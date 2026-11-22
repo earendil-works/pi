@@ -1,7 +1,7 @@
 // What the tests of the whole share besides `/v1/testing`'s `testServer`: the probe's directory (a plugin under test
 // that drives a session's worker), a single-file worker plugin serving one value (`constantPlugin`), and for launched
 // processes (the command's and the release's tests, the bench) a foreground `p3 server` (`launch`), a process's
-// children (`childrenOf`) and whether a process lives (`alive`).
+// children (`childrenOf`), whether a process lives (`alive`) and when it started (`startOf`, to kill only that one).
 
 import { type ChildProcess, spawn } from "node:child_process";
 import { readdir, readFile } from "node:fs/promises";
@@ -22,7 +22,16 @@ export function alive(pid: number): boolean {
 }
 
 /** A `p3 server` launched in the foreground: its pid and port, once it printed its owner link. */
-export type Launched = { readonly pid: number; readonly port: number; readonly dataDir: string; stop(): Promise<void> };
+export type Launched = {
+	readonly pid: number;
+	readonly port: number;
+	readonly dataDir: string;
+	/** Its exit code once it exited (`null` when a signal ended it). */
+	readonly exited: Promise<number | null>;
+	/** Sends it `signal` unless it exited: never to another process that has its pid by now. */
+	kill(signal: NodeJS.Signals): void;
+	stop(): Promise<void>;
+};
 
 /**
  * Launches `p3 server` on `dataDir` on a free port, `command` being Node's arguments that run `p3` (a checkout's
@@ -38,6 +47,7 @@ export async function launch(
 		stdio: ["ignore", "pipe", "inherit"],
 		env,
 	});
+	const exited = new Promise<number | null>((resolve) => child.once("exit", resolve));
 	const port = await new Promise<number>((resolve, reject) => {
 		let out = "";
 		child.stdout?.on("data", (chunk: Buffer) => {
@@ -47,7 +57,15 @@ export async function launch(
 		});
 		child.once("exit", (code) => reject(new Error(`p3 server exited with ${code}`)));
 	});
-	return { pid: child.pid!, port, dataDir, stop: () => stop(child) };
+	// Node signals a child only until it reaped its exit.
+	return {
+		pid: child.pid!,
+		port,
+		dataDir,
+		exited,
+		kill: (signal) => void child.kill(signal),
+		stop: () => stop(child),
+	};
 }
 
 /** Stops `child` with `SIGTERM` and waits for its exit. */
@@ -56,6 +74,16 @@ async function stop(child: ChildProcess): Promise<void> {
 	const exited = new Promise((resolve) => child.once("exit", resolve));
 	child.kill("SIGTERM");
 	await exited;
+}
+
+/**
+ * When process `pid` started (its start time in `/proc/<pid>/stat`), which a later process given the same pid does not
+ * share; `undefined` when it is gone or the system has no `/proc` (a cleanup then leaves it to `p3 stop`).
+ */
+export async function startOf(pid: number): Promise<string | undefined> {
+	const stat = await readFile(`/proc/${pid}/stat`, "utf8").catch(() => undefined);
+	// The fields after the command's closing parenthesis, from the third (the state) on: the start time is the 22nd.
+	return stat?.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
 }
 
 /** The children of process `pid`, each with its command line (`/proc/*\/stat`: Android has no `children` file). */

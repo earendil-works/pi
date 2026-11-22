@@ -31,7 +31,7 @@ tests of the base and of the whole (the topology, the command, the release, the 
 **1. Plugin** (milliseconds): one facet built as production builds it, on an in-memory host with its kind's
 principal, address and API modules, beside the base's facet as the real host has it: on the server `ServerRuntime`
 (a server that does not listen, starts no session worker and applies nothing) and the base's registries
-(`WorkerRunners`, `LinkOpened`, `ServerCommands`, composed as the server composes them), on a worker `WorkerRuntime`
+(`WorkerRunners`, `WorkerRunnerWraps`, `LinkOpened`, `ServerCommands`, composed as the server composes them), on a worker `WorkerRuntime`
 and `WorkerBusy`. Each test gets a temporary directory of its own (the runtime's `dataDir` or `dir`), removed at its
 close. Chord's HTTP component is not there: its registries (`Http`, `Authenticators`) are collected for the test
 (`t.contributions`). The installed release runs a third-party plugin's own test this way. Model:
@@ -65,7 +65,7 @@ directory, its session workers as real processes forked from the install's worke
 are: the built-in ones, the plugins under test (`plugins`: their directories, from a root of their own) and the data
 directory's user root (`userRoot`), where a test writes plugins of its own and applies them. It gives `client(ctx)`
 (signed in as the owner over WebSocket, as a page is), `cookie(ctx)` (a browser's sign-in cookie), `host` (the
-server's host: `root`, the base's registries), `plugins` (the watcher's marks), `workers(ctx)` (the runner's state),
+server's host: `root`, the base's registries), `plugins` (the watcher's marks), `workers(ctx)` (the state of the runner the base uses, its wraps included),
 `apply(ctx)`, `restart(ctx)`, `stop(ctx)` (the data directory kept) and `close(ctx)`; workers idle 300 ms by default
 (`idleMs`). `ownerClient` and `ownerCookie` sign in to any running p3 server (a launched one too). The tests' own
 `test/support.ts` adds the probe (`PROBE`: a plugin under test that drives a session's worker, and whose server route

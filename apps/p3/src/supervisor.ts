@@ -37,7 +37,9 @@ async function supervise(dataDir: string, command: readonly string[]): Promise<v
 	const stop = (): void => {
 		stopping = true;
 		child?.kill("SIGTERM");
-		wake?.();
+		// After the answer: woken during its wait, the supervisor releases its socket at once, which would cut off the
+		// stop's answer still being written.
+		setImmediate(() => wake?.());
 	};
 	const taken = await takeSocket(
 		supervisorSocket(dataDir),
@@ -51,14 +53,14 @@ async function supervise(dataDir: string, command: readonly string[]): Promise<v
 			stop();
 			return { kind: "stopping" };
 		},
-	);
+	).catch(async (error: unknown) => {
+		// Its stderr goes nowhere (`p3` spawns it detached): the log, which `p3` names, says why it did not start.
+		(await logOf(dataDir)).say(`could not take ${supervisorSocket(dataDir)}: ${String(error)}`);
+		process.exit(1);
+	});
 	if (taken.kind === "held") process.exit(1);
 	for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, stop);
-	await privateDirectory(join(dataDir, "logs"));
-	// The server prints into the log itself; the supervisor adds what it does. Private also when it existed looser.
-	const out = openSync(join(dataDir, "logs", "server.log"), "a", 0o600);
-	fchmodSync(out, 0o600);
-	const say = (text: string): void => void writeSync(out, `${new Date().toISOString()} supervisor: ${text}\n`);
+	const { out, say } = await logOf(dataDir);
 	let delay = FIRST_DELAY_MS;
 	let code = 0;
 	while (!stopping) {
@@ -67,7 +69,8 @@ async function supervise(dataDir: string, command: readonly string[]): Promise<v
 		say(`the server starts (pid ${child.pid})`);
 		const ended = await runOnce(child, say);
 		child = undefined;
-		code = ended.code;
+		// A stop's `SIGTERM` that came before the server could handle it (it closes and exits 0 on it) ended it: stopped.
+		code = stopping && ended.signal === "SIGTERM" ? 0 : ended.code;
 		if (stopping || ended.code === 0 || !ended.listened) break;
 		if (Date.now() - started >= SETTLED_MS) delay = FIRST_DELAY_MS;
 		say(`the server exited with ${ended.code}; starting it again in ${delay} ms`);
@@ -83,21 +86,35 @@ async function supervise(dataDir: string, command: readonly string[]): Promise<v
 	process.exit(code);
 }
 
-/** Waits for `child` to exit: its exit code (1 for a signal or a failed spawn), and whether it had listened. */
+/**
+ * Opens the server's log in `dataDir` (`logs/server.log`): `out`, where the server prints itself, and `say`, what the
+ * supervisor adds, with its time. Private also when it existed looser.
+ */
+async function logOf(dataDir: string): Promise<{ readonly out: number; say(text: string): void }> {
+	await privateDirectory(join(dataDir, "logs"));
+	const out = openSync(join(dataDir, "logs", "server.log"), "a", 0o600);
+	fchmodSync(out, 0o600);
+	return { out, say: (text) => void writeSync(out, `${new Date().toISOString()} supervisor: ${text}\n`) };
+}
+
+/**
+ * Waits for `child` to exit: its exit code (1 for a signal or a failed spawn), the signal that ended it, and whether it
+ * had listened.
+ */
 async function runOnce(
 	child: ChildProcess,
 	say: (text: string) => void,
-): Promise<{ readonly code: number; readonly listened: boolean }> {
+): Promise<{ readonly code: number; readonly signal: NodeJS.Signals | null; readonly listened: boolean }> {
 	let listened = false;
 	child.once("message", () => {
 		listened = true;
 	});
-	const code = await new Promise<number>((resolve) => {
+	const { code, signal } = await new Promise<{ code: number; signal: NodeJS.Signals | null }>((resolve) => {
 		child.once("error", (error) => {
 			say(`the server did not start: ${error.message}`);
-			resolve(1);
+			resolve({ code: 1, signal: null });
 		});
-		child.once("exit", (exit) => resolve(exit ?? 1));
+		child.once("exit", (exit, signal) => resolve({ code: exit ?? 1, signal }));
 	});
-	return { code, listened };
+	return { code, signal, listened };
 }

@@ -2,6 +2,7 @@
 // client signed in as the owner over WebSocket. One case per rule of the base, the runner and the sessions plugin.
 
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
@@ -131,7 +132,40 @@ describe("session workers", () => {
 		await applied(t, (marks) => marks.dirty.length > 0);
 		await until(held.value, (value) => value === "2", within("the applied value", context));
 	});
+
+	// Astra B1, review round 4, adapted to the decision (one runner, wraps): a plugin changing how workers run, added by
+	// an apply while a worker is held, hid that worker from the status `p3 stop` kills by.
+	it("the status names a held worker after an apply added a wrap, and the wrap's own workers beside it", async (c) => {
+		const { t, id } = await withSession();
+		const pid = (await probe(t, id)).pid.value;
+		// A process the wrap says it runs elsewhere.
+		const own = spawn("sleep", ["60"], { stdio: "ignore" });
+		c.after(() => own.kill("SIGKILL"));
+		await writeFile(join(t.userRoot, "elsewhere.server.ts"), wrapPlugin(own.pid!));
+		await applied(t, (marks) => marks.set);
+		const status = await askServer(t.dataDir, { kind: "status" }, 5000);
+		assert.ok(status.kind === "answered" && status.answer.kind === "running", JSON.stringify(status));
+		assert.deepEqual([...status.answer.workers].sort(), [pid, own.pid!].sort());
+		assert.ok(alive(pid));
+	});
 });
+
+/** A single-file server plugin contributing a wrap that runs everything on the runner beneath, and says it runs `pid`. */
+function wrapPlugin(pid: number): string {
+	return `import { defineFacet } from "@earendil-works/p3/v1";
+import { WorkerRunnerWraps } from "@earendil-works/p3/v1/server";
+export default defineFacet((_host, self) =>
+	self.contribute(WorkerRunnerWraps, (inner) => ({
+		start: (address, ctx) => inner.start(address, ctx),
+		stop: (id) => inner.stop(id),
+		retry: (id) => inner.retry(id),
+		state: () => inner.state(),
+		pids: () => [${pid}, ...inner.pids()],
+		reload: (built, ctx) => inner.reload(built, ctx),
+	})),
+);
+`;
+}
 
 /** Waits until the watcher's marks pass `marked`, then applies once with the command `apply`; asserts no step stopped. */
 async function applied(t: TestServer, marked: (marks: typeof t.plugins.value) => boolean): Promise<void> {

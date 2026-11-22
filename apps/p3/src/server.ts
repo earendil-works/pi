@@ -1,10 +1,11 @@
 // The p3 server's bootstrap: everything that must exist before plugins can load, and nothing else. The data
 // directory's socket (`server.sock`, `local-socket.ts`) is taken first: it is the server's lock, and it answers the
 // command (what the server is, with its workers' pids, and the plugins' `ServerCommands`). Then the store, the host,
-// Chord's HTTP and plugins components, the route to session workers and the base's registries. A failed store
-// (`storage_failed`) ends the server: the host closed itself, so it closes and exits non-zero for the supervisor to
-// start it again. The close releases the socket last, after the store's close. The base's facet and the route's
-// admission are exported for the test topology (`test/topology.ts`).
+// Chord's HTTP and plugins components, the route to session workers, the base's registries and the runner it uses (the
+// one runner with the plugins' wraps composed over it). A failed store (`storage_failed`) ends the server: the host
+// closed itself, so it closes and exits non-zero for the supervisor to start it again. The close releases the socket
+// last, after the store's close. The base's facet and the route's admission are exported for the test topology
+// (`test/topology.ts`).
 
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -22,9 +23,10 @@ import {
 	type Link,
 	type PluginFailure,
 	type RegistryTable,
+	type RegistryValue,
 	type Watchable,
 } from "@earendil-works/chord";
-import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/chord/context";
+import { awaitWithContext, BACKGROUND_CONTEXT, type Context, withoutAbortSignal } from "@earendil-works/chord/context";
 import {
 	createHttp,
 	type HttpError,
@@ -44,6 +46,8 @@ import {
 	SessionRoute,
 	type WorkerRunner,
 	WorkerRunners,
+	type WorkerRunnerWrap,
+	WorkerRunnerWraps,
 } from "@earendil-works/p3/v1/server";
 import { API, KINDS, type P3Principal, SERVER, workerPrincipal } from "./app.ts";
 import { openDataDir, openPrivateStore, privateDirectory } from "./files.ts";
@@ -88,6 +92,8 @@ export type RunningServer = {
 	readonly dataDir: string;
 	readonly port: number;
 	readonly runtime: ServerRuntime;
+	/** The runner the base uses: the one runner with the plugins' wraps composed over it. */
+	readonly runner: UsedRunner;
 	/** The plugins' marks (`dirty`, ...): what a test or a tool waits on before an apply. */
 	readonly plugins: Watchable<PluginsState>;
 	/** Closes everything it opened, the data directory's socket last; a second call waits for the first. */
@@ -160,6 +166,7 @@ export async function startServer(options: ServerOptions, context: Context): Pro
 			context,
 		);
 		closers.push(() => plugins.close());
+		const used = usedRunner(host, context);
 		const sessions = host.route(
 			Session,
 			{
@@ -167,7 +174,7 @@ export async function startServer(options: ServerOptions, context: Context): Pro
 				authorize: () => true,
 				admit: admitSession,
 				resolve: async (address, routing) => ({
-					link: await startWorker(host, address, routing),
+					link: await startWorker(used, address, routing),
 					principal: workerPrincipal(address.params.id),
 					trusted: true,
 				}),
@@ -186,12 +193,12 @@ export async function startServer(options: ServerOptions, context: Context): Pro
 			listening: () => listening,
 			apply: async (ctx) => {
 				const built = await plugins.build(plugins.state.value.dirty, ctx);
-				// The runner is read when its step runs: the server step may have reloaded the runner plugin.
+				// The runner is read when its step runs: the server step may have reloaded the runner plugin or a wrap's.
 				const workers = {
 					name: "workers",
 					kinds: ["worker"],
 					reload: async (step: typeof built, stepContext: Context) => {
-						const runner = (await host.registry(WorkerRunners, stepContext)).value;
+						const runner = await used.now(stepContext);
 						return runner === undefined ? { hosts: [] } : runner.reload(step, stepContext);
 					},
 				};
@@ -207,18 +214,14 @@ export async function startServer(options: ServerOptions, context: Context): Pro
 		const loaded = await plugins.load(host, { kind: "server", core, modules: SERVER_MODULES }, context);
 		for (const failed of loaded.failed) options.onError({ kind: "plugin_failed", error: failed });
 		linkOpened = await host.registry(LinkOpened, context);
-		// The last runner contributed, also once withdrawn: at the close it is withdrawn while it still stops its workers.
-		const runners = await (await host.registry(WorkerRunners, context)).watch(context);
-		closers.push(async () => void (await runners.stop()));
-		answering.runner = runners.value;
-		runners.start(async (call) => {
-			if (call.kind === "value" && call.value !== undefined) answering.runner = call.value;
-		});
+		// Its registries read now: a status while the host closes (which refuses reads) still names the workers.
+		await used.now(context);
+		answering.runner = used;
 		listening = await Promise.race([http.listening(context), unheard.promise]);
 		starting = false;
 		answering.status = { kind: "running", port: listening.port, version: options.version, startedAt: Date.now() };
 		answering.host = host;
-		return { dataDir, port: listening.port, runtime, plugins: plugins.state, close };
+		return { dataDir, port: listening.port, runtime, runner: used, plugins: plugins.state, close };
 	} catch (error) {
 		await close(context);
 		throw error;
@@ -233,28 +236,97 @@ function listenFailed(address: ListenAddress, cause: unknown): Error {
 }
 
 /**
- * Starts the worker of `address` with the runner contributed now, else the next one. While the runner plugin reloads
+ * Starts the worker of `address` with the runner `used` gives now, else the next one. While the runner plugin reloads
  * there is none (the old runner closes, its workers exit, then the new one is contributed), and a start the old runner
  * took before it was withdrawn is refused by its close: neither fails the holders, the worker starts on the next
- * runner. A start that fails while its runner is still the current one is the worker's failure. `context`'s abort
+ * runner. A start that fails while its runner is still the one used is the worker's failure. `context`'s abort
  * rejects. Exported for the base's tests.
  */
-export async function startWorker(
-	host: Host<P3Principal>,
-	address: Address<typeof Session>,
-	context: Context,
-): Promise<Link> {
-	const runners = await host.registry(WorkerRunners, context);
+export async function startWorker(used: UsedRunner, address: Address<typeof Session>, context: Context): Promise<Link> {
 	for (;;) {
-		// `until` resolves only with a value its condition passed: a runner.
-		const runner = runners.value ?? ((await until(runners, (next) => next !== undefined, context)) as WorkerRunner);
+		const runner = await used.next(context);
 		try {
 			return await runner.start(address, context);
 		} catch (error) {
 			// Its object withdraws a runner at its seal, before its close refuses starts: a withdrawn one is no failure.
-			if (runners.value === runner) throw error;
+			if ((await used.now(context)) === runner) throw error;
 		}
 	}
+}
+
+/**
+ * The runner the base uses: the one runner (`WorkerRunners`) with the wraps (`WorkerRunnerWraps`) composed over it in
+ * plugin order, the first innermost.
+ */
+export type UsedRunner = {
+	/** The composed runner now; `undefined` while no runner is contributed. */
+	now(context: Context): Promise<WorkerRunner | undefined>;
+	/**
+	 * The composed runner now, else the last one composed: a runner withdrawn by a reload of its plugin still stops its
+	 * workers, and the status names them (`p3 stop` kills them when the server does not stop).
+	 */
+	last(context: Context): Promise<WorkerRunner | undefined>;
+	/** The composed runner now, or once a runner is contributed; `context`'s abort rejects. */
+	next(context: Context): Promise<WorkerRunner>;
+};
+
+/** The two registries the used runner is composed from. */
+type RunnerRegistries = readonly [RegistryValue<WorkerRunner | undefined>, RegistryValue<readonly WorkerRunnerWrap[]>];
+
+/**
+ * The runner `host`'s base uses, composed again only when the runner or the wraps changed: a wrap's runner is the same
+ * object from one start to the next. The registries are read in `context` (the server's), at the first use. Exported
+ * for the base's tests.
+ */
+export function usedRunner(host: Host<P3Principal>, context: Context): UsedRunner {
+	const read = registriesOf(host, context);
+	let composed:
+		| { readonly runner: WorkerRunner; readonly wraps: readonly WorkerRunnerWrap[]; readonly value: WorkerRunner }
+		| undefined;
+	const now = async (caller: Context): Promise<WorkerRunner | undefined> => {
+		const [runners, wraps] = await read(caller);
+		const runner = runners.value;
+		if (runner === undefined) return undefined;
+		if (composed?.runner !== runner || composed.wraps !== wraps.value) {
+			composed = { runner, wraps: wraps.value, value: wraps.value.reduce((inner, wrap) => wrap(inner), runner) };
+		}
+		return composed.value;
+	};
+	return {
+		now,
+		last: async (caller) => (await now(caller)) ?? composed?.value,
+		next: async (caller) => {
+			for (;;) {
+				const runner = await now(caller);
+				if (runner !== undefined) return runner;
+				const [runners] = await read(caller);
+				await until(runners, (next) => next !== undefined, caller);
+			}
+		},
+	};
+}
+
+/**
+ * The registries of the used runner on `host`, read in `context` at the first call and kept (each caller waits in its
+ * own context): `host.registry` refuses once the host closes, and the status still names the workers then.
+ */
+function registriesOf(host: Host<P3Principal>, context: Context): (caller: Context) => Promise<RunnerRegistries> {
+	let registries: Promise<RunnerRegistries> | undefined;
+	return (caller) => {
+		if (registries === undefined) {
+			const own = withoutAbortSignal(context);
+			const reading = Promise.all([
+				host.registry(WorkerRunners, own),
+				host.registry(WorkerRunnerWraps, own),
+			] as const);
+			registries = reading;
+			// A read that failed (the host closed before its load published) is not kept.
+			reading.catch(() => {
+				if (registries === reading) registries = undefined;
+			});
+		}
+		return awaitWithContext(registries, caller);
+	};
 }
 
 /** Runs every closer, the last added first, each also when an earlier one failed; throws what failed. */
@@ -271,16 +343,16 @@ async function closeAll(closers: readonly ((context: Context) => Promise<void> |
 }
 
 /**
- * What the server is to its socket: starting, then running with its host (whose registries answer commands); the last
- * runner contributed once its plugins loaded (a status names its workers; an older one, withdrawn by a reload of the
- * runner plugin, kills its own workers after their grace).
+ * What the server is to its socket: starting, then running with its host (whose registries answer commands); the runner
+ * it uses once its plugins loaded (a status names its workers, also those of one withdrawn by a reload of the runner
+ * plugin, which kills its own workers after their grace).
  */
 type Answering = {
 	status:
 		| { readonly kind: "starting" }
 		| { readonly kind: "running"; readonly port: number; readonly version: string; readonly startedAt: number };
 	host: Host<P3Principal> | undefined;
-	runner: WorkerRunner | undefined;
+	runner: UsedRunner | undefined;
 };
 
 /** The server's answer to the command's `request` (`local-socket.ts`). */
@@ -291,8 +363,8 @@ async function answer(request: unknown, answering: Answering, context: Context):
 		readonly name?: unknown;
 	};
 	// Asked at each status: `p3 stop` kills the workers by the pids it gets right before.
-	const status = (): ServerStatus => {
-		const own = { pid: process.pid, workers: answering.runner?.pids() ?? [] };
+	const status = async (): Promise<ServerStatus> => {
+		const own = { pid: process.pid, workers: (await answering.runner?.last(context))?.pids() ?? [] };
 		return answering.status.kind === "starting" ? { kind: "starting", ...own } : { ...answering.status, ...own };
 	};
 	if (kind === "status") return status();
@@ -308,14 +380,27 @@ async function answer(request: unknown, answering: Answering, context: Context):
 export const SERVER_MODULES = { "@earendil-works/p3/v1": v1, "@earendil-works/p3/v1/server": v1server };
 
 /**
- * The base's facet: it serves `ServerRuntime` (the process values), `WorkerRunners` (the first runner by plugin name),
- * `LinkOpened` (every hook called, in plugin order) and `ServerCommands` (each name's first command by plugin name; a
- * second one of a name is reported as a conflict).
+ * The base's facet: it serves `ServerRuntime` (the process values), `WorkerRunners` (the one runner: the first by
+ * plugin name, a second one reported as a conflict), `WorkerRunnerWraps` (in plugin order), `LinkOpened` (every hook
+ * called, in plugin order) and `ServerCommands` (each name's first command by plugin name; a second one of a name is
+ * reported as a conflict).
  */
 export function serverCoreFacet(runtime: ServerRuntime): Facet<P3Principal> {
 	return defineFacet<P3Principal>((host) => {
 		host.serve(ServerRuntime, { compose: () => runtime });
-		host.serve(WorkerRunners, { compose: (table) => table[0]?.value });
+		host.serve(WorkerRunners, {
+			compose: ([first, ...others], { report }) => {
+				// Two runners would each start workers of one session's store: a misconfiguration, never a choice.
+				for (const other of others) {
+					report({
+						message: "a second runner is contributed: contribute a wrap (WorkerRunnerWraps) instead",
+						plugins: [first!.plugin, other.plugin],
+					});
+				}
+				return first?.value;
+			},
+		});
+		host.serve(WorkerRunnerWraps, { compose: (table) => table.map(({ value }) => value) });
 		host.serve(LinkOpened, { compose: (table) => (request, close) => linkOpened(table, request, close) });
 		host.serve(ServerCommands, {
 			compose: (table, { report }) => {

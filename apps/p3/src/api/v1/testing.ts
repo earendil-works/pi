@@ -4,9 +4,9 @@
 // process with the built-in plugins and the plugins under test, its session workers as real processes, clients signed
 // in as the owner.
 
-import { mkdtemp, rm, symlink } from "node:fs/promises";
+import { mkdtemp, realpath, rm, stat, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import {
 	type ChordStore,
 	createHost,
@@ -23,7 +23,7 @@ import {
 	type TestedPlugin,
 } from "@earendil-works/chord/plugins";
 import { Server, Session } from "@earendil-works/p3/v1";
-import { type ServerRuntime, WorkerRunners, type WorkerState } from "@earendil-works/p3/v1/server";
+import type { ServerRuntime, WorkerState } from "@earendil-works/p3/v1/server";
 import { API, KINDS, type P3Principal, SERVER, workerPrincipal } from "../../app.ts";
 import { PLUGINS, WORKER } from "../../install.ts";
 import { ASK_MS, askServer } from "../../local-socket.ts";
@@ -144,8 +144,8 @@ function workerStubs(
 /** What a test's server starts with. */
 export type TestServerOptions = {
 	/**
-	 * The plugins under test: their directories, loaded beside the built-in plugins from a root of their own; one that
-	 * fails to load fails the start.
+	 * The plugins under test: their directories (a relative one from the working directory), loaded beside the built-in
+	 * plugins from a root of their own; one that is missing or fails to load fails the start.
 	 */
 	readonly plugins?: readonly string[];
 	/** A copy of the built-in plugins that the test edits and applies; p3's own by default. */
@@ -175,15 +175,21 @@ export type TestServer = {
 	client(context: Context): Promise<Host<P3Principal>>;
 	/** A fresh owner's sign-in cookie (`name=value`), as a browser gets it from an owner link. */
 	cookie(context: Context): Promise<string>;
-	/** Each session's worker as the runner sees it. */
+	/** Each session's worker as the runner the base uses sees it (the one runner with the wraps over it). */
 	workers(context: Context): Promise<Readonly<Record<string, WorkerState>>>;
 	/** Builds the changed plugins and rolls them out, as `p3 apply` does. */
 	apply(context: Context): Promise<RolloutResult>;
-	/** Stops the server, then starts a new one on the same data directory with the same options. */
+	/**
+	 * Stops the server, then starts a new one on the same data directory with the same options: the new one owns the
+	 * data directory from then on (this one's `close` leaves it).
+	 */
 	restart(context: Context): Promise<TestServer>;
-	/** Closes the clients and the server (two calls at once close it once), keeping the data directory. */
+	/**
+	 * Closes the clients, then the server, also when a client's close failed (it rejects with that afterwards), keeping
+	 * the data directory; once: a second call waits for the first.
+	 */
 	stop(context: Context): Promise<void>;
-	/** Stops the server and removes its data directory. */
+	/** Stops the server and removes its data directory, unless the server's close failed or a restart took it over. */
 	close(context: Context): Promise<void>;
 };
 
@@ -199,7 +205,10 @@ export async function testServer(options: TestServerOptions, context: Context): 
 	const idleMs = options.idleMs ?? TEST_IDLE_MS;
 	const errors: ServerError[] = [];
 	try {
-		for (const plugin of options.plugins ?? []) await symlink(plugin, join(tested, basename(plugin)), "dir");
+		for (const plugin of options.plugins ?? []) {
+			const dir = await pluginDirectory(plugin);
+			await symlink(dir, join(tested, basename(dir)), "dir");
+		}
 		const server = await startServer(
 			{
 				dataDir,
@@ -219,13 +228,27 @@ export async function testServer(options: TestServerOptions, context: Context): 
 		);
 		const host = server.runtime.host;
 		const clients: Host<P3Principal>[] = [];
-		const stop = async (ctx: Context) => {
+		/** Set once the server closed: only then may its data directory go. */
+		let closed = false;
+		/** Set once a restart's server runs: the data directory is its own from then on. */
+		let handedOver = false;
+		const stopOnce = async (ctx: Context): Promise<void> => {
+			const failed: unknown[] = [];
+			for (const client of clients.splice(0)) {
+				await client.close(ctx).catch((error: unknown) => void failed.push(error));
+			}
 			try {
-				for (const client of clients.splice(0)) await client.close(ctx);
 				await server.close(ctx);
+				closed = true;
 			} finally {
 				await rm(tested, { recursive: true, force: true });
 			}
+			if (failed.length > 0) throw new AggregateError(failed, "testServer: a client's close failed");
+		};
+		let stopping: Promise<void> | undefined;
+		const stop = (ctx: Context): Promise<void> => {
+			stopping ??= stopOnce(ctx);
+			return stopping;
 		};
 		return {
 			dataDir,
@@ -241,18 +264,20 @@ export async function testServer(options: TestServerOptions, context: Context): 
 				return client;
 			},
 			cookie: (ctx) => ownerCookie(dataDir, server.port, ctx),
-			workers: async (ctx) => (await host.registry(WorkerRunners, ctx)).value?.state() ?? {},
+			workers: async (ctx) => (await server.runner.now(ctx))?.state() ?? {},
 			apply: (ctx) => server.runtime.apply(ctx),
 			restart: async (ctx) => {
 				await stop(ctx);
-				return testServer({ ...options, dataDir }, ctx);
+				const next = await testServer({ ...options, dataDir }, ctx);
+				handedOver = true;
+				return next;
 			},
 			stop,
 			close: async (ctx) => {
 				try {
 					await stop(ctx);
 				} finally {
-					await rm(dataDir, { recursive: true, force: true });
+					if (closed && !handedOver) await rm(dataDir, { recursive: true, force: true });
 				}
 			},
 		};
@@ -261,6 +286,18 @@ export async function testServer(options: TestServerOptions, context: Context): 
 		if (options.dataDir === undefined) await rm(dataDir, { recursive: true, force: true });
 		throw error;
 	}
+}
+
+/**
+ * The real path of the plugin directory `plugin` (a relative one from the working directory): a link to a path that is
+ * no directory would leave the plugins' root empty, and the start pass without the plugin.
+ */
+async function pluginDirectory(plugin: string): Promise<string> {
+	const dir = await realpath(resolve(plugin)).catch(() => undefined);
+	if (dir === undefined || !(await stat(dir)).isDirectory()) {
+		throw new Error(`testServer: no plugin directory at ${plugin}`);
+	}
+	return dir;
 }
 
 /** How long a test server's worker idles before it stops itself, by default. */

@@ -1,16 +1,19 @@
 // The helpers of a plugin's tests (`@earendil-works/p3/v1/testing`). `testPlugin`: a tested facet gets the base's facet
 // as its real host has it, and a directory of its own: a new temporary one per test (two tests of one session share
-// nothing), removed at its close. `testServer`: the plugins under test load beside the built-in ones (one that fails
-// fails the start); `stop` keeps the data directory, `restart` starts on it again, `close` removes it.
+// nothing), removed at its close. `testServer`: the plugins under test load beside the built-in ones (one that is
+// missing or fails fails the start, a relative one is the working directory's); `stop` keeps the data directory, runs
+// once and closes the server also when a client's close failed; `restart` starts on it again and hands it over;
+// `close` removes it.
 
 import assert from "node:assert/strict";
 import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { after, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT as context, local, Sessions, str } from "@earendil-works/p3/v1";
 import { ServerCommands } from "@earendil-works/p3/v1/server";
 import { testPlugin, testServer } from "@earendil-works/p3/v1/testing";
+import { exchange, serverSocket } from "../src/local-socket.ts";
 import { within } from "./until.ts";
 
 /** What the plugin the test writes serves: its host's directory. */
@@ -101,5 +104,69 @@ describe("testServer", () => {
 		await writeFile(join(broken, "package.json"), JSON.stringify({ name: "broken", private: true, type: "module" }));
 		await writeFile(join(broken, "server.ts"), 'throw new Error("broken: on purpose");\n');
 		await assert.rejects(testServer({ plugins: [broken] }, context), /broken/);
+	});
+
+	// Astra S4, review round 4: a missing plugin left the required root empty and the start passed; a relative path was
+	// read from the root's temporary directory.
+	it("loads a plugin under test given relative to the working directory, and fails the start for a missing one", async () => {
+		const t = await testServer({ plugins: [relative(process.cwd(), plugin)] }, context);
+		try {
+			const dir = await t.host.root(
+				async (ctx) => (await ctx.get(Dir, {})).dir.value,
+				within("the plugin", context),
+			);
+			assert.equal(dir, t.dataDir);
+		} finally {
+			await t.close(context);
+		}
+		await assert.rejects(
+			testServer({ plugins: [join(root, "no-such-plugin")] }, context),
+			/no plugin directory at .*no-such-plugin/,
+		);
+	});
+
+	// Astra S5, review round 4: the first handle's close after a restart removed the data directory under the new server.
+	it("hands the data directory over at a restart: the first handle's close leaves it to the new server", async () => {
+		const t = await testServer({}, context);
+		const next = await t.restart(context);
+		try {
+			await t.close(context);
+			assert.ok(await exists(join(next.dataDir, "server", "store.sqlite")));
+			assert.equal((await (await next.client(context)).get(Sessions, {}, context)).variant, "owner");
+		} finally {
+			await next.close(context);
+		}
+		assert.equal(await exists(next.dataDir), false);
+	});
+
+	// Astra S5, review round 4: a second stop closed the server while the first still closed the clients, and a client
+	// whose close failed kept the server open.
+	it("stops once, a second stop waiting for the first; a client's failed close still closes the server", async () => {
+		const t = await testServer({}, context);
+		try {
+			const client = await t.client(context);
+			const entered = Promise.withResolvers<void>();
+			const gate = Promise.withResolvers<void>();
+			const close = client.close.bind(client);
+			client.close = async (ctx) => {
+				entered.resolve();
+				await gate.promise;
+				await close(ctx);
+				throw new Error("the client's close failed");
+			};
+			const first = t.stop(context);
+			await entered.promise;
+			const second = t.stop(context);
+			try {
+				const status = await exchange(serverSocket(t.dataDir), { kind: "status" });
+				assert.equal(status.kind, "answered", "the server runs while the first stop closes its clients");
+			} finally {
+				gate.resolve();
+			}
+			for (const stopped of [first, second]) await assert.rejects(stopped, /a client's close failed/);
+			assert.deepEqual(await exchange(serverSocket(t.dataDir), { kind: "status" }), { kind: "none" });
+		} finally {
+			await t.close(context).catch(() => {});
+		}
 	});
 });

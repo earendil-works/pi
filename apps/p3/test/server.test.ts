@@ -1,8 +1,9 @@
-// The server's bootstrap (`src/server.ts`) apart from its workers: the base's registries (`LinkOpened` calls every
-// plugin's hook on its own, `ServerCommands` keeps a name's first command and reports a second), the order of its
-// close (the data directory's socket, its lock, last, after the store), its answers on that socket (the control
-// plugin's `apply`, an unknown command), a failed plugin of the user's root reported, and the route's start of a worker
-// while no runner is contributed.
+// The server's bootstrap (`src/server.ts`) apart from its workers' processes: the base's registries (`LinkOpened`
+// calls every plugin's hook on its own, `ServerCommands` keeps a name's first command and reports a second), the order
+// of its close (the data directory's socket, its lock, last, after the store), its answers on that socket (the control
+// plugin's `apply`, an unknown command, a command while it starts), a failed plugin of the user's root reported, the
+// runner it uses (the one runner, a second reported and not used, the wraps composed over it once) and the route's
+// start of a worker while no runner is contributed.
 
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -11,17 +12,29 @@ import { join } from "node:path";
 import { describe, it, mock, type TestContext } from "node:test";
 import { createHost, type HostError } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT as context, withAbortSignal } from "@earendil-works/chord/context";
-import { contribute, defineFacet, type P3Principal, Session } from "@earendil-works/p3/v1";
+import { contribute, defineFacet, type P3Principal, Session, Sessions, SessionWorker } from "@earendil-works/p3/v1";
 import {
 	type HttpRequest,
 	LinkOpened,
 	type LinkOpenedHook,
 	ServerCommands,
 	type ServerRuntime,
+	type WorkerRunner,
+	WorkerRunners,
+	WorkerRunnerWraps,
 } from "@earendil-works/p3/v1/server";
 import { PLUGINS, WORKER } from "../src/install.ts";
 import { exchange, serverSocket } from "../src/local-socket.ts";
-import { type ServerEnd, type ServerError, serverCoreFacet, startServer, startWorker } from "../src/server.ts";
+import {
+	type RunningServer,
+	type ServerEnd,
+	type ServerError,
+	serverCoreFacet,
+	startServer,
+	startWorker,
+	usedRunner,
+} from "../src/server.ts";
+import { eventually } from "./until.ts";
 
 /** A host with the base's facet and one plugin per entry of `plugins`, each contributing what its facet does. */
 async function hostWith(t: TestContext, plugins: Readonly<Record<string, ReturnType<typeof defineFacet>>>) {
@@ -98,22 +111,21 @@ async function answerOf(path: string, request: unknown, ms?: number): Promise<un
 	return reply.kind === "answered" ? reply.answer : undefined;
 }
 
+/** Facets of the server's own, loaded with its plugins. */
+type Facets = readonly { name: string; facet: ReturnType<typeof defineFacet> }[];
+
 /**
- * A server on a new data directory with the built-in plugins, `facets`, and the data directory's user root (`plugins`,
- * not required) holding `plugins`' files; what its `onStop` and `onError` heard.
+ * A server starting on a new data directory with the built-in plugins, `facets`, and the data directory's user root
+ * (`plugins`, not required) holding `plugins`' files; what its `onStop` and `onError` heard.
  */
-async function server(
-	t: TestContext,
-	facets: readonly { name: string; facet: ReturnType<typeof defineFacet> }[] = [],
-	plugins: Readonly<Record<string, string>> = {},
-) {
+async function starting(t: TestContext, facets: Facets = [], plugins: Readonly<Record<string, string>> = {}) {
 	const dataDir = await mkdtemp(join(tmpdir(), "p3-server-"));
 	const root = join(dataDir, "plugins");
 	await mkdir(root, { recursive: true });
 	for (const [file, source] of Object.entries(plugins)) await writeFile(join(root, file), source);
 	const ends: ServerEnd[] = [];
 	const errors: ServerError[] = [];
-	const running = await startServer(
+	const started = startServer(
 		{
 			dataDir,
 			roots: [
@@ -130,10 +142,48 @@ async function server(
 		context,
 	);
 	t.after(async () => {
-		await running.close(context);
+		await (await started.catch(() => undefined))?.close(context);
 		await rm(dataDir, { recursive: true, force: true });
 	});
-	return { running, dataDir, ends, errors };
+	return { started, dataDir, ends, errors };
+}
+
+/** `starting`, once the server runs. */
+async function server(t: TestContext, facets: Facets = [], plugins: Readonly<Record<string, string>> = {}) {
+	const { started, ...rest } = await starting(t, facets, plugins);
+	return { running: await started, ...rest };
+}
+
+/** Holds the worker of a new session of `running` until the hold's call returns: the worker starts. */
+async function startOne(running: RunningServer): Promise<string> {
+	return running.runtime.host.root(
+		async (ctx) => {
+			const sessions = await ctx.get(Sessions, {});
+			const id = await sessions.create({ title: "one" }, ctx);
+			await ctx.get(SessionWorker, { session: id });
+			return id;
+		},
+		context,
+		{ principal: { kind: "owner" } },
+	);
+}
+
+/** A wrap over `inner` that runs everything on it, telling `seen` of each start and reload. */
+function passing(inner: WorkerRunner, seen: string[]): WorkerRunner {
+	return {
+		start: (address, ctx) => {
+			seen.push(`start ${address.params.id}`);
+			return inner.start(address, ctx);
+		},
+		stop: (id) => inner.stop(id),
+		retry: (id) => inner.retry(id),
+		state: () => inner.state(),
+		pids: () => inner.pids(),
+		reload: (built, ctx) => {
+			seen.push("reload");
+			return inner.reload(built, ctx);
+		},
+	};
 }
 
 describe("the server", () => {
@@ -219,6 +269,42 @@ describe("the server", () => {
 		assert.deepEqual(await answerOf(path, { kind: "bogus" }), { kind: "invalid" });
 	});
 
+	// Astra, review round 4 (open point b of round 3): a command while the plugins load answers `starting`, the answer
+	// `p3 stop` asks again on; only a stand-in pinned that side.
+	it("answers a command while its plugins load with `starting`, and runs it once they did", async (t) => {
+		const entered = Promise.withResolvers<void>();
+		const gate = Promise.withResolvers<void>();
+		const gated = defineFacet((host) =>
+			contribute(host, "test.gated", (self) => {
+				self.open(
+					async () => {
+						entered.resolve();
+						await gate.promise;
+						return null;
+					},
+					() => {},
+				);
+			}),
+		);
+		const { started, dataDir, ends } = await starting(t, [{ name: "test.gated", facet: gated }]);
+		const stop = { kind: "command", name: "stop" };
+		try {
+			await entered.promise;
+			const asked = (await answerOf(serverSocket(dataDir), stop)) as { readonly kind?: string };
+			assert.equal(asked.kind, "starting");
+		} finally {
+			gate.resolve();
+		}
+		await started;
+		assert.deepEqual(ends, [], "the stop asked while it started did not run");
+		assert.deepEqual(await answerOf(serverSocket(dataDir), stop), { kind: "answer", value: "stopping" });
+		await eventually(
+			() => ends,
+			(heard) => heard.length === 1,
+		);
+		assert.deepEqual(ends, [{ kind: "stopped" }]);
+	});
+
 	// Fable, review round 3 (S4): a plugin of the user's root that failed at the start was left out without a word.
 	it("reports a plugin of a root that is not required that fails at the start, and starts without it", async (t) => {
 		const { errors } = await server(t, [], {
@@ -236,14 +322,57 @@ describe("the route's start of a worker", () => {
 	// reloads) waits for the next one; nothing pinned that the hold's end ends that wait.
 	it("while no runner is contributed, rejects at its context's abort, also one that came before it", async (t) => {
 		const { host } = await hostWith(t, {});
+		const used = usedRunner(host, context);
 		const before = new AbortController();
 		before.abort(new Error("the hold ended before"));
-		const early = startWorker(host, Session({ id: "s" }), withAbortSignal(before.signal, context));
+		const early = startWorker(used, Session({ id: "s" }), withAbortSignal(before.signal, context));
 		await assert.rejects(early, /the hold ended before/);
 		const during = new AbortController();
-		const waiting = startWorker(host, Session({ id: "s" }), withAbortSignal(during.signal, context));
+		const waiting = startWorker(used, Session({ id: "s" }), withAbortSignal(during.signal, context));
 		await new Promise((resolve) => setImmediate(resolve));
 		during.abort(new Error("the hold ended"));
 		await assert.rejects(waiting, /the hold ended/);
+	});
+});
+
+describe("the runner the server uses", () => {
+	// Decided in review round 4 (Astra B1): a second runner that sorted first took over the route while the first one
+	// still ran a held worker, which the status then left out. One runner; how workers run changes by wraps.
+	it("is the one runner with the wraps over it: a wrap sees every start and the apply's reload, composed once", async (t) => {
+		const seen: string[] = [];
+		let composed = 0;
+		const wrapping = defineFacet((_host, self) =>
+			self.contribute(WorkerRunnerWraps, (inner) => {
+				composed++;
+				return passing(inner, seen);
+			}),
+		);
+		const { running } = await server(t, [{ name: "test.wrap", facet: wrapping }]);
+		const one = await startOne(running);
+		const two = await startOne(running);
+		await running.runtime.apply(context);
+		assert.deepEqual(seen, [`start ${one}`, `start ${two}`, "reload"]);
+		assert.equal(composed, 1, "composed once for the one runner and its wraps");
+		assert.deepEqual(Object.keys((await running.runner.now(context))?.state() ?? {}).sort(), [one, two].sort());
+	});
+
+	it("reports a second runner as a conflict naming both plugins, and does not use it", async (t) => {
+		const refusing: WorkerRunner = {
+			start: () => Promise.reject(new Error("the second runner was used")),
+			stop: async () => {},
+			retry: () => {},
+			state: () => ({}),
+			pids: () => [],
+			reload: async () => ({ hosts: [] }),
+		};
+		const second = defineFacet((_host, self) => self.contribute(WorkerRunners, refusing));
+		const { running, errors } = await server(t, [{ name: "test.runner", facet: second }]);
+		await startOne(running);
+		const conflicts = errors.flatMap(({ kind, error }) =>
+			kind === "host" && error.kind === "registry_conflict" ? [error] : [],
+		);
+		assert.equal(conflicts.length, 1);
+		assert.equal(conflicts[0]?.registry, WorkerRunners.name);
+		assert.deepEqual(conflicts[0]?.plugins, ["@earendil-works/p3-runner", "test.runner"]);
 	});
 });

@@ -9,7 +9,7 @@ successor of p2 (Pi Mobile) on Chord v2, built in slices; so far it is headless 
 p3                 start the Pi's server in the background unless it runs; print its port and an owner link
 p3 server          run the server in the foreground
 p3 status          whether it runs: its port, pid, data directory, version, start time and session workers
-p3 stop            stop it; returns once it is gone (after --wait seconds, at least 1, it kills it and its workers)
+p3 stop            stop it; returns once it is gone (after --wait seconds, at least 1, it kills it and the workers it names)
 p3 restart         stop, then start in the background
 p3 apply           build the plugins changed since the start or the last apply, and roll them out
 p3 list            the Pis on this machine and their state
@@ -19,7 +19,8 @@ A Pi is its data directory: `~/.pi/p3/<name>` for `--pi <name>`. Without an opti
 `default` (`~/.pi/p3/default`), on port 8789. `--dir <path>` is a Pi in any directory whose path is short enough for
 its sockets (a socket path holds at most 108 bytes on Linux and Android, 103 on macOS; the longest is
 `<data directory>/supervisor.sock`, so a data directory's path has at most 92 bytes, 87 on macOS), and whose parent
-is the owner's or root's and not writable by every user without the sticky bit; another is refused at the start. Every Pi but the default takes a free port at its first start and keeps it
+is the owner's or root's and not writable by every user without the sticky bit; another is refused at the start (only
+that parent is checked, no ancestor above it: ERNDL-1059). Every Pi but the default takes a free port at its first start and keeps it
 (`pi.json`). `--port <n>` names the port for one start.
 
 Pis on one machine keep their own sessions, sign-ins and cookie, but a browser does not keep them apart: it sends the
@@ -31,6 +32,9 @@ not over HTTP, and sends no token: the trust boundary is the OS user. Every proc
 apply or ask for an owner link (the owner's programs, plugins, an agent's tools); no other user can. This holds on
 POSIX systems (Linux, macOS, Android) only: p3 does not run on Windows yet, where the socket would be a named pipe
 every local user can reach (ERNDL-1059).
+
+A stop that has to kill a server that does not stop kills the session workers its status names. A server that does not
+answer at all names none: its workers end once it is gone, unless they are stuck too.
 
 The background server runs under a supervisor that starts it again after a crash (a server whose store failed exits
 with an error for that); what it prints is in `<data directory>/logs/server.log`. The owner link signs a browser in once and is valid for ten minutes; `p3` prints a

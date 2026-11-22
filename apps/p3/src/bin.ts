@@ -259,18 +259,20 @@ async function askStop(dataDir: string, deadline: number): Promise<void> {
 
 /**
  * Kills the holders of `dataDir`'s sockets by the pids they answer now (asked again: a pid from before the wait may be
- * another process's by now): the supervisor with its process group (its server is in it), the server, and each of the
- * server's session workers with its process group (each leads one of its own). A server that does not answer names
- * no workers: they end on their link's disconnect once the server is gone, unless they are stuck. A holder that does
- * not answer and that no answer names is left, with an error.
+ * another process's by now), each signalled right after its own answer, never after a wait for the other's: the server
+ * and each of its session workers with its process group (each leads one of its own), then the supervisor with its
+ * process group (its server is in it: killed first, the server could not name its workers any more). A server that does
+ * not answer names no workers: they end on their link's disconnect once the server is gone, unless they are stuck. A
+ * holder that does not answer and that no answer names is left, with an error.
  */
 async function kill(dataDir: string): Promise<void> {
-	const [server, supervisor] = await Promise.all([serverOn(dataDir), supervisorOn(dataDir)]);
-	if (supervisor.kind === "supervising") signal(-supervisor.pid, "SIGKILL");
+	const server = await serverOn(dataDir);
 	if (server.kind === "running" || server.kind === "starting") {
 		signal(server.pid, "SIGKILL");
 		for (const worker of server.workers) signal(-worker, "SIGKILL");
 	}
+	const supervisor = await supervisorOn(dataDir);
+	if (supervisor.kind === "supervising") signal(-supervisor.pid, "SIGKILL");
 	if (supervisor.kind === "silent" || (server.kind === "silent" && supervisor.kind !== "supervising")) {
 		const who = supervisor.kind === "silent" ? "supervisor" : "server";
 		throw new Error(

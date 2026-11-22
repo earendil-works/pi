@@ -42,7 +42,8 @@ session workers           one process per session: host at Session({ id }), its 
 - **The data directory's sockets** (`local-socket.ts`): `server.sock` (the server) and `supervisor.sock` (the
   background server's supervisor) are each a lock and the command's channel: one JSON request and answer. The trust
   boundary is the OS user: the directory is 0700, so only the owner's user can make or reach a socket there, and every
-  process of that user may ask (the owner's programs, plugins, an agent's tools); no token travels. POSIX only: p3
+  process of that user may ask (the owner's programs, plugins, an agent's tools); no token travels. The start checks
+  the data directory and its immediate parent only (`files.ts`), no ancestor above it (ERNDL-1059). POSIX only: p3
   refuses to start on Windows, where a named pipe is reachable by every local user (ERNDL-1059). A socket file a
   killed holder left is cleared and taken under a kernel-owned guard (Chord's `processLock`,
   `@earendil-works/chord/workers/child`), so two starters after a crash cannot both win; the guard is held for
@@ -52,8 +53,14 @@ session workers           one process per session: host at Session({ id }), its 
 - **Failures:** a failure nobody awaits goes to `reportError` (stderr now, telemetry later). A failed server store
   (`storage_failed`: a commit whose outcome is unknown) is not one of those: the server closes and exits non-zero,
   and the supervisor starts it again.
-- **Session workers:** the route's `resolve` asks the `WorkerRunners` registry; the `runner` plugin forks one process
-  per session, its directory `<data directory>/workers/<session id>` (ids are the sessions plugin's UUIDs). A worker
+- **Session workers:** the route's `resolve` asks the runner the base uses: the one runner of `WorkerRunners` (the
+  `runner` plugin's) with the wraps of `WorkerRunnerWraps` composed over it in plugin order; the status's pids (what
+  `p3 stop` kills), the apply's workers step and `testServer`'s `workers` ask the same. To change how workers run
+  (run some sessions elsewhere, count or delay starts), contribute a wrap, never a second runner: a second contribution
+  to `WorkerRunners` is a misconfiguration, reported as a conflict naming both plugins and not used (the first by plugin
+  name is). A wrap that runs sessions elsewhere answers `pids()` for its own workers plus `inner.pids()`, and keeps
+  what it runs in its object: the base composes it again when the runner or a wrap changes. The `runner` plugin forks
+  one process per session, its directory `<data directory>/workers/<session id>` (ids are the sessions plugin's UUIDs). A worker
   stops itself once it was idle for its idle time (the runner's worker facet: no holds, calls, jobs or lingering
   objects, and every `WorkerBusy` count 0; the harness contributes "a run is active"); its store's commits settle
   first.
@@ -68,7 +75,7 @@ session workers           one process per session: host at Session({ id }), its 
 | Module | What you get |
 | --- | --- |
 | `/v1` | everything of Chord's root (`remote`, `local`, `method`, the schema helpers, `defineTable`, `query`, `queries`, `defineState`, `defineRegistry`, `allow`, `deny`, `forbidden`, `invalid`, ...), `BACKGROUND_CONTEXT`, `Context`, `withAbortSignal`, `withCancel`, `JsonValue`, `defineFacet` typed with p3's principals, the host kinds `Server()` and `Session({ id })`, the helpers `forward`, `contribute`, `until(watchable, done, context)` (the first value for which `done` holds; the base, the plugins and the tests wait with it) and `reportError` (a failure nobody awaits: stderr now, telemetry with the telemetry package), `P3Principal`, and the contracts p3 promises to third-party plugins (the sessions plugin's: `Sessions`, `SessionsList`, `SessionFacts`, `SessionWorker`, `SessionStart`, `SessionRow`, `SessionState`) |
-| `/v1/server` | Chord's HTTP surface (`Http`, `Authenticators`, cookies), `ServerRuntime` (the data directory, the host, the store, the route to workers, apply, stop), `WorkerRunners` (how session workers run), `LinkOpened` (hooks on accepted links), `ServerCommands` (what `p3` runs over the data directory's socket, for the owner's OS user: `stop`, `apply`, `owner-link`), `SessionRoute`, the worker control messages, the rollout types, Chord's `processLock` and `clearStaleLock` (a session's lock) |
+| `/v1/server` | Chord's HTTP surface (`Http`, `Authenticators`, cookies), `ServerRuntime` (the data directory, the host, the store, the route to workers, apply, stop), `WorkerRunners` (the one runner) and `WorkerRunnerWraps` (how a plugin changes how session workers run), `LinkOpened` (hooks on accepted links), `ServerCommands` (what `p3` runs over the data directory's socket, for the owner's OS user: `stop`, `apply`, `owner-link`), `SessionRoute`, the worker control messages, the rollout types, Chord's `processLock` and `clearStaleLock` (a session's lock) |
 | `/v1/worker` | `WorkerRuntime` (the session, the host, the store, the directory, the idle time, `close`), `WorkerBusy` (counts that keep the worker alive) |
 | `/v1/testing` | for a plugin's `test/` folder only. `testPlugin(root, { kind: "server" } or { kind: "worker", session }, context)`: Chord's plugin tier with p3's API, kinds, modules and principals, and the base's own facet as the real host has it (`ServerRuntime` of a server that does not listen, starts no worker and applies nothing; or `WorkerRuntime` and `WorkerBusy`), each test with a temporary directory of its own, removed at `close`. `testServer({ plugins }, context)`: p3's real server on a temporary data directory with the built-in plugins and the plugins under test, workers as real processes, `client(ctx)` signed in as the owner (`testing.md`, tier 3); `ownerClient`, `ownerCookie` |
 
@@ -280,3 +287,5 @@ reference or a native.
 | A persisted state with a random `initial` (the cookie's key): an initial value is never stored, so every start made a new key and signed every browser out | an empty initial value, and a generated one written once; a restart test |
 | The base's composed `LinkOpened` made each link's disposer inside the function that had the request: V8 keeps one context per scope, so every open link kept its request (headers, cookie) | a closure that outlives its call is made in a function of its own, given only what it needs; a GC test through the composed registry |
 | A failed store (`storage_failed`) was only logged: the server answered `running` with a closed host | the server closes and exits non-zero; the supervisor starts it again |
+| A second runner contributed to change how workers run (it sorted first, so the route used it): the first runner still ran a held worker, and the status, which named only the second's, hid it from `p3 stop` | one runner; a plugin contributes a wrap (`WorkerRunnerWraps`) over it, and a second runner is reported as a conflict |
+| A test waited for a worker's state by reading Linux's `/proc/<pid>/stat` (stopped by `SIGSTOP`): on a POSIX system without `/proc` it never saw it | the process says it over IPC (a socket the test listens on) or writes a marker file; the test answers to let it go on |

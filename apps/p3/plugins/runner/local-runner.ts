@@ -89,7 +89,7 @@ export class LocalRunner implements WorkerRunner {
 		const state: Record<string, WorkerState> = {};
 		for (const [id, { worker, failed }] of this.#queues) {
 			if (failed !== undefined) state[id] = { status: "failed", reason: failed };
-			else if (worker !== undefined) state[id] = { status: worker.status, pid: worker.pid };
+			else if (worker !== undefined) state[id] = stateOf(worker);
 		}
 		return state;
 	}
@@ -193,6 +193,13 @@ export class LocalRunner implements WorkerRunner {
 		if (queue.pending > 0 || queue.worker !== undefined || queue.failed !== undefined) return;
 		if (this.#queues.get(queue.id) === queue) this.#queues.delete(queue.id);
 	}
+}
+
+/** `worker`'s state: a starting one that has not said it holds its session's lock yet waits for it. */
+function stateOf(worker: WorkerProcess): WorkerState {
+	const { status, pid } = worker;
+	if (status === "starting" && !worker.locked) return { status, pid, waiting: "lock" };
+	return { status, pid };
 }
 
 /** What a start rejects with once the runner closes. */

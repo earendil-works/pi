@@ -75,12 +75,15 @@ export function contribute(
 
 /**
  * The first value of `source` (a registry, a reference's state member, its `state`), now or later, for which `done`
- * holds; rejects with `context`'s reason when it aborts, or when the watch ends first. A JSON watchable is a native one
- * too: only each call's value is read.
+ * holds; rejects with `context`'s reason when it aborts (also before the call, or while the watch is made: no value
+ * then, not even one that passes), or when the watch ends first. A JSON watchable is a native one too: only each call's
+ * value is read.
  */
 export async function until<T>(source: NativeWatchable<T>, done: (value: T) => boolean, context: Context): Promise<T> {
 	const watch = await source.watch(context);
 	try {
+		// A watch made in an aborted context may still hold the source's value.
+		context.abortSignal?.throwIfAborted();
 		if (done(watch.value)) return watch.value;
 		return await new Promise<T>((resolve, reject) => {
 			void watch.closed.then((end) =>

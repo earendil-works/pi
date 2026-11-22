@@ -1,19 +1,20 @@
 // The local runner against real processes. Its close (its plugin's object ends: a reload of the runner plugin, the
 // server's close) stops every worker it runs at once, cleanly, forks nothing for a start it overtook, and is not held up
 // by a start queued behind a worker that no longer answers; a rollout reaches a worker still starting (forked or not
-// yet) once it is ready, ships exactly what the worker does not run yet, per plugin (a failed plugin keeps its old
-// script), clears a crash's failure and is not held up by a start that failed; reloads settle when the worker exits; a
-// stop suspends the session first, arms the kill once (also for a worker that said it leaves) and none for one that
-// exited; an exit counts only once the server's store settled, as a crash when the worker's close failed; `pids` lists
-// every worker process not exited. Most cases fork a stand-in worker (`stand-in.ts`) that speaks the control messages
-// and is steered by the test over a socket; the session's lock and the worker's close fork the real worker (`WORKER`,
-// the one import of p3's base) with worker plugins written here.
+// yet) once it is ready, ships exactly what the worker does not run yet (known once it is ready), per plugin (a failed
+// plugin keeps its old script), clears a crash's failure and is not held up by a start that failed; reloads settle when
+// the worker exits; a stop suspends the session first, arms the kill once (also for a worker that said it leaves) and
+// none for one that exited; an exit counts only once the server's store settled, as a crash when the worker's close
+// failed; `pids` lists every worker process not exited. Most cases fork a stand-in worker (`stand-in.ts`) that speaks
+// the control messages and is steered by the test over a socket; the session's lock and the worker's close fork the
+// real worker (`WORKER`, the one import of p3's base) with worker plugins written here, which tell the test over the
+// same socket (or a marker file) where they are: no test reads a process's state from `/proc`.
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { getEventListeners } from "node:events";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -54,30 +55,49 @@ function scriptsWith(digests: Readonly<Record<string, string>>): readonly Plugin
 	})) as unknown as PluginScript[];
 }
 
-/** A real worker's single-file worker plugin `name` whose live object runs `onLive` (with `runtime`, its process values). */
+/**
+ * A real worker's plugin `name` (a directory's, so it may require Node's modules) whose live object runs `onLive` (with
+ * `runtime`, its process values, and `require`).
+ */
 function workerPlugin(t: Rig, name: string, onLive: string): PluginScript {
-	const source = `(function (require, module) {
-	const { contribute, defineFacet } = require("@earendil-works/p3/v1");
+	return scriptOf(
+		t,
+		name,
+		`const { contribute, defineFacet } = require("@earendil-works/p3/v1");
 	const { WorkerRuntime } = require("@earendil-works/p3/v1/worker");
 	module.exports = { default: defineFacet((host) => contribute(host, "${name}", (self) => {
 		const registry = self.registry(WorkerRuntime);
 		self.onLive(async () => { const runtime = registry.value; ${onLive} });
-	})) };
-})`;
+	})) };`,
+	);
+}
+
+/** A real worker's plugin `name` whose worker facet's module body is `body` (with `require` and `module`). */
+function scriptOf(t: Rig, name: string, body: string): PluginScript {
+	const source = `(function (require, module) {\n${body}\n})`;
 	// A plugin record as discovery makes it, as far as evaluation reads it.
 	return {
-		plugin: { name, dir: t.runtime.dataDir, layout: "file", facets: { worker: `${name}.worker.ts` } },
+		plugin: { name, dir: t.runtime.dataDir, layout: "directory", external: [], facets: { worker: "worker.ts" } },
 		built: { kind: "script", plugin: name, facet: "worker", source, digest: name },
 	} as unknown as PluginScript;
 }
 
 /**
- * The store's close made to stop its process (`SIGSTOP`) on the turn after it is called, before it closes: a test
- * sees the close begin, and the process stays until the test continues it (`SIGCONT`).
+ * The store's close made to wait for the test: it says `closing` on the rig's gate (as a stand-in reports there) and
+ * closes once the test writes a word back, so a test sees the close begin and the process stay meanwhile.
  */
-const STOPPING_CLOSE = `const store = runtime.store;
+const GATED_CLOSE = `const { connect } = require("node:net");
+	const { join } = require("node:path");
+	const store = runtime.store;
 	const close = store.close.bind(store);
-	store.close = async (ctx) => { await Promise.resolve(); process.kill(process.pid, "SIGSTOP"); return close(ctx); };`;
+	store.close = (ctx) => new Promise((resolve, reject) => {
+		const gate = connect(join(runtime.dir, "..", "..", "gate.sock"));
+		gate.once("connect", () => gate.write(JSON.stringify({ event: "closing", scripts: "" }) + "\\n"));
+		gate.once("data", () => {
+			gate.destroy();
+			close(ctx).then(resolve, reject);
+		});
+	});`;
 
 /** A session's address, as the route's stand-in reads it. */
 type Addressed = { readonly params: { readonly id: string } };
@@ -198,12 +218,6 @@ function lockName(name: string): string {
 	return `chord-lock-${createHash("sha256").update(name).digest("hex").slice(0, 32)}`;
 }
 
-/** Whether process `pid` is stopped (`T` in `/proc/<pid>/stat`). */
-async function stopped(pid: number): Promise<boolean> {
-	const stat = await readFile(`/proc/${pid}/stat`, "utf8").catch(() => "");
-	return stat.slice(stat.lastIndexOf(")") + 2).startsWith("T");
-}
-
 /** Whether `promise` settled within a few turns. */
 async function settledSoon(promise: Promise<unknown>): Promise<boolean> {
 	let settled = false;
@@ -311,6 +325,24 @@ describe("the local runner's rollouts", () => {
 		t.scripts = async () => scriptsWith({ p: "1", q: "1" });
 		assert.deepEqual(await rollout(t), [{ kind: "reloaded", host: "a" }]);
 		assert.deepEqual(await worker.next(), { event: "reload", scripts: "1,1" });
+	});
+
+	// Astra S1, review round 4: an apply of the start's set before `ready` was taken as shipping nothing, though `ready`
+	// then said a plugin failed: what a worker runs is known only once it is ready.
+	it("an apply of the start's set while the worker starts ships it once `ready` named a plugin that failed", async () => {
+		t.scripts = async () => scriptsWith({ p: "1", q: "1" });
+		await t.runner.start(Session({ id: "a" }), context);
+		const worker = await t.standIn();
+		await worker.next();
+		worker.say("failing");
+		assert.deepEqual(await worker.next(), { event: "failing", scripts: "" });
+		const applied = rollout(t);
+		// A turn: the apply is in before the worker's `ready`.
+		await new Promise((resolve) => setImmediate(resolve));
+		worker.say("ready");
+		assert.deepEqual(await applied, [{ kind: "reloaded", host: "a" }]);
+		assert.deepEqual(await worker.next(), { event: "reload", scripts: "1,1" });
+		assert.deepEqual(await rollout(t), [], "both loaded now");
 	});
 
 	it("a plugin that failed at the start runs nothing: the same set ships again; a reload that threw ships again", async () => {
@@ -639,6 +671,8 @@ describe("the local runner with the real worker", () => {
 			await t.runner.start(Session({ id: "a" }), context);
 			await reached.promise;
 			assert.deepEqual(await readdir(dir), [], "no store while the lock is held");
+			const { pid } = t.runner.state().a as { readonly pid: number };
+			assert.deepEqual(t.runner.state().a, { status: "starting", pid, waiting: "lock" });
 		} finally {
 			for (const socket of waiting) socket.destroy();
 			await new Promise((resolve) => holder.close(resolve));
@@ -670,27 +704,19 @@ describe("the local runner with the real worker", () => {
 	});
 
 	it("a worker that holds the session's lock but is not ready in time fails with its start time alone", async () => {
-		// A worker plugin that stops its worker while it is evaluated: once the worker took the lock and opened its store.
-		t.scripts = async () =>
-			[
-				{
-					plugin: { name: "frozen", dir: t.runtime.dataDir, facets: { worker: "frozen.worker.ts" } },
-					built: {
-						kind: "script",
-						plugin: "frozen",
-						facet: "worker",
-						source: '(function () { process.kill(process.pid, "SIGSTOP"); })',
-						digest: "frozen",
-					},
-				},
-			] as unknown as PluginScript[];
+		// A worker plugin that blocks its worker for good while it is evaluated: once the worker took the lock (and said
+		// so) and opened its store.
+		t.scripts = async () => [scriptOf(t, "frozen", "Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);")];
 		mock.timers.enable({ apis: ["setTimeout"] });
 		await t.runner.start(Session({ id: "a" }), context);
-		const pid = (t.runner.state().a as { readonly pid: number }).pid;
-		// Turns, not timers (they are mocked): until the worker stopped itself, and its `locked` was read meanwhile.
+		// Turns, not timers (they are mocked): until the runner read the worker's `locked` (it no longer waits for the lock).
 		const deadline = Date.now() + 30_000;
-		while (!(await stopped(pid)) && Date.now() < deadline) await new Promise((resolve) => setImmediate(resolve));
-		for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve));
+		const locked = () => {
+			const state = t.runner.state().a;
+			return state?.status === "starting" && state.waiting === undefined;
+		};
+		while (!locked() && Date.now() < deadline) await new Promise((resolve) => setImmediate(resolve));
+		assert.ok(locked(), "the runner read its `locked`");
 		mock.timers.tick(START_MS);
 		mock.timers.reset();
 		assert.deepEqual(await stateOf(t.runner, "a", (status) => status === "failed"), {
@@ -701,40 +727,30 @@ describe("the local runner with the real worker", () => {
 
 	// Astra B4, Opus S4 and Fable S3, review round 3 (Opus round 2 M7): dropping the store's close passed every test.
 	it("closes its store before it exits: the process stays while the close runs", async () => {
-		t.scripts = async () => [workerPlugin(t, "gated", STOPPING_CLOSE)];
+		t.scripts = async () => [workerPlugin(t, "gated", GATED_CLOSE)];
 		await t.runner.start(Session({ id: "a" }), context);
 		await stateOf(t.runner, "a", (status) => status === "running");
-		const pid = pidOf(t.runner, "a");
 		const stopping = t.runner.stop("a");
-		try {
-			await eventually(
-				() => stopped(pid),
-				(done) => done,
-			);
-			assert.equal(t.runner.state().a?.status, "stopping", "its exit has not come");
-		} finally {
-			process.kill(pid, "SIGCONT");
-		}
+		const closing = await Promise.race([t.standIn(), stopping.then(() => undefined)]);
+		assert.ok(closing !== undefined, "it exited without closing its store");
+		assert.deepEqual(await closing.next(), { event: "closing", scripts: "" });
+		assert.equal(t.runner.state().a?.status, "stopping", "its exit has not come");
+		closing.say("go");
 		await stopping;
 		assert.deepEqual(t.runner.state(), {}, "a clean exit");
 	});
 
 	// Astra B4, review round 3: a host's close that threw skipped the store's close and still exited 0.
 	it("closes its store also when its host's close fails, then exits non-zero: its session failed", async () => {
-		const failing = `runtime.host.close = async () => { throw new Error("the host's close failed"); }; ${STOPPING_CLOSE}`;
+		const failing = `runtime.host.close = async () => { throw new Error("the host's close failed"); }; ${GATED_CLOSE}`;
 		t.scripts = async () => [workerPlugin(t, "failing", failing)];
 		await t.runner.start(Session({ id: "a" }), context);
 		await stateOf(t.runner, "a", (status) => status === "running");
-		const pid = pidOf(t.runner, "a");
 		const stopping = t.runner.stop("a");
-		try {
-			await eventually(
-				() => stopped(pid),
-				(done) => done,
-			);
-		} finally {
-			process.kill(pid, "SIGCONT");
-		}
+		const closing = await Promise.race([t.standIn(), stopping.then(() => undefined)]);
+		assert.ok(closing !== undefined, "it exited without closing its store");
+		assert.deepEqual(await closing.next(), { event: "closing", scripts: "" });
+		closing.say("go");
 		await stopping;
 		assert.deepEqual(t.runner.state().a, { status: "failed", reason: "exited (code 1)" });
 	});

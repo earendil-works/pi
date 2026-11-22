@@ -85,8 +85,8 @@ function pisRoot(): string {
 
 /**
  * The real path of the data directory `path`, made private (0700) and made when missing; refused when it is the home
- * directory, a file system's root, another user's, in a directory other users may change, or too long a path for
- * its sockets.
+ * directory, a file system's root, another user's, in a parent directory other users may change (`checkParent`: the
+ * immediate parent only), or too long a path for its sockets.
  */
 export async function openDataDir(path: string): Promise<string> {
 	await mkdir(path, { recursive: true, mode: 0o700 });
@@ -133,9 +133,10 @@ async function checkDataDir(dataDir: string): Promise<{ readonly mode: number }>
 }
 
 /**
- * Throws when another user could rename the data directory `dataDir` away after its checks and put one of theirs in
- * its place: its parent is another user's (not root's), or every user may write to it without the sticky bit. A parent
- * its group may write to is let be: most systems give each user a group of their own.
+ * Throws when the immediate parent of the data directory `dataDir` is another user's (not root's), or every user may
+ * write to it without the sticky bit: another user could rename the data directory away after its checks and put one of
+ * theirs in its place. Only that parent is checked: an ancestor further up that others may change, or a parent its
+ * group may write to (most systems give each user a group of their own, not all), is not refused (ERNDL-1059).
  */
 async function checkParent(dataDir: string, own: number): Promise<void> {
 	const parent = dirname(dataDir);

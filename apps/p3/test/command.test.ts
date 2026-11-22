@@ -1,14 +1,15 @@
 // The `p3` command as a user runs it: launched from source as processes of its own, on a temporary home (a Pi lives
 // in `~/.pi/p3/<name>/`, the default one is `default`), each case with its own Pi. The command asks the server and its
 // supervisor over their sockets in the data directory; the cases include what a crash leaves behind, a server or a
-// session worker that does not stop, a server or supervisor that does not answer, a stop during a start, a held take
-// guard, a store that fails, two starts at once and the supervisor's waits. The cases run at once: each has its own
-// home, so nothing but the machine is shared.
+// session worker that does not stop (each holder killed right after its own answer), a server or supervisor that does
+// not answer, a stop during a start, the stop's answer on the socket, a held take guard (the supervisor's named in the
+// log), a store that fails, two starts at once and the supervisor's waits (a stop after a crash). The cases run at once:
+// each has its own home, so nothing but the machine is shared.
 
 import assert from "node:assert/strict";
-import { execFile, spawn } from "node:child_process";
+import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { access, chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { createServer } from "node:net";
+import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -20,7 +21,7 @@ import { ownerClient } from "@earendil-works/p3/v1/testing";
 import { Sessions, SessionWorker } from "../plugins/sessions/contract.ts";
 import { COMMAND, SUPERVISOR } from "../src/install.ts";
 import { exchange, serverSocket, supervisorSocket, takeSocket } from "../src/local-socket.ts";
-import { alive, launch } from "./support.ts";
+import { alive, launch, startOf } from "./support.ts";
 import { eventually } from "./until.ts";
 
 const run = promisify(execFile);
@@ -30,9 +31,9 @@ type Ran = { readonly code: number; readonly out: string };
 
 /**
  * A temporary home for the case `t`, removed after it with every Pi the case left running stopped: `p3(...args)` runs
- * the command with it, `pids()` reads the default Pi's server, supervisor and worker pids from `p3 status`. Every pid
- * `pids()` read is killed after the case too, if it still lives: a case that failed (or a mutated server that does not
- * obey `p3 stop`) leaves nothing behind.
+ * the command with it, `pids()` reads the default Pi's server, supervisor and worker pids from `p3 status`. Every
+ * process `pids()` named is killed after the case too, if it is still the same process (its start time): a case that
+ * failed (or a mutated server that does not obey `p3 stop`) leaves nothing behind, and no other process is hit.
  */
 async function homeOf(t: TestContext) {
 	const home = await mkdtemp(join(tmpdir(), "p3-home-"));
@@ -46,12 +47,13 @@ async function homeOf(t: TestContext) {
 			return { code: failed.code ?? 1, out: `${failed.stdout ?? ""}${failed.stderr ?? ""}` };
 		}
 	};
-	const seen = new Set<number>();
+	/** Each process `pids()` named, by pid, with its start time then. */
+	const seen = new Map<number, string>();
 	t.after(async () => {
 		await p3("stop", "--wait", "1");
 		await p3("stop", "--pi", "two", "--wait", "1");
-		for (const pid of seen) {
-			if (!alive(pid)) continue;
+		for (const [pid, started] of seen) {
+			if ((await startOf(pid)) !== started) continue;
 			process.kill(pid, "SIGCONT");
 			process.kill(pid, "SIGKILL");
 		}
@@ -68,7 +70,10 @@ async function homeOf(t: TestContext) {
 			supervisor: supervisor === undefined ? undefined : Number(supervisor),
 			workers,
 		};
-		for (const one of [found.pid, found.supervisor ?? found.pid, ...workers]) seen.add(one);
+		for (const one of [found.pid, found.supervisor ?? found.pid, ...workers]) {
+			const started = await startOf(one);
+			if (started !== undefined && !seen.has(one)) seen.set(one, started);
+		}
 		return found;
 	};
 	return { home, p3, pids, env: { ...process.env, HOME: home }, dataDir: join(home, ".pi", "p3", "default") };
@@ -78,11 +83,55 @@ async function homeOf(t: TestContext) {
 async function foreground(t: TestContext, home: { readonly env: NodeJS.ProcessEnv; readonly dataDir: string }) {
 	const launched = await launch(COMMAND, home.dataDir, home.env);
 	t.after(() => {
-		if (!alive(launched.pid)) return;
-		process.kill(launched.pid, "SIGCONT");
-		process.kill(launched.pid, "SIGKILL");
+		launched.kill("SIGCONT");
+		launched.kill("SIGKILL");
 	});
 	return launched;
+}
+
+/**
+ * Runs a supervisor whose server's first start crashes after it listened (the next ones run until a `SIGTERM`, as p3's
+ * server does), asks it to stop once its log matches `seen`, and checks the end state whichever way the stop and the
+ * restart interleaved: the supervisor exits 0, every server it started is gone, both sockets are free, and no server
+ * started after the stop was answered.
+ */
+async function stoppedAfterCrash(t: TestContext, seen: RegExp): Promise<void> {
+	const { home } = await homeOf(t);
+	const dataDir = join(home, "supervised");
+	await mkdir(dataDir, { mode: 0o700 });
+	const crashed = join(home, "crashed");
+	const server = [
+		"-e",
+		`const fs = require("node:fs");
+		const first = !fs.existsSync(${JSON.stringify(crashed)});
+		if (first) fs.writeFileSync(${JSON.stringify(crashed)}, "");
+		process.on("SIGTERM", () => process.exit(0));
+		process.send("listening", () => first && process.exit(1));
+		setInterval(() => {}, 1000);`,
+	];
+	const supervisor = spawn(process.execPath, [...SUPERVISOR, dataDir, ...server], { stdio: "ignore" });
+	t.after(() => supervisor.kill("SIGKILL"));
+	const exited = new Promise<number | null>((resolve) => supervisor.once("exit", resolve));
+	const log = join(dataDir, "logs", "server.log");
+	await eventually(
+		() => readFile(log, "utf8"),
+		(text) => seen.test(text),
+	);
+	const reply = await exchange(supervisorSocket(dataDir), { kind: "stop" });
+	const answered = Date.now();
+	assert.deepEqual(reply, { kind: "answered", answer: { kind: "stopping" } });
+	assert.equal(await exited, 0);
+	const starts = [...(await readFile(log, "utf8")).matchAll(/^(\S+) supervisor: the server starts \(pid (\d+)\)$/gm)];
+	const pids = starts.map(([, , pid]) => Number(pid));
+	t.after(() => {
+		for (const pid of pids) if (alive(pid)) process.kill(pid, "SIGKILL");
+	});
+	assert.ok(starts.length >= 1);
+	for (const [line, at] of starts) assert.ok(Date.parse(at!) <= answered, `started after the stop: ${line}`);
+	for (const pid of pids) assert.ok(!alive(pid), `server ${pid} still runs`);
+	for (const path of [supervisorSocket(dataDir), serverSocket(dataDir)]) {
+		assert.deepEqual(await exchange(path, { kind: "status" }), { kind: "none" }, path);
+	}
 }
 
 describe("the p3 command", { concurrency: true }, () => {
@@ -198,6 +247,19 @@ describe("the p3 command", { concurrency: true }, () => {
 		);
 	});
 
+	// Astra, review round 4 (open point a of round 3): the case above checks only that the server went. On the raw
+	// socket a stop is answered `stopping` or, when the close ended the socket first, not at all (no order is promised),
+	// never left hanging; the server exits 0 and frees its socket.
+	it("ends on a stop asked on its socket, answering `stopping` or nothing, and exits 0", async (t) => {
+		const home = await homeOf(t);
+		const server = await foreground(t, home);
+		const reply = await exchange(serverSocket(home.dataDir), { kind: "command", name: "stop" });
+		assert.notEqual(reply.kind, "silent");
+		if (reply.kind === "answered") assert.deepEqual(reply.answer, { kind: "answer", value: "stopping" });
+		assert.equal(await server.exited, 0);
+		assert.deepEqual(await exchange(serverSocket(home.dataDir), { kind: "status" }), { kind: "none" });
+	});
+
 	// Sol (S1), Astra (S1) and Opus (S5), review round 2: a foreground server that did not answer was reported "not
 	// running" with exit 0 while it still held the data directory, and `p3 list` threw on it.
 	it("says a hung foreground server does not answer, never that it is gone: stop and start fail, status and list say so", async (t) => {
@@ -308,6 +370,68 @@ describe("the p3 command", { concurrency: true }, () => {
 		assert.ok(Date.now() - started < 30_000, `took ${Date.now() - started} ms`);
 	});
 
+	// Astra, review round 4 (S3): a background start whose supervisor could not take its socket said "see the log", and
+	// the log said nothing: the supervisor's stderr goes nowhere.
+	it("fails a background start whose supervisor's take guard stays held, its log naming the guard", async (t) => {
+		const { p3, dataDir } = await homeOf(t);
+		await mkdir(dataDir, { recursive: true, mode: 0o700 });
+		const guard = await processLock(`p3-socket:${supervisorSocket(dataDir)}`, context);
+		t.after(() => guard.release());
+		const failed = await p3("--port", "0");
+		assert.equal(failed.code, 1, failed.out);
+		assert.match(failed.out, /did not start; see .*server\.log/);
+		assert.match(
+			await readFile(join(dataDir, "logs", "server.log"), "utf8"),
+			/supervisor: could not take .*supervisor\.sock: .*take guard of .*supervisor\.sock stayed held for 10 s/,
+		);
+	});
+
+	// Astra, review round 4 (nit): the kill asked the server and the supervisor at once and signalled both once the slower
+	// had answered: with a server that did not answer, the supervisor's pid was 5 s old by then. The stand-in supervisor
+	// names one process while an ask of the server is under way and another once none is: only the second may die.
+	it("kills each holder by the pid it answered after the other's ask ended, never by one answered meanwhile", async (t) => {
+		const { p3, dataDir } = await homeOf(t);
+		await mkdir(dataDir, { recursive: true, mode: 0o700 });
+		// Leaders of process groups of their own, as a supervisor is.
+		const [stale, fresh] = [0, 1].map(() => {
+			const named = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+				detached: true,
+				stdio: "ignore",
+			});
+			t.after(() => named.kill("SIGKILL"));
+			return named;
+		}) as [ChildProcess, ChildProcess];
+		const died = new Promise<void>((resolve) => fresh.once("exit", () => resolve()));
+		// A server that does not answer, its asks under way tracked.
+		const asking = new Set<Socket>();
+		const server = createServer((socket) => {
+			asking.add(socket);
+			// Read (and dropped): a socket nobody reads never sees its peer close.
+			socket.resume();
+			socket.on("error", () => {});
+			socket.once("close", () => asking.delete(socket));
+		});
+		await new Promise<void>((resolve) => server.listen(serverSocket(dataDir), resolve));
+		const supervisor = await takeSocket(supervisorSocket(dataDir), context, async (request) => {
+			if ((request as { kind: string }).kind !== "status") return { kind: "stopping" };
+			// An ask of the server that ended right before this one may be seen closing only in the next turn.
+			if (asking.size > 0) await new Promise((resolve) => setImmediate(resolve));
+			return { kind: "supervising", pid: (asking.size > 0 ? stale : fresh).pid, server: null };
+		});
+		const release = async () => {
+			for (const socket of asking) socket.destroy();
+			await new Promise((resolve) => server.close(resolve));
+			if (supervisor.kind === "taken") await supervisor.socket.release();
+		};
+		t.after(() => (server.listening ? release() : undefined));
+		// Killed, both holders go: the stop ends.
+		void died.then(release);
+		const stopped = await p3("stop", "--wait", "1");
+		assert.equal(stopped.out.trim(), "killed", stopped.out);
+		await died;
+		assert.ok(alive(stale.pid!), "the pid answered while the server's ask was under way was not signalled");
+	});
+
 	// Astra, review round 2 (S2): of two `p3` started at once on an empty Pi, the one whose supervisor lost the
 	// socket to the other's said "the server did not start".
 	it("starts once when two `p3` start the Pi at once; both print its port", async (t) => {
@@ -356,6 +480,17 @@ describe("the p3 command", { concurrency: true }, () => {
 		assert.equal(code, 0);
 		await assert.rejects(access(started), { code: "ENOENT" });
 	});
+
+	// Astra, review round 4 (open point b of round 3): a stop after a crash is a stop, not a crash. Asked once the wait
+	// is announced, it may come during the wait or after the server started again; asked once the server started again,
+	// it ends that server. Either way the end state holds (`stoppedAfterCrash`).
+	for (const [when, seen] of [
+		["once the wait after the crash is announced", /the server exited with 1; starting it again in 1000 ms/],
+		["once the server started again", /starting it again in 1000 ms\n.* supervisor: the server starts/],
+	] as const) {
+		it(`a supervisor stopped ${when} exits 0, leaves nothing running and starts nothing after`, (t) =>
+			stoppedAfterCrash(t, seen));
+	}
 
 	// Opus, review round 2 (B1, M23; N7): the supervisor's wait after a crash, doubled for each crash in a row. Read
 	// from the supervisor's log, whose times are the supervisor's own: the test's polling adds nothing to them.

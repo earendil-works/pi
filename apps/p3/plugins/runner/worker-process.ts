@@ -36,9 +36,11 @@ export class WorkerProcess {
 	#runs: Map<string, string> | undefined;
 	/** Settles once it is ready or exited: the worker takes reloads only after its start. */
 	readonly #started = Promise.withResolvers<void>();
+	/** Set by `ready`: what it runs is known only then (`ready` names the plugins that failed at the start). */
+	#ready = false;
 	/** Its reloads, one after another, the first after its start. */
 	#reloading: Promise<unknown> = this.#started.promise;
-	/** How many reloads are queued and not settled: with none, a reload of what it runs needs no turn. */
+	/** How many reloads are queued and not settled: with none, once ready, a reload of what it runs needs no turn. */
 	#queued = 0;
 	#reloaded: ((reply: ReloadReply) => void) | undefined;
 	/** How it exited, once it did: a reload whose turn comes after settles with it. */
@@ -107,6 +109,11 @@ export class WorkerProcess {
 		this.#process.send(workerMessage(start));
 	}
 
+	/** Whether it said it holds its session's lock. */
+	get locked(): boolean {
+		return this.#locked;
+	}
+
 	/** Its process id, `-1` before the fork gave one. */
 	get pid(): number {
 		return this.#process.pid ?? -1;
@@ -131,13 +138,14 @@ export class WorkerProcess {
 
 	/**
 	 * Ships `scripts` after its start and its outstanding reloads: the report, the error, or `stopped`/`failed` once it
-	 * exited (a send to a child that is gone settles too); no result when nothing is queued and it runs them already. A
-	 * reload back to what it runs, behind one not answered yet, still ships.
+	 * exited (a send to a child that is gone settles too); no result when it runs them already, decided at its turn
+	 * (after the start and the earlier reloads settled), at once when it is ready and nothing is queued. A reload back to
+	 * what it runs, behind one not answered yet, still ships.
 	 */
 	reload(scripts: readonly PluginScript[]): Promise<RolloutHost | undefined> {
-		if (this.#queued === 0 && this.#runsAll(scripts)) return Promise.resolve(undefined);
+		if (this.#ready && this.#queued === 0 && this.#runsAll(scripts)) return Promise.resolve(undefined);
 		this.#queued++;
-		const reload = this.#reloading.then(() => this.#ship(scripts));
+		const reload = this.#reloading.then(() => this.#turn(scripts));
 		this.#reloading = reload;
 		return reload;
 	}
@@ -160,7 +168,14 @@ export class WorkerProcess {
 		);
 	}
 
-	/** A reload's turn: sends `scripts` unless it exited. */
+	/** A reload's turn: nothing when it runs `scripts` already, else it ships them (settled by its exit, once it exited). */
+	#turn(scripts: readonly PluginScript[]): Promise<RolloutHost | undefined> {
+		if (this.#exit !== undefined || !this.#runsAll(scripts)) return this.#ship(scripts);
+		this.#queued--;
+		return Promise.resolve(undefined);
+	}
+
+	/** Sends `scripts` unless it exited. */
 	#ship(scripts: readonly PluginScript[]): Promise<RolloutHost | undefined> {
 		return new Promise((resolve) => {
 			const settle = (entry: RolloutHost | undefined): void => {
@@ -206,6 +221,7 @@ export class WorkerProcess {
 				if (this.status === "starting") this.status = "running";
 				// A plugin that failed at the start runs nothing.
 				for (const plugin of message.failed) this.#runs?.delete(plugin);
+				this.#ready = true;
 				this.#started.resolve();
 				if (message.failed.length > 0) {
 					reportError(`p3 runner: ${this.#session}: plugins failed`, message.failed, this.#context);

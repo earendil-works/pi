@@ -74,15 +74,41 @@ export type WorkerRunner = {
 	reload: RolloutStep["reload"];
 };
 
-/** A session worker as its runner sees it. */
+/**
+ * A session worker as its runner sees it. A starting one `waiting` for `"lock"` has not said yet that it holds its
+ * session's lock: the session's previous worker may still run.
+ */
 export type WorkerState =
-	| { readonly status: "starting" | "running" | "stopping"; readonly pid: number }
+	| { readonly status: "starting"; readonly pid: number; readonly waiting?: "lock" }
+	| { readonly status: "running" | "stopping"; readonly pid: number }
 	| { readonly status: "failed"; readonly reason: string };
 
-/** The runners: the first contribution by plugin name is the one the route uses. */
+/**
+ * The one runner (the runner plugin's): the base composes the wraps (`WorkerRunnerWraps`) over it. A second
+ * contribution is a misconfiguration: reported as a conflict naming both plugins, and not used (the first by plugin
+ * name is). To change how workers run, contribute a wrap, never a second runner.
+ */
 export const WorkerRunners = defineRegistry<WorkerRunner, WorkerRunner | undefined>("p3.worker-runners", {
 	version: 1,
 });
+
+/**
+ * A change of how session workers run: given the runner beneath it (the one runner, or it with the wraps before this
+ * one), the runner the base uses instead. The base composes it again only when the runner or a wrap changes (a reload
+ * of the runner plugin, an apply): what a wrap keeps (the workers it runs elsewhere) lives in its contributing object,
+ * not in the runner it returns. A wrap that runs some sessions elsewhere answers `pids()` for its own workers plus
+ * `inner.pids()`, and `state()` for both.
+ */
+export type WorkerRunnerWrap = (inner: WorkerRunner) => WorkerRunner;
+
+/**
+ * The wraps of the one runner, in plugin order: the first wraps the runner, the next wraps that. The route, the
+ * status's pids (`p3 stop`) and the apply's workers step use the composed runner.
+ */
+export const WorkerRunnerWraps = defineRegistry<WorkerRunnerWrap, readonly WorkerRunnerWrap[]>(
+	"p3.worker-runner-wraps",
+	{ version: 1 },
+);
 
 /**
  * A hook on each `/chord` link the HTTP component accepts: `close` ends the link; the hook returns what to call once

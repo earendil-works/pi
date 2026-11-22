@@ -99,6 +99,25 @@ describe("until", () => {
 			await host.close(context);
 		}
 	});
+
+	// Astra S6, review round 4: a caller that had gone away got the value of a watch made after its abort.
+	it("gives no value to a caller that aborted, before the call or while the watch is made, though the value passes", async () => {
+		const before = withCancel(context);
+		before.cancel(new Error("cancelled before"));
+		await assert.rejects(
+			until(constant(1), (n) => n === 1, before.context),
+			/cancelled before/,
+		);
+		const { host, counts } = await counted();
+		try {
+			const during = withCancel(context);
+			const waiting = until(counts, (n) => n === 0, during.context);
+			during.cancel(new Error("cancelled during"));
+			await assert.rejects(waiting, /cancelled during/);
+		} finally {
+			await host.close(context);
+		}
+	});
 });
 
 describe("reportError", () => {

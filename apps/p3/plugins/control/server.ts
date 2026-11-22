@@ -1,7 +1,8 @@
 // The control plugin on the server: the owner's control of the server, as commands `p3` runs over the data
-// directory's socket (`ServerCommands`, the owner's alone). `stop` stops the server (as `SIGTERM` does: `p3 stop`);
-// `apply` builds the changed plugins and rolls them out, the server first, then the running workers (`p3 apply`), and
-// answers each host's outcome for programs (`steps`, `stopped`) and as the lines `p3 apply` prints.
+// directory's socket (`ServerCommands`, the owner's alone). `stop` stops the server (as `SIGTERM` does: `p3 stop`; its
+// answer may not arrive); `apply` builds the changed plugins and rolls them out, the server first, then the running
+// workers (`p3 apply`), and answers each host's outcome for programs (`steps`, `stopped`) and as the lines `p3 apply`
+// prints.
 
 import { contribute, defineFacet, type JsonValue } from "@earendil-works/p3/v1";
 import { type RolloutHost, ServerCommands, ServerRuntime } from "@earendil-works/p3/v1/server";
@@ -13,8 +14,9 @@ export default defineFacet((host) => {
 		self.contribute(ServerCommands, {
 			name: "stop",
 			run: async () => {
-				// After the answer: the close releases the socket last, its answer written by then.
-				setImmediate(() => runtime.value.stop());
+				// The close may end the socket before this answer reaches the caller: `p3 stop` waits for the server to be
+				// gone, never for the answer.
+				runtime.value.stop();
 				return "stopping";
 			},
 		});

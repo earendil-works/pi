@@ -10,7 +10,13 @@
 // holder's file cannot both win, and there is no moment without a socket at the path. A release removes the file only
 // while it is still its own (same inode). On Linux and Android the guard is an abstract socket, which any local user
 // can hold: the wait for it has a deadline and says so, never takes the socket (the file stays in the private
-// directory). Elsewhere it is a file in the temporary directory (ERNDL-1059).
+// directory). Elsewhere it is a file in the temporary directory (ERNDL-1059). A taker killed between its listen and its
+// rename leaves its temporary file (a dot-file with a random name) in the data directory: inert (nobody listens on
+// it, nobody takes it, it grants nothing) and left there, never swept by name: another starter's live temporary file
+// looks the same.
+//
+// The data directory being private is what makes its sockets the owner's: the start checks the directory and its
+// immediate parent only (`files.ts`), not every ancestor (ERNDL-1059).
 
 import { randomBytes } from "node:crypto";
 import { lstatSync, unlinkSync } from "node:fs";
@@ -232,7 +238,7 @@ async function placed(
 	await listen(server, temporary);
 	try {
 		// A crash while it is held leaves the guard free (the kernel owns it on Linux and Android) and at most the
-		// temporary file, which nobody takes.
+		// temporary file, which nobody takes (left there: see the header).
 		const guard = await guardOf(path, context);
 		try {
 			if (await heldAt(path)) {
