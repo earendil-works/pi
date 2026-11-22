@@ -1,10 +1,9 @@
 /**
  * Durable code mode on djs (prototype): no journal and no replay. The script's state is its latest dump.
  *
- * - At every idle point where something happened (the first run, results applied, new calls), the run is saved as a
- *   dump into `pi.codemode.saved`, together with the highest call id handed out (`launched`). Calls are launched only
- *   after that commit: a nested call exists only if a saved dump made it, so a restart from the dump makes the same
- *   calls under the same keys (`c<id>`) and finds them again.
+ * - Before a call leaves the VM (it launches) and before the script parks, the idle run is saved as a dump into
+ *   `pi.codemode.saved`, with the highest call id handed out (`launched`). A nested call exists only if a saved dump
+ *   made it, so a restart from the dump makes the same calls under the same keys (`c<id>`) and finds them again.
  * - A result is not journaled: it lives in its nested call's task. A restart resumes the dump, finds each open call's
  *   task by key and takes its stored result. Results applied after the last save are applied again; what the script
  *   did with them had no effect outside the VM yet (new calls wait for the next save).
@@ -141,30 +140,23 @@ export class DjsCodemodeCall {
 	}
 
 	private async drive(vm: CodemodeVm, fresh: boolean, launched: number): Promise<ToolExecutionResult | ToolPark> {
-		const { api, context } = this;
+		const { context } = this;
 		const parkAfter = this.options.parkAfterMs ?? DEFAULT_PARK_AFTER_MS;
+		// Whether the VM moved on since the stored dump. Saving is needed only before something leaves the VM (a call
+		// launches, the script parks): results applied since the last save come back from their nested calls.
 		let dirty = fresh;
 		for (;;) {
 			context.abortSignal?.throwIfAborted();
 			if (this.failure !== undefined) throw this.failure;
 			if (vm.result !== undefined) return this.complete(vm.result);
 			const open = vm.calls;
+			if (open.length === 0) {
+				return this.decide(errorResult("The script waits on a promise that can never settle: no call is open."));
+			}
 			const newest = open.reduce((max, call) => Math.max(max, call.id), launched);
-			if (dirty || newest > launched) {
-				// Saved before any call it made launches.
-				let saved: CodemodeSaved;
-				try {
-					saved = vm.save();
-				} catch (error) {
-					// The script holds something a dump cannot write (a WeakMap, an object with private fields): it cannot wait
-					// durably, so it ends here instead of making calls a restart could not account for.
-					return this.decide(errorResult(`The script cannot be saved while it waits: ${errorMessage(error)}`));
-				}
-				await api.commit(async (tx) => {
-					const doc = await tx.doc(CodemodeSavedDoc, api.taskId);
-					doc.saved = copyJson(saved as unknown as JsonValue) as unknown as CodemodeSaved;
-					doc.launched = newest;
-				}, context);
+			if (newest > launched) {
+				const refused = await this.save(vm, newest);
+				if (refused !== undefined) return refused;
 				launched = newest;
 				dirty = false;
 			}
@@ -174,11 +166,15 @@ export class DjsCodemodeCall {
 					this.poke = () => resolve(true);
 					setTimeout(() => resolve(false), parkAfter);
 				});
-				if (!(await woken) && this.ready.size === 0 && this.failure === undefined) {
-					// Every open call is a nested call: park on them; one that ends wakes the script.
-					if (open.length > 0 && open.every((call) => this.tasks.has(call.id))) {
-						return { kind: "wait", on: open.map((call) => this.tasks.get(call.id)!), policy: "any" };
+				// Every open call is a nested call: park on them; one that ends wakes the script.
+				const idle = !(await woken) && this.ready.size === 0 && this.failure === undefined;
+				if (idle && open.every((call) => this.tasks.has(call.id))) {
+					if (dirty) {
+						const refused = await this.save(vm, launched);
+						if (refused !== undefined) return refused;
+						dirty = false;
 					}
+					return { kind: "wait", on: open.map((call) => this.tasks.get(call.id)!), policy: "any" };
 				}
 				continue;
 			}
@@ -191,6 +187,24 @@ export class DjsCodemodeCall {
 			dirty = true;
 			await vm.advance();
 		}
+	}
+
+	/** Store the idle run as its dump, with the calls it may have launched; an error result when it cannot be dumped. */
+	private async save(vm: CodemodeVm, launched: number): Promise<ToolExecutionResult | undefined> {
+		let saved: CodemodeSaved;
+		try {
+			saved = vm.save();
+		} catch (error) {
+			// The script holds something a dump cannot write (a WeakMap, an object with private fields): it cannot wait
+			// durably, so it ends here instead of making calls a restart could not account for.
+			return this.decide(errorResult(`The script cannot be saved while it waits: ${errorMessage(error)}`));
+		}
+		await this.api.commit(async (tx) => {
+			const doc = await tx.doc(CodemodeSavedDoc, this.api.taskId);
+			doc.saved = copyJson(saved as unknown as JsonValue) as unknown as CodemodeSaved;
+			doc.launched = launched;
+		}, this.context);
+		return undefined;
 	}
 
 	/** Answer one call: a tool's by its nested call, found by key after a restart; a global's here. */
