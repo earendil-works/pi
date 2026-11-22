@@ -131,10 +131,15 @@ describe("the build's guards", () => {
 
 	it("refuse a dependency pinned to another version than the workspace's, which the bundle inlines", () => {
 		const manifest = { version: "0.0.1", dependencies: { "@earendil-works/chord": "1.5.2", esbuild: "0.28.2" } };
-		checkVersions(manifest, { "@earendil-works/chord": "1.5.2", esbuild: "0.28.2" });
+		checkVersions(manifest, { "@earendil-works/chord": "1.5.2" });
 		assert.throws(
-			() => checkVersions(manifest, { "@earendil-works/chord": "1.5.3", esbuild: "0.28.2" }),
+			() => checkVersions(manifest, { "@earendil-works/chord": "1.5.3" }),
 			/@earendil-works\/chord is pinned to 1\.5\.2, the workspace has 1\.5\.3$/,
 		);
+	});
+
+	it("check only workspace packages: a registry dependency is installed as pinned, whatever the root holds", () => {
+		const manifest = { version: "0.0.1", dependencies: { "@earendil-works/chord": "1.5.2", react: "19.3.0" } };
+		checkVersions(manifest, { "@earendil-works/chord": "1.5.2" });
 	});
 });

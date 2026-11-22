@@ -39,6 +39,8 @@ export {
 	type TaskGraph,
 } from "@earendil-works/pi-durable";
 export type { ExecutionEnv } from "@earendil-works/pi-durable/env";
+// Until real provider logins (ERNDL-705): a deployment's own login plugin builds on it. Outside v1's promise.
+export { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
 export { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 export { StoreStorage } from "@earendil-works/pi-durable/storage/store";
 export { createCodingTools } from "@earendil-works/pi-durable/tools";

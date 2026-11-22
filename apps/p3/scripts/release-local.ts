@@ -1,15 +1,16 @@
-// A local release of p3 (`docs/slices/26-release.md`): builds p3 and the three workspace packages it depends on (Chord,
-// pi-schema, pi-telemetry: their published versions do not have what p3 uses yet), packs the four and installs p3's
-// tarball, the three as overrides, into a directory outside the repository, as a user installing from npm would (no
-// lifecycle script of a dependency runs), so nothing there resolves a workspace source. Then the release test runs
-// against the install, and with `--bench` the bench.
+// A local release of p3 (`docs/slices/26-release.md`): builds p3 and the workspace packages it depends on, directly or
+// through another of them (Chord, pi-ai, Durable, pi-codemode, pi-schema, pi-telemetry: their published versions do
+// not have what p3 uses yet), packs them and installs p3's tarball, the others as overrides, into a directory outside
+// the repository, as a user installing from npm would (no lifecycle script of a dependency runs), so nothing there
+// resolves a workspace source. Its other dependencies (React, Elanor, esbuild, ws) come from the registry as p3 pins
+// them. Then the release test runs against the install, and with `--bench` the bench.
 // Run from the repository root: npm run release:p3:local -- --out /tmp/p3-release [--force] [--skip-test] [--bench]
 
 import { execFileSync } from "node:child_process";
-import { mkdir, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
-import { buildRelease, P3, REPOSITORY } from "./build-release.ts";
+import { buildRelease, P3, REPOSITORY, type WorkspacePackage, workspacePackage } from "./build-release.ts";
 
 const USAGE = `Usage: npm run release:p3:local -- --out <dir> [--force] [--skip-test] [--bench]
 
@@ -17,7 +18,7 @@ const USAGE = `Usage: npm run release:p3:local -- --out <dir> [--force] [--skip-
                 p3's tarball) and p3 (a link to the installed command)
   --force       Replace the release a previous run left in <dir>
   --skip-test   Do not run the release test against the install
-  --bench       Run bench/skeleton.ts against the install afterwards`;
+  --bench       Run bench/skeleton.ts and bench/base.ts against the install afterwards`;
 
 /** The file that marks a directory as a release this script made: only such a directory is ever emptied. */
 const MARKER = ".p3-release";
@@ -25,8 +26,35 @@ const MARKER = ".p3-release";
 /** What the script makes in its output directory, and so what `--force` removes there: nothing else. */
 const MADE = [MARKER, "tarballs", "install", "p3"];
 
-/** The workspace packages p3 depends on, in the order they build. */
-const DEPENDENCIES = ["telemetry", "schema", "chord"].map((name) => join(REPOSITORY, "packages", name));
+/**
+ * The workspace packages p3's `dependencies` name, directly or through another workspace package, each after the
+ * workspace packages it depends on (the order they build in).
+ */
+export async function workspaceDependencies(
+	dependencies: Readonly<Record<string, string>>,
+): Promise<WorkspacePackage[]> {
+	const ordered: WorkspacePackage[] = [];
+	const seen = new Set<string>();
+	const visit = async (name: string): Promise<void> => {
+		if (seen.has(name)) return;
+		seen.add(name);
+		const found = await workspacePackage(name);
+		if (found === undefined) return;
+		for (const dependency of Object.keys(found.dependencies)) await visit(dependency);
+		ordered.push(found);
+	};
+	for (const name of Object.keys(dependencies)) await visit(name);
+	return ordered;
+}
+
+/**
+ * Builds the workspace package `found` for packing: `build:offline` when it has one (pi-ai's `build` first regenerates
+ * its model catalog from the network, which a release of p3 must not change), else `build`.
+ */
+function buildPackage(found: WorkspacePackage): void {
+	const script = Object.hasOwn(found.scripts, "build:offline") ? "build:offline" : "build";
+	execFileSync("npm", ["run", script], { cwd: found.directory, stdio: "inherit" });
+}
 
 /**
  * The output directory `out`, ready: made when missing, used when empty, and with `force` cleared of what a previous
@@ -106,13 +134,17 @@ if (import.meta.main) {
 		process.exit(values.help ? 0 : 2);
 	}
 	const out = await prepareOutput(values.out, values.force);
-	for (const directory of DEPENDENCIES) execFileSync("npm", ["run", "build"], { cwd: directory, stdio: "inherit" });
+	const manifest = JSON.parse(await readFile(join(P3, "package.json"), "utf8")) as {
+		readonly dependencies: Readonly<Record<string, string>>;
+	};
+	const workspace = await workspaceDependencies(manifest.dependencies);
+	for (const found of workspace) buildPackage(found);
 	const built = await buildRelease();
 	console.log(`Built ${built.dist}: ${built.files.length} files, ${(built.bytes / 1024).toFixed(0)} KiB of bundles`);
 	const tarballs = join(out, "tarballs");
 	await mkdir(tarballs);
 	const p3 = pack(P3, tarballs);
-	const dependencies = DEPENDENCIES.map((directory) => pack(directory, tarballs));
+	const dependencies = workspace.map(({ directory }) => pack(directory, tarballs));
 	// An isolated consumer: a private package whose one dependency is p3's tarball. Its dependencies of the workspace
 	// come from their tarballs too, not from the registry.
 	const install = join(out, "install");
@@ -129,7 +161,8 @@ if (import.meta.main) {
 	if (!values["skip-test"]) run(["npm", "run", "test:release"], install);
 	if (values.bench) {
 		const flags = ["--conditions=source", "--disable-warning=ExperimentalWarning"];
-		run([process.execPath, ...flags, "bench/skeleton.ts", "--release", out], install);
+		for (const bench of ["bench/skeleton.ts", "bench/base.ts"])
+			run([process.execPath, ...flags, bench, "--release", out], install);
 	}
 	console.log(
 		`\nLocal release of ${p3.name}: ${out}\n  the command: ${join(out, "p3")}\n  the tarball: ${p3.tarball}`,

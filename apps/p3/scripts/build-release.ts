@@ -7,9 +7,9 @@
 // Run: npm run build (in apps/p3)
 
 import { execFileSync } from "node:child_process";
-import { chmod, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { isBuiltin } from "node:module";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type BuildOptions, build, type Metafile } from "esbuild";
 
@@ -135,23 +135,50 @@ await import("./main.js");
 export type Manifest = { readonly version: string; readonly dependencies: Readonly<Record<string, string>> };
 
 /**
- * Fails unless each dependency is pinned to the version the workspace has (`versions`): the bundle inlines the
- * workspace's Chord, the package's types come from the dependency, and the two must be one version.
+ * Fails unless each dependency that is a workspace package (`versions`, by name) is pinned to the version the
+ * workspace has: the bundle inlines the workspace's sources (Chord, Durable), the package's types come from the
+ * dependency, and the two must be one version. Other dependencies (React, Elanor) come from the registry as pinned.
  */
 export function checkVersions(manifest: Manifest, versions: Readonly<Record<string, string>>): void {
 	for (const [name, pinned] of Object.entries(manifest.dependencies)) {
-		if (versions[name] !== pinned) {
+		if (Object.hasOwn(versions, name) && versions[name] !== pinned) {
 			throw new Error(`build-release: ${name} is pinned to ${pinned}, the workspace has ${versions[name]}`);
 		}
 	}
 }
 
-/** The versions of the packages `names` as the repository's `node_modules` resolves them. */
+/** A workspace package: its name, version, directory and dependencies. */
+export type WorkspacePackage = {
+	readonly name: string;
+	readonly version: string;
+	readonly directory: string;
+	readonly dependencies: Readonly<Record<string, string>>;
+	readonly scripts: Readonly<Record<string, string>>;
+};
+
+/**
+ * The workspace package `name`, or `undefined` when it is not one: npm links a workspace package into the root's
+ * `node_modules`, so its real path lies outside every `node_modules`.
+ */
+export async function workspacePackage(name: string): Promise<WorkspacePackage | undefined> {
+	const directory = await realpath(join(REPOSITORY, "node_modules", name)).catch(() => undefined);
+	if (directory === undefined || relative(REPOSITORY, directory).split(sep).includes("node_modules")) return undefined;
+	const manifest = JSON.parse(await readFile(join(directory, "package.json"), "utf8")) as Partial<WorkspacePackage>;
+	return {
+		name,
+		version: manifest.version ?? "",
+		directory,
+		dependencies: manifest.dependencies ?? {},
+		scripts: manifest.scripts ?? {},
+	};
+}
+
+/** The versions of those of `names` that are workspace packages. */
 async function workspaceVersions(names: readonly string[]): Promise<Record<string, string>> {
 	const versions: Record<string, string> = {};
 	for (const name of names) {
-		const path = join(REPOSITORY, "node_modules", name, "package.json");
-		versions[name] = (JSON.parse(await readFile(path, "utf8")) as { version: string }).version;
+		const found = await workspacePackage(name);
+		if (found !== undefined) versions[name] = found.version;
 	}
 	return versions;
 }
