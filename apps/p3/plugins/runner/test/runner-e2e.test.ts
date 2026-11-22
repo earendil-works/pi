@@ -1,15 +1,15 @@
 // The runner plugin on p3's real server (ERNDL-954, `testServer` of `/v1/testing`), reloaded and asked to stop. Its
 // built-in plugins are copied into a root of the test's own, so the test edits the runner's server facet and applies it
 // once the edit is marked, as an owner editing a plugin does. The old runner stops every worker, and the sessions
-// plugin's waker starts the workers of the `working` sessions again on the new runner (an unheld session's run would
-// otherwise stay cut off until a restart); the apply's worker step is the new runner's, so a worker plugin changed in
+// plugin's waker starts the workers of the `working` sessions again on the new runner (an unheld session's run, a
+// gated run of the faux login, would otherwise stay cut off until a restart); the apply's worker step is the new runner's, so a worker plugin changed in
 // the same apply reaches the worker the new runner started. A held session comes back by itself: the route's resolve
 // waits for the next runner while there is none, starts again on it a start the old runner refused at its close, and
 // resolves again a session whose worker the old runner stopped before its handshake. A stop keeps a held session
 // stopped until `retry`.
 
 import assert from "node:assert/strict";
-import { cp, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, describe, it } from "node:test";
@@ -18,7 +18,16 @@ import { BACKGROUND_CONTEXT as context, Sessions, THIS_DEVICE, until } from "@ea
 import { type PluginScript, processLock, ServerRuntime, WorkerRunners } from "@earendil-works/p3/v1/server";
 import { type TestServer, testServer } from "@earendil-works/p3/v1/testing";
 import { Probe } from "../../../test/plugins/probe/contract.ts";
-import { alive, constantContract, constantPlugin, PROBE } from "../../../test/support.ts";
+import {
+	alive,
+	constantContract,
+	constantPlugin,
+	FAUX,
+	gated,
+	openGate,
+	PROBE,
+	startRun,
+} from "../../../test/support.ts";
 import { eventually, within } from "../../../test/until.ts";
 
 /** The runner plugin's name, as its dirty mark names it. */
@@ -36,9 +45,15 @@ type EditableServer = { readonly t: TestServer; readonly builtIn: string };
 
 let running: TestServer | undefined;
 
+/** The folders of the case's gated sessions (`gated`): opened after it, so no bash call of a stopped worker waits on. */
+const folders: string[] = [];
+
 afterEach(async () => {
+	const opened = folders.splice(0);
+	for (const folder of opened) await openGate(folder);
 	await running?.close(context);
 	running = undefined;
+	for (const folder of opened) await rm(folder, { recursive: true, force: true });
 });
 
 /** Starts a test's server (with the probe) on a new data directory with a copy of the built-in plugins (no tests). */
@@ -46,7 +61,7 @@ async function editableServer(): Promise<EditableServer> {
 	const dataDir = await mkdtemp(join(tmpdir(), "p3-e2e-"));
 	const builtIn = join(dataDir, "builtin");
 	await cp(BUILT_IN, builtIn, { recursive: true, filter: (path) => basename(path) !== "test" });
-	running = await testServer({ dataDir, builtIn, plugins: [PROBE] }, context);
+	running = await testServer({ dataDir, builtIn, plugins: [PROBE, FAUX] }, context);
 	return { t: running, builtIn };
 }
 
@@ -60,14 +75,20 @@ async function newSession(t: TestServer) {
 	return { client, id };
 }
 
-/** A session that is `working`, its worker kept alive by its work and held by nobody: its id and the worker's pid. */
+/**
+ * A session whose agent is working (a gated run, `gated`), its worker kept alive by the run and held by nobody: its id
+ * and the worker's pid. The harness owns the session's state: a report of `working` by the test would race the
+ * harness's own report of what Durable does.
+ */
 async function workingSession(t: TestServer): Promise<{ readonly id: string; readonly pid: number }> {
-	const { client, id } = await newSession(t);
+	const folder = await mkdtemp(join(tmpdir(), "p3-e2e-run-"));
+	folders.push(folder);
+	const client = await t.client(context);
+	const id = await (await client.get(Sessions, {}, context)).create(gated("one", folder), context);
 	const held = await client.get(Probe, { session: id }, context);
 	if (held.variant !== "owner") return assert.fail(held.variant);
 	const pid = held.pid.value;
-	await held.report({ state: "working" }, context);
-	await held.busy(1, context);
+	await startRun(client, id, context);
 	held.release();
 	return { id, pid };
 }

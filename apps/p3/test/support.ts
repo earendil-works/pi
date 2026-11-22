@@ -1,16 +1,77 @@
 // What the tests of the whole share besides `/v1/testing`'s `testServer`: the probe's directory (a plugin under test
-// that drives a session's worker), a single-file worker plugin serving one value (`constantPlugin`), and for launched
+// that drives a session's worker), the faux login's and a session whose agent works until the test opens its gate
+// (`gated`, `startRun`, `openGate`), a single-file worker plugin serving one value (`constantPlugin`), and for launched
 // processes (the command's and the release's tests, the bench) a foreground `p3 server` (`launch`), a process's
 // children (`childrenOf`), whether a process lives (`alive`) and when it started (`startOf`, to kill only that one).
 
 import { type ChildProcess, spawn } from "node:child_process";
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { remote, Session, str, THIS_DEVICE } from "@earendil-works/p3/v1";
+import {
+	type Context,
+	type Host,
+	type P3Principal,
+	remote,
+	Session,
+	SessionsList,
+	str,
+	THIS_DEVICE,
+	Transcript,
+	until,
+} from "@earendil-works/p3/v1";
 
 /** The probe (`test/plugins/probe/`): a test server's plugin under test (`testServer({ plugins: [PROBE] })`). */
 export const PROBE = fileURLToPath(new URL("./plugins/probe/", import.meta.url));
+
+/** The faux login (`test/plugins/faux-login/`): a model login answering from a script, a plugin under test. */
+export const FAUX = fileURLToPath(new URL("./plugins/faux-login/", import.meta.url));
+
+/** A bash command that waits until the folder has a file `gate`, then says so. */
+const UNTIL_GATE = "until [ -e gate ]; do sleep 0.05; done; echo opened";
+
+/**
+ * What the owner's `Sessions.create` takes for a coding session titled `title` in `folder` whose agent works until
+ * `folder` has a file `gate` (`openGate`): a faux login (`FAUX`) whose every answer is a bash call waiting for it (a run
+ * cut off asks again and waits again) until the gate is open, and the coding tools. Its row says `working` because the
+ * harness says so, as for any run: a test never reports a state the harness owns.
+ */
+export function gated(title: string, folder: string) {
+	const wait = { kind: "tool", name: "bash", args: JSON.stringify({ command: UNTIL_GATE }) } as const;
+	const script = [
+		{ when: "opened", reply: [{ kind: "text", text: "done" }] },
+		{ when: "", reply: [wait] },
+	];
+	return {
+		app: "coding",
+		title,
+		location: { environment: THIS_DEVICE, folder },
+		things: [
+			{ kind: "faux.login", options: { provider: "faux", script, tool: false } },
+			{ kind: "tools.coding", options: { shell: true } },
+		],
+	};
+}
+
+/** Lets a gated session's run (`gated`) in `folder` finish: its bash calls, on any worker, see the gate. */
+export function openGate(folder: string): Promise<void> {
+	return writeFile(join(folder, "gate"), "");
+}
+
+/**
+ * Starts the agent's run in `session` (the owner's send through its transcript) and waits until the owner's list
+ * shows the session `working`; holds nothing afterwards.
+ */
+export async function startRun(client: Host<P3Principal>, session: string, context: Context): Promise<void> {
+	await client.root(async (ctx) => {
+		const transcript = await ctx.get(Transcript, { session });
+		if (transcript.variant !== "writer") throw new Error(`startRun: the owner is a ${transcript.variant}`);
+		await transcript.send({ text: "go", requestId: "go" }, ctx);
+		const list = await ctx.get(SessionsList, { app: "coding", set: "active", view: `run-${session}` });
+		await until(list.list, (value) => value.rows.some((row) => row.id === session && row.state === "working"), ctx);
+	}, context);
+}
 
 /** What the owner's `Sessions.create` takes for a new coding session titled `title` (on this device, in `/tmp`). */
 export function coding(title: string) {

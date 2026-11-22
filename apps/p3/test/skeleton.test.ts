@@ -3,7 +3,8 @@
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -13,7 +14,7 @@ import { type TestServer, testServer } from "@earendil-works/p3/v1/testing";
 import { Sessions, SessionWorker } from "../plugins/sessions/contract.ts";
 import { askServer } from "../src/local-socket.ts";
 import { Probe } from "./plugins/probe/contract.ts";
-import { alive, coding, constantContract, constantPlugin, PROBE } from "./support.ts";
+import { alive, coding, constantContract, constantPlugin, FAUX, gated, openGate, PROBE, startRun } from "./support.ts";
 import { eventually, within } from "./until.ts";
 
 let running: TestServer | undefined;
@@ -102,11 +103,19 @@ describe("session workers", () => {
 		assert.notEqual((await probe(t, id)).pid.value, pid);
 	});
 
-	it("a working session's worker starts again after a server restart, unasked", async () => {
-		const { t, id } = await withSession();
-		const held = await probe(t, id);
-		await held.report({ state: "working" }, context);
-		await held.busy(1, context);
+	it("a working session's worker starts again after a server restart, unasked", async (c) => {
+		running = await testServer({ plugins: [PROBE, FAUX] }, context);
+		const t = running;
+		const folder = await mkdtemp(join(tmpdir(), "p3-skeleton-run-"));
+		// The run waits on its gate on any worker; opened after the case, so no bash call waits on.
+		c.after(async () => {
+			await openGate(folder);
+			await rm(folder, { recursive: true, force: true });
+		});
+		const client = await t.client(context);
+		const id = await (await client.get(Sessions, {}, context)).create(gated("one", folder), context);
+		// The harness reports the run `working` (a report by the test would race the harness's own).
+		await startRun(client, id, context);
 		running = await t.restart(context);
 		const restarted = running;
 		await eventually(
