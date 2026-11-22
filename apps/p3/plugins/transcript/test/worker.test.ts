@@ -35,8 +35,11 @@ const SESSION = "s1";
 const OWNER: P3Principal = { kind: "owner" };
 const ALICE: P3Principal = { kind: "person", id: "alice", name: "Alice" };
 
-/** A stand-in harness: Durable on the worker's store answering "ok", counting the followers of conversations. */
-function standInHarness(counts: { observers: number }) {
+/**
+ * A stand-in harness: Durable on the worker's store answering "ok", counting the followers of conversations. With
+ * `opens`, its first open fails and it opens on its retry (a second later), so it is not open yet after the load.
+ */
+function standInHarness(counts: { observers: number; opens?: number }) {
 	return defineFacet((host) => {
 		host.serve(SessionHarness, { compose: (table) => table[0]?.value });
 		contribute(host, "test.harness", (self) => {
@@ -44,6 +47,7 @@ function standInHarness(counts: { observers: number }) {
 			const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-model" }] });
 			const opened = self.open(
 				async (open) => {
+					if (counts.opens !== undefined && counts.opens++ === 0) throw new Error("the first open fails");
 					const models = createModels();
 					models.setProvider(faux.provider);
 					const storage = await StoreStorage.open(runtime.value.store, "harness", open);
@@ -93,11 +97,12 @@ function texts(view: unknown): string[] {
 
 describe("the transcript plugin on a worker", () => {
 	let t: TestedPlugin<P3Principal>;
-	let counts: { observers: number };
+	let counts: { observers: number; opens?: number };
 	let server: ReturnType<typeof standIns>["control"];
 
-	beforeEach(async () => {
-		counts = { observers: 0 };
+	beforeEach(async (c) => {
+		// The case about a harness not open yet: its first open fails.
+		counts = c.name.includes("not open yet") ? { observers: 0, opens: 0 } : { observers: 0 };
 		const stand = standIns(sessionRow(SESSION, "/tmp"), []);
 		server = stand.control;
 		server.access("person:alice", "read");
@@ -162,6 +167,22 @@ describe("the transcript plugin on a worker", () => {
 			context,
 			{ principal: OWNER },
 		);
+	});
+
+	// Bench, 2026-11-22: a reader who came before the harness was open failed the follower's first attempt
+	// (`activation_failed`, "the followed address is absent"), retried once the harness was contributed.
+	it("waits for a harness that is not open yet, without a failed attempt", async () => {
+		await t.root(
+			async (ctx) => {
+				const transcript = await ctx.get(Transcript, { session: SESSION });
+				await until(transcript.view, (view) => view !== null, within("the view", ctx, 5000));
+			},
+			context,
+			{ principal: OWNER },
+		);
+		assert.equal(counts.opens, 2);
+		const followers = t.errors.filter((error) => JSON.stringify(error).includes("transcript.followed"));
+		assert.deepEqual(followers, []);
 	});
 
 	it("follows a conversation once for two readers", async () => {

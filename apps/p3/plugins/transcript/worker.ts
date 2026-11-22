@@ -13,6 +13,7 @@ import {
 	SessionFacts,
 	str,
 	unknown,
+	until,
 } from "@earendil-works/p3/v1";
 import {
 	type ConversationId,
@@ -39,8 +40,18 @@ export default defineFacet((host) => {
 		const harness = self.registry(SessionHarness);
 		// A closed harness ends the follow; the next one's contribution follows again.
 		self.retryOn(harness);
+		// The registry has a value (`undefined`) before the harness is open, so it is no dependency to park on: the
+		// attempt waits for the harness here (a reader may come while it opens or reopens), instead of failing.
+		const opened = self.open(
+			async (context) => {
+				const open = await until(harness, (value) => value !== undefined, context);
+				if (open === undefined) throw new Error("transcript: no harness");
+				return open;
+			},
+			() => {},
+		);
 		const view = self.follow(async (observer, context) =>
-			harness.value?.durable.observeConversation(Number(conversation) as ConversationId, observer, context),
+			opened.value.durable.observeConversation(Number(conversation) as ConversationId, observer, context),
 		);
 		return { view };
 	});
