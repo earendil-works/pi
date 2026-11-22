@@ -26,8 +26,8 @@ import {
 import { PeopleStore, SessionsStore, ThingKinds } from "@earendil-works/p3/v1/server";
 import { serveAccess } from "./access.ts";
 import { serveBring } from "./bring.ts";
-import { currentOptions } from "./options.ts";
-import { serveStore } from "./store.ts";
+import { currentOptions, type StoredOptions } from "./options.ts";
+import { optionsForOf, serveStore } from "./store.ts";
 import { serveWaker } from "./waker.ts";
 
 /** How many sessions a page of a list holds. */
@@ -98,7 +98,8 @@ export default defineFacet((host) => {
 			const store = self.get(SessionsStore, {});
 			const found = self.liveQuery(store.sessions.one, { id: session }, { first: 1 });
 			const things = self.liveQuery(store.things.of, { session }, { first: READ_WHOLE });
-			const defaults = self.liveQuery(store.options.ofSession, { session, for: "everyone" }, { first: READ_WHOLE });
+			// Every option set in the session (each thing's default and its overrides), read whole.
+			const set = self.liveQuery(store.options.inSession, { session }, { first: READ_WHOLE });
 			const members = self.liveQuery(store.members.of, { session }, { first: READ_WHOLE });
 			const kinds = self.registry(ThingKinds);
 			// The members' names, read by key and following the members: a rename shows, nothing walks the people.
@@ -113,15 +114,28 @@ export default defineFacet((host) => {
 					// Admitted: the session exists (its access is none otherwise).
 					session: self.derive([found], ([{ rows }]) => rows[0] ?? fail(`no session ${session}`)),
 					access: constant(access),
-					things: self.derive([things, defaults, kinds], ([of, set, table]) => {
-						if (of.more || set.more) fail(`session ${session} has more than ${READ_WHOLE} things`);
-						const stored = new Map(set.rows.map((row) => [row.thing, row]));
+					things: self.derive([things, set, kinds], ([of, written, table]) => {
+						if (of.more || written.more) fail(`session ${session} has more than ${READ_WHOLE} things or options`);
+						const byThing = Map.groupBy(written.rows, (row) => row.thing);
 						return of.rows.map(({ thing, kind, ref, by }) => {
-							const row = stored.get(thing);
-							const options = row === undefined ? undefined : currentOptions(table.get(kind)?.value, row);
+							const entry = table.get(kind)?.value;
+							const read = (row: StoredOptions) => currentOptions(entry, row)?.options ?? null;
+							const rows = byThing.get(thing) ?? [];
+							const everyone = rows.find((row) => row.for === "everyone");
+							const overrides = rows
+								.filter((row) => row.for !== "everyone")
+								.map((row) => ({ for: optionsForOf(row.for), options: read(row) }));
 							// The kind's title; its name while no plugin serves it.
-							const title = table.get(kind)?.value.title ?? kind;
-							return { thing, kind, ref, by, options: options?.options ?? null, title };
+							const title = entry?.title ?? kind;
+							return {
+								thing,
+								kind,
+								ref,
+								by,
+								options: everyone === undefined ? null : read(everyone),
+								overrides,
+								title,
+							};
 						});
 					}),
 					members: self.derive([members, persons, groups], ([{ rows, more }, ofPersons, ofGroups]) => {

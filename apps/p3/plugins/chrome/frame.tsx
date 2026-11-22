@@ -38,7 +38,9 @@ export type ChromeProps = {
 export function Frame() {
 	const route = useRoute();
 	const apps = useWatch(useVariant(useHold(AppCatalog, {}), "catalog")?.apps);
-	const caller = useWatch(useVariant(useHold(Me, {}), "me")?.me);
+	const me = useWatch(useVariant(useHold(Me, {}), "me")?.me);
+	// A page is never a session's worker: `Me` answers it the owner or a person.
+	const caller = me?.kind === "agent" ? undefined : me;
 	const connection = useRegistry(PageConnection) ?? "connecting";
 	const [inviting, setInviting] = useState(false);
 	const current = apps?.find((app) => app.id === route.app);

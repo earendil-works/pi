@@ -71,6 +71,8 @@ export const SessionsStore = local("sessions.store", {
 			of: obj({ session: str(), thing: str() }),
 			/** The options `for` set for every thing of session `session`, by thing. */
 			ofSession: obj({ session: str(), for: str() }),
+			/** Every option set in session `session`, by thing, then by whom. */
+			inSession: obj({ session: str() }),
 		}),
 		/**
 		 * Makes a session with its members and things in one commit; answers its id. Without a location it works on

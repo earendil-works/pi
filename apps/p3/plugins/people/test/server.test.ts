@@ -58,7 +58,7 @@ describe("the people plugin on the server", () => {
 	const store = <T>(fn: (people: Reference<typeof PeopleStore>, ctx: Ctx<P3Principal>) => Promise<T>) =>
 		t.root(async (ctx) => fn(await ctx.get(PeopleStore, {}), ctx), context);
 
-	it("tells the owner and a person who they are, a person's name live", async () => {
+	it("tells the owner, a person and a session's agent who they are, a person's name live; refuses the server", async () => {
 		const id = await store((people, ctx) => people.createPerson({ name: "Ann" }, ctx));
 		assert.deepEqual(await t.root(async (ctx) => (await ctx.get(Me, {})).me.value, context, { principal: OWNER }), {
 			kind: "owner",
@@ -73,7 +73,11 @@ describe("the people plugin on the server", () => {
 			context,
 			{ principal: { kind: "person", id, name: "Ann" } },
 		);
-		await refused(t.root(async (ctx) => ctx.get(Me, {}), context, { principal: { kind: "worker", session: "s" } }));
+		const agent = await t.root(async (ctx) => (await ctx.get(Me, {})).me.value, context, {
+			principal: { kind: "worker", session: "s" },
+		});
+		assert.deepEqual(agent, { kind: "agent", session: "s" });
+		await refused(t.root(async (ctx) => ctx.get(Me, {}), context, { principal: { kind: "server" } }));
 	});
 
 	it("makes an app's group once per name, and removes a removed person from every group", async () => {

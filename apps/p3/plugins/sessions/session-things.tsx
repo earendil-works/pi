@@ -1,7 +1,8 @@
 // The view `SessionThingsView`: what a session holds, opened on demand. Everyone with access sees its location, its
 // things (each in its kind's view, `<ThingView>`, with who brought it) and its members. A writer (a person or the
-// owner) brings their own records (`BringThings`) and withdraws what they brought; the owner also adds and removes any
-// thing (the kinds without records of `ThingKindCatalog`) and members (the persons of `PeopleList`), through
+// owner) brings their own records (`BringThings`), withdraws what they brought and sets its options (with its kind's
+// form, `thing-options.tsx`); the owner also adds and removes any thing (the kinds without records of
+// `ThingKindCatalog`), sets any thing's options, and adds and removes members (the persons of `PeopleList`), through
 // `Sessions`.
 
 import { Button, Heading } from "@earendil-works/elanor-react";
@@ -20,19 +21,20 @@ import {
 	ThingKindCatalog,
 } from "@earendil-works/p3/v1";
 import { useHold, useRefState, useVariant, useWatch } from "@earendil-works/p3/v1/web";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { type Action, useAction } from "./action.ts";
 import { BringOwn, broughtKey, useBringable } from "./bring-own.tsx";
 import { Choice } from "./choice.tsx";
 import { ThingView } from "./contract.web.tsx";
 import { useViewId } from "./session-list.tsx";
 import styles from "./session-things.module.css";
+import { ThingOptions, type ThingOptionsOf } from "./thing-options.tsx";
 
 /** Who the viewer is, as `Me` answers. */
 type Viewer = { readonly kind: "owner" } | { readonly kind: "person"; readonly id: string; readonly name: string };
 
-/** A thing as the view shows it: its id, kind and who brought it. */
-type ShownThing = Pick<SessionThing, "thing" | "kind" | "ref" | "by"> & { readonly title: string };
+/** A thing as the view shows it: its id, kind, who brought it, its kind's title and its options. */
+type ShownThing = Pick<SessionThing, "thing" | "kind" | "ref" | "by"> & ThingOptionsOf & { readonly title: string };
 
 /** A member as the view shows it: who, their access and their name. */
 type ShownMember = Member & { readonly name: string };
@@ -57,6 +59,8 @@ export function SessionThings(props: { readonly session: string }) {
 		return <p className={styles.note}>Loading…</p>;
 	}
 	if (me.kind === "owner") return <Managed members={members} row={row} things={things} />;
+	// A page is never a session's worker.
+	if (me.kind === "agent") return null;
 	return <Working access={access} me={me} members={members} row={row} things={things} />;
 }
 
@@ -81,6 +85,19 @@ function Working(props: {
 					bring === undefined || !mine(thing.by)
 						? undefined
 						: { label: "Withdraw", run: () => change.run((ctx) => bring.withdraw({ thing: thing.thing }, ctx)) }
+				}
+				options={(thing) =>
+					bring === undefined || !mine(thing.by) ? null : (
+						<ThingOptions
+							action={change}
+							members={props.members}
+							onSave={(forWhom, options) =>
+								change.run((ctx) => bring.setOptions({ thing: thing.thing, for: forWhom, options }, ctx))
+							}
+							session={session}
+							thing={thing}
+						/>
+					)
 				}
 				session={session}
 				things={props.things}
@@ -125,6 +142,19 @@ function Managed(props: {
 					label: "Remove",
 					run: () => manage((owner, ctx) => owner.removeThing({ session, thing: thing.thing }, ctx)),
 				})}
+				options={(thing) => (
+					<ThingOptions
+						action={change}
+						members={props.members}
+						onSave={(forWhom, options) =>
+							manage((owner, ctx) =>
+								owner.setOptions({ session, thing: thing.thing, for: forWhom, options }, ctx),
+							)
+						}
+						session={session}
+						thing={thing}
+					/>
+				)}
 				session={session}
 				things={props.things}
 				whose={(by) => whose(by, OWNER, props.members)}
@@ -209,13 +239,14 @@ function Location(props: { readonly row: SessionRow }) {
 }
 
 /**
- * The session's things, each in its kind's view (its kind's title while no plugin shows it) with whose it is, and the
- * removal `removal` offers for it (none: `undefined`).
+ * The session's things, each in its kind's view (its kind's title while no plugin shows it) with whose it is, the
+ * options control `options` gives it (none: `null`), and the removal `removal` offers for it (none: `undefined`).
  */
 function Things(props: {
 	readonly session: string;
 	readonly things: readonly ShownThing[];
 	readonly whose: (by: Bringer) => string;
+	readonly options: (thing: ShownThing) => ReactNode;
 	readonly removal: (thing: ShownThing) => { readonly label: string; readonly run: () => void } | undefined;
 }) {
 	return (
@@ -242,9 +273,16 @@ function Things(props: {
 									thing={thing.thing}
 								/>
 								<span className={styles.whose}>{props.whose(thing.by)}</span>
+								{props.options(thing)}
 							</div>
 							{removal === undefined ? null : (
-								<Button density="compact" hierarchy="tertiary" onClick={removal.run} semantic="negative">
+								<Button
+									data-remove-thing=""
+									density="compact"
+									hierarchy="tertiary"
+									onClick={removal.run}
+									semantic="negative"
+								>
 									{removal.label}
 								</Button>
 							)}

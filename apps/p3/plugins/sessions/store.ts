@@ -498,6 +498,9 @@ function namedQueries(
 				// The key's prefix `session`, `for` filtered, in the order of `thing`.
 				ofSession: ({ session, for: by }: { session: string; for: string }) =>
 					query(Options).where((o) => and(eq(o.session, Session({ id: session })), eq(o.for, by))),
+				// The key's prefix `session`, in the key's order (`thing`, then `for`).
+				inSession: ({ session }: { session: string }) =>
+					query(Options).where((o) => eq(o.session, Session({ id: session }))),
 			},
 		),
 	};
@@ -544,4 +547,9 @@ function bringerOf(key: string): Bringer {
 /** Whose options in the tables: `everyone`, `agent`, `person:<id>`, `group:<id>`. */
 function forKey(by: OptionsFor): string {
 	return by.kind === "everyone" || by.kind === "agent" ? by.kind : keyOf(by);
+}
+
+/** Whose options, of their key in the tables (written by `forKey`). */
+export function optionsForOf(key: string): OptionsFor {
+	return key === "everyone" || key === "agent" ? { kind: key } : partyOf(key);
 }

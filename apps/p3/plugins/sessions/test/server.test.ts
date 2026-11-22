@@ -29,8 +29,8 @@ import {
 } from "@earendil-works/p3/v1";
 import { PeopleStore, SessionsStore } from "@earendil-works/p3/v1/server";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
-import { Note, NotesKind } from "../../../test/plugins/notes/contract.ts";
 import { within } from "../../../test/until.ts";
+import { Notes as Notebook, NotesKind } from "../../notes/contract.ts";
 import { NOTES, Notes, notesAt, STUBS, setNotes } from "./stubs.ts";
 
 const OWNER: P3Principal = { kind: "owner" };
@@ -455,6 +455,56 @@ describe("SessionInfo", () => {
 	});
 });
 
+describe("SessionInfo's options", () => {
+	it("shows each thing's overrides (the agent's, a member's) live after setOptions, null when unreadable", async () => {
+		const ann = await person("Ann");
+		const id = await session([{ kind: "person", id: ann.id, access: "write" }]);
+		const thing = await firstThing(id);
+		await t.root(
+			async (ctx) => {
+				const info = await ctx.get(SessionInfo, { session: id });
+				const sessions = await ctx.get(Sessions, {});
+				const shown = () => info.things.value.map(({ options, overrides }) => ({ options, overrides }));
+				assert.deepEqual(shown(), [{ options: { color: "red" }, overrides: [] }]);
+				await sessions.setOptions(
+					{ session: id, thing, for: { kind: "person", id: ann.id }, options: { color: "black" } },
+					ctx,
+				);
+				await sessions.setOptions({ session: id, thing, for: { kind: "agent" }, options: { color: "white" } }, ctx);
+				await until(info.things, (things) => things[0]?.overrides.length === 2, within("two overrides", ctx));
+				assert.deepEqual(shown(), [
+					{
+						options: { color: "red" },
+						overrides: [
+							{ for: { kind: "agent" }, options: { color: "white" } },
+							{ for: { kind: "person", id: ann.id }, options: { color: "black" } },
+						],
+					},
+				]);
+				// The kind's plugin at another version, without a migration: nothing it reads.
+				setNotes(notesAt(2));
+				assert.deepEqual(shown(), [
+					{
+						options: null,
+						overrides: [
+							{ for: { kind: "agent" }, options: null },
+							{ for: { kind: "person", id: ann.id }, options: null },
+						],
+					},
+				]);
+				setNotes(NOTES);
+				await sessions.setOptions({ session: id, thing, for: { kind: "agent" }, options: null }, ctx);
+				await until(info.things, (things) => things[0]?.overrides.length === 1, within("one override", ctx));
+				assert.deepEqual(info.things.value[0]?.overrides, [
+					{ for: { kind: "person", id: ann.id }, options: { color: "black" } },
+				]);
+			},
+			context,
+			{ principal: OWNER },
+		);
+	});
+});
+
 describe("refusals", () => {
 	it("gives the owner's objects to the owner only, a worker's facts to workers only", async () => {
 		const ann = await person("Ann");
@@ -544,26 +594,21 @@ describe("bringing things", () => {
 		const thing = await bringing(ann, id, async (bring, ctx) => {
 			if (bring.variant !== "writer") return assert.fail(bring.variant);
 			assert.deepEqual(await bring.kinds({}, ctx), [
-				{ kind: NotesKind.name, title: "Notes", records: [{ ref: `person:${ann.id}`, title: "My notes" }] },
+				{ kind: NotesKind.name, title: "Notes", records: [{ ref: `person:${ann.id}`, title: "Ann's notes" }] },
 			]);
-			return bring.bring({ kind: NotesKind.name, ref: `person:${ann.id}`, options: { color: "green" } }, ctx);
+			return bring.bring({ kind: NotesKind.name, ref: `person:${ann.id}`, options: { edit: false } }, ctx);
 		});
 		const facts = await t.root(async (ctx) => (await ctx.get(SessionFacts, {})).things.value, context, {
 			principal: { kind: "worker", session: id },
 		});
 		assert.deepEqual(
 			facts.find((each) => each.thing === thing),
-			{ thing, kind: NotesKind.name, ref: `person:${ann.id}`, version: 1, options: { color: "green" } },
+			{ thing, kind: NotesKind.name, ref: `person:${ann.id}`, version: 1, options: { edit: false } },
 		);
-		const shown = await t.root(
-			async (ctx) => {
-				const note = await ctx.get(Note, { session: id, thing });
-				return [note.variant, note.ref.value, note.color.value, note.access.value];
-			},
-			context,
-			{ principal: ben },
-		);
-		assert.deepEqual(shown, ["reader", `person:${ann.id}`, "green", "read"]);
+		const shown = await t.root(async (ctx) => (await ctx.get(Notebook, { session: id, thing })).variant, context, {
+			principal: ben,
+		});
+		assert.equal(shown, "reader");
 		const info = await t.root(async (ctx) => (await ctx.get(SessionInfo, { session: id })).things.value, context, {
 			principal: ben,
 		});
@@ -577,7 +622,7 @@ describe("bringing things", () => {
 			await refused(bring.bring({ kind: NotesKind.name, ref: `person:${cleo.id}` }, ctx));
 			await refused(bring.bring({ kind: Notes.name, ref: "" }, ctx), "invalid");
 			await refused(
-				bring.bring({ kind: NotesKind.name, ref: `person:${ann.id}`, options: { color: 1 } }, ctx),
+				bring.bring({ kind: NotesKind.name, ref: `person:${ann.id}`, options: { edit: 1 } }, ctx),
 				"invalid",
 			);
 			assert.deepEqual(
@@ -606,18 +651,18 @@ describe("bringing things", () => {
 		await bringing(cleo, id, async (bring, ctx) => {
 			if (bring.variant !== "writer") return assert.fail(bring.variant);
 			await refused(bring.withdraw({ thing }, ctx));
-			await refused(bring.setOptions({ thing, for: { kind: "everyone" }, options: { color: "blue" } }, ctx));
+			await refused(bring.setOptions({ thing, for: { kind: "everyone" }, options: { edit: false } }, ctx));
 			await refused(bring.withdraw({ thing: theTools }, ctx), "forbidden");
 		});
 		await bringing(ann, id, async (bring, ctx) => {
 			if (bring.variant !== "writer") return assert.fail(bring.variant);
-			await bring.setOptions({ thing, for: { kind: "everyone" }, options: { color: "blue" } }, ctx);
+			await bring.setOptions({ thing, for: { kind: "everyone" }, options: { edit: false } }, ctx);
 			await refused(bring.withdraw({ thing: theTools }, ctx));
 			await bring.withdraw({ thing }, ctx);
 		});
 		await bringing(OWNER, id, async (bring, ctx) => {
 			if (bring.variant !== "writer") return assert.fail(bring.variant);
-			assert.deepEqual((await bring.kinds({}, ctx))[0]?.records, [{ ref: "owner", title: "The owner's notes" }]);
+			assert.deepEqual((await bring.kinds({}, ctx))[0]?.records, [{ ref: "owner", title: "My notes" }]);
 			await bring.withdraw({ thing: theTools }, ctx);
 		});
 		assert.deepEqual(

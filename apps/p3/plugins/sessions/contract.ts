@@ -357,8 +357,22 @@ export const SessionInfo = remote("sessions.info", {
 			state: {
 				session: SessionRow,
 				access: Access,
-				/** Each thing with its kind's title (the kind's name while no plugin serves it). */
-				things: arr(obj({ thing: str(), kind: str(), ref: str(), by: Bringer, options: unknown(), title: str() })),
+				/**
+				 * Each thing with its kind's title (the kind's name while no plugin serves it), its default options and
+				 * its `overrides`: the options set for the agent and for members, in the order of whom they are for.
+				 * Options are as the kind reads them now: `null` when it cannot (no plugin, another version).
+				 */
+				things: arr(
+					obj({
+						thing: str(),
+						kind: str(),
+						ref: str(),
+						by: Bringer,
+						options: unknown(),
+						overrides: arr(obj({ for: OptionsFor, options: unknown() })),
+						title: str(),
+					}),
+				),
 				/** Each member with its name (a person's, a group's). */
 				members: arr(obj({ kind: oneOf("person", "group"), id: str(), access: Access, name: str() })),
 			},

@@ -2,15 +2,35 @@
 // session has), and `ThingViews`, through which each kind of thing shows one thing of a session (`<ThingView>`
 // renders the right one, so an app never knows kinds). `/v1/web` re-exports it.
 
-import { defineRegistry, type TableItem } from "@earendil-works/p3/v1";
+import { defineRegistry, type JsonValue, type OptionsFor, type TableItem } from "@earendil-works/p3/v1";
 import { defineView, useRegistry } from "@earendil-works/p3/v1/web";
 import type { ComponentType, ReactNode } from "react";
 
 /** One thing of a session, as its view gets it. */
 export type ThingViewProps = { readonly session: string; readonly thing: string };
 
-/** A kind's view of one thing: the kind's name and its component (the thing's object admits the viewer). */
-export type ThingViewEntry = { readonly kind: string; readonly View: ComponentType<ThingViewProps> };
+/**
+ * A kind's options form for one thing, as `SessionThingsView` shows it to whoever may set the thing's options: the
+ * options it edits (whose they are the view picks: everyone's, the agent's, a member's; `null` when none the kind
+ * reads now: the form starts from its kind's initial ones) and `onSave`, which sets them for whom they are.
+ */
+export type ThingOptionsProps = {
+	readonly session: string;
+	readonly thing: string;
+	readonly for: OptionsFor;
+	readonly options: JsonValue | null;
+	readonly onSave: (forWhom: OptionsFor, options: JsonValue) => void;
+};
+
+/**
+ * A kind's view of one thing: the kind's name, its component (the thing's object admits the viewer) and, for a kind
+ * with options people set in the page, its options form.
+ */
+export type ThingViewEntry = {
+	readonly kind: string;
+	readonly View: ComponentType<ThingViewProps>;
+	readonly Options?: ComponentType<ThingOptionsProps>;
+};
 
 /** The kinds' views of a thing by kind name (the first by plugin name wins a kind; a second is reported). */
 export const ThingViews = defineRegistry<ThingViewEntry, ReadonlyMap<string, TableItem<ThingViewEntry>>>(

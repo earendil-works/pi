@@ -3,7 +3,9 @@
 // the form appears in the list and opens in the transcript, which streams a scripted answer; a phone shows one screen
 // at a time; a reload of the chrome plugin keeps the open page; an app without the bar gets a corner button, and an
 // app that throws shows its error below the bar; a person invited from the person menu and added to the session
-// enters Coding and works in it, brings their own notes (the owner sees them as theirs) and withdraws them, sees the
+// enters Coding and works in it, brings her own notebook and writes in it (the owner sees it as hers, sets its options
+// in the page: everyone reads only, the agent writes; the agent's scripted note appears, her view turns read only)
+// and withdraws it, sees the
 // session refused once removed from it, and no app once removed from every session of Coding. Screenshots of the steps at the phone's and the desktop's size go to `/tmp/p3-base/shots/`
 // (`P3_SHOTS` names another directory).
 
@@ -18,11 +20,12 @@ import {
 	type Host,
 	type P3Principal,
 	Sessions,
+	Transcript,
 	thingOf,
 	until,
 } from "@earendil-works/p3/v1";
 import { type TestServer, testServer } from "@earendil-works/p3/v1/testing";
-import { FauxLogin } from "../../../test/plugins/faux-login/contract.ts";
+import { FauxLogin, type Step } from "../../../test/plugins/faux-login/contract.ts";
 import { within } from "../../../test/until.ts";
 import { BROWSER_SKIP, Browser, DESKTOP, PHONE } from "./browser.ts";
 
@@ -31,9 +34,6 @@ const BUILT_IN = fileURLToPath(new URL("../../", import.meta.url));
 
 /** The tests' faux login: a kind of thing whose model answers from a script. */
 const FAUX = fileURLToPath(new URL("../../../test/plugins/faux-login/", import.meta.url));
-
-/** The tests' notes: a kind of thing with records per person, which members who write bring. */
-const NOTES = fileURLToPath(new URL("../../../test/plugins/notes/", import.meta.url));
 
 /** Where the screenshots go. */
 const SHOTS = process.env.P3_SHOTS ?? "/tmp/p3-base/shots";
@@ -48,13 +48,16 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 	let session: string;
 	/** The invited person's id. */
 	let ada: string;
+	/** The session's faux login (its thing's id) and its script so far. */
+	let faux: string;
+	let script: Step[];
 
 	before(async () => {
 		await mkdir(SHOTS, { recursive: true });
 		const dataDir = await mkdtemp(join(tmpdir(), "p3-page-"));
 		builtIn = join(dataDir, "builtin");
 		await cp(BUILT_IN, builtIn, { recursive: true, filter: (path) => basename(path) !== "test" });
-		t = await testServer({ dataDir, builtIn, plugins: [FAUX, NOTES] }, context);
+		t = await testServer({ dataDir, builtIn, plugins: [FAUX] }, context);
 		owner = await t.client(context);
 		origin = `http://127.0.0.1:${t.port}`;
 		browser = await Browser.start();
@@ -65,6 +68,31 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await browser?.close();
 		await t?.close(context);
 	});
+
+	/** Clicks the first element `selector` matches once it exists, scrolled into the middle of its scroller first. */
+	async function press(selector: string): Promise<void> {
+		const at = JSON.stringify(selector);
+		await browser.wait(`document.querySelector(${at}) !== null`);
+		await browser.evaluate(`document.querySelector(${at}).scrollIntoView({ block: "center" })`);
+		await browser.click(selector);
+	}
+
+	/** Picks `value` (shown as `label`) in the dropdown whose trigger `trigger` matches. */
+	async function pick(trigger: string, value: string, label: string): Promise<void> {
+		await press(trigger);
+		await browser.click(`[data-choice="${value}"]`);
+		await browser.wait(
+			`document.querySelector(${JSON.stringify(trigger)})?.textContent.includes(${JSON.stringify(label)})`,
+		);
+	}
+
+	/** Screenshots of the viewport as `<name>.png`, light, and `<name>-dark.png`. */
+	async function shots(name: string): Promise<void> {
+		await browser.screenshot(join(SHOTS, `${name}.png`));
+		await browser.colorScheme("dark");
+		await browser.screenshot(join(SHOTS, `${name}-dark.png`));
+		await browser.colorScheme("light");
+	}
 
 	it("shows the bar with the app and the connection, and goes to the first app", async () => {
 		await browser.size(DESKTOP);
@@ -94,13 +122,13 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 
 	it("streams scripted answers, a tool call with its output among them, into the transcript", async () => {
 		const sessions = await owner.get(Sessions, {}, context);
-		const script = [
+		script = [
 			{ when: "hello", reply: [{ kind: "text" as const, text: "Hello from the faux model." }] },
 			{ when: "which title", reply: [{ kind: "tool" as const, name: "faux_session", args: "{}" }] },
 			// The tool's result names the session's title.
 			{ when: "First steps", reply: [{ kind: "text" as const, text: "It is called First steps." }] },
 		];
-		await sessions.addThing(
+		faux = await sessions.addThing(
 			{ session, thing: thingOf(FauxLogin, { provider: "faux", script, tool: true }) },
 			context,
 		);
@@ -251,23 +279,36 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 	});
 
 	it("lets a person who writes bring their own notes, which the owner sees as theirs, and withdraw them", async () => {
-		// Ada brings her notes: a kind with records per person (`test/plugins/notes`), offered to her as hers.
+		// Ada brings her notebook: a kind with records per person (the notes plugin), offered to her as hers.
 		await browser.click("[data-things-open]");
 		await browser.settled("[data-things-dialog]");
 		await browser.wait(
-			`document.querySelector('[data-bring-own] [data-field="record"]')?.textContent.includes("My notes")`,
+			`document.querySelector('[data-bring-own] [data-field="record"]')?.textContent.includes("Ada's notes")`,
 		);
 		assert.equal(await browser.evaluate(`document.querySelector("[data-add-thing]") === null`), true);
 		// She reads the kinds by their titles and herself as "You".
 		await browser.wait(`document.querySelector('[data-thing="tools.coding"]')?.textContent.includes("Coding tools")`);
 		await browser.wait(`document.querySelector('[data-member="${ada}"]')?.textContent.includes("You")`);
-		await browser.click("[data-bring]");
+		// What she did not bring has no options for her.
+		assert.equal(
+			await browser.evaluate(`document.querySelector('[data-thing="tools.coding"] [data-options-open]') === null`),
+			true,
+		);
+		await press("[data-bring]");
 		const hers = `[data-thing="notes.notes"][data-by="person:${ada}"]`;
 		await browser.wait(`document.querySelector('${hers}')?.textContent.includes("Yours")`);
 		await browser.wait(
 			`document.querySelector("[data-bring-own]")?.textContent.includes("Everything of yours is here.")`,
 		);
 		await browser.screenshot(join(SHOTS, "13-bring-person-desktop.png"));
+		// She writes in her notebook: she writes in the session and the default options say edit.
+		await browser.wait(`document.querySelector('${hers} [data-notes="editor"]')`);
+		await press(`${hers} [data-note-new]`);
+		await browser.type(`${hers} [data-note-new]`, "Buy more coffee");
+		await press(`${hers} [data-note-add]`);
+		await browser.wait(`document.querySelector('${hers} [data-note-text]')?.textContent === "Buy more coffee"`);
+		await browser.wait(`document.querySelector('${hers} [data-note]')?.textContent.includes("You")`);
+		await shots("notes-01-editor-desktop");
 		// The owner, in a browser of their own, sees them as Ada's and brings their own notes too.
 		const adaCookie = await browser.cookie(origin);
 		await browser.signOut();
@@ -277,26 +318,78 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await browser.click("[data-things-open]");
 		await browser.settled("[data-things-dialog]");
 		await browser.wait(`document.querySelector('${hers}')?.textContent.includes("Ada's")`);
+		await browser.wait(`document.querySelector('${hers} [data-note]')?.textContent.includes("Ada")`);
+		// The owner sets the notebook's options: everyone reads only, the agent writes.
+		await press(`${hers} [data-options-open]`);
+		const panel = `${hers} [data-thing-options]`;
 		await browser.wait(
-			`document.querySelector('[data-bring-own] [data-field="record"]')?.textContent.includes("The owner's notes")`,
+			`document.querySelector('${panel} [data-option="edit"]')?.getAttribute("aria-checked") === "true"`,
 		);
-		await browser.click("[data-bring]");
+		await press(`${panel} [data-option="edit"]`);
+		await press(`${panel} [data-options-save]`);
+		// The owner, without options of their own, reads it only now too.
+		await browser.wait(`document.querySelector('${hers} [data-notes="reader"]')`);
+		await pick(`${panel} [data-field="whose"]`, "agent", "The agent");
+		await browser.wait(`document.querySelector('${panel} [data-options-source="default"]')`);
+		await browser.wait(
+			`document.querySelector('${panel} [data-option="edit"]')?.getAttribute("aria-checked") === "false"`,
+		);
+		await press(`${panel} [data-option="edit"]`);
+		await press(`${panel} [data-options-save]`);
+		await browser.wait(`document.querySelector('${panel} [data-options-source="own"]')`);
+		await shots("notes-02-options-phone");
+		// The agent writes a note through its scripted answer; it appears in the owner's open view.
+		script = [
+			...script,
+			{
+				when: "@note",
+				reply: [{ kind: "tool", name: "notes_write", args: JSON.stringify({ text: "Coffee is on the list." }) }],
+			},
+			{ when: "Added note", reply: [{ kind: "text", text: "Noted." }] },
+		];
+		const sessions = await owner.get(Sessions, {}, context);
+		await sessions.setOptions(
+			{ session, thing: faux, for: { kind: "everyone" }, options: { provider: "faux", script, tool: true } },
+			context,
+		);
+		const transcript = await owner.get(Transcript, { session }, context);
+		if (transcript.variant !== "writer") return assert.fail(transcript.variant);
+		await transcript.send({ text: "@note", requestId: "page-note" }, context);
+		await browser.wait(
+			`[...document.querySelectorAll('${hers} [data-note]')].some((e) => e.textContent.includes("Coffee is on the list.") && e.textContent.includes("The agent"))`,
+		);
+		await browser.evaluate(`document.querySelector('${hers} [data-note]').scrollIntoView({ block: "center" })`);
+		await shots("notes-03-agent-phone");
+		transcript.release();
+		await browser.click('[data-things-dialog] button[aria-label="Close"]');
+		await browser.wait(`document.querySelector("[data-session-things]") === null`);
+		await browser.click("[data-things-open]");
+		await browser.settled("[data-things-dialog]");
+		await browser.wait(
+			`document.querySelector('[data-bring-own] [data-field="record"]')?.textContent.includes("My notes")`,
+		);
+		await press("[data-bring]");
 		const owners = `[data-thing="notes.notes"][data-by="owner"]`;
 		await browser.wait(`document.querySelector('${owners}')?.textContent.includes("Yours")`);
 		await browser.screenshot(join(SHOTS, "14-bring-owner-phone.png"));
-		// Ada sees the owner's notes as the owner's, without a way to withdraw them, and withdraws her own.
+		// Ada's view of her notebook is read only now, with the agent's note; she sees the owner's notes as the
+		// owner's, without a way to withdraw them, and withdraws her own.
 		await browser.signOut();
 		await browser.signIn(origin, adaCookie);
 		await browser.size(DESKTOP);
 		await browser.open(`${origin}/coding/${session}`);
 		await browser.click("[data-things-open]");
 		await browser.settled("[data-things-dialog]");
+		await browser.wait(`document.querySelector('${hers} [data-notes="reader"]')`);
+		await browser.wait(`document.querySelector('${hers}')?.textContent.includes("Coffee is on the list.")`);
+		assert.equal(await browser.evaluate(`document.querySelector('${hers} [data-note-new]') === null`), true);
+		await shots("notes-04-reader-desktop");
 		await browser.wait(`document.querySelector('${owners}')?.textContent.includes("The owner's")`);
-		assert.equal(await browser.evaluate(`document.querySelector('${owners} button') === null`), true);
-		await browser.click(`${hers} button`);
+		assert.equal(await browser.evaluate(`document.querySelector('${owners} [data-remove-thing]') === null`), true);
+		await press(`${hers} [data-remove-thing]`);
 		await browser.wait(`document.querySelector('${hers}') === null`);
 		await browser.wait(
-			`document.querySelector('[data-bring-own] [data-field="record"]')?.textContent.includes("My notes")`,
+			`document.querySelector('[data-bring-own] [data-field="record"]')?.textContent.includes("Ada's notes")`,
 		);
 		await browser.screenshot(join(SHOTS, "15-withdrawn-desktop.png"));
 		await browser.click('[data-things-dialog] button[aria-label="Close"]');

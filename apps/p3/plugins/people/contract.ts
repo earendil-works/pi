@@ -16,13 +16,21 @@ export const Group = obj({ id: str(), app: str(), name: str({ max: 200 }) });
 /** A group (see `Group`). */
 export type Group = Static<typeof Group>;
 
-/** Who the caller is: the owner, or a person. */
+/** Who the caller is: the owner, a person, or a session's agent (its worker). */
 export const Me = remote("people.me", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
 	variants: {
-		me: { state: { me: union([obj({ kind: lit("owner") }), obj({ kind: lit("person"), id: str(), name: str() })]) } },
+		me: {
+			state: {
+				me: union([
+					obj({ kind: lit("owner") }),
+					obj({ kind: lit("person"), id: str(), name: str() }),
+					obj({ kind: lit("agent"), session: str() }),
+				]),
+			},
+		},
 	},
 });
 

@@ -70,3 +70,21 @@
 .error {
 	color: var(--semantic-color-text-negative);
 }
+
+.options {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: var(--semantic-dimension-space-gap-x-small);
+	margin-block: var(--semantic-dimension-space-gap-x-small);
+}
+
+.optionsPanel {
+	display: flex;
+	flex-direction: column;
+	align-self: stretch;
+	gap: var(--semantic-dimension-space-gap-small);
+	padding: var(--semantic-dimension-space-padding-small);
+	border: var(--semantic-dimension-border-width-small) solid var(--semantic-color-border-secondary);
+	border-radius: var(--semantic-dimension-radius-medium);
+}

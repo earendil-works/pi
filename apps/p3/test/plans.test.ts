@@ -1,4 +1,4 @@
-// The plans of the stores' named queries (sessions, people, environments), as SQLite runs them: each read must search
+// The plans of the stores' named queries (sessions, people, environments, notes, canvas), as SQLite runs them: each read must search
 // the index its comment names, with no sort (a temporary B-tree would read and sort every row of a tie, or of the list,
 // for one page), except the joins ordered by a partner's column, which say in their comment that SQLite sorts their
 // few rows: for those the plan asserted is the one they get. The test opens the server's store on a SQLite database of
@@ -14,8 +14,12 @@ import { NodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
 import { type P3Principal, Server, THIS_DEVICE } from "@earendil-works/p3/v1";
 import { EnvironmentsStore, PeopleStore, type ServerRuntime, SessionsStore } from "@earendil-works/p3/v1/server";
 import appsServer from "../plugins/apps/server.ts";
+import canvasServer from "../plugins/canvas/server.ts";
+import { CanvasStore } from "../plugins/canvas/store.ts";
 import codingServer from "../plugins/coding/server.ts";
 import environmentsServer from "../plugins/environments/server.ts";
+import notesServer from "../plugins/notes/server.ts";
+import { NotesStore } from "../plugins/notes/store.ts";
 import peopleServer from "../plugins/people/server.ts";
 import sessionsServer from "../plugins/sessions/server.ts";
 import { Notes, STUBS } from "../plugins/sessions/test/stubs.ts";
@@ -61,8 +65,10 @@ describe("the plans of the stores' queries", () => {
 				[
 					{ name: "p3.server", facet: serverCoreFacet(runtime) },
 					{ name: "@earendil-works/p3-apps", facet: appsServer },
+					{ name: "@earendil-works/p3-canvas", facet: canvasServer },
 					{ name: "@earendil-works/p3-coding", facet: codingServer },
 					{ name: "@earendil-works/p3-environments", facet: environmentsServer },
+					{ name: "@earendil-works/p3-notes", facet: notesServer },
 					{ name: "@earendil-works/p3-people", facet: peopleServer },
 					{ name: "@earendil-works/p3-sessions", facet: sessionsServer },
 					STUBS.find(({ name }) => name === "p3-test-kind")!,
@@ -72,6 +78,10 @@ describe("the plans of the stores' queries", () => {
 			const sessions = await host.get(SessionsStore, {}, context);
 			const people = await host.get(PeopleStore, {}, context);
 			const environments = await host.get(EnvironmentsStore, {}, context);
+			const notes = await host.get(NotesStore, {}, context);
+			for (const notebook of ["owner", "person:ann"]) {
+				for (let i = 0; i < 3; i++) await notes.add({ notebook, text: `n${i}`, author: "owner" }, context);
+			}
 			const ann = await people.createPerson({ name: "Ann" }, context);
 			await people.createPerson({ name: "Ben" }, context);
 			const coaches = await people.group({ app: "coding", name: "coaches" }, context);
@@ -96,6 +106,11 @@ describe("the plans of the stores' queries", () => {
 				if (i % 2 === 0) await sessions.archive({ session: one }, context);
 			}
 			const thing = (await sessions.things.of.page({ session: one }, 1, context)).items[0]!.thing;
+			const canvas = await host.get(CanvasStore, {}, context);
+			for (const board of ["b1", "b2"]) {
+				const rect = { kind: "rect", color: "#000000", x: 0, y: 0, w: 10, h: 10, fill: false } as const;
+				await canvas.add({ session: one, thing: board, shapes: [rect, rect, rect], author: "owner" }, context);
+			}
 			/** The plans of the statements `read` makes Chord prepare. */
 			const plansOf = async (read: Read): Promise<string[]> => {
 				reads.clear();
@@ -124,6 +139,8 @@ describe("the plans of the stores' queries", () => {
 			const S = "sessions.store:sessions";
 			const P = "people.store:people";
 			const E = "environments.store:environments";
+			const N = "notes.store:notes";
+			const C = "canvas.store:canvas";
 			const cases: readonly (readonly [string, readonly Read[], Expected])[] = [
 				["sessions.active", pages(sessions.sessions.active, { app: "coding" }), { index: `${S}.rows:active` }],
 				[
@@ -147,6 +164,7 @@ describe("the plans of the stores' queries", () => {
 				["things.one", pages(sessions.things.one, { session: one, thing }), {}],
 				["options.of", pages(sessions.options.of, { session: one, thing }), {}],
 				["options.ofSession", pages(sessions.options.ofSession, { session: one, for: "everyone" }), {}],
+				["options.inSession", pages(sessions.options.inSession, { session: one }), {}],
 				["working", [() => sessions.working({}, context)], { index: `${S}.rows:working` }],
 				["persons.all", pages(people.persons.all, {}), { index: `${P}.persons:by_name` }],
 				["persons.one", pages(people.persons.one, { id: ann }), {}],
@@ -162,6 +180,8 @@ describe("the plans of the stores' queries", () => {
 				["members.of (people)", pages(people.members.of, { group: coaches }), { sorts: true }],
 				["environments.all", pages(environments.environments.all, {}), { index: `${E}.rows:by_name` }],
 				["environments.one", pages(environments.environments.one, { id: THIS_DEVICE }), {}],
+				["notes.of", pages(notes.notes.of, { notebook: "owner" }), { index: `${N}.rows:by_time` }],
+				["shapes.of", pages(canvas.shapes.of, { session: one, thing: "b1" }), { index: `${C}.shapes:by_order` }],
 			];
 			for (const [name, read, expected] of cases) {
 				const plans = (await Promise.all(read.map((each) => plansOf(each)))).flat();

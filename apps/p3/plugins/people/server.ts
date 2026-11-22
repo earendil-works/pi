@@ -208,7 +208,10 @@ export default defineFacet((host) => {
 
 	host.serve(Me, (_params, principal, self) => {
 		if (principal.kind === "owner") return { variant: "me", members: { me: constant({ kind: "owner" }) } };
-		if (principal.kind !== "person") throw forbidden("people: the owner's and persons'");
+		if (principal.kind === "worker") {
+			return { variant: "me", members: { me: constant({ kind: "agent", session: principal.session }) } };
+		}
+		if (principal.kind !== "person") throw forbidden("people: the owner's, persons' and agents'");
 		const found = self.liveQuery(self.get(PeopleStore, {}).persons.one, { id: principal.id }, { first: 1 });
 		const { id, name } = principal;
 		// The name as the owner gave it now; the sign-in's while the person is gone (their sign-ins end with them).
