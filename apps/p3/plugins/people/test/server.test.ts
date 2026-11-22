@@ -19,6 +19,9 @@ import {
 import { PeopleStore } from "@earendil-works/p3/v1/server";
 import { type TestedPlugin, type TestServer, testPlugin, testServer } from "@earendil-works/p3/v1/testing";
 import { within } from "../../../test/until.ts";
+import appsServer from "../../apps/server.ts";
+import environmentsServer from "../../environments/server.ts";
+import sessionsServer from "../../sessions/server.ts";
 import signInServer from "../../sign-in/server.ts";
 
 const OWNER: P3Principal = { kind: "owner" };
@@ -36,7 +39,16 @@ describe("the people plugin on the server", () => {
 	beforeEach(async () => {
 		t = await testPlugin(
 			fileURLToPath(new URL("../", import.meta.url)),
-			{ kind: "server", stubs: [{ name: "@earendil-works/p3-sign-in", facet: signInServer }] },
+			{
+				kind: "server",
+				// What a person's removal reaches besides the people: their sign-ins and their sessions.
+				stubs: [
+					{ name: "@earendil-works/p3-apps", facet: appsServer },
+					{ name: "@earendil-works/p3-environments", facet: environmentsServer },
+					{ name: "@earendil-works/p3-sessions", facet: sessionsServer },
+					{ name: "@earendil-works/p3-sign-in", facet: signInServer },
+				],
+			},
 			context,
 		);
 	});

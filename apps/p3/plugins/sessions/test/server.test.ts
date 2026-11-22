@@ -8,12 +8,14 @@ import { stat } from "node:fs/promises";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+	BringThings,
 	type Ctx,
 	BACKGROUND_CONTEXT as context,
 	isChordError,
 	type Member,
 	type P3Principal,
 	People,
+	type Reference,
 	SessionAccess,
 	SessionFacts,
 	SessionInfo,
@@ -26,6 +28,7 @@ import {
 } from "@earendil-works/p3/v1";
 import { PeopleStore, SessionsStore } from "@earendil-works/p3/v1/server";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
+import { Note, NotesKind } from "../../../test/plugins/notes/contract.ts";
 import { NOTES, Notes, notesAt, STUBS, setNotes } from "./stubs.ts";
 
 const OWNER: P3Principal = { kind: "owner" };
@@ -471,3 +474,168 @@ describe("a worker's facts", () => {
 		assert.equal(none, null);
 	});
 });
+
+describe("bringing things", () => {
+	/** A session with `ann` writing and `ben` reading, and the notes brought into it so far. */
+	async function setup() {
+		const ann = await person("Ann");
+		const ben = await person("Ben");
+		const cleo = await person("Cleo");
+		const id = await session([
+			{ kind: "person", id: ann.id, access: "write" },
+			{ kind: "person", id: ben.id, access: "read" },
+			{ kind: "person", id: cleo.id, access: "write" },
+		]);
+		return { ann, ben, cleo, id };
+	}
+
+	/** Runs `fn` with `principal`'s `BringThings` of session `id`. */
+	function bringing<T>(
+		principal: P3Principal,
+		id: string,
+		fn: (bring: BringRef, ctx: Ctx<P3Principal>) => Promise<T>,
+	) {
+		return t.root(async (ctx) => fn(await ctx.get(BringThings, { session: id }), ctx), context, { principal });
+	}
+
+	it("lets a writer bring their own record, which the agent and the session's readers then use", async () => {
+		const { ann, ben, id } = await setup();
+		const thing = await bringing(ann, id, async (bring, ctx) => {
+			if (bring.variant !== "writer") return assert.fail(bring.variant);
+			assert.deepEqual(await bring.kinds({}, ctx), [
+				{ kind: NotesKind.name, title: "Notes", records: [{ ref: `person:${ann.id}`, title: "My notes" }] },
+			]);
+			return bring.bring({ kind: NotesKind.name, ref: `person:${ann.id}`, options: { color: "green" } }, ctx);
+		});
+		const facts = await t.root(async (ctx) => (await ctx.get(SessionFacts, {})).things.value, context, {
+			principal: { kind: "worker", session: id },
+		});
+		assert.deepEqual(
+			facts.find((each) => each.thing === thing),
+			{ thing, kind: NotesKind.name, ref: `person:${ann.id}`, version: 1, options: { color: "green" } },
+		);
+		const shown = await t.root(
+			async (ctx) => {
+				const note = await ctx.get(Note, { session: id, thing });
+				return [note.variant, note.ref.value, note.color.value, note.access.value];
+			},
+			context,
+			{ principal: ben },
+		);
+		assert.deepEqual(shown, ["reader", `person:${ann.id}`, "green", "read"]);
+		const info = await t.root(async (ctx) => (await ctx.get(SessionInfo, { session: id })).things.value, context, {
+			principal: ben,
+		});
+		assert.deepEqual(info.find((each) => each.thing === thing)?.by, { kind: "person", id: ann.id });
+	});
+
+	it("refuses another person's record, a kind without records, and leaves out a kind whose records throw", async () => {
+		const { ann, cleo, id } = await setup();
+		await bringing(ann, id, async (bring, ctx) => {
+			if (bring.variant !== "writer") return assert.fail(bring.variant);
+			await refused(bring.bring({ kind: NotesKind.name, ref: `person:${cleo.id}` }, ctx));
+			await refused(bring.bring({ kind: Notes.name, ref: "" }, ctx), "invalid");
+			await refused(
+				bring.bring({ kind: NotesKind.name, ref: `person:${ann.id}`, options: { color: 1 } }, ctx),
+				"invalid",
+			);
+			assert.deepEqual(
+				(await bring.kinds({}, ctx)).map(({ kind }) => kind),
+				[NotesKind.name],
+			);
+		});
+	});
+
+	it("gives a reader no methods", async () => {
+		const { ben, id } = await setup();
+		await bringing(ben, id, async (bring, ctx) => {
+			assert.equal(bring.variant, "reader");
+			// The reader's variant has no `bring`: a call through the reference is refused.
+			const writer = bring as unknown as Extract<BringRef, { readonly variant: "writer" }>;
+			await assert.rejects(writer.bring({ kind: NotesKind.name, ref: `person:${ben.id}` }, ctx));
+		});
+	});
+
+	it("withdraws and sets the options of only what the caller brought; the owner of anything", async () => {
+		const { ann, cleo, id } = await setup();
+		const thing = await bringing(ann, id, async (bring, ctx) =>
+			bring.variant === "writer" ? bring.bring({ kind: NotesKind.name, ref: `person:${ann.id}` }, ctx) : "",
+		);
+		const theTools = await firstThing(id);
+		await bringing(cleo, id, async (bring, ctx) => {
+			if (bring.variant !== "writer") return assert.fail(bring.variant);
+			await refused(bring.withdraw({ thing }, ctx));
+			await refused(bring.setOptions({ thing, for: { kind: "everyone" }, options: { color: "blue" } }, ctx));
+			await refused(bring.withdraw({ thing: theTools }, ctx), "forbidden");
+		});
+		await bringing(ann, id, async (bring, ctx) => {
+			if (bring.variant !== "writer") return assert.fail(bring.variant);
+			await bring.setOptions({ thing, for: { kind: "everyone" }, options: { color: "blue" } }, ctx);
+			await refused(bring.withdraw({ thing: theTools }, ctx));
+			await bring.withdraw({ thing }, ctx);
+		});
+		await bringing(OWNER, id, async (bring, ctx) => {
+			if (bring.variant !== "writer") return assert.fail(bring.variant);
+			assert.deepEqual((await bring.kinds({}, ctx))[0]?.records, [{ ref: "owner", title: "The owner's notes" }]);
+			await bring.withdraw({ thing: theTools }, ctx);
+		});
+		assert.deepEqual(
+			await asServer(async (ctx, store) => (await store.things.of.page({ session: id }, 10, ctx)).items),
+			[],
+		);
+	});
+
+	it("says who brought each thing: the owner's `Sessions`, an app's server code, a person", async () => {
+		const { ann, id } = await setup();
+		const byOwner = await t.root(
+			async (ctx) => (await ctx.get(Sessions, {})).addThing({ session: id, thing: thingOf(Notes) }, ctx),
+			context,
+			{ principal: OWNER },
+		);
+		const byAnn = await bringing(ann, id, async (bring, ctx) =>
+			bring.variant === "writer" ? bring.bring({ kind: NotesKind.name, ref: `person:${ann.id}` }, ctx) : "",
+		);
+		const by = await asServer(async (ctx, store) =>
+			Object.fromEntries(
+				(await store.things.of.page({ session: id }, 10, ctx)).items.map((each) => [each.thing, each.by]),
+			),
+		);
+		assert.deepEqual(by[await firstThing(id)], { kind: "app" });
+		assert.deepEqual(by[byOwner], { kind: "owner" });
+		assert.deepEqual(by[byAnn], { kind: "person", id: ann.id });
+	});
+
+	it("removes what a member brought with the member, and what a person brought from every session with the person", async () => {
+		const { ann, cleo, id } = await setup();
+		const other = await session([{ kind: "person", id: ann.id, access: "write" }], []);
+		const bring = (principal: P3Principal, of: string) =>
+			bringing(principal, of, async (handle, ctx) =>
+				handle.variant === "writer"
+					? handle.bring(
+							{ kind: NotesKind.name, ref: `person:${principal.kind === "person" ? principal.id : ""}` },
+							ctx,
+						)
+					: "",
+			);
+		const annsHere = await bring(ann, id);
+		const cleos = await bring(cleo, id);
+		const annsThere = await bring(ann, other);
+		const things = (of: string) =>
+			asServer(async (ctx, store) =>
+				(await store.things.of.page({ session: of }, 10, ctx)).items.map((each) => each.thing),
+			);
+		await asServer((ctx, store) => store.removeMember({ session: id, party: { kind: "person", id: cleo.id } }, ctx));
+		assert.ok(!(await things(id)).includes(cleos));
+		assert.ok((await things(id)).includes(annsHere));
+		await t.root(async (ctx) => (await ctx.get(PeopleStore, {})).removePerson({ person: ann.id }, ctx), context);
+		assert.ok(!(await things(id)).includes(annsHere));
+		assert.ok(!(await things(other)).includes(annsThere));
+		assert.deepEqual(
+			await asServer(async (ctx, store) => (await store.members.of.page({ session: other }, 10, ctx)).items),
+			[],
+		);
+	});
+});
+
+/** `BringThings` as a test holds it. */
+type BringRef = Reference<typeof BringThings>;

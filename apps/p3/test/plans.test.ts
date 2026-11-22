@@ -65,7 +65,7 @@ describe("the plans of the stores' queries", () => {
 					{ name: "@earendil-works/p3-environments", facet: environmentsServer },
 					{ name: "@earendil-works/p3-people", facet: peopleServer },
 					{ name: "@earendil-works/p3-sessions", facet: sessionsServer },
-					STUBS.find(({ name }) => name === "p3-test-notes")!,
+					STUBS.find(({ name }) => name === "p3-test-kind")!,
 				],
 				context,
 			);
@@ -177,6 +177,21 @@ describe("the plans of the stores' queries", () => {
 					expected.sorts === true,
 					`${name}: ${plans.join(" | ")}`,
 				);
+			}
+			// A person leaving the Pi: their memberships by `by_member`, what they brought by `by_bringer`, each thing's
+			// rows by its key; no read walks a table or sorts.
+			const removal = await plansOf(() => sessions.removePerson({ person: ann }, context));
+			const shown = removal.join(" | ");
+			assert.ok(
+				removal.some((step) => step.includes(`${S}.members:by_member`)),
+				shown,
+			);
+			assert.ok(
+				removal.some((step) => step.includes(`${S}.things:by_bringer`)),
+				shown,
+			);
+			for (const step of removal) {
+				assert.ok(/^SEARCH t USING /.test(step) && !step.includes("TEMP B-TREE"), `removePerson: ${shown}`);
 			}
 		} finally {
 			await host.close(context);

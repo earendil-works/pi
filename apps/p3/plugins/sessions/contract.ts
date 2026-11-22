@@ -122,17 +122,28 @@ export function defineThingKind<const O extends JsonValue>(
 /** The options of a thing of `Kind`. */
 export type OptionsOf<Kind> = Kind extends ThingKind<infer O> ? O : never;
 
+/** Who brought a thing into a session: the owner, a person (their own record, such as their mail), or the app. */
+export const Bringer = union([
+	obj({ kind: lit("owner") }),
+	obj({ kind: lit("person"), id: str() }),
+	obj({ kind: lit("app") }),
+]);
+
+/** Who brought a thing (see `Bringer`). */
+export type Bringer = Static<typeof Bringer>;
+
 /**
  * A thing as a session has it: its id in the session, its kind, the record of its kind's plugin it stands for (`""`
- * for a kind without records, such as the coding tools) and the session's default options for it.
+ * for a kind without records, such as the coding tools), who brought it, and the session's default options for it.
  */
-export const SessionThing = obj({ thing: str(), kind: str(), ref: str(), options: unknown() });
+export const SessionThing = obj({ thing: str(), kind: str(), ref: str(), by: Bringer, options: unknown() });
 
 /** A thing as a session has it (see `SessionThing`). */
 export type SessionThing = {
 	readonly thing: string;
 	readonly kind: string;
 	readonly ref: string;
+	readonly by: Bringer;
 	readonly options: JsonValue;
 };
 
@@ -300,6 +311,37 @@ export function admitThing<O extends JsonValue>(kind: ThingKind<O>) {
 		});
 	};
 }
+
+/** A record of a kind a caller may bring into a session: its id in the kind's plugin and its title. */
+export const ThingRecord = obj({ ref: str(), title: str() });
+
+/** A record a caller may bring (see `ThingRecord`). */
+export type ThingRecord = Static<typeof ThingRecord>;
+
+/**
+ * What a writer of a session brings into it of their own (their mail, their calendar): every writer, the owner too.
+ * `kinds` lists the kinds whose plugin offers the caller records, with them; `bring` adds one of those records as a
+ * thing (its kind's initial options unless given), which everyone in the session then uses, through its views and
+ * through the agent; `withdraw` and `setOptions` act on things the caller brought (the owner: on any). A thing of a
+ * kind without records (the coding tools) only the owner and the app add.
+ */
+export const BringThings = remote("sessions.bring", {
+	version: 1,
+	params: { session: str() },
+	hostAddress: () => Server(),
+	admission: SessionAdmission,
+	variants: {
+		reader: {},
+		writer: {
+			methods: {
+				kinds: method(obj({}), arr(obj({ kind: str(), title: str(), records: arr(ThingRecord) }))),
+				bring: method(obj({ kind: str(), ref: str(), options: opt(unknown()) }), str()),
+				withdraw: method(obj({ thing: str() })),
+				setOptions: method(obj({ thing: str(), for: OptionsFor, options: unknown() })),
+			},
+		},
+	},
+});
 
 /**
  * One session as a page sees it, without starting its worker: its row, its things and its members, and the caller's

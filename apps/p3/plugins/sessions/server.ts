@@ -1,8 +1,9 @@
 // The sessions plugin on the server: the store of the sessions, their members and things (`store.ts`), the access
-// answer every session object admits with (`access.ts`), the waker (`waker.ts`), and the objects of its audiences: the
-// owner's `Sessions`, the kinds of things the owner may add (`ThingKindCatalog`, from `ThingKinds`, served here), a
-// screen's `SessionsList` (the owner's every session of an app, a person's their memberships'), a page's
-// `SessionInfo`, and each worker's `SessionFacts` (its row, its things with the agent's options, its report).
+// answer every session object admits with (`access.ts`), the waker (`waker.ts`), what writers bring of their own
+// (`bring.ts`), and the objects of its audiences: the owner's `Sessions` (what the owner adds is the owner's), the
+// kinds of things the owner may add (`ThingKindCatalog`, from `ThingKinds`, served here), a screen's `SessionsList`
+// (the owner's every session of an app, a person's their memberships'), a page's `SessionInfo`, and each worker's
+// `SessionFacts` (its row, its things with the agent's options, its report).
 
 import {
 	admitSession,
@@ -23,6 +24,7 @@ import {
 } from "@earendil-works/p3/v1";
 import { PeopleStore, SessionsStore, ThingKinds } from "@earendil-works/p3/v1/server";
 import { serveAccess } from "./access.ts";
+import { serveBring } from "./bring.ts";
 import { currentOptions } from "./options.ts";
 import { serveStore } from "./store.ts";
 import { serveWaker } from "./waker.ts";
@@ -36,10 +38,14 @@ const PAGE = 50;
  */
 const READ_WHOLE = 1000;
 
+/** The owner as a bringer of things. */
+const OWNER = { kind: "owner" } as const;
+
 export default defineFacet((host) => {
 	serveStore(host);
 	serveAccess(host);
 	serveWaker(host);
+	serveBring(host);
 
 	host.serve(ThingKinds, {
 		compose: (table, { report }) => keyedEntries(table, (entry) => ({ [entry.kind.name]: entry }), report),
@@ -48,7 +54,9 @@ export default defineFacet((host) => {
 	host.serve(ThingKindCatalog, (_params, principal, self) => {
 		if (principal.kind !== "owner") throw forbidden("sessions: the owner's");
 		const kinds = self.derive([self.registry(ThingKinds)], ([table]) =>
+			// A kind with records is brought by whose records they are (`BringThings`), never added with `{ kind }`.
 			[...table.values()]
+				.filter(({ value }) => value.records === undefined)
 				.map(({ value }) => ({ kind: value.kind.name, title: value.title }))
 				.sort((a, b) => (a.title < b.title ? -1 : a.title > b.title ? 1 : 0)),
 		);
@@ -57,7 +65,12 @@ export default defineFacet((host) => {
 
 	host.serve(Sessions, (_params, principal, self) => {
 		if (principal.kind !== "owner") throw forbidden("sessions: the owner's");
-		return forward(self.get(SessionsStore, {}), Sessions, "owner");
+		const store = self.get(SessionsStore, {});
+		// What the owner adds is the owner's.
+		return forward(store, Sessions, "owner", {
+			create: (args, ctx) => store.create({ ...args, by: OWNER }, ctx),
+			addThing: (args, ctx) => store.addThing({ ...args, by: OWNER }, ctx),
+		});
 	});
 
 	host.serve(SessionsList, ({ app, set }, principal, self) => {
@@ -96,10 +109,10 @@ export default defineFacet((host) => {
 					things: self.derive([things, defaults, kinds], ([of, set, table]) => {
 						if (of.more || set.more) fail(`session ${session} has more than ${READ_WHOLE} things`);
 						const stored = new Map(set.rows.map((row) => [row.thing, row]));
-						return of.rows.map(({ thing, kind, ref }) => {
+						return of.rows.map(({ thing, kind, ref, by }) => {
 							const row = stored.get(thing);
 							const options = row === undefined ? undefined : currentOptions(table.get(kind)?.value, row);
-							return { thing, kind, ref, options: options?.options ?? null };
+							return { thing, kind, ref, by, options: options?.options ?? null };
 						});
 					}),
 					members: self.derive([members], ([{ rows, more }]) => {

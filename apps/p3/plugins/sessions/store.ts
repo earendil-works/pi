@@ -2,11 +2,14 @@
 // delete carry them), their named queries, and every write. `create`, `addMember`, `addThing` and `setOptions` check
 // what they are given (a trust boundary: the owner's wire input through `Sessions`, and apps' server code): the app is
 // installed, the environment, persons and groups exist, a thing's kind is installed and its options pass its schema.
+// Each thing says who brought it (`by`: the owner, an app, a person): a member removed, or a person leaving the Pi,
+// takes the things they brought along.
 
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import {
 	and,
+	type Bringer,
 	type Ctx,
 	checkValue,
 	defineColumns,
@@ -102,16 +105,20 @@ const Members = defineTable("sessions.members", {
 
 /** A session's things' columns: a set, so a thing's options can be joined with their thing. */
 const ThingColumns = defineColumns("sessions.thing-columns", {
-	columns: { session: hostColumn(Session), thing: str(), kind: str(), ref: str(), position: int() },
+	columns: { session: hostColumn(Session), thing: str(), kind: str(), ref: str(), by: str(), position: int() },
 	key: ["session", "thing"],
 });
 
-/** A session's things: its id in the session, its kind, its record, its position in the order they were added. */
+/**
+ * A session's things: its id in the session, its kind, its record, who brought it (`owner`, `app`, `person:<id>`)
+ * and its position in the order they were added. By position for a session's things, by bringer for a person who
+ * leaves the Pi.
+ */
 const Things = defineTable("sessions.things", {
 	version: 1,
 	columns: { ...ThingColumns.columns },
 	key: ["session", "thing"],
-	indexes: { by_position: ["session", "position"] },
+	indexes: { by_position: ["session", "position"], by_bringer: ["by"] },
 	exposes: ThingColumns,
 });
 
@@ -182,16 +189,17 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			if (failed !== undefined) throw invalid("args", `sessions: options of ${kind.name}: ${failed}`);
 			return { kind: kind.name, ref: thing.ref ?? "", version: kind.version, options: given };
 		};
-		/** Writes thing `thing` of session `id` at `position` with its default options. */
+		/** Writes thing `thing` of session `id`, brought by `by`, at `position` with its default options. */
 		const putThing = (
 			tx: Tx,
 			id: string,
 			thing: string,
 			position: number,
+			by: Bringer | undefined,
 			checked: ReturnType<typeof checkedThing>,
 		) => {
 			const session = Session({ id });
-			tx.put(things, { session, thing, kind: checked.kind, ref: checked.ref, position });
+			tx.put(things, { session, thing, kind: checked.kind, ref: checked.ref, by: bringerKey(by), position });
 			tx.put(options, { session, thing, for: "everyone", version: checked.version, options: checked.options });
 		};
 		/** The position after session `id`'s last member (index `by_position`). */
@@ -213,6 +221,23 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			const found = await environments.environments.one.page({ id: location.environment }, 1, ctx);
 			if (found.items.length === 0) throw invalid("args", `sessions: no environment ${location.environment}`);
 		};
+		/** Deletes thing `thing` of session `id` and its options, each by its key. */
+		const deleteThing = async (tx: Tx, id: string, thing: string) => {
+			const session = Session({ id });
+			tx.delete(things, { session, thing });
+			// The key's prefix `session`, `thing`: the thing's options, every one.
+			const of = query(Options).where((o) => and(eq(o.session, session), eq(o.thing, thing)));
+			for await (const row of tx.rows(options, of)) tx.delete(options, { session, thing, for: row.for });
+		};
+		/** Deletes member `member` of session `id`, the options set for it, and the things it brought. */
+		const deleteMember = async (tx: Tx, id: string, member: string) => {
+			const session = Session({ id });
+			tx.delete(members, { session, member });
+			await deleteOptions(tx, id, (row) => row.for === member);
+			// The key's prefix `session`, `by` filtered: a group brings nothing, a person their own.
+			const brought = query(Things).where((t) => and(eq(t.session, session), eq(t.by, member)));
+			for await (const row of tx.rows(things, brought)) await deleteThing(tx, id, row.thing);
+		};
 		/** Deletes session `id`'s options that `matches` keeps, each by its key (readers of other rows skip). */
 		const deleteOptions = async (tx: Tx, id: string, matches: (row: RowOf<typeof OPTIONS>) => boolean) => {
 			const session = Session({ id });
@@ -226,7 +251,7 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		};
 		return {
 			...namedQueries(self, { rows, members, options }),
-			create: async ({ app, title, location, members: given, things: added }, ctx) => {
+			create: async ({ app, title, location, members: given, things: added, by }, ctx) => {
 				if (!apps.value.has(app)) throw invalid("args", `sessions: no app ${app}`);
 				const id = crypto.randomUUID();
 				const where = location ?? { environment: THIS_DEVICE, folder: join(runtime.value.dataDir, "folders", id) };
@@ -258,7 +283,7 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 					let position = 0;
 					for (const [member, { access }] of parties)
 						tx.put(members, { session, member, access, position: position++ });
-					for (const [at, thing] of checked.entries()) putThing(tx, id, crypto.randomUUID(), at, thing);
+					for (const [at, thing] of checked.entries()) putThing(tx, id, crypto.randomUUID(), at, by, thing);
 					return null;
 				}, ctx);
 				return id;
@@ -279,25 +304,41 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			},
 			removeMember: ({ session, party }, ctx) =>
 				self.tx(async (tx) => {
-					const member = keyOf(party);
-					tx.delete(members, { session: Session({ id: session }), member });
-					await deleteOptions(tx, session, (row) => row.for === member);
+					await deleteMember(tx, session, keyOf(party));
 					return null;
 				}, ctx),
-			addThing: async ({ session, thing }, ctx) => {
+			removePerson: ({ person }, ctx) =>
+				self.tx(async (tx) => {
+					const member = `person:${person}`;
+					// Index `by_member`: every session they are in, no cap (a membership left over would grant access).
+					for await (const row of tx.rows(
+						members,
+						query(Members).where((m) => eq(m.member, member)),
+					)) {
+						await deleteMember(tx, row.session.params.id, member);
+					}
+					// Index `by_bringer`: what they brought into sessions they are no member of any more.
+					for await (const row of tx.rows(
+						things,
+						query(Things).where((t) => eq(t.by, member)),
+					)) {
+						await deleteThing(tx, row.session.params.id, row.thing);
+					}
+					return null;
+				}, ctx),
+			addThing: async ({ session, thing, by }, ctx) => {
 				const checked = checkedThing(thing);
 				const id = crypto.randomUUID();
 				await self.tx(async (tx) => {
 					await mustExist(tx, session);
-					putThing(tx, session, id, await nextThing(tx, session), checked);
+					putThing(tx, session, id, await nextThing(tx, session), by, checked);
 					return null;
 				}, ctx);
 				return id;
 			},
 			removeThing: ({ session, thing }, ctx) =>
 				self.tx(async (tx) => {
-					tx.delete(things, { session: Session({ id: session }), thing });
-					await deleteOptions(tx, session, (row) => row.thing === thing);
+					await deleteThing(tx, session, thing);
 					return null;
 				}, ctx),
 			setOptions: ({ session, thing, for: by, options: given }, ctx) =>
@@ -419,10 +460,11 @@ function namedQueries(
 					thing: row.thing,
 					kind: thing.kind as string,
 					ref: thing.ref as string,
+					by: bringerOf(thing.by as string),
 					options: row.options as JsonValue,
 				}),
 				reads: ["thing", "options"],
-				partnerReads: ["kind", "ref"],
+				partnerReads: ["kind", "ref", "by"],
 			},
 			{
 				// The key's prefix `session`, `for` filtered. Ordered by the thing's `position`, a column of the
@@ -487,6 +529,16 @@ export function keyOf(party: Party): string {
 function partyOf(key: string): Party {
 	const colon = key.indexOf(":");
 	return { kind: key.slice(0, colon) as Party["kind"], id: key.slice(colon + 1) };
+}
+
+/** Who brought a thing, in the tables: `owner`, `app` (also when nobody is named: apps' server code), `person:<id>`. */
+function bringerKey(by: Bringer | undefined): string {
+	return by === undefined || by.kind !== "person" ? (by?.kind ?? "app") : `person:${by.id}`;
+}
+
+/** Who brought a thing, of its key in the tables (written by `bringerKey`). */
+function bringerOf(key: string): Bringer {
+	return key === "owner" || key === "app" ? { kind: key } : { kind: "person", id: key.slice("person:".length) };
 }
 
 /** Whose options in the tables: `everyone`, `agent`, `person:<id>`, `group:<id>`. */

@@ -27,7 +27,13 @@ who is in it, what it has and where it works (members, things, location, title, 
 
 - **The owner** works in and manages every session.
 - **A person** works in a session as one of its members says: `write` wins over `read`, a direct membership and one
-  through a group count alike. A person manages nothing through the base.
+  through a group count alike. A person who writes may also **bring their own things** into it (their mail, their
+  calendar: records a kind's plugin says are theirs), and withdraw or set the options of what they brought. A person
+  manages nothing else (members, the location, the owner's things).
+- **What anyone brings, everyone in the session uses**, through its views and through the agent: a guest who writes
+  can have the agent read the mail another member brought. What each person sees and may do in a thing's view is that
+  thing's admission (`admitThing`: their access and the options that apply to them). Removing a member removes the
+  things they brought.
 - **An app manages its sessions in its server code** (`SessionsStore`, server only), and gives its people the
   narrower actions it wants as objects of its own ("a player starts a chat with the coaches").
 - **A session's worker** works in its own session only.
@@ -61,9 +67,10 @@ archived. An archived session starts for the owner only.
 
 ## Things
 
-- **A thing's plugin owns its records** (a login, an MCP server's configuration). **The sessions plugin owns only
-  which things a session has and their options**: `{ thing, kind, options }` per session. Removing a thing from a
-  session deletes nothing elsewhere.
+- **A thing's plugin owns its records** (a login, an MCP server's configuration) and says which of them a person may
+  bring (their own: `ThingKinds`' `records`). **The sessions plugin owns only which things a session has, who brought
+  each, and their options**: `{ thing, kind, ref, by, options }` per session. Removing a thing from a session deletes
+  nothing elsewhere. A kind without records (the coding tools: the Pi's machine) is added by the owner and apps only.
 - **Options are one whole object, typed by the kind**, and exactly one applies to a caller: the person's own in this
   session, else the first of the caller's groups in the session's member order that has one, else the session's
   default. Nothing is merged, so no disagreement can fall back to more than one choice gave. The agent is one more
@@ -210,6 +217,8 @@ removes one person, and restarts the server mid-call. A base edit or a plugin-sp
   page (records of a kind come with logins, ERNDL-705) and `thingOf(Kind, options?, ref?)`; a kind's `migrate`; one
   `Party` for who a member is; `Harness`, `StoreStorage`, `createRegistry`, `createModels` in `/v1/worker` are p3's
   own and outside the promise.
+- Mario (2026-11-22): write members bring their own things and views; `BringThings`, `ThingKinds.records`, a
+  thing's `by`; a removed member's brought things go with them.
 - Astra, review of the contracts: anyone may ask the access answer about themselves (an admission asks as its
   object's caller); `ThingAccess` and `admitThing` carry the thing's `ref`; a worker matches its kind's version
   before it gives a thing anything; work starts only through `SessionHarness.submit`; an archived session opens

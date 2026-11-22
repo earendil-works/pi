@@ -1,6 +1,7 @@
 // What the sessions plugin's plugin-tier tests load beside it: the real server facets of the plugins its store reads
-// (people, environments, apps, the coding app, sign-in), and a test kind of thing whose entry a test changes live
-// (`setNotes`: its version, its migration), as a reload of its plugin would.
+// (people, environments, apps, the coding app, sign-in), a test kind of thing without records whose entry a test
+// changes live (`setNotes`: its version, its migration), as a reload of its plugin would; the notes test plugin (a
+// kind with each person's own records), and a kind whose records throw.
 
 import {
 	contribute,
@@ -14,6 +15,7 @@ import {
 	type Writable,
 } from "@earendil-works/p3/v1";
 import { type ThingKindEntry, ThingKinds } from "@earendil-works/p3/v1/server";
+import recordNotesServer from "../../../test/plugins/notes/server.ts";
 import appsServer from "../../apps/server.ts";
 import codingServer from "../../coding/server.ts";
 import environmentsServer from "../../environments/server.ts";
@@ -46,6 +48,17 @@ const notesServer = defineFacet((host) => {
 	});
 });
 
+/** A kind whose `records` throws: left out of what a writer may bring, and reported. */
+const brokenRecordsServer = defineFacet((_host, self) => {
+	self.contribute(ThingKinds, {
+		kind: defineThingKind("broken.records", { version: 1, options: obj({}), initial: {} }) as ThingKindEntry["kind"],
+		title: "Broken",
+		records: async () => {
+			throw new Error("no records today");
+		},
+	});
+});
+
 /** The facets the sessions plugin is tested beside. */
 export const STUBS: readonly PluginFacet<P3Principal>[] = [
 	{ name: "@earendil-works/p3-apps", facet: appsServer },
@@ -53,7 +66,9 @@ export const STUBS: readonly PluginFacet<P3Principal>[] = [
 	{ name: "@earendil-works/p3-environments", facet: environmentsServer },
 	{ name: "@earendil-works/p3-people", facet: peopleServer },
 	{ name: "@earendil-works/p3-sign-in", facet: signInServer },
-	{ name: "p3-test-notes", facet: notesServer },
+	{ name: "p3-test-kind", facet: notesServer },
+	{ name: "p3-test-notes", facet: recordNotesServer },
+	{ name: "p3-test-broken-records", facet: brokenRecordsServer },
 ];
 
 /** A version of `NOTES` at `version`, with `migrate` (none: no migration). */
