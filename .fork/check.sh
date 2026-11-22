@@ -19,6 +19,14 @@ ensure_ai_deps_built() {
 		echo "building $pkg (dist missing)"
 		(cd "$dir" && npm run build >/dev/null)
 	done
+	if [[ ! -d "packages/ai/dist" ]]; then
+		echo "building @earendil-works/pi-ai (dist missing)"
+		(
+			cd packages/ai
+			npm run check:model-data >/dev/null 2>&1 || npm run hydrate-model-data >/dev/null
+			npm run build:offline >/dev/null
+		)
+	fi
 }
 
 case "${1:-focused}" in
@@ -35,8 +43,10 @@ case "${1:-focused}" in
 			openai-responses-mid-convo-effort openai-codex-stream openai-responses-compat
 			openai-completions-tool-choice images-models
 			native-providers-catalog native-providers-kimi-wire
+			virtual-models-runtime
 		)
 		core_agent_tests=(agent-loop agent-request-update)
+		durable_tests=(virtual-models-durable)
 		agent_tests=(
 			add-endpoint-provider remote-catalog-names anthropic-oauth-prompt-drift references
 			virtual-models interactive-mode-suppressed-messages
@@ -46,6 +56,7 @@ case "${1:-focused}" in
 		missing=()
 		for t in "${ai_tests[@]}"; do [[ -f "packages/ai/test/$t.test.ts" ]] || missing+=("packages/ai/test/$t.test.ts"); done
 		for t in "${core_agent_tests[@]}"; do [[ -f "packages/agent/test/$t.test.ts" ]] || missing+=("packages/agent/test/$t.test.ts"); done
+		for t in "${durable_tests[@]}"; do [[ -f "packages/durable/test/$t.test.ts" ]] || missing+=("packages/durable/test/$t.test.ts"); done
 		for t in "${agent_tests[@]}"; do [[ -f "packages/coding-agent/test/$t.test.ts" ]] || missing+=("packages/coding-agent/test/$t.test.ts"); done
 		if [[ ${#missing[@]} -gt 0 ]]; then
 			printf 'focused test file missing (is its branch merged into this checkout?): %s\n' "${missing[@]}" >&2
@@ -54,6 +65,7 @@ case "${1:-focused}" in
 		ensure_ai_deps_built
 		(cd packages/ai && npx vitest run "${ai_tests[@]/#/test/}")
 		(cd packages/agent && npx vitest run "${core_agent_tests[@]/#/test/}")
+		(cd packages/durable && npx vitest run "${durable_tests[@]/#/test/}")
 		(cd packages/coding-agent && npx vitest run "${agent_tests[@]/#/test/}")
 		;;
 	all)
