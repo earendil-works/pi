@@ -42,6 +42,7 @@
 			"@earendil-works/pi-codemode": ["./packages/codemode/src/index.ts"],
 			"@earendil-works/pi-codemode/cloudflare": ["./packages/codemode/src/cloudflare.ts"],
 			"@earendil-works/pi-codemode/declarations": ["./packages/codemode/src/declarations.ts"],
+			"@earendil-works/pi-codemode/djs": ["./packages/codemode/src/djs.ts"],
 			"@earendil-works/pi-codemode/portable": ["./packages/codemode/src/portable.ts"],
 			"@earendil-works/pi-codemode/source": ["./packages/codemode/src/source.ts"],
 			"@earendil-works/pi-codemode/worker": ["./packages/codemode/src/runtime/worker.ts"],

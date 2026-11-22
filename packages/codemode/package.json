@@ -35,6 +35,11 @@
 			"source": "./src/runtime/worker.ts",
 			"types": "./dist/runtime/worker.d.ts",
 			"import": "./dist/runtime/worker.js"
+		},
+		"./djs": {
+			"source": "./src/djs.ts",
+			"types": "./dist/djs.d.ts",
+			"import": "./dist/djs.js"
 		}
 	},
 	"files": [

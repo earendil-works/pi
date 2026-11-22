@@ -39,6 +39,7 @@ import { ownedSlice } from "@earendil-works/chord/delta";
 import { copyJson, type JsonValue } from "@earendil-works/chord/json";
 import type { TextContent } from "@earendil-works/pi-ai";
 import { toCodemodeIdentifier } from "@earendil-works/pi-codemode/declarations";
+import type { DjsCodemode } from "@earendil-works/pi-codemode/djs";
 import type {
 	CodemodeHostCall,
 	CodemodeOutcome,
@@ -70,6 +71,7 @@ import {
 	namespacesOf,
 	sampleOf,
 } from "./describe.ts";
+import { DjsCodemodeCall } from "./djs-call.ts";
 import {
 	CATALOG_GLOBALS,
 	CODEMODE_INTERNAL_PREFIX,
@@ -98,7 +100,7 @@ export const CODEMODE_TOOL_NAME = "codemode";
 type DeclaredTool = { name: string; jsName: string; description: string; structured?: true; hidden?: true };
 
 /** What a call starts with; a rerun starts the VM from exactly this. */
-type Start = {
+export type Start = {
 	version: number;
 	startedAt: number;
 	seed: number;
@@ -220,7 +222,14 @@ export type CodemodeToolInput = Static<typeof codemodeSchema>;
 
 export type CodemodeToolOptions = {
 	/** Runs the scripts: `CodemodeSandbox` on Node, `RemoteCodemodeSandbox` on Cloudflare. */
-	readonly sandbox: CodemodeSandboxBase;
+	readonly sandbox?: CodemodeSandboxBase;
+	/**
+	 * Runs the scripts on djs instead (prototype): no replay; an idle script is saved as a dump, and parks while its
+	 * calls take longer than `parkAfterMs`.
+	 */
+	readonly djs?: DjsCodemode;
+	/** With `djs`: how long the script waits on its calls before it parks. Default 1000. */
+	readonly parkAfterMs?: number;
 	/** Estimated tokens the tool declarations in the `codemode` section may use. Default 3000. */
 	readonly inlineBudget?: number;
 	/** Give scripts `models.*`: the model catalog, classifiers, and image generation. Default true. */
@@ -230,10 +239,10 @@ export type CodemodeToolOptions = {
 };
 
 /** Outputs bounded by the script's own token budget; the Harness's limits only stop a runaway. */
-const OUTPUT_LIMITS = { maxBytes: 4 * 1024 * 1024, maxLines: 100_000 } as const;
+export const OUTPUT_LIMITS = { maxBytes: 4 * 1024 * 1024, maxLines: 100_000 } as const;
 
 /** Globals for finding tools, answered from the start data, so a replay sees what the first run saw. */
-const DISCOVERY_GLOBALS = ["searchTools", "describeTool", "describeNamespace"] as const;
+export const DISCOVERY_GLOBALS = ["searchTools", "describeTool", "describeNamespace"] as const;
 const DEFAULT_SEARCH_LIMIT = 8;
 
 /** The code mode tool. Scripts call the conversation's callable tools as `tools.<name>(args)`. */
@@ -247,7 +256,10 @@ export function createCodemodeTool(options: CodemodeToolOptions): ToolRegistrati
 		constrainedSampling: { type: "grammar", variants: { openai_lark: CODEMODE_SOURCE_GRAMMAR } },
 		callers: ["model"],
 		replay: "safe",
-		execute: (args, api, context) => new CodemodeCall(options, api, context).execute(args.code),
+		execute: (args, api, context) =>
+			options.djs !== undefined
+				? new DjsCodemodeCall(options, options.djs, api, context).execute(args.code)
+				: new CodemodeCall(options, api, context).execute(args.code),
 	});
 }
 
@@ -279,7 +291,7 @@ export function createCodemodeExtension(options: CodemodeToolOptions): Extension
  * resolves with its text output, images left out, as its declaration says. Any other error rejects, with its text: a
  * schema-less tool's output, else its error diagnostics.
  */
-function outcomeOf(name: string, structured: boolean, result: NestedToolExecutionResult): CodemodeOutcome {
+export function outcomeOf(name: string, structured: boolean, result: NestedToolExecutionResult): CodemodeOutcome {
 	const value = structured ? result.structuredOutput : textOf(result.structuredOutput);
 	if (!result.isError || (structured && value !== undefined)) return { ok: true, value };
 	const message = structured ? "" : (value as string);
@@ -305,8 +317,39 @@ function isText(item: unknown): item is TextContent {
 	return typeof item === "object" && item !== null && (item as TextContent).type === "text";
 }
 
-function errorResult(message: string): ToolExecutionResult {
+export function errorResult(message: string): ToolExecutionResult {
 	return { output: [{ type: "text", text: message }], isError: true };
+}
+
+/** What a script started now can reach: the conversation's callable tools, namespaces, and globals. */
+export async function declaredScope(
+	options: CodemodeToolOptions,
+	api: ToolExecutionApi,
+	context: Context,
+): Promise<Pick<Start, "tools" | "namespaces" | "globals">> {
+	const agent = await api.agent(context);
+	const tools: DeclaredTool[] = agent.callable.map((tool) => ({
+		name: tool.name,
+		jsName: toCodemodeIdentifier(tool.name),
+		description: sampleOf(tool),
+		...(tool.structuredOutputSchema === undefined ? {} : { structured: true as const }),
+		...(tool.name.startsWith(CODEMODE_INTERNAL_PREFIX) ? { hidden: true as const } : {}),
+	}));
+	const callable = agent.callable.filter((tool) => !tool.name.startsWith(CODEMODE_INTERNAL_PREFIX));
+	const models = options.models === false ? [] : [...CATALOG_GLOBALS, ...Object.keys(MODEL_CALLS)];
+	const globals = [
+		...DISCOVERY_GLOBALS.map((name) => ({ name, spread: true })),
+		...models.map((name) => ({ name, spread: true })),
+		...(options.globals ?? []).map((global) => ({ name: global.name, spread: global.spread === true })),
+	];
+	const toolNamespaces = namespacesOf(agent.extensions);
+	const namespaces: Start["namespaces"] = declaredNamespaces(agent.extensions).map((namespace) => ({
+		name: namespace.name,
+		description: namespace.description,
+		...(namespace.instructions === undefined ? {} : { instructions: namespace.instructions }),
+		tools: callable.filter((tool) => toolNamespaces.get(tool.name)?.name === namespace.name).map((tool) => tool.name),
+	}));
+	return { tools, namespaces, globals };
 }
 
 /** One execution of the code mode tool: a first run, or a rerun after a restart that replays the journal. */
@@ -373,30 +416,7 @@ class CodemodeCall {
 	async execute(source: string): Promise<ToolExecutionResult> {
 		const { code, options: sourceOptions } = parseCodemodeSource(source);
 		const { api, context } = this;
-		const agent = await api.agent(context);
-		const tools: DeclaredTool[] = agent.callable.map((tool) => ({
-			name: tool.name,
-			jsName: toCodemodeIdentifier(tool.name),
-			description: sampleOf(tool),
-			...(tool.structuredOutputSchema === undefined ? {} : { structured: true as const }),
-			...(tool.name.startsWith(CODEMODE_INTERNAL_PREFIX) ? { hidden: true as const } : {}),
-		}));
-		const callable = agent.callable.filter((tool) => !tool.name.startsWith(CODEMODE_INTERNAL_PREFIX));
-		const models = this.options.models === false ? [] : [...CATALOG_GLOBALS, ...Object.keys(MODEL_CALLS)];
-		const globals = [
-			...DISCOVERY_GLOBALS.map((name) => ({ name, spread: true })),
-			...models.map((name) => ({ name, spread: true })),
-			...(this.options.globals ?? []).map((global) => ({ name: global.name, spread: global.spread === true })),
-		];
-		const toolNamespaces = namespacesOf(agent.extensions);
-		const namespaces: Start["namespaces"] = declaredNamespaces(agent.extensions).map((namespace) => ({
-			name: namespace.name,
-			description: namespace.description,
-			...(namespace.instructions === undefined ? {} : { instructions: namespace.instructions }),
-			tools: callable
-				.filter((tool) => toolNamespaces.get(tool.name)?.name === namespace.name)
-				.map((tool) => tool.name),
-		}));
+		const { tools, namespaces, globals } = await declaredScope(this.options, api, context);
 		const now = api.now();
 		const seed = crypto.getRandomValues(new Uint32Array(1))[0]!;
 		type Found =
@@ -461,7 +481,7 @@ class CodemodeCall {
 		context.abortSignal?.addEventListener("abort", onAbort, { once: true });
 		if (context.abortSignal?.aborted) onAbort();
 		try {
-			this.run = this.options.sandbox.start(code, {
+			this.run = this.options.sandbox!.start(code, {
 				startedAt: this.start.startedAt,
 				seed: this.start.seed,
 				tools: this.start.tools.filter((tool) => tool.hidden !== true),
@@ -907,51 +927,7 @@ class CodemodeCall {
 
 	/** `searchTools()`, `describeTool()`, `describeNamespace()`: answered from the start data. */
 	private discover(call: CodemodeHostCall): JsonValue | undefined {
-		const args = Array.isArray(call.args) ? call.args : [];
-		const { namespaces } = this.start;
-		const tools = this.start.tools.filter((tool) => tool.hidden !== true);
-		const namespaceOfTool = (name: string) => namespaces.find((namespace) => namespace.tools.includes(name));
-		const matchesNamespace = (namespace: Start["namespaces"][number], query: string) =>
-			namespace.name === query || toCodemodeIdentifier(namespace.name) === toCodemodeIdentifier(query);
-		if (call.name === "describeTool") {
-			const [name] = args;
-			if (typeof name !== "string") throw new Error("describeTool() expects a tool name");
-			return tools.find((tool) => tool.name === name || tool.jsName === name)?.description;
-		}
-		if (call.name === "describeNamespace") {
-			const [name] = args;
-			if (typeof name !== "string") throw new Error("describeNamespace() expects a namespace name");
-			const namespace = namespaces.find((candidate) => matchesNamespace(candidate, name));
-			if (namespace === undefined) return undefined;
-			return {
-				name: namespace.name,
-				...(namespace.description === undefined ? {} : { description: namespace.description }),
-				...(namespace.instructions === undefined ? {} : { instructions: namespace.instructions }),
-				tools: namespace.tools.map((tool) => toCodemodeIdentifier(tool)),
-			};
-		}
-		const [query, options] = args as [unknown, { limit?: unknown; namespace?: unknown } | undefined];
-		if (typeof query !== "string") throw new Error("searchTools() expects a query string");
-		const limit = options?.limit ?? DEFAULT_SEARCH_LIMIT;
-		if (typeof limit !== "number" || !Number.isInteger(limit) || limit <= 0) {
-			throw new Error("searchTools() limit must be a positive integer");
-		}
-		const namespace = options?.namespace;
-		if (namespace !== undefined && namespace !== null && typeof namespace !== "string") {
-			throw new Error("searchTools() namespace must be a string");
-		}
-		const documents = tools.flatMap((tool) => {
-			const own = namespaceOfTool(tool.name);
-			if (typeof namespace === "string" && (own === undefined || !matchesNamespace(own, namespace))) return [];
-			const namespaceText =
-				own === undefined ? "" : [own.name, own.description ?? "", own.instructions ?? ""].join(" ");
-			// `description` is the tool's sample: its description and declaration, with the parameters' names and descriptions.
-			return [{ name: tool.name, text: tool.description, namespaceText }];
-		});
-		return rankDocuments(query, documents, limit).map((name) => {
-			const tool = tools.find((candidate) => candidate.name === name)!;
-			return { name: tool.jsName, description: tool.description };
-		});
+		return discover(this.start, call);
 	}
 
 	/**
@@ -1001,8 +977,57 @@ class CodemodeCall {
 	}
 }
 
+/** `searchTools()`, `describeTool()`, `describeNamespace()`: answered from the start data. */
+export function discover(start: Start, call: CodemodeHostCall): JsonValue | undefined {
+	const args = Array.isArray(call.args) ? call.args : [];
+	const { namespaces } = start;
+	const tools = start.tools.filter((tool) => tool.hidden !== true);
+	const namespaceOfTool = (name: string) => namespaces.find((namespace) => namespace.tools.includes(name));
+	const matchesNamespace = (namespace: Start["namespaces"][number], query: string) =>
+		namespace.name === query || toCodemodeIdentifier(namespace.name) === toCodemodeIdentifier(query);
+	if (call.name === "describeTool") {
+		const [name] = args;
+		if (typeof name !== "string") throw new Error("describeTool() expects a tool name");
+		return tools.find((tool) => tool.name === name || tool.jsName === name)?.description;
+	}
+	if (call.name === "describeNamespace") {
+		const [name] = args;
+		if (typeof name !== "string") throw new Error("describeNamespace() expects a namespace name");
+		const namespace = namespaces.find((candidate) => matchesNamespace(candidate, name));
+		if (namespace === undefined) return undefined;
+		return {
+			name: namespace.name,
+			...(namespace.description === undefined ? {} : { description: namespace.description }),
+			...(namespace.instructions === undefined ? {} : { instructions: namespace.instructions }),
+			tools: namespace.tools.map((tool) => toCodemodeIdentifier(tool)),
+		};
+	}
+	const [query, options] = args as [unknown, { limit?: unknown; namespace?: unknown } | undefined];
+	if (typeof query !== "string") throw new Error("searchTools() expects a query string");
+	const limit = options?.limit ?? DEFAULT_SEARCH_LIMIT;
+	if (typeof limit !== "number" || !Number.isInteger(limit) || limit <= 0) {
+		throw new Error("searchTools() limit must be a positive integer");
+	}
+	const namespace = options?.namespace;
+	if (namespace !== undefined && namespace !== null && typeof namespace !== "string") {
+		throw new Error("searchTools() namespace must be a string");
+	}
+	const documents = tools.flatMap((tool) => {
+		const own = namespaceOfTool(tool.name);
+		if (typeof namespace === "string" && (own === undefined || !matchesNamespace(own, namespace))) return [];
+		const namespaceText =
+			own === undefined ? "" : [own.name, own.description ?? "", own.instructions ?? ""].join(" ");
+		// `description` is the tool's sample: its description and declaration, with the parameters' names and descriptions.
+		return [{ name: tool.name, text: tool.description, namespaceText }];
+	});
+	return rankDocuments(query, documents, limit).map((name) => {
+		const tool = tools.find((candidate) => candidate.name === name)!;
+		return { name: tool.jsName, description: tool.description };
+	});
+}
+
 /** A script's call of `models.classify()` or `models.generateImages()` as the call of its internal tool. */
-function asToolCall(call: CodemodeHostCall): CodemodeHostCall {
+export function asToolCall(call: CodemodeHostCall): CodemodeHostCall {
 	const tool = call.target === "global" ? MODEL_CALLS[call.name] : undefined;
 	if (tool === undefined) return call;
 	const [model, context] = Array.isArray(call.args) ? call.args : [];
@@ -1015,7 +1040,7 @@ function countImages(value: unknown): number {
 	return Array.isArray(output) ? output.filter((item) => (item as { type?: unknown })?.type === "image").length : 0;
 }
 
-function describe(call: CodemodeHostCall): string {
+export function describe(call: CodemodeHostCall): string {
 	return `${call.target === "tool" ? "tools." : ""}${call.name}(${JSON.stringify(call.args) ?? ""})`;
 }
 
