@@ -371,7 +371,10 @@ class PluginsComponent implements Plugins {
 		return awaitWithContext(making, context);
 	}
 
-	/** Makes `kind`'s first set and keeps it as the current one. */
+	/**
+	 * Makes `kind`'s first set and keeps it as the current one, unless `context` (the component's) aborted meanwhile: a
+	 * close during the making publishes nothing, also when every build it needed was done already.
+	 */
 	async #makeSet(kind: string, context: Context): Promise<Map<string, PluginScript>> {
 		if (!this.#discovered) await this.#discover(context);
 		const plugins = this.#discovery.plugins.filter((plugin) => plugin.facets[kind] !== undefined);
@@ -382,6 +385,7 @@ class PluginsComponent implements Plugins {
 				return { plugin, built };
 			}),
 		);
+		context.abortSignal?.throwIfAborted();
 		const set = new Map(scripts.map((script) => [script.plugin.name, script]));
 		this.#current.set(kind, set);
 		return set;

@@ -485,6 +485,19 @@ describe("current sets (slice 10 D11)", () => {
 		plugins.close();
 		await expect(making).rejects.toThrow("plugins: the component closed");
 	});
+
+	// Astra S2, review round 4 of ERNDL-954: with discovery and the builds done already, the making had nothing left to
+	// check its abort at, and published the current set after the close.
+	it("a close aborts a first making whose builds are done, and publishes no current set", async () => {
+		const root = await tempRoot();
+		await itemPlugin(root, "a", "a");
+		const { plugins } = await component(root);
+		await plugins.build([], context);
+		const making = plugins.scripts("worker", context);
+		plugins.close();
+		await expect(making).rejects.toThrow("plugins: the component closed");
+		expect(plugins.current("worker")).toBeUndefined();
+	});
 });
 
 describe("installs through the component", () => {
