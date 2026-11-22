@@ -164,6 +164,7 @@ export class DjsCodemodeCall {
 		// Whether the VM moved on since the stored dump. Saving is needed only before something leaves the VM (a call
 		// launches, the script parks): results applied since the last save come back from their nested calls.
 		let dirty = fresh;
+		if (fresh) await vm.advance(context.abortSignal);
 		for (;;) {
 			context.abortSignal?.throwIfAborted();
 			if (this.failure !== undefined) throw this.failure;
@@ -206,7 +207,7 @@ export class DjsCodemodeCall {
 				this.tasks.delete(id);
 			}
 			dirty = true;
-			await vm.advance();
+			await vm.advance(context.abortSignal);
 		}
 	}
 

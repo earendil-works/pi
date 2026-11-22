@@ -75,6 +75,36 @@ async function resultText(root: Awaited<ReturnType<typeof openChat>>["root"]) {
 	return { isError: message.isError, text: message.content.map((item) => item.text ?? "").join("\n") };
 }
 
+describe.runIf(djsReady)("the djs code mode VM", () => {
+	const scope = { tools: [{ name: "ask", jsName: "ask", description: "" }], globals: [], store: {} };
+
+	it("passes values as JSON, ends the script at exit(), and bounds a runaway step", async () => {
+		const djs = await DjsCodemode.load();
+		const vm = djs.begin(
+			`const r = await tools.ask({ when: new Date(0), m: new Map([[1, 2]]) });
+			try { exit(); } catch { store("caught", true); }
+			text("unreachable");`,
+			scope,
+		);
+		await vm.advance();
+		expect(vm.calls.map((call) => call.args)).toEqual([[{ when: "1970-01-01T00:00:00.000Z", m: {} }]]);
+		vm.settle(vm.calls[0]!.id, { ok: true, value: "x" });
+		await vm.advance();
+		expect(vm.result).toMatchObject({ ok: true, value: undefined, output: [], storeWrites: { set: {}, delete: [] } });
+		vm.dispose();
+
+		const spin = djs.begin("while (true) {}", scope);
+		let ticks = 0;
+		const timer = setInterval(() => ticks++, 1);
+		await spin.advance();
+		clearInterval(timer);
+		expect(spin.result).toMatchObject({ ok: false, error: { kind: "timeout" } });
+		// The event loop ran while the script computed.
+		expect(ticks).toBeGreaterThan(0);
+		spin.dispose();
+	});
+});
+
 describe.runIf(djsReady)("code mode on djs", () => {
 	it("parks with its dump while a nested call is parked, and resumes it after a reopen", async () => {
 		const path = await sqlitePath();
@@ -163,5 +193,4 @@ return [a, answer, await tools.echo({ text: "two" })];`;
 		expect(await resultText(root)).toMatchObject({ isError: false, text: expect.stringContaining("kept object") });
 		await harness.close(context);
 	});
-
 });

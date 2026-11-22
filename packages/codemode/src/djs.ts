@@ -13,7 +13,7 @@
  * what the host side has accumulated. `resume()` continues it in a new VM, any time later: the same code and the
  * same scope are all it needs. Nothing replays.
  */
-import { loadModule, type Run, Sandbox } from "../../../../djs/.worktrees/pdurable/js/src/sandbox.ts";
+import { loadModule, type Run, RunExit, Sandbox } from "../../../../djs/js/src/sandbox.ts";
 import {
 	MAX_OUTPUT_CHARS,
 	MAX_OUTPUT_ITEMS,
@@ -68,8 +68,11 @@ export interface CodemodeVm {
 	readonly result: CodemodeResult | undefined;
 	/** Answer call `id`; applied at the next `advance()`. */
 	settle(id: number, outcome: CodemodeOutcome): void;
-	/** Run until the script waits again or ends. */
-	advance(): Promise<void>;
+	/**
+	 * Run until the script waits again or ends: the first step of a `begin`, or the results settled since. Yields to the
+	 * event loop while it computes; `signal` aborts it (it rejects with the abort).
+	 */
+	advance(signal?: AbortSignal): Promise<void>;
 	/** The idle run, persisted. Throws when it cannot be dumped (then keep the previous one). */
 	save(): CodemodeSaved;
 	dispose(): void;
@@ -80,8 +83,8 @@ export interface DjsCodemodeOptions {
 	module: WebAssembly.Module;
 	dumpModule?: WebAssembly.Module;
 	memoryLimitBytes?: number;
-	/** Fuel a VM may use before the script fails as out of fuel. Default 2e9 (a few seconds). */
-	maxFuel?: number;
+	/** Fuel one step (`advance`) may use before the script fails as timed out. Default 2e9 (a few seconds). */
+	stepFuel?: number;
 }
 
 const FILENAME = "codemode.js";
@@ -101,6 +104,7 @@ export class DjsCodemode {
 		return new DjsCodemode({ module, ...(dumpModule === undefined ? {} : { dumpModule }) });
 	}
 
+	/** A new run of `code`; `advance()` runs it to its first idle point. */
 	begin(code: string, scope: CodemodeScope): CodemodeVm {
 		return new DjsVm(this.options, code, scope);
 	}
@@ -114,8 +118,6 @@ export class DjsCodemode {
 	}
 }
 
-class Exit extends Error {}
-
 class DjsVm implements CodemodeVm {
 	result: CodemodeResult | undefined;
 	private readonly sandbox: Sandbox;
@@ -124,9 +126,10 @@ class DjsVm implements CodemodeVm {
 	private readonly writes: Map<string, string | undefined>;
 	private readonly stored: Map<string, string>;
 	private outputChars = 0;
-	private exited = false;
+	private readonly stepFuel: number;
 
 	constructor(options: DjsCodemodeOptions, code: string | undefined, scope: CodemodeScope, saved?: CodemodeSaved) {
+		this.stepFuel = options.stepFuel ?? 2_000_000_000;
 		this.output = saved ? [...saved.output] : [];
 		for (const item of this.output) this.outputChars += item.type === "text" ? item.text.length : item.data.length;
 		this.writes = new Map(saved?.writes.map((w) => [w[0], w[1]]) ?? []);
@@ -159,7 +162,6 @@ class DjsVm implements CodemodeVm {
 			globals[bound] = bound;
 		}
 		const out = (item: CodemodeOutputItem) => {
-			if (this.exited) return;
 			this.outputChars += item.type === "text" ? item.text.length : item.data.length;
 			if (this.outputChars > MAX_OUTPUT_CHARS || this.output.length + 1 > MAX_OUTPUT_ITEMS) {
 				throw new RangeError(
@@ -179,14 +181,11 @@ class DjsVm implements CodemodeVm {
 			functions: {
 				text: (value) => out({ type: "text", text: outputText(value) }),
 				image: (value) => out(imageItem(value)),
+				// Ends the run: the script cannot catch it, and no more of its code runs.
 				exit: () => {
-					this.exited = true;
-					throw new Exit("exit");
+					throw new RunExit();
 				},
-				store: (key, value) => {
-					// After exit() nothing the script does counts.
-					if (!this.exited) this.store(key, value);
-				},
+				store: (key, value) => this.store(key, value),
 				load: (key) => {
 					if (typeof key !== "string") throw new TypeError("load() key must be a string");
 					const json = this.stored.get(key);
@@ -200,8 +199,8 @@ class DjsVm implements CodemodeVm {
 			...(imports.ok && saved === undefined ? { bindings: imports.bindings } : {}),
 			// Dumps carry the body: a resume needs no script, and nothing hashes our preprocessing.
 			inlineSources: true,
-			// A runaway script ends instead of holding the thread (prototype: per VM, until djs bounds each step).
-			maxFuel: options.maxFuel ?? 2_000_000_000,
+			// Arguments, results and the run's value cross as JSON, as pi's prelude made them.
+			jsonBoundary: true,
 		});
 		if (!imports.ok) {
 			this.run = undefined as never;
@@ -210,7 +209,8 @@ class DjsVm implements CodemodeVm {
 		}
 		if (saved === undefined) {
 			try {
-				this.run = this.sandbox.begin(imports.body, {}, { filename: FILENAME });
+				// The first step runs in `advance()`, bounded like every other.
+				this.run = this.sandbox.begin(imports.body, {}, { filename: FILENAME, start: false });
 			} catch (error) {
 				this.run = undefined as never;
 				if (outOfFuel(error)) this.finish({ kind: "timeout", message: "The script used up its CPU budget" });
@@ -234,11 +234,12 @@ class DjsVm implements CodemodeVm {
 		else this.run.settle(id, { ok: false, value: Object.assign(new Error(outcome.message), outcome.properties) });
 	}
 
-	async advance(): Promise<void> {
+	async advance(signal?: AbortSignal): Promise<void> {
 		if (this.result !== undefined) return;
 		try {
-			await this.run.advance();
+			await this.run.advance({ fuel: this.stepFuel, yieldMs: 10, ...(signal === undefined ? {} : { signal }) });
 		} catch (error) {
+			if (signal?.aborted) throw signal.reason;
 			if (!outOfFuel(error)) throw error;
 			this.finish({ kind: "timeout", message: "The script used up its CPU budget" });
 			return;
@@ -258,10 +259,6 @@ class DjsVm implements CodemodeVm {
 
 	/** After a step: the script's outcome, once it has one. */
 	private check(): void {
-		if (this.exited) {
-			this.finish(undefined, undefined);
-			return;
-		}
 		if (this.run.state === "done") {
 			this.finish(undefined, this.run.value);
 			return;
