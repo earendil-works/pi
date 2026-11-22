@@ -1,8 +1,49 @@
 // p3's API v1 for worker facets (`@earendil-works/p3/v1/worker`): the worker's process values (`WorkerRuntime`) and
-// what keeps it alive (`WorkerBusy`), both served by the base.
+// what keeps it alive (`WorkerBusy`), both served by the base; the built-in plugins' worker contracts p3 promises; and
+// the parts of Durable and pi-ai worker plugins build on (one instance per worker, the versions p3 ships: a plugin
+// inlines neither). `Harness`, `StoreStorage`, `createRegistry` and `createModels` are for p3's own harness plugin and
+// outside v1's promise: a plugin gives the agent tools only through a thing (`ThingExtensions`).
 
 import { type ChordStore, defineRegistry, type Host } from "@earendil-works/chord";
 import type { P3Principal } from "../../app.ts";
+
+export {
+	createModels,
+	createProvider,
+	// pi-ai's faux provider, for plugins' tests: a model login that answers what the test scripts.
+	fauxAssistantMessage,
+	fauxProvider,
+	fauxText,
+	fauxToolCall,
+	type Message,
+	type Models,
+	type MutableModels,
+	type Provider,
+} from "@earendil-works/pi-ai";
+export {
+	type Conversation,
+	type ConversationId,
+	type ConversationView,
+	createRegistry,
+	defineExtension,
+	defineTool,
+	type EntryId,
+	type Extension,
+	Harness,
+	hook,
+	LiveDoc,
+	type LiveState,
+	type Registry,
+	ROOT_CONVERSATION_ID,
+	section,
+	type TaskGraph,
+} from "@earendil-works/pi-durable";
+export type { ExecutionEnv } from "@earendil-works/pi-durable/env";
+export { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
+export { StoreStorage } from "@earendil-works/pi-durable/storage/store";
+export { createCodingTools } from "@earendil-works/pi-durable/tools";
+export * from "../../../plugins/environments/contract.worker.ts";
+export * from "../../../plugins/harness/contract.worker.ts";
 
 /** A session worker's process values, for plugins: what only the base has. */
 export type WorkerRuntime = {

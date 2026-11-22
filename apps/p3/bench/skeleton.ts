@@ -22,7 +22,7 @@ import { ownerClient } from "@earendil-works/p3/v1/testing";
 import { Sessions, SessionWorker } from "../plugins/sessions/contract.ts";
 import { COMMAND } from "../src/install.ts";
 import { askServer, type Reply, type ServerAnswer } from "../src/local-socket.ts";
-import { childrenOf, launch } from "../test/support.ts";
+import { childrenOf, coding, launch } from "../test/support.ts";
 
 /** Node's arguments that run the `p3` command: the release installed in `--release`, else this checkout's source. */
 const { release } = parseArgs({ options: { release: { type: "string" } } }).values;
@@ -63,7 +63,7 @@ try {
 		const starts: number[] = [];
 		const held: { release(): void }[] = [];
 		for (let i = 0; i <= RUNS; i++) {
-			const id = await sessions.create({ title: `s${i}` }, context);
+			const id = await sessions.create(coding(`s${i}`), context);
 			const started = performance.now();
 			held.push(await client.get(SessionWorker, { session: id }, context));
 			starts.push(performance.now() - started);

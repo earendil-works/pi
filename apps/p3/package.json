@@ -23,6 +23,11 @@
 			"types": "./dist/src/api/v1/worker.d.ts",
 			"import": "./dist/src/api/v1/worker.js"
 		},
+		"./v1/web": {
+			"source": "./src/api/v1/web.ts",
+			"types": "./dist/src/api/v1/web.d.ts",
+			"import": "./dist/src/api/v1/web.js"
+		},
 		"./v1/testing": {
 			"source": "./src/api/v1/testing.ts",
 			"types": "./dist/src/api/v1/testing.d.ts",
@@ -49,13 +54,21 @@
 	},
 	"dependencies": {
 		"@earendil-works/chord": "1.6.0",
+		"@earendil-works/design-tokens": "0.1.0",
+		"@earendil-works/elanor-fonts": "0.1.0",
+		"@earendil-works/elanor-icons-react": "0.1.0",
+		"@earendil-works/elanor-react": "0.1.1",
+		"@earendil-works/pi-ai": "1.6.0",
+		"@earendil-works/pi-durable": "1.6.0",
 		"@earendil-works/pi-schema": "1.6.0",
 		"@earendil-works/pi-telemetry": "1.6.0",
 		"esbuild": "0.28.2",
+		"react": "19.3.0",
+		"react-dom": "19.3.0",
 		"ws": "8.21.0"
 	},
 	"devDependencies": {
-		"@earendil-works/pi-ai": "1.6.0",
-		"@earendil-works/pi-durable": "1.6.0"
+		"@types/react": "19.2.14",
+		"@types/react-dom": "19.2.3"
 	}
 }

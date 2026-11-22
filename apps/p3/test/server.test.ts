@@ -34,6 +34,7 @@ import {
 	startWorker,
 	usedRunner,
 } from "../src/server.ts";
+import { coding } from "./support.ts";
 import { eventually } from "./until.ts";
 
 /** A host with the base's facet and one plugin per entry of `plugins`, each contributing what its facet does. */
@@ -159,7 +160,7 @@ async function startOne(running: RunningServer): Promise<string> {
 	return running.runtime.host.root(
 		async (ctx) => {
 			const sessions = await ctx.get(Sessions, {});
-			const id = await sessions.create({ title: "one" }, ctx);
+			const id = await sessions.create(coding("one"), ctx);
 			await ctx.get(SessionWorker, { session: id });
 			return id;
 		},
@@ -249,11 +250,11 @@ describe("the server", () => {
 		assert.equal(applied.kind, "answer");
 		assert.deepEqual(
 			applied.value.steps.map(({ name }) => name),
-			["server", "workers"],
+			["server", "workers", "web"],
 		);
 		assert.equal(applied.value.stopped, null);
-		// Nothing changed: the server's own host reloaded, no worker runs.
-		assert.deepEqual(applied.value.lines, ["server  server  reloaded"]);
+		// Nothing changed: the server's own host reloaded, no worker runs, the page's first set was published.
+		assert.deepEqual(applied.value.lines, ["server  server  reloaded", "web  web  reloaded"]);
 		for (const path of ["/_p3/stop", "/_p3/apply", "/_p3/owner/link"]) {
 			const answer = await fetch(`http://127.0.0.1:${running.port}${path}`, { method: "POST" });
 			assert.equal(answer.status, 404, path);

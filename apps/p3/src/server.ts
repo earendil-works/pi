@@ -7,12 +7,14 @@
 // last, after the store's close. The base's facet and the route's admission are exported for the test topology
 // (`test/topology.ts`).
 
-import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readdir, readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
+import { dirname, extname, join } from "node:path";
 import {
 	type Address,
 	type AdmitSelf,
 	allow,
+	constant,
 	createHost,
 	defineFacet,
 	deny,
@@ -21,6 +23,7 @@ import {
 	type HostError,
 	keyedEntries,
 	type Link,
+	localeChoiceFacet,
 	type PluginFailure,
 	type RegistryTable,
 	type RegistryValue,
@@ -29,28 +32,31 @@ import {
 import { awaitWithContext, BACKGROUND_CONTEXT, type Context, withoutAbortSignal } from "@earendil-works/chord/context";
 import {
 	createHttp,
+	Http,
 	type HttpError,
 	HttpListener,
 	type HttpRequest,
+	type HttpResponse,
 	type ListenAddress,
 } from "@earendil-works/chord/http";
 import { createPlugins, type PluginsError, type PluginsState } from "@earendil-works/chord/plugins";
+import { type PageAssets, pageScripts, webSurface } from "@earendil-works/chord/surfaces";
 import * as v1 from "@earendil-works/p3/v1";
-import { reportError, Server, Session, until } from "@earendil-works/p3/v1";
+import { reportError, Server, Session, SessionAccess, until } from "@earendil-works/p3/v1";
 import * as v1server from "@earendil-works/p3/v1/server";
 import {
 	LinkOpened,
 	type LinkOpenedHook,
 	ServerCommands,
 	ServerRuntime,
-	SessionRoute,
 	type WorkerRunner,
 	WorkerRunners,
 	type WorkerRunnerWrap,
 	WorkerRunnerWraps,
 } from "@earendil-works/p3/v1/server";
-import { API, KINDS, type P3Principal, SERVER, workerPrincipal } from "./app.ts";
+import { API, callerKey, KINDS, type P3Principal, SERVER, workerPrincipal } from "./app.ts";
 import { openDataDir, openPrivateStore, privateDirectory } from "./files.ts";
+import { WEB_ENTRY } from "./install.ts";
 import { type ServerAnswer, type ServerStatus, serverSocket, takeSocket } from "./local-socket.ts";
 
 /** What the server's start takes. */
@@ -148,7 +154,12 @@ export async function startServer(options: ServerOptions, context: Context): Pro
 				listen,
 				links: {
 					path: "/chord",
-					opened: (request, _principal, closeLink) => linkOpened?.value(request, closeLink),
+					opened: (request, principal, closeLink) => {
+						const end = linkOpened?.value(request, closeLink);
+						// A signed-in link no hook tracks (none loaded yet, one that threw) could never be closed by a revoke.
+						if (end === undefined && principal.kind !== "server") closeLink();
+						return end;
+					},
 				},
 				onError: (error) => options.onError({ kind: "http", error }),
 			},
@@ -166,13 +177,20 @@ export async function startServer(options: ServerOptions, context: Context): Pro
 			context,
 		);
 		closers.push(() => plugins.close());
+		// The page's base bundle is built at the first page request or apply, whichever comes first.
+		const web = webSurface(host, {
+			plugins,
+			entry: WEB_ENTRY,
+			paths: ["/", "/*"],
+			page: (request, assets) => pageHtml(request.nonce, assets),
+		});
 		const used = usedRunner(host, context);
 		const sessions = host.route(
 			Session,
 			{
 				// Admission decides; a worker never reaches another session's worker.
 				authorize: () => true,
-				admit: admitSession,
+				admit: admitRoute,
 				resolve: async (address, routing) => ({
 					link: await startWorker(used, address, routing),
 					principal: workerPrincipal(address.params.id),
@@ -202,12 +220,17 @@ export async function startServer(options: ServerOptions, context: Context): Pro
 						return runner === undefined ? { hosts: [] } : runner.reload(step, stepContext);
 					},
 				};
-				return plugins.rollout([plugins.step("server", host), workers], built, ctx);
+				return plugins.rollout([plugins.step("server", host), workers, web.step("web")], built, ctx);
 			},
 			stop: () => options.onStop({ kind: "stopped" }),
 		};
 		const core = [
 			{ name: "chord.http", facet: http.facet },
+			{ name: "chord.web", facet: web.facet },
+			// Every page holds the caller's language choice (`LocaleChoice`) on the server: Chord's `startPage` follows it
+			// for the page's language. Without this facet each page load leaves a hold nobody serves (`unbound_long`).
+			{ name: "chord.locale.choice", facet: localeChoiceFacet<P3Principal>() },
+			{ name: "p3.page", facet: pageFacet(await elanorAssets()) },
 			{ name: "p3.server", facet: serverCoreFacet(runtime) },
 			...(options.facets ?? []),
 		];
@@ -449,12 +472,91 @@ function isolated<T>(plugin: string, run: () => T): T | undefined {
 }
 
 /**
- * The route's admission: a session's worker is reached only while the session exists (the sessions plugin's
- * `SessionRoute`), and never by another session's worker.
+ * The route's admission: a caller reaches a session's worker only with access to the session, as the sessions
+ * plugin answers it live (`SessionAccess`): no worker starts for a caller who would be denied, and one who loses
+ * access is cut off. A worker never reaches another session's worker.
  */
-export function admitSession(principal: P3Principal, address: Address<typeof Session>, self: AdmitSelf) {
-	const route = self.get(SessionRoute, { session: address.params.id });
-	return self.derive([route.exists], ([exists]) =>
-		principal.kind !== "worker" && exists ? allow(null) : deny("no such session"),
+export function admitRoute(principal: P3Principal, address: Address<typeof Session>, self: AdmitSelf) {
+	if (principal.kind === "worker") return constant(deny("a worker reaches no other session's worker"));
+	const answer = self.get(SessionAccess, { session: address.params.id, caller: callerKey(principal) });
+	return self.derive([answer.access], ([access]) =>
+		access === "none" ? deny("no access to this session") : allow(null),
 	);
+}
+
+/**
+ * The page: Elanor's fonts and the brand's tokens as stable files (`elanorAssets`), then the surface's bootstrap,
+ * stylesheets and scripts, and the root the page's entry renders into.
+ */
+function pageHtml(nonce: string, assets: PageAssets): string {
+	return [
+		"<!doctype html>",
+		'<html lang="en">',
+		"<head>",
+		'<meta charset="utf-8">',
+		'<meta name="viewport" content="width=device-width, initial-scale=1">',
+		"<title>Pi</title>",
+		...ELANOR_STYLESHEETS.map((href) => `<link rel="stylesheet" href="${href}">`),
+		pageScripts(assets, nonce),
+		"</head>",
+		'<body><div id="root"></div></body>',
+		"</html>",
+	].join("\n");
+}
+
+/** The stylesheets every page of p3 links before its own: Elanor's fonts and the `pi` brand's tokens. */
+export const ELANOR_STYLESHEETS = ["/fonts/elanor/mallos-serif.css", "/fonts/elanor/commit-mono.css", "/tokens.css"];
+
+/** The content types of Elanor's files the server serves. */
+const MIME_TYPES: Readonly<Record<string, string>> = {
+	".css": "text/css; charset=utf-8",
+	".otf": "font/otf",
+	".txt": "text/plain; charset=utf-8",
+	".woff2": "font/woff2",
+};
+
+/**
+ * Elanor's fonts at `/fonts/elanor/` (their stylesheets, files and licenses, unchanged, so their relative URLs hold)
+ * and the `pi` brand's tokens at `/tokens.css`, read from the installed packages once at the start: stable
+ * URLs every page links, the owner link's too, public (fonts and colors are no secret).
+ */
+export async function elanorAssets(): Promise<ReadonlyMap<string, { readonly mime: string; readonly bytes: Buffer }>> {
+	const require = createRequire(import.meta.url);
+	const fontRoot = dirname(require.resolve("@earendil-works/elanor-fonts/mallos-serif.css"));
+	const files = ["mallos-serif.css", "commit-mono.css"];
+	for (const directory of ["files", "licenses"]) {
+		for (const file of await readdir(join(fontRoot, directory))) files.push(`${directory}/${file}`);
+	}
+	const assets = new Map<string, { readonly mime: string; readonly bytes: Buffer }>();
+	for (const file of files) {
+		const mime = MIME_TYPES[extname(file)] ?? "application/octet-stream";
+		assets.set(`/fonts/elanor/${file}`, { mime, bytes: await readFile(join(fontRoot, file)) });
+	}
+	const tokens = await readFile(require.resolve("@earendil-works/design-tokens/pi.css"));
+	assets.set("/tokens.css", { mime: MIME_TYPES[".css"]!, bytes: tokens });
+	return assets;
+}
+
+/** The base's page facet: Elanor's files (`elanorAssets`) as public routes. */
+function pageFacet(assets: Awaited<ReturnType<typeof elanorAssets>>): Facet<P3Principal> {
+	return defineFacet<P3Principal>((_host, self) => self.contribute(Http, { routes: assetRoutes(assets) }));
+}
+
+/** `assets` as public `GET` routes, cached for a day (they change only with an update of p3). */
+function assetRoutes(assets: ReadonlyMap<string, { readonly mime: string; readonly bytes: Buffer }>) {
+	const routes: Record<string, { readonly public: true; readonly handler: () => Promise<HttpResponse> }> = {};
+	for (const [path, { mime, bytes }] of assets) {
+		routes[`GET ${path}`] = {
+			public: true,
+			handler: async () => ({
+				kind: "bytes",
+				mime,
+				size: bytes.length,
+				inline: true,
+				read: async (offset, length) => bytes.subarray(offset, offset + length),
+				headers: { "Cache-Control": "public, max-age=86400" },
+			}),
+		};
+	}
+	return routes;
 }

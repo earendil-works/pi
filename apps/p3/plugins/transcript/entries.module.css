@@ -1,0 +1,107 @@
+/*
+ * The entries: a person's messages as filled bubbles at the end of the line, the agent's answers as text across
+ * it, tool calls as folded rows (their state on the left edge), markers as small centered lines.
+ */
+
+.entries {
+	display: flex;
+	max-inline-size: var(--semantic-dimension-size-max-width-content-medium);
+	flex-direction: column;
+	gap: var(--semantic-dimension-space-flow-medium);
+	margin: 0 auto;
+	padding: 0;
+	list-style: none;
+}
+
+.user {
+	max-inline-size: 85%;
+	align-self: flex-end;
+	padding-block: var(--semantic-dimension-space-padding-x-small);
+	padding-inline: var(--semantic-dimension-space-padding-small);
+	border-radius: var(--semantic-dimension-radius-large);
+	background: var(--semantic-color-background-fill-secondary);
+	color: var(--semantic-color-text-on-secondary-fill);
+}
+
+.assistant {
+	display: flex;
+	flex-direction: column;
+	gap: var(--semantic-dimension-space-flow-small);
+}
+
+.text {
+	margin: 0;
+	overflow-wrap: anywhere;
+	white-space: pre-wrap;
+	font: var(--semantic-typography-prose-primary);
+}
+
+.thinking {
+	color: var(--semantic-color-text-secondary);
+}
+
+.thinking summary,
+.toolSummary {
+	cursor: pointer;
+	font: var(--semantic-typography-ui-secondary);
+}
+
+.tool {
+	padding-inline-start: var(--semantic-dimension-space-padding-x-small);
+	border-inline-start: var(--semantic-dimension-border-width-medium) solid var(--semantic-color-border-secondary);
+}
+
+.tool[data-state="running"] {
+	border-inline-start-color: var(--semantic-color-border-warning);
+}
+
+.tool[data-state="error"] {
+	border-inline-start-color: var(--semantic-color-border-negative);
+}
+
+.toolSummary {
+	display: flex;
+	min-inline-size: 0;
+	gap: var(--semantic-dimension-space-gap-small);
+	color: var(--semantic-color-text-secondary);
+}
+
+.toolName {
+	flex: none;
+	color: var(--semantic-color-text-primary);
+	font-weight: var(--semantic-font-weight-ui-emphasis);
+}
+
+.toolArgs {
+	min-inline-size: 0;
+	overflow: hidden;
+	font: var(--semantic-typography-code-secondary);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.code {
+	max-block-size: 20rem;
+	margin: var(--semantic-dimension-space-gap-x-small) 0 0;
+	padding: var(--semantic-dimension-space-padding-x-small);
+	overflow: auto;
+	border-radius: var(--semantic-dimension-radius-small);
+	background: var(--semantic-color-background-surface);
+	color: var(--semantic-color-text-code);
+	font: var(--semantic-typography-code-secondary);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.marker {
+	color: var(--semantic-color-text-secondary);
+	font: var(--semantic-typography-ui-tertiary);
+	text-align: center;
+}
+
+.error,
+.failure {
+	margin: 0;
+	color: var(--semantic-color-text-negative);
+	font: var(--semantic-typography-ui-secondary);
+}

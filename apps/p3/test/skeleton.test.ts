@@ -13,7 +13,7 @@ import { type TestServer, testServer } from "@earendil-works/p3/v1/testing";
 import { Sessions, SessionWorker } from "../plugins/sessions/contract.ts";
 import { askServer } from "../src/local-socket.ts";
 import { Probe } from "./plugins/probe/contract.ts";
-import { alive, constantContract, constantPlugin, PROBE } from "./support.ts";
+import { alive, coding, constantContract, constantPlugin, PROBE } from "./support.ts";
 import { eventually, within } from "./until.ts";
 
 let running: TestServer | undefined;
@@ -31,7 +31,7 @@ async function withSession(): Promise<{ readonly t: TestServer; readonly id: str
 	running = await testServer({ plugins: [PROBE] }, context);
 	const client = await running.client(context);
 	const sessions = await client.get(Sessions, {}, context);
-	return { t: running, id: await sessions.create({ title: "one" }, context) };
+	return { t: running, id: await sessions.create(coding("one"), context) };
 }
 
 /** The probe on session `id`'s worker, held by a new owner client until `release`. */
@@ -46,13 +46,12 @@ describe("session workers", () => {
 	it("a worker starts on the first hold, as a process of its own, and follows its session's row", async () => {
 		const { t, id } = await withSession();
 		const worker = await (await t.client(context)).get(SessionWorker, { session: id }, context);
-		assert.equal(worker.variant, "owner");
+		assert.equal(worker.variant, "view");
 		const pid = (await probe(t, id)).pid.value;
 		assert.notEqual(pid, process.pid);
 		assert.ok(alive(pid));
 		const sessions = await (await t.client(context)).get(Sessions, {}, context);
-		await sessions.rename({ id, title: "two" }, context);
-		if (worker.variant !== "owner") return;
+		await sessions.rename({ session: id, title: "two" }, context);
 		await until(worker.session, (row) => row?.title === "two", within("the renamed row", context));
 	});
 

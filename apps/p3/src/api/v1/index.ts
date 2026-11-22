@@ -11,11 +11,13 @@ import {
 	hostKind,
 	isChordError,
 	local,
+	type Schema,
 	type StoreSelf,
 	str,
 } from "@earendil-works/chord";
 import type { Context } from "@earendil-works/chord/context";
 import type { NativeWatchable } from "@earendil-works/chord/watch";
+import { compile, type JsonSchema, type Validator } from "@earendil-works/pi-schema";
 import type { P3Principal } from "../../app.ts";
 
 // Everything of Chord's root; the names this module defines itself (`defineFacet`, `Server`, `Session`) win over a
@@ -32,17 +34,13 @@ export {
 export type { JsonValue } from "@earendil-works/chord/json";
 // The contracts p3 promises to third-party plugins (Chord decision "The app kit, point 5"): the built-in plugins'
 // own files, re-exported; a plugin built against `/v1` keeps v1's contracts.
-export {
-	Creator,
-	SessionFacts,
-	SessionRow,
-	SessionStart,
-	SessionState,
-	Sessions,
-	SessionsList,
-	SessionWorker,
-} from "../../../plugins/sessions/contract.ts";
-export { P3Principal } from "../../app.ts";
+export * from "../../../plugins/apps/contract.ts";
+export * from "../../../plugins/environments/contract.ts";
+export * from "../../../plugins/people/contract.ts";
+export * from "../../../plugins/sessions/contract.ts";
+export * from "../../../plugins/tools/contract.ts";
+export * from "../../../plugins/transcript/contract.ts";
+export { callerKey, P3Principal } from "../../app.ts";
 export { forward } from "./forward.ts";
 
 /** Defines a facet of p3: its factories get p3's principals. */
@@ -101,6 +99,27 @@ export async function until<T>(source: NativeWatchable<T>, done: (value: T) => b
 		await watch.stop();
 	}
 }
+
+/**
+ * Why `value` does not have `schema`'s shape (its first error, with the JSON Pointer path), or `undefined` when it
+ * does: for a trust boundary of a plugin's own (options a page sent, checked against a kind's schema). The schema's
+ * validator is compiled at its first check and kept while the schema lives.
+ */
+export function checkValue(schema: Schema, value: unknown): string | undefined {
+	let validator = validators.get(schema);
+	if (validator === undefined) {
+		// A Chord schema is a JSON Schema.
+		validator = compile(schema as JsonSchema);
+		validators.set(schema, validator);
+	}
+	if (validator.check(value)) return undefined;
+	// A value that failed the check has at least one error.
+	const error = validator.errors(value)[0]!;
+	return `${error.path || "/"}: ${error.message}`;
+}
+
+/** The compiled validators of the schemas checked so far, by schema. */
+const validators = new WeakMap<Schema, Validator>();
 
 /**
  * Reports `error` of `what` (who failed doing what: "p3 runner: s1: worker"), a failure nobody awaits (a worker that

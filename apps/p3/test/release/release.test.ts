@@ -16,7 +16,7 @@ import { promisify } from "node:util";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { ownerClient, ownerCookie } from "@earendil-works/p3/v1/testing";
 import { Sessions, SessionWorker } from "../../plugins/sessions/contract.ts";
-import { childrenOf, launch } from "../support.ts";
+import { childrenOf, coding, launch } from "../support.ts";
 import { eventually } from "../until.ts";
 
 const run = promisify(execFile);
@@ -71,9 +71,9 @@ describe("the installed release", () => {
 		const server = await launch(P3, join(root, "workers"));
 		try {
 			const client = await ownerClient(server.dataDir, server.port, context, 30_000);
-			const id = await (await client.get(Sessions, {}, context)).create({ title: "one" }, context);
+			const id = await (await client.get(Sessions, {}, context)).create(coding("one"), context);
 			const worker = await client.get(SessionWorker, { session: id }, context);
-			assert.equal(worker.variant, "owner");
+			assert.equal(worker.variant, "view");
 			// Besides the worker, the server has esbuild's service as a child (it builds the plugins).
 			const children = await eventually(
 				() => childrenOf(server.pid),
@@ -210,7 +210,7 @@ const HELLO = {
 		'import assert from "node:assert/strict";',
 		'import { it } from "node:test";',
 		'import { fileURLToPath } from "node:url";',
-		'import { BACKGROUND_CONTEXT as context, Sessions } from "@earendil-works/p3/v1";',
+		'import { BACKGROUND_CONTEXT as context, Sessions, THIS_DEVICE } from "@earendil-works/p3/v1";',
 		'import { testServer } from "@earendil-works/p3/v1/testing";',
 		'import { Hello, Where } from "../contract.ts";',
 		"",
@@ -220,7 +220,8 @@ const HELLO = {
 		"		const client = await t.client(context);",
 		'		const hello = await client.get(Hello, { tone: "plain" }, context);',
 		'		assert.equal(await hello.greet({ name: "p3" }, context), "hello, p3");',
-		'		const session = await (await client.get(Sessions, {}, context)).create({ title: "one" }, context);',
+		"		const location = { environment: THIS_DEVICE, folder: t.dataDir };",
+		'		const session = await (await client.get(Sessions, {}, context)).create({ app: "coding", title: "one", location }, context);',
 		"		const where = await client.get(Where, { session }, context);",
 		'		assert.equal(where.variant, "owner");',
 		'		assert.equal(where.variant === "owner" && where.session.value, session);',

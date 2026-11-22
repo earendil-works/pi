@@ -1,0 +1,31 @@
+/* The composer: the message field growing with its text up to a third of the window, the buttons beside it. */
+
+.composer {
+	display: flex;
+	flex: none;
+	flex-direction: column;
+	gap: var(--semantic-dimension-space-gap-x-small);
+	padding: var(--semantic-dimension-space-padding-small);
+	border-block-start: var(--semantic-dimension-border-width-small) solid var(--semantic-color-border-secondary);
+	background: var(--semantic-color-background-canvas);
+}
+
+.row {
+	display: flex;
+	align-items: flex-end;
+	gap: var(--semantic-dimension-space-gap-small);
+}
+
+.input {
+	min-inline-size: 0;
+	flex: 1 1 auto;
+	max-block-size: 33dvh;
+	field-sizing: content;
+	resize: none;
+}
+
+.error {
+	margin: 0;
+	color: var(--semantic-color-text-negative);
+	font: var(--semantic-typography-ui-secondary);
+}

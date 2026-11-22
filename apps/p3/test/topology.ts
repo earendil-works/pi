@@ -1,6 +1,6 @@
 // The test topology: p3's server and its session workers as hosts in one process, linked in memory, each with its
 // own SQLite store, the plugins' facets imported as modules (no build). The base's pieces are the real ones
-// (`serverCoreFacet`, `admitSession`, `workerCoreFacet`); the route starts a worker as a host, not a process, and the
+// (`serverCoreFacet`, `admitRoute`, `workerCoreFacet`); the route starts a worker as a host, not a process, and the
 // runner it contributes is asked by the waker alone. `reload` renews a plugin's facet object on the server or a
 // worker (its objects restart, as after an edit); `count` reads the server's metrics.
 
@@ -26,14 +26,19 @@ import { type P3Principal, Server, Session } from "@earendil-works/p3/v1";
 import type { ServerRuntime } from "@earendil-works/p3/v1/server";
 import type { WorkerRuntime } from "@earendil-works/p3/v1/worker";
 import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
+import appsServer from "../plugins/apps/server.ts";
+import codingServer from "../plugins/coding/server.ts";
 import controlServer from "../plugins/control/server.ts";
+import environmentsServer from "../plugins/environments/server.ts";
+import environmentsWorker from "../plugins/environments/worker.ts";
+import peopleServer from "../plugins/people/server.ts";
 import runnerServer from "../plugins/runner/server.ts";
 import runnerWorker from "../plugins/runner/worker.ts";
 import sessionsServer from "../plugins/sessions/server.ts";
 import sessionsWorker from "../plugins/sessions/worker.ts";
 import signInServer from "../plugins/sign-in/server.ts";
 import { SERVER, workerPrincipal } from "../src/app.ts";
-import { admitSession, serverCoreFacet } from "../src/server.ts";
+import { admitRoute, serverCoreFacet } from "../src/server.ts";
 import { workerCoreFacet } from "../src/worker.ts";
 import probeWorker from "./plugins/probe/worker.ts";
 
@@ -45,7 +50,11 @@ type Plugin = { readonly name: string; readonly facet: Facet<P3Principal> };
 
 /** The server's plugins, by name. */
 const SERVER_PLUGINS: readonly Plugin[] = [
+	{ name: "@earendil-works/p3-apps", facet: appsServer },
+	{ name: "@earendil-works/p3-coding", facet: codingServer },
 	{ name: "@earendil-works/p3-control", facet: controlServer },
+	{ name: "@earendil-works/p3-environments", facet: environmentsServer },
+	{ name: "@earendil-works/p3-people", facet: peopleServer },
 	{ name: "@earendil-works/p3-runner", facet: runnerServer },
 	{ name: "@earendil-works/p3-sessions", facet: sessionsServer },
 	{ name: "@earendil-works/p3-sign-in", facet: signInServer },
@@ -53,6 +62,7 @@ const SERVER_PLUGINS: readonly Plugin[] = [
 
 /** A worker's plugins, by name. */
 const WORKER_PLUGINS: readonly Plugin[] = [
+	{ name: "@earendil-works/p3-environments", facet: environmentsWorker },
 	{ name: "@earendil-works/p3-runner", facet: runnerWorker },
 	{ name: "@earendil-works/p3-sessions", facet: sessionsWorker },
 	{ name: "p3-test-probe", facet: probeWorker },
@@ -128,11 +138,7 @@ export async function topology(context: Context, idleMs = 60_000): Promise<Topol
 		);
 		return { link: down, principal: workerPrincipal(session), trusted: true as const };
 	};
-	const sessions = server.route(
-		Session,
-		{ authorize: () => true, admit: admitSession, resolve: startWorker },
-		context,
-	);
+	const sessions = server.route(Session, { authorize: () => true, admit: admitRoute, resolve: startWorker }, context);
 	const runtime: ServerRuntime = {
 		dataDir,
 		host: server,

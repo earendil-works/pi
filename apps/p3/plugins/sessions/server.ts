@@ -1,207 +1,165 @@
-// The sessions plugin on the server. Every session is one row of a table keyed by its address, so a session's export,
-// import and delete carry it. One local store (`SessionsStore`, `contract.server.ts`) owns the table, writes it and
-// offers its rows as named queries; the owner's `Sessions` and `SessionsList`, each worker's `SessionFacts` (its row,
-// and its report of what its agent does) and the route's `SessionRoute` read them. The waker starts the workers of
-// every `working` session whenever a runner appears in `WorkerRunners`: once the server is up (a restart cut their runs
-// off; Durable resumes them there), and after a reload of the runner plugin (the old runner stopped every worker before
-// the new one is contributed). It holds each one's `SessionStart` until the worker is live, then lets go. A worker keeps
-// itself alive while it works.
+// The sessions plugin on the server: the store of the sessions, their members and things (`store.ts`), the access
+// answer every session object admits with (`access.ts`), the waker (`waker.ts`), and the objects of its audiences: the
+// owner's `Sessions`, the kinds of things the owner may add (`ThingKindCatalog`, from `ThingKinds`, served here), a
+// screen's `SessionsList` (the owner's every session of an app, a person's their memberships'), a page's
+// `SessionInfo`, and each worker's `SessionFacts` (its row, its things with the agent's options, its report).
 
 import {
-	and,
-	type Ctx,
-	contribute,
+	admitSession,
+	constant,
 	defineFacet,
-	defineTable,
-	eq,
 	forbidden,
 	forward,
-	gt,
-	host as hostColumn,
-	int,
-	invalid,
-	json,
-	query,
-	type RowOf,
-	reportError,
-	Session,
-	str,
-	untilAborted,
-} from "@earendil-works/p3/v1";
-import { ServerRuntime, SessionRoute, WorkerRunners } from "@earendil-works/p3/v1/server";
-import { SessionsStore } from "./contract.server.ts";
-import {
-	CODING,
-	Creator,
+	keyedEntries,
+	type P3Principal,
+	type Self,
 	SessionFacts,
+	SessionInfo,
 	type SessionRow,
-	SessionStart,
-	type SessionState,
 	Sessions,
 	SessionsList,
-} from "./contract.ts";
-
-/**
- * A session's row: its address, title, app, creator, when it was made, its state, when it was last touched, and when
- * it was archived. `archivedAt` is 0 while it is not archived: both lists need it in their index, and index and order
- * columns are never optional.
- */
-const ROW = {
-	id: hostColumn(Session),
-	title: str(),
-	app: str(),
-	creator: json(Creator, { version: 1 }),
-	createdAt: int(),
-	state: str(),
-	lastTouch: int(),
-	archivedAt: int(),
-};
-
-/** A row of `Rows`. */
-type Row = RowOf<typeof ROW>;
-
-/**
- * Every session, one row each, by its address. One index per list: a list's whole order (its column, then the key)
- * must be its index's after the columns its condition fixes, or SQLite sorts every page it reads.
- */
-const Rows = defineTable("sessions.rows", {
-	version: 1,
-	columns: ROW,
-	key: ["id"],
-	indexes: { active: ["app", "archivedAt", "lastTouch"], archived: ["app", "archivedAt"], state: ["state"] },
-});
+	ThingKindCatalog,
+	type Watchable,
+} from "@earendil-works/p3/v1";
+import { PeopleStore, SessionsStore, ThingKinds } from "@earendil-works/p3/v1/server";
+import { serveAccess } from "./access.ts";
+import { currentOptions } from "./options.ts";
+import { serveStore } from "./store.ts";
+import { serveWaker } from "./waker.ts";
 
 /** How many sessions a page of a list holds. */
 const PAGE = 50;
 
+/**
+ * How many things, members and options of a session, and groups of a person, a view reads at most: read whole, a
+ * session or a person with more fails the member that shows them (closed and visible, never a part of them).
+ */
+const READ_WHOLE = 1000;
+
 export default defineFacet((host) => {
-	host.serve(SessionsStore, (_params, self) => {
-		const rows = self.table(Rows);
-		/** Sets `change` on session `id`'s row: an `update`, so only the reads that depend on those columns run. */
-		const update = (id: string, change: Partial<Row>, ctx: Ctx) =>
-			self.tx(async (tx) => {
-				const key = { id: Session({ id }) };
-				if ((await tx.get(rows, key)) === undefined) throw invalid("args", `sessions: no session ${id}`);
-				tx.update(rows, key, change);
-				return null;
-			}, ctx);
-		return {
-			sessions: self.queries(
-				rows,
-				{ map: shown },
-				{
-					// Index `active`: `app` and `archivedAt` fixed, in the order of `lastTouch`, then the key.
-					active: ({ app }: { app: string }) =>
-						query(Rows)
-							.where((s) => and(eq(s.app, app), eq(s.archivedAt, 0)))
-							.orderBy((s) => s.lastTouch, "desc"),
-					// Index `archived`: `app` fixed, a range of `archivedAt` in its order, then the key.
-					archived: ({ app }: { app: string }) =>
-						query(Rows)
-							.where((s) => and(eq(s.app, app), gt(s.archivedAt, 0)))
-							.orderBy((s) => s.archivedAt, "desc"),
-					// The key.
-					one: ({ id }: { id: string }) => query(Rows).where((s) => eq(s.id, Session({ id }))),
-				},
-			),
-			create: async ({ title, creator }, ctx) => {
-				const id = crypto.randomUUID();
-				const now = Date.now();
-				const state: SessionState = "settled";
-				const row = { id: Session({ id }), title, app: CODING, creator, state };
-				await self.tx(async (tx) => tx.put(rows, { ...row, createdAt: now, lastTouch: now, archivedAt: 0 }), ctx);
-				return id;
-			},
-			rename: ({ id, title }, ctx) => update(id, { title }, ctx),
-			archive: ({ id }, ctx) => update(id, { archivedAt: Date.now() }, ctx),
-			restore: ({ id }, ctx) => update(id, { archivedAt: 0 }, ctx),
-			report: ({ id, state }, ctx) => update(id, { state, lastTouch: Date.now() }, ctx),
-			working: (_args, ctx) =>
-				self.tx(async (tx) => {
-					// Index `state`; every row, no cap: a session left out would never resume.
-					const ids: string[] = [];
-					for await (const row of tx.rows(
-						rows,
-						query(Rows).where((s) => eq(s.state, "working")),
-					)) {
-						ids.push(row.id.params.id);
-					}
-					return ids;
-				}, ctx),
-		};
+	serveStore(host);
+	serveAccess(host);
+	serveWaker(host);
+
+	host.serve(ThingKinds, {
+		compose: (table, { report }) => keyedEntries(table, (entry) => ({ [entry.kind.name]: entry }), report),
+	});
+
+	host.serve(ThingKindCatalog, (_params, principal, self) => {
+		if (principal.kind !== "owner") throw forbidden("sessions: the owner's");
+		const kinds = self.derive([self.registry(ThingKinds)], ([table]) =>
+			[...table.values()]
+				.map(({ value }) => ({ kind: value.kind.name, title: value.title }))
+				.sort((a, b) => (a.title < b.title ? -1 : a.title > b.title ? 1 : 0)),
+		);
+		return { variant: "owner", members: { kinds } };
 	});
 
 	host.serve(Sessions, (_params, principal, self) => {
 		if (principal.kind !== "owner") throw forbidden("sessions: the owner's");
-		const store = self.get(SessionsStore, {});
-		return forward(store, Sessions, "owner", {
-			create: ({ title }, ctx) => store.create({ title: title ?? "", creator: { kind: "owner" } }, ctx),
-		});
+		return forward(self.get(SessionsStore, {}), Sessions, "owner");
 	});
 
 	host.serve(SessionsList, ({ app, set }, principal, self) => {
-		if (principal.kind !== "owner") throw forbidden("sessions: the owner's");
-		const list = self.list("sessions", [[self.get(SessionsStore, {}).sessions[set], { app }]], { first: PAGE });
-		return { variant: "owner", members: { list: list.value, more: (ctx) => list.more(ctx) } };
+		const store = self.get(SessionsStore, {});
+		if (principal.kind === "owner") {
+			const list = self.list("sessions", [[store.sessions[set], { app }]], { first: PAGE });
+			return { variant: "sessions", members: { list: list.value, more: (ctx) => list.more(ctx) } };
+		}
+		if (principal.kind !== "person") throw forbidden("sessions: the owner's and persons'");
+		const person = principal.id;
+		const groups = self.liveQuery(self.get(PeopleStore, {}).groups.ofPerson, { person }, { first: READ_WHOLE });
+		// Their groups count only when read whole (fails closed: the list shows their direct memberships then).
+		const args = self.derive([groups], ([{ rows, more }]) => ({
+			app,
+			members: [`person:${person}`, ...(more ? [] : rows.map(({ id }) => `group:${id}`))],
+		}));
+		const list = self.list("memberships", [[store.memberships[set], args]], { first: PAGE });
+		return { variant: "sessions", members: { list: onceEach(list.value, self), more: (ctx) => list.more(ctx) } };
 	});
+
+	host.serve(
+		SessionInfo,
+		({ session }, _principal, { access }, self) => {
+			const store = self.get(SessionsStore, {});
+			const found = self.liveQuery(store.sessions.one, { id: session }, { first: 1 });
+			const things = self.liveQuery(store.things.of, { session }, { first: READ_WHOLE });
+			const defaults = self.liveQuery(store.options.ofSession, { session, for: "everyone" }, { first: READ_WHOLE });
+			const members = self.liveQuery(store.members.of, { session }, { first: READ_WHOLE });
+			const kinds = self.registry(ThingKinds);
+			return {
+				variant: "info",
+				members: {
+					// Admitted: the session exists (its access is none otherwise).
+					session: self.derive([found], ([{ rows }]) => rows[0] ?? fail(`no session ${session}`)),
+					access: constant(access),
+					things: self.derive([things, defaults, kinds], ([of, set, table]) => {
+						if (of.more || set.more) fail(`session ${session} has more than ${READ_WHOLE} things`);
+						const stored = new Map(set.rows.map((row) => [row.thing, row]));
+						return of.rows.map(({ thing, kind, ref }) => {
+							const row = stored.get(thing);
+							const options = row === undefined ? undefined : currentOptions(table.get(kind)?.value, row);
+							return { thing, kind, ref, options: options?.options ?? null };
+						});
+					}),
+					members: self.derive([members], ([{ rows, more }]) => {
+						if (more) fail(`session ${session} has more than ${READ_WHOLE} members`);
+						return rows;
+					}),
+				},
+			};
+		},
+		{ admit: admitSession },
+	);
 
 	host.serve(SessionFacts, (_params, principal, self) => {
 		if (principal.kind !== "worker") throw forbidden("sessions: a session's worker only");
+		const session = principal.session;
 		const store = self.get(SessionsStore, {});
-		const found = self.liveQuery(store.sessions.one, { id: principal.session }, { first: 1 });
+		const found = self.liveQuery(store.sessions.one, { id: session }, { first: 1 });
+		const things = self.liveQuery(store.things.of, { session }, { first: READ_WHOLE });
+		const defaults = self.liveQuery(store.options.ofSession, { session, for: "everyone" }, { first: READ_WHOLE });
+		const agent = self.liveQuery(store.options.ofSession, { session, for: "agent" }, { first: READ_WHOLE });
+		const kinds = self.registry(ThingKinds);
+		const agentThings = self.derive([things, defaults, agent, kinds], ([of, everyone, own, table]) => {
+			if (of.more || everyone.more || own.more) fail(`session ${session} has more than ${READ_WHOLE} things`);
+			const stored = new Map([...everyone.rows, ...own.rows].map((row) => [row.thing, row]));
+			return of.rows.map(({ thing, kind, ref }) => {
+				const row = stored.get(thing)!;
+				// Nothing for options no installed kind reads now: the harness gives such a thing nothing.
+				const current = currentOptions(table.get(kind)?.value, row);
+				return current === undefined
+					? { thing, kind, ref, version: row.version, options: null }
+					: { thing, kind, ref, ...current };
+			});
+		});
 		return {
 			variant: "worker",
 			members: {
 				session: self.derive([found], ([{ rows }]) => rows[0] ?? null),
-				report: ({ state }, ctx) => store.report({ id: principal.session, state }, ctx),
+				things: agentThings,
+				report: ({ state }, ctx) => store.report({ session, state }, ctx),
 			},
 		};
 	});
-
-	contribute(host, "sessions.waker", (self) => {
-		const store = self.get(SessionsStore, {});
-		const runtime = self.registry(ServerRuntime);
-		const runners = self.registry(WorkerRunners);
-		self.onLive(async (ctx) => {
-			const { host: server } = runtime.value;
-			/** Starts the worker of every `working` session. */
-			const wake = async (): Promise<void> => {
-				const starts = (await store.working({}, ctx)).map((session) =>
-					// Held until the worker serves it (it is live then), released when `root` returns.
-					server
-						.root(async (root) => void (await root.get(SessionStart, { session })), ctx)
-						.catch((error: unknown) => {
-							// Ending with the waker (its reload, the server's close) is no failure.
-							if (ctx.abortSignal?.aborted !== true) {
-								reportError(`p3 sessions: ${session}: could not start its worker`, error, ctx);
-							}
-						}),
-				);
-				await Promise.all(starts);
-			};
-			const watch = await runners.watch(ctx);
-			try {
-				if (watch.value !== undefined) await wake();
-				// Each new runner wakes them again (`undefined` comes between two: the old one withdrew before it stopped its
-				// workers).
-				watch.start(async (call) => {
-					if (call.kind === "value" && call.value !== undefined) await wake();
-				});
-				await untilAborted(ctx);
-			} finally {
-				await watch.stop();
-			}
-		});
-	});
-
-	host.serve(SessionRoute, ({ session }, self) => {
-		const found = self.liveQuery(self.get(SessionsStore, {}).sessions.one, { id: session }, { first: 1 });
-		return { exists: self.derive([found], ([{ rows }]) => rows.length === 1) };
-	});
 });
 
-/** A table row as lists and a session's worker see it. */
-function shown({ id, state, archivedAt, ...row }: Row): SessionRow {
-	// `state` holds only what this plugin wrote: a `SessionState`.
-	return { id: id.params.id, ...row, state: state as SessionState, archivedAt: archivedAt === 0 ? null : archivedAt };
+/**
+ * `list` with each session once: a person in a session directly and through a group has two memberships of it, so
+ * the memberships' list shows it twice, adjacent (same order columns). A loaded page may show fewer distinct
+ * sessions than its size; `more` still reaches every one.
+ */
+function onceEach(
+	list: Watchable<{ rows: SessionRow[]; moreAfter: boolean }>,
+	self: Self<P3Principal>,
+): Watchable<{ rows: SessionRow[]; moreAfter: boolean }> {
+	return self.derive([list], ([{ rows, moreAfter }]) => {
+		const seen = new Set<string>();
+		return { rows: rows.filter(({ id }) => !seen.has(id) && seen.add(id) !== undefined), moreAfter };
+	});
+}
+
+/** Fails the member being computed: a read that cannot be shown whole. */
+function fail(why: string): never {
+	throw new Error(`sessions: ${why}`);
 }

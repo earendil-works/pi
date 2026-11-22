@@ -1,17 +1,15 @@
 // p3's API v1 for server facets (`@earendil-works/p3/v1/server`): Chord's HTTP surface, the registries the base
-// serves, the contract the session route asks (`SessionRoute`, a plugin serves it), and what a runner needs (the
-// worker's control messages, Chord's process locks).
+// serves, what a runner needs (the worker's control messages, Chord's process locks), and the built-in plugins' server
+// contracts p3 promises (the stores apps manage their sessions and people with, the apps and thing kinds registries).
 
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
 	type Address,
-	bool,
 	type ChordStore,
 	defineRegistry,
 	type Host,
 	type Link,
-	local,
 	type RouteHandle,
-	str,
 } from "@earendil-works/chord";
 import type { Context } from "@earendil-works/chord/context";
 import type { HttpRequest, ListenAddress } from "@earendil-works/chord/http";
@@ -28,6 +26,10 @@ export {
 	/** Takes the lock of a name (a session's), owned by the kernel for the holder's life; waits while another holds it. */
 	processLock,
 } from "@earendil-works/chord/workers/child";
+export * from "../../../plugins/apps/contract.server.ts";
+export * from "../../../plugins/environments/contract.server.ts";
+export * from "../../../plugins/people/contract.server.ts";
+export * from "../../../plugins/sessions/contract.server.ts";
 export * from "./control.ts";
 
 /** The server's process values, for plugins: what only the base has. */
@@ -120,17 +122,6 @@ export type LinkOpenedHook = (request: HttpRequest, close: () => void) => (() =>
 export const LinkOpened = defineRegistry<LinkOpenedHook, LinkOpenedHook>("p3.link-opened", { version: 1 });
 
 /**
- * What the route to a session's worker asks before it starts or reaches one: whether the session exists. The API owns
- * the contract because the route is base code, which never reloads and keeps the contract it was built with; the
- * sessions plugin serves it.
- */
-export const SessionRoute = local("p3.session-route", {
-	version: 1,
-	params: { session: str() },
-	members: { exists: bool() },
-});
-
-/**
  * A command the owner's `p3` runs on the server over the data directory's socket (`server.sock`: the control plugin's
  * `stop` and `apply`, the sign-in plugin's `owner-link`). Only the owner's OS user can reach that socket (the directory
  * is private; POSIX only, Windows: ERNDL-1059): a command runs for the owner, without a sign-in, for every process of
@@ -142,3 +133,20 @@ export type ServerCommand = { readonly name: string; run(context: Context): Prom
 export const ServerCommands = defineRegistry<ServerCommand, ReadonlyMap<string, ServerCommand>>("p3.server-commands", {
 	version: 1,
 });
+
+/** A fresh random token of `bytes` bytes, base64url. */
+export function newToken(bytes = 32): string {
+	return randomBytes(bytes).toString("base64url");
+}
+
+/** The hash a token is kept as (SHA-256, hex): what leaks from a store is no credential. */
+export function hashToken(token: string): string {
+	return createHash("sha256").update(token).digest("hex");
+}
+
+/** Whether `token` hashes to `hash`, compared in constant time. */
+export function matchesHash(token: string, hash: string): boolean {
+	const given = Buffer.from(hashToken(token), "hex");
+	const kept = Buffer.from(hash, "hex");
+	return given.length === kept.length && timingSafeEqual(given, kept);
+}

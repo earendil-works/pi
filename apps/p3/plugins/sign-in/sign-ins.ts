@@ -3,8 +3,8 @@
 // and the hook that closes the open links of a sign-in that ends (and every link `SignIns` tracked, once it ends);
 // tokens are random, kept only as their SHA-256 hashes, compared in constant time (the owner link's too).
 
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
+	BACKGROUND_CONTEXT,
 	type Context,
 	defineState,
 	type FacetHost,
@@ -22,7 +22,10 @@ import {
 	Authenticators,
 	cookie,
 	type HttpRequest,
+	hashToken,
 	LinkOpened,
+	matchesHash,
+	newToken,
 	type Provenance,
 	readCookie,
 } from "@earendil-works/p3/v1/server";
@@ -73,10 +76,7 @@ export function serveSignIns(host: FacetHost<P3Principal>): void {
 			const { id, secret } = document.value.cookie;
 			return id === "" ? undefined : { name: `p3-${id}`, secret };
 		};
-		const links = new SignInLinks((id) => {
-			const signIns = document.value.signIns;
-			return Object.hasOwn(signIns, id) && Date.now() - signIns[id]!.lastUsed <= SIGN_IN_IDLE_MS;
-		});
+		const links = new SignInLinks();
 		// The next object (a reload's) tracks none of these links, so it could never close them: they end with this one,
 		// and their clients sign in again.
 		self.onLive(async (ctx) => {
@@ -94,11 +94,18 @@ export function serveSignIns(host: FacetHost<P3Principal>): void {
 		const authenticate = (token: string, context: Context) => authenticated(document, token, end, context);
 		self.contribute(Authenticators, (request, context) => {
 			const token = requestToken(request, key());
-			const signIn = token === undefined ? undefined : authenticate(token, context);
-			if (signIn !== undefined) links.signedIn(request, signIn.id);
-			return signIn?.principal;
+			return token === undefined ? undefined : authenticate(token, context)?.principal;
 		});
-		self.contribute(LinkOpened, (request, close) => links.opened(request, close));
+		// The link's request is checked again here, not remembered from its authentication: a reload of this plugin
+		// between the two would leave the link to an object that never saw the request, and a revoke would miss it. A
+		// sign-in that ended in between closes its link at once.
+		self.contribute(LinkOpened, (request, close) => {
+			const token = requestToken(request, key());
+			if (token === undefined) return undefined;
+			const signIn = authenticate(token, BACKGROUND_CONTEXT);
+			if (signIn === undefined) close();
+			return links.opened(signIn?.id, close);
+		});
 		return {
 			list: self.derive([document], ([value]) =>
 				Object.entries(value.signIns).map(([id, { hash: _, ...shown }]) => ({ id, ...shown })),
@@ -129,33 +136,13 @@ export function serveSignIns(host: FacetHost<P3Principal>): void {
 	});
 }
 
-/** The open links of each sign-in, by its id; and which sign-in each request authenticated with. */
+/** The open links of each sign-in, by its id. */
 class SignInLinks {
 	readonly #closes = new Map<string, Set<() => void>>();
-	readonly #requests = new WeakMap<HttpRequest, string>();
-	readonly #live: (id: string) => boolean;
 
-	/** One `SignIns` object's links: `live` says whether a sign-in exists and has not expired (read as a link opens). */
-	constructor(live: (id: string) => boolean) {
-		this.#live = live;
-	}
-
-	/** `request` authenticated with sign-in `id`: a link it opens is that sign-in's. */
-	signedIn(request: HttpRequest, id: string): void {
-		this.#requests.set(request, id);
-	}
-
-	/**
-	 * A link opened for `request`; `close` ends it. A sign-in that ended between the request's authentication and now
-	 * has its link closed at once. Returns what to call when the link closed.
-	 */
-	opened(request: HttpRequest, close: () => void): (() => void) | undefined {
-		const id = this.#requests.get(request);
+	/** A link of sign-in `id` (none: no sign-in's) opened; `close` ends it. Returns what to call when the link closed. */
+	opened(id: string | undefined, close: () => void): (() => void) | undefined {
 		if (id === undefined) return undefined;
-		if (!this.#live(id)) {
-			close();
-			return undefined;
-		}
 		const closes = this.#closes.get(id) ?? new Set();
 		this.#closes.set(id, closes.add(close));
 		return () => {
@@ -216,21 +203,4 @@ function requestToken(request: HttpRequest, key: Key | undefined): string | unde
 	const header = request.headers.get("authorization");
 	const bearer = header === null ? null : /^Bearer\s+(\S+)$/i.exec(header);
 	return bearer?.[1] ?? (key === undefined ? undefined : readCookie(request, key.name, key.secret));
-}
-
-/** A fresh random token of `bytes` bytes, base64url. */
-export function newToken(bytes = 32): string {
-	return randomBytes(bytes).toString("base64url");
-}
-
-/** The hash a token is kept as (SHA-256, hex): what leaks from a store is no credential. */
-export function hashToken(token: string): string {
-	return createHash("sha256").update(token).digest("hex");
-}
-
-/** Whether `token` hashes to `hash`, compared in constant time. */
-export function matchesHash(token: string, hash: string): boolean {
-	const given = Buffer.from(hashToken(token), "hex");
-	const kept = Buffer.from(hash, "hex");
-	return given.length === kept.length && timingSafeEqual(given, kept);
 }

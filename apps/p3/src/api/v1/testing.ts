@@ -11,6 +11,7 @@ import {
 	type ChordStore,
 	createHost,
 	type Host,
+	memoryLinkPair,
 	type PluginFacet,
 	type Watchable,
 	webSocketLink,
@@ -24,11 +25,12 @@ import {
 } from "@earendil-works/chord/plugins";
 import { Server, Session } from "@earendil-works/p3/v1";
 import type { ServerRuntime, WorkerState } from "@earendil-works/p3/v1/server";
+import { SignIns } from "../../../plugins/sign-in/contract.ts";
 import { API, KINDS, type P3Principal, SERVER, workerPrincipal } from "../../app.ts";
 import { PLUGINS, WORKER } from "../../install.ts";
 import { ASK_MS, askServer } from "../../local-socket.ts";
 // The processes' own maps: a worker facet gets a worker's modules (never the server's), as in a real worker.
-import { admitSession, IDLE_MS, SERVER_MODULES, type ServerError, serverCoreFacet, startServer } from "../../server.ts";
+import { admitRoute, IDLE_MS, SERVER_MODULES, type ServerError, serverCoreFacet, startServer } from "../../server.ts";
 import { WORKER_MODULES, workerCoreFacet } from "../../worker.ts";
 
 export type { TestedPlugin } from "@earendil-works/chord/plugins";
@@ -49,6 +51,12 @@ export type TestedFacet =
 			readonly idleMs?: number;
 			readonly close?: () => void;
 			readonly stubs?: readonly PluginFacet<P3Principal>[];
+			/**
+			 * The facets of a stand-in server the worker's host is linked to, as a real worker is to its server (the
+			 * worker's principal on that link): what serves the server contracts the facet holds (`SessionFacts`,
+			 * `SessionAccess` behind `admitSession`). Without it the worker has no server.
+			 */
+			readonly server?: readonly PluginFacet<P3Principal>[];
 	  };
 
 /**
@@ -62,6 +70,7 @@ export async function testPlugin(
 	context: Context,
 ): Promise<TestedPlugin<P3Principal>> {
 	const dir = await mkdtemp(join(tmpdir(), "p3-test-plugin-"));
+	let server: Host<P3Principal> | undefined;
 	const host =
 		facet.kind === "server"
 			? { principal: SERVER, address: Server(), modules: SERVER_MODULES }
@@ -79,22 +88,52 @@ export async function testPlugin(
 				kinds: Object.keys(KINDS),
 				platform: KINDS[facet.kind].platform,
 				stubs: facet.stubs ?? [],
-				hostStubs: (tested, store) =>
-					facet.kind === "server"
-						? serverStubs(tested, store, dir, context)
-						: workerStubs(facet, tested, store, dir),
+				hostStubs: (tested, store) => {
+					if (facet.kind === "server") return serverStubs(tested, store, dir, context);
+					if (facet.server !== undefined) server = standInServer(tested, facet.session, facet.server, context);
+					return workerStubs(facet, tested, store, dir);
+				},
 				...host,
 			},
 			context,
 		);
-		// Its close also removes the test's directory.
+		// Its close also closes the stand-in server and removes the test's directory.
 		const close = tested.close.bind(tested);
-		tested.close = (ctx) => close(ctx).finally(() => rm(dir, { recursive: true, force: true }));
+		tested.close = (ctx) =>
+			close(ctx)
+				.finally(() => server?.close(ctx))
+				.finally(() => rm(dir, { recursive: true, force: true }));
 		return tested;
 	} catch (error) {
+		await server?.close(context);
 		await rm(dir, { recursive: true, force: true });
 		throw error;
 	}
+}
+
+/**
+ * A stand-in server at `Server()` with `facets`, loaded (not awaited: the worker's load may wait on it, as a real
+ * worker's does) and linked to `worker`, session `session`'s worker host, as the server's route links a worker.
+ */
+function standInServer(
+	worker: Host<P3Principal>,
+	session: string,
+	facets: readonly PluginFacet<P3Principal>[],
+	context: Context,
+): Host<P3Principal> {
+	const server = createHost<P3Principal>({
+		address: Server(),
+		principal: SERVER,
+		onError: (error) => console.error("testPlugin: the stand-in server:", error),
+	});
+	const [up, down] = memoryLinkPair();
+	worker.connect(up, { principal: SERVER, trusted: true }, context);
+	server.connect(down, { principal: workerPrincipal(session), trusted: true }, context);
+	void server.load(facets, context).then(
+		({ failed }) => failed.length > 0 && console.error("testPlugin: the stand-in server failed to load", failed),
+		(error: unknown) => console.error("testPlugin: the stand-in server failed to load", error),
+	);
+	return server;
 }
 
 /** The base's facet of the server on the test's host, with a runtime whose server does not listen. */
@@ -103,7 +142,7 @@ function serverStubs(host: Host<P3Principal>, store: ChordStore, dataDir: string
 		Session,
 		{
 			authorize: () => true,
-			admit: admitSession,
+			admit: admitRoute,
 			resolve: () => Promise.reject(new Error("testPlugin: the plugin tier starts no session worker")),
 		},
 		context,
@@ -171,8 +210,11 @@ export type TestServer = {
 	readonly errors: readonly ServerError[];
 	/** How long its workers idle before they stop themselves. */
 	readonly idleMs: number;
-	/** A new client signed in as the owner over WebSocket, as a browser's page is (closed with the server). */
-	client(context: Context): Promise<Host<P3Principal>>;
+	/**
+	 * A new client over WebSocket, as a browser's page is (closed with the server): signed in as the owner, or as
+	 * `principal` (a person, with a sign-in issued for them as an invite link's page gets one).
+	 */
+	client(context: Context, principal?: P3Principal): Promise<Host<P3Principal>>;
 	/** A fresh owner's sign-in cookie (`name=value`), as a browser gets it from an owner link. */
 	cookie(context: Context): Promise<string>;
 	/** Each session's worker as the runner the base uses sees it (the one runner with the wraps over it). */
@@ -258,8 +300,11 @@ export async function testServer(options: TestServerOptions, context: Context): 
 			plugins: server.plugins,
 			errors,
 			idleMs,
-			client: async (ctx) => {
-				const client = await ownerClient(dataDir, server.port, ctx);
+			client: async (ctx, principal) => {
+				const client =
+					principal === undefined
+						? await ownerClient(dataDir, server.port, ctx)
+						: await signedInClient(host, server.port, principal, ctx);
 				clients.push(client);
 				return client;
 			},
@@ -314,9 +359,32 @@ export async function ownerClient(
 	context: Context,
 	readyTimeout = 10_000,
 ): Promise<Host<P3Principal>> {
-	const cookie = await ownerCookie(dataDir, port, context);
+	return clientWith({ cookie: await ownerCookie(dataDir, port, context) }, port, context, readyTimeout);
+}
+
+/** A client host connected over WebSocket to the server `host` on `port`, signed in as `principal` with a new sign-in. */
+async function signedInClient(
+	host: Host<P3Principal>,
+	port: number,
+	principal: P3Principal,
+	context: Context,
+): Promise<Host<P3Principal>> {
+	const issued = await host.root(
+		async (ctx) => (await ctx.get(SignIns, {})).issue({ principal, label: "test", kind: "device" }, ctx),
+		context,
+	);
+	return clientWith({ authorization: `Bearer ${issued.token}` }, port, context, 10_000);
+}
+
+/** A client host connected over WebSocket on `port` with `headers`, loaded with no plugins. */
+async function clientWith(
+	headers: Readonly<Record<string, string>>,
+	port: number,
+	context: Context,
+	readyTimeout: number,
+): Promise<Host<P3Principal>> {
 	// Node's WebSocket (undici) takes an init object with headers; the DOM type knows only protocols.
-	const init = { headers: { cookie } } as unknown as string[];
+	const init = { headers } as unknown as string[];
 	const socket = new WebSocket(`ws://127.0.0.1:${port}/chord`, init);
 	const client = createHost<P3Principal>({ readyTimeout, onError: (error) => console.error("client:", error) });
 	client.connect(webSocketLink(socket), { principal: { kind: "server" } }, context);

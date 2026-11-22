@@ -5,11 +5,17 @@
 
 import { type ChildProcess, spawn } from "node:child_process";
 import { readdir, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { remote, Session, str } from "@earendil-works/p3/v1";
+import { remote, Session, str, THIS_DEVICE } from "@earendil-works/p3/v1";
 
 /** The probe (`test/plugins/probe/`): a test server's plugin under test (`testServer({ plugins: [PROBE] })`). */
 export const PROBE = fileURLToPath(new URL("./plugins/probe/", import.meta.url));
+
+/** What the owner's `Sessions.create` takes for a new coding session titled `title` (on this device, in `/tmp`). */
+export function coding(title: string) {
+	return { app: "coding", title, location: { environment: THIS_DEVICE, folder: tmpdir() } };
+}
 
 /** Whether process `pid` lives. */
 export function alive(pid: number): boolean {

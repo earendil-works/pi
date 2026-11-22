@@ -1,0 +1,66 @@
+/* What a session holds: its location, then its things and its members as rows, each with its removal at the end. */
+
+.things {
+	display: flex;
+	flex-direction: column;
+	gap: var(--semantic-dimension-space-flow-medium);
+}
+
+.location {
+	margin: 0;
+	overflow-wrap: anywhere;
+	color: var(--semantic-color-text-secondary);
+	font: var(--semantic-typography-code-secondary);
+}
+
+.section {
+	display: flex;
+	flex-direction: column;
+	gap: var(--semantic-dimension-space-gap-small);
+}
+
+.items {
+	display: flex;
+	flex-direction: column;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.item {
+	display: flex;
+	min-block-size: var(--semantic-dimension-size-large);
+	align-items: center;
+	gap: var(--semantic-dimension-space-gap-small);
+	border-block-end: var(--semantic-dimension-border-width-small) solid var(--semantic-color-border-secondary);
+}
+
+.grow {
+	flex: 1 1 auto;
+	min-inline-size: 0;
+	overflow-wrap: anywhere;
+}
+
+.access {
+	flex: none;
+	color: var(--semantic-color-text-secondary);
+	font: var(--semantic-typography-ui-secondary);
+}
+
+.add {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-end;
+	gap: var(--semantic-dimension-space-gap-small);
+}
+
+.note,
+.error {
+	margin: 0;
+	color: var(--semantic-color-text-secondary);
+	font: var(--semantic-typography-ui-secondary);
+}
+
+.error {
+	color: var(--semantic-color-text-negative);
+}

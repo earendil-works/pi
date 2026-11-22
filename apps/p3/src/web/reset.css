@@ -1,0 +1,29 @@
+/* The page's reset: box sizing, the canvas and the text in the brand's tokens, the root filling the window. */
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+}
+
+html {
+	min-width: 20rem;
+	height: 100%;
+	-webkit-text-size-adjust: 100%;
+	text-size-adjust: 100%;
+	background: var(--semantic-color-background-canvas);
+}
+
+body {
+	height: 100%;
+	margin: 0;
+	background: var(--semantic-color-background-canvas);
+	color: var(--semantic-color-text-primary);
+	font: var(--semantic-typography-ui-primary);
+}
+
+/* Portals render outside the root, which isolates its stacking context. */
+#root {
+	height: 100%;
+	isolation: isolate;
+}

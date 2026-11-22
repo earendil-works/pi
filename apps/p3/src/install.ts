@@ -14,6 +14,8 @@ export type Files = {
 	readonly plugins: string;
 	/** How a session's worker starts: the source entry, or the built one; with the V8 flags for its memory. */
 	readonly worker: { readonly entry: string; readonly execArgv: readonly string[] };
+	/** The page's entry: the web surface builds the page's base bundle from it (source in both layouts). */
+	readonly web: string;
 	/** Node's arguments that run the `p3` command. */
 	readonly command: readonly string[];
 	/** Node's arguments that run the background server's supervisor (`supervisor.ts`). */
@@ -29,6 +31,7 @@ export function filesOf(file: string): Files {
 			root,
 			plugins: join(root, "plugins"),
 			worker: { entry: join(root, "src", "worker.ts"), execArgv: [...SOURCE_FLAGS, ...WORKER_V8_FLAGS] },
+			web: join(root, "src", "web", "page.tsx"),
 			command: [...SOURCE_FLAGS, join(root, "src", "bin.ts")],
 			supervisor: [...SOURCE_FLAGS, join(root, "src", "supervisor.ts")],
 		};
@@ -38,6 +41,7 @@ export function filesOf(file: string): Files {
 		root,
 		plugins: join(root, "plugins"),
 		worker: { entry: join(dist, "worker.js"), execArgv: [BUILT_FLAG, ...WORKER_V8_FLAGS] },
+		web: join(root, "src", "web", "page.tsx"),
 		command: [join(dist, "p3.js")],
 		supervisor: [join(dist, "supervisor.js")],
 	};
@@ -73,6 +77,9 @@ export const PLUGINS = FILES.plugins;
 
 /** How a session's worker starts. */
 export const WORKER = FILES.worker;
+
+/** The page's entry of this install. */
+export const WEB_ENTRY = FILES.web;
 
 /** Node's arguments that run the `p3` command of this install. */
 export const COMMAND = FILES.command;

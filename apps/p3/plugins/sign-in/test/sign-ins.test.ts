@@ -17,19 +17,31 @@ import {
 	createHost,
 	isChordError,
 	type P3Principal,
+	THIS_DEVICE,
 	until,
 	webSocketLink,
 } from "@earendil-works/p3/v1";
-import { Authenticators, type HttpRequest, LinkOpened } from "@earendil-works/p3/v1/server";
+import {
+	Authenticators,
+	type HttpRequest,
+	hashToken,
+	LinkOpened,
+	matchesHash,
+	newToken,
+} from "@earendil-works/p3/v1/server";
 import { type TestedPlugin, type TestServer, testPlugin, testServer } from "@earendil-works/p3/v1/testing";
 import { collected, eventually, within } from "../../../test/until.ts";
 import { Sessions } from "../../sessions/contract.ts";
 import { SignIns } from "../contract.ts";
-import { hashToken, matchesHash, newToken } from "../sign-ins.ts";
 
 const DAY = 24 * 60 * 60_000;
 const OWNER: P3Principal = { kind: "owner" };
 const MAX: P3Principal = { kind: "person", id: "max", name: "Max" };
+
+/** A new coding session titled `title`, as the owner makes it. */
+function coding(title: string) {
+	return { app: "coding", title, location: { environment: THIS_DEVICE, folder: tmpdir() } };
+}
 
 /** The sign-in plugin's directory. */
 const PLUGIN = fileURLToPath(new URL("../", import.meta.url));
@@ -325,12 +337,23 @@ describe("the plugin's links of a sign-in", () => {
 		}
 	});
 
-	it("a link of a request no sign-in authenticated is none of the plugin's", async () => {
+	it("a link without a token is none of the plugin's; one with a token that signs nobody in is closed", async () => {
 		const { link, end } = await open(t, request({}));
 		const refused = request({ authorization: "Bearer nope.x" });
 		assert.equal(await authenticate(t, refused), undefined);
 		const other = await open(t, refused);
-		assert.deepEqual([link.closed, end, other.link.closed, other.end], [0, undefined, 0, undefined]);
+		assert.deepEqual([link.closed, end, other.link.closed, other.end], [0, undefined, 1, undefined]);
+	});
+
+	// Astra, review of the base (2026-11-22): a link opened while the plugin reloaded, between its request's
+	// authentication (the old object) and its open (the new one), was tracked by neither, so a revoke missed it.
+	it("a link whose request another object of the plugin authenticated is still its sign-in's", async () => {
+		const laptop = await issue(t, OWNER, "device");
+		const req = request(carrying(laptop, "bearer"));
+		// Opened without this object's authenticator having seen the request.
+		const { link } = await open(t, req);
+		await revoke(t, laptop.id);
+		assert.equal(link.closed, 1);
 	});
 
 	it("keeps no request it authenticated: the note of a request's sign-in goes with the request", async () => {
@@ -466,10 +489,10 @@ describe("a sign-in's `/chord` links on the server", () => {
 		try {
 			const sessions = await revoked.host.get(Sessions, {}, context);
 			const others = await kept.host.get(Sessions, {}, context);
-			await sessions.create({ title: "before" }, context);
+			await sessions.create(coding("before"), context);
 			await revokeClosing(t.host, laptop.id, revoked.state);
-			await assert.rejects(sessions.create({ title: "by a revoked device" }, context));
-			await others.create({ title: "after" }, context);
+			await assert.rejects(sessions.create(coding("by a revoked device"), context));
+			await others.create(coding("after"), context);
 			assert.equal(kept.state.closed, false);
 		} finally {
 			await revoked.host.close(context);
@@ -521,7 +544,7 @@ describe("a reload of the sign-in plugin", () => {
 			// The sign-ins stay: both devices sign in again, and a revoke reaches the new object's links.
 			const [revoked, kept] = await connect();
 			await revokeClosing(host, laptop.id, revoked!.state);
-			await (await kept!.host.get(Sessions, {}, context)).create({ title: "after" }, context);
+			await (await kept!.host.get(Sessions, {}, context)).create(coding("after"), context);
 			assert.equal(kept!.state.closed, false);
 			assert.deepEqual(t.errors, []);
 		} finally {

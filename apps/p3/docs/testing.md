@@ -136,11 +136,31 @@ loaded from the Pi's user root, called by a client of the compiled API). Run the
 
 ## UI tests
 
-p3 has no page or terminal client yet. When they come:
+The page (the base's `src/web/` and the plugins' web facets) is tested in a real browser; the terminal client does
+not exist yet.
 
-- **Automated:** headless Chromium driven over the DevTools protocol, as p2 does (`apps/p2/test/p2/browser.ts`). Every
-  case at a phone viewport (390×844, touch emulated) and a desktop one (1280×900). On slayer:
-  `CHROMIUM_BIN=/home/badlogic/.local/bin/chromium-docker`. Browser tests run only when asked, never in `npm test`.
+- **Automated:** headless Chromium driven over the DevTools protocol by `plugins/chrome/test/browser.ts` (open a URL,
+  size the viewport, wait for an expression, click and type with real input events, take screenshots, keep the page's
+  console). The model is `plugins/chrome/test/page.test.ts`: `testServer` with a copy of the built-in plugins the test
+  edits and the tests' faux login (`test/plugins/faux-login/`), the owner's cookie set in the browser, then the page as
+  a person uses it: the bar, a session made through the form, a scripted answer with a tool call, the session's
+  dialog, the phone's screens, a reload of a plugin while the page is open (the page keeps its state, it does not load
+  again), apps a test writes into the user root, an invited person and their refusal. Every case looks at the phone's
+  viewport (390x844, touch emulated) and the desktop's (1280x900), light and dark (`colorScheme`). Wait for what the
+  page shows (`wait`), never sleep; before a screenshot of a dialog or a popup, `settled` waits until its animations
+  ended and checks it is on top. The last case asserts that the server reported nothing and the page logged no error.
+  Screenshots go to `/tmp/p3-base/shots/` (`P3_SHOTS` names another directory) for a person to look at.
+- **Run only when asked,** never in a plain `npm test`: `P3_BROWSER_TESTS=1` and `CHROMIUM_BIN` (on slayer
+  `CHROMIUM_BIN=/home/badlogic/.local/bin/chromium-docker`, the Playwright image's Chromium), else the suite is
+  skipped:
+
+  ```sh
+  P3_BROWSER_TESTS=1 CHROMIUM_BIN=/home/badlogic/.local/bin/chromium-docker \
+    node --conditions=source --disable-warning=ExperimentalWarning --test plugins/chrome/test/page.test.ts
+  ```
+
+- **Without a browser:** what the server serves the page (Elanor's fonts and tokens, the page's links) is a plain
+  `testServer` test (`plugins/chrome/test/assets.test.ts`), part of `npm test`.
 - **By hand, at sign-off:** people with the devices check Safari on iOS, Firefox on Android and Chrome on Android, and
   note on the Linear issue what they used and found.
 
