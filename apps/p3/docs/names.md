@@ -8,8 +8,8 @@ meaning from `packages/chord/docs/design.md` §2.
 | Name | Means | Not |
 | --- | --- | --- |
 | Pi | one installation of p3, with one owner | instance |
-| owner | the person who owns the Pi and installs its plugins | admin |
-| person | anyone besides the owner who signs in (an invite link makes one) | user, guest |
+| owner | the person who owns the Pi and installs its plugins: a person with the owner flag | admin |
+| person | anyone who signs in, the owner among them (an invite link makes the others) | user, guest |
 | group | persons an app made for one of its roles (coaches, players) | role, team |
 | member | a person or a group in a session, who reads or writes there | share, participant |
 | app | a plugin that owns the page below the top bar, and its sessions; coding is the built-in app | |

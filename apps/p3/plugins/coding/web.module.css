@@ -58,11 +58,18 @@
 	white-space: nowrap;
 }
 
-.transcript {
+/* The session's panes fill the space below its header; a thing's pane scrolls itself. */
+.panes {
 	display: flex;
 	min-block-size: 0;
 	flex: 1 1 auto;
-	flex-direction: column;
+}
+
+.paneScroll {
+	min-block-size: 0;
+	flex: 1 1 auto;
+	overflow-y: auto;
+	padding: var(--semantic-dimension-space-padding-small);
 }
 
 .scroll {

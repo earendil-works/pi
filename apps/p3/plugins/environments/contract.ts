@@ -2,7 +2,7 @@
 // the server's first start; more kinds (SSH, sandboxes) come with their packages. A session's location names one of
 // them and a folder on it. `/v1` re-exports this file.
 
-import { arr, obj, oneOf, remote, Server, type Static, str } from "@earendil-works/p3/v1";
+import { arr, nul, obj, oneOf, remote, Server, type Static, str } from "@earendil-works/p3/v1";
 
 /** This device's environment id: the machine the server runs on. */
 export const THIS_DEVICE = "this-device";
@@ -18,5 +18,7 @@ export const Environments = remote("environments.environments", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
+	// The owner's only (`admitOwner`, the people plugin's; its value `OwnerAdmission`, none).
+	admission: nul(),
 	variants: { owner: { state: { environments: arr(Environment) } } },
 });

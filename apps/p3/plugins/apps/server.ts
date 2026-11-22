@@ -1,5 +1,5 @@
 // The apps plugin on the server: the `Apps` registry (each app's entry, by id), and who may enter which app. The owner
-// enters every app; a person an app of one of their groups, or an app one of whose active sessions they are a member
+// (a person whose row says so, read live) enters every app; a person an app of one of their groups, or an app one of whose active sessions they are a member
 // of (directly or through a group). `AppAccess` answers that for one app (an app's own objects admit with it),
 // `AppCatalog` for every app at once. Whether a person is in an app's sessions is one live read per app and person
 // (`AppEntered`); the catalog holds one per app in `Apps`, which changes at runtime (`entered.ts`).
@@ -45,12 +45,6 @@ export default defineFacet((host) => {
 	host.serve(AppAccess, ({ app, caller }, principal, self) => {
 		mayAsk(principal, caller);
 		const apps = self.registry(Apps);
-		if (caller === "owner") {
-			const answer = self.derive([apps], ([table]) =>
-				table.has(app) ? { kind: "owner" as const } : { kind: "none" as const },
-			);
-			return { variant: "answer", members: { answer } };
-		}
 		// The server and the workers are no one in an app; anything else that is no person neither.
 		if (!caller.startsWith("person:")) return { variant: "answer", members: { answer: constant(NONE) } };
 		const person = caller.slice("person:".length);
@@ -59,24 +53,29 @@ export default defineFacet((host) => {
 		const groups = self.liveQuery(people.groups.ofPerson, { person }, { first: GROUPS_READ });
 		const entered = self.get(AppEntered, { app, person }).entered;
 		const answer = self.derive([apps, found, groups, entered], ([table, persons, theirs, inSession]) => {
-			if (!table.has(app) || persons.rows.length === 0) return NONE;
+			const [row] = persons.rows;
+			if (!table.has(app) || row === undefined) return NONE;
 			const names = theirs.more ? [] : theirs.rows.filter((group) => group.app === app).map(({ name }) => name);
-			if (names.length === 0 && !inSession) return NONE;
-			return { kind: "person" as const, id: person, groups: names } satisfies AppAdmission;
+			// The owner enters every app.
+			if (!row.owner && names.length === 0 && !inSession) return NONE;
+			return { kind: "person" as const, id: person, owner: row.owner, groups: names } satisfies AppAdmission;
 		});
 		return { variant: "answer", members: { answer } };
 	});
 
 	host.serve(AppCatalog, (_params, principal, self) => {
 		const apps = self.registry(Apps);
-		if (principal.kind === "owner") {
-			return { variant: "catalog", members: { apps: self.derive([apps], ([table]) => byTitle(table, () => true)) } };
-		}
-		if (principal.kind !== "person") throw forbidden("apps: the owner's and persons'");
-		const person = principal.id;
-		const groups = self.liveQuery(self.get(PeopleStore, {}).groups.ofPerson, { person }, { first: GROUPS_READ });
+		const caller = callerKey(principal);
+		// A session's agent and the server enter no app.
+		if (!caller.startsWith("person:")) return { variant: "catalog", members: { apps: constant([]) } };
+		const person = caller.slice("person:".length);
+		const people = self.get(PeopleStore, {});
+		const found = self.liveQuery(people.persons.one, { id: person }, { first: 1 });
+		const groups = self.liveQuery(people.groups.ofPerson, { person }, { first: GROUPS_READ });
 		const entered = followEntered(self, apps, (app, ctx) => ctx.get(AppEntered, { app, person }));
-		const shown = self.derive([apps, groups, entered], ([table, theirs, inSessions]) => {
+		const shown = self.derive([apps, found, groups, entered], ([table, persons, theirs, inSessions]) => {
+			// The owner (their row's flag, live) enters every app.
+			if (persons.rows[0]?.owner === true) return byTitle(table, () => true);
 			const ofGroups = new Set(theirs.more ? [] : theirs.rows.map(({ app }) => app));
 			return byTitle(table, (id) => ofGroups.has(id) || inSessions.has(id));
 		});
@@ -92,8 +91,9 @@ const NONE = { kind: "none" } as const;
  * admissions ask for their callers), anyone else about themselves only.
  */
 function mayAsk(principal: P3Principal, caller: string): void {
-	if (principal.kind === "server" || principal.kind === "worker") return;
-	if (callerKey(principal) !== caller) throw forbidden("apps: an answer about the caller only");
+	const asker = callerKey(principal);
+	if (asker === "server" || asker.startsWith("worker:") || asker === caller) return;
+	throw forbidden("apps: an answer about the caller only");
 }
 
 /** The apps of `table` that `shown` keeps, by title. */

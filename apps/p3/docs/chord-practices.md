@@ -79,8 +79,10 @@ session workers           one process per session: host at Session({ id }), its 
 | `/v1/worker` | `WorkerRuntime` (the session, the host, the store, the directory, the idle time, `close`), `WorkerBusy` (counts that keep the worker alive) |
 | `/v1/testing` | for a plugin's `test/` folder only. `testPlugin(root, { kind: "server" } or { kind: "worker", session }, context)`: Chord's plugin tier with p3's API, kinds, modules and principals, and the base's own facet as the real host has it (`ServerRuntime` of a server that does not listen, starts no worker and applies nothing; or `WorkerRuntime` and `WorkerBusy`), each test with a temporary directory of its own, removed at `close`. `testServer({ plugins }, context)`: p3's real server on a temporary data directory with the built-in plugins and the plugins under test, workers as real processes, `client(ctx)` signed in as the owner (`testing.md`, tier 3); `ownerClient`, `ownerCookie` |
 
-Principals are identity only: `{ kind: "owner" }`, `{ kind: "person", id, name }`, `{ kind: "worker", session }`,
-`{ kind: "server" }`. What a person may do is data, read by admissions, never stored in the principal.
+Principals are identity only: `{ kind: "person", id, name }`, `{ kind: "worker", session }`, `{ kind: "server" }`.
+The owner is a person too, the one whose row says so (decision "The owner is a person"). What a person may do, being
+the owner among it, is data, read by admissions (`admitSession`, `admitThing`, `admitApp`, `admitOwner`), never
+stored in the principal.
 
 A plugin of another root (a third party's, in `<data directory>/plugins`) reaches the built-in plugins' contracts only
 through the API (Chord decision "The app kit, point 5"): a relative path out of its root is a build error. The sessions
@@ -152,19 +154,18 @@ host.serve(SessionsStore, (_params, self) => {
 **Views forward; lists are `self.list`; a worker follows its row with `self.liveQuery`.**
 
 ```ts
-host.serve(Sessions, (_params, principal, self) => {
-	if (principal.kind !== "owner") throw forbidden("sessions: the owner's");
+host.serve(Sessions, (_params, principal, _admitted, self) => {      // admitted as the owner: a person
 	const store = self.get(SessionsStore, {});
+	const by = { kind: "person", id: principal.id } as const;
 	return forward(store, Sessions, "owner", {                        // members taken from the store, by the contract's names
-		create: ({ title }, ctx) => store.create({ title: title ?? "", creator: { kind: "owner" } }, ctx),   // one that needs the caller
+		create: (args, ctx) => store.create({ ...args, by }, ctx),     // one that needs the caller
 	});
-});
+}, { admit: admitOwner });
 
-host.serve(SessionsList, ({ app, set }, principal, self) => {
-	if (principal.kind !== "owner") throw forbidden("sessions: the owner's");
+host.serve(SessionsList, ({ app, set }, principal, { every }, self) => {   // `every`: the owner's row, live
 	const list = self.list("sessions", [[self.get(SessionsStore, {}).sessions[set], { app }]], { first: 50 });
-	return { variant: "owner", members: { list: list.value, more: (ctx) => list.more(ctx) } };
-});
+	return { variant: "sessions", members: { list: list.value, more: (ctx) => list.more(ctx) } };
+}, { admit: admitList });
 
 host.serve(SessionFacts, (_params, principal, self) => {
 	if (principal.kind !== "worker") throw forbidden("sessions: a session's worker only");

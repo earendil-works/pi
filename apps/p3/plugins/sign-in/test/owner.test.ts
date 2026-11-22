@@ -8,11 +8,9 @@ import assert from "node:assert/strict";
 import { afterEach, describe, it, mock } from "node:test";
 import { fileURLToPath } from "node:url";
 import { BACKGROUND_CONTEXT as context, type P3Principal } from "@earendil-works/p3/v1";
-import { ServerCommands } from "@earendil-works/p3/v1/server";
+import { PeopleStore, ServerCommands } from "@earendil-works/p3/v1/server";
 import { type TestServer, testPlugin, testServer } from "@earendil-works/p3/v1/testing";
 import { SignIns } from "../contract.ts";
-
-const OWNER: P3Principal = { kind: "owner" };
 
 /** The tests' probe plugin, whose route says what a request signed in as. */
 const PROBE = fileURLToPath(new URL("../../../test/plugins/probe/", import.meta.url));
@@ -36,6 +34,14 @@ async function started(): Promise<TestServer> {
 async function commandLink(t: TestServer): Promise<string> {
 	const commands = (await t.host.registry(ServerCommands, context)).value;
 	return (await commands.get("owner-link")!.run(context)) as string;
+}
+
+/** The owner's person on `t` (made at its first start), as a principal. */
+async function ownerOf(t: TestServer): Promise<P3Principal> {
+	const [found] = (
+		await t.host.root(async (ctx) => (await ctx.get(PeopleStore, {})).persons.owner.page({}, 1, ctx), context)
+	).items;
+	return { kind: "person", id: found!.id, name: found!.name };
 }
 
 /** Posts `body` to the owner link's route as its page does. */
@@ -73,14 +79,15 @@ describe("the owner link", () => {
 		assert.equal((await postToken(t, link.href)).status, 403, "used up");
 		// Asked after the check above: a fresh link would replace the used one anyway.
 		const cookie = signed.headers.get("set-cookie")!.split(";")[0]!;
-		assert.deepEqual(await principalOf(t, cookie), OWNER, "the browser is the owner's");
+		const owner = await ownerOf(t);
+		assert.deepEqual(await principalOf(t, cookie), owner, "the browser is the owner's person's");
 		const browsers = await t.host.root(
 			async (ctx) => (await ctx.get(SignIns, {})).list.value.filter(({ kind }) => kind === "browser"),
 			context,
 		);
 		assert.deepEqual(
 			browsers.map(({ label, principal }) => [label, principal]),
-			[["owner browser", OWNER]],
+			[["owner browser", owner]],
 		);
 	});
 
@@ -120,7 +127,7 @@ describe("the owner link", () => {
 
 	it("signs `p3`'s browser in as the owner over the data directory's socket", async () => {
 		const t = await started();
-		assert.deepEqual(await principalOf(t, await t.cookie(context)), OWNER);
+		assert.deepEqual(await principalOf(t, await t.cookie(context)), await ownerOf(t));
 	});
 
 	it("is refused by the command before the server listens", async () => {

@@ -23,12 +23,13 @@ export type ThingOptionsProps = {
 };
 
 /**
- * A kind's view of one thing: the kind's name, its component (the thing's object admits the viewer) and, for a kind
- * with options people set in the page, its options form.
+ * A kind's view of one thing: the kind's name, its component (the thing's object admits the viewer; none for a kind
+ * with nothing to show but its title, such as the coding tools: an app offers no pane for it) and, for a kind with
+ * options people set in the page, its options form.
  */
 export type ThingViewEntry = {
 	readonly kind: string;
-	readonly View: ComponentType<ThingViewProps>;
+	readonly View?: ComponentType<ThingViewProps>;
 	readonly Options?: ComponentType<ThingOptionsProps>;
 };
 
@@ -58,5 +59,12 @@ export const NewSessionView = defineView<{
 	readonly onCreated: (session: string) => void;
 }>("sessions.new");
 
-/** What a session holds (its things and members), opened on demand; the owner manages them there. */
-export const SessionThingsView = defineView<{ readonly session: string }>("sessions.things");
+/**
+ * What a session holds (its things and members), opened on demand; the owner manages them there. With `onOpen`, each
+ * thing whose kind has a view offers "Open", which hands its id to the app (to show it where the app shows things);
+ * the dialog never shows a thing's view itself.
+ */
+export const SessionThingsView = defineView<{
+	readonly session: string;
+	readonly onOpen?: (thing: string) => void;
+}>("sessions.things");

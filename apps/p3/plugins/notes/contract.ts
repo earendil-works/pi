@@ -1,5 +1,5 @@
 // The notes plugin's contract: notebooks as a kind of thing (`notes.notes`), and one notebook in a session as its
-// members and its agent see it (`Notes`). A notebook is a person's own (record `person:<id>`; the owner's: `owner`)
+// members and its agent see it (`Notes`). A notebook is a person's own (record `person:<id>`, the owner's too)
 // and lives on the server across sessions: the same notebook brought into two sessions shows the same notes. A thing
 // of the kind without a record (an app's `thingOf(NotesKind)`) is its session's own notebook.
 
@@ -27,14 +27,10 @@ export const NotesKind = defineThingKind("notes.notes", {
 });
 
 /**
- * Who wrote a note last: the owner, a person (their name as the people plugin has it now), or an agent (which
+ * Who wrote a note last: a person (the owner too; their name as the people plugin has it now), or an agent (which
  * session's is implicit: the notebook's use there).
  */
-export const Author = union([
-	obj({ kind: lit("owner") }),
-	obj({ kind: lit("person"), id: str(), name: str() }),
-	obj({ kind: lit("agent") }),
-]);
+export const Author = union([obj({ kind: lit("person"), id: str(), name: str() }), obj({ kind: lit("agent") })]);
 
 /** Who wrote a note last (see `Author`). */
 export type Author = Static<typeof Author>;

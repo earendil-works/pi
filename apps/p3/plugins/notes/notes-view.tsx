@@ -10,8 +10,8 @@ import { useState } from "react";
 import { type Author, type Note, Notes } from "./contract.ts";
 import styles from "./notes-view.module.css";
 
-/** Who is looking: the owner, a person by id, or nobody known yet. */
-type Viewer = { readonly kind: "owner" } | { readonly kind: "person"; readonly id: string } | undefined;
+/** Who is looking: a person (the owner among them) by id, or nobody known yet. */
+type Viewer = { readonly id: string } | undefined;
 
 /** The editor's methods, as the view calls them. */
 type Editor = Extract<Reference<typeof Notes>, { readonly variant: "editor" }>;
@@ -26,7 +26,7 @@ export function NotesView(props: { readonly session: string; readonly thing: str
 	const list = useWatch(live?.list);
 	const me = useWatch(useVariant(useHold(Me, {}), "me")?.me);
 	const action = useAction();
-	const viewer: Viewer = me?.kind === "person" ? { kind: "person", id: me.id } : me?.kind === "owner" ? me : undefined;
+	const viewer: Viewer = me?.kind === "person" ? { id: me.id } : undefined;
 	if (state?.kind === "failed" && state.cause.kind === "denied") {
 		return <p className={styles.note}>You may not read these notes.</p>;
 	}
@@ -205,13 +205,11 @@ function NoteItem(props: {
 	);
 }
 
-/** How the view names a note's author: the viewer as "You", a person by name, the owner, an agent. */
+/** How the view names a note's author: the viewer as "You", a person (the owner too) by name, the agent. */
 function authorName(author: Author, viewer: Viewer): string {
 	switch (author.kind) {
-		case "owner":
-			return viewer?.kind === "owner" ? "You" : "The owner";
 		case "person":
-			return viewer?.kind === "person" && viewer.id === author.id ? "You" : author.name;
+			return viewer?.id === author.id ? "You" : author.name;
 		case "agent":
 			return "The agent";
 	}

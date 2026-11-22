@@ -75,7 +75,7 @@ export const Shape = union([
 export type Shape = Static<typeof Shape>;
 
 /**
- * A committed shape: its id, who drew it (`owner`, `person:<id>`, `agent`: the session's agent) and the shape.
+ * A committed shape: its id, who drew it (`person:<id>`, the owner's too; `agent`: the session's agent) and the shape.
  */
 export const PlacedShape = obj({ id: str(), author: str(), shape: Shape });
 

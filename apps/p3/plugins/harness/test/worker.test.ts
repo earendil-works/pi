@@ -25,7 +25,8 @@ import { eventually, within } from "../../../test/until.ts";
 import { type Server, sessionRow, standIns, type Thing } from "./stubs.ts";
 
 const SESSION = "s1";
-const OWNER: P3Principal = { kind: "owner" };
+/** The owner, as the stand-ins answer for them (a person who writes). */
+const OWNER: P3Principal = { kind: "person", id: "owner", name: "Owner" };
 
 /** A faux login thing `thing` of provider `provider` answering from `script`. */
 function login(thing: string, provider: string, script: Step[], tool = false): Thing {

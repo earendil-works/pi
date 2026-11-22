@@ -186,8 +186,9 @@ export class Browser {
 				timeoutMs,
 			);
 		} catch (error) {
+			const at = await this.evaluate<string>("location.pathname").catch(() => "?");
 			throw new Error(
-				`waiting for ${expression}: ${(error as Error).message}\nconsole:\n${this.console.join("\n")}`,
+				`waiting for ${expression} (at ${at}): ${(error as Error).message}\nconsole:\n${this.console.join("\n")}`,
 			);
 		}
 	}
@@ -212,6 +213,53 @@ export class Browser {
 		for (const type of ["mouseMoved", "mousePressed", "mouseReleased"]) {
 			await this.call("Input.dispatchMouseEvent", { type, x, y, button: "left", buttons: 1, clickCount: 1 });
 		}
+	}
+
+	/** The box of the first element `selector` matches, in the viewport's pixels. */
+	box(selector: string): Promise<{ x: number; y: number; width: number; height: number }> {
+		return this.evaluate(
+			`(() => { const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { x: r.left, y: r.top, width: r.width, height: r.height }; })()`,
+		);
+	}
+
+	/**
+	 * Drags with the mouse from the centre of the first element `selector` matches to (`x`, `y`), in steps; `held`
+	 * runs at the end before the button is released (a screenshot of the drop's indicator).
+	 */
+	async drag(selector: string, x: number, y: number, held?: () => Promise<void>): Promise<void> {
+		const from = await this.box(selector);
+		const start = { x: from.x + from.width / 2, y: from.y + from.height / 2 };
+		await this.call("Input.dispatchMouseEvent", { type: "mouseMoved", ...start });
+		await this.call("Input.dispatchMouseEvent", {
+			type: "mousePressed",
+			...start,
+			button: "left",
+			buttons: 1,
+			clickCount: 1,
+		});
+		for (let step = 1; step <= STEPS; step++) {
+			const at = { x: start.x + ((x - start.x) * step) / STEPS, y: start.y + ((y - start.y) * step) / STEPS };
+			await this.call("Input.dispatchMouseEvent", { type: "mouseMoved", ...at, button: "left", buttons: 1 });
+		}
+		await held?.();
+		await this.call("Input.dispatchMouseEvent", {
+			type: "mouseReleased",
+			x,
+			y,
+			button: "left",
+			buttons: 0,
+			clickCount: 1,
+		});
+	}
+
+	/** Swipes one finger from (`x1`, `y1`) to (`x2`, `y2`), in steps (touch emulated: a phone's viewport). */
+	async swipe(x1: number, y1: number, x2: number, y2: number): Promise<void> {
+		await this.call("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: x1, y: y1 }] });
+		for (let step = 1; step <= STEPS; step++) {
+			const point = { x: x1 + ((x2 - x1) * step) / STEPS, y: y1 + ((y2 - y1) * step) / STEPS };
+			await this.call("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [point] });
+		}
+		await this.call("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
 	}
 
 	/** Focuses the first element `selector` matches and types `text` into it. */
@@ -278,6 +326,9 @@ export class Browser {
 		else waiting?.resolve(message.result);
 	}
 }
+
+/** How many moves a drag or a swipe makes on its way. */
+const STEPS = 10;
 
 /** What DevTools sends (a trust boundary of the test's own: only the fields read here). */
 type Message = {

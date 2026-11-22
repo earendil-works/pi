@@ -21,7 +21,7 @@ import {
 	thingOf,
 	until,
 } from "@earendil-works/p3/v1";
-import { SessionsStore } from "@earendil-works/p3/v1/server";
+import { PeopleStore, SessionsStore } from "@earendil-works/p3/v1/server";
 import { type TestServer, testServer } from "@earendil-works/p3/v1/testing";
 import { FauxLogin, FauxRequests, type Step } from "../../../test/plugins/faux-login/contract.ts";
 import { eventually, within } from "../../../test/until.ts";
@@ -156,7 +156,10 @@ describe("the canvas end to end", () => {
 			(count) => count > 0,
 			5000,
 		);
-		assert.deepEqual(seen[0], { kind: "point", who: "owner", name: "Owner", x: 10, y: 20, draft: null });
+		const [me] = (
+			await t.host.root(async (ctx) => (await ctx.get(PeopleStore, {})).persons.owner.page({}, 1, ctx), context)
+		).items;
+		assert.deepEqual(seen[0], { kind: "point", who: `person:${me!.id}`, name: me!.name, x: 10, y: 20, draft: null });
 		await ask("@label", "Drawn.");
 		await until(watching.shapes, (list) => list.rows.length === 2, within("the label", context, 10_000));
 		assert.deepEqual(t.errors, []);

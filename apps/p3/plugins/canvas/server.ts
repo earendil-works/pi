@@ -91,14 +91,12 @@ export default defineFacet((host, self) => {
 });
 
 /**
- * Who the caller of a method is, as the people plugin answers them (asked as the caller): their author key (`owner`,
- * `person:<id>`, `agent` for the session's agent) and their name now.
+ * Who the caller of a method is, as the people plugin answers them (asked as the caller): their author key
+ * (`person:<id>`, the owner's too; `agent` for the session's agent) and their name now.
  */
 async function caller(ctx: Ctx<P3Principal>): Promise<{ readonly who: string; readonly name: string }> {
 	const me = (await ctx.get(Me, {})).me.value;
 	switch (me.kind) {
-		case "owner":
-			return { who: "owner", name: "Owner" };
 		case "person":
 			return { who: `person:${me.id}`, name: me.name };
 		case "agent":

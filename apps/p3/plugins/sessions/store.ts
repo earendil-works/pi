@@ -534,14 +534,14 @@ function partyOf(key: string): Party {
 	return { kind: key.slice(0, colon) as Party["kind"], id: key.slice(colon + 1) };
 }
 
-/** Who brought a thing, in the tables: `owner`, `app` (also when nobody is named: apps' server code), `person:<id>`. */
+/** Who brought a thing, in the tables: `person:<id>`, or `app` (also when nobody is named: apps' server code). */
 function bringerKey(by: Bringer | undefined): string {
-	return by === undefined || by.kind !== "person" ? (by?.kind ?? "app") : `person:${by.id}`;
+	return by?.kind === "person" ? `person:${by.id}` : "app";
 }
 
 /** Who brought a thing, of its key in the tables (written by `bringerKey`). */
 function bringerOf(key: string): Bringer {
-	return key === "owner" || key === "app" ? { kind: key } : { kind: "person", id: key.slice("person:".length) };
+	return key === "app" ? { kind: "app" } : { kind: "person", id: key.slice("person:".length) };
 }
 
 /** Whose options in the tables: `everyone`, `agent`, `person:<id>`, `group:<id>`. */

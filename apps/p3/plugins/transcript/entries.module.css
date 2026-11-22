@@ -91,6 +91,8 @@
 	font: var(--semantic-typography-code-secondary);
 	white-space: pre-wrap;
 	overflow-wrap: anywhere;
+	/* Scrolled sideways by a finger too, inside a pane whose sideways swipes switch panes. */
+	touch-action: pan-x pan-y pinch-zoom;
 }
 
 .marker {

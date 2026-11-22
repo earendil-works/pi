@@ -3,6 +3,7 @@
 // cookie signs in as): it signs a browser in as the person, once, and removing the person ends their sign-ins.
 
 import assert from "node:assert/strict";
+import { userInfo } from "node:os";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
@@ -10,6 +11,7 @@ import {
 	BACKGROUND_CONTEXT as context,
 	isChordError,
 	Me,
+	OwnerAccess,
 	type P3Principal,
 	People,
 	PeopleList,
@@ -23,8 +25,6 @@ import appsServer from "../../apps/server.ts";
 import environmentsServer from "../../environments/server.ts";
 import sessionsServer from "../../sessions/server.ts";
 import signInServer from "../../sign-in/server.ts";
-
-const OWNER: P3Principal = { kind: "owner" };
 
 /** The tests' probe plugin, whose route says what a request signed in as. */
 const PROBE = fileURLToPath(new URL("../../../test/plugins/probe/", import.meta.url));
@@ -57,18 +57,75 @@ describe("the people plugin on the server", () => {
 	/** Runs `fn` with the store, as server code has it. */
 	const store = <T>(fn: (people: Reference<typeof PeopleStore>, ctx: Ctx<P3Principal>) => Promise<T>) =>
 		t.root(async (ctx) => fn(await ctx.get(PeopleStore, {}), ctx), context);
-
-	it("tells the owner, a person and a session's agent who they are, a person's name live; refuses the server", async () => {
-		const id = await store((people, ctx) => people.createPerson({ name: "Ann" }, ctx));
-		assert.deepEqual(await t.root(async (ctx) => (await ctx.get(Me, {})).me.value, context, { principal: OWNER }), {
-			kind: "owner",
+	/** The owner's person, as a principal. */
+	const owner = () =>
+		store(async (people, ctx) => {
+			const [found] = (await people.persons.owner.page({}, 1, ctx)).items;
+			return { kind: "person", id: found!.id, name: found!.name } satisfies P3Principal;
 		});
+
+	it("makes the owner's person at the first start, once, named after the OS user; never removes it", async () => {
+		const owners = await store(async (people, ctx) => (await people.persons.all.page({}, 10, ctx)).items);
+		const user = userInfo().username;
+		assert.deepEqual(owners, [{ id: owners[0]!.id, name: `${user[0]!.toUpperCase()}${user.slice(1)}`, owner: true }]);
+		await refused(
+			store((people, ctx) => people.removePerson({ person: owners[0]!.id }, ctx)),
+			"invalid",
+		);
+		const me = await owner();
+		await refused(
+			t.root(async (ctx) => (await ctx.get(People, {})).link({ person: me.id }, ctx), context, { principal: me }),
+			"invalid",
+		);
+	});
+
+	it("admits the owner to the owner's objects, live from their row, and refuses everyone else", async () => {
+		const me = await owner();
+		const ann = await store((people, ctx) => people.createPerson({ name: "Ann" }, ctx));
+		const annP: P3Principal = { kind: "person", id: ann, name: "Ann" };
+		assert.equal(
+			await t.root(async (ctx) => (await ctx.get(People, {})).variant, context, { principal: me }),
+			"owner",
+		);
+		const ask = (principal: P3Principal, caller: string) =>
+			t.root(async (ctx) => (await ctx.get(OwnerAccess, { caller })).owner.value, context, { principal });
+		assert.deepEqual(
+			[
+				await ask(me, `person:${me.id}`),
+				await ask(annP, `person:${ann}`),
+				await ask({ kind: "worker", session: "s" }, `person:${me.id}`),
+				await ask({ kind: "server" }, "server"),
+			],
+			[true, false, true, false],
+		);
+		await refused(ask(annP, `person:${me.id}`));
+		for (const principal of [annP, { kind: "worker", session: "s" }, { kind: "server" }] satisfies P3Principal[]) {
+			await refused(t.root(async (ctx) => ctx.get(People, {}, { readyTimeout: 500 }), context, { principal }));
+			await refused(
+				t.root(async (ctx) => ctx.get(PeopleList, { view: "v" }, { readyTimeout: 500 }), context, { principal }),
+			);
+		}
+	});
+
+	it("tells the owner, a person and a session's agent who they are, a rename live; refuses the server", async () => {
+		const id = await store((people, ctx) => people.createPerson({ name: "Ann" }, ctx));
+		const me = await owner();
 		await t.root(
 			async (ctx) => {
-				const me = await ctx.get(Me, {});
-				assert.deepEqual(me.me.value, { kind: "person", id, name: "Ann" });
+				const mine = await ctx.get(Me, {});
+				assert.deepEqual(mine.me.value, { kind: "person", id: me.id, name: me.name, owner: true });
+				await store((people, server) => people.renamePerson({ person: me.id, name: "Mario" }, server));
+				assert.deepEqual(mine.me.value, { kind: "person", id: me.id, name: "Mario", owner: true });
+			},
+			context,
+			{ principal: me },
+		);
+		await t.root(
+			async (ctx) => {
+				const mine = await ctx.get(Me, {});
+				assert.deepEqual(mine.me.value, { kind: "person", id, name: "Ann", owner: false });
 				await store((people, server) => people.renamePerson({ person: id, name: "Anna" }, server));
-				assert.deepEqual(me.me.value, { kind: "person", id, name: "Anna" });
+				assert.deepEqual(mine.me.value, { kind: "person", id, name: "Anna", owner: false });
 			},
 			context,
 			{ principal: { kind: "person", id, name: "Ann" } },
@@ -96,7 +153,7 @@ describe("the people plugin on the server", () => {
 				["coaches"],
 			);
 			assert.deepEqual((await people.members.of.page({ group: coaches }, 10, ctx)).items, [
-				{ id: ann, name: "Ann" },
+				{ id: ann, name: "Ann", owner: false },
 			]);
 			assert.equal((await people.groups.ofPerson.page({ person: ann }, 10, ctx)).items.length, 2);
 			await people.removePerson({ person: ann }, ctx);
@@ -114,20 +171,21 @@ describe("the people plugin on the server", () => {
 			async (ctx) => {
 				const list = await ctx.get(PeopleList, { view: "v" });
 				assert.deepEqual([list.list.value.rows.length, list.list.value.moreAfter], [50, true]);
-				assert.equal(list.list.value.rows[0]?.name, "p00");
+				// By name, the owner's person ("Badlogic" here) first: capitals sort first.
+				assert.equal(
+					list.list.value.rows.some(({ owner }) => owner),
+					true,
+				);
 				await list.more(ctx);
-				assert.deepEqual([list.list.value.rows.length, list.list.value.moreAfter], [60, false]);
+				// The owner's person among them.
+				assert.deepEqual([list.list.value.rows.length, list.list.value.moreAfter], [61, false]);
 			},
 			context,
-			{ principal: OWNER },
+			{ principal: await owner() },
 		);
 	});
 
-	it("gives `People` and `PeopleList` to the owner only; an invite's link is a fresh one-time path", async () => {
-		for (const principal of [{ kind: "person", id: "p", name: "P" }, { kind: "server" }] satisfies P3Principal[]) {
-			await refused(t.root(async (ctx) => ctx.get(People, {}), context, { principal }));
-			await refused(t.root(async (ctx) => ctx.get(PeopleList, { view: "v" }), context, { principal }));
-		}
+	it("makes an invite's link a fresh one-time path", async () => {
 		await t.root(
 			async (ctx) => {
 				const people = await ctx.get(People, {});
@@ -137,7 +195,7 @@ describe("the people plugin on the server", () => {
 				await refused(people.link({ person: "none" }, ctx), "invalid");
 			},
 			context,
-			{ principal: OWNER },
+			{ principal: await owner() },
 		);
 	});
 });
@@ -177,7 +235,7 @@ describe("an invite link", () => {
 		// A device of hers, with an open link and an object on it.
 		const device = await t.client(context, ann);
 		const me = await device.get(Me, {}, context);
-		assert.deepEqual(me.me.value, ann);
+		assert.deepEqual(me.me.value, { ...ann, owner: false });
 		await people.remove({ person }, context);
 		assert.equal(await principalOf(cookie), undefined);
 		await until(me.state, (state) => state.kind !== "live", within("her link closed", context));
@@ -191,5 +249,25 @@ describe("an invite link", () => {
 		assert.equal((await post(link)).status, 403, "replaced by a fresh link");
 		assert.equal((await post(`#${person}.nonsense`)).status, 403);
 		assert.equal((await post("#no-dot")).status, 403);
+	});
+});
+
+describe("the owner's person", () => {
+	it("exists after the first start, once also after a restart, and the owner link signs in as them", async () => {
+		const first = await testServer({}, context);
+		let t = first;
+		try {
+			const owners = async () =>
+				(await t.host.root(async (ctx) => (await ctx.get(PeopleStore, {})).persons.all.page({}, 10, ctx), context))
+					.items;
+			const [before] = await owners();
+			assert.equal(before?.owner, true);
+			const me = (await (await t.client(context)).get(Me, {}, context)).me.value;
+			assert.deepEqual(me, { kind: "person", id: before!.id, name: before!.name, owner: true });
+			t = await first.restart(context);
+			assert.deepEqual(await owners(), [before]);
+		} finally {
+			await t.close(context);
+		}
 	});
 });

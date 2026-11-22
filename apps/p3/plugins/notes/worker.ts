@@ -64,8 +64,6 @@ function listed(rows: readonly Note[], more: boolean): string {
 /** Who wrote a note, for the agent. */
 function writer(note: Note): string {
 	switch (note.author.kind) {
-		case "owner":
-			return "the owner";
 		case "person":
 			return note.author.name;
 		case "agent":

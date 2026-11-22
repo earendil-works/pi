@@ -23,7 +23,7 @@ import type { Context } from "@earendil-works/chord/context";
 import { createHttp, type HttpError } from "@earendil-works/chord/http";
 import { openNodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
 import { type P3Principal, Server, Session } from "@earendil-works/p3/v1";
-import type { ServerRuntime } from "@earendil-works/p3/v1/server";
+import { PeopleStore, type ServerRuntime } from "@earendil-works/p3/v1/server";
 import type { WorkerRuntime } from "@earendil-works/p3/v1/worker";
 import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import appsServer from "../plugins/apps/server.ts";
@@ -83,6 +83,8 @@ export type Topology = {
 		| { readonly kind: "load_failed"; readonly failed: LoadReport["failed"] }
 	)[];
 	readonly closed: readonly string[];
+	/** The owner's person (the people plugin made it at the start), as a principal. */
+	readonly owner: P3Principal;
 	/** The sum of the server's metric `name` so far (`chord.query.runs`, `chord.query.probes`, ...). */
 	count(name: string): number;
 	/** A client host connected to the server as `principal`, loaded with no plugins. */
@@ -159,7 +161,11 @@ export async function topology(context: Context, idleMs = 60_000): Promise<Topol
 		...SERVER_PLUGINS,
 	];
 	throwFailed(await server.load(serverFacets, context));
+	const [found] = (
+		await server.root(async (ctx) => (await ctx.get(PeopleStore, {})).persons.owner.page({}, 1, ctx), context)
+	).items;
 	return {
+		owner: { kind: "person", id: found!.id, name: found!.name },
 		server,
 		workers,
 		errors,

@@ -13,6 +13,7 @@ import { after, before, describe, it } from "node:test";
 import {
 	BACKGROUND_CONTEXT as context,
 	type Host,
+	Me,
 	type P3Principal,
 	People,
 	Sessions,
@@ -27,6 +28,9 @@ const SHOTS = process.env.P3_SHOTS ?? "/tmp/p3-base/shots";
 
 describe("the canvas in two browsers", { skip: BROWSER_SKIP }, () => {
 	let t: TestServer;
+	/** The owner's author key and name (their person's). */
+	let ownerKey = "";
+	let ownerName = "";
 	let owner: Host<P3Principal>;
 	let mine: Browser;
 	let hers: Browser;
@@ -38,6 +42,10 @@ describe("the canvas in two browsers", { skip: BROWSER_SKIP }, () => {
 		await mkdir(SHOTS, { recursive: true });
 		t = await testServer({ dataDir: await mkdtemp(join(tmpdir(), "p3-canvas-page-")) }, context);
 		owner = await t.client(context);
+		const me = (await owner.get(Me, {}, context)).me.value;
+		if (me.kind !== "person") throw new Error("the owner's client is no person");
+		ownerKey = `person:${me.id}`;
+		ownerName = me.name;
 		origin = `http://127.0.0.1:${t.port}`;
 		const invited = await (await owner.get(People, {}, context)).invite({ name: "Ada" }, context);
 		ada = invited.person;
@@ -66,11 +74,16 @@ describe("the canvas in two browsers", { skip: BROWSER_SKIP }, () => {
 		await t?.close(context);
 	});
 
-	/** Opens the session's view of what it holds in `browser`, down to its board as `variant`. */
+	/** Opens the session's board in `browser` from its dialog, as a pane, as `variant`. */
 	async function openBoard(browser: Browser, variant: string): Promise<void> {
 		await browser.open(`${origin}/coding/${session}`);
 		await browser.click("[data-things-open]");
 		await browser.settled("[data-things-dialog]");
+		await browser.click('[data-thing="canvas.board"] [data-open-thing]');
+		// The dialog's backdrop fades out over the pane: drawing waits until it is gone.
+		await browser.wait(
+			`document.querySelector("[data-things-dialog]") === null && document.querySelector("[data-ending-style]") === null`,
+		);
 		await browser.wait(`document.querySelector('[data-canvas="${variant}"]')`);
 		await browser.evaluate(`document.querySelector("[data-canvas-surface]").scrollIntoView({ block: "center" })`);
 	}
@@ -86,11 +99,13 @@ describe("the canvas in two browsers", { skip: BROWSER_SKIP }, () => {
 			await mouse(mine, "mouseMoved", desk.at(0.2 + step * 0.04, 0.3 + Math.sin(step / 2) * 0.1), 1);
 		}
 		// Ada sees the owner's pointer with their name, and the stroke so far.
-		await hers.wait(`document.querySelector('[data-cursor="owner"]')?.textContent === "Owner"`);
-		await hers.wait(`document.querySelector('[data-draft="owner"]')?.getAttribute("d")?.split(" ").length > 10`);
+		await hers.wait(`document.querySelector('[data-cursor="${ownerKey}"]')?.textContent === "${ownerName}"`);
+		await hers.wait(
+			`document.querySelector('[data-draft="${ownerKey}"]')?.getAttribute("d")?.split(" ").length > 10`,
+		);
 		await mouse(mine, "mouseReleased", desk.at(0.6, 0.3), 0);
-		await hers.wait(`document.querySelector('[data-shape][data-author="owner"]')`);
-		await hers.wait(`document.querySelector('[data-draft="owner"]') === null`);
+		await hers.wait(`document.querySelector('[data-shape][data-author="${ownerKey}"]')`);
+		await hers.wait(`document.querySelector('[data-draft="${ownerKey}"]') === null`);
 		// Ada draws with her finger, and stops before lifting it.
 		const phone = await surface(hers);
 		await touch(hers, "touchStart", phone.at(0.3, 0.6));
@@ -117,19 +132,19 @@ describe("the canvas in two browsers", { skip: BROWSER_SKIP }, () => {
 		await mouse(mine, "mouseMoved", desk.at(0.7, 0.65), 1);
 		await mouse(mine, "mouseMoved", desk.at(0.85, 0.8), 1);
 		await mouse(mine, "mouseReleased", desk.at(0.85, 0.8), 0);
-		await hers.wait(`document.querySelector('rect[data-author="owner"]')`);
+		await hers.wait(`document.querySelector('rect[data-author="${ownerKey}"]')`);
 		await mine.click('[data-tool="text"]');
 		await mine.type("[data-canvas-text]", "Hello, Ada");
 		await mine.click('[data-color="#cf222e"]');
 		const placed = desk.at(0.1, 0.15);
 		await mouse(mine, "mousePressed", placed, 1);
 		await mouse(mine, "mouseReleased", placed, 0);
-		await hers.wait(`document.querySelector('text[data-author="owner"]')?.textContent === "Hello, Ada"`);
+		await hers.wait(`document.querySelector('text[data-author="${ownerKey}"]')?.textContent === "Hello, Ada"`);
 		// Undo takes the last of one's own shapes the board shows committed.
-		await mine.wait(`document.querySelector('text[data-author="owner"]')`);
+		await mine.wait(`document.querySelector('text[data-author="${ownerKey}"]')`);
 		await mine.click("[data-canvas-undo]");
-		await hers.wait(`document.querySelector('text[data-author="owner"]') === null`);
-		await hers.wait(`document.querySelector('rect[data-author="owner"]')`);
+		await hers.wait(`document.querySelector('text[data-author="${ownerKey}"]') === null`);
+		await hers.wait(`document.querySelector('rect[data-author="${ownerKey}"]')`);
 		await hers.wait(`document.querySelector('[data-shape][data-author="person:${ada}"]')`);
 		await mine.colorScheme("dark");
 		await mine.evaluate(`document.querySelector("[data-canvas-surface]").scrollIntoView({ block: "center" })`);
@@ -141,6 +156,8 @@ describe("the canvas in two browsers", { skip: BROWSER_SKIP }, () => {
 	});
 
 	it("leaves Ada the board read only once the owner turns her drawing off in the options form", async () => {
+		await mine.click("[data-things-open]");
+		await mine.settled("[data-things-dialog]");
 		await mine.click("[data-options-open]");
 		await mine.wait(`document.querySelector("[data-canvas-options]")`);
 		// The form for Ada: her own options, "May draw" off.

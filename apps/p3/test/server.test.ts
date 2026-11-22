@@ -17,6 +17,7 @@ import {
 	type HttpRequest,
 	LinkOpened,
 	type LinkOpenedHook,
+	PeopleStore,
 	ServerCommands,
 	type ServerRuntime,
 	type WorkerRunner,
@@ -157,7 +158,11 @@ async function server(t: TestContext, facets: Facets = [], plugins: Readonly<Rec
 
 /** Holds the worker of a new session of `running` until the hold's call returns: the worker starts. */
 async function startOne(running: RunningServer): Promise<string> {
-	return running.runtime.host.root(
+	const host = running.runtime.host;
+	const [owner] = (
+		await host.root(async (ctx) => (await ctx.get(PeopleStore, {})).persons.owner.page({}, 1, ctx), context)
+	).items;
+	return host.root(
 		async (ctx) => {
 			const sessions = await ctx.get(Sessions, {});
 			const id = await sessions.create(coding("one"), ctx);
@@ -165,7 +170,7 @@ async function startOne(running: RunningServer): Promise<string> {
 			return id;
 		},
 		context,
-		{ principal: { kind: "owner" } },
+		{ principal: { kind: "person", id: owner!.id, name: owner!.name } },
 	);
 }
 

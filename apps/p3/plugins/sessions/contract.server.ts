@@ -112,8 +112,8 @@ export const SessionsStore = local("sessions.store", {
 	},
 });
 
-/** Who asks for the records a kind offers: the owner, or a person by id. */
-export type RecordsFor = { readonly kind: "owner" } | { readonly kind: "person"; readonly id: string };
+/** Who asks for the records a kind offers: a person by id (the owner is one). */
+export type RecordsFor = { readonly kind: "person"; readonly id: string };
 
 /**
  * A kind of thing as its plugin offers it: the kind (its options' schema, version, initial), its title, and, for a

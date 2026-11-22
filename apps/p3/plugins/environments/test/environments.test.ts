@@ -13,8 +13,10 @@ import {
 	type P3Principal,
 	THIS_DEVICE,
 } from "@earendil-works/p3/v1";
+import { PeopleStore } from "@earendil-works/p3/v1/server";
 import { testPlugin, testServer } from "@earendil-works/p3/v1/testing";
 import { ExecutionEnvironments } from "@earendil-works/p3/v1/worker";
+import peopleServer from "../../people/server.ts";
 
 /** The plugin's directory. */
 const PLUGIN = fileURLToPath(new URL("../", import.meta.url));
@@ -37,12 +39,18 @@ describe("this device", () => {
 
 describe("the environments plugin's facets", () => {
 	it("gives the owner the environments, and nobody else", async () => {
-		const t = await testPlugin(PLUGIN, { kind: "server" }, context);
+		// The people plugin answers who the owner is.
+		const stubs = [{ name: "@earendil-works/p3-people", facet: peopleServer }];
+		const t = await testPlugin(PLUGIN, { kind: "server", stubs }, context);
 		try {
+			const [owner] = await t.root(
+				async (ctx) => (await (await ctx.get(PeopleStore, {})).persons.owner.page({}, 1, ctx)).items,
+				context,
+			);
 			const ids = await t.root(
 				async (ctx) => (await ctx.get(Environments, {})).environments.value.map(({ id }) => id),
 				context,
-				{ principal: { kind: "owner" } },
+				{ principal: { kind: "person", id: owner!.id, name: owner!.name } },
 			);
 			assert.deepEqual(ids, [THIS_DEVICE]);
 			for (const principal of [
@@ -50,7 +58,7 @@ describe("the environments plugin's facets", () => {
 				{ kind: "worker", session: "s" },
 			] satisfies P3Principal[]) {
 				await assert.rejects(
-					t.root(async (ctx) => ctx.get(Environments, {}), context, { principal }),
+					t.root(async (ctx) => ctx.get(Environments, {}, { readyTimeout: 500 }), context, { principal }),
 					(error) => isChordError(error, "forbidden"),
 				);
 			}

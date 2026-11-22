@@ -25,7 +25,6 @@ import { Probe } from "./plugins/probe/contract.ts";
 import { type Topology, topology } from "./topology.ts";
 import { eventually, within } from "./until.ts";
 
-const OWNER: P3Principal = { kind: "owner" };
 const PERSON: P3Principal = { kind: "person", id: "p1", name: "Ann" };
 
 /** Where the topology's sessions work. */
@@ -47,7 +46,7 @@ afterEach(async () => {
 async function withSession(idleMs?: number) {
 	const t = await topology(context, idleMs);
 	running = t;
-	const owner = await t.client(OWNER);
+	const owner = await t.client(t.owner);
 	const sessions = await owner.get(Sessions, {}, context);
 	const id = await sessions.create(one("one"), context);
 	return { t, owner, sessions, id };
@@ -138,14 +137,14 @@ describe("reloads while in use", () => {
 		const { t } = await withSession();
 		const issued = await t.server.root(async (ctx) => {
 			const signIns = await ctx.get(SignIns, {});
-			return signIns.issue({ principal: OWNER, label: "test", kind: "device" }, ctx);
+			return signIns.issue({ principal: t.owner, label: "test", kind: "device" }, ctx);
 		}, context);
 		await t.reload("@earendil-works/p3-sign-in");
 		const verified = await t.server.root(
 			async (ctx) => (await ctx.get(SignIns, {})).verify(issued.token, ctx),
 			context,
 		);
-		assert.deepEqual(verified, OWNER);
+		assert.deepEqual(verified, t.owner);
 	});
 
 	it("the sessions plugin's waker: a reload starts the worker of a working session nobody holds", async () => {
@@ -251,20 +250,21 @@ describe("counted work", () => {
 		assert.equal(list.list.value.rows.find(({ id }) => id === a)?.state, "working");
 	});
 
-	// The route's admission and the worker's `admitSession` share one standing (the owner's, one read of the row); the
-	// worker's facts read its row, its things, and their default and the agent's options.
-	it("a hold of a session's worker costs five reads: the owner's standing and its worker's facts; a second hold none", async () => {
+	// The route's admission and the worker's `admitSession` share one standing (the owner's person's: the session's row,
+	// the person's row, their groups and the session's members); the worker's facts read its row, its things, and
+	// their default and the agent's options.
+	it("a hold of a session's worker costs eight reads: the owner's standing and its worker's facts; a second hold none", async () => {
 		const { t, owner, id } = await withSession();
 		await owner.get(SessionsList, { app: "coding", set: "active", view: "v" }, context);
 		const counted = () => [t.count("chord.query.runs"), t.count("chord.query.probes")];
 		const first = counted();
 		await owner.get(SessionWorker, { session: id }, context);
 		const second = counted();
-		await (await t.client(OWNER)).get(SessionWorker, { session: id }, context);
+		await (await t.client(t.owner)).get(SessionWorker, { session: id }, context);
 		const after = counted();
 		assert.deepEqual(
 			[second[0]! - first[0]!, second[1]! - first[1]!, after[0]! - second[0]!, after[1]! - second[1]!],
-			[5, 0, 0, 0],
+			[8, 0, 0, 0],
 		);
 	});
 });

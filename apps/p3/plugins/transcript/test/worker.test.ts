@@ -32,7 +32,8 @@ import { within } from "../../../test/until.ts";
 import { sessionRow, standIns } from "../../harness/test/stubs.ts";
 
 const SESSION = "s1";
-const OWNER: P3Principal = { kind: "owner" };
+/** The owner, as the stand-ins answer for them (a person who writes). */
+const OWNER: P3Principal = { kind: "person", id: "owner", name: "Owner" };
 const ALICE: P3Principal = { kind: "person", id: "alice", name: "Alice" };
 
 /**

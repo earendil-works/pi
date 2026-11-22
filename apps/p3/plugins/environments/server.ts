@@ -3,7 +3,7 @@
 // server's first start on, once.
 
 import { hostname } from "node:os";
-import { defineFacet, defineTable, type Environment, eq, forbidden, query, str } from "@earendil-works/p3/v1";
+import { admitOwner, defineFacet, defineTable, type Environment, eq, query, str } from "@earendil-works/p3/v1";
 import { EnvironmentsStore } from "./contract.server.ts";
 import { Environments, THIS_DEVICE } from "./contract.ts";
 
@@ -49,13 +49,16 @@ export default defineFacet((host) => {
 		};
 	});
 
-	host.serve(Environments, (_params, principal, self) => {
-		if (principal.kind !== "owner") throw forbidden("environments: the owner's");
-		const all = self.liveQuery(self.get(EnvironmentsStore, {}).environments.all, {}, { first: SHOWN });
-		const environments = self.derive([all], ([{ rows, more }]) => {
-			if (more) throw new Error(`environments: more than ${SHOWN} environments`);
-			return rows;
-		});
-		return { variant: "owner", members: { environments } };
-	});
+	host.serve(
+		Environments,
+		(_params, _principal, _admitted, self) => {
+			const all = self.liveQuery(self.get(EnvironmentsStore, {}).environments.all, {}, { first: SHOWN });
+			const environments = self.derive([all], ([{ rows, more }]) => {
+				if (more) throw new Error(`environments: more than ${SHOWN} environments`);
+				return rows;
+			});
+			return { variant: "owner", members: { environments } };
+		},
+		{ admit: admitOwner },
+	);
 });

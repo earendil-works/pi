@@ -1,8 +1,8 @@
 // The sessions plugin's contracts, one per audience, and the two admissions every session object uses. A session is
 // one agent in one folder of one environment, with its members (persons and groups, who read or write) and its things
-// (each with options). The owner manages sessions (`Sessions`), apps manage theirs in server code (`SessionsStore`,
-// `contract.server.ts`); persons only work in the sessions they are members of. Every facet of the plugin imports this
-// file, and `/v1` re-exports it for third-party plugins.
+// (each with options). The owner (a person whose row says so) manages sessions (`Sessions`), apps manage theirs in
+// server code (`SessionsStore`, `contract.server.ts`); other persons only work in the sessions they are members of.
+// Every facet of the plugin imports this file, and `/v1` re-exports it for third-party plugins.
 
 import {
 	type Admission,
@@ -122,12 +122,8 @@ export function defineThingKind<const O extends JsonValue>(
 /** The options of a thing of `Kind`. */
 export type OptionsOf<Kind> = Kind extends ThingKind<infer O> ? O : never;
 
-/** Who brought a thing into a session: the owner, a person (their own record, such as their mail), or the app. */
-export const Bringer = union([
-	obj({ kind: lit("owner") }),
-	obj({ kind: lit("person"), id: str() }),
-	obj({ kind: lit("app") }),
-]);
+/** Who brought a thing into a session: a person (the owner too; their own record, such as their mail), or the app. */
+export const Bringer = union([obj({ kind: lit("person"), id: str() }), obj({ kind: lit("app") })]);
 
 /** Who brought a thing (see `Bringer`). */
 export type Bringer = Static<typeof Bringer>;
@@ -169,6 +165,8 @@ export const Sessions = remote("sessions.sessions", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
+	// The owner's only (`admitOwner`, the people plugin's; its value `OwnerAdmission`, none).
+	admission: nul(),
 	variants: {
 		owner: {
 			methods: {
@@ -208,6 +206,8 @@ export const ThingKindCatalog = remote("sessions.thing-kinds", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
+	// The owner's only (`admitOwner`, the people plugin's; its value `OwnerAdmission`, none).
+	admission: nul(),
 	variants: { owner: { state: { kinds: arr(obj({ kind: str(), title: str() })) } } },
 });
 
@@ -215,12 +215,13 @@ export const ThingKindCatalog = remote("sessions.thing-kinds", {
  * One screen's list of an app's sessions, active (the last touched first) or archived (the last archived first):
  * `view` is the screen's own id, so a fresh id is a fresh list. The owner sees every session of the app, a person the
  * ones they are a member of. `list` holds the rows loaded so far and whether rows may follow; `more` loads the next
- * page. Holding it starts no worker.
+ * page. Holding it starts no worker. Its admission says which (`every`: the owner's, read live from their row).
  */
 export const SessionsList = remote("sessions.list", {
 	version: 1,
 	params: { app: str(), set: oneOf("active", "archived"), view: str() },
 	hostAddress: () => Server(),
+	admission: obj({ every: bool() }),
 	variants: {
 		sessions: {
 			state: { list: obj({ rows: arr(SessionRow), moreAfter: bool() }) },
@@ -231,7 +232,7 @@ export const SessionsList = remote("sessions.list", {
 
 /**
  * What the sessions plugin answers about a caller (`callerKey`) in a session: `none`, `read` or `write`. The owner
- * writes every session; a person as their memberships say (directly or through a group; `write` wins), none in an
+ * (a person whose row says so) writes every session, an archived one too; a person as their memberships say (directly or through a group; `write` wins), none in an
  * archived session; the server's waker writes a session that is not archived; a worker its own session. Read live by
  * the route (before a worker starts) and by `admitSession`. Asked by the server about anyone, by a worker about its
  * own session, and by anyone else about themselves only (an admission's `get` asks as the object's caller).
@@ -358,9 +359,10 @@ export const SessionInfo = remote("sessions.info", {
 				session: SessionRow,
 				access: Access,
 				/**
-				 * Each thing with its kind's title (the kind's name while no plugin serves it), its default options and
-				 * its `overrides`: the options set for the agent and for members, in the order of whom they are for.
-				 * Options are as the kind reads them now: `null` when it cannot (no plugin, another version).
+				 * Each thing with its kind's title (the kind's name while no plugin serves it), who brought it and their
+				 * name now (`byName`; `""` for the app), its default options and its `overrides`: the options set for
+				 * the agent and for members, in the order of whom they are for. Options are as the kind reads them now:
+				 * `null` when it cannot (no plugin, another version).
 				 */
 				things: arr(
 					obj({
@@ -368,6 +370,7 @@ export const SessionInfo = remote("sessions.info", {
 						kind: str(),
 						ref: str(),
 						by: Bringer,
+						byName: str(),
 						options: unknown(),
 						overrides: arr(obj({ for: OptionsFor, options: unknown() })),
 						title: str(),

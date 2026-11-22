@@ -470,3 +470,11 @@ older entries that say `docs/<file>` or `apps/p3/docs/<file>` now are `apps/p3/d
 - **No lazy loading in plugins for now (owner, 2026-11-18):** plugins keep loading their whole facet at a process's
   start (the plugin build refuses `import()`); no Chord change for it. A package that wants a heavy library in a worker
   facet measures its cost per idle worker and brings it to Mario.
+- **The owner is a person (Mario, 2026-11-22; supersedes the owner kind of "The principal is identity only"):** the
+  principal is `{ kind: "person", id, name }`, `worker { session }` or `server`; there is no `owner` kind. The owner is
+  the person whose row in the people plugin has the owner flag: made at the server's first start (named after the OS
+  user, renamed later), exactly one, and never removable. Why: one kind of caller instead of a special case in every
+  plugin; owner rights are data, read live (`SessionAccess` and `AppAccess` answer a person whose row says owner as
+  writing every session and entering every app; `admitOwner` admits the owner's objects); the owner is a member of
+  groups and sessions, brings things and has options like anyone, and whatever was stored as `owner` (who brought a
+  thing, an author) is the owner's person's id. The owner link and `p3`'s command sign in as the owner's person.

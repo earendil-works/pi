@@ -36,7 +36,8 @@ import sessionsServer from "../../sessions/server.ts";
 import signInServer from "../../sign-in/server.ts";
 import { AppEntered } from "../entered.ts";
 
-const OWNER: P3Principal = { kind: "owner" };
+/** The owner's person in this test's Pi (made at its first start). */
+let OWNER: Extract<P3Principal, { kind: "person" }>;
 
 /** The test app's own object: who the caller is in the club. */
 const Board = remote("club.board", {
@@ -53,7 +54,7 @@ const clubServer = defineFacet((host, self) => {
 	host.serve(
 		Board,
 		(_params, _principal, admitted) =>
-			admitted.kind === "owner"
+			admitted.owner
 				? { variant: "owner", members: { who: constant("owner") } }
 				: { variant: "person", members: { who: constant(admitted.groups.join(",")) } },
 		{ admit: admitApp("club") },
@@ -83,6 +84,11 @@ describe("the apps plugin on the server", () => {
 			},
 			context,
 		);
+		const [owner] = await t.root(
+			async (ctx) => (await (await ctx.get(PeopleStore, {})).persons.owner.page({}, 1, ctx)).items,
+			context,
+		);
+		OWNER = { kind: "person", id: owner!.id, name: owner!.name };
 	});
 	afterEach(() => t.close(context));
 
@@ -98,7 +104,7 @@ describe("the apps plugin on the server", () => {
 			context,
 		);
 
-	it("lists every app for the owner, by title; refuses workers and the server", async () => {
+	it("lists every app for the owner, by title; none for workers and the server", async () => {
 		const titles = await t.root(
 			async (ctx) => (await ctx.get(AppCatalog, {})).apps.value.map(({ title }) => title),
 			context,
@@ -106,7 +112,10 @@ describe("the apps plugin on the server", () => {
 		);
 		assert.deepEqual(titles, ["Club", "Coding"]);
 		for (const principal of [{ kind: "worker", session: "s" }, { kind: "server" }] satisfies P3Principal[]) {
-			await refused(t.root(async (ctx) => ctx.get(AppCatalog, {}), context, { principal }));
+			assert.deepEqual(
+				await t.root(async (ctx) => (await ctx.get(AppCatalog, {})).apps.value, context, { principal }),
+				[],
+			);
 		}
 	});
 
@@ -169,8 +178,13 @@ describe("the apps plugin on the server", () => {
 			});
 		assert.deepEqual(await answer({ kind: "server" }, `person:${ann}`), { kind: "none" });
 		assert.deepEqual(await answer(principal, `person:${ann}`), { kind: "none" });
-		assert.deepEqual(await answer({ kind: "server" }, "owner"), { kind: "owner" });
-		await refused(answer(principal, "owner"));
+		assert.deepEqual(await answer({ kind: "server" }, `person:${OWNER.id}`), {
+			kind: "person",
+			id: OWNER.id,
+			owner: true,
+			groups: [],
+		});
+		await refused(answer(principal, `person:${OWNER.id}`));
 		await refused(answer(OWNER, `person:${ann}`));
 	});
 });

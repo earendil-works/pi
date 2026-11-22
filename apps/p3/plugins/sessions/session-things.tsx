@@ -1,5 +1,6 @@
 // The view `SessionThingsView`: what a session holds, opened on demand. Everyone with access sees its location, its
-// things (each in its kind's view, `<ThingView>`, with who brought it) and its members. A writer (a person or the
+// things (each by its kind's title, with who brought it, and "Open" when the app shows things and the kind has a view)
+// and its members. A writer (a person or the
 // owner) brings their own records (`BringThings`), withdraws what they brought and sets its options (with its kind's
 // form, `thing-options.tsx`); the owner also adds and removes any thing (the kinds without records of
 // `ThingKindCatalog`), sets any thing's options, and adds and removes members (the persons of `PeopleList`), through
@@ -20,27 +21,28 @@ import {
 	type SessionThing,
 	ThingKindCatalog,
 } from "@earendil-works/p3/v1";
-import { useHold, useRefState, useVariant, useWatch } from "@earendil-works/p3/v1/web";
+import { useHold, useRefState, useRegistry, useVariant, useWatch } from "@earendil-works/p3/v1/web";
 import { type ReactNode, useState } from "react";
 import { type Action, useAction } from "./action.ts";
 import { BringOwn, broughtKey, useBringable } from "./bring-own.tsx";
 import { Choice } from "./choice.tsx";
-import { ThingView } from "./contract.web.tsx";
+import { ThingViews } from "./contract.web.tsx";
 import { useViewId } from "./session-list.tsx";
 import styles from "./session-things.module.css";
 import { ThingOptions, type ThingOptionsOf } from "./thing-options.tsx";
 
-/** Who the viewer is, as `Me` answers. */
-type Viewer = { readonly kind: "owner" } | { readonly kind: "person"; readonly id: string; readonly name: string };
+/** Who the viewer is, as `Me` answers for a person (the owner among them). */
+type Viewer = { readonly id: string; readonly name: string; readonly owner: boolean };
 
-/** A thing as the view shows it: its id, kind, who brought it, its kind's title and its options. */
-type ShownThing = Pick<SessionThing, "thing" | "kind" | "ref" | "by"> & ThingOptionsOf & { readonly title: string };
+/** A thing as the view shows it: its id, kind, who brought it (and their name), its kind's title and its options. */
+type ShownThing = Pick<SessionThing, "thing" | "kind" | "ref" | "by"> &
+	ThingOptionsOf & { readonly title: string; readonly byName: string };
 
 /** A member as the view shows it: who, their access and their name. */
 type ShownMember = Member & { readonly name: string };
 
 /** Session `session`'s things and members; writers bring their own, the owner manages them. */
-export function SessionThings(props: { readonly session: string }) {
+export function SessionThings(props: { readonly session: string; readonly onOpen?: (thing: string) => void }) {
 	const infoRef = useHold(SessionInfo, { session: props.session });
 	const info = useVariant(infoRef, "info");
 	const state = useRefState(infoRef);
@@ -58,10 +60,10 @@ export function SessionThings(props: { readonly session: string }) {
 	if (row === undefined || access === undefined || things === undefined || members === undefined || me === undefined) {
 		return <p className={styles.note}>Loading…</p>;
 	}
-	if (me.kind === "owner") return <Managed members={members} row={row} things={things} />;
 	// A page is never a session's worker.
 	if (me.kind === "agent") return null;
-	return <Working access={access} me={me} members={members} row={row} things={things} />;
+	if (me.owner) return <Managed me={me} members={members} onOpen={props.onOpen} row={row} things={things} />;
+	return <Working access={access} me={me} members={members} onOpen={props.onOpen} row={row} things={things} />;
 }
 
 /** A person's view: the lists, and for a writer their own things to bring and withdraw. */
@@ -71,16 +73,18 @@ function Working(props: {
 	readonly things: readonly ShownThing[];
 	readonly members: readonly ShownMember[];
 	readonly me: Viewer;
+	readonly onOpen: ((thing: string) => void) | undefined;
 }) {
 	const session = props.row.id;
 	const bring = useVariant(useHold(BringThings, { session }), "writer");
 	const bringable = useBringable(bring?.kinds);
 	const change = useAction();
-	const mine = (by: Bringer) => props.me.kind === "person" && by.kind === "person" && by.id === props.me.id;
+	const mine = (by: Bringer) => by.kind === "person" && by.id === props.me.id;
 	return (
 		<div className={styles.things} data-session-things="">
 			<Location row={props.row} />
 			<Things
+				onOpen={props.onOpen}
 				removal={(thing) =>
 					bring === undefined || !mine(thing.by)
 						? undefined
@@ -101,7 +105,7 @@ function Working(props: {
 				}
 				session={session}
 				things={props.things}
-				whose={(by) => whose(by, props.me, props.members)}
+				whose={(thing) => whose(thing, props.me)}
 			/>
 			{bring === undefined || bringable.kinds === undefined ? null : (
 				<BringOwn
@@ -122,6 +126,8 @@ function Managed(props: {
 	readonly row: SessionRow;
 	readonly things: readonly ShownThing[];
 	readonly members: readonly ShownMember[];
+	readonly me: Viewer;
+	readonly onOpen: ((thing: string) => void) | undefined;
 }) {
 	const session = props.row.id;
 	const sessions = useVariant(useHold(Sessions, {}), "owner");
@@ -138,6 +144,7 @@ function Managed(props: {
 		<div className={styles.things} data-session-things="">
 			<Location row={props.row} />
 			<Things
+				onOpen={props.onOpen}
 				removal={(thing) => ({
 					label: "Remove",
 					run: () => manage((owner, ctx) => owner.removeThing({ session, thing: thing.thing }, ctx)),
@@ -157,7 +164,7 @@ function Managed(props: {
 				)}
 				session={session}
 				things={props.things}
-				whose={(by) => whose(by, OWNER, props.members)}
+				whose={(thing) => whose(thing, props.me)}
 			/>
 			<AddThing
 				action={change}
@@ -167,14 +174,14 @@ function Managed(props: {
 			{bring === undefined || bringable.kinds === undefined ? null : (
 				<BringOwn
 					action={change}
-					brought={broughtBy(props.things, (by) => by.kind === "owner")}
+					brought={broughtBy(props.things, (by) => by.kind === "person" && by.id === props.me.id)}
 					kinds={bringable.kinds}
 					onBring={(kind, ref) => change.run((ctx) => bring.bring({ kind, ref }, ctx))}
 				/>
 			)}
 			<Members
 				members={props.members}
-				me={OWNER}
+				me={props.me}
 				onRemove={(party) => manage((owner, ctx) => owner.removeMember({ session, party }, ctx))}
 			/>
 			<AddMember
@@ -192,29 +199,18 @@ function Managed(props: {
 	);
 }
 
-/** The owner, as a viewer. */
-const OWNER: Viewer = { kind: "owner" };
-
 /** The records among `things` that someone `theirs` says brought, as `BringOwn` tells them apart. */
 function broughtBy(things: readonly ShownThing[], theirs: (by: Bringer) => boolean): ReadonlySet<string> {
 	return new Set(things.filter((thing) => theirs(thing.by)).map((thing) => broughtKey(thing.kind, thing.ref)));
 }
 
-/**
- * Whose a thing is, as the viewer `me` reads it: yours, the owner's, the app's, or a person's by their name among
- * `members` (one no longer a member: a member's).
- */
-function whose(by: Bringer, me: Viewer, members: readonly ShownMember[]): string {
-	switch (by.kind) {
-		case "owner":
-			return me.kind === "owner" ? "Yours" : "The owner's";
+/** Whose a thing is, as the viewer `me` reads it: yours, a person's by their name, or the app's. */
+function whose(thing: ShownThing, me: Viewer): string {
+	switch (thing.by.kind) {
 		case "app":
 			return "The app's";
-		case "person": {
-			if (me.kind === "person" && me.id === by.id) return "Yours";
-			const name = members.find((member) => member.kind === "person" && member.id === by.id)?.name;
-			return name === undefined ? "A member's" : `${name}'s`;
-		}
+		case "person":
+			return thing.by.id === me.id ? "Yours" : `${thing.byName}'s`;
 	}
 }
 
@@ -239,16 +235,19 @@ function Location(props: { readonly row: SessionRow }) {
 }
 
 /**
- * The session's things, each in its kind's view (its kind's title while no plugin shows it) with whose it is, the
- * options control `options` gives it (none: `null`), and the removal `removal` offers for it (none: `undefined`).
+ * The session's things, each by its kind's title with whose it is, "Open" when `onOpen` is given and its kind has a
+ * view, the options control `options` gives it (none: `null`), and the removal `removal` offers for it (none:
+ * `undefined`).
  */
 function Things(props: {
 	readonly session: string;
+	readonly onOpen: ((thing: string) => void) | undefined;
 	readonly things: readonly ShownThing[];
-	readonly whose: (by: Bringer) => string;
+	readonly whose: (thing: ShownThing) => string;
 	readonly options: (thing: ShownThing) => ReactNode;
 	readonly removal: (thing: ShownThing) => { readonly label: string; readonly run: () => void } | undefined;
 }) {
+	const views = useRegistry(ThingViews);
 	return (
 		<section aria-label="Things" className={styles.section}>
 			<Heading level={3} size={6}>
@@ -266,15 +265,20 @@ function Things(props: {
 							key={thing.thing}
 						>
 							<div className={styles.grow}>
-								<ThingView
-									fallback={<span>{thing.title}</span>}
-									kind={thing.kind}
-									session={props.session}
-									thing={thing.thing}
-								/>
-								<span className={styles.whose}>{props.whose(thing.by)}</span>
+								<span className={styles.title}>{thing.title}</span>
+								<span className={styles.whose}>{props.whose(thing)}</span>
 								{props.options(thing)}
 							</div>
+							{props.onOpen === undefined || views?.get(thing.kind)?.value.View === undefined ? null : (
+								<Button
+									data-open-thing={thing.thing}
+									density="compact"
+									hierarchy="secondary"
+									onClick={() => props.onOpen?.(thing.thing)}
+								>
+									Open
+								</Button>
+							)}
 							{removal === undefined ? null : (
 								<Button
 									data-remove-thing=""
@@ -333,9 +337,7 @@ function Members(props: {
 				{props.members.map((member) => (
 					<li className={styles.item} data-member={member.id} key={`${member.kind}:${member.id}`}>
 						<span className={styles.grow}>
-							{props.me.kind === "person" && member.kind === "person" && member.id === props.me.id
-								? "You"
-								: member.name}
+							{member.kind === "person" && member.id === props.me.id ? "You" : member.name}
 						</span>
 						<span className={styles.access}>{ACCESS_LABELS[member.access]}</span>
 						{props.onRemove === undefined ? null : (

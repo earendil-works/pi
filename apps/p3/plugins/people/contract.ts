@@ -1,11 +1,35 @@
-// The people plugin's contracts: who the caller is (`Me`), and the owner's persons (`People`, `PeopleList`). A
-// person is anyone besides the owner who signs in; the owner makes one with an invite link, which signs its first
-// browser in as them. Groups are made by apps (`PeopleStore`, `contract.server.ts`). `/v1` re-exports this file.
+// The people plugin's contracts: who the caller is (`Me`), the owner's persons (`People`, `PeopleList`), and the
+// admission of the owner's objects (`admitOwner`, from `OwnerAccess`). A person is anyone who signs in; the owner is one too, the one whose
+// row says so (made at the server's first start, never removed). The owner makes the others with invite links, which
+// sign their first browser in as them. Groups are made by apps (`PeopleStore`, `contract.server.ts`). `/v1`
+// re-exports this file.
 
-import { arr, bool, lit, method, obj, remote, Server, type Static, str, union } from "@earendil-works/p3/v1";
+import {
+	type Admission,
+	type AdmitSelf,
+	allow,
+	arr,
+	bool,
+	callerKey,
+	deny,
+	lit,
+	method,
+	nul,
+	obj,
+	type P3Principal,
+	remote,
+	Server,
+	type Static,
+	str,
+	union,
+	type Watchable,
+} from "@earendil-works/p3/v1";
 
-/** A person: their id and their name as the owner gave it. */
-export const Person = obj({ id: str(), name: str({ max: 200 }) });
+/**
+ * A person: their id, their name as the owner gave it (the owner's own: the OS user's at first), and whether they are
+ * the owner.
+ */
+export const Person = obj({ id: str(), name: str({ max: 200 }), owner: bool() });
 
 /** A person (see `Person`). */
 export type Person = Static<typeof Person>;
@@ -16,7 +40,10 @@ export const Group = obj({ id: str(), app: str(), name: str({ max: 200 }) });
 /** A group (see `Group`). */
 export type Group = Static<typeof Group>;
 
-/** Who the caller is: the owner, a person, or a session's agent (its worker). */
+/** The admission value of the owner's objects: none (the owner is admitted, anyone else denied). */
+export const OwnerAdmission = nul();
+
+/** Who the caller is: a person (`owner`: the owner, read live from their row), or a session's agent (its worker). */
 export const Me = remote("people.me", {
 	version: 1,
 	params: {},
@@ -25,8 +52,7 @@ export const Me = remote("people.me", {
 		me: {
 			state: {
 				me: union([
-					obj({ kind: lit("owner") }),
-					obj({ kind: lit("person"), id: str(), name: str() }),
+					obj({ kind: lit("person"), id: str(), name: str(), owner: bool() }),
 					obj({ kind: lit("agent"), session: str() }),
 				]),
 			},
@@ -42,6 +68,7 @@ export const People = remote("people.people", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
+	admission: OwnerAdmission,
 	variants: {
 		owner: {
 			methods: {
@@ -60,5 +87,26 @@ export const PeopleList = remote("people.list", {
 	version: 1,
 	params: { view: str() },
 	hostAddress: () => Server(),
+	admission: OwnerAdmission,
 	variants: { owner: { state: { list: obj({ rows: arr(Person), moreAfter: bool() }) }, methods: { more: method() } } },
 });
+
+/**
+ * Whether a caller (`callerKey`) is the owner: a person whose row says so, read live. Asked by the server and workers
+ * about anyone (an admission on a worker asks for its object's caller), by anyone else about themselves only.
+ */
+export const OwnerAccess = remote("people.owner-access", {
+	version: 1,
+	params: { caller: str() },
+	hostAddress: () => Server(),
+	variants: { answer: { state: { owner: bool() } } },
+});
+
+/**
+ * The admission of an object for the owner only (`admission: OwnerAdmission`), on the server or a worker: allowed
+ * while the caller is the owner (`OwnerAccess`, live), denied for anyone else.
+ */
+export function admitOwner(_params: unknown, principal: P3Principal, self: AdmitSelf): Watchable<Admission<null>> {
+	const answer = self.get(OwnerAccess, { caller: callerKey(principal) });
+	return self.derive([answer.owner], ([owner]) => (owner ? allow(null) : deny("the owner's only")));
+}

@@ -20,10 +20,10 @@ import styles from "./frame.module.css";
 import { InviteDialog } from "./invite.tsx";
 import { TopBar } from "./top-bar.tsx";
 
-/** Who the caller is, as `Me` answers: the owner, or a person. */
+/** Who the caller is, as `Me` answers: a person (the owner among them), or a session's agent (never a page). */
 export type Caller =
-	| { readonly kind: "owner" }
-	| { readonly kind: "person"; readonly id: string; readonly name: string };
+	| { readonly kind: "person"; readonly id: string; readonly name: string; readonly owner: boolean }
+	| { readonly kind: "agent"; readonly session: string };
 
 /** What the bar and the corner button show: the apps (`current` the route's), the connection and the caller. */
 export type ChromeProps = {
@@ -55,7 +55,9 @@ export function Frame() {
 			<main className={styles.page}>
 				<AppPage apps={apps} current={current} />
 			</main>
-			{caller?.kind === "owner" ? <InviteDialog onClose={() => setInviting(false)} open={inviting} /> : null}
+			{caller?.kind === "person" && caller.owner ? (
+				<InviteDialog onClose={() => setInviting(false)} open={inviting} />
+			) : null}
 		</div>
 	);
 }

@@ -1,12 +1,15 @@
 // What p3 is to its base, its API and its tests: its API (the package and its versions), its facet kinds, and its
-// principals (decision "The principal is identity only", 2026-11-13): who someone is, never what they may do. What a
-// person may do is data of apps and plugins, read live by admissions. The API's modules ship this file.
+// principals (decisions "The principal is identity only", 2026-11-13, and "The owner is a person", 2026-11-22): who
+// someone is, never what they may do. What a person may do, being the owner among it, is data of apps and plugins,
+// read live by admissions. The API's modules ship this file.
 
 import { lit, obj, type Static, str, union } from "@earendil-works/chord";
 
-/** Who someone is in p3: the owner, a person the owner let in, a session's worker, or the server. */
+/**
+ * Who someone is in p3: a person (the owner is one: their row in the people plugin says so), a session's worker, or
+ * the server.
+ */
 export const P3Principal = union([
-	obj({ kind: lit("owner") }),
 	obj({ kind: lit("person"), id: str(), name: str() }),
 	obj({ kind: lit("worker"), session: str() }),
 	obj({ kind: lit("server") }),
@@ -48,12 +51,11 @@ export function workerPrincipal(id: string): P3Principal {
 }
 
 /**
- * A caller as a params value (params are flat strings): `owner`, `server`, `person:<id>`, `worker:<session>`. The
+ * A caller as a params value (params are flat strings): `server`, `person:<id>`, `worker:<session>`. The
  * sessions plugin's access answer is asked by it; nothing else turns a principal into data.
  */
 export function callerKey(principal: P3Principal): string {
 	switch (principal.kind) {
-		case "owner":
 		case "server":
 			return principal.kind;
 		case "person":

@@ -1,7 +1,7 @@
 // p3's API v1 for web facets (`@earendil-works/p3/v1/web`): Chord's React bindings, the page's one slot (`PageRoot`,
 // the chrome plugin's), the connection state, views as typed tokens (`defineView`, `Views`, `useView`), the page's
-// route (`useRoute`, `navigate`, `redirect`), and the icons p3 offers. The built-in plugins' web contracts p3
-// promises are re-exported here. Browser only.
+// route (`useRoute`, `navigate`, `redirect`), the pane layout (`PaneLayout` over a tree the app keeps, `pane-tree.ts`),
+// and the icons p3 offers. The built-in plugins' web contracts p3 promises are re-exported here. Browser only.
 
 /// <reference path="./css.d.ts" />
 
@@ -60,6 +60,26 @@ export {
 export * from "../../../plugins/apps/contract.web.ts";
 export * from "../../../plugins/sessions/contract.web.tsx";
 export * from "../../../plugins/transcript/contract.web.ts";
+export { type Pane, PaneLayout, type PaneLayoutProps } from "./pane-layout.tsx";
+export {
+	activatePane,
+	closePane,
+	groupOf,
+	groupsOf,
+	keepPanes,
+	MIN_SHARE,
+	movePane,
+	openPane,
+	type PaneEdge,
+	type PaneGroup,
+	type PaneNode,
+	type PaneSplit,
+	panesOf,
+	paneTree,
+	parsePaneTree,
+	resizeSplit,
+	splitPane,
+} from "./pane-tree.ts";
 
 /**
  * The page's root: the one component the base renders inside the page's host (the chrome plugin's: the top bar and

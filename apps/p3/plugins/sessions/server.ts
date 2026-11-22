@@ -6,9 +6,14 @@
 // `SessionFacts` (its row, its things with the agent's options, its report).
 
 import {
+	type Admission,
+	type AdmitSelf,
+	admitOwner,
 	admitSession,
+	allow,
 	constant,
 	defineFacet,
+	deny,
 	forbidden,
 	forward,
 	keyedEntries,
@@ -39,9 +44,6 @@ const PAGE = 50;
  */
 const READ_WHOLE = 1000;
 
-/** The owner as a bringer of things. */
-const OWNER = { kind: "owner" } as const;
-
 export default defineFacet((host) => {
 	serveStore(host);
 	serveAccess(host);
@@ -52,45 +54,59 @@ export default defineFacet((host) => {
 		compose: (table, { report }) => keyedEntries(table, (entry) => ({ [entry.kind.name]: entry }), report),
 	});
 
-	host.serve(ThingKindCatalog, (_params, principal, self) => {
-		if (principal.kind !== "owner") throw forbidden("sessions: the owner's");
-		const kinds = self.derive([self.registry(ThingKinds)], ([table]) =>
-			// A kind with records is brought by whose records they are (`BringThings`), never added with `{ kind }`.
-			[...table.values()]
-				.filter(({ value }) => value.records === undefined)
-				.map(({ value }) => ({ kind: value.kind.name, title: value.title }))
-				.sort((a, b) => (a.title < b.title ? -1 : a.title > b.title ? 1 : 0)),
-		);
-		return { variant: "owner", members: { kinds } };
-	});
+	host.serve(
+		ThingKindCatalog,
+		(_params, _principal, _admitted, self) => {
+			const kinds = self.derive([self.registry(ThingKinds)], ([table]) =>
+				// A kind with records is brought by whose records they are (`BringThings`), never added with `{ kind }`.
+				[...table.values()]
+					.filter(({ value }) => value.records === undefined)
+					.map(({ value }) => ({ kind: value.kind.name, title: value.title }))
+					.sort((a, b) => (a.title < b.title ? -1 : a.title > b.title ? 1 : 0)),
+			);
+			return { variant: "owner", members: { kinds } };
+		},
+		{ admit: admitOwner },
+	);
 
-	host.serve(Sessions, (_params, principal, self) => {
-		if (principal.kind !== "owner") throw forbidden("sessions: the owner's");
-		const store = self.get(SessionsStore, {});
-		// What the owner adds is the owner's.
-		return forward(store, Sessions, "owner", {
-			create: (args, ctx) => store.create({ ...args, by: OWNER }, ctx),
-			addThing: (args, ctx) => store.addThing({ ...args, by: OWNER }, ctx),
-		});
-	});
+	host.serve(
+		Sessions,
+		(_params, principal, _admitted, self) => {
+			// Admitted as the owner: a person.
+			if (principal.kind !== "person") throw forbidden("sessions: the owner's");
+			const store = self.get(SessionsStore, {});
+			// What the owner adds is the owner's person's.
+			const by = { kind: "person", id: principal.id } as const;
+			return forward(store, Sessions, "owner", {
+				create: (args, ctx) => store.create({ ...args, by }, ctx),
+				addThing: (args, ctx) => store.addThing({ ...args, by }, ctx),
+			});
+		},
+		{ admit: admitOwner },
+	);
 
-	host.serve(SessionsList, ({ app, set }, principal, self) => {
-		const store = self.get(SessionsStore, {});
-		if (principal.kind === "owner") {
-			const list = self.list("sessions", [[store.sessions[set], { app }]], { first: PAGE });
-			return { variant: "sessions", members: { list: list.value, more: (ctx) => list.more(ctx) } };
-		}
-		if (principal.kind !== "person") throw forbidden("sessions: the owner's and persons'");
-		const person = principal.id;
-		const groups = self.liveQuery(self.get(PeopleStore, {}).groups.ofPerson, { person }, { first: READ_WHOLE });
-		// Their groups count only when read whole (fails closed: the list shows their direct memberships then).
-		const args = self.derive([groups], ([{ rows, more }]) => ({
-			app,
-			members: [`person:${person}`, ...(more ? [] : rows.map(({ id }) => `group:${id}`))],
-		}));
-		const list = self.list("memberships", [[store.memberships[set], args]], { first: PAGE });
-		return { variant: "sessions", members: { list: onceEach(list.value, self), more: (ctx) => list.more(ctx) } };
-	});
+	host.serve(
+		SessionsList,
+		({ app, set }, principal, { every }, self) => {
+			const store = self.get(SessionsStore, {});
+			if (every) {
+				const list = self.list("sessions", [[store.sessions[set], { app }]], { first: PAGE });
+				return { variant: "sessions", members: { list: list.value, more: (ctx) => list.more(ctx) } };
+			}
+			// Admitted: a person (`admitList`).
+			if (principal.kind !== "person") throw forbidden("sessions: persons'");
+			const person = principal.id;
+			const groups = self.liveQuery(self.get(PeopleStore, {}).groups.ofPerson, { person }, { first: READ_WHOLE });
+			// Their groups count only when read whole (fails closed: the list shows their direct memberships then).
+			const args = self.derive([groups], ([{ rows, more }]) => ({
+				app,
+				members: [`person:${person}`, ...(more ? [] : rows.map(({ id }) => `group:${id}`))],
+			}));
+			const list = self.list("memberships", [[store.memberships[set], args]], { first: PAGE });
+			return { variant: "sessions", members: { list: onceEach(list.value, self), more: (ctx) => list.more(ctx) } };
+		},
+		{ admit: admitList },
+	);
 
 	host.serve(
 		SessionInfo,
@@ -105,16 +121,24 @@ export default defineFacet((host) => {
 			// The members' names, read by key and following the members: a rename shows, nothing walks the people.
 			const people = self.get(PeopleStore, {});
 			const idsOf = (kind: Member["kind"]) =>
-				self.derive([members], ([{ rows }]) => ({ ids: rows.filter((m) => m.kind === kind).map(({ id }) => id) }));
-			const persons = self.liveQuery(people.persons.ofIds, idsOf("person"), { first: READ_WHOLE });
-			const groups = self.liveQuery(people.groups.ofIds, idsOf("group"), { first: READ_WHOLE });
+				self.derive([members], ([{ rows }]) => rows.filter((m) => m.kind === kind).map(({ id }) => id));
+			// The persons: the members and whoever brought a thing (members or not, the owner among them).
+			const personIds = self.derive([idsOf("person"), things], ([ofMembers, { rows }]) => ({
+				ids: [...new Set([...ofMembers, ...rows.flatMap(({ by }) => (by.kind === "person" ? [by.id] : []))])],
+			}));
+			const groupIds = self.derive([idsOf("group")], ([ids]) => ({ ids }));
+			const persons = self.liveQuery(people.persons.ofIds, personIds, { first: READ_WHOLE });
+			const groups = self.liveQuery(people.groups.ofIds, groupIds, { first: READ_WHOLE });
+			const personNames = self.derive([persons], ([{ rows }]) =>
+				Object.fromEntries(rows.map(({ id, name }) => [id, name])),
+			);
 			return {
 				variant: "info",
 				members: {
 					// Admitted: the session exists (its access is none otherwise).
 					session: self.derive([found], ([{ rows }]) => rows[0] ?? fail(`no session ${session}`)),
 					access: constant(access),
-					things: self.derive([things, set, kinds], ([of, written, table]) => {
+					things: self.derive([things, set, kinds, personNames], ([of, written, table, names]) => {
 						if (of.more || written.more) fail(`session ${session} has more than ${READ_WHOLE} things or options`);
 						const byThing = Map.groupBy(written.rows, (row) => row.thing);
 						return of.rows.map(({ thing, kind, ref, by }) => {
@@ -132,6 +156,8 @@ export default defineFacet((host) => {
 								kind,
 								ref,
 								by,
+								// The bringer's name now; a person who left shows their id.
+								byName: by.kind === "person" ? (names[by.id] ?? by.id) : "",
 								options: everyone === undefined ? null : read(everyone),
 								overrides,
 								title,
@@ -139,7 +165,8 @@ export default defineFacet((host) => {
 						});
 					}),
 					members: self.derive([members, persons, groups], ([{ rows, more }, ofPersons, ofGroups]) => {
-						if (more) fail(`session ${session} has more than ${READ_WHOLE} members`);
+						if (more || ofPersons.more || ofGroups.more)
+							fail(`session ${session} has more than ${READ_WHOLE} members`);
 						const names = new Map([
 							...ofPersons.rows.map(({ id, name }) => [`person:${id}`, name] as const),
 							...ofGroups.rows.map(({ id, name }) => [`group:${id}`, name] as const),
@@ -206,4 +233,19 @@ function onceEach(
 /** Fails the member being computed: a read that cannot be shown whole. */
 function fail(why: string): never {
 	throw new Error(`sessions: ${why}`);
+}
+
+/**
+ * The admission of `SessionsList`: a person's list, of every session of the app for the owner (their row's flag,
+ * live), of their own for anyone else; the server and workers have no list.
+ */
+function admitList(
+	_params: unknown,
+	principal: P3Principal,
+	self: AdmitSelf,
+): Watchable<Admission<{ every: boolean }>> {
+	if (principal.kind !== "person") return constant(deny("sessions: persons' lists"));
+	const found = self.liveQuery(self.get(PeopleStore, {}).persons.one, { id: principal.id }, { first: 1 });
+	// A person the Pi does not know (any more) is no member of anything: their list is empty.
+	return self.derive([found], ([{ rows }]) => allow({ every: rows[0]?.owner === true }));
 }

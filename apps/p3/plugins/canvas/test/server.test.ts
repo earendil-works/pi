@@ -36,7 +36,8 @@ import { CodingTools } from "../../tools/contract.ts";
 import toolsServer from "../../tools/server.ts";
 import { Canvas, CanvasKind, type Motion, type Shape } from "../contract.ts";
 
-const OWNER: P3Principal = { kind: "owner" };
+/** The owner's person in this test's Pi (made at its first start). */
+let OWNER: Extract<P3Principal, { kind: "person" }>;
 
 /** Where the tests' sessions work. */
 const HERE = { environment: THIS_DEVICE, folder: "/tmp/p3-canvas-test" };
@@ -72,6 +73,11 @@ beforeEach(async () => {
 		},
 		context,
 	);
+	const [owner] = await t.root(
+		async (ctx) => (await (await ctx.get(PeopleStore, {})).persons.owner.page({}, 1, ctx)).items,
+		context,
+	);
+	OWNER = { kind: "person", id: owner!.id, name: owner!.name };
 });
 
 afterEach(() => t.close(context));
@@ -243,7 +249,7 @@ describe("a board's shapes", () => {
 			rows.map(({ author, shape }) => [author, shape.kind]),
 			[
 				[`person:${ann.id}`, "line"],
-				["owner", "rect"],
+				[`person:${OWNER.id}`, "rect"],
 				["agent", "rect"],
 			],
 		);

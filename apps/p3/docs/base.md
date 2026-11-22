@@ -9,8 +9,8 @@ the section "Built" lists it.
 
 | Word | Means |
 | --- | --- |
-| **owner** | who owns the Pi; reaches and changes everything |
-| **person** | anyone else who signs in |
+| **owner** | the person who owns the Pi, a person with the owner flag; reaches and changes everything |
+| **person** | anyone who signs in, the owner among them |
 | **group** | persons, made by an app for one of its roles (coaches, players) |
 | **app** | a plugin that owns the page below the top bar, and its sessions |
 | **session** | one agent working in one folder of one environment, with its members and its things. The page may call it a workspace; in code it is the session, one id |
@@ -25,8 +25,11 @@ the section "Built" lists it.
 Working is reading or writing: seeing the transcript, sending, using the views of its things. Managing is choosing
 who is in it, what it has and where it works (members, things, location, title, archive).
 
-- **The owner** works in and manages every session.
-- **A person** works in a session as one of its members says: `write` wins over `read`, a direct membership and one
+- **The owner** is a person whose row in the people plugin says so (made at the server's first start, named after
+  the OS user, never removed). They work in and manage every session, and are a member of groups and sessions like
+  anyone, with options of their own. Owner rights are data read live (`SessionAccess`, `AppAccess`, `admitOwner`):
+  no plugin tells the owner apart by the principal, which is a person's like everyone's.
+- **Any other person** works in a session as one of its members says: `write` wins over `read`, a direct membership and one
   through a group count alike. A person who writes may also **bring their own things** into it (their mail, their
   calendar: records a kind's plugin says are theirs), and withdraw or set the options of what they brought. A person
   manages nothing else (members, the location, the owner's things).
@@ -43,8 +46,9 @@ commit. An app's server code may leave out the location: the session then works 
 sessions plugin makes for it.
 
 **An app's own objects** (the club's board, "a player starts a chat with the coaches") use `admitApp(app)`: the
-factory gets `{ kind: "owner" }` or `{ kind: "person", id, groups }`, the names of the app's groups the person is in
-(their roles); a person who may not enter the app is denied.
+factory gets `{ kind: "person", id, owner, groups }`: whether they are the owner, and the names of the app's groups
+they are in (their roles); a person who may not enter the app is denied. The owner's own objects (`Sessions`,
+`People`, `Environments`, ...) use `admitOwner`: allowed while the caller's row says owner.
 
 ## One question for every object: `admitSession`
 

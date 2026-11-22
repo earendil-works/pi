@@ -65,7 +65,7 @@ function PersonMenu(props: { readonly caller: Caller; readonly onInvite: () => v
 						<Menu.Group>
 							<Menu.GroupLabel>Signed in as {name}</Menu.GroupLabel>
 						</Menu.Group>
-						{props.caller.kind === "owner" ? (
+						{props.caller.kind === "person" && props.caller.owner ? (
 							<Menu.Item data-invite-open="" icon={<PersonAddIcon />} onClick={props.onInvite}>
 								Invite a person
 							</Menu.Item>
@@ -77,7 +77,7 @@ function PersonMenu(props: { readonly caller: Caller; readonly onInvite: () => v
 	);
 }
 
-/** How the chrome names the caller: the owner as "Owner", a person by their name. */
+/** How the chrome names the caller: a person (the owner too) by their name; a session's agent as "Agent". */
 export function callerName(caller: Caller): string {
-	return caller.kind === "owner" ? "Owner" : caller.name;
+	return caller.kind === "person" ? caller.name : "Agent";
 }

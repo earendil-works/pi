@@ -3,9 +3,11 @@
 // (`invites.ts`). Removing a person removes them from every group and every session (the things they brought into
 // sessions with them) and ends their sign-ins at once.
 
+import { userInfo } from "node:os";
 import {
 	and,
 	type Ctx,
+	callerKey,
 	constant,
 	defineColumns,
 	defineFacet,
@@ -13,6 +15,7 @@ import {
 	eq,
 	forbidden,
 	inArray,
+	int,
 	invalid,
 	query,
 	str,
@@ -21,18 +24,22 @@ import {
 import { SessionsStore } from "../sessions/contract.server.ts";
 import { SignIns } from "../sign-in/contract.ts";
 import { PeopleStore } from "./contract.server.ts";
-import { Me, People, PeopleList } from "./contract.ts";
+import { admitOwner, Me, OwnerAccess, People, PeopleList } from "./contract.ts";
 import { Invites, serveInviteRoutes } from "./invites.ts";
 
 /** The persons' columns, a set so a group's members can be joined with their person. */
-const PersonColumns = defineColumns("people.person-columns", { columns: { id: str(), name: str() }, key: ["id"] });
+const PersonColumns = defineColumns("people.person-columns", {
+	// `owner`: 1 for the owner's person, else 0 (an index column, so an int).
+	columns: { id: str(), name: str(), owner: int() },
+	key: ["id"],
+});
 
-/** Every person, by id; by name for the owner's list. */
+/** Every person, by id; by name for the owner's list; by the owner flag for the owner's person. */
 const Persons = defineTable("people.persons", {
 	version: 1,
 	columns: { ...PersonColumns.columns },
 	key: ["id"],
-	indexes: { by_name: ["name"] },
+	indexes: { by_name: ["name"], by_owner: ["owner"] },
 	exposes: PersonColumns,
 });
 
@@ -74,9 +81,22 @@ export default defineFacet((host) => {
 		const personMustExist = async (tx: Tx, id: string) => {
 			if ((await tx.get(persons, { id })) === undefined) throw invalid("args", `people: no person ${id}`);
 		};
+		// Opened before the store goes live: from the first start on, the owner's person exists, once.
+		self.open(
+			(ctx) =>
+				self.tx(async (tx) => {
+					const owner = query(Persons).where((p) => eq(p.owner, 1));
+					if ((await tx.page(persons, owner, 1)).items.length > 0) return null;
+					tx.put(persons, { id: crypto.randomUUID(), name: ownerName(), owner: 1 });
+					return null;
+				}, ctx),
+			() => {},
+		);
 		const removePerson = ({ person }: { readonly person: string }, ctx: Ctx) =>
 			self.tx(async (tx) => {
-				await personMustExist(tx, person);
+				const found = await tx.get(persons, { id: person });
+				if (found === undefined) throw invalid("args", `people: no person ${person}`);
+				if (found.owner === 1) throw invalid("args", "people: the owner's person is never removed");
 				tx.delete(persons, { id: person });
 				// Index `of_person`: every group of theirs, no cap (a membership left over would grant access).
 				for await (const row of tx.rows(
@@ -90,12 +110,14 @@ export default defineFacet((host) => {
 		return {
 			persons: self.queries(
 				persons,
-				{ map: (row) => row },
+				{ map: ({ id, name, owner }) => ({ id, name, owner: owner === 1 }) },
 				{
 					// Index `by_name`, then the key.
 					all: (_args: Record<never, never>) => query(Persons).orderBy((p) => p.name, "asc"),
 					// The key.
 					one: ({ id }: { id: string }) => query(Persons).where((p) => eq(p.id, id)),
+					// Index `by_owner`: the one person whose flag is set.
+					owner: (_args: Record<never, never>) => query(Persons).where((p) => eq(p.owner, 1)),
 					// The key: each of `ids`, in the key's order.
 					ofIds: ({ ids }: { ids: string[] }) => query(Persons).where((p) => inArray(p.id, ids)),
 				},
@@ -140,7 +162,14 @@ export default defineFacet((host) => {
 			},
 			members: self.queries(
 				members,
-				{ map: (_row, person) => ({ id: person.id as string, name: person.name as string }), reads: [] },
+				{
+					map: (_row, person) => ({
+						id: person.id as string,
+						name: person.name as string,
+						owner: person.owner === 1,
+					}),
+					reads: [],
+				},
 				{
 					// The key's prefix `group`, each row joined with its person by the person's key. Ordered by the
 					// person's name, a column of the partner: SQLite sorts the group's rows.
@@ -153,7 +182,7 @@ export default defineFacet((host) => {
 			),
 			createPerson: async ({ name }, ctx) => {
 				const id = crypto.randomUUID();
-				await self.tx(async (tx) => tx.put(persons, { id, name }), ctx);
+				await self.tx(async (tx) => tx.put(persons, { id, name, owner: 0 }), ctx);
 				return id;
 			},
 			renamePerson: ({ person, name }, ctx) =>
@@ -207,46 +236,83 @@ export default defineFacet((host) => {
 	});
 
 	host.serve(Me, (_params, principal, self) => {
-		if (principal.kind === "owner") return { variant: "me", members: { me: constant({ kind: "owner" }) } };
 		if (principal.kind === "worker") {
 			return { variant: "me", members: { me: constant({ kind: "agent", session: principal.session }) } };
 		}
-		if (principal.kind !== "person") throw forbidden("people: the owner's, persons' and agents'");
+		if (principal.kind !== "person") throw forbidden("people: persons' and agents'");
 		const found = self.liveQuery(self.get(PeopleStore, {}).persons.one, { id: principal.id }, { first: 1 });
 		const { id, name } = principal;
-		// The name as the owner gave it now; the sign-in's while the person is gone (their sign-ins end with them).
-		const me = self.derive([found], ([{ rows }]) => ({ kind: "person" as const, id, name: rows[0]?.name ?? name }));
+		// Their name and owner flag now; the sign-in's name, and no owner, while the person is gone (their sign-ins end
+		// with them).
+		const me = self.derive(
+			[found],
+			([
+				{
+					rows: [row],
+				},
+			]) => ({
+				kind: "person" as const,
+				id,
+				name: row?.name ?? name,
+				owner: row?.owner ?? false,
+			}),
+		);
 		return { variant: "me", members: { me } };
 	});
 
-	host.serve(People, (_params, principal, self) => {
-		if (principal.kind !== "owner") throw forbidden("people: the owner's");
+	host.serve(OwnerAccess, ({ caller }, principal, self) => {
+		// The server and workers ask about anyone, anyone else about themselves only.
+		const asker = callerKey(principal);
+		if (asker !== "server" && !asker.startsWith("worker:") && asker !== caller) {
+			throw forbidden("people: an answer about the caller only");
+		}
+		if (!caller.startsWith("person:")) return { variant: "answer", members: { owner: constant(false) } };
 		const store = self.get(PeopleStore, {});
-		/** A fresh invite link of person `person`, which must exist. */
-		const link = async ({ person }: { readonly person: string }, ctx: Ctx): Promise<string> => {
-			const found = await store.persons.one.page({ id: person }, 1, ctx);
-			if (found.items.length === 0) throw invalid("args", `people: no person ${person}`);
-			return invites.renew(person);
-		};
-		return {
-			variant: "owner",
-			members: {
-				invite: async ({ name }, ctx) => {
-					const person = await store.createPerson({ name }, ctx);
-					return { person, link: await link({ person }, ctx) };
-				},
-				link,
-				rename: ({ person, name }, ctx) => store.renamePerson({ person, name }, ctx),
-				remove: ({ person }, ctx) => store.removePerson({ person }, ctx),
-			},
-		};
+		const found = self.liveQuery(store.persons.one, { id: caller.slice("person:".length) }, { first: 1 });
+		return { variant: "answer", members: { owner: self.derive([found], ([{ rows }]) => rows[0]?.owner === true) } };
 	});
 
-	host.serve(PeopleList, (_params, principal, self) => {
-		if (principal.kind !== "owner") throw forbidden("people: the owner's");
-		const list = self.list("people", [[self.get(PeopleStore, {}).persons.all, {}]], { first: PAGE });
-		return { variant: "owner", members: { list: list.value, more: (ctx) => list.more(ctx) } };
-	});
+	host.serve(
+		People,
+		(_params, _principal, _admitted, self) => {
+			const store = self.get(PeopleStore, {});
+			/** A fresh invite link of person `person`, which must exist and not be the owner (who has the owner link). */
+			const link = async ({ person }: { readonly person: string }, ctx: Ctx): Promise<string> => {
+				const [found] = (await store.persons.one.page({ id: person }, 1, ctx)).items;
+				if (found === undefined) throw invalid("args", `people: no person ${person}`);
+				if (found.owner) throw invalid("args", "people: the owner signs in with the owner link");
+				return invites.renew(person);
+			};
+			return {
+				variant: "owner",
+				members: {
+					invite: async ({ name }, ctx) => {
+						const person = await store.createPerson({ name }, ctx);
+						return { person, link: await link({ person }, ctx) };
+					},
+					link,
+					rename: ({ person, name }, ctx) => store.renamePerson({ person, name }, ctx),
+					remove: ({ person }, ctx) => store.removePerson({ person }, ctx),
+				},
+			};
+		},
+		{ admit: admitOwner },
+	);
+
+	host.serve(
+		PeopleList,
+		(_params, _principal, _admitted, self) => {
+			const list = self.list("people", [[self.get(PeopleStore, {}).persons.all, {}]], { first: PAGE });
+			return { variant: "owner", members: { list: list.value, more: (ctx) => list.more(ctx) } };
+		},
+		{ admit: admitOwner },
+	);
 
 	serveInviteRoutes(host, invites);
 });
+
+/** The owner's person's first name: their OS user's, capitalised (the owner renames it later). */
+function ownerName(): string {
+	const user = userInfo().username;
+	return user === "" ? "Owner" : `${user[0]!.toUpperCase()}${user.slice(1)}`;
+}

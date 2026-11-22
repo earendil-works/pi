@@ -100,20 +100,17 @@ function mayAsk(principal: P3Principal, session: string, caller: string): void {
 	throw forbidden("sessions: an answer about the caller only");
 }
 
-/** The standing of `caller` in `session`, read live through `self`. */
+/**
+ * The standing of `caller` in `session`, read live through `self`: the server's, a worker's, or a person's (the owner
+ * writes every session, also an archived one, with options of their own like anyone).
+ */
 function standingOf(session: string, caller: string, self: Self<P3Principal>): Watchable<Standing> {
 	const store = self.get(SessionsStore, {});
 	const found = self.liveQuery(store.sessions.one, { id: session }, { first: 1 });
-	if (caller === "owner" || caller === "server") {
-		return self.derive(
-			[found],
-			([
-				{
-					rows: [row],
-				},
-			]) =>
-				// The server's waker reaches no archived session; the owner reaches every session.
-				row === undefined || (caller === "server" && row.archivedAt !== null) ? NONE : EVERYONE_WRITES,
+	if (caller === "server") {
+		// The server's waker reaches no archived session.
+		return self.derive([found], ([{ rows }]) =>
+			rows[0] === undefined || rows[0].archivedAt !== null ? NONE : SERVER,
 		);
 	}
 	if (caller === `worker:${session}`) return constant(AGENT);
@@ -123,25 +120,19 @@ function standingOf(session: string, caller: string, self: Self<P3Principal>): W
 	const persons = self.liveQuery(people.persons.one, { id: person }, { first: 1 });
 	const groups = self.liveQuery(people.groups.ofPerson, { person }, { first: READ_WHOLE });
 	const members = self.liveQuery(store.members.of, { session }, { first: READ_WHOLE });
-	return self.derive(
-		[found, persons, groups, members],
-		([
-			{
-				rows: [row],
-			},
-			them,
-			theirs,
-			all,
-		]) => {
-			if (row === undefined || row.archivedAt !== null || them.rows.length === 0 || all.more) return NONE;
-			const own = new Set([caller, ...(theirs.more ? [] : theirs.rows.map(({ id }) => `group:${id}`))]);
-			const matching = all.rows.filter((member) => own.has(keyOf(member)));
-			if (matching.length === 0) return NONE;
-			const access: Access = matching.some((member) => member.access === "write") ? "write" : "read";
-			const groupsInOrder = matching.filter(({ kind }) => kind === "group").map(keyOf);
-			return { access, options: [caller, ...groupsInOrder, "everyone"] } satisfies Standing;
-		},
-	);
+	return self.derive([found, persons, groups, members], ([sessions, them, theirs, all]) => {
+		const [row] = sessions.rows;
+		const [who] = them.rows;
+		if (row === undefined || who === undefined) return NONE;
+		const own = new Set([caller, ...(theirs.more ? [] : theirs.rows.map(({ id }) => `group:${id}`))]);
+		const matching = all.more ? [] : all.rows.filter((member) => own.has(keyOf(member)));
+		const groupsInOrder = matching.filter(({ kind }) => kind === "group").map(keyOf);
+		const options = [caller, ...groupsInOrder, "everyone"];
+		if (who.owner) return { access: "write", options } satisfies Standing;
+		if (row.archivedAt !== null || matching.length === 0) return NONE;
+		const access: Access = matching.some((member) => member.access === "write") ? "write" : "read";
+		return { access, options } satisfies Standing;
+	});
 }
 
 /** A caller's standing in a session (see `SessionStanding`). */
@@ -150,8 +141,8 @@ type Standing = { access: "none" } | { access: Access; options: string[] };
 /** No access. */
 const NONE: Standing = { access: "none" };
 
-/** The owner's and the server's standing: write, the session's default options. */
-const EVERYONE_WRITES: Standing = { access: "write", options: ["everyone"] };
+/** The server's standing: write, the session's default options. */
+const SERVER: Standing = { access: "write", options: ["everyone"] };
 
 /** A session's own worker: write, the agent's options, else the default. */
 const AGENT: Standing = { access: "write", options: ["agent", "everyone"] };

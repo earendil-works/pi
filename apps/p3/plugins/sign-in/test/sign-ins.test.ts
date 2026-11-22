@@ -28,6 +28,7 @@ import {
 	LinkOpened,
 	matchesHash,
 	newToken,
+	PeopleStore,
 } from "@earendil-works/p3/v1/server";
 import { type TestedPlugin, type TestServer, testPlugin, testServer } from "@earendil-works/p3/v1/testing";
 import { collected, eventually, within } from "../../../test/until.ts";
@@ -35,7 +36,16 @@ import { Sessions } from "../../sessions/contract.ts";
 import { SignIns } from "../contract.ts";
 
 const DAY = 24 * 60 * 60_000;
-const OWNER: P3Principal = { kind: "owner" };
+/** A person whose sign-ins the identity tests issue (who they are does not matter to a sign-in). */
+const OWNER: P3Principal = { kind: "person", id: "owner", name: "Owner" };
+
+/** The owner's person of the server `host` (made at its first start): who the owner's objects admit. */
+async function ownerOf(host: TestServer["host"]): Promise<P3Principal> {
+	const [found] = (
+		await host.root(async (ctx) => (await ctx.get(PeopleStore, {})).persons.owner.page({}, 1, ctx), context)
+	).items;
+	return { kind: "person", id: found!.id, name: found!.name };
+}
 const MAX: P3Principal = { kind: "person", id: "max", name: "Max" };
 
 /** A new coding session titled `title`, as the owner makes it. */
@@ -482,8 +492,9 @@ async function revokeClosing(host: TestServer["host"], id: string, revoked: { cl
 describe("a sign-in's `/chord` links on the server", () => {
 	it("a revoked sign-in's link closes at once; another device of the owner keeps its link and its objects", async () => {
 		const t = await started();
-		const laptop = await issueOn(t, OWNER, "device");
-		const phone = await issueOn(t, OWNER, "browser");
+		const owner = await ownerOf(t.host);
+		const laptop = await issueOn(t, owner, "device");
+		const phone = await issueOn(t, owner, "browser");
 		const revoked = await device(t.port, carrying(laptop, "bearer"));
 		const kept = await device(t.port, carrying(phone, "cookie"));
 		try {
@@ -509,9 +520,10 @@ describe("a reload of the sign-in plugin", () => {
 		await cp(fileURLToPath(new URL("../../", import.meta.url)), root, { recursive: true });
 		const t = await testServer({ builtIn: root }, context);
 		const { host } = t;
+		const owner = await ownerOf(host);
 		const issue = (kind: "browser" | "device") =>
 			host.root(
-				async (ctx) => (await ctx.get(SignIns, {})).issue({ principal: OWNER, label: kind, kind }, ctx),
+				async (ctx) => (await ctx.get(SignIns, {})).issue({ principal: owner, label: kind, kind }, ctx),
 				context,
 			);
 		const laptop = await issue("device");

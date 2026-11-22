@@ -1,9 +1,11 @@
 // The owner's sign-in: a one-time owner link (single use, 10 minutes; its page posts the token from the URL's
-// fragment, never sent to a server, and gets a browser sign-in), made fresh for `p3` (the command `owner-link`, over
-// the data directory's socket, which only the owner's processes reach).
+// fragment, never sent to a server, and gets a browser sign-in as the owner's person, read from the people plugin when
+// the link is used), made fresh for `p3` (the command `owner-link`, over the data directory's socket, which only the
+// owner's processes reach).
 
 import { contribute, type FacetHost, type P3Principal } from "@earendil-works/p3/v1";
 import { Http, hashToken, matchesHash, newToken, ServerCommands, ServerRuntime } from "@earendil-works/p3/v1/server";
+import { PeopleStore } from "../people/contract.server.ts";
 import { SignIns } from "./contract.ts";
 
 /** How long an owner link is valid: 10 minutes. */
@@ -33,7 +35,12 @@ export function serveOwner(host: FacetHost<P3Principal>): void {
 						}
 						const signIns = await ctx.get(SignIns, {});
 						const secure = request.provenance.kind !== "local";
-						const owner = { principal: OWNER, label: "owner browser", kind: "browser", secure } as const;
+						// The owner's person as the people plugin has it now (a server-local read).
+						const people = await ctx.get(PeopleStore, {});
+						const [person] = (await people.persons.owner.page({}, 1, ctx)).items;
+						if (person === undefined) return { kind: "error", status: 503 };
+						const principal = { kind: "person", id: person.id, name: person.name } as const;
+						const owner = { principal, label: "owner browser", kind: "browser", secure } as const;
 						const issued = await signIns.issue(owner, ctx);
 						return { kind: "json", value: "signed in", headers: { "Set-Cookie": issued.cookie } };
 					},
@@ -51,9 +58,6 @@ export function serveOwner(host: FacetHost<P3Principal>): void {
 		});
 	});
 }
-
-/** The owner's principal. */
-const OWNER = { kind: "owner" } as const;
 
 /** The owner link and its one-time token: made on request, consumed by its first use. */
 class OwnerLink {

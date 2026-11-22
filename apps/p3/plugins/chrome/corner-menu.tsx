@@ -42,7 +42,7 @@ export function CornerMenu(props: ChromeProps) {
 								{props.caller === undefined ? "" : `Signed in as ${callerName(props.caller)}. `}
 								{CONNECTION_LABELS[props.connection]}
 							</Menu.GroupLabel>
-							{props.caller?.kind === "owner" ? (
+							{props.caller?.kind === "person" && props.caller.owner ? (
 								<Menu.Item data-invite-open="" icon={<PersonAddIcon />} onClick={props.onInvite}>
 									Invite a person
 								</Menu.Item>

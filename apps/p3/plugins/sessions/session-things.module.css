@@ -35,6 +35,11 @@
 	border-block-end: var(--semantic-dimension-border-width-small) solid var(--semantic-color-border-secondary);
 }
 
+.title {
+	display: block;
+	font: var(--semantic-typography-ui-primary);
+}
+
 .grow {
 	flex: 1 1 auto;
 	min-inline-size: 0;

@@ -1,5 +1,5 @@
 // The notes store on the server (`NotesStore`): one table of every notebook's notes, its named query, and every
-// write. A notebook is a key (`person:<id>`, `owner`, `session:<id>`); its notes outlive every session it is in.
+// write. A notebook is a key (`person:<id>`, the owner's too, `session:<id>`); its notes outlive every session it is in.
 // Server code of this plugin only: it checks no caller (`Notes` admits them).
 
 import {
@@ -24,7 +24,7 @@ const StoredNote = obj({ id: str(), text: str(), at: num(), author: str() });
 
 /**
  * The notebooks' notes, once per server: each notebook's notes as a named query, the last written first, and the
- * writes. An author is a key: `owner`, `person:<id>`, `agent`.
+ * writes. An author is a key: `person:<id>` (the owner's too), `agent`.
  */
 export const NotesStore = local("notes.store", {
 	version: 1,

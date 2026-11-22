@@ -33,7 +33,9 @@ import { within } from "../../../test/until.ts";
 import { Notes as Notebook, NotesKind } from "../../notes/contract.ts";
 import { NOTES, Notes, notesAt, STUBS, setNotes } from "./stubs.ts";
 
-const OWNER: P3Principal = { kind: "owner" };
+/** The owner's person in this test's Pi (made at its first start), and their caller key. */
+let OWNER: Extract<P3Principal, { kind: "person" }>;
+let OWNER_KEY: string;
 
 /** Where the tests' sessions work. */
 const HERE = { environment: THIS_DEVICE, folder: "/tmp/p3-sessions-test" };
@@ -42,6 +44,12 @@ let t: TestedPlugin<P3Principal>;
 
 beforeEach(async () => {
 	t = await testPlugin(fileURLToPath(new URL("../", import.meta.url)), { kind: "server", stubs: STUBS }, context);
+	const [owner] = await t.root(
+		async (ctx) => (await (await ctx.get(PeopleStore, {})).persons.owner.page({}, 1, ctx)).items,
+		context,
+	);
+	OWNER = { kind: "person", id: owner!.id, name: owner!.name };
+	OWNER_KEY = `person:${owner!.id}`;
 });
 
 afterEach(() => t.close(context));
@@ -170,21 +178,21 @@ describe("the access answer", () => {
 			t.root(async (ctx) => (await ctx.get(SessionAccess, { session: of, caller })).access.value, context);
 		assert.deepEqual(
 			[
-				await access("owner"),
+				await access(OWNER_KEY),
 				await access("server"),
 				await access(`worker:${id}`),
 				await access(`worker:${other}`),
 				await access(`person:${ann.id}`),
 				await access(`person:${ann.id}`, other),
 				await access("person:nobody"),
-				await access("owner", "no-session"),
+				await access(OWNER_KEY, "no-session"),
 				await access("nonsense"),
 			],
 			["write", "write", "write", "none", "read", "none", "none", "none", "none"],
 		);
 		await asServer((ctx, store) => store.archive({ session: id }, ctx));
 		assert.deepEqual(
-			[await access("owner"), await access("server"), await access(`person:${ann.id}`)],
+			[await access(OWNER_KEY), await access("server"), await access(`person:${ann.id}`)],
 			["write", "none", "none"],
 		);
 	});
@@ -229,7 +237,7 @@ describe("the access answer", () => {
 				principal,
 			});
 		assert.equal(await ask(ann, `person:${ann.id}`), "read");
-		assert.equal(await ask(OWNER, "owner"), "write");
+		assert.equal(await ask(OWNER, OWNER_KEY), "write");
 		assert.equal(await ask({ kind: "worker", session: id }, `person:${ann.id}`), "read");
 		await refused(ask(ben, `person:${ann.id}`));
 		await refused(ask(OWNER, `person:${ann.id}`));
@@ -275,20 +283,20 @@ describe("options", () => {
 			assert.deepEqual([await options(`person:${ann.id}`), await options(`person:${ben.id}`)], ["black", "green"]);
 			await set({ kind: "agent" }, { color: "white" });
 			assert.deepEqual(
-				[await options(`worker:${id}`), await options("owner"), await options("server")],
+				[await options(`worker:${id}`), await options(OWNER_KEY), await options("server")],
 				["white", "red", "red"],
 			);
 			await set({ kind: "person", id: ann.id }, null);
 			assert.equal(await options(`person:${ann.id}`), "yellow", "null removes a member's");
 			await set({ kind: "everyone" }, { color: "pink" });
 			await set({ kind: "everyone" }, null);
-			assert.equal(await options("owner"), "red", "null resets the default to the kind's initial");
+			assert.equal(await options(OWNER_KEY), "red", "null resets the default to the kind's initial");
 			await refused(set({ kind: "agent" }, { color: 3 }), "invalid");
 			await refused(set({ kind: "person", id: ben.id }, { color: "blue" }), "invalid");
 			await store.removeMember({ session: id, party: { kind: "group", id: second } }, ctx);
 			assert.equal(await options(`person:${ann.id}`), "green", "a removed member's options go with it");
 			await store.removeThing({ session: id, thing }, ctx);
-			assert.equal(await options("owner"), "none", "a removed thing");
+			assert.equal(await options(OWNER_KEY), "none", "a removed thing");
 			assert.deepEqual((await store.options.of.page({ session: id, thing }, 10, ctx)).items, []);
 		});
 	});
@@ -662,7 +670,9 @@ describe("bringing things", () => {
 		});
 		await bringing(OWNER, id, async (bring, ctx) => {
 			if (bring.variant !== "writer") return assert.fail(bring.variant);
-			assert.deepEqual((await bring.kinds({}, ctx))[0]?.records, [{ ref: "owner", title: "My notes" }]);
+			assert.deepEqual((await bring.kinds({}, ctx))[0]?.records, [
+				{ ref: OWNER_KEY, title: `${OWNER.name}'s notes` },
+			]);
 			await bring.withdraw({ thing: theTools }, ctx);
 		});
 		assert.deepEqual(
@@ -687,7 +697,7 @@ describe("bringing things", () => {
 			),
 		);
 		assert.deepEqual(by[await firstThing(id)], { kind: "app" });
-		assert.deepEqual(by[byOwner], { kind: "owner" });
+		assert.deepEqual(by[byOwner], { kind: "person", id: OWNER.id });
 		assert.deepEqual(by[byAnn], { kind: "person", id: ann.id });
 	});
 
@@ -725,3 +735,111 @@ describe("bringing things", () => {
 
 /** `BringThings` as a test holds it. */
 type BringRef = Reference<typeof BringThings>;
+
+describe("the owner's person", () => {
+	it("writes every session, archived too, and can be a member like anyone, with options of their own", async () => {
+		const coaches = await group("coaches", OWNER);
+		const notIn = await session();
+		const id = await session([{ kind: "group", id: coaches, access: "read" }]);
+		await asServer((ctx, store) => store.archive({ session: notIn }, ctx));
+		const access = (of: string) =>
+			t.root(
+				async (ctx) => (await ctx.get(SessionAccess, { session: of, caller: OWNER_KEY })).access.value,
+				context,
+			);
+		assert.deepEqual([await access(notIn), await access(id)], ["write", "write"]);
+		const thing = await firstThing(id);
+		const color = () =>
+			t.root(async (ctx) => {
+				const found = (await ctx.get(ThingAccess, { session: id, thing, caller: OWNER_KEY })).answer.value;
+				return found.access === "none" ? "none" : (found.options as { color: string }).color;
+			}, context);
+		await asServer((ctx, store) =>
+			store.setOptions(
+				{ session: id, thing, for: { kind: "group", id: coaches }, options: { color: "green" } },
+				ctx,
+			),
+		);
+		assert.equal(await color(), "green", "their group's");
+		await asServer((ctx, store) =>
+			store.addMember({ session: id, member: { kind: "person", id: OWNER.id, access: "read" } }, ctx),
+		);
+		await asServer((ctx, store) =>
+			store.setOptions(
+				{ session: id, thing, for: { kind: "person", id: OWNER.id }, options: { color: "blue" } },
+				ctx,
+			),
+		);
+		assert.equal(await color(), "blue", "their own");
+		const list = await t.root(
+			async (ctx) =>
+				(await ctx.get(SessionsList, { app: "coding", set: "archived", view: "v" })).list.value.rows.map(
+					({ id: row }) => row,
+				),
+			context,
+			{ principal: OWNER },
+		);
+		assert.deepEqual(list, [notIn], "the owner's list is every session of the app");
+	});
+
+	it("shows the owner's name and a bringer's live in a session's info; the app's things have none", async () => {
+		const ann = await person("Ann");
+		const id = await session([
+			{ kind: "person", id: OWNER.id, access: "write" },
+			{ kind: "person", id: ann.id, access: "write" },
+		]);
+		const brought = await t.root(
+			async (ctx) => {
+				const bring = await ctx.get(BringThings, { session: id });
+				return bring.variant === "writer"
+					? bring.bring({ kind: NotesKind.name, ref: `person:${ann.id}` }, ctx)
+					: assert.fail(bring.variant);
+			},
+			context,
+			{ principal: ann },
+		);
+		const byOwner = await t.root(
+			async (ctx) => (await ctx.get(Sessions, {})).addThing({ session: id, thing: thingOf(Notes) }, ctx),
+			context,
+			{ principal: OWNER },
+		);
+		await t.root(
+			async (ctx) => {
+				const info = await ctx.get(SessionInfo, { session: id });
+				const names = () => info.members.value.map(({ name }) => name);
+				const byName = () => Object.fromEntries(info.things.value.map(({ thing, byName: name }) => [thing, name]));
+				await until(info.things, (things) => things.length === 3, within("the three things", context));
+				assert.deepEqual(names(), [OWNER.name, "Ann"]);
+				assert.deepEqual(
+					[byName()[await firstThing(id)], byName()[brought], byName()[byOwner]],
+					["", "Ann", OWNER.name],
+				);
+				await t.root(async (server) => {
+					const people = await server.get(PeopleStore, {});
+					await people.renamePerson({ person: OWNER.id, name: "Mario" }, server);
+					await people.renamePerson({ person: ann.id, name: "Anna" }, server);
+				}, context);
+				assert.deepEqual(names(), ["Mario", "Anna"]);
+				assert.deepEqual([byName()[brought], byName()[byOwner]], ["Anna", "Mario"]);
+			},
+			context,
+			{ principal: ann },
+		);
+	});
+
+	it("is the only person admitted to the owner's objects", async () => {
+		const ann = await person("Ann");
+		for (const [type, params] of [
+			[Sessions, {}],
+			[ThingKindCatalog, {}],
+		] as const) {
+			assert.equal(
+				await t.root(async (ctx) => (await ctx.get(type, params)).variant, context, { principal: OWNER }),
+				"owner",
+			);
+			await refused(
+				t.root(async (ctx) => ctx.get(type, params, { readyTimeout: 500 }), context, { principal: ann }),
+			);
+		}
+	});
+});

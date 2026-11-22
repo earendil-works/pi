@@ -63,9 +63,8 @@ export default defineFacet((host) => {
 	);
 });
 
-/** The notebook `who` may bring: their own (a person's titled with their name; none for a person who left). */
+/** The notebook `who` may bring: their own (titled with their name; none for a person who left). */
 async function recordsOf(who: RecordsFor, people: Reference<typeof PeopleStore>, context: Context) {
-	if (who.kind === "owner") return [{ ref: "owner", title: "My notes" }];
 	const [found] = (await people.persons.one.page({ id: who.id }, 1, context)).items;
 	return found === undefined ? [] : [{ ref: `person:${found.id}`, title: `${found.name}'s notes` }];
 }
@@ -74,8 +73,6 @@ async function recordsOf(who: RecordsFor, people: Reference<typeof PeopleStore>,
 async function authorKey(ctx: Ctx<P3Principal>): Promise<string> {
 	const me = (await ctx.get(Me, {})).me.value;
 	switch (me.kind) {
-		case "owner":
-			return "owner";
 		case "person":
 			return `person:${me.id}`;
 		case "agent":
@@ -111,5 +108,5 @@ function authorOf(key: string, names: ReadonlyMap<string, string>): Author {
 		const id = key.slice(PERSON.length);
 		return { kind: "person", id, name: names.get(id) ?? id };
 	}
-	return key === "agent" ? { kind: "agent" } : { kind: "owner" };
+	return { kind: "agent" };
 }

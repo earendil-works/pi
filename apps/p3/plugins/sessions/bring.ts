@@ -16,7 +16,13 @@ import {
 	reportError,
 	type ThingRecord,
 } from "@earendil-works/p3/v1";
-import { type RecordsFor, SessionsStore, type ThingKindEntry, ThingKinds } from "@earendil-works/p3/v1/server";
+import {
+	PeopleStore,
+	type RecordsFor,
+	SessionsStore,
+	type ThingKindEntry,
+	ThingKinds,
+} from "@earendil-works/p3/v1/server";
 
 /** Serves `BringThings` on `host`. */
 export function serveBring(host: FacetHost<P3Principal>): void {
@@ -24,15 +30,20 @@ export function serveBring(host: FacetHost<P3Principal>): void {
 		BringThings,
 		({ session }, principal, { access }, self) => {
 			if (access === "read") return { variant: "reader", members: {} };
-			const who = recordsFor(principal);
-			const by: Bringer = who.kind === "owner" ? who : { kind: "person", id: who.id };
+			// The server and workers bring nothing.
+			if (principal.kind !== "person") throw forbidden("sessions: persons bring things");
+			const who: RecordsFor = { kind: "person", id: principal.id };
+			const by: Bringer = who;
 			const store = self.get(SessionsStore, {});
 			const kinds = self.registry(ThingKinds);
+			// Whether the caller is the owner, read live from their row.
+			const found = self.liveQuery(self.get(PeopleStore, {}).persons.one, { id: who.id }, { first: 1 });
 			/** Thing `thing` of the session, which the caller brought (the owner: any). */
 			const theirs = async (thing: string, ctx: Ctx<P3Principal>) => {
-				const [found] = (await store.things.one.page({ session, thing }, 1, ctx)).items;
-				if (found === undefined) throw invalid("args", `sessions: session ${session} has no thing ${thing}`);
-				if (by.kind === "person" && (found.by.kind !== "person" || found.by.id !== by.id)) {
+				const [row] = (await store.things.one.page({ session, thing }, 1, ctx)).items;
+				if (row === undefined) throw invalid("args", `sessions: session ${session} has no thing ${thing}`);
+				if (found.value.rows[0]?.owner === true) return;
+				if (row.by.kind !== "person" || row.by.id !== who.id) {
 					throw forbidden("sessions: a thing someone else brought");
 				}
 			};
@@ -60,13 +71,6 @@ export function serveBring(host: FacetHost<P3Principal>): void {
 		},
 		{ admit: admitSession },
 	);
-}
-
-/** Whom the records are asked for: the owner, or a person. The server and workers bring nothing (`forbidden`). */
-function recordsFor(principal: P3Principal): RecordsFor {
-	if (principal.kind === "owner") return { kind: "owner" };
-	if (principal.kind === "person") return { kind: "person", id: principal.id };
-	throw forbidden("sessions: the owner and persons bring things");
 }
 
 /**

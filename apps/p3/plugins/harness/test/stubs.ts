@@ -59,7 +59,7 @@ export function standIns(
 	let held: Promise<void> = Promise.resolve();
 	const rows = new Set<Writable<SessionRow>>();
 	const lists = new Set<Writable<readonly Thing[]>>();
-	const accesses = new Map<string, "none" | "read" | "write">([["owner", "write"]]);
+	const accesses = new Map<string, "none" | "read" | "write">([["person:owner", "write"]]);
 	const answers = new Set<{ caller: string; access: Writable<string> }>();
 	const reports: SessionState[] = [];
 	const server: Server = {

@@ -7,6 +7,7 @@ import {
 	type AdmitSelf,
 	allow,
 	arr,
+	bool,
 	callerKey,
 	deny,
 	lit,
@@ -31,7 +32,8 @@ export const AppInfo = obj({ id: str(), title: str(), chrome: AppChrome });
 export type AppInfo = Static<typeof AppInfo>;
 
 /**
- * The apps the caller may enter, by title: the owner every app; a person the apps of the groups they are in. The
+ * The apps the caller may enter, by title: the owner every app; a person the apps of the groups they are in, and of
+ * the sessions they are members of; a session's agent none. The
  * top bar's switcher lists them; an app's own objects still decide what the person gets inside it.
  */
 export const AppCatalog = remote("apps.catalog", {
@@ -42,13 +44,10 @@ export const AppCatalog = remote("apps.catalog", {
 });
 
 /**
- * Who the caller is in an app, as an app's own objects get it: the owner, or a person with the names of the app's
- * groups they are in (their roles). A person who may not enter the app is denied.
+ * Who the caller is in an app, as an app's own objects get it: a person, whether they are the owner (who enters
+ * every app), and the names of the app's groups they are in (their roles). A person who may not enter is denied.
  */
-export const AppAdmission = union([
-	obj({ kind: lit("owner") }),
-	obj({ kind: lit("person"), id: str(), groups: arr(str()) }),
-]);
+export const AppAdmission = obj({ kind: lit("person"), id: str(), owner: bool(), groups: arr(str()) });
 
 /** Who the caller is in an app (see `AppAdmission`). */
 export type AppAdmission = Static<typeof AppAdmission>;

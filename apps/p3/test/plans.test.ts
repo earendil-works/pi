@@ -79,8 +79,8 @@ describe("the plans of the stores' queries", () => {
 			const people = await host.get(PeopleStore, {}, context);
 			const environments = await host.get(EnvironmentsStore, {}, context);
 			const notes = await host.get(NotesStore, {}, context);
-			for (const notebook of ["owner", "person:ann"]) {
-				for (let i = 0; i < 3; i++) await notes.add({ notebook, text: `n${i}`, author: "owner" }, context);
+			for (const notebook of ["person:owner", "person:ann"]) {
+				for (let i = 0; i < 3; i++) await notes.add({ notebook, text: `n${i}`, author: "person:owner" }, context);
 			}
 			const ann = await people.createPerson({ name: "Ann" }, context);
 			await people.createPerson({ name: "Ben" }, context);
@@ -109,7 +109,10 @@ describe("the plans of the stores' queries", () => {
 			const canvas = await host.get(CanvasStore, {}, context);
 			for (const board of ["b1", "b2"]) {
 				const rect = { kind: "rect", color: "#000000", x: 0, y: 0, w: 10, h: 10, fill: false } as const;
-				await canvas.add({ session: one, thing: board, shapes: [rect, rect, rect], author: "owner" }, context);
+				await canvas.add(
+					{ session: one, thing: board, shapes: [rect, rect, rect], author: "person:owner" },
+					context,
+				);
 			}
 			/** The plans of the statements `read` makes Chord prepare. */
 			const plansOf = async (read: Read): Promise<string[]> => {
@@ -169,6 +172,7 @@ describe("the plans of the stores' queries", () => {
 				["persons.all", pages(people.persons.all, {}), { index: `${P}.persons:by_name` }],
 				["persons.one", pages(people.persons.one, { id: ann }), {}],
 				["persons.ofIds", pages(people.persons.ofIds, { ids: [ann, "none"] }), {}],
+				["persons.owner", pages(people.persons.owner, {}), { index: `${P}.persons:by_owner` }],
 				["groups.ofApp", pages(people.groups.ofApp, { app: "coding" }), { index: `${P}.groups:of_app` }],
 				["groups.one", pages(people.groups.one, { id: coaches }), {}],
 				["groups.ofIds", pages(people.groups.ofIds, { ids: [coaches, "none"] }), {}],
@@ -180,7 +184,7 @@ describe("the plans of the stores' queries", () => {
 				["members.of (people)", pages(people.members.of, { group: coaches }), { sorts: true }],
 				["environments.all", pages(environments.environments.all, {}), { index: `${E}.rows:by_name` }],
 				["environments.one", pages(environments.environments.one, { id: THIS_DEVICE }), {}],
-				["notes.of", pages(notes.notes.of, { notebook: "owner" }), { index: `${N}.rows:by_time` }],
+				["notes.of", pages(notes.notes.of, { notebook: "person:owner" }), { index: `${N}.rows:by_time` }],
 				["shapes.of", pages(canvas.shapes.of, { session: one, thing: "b1" }), { index: `${C}.shapes:by_order` }],
 			];
 			for (const [name, read, expected] of cases) {

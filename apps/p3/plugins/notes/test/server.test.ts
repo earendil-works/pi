@@ -32,7 +32,8 @@ import sessionsServer from "../../sessions/server.ts";
 import signInServer from "../../sign-in/server.ts";
 import { Notes, NotesKind } from "../contract.ts";
 
-const OWNER: P3Principal = { kind: "owner" };
+/** The owner's person in this test's Pi (made at its first start). */
+let OWNER: Extract<P3Principal, { kind: "person" }>;
 
 /** Where the tests' sessions work. */
 const HERE = { environment: THIS_DEVICE, folder: "/tmp/p3-notes-test" };
@@ -61,6 +62,11 @@ beforeEach(async () => {
 		},
 		context,
 	);
+	const [owner] = await t.root(
+		async (ctx) => (await (await ctx.get(PeopleStore, {})).persons.owner.page({}, 1, ctx)).items,
+		context,
+	);
+	OWNER = { kind: "person", id: owner!.id, name: owner!.name };
 });
 
 afterEach(() => t.close(context));
@@ -150,7 +156,7 @@ describe("the notebooks a caller may bring", () => {
 				{ principal },
 			);
 		assert.deepEqual(await offered(ann), [{ ref: `person:${ann.id}`, title: "Ann's notes" }]);
-		assert.deepEqual(await offered(OWNER), [{ ref: "owner", title: "My notes" }]);
+		assert.deepEqual(await offered(OWNER), [{ ref: `person:${OWNER.id}`, title: `${OWNER.name}'s notes` }]);
 		await refused(
 			t.root(
 				async (ctx) => {
@@ -281,7 +287,7 @@ describe("who may do what in a notebook", () => {
 				[
 					["by Ann", { kind: "person", id: ann.id, name: "Ann" }],
 					["by the agent", { kind: "agent" }],
-					["by the owner", { kind: "owner" }],
+					["by the owner", { kind: "person", id: OWNER.id, name: OWNER.name }],
 				],
 			);
 			await t.root(async (server) => {
