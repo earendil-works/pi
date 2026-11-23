@@ -13,8 +13,8 @@
  * VM, any time later, given the same scope. Nothing replays. Hosts that do not persist runs never call `save()`.
  */
 import { type Run, RunExit, Sandbox, type SandboxError } from "@earendil-works/djs";
-import { scriptError } from "./djs-compat.ts";
 import { ScriptIo, type StoreWrite } from "./host-io.ts";
+import { missingMemberMessage, scriptError, TOOLS_MISSING_HINT } from "./script-values.ts";
 import type { CodemodeError, CodemodeOutcome, CodemodeOutputItem, CodemodeResult } from "./types.ts";
 import { type CodemodeWasmModule, loadDjsWasm } from "./wasm.ts";
 
@@ -55,6 +55,8 @@ export type CodemodeSaved = {
 	output: CodemodeOutputItem[];
 	/** `store()` writes so far, in order: `[key, json]`, `[key]` for a deletion. */
 	writes: StoreWrite[];
+	/** The fuel the run had used: a resumed run goes on counting from it (a dump does not carry it). */
+	fuelUsed?: number;
 };
 
 /** One run of a script. */
@@ -65,6 +67,8 @@ export interface CodemodeVm {
 	readonly result: CodemodeResult | undefined;
 	/** The output so far. */
 	readonly output: readonly CodemodeOutputItem[];
+	/** Once the script ended: the calls still open then, which the run no longer waits for. The host cancels them. */
+	readonly dropped: readonly CodemodeVmCall[];
 	/** Answer call `id`; applied at the next `advance()`. */
 	settle(id: number, outcome: CodemodeOutcome): void;
 	/**
@@ -121,6 +125,12 @@ const FILENAME = "codemode.js";
 
 const STALL_MESSAGE =
 	"The script is waiting on a promise that can never settle: no tool call is pending, and timers do not exist here.";
+const STALL_ERROR: CodemodeError = {
+	kind: "script",
+	name: "Error",
+	message: STALL_MESSAGE,
+	stack: `Error: ${STALL_MESSAGE}`,
+};
 
 type Start = { kind: "begin"; code: string } | { kind: "resume"; saved: CodemodeSaved };
 
@@ -141,7 +151,7 @@ class DjsVm implements CodemodeVm {
 				start.kind === "begin"
 					? // The first step runs in `advance()`, bounded like every other.
 						this.sandbox.begin(start.code, {}, { filename: FILENAME, start: false })
-					: this.sandbox.loadRun(start.saved.dump);
+					: this.sandbox.loadRun(start.saved.dump, { fuelUsed: start.saved.fuelUsed ?? 0 });
 		} catch (error) {
 			this.run = undefined;
 			this.finish(startError(error));
@@ -157,6 +167,11 @@ class DjsVm implements CodemodeVm {
 
 	get output(): readonly CodemodeOutputItem[] {
 		return this.io.output;
+	}
+
+	get dropped(): CodemodeVmCall[] {
+		if (this.result === undefined || this.run === undefined) return [];
+		return this.run.dropped.map((call) => ({ id: call.id, identity: call.fn, args: call.args }));
 	}
 
 	settle(id: number, outcome: CodemodeOutcome): void {
@@ -183,7 +198,14 @@ class DjsVm implements CodemodeVm {
 
 	save(): CodemodeSaved {
 		if (this.result !== undefined || this.run === undefined) throw new Error("The script has ended");
-		return { v: 1, engine: "djs", dump: this.run.dump(), output: [...this.io.output], writes: this.io.savedWrites() };
+		return {
+			v: 1,
+			engine: "djs",
+			dump: this.run.dump(),
+			output: [...this.io.output],
+			writes: this.io.savedWrites(),
+			fuelUsed: this.run.fuelUsed,
+		};
 	}
 
 	dispose(): void {
@@ -204,6 +226,8 @@ class DjsVm implements CodemodeVm {
 			});
 		} else if (run.state === "done") this.finish(undefined, run.exited ? undefined : run.value);
 		else if (run.state === "threw") this.finish(threwError(run.error!));
+		// With no timers or I/O in the VM, nothing can ever resume a script that waits without an open call.
+		else if (run.state === "idle" && run.calls.length === 0) this.finish(STALL_ERROR);
 	}
 
 	private finish(error: CodemodeError | undefined, value?: unknown): void {
@@ -232,11 +256,14 @@ function sandboxOptions(options: DjsCodemodeOptions, scope: CodemodeScope, io: S
 		for (const exported of module.exports) asyncFunctions[exported.identity] = host;
 	}
 	const listed: { name: string; description: string }[] = [];
+	// `tools["my-tool"]` next to `tools.my_tool`.
+	const aliases: Record<string, string[]> = {};
 	for (const tool of scope.tools) {
 		const identity = `tools.${tool.jsName}`;
 		if (identity in asyncFunctions) continue;
 		asyncFunctions[identity] = host;
 		listed.push({ name: tool.jsName, description: tool.description });
+		if (tool.name !== tool.jsName) aliases[identity] = [tool.name];
 	}
 	// Without tools, `tools` is an empty object of host data: `"x" in tools` still works.
 	if (scope.tools.length > 0) globals.tools = "tools";
@@ -246,6 +273,13 @@ function sandboxOptions(options: DjsCodemodeOptions, scope: CodemodeScope, io: S
 		const bound = dot === -1 ? global.name : global.name.slice(0, dot);
 		globals[bound] = bound;
 	}
+	const members = new Map<string, string[]>([["tools", listed.map((tool) => tool.name)]]);
+	for (const global of scope.globals) {
+		const dot = global.name.indexOf(".");
+		if (dot === -1) continue;
+		const namespace = global.name.slice(0, dot);
+		members.set(namespace, [...(members.get(namespace) ?? []), global.name.slice(dot + 1)]);
+	}
 	const log = (...args: unknown[]) => io.console(args);
 	return {
 		module: options.module,
@@ -253,7 +287,7 @@ function sandboxOptions(options: DjsCodemodeOptions, scope: CodemodeScope, io: S
 		...(options.fuel === undefined ? {} : { maxFuel: options.fuel }),
 		frozenBuiltins: true,
 		typescript: true,
-		console: { log, info: log, warn: log, error: log },
+		console: { log, info: log, warn: log, error: log, debug: log },
 		unhandledRejections: "collect" as const,
 		functions: {
 			text: (value: unknown) => io.text(value),
@@ -267,6 +301,13 @@ function sandboxOptions(options: DjsCodemodeOptions, scope: CodemodeScope, io: S
 		},
 		asyncFunctions,
 		globals,
+		aliases,
+		// A read of a member that does not exist names the close matches, instead of a later "not a function".
+		missingMember: (namespace: string, member: string) => {
+			const names = members.get(namespace);
+			if (names === undefined) return undefined;
+			return missingMemberMessage(namespace, member, names, namespace === "tools" ? TOOLS_MISSING_HINT : undefined);
+		},
 		// Host data: a dump names it, never writes it.
 		values: scope.tools.length > 0 ? { ALL_TOOLS: listed } : { ALL_TOOLS: listed, tools: {} },
 		// `import { x } from "<specifier>"`: djs asks for a module once, and binds its exports by identity.
@@ -277,8 +318,8 @@ function sandboxOptions(options: DjsCodemodeOptions, scope: CodemodeScope, io: S
 		},
 		// Dumps carry the body: a resume needs no script.
 		inlineSources: true,
-		// Arguments, results and the run's value cross as JSON.
-		jsonBoundary: true,
+		// Tools' arguments, results and the run's value cross as JSON; the output and store functions get plain values.
+		jsonBoundary: { except: ["text", "image", "store", "load"] },
 	};
 }
 
@@ -300,9 +341,7 @@ function startError(error: unknown): CodemodeError {
 
 /** The outcome of a run that threw: the script's exception, or djs's stall report as pi words it. */
 function threwError(error: SandboxError): CodemodeError {
-	if (error.value === undefined && /never settles/.test(error.message)) {
-		return { kind: "script", name: "Error", message: STALL_MESSAGE, stack: `Error: ${STALL_MESSAGE}` };
-	}
+	if (error.value === undefined && /never settles/.test(error.message)) return STALL_ERROR;
 	return scriptError(error);
 }
 

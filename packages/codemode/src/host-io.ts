@@ -1,8 +1,9 @@
 // A script's output and store, kept on the host: what `text()`, `image()`, `console.*`, `store()`, and `load()` do,
 // with their checks, limits, and messages. These are sync host functions of the VM, so none of this code runs in it.
+// They get the script's values plainly (outside the JSON boundary) and turn objects into JSON here.
 import { RunExit } from "@earendil-works/djs";
-import { consoleText } from "./djs-compat.ts";
 import { MAX_OUTPUT_CHARS, MAX_OUTPUT_ITEMS, MAX_STORE_TOTAL_CHARS, MAX_STORE_VALUE_CHARS } from "./limits.ts";
+import { consoleText, toJson } from "./script-values.ts";
 import type { CodemodeOutputItem, CodemodeStoreWrites } from "./types.ts";
 
 /** `store()` writes in order: `[key, json]`, `[key]` for a deletion. */
@@ -68,7 +69,7 @@ export class ScriptIo {
 		}
 		let json: string | undefined;
 		try {
-			json = JSON.stringify(value);
+			json = toJson(value);
 		} catch (error) {
 			throw new TypeError(`store(${JSON.stringify(key)}) value is not JSON-serializable: ${consoleText(error)}`);
 		}
@@ -134,7 +135,7 @@ function outputText(value: unknown): string {
 	if (value === undefined || value === null || (typeof value !== "object" && typeof value !== "function")) {
 		return String(value);
 	}
-	return JSON.stringify(value) ?? String(value);
+	return toJson(value) ?? String(value);
 }
 
 const IMAGE_HELPER_EXPECTS =

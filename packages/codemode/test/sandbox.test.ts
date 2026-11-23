@@ -31,12 +31,6 @@ const BACKENDS: Record<string, (options: CodemodeSandboxBaseOptions) => Codemode
 		}),
 };
 
-/**
- * A behavior djs does not have yet (djs issue 0295, the letter names the gap; see src/djs-compat.ts): the test fails
- * today, so `it.fails` passes. Once the djs package has it, the test passes, `it.fails` fails: make it `it`.
- */
-const djsGap = (_gap: string) => it.fails;
-
 let backend = "local";
 const sandboxes: CodemodeSandboxBase[] = [];
 
@@ -123,7 +117,7 @@ describe.each(Object.keys(BACKENDS))("%s backend", (name) => {
 			]);
 		});
 
-		djsGap("b")("prints an Error in console output with its stack", async () => {
+		it("prints an Error in console output with its stack", async () => {
 			const sandbox = createSandbox();
 			const result = await sandbox.execute('console.error(new Error("bad"));');
 			expect(result.output).toMatchObject([
@@ -141,7 +135,7 @@ describe.each(Object.keys(BACKENDS))("%s backend", (name) => {
 		});
 
 		// #11901
-		djsGap("h")("prints non-finite numbers in text() like console output", async () => {
+		it("prints non-finite numbers in text() like console output", async () => {
 			const sandbox = createSandbox();
 			const result = await sandbox.execute("text(0 / 0);");
 			expect(result.output).toEqual([{ type: "text", text: "NaN" }]);
@@ -151,10 +145,7 @@ describe.each(Object.keys(BACKENDS))("%s backend", (name) => {
 			const sandbox = createSandbox();
 			const result = await sandbox.execute(`
 				const errors = [];
-				const circular = {};
-				circular.self = circular;
 				for (const run of [
-					() => text(circular),
 					() => image(""),
 					() => image("https://example.com/a.png"),
 					() => image("data:image/png,raw"),
@@ -178,9 +169,7 @@ describe.each(Object.keys(BACKENDS))("%s backend", (name) => {
 			expect(result.ok).toBe(true);
 			if (!result.ok) return;
 			expect(result.output).toEqual([]);
-			const errors = result.value as string[];
-			expect(errors[0]).toMatch(/^TypeError: .*circular/);
-			expect(errors.slice(1)).toEqual([
+			expect(result.value).toEqual([
 				'TypeError: image expects a non-empty image URL string, an object with image_url, or an image block { type: "image", data, mimeType }',
 				"TypeError: remote image URLs are not supported in tool outputs. Pass a base64 data URI instead",
 				"TypeError: invalid image output. Pass a base64 data URI instead",
@@ -192,6 +181,15 @@ describe.each(Object.keys(BACKENDS))("%s backend", (name) => {
 				),
 				...Array(3).fill("TypeError: invalid image output. The image data is not a PNG, JPEG, GIF, or WebP image"),
 			]);
+		});
+
+		// djs: a cycle passed to a plain host function fails the run instead of the call.
+		it.fails("rejects a value with a cycle in text()", async () => {
+			const sandbox = createSandbox();
+			const result = await sandbox.execute(
+				"const c = {}; c.self = c; try { text(c); } catch (error) { return error.name + ': ' + error.message; }",
+			);
+			expect(result).toMatchObject({ ok: true, value: expect.stringMatching(/^TypeError: .*circular/) });
 		});
 
 		// https://github.com/earendil-works/pi/issues/10215
@@ -251,13 +249,13 @@ describe.each(Object.keys(BACKENDS))("%s backend", (name) => {
 			expect(result.error).toMatchObject({ kind: "script", name: "TypeError", message: "boom 1" });
 		});
 
-		djsGap("a")("reports thrown errors with their stack", async () => {
+		it("reports thrown errors with their stack", async () => {
 			const sandbox = createSandbox();
 			const result = await sandbox.execute("const a = 1;\nthrow new TypeError('boom ' + a)");
 			expect(result.ok ? undefined : result.error.stack).toMatch(/codemode\.js:2/);
 		});
 
-		djsGap("a, b")("formats stacks like V8", async () => {
+		it("formats stacks like V8", async () => {
 			const sandbox = createSandbox();
 			const result = await sandbox.execute("console.log(new Error('inner'));\nthrow new RangeError('outer')");
 			expect(result.ok).toBe(false);
@@ -324,7 +322,7 @@ describe.each(Object.keys(BACKENDS))("%s backend", (name) => {
 			expect(result).toMatchObject({ ok: true, value: [1, 2, 3] });
 		});
 
-		djsGap("d")("lists tool names in order", async () => {
+		it("lists tool names in order", async () => {
 			const sandbox = createSandbox([echo, { name: "delay", execute: () => 1 }]);
 			expect(await sandbox.execute("return Object.keys(tools)")).toMatchObject({
 				ok: true,
@@ -357,7 +355,7 @@ describe.each(Object.keys(BACKENDS))("%s backend", (name) => {
 			});
 		});
 
-		djsGap("e")("exposes tools under their own names too", async () => {
+		it("exposes tools under their own names too", async () => {
 			const sandbox = createSandbox([{ name: "my-tool", execute: () => "dash" }]);
 			expect(await sandbox.execute('return await tools["my-tool"]()')).toMatchObject({ ok: true, value: "dash" });
 		});
@@ -395,7 +393,7 @@ describe.each(Object.keys(BACKENDS))("%s backend", (name) => {
 			expect(result).toMatchObject({ ok: false, error: { kind: "script", name: "TypeError" } });
 		});
 
-		djsGap("g")("aborts unawaited calls when the script returns", async () => {
+		it("aborts unawaited calls when the script returns", async () => {
 			let aborted = false;
 			const sandbox = newSandbox({
 				timeoutMs: 500,
@@ -418,7 +416,7 @@ describe.each(Object.keys(BACKENDS))("%s backend", (name) => {
 			expect(aborted).toBe(true);
 		});
 
-		djsGap("c, d")("names close matches when a script reads a tool that does not exist", async () => {
+		it("names close matches when a script reads a tool that does not exist", async () => {
 			const sandbox = createSandbox([echo, { name: "web-search", execute: () => "" }]);
 			const attempt = async (expression: string) => {
 				const result = await sandbox.execute(`return ${expression};`);
@@ -429,9 +427,17 @@ describe.each(Object.keys(BACKENDS))("%s backend", (name) => {
 			);
 			expect(await attempt("tools.websearch")).toContain("Did you mean tools.web_search?");
 			expect(await attempt("tools.nothing")).toContain("Available: echo, web_search.");
-			expect(
-				await attempt("['echo' in tools, 'nothing' in tools, String(tools.toString), JSON.stringify(tools)]"),
-			).toEqual([true, false, "undefined", "{}"]);
+			expect(await attempt("['echo' in tools, 'nothing' in tools, JSON.stringify(tools)]")).toEqual([
+				true,
+				false,
+				"{}",
+			]);
+		});
+
+		// djs 0296: namespaces with a null prototype.
+		it.fails("has no members of Object.prototype in tools", async () => {
+			const sandbox = createSandbox([echo]);
+			expect(await sandbox.execute("return String(tools.toString)")).toMatchObject({ ok: true, value: "undefined" });
 		});
 
 		it("supports register and unregister between executions", async () => {
@@ -493,7 +499,7 @@ describe.each(Object.keys(BACKENDS))("%s backend", (name) => {
 			});
 		});
 
-		djsGap("h")("rejects a value JSON cannot hold", async () => {
+		it("rejects a value JSON cannot hold", async () => {
 			const sandbox = createSandbox();
 			const result = await sandbox.execute('try { store("fn", () => 1); } catch (error) { return error.message; }');
 			expect(result).toMatchObject({ ok: true, value: 'store("fn") value is not JSON-serializable' });
@@ -551,7 +557,7 @@ describe.each(Object.keys(BACKENDS))("%s backend", (name) => {
 			expect(seen).toEqual([["classifier", null, 3], []]);
 		});
 
-		djsGap("d")("lists and freezes the members of a namespace", async () => {
+		it("lists and freezes the members of a namespace", async () => {
 			const execute = () => undefined;
 			const sandbox = newSandbox({
 				globals: [
@@ -565,7 +571,7 @@ describe.each(Object.keys(BACKENDS))("%s backend", (name) => {
 			expect(result).toMatchObject({ ok: true, value: [["list", "first"], false] });
 		});
 
-		djsGap("c")("names the members of a namespace when a script reads one that does not exist", async () => {
+		it("names the members of a namespace when a script reads one that does not exist", async () => {
 			const execute = () => undefined;
 			const sandbox = newSandbox({
 				globals: [
@@ -851,13 +857,15 @@ describe.each(Object.keys(BACKENDS))("%s backend", (name) => {
 			});
 		});
 
-		djsGap("a")("reports errors whose name or message is not a string", async () => {
+		// djs: a thrown Error's message that is not a string arrives empty.
+		it.fails("reports errors whose name or message is not a string", async () => {
 			const sandbox = createSandbox();
 			const result = await sandbox.execute("const error = new Error('x'); error.message = 42; throw error;");
 			expect(result).toMatchObject({ ok: false, error: { kind: "script", name: "Error", message: "42" } });
 		});
 
-		djsGap("d")("keeps tools and console frozen", async () => {
+		// djs: host globals are writable.
+		it.fails("keeps tools and console frozen", async () => {
 			const sandbox = createSandbox([echo]);
 			const result = await sandbox.execute(`
 				try { tools.echo = () => 'nope'; } catch {}

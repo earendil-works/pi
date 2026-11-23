@@ -45,8 +45,7 @@ describe("CodemodeSandbox with a fuel budget", () => {
 		}
 	});
 
-	// djs: maxFuel is not counted across the steps of a host-driven run yet.
-	it.fails("counts the fuel across waits on tools", async () => {
+	it("counts the fuel across waits on tools", async () => {
 		const sandbox = new CodemodeSandbox({ wasm, fuel: 10_000_000, tools: [{ name: "tick", execute: () => 1 }] });
 		const result = await sandbox.execute("for (;;) { for (let i = 0; i < 1e5; i++); await tools.tick(); }", {
 			timeoutMs: 1000,

@@ -9,7 +9,7 @@
  * 2. The runner drives the VM and hands every call the script makes to {@link VmHost.call}, which runs the tool or
  *    global here and records tool calls.
  * 3. When the runner resolves (the script ended, or the stop signal fired), calls still running are aborted through
- *    their tool's signal and recorded as `cancelled`.
+ *    their tool's signal and recorded as `cancelled`: a script's result does not wait for calls it does not await.
  */
 import type { CodemodeScope, CodemodeVm, CodemodeVmCall } from "../djs.ts";
 import { toCodemodeIdentifier } from "../identifier.ts";
@@ -177,6 +177,9 @@ export async function drive(vm: CodemodeVm, host: VmHost): Promise<CodemodeResul
 			}
 			await vm.advance(host.signal);
 		}
+		// Calls the script made but no longer awaits when it ended still start, so the host sees and cancels them, as
+		// it does the ones already running.
+		for (const call of vm.dropped) if (!asked.has(call.id)) host.call(call).catch(() => undefined);
 		return vm.result;
 	} catch (error) {
 		if (host.signal.aborted) return failed(host.signal.reason as CodemodeError, vm.output);

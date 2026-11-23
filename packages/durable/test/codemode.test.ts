@@ -45,13 +45,6 @@ function tool(
 
 const DONE = fauxAssistantMessage([fauxText("done")]);
 
-/**
- * A behavior that needs djs issue 0295 (the letter names the gap, see pi-codemode's src/djs-compat.ts): (g) a run ends
- * when its body settles, with calls it no longer awaits cancelled. Without it these scripts wait on those calls
- * forever, so the tests are skipped instead of expected to fail.
- */
-const djsGap = (_gap: string) => it.skip;
-
 const wasm = await loadDjsWasm();
 
 function script(code: string): AssistantMessage {
@@ -258,7 +251,7 @@ describe("durable code mode", () => {
 		await harness.close(context);
 	});
 
-	djsGap("g")("lists the script's tool calls in its result's details", async () => {
+	it("lists the script's tool calls in its result's details", async () => {
 		const chat = codemodeChat();
 		addTool(
 			chat.setup.registry,
@@ -284,7 +277,7 @@ describe("durable code mode", () => {
 		await harness.close(context);
 	});
 
-	djsGap("g")("aborts a call still running when the script ends", async () => {
+	it("aborts a call still running when the script ends", async () => {
 		const chat = codemodeChat();
 		chat.setup.faux.setResponses([script(`tools.hold({}); await tools.echo({ text: "a" }); return 1;`), DONE]);
 		const { harness, root } = await openChat(await openNodeSqliteStorage(await sqlitePath()), chat.setup);
@@ -312,7 +305,7 @@ describe("durable code mode", () => {
 		await harness.close(context);
 	});
 
-	djsGap("g")("drops a global's result that arrives after the script finished", async () => {
+	it("drops a global's result that arrives after the script finished", async () => {
 		const late = deferred<string>();
 		const chat = codemodeChat([
 			{ name: "slowly", execute: () => late.promise },

@@ -108,7 +108,7 @@ export class CodemodeCall {
 	private readonly rows = new Map<number, CodemodeNestedCall>();
 	private poke: () => void = () => {};
 	private failure: unknown;
-	/** Set once this execution returned: late results have nowhere to go, and waiting model calls start none. */
+	/** Set once the script ended or this execution returned: late results have nowhere to go, and waiting model calls start none. */
 	private ended = false;
 	private unsaved = false;
 	/** `models.classify()`/`generateImages()` calls in flight, and those waiting for a slot. */
@@ -243,7 +243,16 @@ export class CodemodeCall {
 			for (;;) {
 				stop.signal.throwIfAborted();
 				if (this.failure !== undefined) throw this.failure;
-				if (vm.result !== undefined) return await this.complete(vm.result);
+				if (vm.result !== undefined) {
+					this.ended = true;
+					// Calls the script no longer awaits are not launched; those running end with this call (the Harness
+					// aborts them). Their rows show them as cancelled.
+					for (const call of vm.dropped) {
+						const host = this.hostCall(call);
+						if (host.target === "tool") this.started(host);
+					}
+					return await this.complete(vm.result);
+				}
 				const open = vm.calls;
 				if (open.length === 0) {
 					return await this.decide(

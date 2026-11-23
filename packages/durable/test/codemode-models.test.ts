@@ -221,8 +221,7 @@ describe("code mode models.*", () => {
 		expect(chat.calls.maxInFlight).toBe(4);
 	});
 
-	// Needs djs 0295 (g): a run that ends when its body settles; without it the script waits on its model calls.
-	it.skip("does not start a model call that waited for a slot after the script ended", async () => {
+	it("does not start a model call that waited for a slot after the script ended", async () => {
 		const chat = modelsChat();
 		chat.gate.open = deferred();
 		const directory = await mkdtemp(join(tmpdir(), "pi-codemode-models-"));
