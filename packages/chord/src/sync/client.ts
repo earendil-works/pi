@@ -107,12 +107,7 @@ export type UploadResult =
 	 * commits would reuse their sequences, so nothing is uploaded. Pull what it lost before the copy commits again; a pull
 	 * applies from the local head.
 	 */
-	| { readonly type: "behind"; readonly head: Seq; readonly syncedHead: Seq }
-	/**
-	 * The remote refused this device's epoch: another device holds the right to write the session now. Like
-	 * `diverged`, the copy's commits after `at` are a different history, so the host forks the copy (S7).
-	 */
-	| { readonly type: "stale_epoch"; readonly at: Seq; readonly epoch: number };
+	| { readonly type: "behind"; readonly head: Seq; readonly syncedHead: Seq };
 
 /**
  * Upload what this copy committed since it last shared the remote's history, from the store's outbox, and trim the
@@ -134,11 +129,9 @@ export async function uploadSession(options: {
 	/** Only `putBatch` is used: an upload creates slots and never reads the remote. */
 	readonly store: SessionSyncUploader;
 	readonly state: SyncStateStore;
-	/** The writer's epoch, from whatever grants it (the remote, Radius); sent with every slot. */
-	readonly epoch?: number;
 	readonly context: Context;
 }): Promise<UploadResult> {
-	const { sessionId, device, source, store, state, epoch, context } = options;
+	const { sessionId, device, source, store, state, context } = options;
 	const outbox = outboxOf(source);
 	let synced = sharedHead(await state.get(sessionId, context), storeHead(source));
 	let uploaded: Seq | undefined;
@@ -166,16 +159,12 @@ export async function uploadSession(options: {
 		const after = synced;
 		let result: PutBatchResult;
 		try {
-			result = await store.putBatch(sessionId, after, to, device, body, context, {
-				...(archive ? { archive } : {}),
-				...(epoch === undefined ? {} : { epoch }),
-			});
+			result = await store.putBatch(sessionId, after, to, device, body, context, archive ? { archive } : {});
 		} finally {
 			// A remote that answered without reading the archive leaves the export holding the commit queue.
 			await close?.();
 		}
 		// A history that does not end at `after` is another one too: the remote never held this copy's past `after`.
-		if (result.type === "stale_epoch") return { type: "stale_epoch", at: after, epoch: result.epoch };
 		if (result.type === "not_head") return { type: "diverged", at: after };
 		if (result.type === "exists" && result.device !== device) return { type: "diverged", at: after };
 		synced = result.type === "created" ? to : result.to;

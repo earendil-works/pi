@@ -144,7 +144,6 @@ export class BackupUploader {
 				report({ state: "behind", ...head, at: Date.now() });
 				return;
 			case "diverged":
-			case "stale_epoch":
 				report({ state: "diverged", ...head, at: Date.now() });
 				return;
 		}

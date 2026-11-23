@@ -52,7 +52,6 @@ const PutResultSchema = union([
 	obj({ type: literal("created") }),
 	obj({ type: literal("exists"), to: int(), device: str() }),
 	obj({ type: literal("not_head"), head: int() }),
-	obj({ type: literal("stale_epoch"), epoch: int() }),
 ]);
 
 /** `begin`'s answer: an upload to send the body to, or the slot's result when the remote wants no body. */

@@ -3729,6 +3729,13 @@ From `research/chord-on-durable-objects.md`, adopted for the Chord v2 kernel bec
   `limits.ephemeralSessions` to `limits.ephemeralSignIns`, the files `sign-ins.ts` and `ephemeral-sign-ins.ts`, example
   `54-app-sign-ins`. No migration: nothing deployed uses the kit's sign-ins (p2 has its own); a kit app's existing
   sign-ins and cookies are not read under the new names (everyone signs in again).
+- **Sync: no writer epochs (owner, 2026-11-23):** p2 uses the sync layer (`@earendil-works/chord/sync`) only to back
+  sessions up, one writer per session; a backup restored on another machine will fork into a new session instead of
+  sharing one history. Writer epochs (`uploadSession`'s `epoch`, the `stale_epoch` results) are removed: no remote
+  issued them. They can come back as an addition: a session without an epoch grants one to the device that wrote its
+  last slot when it first uploads under the new rules, and a remote raises a session's minimum protocol
+  (`SYNC_PROTOCOL`, `protocol_too_old`) only once the session needs epochs, so older writers keep their other
+  sessions; reads are never gated.
 
 ## Still valid from `target-design.md`
 
