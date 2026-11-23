@@ -13,7 +13,7 @@ import { FileSyncStateStore, pullSession } from "@earendil-works/chord/sync";
 import type { ConversationView, LiveState } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT, type Host } from "@p2/app/v1";
 import { Backup } from "../../plugins/backup/contract.ts";
-import { openFolderRemote } from "../../plugins/backup/server.ts";
+import { openFolderRemote } from "../../plugins/backup/target.ts";
 import { backupFiles } from "../../plugins/backup/uploader.ts";
 import { Chat } from "../../plugins/chat/contract.ts";
 import { type Session, Sessions } from "../../plugins/sessions/contract.ts";

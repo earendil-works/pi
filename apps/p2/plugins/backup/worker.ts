@@ -2,12 +2,13 @@
 // commit (about 200 ms after an urgent one: what the user sent, a finished answer), and once more as the worker stops.
 // Inert while backup is off (the server's `device` is null). The device is the server's: the one it stamps on every
 // slot, which an upload compares with a taken slot's to tell its own lost answer from another machine's upload.
-import { defineFacet, expectVariant, local, untilAborted } from "@p2/app/v1";
+import type { CommitPublication } from "@earendil-works/pi-durable";
+import { defineFacet, expectVariant, INPUT_ENTRY, local, untilAborted } from "@p2/app/v1";
 import { backupTarget, processLogs, sessionDirectory } from "@p2/app/v1/node";
 import { harnessOf, workerOf } from "@p2/app/v1/worker";
 import { ChunkedRemote } from "./chunked-remote.ts";
 import { BackupRemote, isTerminalBackupError, sessionStoreName } from "./contract.ts";
-import { BackupUploader, backupFiles, backupTargetKey, isUrgentCommit } from "./uploader.ts";
+import { BackupUploader, backupFiles, backupTargetKey, errorText } from "./uploader.ts";
 
 /** The worker's backup of its store, for the worker's life. */
 const StoreBackup = local("p2.store-backup", { version: 1, params: {}, members: {} });
@@ -50,7 +51,7 @@ export default defineFacet((host) => {
 					void root(
 						async (inner) => expectVariant(await inner.get(BackupRemote, {}), "worker").report({ status }, inner),
 						ctx,
-					).catch((error: unknown) => log(`reporting the backup status failed: ${text(error)}`)),
+					).catch((error: unknown) => log(`reporting the backup status failed: ${errorText(error)}`)),
 			});
 			// Every commit of the session's Durable records; the urgent ones leave the machine first.
 			const observation = harness().durable.observeCommits({
@@ -64,11 +65,25 @@ export default defineFacet((host) => {
 				// The worker is stopping: what is left goes now. A failure keeps it in the outbox for the next start.
 				await uploader
 					.close()
-					.catch((error: unknown) => log(`the last upload failed (kept for the next start): ${text(error)}`));
+					.catch((error: unknown) => log(`the last upload failed (kept for the next start): ${errorText(error)}`));
 			}
 		});
 		return {};
 	});
 });
 
-const text = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+/** Entries that should leave the machine soon: what a person sent (p2's input, Durable's user entry) and an answer. */
+const URGENT_ENTRIES: ReadonlySet<string> = new Set([INPUT_ENTRY, "pi.user", "pi.assistant"]);
+
+/**
+ * Whether a session commit should be uploaded soon (about 200 ms) rather than with the next ordinary flush (5 s): what
+ * the user sent, a finished answer, a settled submission. A host that may be stopped any time (a Durable Object evicted
+ * after idling) then loses at most the last moments of a turn, never a whole exchange.
+ */
+export function isUrgentCommit(publication: CommitPublication): boolean {
+	return publication.changes.some(
+		(change) =>
+			(change.type === "entry" && URGENT_ENTRIES.has(change.value.kind)) ||
+			(change.type === "submission" && (change.value.status === "done" || change.value.status === "unanswered")),
+	);
+}

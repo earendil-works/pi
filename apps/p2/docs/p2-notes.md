@@ -1351,6 +1351,11 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
     server's `BackupRemote`, in pieces of 1 MiB; only the server holds the remote). Soon after each commit: 200 ms after
     what a person sent or a finished answer (`isUrgentCommit`), else 5 s; once more as a worker stops. The last seq the
     backup holds is a bookmark file beside each store (`backup/<target>/`).
+  - **Its own state is files, not the store** (owner, 2026-11-23; a deliberate exception to "everything kept is in
+    the store"): a store's bookmark (`<name>.json`) and account (`<name>.account`) are files in `backup/<target>/`
+    beside it, each replaced whole (a temporary file, then a rename). In the store they would be commits: every upload
+    would commit its own bookmark, the next upload would carry that commit, and the uploader would never be idle; and a
+    restored store would bring the old machine's bookmark with it. Written only by the store's owner, as the store is.
   - **Outbox only while backup is on:** turning backup off drops what the outbox held; turned on again, the next upload
     is a full copy of the store after what the backup holds, and the backup goes on in the same history.
   - **Upload answers:** `created`, or `exists` by this server (an answer lost on the way): go on. The remote holds

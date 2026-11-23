@@ -50,6 +50,7 @@ export const BackupStatusSchema = obj({
 	/** When this status was reported (ms since the epoch). */
 	at: num(),
 });
+/** Where one store's backup stands (`BackupStatusSchema`). */
 export type BackupStatus = Static<typeof BackupStatusSchema>;
 
 /** What creating a slot answers (`PutBatchResult`). */
@@ -60,7 +61,10 @@ const PutResultSchema = union([
 ]);
 
 /** `begin`'s answer: an upload to send the body to, or the slot's result when the remote wants no body. */
-const BeginSchema = union([obj({ upload: str() }), obj({ result: PutResultSchema })]);
+const BeginSchema = union([
+	obj({ kind: literal("upload"), upload: str() }),
+	obj({ kind: literal("result"), result: PutResultSchema }),
+]);
 
 const SlotArgs = { after: int(), to: int(), archive: opt(bool()) };
 const UploadArgs = { upload: str() };
@@ -82,7 +86,9 @@ export const Backup = local("p2.backup", {
 });
 
 /** `begin`'s answer, as `BackupUploads` gives it. */
-export type Begun = { readonly upload: string } | { readonly result: PutBatchResult };
+export type Begun =
+	| { readonly kind: "upload"; readonly upload: string }
+	| { readonly kind: "result"; readonly result: PutBatchResult };
 
 /**
  * The open backup's uploads of a store's slots (the server's native, opened by `Backup`; undefined while backup is
@@ -102,6 +108,7 @@ export type BackupUploads = {
  * target without accounts, `OpenBackupTarget.account`).
  */
 export type OpenBackup = { readonly uploads: BackupUploads; readonly account: () => Promise<string | null> };
+/** The open backup, for the server's own objects: `Backup` contributes it, `BackupRemote` uses it for workers. */
 export const BackupNative = defineRegistry<
 	{ readonly backup: OpenBackup | undefined },
 	{ readonly backup: OpenBackup | undefined } | undefined
@@ -156,6 +163,9 @@ export type OpenBackupTarget = {
  * worker's upload as a `PluginError` with this code, which crosses the link, so the worker stops as the server does.
  */
 export const BACKUP_TERMINAL = "backup_terminal";
+
+/** The code of a worker's upload while the server's backup is off (not configured, or its target not open yet). */
+export const BACKUP_OFF = "backup_off";
 
 /** Whether `error` is a terminal backup failure that crossed from the server (`BACKUP_TERMINAL`). */
 export function isTerminalBackupError(error: unknown): boolean {

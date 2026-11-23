@@ -1,12 +1,12 @@
-// A slot's body streamed through the server (`StreamedUpload`, `plugins/backup/server.ts`): the remote reads the chunks
+// A slot's body streamed through the server (`StreamedUpload`, `plugins/backup/uploads.ts`): the remote reads the chunks
 // as they arrive; a remote that answers without the body answers `begin` at once; an upload whose worker stops sending is
 // dropped after its idle time, the remote's read failing so nothing is written.
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { PutBatchResult, SyncBody } from "@p2/app/v1/node";
-import { StreamedUpload } from "../../plugins/backup/server.ts";
-import { isUrgentCommit } from "../../plugins/backup/uploader.ts";
+import { StreamedUpload } from "../../plugins/backup/uploads.ts";
+import { isUrgentCommit } from "../../plugins/backup/worker.ts";
 import { INPUT_ENTRY } from "../../src/runtime/input.ts";
 
 /** A remote that reads the whole body, then answers `created` with what it read. */

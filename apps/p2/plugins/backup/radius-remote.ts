@@ -1,6 +1,7 @@
 // Radius's HTTP adapter for Chord's session-sync remote contract.
 import type { Context } from "@p2/app/v1";
 import {
+	type BatchInfo,
 	type JsonObject,
 	type PutBatchResult,
 	type RemoteListing,
@@ -22,7 +23,8 @@ const PROTOCOL_HEADER = "pi-sync-protocol";
 /** Radius's code for a write this client's protocol is too old for: the session moved under newer rules. */
 const PROTOCOL_TOO_OLD = "protocol_too_old";
 
-type ErrorBody = { error?: { message?: string; code?: string; details?: Record<string, unknown> } };
+/** Radius's error answer, as far as it could be read. */
+type RadiusError = { readonly message?: string; readonly code?: string; readonly details: Record<string, unknown> };
 
 /**
  * Chord session storage through Radius's server-scoped HTTP API. The first consumer backs up and restores sessions;
@@ -56,20 +58,19 @@ export class RadiusSyncRemote implements SessionSyncStore {
 		});
 		if (response.status === 201) return { type: "created" };
 		if (response.status === 409) {
-			const { error } = (await response.json()) as ErrorBody;
-			const details = error?.details ?? {};
-			if (error?.code === "slot_taken" && isSeq(details.to) && typeof details.device === "string")
+			const error = errorOf(await response.json());
+			const { details } = error;
+			if (error.code === "slot_taken" && isSeq(details.to) && typeof details.device === "string")
 				return { type: "exists", to: details.to, device: details.device };
-			if (error?.code === "not_head" && isSeq(details.head)) return { type: "not_head", head: details.head };
+			if (error.code === "not_head" && isSeq(details.head)) return { type: "not_head", head: details.head };
 			// Chord needs one terminal divergence result instead of a transport error its scheduler would retry forever.
-			if (error?.code === "slot_content_mismatch" && isSeq(details.to))
-				return { type: "not_head", head: details.to };
-			if ((error?.code === "next_id_regression" || error?.code === "legacy_session_history") && isSeq(details.head))
+			if (error.code === "slot_content_mismatch" && isSeq(details.to)) return { type: "not_head", head: details.to };
+			if ((error.code === "next_id_regression" || error.code === "legacy_session_history") && isSeq(details.head))
 				return { type: "not_head", head: details.head };
 			throw new RadiusSyncError(
-				`Radius sync could not upload a batch: 409${error?.message ? ` ${error.message}` : ""}`,
+				`Radius sync could not upload a batch: 409${error.message ? ` ${error.message}` : ""}`,
 				409,
-				error?.code,
+				error.code,
 			);
 		}
 		throw await failure(response, "upload a batch");
@@ -87,28 +88,14 @@ export class RadiusSyncRemote implements SessionSyncStore {
 		const response = await this.#request(`/${encodeURIComponent(sessionId)}`, context);
 		if (response.status === 404) return { batches: [], snapshots: [] };
 		if (!response.ok) throw await failure(response, "list a session");
-		const { batches, snapshots } = (await response.json()) as RemoteListing;
-		return { batches, snapshots };
+		return listingOf(await response.json());
 	}
 
 	async sessions(cursor: string | undefined, context: Context): Promise<SessionChanges> {
 		const query = new URLSearchParams({ cursor: cursor ?? "0", limit: String(PAGE_SIZE) });
 		const response = await this.#request(`?${query}`, context);
 		if (!response.ok) throw await failure(response, "list sessions");
-		const page = (await response.json()) as {
-			sessions: { id: string; head: Seq; meta: JsonObject | null }[];
-			cursor: number;
-			more: boolean;
-		};
-		return {
-			sessions: page.sessions.map((session) => ({
-				id: session.id,
-				head: session.head,
-				meta: session.meta ?? undefined,
-			})),
-			cursor: String(page.cursor),
-			more: page.more,
-		};
+		return changesOf(await response.json());
 	}
 
 	async putMeta(sessionId: string, meta: JsonObject, context: Context): Promise<void> {
@@ -124,7 +111,9 @@ export class RadiusSyncRemote implements SessionSyncStore {
 		const response = await this.#request(`/${encodeURIComponent(sessionId)}/meta`, context);
 		if (response.status === 404) return undefined;
 		if (!response.ok) throw await failure(response, "read a session description");
-		return (await response.json()) as JsonObject;
+		const meta: unknown = await response.json();
+		if (!isObject(meta)) throw malformed("read a session description");
+		return meta;
 	}
 
 	async #body(path: string, context: Context, operation: string): Promise<SyncBody | undefined> {
@@ -201,16 +190,71 @@ export function isTerminalSyncError(error: unknown): boolean {
 }
 
 async function failure(response: Response, operation: string): Promise<RadiusSyncError> {
-	let error: ErrorBody["error"];
+	let error: RadiusError = { details: {} };
 	try {
-		error = ((await response.json()) as ErrorBody).error;
+		error = errorOf(await response.json());
 	} catch {
-		// The response was not a Radius JSON error.
+		// The response was not JSON: its status says enough.
 	}
-	const message = error?.message ?? "";
+	const message = error.message ?? "";
 	return new RadiusSyncError(
 		`Radius sync could not ${operation}: ${response.status}${message ? ` ${message}` : ""}`,
 		response.status,
-		error?.code,
+		error.code,
 	);
 }
+
+// Radius's answers are wire input (a trust boundary): each is checked before p2 uses it, never cast.
+
+/** Radius's error answer (`{ error: { message, code, details } }`), each field kept only when it has its type. */
+function errorOf(body: unknown): RadiusError {
+	const error = isObject(body) && isObject(body.error) ? body.error : {};
+	return {
+		...(typeof error.message === "string" ? { message: error.message } : {}),
+		...(typeof error.code === "string" ? { code: error.code } : {}),
+		details: isObject(error.details) ? error.details : {},
+	};
+}
+
+/** A session's slots and snapshots; a malformed answer fails the request, retried as a passing failure. */
+function listingOf(body: unknown): RemoteListing {
+	if (!isObject(body) || !Array.isArray(body.batches) || !Array.isArray(body.snapshots))
+		throw malformed("list a session");
+	const batches = body.batches.map((slot: unknown): BatchInfo => {
+		if (!isObject(slot) || !isSeq(slot.after) || !isSeq(slot.to) || typeof slot.device !== "string")
+			throw malformed("list a session");
+		return {
+			after: slot.after,
+			to: slot.to,
+			device: slot.device,
+			...(slot.folded === true ? { folded: true as const } : {}),
+			...(slot.archive === true ? { archive: true as const } : {}),
+		};
+	});
+	const snapshots = body.snapshots.map((at: unknown) => {
+		if (!isSeq(at)) throw malformed("list a session");
+		return at;
+	});
+	return { batches, snapshots };
+}
+
+/** A page of sessions changed after a cursor. */
+function changesOf(body: unknown): SessionChanges {
+	if (!isObject(body) || !Array.isArray(body.sessions) || !isSeq(body.cursor) || typeof body.more !== "boolean")
+		throw malformed("list sessions");
+	const sessions = body.sessions.map((session: unknown) => {
+		if (!isObject(session) || typeof session.id !== "string" || !isSeq(session.head))
+			throw malformed("list sessions");
+		// A session without a description has `meta: null`.
+		const meta = isObject(session.meta) ? session.meta : undefined;
+		if (meta === undefined && session.meta !== null && session.meta !== undefined) throw malformed("list sessions");
+		return { id: session.id, head: session.head, meta };
+	});
+	return { sessions, cursor: String(body.cursor), more: body.more };
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+const malformed = (operation: string): Error => new Error(`Radius sync could not ${operation}: a malformed answer`);

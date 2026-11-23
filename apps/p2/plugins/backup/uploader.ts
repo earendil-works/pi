@@ -1,12 +1,11 @@
 // One store's uploads to the backup remote, used by the server (its own store) and each session's worker (the
 // session's): Chord's `uploadSession` from the store's outbox, run by a `FlushScheduler` soon after each commit (about
-// 200 ms after an urgent one, `isUrgentCommit`), with the last sequence the backup holds kept beside the store, and,
+// 200 ms after an urgent one: the worker's `isUrgentCommit`), with the last sequence the backup holds kept beside the store, and,
 // for a target with accounts (Radius), the account the store's backup belongs to (the first one it was uploaded as).
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import type { CommitPublication } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
-import { BACKGROUND_CONTEXT, type Context, INPUT_ENTRY } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, type Context } from "@p2/app/v1";
 import {
 	type BackupTarget,
 	FileSyncStateStore,
@@ -33,22 +32,10 @@ export function backupTargetKey(target: BackupTarget): string {
 /** The file system a store's uploader keeps its state with (`BackupUploaderOptions.files`). */
 export const backupFiles = (dataDir: string): SyncFileSystem => new NodeExecutionEnv({ cwd: dataDir });
 
-/** Entries that should leave the machine soon: what a person sent (p2's input, Durable's user entry) and an answer. */
-const URGENT_ENTRIES: ReadonlySet<string> = new Set([INPUT_ENTRY, "pi.user", "pi.assistant"]);
+/** A failure's message, for statuses and the log. */
+export const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
-/**
- * Whether a session commit should be uploaded soon (about 200 ms) rather than with the next ordinary flush (5 s): what
- * the user sent, a finished answer, a settled submission. A host that may be stopped any time (a Durable Object evicted
- * after idling) then loses at most the last moments of a turn, never a whole exchange.
- */
-export function isUrgentCommit(publication: CommitPublication): boolean {
-	return publication.changes.some(
-		(change) =>
-			(change.type === "entry" && URGENT_ENTRIES.has(change.value.kind)) ||
-			(change.type === "submission" && (change.value.status === "done" || change.value.status === "unanswered")),
-	);
-}
-
+/** What `BackupUploader` is given: the store, where it uploads to and as whom, and where it reports. */
 export type BackupUploaderOptions = {
 	/** The store to upload; opened with an outbox. */
 	readonly store: Store;
@@ -103,7 +90,7 @@ export class BackupUploader {
 			},
 			now: Date.now,
 			onError: (error) => {
-				const message = error instanceof Error ? error.message : String(error);
+				const message = errorText(error);
 				if (options.terminal?.(error) === true) {
 					this.#stopped = true;
 					options.report({ state: "error", error: `${message} (stopped until a restart)`, at: Date.now() });
@@ -191,12 +178,16 @@ export class BackupUploader {
 		throw read.error;
 	}
 
+	/** Writes the account file whole or not at all: a torn name would keep the store from uploading for good. */
 	async #bind(account: string, context: Context): Promise<void> {
 		const { files, directory, target } = this.#options;
 		const created = await files.createDir(join(directory, "backup", target), { recursive: true }, context);
 		if (!created.ok) throw created.error;
-		const written = await files.writeFile(this.#accountFile, account, context);
+		const temporary = `${this.#accountFile}.tmp`;
+		const written = await files.writeFile(temporary, account, context);
 		if (!written.ok) throw written.error;
+		const renamed = await files.renameFile(temporary, this.#accountFile, context);
+		if (!renamed.ok) throw renamed.error;
 	}
 
 	get #accountFile(): string {

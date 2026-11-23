@@ -4,6 +4,7 @@
 // Chord's store and its sync layer, for the backup plugin (`plugins/backup`): plugins reach Chord only through this API.
 export type { Store } from "@earendil-works/chord";
 export {
+	type BatchInfo,
 	FileSyncStateStore,
 	FileSystemSyncRemote,
 	FlushScheduler,
