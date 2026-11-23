@@ -51,6 +51,16 @@ describe("Mermaid rendering", () => {
 		expect(narrow).toContain("```\n`Mermaid diagram not rendered: needs 21 columns, 10 available`");
 	});
 
+	it("reports warnings instead of width when an oversized diagram also has warnings", () => {
+		const invalid = "```mermaid\nflowchart LR\n  A[Start] --> B[Done]\n  C-->\n```";
+
+		const narrow = transformMermaid(invalid, { maxWidth: 10 });
+		expect(narrow).toContain(invalid);
+		expect(narrow).toContain("Mermaid diagram not rendered: dropped, link has no target");
+		expect(narrow).not.toContain("columns");
+		expect(transformMermaid(invalid, { maxWidth: 10, isStreaming: true })).toBe(invalid);
+	});
+
 	it("renders diagram types added by lovely-mermaid", () => {
 		const rendered = transformMermaid('```mermaid\npie\n  title Pets\n  "Dogs" : 4\n```');
 

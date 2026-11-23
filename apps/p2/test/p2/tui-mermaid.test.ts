@@ -53,4 +53,8 @@ test("too wide or invalid diagrams keep their source and say why once complete",
 	assert.match(plain(out), /Mermaid diagram not rendered: dropped, link has no target/);
 	// While streaming, an unfinished diagram is not reported.
 	assert.doesNotMatch(mermaidMarkdownTransformer(invalid, context({ isStreaming: true })), /not rendered/);
+	// Too wide and invalid: the warning wins, since widening the terminal would not render it.
+	const wideInvalid = plain(mermaidMarkdownTransformer(invalid, context({ availableWidth: 4 })));
+	assert.match(wideInvalid, /Mermaid diagram not rendered: dropped, link has no target/);
+	assert.doesNotMatch(wideInvalid, /columns/);
 });

@@ -85,15 +85,18 @@ export function createMermaidMarkdownTransformer(options: MermaidTransformerOpti
 					const styledWarning = options.theme ? options.theme.fg("warning", warning) : warning;
 					return `${token.raw}\n${codeSpan(styledWarning)}  \n`;
 				};
-				if (art.width > context.availableWidth) {
-					if (context.isStreaming) return token.raw;
-					return withWarning(
-						`Mermaid diagram not rendered: needs ${art.width} columns, ${context.availableWidth} available`,
-					);
-				}
+				// Warnings come first: a diagram with warnings stays unrendered at any width.
+				// While streaming, warnings come from unfinished source, so the partial diagram renders.
 				if (!context.isStreaming && art.warnings.length > 0) {
 					const suffix = art.warnings.length > 1 ? ` (+${art.warnings.length - 1} more)` : "";
 					return withWarning(`Mermaid diagram not rendered: ${art.warnings[0]}${suffix}`);
+				}
+				if (art.width > context.availableWidth) {
+					return context.isStreaming
+						? token.raw
+						: withWarning(
+								`Mermaid diagram not rendered: needs ${art.width} columns, ${context.availableWidth} available`,
+							);
 				}
 				const lines = options.theme ? themedLines(art, options.theme) : art.plain;
 				// Markdown hard breaks keep every diagram row on its own line.
