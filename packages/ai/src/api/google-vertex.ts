@@ -548,15 +548,17 @@ function buildParams(
 
 function getGoogleBudget(
 	model: Model<"google-vertex">,
-	level: ResolvedGoogleThinkingLevel,
+	resolvedLevel: ResolvedGoogleThinkingLevel,
 	customBudgets?: ThinkingBudgets,
 ): number {
+	// Token budgets have no xhigh tier; budget-based models clamp it to high like other providers do.
+	const level = resolvedLevel === "xhigh" ? "high" : resolvedLevel;
 	if (customBudgets?.[level] !== undefined) {
 		return customBudgets[level]!;
 	}
 
 	if (model.id.includes("2.5-pro")) {
-		const budgets: Record<ResolvedGoogleThinkingLevel, number> = {
+		const budgets: Record<typeof level, number> = {
 			minimal: 128,
 			low: 2048,
 			medium: 8192,
@@ -566,7 +568,7 @@ function getGoogleBudget(
 	}
 
 	if (model.id.includes("2.5-flash")) {
-		const budgets: Record<ResolvedGoogleThinkingLevel, number> = {
+		const budgets: Record<typeof level, number> = {
 			minimal: 128,
 			low: 2048,
 			medium: 8192,
