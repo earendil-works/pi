@@ -1,23 +1,17 @@
 /**
- * Sandboxes that need no Node built-ins: `InlineCodemodeSandbox` runs the VM on the calling thread
- * and `RemoteCodemodeSandbox` runs it in another isolate. Neither imports `node:*` modules, so this
- * entry works in Cloudflare Workers, Durable Objects, and browsers. `CodemodeSandbox`, which uses
- * worker threads, stays in the main entry.
+ * The sandboxes and their types, without the declaration renderer and the source parser. Nothing here imports
+ * `node:*` modules, so this entry works in Cloudflare Workers, Durable Objects, and browsers: `CodemodeSandbox` runs
+ * the VM on the calling thread, `RemoteCodemodeSandbox` in another isolate.
  */
 export { toCodemodeIdentifier } from "./identifier.ts";
-export { CodemodeSandboxBase } from "./runtime/execution.ts";
-export {
-	DEFAULT_INTERRUPT_BUDGET,
-	InlineCodemodeSandbox,
-	type InlineCodemodeSandboxOptions,
-} from "./runtime/inline.ts";
 export {
 	MAX_OUTPUT_CHARS,
 	MAX_OUTPUT_ITEMS,
 	MAX_STORE_TOTAL_CHARS,
 	MAX_STORE_VALUE_CHARS,
-} from "./runtime/prelude-source.ts";
-export type { HostToWorkerMessage, VmStartData, WorkerToHostMessage } from "./runtime/protocol.ts";
+} from "./limits.ts";
+export { CodemodeSandboxBase } from "./runtime/execution.ts";
+export { CodemodeSandbox } from "./runtime/host.ts";
 export {
 	type CodemodeRemote,
 	type CodemodeRemoteExchange,
@@ -25,6 +19,7 @@ export {
 	type CodemodeRemoteReply,
 	type CodemodeRemoteRequest,
 	type CodemodeServeOptions,
+	DEFAULT_REMOTE_FUEL,
 	RemoteCodemodeSandbox,
 	type RemoteCodemodeSandboxOptions,
 	serveCodemodeRemote,
@@ -32,22 +27,17 @@ export {
 export type {
 	CodemodeCall,
 	CodemodeCallStatus,
-	CodemodeDeclaredGlobal,
-	CodemodeDeclaredTool,
-	CodemodeDuring,
 	CodemodeError,
 	CodemodeErrorKind,
 	CodemodeExecuteOptions,
-	CodemodeHostCall,
 	CodemodeJsonSchema,
 	CodemodeOutcome,
 	CodemodeOutputItem,
 	CodemodeResult,
-	CodemodeRun,
-	CodemodeRunOptions,
 	CodemodeSandboxBaseOptions,
+	CodemodeSandboxOptions,
 	CodemodeStoreWrites,
 	CodemodeTool,
 	CodemodeToolContext,
 } from "./types.ts";
-export type { CodemodeWasmModule } from "./wasm.ts";
+export { type CodemodeWasmModule, DJS_WASM_FILE, loadDjsWasm } from "./wasm.ts";

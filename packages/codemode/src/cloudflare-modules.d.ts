@@ -10,10 +10,10 @@ declare module "cloudflare:workers" {
 	}
 }
 
-// A pattern, not the exact specifier: coding-agent declares "quickjs-wasi/quickjs.wasm" as a path
-// for Bun, and an exact declaration takes precedence where both are visible. cloudflare.ts casts the
-// import to the compiled module Wrangler actually produces.
-declare module "*/quickjs.wasm" {
+// A pattern, not the exact specifier: coding-agent declares the djs module as a path for Bun, and an
+// exact declaration takes precedence where both are visible. cloudflare.ts casts the import to the
+// compiled module Wrangler actually produces.
+declare module "*/djs.wasm" {
 	const module: unknown;
 	export default module;
 }

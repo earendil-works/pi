@@ -1,35 +1,19 @@
-import { readFile } from "node:fs/promises";
-import { createRequire } from "node:module";
+// The djs module code mode runs on, with the dumper: the one place in pi-codemode that loads it.
+import { loadModule } from "@earendil-works/djs";
 
 /**
- * A compiled `WebAssembly.Module` of `quickjs-wasi/quickjs.wasm`. Typed opaquely because the Node
- * type definitions do not declare the WebAssembly globals (they live in the DOM lib).
+ * A compiled djs module, a `WebAssembly.Module`. Typed opaquely because the Node type definitions do not declare the
+ * WebAssembly globals (they live in the DOM lib).
  */
 export type CodemodeWasmModule = object;
 
-interface WebAssemblyGlobal {
-	compile(bytes: Uint8Array): Promise<CodemodeWasmModule>;
-}
-
-const modules = new Map<string, Promise<CodemodeWasmModule>>();
+/** The package file of the module, for hosts that resolve, embed, or copy it (Bun binaries, bundles). */
+export const DJS_WASM_FILE = "@earendil-works/djs/wasm/djs.wasm";
 
 /**
- * Read and compile the QuickJS wasm once per path. `path` defaults to the file in the installed
- * `quickjs-wasi` package; pass it when that file lives elsewhere, for example embedded in a Bun
- * compiled executable. A failed load is retried on the next call.
+ * Reads and compiles the djs module once per location (a path or URL; default: `$DJS_WASM`, else the file in the
+ * installed `@earendil-works/djs` package). A failed load is retried on the next call.
  */
-export function loadQuickJSWasm(path?: string): Promise<CodemodeWasmModule> {
-	const resolved = path ?? createRequire(import.meta.url).resolve("quickjs-wasi/quickjs.wasm");
-	let module = modules.get(resolved);
-	if (!module) {
-		const { WebAssembly } = globalThis as unknown as { WebAssembly: WebAssemblyGlobal };
-		module = readFile(resolved)
-			.then((bytes) => WebAssembly.compile(bytes))
-			.catch((error: unknown) => {
-				modules.delete(resolved);
-				throw error;
-			});
-		modules.set(resolved, module);
-	}
-	return module;
+export function loadDjsWasm(location?: string | URL): Promise<CodemodeWasmModule> {
+	return location === undefined ? loadModule() : loadModule(location);
 }

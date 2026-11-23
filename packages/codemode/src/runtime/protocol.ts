@@ -1,4 +1,11 @@
-import type { CodemodeDuring, CodemodeOutputItem } from "../types.ts";
+import type { CodemodeOutputItem } from "../types.ts";
+
+/** Deterministic mode: the result the VM was processing when the script finished, and the calls issued by then. */
+interface CodemodeDuring {
+	seq: number;
+	issued: number;
+}
+
 import type { CodemodeWasmModule } from "../wasm.ts";
 
 /**
