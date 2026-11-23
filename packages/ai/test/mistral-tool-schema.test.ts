@@ -17,7 +17,7 @@ interface MistralToolPayload {
 describe("Mistral tool schema serialization", () => {
 	it("strips TypeBox symbol keys before the SDK validates tool schemas", async () => {
 		const model: Model<"mistral-conversations"> = {
-			...getModel("mistral", "devstral-medium-latest"),
+			...getModel("mistral", "mistral-medium-latest"),
 			baseUrl: "http://127.0.0.1:9",
 			compat: { supportsStrictMode: true },
 		};
