@@ -10,26 +10,11 @@ import { Button, IconButton, Modal, Stack } from "@earendil-works/elanor-react";
 import { Me, SessionInfo } from "@earendil-works/p3/v1";
 import {
 	ArrowBackIcon,
-	activatePane,
 	CloseIcon,
 	FolderIcon,
-	groupOf,
-	keepPanes,
 	navigate,
-	openPane,
-	type Pane,
-	PaneLayoutView,
-	type PaneNode,
 	PersonAddIcon,
-	panesOf,
-	paneTree,
-	parsePaneTree,
 	redirect,
-	SessionMembersView,
-	SessionThingsView,
-	ThingView,
-	ThingViews,
-	TranscriptView,
 	useHold,
 	usePageState,
 	useRegistry,
@@ -38,6 +23,22 @@ import {
 	useWatch,
 } from "@earendil-works/p3/v1/web";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+// Other plugins' web contracts by path, never through `/v1/web`: a plugin applied to a running server meets the base
+// its page started with, whose `/v1/web` may not have a newer contract yet (a view token would be `undefined`).
+import {
+	activatePane,
+	groupOf,
+	keepPanes,
+	openPane,
+	type Pane,
+	PaneLayoutView,
+	type PaneNode,
+	panesOf,
+	paneTree,
+	parsePaneTree,
+} from "../layout/contract.web.tsx";
+import { SessionMembersView, SessionThingsView, ThingView, ThingViews } from "../sessions/contract.web.tsx";
+import { TranscriptView } from "../transcript/contract.web.ts";
 import styles from "./web.module.css";
 
 /** The transcript's pane id: no thing has it (things' ids are the sessions plugin's UUIDs). */

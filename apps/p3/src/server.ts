@@ -9,6 +9,7 @@
 
 import { mkdir, readdir, readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { hostname, userInfo } from "node:os";
 import { dirname, extname, join } from "node:path";
 import {
 	type Address,
@@ -202,6 +203,7 @@ export async function startServer(options: ServerOptions, context: Context): Pro
 		let listening: ListenAddress | undefined;
 		const runtime: ServerRuntime = {
 			dataDir,
+			machine: { user: userInfo().username, hostname: hostname() },
 			host,
 			store,
 			sessions,

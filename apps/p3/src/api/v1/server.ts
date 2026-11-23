@@ -36,6 +36,8 @@ export * from "./control.ts";
 export type ServerRuntime = {
 	/** The Pi's data directory (a real path, private). */
 	readonly dataDir: string;
+	/** The machine the server runs on: its OS user's name and its host name (what the owner and this device are first named). */
+	readonly machine: { readonly user: string; readonly hostname: string };
 	readonly host: Host<P3Principal>;
 	readonly store: ChordStore;
 	/** The route to session workers: `retry` and `suspend` an address. */

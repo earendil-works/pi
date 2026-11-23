@@ -5,7 +5,7 @@
 // in as the owner.
 
 import { mkdtemp, realpath, rm, stat, symlink } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir, userInfo } from "node:os";
 import { basename, join, resolve } from "node:path";
 import {
 	type ChordStore,
@@ -149,6 +149,7 @@ function serverStubs(host: Host<P3Principal>, store: ChordStore, dataDir: string
 	);
 	const runtime: ServerRuntime = {
 		dataDir,
+		machine: { user: userInfo().username, hostname: hostname() },
 		host,
 		store,
 		sessions,

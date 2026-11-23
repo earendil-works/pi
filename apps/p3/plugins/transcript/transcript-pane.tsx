@@ -4,8 +4,8 @@
 
 import { Button } from "@earendil-works/elanor-react";
 import { type RefState, Transcript } from "@earendil-works/p3/v1";
+import type { ConversationView, LiveState } from "@earendil-works/p3/v1/web";
 import { useHold, useRefState, useVariant, useWatch } from "@earendil-works/p3/v1/web";
-import type { ConversationView, LiveState } from "@earendil-works/pi-durable";
 import { useLayoutEffect, useMemo, useRef } from "react";
 import { Composer } from "./composer.tsx";
 import { type EntriesReader, useEarlier } from "./earlier.ts";

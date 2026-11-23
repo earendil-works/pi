@@ -57,6 +57,9 @@ export {
 	UnarchiveIcon,
 	WarningIcon,
 } from "@earendil-works/elanor-icons-react";
+// The shapes of a conversation as Durable and pi-ai give them, for views of a transcript (types only: nothing loads).
+export type { AssistantMessage, ToolCall, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
+export type { ConversationView, EntryRecord, LiveState } from "@earendil-works/pi-durable";
 export * from "../../../plugins/apps/contract.web.ts";
 export * from "../../../plugins/layout/contract.web.tsx";
 export * from "../../../plugins/sessions/contract.web.tsx";

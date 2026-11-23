@@ -1,8 +1,9 @@
 // The page in a real browser (only when asked: `P3_BROWSER_TESTS=1` with `CHROMIUM_BIN`), on p3's real server with a
 // copy of the built-in plugins the test edits and the tests' faux login: the bar shows the app and the connection; a
 // session made through the form appears in the list and opens in the transcript, which streams a scripted answer; a
-// phone shows one screen at a time; a reload of the chrome plugin keeps the open page; an app without the bar gets a
-// corner button, and an app that throws shows its error below the bar; a person invited from the person menu and
+// phone shows one screen at a time; a reload of the chrome plugin keeps the open page, as does an apply whose web
+// contracts are newer than the page's base; an app without the bar gets a corner button, and an app that throws shows
+// its error below the bar; a person invited from the person menu and
 // added to the session enters Coding and works in it, brings her own notebook and writes in it as a pane (the owner
 // sees it as hers, sets its options in the page: everyone reads only, the agent writes; the agent's scripted note
 // appears, her view turns read only) and withdraws it, sees the session refused once removed from it, and no app once
@@ -379,6 +380,54 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await browser.wait(`document.querySelector('[data-connection="connected"]')`);
 	});
 
+	it("applies a plugin whose web contract is newer than the page's base, without an error", async () => {
+		// The deployment's bug (2026-11-23): an apply brought a new view token in the sessions plugin's web contract; the
+		// coding app took it from `/v1/web`, which is the page's base, built at the server's start: `undefined` there,
+		// and the coding page stopped with an error. Here a new view and its use are applied over the running page.
+		await browser.open(`${origin}/coding/${session}`);
+		await browser.wait(`document.querySelector('[data-transcript="writer"]')`);
+		await browser.evaluate("window.p3Marker = 2");
+		const edit = async (path: string, change: (source: string) => string) => {
+			const file = join(builtIn, ...path.split("/"));
+			await writeFile(file, change(await readFile(file, "utf8")));
+		};
+		await edit(
+			"sessions/contract.web.tsx",
+			(source) =>
+				`${source}\n/** A view new since the page's base, for the test. */\nexport const ProbeView = defineView<Record<string, never>>("sessions.probe");\n`,
+		);
+		await edit("sessions/web.tsx", (source) =>
+			source
+				.replace("	MyThingsView,\n", "	MyThingsView,\n	ProbeView,\n")
+				.replace(
+					"		viewOf(MyThingsView, MyThingsList),",
+					'		viewOf(MyThingsView, MyThingsList),\n		viewOf(ProbeView, () => <p data-probe="">probe</p>),',
+				),
+		);
+		await edit("coding/open-session.tsx", (source) =>
+			source
+				.replace("	PaneLayoutView,", "	PaneLayoutView,")
+				.replace(
+					'from "../sessions/contract.web.tsx";',
+					'from "../sessions/contract.web.tsx";\nimport { ProbeView } from "../sessions/contract.web.tsx";',
+				)
+				.replace(
+					"	const Layout = useView(PaneLayoutView);",
+					"	const Layout = useView(PaneLayoutView);\n	const Probe = useView(ProbeView);",
+				)
+				.replace(
+					"<div className={styles.panes}>",
+					"<div className={styles.panes}>\n				{Probe === undefined ? null : <Probe />}",
+				),
+		);
+		await until(t.plugins, (state) => state.dirty.length >= 2, within("the edits seen", context, 10_000));
+		await t.apply(context);
+		await browser.wait(`document.querySelector("[data-probe]")`);
+		assert.equal(await browser.evaluate("window.p3Marker"), 2, "the page did not load again");
+		assert.equal(await browser.evaluate(`document.querySelector("[data-app-error]") === null`), true);
+		await browser.wait(`document.querySelector('[data-transcript="writer"]')`);
+	});
+
 	it("gives an app without the bar one corner button, and keeps the bar above an app that throws", async () => {
 		// Two apps of the owner's own root: one with the corner button, one whose page throws.
 		const files: Readonly<Record<string, string>> = {
@@ -600,7 +649,8 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await browser.signOut();
 		await browser.signIn(origin, await t.cookie(context));
 		await browser.size(DESKTOP);
-		await browser.open(`${origin}/coding/${session}`);
+		// Cleared from a page of the origin that runs no app (the base's hash), so no open session writes it back.
+		await browser.open(`${origin}/_chord/web/base`);
 		await browser.evaluate("localStorage.clear()");
 		await browser.open(`${origin}/coding/${session}`);
 		await browser.wait(`document.querySelectorAll("[data-pane-group]").length === 1`);

@@ -2,8 +2,14 @@
 // its output: the result once there, the running output from `pi.live` while it runs), markers where the context
 // was summarized or started over, and the answer being streamed (`pi.live`'s partial message).
 
-import type { AssistantMessage, ToolCall, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
-import type { EntryRecord, LiveState } from "@earendil-works/pi-durable";
+import type {
+	AssistantMessage,
+	EntryRecord,
+	LiveState,
+	ToolCall,
+	ToolResultMessage,
+	UserMessage,
+} from "@earendil-works/p3/v1/web";
 import styles from "./entries.module.css";
 
 /** The entries, oldest first, then what `live` shows of the running run. */

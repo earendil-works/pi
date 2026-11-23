@@ -2,8 +2,8 @@
 // them (`Environments`). This device is written when the store opens and finds it missing, so it exists from the
 // server's first start on, once.
 
-import { hostname } from "node:os";
 import { admitOwner, defineFacet, defineTable, type Environment, eq, query, str } from "@earendil-works/p3/v1";
+import { ServerRuntime } from "@earendil-works/p3/v1/server";
 import { EnvironmentsStore } from "./contract.server.ts";
 import { Environments, THIS_DEVICE } from "./contract.ts";
 
@@ -24,12 +24,13 @@ const SHOWN = 1000;
 export default defineFacet((host) => {
 	host.serve(EnvironmentsStore, (_params, self) => {
 		const rows = self.table(Rows);
+		const runtime = self.registry(ServerRuntime);
 		// Opened before the store goes live: nobody reads the environments before this device is among them.
 		self.open(
 			(ctx) =>
 				self.tx(async (tx) => {
 					if ((await tx.get(rows, { id: THIS_DEVICE })) !== undefined) return null;
-					tx.put(rows, { id: THIS_DEVICE, name: hostname(), kind: "local" });
+					tx.put(rows, { id: THIS_DEVICE, name: runtime.value.machine.hostname, kind: "local" });
 					return null;
 				}, ctx),
 			() => {},

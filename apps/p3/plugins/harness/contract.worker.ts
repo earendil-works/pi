@@ -11,8 +11,7 @@ import {
 	type TableItem,
 	type ThingKind,
 } from "@earendil-works/p3/v1";
-import type { Provider } from "@earendil-works/pi-ai";
-import type { Extension, Harness } from "@earendil-works/pi-durable";
+import type { Extension, Harness, Provider } from "@earendil-works/p3/v1/worker";
 
 /**
  * One thing of the session as its kind's plugin gets it: its id (its content's key), its name (empty: none given) and

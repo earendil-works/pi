@@ -3,7 +3,6 @@
 // (`invites.ts`). Removing a person removes them from every group and every session (the things they brought into
 // sessions with them) and ends their sign-ins at once.
 
-import { userInfo } from "node:os";
 import {
 	and,
 	type Ctx,
@@ -21,6 +20,7 @@ import {
 	str,
 	type Tx,
 } from "@earendil-works/p3/v1";
+import { ServerRuntime } from "@earendil-works/p3/v1/server";
 import { SessionsStore } from "../sessions/contract.server.ts";
 import { SignIns } from "../sign-in/contract.ts";
 import { PeopleStore } from "./contract.server.ts";
@@ -81,13 +81,14 @@ export default defineFacet((host) => {
 		const personMustExist = async (tx: Tx, id: string) => {
 			if ((await tx.get(persons, { id })) === undefined) throw invalid("args", `people: no person ${id}`);
 		};
+		const runtime = self.registry(ServerRuntime);
 		// Opened before the store goes live: from the first start on, the owner's person exists, once.
 		self.open(
 			(ctx) =>
 				self.tx(async (tx) => {
 					const owner = query(Persons).where((p) => eq(p.owner, 1));
 					if ((await tx.page(persons, owner, 1)).items.length > 0) return null;
-					tx.put(persons, { id: crypto.randomUUID(), name: ownerName(), owner: 1 });
+					tx.put(persons, { id: crypto.randomUUID(), name: ownerName(runtime.value.machine.user), owner: 1 });
 					return null;
 				}, ctx),
 			() => {},
@@ -311,8 +312,7 @@ export default defineFacet((host) => {
 	serveInviteRoutes(host, invites);
 });
 
-/** The owner's person's first name: their OS user's, capitalised (the owner renames it later). */
-function ownerName(): string {
-	const user = userInfo().username;
+/** The owner's person's first name: their OS user's (`user`), capitalised (the owner renames it later). */
+function ownerName(user: string): string {
 	return user === "" ? "Owner" : `${user[0]!.toUpperCase()}${user.slice(1)}`;
 }

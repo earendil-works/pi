@@ -2,7 +2,7 @@
 // environment of its location. `/v1/worker` re-exports it.
 
 import { type Context, defineRegistry } from "@earendil-works/p3/v1";
-import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
+import type { ExecutionEnv } from "@earendil-works/p3/v1/worker";
 import type { Location } from "../sessions/contract.ts";
 
 /** The execution environment of `location`, or `undefined` when this contribution does not serve its environment. */

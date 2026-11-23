@@ -5,7 +5,7 @@
 // worker (its objects restart, as after an edit); `count` reads the server's metrics.
 
 import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import {
 	type Address,
@@ -143,6 +143,7 @@ export async function topology(context: Context, idleMs = 60_000): Promise<Topol
 	const sessions = server.route(Session, { authorize: () => true, admit: admitRoute, resolve: startWorker }, context);
 	const runtime: ServerRuntime = {
 		dataDir,
+		machine: { user: userInfo().username, hostname: hostname() },
 		host: server,
 		store,
 		sessions,

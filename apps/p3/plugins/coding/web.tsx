@@ -7,11 +7,8 @@ import { Button, IconButton } from "@earendil-works/elanor-react";
 import { defineFacet, Me } from "@earendil-works/p3/v1";
 import {
 	AddIcon,
-	AppPages,
 	ArrowBackIcon,
-	NewSessionView,
 	navigate,
-	SessionListView,
 	useHold,
 	usePageState,
 	useRoute,
@@ -19,6 +16,10 @@ import {
 	useView,
 	useWatch,
 } from "@earendil-works/p3/v1/web";
+// Other plugins' web contracts by path, never through `/v1/web`: a plugin applied to a running server meets the base
+// its page started with, whose `/v1/web` may not have a newer contract yet (a view token would be `undefined`).
+import { AppPages } from "../apps/contract.web.ts";
+import { NewSessionView, SessionListView } from "../sessions/contract.web.tsx";
 import { OpenSession } from "./open-session.tsx";
 import styles from "./web.module.css";
 

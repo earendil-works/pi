@@ -3,7 +3,7 @@
 // the ones it dropped are fetched too, so nothing a person loaded disappears from between them.
 
 import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/p3/v1";
-import type { ConversationView, EntryRecord } from "@earendil-works/pi-durable";
+import type { ConversationView, EntryRecord } from "@earendil-works/p3/v1/web";
 import { useEffect, useState } from "react";
 
 /** What `Transcript`'s `entries` answers: a page of entries, newest last, and whether more lie before it. */
