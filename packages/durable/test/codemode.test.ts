@@ -2,6 +2,7 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Context } from "@earendil-works/chord/context";
+import type { JsonValue } from "@earendil-works/chord/json";
 import { type AssistantMessage, fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
 import { CodemodeSandbox, loadCodemodeWasm } from "@earendil-works/pi-codemode";
 import {
@@ -24,6 +25,7 @@ import {
 	type CodemodeToolDetails,
 	createCodemodeTool,
 } from "../src/codemode/codemode.ts";
+import { defineDoc } from "../src/documents.ts";
 import { NodeExecutionEnv } from "../src/env/node.ts";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { createReadTool } from "../src/tools/read.ts";
@@ -43,6 +45,15 @@ function tool(
 }
 
 const DONE = fauxAssistantMessage([fauxText("done")]);
+
+/** The journal of the format before djs (code mode version 2), which a store from then may still hold. */
+const JournalDoc = defineDoc<{ entries: JsonValue[] }>({
+	kind: "pi.codemode.journal",
+	version: 1,
+	scope: "task",
+	initial: () => ({ entries: [] }),
+	checkpointWhen: () => false,
+});
 
 const wasm = await loadCodemodeWasm();
 
@@ -68,9 +79,13 @@ async function sqlitePath(): Promise<string> {
  * - `hold` (replay-safe) waits for `holds.gate` while `holds.block` is set, then returns `held <id>`;
  * - `slow` returns `slow <id>` once `slows.release(id)` was called.
  */
-function codemodeChat(globals: CodemodeGlobal[] = [], parkAfterMs?: number) {
+function codemodeChat(globals: CodemodeGlobal[] = [], parkAfterMs?: number, fuel?: number) {
 	const setup = chatSetup();
-	const sandbox = new CodemodeSandbox({ wasm, memoryLimitBytes: 64 * 1024 * 1024 });
+	const sandbox = new CodemodeSandbox({
+		wasm,
+		memoryLimitBytes: 64 * 1024 * 1024,
+		...(fuel === undefined ? {} : { fuel }),
+	});
 	// VMs started: a new run or a resumed dump.
 	const vm = { starts: 0 };
 	const begin = sandbox.begin.bind(sandbox);
@@ -305,7 +320,7 @@ describe("durable code mode", () => {
 		await harness.close(context);
 	});
 
-	it("keeps a global's undefined result undefined, live and replayed", async () => {
+	it("keeps a global's undefined result undefined, before and after a restart", async () => {
 		const chat = codemodeChat([{ name: "nothing", execute: async () => undefined }]);
 		const { harness, result } = await restart(
 			chat,
@@ -433,15 +448,21 @@ describe("durable code mode", () => {
 		await harness.close(context);
 	});
 
-	it("ends a call started under another code mode version with an error, as an upgrade from the journal format does", async () => {
+	it("ends a call started under another code mode version (the journal format) with an error asking to run it again", async () => {
 		const chat = codemodeChat();
 		const { harness, result } = await restart(
 			chat,
 			`await tools.hold({}); await tools.echo({ text: "late" });`,
+			// What a store written by the journal format (version 2) holds for a running call: its start with a seed and
+			// the VM's fingerprint, a journal of delivered results, and no saved run.
 			async (opened, task) => {
 				await opened.commit(async (tx) => {
 					const run = await tx.doc(CodemodeRunDoc, task);
-					run.start!.version = 2;
+					Object.assign(run.start!, { version: 2, seed: 7, fingerprint: "quickjs-wasi 3.6.2" });
+					const saved = await tx.doc(CodemodeSavedDoc, task);
+					delete saved.saved;
+					const journal = await tx.doc(JournalDoc, task);
+					journal.entries.push({ id: 1, at: 0, issuedAfter: 1 });
 				}, context);
 			},
 		);
@@ -450,6 +471,23 @@ describe("durable code mode", () => {
 			isError: true,
 		});
 		expect(chat.echo.size).toBe(0);
+		await harness.close(context);
+	});
+
+	it("counts the CPU budget across a restart, so a script that computes on after it resumes still ends", async () => {
+		// Each loop uses about 60% of the budget: the first fits, both do not.
+		const chat = codemodeChat([], undefined, 100_000_000);
+		const { harness, result } = await restart(
+			chat,
+			`for (let i = 0; i < 12_000_000; i++);
+			await tools.hold({});
+			for (let i = 0; i < 12_000_000; i++);
+			return "done";`,
+		);
+		expect(result.isError).toBe(true);
+		expect(result.text).toContain("Script timed out: The script used its CPU budget (about 0.2 s of computation)");
+		// The VM ran twice: it resumed from its dump with the fuel it had used.
+		expect(chat.vm.starts).toBe(2);
 		await harness.close(context);
 	});
 

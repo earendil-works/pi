@@ -1,7 +1,7 @@
 import { expect, test, vi } from "vitest";
 import { createCodemodeExtension } from "../src/codemode/codemode.ts";
 
-// The extension runs scripts on the engine the host passes, so loading it must not load djs (#11254).
+// The extension runs scripts on the sandbox the host passes, so loading it must not load djs (#11254).
 vi.mock("@earendil-works/djs", () => {
 	throw new Error("the Code Mode extension loaded djs");
 });

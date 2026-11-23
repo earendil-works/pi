@@ -528,7 +528,7 @@ describe("AgentSession codemode tool", () => {
 		expect((result.content[0] as { text: string }).text).toMatch(/^Script failed\n/);
 		const text = resultText(result);
 		expect(text).toMatch(/^partial\n<console_output>\nlog\n<\/console_output>\nScript error:\nError: boom\n/);
-		// The stack (`codemode.js:4`) comes with djs 0295 (a): pi-codemode's sandbox tests pin it.
+		expect(text).toContain("codemode.js:4");
 		expect(text).toContain("Tool calls made before the failure (they are not undone): echo (ok)");
 		expect((result.details as unknown as CodemodeToolDetails).calls.map((call) => call.name)).toEqual(["echo"]);
 	});
