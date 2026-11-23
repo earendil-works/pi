@@ -111,6 +111,20 @@ Use `promptCache` to declare the provider's best-effort cache lifetime in second
 
 Choose the conservative end of any published range. A model without a lifetime for the active tier is not eligible for cache warming. A `modelOverrides` entry can set `inputLimits` or `promptCache` for a built-in or extension model, including a model accessed through a validated proxy. See [`cacheWarming`](settings.md#model-and-thinking).
 
+### Map thinking levels
+
+Use `thinkingLevelMap` to choose which thinking levels `/thinking` offers and which provider value Pi sends for each:
+
+```json
+{
+  "id": "reasoning-model",
+  "reasoning": true,
+  "thinkingLevelMap": { "minimal": null, "xhigh": "xhigh", "max": "max" }
+}
+```
+
+A string is sent to the provider as the effort value, and `null` hides the level. Levels left out use the provider's default value for `off` through `high`. `xhigh` and `max` are opt-in: Pi offers them only when the map gives them a string, which must be a value the provider accepts. Set the map in `models.json`, on a custom model or in a `modelOverrides` entry for a built-in model, not in `settings.json`.
+
 ### Configure sampling by thinking level
 
 OpenAI-compatible APIs support free-form `samplingParams` model defaults and `samplingParamsByThinkingLevel` overrides. The latter uses Pi thinking-level keys (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`), not provider values from `thinkingLevelMap`:
