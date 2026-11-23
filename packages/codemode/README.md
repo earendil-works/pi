@@ -53,14 +53,16 @@ await sandbox.close();
 - `exit()` ends the script successfully right away, keeping its output and store writes.
 - `globals` passed to the sandbox are called as top-level functions, for example a host helper `image(ref)`. They behave like tools but are not recorded in `result.calls`. A name like `models.classify` puts the function on a frozen `models` object. With `spread: true`, `execute` receives all call arguments as an array instead of the first one, and `signature` replaces the declaration generated from the schemas.
 - `store(key, value)` and `load(key)` read and write JSON values synchronously. See [Store](#store).
-- Reading a member of `tools` or a global namespace that does not exist throws a `TypeError` that names the close matches.
+- Reading a member of `tools` or a global namespace that does not exist throws a `TypeError` that names the close matches. `missingToolHint` ends it for tools, for example to point at a `searchTools` global.
 - Nothing else: no timers, `fetch`, `process`, `require`, or `WebAssembly`. Built-ins are frozen. `eval` and `Function` work but only produce more code inside the same VM.
 
 `timeoutMs: Infinity` disables the deadline; the script then runs until it settles or `signal` aborts it. A script that waits on a promise nothing can settle (no tool call pending, and the VM has no timers or I/O) fails right away instead of hanging.
 
 `memoryLimitBytes` caps the VM's heap. Past it the script fails with `InternalError: out of memory`.
 
-The VM runs on the calling thread. While a script computes, each step yields to the event loop every 10 ms, so the host's timers and I/O, the deadline, and an abort keep working during `while (true) {}`. `fuel` bounds the computation of one execution, across its waits on tools, independently of time: about 1e9 is 2 seconds of a tight loop on an Apple M-series laptop. Past it the execution fails with `kind: "timeout"`.
+The VM runs on the calling thread. While a script computes, each step yields to the event loop every 10 ms, so the host's timers and I/O, the deadline, and an abort keep working during `while (true) {}`.
+
+Every run has a CPU budget, `fuel`: only computing counts, never waiting on tools, and a saved run carries what it used. The default, `DEFAULT_FUEL`, is about a minute of pure computation (`FUEL_PER_SECOND` is about 5e8 on an Apple M-series laptop; built-ins such as `sort` and `JSON.parse` cost little). Past it the script fails with `kind: "timeout"` and "The script used its CPU budget (about N s of computation)".
 
 ## Store
 
@@ -90,19 +92,17 @@ Supported fields are `max_output_tokens`, a token budget for the output, and `ti
 
 ## Bundled Node and Bun hosts
 
-By default `CodemodeSandbox` loads `@earendil-works/djs/wasm/djs.wasm` from the installed package (`$DJS_WASM` overrides it). The file is not on disk when the host is bundled, so pass the module:
+By default `CodemodeSandbox` loads `@earendil-works/djs/wasm/djs.wasm` from the installed package, on its first run. The file is not on disk when the host is bundled, so pass the module:
 
 ```ts
-import { CodemodeSandbox, loadDjsWasm } from "@earendil-works/pi-codemode";
+import { CodemodeSandbox, loadCodemodeWasm } from "@earendil-works/pi-codemode";
 
 const sandbox = new CodemodeSandbox({
 	tools,
 	// Compiled once per path and cached.
-	wasm: loadDjsWasm(pathToDjsWasm),
+	wasm: loadCodemodeWasm(pathToWasm),
 });
 ```
-
-`DJS_WASM_FILE` names the file to resolve, embed, or copy (`require.resolve(DJS_WASM_FILE)`).
 
 ## Usage on Cloudflare Workers
 
@@ -184,7 +184,9 @@ const sandbox = new RemoteCodemodeSandbox({
 const result = await sandbox.execute(code, { signal, store });
 ```
 
-Import the sandbox from `/portable` in the agent's Worker. Importing `/cloudflare` would also bundle the djs module there. `remote` is called once per execution and picks the Durable Object that runs it.
+Import the sandbox from `/portable` in the agent's Worker. Importing `/cloudflare` would also bundle the djs module there. `remote` is called once per execution, and once per step of a run the agent drives, and picks the Durable Object that runs it.
+
+Runs the agent drives itself ([Saved runs](#saved-runs), as pi's durable code mode does) work on a `RemoteCodemodeSandbox` too: each `advance()` is one RPC that carries the saved run there and back, and nothing stays alive in the sandbox object while tools run or the script waits. Measured in Node with the object's code path: a step costs about 1 ms and 1 KB each way for a small script, and grows with what the script holds (about 12 ms and 150 KB each way for 100 KB of live data, about 1 s and 5 MB for a million-element array), since every step loads and saves the whole run.
 
 - **One object per session**, `getByName(sessionId)`, keeps a session's scripts together. Two scripts of the same session take turns on one thread.
 - **One object per execution**, `getByName(crypto.randomUUID())`, runs every script on its own.
@@ -194,8 +196,8 @@ Run both Workers locally with `wrangler dev -c agent/wrangler.jsonc -c sandbox/w
 ### Limits on Cloudflare
 
 - **Fuel.** While a script computes without calling a tool, no timer can run, and `Date.now()` does not advance. A script that never yields is limited only by its fuel, not by `timeoutMs`. Past the budget, the execution fails with `kind: "timeout"`.
-   - The default `DEFAULT_REMOTE_FUEL` of 1e9 is about 2 seconds of a tight loop on an Apple M-series laptop.
-   - Keep the budget below the Worker's `cpu_ms` limit (30 seconds by default). Hitting that limit resets the object instead of failing one script.
+   - The object's default, `DEFAULT_CLOUDFLARE_FUEL`, is about 2 seconds of computation, per execution and per step.
+   - Keep it below the Worker's `cpu_ms` limit (30 seconds by default). Hitting that limit resets the object instead of failing one script.
 - **Memory.** Each VM may use up to 32 MiB by default. All VMs in one isolate share its 128 MB.
 - **Changing the limits.** The Durable Object caps every request at its own limits, whatever the client asks for. To change them, subclass it in the sandbox Worker:
 
@@ -210,7 +212,7 @@ export class CodemodeSandbox extends CodemodeSandboxDurableObject {
 
 - **Aborts and timeouts.** `timeoutMs` and `signal` end the execution in the caller right away, with `kind: "timeout"` or `kind: "aborted"`. The remote VM stops at its next tool call. A remote VM that is computing at that moment keeps running until it calls a tool or uses up its fuel.
 - **Output.** The remote sends output with its next call or with the result, so a caller that stops early has the output up to the last call.
-- **Billing.** Each execution is one Durable Object request. The sandbox object is billed for wall-clock duration while an execution runs, including time spent waiting on tools.
+- **Billing.** Each execution is one Durable Object request. The sandbox object is billed for wall-clock duration while an execution runs, including time spent waiting on tools. A run the agent drives is billed only for its steps.
 
 ### On the calling thread
 
@@ -223,7 +225,7 @@ const sandbox = createCodemodeSandbox({ tools, timeoutMs: 60_000, fuel: 500_000_
 const result = await sandbox.execute(code);
 ```
 
-`createCodemodeSandbox()` passes the djs module Wrangler compiled to `CodemodeSandbox`, with a fuel budget of `DEFAULT_REMOTE_FUEL` unless given. With another bundler, import `CodemodeSandbox` from `/portable` and pass your own compiled module as `wasm`. A script that computes blocks the caller until it awaits a tool or uses up its fuel.
+`createCodemodeSandbox()` passes the djs module Wrangler compiled (`cloudflareCodemodeWasm`) to `CodemodeSandbox`, with a fuel budget of `DEFAULT_CLOUDFLARE_FUEL` unless given. With another bundler, import `CodemodeSandbox` from `/portable` and pass your own compiled module as `wasm`. A script that computes blocks the caller until it awaits a tool or uses up its fuel.
 
 ## Declarations for the model
 
@@ -291,15 +293,15 @@ const codemodeTool: AgentTool = {
 
 ## Saved runs
 
-For hosts that answer a script's calls themselves and keep it across restarts, as pi's durable code mode does, `CodemodeSandbox` also hands out the run: `begin(code, scope)` starts a `CodemodeRun` that reaches what `scope` declares (not the sandbox's tools and globals). The host advances it, answers its calls by id, and while it waits can save it as JSON and continue it later, in another process:
+For hosts that answer a script's calls themselves and keep it across restarts, as pi's durable code mode does, both sandboxes also hand out the run: `begin(code, scope)` starts a `CodemodeRun` that reaches what `scope` declares (not the sandbox's tools and globals). The host advances it, answers its calls by id, and while it waits can save it as JSON and continue it later, in another process:
 
 ```ts
 const sandbox = new CodemodeSandbox({ memoryLimitBytes: 256 * 1024 * 1024 });
 const scope: CodemodeScope = { tools: [{ name: "read", jsName: "read", description: "" }], globals: [], store: {} };
 const run = await sandbox.begin(code, scope);
 await run.advance(signal);
-for (const call of run.calls) queue.add(call); // CodemodeHostCall: { id, identity: "tools.read", args }
-const saved = run.save(); // CodemodeSaved: { v: 1, engine: "djs", dump, output, writes, fuelUsed }
+for (const call of run.calls) queue.add(call); // CodemodeHostCall: { id, identity, kind: "tool", name: "read", args }
+const saved = run.save(); // CodemodeSaved: { dump, output, writes, fuelUsed }
 run.dispose();
 
 // Later, anywhere:
@@ -309,7 +311,7 @@ await resumed.advance(signal);
 if (resumed.result !== undefined) use(resumed.result);
 ```
 
-Calls are named by identity: `tools.<jsName>` for tools, a global's name, `<specifier>#<export>` for what a script imports from `scope.modules`. A run that ends lists the calls it no longer awaits in `dropped`; the host cancels them. `save()` throws when the run holds a value a dump cannot write (a `WeakMap`, a `Proxy`). `fuel` counts across saves; `stepFuel` bounds each step. Nothing replays: the saved run is the script's state. `execute()` is built on the same runs.
+A call names what it reaches: `kind: "tool"` with the tool's `name` (from `tools`, or from what a script imports from `scope.modules`), or `kind: "global"`; `args` is the tool's argument, or a spread global's argument list. A run that ends lists the calls it made but no longer awaits in `dropped`; they never run. `save()` throws when the run holds a value a dump cannot write (a `WeakMap`, a `Proxy`); on a remote sandbox, which keeps nothing between steps, such a run ends with a sandbox error. The CPU budget counts across saves. `execute()` is built on the same runs.
 
 ## Results
 
@@ -322,7 +324,7 @@ Calls are named by identity: `tools.<jsName>` for tools, a global's name, `<spec
 | `aborted` | `options.signal` fired or `close()` was called |
 | `sandbox` | the VM or its transport failed, for example a wasm trap, a module that does not load, or a failed remote |
 
-`result.output` holds the text and image items in the order the script produced them, also for failed executions. The host keeps all of it until the script ends, so output is limited to `MAX_OUTPUT_CHARS` (16 Mi) characters of text and base64 image data and `MAX_OUTPUT_ITEMS` (100000) items. Past either limit the script fails with a `RangeError`, even if it catches the error. `result.calls` lists every tool call with `status: "ok" | "error" | "cancelled"`. A call that is still running when the script returns (not awaited) is aborted through the tool's `signal` and reported as `cancelled`.
+`result.output` holds the text and image items in the order the script produced them, also for failed executions. The host keeps all of it until the script ends, so output is limited to `MAX_OUTPUT_CHARS` (16 Mi) characters of text and base64 image data and `MAX_OUTPUT_ITEMS` (100000) items. Past either limit the script fails with a `RangeError`, even if it catches the error. `result.calls` lists every tool call with `status: "ok" | "error" | "cancelled"`. A call that is still running when the script returns (not awaited) is aborted through the tool's `signal` and reported as `cancelled`; one the script made in its last step without awaiting it never runs, and is reported as `cancelled` too.
 
 ## How it works
 

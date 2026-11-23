@@ -140,8 +140,8 @@ export type CodemodeToolInput = Static<typeof codemodeSchema>;
 
 export type CodemodeToolOptions = {
 	/**
-	 * Runs the scripts on the calling thread. An idle script is saved, and parks while its calls take longer than
-	 * `parkAfterMs`.
+	 * Runs the scripts: `CodemodeSandbox` on the calling thread, `RemoteCodemodeSandbox` on Cloudflare. An idle script
+	 * is saved, and parks while its calls take longer than `parkAfterMs`.
 	 */
 	readonly sandbox: CodemodeSandboxBase;
 	/** How long the script waits on its calls before it parks. Default 1000. */

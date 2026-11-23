@@ -225,5 +225,7 @@ for (const block of result.output) {
 
 - A script's VM has 256 MB of memory. Running out fails the script with `InternalError: out of memory`; filter or aggregate large data instead of accumulating it.
 - A script that computes lets pi's event loop run every 10 ms, so the UI, the deadline, and stopping the script keep working while it runs.
+- Scripts run in pi's own process, each in its own VM of up to 256 MB; there is no limit on how many run at once.
+- A script has a CPU budget of about a minute of computation; waiting on tools does not count. Past it the script fails with "The script used its CPU budget".
 - A script that waits on a promise that can never settle (no tool call pending) fails immediately, since there are no timers.
 - Scripts cannot start other `codemode` scripts.

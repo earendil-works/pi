@@ -11,6 +11,11 @@ This example has two Workers:
 The [README of the package](../../README.md#usage-on-cloudflare-workers) explains why the
 sandbox must be a separate Worker, and which limits apply.
 
+The same sandbox serves pi's durable code mode: pass the `RemoteCodemodeSandbox` to
+`createCodemodeExtension({ sandbox })` of `@earendil-works/pi-durable/codemode`. Its scripts then run on
+the sandbox Worker one step at a time (`CodemodeSandboxDurableObject.step()`), and nothing stays alive
+there while tools run or a script is parked.
+
 ## Try it locally
 
 Install `@earendil-works/pi-codemode` and `wrangler` in each directory, then start both Workers in
