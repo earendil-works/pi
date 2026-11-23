@@ -7,7 +7,7 @@
 // Run: npm run build (in apps/p3)
 
 import { execFileSync } from "node:child_process";
-import { chmod, mkdir, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { isBuiltin } from "node:module";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -66,6 +66,7 @@ export async function buildRelease(dist: string = join(P3, "dist")): Promise<Bui
 	// package (`import("@earendil-works/chord")`), as an install resolves them.
 	const tsc = join(REPOSITORY, "node_modules", "typescript", "bin", "tsc");
 	execFileSync(process.execPath, [tsc, "-p", join(P3, "tsconfig.build.json"), "--outDir", dist], { stdio: "inherit" });
+	await copyImportedStyles(dist);
 	const files = await readdir(dist, { recursive: true, withFileTypes: true });
 	return {
 		dist,
@@ -75,6 +76,31 @@ export async function buildRelease(dist: string = join(P3, "dist")): Promise<Bui
 			.sort(),
 		bytes: Object.values(outputs).reduce((sum, output) => sum + output.bytes, LAUNCHER.length),
 	};
+}
+
+/** A compiled module's import of a stylesheet next to it (`import styles from "./x.module.css"`, `import "./x.css"`). */
+const STYLE_IMPORT = /(?:from|import)\s*"(\.{1,2}\/[^"]+\.css)"/g;
+
+/**
+ * Copies into `dist` the stylesheets the compiled API modules import (a web module's CSS module): TypeScript emits
+ * no CSS, and the page's build in an install resolves them next to the module, as in the source. Each from the
+ * checkout's file at the same path; a missing one fails the build.
+ */
+export async function copyImportedStyles(dist: string): Promise<void> {
+	const compiled = (await readdir(dist, { recursive: true, withFileTypes: true })).filter(
+		(entry) =>
+			entry.isFile() &&
+			entry.name.endsWith(".js") &&
+			relative(dist, entry.parentPath).split(sep)[0] !== "chunks" &&
+			entry.parentPath !== dist,
+	);
+	for (const entry of compiled) {
+		const file = join(entry.parentPath, entry.name);
+		for (const [, path] of (await readFile(file, "utf8")).matchAll(STYLE_IMPORT)) {
+			const target = join(entry.parentPath, path!);
+			await copyFile(join(P3, relative(dist, target)), target);
+		}
+	}
 }
 
 /** The esbuild options of one process's bundle in `dist`. */

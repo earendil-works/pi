@@ -11,6 +11,7 @@
 // Times are medians of 20 runs with min and max, the first (cold) run apart.
 // Run from apps/p3, with Node 26: node --conditions=source --disable-warning=ExperimentalWarning bench/skeleton.ts
 // [--release <dir>]: with it, the release `npm run release:p3:local -- --out <dir>` installed in `<dir>/install` runs.
+// Every launched server is stopped however the bench ends (`launched.ts`).
 
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -22,7 +23,8 @@ import { ownerClient } from "@earendil-works/p3/v1/testing";
 import { Sessions, SessionWorker } from "../plugins/sessions/contract.ts";
 import { COMMAND } from "../src/install.ts";
 import { askServer, type Reply, type ServerAnswer } from "../src/local-socket.ts";
-import { childrenOf, coding, launch } from "../test/support.ts";
+import { childrenOf, coding } from "../test/support.ts";
+import { launchTracked, withServer } from "./launched.ts";
 
 /** Node's arguments that run the `p3` command: the release installed in `--release`, else this checkout's source. */
 const { release } = parseArgs({ options: { release: { type: "string" } } }).values;
@@ -47,16 +49,15 @@ try {
 	const firstApplies: number[] = [];
 	for (let i = 0; i <= RUNS; i++) {
 		const started = performance.now();
-		const server = await launch(P3, join(root, `launch-${i % 2}`), env);
+		const server = await launchTracked(P3, join(root, `launch-${i % 2}`), env);
 		launches.push(performance.now() - started);
-		firstApplies.push(await apply(server.dataDir));
-		await server.stop();
+		await withServer(server, async () => firstApplies.push(await apply(server.dataDir)));
 	}
 	line("server: launch to ready, cold (first)", `${launches[0]!.toFixed(0)} ms`);
 	line("server: launch to ready, warm", stats(launches.slice(1)));
 	line("apply after the start, no worker (builds)", stats(firstApplies.slice(1), 1));
 
-	const server = await launch(P3, join(root, "pi"), env);
+	const server = await launchTracked(P3, join(root, "pi"), env);
 	try {
 		const client = await ownerClient(server.dataDir, server.port, context, 30_000);
 		const sessions = await client.get(Sessions, {}, context);

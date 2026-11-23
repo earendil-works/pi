@@ -27,7 +27,9 @@ export function GiveThing(props: {
 	const [picked, setPicked] = useState<string | undefined>(undefined);
 	const keepers = props.owners.flatMap(({ owner, name }) => {
 		const keeper = keeperOf(owner);
-		return keeper === undefined || ownerKey(owner) === ownerKey(props.current) ? [] : [{ keeper, name }];
+		return keeper === undefined || ownerKey(owner) === ownerKey(props.current)
+			? []
+			: [{ keeper, name: choiceName({ owner, name }) }];
 	});
 	if (keepers.length === 0) return null;
 	if (!open) {
@@ -58,6 +60,11 @@ export function GiveThing(props: {
 			</Button>
 		</span>
 	);
+}
+
+/** How a choice of owner reads: its name; the Pi, whose name the server leaves empty, as "The Pi". */
+export function choiceName(choice: OwnerChoice): string {
+	return choice.owner.kind === "pi" && choice.name === "" ? "The Pi" : choice.name;
 }
 
 /** An owner as a key: `pi`, `none`, `person:<id>`, `group:<id>`. */

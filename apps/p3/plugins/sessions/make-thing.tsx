@@ -10,7 +10,7 @@ import { useState } from "react";
 import type { Action } from "./action.ts";
 import { Choice } from "./choice.tsx";
 import { ThingViews } from "./contract.web.tsx";
-import { type OwnerChoice, ownerKey } from "./give-thing.tsx";
+import { choiceName, type OwnerChoice, ownerKey } from "./give-thing.tsx";
 import styles from "./session-things.module.css";
 import { NameField } from "./thing-name.tsx";
 
@@ -34,8 +34,8 @@ export function MakeThing(props: {
 	const [kind, setKind] = useState<string | undefined>(undefined);
 	const [owner, setOwner] = useState<string | undefined>(undefined);
 	const [name, setName] = useState("");
-	const keepers = props.owners.flatMap(({ owner: each, name: label }) =>
-		each.kind === "none" ? [] : [{ keeper: each, label }],
+	const keepers = props.owners.flatMap((choice) =>
+		choice.owner.kind === "none" ? [] : [{ keeper: choice.owner, label: choiceName(choice) }],
 	);
 	const picked = props.kinds.find((each) => each.kind === kind) ?? props.kinds[0];
 	const whom = keepers.find(({ keeper }) => ownerKey(keeper) === owner) ?? keepers[0];

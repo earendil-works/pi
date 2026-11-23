@@ -482,6 +482,22 @@ describe("the agent's things", () => {
 			[["Sketch", "none", "agent"]],
 		);
 	});
+
+	// The deployment's "Packing": the agent's checklist kept by the owner showed "in all my sessions" on.
+	it("content the agent made, kept by the owner in the session, is not in all their sessions", async () => {
+		const owner = w.owner();
+		const id = await w.session([owner], [], { kind: "person", id: owner.id, access: "write" });
+		const packing = await w.asAgent(id, (facts, ctx) => facts.create({ kind: Boards.name, name: "Packing" }, ctx));
+		await w.asWriter(owner, id, (things, ctx) =>
+			things.keep({ thing: packing, owner: { kind: "person", id: owner.id } }, ctx),
+		);
+		const row = await w.asMine(owner, async (mine) => mine.list.value.rows.find(({ id: each }) => each === packing));
+		assert.deepEqual([row?.owner, row?.everywhere], [{ kind: "person", id: owner.id }, false]);
+		// Kept to the Pi alike.
+		const other = await w.asAgent(id, (facts, ctx) => facts.create({ kind: Boards.name, name: "Spare" }, ctx));
+		await w.asWriter(owner, id, (things, ctx) => things.keep({ thing: other, owner: { kind: "pi" } }, ctx));
+		assert.equal((await w.thingRow(other))?.everywhere, false);
+	});
 });
 
 describe("members and persons leaving", () => {

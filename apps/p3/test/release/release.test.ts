@@ -1,9 +1,10 @@
 // The installed release: p3 as `npm run release:p3:local` built, packed and installed it outside the repository.
 // `P3_RELEASE` names the install directory; the release script sets it. Not part of `npm test`: it needs that install.
-// It checks what the package holds, the command, a session's worker forked from the release's own bundle, and a
-// third-party plugin written against nothing but the installed API: type-checked, its own tests run on the installed
-// `/v1/testing` (the plugin tier, and end to end: the installed server with its workers forked from the release's
-// bundle), loaded from the Pi's user root, and called by a client that uses the compiled API modules.
+// It checks what the package holds, the command, a session's worker forked from the release's own bundle, the page
+// (its base bundle built in the install), and a third-party plugin written against nothing but the installed API:
+// type-checked, its own tests run on the installed `/v1/testing` (the plugin tier, and end to end: the installed
+// server with its workers forked from the release's bundle), loaded from the Pi's user root, and called by a client
+// that uses the compiled API modules.
 
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
@@ -83,6 +84,22 @@ describe("the installed release", () => {
 			assert.equal(workers.length, 1, JSON.stringify(children));
 			assert.ok(workers[0]!.args.includes(join(PACKAGE, "dist", "worker.js")), workers[0]!.args.join(" "));
 			await client.close(context);
+		} finally {
+			await server.stop();
+		}
+	});
+
+	it("serves the page, its base bundle built from the installed src/web and the compiled web API", async () => {
+		const server = await launch(P3, join(root, "page"));
+		try {
+			const cookie = await ownerCookie(server.dataDir, server.port, context);
+			const page = await fetch(`http://127.0.0.1:${server.port}/`, { headers: { cookie } });
+			assert.equal(page.status, 200, "the page's build succeeded");
+			const script = /<script defer src="(\/_chord\/web\/base\.[0-9a-f]+\.js)"/.exec(await page.text())?.[1];
+			assert.ok(script !== undefined, "the page links its base bundle");
+			const base = await fetch(`http://127.0.0.1:${server.port}${script}`, { headers: { cookie } });
+			assert.equal(base.status, 200);
+			assert.ok((await base.text()).length > 0);
 		} finally {
 			await server.stop();
 		}

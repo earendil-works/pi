@@ -713,6 +713,10 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await browser.wait(
 			`document.querySelector('[data-make-thing] [data-field="make-kind"]')?.textContent.includes("Faux inbox")`,
 		);
+		// Whom it may be made for: the owner and, by name, the Pi.
+		await press('[data-make-thing] [data-field="make-owner"]');
+		await browser.wait(`document.querySelector('[data-choice="pi"]')?.textContent === "The Pi"`);
+		await browser.click(`[data-choice="person:${ownerId}"]`);
 		await press('[data-make-thing] [data-field="name"]');
 		await browser.type('[data-make-thing] [data-field="name"]', "Inbox");
 		await shots("29-make-thing-desktop");
@@ -757,6 +761,7 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await openMyThings();
 		await press(`${mine} [data-give-open]`);
 		await press(`${mine} [data-field="keeper"]`);
+		await browser.wait(`document.querySelector('[data-choice="pi"]')?.textContent === "The Pi"`);
 		await browser.click('[data-choice="pi"]');
 		await press(`${mine} [data-give-save]`);
 		await browser.wait(`document.querySelector('${mine} [data-whose]')?.textContent === "The Pi's"`);

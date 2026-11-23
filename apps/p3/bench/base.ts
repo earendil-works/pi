@@ -3,14 +3,15 @@
 // - the page: the time of the first `GET /` after a launch (it builds the page's base bundle and the web plugins),
 //   warm `GET /` beside it, the server's USS settled before and after it, and the page's files as the page links
 //   them (the base script, the plugins' combined file, the stylesheets), their bytes and gzipped;
-// - a session with the harness and its things (`tools.coding` and a faux login, `test/plugins/faux-login` copied to
-//   the data directory's user root): its worker's start until its first object (`SessionWorker`) and until its
-//   transcript's view arrived (Durable open), the
-//   idle worker's USS settled, one faux answer with a tool call (bash) from send to the row's `settled`, and the
-//   worker's USS settled after it.
+// - a session with the harness and its things (the Pi's coding tools and faux login, which every session following
+//   the owner has; `test/plugins/faux-login` copied to the data directory's user root, its script set per session):
+//   its worker's start until its first object (`SessionWorker`) and until its transcript's view arrived (Durable
+//   open), the idle worker's USS settled, one faux answer with a tool call (bash) from send to the row's `settled`,
+//   and the worker's USS settled after it.
 // Times are medians of 20 runs with min and max, the first (cold) run apart; USS the median of the 21 workers.
 // Run from apps/p3, with Node 26: node --conditions=source --disable-warning=ExperimentalWarning bench/base.ts
 // [--release <dir>]: with it, the release `npm run release:p3:local -- --out <dir>` installed in `<dir>/install` runs.
+// Every launched server is stopped however the bench ends (`launched.ts`).
 
 import { cp, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -32,8 +33,10 @@ import {
 import { ownerClient, ownerCookie } from "@earendil-works/p3/v1/testing";
 import { Sessions, SessionWorker } from "../plugins/sessions/contract.ts";
 import { COMMAND } from "../src/install.ts";
-import { childrenOf, launch } from "../test/support.ts";
+import { FauxRequests, type Step } from "../test/plugins/faux-login/contract.ts";
+import { childrenOf, scriptFaux } from "../test/support.ts";
 import { within } from "../test/until.ts";
+import { launchTracked, withServer } from "./launched.ts";
 
 /** Node's arguments that run the `p3` command: the release installed in `--release`, else this checkout's source. */
 const { release } = parseArgs({ options: { release: { type: "string" } } }).values;
@@ -50,7 +53,7 @@ const RUNS = 20;
 const FAUX = fileURLToPath(new URL("../test/plugins/faux-login/", import.meta.url));
 
 /** The faux login's script: a bash call for `@go`, then text for the tool's result. */
-const SCRIPT = [
+const SCRIPT: Step[] = [
 	{ when: "@go", reply: [{ kind: "tool", name: "bash", args: JSON.stringify({ command: "echo hi" }) }] },
 	{ when: "", reply: [{ kind: "text", text: "done" }] },
 ];
@@ -65,17 +68,17 @@ try {
 	const warm: number[] = [];
 	for (let i = 0; i <= RUNS; i++) {
 		const dataDir = await dataDirWithFaux(join(root, `launch-${i}`));
-		const server = await launch(P3, dataDir, env);
-		const cookie = await ownerCookie(server.dataDir, server.port, context);
-		builds.push((await page(server.port, cookie)).ms);
-		warm.push((await page(server.port, cookie)).ms);
-		await server.stop();
+		await withServer(await launchTracked(P3, dataDir, env), async (server) => {
+			const cookie = await ownerCookie(server.dataDir, server.port, context);
+			builds.push((await page(server.port, cookie)).ms);
+			warm.push((await page(server.port, cookie)).ms);
+		});
 	}
 	line("page: first GET / after a launch, cold (first)", `${builds[0]!.toFixed(0)} ms`);
 	line("page: first GET / after a launch (builds)", stats(builds.slice(1)));
 	line("page: a second GET /", stats(warm.slice(1), 1));
 
-	const server = await launch(P3, await dataDirWithFaux(join(root, "pi")), env);
+	const server = await launchTracked(P3, await dataDirWithFaux(join(root, "pi")), env);
 	try {
 		line("server, settled, before any page", `USS ${mib(await settled(server.pid))}`);
 		const cookie = await ownerCookie(server.dataDir, server.port, context);
@@ -95,22 +98,12 @@ try {
 		for (let i = 0; i <= RUNS; i++) {
 			const folder = join(root, `folder-${i}`);
 			await mkdir(folder);
+			// The session follows the owner, so it has the Pi's coding tools and faux login ("in all my sessions").
 			const id = await sessions.create(
-				{
-					app: "coding",
-					title: `s${i}`,
-					location: { environment: THIS_DEVICE, folder },
-					things: [
-						{
-							use: "new" as const,
-							kind: "faux.login",
-							options: { provider: "faux", script: SCRIPT, tool: false },
-						},
-						{ use: "new" as const, kind: "tools.coding", options: { shell: true } },
-					],
-				},
+				{ app: "coding", title: `s${i}`, location: { environment: THIS_DEVICE, folder } },
 				context,
 			);
+			await scriptFaux(client, id, SCRIPT, context);
 			const started = performance.now();
 			held.push(await client.get(SessionWorker, { session: id }, context));
 			workerStarts.push(performance.now() - started);
@@ -134,6 +127,7 @@ try {
 			await reaches(client, id, "settled");
 			answers.push(performance.now() - started);
 		}
+		await ranTheTool(client, ids[0]!);
 		line("faux answer with a tool call, send to settled, the first", `${answers[0]!.toFixed(0)} ms`);
 		line("faux answer with a tool call, send to settled", stats(answers.slice(1)));
 		line(
@@ -186,6 +180,18 @@ async function send(client: Host<P3Principal>, session: string, text: string): P
 		if (transcript.variant !== "writer") throw new Error("bench: the owner does not write");
 		await transcript.send({ text, requestId: text }, ctx);
 	}, context);
+}
+
+/** Throws unless `session`'s faux login got the bash call's result, with bash offered: the answer ran the tool. */
+async function ranTheTool(client: Host<P3Principal>, session: string): Promise<void> {
+	const requests = await client.root(
+		async (ctx) => (await ctx.get(FauxRequests, { session })).requests.value,
+		context,
+	);
+	const result = requests[1];
+	if (requests.length !== 2 || !result?.matched || !result.tools.includes("bash") || !result.last.includes("hi")) {
+		throw new Error(`bench: the answer did not run bash: ${JSON.stringify(requests)}`);
+	}
 }
 
 /** Waits until `session`'s row in the owner's list is in `state`. */
