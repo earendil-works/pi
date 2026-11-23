@@ -29,6 +29,7 @@ import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
 import { getIdentityHeaders } from "../utils/identity.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
+import { SseDecoder } from "../utils/sse.ts";
 import { ToolCallArgumentsStream } from "../utils/streaming-json.ts";
 import { ownedSlice } from "../utils/text.ts";
 
@@ -292,50 +293,28 @@ function createEventConverter(model: Model<"pi-messages">) {
 }
 
 async function* readPiMessagesEvents(stream: ReadableStream<Uint8Array>): AsyncGenerator<PiMessagesEvent> {
-	const decoder = new TextDecoder();
 	const reader = stream.getReader();
-	let buffer = "";
+	const sse = new SseDecoder();
 
 	try {
 		while (true) {
 			const { done, value } = await reader.read();
-			buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
-			buffer = buffer.replace(/\r\n/g, "\n");
+			const events = done ? sse.end() : sse.push(value);
 
-			let split = buffer.indexOf("\n\n");
-			while (split !== -1) {
-				const event = parsePiMessagesEvent(buffer.slice(0, split));
-				if (event) {
-					yield event;
+			for (const event of events) {
+				const data = event.data.trim();
+				if (data && data !== "[DONE]") {
+					yield JSON.parse(data) as PiMessagesEvent;
 				}
-				buffer = buffer.slice(split + 2);
-				split = buffer.indexOf("\n\n");
 			}
 
 			if (done) {
 				break;
 			}
 		}
-
-		if (buffer.trim()) {
-			const event = parsePiMessagesEvent(buffer);
-			if (event) {
-				yield event;
-			}
-		}
 	} finally {
 		reader.releaseLock();
 	}
-}
-
-function parsePiMessagesEvent(raw: string): PiMessagesEvent | undefined {
-	const data = raw
-		.split("\n")
-		.find((line) => line.startsWith("data:"))
-		?.slice(5)
-		.trim();
-
-	return data && data !== "[DONE]" ? (JSON.parse(data) as PiMessagesEvent) : undefined;
 }
 
 function createErrorEvent(model: Model<"pi-messages">, error: unknown, aborted: boolean): AssistantMessageEvent {

@@ -127,6 +127,33 @@ describe("consumeSseStream", () => {
 		expect(await parse(["id: 1\rdata: a\r\ndata: b\n\r", "\ndata: c\r\r"])).toEqual(expected);
 	});
 
+	// Regression test for #12224: a large event split across many chunks is measured and scanned once.
+	it("reads a large event split across many chunks in linear time", async () => {
+		const encoder = new TextEncoder();
+		const text = `data: ${"x".repeat(1024 * 1024)}\n\n`;
+		const stream = new ReadableStream<Uint8Array>({
+			start(controller) {
+				for (let i = 0; i < text.length; i += 4096) controller.enqueue(encoder.encode(text.slice(i, i + 4096)));
+				controller.close();
+			},
+		});
+		let measured = 0;
+		const byteLength = Buffer.byteLength;
+		const spy = vi.spyOn(Buffer, "byteLength").mockImplementation((value, encoding) => {
+			if (typeof value === "string") measured += value.length;
+			return byteLength(value, encoding);
+		});
+		const events: SseEvent[] = [];
+		try {
+			await consumeSseStream(stream, { onEvent: (event) => events.push(event) });
+		} finally {
+			spy.mockRestore();
+		}
+		expect(events).toEqual([{ data: "x".repeat(1024 * 1024) }]);
+		// Each chunk once, then the complete data line once.
+		expect(measured).toBeLessThanOrEqual(2 * text.length);
+	});
+
 	it("dispatches CR-terminated events while the stream stays open", async () => {
 		const encoder = new TextEncoder();
 		let controller!: ReadableStreamDefaultController<Uint8Array>;
