@@ -230,6 +230,14 @@ describe("durable code mode", () => {
 		);
 		expect(result).toEqual({ text: '["echo a","held 1","echo b",true]', isError: false });
 		expect(Object.fromEntries(chat.echo)).toEqual({ a: 1, b: 1 });
+		// The details list every call once, the one finished before the restart too (its row was saved with the dump).
+		const entry = (await allEntries(await harness.root(context))).find((candidate) => ToolResultEntry.is(candidate))!;
+		const details = (entry.model![0] as { details?: CodemodeToolDetails }).details;
+		expect(details?.calls.map((call) => [call.id, call.name, call.status])).toEqual([
+			[1, "echo", "ok"],
+			[2, "hold", "ok"],
+			[3, "echo", "ok"],
+		]);
 		// The VM ran twice, the second time from its dump; hold, replay-safe, reran once after the restart.
 		expect(chat.vm.starts).toBe(2);
 		expect(chat.holds.runs).toBe(2);

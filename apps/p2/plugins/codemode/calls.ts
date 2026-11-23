@@ -15,16 +15,14 @@ export const REMOVED_MESSAGE = "Code mode was removed while this script ran.";
 const REPORT_MS = 2000;
 
 /**
- * Problem: removing the plugin by a hot reload closes the sandbox while the Harness stays open. Durable stores no
- * outcome for a run the sandbox ended on its own (so a restart replays it), and the call then waits for its own
- * cancellation: nothing would ever settle it.
- * Solution: on removal (not on a worker stop, after which the next worker replays), each running call reports why in
- * its output, then is aborted through Durable (`abortTask`), which ends its script and nested calls bottom-up and
- * settles it with an error result. Only then is the sandbox closed.
+ * Problem: removing the plugin by a hot reload takes code mode away while the Harness stays open, but a script that is
+ * running would go on with calls the session no longer offers, and a parked one would wake to a tool that is gone.
+ * Solution: on removal (not on a worker stop, after which the next worker resumes them), each running call reports why
+ * in its output, then is aborted through Durable (`abortTask`), which ends its script and nested calls bottom-up and
+ * settles it with an error result.
  */
 export class RunningCalls {
 	readonly #calls = new Map<TaskId, ToolExecutionApi>();
-	readonly #idle = new Set<() => void>();
 
 	/** Runs one codemode `execute()`, known as running until it returns. */
 	async track<T>(api: ToolExecutionApi, run: () => Promise<T>): Promise<T> {
@@ -33,20 +31,7 @@ export class RunningCalls {
 			return await run();
 		} finally {
 			this.#calls.delete(api.taskId);
-			if (this.#calls.size === 0) for (const resolve of this.#idle) resolve();
 		}
-	}
-
-	/** Resolves once no call runs (at once when none does). */
-	idle(): Promise<void> {
-		if (this.#calls.size === 0) return Promise.resolve();
-		return new Promise((resolve) => {
-			const done = () => {
-				this.#idle.delete(done);
-				resolve();
-			};
-			this.#idle.add(done);
-		});
 	}
 
 	get size(): number {

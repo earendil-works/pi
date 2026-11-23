@@ -70,6 +70,8 @@ type SavedState = {
 	saved?: CodemodeSaved;
 	/** The script held a value a dump cannot write: it ran in memory only, and cannot resume. */
 	unsaved?: true;
+	/** The `details` rows as of the dump, so a resumed script's result still lists the calls it finished before. */
+	rows?: CodemodeNestedCall[];
 };
 
 /** The latest dump of a code mode call's script, scoped to its task and gone when it settles. */
@@ -184,6 +186,7 @@ export class CodemodeCall {
 			);
 		}
 		const { saved } = found.saved;
+		for (const row of found.saved.rows ?? []) this.rows.set(row.id, row);
 		let vm: CodemodeVm;
 		try {
 			vm = saved === undefined ? this.djs.begin(code, this.scope()) : this.djs.resume(this.scope(), saved);
@@ -338,6 +341,7 @@ export class CodemodeCall {
 				delete doc.saved;
 				doc.unsaved = true;
 			} else doc.saved = copyJson(saved as unknown as JsonValue) as unknown as CodemodeSaved;
+			doc.rows = copyJson([...this.rows.values()] as unknown as JsonValue) as unknown as CodemodeNestedCall[];
 		}, this.context);
 	}
 

@@ -1,7 +1,8 @@
-// Durable code mode: the `codemode` tool runs model-written JavaScript that calls the conversation's other tools as
-// nested durable calls (`await tools.read({ path })`), and survives worker restarts by replaying its journal.
+// Durable code mode: the `codemode` tool runs model-written JavaScript or TypeScript that calls the conversation's
+// other tools as nested durable calls (`await tools.read({ path })`), on this worker's thread, and survives worker
+// restarts by resuming the script's latest dump.
 
-import { CodemodeSandbox } from "@earendil-works/pi-codemode";
+import { DjsCodemode } from "@earendil-works/pi-codemode";
 import { createCodemodeExtension } from "@earendil-works/pi-durable/codemode";
 import { defineFacet } from "@p2/app/v1";
 import { ExtensionSwitches } from "@p2/app/v1/node";
@@ -14,16 +15,12 @@ export default defineFacet((host) => {
 	host.serve(CodemodeRuntime, (_params, self) => {
 		const harness = harnessOf(self);
 		const worker = workerOf(self);
-		// Natives close in reverse order: running calls first, then the sandbox, which ends VMs and worker threads. Only
-		// a removal (the object ends) cancels running calls; after a worker stop Durable replays them in the next
-		// worker, and a reload drains them: the old sandbox closes once its scripts finished, the new one opens at once.
+		// Only a removal (the object ends) cancels running calls; after a worker stop the next worker resumes them from
+		// their dumps, and after a reload they run on (a script keeps the engine it started on).
 		const calls = new RunningCalls();
-		const sandboxResource = self.open(
-			async () => new CodemodeSandbox({ memoryLimitBytes: CODEMODE_MEMORY_LIMIT_BYTES }),
-			(sandbox, reason) => {
-				if (reason.kind === "reload") void calls.idle().then(() => sandbox.close());
-				else return sandbox.close();
-			},
+		const engine = self.open(
+			async () => DjsCodemode.load(undefined, { memoryLimitBytes: CODEMODE_MEMORY_LIMIT_BYTES }),
+			() => {},
 		);
 		self.open(
 			async () => calls,
@@ -31,10 +28,10 @@ export default defineFacet((host) => {
 				if (reason.kind === "end" && !worker().liveness.stopping) await running.cancel(harness().durable, context);
 			},
 		);
-		// The tool reads the sandbox when a script starts: a running script keeps the sandbox it started on.
+		// The tool reads the engine when a script starts or resumes.
 		const codemode = createCodemodeExtension({
-			get sandbox() {
-				return sandboxResource.value;
+			get djs() {
+				return engine.value;
 			},
 		});
 		// The `codemode` setting (default on in p2) installs and uninstalls the extension live, plugin loaded or not.
