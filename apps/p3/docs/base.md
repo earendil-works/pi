@@ -158,6 +158,21 @@ made the tools for the Pi at its start (`ensureThing`, everywhere), and the sess
 - On the worker, `thingExtension(Kind, (things, agent) => …)`: the agent's tools.
 - On the page, `ThingViews`: its view of one thing, its options form, and for a `person` kind its `Create` view.
 
+## What admission confines, and what it does not (Mario, 2026-11-23)
+
+Admission confines **people and the agent**: what they see and do in p3's objects. It does not confine two things,
+and that is decided, not a gap:
+
+- **Plugins are trusted.** Every plugin the owner installs runs in the server's and the workers' processes with their
+  stores. A plugin's server code can get any server-only store contract (`SessionsStore`, a kind's store), call an
+  object as the server (which writes every session), and read `ServerRuntime.store`. No contract says which plugins may
+  reach it: that would cost extensibility and still not stop code in the same process. Install only plugins you trust.
+- **A shell on a machine is that machine's user.** An agent whose session has the coding tools with the shell, on
+  this device, runs as the owner's OS user: it can read the Pi's data directory and the owner's files and logins, and
+  reach p3's own command socket. That is what lets an agent write and apply plugins, and it is why everyone who writes
+  in such a session can have the agent do it too. To confine the agent, give the session no shell, or a location
+  without the owner's files (a sandbox such as Gondolin, another machine).
+
 ## What the agent gets
 
 The agent is Durable's harness in the session's worker (plugin `harness`). **It gets exactly its session's things**,

@@ -500,3 +500,9 @@ older entries that say `docs/<file>` or `apps/p3/docs/<file>` now are `apps/p3/d
     model, are decided with Armin (`next.md`, "Open, with Armin").
   - Superseded: a kind's own records with `ref`, members bringing things (`BringThings`, `ThingKinds.records`), the
     agent making things for a member or the Pi and keeping them.
+- **Plugins are trusted; a shell is its machine's user (Mario, 2026-11-23, after Armin's question):** admission
+  confines people and the agent, never plugins: a plugin the owner installs may reach any store and object on its
+  host, and no contract lists which plugins may get it (no isolation in one process, no loss of extensibility). An
+  agent with a shell on a machine can do whatever that machine's user can, the Pi's data and the command socket
+  included: that is how it writes plugins. Confining an agent means no shell, or a location without the owner's files
+  (a sandbox). Documented in `base.md`, "What admission confines".
