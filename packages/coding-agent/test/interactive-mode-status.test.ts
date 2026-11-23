@@ -243,6 +243,38 @@ describe("InteractiveMode pending user bash output", () => {
 	});
 });
 
+// Regression test for https://github.com/earendil-works/pi/issues/12426
+describe("InteractiveMode rebuilt user bash output", () => {
+	beforeAll(() => {
+		initTheme("dark");
+	});
+
+	test.each([true, false])("follows ctrl+o state %s when rebuilt from the session", (expanded) => {
+		const fakeThis: any = {
+			toolOutputExpanded: expanded,
+			chatContainer: new Container(),
+			ui: { requestRender: vi.fn() },
+			outputPad: 1,
+		};
+		const output = Array.from({ length: 40 }, (_, i) => `line-${i + 1}`).join("\n");
+
+		(InteractiveMode as any).prototype.addMessageToChat.call(fakeThis, {
+			role: "bashExecution",
+			command: "seq 1 40",
+			output,
+			exitCode: 0,
+			cancelled: false,
+			truncated: false,
+			timestamp: Date.now(),
+		});
+
+		const rendered = normalizeRenderedOutput(fakeThis.chatContainer);
+		expect(rendered).toContain("line-40");
+		expect(rendered.includes("line-1\n")).toBe(expanded);
+		expect(rendered.includes("to expand")).toBe(!expanded);
+	});
+});
+
 describe("InteractiveMode.createExtensionUIContext setTheme", () => {
 	test("persists theme changes to settings manager", () => {
 		initTheme("dark");
