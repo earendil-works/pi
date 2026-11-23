@@ -27,6 +27,10 @@ Remove this file when the list is done.
   descriptions, write tools refusing what options forbid); the agent's create tools (`canvas_create`,
   `notes_create`, with `for`), the base tool listing whom it may create for, keep.
 - A base helper for "writer if access is write and the option allows it".
+- A third example kind, `plugins/checklist/` (Mario, 2026-11-23): exactly the shape of the artifact "A small kind of
+  thing: checklist" (copy at /tmp/small-kind.md): contract.ts (kind, object), server.ts (its store, table and one
+  `serveThing`), worker.ts (`checklist_list`, `checklist_tick` only while some checklist allows ticking), web.tsx
+  (view, "May tick" form); with tests. Builder "notes", after item 1.
 
 ## 3. The page (builder "page")
 
