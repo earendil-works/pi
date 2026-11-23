@@ -1,7 +1,8 @@
 import { type JsonRpcMessage, McpConnectionClosedError } from "../protocol/jsonrpc.ts";
-import { type McpTransport, TransportEvents } from "./transport.ts";
+import { type McpModernTransportSupport, type McpTransport, TransportEvents } from "./transport.ts";
 
 export class InMemoryTransport extends TransportEvents implements McpTransport {
+	readonly modernProtocol: McpModernTransportSupport = { headers: false };
 	private peer: InMemoryTransport | undefined;
 	private started = false;
 	private closed = false;

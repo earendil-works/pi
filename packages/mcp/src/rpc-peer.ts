@@ -32,6 +32,10 @@ export interface PeerRequestOptions {
 	onProgress?: (progress: ProgressNotification) => void;
 	/** Whether the server is told with `notifications/cancelled` when the request is aborted or times out. */
 	notifyCancel: boolean;
+	/** Extra HTTP headers for this request; transports without headers ignore them. */
+	headers?: Record<string, string>;
+	/** Called with the request's id before it is sent. */
+	onSent?: (id: JsonRpcId) => void;
 }
 
 interface PendingRequest {
@@ -83,6 +87,7 @@ export class JsonRpcPeer {
 		if (!transport) throw new McpConnectionClosedError();
 		if (options.signal?.aborted) throw new McpAbortError();
 		const id = this.nextRequestId++;
+		options.onSent?.(id);
 		const progressToken = options.onProgress ? id : undefined;
 		const requestParams =
 			progressToken === undefined
@@ -118,7 +123,10 @@ export class JsonRpcPeer {
 			options.signal?.addEventListener("abort", entry.onAbort, { once: true });
 			this.armTimeout(id, entry);
 			transport
-				.send(message, { signal: entry.sendController.signal })
+				.send(message, {
+					signal: entry.sendController.signal,
+					...(options.headers === undefined ? {} : { headers: options.headers }),
+				})
 				.catch((error) => this.cancelPending(id, error, false));
 		});
 	}
@@ -134,6 +142,11 @@ export class JsonRpcPeer {
 		return () => {
 			if (this.requestHandlers.get(method) === handler) this.requestHandlers.delete(method);
 		};
+	}
+
+	/** The handler for requests of `method`, also used to answer input requests of MCP 2026-07-28. */
+	requestHandler(method: string): RequestHandler | undefined {
+		return this.requestHandlers.get(method);
 	}
 
 	onNotification(method: string, listener: NotificationListener): () => void {

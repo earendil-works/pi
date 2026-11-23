@@ -1,7 +1,7 @@
 /**
  * The `mcpServers` configuration shape that MCP clients share, so configurations can be copied between
  * them: stdio servers (`command`, `args`, `env`, `cwd`), Streamable HTTP servers (`url`, `headers`,
- * `oauth`), and `enabled`, `description` and `timeout` for both.
+ * `oauth`), and `enabled`, `description`, `timeout` and `protocol` for both.
  *
  * ```json
  * {
@@ -16,6 +16,8 @@
  * for the caller to check afterwards.
  */
 
+import type { McpProtocolMode } from "./protocol/types.ts";
+
 /** Fields every server entry may have. */
 interface McpServerConfigBase {
 	/** What the server offers, in a sentence. */
@@ -24,6 +26,12 @@ interface McpServerConfigBase {
 	enabled?: boolean;
 	/** Per-request timeout in seconds. */
 	timeout?: number;
+	/**
+	 * MCP protocol to speak: `legacy` (the `initialize` handshake of 2025-11-25 and earlier), `modern`
+	 * (the stateless protocol of 2026-07-28), or `auto` (probe with `server/discover`, fall back to
+	 * `legacy`). The application picks the default.
+	 */
+	protocol?: McpProtocolMode;
 }
 
 /** A server started as a local program that speaks MCP over stdin and stdout. */
@@ -105,6 +113,7 @@ export interface McpServerConfigOptions {
 }
 
 const SERVER_NAME = /^[A-Za-z0-9_-]+$/;
+const PROTOCOL_MODES: readonly unknown[] = ["auto", "legacy", "modern"] satisfies McpProtocolMode[];
 
 /**
  * Validate one entry of the `mcpServers` shape (configuration files are a trust boundary). Server
@@ -143,8 +152,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function validateBaseFields(entry: Record<string, unknown>): string | undefined {
-	const { enabled, timeout, description } = entry;
+	const { enabled, timeout, description, protocol } = entry;
 	if (enabled !== undefined && typeof enabled !== "boolean") return "enabled must be a boolean";
+	if (protocol !== undefined && !PROTOCOL_MODES.includes(protocol)) {
+		return 'protocol must be "auto", "legacy", or "modern"';
+	}
 	if (description !== undefined && typeof description !== "string") return "description must be a string";
 	if (timeout !== undefined && (typeof timeout !== "number" || !(timeout > 0))) {
 		return "timeout must be a positive number of seconds";

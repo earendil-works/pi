@@ -13,6 +13,17 @@ export interface McpTransportSendOptions {
 	 * retrying it after an authorization refresh. It does not undo a message already dispatched.
 	 */
 	signal?: AbortSignal;
+	/** HTTP headers for this message (`Mcp-Param-*` of MCP 2026-07-28). Transports without headers ignore them. */
+	headers?: Record<string, string>;
+}
+
+/**
+ * How a transport carries the stateless protocol (MCP 2026-07-28). `headers`: requests are HTTP
+ * requests, so the client adds the headers a tool's `x-mcp-header` annotations ask for, and excludes
+ * tools whose annotations are invalid.
+ */
+export interface McpModernTransportSupport {
+	headers: boolean;
 }
 
 export interface McpTransport {
@@ -22,7 +33,13 @@ export interface McpTransport {
 	onMessage(listener: McpTransportMessageListener): () => void;
 	onError(listener: McpTransportErrorListener): () => void;
 	onClose(listener: McpTransportCloseListener): () => void;
+	/** Legacy protocol: the version `initialize` negotiated, for transports that send it with every message. */
 	setProtocolVersion?(version: string): void;
+	/**
+	 * Set by transports that can carry the stateless protocol. A client uses only the legacy protocol
+	 * over transports without it, since it cannot know what they do with modern requests.
+	 */
+	readonly modernProtocol?: McpModernTransportSupport;
 }
 
 /** Listener bookkeeping shared by transports. `emitClose` fires at most once per transport. */

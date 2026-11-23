@@ -3,7 +3,7 @@ import process from "node:process";
 import crossSpawn from "cross-spawn";
 import { type JsonRpcMessage, McpConnectionClosedError } from "../protocol/jsonrpc.ts";
 import { JsonRpcLineReader } from "./lines.ts";
-import { type McpTransport, TransportEvents } from "./transport.ts";
+import { type McpModernTransportSupport, type McpTransport, TransportEvents } from "./transport.ts";
 
 const DEFAULT_CLOSE_TIMEOUT_MS = 2_000;
 /** How long a server gets to exit on its own after stdin closes, before it is sent SIGTERM. */
@@ -67,6 +67,7 @@ export interface StdioTransportOptions {
 }
 
 export class StdioTransport extends TransportEvents implements McpTransport {
+	readonly modernProtocol: McpModernTransportSupport = { headers: false };
 	readonly options: Readonly<StdioTransportOptions>;
 	private child: ChildProcess | undefined;
 	private readonly lines: JsonRpcLineReader;

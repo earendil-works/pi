@@ -1,12 +1,39 @@
 import type { CallToolResult } from "./protocol/content.ts";
-import { isObject, JSON_RPC_ERROR_CODES, McpConnectionClosedError, McpError } from "./protocol/jsonrpc.ts";
+import { type ToolHeaderBinding, toolHeaderBindings, toolParamHeaders } from "./protocol/http-headers.ts";
+import {
+	isObject,
+	JSON_RPC_ERROR_CODES,
+	type JsonRpcId,
+	McpConnectionClosedError,
+	McpError,
+	McpTimeoutError,
+	normalizeOwnRequestId,
+} from "./protocol/jsonrpc.ts";
+import {
+	isModernProtocolError,
+	META_SUBSCRIPTION_ID,
+	type ModernRequestMeta,
+	mutualModernVersion,
+	readModernResult,
+	serverInfoOf,
+	supportedVersions,
+	validateDiscoverResult,
+	withModernMeta,
+} from "./protocol/modern.ts";
 import {
 	type ClientCapabilities,
+	type DiscoverResult,
 	type Implementation,
 	type InitializeResult,
+	type InputRequest,
+	LATEST_MODERN_PROTOCOL_VERSION,
 	LATEST_PROTOCOL_VERSION,
 	type ListResourcesResult,
 	type ListResourceTemplatesResult,
+	type LoggingLevel,
+	type McpProtocolEra,
+	type McpProtocolMode,
+	type ModernProtocolVersion,
 	type ProgressNotification,
 	type ReadResourceResult,
 	type Resource,
@@ -14,21 +41,41 @@ import {
 	type Root,
 	type ServerCapabilities,
 	SUPPORTED_PROTOCOL_VERSIONS,
+	type SubscriptionFilter,
 	type SupportedProtocolVersion,
 	type Tool,
 } from "./protocol/types.ts";
 import { type ErrorListener, JsonRpcPeer, type NotificationListener, type RequestHandler } from "./rpc-peer.ts";
+import { McpHttpError } from "./transports/http-errors.ts";
 import type { McpTransport } from "./transports/transport.ts";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const MAX_LIST_PAGES = 1_000;
+/**
+ * Rounds of input a server may ask for before one request completes. Servers may ask again until they
+ * have what they need; this bounds a server that never does.
+ */
+const MAX_INPUT_ROUNDS = 16;
+/** Methods whose results may ask for input in MCP 2026-07-28 (multi round-trip requests). */
+const INPUT_METHODS = new Set(["tools/call", "resources/read", "prompts/get"]);
 
 type ClientState = "idle" | "connecting" | "connected" | "closed";
 type CloseListener = () => void;
 
 export interface McpClientOptions extends Implementation {
 	capabilities?: ClientCapabilities;
+	/** Version the legacy `initialize` handshake asks for. Default: {@link LATEST_PROTOCOL_VERSION}. */
 	protocolVersion?: SupportedProtocolVersion;
+	/**
+	 * Protocol to speak (see {@link McpProtocolMode}). Default: `legacy`. Transports without
+	 * `modernProtocol` always use `legacy`; with them, `modern` and `auto` start with `server/discover`.
+	 */
+	protocol?: McpProtocolMode;
+	/**
+	 * Modern servers send log messages (`notifications/message`) only for requests that name a level, so
+	 * every modern request names this one. Without it, they send none. Legacy servers are not affected.
+	 */
+	logLevel?: LoggingLevel;
 	requestTimeoutMs?: number;
 	roots?: readonly Root[] | (() => readonly Root[] | Promise<readonly Root[]>);
 }
@@ -37,6 +84,18 @@ export interface McpRequestOptions {
 	signal?: AbortSignal;
 	timeoutMs?: number;
 	onProgress?: (progress: ProgressNotification) => void;
+}
+
+/** An open `subscriptions/listen` stream of a modern server. */
+export interface McpSubscription {
+	/** The notification types the server agreed to send. */
+	readonly notifications: SubscriptionFilter;
+	/**
+	 * Settles when the subscription ends: resolves when the server ended it gracefully or `close()` was
+	 * called, rejects when the connection or stream failed.
+	 */
+	readonly closed: Promise<void>;
+	close(): void;
 }
 
 function validateInitializeResult(value: unknown): InitializeResult {
@@ -120,15 +179,37 @@ function validateCallToolResult(value: unknown): CallToolResult {
 	return (value.content === undefined ? { ...value, content: [] } : value) as unknown as CallToolResult;
 }
 
+/**
+ * Whether a failed `server/discover` probe identifies a legacy server: any error response that is not
+ * one of the modern errors, a client error status without one, or no answer in time. Auth failures and
+ * transient statuses are not answers about the protocol.
+ */
+function isLegacyProbeAnswer(error: unknown): boolean {
+	if (error instanceof McpError) return !isModernProtocolError(error);
+	if (error instanceof McpTimeoutError) return true;
+	if (!(error instanceof McpHttpError)) return false;
+	const { status } = error;
+	return status >= 400 && status < 500 && ![401, 403, 408, 429].includes(status);
+}
+
+/** The protocol a connected client speaks. */
+type Session =
+	| { era: "legacy"; protocolVersion: string }
+	| { era: "modern"; protocolVersion: ModernProtocolVersion; headers: boolean };
+
 export class McpClient {
 	readonly options: Readonly<McpClientOptions>;
 	private state: ClientState = "idle";
 	private transport: McpTransport | undefined;
 	private readonly rpc = new JsonRpcPeer();
+	private session: Session | undefined;
 	private serverInfoValue: Implementation | undefined;
 	private serverCapabilitiesValue: ServerCapabilities | undefined;
 	private instructionsValue: string | undefined;
-	private protocolVersionValue: string | undefined;
+	/** `Mcp-Param-*` bindings of the tools last listed, for modern servers over HTTP. */
+	private toolHeaders = new Map<string, ToolHeaderBinding[]>();
+	/** Open `subscriptions/listen` requests by id, waiting for their acknowledgment. */
+	private subscriptions = new Map<JsonRpcId, { acknowledge(filter: SubscriptionFilter): void; end(): void }>();
 	private closeListeners = new Set<CloseListener>();
 	private disposers: (() => void)[] = [];
 
@@ -141,6 +222,8 @@ export class McpClient {
 				roots: [...(typeof roots === "function" ? await roots() : roots)],
 			}));
 		}
+		this.rpc.onNotification("notifications/subscriptions/acknowledged", (params) => this.handleAcknowledged(params));
+		this.rpc.onNotification("notifications/cancelled", (params) => this.handleServerCancelled(params));
 	}
 
 	get connectionState(): ClientState {
@@ -160,9 +243,18 @@ export class McpClient {
 	}
 
 	get protocolVersion(): string | undefined {
-		return this.protocolVersionValue;
+		return this.session?.protocolVersion;
 	}
 
+	/** Whether the connection uses the `initialize` handshake (`legacy`) or per-request metadata (`modern`). */
+	get protocolEra(): McpProtocolEra | undefined {
+		return this.session?.era;
+	}
+
+	/**
+	 * Connect over `transport`. Resolves to what the server reported about itself; for modern servers, a
+	 * result in the shape of `initialize` built from `server/discover`.
+	 */
 	async connect(transport: McpTransport): Promise<InitializeResult> {
 		if (this.state !== "idle") throw new Error(`Cannot connect MCP client in ${this.state} state`);
 		this.state = "connecting";
@@ -177,33 +269,14 @@ export class McpClient {
 
 		try {
 			await transport.start();
-			const capabilities: ClientCapabilities = { ...this.options.capabilities };
-			if (this.options.roots && capabilities.roots === undefined) capabilities.roots = {};
-			const result = validateInitializeResult(
-				await this.requestInternal(
-					"initialize",
-					{
-						protocolVersion: this.options.protocolVersion ?? LATEST_PROTOCOL_VERSION,
-						capabilities,
-						clientInfo: {
-							name: this.options.name,
-							version: this.options.version,
-							...(this.options.title === undefined ? {} : { title: this.options.title }),
-						},
-					},
-					{},
-					true,
-				),
-			);
-			if (!(SUPPORTED_PROTOCOL_VERSIONS as readonly string[]).includes(result.protocolVersion)) {
-				throw new Error(`MCP server selected unsupported protocol version ${result.protocolVersion}`);
+			const mode = this.options.protocol ?? "legacy";
+			if (mode === "modern" && !transport.modernProtocol) {
+				throw new Error("This MCP transport does not support the stateless protocol (2026-07-28)");
 			}
-			this.protocolVersionValue = result.protocolVersion;
-			this.serverInfoValue = result.serverInfo;
-			this.serverCapabilitiesValue = result.capabilities;
-			this.instructionsValue = result.instructions;
-			transport.setProtocolVersion?.(result.protocolVersion);
-			await this.notifyInternal("notifications/initialized", undefined, true);
+			const discovered = transport.modernProtocol && mode !== "legacy" ? await this.discover(mode) : undefined;
+			const result = discovered
+				? this.startModern(discovered.result, discovered.version, transport.modernProtocol?.headers ?? false)
+				: await this.initialize(transport);
 			this.state = "connected";
 			return result;
 		} catch (error) {
@@ -212,18 +285,23 @@ export class McpClient {
 		}
 	}
 
-	request<Result = unknown>(
+	async request<Result = unknown>(
 		method: string,
 		params?: Record<string, unknown>,
 		options: McpRequestOptions = {},
 	): Promise<Result> {
-		return this.requestInternal(method, params, options, false) as Promise<Result>;
+		return (await this.requestConnected(method, params, options)) as Result;
 	}
 
-	notify(method: string, params?: Record<string, unknown>): Promise<void> {
-		return this.notifyInternal(method, params, false);
+	async notify(method: string, params?: Record<string, unknown>): Promise<void> {
+		this.requireConnected();
+		await this.rpc.notify(method, params);
 	}
 
+	/**
+	 * Answer requests of `method` from the server: requests a legacy server sends, and the input requests
+	 * of the same method a modern server returns (`roots/list`, `elicitation/create`, `sampling/createMessage`).
+	 */
 	setRequestHandler(method: string, handler: RequestHandler): () => void {
 		return this.rpc.setRequestHandler(method, handler);
 	}
@@ -242,12 +320,32 @@ export class McpClient {
 		return () => this.closeListeners.delete(listener);
 	}
 
+	/** Check that the server answers: `ping` for legacy servers, `server/discover` for modern ones. */
 	async ping(options: McpRequestOptions = {}): Promise<void> {
-		await this.request("ping", undefined, options);
+		await this.request(this.session?.era === "modern" ? "server/discover" : "ping", undefined, options);
 	}
 
+	/**
+	 * Every tool, following `nextCursor` through all pages. Over HTTP, tools of modern servers whose
+	 * `x-mcp-header` annotations are invalid are left out and reported through `onError`.
+	 */
 	async listTools(options: McpRequestOptions = {}): Promise<Tool[]> {
-		return (await this.listAll("tools/list", "tools", isTool, options)) as unknown as Tool[];
+		const tools = (await this.listAll("tools/list", "tools", isTool, options)) as unknown as Tool[];
+		const session = this.session;
+		if (session?.era !== "modern" || !session.headers) return tools;
+		const kept: Tool[] = [];
+		const headers = new Map<string, ToolHeaderBinding[]>();
+		for (const tool of tools) {
+			const bindings = toolHeaderBindings(tool.inputSchema);
+			if (bindings.kind === "invalid") {
+				this.rpc.emitError(new Error(`Excluded MCP tool "${tool.name}": ${bindings.reason}`));
+				continue;
+			}
+			if (bindings.bindings.length > 0) headers.set(tool.name, bindings.bindings);
+			kept.push(tool);
+		}
+		this.toolHeaders = headers;
+		return kept;
 	}
 
 	/** Every resource, following `nextCursor` through all pages. */
@@ -291,6 +389,289 @@ export class McpClient {
 		return validateReadResourceResult(await this.request("resources/read", { uri }, options));
 	}
 
+	async callTool(
+		name: string,
+		args?: Record<string, unknown>,
+		options: McpRequestOptions = {},
+	): Promise<CallToolResult> {
+		const params = { name, ...(args === undefined ? {} : { arguments: args }) };
+		const bindings = this.toolHeaders.get(name);
+		const headers = bindings ? toolParamHeaders(bindings, args) : undefined;
+		return validateCallToolResult(await this.requestConnected("tools/call", params, options, headers));
+	}
+
+	/**
+	 * Open a `subscriptions/listen` stream of a modern server, which delivers the notifications `filter`
+	 * names to `onNotification` listeners. Resolves once the server acknowledged it. Legacy servers send
+	 * their notifications without one.
+	 */
+	async listen(filter: SubscriptionFilter, options: { signal?: AbortSignal } = {}): Promise<McpSubscription> {
+		if (this.session?.era !== "modern") throw new Error("subscriptions/listen needs a modern MCP server");
+		const controller = new AbortController();
+		const onAbort = () => controller.abort(options.signal?.reason);
+		options.signal?.addEventListener("abort", onAbort, { once: true });
+		let acknowledge!: (filter: SubscriptionFilter) => void;
+		const acknowledged = new Promise<SubscriptionFilter>((resolve) => {
+			acknowledge = resolve;
+		});
+		let id: JsonRpcId | undefined;
+		const closed = this.requestModern(
+			"subscriptions/listen",
+			{ notifications: filter },
+			{ signal: controller.signal, timeoutMs: Number.POSITIVE_INFINITY },
+			undefined,
+			// Every attempt is a new request, and the subscription is named by the id of the current one.
+			(requestId) => {
+				if (id !== undefined) this.subscriptions.delete(id);
+				id = requestId;
+				this.subscriptions.set(requestId, { acknowledge, end: () => controller.abort("ended by server") });
+			},
+		)
+			.then(
+				() => undefined,
+				(error: unknown) => {
+					// Closing the stream ourselves is how a subscription ends.
+					if (controller.signal.aborted) return undefined;
+					throw error;
+				},
+			)
+			.finally(() => {
+				if (id !== undefined) this.subscriptions.delete(id);
+				options.signal?.removeEventListener("abort", onAbort);
+			});
+		const endedEarly = closed.then(() => {
+			throw new Error("MCP subscription ended before the server acknowledged it");
+		});
+		// Only the race observes it; once acknowledged, the caller handles `closed`.
+		endedEarly.catch(() => {});
+		const notifications = await Promise.race([acknowledged, endedEarly]);
+		return { notifications, closed, close: () => controller.abort("closed") };
+	}
+
+	async close(): Promise<void> {
+		const transport = this.transport;
+		this.transport = undefined;
+		this.rpc.detach();
+		this.disposeTransportListeners();
+		this.markClosed(new McpConnectionClosedError());
+		await transport?.close();
+	}
+
+	/** The legacy handshake: `initialize`, then `notifications/initialized`. */
+	private async initialize(transport: McpTransport): Promise<InitializeResult> {
+		const result = validateInitializeResult(
+			await this.rpc.request(
+				"initialize",
+				{
+					protocolVersion: this.options.protocolVersion ?? LATEST_PROTOCOL_VERSION,
+					capabilities: this.clientCapabilities(),
+					clientInfo: this.clientInfo(),
+				},
+				// The spec forbids cancelling `initialize`.
+				{ timeoutMs: this.requestTimeoutMs(), notifyCancel: false },
+			),
+		);
+		if (!(SUPPORTED_PROTOCOL_VERSIONS as readonly string[]).includes(result.protocolVersion)) {
+			throw new Error(`MCP server selected unsupported protocol version ${result.protocolVersion}`);
+		}
+		this.session = { era: "legacy", protocolVersion: result.protocolVersion };
+		this.serverInfoValue = result.serverInfo;
+		this.serverCapabilitiesValue = result.capabilities;
+		this.instructionsValue = result.instructions;
+		transport.setProtocolVersion?.(result.protocolVersion);
+		await this.rpc.notify("notifications/initialized", undefined);
+		return result;
+	}
+
+	/**
+	 * Probe with `server/discover` and settle on a modern version. Resolves to undefined when `auto`
+	 * should fall back to the legacy handshake: the server answered like a legacy server (including with
+	 * something that is no discover result), or it supports no modern version the client knows. An
+	 * `UnsupportedProtocolVersionError` is retried once with a version from its list.
+	 */
+	private async discover(
+		mode: "auto" | "modern",
+	): Promise<{ result: DiscoverResult; version: ModernProtocolVersion } | undefined> {
+		let version: ModernProtocolVersion = LATEST_MODERN_PROTOCOL_VERSION;
+		for (let attempt = 0; ; attempt++) {
+			let raw: unknown;
+			try {
+				raw = await this.rpc.request("server/discover", withModernMeta(undefined, this.modernMeta(version)), {
+					timeoutMs: this.requestTimeoutMs(),
+					notifyCancel: false,
+				});
+			} catch (error) {
+				const supported = error instanceof McpError ? supportedVersions(error) : undefined;
+				const mutual = supported && mutualModernVersion(supported);
+				if (mutual && attempt === 0) {
+					version = mutual;
+					continue;
+				}
+				if (mode === "auto" && (supported ? !mutual : isLegacyProbeAnswer(error))) return undefined;
+				throw error;
+			}
+			let result: DiscoverResult;
+			try {
+				result = validateDiscoverResult(raw);
+			} catch (error) {
+				if (mode === "auto") return undefined;
+				throw error;
+			}
+			const mutual = mutualModernVersion(result.supportedVersions);
+			if (mutual) return { result, version: mutual };
+			if (mode === "auto") return undefined;
+			throw new Error(
+				`MCP server supports none of this client's protocol versions: ${result.supportedVersions.join(", ")}`,
+			);
+		}
+	}
+
+	private startModern(result: DiscoverResult, version: ModernProtocolVersion, headers: boolean): InitializeResult {
+		this.session = { era: "modern", protocolVersion: version, headers };
+		const serverInfo = serverInfoOf(result as unknown as Record<string, unknown>);
+		this.serverInfoValue = serverInfo;
+		this.serverCapabilitiesValue = result.capabilities;
+		this.instructionsValue = result.instructions;
+		return {
+			protocolVersion: version,
+			capabilities: result.capabilities,
+			// Modern servers SHOULD name themselves, but need not.
+			serverInfo: serverInfo ?? { name: "", version: "" },
+			...(result.instructions === undefined ? {} : { instructions: result.instructions }),
+		};
+	}
+
+	private async requestConnected(
+		method: string,
+		params: Record<string, unknown> | undefined,
+		options: McpRequestOptions,
+		headers?: Record<string, string>,
+	): Promise<unknown> {
+		const session = this.requireConnected();
+		if (session.era === "modern") return this.requestModern(method, params, options, headers);
+		return this.rpc.request(method, params, {
+			...this.peerOptions(options),
+			...(headers === undefined ? {} : { headers }),
+		});
+	}
+
+	/**
+	 * A request of the stateless protocol. It carries the client's metadata, is sent again with the
+	 * version an `UnsupportedProtocolVersionError` names, and, for methods that may ask for input, is
+	 * sent again with the answers to the server's input requests until it completes. Every attempt is
+	 * a new JSON-RPC request.
+	 */
+	private async requestModern(
+		method: string,
+		params: Record<string, unknown> | undefined,
+		options: McpRequestOptions,
+		headers: Record<string, string> | undefined,
+		onSent?: (id: JsonRpcId) => void,
+	): Promise<unknown> {
+		let input: { inputResponses: Record<string, unknown>; requestState: string | undefined } | undefined;
+		let versionRetried = false;
+		for (let round = 0; ; ) {
+			const session = this.requireConnected();
+			if (session.era !== "modern") throw new McpConnectionClosedError();
+			const attemptParams = input
+				? {
+						...params,
+						inputResponses: input.inputResponses,
+						...(input.requestState === undefined ? {} : { requestState: input.requestState }),
+					}
+				: params;
+			let raw: unknown;
+			try {
+				raw = await this.rpc.request(
+					method,
+					withModernMeta(attemptParams, this.modernMeta(session.protocolVersion)),
+					{
+						...this.peerOptions(options),
+						...(headers === undefined ? {} : { headers }),
+						...(onSent === undefined ? {} : { onSent }),
+					},
+				);
+			} catch (error) {
+				const supported = error instanceof McpError ? supportedVersions(error) : undefined;
+				const mutual = supported && mutualModernVersion(supported);
+				if (!mutual || versionRetried) throw error;
+				versionRetried = true;
+				this.session = { ...session, protocolVersion: mutual };
+				continue;
+			}
+			if (!INPUT_METHODS.has(method)) {
+				if (isObject(raw) && raw.resultType !== undefined && raw.resultType !== "complete") {
+					throw invalid(`Unsupported MCP ${method} result type: ${String(raw.resultType)}`);
+				}
+				return raw;
+			}
+			const result = readModernResult(method, raw);
+			if (result.kind === "complete") return result.result;
+			if (++round > MAX_INPUT_ROUNDS) {
+				throw new Error(`MCP ${method} still asks for input after ${MAX_INPUT_ROUNDS} rounds`);
+			}
+			input = {
+				inputResponses: await this.answerInputRequests(result.inputRequests, options.signal),
+				requestState: result.requestState,
+			};
+		}
+	}
+
+	/** Answer a modern server's input requests with the handlers registered for their methods. */
+	private async answerInputRequests(
+		requests: Record<string, InputRequest>,
+		signal: AbortSignal | undefined,
+	): Promise<Record<string, unknown>> {
+		const responses: Record<string, unknown> = {};
+		for (const [key, request] of Object.entries(requests)) {
+			const handler = this.rpc.requestHandler(request.method);
+			if (!handler) throw new Error(`MCP server asked for input this client does not provide: ${request.method}`);
+			responses[key] = (await handler(request.params, { signal: signal ?? new AbortController().signal })) ?? {};
+		}
+		return responses;
+	}
+
+	private requireConnected(): Session {
+		if (this.transport && this.session && this.state === "connected") return this.session;
+		throw new McpConnectionClosedError(`MCP client is ${this.state}`);
+	}
+
+	private peerOptions(options: McpRequestOptions) {
+		return {
+			timeoutMs: options.timeoutMs ?? this.requestTimeoutMs(),
+			notifyCancel: true,
+			...(options.signal === undefined ? {} : { signal: options.signal }),
+			...(options.onProgress === undefined ? {} : { onProgress: options.onProgress }),
+		};
+	}
+
+	private requestTimeoutMs(): number {
+		return this.options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+	}
+
+	private clientInfo(): Implementation {
+		return {
+			name: this.options.name,
+			version: this.options.version,
+			...(this.options.title === undefined ? {} : { title: this.options.title }),
+		};
+	}
+
+	private clientCapabilities(): ClientCapabilities {
+		const capabilities: ClientCapabilities = { ...this.options.capabilities };
+		if (this.options.roots && capabilities.roots === undefined) capabilities.roots = {};
+		return capabilities;
+	}
+
+	private modernMeta(protocolVersion: ModernProtocolVersion): ModernRequestMeta {
+		return {
+			protocolVersion,
+			clientInfo: this.clientInfo(),
+			clientCapabilities: this.clientCapabilities(),
+			logLevel: this.options.logLevel,
+		};
+	}
+
 	private async listPage(
 		method: string,
 		key: string,
@@ -328,55 +709,19 @@ export class McpClient {
 		throw new Error(`MCP ${method} exceeded ${MAX_LIST_PAGES} pages`);
 	}
 
-	async callTool(
-		name: string,
-		args?: Record<string, unknown>,
-		options: McpRequestOptions = {},
-	): Promise<CallToolResult> {
-		return validateCallToolResult(
-			await this.request("tools/call", { name, ...(args === undefined ? {} : { arguments: args }) }, options),
-		);
+	/** `notifications/subscriptions/acknowledged` names the subscription it acknowledges in `_meta`. */
+	private handleAcknowledged(params: unknown): void {
+		const id = subscriptionIdOf(params);
+		const filter = isObject(params) && isObject(params.notifications) ? params.notifications : {};
+		if (id !== undefined) this.subscriptions.get(id)?.acknowledge(filter as SubscriptionFilter);
 	}
 
-	async close(): Promise<void> {
-		const transport = this.transport;
-		this.transport = undefined;
-		this.rpc.detach();
-		this.disposeTransportListeners();
-		this.markClosed(new McpConnectionClosedError());
-		await transport?.close();
-	}
-
-	private async requestInternal(
-		method: string,
-		params: Record<string, unknown> | undefined,
-		options: McpRequestOptions,
-		allowConnecting: boolean,
-	): Promise<unknown> {
-		this.requireTransport(allowConnecting);
-		return this.rpc.request(method, params, {
-			timeoutMs: options.timeoutMs ?? this.options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
-			// The spec forbids cancelling `initialize`.
-			notifyCancel: method !== "initialize",
-			...(options.signal === undefined ? {} : { signal: options.signal }),
-			...(options.onProgress === undefined ? {} : { onProgress: options.onProgress }),
-		});
-	}
-
-	private async notifyInternal(
-		method: string,
-		params: Record<string, unknown> | undefined,
-		allowConnecting: boolean,
-	): Promise<void> {
-		this.requireTransport(allowConnecting);
-		await this.rpc.notify(method, params);
-	}
-
-	private requireTransport(allowConnecting: boolean): McpTransport {
-		if (this.transport && (this.state === "connected" || (allowConnecting && this.state === "connecting"))) {
-			return this.transport;
+	/** Modern servers send `notifications/cancelled` only to end a subscription. */
+	private handleServerCancelled(params: unknown): void {
+		const requestId = isObject(params) ? params.requestId : undefined;
+		if (typeof requestId === "string" || typeof requestId === "number") {
+			this.subscriptions.get(normalizeOwnRequestId(requestId))?.end();
 		}
-		throw new McpConnectionClosedError(`MCP client is ${this.state}`);
 	}
 
 	private handleTransportClose(): void {
@@ -401,4 +746,10 @@ export class McpClient {
 	private disposeTransportListeners(): void {
 		for (const dispose of this.disposers.splice(0)) dispose();
 	}
+}
+
+function subscriptionIdOf(params: unknown): JsonRpcId | undefined {
+	const meta = isObject(params) && isObject(params._meta) ? params._meta : undefined;
+	const id = meta?.[META_SUBSCRIPTION_ID];
+	return typeof id === "string" || typeof id === "number" ? normalizeOwnRequestId(id) : undefined;
 }

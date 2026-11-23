@@ -1,6 +1,6 @@
 import { type JsonRpcMessage, McpConnectionClosedError } from "../protocol/jsonrpc.ts";
 import { JsonRpcLineReader } from "./lines.ts";
-import { type McpTransport, TransportEvents } from "./transport.ts";
+import { type McpModernTransportSupport, type McpTransport, TransportEvents } from "./transport.ts";
 
 const DEFAULT_CLOSE_TIMEOUT_MS = 2_000;
 
@@ -36,6 +36,7 @@ export interface PipeTransportOptions {
  * error first.
  */
 export class PipeTransport extends TransportEvents implements McpTransport {
+	readonly modernProtocol: McpModernTransportSupport = { headers: false };
 	readonly options: Readonly<PipeTransportOptions>;
 	private readonly lines: JsonRpcLineReader;
 	private pipe: McpPipe | undefined;
