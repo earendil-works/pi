@@ -6,6 +6,10 @@
 
 - Added `compat.supportsStrictMode` for `google-generative-ai` and `google-vertex` models in `models.json`, so Gemini 3+ models served under IDs without the version can use strict tools ([#12321](https://github.com/earendil-works/pi/issues/12321))
 
+### Changed
+
+- Changed the default Mistral model from `devstral-medium-latest` to `mistral-medium-latest`, because Mistral retired Devstral and the model catalog no longer lists it
+
 ### Fixed
 
 - Fixed sessions with very many entries after the last compaction (about 120k or more) failing to load with `RangeError: Maximum call stack size exceeded` when building the context ([#12154](https://github.com/earendil-works/pi/issues/12154))
@@ -16,6 +20,7 @@
 - Fixed the `AuthStorage` coalesced-reload test failing intermittently on systems with coarse file timestamps ([#12190](https://github.com/earendil-works/pi/issues/12190))
 - Fixed the `thinkingLevelMap` reference in the models.json schema and docs suggesting pi does not support the `xhigh` and `max` thinking levels; it now says they are opt-in and only offered when mapped, and the model guide explains how to map thinking levels ([#12281](https://github.com/earendil-works/pi/issues/12281))
 - Fixed Mermaid diagrams wider than the terminal falling back to their source without explanation; a note now says how many columns the diagram needs ([#12324](https://github.com/earendil-works/pi/issues/12324))
+- Fixed copies on Wayland silently failing when `wl-copy` guessed a non-text MIME type from the copied text, for example `application/x-ruby` for text starting with `def`, which clipboard managers such as Klipper discard; pi now copies as `text/plain` ([#12446](https://github.com/earendil-works/pi/pull/12446) by [@ttempaa](https://github.com/ttempaa))
 
 ## [1.6.0] - 2026-11-20
 

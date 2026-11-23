@@ -1096,37 +1096,58 @@ describe("openai-codex streaming", () => {
 		expect(requestBodies[1]?.input).toEqual([userItem]);
 	});
 
-	// Regression test for https://github.com/earendil-works/pi/issues/12269
-	it("sends thinking level changes as configuration_update items with a fixed request effort", async () => {
-		const token = mockToken();
+	// Regressions for #12269 (cache preservation) and #12361 (request-level starting effort).
+	it("reconstructs the initial request effort and emits only level changes", async () => {
 		const requestBodies = captureSSERequestBodies();
 		const model = buildCodexModel("gpt-6.2-sol", { supportsMidConvoEffort: true });
-		const firstMessages: Context["messages"] = [{ role: "user", content: "Say hello", timestamp: 1 }];
-
-		const first = await streamOpenAICodexResponses(model, normalizeContext({ messages: firstMessages }), {
-			apiKey: token,
-			transport: "sse",
-			reasoningEffort: "low",
-		}).result();
-		const second = await streamOpenAICodexResponses(
-			model,
-			normalizeContext({ messages: [...firstMessages, first, { role: "user", content: "Again", timestamp: 2 }] }),
-			{ apiKey: token, transport: "sse", reasoningEffort: "high" },
-		).result();
-
-		expect(first.providerThinkingLevel).toBe("low");
-		expect(second.providerThinkingLevel).toBe("high");
-		expect(requestBodies.map((body) => body?.reasoning)).toEqual([
-			{ effort: "medium", summary: "auto" },
-			{ effort: "medium", summary: "auto" },
-		]);
+		const messages: Context["messages"] = [];
+		for (const reasoningEffort of ["high", "high", "low", "low"] as const) {
+			messages.push({ role: "user", content: "Again", timestamp: 1 });
+			const reply = await streamOpenAICodexResponses(model, normalizeContext({ messages }), {
+				apiKey: mockToken(),
+				transport: "sse",
+				reasoningEffort,
+			}).result();
+			expect(reply.providerThinkingLevel).toBe(reasoningEffort);
+			messages.push(reply);
+		}
+		expect(requestBodies.map((body) => body?.reasoning)).toEqual(Array(4).fill({ effort: "high", summary: "auto" }));
 		expect(requestBodies.map((body) => summarizeInput(body))).toEqual([
-			["user", "configuration_update:low"],
-			["user", "configuration_update:low", "assistant", "user", "configuration_update:high"],
+			["user"],
+			["user", "assistant", "user"],
+			["user", "assistant", "user", "assistant", "user", "configuration_update:low"],
+			["user", "assistant", "user", "assistant", "user", "configuration_update:low", "assistant", "user"],
 		]);
 	});
 
-	it("sends the off level, an omitted reasoning option, as a configuration_update item", async () => {
+	it("uses only retained replies from the requested model to establish the baseline", async () => {
+		const requestBodies = captureSSERequestBodies();
+		const model = buildCodexModel("gpt-6-sol", { supportsMidConvoEffort: true });
+		const other = buildCodexModel("gpt-6-luna", { supportsMidConvoEffort: true });
+		const user = { role: "user", content: "Again", timestamp: 1 } as const;
+		const options = { apiKey: mockToken(), transport: "sse" } as const;
+		const first = await streamOpenAICodexResponses(other, normalizeContext({ messages: [user] }), {
+			...options,
+			reasoningEffort: "low",
+		}).result();
+		const history = [user, first, user];
+		const second = await streamOpenAICodexResponses(model, normalizeContext({ messages: history }), {
+			...options,
+			reasoningEffort: "high",
+		}).result();
+		// Resume from serialized history, then simulate compaction dropping both replies.
+		for (const messages of [JSON.parse(JSON.stringify([...history, second, user])), [user]]) {
+			await streamOpenAICodexResponses(model, normalizeContext({ messages }), {
+				...options,
+				reasoningEffort: "low",
+			}).result();
+		}
+		expect(requestBodies.map((body) => body?.reasoning)).toEqual(
+			["low", "high", "high", "low"].map((effort) => ({ effort, summary: "auto" })),
+		);
+	});
+
+	it("sends the off level, an omitted reasoning option, as the request baseline", async () => {
 		const token = mockToken();
 		const requestBodies = captureSSERequestBodies();
 		const model = buildCodexModel("gpt-6-sol", { supportsMidConvoEffort: true }, { off: "none" });
@@ -1138,8 +1159,8 @@ describe("openai-codex streaming", () => {
 		).result();
 
 		expect(result.providerThinkingLevel).toBe("none");
-		expect(requestBodies[0]?.reasoning).toEqual({ effort: "medium", summary: "auto" });
-		expect(summarizeInput(requestBodies[0])).toEqual(["user", "configuration_update:none"]);
+		expect(requestBodies[0]?.reasoning).toEqual({ effort: "none", summary: "auto" });
+		expect(summarizeInput(requestBodies[0])).toEqual(["user"]);
 	});
 
 	it("sends thinking levels as reasoning.effort without supportsMidConvoEffort", async () => {
@@ -2519,15 +2540,15 @@ describe("openai-codex streaming", () => {
 		}
 
 		expect(sentBodies.map((body) => body.reasoning)).toEqual([
-			{ effort: "medium", summary: "auto" },
-			{ effort: "medium", summary: "auto" },
-			{ effort: "medium", summary: "auto" },
+			{ effort: "low", summary: "auto" },
+			{ effort: "low", summary: "auto" },
+			{ effort: "low", summary: "auto" },
 		]);
 		expect(sentBodies.map((body) => body.previous_response_id)).toEqual([undefined, "resp_1", "resp_2"]);
 		expect(sentBodies.map((body) => summarizeInput(body as Record<string, unknown>))).toEqual([
-			["user", "configuration_update:low"],
+			["user"],
 			["user", "configuration_update:high"],
-			["user", "configuration_update:high"],
+			["user"],
 		]);
 		expect(getOpenAICodexWebSocketDebugStats(sessionId)).toMatchObject({ fullContextRequests: 1, deltaRequests: 2 });
 	});
