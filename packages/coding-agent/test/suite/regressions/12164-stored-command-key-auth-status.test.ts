@@ -19,14 +19,14 @@ describe("issue #12164 stored command key auth status", () => {
 		harness = undefined;
 	});
 
-	it("reports a stored key whose command fails as not configured", async () => {
+	it("reports a stored key whose command fails as stored but not configured", async () => {
 		harness = await createHarness({ withConfiguredAuth: false, modelsJson: providersWithoutKeys });
 		const runtime = harness.session.modelRuntime;
 		await harness.authStorage.modify("failing-command", async () => ({ type: "api_key", key: "!exit 1" }));
 		await harness.authStorage.modify("working-command", async () => ({ type: "api_key", key: "!echo key" }));
 		await runtime.refresh({ allowNetwork: false });
 
-		expect(runtime.getProviderAuthStatus("failing-command")).toEqual({ configured: false });
+		expect(runtime.getProviderAuthStatus("failing-command")).toEqual({ configured: false, source: "stored" });
 		expect(runtime.hasConfiguredAuth("failing-command")).toBe(false);
 		expect(runtime.getProviderAuthStatus("working-command")).toEqual({ configured: true, source: "stored" });
 		expect(runtime.hasConfiguredAuth("working-command")).toBe(true);

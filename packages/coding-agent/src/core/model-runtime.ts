@@ -655,11 +655,10 @@ export class ModelRuntime implements Models {
 	getProviderAuthStatus(providerId: string): AuthStatus {
 		if (this.credentials.hasRuntimeApiKey(providerId)) return { configured: true, source: "runtime" };
 		// A stored credential owns the provider, so it is configured only when it resolves. A failing
-		// `!command` key leaves it unresolved, and requests fail with it (#12164).
+		// `!command` key leaves it unresolved, and requests fail with it (#12164). The source still says
+		// that a stored credential exists, so the UI can tell this apart from no credential at all.
 		if (this.snapshot.storedProviders.has(providerId)) {
-			return this.snapshot.configuredProviders.has(providerId)
-				? { configured: true, source: "stored" }
-				: { configured: false };
+			return { configured: this.snapshot.configuredProviders.has(providerId), source: "stored" };
 		}
 		const configured = configuredRequestAuthStatus(
 			this.config.getProvider(providerId),

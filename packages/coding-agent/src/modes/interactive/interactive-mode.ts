@@ -6065,6 +6065,7 @@ export class InteractiveMode {
 						source: authStatus.label ?? authStatus.source,
 					}
 				: undefined;
+			const unresolved = !authStatus.configured && authStatus.source === "stored";
 			const subscription = provider.auth.oauth?.isSubscription === true;
 			if ((!authType || authType === "oauth") && provider.auth.oauth) {
 				options.push({
@@ -6073,6 +6074,7 @@ export class InteractiveMode {
 					authType: "oauth",
 					method: provider.auth.oauth,
 					status,
+					unresolved,
 					subscription,
 				});
 			}
@@ -6083,6 +6085,7 @@ export class InteractiveMode {
 					authType: "api_key",
 					method: provider.auth.apiKey,
 					status,
+					unresolved,
 					subscription,
 				});
 			}

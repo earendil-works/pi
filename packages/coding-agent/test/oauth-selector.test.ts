@@ -1,7 +1,10 @@
 import { setKeybindings, type TUI } from "@earendil-works/pi-tui";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
-import { OAuthSelectorComponent } from "../src/modes/interactive/components/oauth-selector.ts";
+import {
+	type AuthSelectorProvider,
+	OAuthSelectorComponent,
+} from "../src/modes/interactive/components/oauth-selector.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 import { initTheme, theme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
@@ -82,6 +85,36 @@ describe("OAuthSelectorComponent", () => {
 		const output = stripAnsi(selector.render(120).join("\n"));
 		expect(output).toContain("not configured");
 		expect(output).not.toContain("✓ configured");
+	});
+
+	// Regression test for #12164.
+	it("shows a stored credential that does not resolve", () => {
+		const getLoginProviderOptions = (
+			InteractiveMode as unknown as {
+				prototype: {
+					getLoginProviderOptions(this: object): AuthSelectorProvider[];
+				};
+			}
+		).prototype.getLoginProviderOptions;
+		const fakeThis = {
+			session: {
+				modelRuntime: {
+					getProviders: () => [{ id: "deepseek", name: "DeepSeek", auth: { apiKey: { name: "API key" } } }],
+					getProviderAuthStatus: () => ({ configured: false, source: "stored" }),
+					isUsingOAuth: () => false,
+				},
+			},
+		};
+		const selector = new OAuthSelectorComponent(
+			"login",
+			getLoginProviderOptions.call(fakeThis),
+			() => {},
+			() => {},
+		);
+
+		const output = stripAnsi(selector.render(120).join("\n"));
+		expect(output).toContain("DeepSeek • stored key did not resolve");
+		expect(output).not.toContain("not configured");
 	});
 
 	it("shows OAuth auth distinctly in the API key selector", () => {

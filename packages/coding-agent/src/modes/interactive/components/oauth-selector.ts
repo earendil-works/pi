@@ -21,6 +21,8 @@ export type AuthSelectorProvider = {
 	authType: "oauth" | "api_key";
 	method?: ApiKeyAuth | OAuthAuth;
 	status?: AuthCheck;
+	/** A stored credential exists but does not resolve to a key, for example a failing `!command`. Only without `status`. */
+	unresolved?: boolean;
 	/**
 	 * Whether the provider's OAuth sign-in is backed by a subscription. `false` labels it as an account;
 	 * unset keeps the "subscription" label.
@@ -38,7 +40,11 @@ export function formatAuthSelectorProviderType(
 
 /** Themed suffix describing whether and how a login option is configured, for example " ✓ configured". */
 export function formatAuthSelectorProviderStatus(provider: AuthSelectorProvider): string {
-	if (!provider.status) return theme.fg("muted", " • not configured");
+	if (!provider.status) {
+		return provider.unresolved
+			? theme.fg("muted", " • ") + theme.fg("error", "stored key did not resolve")
+			: theme.fg("muted", " • not configured");
+	}
 	if (provider.status.type !== provider.authType) {
 		const label = `${formatAuthSelectorProviderType(provider.status.type, provider.subscription)} configured`;
 		return theme.fg("muted", " • ") + theme.fg("warning", label);
