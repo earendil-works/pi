@@ -30,16 +30,11 @@ import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { getIdentityHeaders } from "../utils/identity.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
-import { getDeclaredTools, normalizeContext, resolveTranscript, resolveTranscriptTools } from "../utils/transcript.ts";
+import { getDeclaredTools, normalizeContext, resolveTranscript } from "../utils/transcript.ts";
 import { uuidv7 } from "../utils/uuid.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
-import {
-	convertResponsesMessages,
-	convertResponsesTools,
-	getResponsesToolSupport,
-	processResponsesStream,
-} from "./openai-responses-shared.ts";
+import { convertResponsesMessages, prepareResponsesPrompt, processResponsesStream } from "./openai-responses-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 
 // ============================================================================
@@ -61,8 +56,6 @@ const WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE = "websocket_connection_limit_reac
 const PREVIOUS_RESPONSE_NOT_FOUND_CODE = "previous_response_not_found";
 // The Responses API rejects max_output_tokens below 16: https://github.com/earendil-works/pi/issues/6265
 const MIN_OUTPUT_TOKENS = 16;
-// Fixed reasoning.effort while configuration_update items carry the thinking level.
-const CONFIGURATION_UPDATE_REQUEST_EFFORT = "medium";
 
 const CODEX_RESPONSE_STATUSES = new Set<CodexResponseStatus>([
 	"completed",
@@ -577,31 +570,30 @@ function buildRequestBody(
 	const supportsOpenAIGrammarTools = model.compat?.supportsOpenAIGrammarTools ?? false;
 	const supportsAdditionalTools = model.compat?.supportsAdditionalTools ?? false;
 	const supportsToolSearch = model.compat?.supportsToolSearch ?? false;
-	const transcriptTools = resolveTranscriptTools(
-		context.messages,
-		getResponsesToolSupport({
+	// Keep the system prompt in a leading developer item, not top-level instructions: GPT-6.2+
+	// appends instructions after input, preventing cache reuse across turns (#12273).
+	// On the Codex backend, medium + a high update can reason less than request-level high (#12361).
+	// Pin the initial effort instead. The public OpenAI Responses API was not implicated.
+	const { input, requestTools, requestEffortBaseline } = prepareResponsesPrompt(
+		model,
+		context,
+		CODEX_TOOL_CALL_PROVIDERS,
+		{
+			grammarToolInputProperties,
 			supportsMidConvoSystemMessages: model.compat?.supportsMidConvoSystemMessages ?? false,
 			supportsAdditionalTools,
 			supportsToolSearch,
-		}),
+			toolOptions: { strict: null, supportsStrictMode, supportsOpenAIGrammarTools },
+			configurationUpdateEffort,
+			effortBaseline: "initial",
+		},
 	);
-	// The system prompt goes into a leading developer item, not top-level `instructions`, as in Codex.
-	// From GPT-6.2 on, the backend appends `instructions` after `input`, so every new turn changed the
-	// prompt before the system prompt and it was never served from the prompt cache (#12273).
-	const messages = convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, {
-		grammarToolInputProperties,
-		supportsMidConvoSystemMessages: model.compat?.supportsMidConvoSystemMessages ?? false,
-		supportsAdditionalTools,
-		supportsToolSearch,
-		toolOptions: { strict: null, supportsStrictMode, supportsOpenAIGrammarTools },
-		configurationUpdateEffort,
-	});
 
 	const body: RequestBody = {
 		model: model.id,
 		store: false,
 		stream: true,
-		input: messages,
+		input,
 		text: { verbosity: options?.textVerbosity || "low" },
 		include: ["reasoning.encrypted_content"],
 		prompt_cache_key: cacheSessionId,
@@ -621,19 +613,10 @@ function buildRequestBody(
 		body.service_tier = options.serviceTier;
 	}
 
-	if (transcriptTools.requestTools.length > 0) {
-		body.tools = convertResponsesTools(transcriptTools.requestTools, {
-			strict: null,
-			supportsStrictMode,
-			supportsOpenAIGrammarTools,
-		});
-	}
+	if (requestTools.length > 0) body.tools = requestTools;
 
 	if (options?.reasoningEffort !== undefined) {
-		const effort =
-			configurationUpdateEffort === undefined
-				? resolveReasoningEffort(model, options.reasoningEffort)
-				: CONFIGURATION_UPDATE_REQUEST_EFFORT;
+		const effort = requestEffortBaseline ?? resolveReasoningEffort(model, options.reasoningEffort);
 		if (effort !== null) {
 			body.reasoning = {
 				effort,

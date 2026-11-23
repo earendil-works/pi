@@ -7,16 +7,11 @@ import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { getIdentityHeaders } from "../utils/identity.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
-import { getDeclaredTools, resolveTranscript, resolveTranscriptTools } from "../utils/transcript.ts";
+import { getDeclaredTools, resolveTranscript } from "../utils/transcript.ts";
 import { type AzureEndpointOptions, resolveAzureConfig, resolveDeploymentName } from "./azure-openai-config.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
-import {
-	convertResponsesMessages,
-	convertResponsesTools,
-	getResponsesToolSupport,
-	processResponsesStream,
-} from "./openai-responses-shared.ts";
+import { prepareResponsesPrompt, processResponsesStream } from "./openai-responses-shared.ts";
 import { buildBaseOptions, resolveSamplingParams } from "./simple-options.ts";
 
 const AZURE_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode", "azure"]);
@@ -182,15 +177,7 @@ function buildParams(
 ) {
 	const supportsAdditionalTools = model.compat?.supportsAdditionalTools ?? false;
 	const supportsToolSearch = model.compat?.supportsToolSearch ?? false;
-	const transcriptTools = resolveTranscriptTools(
-		context.messages,
-		getResponsesToolSupport({
-			supportsMidConvoSystemMessages: model.compat?.supportsMidConvoSystemMessages ?? false,
-			supportsAdditionalTools,
-			supportsToolSearch,
-		}),
-	);
-	const messages = convertResponsesMessages(model, context, AZURE_TOOL_CALL_PROVIDERS, {
+	const { input, requestTools } = prepareResponsesPrompt(model, context, AZURE_TOOL_CALL_PROVIDERS, {
 		grammarToolInputProperties,
 		supportsMidConvoSystemMessages: model.compat?.supportsMidConvoSystemMessages ?? false,
 		supportsAdditionalTools,
@@ -203,7 +190,7 @@ function buildParams(
 
 	const params: ResponseCreateParamsStreaming = {
 		model: deploymentName,
-		input: messages,
+		input,
 		stream: true,
 		prompt_cache_key:
 			model.compat?.promptCacheKeyMode === "disabled" ? undefined : clampOpenAIPromptCacheKey(options?.sessionId),
@@ -218,12 +205,7 @@ function buildParams(
 		params.temperature = options?.temperature;
 	}
 
-	if (transcriptTools.requestTools.length > 0) {
-		params.tools = convertResponsesTools(transcriptTools.requestTools, {
-			supportsStrictMode: model.compat?.supportsStrictMode ?? true,
-			supportsOpenAIGrammarTools: model.compat?.supportsOpenAIGrammarTools ?? false,
-		});
-	}
+	if (requestTools.length > 0) params.tools = requestTools;
 	if (options?.toolChoice !== undefined) {
 		params.tool_choice = options.toolChoice;
 	}
