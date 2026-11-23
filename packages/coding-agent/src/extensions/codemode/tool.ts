@@ -82,7 +82,7 @@ const TEXT_OUTPUT_SCHEMA: CodemodeJsonSchema = { type: "string" };
 
 export const codemodeSchema = Type.Object({
 	code: Type.String({
-		description: "Raw JavaScript source.",
+		description: "Raw JavaScript or TypeScript source.",
 	}),
 });
 
@@ -120,7 +120,7 @@ export const codemodeToolSystemPromptContribution = {
 /** The reference for scripts: globals, tool results, `store()`, the `models` API, and limits. */
 export const CODEMODE_DOCS_PATH = join(getDocsPath(), "codemode.md");
 
-const DESCRIPTION_INTRO = `Run JavaScript that calls other tools. The input is raw JavaScript (not JSON, no code fence), run as an async function body in a QuickJS sandbox: top-level \`await\` and \`return\` work. No Node, file system, network, or timers.
+const DESCRIPTION_INTRO = `Run JavaScript or TypeScript that calls other tools. The input is raw source (not JSON, no code fence), run as an async function body in a djs sandbox: top-level \`await\` and \`return\` work. No Node, file system, network, or timers.
 - \`await tools.<name>({ ...args })\` resolves to a string, or an object if the tool's declaration says so, and rejects with an Error on failure. A tool whose declaration returns an object resolves on failure too when it returned that object; check its fields. Calls still running when the script ends are cancelled.
 - Optional first line: \`// @options: {"max_output_tokens": 10000, "timeout_ms": 60000}\``;
 
@@ -435,7 +435,7 @@ export function createCodemodeToolDefinition(
 		reachesTools: (input) => getScriptReach(input.code),
 		// Capable models write the script as raw text instead of a JSON-escaped string.
 		constrainedSampling: { type: "grammar", variants: { openai_lark: CODEMODE_SOURCE_GRAMMAR } },
-		// The sandbox (worker, QuickJS wasm) loads on the first call, not at startup.
+		// The sandbox (djs wasm) loads on the first call, not at startup.
 		execute: async (toolCallId, params, signal, onUpdate, ctx) =>
 			(await loadCodemodeExecutor()).executeCodemode(toolCallId, params, signal, onUpdate, ctx, options),
 		...codemodeRenderers,

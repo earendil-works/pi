@@ -177,7 +177,7 @@ Codemode is useful without MCP: scripts can run several tool calls in parallel, 
 
 ### How codemode works
 
-Scripts run in a QuickJS sandbox and reach the other tools through `tools.<name>(args)`. [Codemode](codemode.md) describes the script API, how tools are listed and found, the `store()` and `models` globals, and the limits.
+Scripts (JavaScript or TypeScript) run in a djs sandbox and reach the other tools through `tools.<name>(args)`. [Codemode](codemode.md) describes the script API, how tools are listed and found, the `store()` and `models` globals, and the limits.
 
 ### Tool search
 

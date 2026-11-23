@@ -8,6 +8,6 @@
 	"preview_urls": false,
 	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["CodemodeSandbox"] }],
 	// Optional. The default is 30 seconds of CPU per request; one execution is one request. Keep it above
-	// the time the interrupt budget allows, so scripts fail with a timeout instead of resetting the object.
+	// the time the fuel budget allows, so scripts fail with a timeout instead of resetting the object.
 	"limits": { "cpu_ms": 60000 }
 }

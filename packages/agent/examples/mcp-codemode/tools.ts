@@ -141,7 +141,7 @@ export function createCodemodeTool(
 		name: CODEMODE_TOOL_NAME,
 		label: "Codemode",
 		description: [
-			"Run JavaScript that calls other tools, to chain calls, run them in parallel, or filter large results.",
+			"Run JavaScript or TypeScript that calls other tools, to chain calls, run them in parallel, or filter large results.",
 			"The code is the body of an async function. There is no Node, file system, network, or timers.",
 			"Call tools as `await tools.<name>(args)`. Output with `text(value)` or `console.log()`, or `return` a value.",
 			"Only the output and the return value reach you, not the results of the tool calls.",

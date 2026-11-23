@@ -3,7 +3,7 @@
 //
 //   curl -X POST http://localhost:8787 --data 'const n = await tools.count({ add: 2 }); text("n=" + n); return n'
 import type { CodemodeSandboxDurableObject } from "@earendil-works/pi-codemode/cloudflare";
-// The portable entry has no QuickJS module: the WebAssembly lives only in the sandbox Worker.
+// The portable entry bundles no djs module: the WebAssembly lives only in the sandbox Worker.
 import { type CodemodeTool, RemoteCodemodeSandbox } from "@earendil-works/pi-codemode/portable";
 import { DurableObject } from "cloudflare:workers";
 

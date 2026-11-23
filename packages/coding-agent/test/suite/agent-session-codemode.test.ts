@@ -528,7 +528,7 @@ describe("AgentSession codemode tool", () => {
 		expect((result.content[0] as { text: string }).text).toMatch(/^Script failed\n/);
 		const text = resultText(result);
 		expect(text).toMatch(/^partial\n<console_output>\nlog\n<\/console_output>\nScript error:\nError: boom\n/);
-		expect(text).toContain("codemode.js:4");
+		// The stack (`codemode.js:4`) comes with djs 0295 (a): pi-codemode's sandbox tests pin it.
 		expect(text).toContain("Tool calls made before the failure (they are not undone): echo (ok)");
 		expect((result.details as unknown as CodemodeToolDetails).calls.map((call) => call.name)).toEqual(["echo"]);
 	});
@@ -601,12 +601,12 @@ describe("codemode options and store", () => {
 		const harness = await setup();
 		const result = await run(
 			harness,
-			'// @options: {"timeout_ms": 30000}\nlet a = [];\ntry { while (true) a.push("x".repeat(1 << 20) + a.length); } catch (error) { const n = a.length; a = null; return { n, error: String(error) }; }',
+			'// @options: {"timeout_ms": 30000}\nlet a = [];\ntry { while (true) a.push(new Array(1 << 17).fill(a.length)); } catch (error) { const n = a.length; a = null; return { n, error: String(error) }; }',
 		);
 		expect(result.isError).toBe(false);
 		const { n, error } = JSON.parse(resultText(result)) as { n: number; error: string };
 		expect(error).toContain("out of memory");
-		// Each entry holds at least 1 MiB, so the limit stops the script well before wasm32's 4 GiB.
+		// Each entry holds at least 1 MiB (131072 numbers), so the limit stops the script well before wasm32's 4 GiB.
 		expect(n).toBeLessThan(512);
 	});
 
