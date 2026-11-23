@@ -301,10 +301,11 @@ async function* readPiMessagesEvents(stream: ReadableStream<Uint8Array>): AsyncG
 			const { done, value } = await reader.read();
 			const events = done ? sse.end() : sse.push(value);
 
-			for (const event of events) {
-				const data = event.data.trim();
-				if (data && data !== "[DONE]") {
-					yield JSON.parse(data) as PiMessagesEvent;
+			for (const { data } of events) {
+				const text = data.trim();
+				const event = text && text !== "[DONE]" ? (JSON.parse(text) as PiMessagesEvent | null) : undefined;
+				if (event) {
+					yield event;
 				}
 			}
 

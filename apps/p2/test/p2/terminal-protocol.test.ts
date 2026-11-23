@@ -19,6 +19,23 @@ test("terminal frames read the same at every chunk size", () => {
 	}
 });
 
+test("a frame whose handler threw is not delivered again", () => {
+	const socket = new Socket();
+	const frames: unknown[] = [];
+	let thrown = false;
+	readFrames(socket, (frame) => {
+		frames.push(frame);
+		if (!thrown) {
+			thrown = true;
+			throw new Error("handler failed");
+		}
+	});
+	const first = Buffer.concat([encodeFrame({ n: 1 }), encodeFrame({ n: 2 })]);
+	assert.throws(() => socket.emit("data", first), /handler failed/);
+	socket.emit("data", encodeFrame({ n: 3 }));
+	assert.deepEqual(frames, [{ n: 1 }, { n: 3 }]);
+});
+
 test("a large terminal frame split across many chunks is joined once", (t) => {
 	const payload = new Uint8Array(1024 * 1024).fill(7);
 	const bytes = encodeFrame(payload);

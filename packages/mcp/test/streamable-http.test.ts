@@ -186,6 +186,22 @@ describe("consumeSseStream", () => {
 		expect(sent).toBeLessThan(100);
 	});
 
+	it("rejects a line that exceeds the limit before its line ending arrives", async () => {
+		const encoder = new TextEncoder();
+		let sent = 0;
+		const stream = new ReadableStream<Uint8Array>({
+			pull(controller) {
+				// One data line that never ends.
+				if (sent++ > 1000) controller.close();
+				else controller.enqueue(encoder.encode(sent === 1 ? "data: " : "xxxxxxxxxxxxxxxx"));
+			},
+		});
+		await expect(consumeSseStream(stream, { maxEventBytes: 256, onEvent: () => {} })).rejects.toThrow(
+			"MCP SSE event exceeds 256 bytes",
+		);
+		expect(sent).toBeLessThan(100);
+	});
+
 	// Regression test for #11729: a failed stream must be cancelled, not left open.
 	it("cancels the stream when an event exceeds the limit", async () => {
 		const encoder = new TextEncoder();

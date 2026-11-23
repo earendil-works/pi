@@ -31,19 +31,18 @@ export function attachJsonlLineReader(stream: Readable, onLine: (line: string) =
 		// Only the new text is scanned, so a long line arriving in many chunks is not rescanned per chunk.
 		let start = 0;
 		for (let newlineIndex = text.indexOf("\n"); newlineIndex !== -1; newlineIndex = text.indexOf("\n", start)) {
-			emitLine(buffer + text.slice(start, newlineIndex));
+			const line = buffer + text.slice(start, newlineIndex);
 			buffer = "";
 			start = newlineIndex + 1;
+			emitLine(line);
 		}
 		buffer += text.slice(start);
 	};
 
 	const onEnd = () => {
-		buffer += decoder.end();
-		if (buffer.length > 0) {
-			emitLine(buffer);
-			buffer = "";
-		}
+		const line = buffer + decoder.end();
+		buffer = "";
+		if (line.length > 0) emitLine(line);
 	};
 
 	stream.on("data", onData);

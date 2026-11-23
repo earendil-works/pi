@@ -143,10 +143,14 @@ export function readFrames(socket: Socket, onFrame: (frame: unknown | Uint8Array
 	// Bytes the next frame, or its length header, needs before it can be read.
 	let needed = 4;
 	socket.on("data", (chunk: Buffer) => {
+		if (chunk.length === 0) return;
 		pending.push(chunk);
 		pendingBytes += chunk.length;
 		if (pendingBytes < needed) return;
 		let buffer = pending.length === 1 ? chunk : Buffer.concat(pending, pendingBytes);
+		// Taken out before any frame is delivered, so a throwing `onFrame` cannot have its frames delivered again.
+		pending = [];
+		pendingBytes = 0;
 		needed = 4;
 		while (buffer.length >= 4) {
 			const length = buffer.readUInt32BE(0);

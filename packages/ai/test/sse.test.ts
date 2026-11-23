@@ -36,6 +36,13 @@ describe("SseDecoder", () => {
 		]);
 	});
 
+	it("does not carry an empty event name into the next event", () => {
+		const decoder = new SseDecoder();
+		expect(decoder.push(new TextEncoder().encode("event:\n\ndata: x\n\n"))).toEqual([
+			{ event: null, data: "x", raw: ["data: x"] },
+		]);
+	});
+
 	it("drops comment lines of events without data", () => {
 		const decoder = new SseDecoder();
 		const encoder = new TextEncoder();

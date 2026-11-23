@@ -196,6 +196,23 @@ describe("pi-messages", () => {
 		expect(message.content).toEqual([{ type: "text", text: "Hello", textSignature: undefined }]);
 	});
 
+	// Regression test for #12224: the shared SSE decoder must keep skipping events whose data parses to null.
+	it("skips wire events whose data is null", async () => {
+		const { baseUrl } = await startServer({
+			events: [{ type: "start" }, null, { type: "done", reason: "stop", usage, responseId: "resp_1" }],
+		});
+		const received: unknown[] = [];
+		const message = await streamSimple(createModel(baseUrl), normalizeContext(context), {
+			apiKey: "test-key",
+			onProviderStreamEvent: (event) => {
+				received.push(event);
+			},
+		}).result();
+
+		expect(received).toEqual([{ type: "start" }, { type: "done", reason: "stop", usage, responseId: "resp_1" }]);
+		expect(message.stopReason).toBe("stop");
+	});
+
 	it("appends debug=1 and reports response headers via onResponse", async () => {
 		const { baseUrl, requests } = await startServer({
 			headers: { "x-pi-gateway-upstream-provider": "anthropic" },

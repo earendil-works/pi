@@ -71,6 +71,7 @@ export class SseDecoder {
 
 	private flush(): ServerSentEvent | undefined {
 		if (!this.event && this.data.length === 0) {
+			this.event = null;
 			this.raw = [];
 			return undefined;
 		}
