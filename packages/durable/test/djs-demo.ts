@@ -9,7 +9,7 @@
 import { mkdirSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
-import { DjsCodemode } from "@earendil-works/pi-codemode/djs";
+import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import {
 	defineExtension,
 	defineSignal,
@@ -52,9 +52,9 @@ return [first, slow];
 `;
 
 const setup = chatSetup();
-const djs = await DjsCodemode.load();
+const sandbox = new CodemodeSandbox();
 const crashing = phase === "crash" || phase === "recover";
-addTool(setup.registry, createCodemodeTool({ djs, parkAfterMs: crashing ? 60_000 : 50 }));
+addTool(setup.registry, createCodemodeTool({ sandbox, parkAfterMs: crashing ? 60_000 : 50 }));
 setup.registry.install(
 	defineExtension({
 		name: "github",

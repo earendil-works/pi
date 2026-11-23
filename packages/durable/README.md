@@ -458,10 +458,10 @@ A task that its creator awaits only in memory, and that the creator never resume
 `@earendil-works/pi-durable/codemode` adds a `codemode` tool: the model writes JavaScript or TypeScript that calls the conversation's tools as `await tools.<name>(args)`, in a djs sandbox on the calling thread (`@earendil-works/pi-codemode`). Each call is a nested tool call, and only the script's output reaches the model. The script survives a restart: it resumes where it was, without running its finished calls again.
 
 ```typescript
-import { DjsCodemode } from "@earendil-works/pi-codemode/djs";
+import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import { createCodemodeExtension } from "@earendil-works/pi-durable/codemode";
 
-registry.install(createCodemodeExtension({ djs: await DjsCodemode.load(undefined, { memoryLimitBytes: 256 * 1024 * 1024 }) }));
+registry.install(createCodemodeExtension({ sandbox: new CodemodeSandbox({ memoryLimitBytes: 256 * 1024 * 1024 }) }));
 ```
 
 The extension also adds a `codemode` prompt section listing the tools scripts can call, as TypeScript declarations within a token budget; scripts find the others with `searchTools()`, `describeTool()`, and `describeNamespace()`. Group tools into namespaces by declaring one on the extension that brings them, `namespace: { name, description, instructions? }`, for example one extension per MCP server: the section lists every selected extension's namespace with its one-line description (also before it has tools), and `describeNamespace()` returns its instructions. The result reads like the coding agent's: a header, the script's output, and on failure the calls already made; text past `max_output_tokens` is cut, with the full text in a temp file. Scripts also get `models.*`: the model catalog, `models.classify()`, and `models.generateImages()`, which run as nested calls of internal tools (`models: false` turns them off). Closing the Harness while a script runs (for example when shutting down) is not an outcome: the next process resumes the script. A failed nested call rejects in the script with its error text, unless the tool declares a schema and returned its own value with the error: `tools.bash` resolves with `{ output, exitCode, ... }` also for a nonzero exit, so scripts check `exitCode`. `store(key, value)` and `load(key)` keep JSON values per conversation; a fork sees them as they were at its entry.

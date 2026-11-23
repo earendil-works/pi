@@ -26,13 +26,13 @@ import { ownedSlice } from "@earendil-works/chord/delta";
 import { copyJson, type JsonValue } from "@earendil-works/chord/json";
 import { toCodemodeIdentifier } from "@earendil-works/pi-codemode/declarations";
 import type {
+	CodemodeHostCall,
+	CodemodeOutcome,
+	CodemodeResult,
+	CodemodeRun,
 	CodemodeSaved,
 	CodemodeScope,
-	CodemodeVm,
-	CodemodeVmCall,
-	DjsCodemode,
-} from "@earendil-works/pi-codemode/djs";
-import type { CodemodeOutcome, CodemodeResult } from "@earendil-works/pi-codemode/portable";
+} from "@earendil-works/pi-codemode/portable";
 import { parseCodemodeSource } from "@earendil-works/pi-codemode/source";
 import { defineDoc } from "../documents.ts";
 import type { ExecutionEnv } from "../env/index.ts";
@@ -50,9 +50,9 @@ import {
 	declaredScope,
 	discover,
 	errorResult,
-	type HostCall,
 	OUTPUT_LIMITS,
 	outcomeOf,
+	type ScriptCall,
 	type Start,
 } from "./codemode.ts";
 import {
@@ -96,7 +96,6 @@ const DEADLINE = new Error("The script's deadline passed");
 /** One execution of the code mode tool. */
 export class CodemodeCall {
 	private readonly options: CodemodeToolOptions;
-	private readonly djs: DjsCodemode;
 	private readonly api: ToolExecutionApi;
 	private readonly context: Context;
 	private start!: Start;
@@ -119,9 +118,8 @@ export class CodemodeCall {
 	/** Images `models.generateImages()` returned, to notice a script that never shows them. */
 	private generatedImages = 0;
 
-	constructor(options: CodemodeToolOptions, djs: DjsCodemode, api: ToolExecutionApi, context: Context) {
+	constructor(options: CodemodeToolOptions, api: ToolExecutionApi, context: Context) {
 		this.options = options;
-		this.djs = djs;
 		this.api = api;
 		this.context = context;
 	}
@@ -187,9 +185,10 @@ export class CodemodeCall {
 		}
 		const { saved } = found.saved;
 		for (const row of found.saved.rows ?? []) this.rows.set(row.id, row);
-		let vm: CodemodeVm;
+		const { sandbox } = this.options;
+		let vm: CodemodeRun;
 		try {
-			vm = saved === undefined ? this.djs.begin(code, this.scope()) : this.djs.resume(this.scope(), saved);
+			vm = saved === undefined ? await sandbox.begin(code, this.scope()) : await sandbox.resume(this.scope(), saved);
 		} catch (error) {
 			return this.decide(errorResult(`The script cannot resume: ${errorMessage(error)}`));
 		}
@@ -224,7 +223,7 @@ export class CodemodeCall {
 	 * Run the VM until the script ends or parks: answer its calls, apply their results, save before calls launch.
 	 * `launched`: the newest call id a saved dump made.
 	 */
-	private async drive(vm: CodemodeVm, fresh: boolean, launched: number): Promise<ToolExecutionResult | ToolPark> {
+	private async drive(vm: CodemodeRun, fresh: boolean, launched: number): Promise<ToolExecutionResult | ToolPark> {
 		const { context } = this;
 		const parkAfter = this.options.parkAfterMs ?? DEFAULT_PARK_AFTER_MS;
 		const stop = new AbortController();
@@ -327,7 +326,7 @@ export class CodemodeCall {
 	 * Store the idle run as its dump. When it cannot be dumped, the script goes on in memory only: it is marked unsaved,
 	 * never parks, and a restart ends it as interrupted instead of resuming an older dump.
 	 */
-	private async save(vm: CodemodeVm): Promise<void> {
+	private async save(vm: CodemodeRun): Promise<void> {
 		if (this.unsaved) return;
 		let saved: CodemodeSaved | undefined;
 		try {
@@ -346,7 +345,7 @@ export class CodemodeCall {
 	}
 
 	/** Answer one call: a tool's by its nested call, found by key after a restart; a global's here. */
-	private answer(call: CodemodeVmCall): void {
+	private answer(call: CodemodeHostCall): void {
 		this.answering.add(call.id);
 		const host = this.hostCall(call);
 		if (host.target === "tool") this.started(host);
@@ -366,7 +365,7 @@ export class CodemodeCall {
 	}
 
 	/** The VM's call by identity: `tools.<jsName>` and `<specifier>#<tool name>` are tools, model calls their tools. */
-	private hostCall(call: CodemodeVmCall): HostCall {
+	private hostCall(call: CodemodeHostCall): ScriptCall {
 		if (call.identity.startsWith("tools.")) {
 			const jsName = call.identity.slice("tools.".length);
 			const tool = this.start.tools.find((candidate) => candidate.jsName === jsName);
@@ -393,7 +392,7 @@ export class CodemodeCall {
 	}
 
 	/** A tool call as a nested call, keyed by the VM's call id; model calls wait for one of their slots. */
-	private async callTool(call: HostCall): Promise<CodemodeOutcome> {
+	private async callTool(call: ScriptCall): Promise<CodemodeOutcome> {
 		const model = call.name.startsWith(CODEMODE_INTERNAL_PREFIX);
 		if (model) {
 			await this.modelSlot();
@@ -422,7 +421,7 @@ export class CodemodeCall {
 	}
 
 	/** `searchTools()` and friends from the start, the model catalog, or a host global. */
-	private async callGlobal(call: HostCall): Promise<CodemodeOutcome> {
+	private async callGlobal(call: ScriptCall): Promise<CodemodeOutcome> {
 		try {
 			if ((DISCOVERY_GLOBALS as readonly string[]).includes(call.name)) {
 				return { ok: true, value: discover(this.start, call) };
@@ -452,7 +451,7 @@ export class CodemodeCall {
 	}
 
 	/** The script made a tool call: its row appears, running, also while it waits for a model slot. */
-	private started(call: HostCall): void {
+	private started(call: ScriptCall): void {
 		if (this.rows.has(call.id)) return;
 		const args = call.args === undefined ? "" : (JSON.stringify(call.args) ?? "");
 		const name = call.name.startsWith(CODEMODE_INTERNAL_PREFIX)

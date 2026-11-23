@@ -1,6 +1,6 @@
 /**
- * Code mode's engine: a script runs as a djs host-driven run, and everything it can reach outside the language is a
- * host function named by a stable identity. No code of pi's runs in the VM, so none is in a dump.
+ * One run of a script, driven by the host: a djs host-driven run, where everything the script can reach outside the
+ * language is a host function named by a stable identity. No code of pi's runs in the VM, so none is in a dump.
  *
  * - Async host functions are the calls the host answers: `tools.<jsName>` for tools, a global's own name
  *   (`searchTools`, `models.classify`), and `<specifier>#<export>` for what scripts import. The VM never calls them:
@@ -9,14 +9,14 @@
  *   (`ScriptIo`): their checks and messages live on the host.
  *
  * `save()` writes an idle run as {@link CodemodeSaved}: the djs dump (a plain Script that names host functions only by
- * identity, with the script's body inlined) plus the output and store writes so far. `resume()` continues it in a new
- * VM, any time later, given the same scope. Nothing replays. Hosts that do not persist runs never call `save()`.
+ * identity, with the script's body inlined) plus the output and store writes so far. `resumeRun()` continues it in a
+ * new VM, any time later, given the same scope. Nothing replays. Hosts that do not persist runs never call `save()`.
  */
 import { type Run, RunExit, Sandbox, type SandboxError } from "@earendil-works/djs";
 import { ScriptIo, type StoreWrite } from "./host-io.ts";
 import { missingMemberMessage, scriptError, TOOLS_MISSING_HINT } from "./script-values.ts";
 import type { CodemodeError, CodemodeOutcome, CodemodeOutputItem, CodemodeResult } from "./types.ts";
-import { type CodemodeWasmModule, loadDjsWasm } from "./wasm.ts";
+import type { CodemodeWasmModule } from "./wasm.ts";
 
 /** What a script can reach. A resumed run gets the scope it started with. */
 export interface CodemodeScope {
@@ -33,8 +33,8 @@ export interface CodemodeScope {
 	modules?: readonly { specifier: string; exports: readonly { name: string; identity: string }[] }[];
 }
 
-/** An async call the run waits for. */
-export interface CodemodeVmCall {
+/** A call the script made that the host answers (`CodemodeRun.settle`). */
+export interface CodemodeHostCall {
 	/** The VM's call id: settle with it; stable across save and resume. */
 	id: number;
 	/** The host function's identity (`tools.read`, `searchTools`, `@mcp/github#search_issues`). */
@@ -59,16 +59,16 @@ export type CodemodeSaved = {
 	fuelUsed?: number;
 };
 
-/** One run of a script. */
-export interface CodemodeVm {
-	/** The async calls the run waits for, oldest first. */
-	readonly calls: readonly CodemodeVmCall[];
+/** One run of a script, driven by the host: `CodemodeSandbox.begin()` and `resume()` make it. */
+export interface CodemodeRun {
+	/** The calls the run waits for, oldest first. */
+	readonly calls: readonly CodemodeHostCall[];
 	/** The outcome, once the script ended. Its `calls` is empty: the host records calls. */
 	readonly result: CodemodeResult | undefined;
 	/** The output so far. */
 	readonly output: readonly CodemodeOutputItem[];
 	/** Once the script ended: the calls still open then, which the run no longer waits for. The host cancels them. */
-	readonly dropped: readonly CodemodeVmCall[];
+	readonly dropped: readonly CodemodeHostCall[];
 	/** Answer call `id`; applied at the next `advance()`. */
 	settle(id: number, outcome: CodemodeOutcome): void;
 	/**
@@ -81,47 +81,35 @@ export interface CodemodeVm {
 	dispose(): void;
 }
 
-export interface DjsCodemodeOptions {
-	/** The compiled djs module, from {@link loadDjsWasm} (or Wrangler's `.wasm` import on Cloudflare). */
+/** The VM and limits of a run. */
+export interface RunEngine {
+	/** The compiled djs module. */
 	module: CodemodeWasmModule;
-	/** Heap cap of each VM. Past it the script fails with `InternalError: out of memory`. Default: none (4 GiB). */
+	/** Heap cap of the VM. Past it the script fails with `InternalError: out of memory`. Default: none (4 GiB). */
 	memoryLimitBytes?: number;
-	/** Fuel one run may use across its steps before it fails with `kind: "timeout"`. Default: none. */
+	/** Fuel the run may use across its steps (and saves) before it fails with `kind: "timeout"`. Default: none. */
 	fuel?: number;
 	/** Fuel one step (`advance`) may use before the run fails with `kind: "timeout"`. Default: none. */
 	stepFuel?: number;
-	/** How long a step computes before it lets the event loop run. Default 10 ms. */
-	yieldMs?: number;
 }
 
-/** The engine: makes runs of scripts and resumes saved ones, each in its own VM. */
-export class DjsCodemode {
-	readonly options: DjsCodemodeOptions;
+/** A new run of `code` (JavaScript or TypeScript, an async function body); `advance()` runs it. */
+export function beginRun(engine: RunEngine, code: string, scope: CodemodeScope): CodemodeRun {
+	return new DjsRun(engine, scope, { kind: "begin", code });
+}
 
-	constructor(options: DjsCodemodeOptions) {
-		this.options = options;
+/** Continues a saved run. The dump carries the script; `scope` must give every identity it refers to. */
+export function resumeRun(engine: RunEngine, scope: CodemodeScope, saved: CodemodeSaved): CodemodeRun {
+	if (saved.v !== 1 || saved.engine !== "djs") {
+		throw new Error(`cannot resume a run saved as ${String(saved.engine)} format ${String(saved.v)}`);
 	}
-
-	/** An engine on the djs module at `location` (default: the one pi-codemode ships with). */
-	static async load(location?: string | URL, options: Omit<DjsCodemodeOptions, "module"> = {}): Promise<DjsCodemode> {
-		return new DjsCodemode({ ...options, module: await loadDjsWasm(location) });
-	}
-
-	/** A new run of `code` (JavaScript or TypeScript, an async function body); `advance()` runs it. */
-	begin(code: string, scope: CodemodeScope): CodemodeVm {
-		return new DjsVm(this.options, scope, { kind: "begin", code });
-	}
-
-	/** Continues a saved run. The dump carries the script; `scope` must give every identity it refers to. */
-	resume(scope: CodemodeScope, saved: CodemodeSaved): CodemodeVm {
-		if (saved.v !== 1 || saved.engine !== "djs") {
-			throw new Error(`cannot resume a run saved as ${String(saved.engine)} format ${String(saved.v)}`);
-		}
-		return new DjsVm(this.options, scope, { kind: "resume", saved });
-	}
+	return new DjsRun(engine, scope, { kind: "resume", saved });
 }
 
 const FILENAME = "codemode.js";
+
+/** How long a step computes before it lets the event loop run. */
+const YIELD_MS = 10;
 
 const STALL_MESSAGE =
 	"The script is waiting on a promise that can never settle: no tool call is pending, and timers do not exist here.";
@@ -134,14 +122,14 @@ const STALL_ERROR: CodemodeError = {
 
 type Start = { kind: "begin"; code: string } | { kind: "resume"; saved: CodemodeSaved };
 
-class DjsVm implements CodemodeVm {
+class DjsRun implements CodemodeRun {
 	result: CodemodeResult | undefined;
-	private readonly options: DjsCodemodeOptions;
+	private readonly options: RunEngine;
 	private readonly sandbox: Sandbox;
 	private readonly run: Run | undefined;
 	private readonly io: ScriptIo;
 
-	constructor(options: DjsCodemodeOptions, scope: CodemodeScope, start: Start) {
+	constructor(options: RunEngine, scope: CodemodeScope, start: Start) {
 		this.options = options;
 		const saved = start.kind === "resume" ? start.saved : undefined;
 		this.io = new ScriptIo(scope.store, saved?.output ?? [], saved?.writes ?? []);
@@ -160,7 +148,7 @@ class DjsVm implements CodemodeVm {
 		this.check();
 	}
 
-	get calls(): CodemodeVmCall[] {
+	get calls(): CodemodeHostCall[] {
 		if (this.result !== undefined || this.run === undefined) return [];
 		return this.run.calls.map((call) => ({ id: call.id, identity: call.fn, args: call.args }));
 	}
@@ -169,7 +157,7 @@ class DjsVm implements CodemodeVm {
 		return this.io.output;
 	}
 
-	get dropped(): CodemodeVmCall[] {
+	get dropped(): CodemodeHostCall[] {
 		if (this.result === undefined || this.run === undefined) return [];
 		return this.run.dropped.map((call) => ({ id: call.id, identity: call.fn, args: call.args }));
 	}
@@ -184,7 +172,7 @@ class DjsVm implements CodemodeVm {
 		if (this.result !== undefined || this.run === undefined) return;
 		try {
 			await this.run.advance({
-				yieldMs: this.options.yieldMs ?? 10,
+				yieldMs: YIELD_MS,
 				...(this.options.stepFuel === undefined ? {} : { fuel: this.options.stepFuel }),
 				...(signal === undefined ? {} : { signal }),
 			});
@@ -240,7 +228,7 @@ class DjsVm implements CodemodeVm {
 }
 
 /** The djs sandbox of one run: pi's capabilities as host functions by identity, and the limits. */
-function sandboxOptions(options: DjsCodemodeOptions, scope: CodemodeScope, io: ScriptIo) {
+function sandboxOptions(options: RunEngine, scope: CodemodeScope, io: ScriptIo) {
 	const asyncFunctions: Record<string, () => void> = {};
 	const globals: Record<string, string> = {
 		text: "text",
@@ -346,7 +334,7 @@ function threwError(error: SandboxError): CodemodeError {
 }
 
 /** A step that failed outside the script's control: out of fuel, out of memory, or a trap. */
-function stepError(error: SandboxError, options: DjsCodemodeOptions): CodemodeError {
+function stepError(error: SandboxError, options: RunEngine): CodemodeError {
 	switch (error.kind) {
 		case "fuel":
 			return {

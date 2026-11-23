@@ -3,14 +3,6 @@
  * `node:*` modules, so this entry works in Cloudflare Workers, Durable Objects, and browsers: `CodemodeSandbox` runs
  * the VM on the calling thread, `RemoteCodemodeSandbox` in another isolate.
  */
-export {
-	type CodemodeSaved,
-	type CodemodeScope,
-	type CodemodeVm,
-	type CodemodeVmCall,
-	DjsCodemode,
-	type DjsCodemodeOptions,
-} from "./djs.ts";
 export { toCodemodeIdentifier } from "./identifier.ts";
 export {
 	MAX_OUTPUT_CHARS,
@@ -18,6 +10,7 @@ export {
 	MAX_STORE_TOTAL_CHARS,
 	MAX_STORE_VALUE_CHARS,
 } from "./limits.ts";
+export type { CodemodeHostCall, CodemodeRun, CodemodeSaved, CodemodeScope } from "./run.ts";
 export { CodemodeSandboxBase } from "./runtime/execution.ts";
 export { CodemodeSandbox } from "./runtime/host.ts";
 export {

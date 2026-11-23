@@ -13,8 +13,7 @@ import type { Context } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord/json";
 import type { TextContent } from "@earendil-works/pi-ai";
 import { toCodemodeIdentifier } from "@earendil-works/pi-codemode/declarations";
-import type { DjsCodemode } from "@earendil-works/pi-codemode/djs";
-import type { CodemodeOutcome } from "@earendil-works/pi-codemode/portable";
+import type { CodemodeOutcome, CodemodeSandbox } from "@earendil-works/pi-codemode/portable";
 import { CODEMODE_SOURCE_GRAMMAR } from "@earendil-works/pi-codemode/source";
 import { obj, type Static, str } from "@earendil-works/pi-schema";
 import { defineDoc } from "../documents.ts";
@@ -130,7 +129,7 @@ export type CodemodeToolDetails = {
 };
 
 /** A call a script made, by target: a tool (also a model call, as its internal tool) or a global. */
-export type HostCall = { id: number; target: "tool" | "global"; name: string; args: unknown };
+export type ScriptCall = { id: number; target: "tool" | "global"; name: string; args: unknown };
 
 /** A function scripts call as a top-level global. */
 export type CodemodeGlobal = {
@@ -145,10 +144,10 @@ export type CodemodeToolInput = Static<typeof codemodeSchema>;
 
 export type CodemodeToolOptions = {
 	/**
-	 * Runs the scripts on the calling thread. An idle script is saved as a dump, and parks while its calls take longer
-	 * than `parkAfterMs`.
+	 * Runs the scripts on the calling thread. An idle script is saved, and parks while its calls take longer than
+	 * `parkAfterMs`.
 	 */
-	readonly djs: DjsCodemode;
+	readonly sandbox: CodemodeSandbox;
 	/** How long the script waits on its calls before it parks. Default 1000. */
 	readonly parkAfterMs?: number;
 	/** Estimated tokens the tool declarations in the `codemode` section may use. Default 3000. */
@@ -177,7 +176,7 @@ export function createCodemodeTool(options: CodemodeToolOptions): ToolRegistrati
 		constrainedSampling: { type: "grammar", variants: { openai_lark: CODEMODE_SOURCE_GRAMMAR } },
 		callers: ["model"],
 		replay: "safe",
-		execute: (args, api, context) => new CodemodeCall(options, options.djs, api, context).execute(args.code),
+		execute: (args, api, context) => new CodemodeCall(options, api, context).execute(args.code),
 	});
 }
 
@@ -271,7 +270,7 @@ export async function declaredScope(
 }
 
 /** `searchTools()`, `describeTool()`, `describeNamespace()`: answered from the start data. */
-export function discover(start: Start, call: Pick<HostCall, "name" | "args">): JsonValue | undefined {
+export function discover(start: Start, call: Pick<ScriptCall, "name" | "args">): JsonValue | undefined {
 	const args = Array.isArray(call.args) ? call.args : [];
 	const { namespaces } = start;
 	const tools = start.tools.filter((tool) => tool.hidden !== true);

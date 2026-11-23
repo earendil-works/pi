@@ -34,7 +34,7 @@
  * Failure: if the RPC call rejects (the remote isolate crashed, hit its CPU limit, or was redeployed) or returns
  * without a terminal message, the execution fails with `kind: "sandbox"`.
  */
-import { type CodemodeVm, type CodemodeVmCall, DjsCodemode } from "../djs.ts";
+import { beginRun, type CodemodeHostCall, type CodemodeRun } from "../run.ts";
 import type {
 	CodemodeError,
 	CodemodeOutcome,
@@ -62,7 +62,7 @@ export interface CodemodeRemoteRequest {
 /** What the remote sends to the client. `done` carries the result without its output, which came before it. */
 export type CodemodeRemoteMessage =
 	| { type: "output"; items: CodemodeOutputItem[] }
-	| { type: "call"; call: CodemodeVmCall }
+	| { type: "call"; call: CodemodeHostCall }
 	| { type: "done"; result: CodemodeResult }
 	| { type: "failure"; error: CodemodeError };
 
@@ -130,14 +130,14 @@ export async function serveCodemodeRemote(
 	const maxMemory = options.maxMemoryLimitBytes;
 	const memoryLimitBytes =
 		requested === undefined ? maxMemory : maxMemory === undefined ? requested : Math.min(requested, maxMemory);
-	let vm: CodemodeVm;
+	let vm: CodemodeRun;
 	try {
-		const engine = new DjsCodemode({
+		const engine = {
 			module: await options.wasm,
 			fuel: Math.min(request.fuel ?? maxFuel, maxFuel),
 			...(memoryLimitBytes === undefined ? {} : { memoryLimitBytes }),
-		});
-		vm = engine.begin(request.job.code, request.job.scope);
+		};
+		vm = beginRun(engine, request.job.code, request.job.scope);
 	} catch (error) {
 		await exchange([{ type: "failure", error: { kind: "sandbox", message: errorMessage(error) } }]).catch(() => null);
 		return;
@@ -192,7 +192,7 @@ function remoteRunner(remote: () => CodemodeRemote, fuel: number | undefined): V
 						reply({ type: "stop" });
 						return;
 					}
-					let call: CodemodeVmCall | undefined;
+					let call: CodemodeHostCall | undefined;
 					for (const message of messages) {
 						if (message.type === "output") output.push(...message.items);
 						else if (message.type === "call") call = message.call;

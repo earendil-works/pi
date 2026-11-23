@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
-import { DjsCodemode } from "@earendil-works/pi-codemode/djs";
+import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import { num, obj, str } from "@earendil-works/pi-schema";
 import { createCodemodeTool } from "../src/codemode/codemode.ts";
 import { createRegistry, defineExtension, defineTool, Harness } from "../src/index.ts";
@@ -48,9 +48,9 @@ async function run(mode: "codemode" | "plain", shape: Shape, n: number): Promise
 		const faux = fauxProvider();
 		const models = createModels();
 		models.setProvider(faux.provider);
-		const djs = await DjsCodemode.load(undefined, { memoryLimitBytes: 256 * 1024 * 1024 });
+		const sandbox = new CodemodeSandbox({ memoryLimitBytes: 256 * 1024 * 1024 });
 		const registry = createRegistry();
-		registry.install(defineExtension({ name: "bench", tools: [echo, plain, createCodemodeTool({ djs })] }));
+		registry.install(defineExtension({ name: "bench", tools: [echo, plain, createCodemodeTool({ sandbox })] }));
 		const code =
 			shape === "sequential"
 				? `for (let i = 0; i < ${n}; i++) await tools.echo({ i }); return "done";`

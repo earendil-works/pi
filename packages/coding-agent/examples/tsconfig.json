@@ -112,9 +112,6 @@
 			"@earendil-works/pi-codemode/declarations": [
 				"../../../packages/codemode/src/declarations.ts"
 			],
-			"@earendil-works/pi-codemode/djs": [
-				"../../../packages/codemode/src/djs.ts"
-			],
 			"@earendil-works/pi-codemode/portable": [
 				"../../../packages/codemode/src/portable.ts"
 			],

@@ -291,24 +291,25 @@ const codemodeTool: AgentTool = {
 
 ## Saved runs
 
-`DjsCodemode` (`@earendil-works/pi-codemode/djs`, also in the main entry) is the engine under the sandboxes, for hosts that drive a script themselves and keep it across restarts, as pi's durable code mode does. `begin(code, scope)` starts a run; the host advances it, answers its calls by id, and while it waits can save it as JSON and continue it later in another process:
+For hosts that answer a script's calls themselves and keep it across restarts, as pi's durable code mode does, `CodemodeSandbox` also hands out the run: `begin(code, scope)` starts a `CodemodeRun` that reaches what `scope` declares (not the sandbox's tools and globals). The host advances it, answers its calls by id, and while it waits can save it as JSON and continue it later, in another process:
 
 ```ts
-const djs = await DjsCodemode.load(undefined, { memoryLimitBytes: 256 * 1024 * 1024 });
-const vm = djs.begin(code, { tools: [{ name: "read", jsName: "read", description: "" }], globals: [], store: {} });
-await vm.advance(signal);
-for (const call of vm.calls) queue.add(call); // { id, identity: "tools.read", args }
-const saved = vm.save(); // { v: 1, engine: "djs", dump, output, writes, fuelUsed }
-vm.dispose();
+const sandbox = new CodemodeSandbox({ memoryLimitBytes: 256 * 1024 * 1024 });
+const scope: CodemodeScope = { tools: [{ name: "read", jsName: "read", description: "" }], globals: [], store: {} };
+const run = await sandbox.begin(code, scope);
+await run.advance(signal);
+for (const call of run.calls) queue.add(call); // CodemodeHostCall: { id, identity: "tools.read", args }
+const saved = run.save(); // CodemodeSaved: { v: 1, engine: "djs", dump, output, writes, fuelUsed }
+run.dispose();
 
 // Later, anywhere:
-const resumed = djs.resume(scope, saved);
+const resumed = await sandbox.resume(scope, saved);
 resumed.settle(callId, { ok: true, value: "file text" });
 await resumed.advance(signal);
 if (resumed.result !== undefined) use(resumed.result);
 ```
 
-Calls are named by identity: `tools.<jsName>` for tools, a global's name, `<specifier>#<export>` for what a script imports from `scope.modules`. A run that ends lists the calls it no longer awaits in `dropped`; the host cancels them. `save()` throws when the run holds a value a dump cannot write (a `WeakMap`, a `Proxy`). Nothing replays: the dump is the script's state.
+Calls are named by identity: `tools.<jsName>` for tools, a global's name, `<specifier>#<export>` for what a script imports from `scope.modules`. A run that ends lists the calls it no longer awaits in `dropped`; the host cancels them. `save()` throws when the run holds a value a dump cannot write (a `WeakMap`, a `Proxy`). `fuel` counts across saves; `stepFuel` bounds each step. Nothing replays: the saved run is the script's state. `execute()` is built on the same runs.
 
 ## Results
 

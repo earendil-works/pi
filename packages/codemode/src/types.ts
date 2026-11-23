@@ -138,6 +138,8 @@ export interface CodemodeSandboxOptions extends CodemodeSandboxBaseOptions {
 	 * loop on an Apple M-series laptop. Default: none; `timeoutMs` bounds the script.
 	 */
 	fuel?: number;
+	/** Fuel one step of a script may use (its computing between two waits) before it fails with `kind: "timeout"`. */
+	stepFuel?: number;
 }
 
 /**

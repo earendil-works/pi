@@ -1,6 +1,6 @@
 import { withTelemetry } from "@earendil-works/chord/context";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
-import { DjsCodemode } from "@earendil-works/pi-codemode/djs";
+import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import {
 	CompactionTask,
 	defineTask,
@@ -943,11 +943,11 @@ describe("Durable telemetry", () => {
 		const setup = chatSetup();
 		const telemetry = new InMemoryTelemetryContext();
 		const storage = new ControlledStorage();
-		const djs = await DjsCodemode.load(undefined, { memoryLimitBytes: 64 * 1024 * 1024 });
+		const sandbox = new CodemodeSandbox({ memoryLimitBytes: 64 * 1024 * 1024 });
 		let runs = 0;
 		let recover = false;
 		const reached = Promise.withResolvers<void>();
-		addTool(setup.registry, createCodemodeTool({ djs, models: false }));
+		addTool(setup.registry, createCodemodeTool({ sandbox, models: false }));
 		addTool(
 			setup.registry,
 			defineTool({

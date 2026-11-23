@@ -3,8 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Context } from "@earendil-works/chord/context";
 import { type AssistantMessage, fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
-import { loadDjsWasm } from "@earendil-works/pi-codemode";
-import { DjsCodemode } from "@earendil-works/pi-codemode/djs";
+import { CodemodeSandbox, loadDjsWasm } from "@earendil-works/pi-codemode";
 import {
 	defineExtension,
 	defineSignal,
@@ -71,20 +70,23 @@ async function sqlitePath(): Promise<string> {
  */
 function codemodeChat(globals: CodemodeGlobal[] = [], parkAfterMs?: number) {
 	const setup = chatSetup();
-	const djs = new DjsCodemode({ module: wasm, memoryLimitBytes: 64 * 1024 * 1024, stepFuel: 2_000_000_000 });
+	const sandbox = new CodemodeSandbox({ wasm, memoryLimitBytes: 64 * 1024 * 1024, stepFuel: 2_000_000_000 });
 	// VMs started: a new run or a resumed dump.
 	const vm = { starts: 0 };
-	const begin = djs.begin.bind(djs);
-	const resume = djs.resume.bind(djs);
-	djs.begin = (code, scope) => {
+	const begin = sandbox.begin.bind(sandbox);
+	const resume = sandbox.resume.bind(sandbox);
+	sandbox.begin = (code, scope) => {
 		vm.starts++;
 		return begin(code, scope);
 	};
-	djs.resume = (scope, saved) => {
+	sandbox.resume = (scope, saved) => {
 		vm.starts++;
 		return resume(scope, saved);
 	};
-	addTool(setup.registry, createCodemodeTool({ djs, globals, ...(parkAfterMs === undefined ? {} : { parkAfterMs }) }));
+	addTool(
+		setup.registry,
+		createCodemodeTool({ sandbox, globals, ...(parkAfterMs === undefined ? {} : { parkAfterMs }) }),
+	);
 	const echo = new Map<string, number>();
 	addTool(
 		setup.registry,
@@ -148,7 +150,7 @@ function codemodeChat(globals: CodemodeGlobal[] = [], parkAfterMs?: number) {
 			return { output: [{ type: "text", text: `slow ${args.id}` }] };
 		}),
 	);
-	return { setup, djs, vm, echo, holds, pauses, slows };
+	return { setup, sandbox, vm, echo, holds, pauses, slows };
 }
 
 async function scriptTask(harness: Harness): Promise<TaskId> {
@@ -755,9 +757,9 @@ describe("durable code mode output and tool search", () => {
 
 const Answer = defineSignal({ name: "test.answer", version: 1, schema: obj({ text: str() }) });
 /** A chat whose code mode parks after 20 ms, with `echo` (recording its texts) and `ask` (parks on `Answer`). */
-function setupWith(djs: DjsCodemode, echoes: string[]): ChatSetup {
+function setupWith(sandbox: CodemodeSandbox, echoes: string[]): ChatSetup {
 	const setup = chatSetup();
-	addTool(setup.registry, createCodemodeTool({ djs, parkAfterMs: 20 }));
+	addTool(setup.registry, createCodemodeTool({ sandbox, parkAfterMs: 20 }));
 	addTool(
 		setup.registry,
 		defineTool({
@@ -788,8 +790,8 @@ function setupWith(djs: DjsCodemode, echoes: string[]): ChatSetup {
 	return setup;
 }
 
-/** A new engine on the module loaded once, as another process would make. */
-const djs = () => new DjsCodemode({ module: wasm });
+/** A new sandbox on the module loaded once, as another process would make. */
+const newSandbox = () => new CodemodeSandbox({ wasm });
 
 async function nested(harness: Harness, name: string) {
 	const tasks = (await harness.commit((tx) => tx.scanTasks({ kind: ToolTask.definition.name }, 100), context)).items;
@@ -810,7 +812,7 @@ describe("durable code mode saves and parks", () => {
 		const code = `const a = await tools.echo({ text: "one" });
 const answer = await tools.ask({});
 return [a, answer, await tools.echo({ text: "two" })];`;
-		let setup = setupWith(djs(), echoes);
+		let setup = setupWith(newSandbox(), echoes);
 		setup.faux.setResponses([
 			fauxAssistantMessage([fauxToolCall("codemode", { code }, { id: "s1" })], { stopReason: "toolUse" }),
 		]);
@@ -830,8 +832,8 @@ return [a, answer, await tools.echo({ text: "two" })];`;
 		expect(saved?.saved?.dump).not.toContain("$djs.source");
 		await opened.harness.close(context);
 
-		// Another process: a new djs module instance, the same database.
-		setup = setupWith(djs(), echoes);
+		// Another process: a new sandbox, the same database.
+		setup = setupWith(newSandbox(), echoes);
 		setup.faux.setResponses([fauxAssistantMessage([fauxText("done")])]);
 		opened = await openChat(await openNodeSqliteStorage(path), setup);
 		opened.harness.resume();
@@ -847,7 +849,7 @@ return [a, answer, await tools.echo({ text: "two" })];`;
 	});
 
 	it("parks again on the calls still parked after one of them ends", async () => {
-		const setup = setupWith(djs(), []);
+		const setup = setupWith(newSandbox(), []);
 		const code = `const [a, b] = await Promise.all([tools.ask({}), tools.ask({})]); return a + "+" + b;`;
 		setup.faux.setResponses([
 			fauxAssistantMessage([fauxToolCall("codemode", { code }, { id: "s1" })], { stopReason: "toolUse" }),
@@ -879,7 +881,7 @@ return [a, answer, await tools.echo({ text: "two" })];`;
 	});
 
 	it("runs a script that holds what a dump cannot write in memory only, and never parks it", async () => {
-		const setup = setupWith(djs(), []);
+		const setup = setupWith(newSandbox(), []);
 		const code = `const seen = new WeakMap(); seen.set({}, 1); await tools.echo({ text: "x" }); return "kept " + typeof seen;`;
 		setup.faux.setResponses([
 			fauxAssistantMessage([fauxToolCall("codemode", { code }, { id: "s1" })], { stopReason: "toolUse" }),

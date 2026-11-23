@@ -1,14 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { type CodemodeScope, DjsCodemode } from "../src/djs.ts";
-import { loadDjsWasm } from "../src/wasm.ts";
+import { CodemodeSandbox, type CodemodeScope, loadDjsWasm } from "../src/index.ts";
 
-const module = await loadDjsWasm();
+const wasm = await loadDjsWasm();
 const scope: CodemodeScope = { tools: [{ name: "ask", jsName: "ask", description: "" }], globals: [], store: {} };
 
-describe("host-driven runs", () => {
+describe("runs the host drives", () => {
 	it("passes values as JSON, ends the script at exit(), and bounds a runaway step", async () => {
-		const djs = new DjsCodemode({ module, stepFuel: 100_000_000 });
-		const vm = djs.begin(
+		const sandbox = new CodemodeSandbox({ wasm, stepFuel: 100_000_000 });
+		const vm = await sandbox.begin(
 			`const r = await tools.ask({ when: new Date(0), m: new Map([[1, 2]]) });
 			try { exit(); } catch { store("caught", true); }
 			text("unreachable");`,
@@ -21,7 +20,7 @@ describe("host-driven runs", () => {
 		expect(vm.result).toMatchObject({ ok: true, value: undefined, output: [], storeWrites: { set: {}, delete: [] } });
 		vm.dispose();
 
-		const spin = djs.begin("while (true) {}", scope);
+		const spin = await sandbox.begin("while (true) {}", scope);
 		let ticks = 0;
 		const timer = setInterval(() => ticks++, 1);
 		await spin.advance();
@@ -33,7 +32,7 @@ describe("host-driven runs", () => {
 	});
 
 	it("lists the calls a script no longer awaits when it ends", async () => {
-		const vm = new DjsCodemode({ module }).begin("tools.ask({}); return 'early';", scope);
+		const vm = await new CodemodeSandbox({ wasm }).begin("tools.ask({}); return 'early';", scope);
 		await vm.advance();
 		expect(vm.result).toMatchObject({ ok: true, value: "early" });
 		expect(vm.dropped).toMatchObject([{ identity: "tools.ask", args: [{}] }]);
@@ -41,8 +40,8 @@ describe("host-driven runs", () => {
 	});
 
 	it("continues a saved run in another engine, with its output, store writes, and fuel", async () => {
-		const djs = new DjsCodemode({ module, fuel: 1_000_000_000 });
-		const vm = djs.begin(
+		const sandbox = new CodemodeSandbox({ wasm, fuel: 1_000_000_000 });
+		const vm = await sandbox.begin(
 			`text("before"); store("k", 1); for (let i = 0; i < 1e5; i++); return await tools.ask({});`,
 			scope,
 		);
@@ -56,7 +55,7 @@ describe("host-driven runs", () => {
 			writes: [["k", "1"]],
 		});
 		expect(saved.fuelUsed).toBeGreaterThan(0);
-		const resumed = new DjsCodemode({ module, fuel: saved.fuelUsed! }).resume(scope, saved);
+		const resumed = await new CodemodeSandbox({ wasm, fuel: saved.fuelUsed! }).resume(scope, saved);
 		resumed.settle(resumed.calls[0]!.id, { ok: true, value: "answer" });
 		await resumed.advance();
 		// The fuel used before the save counts: the resumed run has none left.
@@ -76,8 +75,8 @@ describe("imports from virtual modules", () => {
 	};
 
 	it("binds named and namespace imports by identity, across a save and a resume", async () => {
-		const djs = new DjsCodemode({ module });
-		const vm = djs.begin(
+		const sandbox = new CodemodeSandbox({ wasm });
+		const vm = await sandbox.begin(
 			`import { search_issues as search } from "@mcp/github";
 			import * as gh from "@mcp/github";
 			const a = await search({ q: "a" });
@@ -90,7 +89,7 @@ describe("imports from virtual modules", () => {
 		await vm.advance();
 		const saved = vm.save();
 		vm.dispose();
-		const resumed = djs.resume(modules, saved);
+		const resumed = await sandbox.resume(modules, saved);
 		expect(resumed.calls).toMatchObject([{ identity: "@mcp/github#search-issues", args: [{ q: "b" }] }]);
 		resumed.settle(resumed.calls[0]!.id, { ok: true, value: "B" });
 		await resumed.advance();
@@ -99,7 +98,7 @@ describe("imports from virtual modules", () => {
 	});
 
 	it("reports an unknown module as a syntax error", async () => {
-		const vm = new DjsCodemode({ module }).begin(`import { x } from "@mcp/nope"; return x;`, modules);
+		const vm = await new CodemodeSandbox({ wasm }).begin(`import { x } from "@mcp/nope"; return x;`, modules);
 		await vm.advance();
 		expect(vm.result).toMatchObject({ ok: false, error: { kind: "script", name: "SyntaxError" } });
 		expect(JSON.stringify(vm.result)).toContain("@mcp/nope");

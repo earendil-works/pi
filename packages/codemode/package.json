@@ -30,11 +30,6 @@
 			"source": "./src/cloudflare.ts",
 			"types": "./dist/cloudflare.d.ts",
 			"import": "./dist/cloudflare.js"
-		},
-		"./djs": {
-			"source": "./src/djs.ts",
-			"types": "./dist/djs.d.ts",
-			"import": "./dist/djs.js"
 		}
 	},
 	"files": [

@@ -4938,10 +4938,10 @@ any more (section 2.2).
 
 ### 7.6 Code mode
 
-`@earendil-works/pi-durable/codemode` provides the `codemode` tool (`createCodemodeExtension({ djs })`):
+`@earendil-works/pi-durable/codemode` provides the `codemode` tool (`createCodemodeExtension({ sandbox })`):
 `callers: ["model"]`, `replay: "safe"`. Its argument is a script (JavaScript or
-TypeScript), run as a djs host-driven run of pi-codemode's `DjsCodemode` on the
-calling thread. The script calls the agent's
+TypeScript), run with pi-codemode's `sandbox.begin()` (a djs run the tool drives)
+on the calling thread. The script calls the agent's
 `callable` tools as `tools.<name>(args)`; each call is a nested call with key
 `c<id>`, the VM's own number for the call. As in the coding agent, a tool that
 declares `structuredOutputSchema` resolves with its `structuredOutput`, also on an

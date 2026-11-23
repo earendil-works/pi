@@ -11,7 +11,7 @@ import {
 	fauxToolCall,
 	type MutableModels,
 } from "@earendil-works/pi-ai";
-import { DjsCodemode } from "@earendil-works/pi-codemode/djs";
+import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import { MemoryStorage, ToolResultEntry, UsageDoc } from "@earendil-works/pi-durable";
 import { describe, expect, it } from "vitest";
 import { createCodemodeExtension } from "../src/codemode/codemode.ts";
@@ -20,8 +20,6 @@ import { NodeExecutionEnv } from "../src/env/node.ts";
 import { allEntries, chatSetup, openChat } from "./chat-support.ts";
 import { context } from "./session-support.ts";
 import { deferred } from "./task-support.ts";
-
-const djs = await DjsCodemode.load();
 
 const COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 const USAGE = {
@@ -119,7 +117,7 @@ function modelsChat() {
 			},
 		}),
 	);
-	setup.registry.install(createCodemodeExtension({ djs }));
+	setup.registry.install(createCodemodeExtension({ sandbox: new CodemodeSandbox() }));
 	return { setup, calls, gate };
 }
 

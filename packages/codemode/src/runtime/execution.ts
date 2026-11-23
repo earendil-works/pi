@@ -11,8 +11,9 @@
  * 3. When the runner resolves (the script ended, or the stop signal fired), calls still running are aborted through
  *    their tool's signal and recorded as `cancelled`: a script's result does not wait for calls it does not await.
  */
-import type { CodemodeScope, CodemodeVm, CodemodeVmCall } from "../djs.ts";
+
 import { toCodemodeIdentifier } from "../identifier.ts";
+import type { CodemodeHostCall, CodemodeRun, CodemodeScope } from "../run.ts";
 import type {
 	CodemodeCall,
 	CodemodeError,
@@ -36,7 +37,7 @@ export interface VmHost {
 	/** Aborted when the execution is over for the host; its reason is the {@link CodemodeError} to end with. */
 	readonly signal: AbortSignal;
 	/** Runs one call of the script. Never rejects: a failed call is an `ok: false` outcome. */
-	call(call: CodemodeVmCall): Promise<CodemodeOutcome>;
+	call(call: CodemodeHostCall): Promise<CodemodeOutcome>;
 }
 
 /** Runs one execution's VM to its outcome (its `calls` are left empty). Never rejects. */
@@ -140,7 +141,7 @@ export class CodemodeSandboxBase {
  * that loops over a tool answering at once (`for (;;) await tools.tick()`) would otherwise chain steps in microtasks
  * and starve the host's timers, its deadline included.
  */
-export async function drive(vm: CodemodeVm, host: VmHost): Promise<CodemodeResult> {
+export async function drive(vm: CodemodeRun, host: VmHost): Promise<CodemodeResult> {
 	let yielded = performance.now();
 	const asked = new Set<number>();
 	const ready = new Map<number, CodemodeOutcome>();
@@ -291,7 +292,7 @@ class Execution {
 		if (!this.stop.signal.aborted) this.stop.abort(error);
 	}
 
-	private async call(call: CodemodeVmCall): Promise<CodemodeOutcome> {
+	private async call(call: CodemodeHostCall): Promise<CodemodeOutcome> {
 		const target = this.targets.get(call.identity);
 		const record: CodemodeCall | undefined =
 			target?.kind === "tool" ? { name: target.tool.name, status: "cancelled", durationMs: 0 } : undefined;
