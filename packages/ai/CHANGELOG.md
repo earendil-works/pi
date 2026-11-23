@@ -19,6 +19,7 @@
 - Fixed GPT-6.2 dropping earlier reasoning as `prefix_mismatch` after the OpenAI Codex WebSocket connection expired, because replayed tool calls lacked the `status: "completed"` the API had returned on them ([#12367](https://github.com/earendil-works/pi/issues/12367))
 - Fixed Google Generative AI and Vertex prompt blocks being reported as retryable missing-finish errors. Block errors now include the reason and safety ratings, while genuinely incomplete streams report the received chunk count ([#12330](https://github.com/earendil-works/pi/issues/12330))
 - Fixed HTTP 400 after tool calls without text on Cloudflare Workers AI's GPT-OSS 120B and 20B, Granite 4.0 H Micro, and Llama 3.3 70B Instruct FP8 Fast. Pi now sends an empty string instead of `null` for those assistant messages ([#12194](https://github.com/earendil-works/pi/issues/12194))
+- Fixed HTTP 400 for non-strict Anthropic tools with Draft 7 tuples by preserving their declared `$schema` ([#12212](https://github.com/earendil-works/pi/issues/12212))
 
 ## [1.6.0] - 2026-11-20
 

@@ -1905,17 +1905,19 @@ function convertTools(
 			properties?: unknown;
 			required?: string[];
 			additionalProperties?: unknown;
+			$schema?: string;
 			$defs?: unknown;
 			definitions?: unknown;
 		};
-		// Keep shared definitions so property $refs still resolve, and additionalProperties so the
-		// model knows whether extra arguments are allowed. Other root keywords stay out:
-		// Anthropic rejects root anyOf/oneOf/allOf with a 400.
+		// Keep the declared dialect so nested keywords (such as Draft 7 tuple items) are read correctly.
+		// Keep shared definitions for property $refs and additionalProperties for extra arguments.
+		// Other root keywords stay out: Anthropic rejects root anyOf/oneOf/allOf with a 400.
 		const legacyInputSchema = {
 			type: "object" as const,
 			properties: schema.properties ?? {},
 			required: schema.required ?? [],
 			...(schema.additionalProperties === undefined ? {} : { additionalProperties: schema.additionalProperties }),
+			...(schema.$schema === undefined ? {} : { $schema: schema.$schema }),
 			...(schema.$defs === undefined ? {} : { $defs: schema.$defs }),
 			...(schema.definitions === undefined ? {} : { definitions: schema.definitions }),
 		};
