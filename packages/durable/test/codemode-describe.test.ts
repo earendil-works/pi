@@ -1,5 +1,5 @@
 import { type AssistantMessage, fauxAssistantMessage, fauxText } from "@earendil-works/pi-ai";
-import { CodemodeSandbox } from "@earendil-works/pi-codemode";
+import { DjsCodemode } from "@earendil-works/pi-codemode/djs";
 import { CODEMODE_SOURCE_GRAMMAR } from "@earendil-works/pi-codemode/source";
 import {
 	defineExtension,
@@ -15,6 +15,8 @@ import { createCodemodeExtension } from "../src/codemode/codemode.ts";
 import { codemodeDescription, codemodeSection, namespacesOf } from "../src/codemode/describe.ts";
 import { allEntries, chatSetup, openChat } from "./chat-support.ts";
 import { context } from "./session-support.ts";
+
+const djs = await DjsCodemode.load();
 
 function tool(name: string, description: string, extra: Partial<ToolRegistration> = {}): ToolRegistration {
 	return defineTool({
@@ -108,7 +110,7 @@ describe("code mode description and section", () => {
 
 	it("renders the section from the conversation's extensions and callable tools into the system prompt", async () => {
 		const setup = chatSetup();
-		setup.registry.install(createCodemodeExtension({ sandbox: new CodemodeSandbox() }));
+		setup.registry.install(createCodemodeExtension({ djs }));
 		setup.registry.install({ name: "tools", tools: [tool("read", "Read a file.")] });
 		setup.registry.install({
 			name: "mcp:github",

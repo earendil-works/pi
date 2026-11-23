@@ -1,11 +1,11 @@
-// Durable code mode on djs, across two processes (prototype).
+// Durable code mode on djs, across two processes.
 //
 //   node --conditions=source test/djs-demo.ts start    # the script runs, calls a tool that parks on a person, parks
 //   node --conditions=source test/djs-demo.ts answer   # a new process: the person answers, the script continues
 //   node --conditions=source test/djs-demo.ts crash    # the script runs; the process dies while a tool runs
 //   node --conditions=source test/djs-demo.ts recover  # a new process: recovery resumes the last dump
 //
-// DJS_WASM (and DJS_DUMP_WASM) name djs-wasm; DEMO_DB the SQLite file (default /tmp/pi-djs-demo/session.sqlite).
+// DJS_WASM may name another djs module; DEMO_DB the SQLite file (default /tmp/pi-djs-demo/session.sqlite).
 import { mkdirSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";

@@ -1,6 +1,6 @@
 import { withTelemetry } from "@earendil-works/chord/context";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
-import { CodemodeSandbox } from "@earendil-works/pi-codemode";
+import { DjsCodemode } from "@earendil-works/pi-codemode/djs";
 import {
 	CompactionTask,
 	defineTask,
@@ -939,15 +939,15 @@ describe("Durable telemetry", () => {
 		await harness.close(context);
 	});
 
-	it("emits replay for a codemode journal result without rerunning its nested tool", async () => {
+	it("emits replay for a nested result a resumed codemode script takes again, without rerunning its tool", async () => {
 		const setup = chatSetup();
 		const telemetry = new InMemoryTelemetryContext();
 		const storage = new ControlledStorage();
-		const sandbox = new CodemodeSandbox({ memoryLimitBytes: 64 * 1024 * 1024 });
+		const djs = await DjsCodemode.load(undefined, { memoryLimitBytes: 64 * 1024 * 1024 });
 		let runs = 0;
 		let recover = false;
 		const reached = Promise.withResolvers<void>();
-		addTool(setup.registry, createCodemodeTool({ sandbox, models: false }));
+		addTool(setup.registry, createCodemodeTool({ djs, models: false }));
 		addTool(
 			setup.registry,
 			defineTool({
@@ -977,7 +977,8 @@ describe("Durable telemetry", () => {
 			}),
 		);
 		setup.faux.setResponses([
-			toolReply("codemode", { code: "await tools.once({}); await tools.hold({});" }),
+			// Both calls are open in the saved dump: the resumed script takes once's result from its nested call again.
+			toolReply("codemode", { code: "await Promise.all([tools.once({}), tools.hold({})]);" }),
 			fauxAssistantMessage("done"),
 		]);
 		let { harness } = await openTracked(storage, setup, telemetry);
@@ -998,7 +999,6 @@ describe("Durable telemetry", () => {
 				.filter((event) => event.name === "pi.durable.replay"),
 		).toContainEqual({ name: "pi.durable.replay", attributes: { "tool.name": "once" } });
 		await harness.close(context);
-		await sandbox.close();
 	});
 
 	it("reports telemetry adapters that throw while a commit is published, and the commit stands", async () => {

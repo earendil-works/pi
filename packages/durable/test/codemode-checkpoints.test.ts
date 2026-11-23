@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { CodemodeJournalDoc, CodemodeRunDoc, CodemodeStoreDoc } from "../src/codemode/codemode.ts";
+import { CodemodeSavedDoc } from "../src/codemode/call.ts";
+import { CodemodeRunDoc, CodemodeStoreDoc } from "../src/codemode/codemode.ts";
 import { NestedCallDoc } from "../src/harness/tool.ts";
 import { context, createConversation, openTestSession } from "./session-support.ts";
 
@@ -8,7 +9,8 @@ describe("built-in document checkpoint policies", () => {
 		const info = { deltasSinceBase: 1000 };
 		expect(NestedCallDoc.definition.checkpointWhen({}, [], info)).toBe(false);
 		expect(CodemodeRunDoc.definition.checkpointWhen({}, [], info)).toBe(false);
-		expect(CodemodeJournalDoc.definition.checkpointWhen({ entries: [] }, [], info)).toBe(false);
+		// The saved dump is replaced whole on every save: its deltas are checkpointed early.
+		expect(CodemodeSavedDoc.definition.checkpointWhen({}, [], { deltasSinceBase: 4 })).toBe(true);
 	});
 
 	it("checkpoints the codemode store after 64 deltas without changing historical reads or forks", async () => {

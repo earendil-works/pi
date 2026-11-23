@@ -4938,9 +4938,10 @@ any more (section 2.2).
 
 ### 7.6 Code mode
 
-`@earendil-works/pi-durable/codemode` provides the `codemode` tool (`createCodemodeExtension({ sandbox })`):
-`callers: ["model"]`, `replay: "safe"`. Its argument is a script, run with
-pi-codemode's deterministic `sandbox.start()`. The script calls the agent's
+`@earendil-works/pi-durable/codemode` provides the `codemode` tool (`createCodemodeExtension({ djs })`):
+`callers: ["model"]`, `replay: "safe"`. Its argument is a script (JavaScript or
+TypeScript), run as a djs host-driven run of pi-codemode's `DjsCodemode` on the
+calling thread. The script calls the agent's
 `callable` tools as `tools.<name>(args)`; each call is a nested call with key
 `c<id>`, the VM's own number for the call. As in the coding agent, a tool that
 declares `structuredOutputSchema` resolves with its `structuredOutput`, also on an
@@ -4966,7 +4967,7 @@ are returned by `describeNamespace()` only; `searchTools()` searches its name,
 description and instructions. Scripts find
 tools with `ALL_TOOLS`, `searchTools(query, { limit?, namespace? })` (BM25),
 `describeTool(name)`, and `describeNamespace(name)`, answered from the start
-data and journaled like other globals. The result's content is a
+data. The result's content is a
 `Script completed`/`Script failed` header with the wall time since
 `startedAt`, the text items (`==> text N/M <==` when there are several), the
 `console` lines in one `<console_output>` block, the returned value, and on
@@ -4982,8 +4983,8 @@ document (`outputDir`) before writing to it, under fixed names (`output.txt`,
 ones.
 
 With `models` (default on), scripts get the model catalog
-(`models.getModelsOfType`, `getAvailableOfType`, `getModelOfType`; journaled
-globals, configured `headers` removed) and `models.classify()` and
+(`models.getModelsOfType`, `getAvailableOfType`, `getModelOfType`; globals,
+configured `headers` removed) and `models.classify()` and
 `models.generateImages()`. Those two are paid effects, so each runs as an
 internal tool of the extension, `pi.codemode.models.classify` and
 `pi.codemode.models.generateImages` (`callers: ["tools"]`): the code mode tool
@@ -5008,57 +5009,40 @@ script runs, UIs show its nested calls from \`pi.live.nestedTools\`.
 Three documents, two of them scoped to the code mode call's task:
 
 - `pi.codemode.run`: `start`, written once before the VM starts (module
-  version, `startedAt`, seed, the VM's fingerprint once reported, the deadline
-  from `timeout_ms`, the tools and globals the script sees, the store
-  snapshot), and `result`, the outcome, written once.
-- `pi.codemode.journal`: `entries`, one per result delivered to the VM, in
-  delivery order: the call's ID, the clock value, `issuedAfter` (the calls the VM
-  had issued after processing it, from its acknowledgment), and for a global its
-  name, arguments, and outcome; and `firstIssued`, the calls the VM had issued
-  after the script's first run.
+  version, `startedAt`, the deadline from `timeout_ms`, the tools, namespaces
+  and globals the script sees, the store snapshot), and `result`, the outcome,
+  written once.
+- `pi.codemode.saved`: `saved`, the script's latest dump (`CodemodeSaved`: the
+  djs dump with the script's body inlined, the output and the `store()` writes
+  so far), or `unsaved` once the script held a value a dump cannot write.
 - `pi.codemode.store`: conversation-scoped, `history: "rewindable"`,
   `fork: "asOf"`; a successful script's `store()` writes are applied per key in
   the transaction that writes its `result`.
 
-Live, a finished call's result is appended to the journal and then delivered as
-result number `entry index + 1`, with the clock at the entry's time; one journal
-commit is in flight at a time and later results join the next. Acknowledged
-counts are recorded with the next journal commit, or at once when the VM has
-processed everything delivered. A call is launched only once the count of the
-drain that made it is committed, so every key an attempt admitted is at most its
-last recorded count.
+No journal and no replay: the script's state is its latest dump. Before a call
+leaves the VM (a call the saved dump did not have yet launches) and before the
+script parks, the idle run is saved. A nested call therefore exists only if a
+saved dump made it, so a run resumed from the dump makes the same calls under
+the same keys and finds them again; a result lives in its nested call's task,
+and a resumed run takes it from there. Results applied after the last save are
+applied again; what the script did with them had no effect outside the VM yet.
+Globals are answered again when their call is open in the dump.
 
-A run the sandbox ends as `aborted` without the call having asked for it (the
-host closed the sandbox, for example before closing the Harness) decides
-nothing: the call stores no outcome and ends with its invocation, so a later
-attempt replays the script.
+While the script waits on calls that are all nested calls for longer than
+`parkAfterMs` (default 1000), the tool parks (`wait` on their tasks, policy
+`any`) and its VM is gone; the wake runs `execute()` again, which resumes the
+dump. A script with a deadline does not park, since a park cannot watch it. A
+script whose state a dump cannot write (a `WeakMap`, a `Proxy`) runs on in
+memory only: it never parks, and a restart ends it as interrupted.
 
-A rerun (`execute()` after recovery) returns a stored `result` without a VM.
-Otherwise it ends the call with a stored error result, admitting no new nested
-call, when the module version differs or the deadline passed; it starts the VM
-from `start` and does the same when the fingerprint the VM reports differs, before
-delivering or reattaching anything. It then delivers the journal in order, each
-entry once the VM has issued its call; a tool's result comes from its nested
-call by key, a global's from the journal after comparing name and arguments.
-Calls the journal does not have are held until the last journaled result is
-acknowledged. Divergence ends the call with a stored error result, then stops the
-VM with an error the script cannot catch: a count that differs from a recorded
-`issuedAfter`, a VM that waits without having issued the next entry's call, a
-key or global called with another name or arguments, or a script that ends while
-processing an entry whose `issuedAfter` was recorded (or during its first run
-with a non-empty journal), or before issuing a call that a later entry answers.
-A live call whose key an earlier attempt admitted with another tool or other
-arguments diverges the same way. Every recorded count, `firstIssued`
-included, must equal the replay's. On a rerun, live calls are held until the
-acknowledgment of the last journaled result, or of the first run when the
-journal is empty; by then the counts have matched, so the script has made every
-call an earlier attempt could have admitted. Every held call's key is checked
-against its stored nested call, whatever the call's target, and only when none
-differs are they launched; later calls are new. Nothing is admitted or delivered once the run
-has its outcome. A script that ends before using every entry
-is otherwise fine: the live run ended there too. A count the replay acknowledges
-but the journal lacks is recorded with the first live commit. Nested calls admitted before the restart may
-resume on their own whatever the rerun decides; the call's cleanup aborts them.
+A rerun (`execute()` after recovery or a wake) returns a stored `result`
+without a VM. Otherwise it ends the call with a stored error result, admitting
+no new nested call, when the module version differs (a call started by the
+QuickJS journal format of version 2 asks the model to run the script again),
+when the deadline passed, or when the script was unsaved; else it resumes the
+dump, or begins the script when none was saved. Closing the Harness while a
+script runs decides nothing: the call stores no outcome, and the next process
+resumes the dump.
 
 ## 8. Built-in tasks
 
