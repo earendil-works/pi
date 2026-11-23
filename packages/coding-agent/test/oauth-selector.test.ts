@@ -120,7 +120,14 @@ describe("OAuthSelectorComponent", () => {
 	it("shows OAuth auth distinctly in the API key selector", () => {
 		const selector = new OAuthSelectorComponent(
 			"login",
-			[{ id: "anthropic", name: "Anthropic", authType: "api_key", status: { type: "oauth", source: "OAuth" } }],
+			[
+				{
+					id: "anthropic",
+					name: "Anthropic",
+					authType: "api_key",
+					status: { kind: "configured", type: "oauth", source: "OAuth" },
+				},
+			],
 			() => {},
 			() => {},
 		);
@@ -132,7 +139,14 @@ describe("OAuthSelectorComponent", () => {
 	it("shows environment API key auth as configured", () => {
 		const selector = new OAuthSelectorComponent(
 			"login",
-			[{ id: "openai", name: "OpenAI", authType: "api_key", status: { type: "api_key", source: "OPENAI_API_KEY" } }],
+			[
+				{
+					id: "openai",
+					name: "OpenAI",
+					authType: "api_key",
+					status: { kind: "configured", type: "api_key", source: "OPENAI_API_KEY" },
+				},
+			],
 			() => {},
 			() => {},
 		);
@@ -150,7 +164,7 @@ describe("OAuthSelectorComponent", () => {
 					id: "local-proxy",
 					name: "local-proxy",
 					authType: "api_key",
-					status: { type: "api_key", source: "key in models.json" },
+					status: { kind: "configured", type: "api_key", source: "key in models.json" },
 				},
 			],
 			() => {},
@@ -168,7 +182,7 @@ describe("OAuthSelectorComponent", () => {
 					id: "op-proxy",
 					name: "op-proxy",
 					authType: "api_key",
-					status: { type: "api_key", source: "command in models.json" },
+					status: { kind: "configured", type: "api_key", source: "command in models.json" },
 				},
 			],
 			() => {},
