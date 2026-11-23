@@ -56,6 +56,9 @@ const bashOutputSchema = Type.Object({
 	output: Type.String({ description: "Combined stdout and stderr, possibly truncated" }),
 	truncated: Type.Boolean(),
 	full_output_path: Type.Optional(Type.String({ description: "Full output, when truncated" })),
+	full_output_error: Type.Optional(
+		Type.String({ description: "Why the full output could not be saved, when truncated and saving failed" }),
+	),
 	exit_code: Type.Number(),
 	wall_time_seconds: Type.Number(),
 });
@@ -432,6 +435,9 @@ export function createShellToolDefinition(
 					truncated: fullOutput.truncated,
 					...(fullOutput.truncated && snapshot.fullOutputFile?.kind === "saved"
 						? { full_output_path: snapshot.fullOutputFile.path }
+						: {}),
+					...(fullOutput.truncated && snapshot.fullOutputFile?.kind === "failed"
+						? { full_output_error: snapshot.fullOutputFile.error }
 						: {}),
 					exit_code: exitCode,
 					wall_time_seconds: wallTimeSeconds,

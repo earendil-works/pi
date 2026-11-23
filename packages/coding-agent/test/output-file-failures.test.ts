@@ -5,7 +5,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Writable } from "node:stream";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const fsMocks = vi.hoisted(() => ({
 	failure: undefined as "write" | "exists" | undefined,
@@ -44,8 +44,21 @@ vi.mock("node:fs", async (importOriginal) => {
 });
 
 import { executeBashWithOperations } from "../src/core/bash-executor.ts";
+import { type BashExecutionMessage, bashExecutionToText } from "../src/core/messages.ts";
 import { type BashOperations, type BashToolOutput, createBashTool } from "../src/core/tools/bash.ts";
+import type { TruncationResult } from "../src/core/tools/truncate.ts";
+import { BashExecutionComponent } from "../src/modes/interactive/components/bash-execution.ts";
+import { initTheme } from "../src/modes/interactive/theme/theme.ts";
+import { stripAnsi } from "../src/utils/ansi.ts";
 import { createOutputFileStream, type OutputFileStream } from "../src/utils/output-files.ts";
+
+/** Minimal TUI for rendering components: a terminal size and no-op scheduling. */
+const tuiStub = {
+	terminal: { columns: 120, rows: 24 },
+	addInterval: () => ({ dispose: () => {} }),
+	removeInterval: () => {},
+	requestRender: () => {},
+} as never;
 
 /** 3000 numbered lines: over the 2000-line limit, so the full output goes to a temp file. */
 const operations: BashOperations = {
@@ -56,6 +69,8 @@ const operations: BashOperations = {
 };
 
 let tempRoot: string;
+
+beforeAll(() => initTheme(undefined, false));
 
 beforeEach(() => {
 	tempRoot = mkdtempSync(join(tmpdir(), "pi-output-file-failures-"));
@@ -136,6 +151,7 @@ describe("bash tool", () => {
 		const structured = result.structuredContent as BashToolOutput;
 		expect(structured.truncated).toBe(true);
 		expect(structured.full_output_path).toBeUndefined();
+		expect(structured.full_output_error).toContain(failure === "open" ? "ENOENT" : "ENOSPC");
 		expect(structured.output).toMatch(/^\[\.\.\. \d+ bytes omitted \.\.\.\]\n\n/);
 		expect(structured.output.endsWith("2999\n3000\n")).toBe(true);
 		for (const path of fsMocks.createdPaths) expect(existsSync(path)).toBe(false);
@@ -148,9 +164,48 @@ describe("user bash executor", () => {
 		else fsMocks.failure = "write";
 		const result = await executeBashWithOperations("seq 3000", tempRoot, operations);
 
+		const code = failure === "open" ? "ENOENT" : "ENOSPC";
 		expect(result.truncated).toBe(true);
 		expect(result.fullOutputPath).toBeUndefined();
+		expect(result.fullOutputError).toContain(code);
 		expect(result.output).toMatch(/\n2999\n3000\n?$/);
 		for (const path of fsMocks.createdPaths) expect(existsSync(path)).toBe(false);
+
+		// What the model reads and what the user sees both say the output is cut, and why.
+		const message: BashExecutionMessage = { role: "bashExecution", command: "seq 3000", timestamp: 0, ...result };
+		expect(bashExecutionToText(message)).toMatch(
+			new RegExp(`\\[Output truncated\\. Could not save the full output: .*${code}.*\\]$`),
+		);
+		const component = new BashExecutionComponent("seq 3000", tuiStub);
+		component.appendOutput(result.output);
+		// As interactive mode passes it.
+		component.setComplete(
+			result.exitCode,
+			result.cancelled,
+			{ truncated: true, content: result.output } as TruncationResult,
+			result.fullOutputPath,
+			result.fullOutputError,
+		);
+		// The line wraps at the terminal width.
+		expect(stripAnsi(component.render(120).join(" ")).replace(/\s+/g, " ")).toMatch(
+			new RegExp(`Output truncated\\. Could not save the full output: .*${code}`),
+		);
+	});
+});
+
+// Output truncated without a saved file and without a reason (for example a result an extension returned).
+describe("truncated user bash output without a file", () => {
+	it("still says the output is truncated", () => {
+		expect(
+			bashExecutionToText({
+				role: "bashExecution",
+				command: "x",
+				output: "tail",
+				exitCode: 0,
+				cancelled: false,
+				truncated: true,
+				timestamp: 0,
+			}),
+		).toMatch(/\[Output truncated\]$/);
 	});
 });

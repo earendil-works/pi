@@ -34,6 +34,8 @@ export interface BashResult {
 	truncated: boolean;
 	/** Path to temp file containing full output (if output exceeded truncation threshold and the file could be saved) */
 	fullOutputPath?: string;
+	/** Why the full output could not be saved to a temp file (if output exceeded truncation threshold) */
+	fullOutputError?: string;
 }
 
 // ============================================================================
@@ -141,5 +143,6 @@ export async function executeBashWithOperations(
 		cancelled,
 		truncated: discardedOutput || truncationResult.truncated,
 		fullOutputPath: saved?.kind === "saved" ? saved.path : undefined,
+		...(saved?.kind === "failed" ? { fullOutputError: saved.error } : {}),
 	};
 }
