@@ -41,7 +41,7 @@
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"dependencies": {
-		"@earendil-works/djs": "file:/Users/mitsuhiko/Development/djs/work/scratch/pi-pack/package",
+		"@earendil-works/djs": "0.2.0",
 		"@earendil-works/pi-agent-core": "1.6.0",
 		"@earendil-works/pi-ai": "1.6.0",
 		"@earendil-works/pi-codemode": "1.6.0",

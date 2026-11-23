@@ -68,7 +68,7 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"@earendil-works/djs": "file:/Users/mitsuhiko/Development/djs/work/scratch/pi-pack/package"
+		"@earendil-works/djs": "0.2.0"
 	},
 	"devDependencies": {
 		"vitest": "4.1.12"
