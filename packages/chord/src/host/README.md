@@ -358,7 +358,9 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
   hosts of `Kind`.
   `authorize(principal, address)` runs for every hold routed over it with the hold's principal, before anything
   starts (`false`: broken `forbidden`; a throw: broken with that error). `resolve(address, context)` returns `{ link,
-  principal, trusted?, codec? }`, the address's link (role `route`); it runs at most once at a time per address, later
+  principal, trusted?, codec?, opened? }`, the address's link (role `route`; `opened(incarnation)` is called once at
+  its handshake with the incarnation of the host at the other end, before anything else that host sent is handled:
+  the workers component records it); it runs at most once at a time per address, later
   holds wait for it, and `context` is aborted only when the host closes (a link it returns later is closed at once). A
   `resolve` whose holds were all released meanwhile finishes and its link is kept. A route has no timer (slice 10
   R2): a rejection (`resolve_failed`), a link closed already, or a link closing before its handshake fails the

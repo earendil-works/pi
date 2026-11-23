@@ -375,6 +375,8 @@ type SubmissionDraft = {
       readonly whenBusy?: "steer" | "followUp" | "reject";
       /** `reject`: an idle conversation rejects the input with `ConversationIdle` (section 6). */
       readonly whenIdle?: "reject";
+      /** `keep`: a conversation abort or abort cascade leaves the input queued (section 6). */
+      readonly onAbort?: "withdraw" | "keep";
       readonly entry?: never;
     }
   | {
@@ -730,7 +732,7 @@ interface Conversation {
   readonly id: ConversationId;
   submit(submission: SubmissionDraft, context: Context): Promise<Submission>;
   /** Admit inside the caller's commit, with the same rules; stored with that commit (section 6). */
-  submit(tx: Tx, submission: SubmissionDraft): Promise<SubmissionId>;
+  admit(tx: Tx, submission: SubmissionDraft): Promise<SubmissionId>;
   /** Resolved with the current registry snapshot and settings. */
   agent(context: Context): Promise<Agent>;
   /** `configure()` in its own commit. */
@@ -1093,7 +1095,7 @@ watch. An idle wait does not guarantee placement of queued passive writes.
 `abortTask()` commits `abortRequested`, then signals and joins the active run;
 the scheduler then starts the abort invocation and marks the foreground-owned
 subtree in its next reconcile commit (section 5.4). `Conversation.abort()` withdraws queued
-input submissions, marks non-background tasks selected by ordinary ownership
+input submissions (except `onAbort: "keep"` ones, section 6), marks non-background tasks selected by ordinary ownership
 traversal, signals them, and resolves only after that scope is ordinarily idle.
 Passive writes and background subtrees survive. Conversation idle means no live
 non-background task selected from that conversation. Harness idle applies the
@@ -1993,7 +1995,7 @@ Table rules:
 - Any table read after the first table write throws `ReadAfterWrite`.
 - Document access and read-your-writes remain available after table writes.
 - Creation methods return their created ID/record; callers do not read it back.
-- `Conversation.submit(tx, draft)` and `ConversationHandle.submit(tx, draft)`
+- `Conversation.admit(tx, draft)` and `ConversationHandle.admit(tx, draft)`
   come before the commit's first table write, another admission's included;
   otherwise they throw `ReadAfterWrite`, whether or not the admission would read
   a table (section 6). `tx.signal()` reads the task record and follows the same
@@ -2561,7 +2563,8 @@ created there after the cascade. Deriving the marks in their own commit
 keeps them out of the owner's commit, which may already have written the tasks
 involved. Every conversation the cascade reaches is treated like
 `Conversation.abort()`: its queued input submissions become `unanswered` with
-reason `aborted` and leave its inbox, while queued writes stay. The cascade starts
+reason `aborted` and leave its inbox, except `onAbort: "keep"` inputs, while
+queued writes stay. The cascade starts
 below the cancelled task, so that task's own conversation keeps its queue.
 Held outcomes `failed`, `faulted`, `orphaned`, and `aborted` record the same
 durable cancellation intent as an abort mark; `completed` does not. Conversation
@@ -2974,7 +2977,7 @@ interface SignalToken<T> {
 type SignalKey<T> = { readonly signal: string; readonly key: string; readonly "~value"?: T };
 
 /** A key's state: the value delivered under it, or expired because its sleep's deadline came first. */
-type SignalState<T> = { readonly value: T } | { readonly expired: true };
+type SignalState<T> = { readonly kind: "value"; readonly value: T } | { readonly kind: "expired" };
 
 type SignalResult = "delivered" | "duplicate" | "invalid" | "closed" | "not_found";
 
@@ -3002,7 +3005,7 @@ in order, returns:
 The task need not sleep on the key yet: a value delivered while it runs, or
 sleeps on other keys, is kept, and a later sleep on that key wakes at once.
 `delivered` means durably accepted, not consumed: the task may end without
-waiting on the key. Like `submit(tx)`, `tx.signal()` comes before the commit's
+waiting on the key. Like `admit(tx)`, `tx.signal()` comes before the commit's
 first table write and throws `ReadAfterWrite` after it, and its result is
 provisional until the commit is stored. `Harness.signal()` runs it in a commit
 of its own (section 2.2). Neither checks who calls it.
@@ -3074,7 +3077,7 @@ const AskPerson = defineTask<{ question: string }, { phase: "ask" } | { phase: "
       ),
     answered: async (_task, runtime, context) => {
       const state = await runtime.readSignal(Answer, "answer", context); // { value } when answered, { expired } after the deadline
-      const text = state !== undefined && "value" in state ? state.value.text : undefined;
+      const text = state?.kind === "value" ? state.value.text : undefined;
       return runtime.commit(() => ({ status: "terminal", outcome: { status: "completed", result: { text } } }), context);
     },
   },
@@ -3095,8 +3098,8 @@ wait in the built-in inbox document, an ordered list of tagged items:
 
 ```ts
 type InboxItem =
-  /** `entry` is the input's `InputEntry` (`kind` and optional `data`), present when given. */
-  | { readonly id: SubmissionId; readonly mode: "steer" | "followUp"; readonly content: UserInput; readonly entry?: InputEntry }
+  /** `entry` is the input's `InputEntry` (`kind` and optional `data`), present when given; `onAbort` only as `keep`. */
+  | { readonly id: SubmissionId; readonly mode: "steer" | "followUp"; readonly content: UserInput; readonly entry?: InputEntry; readonly onAbort?: "keep" }
   /** `entry` is the write's `EntryDraft`, stored as plain JSON. */
   | { readonly id: SubmissionId; readonly mode: "write"; readonly entry: JsonObject };
 
@@ -3179,9 +3182,9 @@ for its after-run tasks is busy, so such an input queues there; it starts the
 next run when that run ends, as every item queued behind a final answer does. An idle input queues with
 mode `steer` when `whenBusy` is `steer` and `followUp` otherwise.
 
-`Conversation.submit(tx, draft)` runs the same admission inside the caller's
+`Conversation.admit(tx, draft)` runs the same admission inside the caller's
 commit instead of one of its own and returns the submission's ID; a task or tool
-does so through `ConversationHandle.submit(tx, draft)` in its own commit. The
+does so through `ConversationHandle.admit(tx, draft)` in its own commit. The
 Harness supplies the clock, queue modes, the `pi.durable.submit` span (same
 parent, links, and trace carrier as `submit(draft, context)`), and the request
 for progress a started run needs. The admission's writes, a started run
@@ -3235,7 +3238,14 @@ selected before the new input.
 A `Submission` waits until `done` or `unanswered`; abort withdraws only a still-
 queued submission, reports `already_placed` for a placed input, and reports
 `settled` for any terminal submission. Conversation abort withdraws queued
-steer/follow-up submissions but keeps writes for later placement.
+steer/follow-up submissions but keeps writes for later placement, and keeps
+inputs submitted with `onAbort: "keep"`: they stay queued as after a failed run
+under `afterFailedRun: "keep"`, so the next input or queued write places them
+and its run answers them. It is for input its sender cannot take back, such as
+another agent's message, which a person's Stop must not drop. `Submission.abort()`
+withdraws a kept input too: it is the explicit withdrawal, and a host that must
+empty the queue withdraws kept inputs with it. Run failures follow
+`afterFailedRun` alone.
 
 Boundary selection is deterministic by item ID, with the settings'
 `steeringMode` and `followUpMode` (section 2.2), read at each boundary on the
@@ -3347,8 +3357,8 @@ type HookRegistration = { readonly task: string; readonly handlers: object };
 
 /** Built by `wrapTool()` and `wrapSection()`; targets a tool name or a section key. */
 type Wrap<Tool extends ToolRegistration = ToolRegistration> =
-  | { readonly tool: string; wrap(tool: Tool): Tool }
-  | { readonly section: string; wrap(section: PromptSection<Tool>): PromptSection<Tool> };
+  | { readonly kind: "tool"; readonly tool: string; wrap(tool: Tool): Tool }
+  | { readonly kind: "section"; readonly section: string; wrap(section: PromptSection<Tool>): PromptSection<Tool> };
 
 interface Extension<Tool extends ToolRegistration = ToolRegistration> {
   readonly name: string;
@@ -3644,7 +3654,10 @@ interface GenerationHooks {
     answer: AssistantMessage,
     api: HookApi,
     context: Context,
-  ): HookResult<{ readonly continue: UserInput } | { readonly tasks: readonly HookTask[] }>;
+  ): HookResult<
+    | { readonly kind: "continue"; readonly continue: UserInput }
+    | { readonly kind: "tasks"; readonly tasks: readonly HookTask[] }
+  >;
   /** After every tool of the round is terminal; `results` are its result entries in call order. Tasks run before the round ends. */
   afterTools(
     assistant: EntryId,
@@ -3717,7 +3730,7 @@ interface CompactionHooks {
     },
     api: HookApi,
     context: Context,
-  ): HookResult<{ readonly decline: true } | { readonly summary: string }>;
+  ): HookResult<{ readonly kind: "decline" } | { readonly kind: "summary"; readonly summary: string }>;
 }
 ```
 
@@ -3784,7 +3797,7 @@ const RunTests = defineTask<{ command: string }, { phase: "run" }, string>({
       await runtime.commit(async (tx) => {
         // Admitted in this commit, before its table writes; placed when the run ends, in queue order with other input.
         if (!result.passed) {
-          await handle.submit(tx, { type: "input", content: `Tests failed:\n${result.output}`, whenBusy: "followUp" });
+          await handle.admit(tx, { type: "input", content: `Tests failed:\n${result.output}`, whenBusy: "followUp" });
         }
         await tx.appendEntry(runtime.conversationId, { kind: "app.tests", data: { passed: result.passed } });
         return { status: "terminal", outcome: { status: "completed", result: result.output } };
@@ -3863,7 +3876,7 @@ export const Approvals = defineExtension({
       // One deadline per question, fixed at the first pass: later passes (wakes, registry changes) keep it.
       const until = await api.memo(`approvals.until.${key}`, api.now() + DAY, context);
       if (state === undefined) return { sleep: { signals: [Approval.key(key)], until } };
-      if ("expired" in state) return { block: "No approval within a day" };
+      if (state.kind === "expired") return { block: "No approval within a day" };
       return state.value.allow ? undefined : { block: "Not approved" };
     },
   })],
@@ -3909,28 +3922,29 @@ type ToolExecutionResult<TDetails extends JsonValue = JsonValue> = {
   /** Spend of the execution itself, such as a model call; stored on the result and in `pi.usage.tools`. */
   readonly usage?: Usage;
   readonly control?: ToolControl;
-  /** A result is no park. */
-  readonly sleep?: never;
-  readonly wait?: never;
+  /** A result is no park: only parks have a `kind`. */
+  readonly kind?: never;
 };
 
 /** What `execute()` returns instead of a result to park the call; it carries no result field. */
 type ToolPark<C extends JsonValue = JsonValue> =
   | {
-      readonly sleep: { readonly checkpoint?: C; readonly until?: number; readonly signals?: readonly SignalKey<unknown>[] };
-      readonly wait?: never;
+      readonly kind: "sleep";
+      readonly checkpoint?: C;
+      readonly until?: number;
+      readonly signals?: readonly SignalKey<unknown>[];
     }
-  | { readonly wait: { readonly checkpoint?: C; readonly on: readonly TaskId[]; readonly policy: JoinPolicy }; readonly sleep?: never };
+  | { readonly kind: "wait"; readonly checkpoint?: C; readonly on: readonly TaskId[]; readonly policy: JoinPolicy };
 
 interface ConversationHandle {
   readonly id: ConversationId;
   /** Any submission, as `Conversation.submit()` takes: a task may also continue a conversation it owns. */
   submit(submission: SubmissionDraft, context: Context): Promise<Submission>;
   /**
-   * Inside the invocation's commit (`runtime.commit()`, a tool's `api.commit()`), as `Conversation.submit(tx, ...)`;
+   * Inside the invocation's commit (`runtime.commit()`, a tool's `api.commit()`), as `Conversation.admit(tx, ...)`;
    * appended entries carry the task's `byTaskId`. Rejects once the invocation is aborted or ended.
    */
-  submit(tx: Tx, submission: SubmissionDraft): Promise<SubmissionId>;
+  admit(tx: Tx, submission: SubmissionDraft): Promise<SubmissionId>;
   abort(context: Context): Promise<void>;
   waitForIdle(context: Context): Promise<void>;
 }
@@ -4179,7 +4193,7 @@ const research = defineTool<typeof ResearchParameters, JsonValue, ResearchCheckp
     const done = new Set(api.checkpoint?.done ?? []);
     if (api.wake?.reason === "tasks") for (const id of api.wake.ended) done.add(id);
     const open = [a, b].filter((call) => !done.has(call.taskId));
-    if (open.length > 0) return { wait: { checkpoint: { done: [...done] }, on: open.map((call) => call.taskId), policy: "any" } };
+    if (open.length > 0) return { kind: "wait", checkpoint: { done: [...done] }, on: open.map((call) => call.taskId), policy: "any" };
     const [ra, rb] = await Promise.all([a.result(context), b.result(context)]);
     return { output: [{ type: "text", text: `${String(ra.structuredOutput)}\n${String(rb.structuredOutput)}` }] };
   },
@@ -4214,7 +4228,7 @@ const runCi = defineTool<typeof CiParameters, JsonValue, { buildId: string }>({
   async execute({ ref }, api, context) {
     // The result, the deadline's expiry, or nothing yet (a fresh call).
     const state = await api.readSignal(CiResult, "done", context);
-    if (state !== undefined && "value" in state) {
+    if (state?.kind === "value") {
       const { status, logUrl } = state.value;
       return { output: [{ type: "text", text: `CI ${status}: ${logUrl}` }], isError: status !== "passed" };
     }
@@ -4226,7 +4240,7 @@ const runCi = defineTool<typeof CiParameters, JsonValue, { buildId: string }>({
     // Registered before triggering, so a fast webhook already finds this task.
     await webhooks.expect(runId, api.taskId, CiResult, "done", context);
     const build = await ci.trigger({ ref, correlationId: runId, idempotencyKey: runId }, context);
-    return { sleep: { checkpoint: { buildId: build.id }, signals: [CiResult.key("done")], until: api.now() + 2 * HOUR } };
+    return { kind: "sleep", checkpoint: { buildId: build.id }, signals: [CiResult.key("done")], until: api.now() + 2 * HOUR };
   },
   async cancel(_args, api, context) {
     if (api.checkpoint !== undefined) await ci.cancel(api.checkpoint.buildId, context);
@@ -4587,7 +4601,7 @@ export const ParkingSubagent = defineExtension({
     replay: "safe",
     async execute({ task }, api, context) {
       const state = await api.readSignal(SubmissionSettled, "answered", context);
-      if (state !== undefined && "value" in state) {
+      if (state?.kind === "value") {
         const settled = state.value;
         if (settled.status !== "done" || settled.type !== "input") {
           return { output: [{ type: "text", text: `Subagent ended: ${settled.status}` }], isError: true };
@@ -4607,7 +4621,7 @@ export const ParkingSubagent = defineExtension({
         { type: "input", content: task, requestId: `subagent:${api.taskId}`, notify: { taskId: api.taskId, key: "answered" } },
         context,
       );
-      return { sleep: { signals: [SubmissionSettled.key("answered")] } };
+      return { kind: "sleep", signals: [SubmissionSettled.key("answered")] };
     },
   })],
 });
@@ -5979,8 +5993,8 @@ Phases:
   `models.getModel()` does not know it,
   the task fails with `no_model`. With nothing to compact it completes with
   `{}`. Otherwise the `beforeCompact` hooks (section 7.2) run with the
-  summarized entries and messages; the first decision wins. `{ decline: true }` completes
-  with `{}`, and `{ summary }` is placed as below in the same commit. Without a
+  summarized entries and messages; the first decision wins. `{ kind: "decline" }` completes
+  with `{}`, and `{ kind: "summary", summary }` is placed as below in the same commit. Without a
   decision, one commit moves to `summarize` with attempt 1, the agent's model
   and thinking level, the settings' stream options, `maxTokens` = `min(floor(0.8 *
   reserveTokens), model.maxTokens)` (the model's value only when positive), the
@@ -6700,7 +6714,10 @@ interface Storage {
     batches: readonly (readonly StorageWrite[])[],
     receive: (index: number, seq: Seq) => void,
     context: Context,
-  ): Promise<{ readonly stored: number; readonly refused?: unknown }>;
+  ): Promise<
+    | { readonly kind: "stored"; readonly stored: number }
+    | { readonly kind: "refused"; readonly stored: number; readonly refused: unknown }
+  >;
   /**
    * Optional. Run `publish`, the Session's publication of one commit (cache write-through, adoption, observers),
    * inside this storage's own scope, such as a store host's batch. Call it exactly once, now or soon after; the
@@ -7076,7 +7093,7 @@ These are contracts, not invitations to add defensive machinery:
   unsupported.
 - **Read after write:** read every required table row before the first table
   write. Document drafts remain usable afterward; table reads do not.
-- **Admission inside a commit:** `submit(tx, draft)` throws `ReadAfterWrite`
+- **Admission inside a commit:** `admit(tx, draft)` throws `ReadAfterWrite`
   after the commit's first table write: one admission per commit, before the
   commit's own `appendEntry()`, `createTask()`, or `createSubmission()`. The
   admission is provisional until the commit is stored: a later throw in the
@@ -7153,7 +7170,7 @@ These are contracts, not invitations to add defensive machinery:
   turn budget, which asks `afterRun` again; `maxTurns` does not bound the loop,
   the extension does, for example with a counter in its own document.
 - **Submissions from after-run tasks:** admit them in the task's own commit with
-  `submit(tx, draft)`, before its table writes; one submitted outside a commit
+  `admit(tx, draft)`, before its table writes; one submitted outside a commit
   should carry a stable `requestId`, as a rerun after a crash submits it again.
 - **Hook memo names:** hooks share the asking task's memo namespace with the
   task and other hooks. Prefix memo names; `pi.` is the Harness's.

@@ -9,7 +9,7 @@ import {
 	withAbortSignal,
 	withoutAbortSignal,
 } from "@p2/app/v1";
-import { fromOrigin, type RouteHandler, Routes, sendJson, serverOf } from "@p2/app/v1/server";
+import { crossSiteRead, fromOrigin, type RouteHandler, Routes, sendJson, serverOf } from "@p2/app/v1/server";
 import { Catalog } from "../sessions/contract.ts";
 import { WorkspaceTransfer } from "./contract.ts";
 import { WORKSPACE_DOWNLOAD_LIMIT, WORKSPACE_READ_CHUNK, workspacePath } from "./protocol.ts";
@@ -22,11 +22,7 @@ export default defineFacet((host) => {
 			const params = new URL(request.url ?? "/", "http://localhost").searchParams;
 			const session = params.get("session") ?? "";
 			const uploading = request.method === "POST";
-			if (
-				!canSend(principal, session) ||
-				request.headers["sec-fetch-site"] === "cross-site" ||
-				(uploading && !fromOrigin(request, origin))
-			) {
+			if (!canSend(principal, session) || crossSiteRead(request) || (uploading && !fromOrigin(request, origin))) {
 				request.resume();
 				response.writeHead(403);
 				response.end("Forbidden");
@@ -103,15 +99,16 @@ export default defineFacet((host) => {
 							response.end();
 							return;
 						}
-						const range = match
+						// One shape with optional bounds, as `WorkspaceTransfer.read` takes them.
+						const range: { readonly start?: number; readonly end?: number; readonly suffix?: number } = match
 							? match[1]
 								? { start: Number(match[1]), ...(match[2] ? { end: Number(match[2]) } : {}) }
 								: { suffix: Number(match[2]) }
 							: {};
 						if (
 							Object.values(range).some((n) => !Number.isSafeInteger(n) || n < 0) ||
-							("suffix" in range && range.suffix === 0) ||
-							("end" in range && range.end !== undefined && range.end < (range.start ?? 0))
+							range.suffix === 0 ||
+							(range.end !== undefined && range.end < (range.start ?? 0))
 						) {
 							response.writeHead(416);
 							response.end();
@@ -120,7 +117,7 @@ export default defineFacet((host) => {
 						let chunk = await transfer.read({ path, ...range }, ctx);
 						const size = chunk.size;
 						const start = chunk.start;
-						const end = Math.min("end" in range ? (range.end ?? size - 1) : size - 1, size - 1);
+						const end = Math.min(range.end ?? size - 1, size - 1);
 						if (header !== undefined && (!size || start >= size || end < start)) {
 							response.writeHead(416, { "Content-Range": `bytes */${size}` });
 							response.end();

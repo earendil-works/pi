@@ -1,5 +1,6 @@
-// `projects.json` in the data directory: `{ "<name>": [{ "env"?: "<environment>", "path": "<directory>" }, ...] }`.
-// Object order is display order, array order is preference; a place without `env` is this device.
+// What a project may be (its name, its places), and `projects.json`, where projects lived before the server's store:
+// `{ "<name>": [{ "env"?: "<environment>", "path": "<directory>" }, ...] }`, object order the display order, array
+// order preference, a place without `env` this device. The store imports it once (server.ts); nothing writes it.
 import { join } from "node:path";
 import { compile, obj, opt, str } from "@earendil-works/pi-schema";
 import { isRooted } from "@p2/app/v1";
@@ -30,8 +31,8 @@ export function parseProjects(content: string): Project[] {
 	return Object.entries(value).map(([name, places]) => ({ name, places: parsePlaces(name, places) }));
 }
 
-/** One project's places: absolute or `~` paths, at most one per environment. */
-function parsePlaces(name: string, places: unknown): Project["places"] {
+/** One project's name and places: absolute or `~` paths, at most one per environment. */
+export function parsePlaces(name: string, places: unknown): Project["places"] {
 	if (!name.trim() || name.length > 64 || hasControl(name)) throw new Error(`Invalid project name: ${name}`);
 	if (!Array.isArray(places) || places.length === 0)
 		throw new Error(`Project ${name}: a list of places ({ "env"?, "path" }) is required`);

@@ -2684,6 +2684,60 @@ validation and copies the v2 kernel added around Delta.
   reason no longer depends on it. A call first made after the denial meets the denied reference and gets the plain
   `forbidden`. Rejected: `forbidden` without the reason for calls that never ran. (Design §3, §22; `slice-14.md`
   §2.3.)
+- **A worker's exit is published after its link's work ended (owner, 2026-11-15; proposal and reviews by Fable, Sol
+  and Astra):** the problem: a worker reports something to the server and exits; the report must not land once the
+  server says the worker is gone. p2 checked that by hand in every report method (a generation in the worker's
+  principal and in the arguments). The cause was one ordering in the workers component: it published the exit
+  (`state`) when the process exited, while the IPC link closed on its own event, sometimes later, with calls still
+  buffered or running. **The rule, in the component, no kernel fence:** when a worker exits, (1) its link is closed
+  first (`WorkerProcess`, before the exit is told): what it sent and was not handled yet is dropped, the calls it
+  made are aborted, so a transaction under a call's `ctx` not yet at its commit is refused; (2) the commits those
+  calls had already queued in the server's store settle (a queued commit ignores its caller's abort;
+  `ChordStore.settled()`, the store given as `createWorkers`' `store`: a required option, so no app forgets it,
+  `undefined` only for a host without a store); (3) only then the
+  exit is published and the address's next start goes on. So a plugin needs no check of its own. A call the worker
+  made that the server relayed to another host is cancelled there when the cancel arrives, not before the exit is
+  published; work a report started outside its call's `ctx` (a job) is that work's own. **The incarnation:**
+  `WorkerState` carries the running worker's incarnation (its host's, the `ctx.incarnation` of its calls), for data
+  kept across worker runs (a store tags a report with `ctx.incarnation` and compares). It is installed at the
+  link's handshake, before anything else the worker sent is handled, not at `ready`: a startup that calls the
+  server would meet a state that does not know it yet. For that a route's `resolve` may return `opened(incarnation)`
+  (the one kernel addition). Rejected: `host.serve(…, { fence: Session })` (the kernel cannot name the address
+  without a magic field, `ctx.incarnation` is the origin's so relayed tabs would be refused, and "dropped" is a
+  refusal of a call that needs an answer); the incarnation over the control channel (`workerMain` learns the app's
+  host only at `plugins.load`, after a startup may have called the server).
+- **C15 stands; the UI bindings follow the variant (owner, 2026-11-15; reviews by Fable, Sol and Astra):** in plain
+  code `if (ref.variant === "editor")` narrows, as C15 says. In a component it is not enough: a held reference's
+  variant is `undefined` until it binds, changes while the component is mounted (an admission's other allowed value
+  binds another variant, slice 14 §2.2), and a reference keeps its last variant while it loads between two, so the
+  comparison alone leaves an editor's controls up for a reader. So the UI bindings, and only they, get one helper:
+  `useVariant(ref, variant)` in `chord/react` and `TuiScope.variant(ref, variant)` return the reference narrowed to
+  that variant while it is live in it, `undefined` otherwise (no reference, loading, failed or denied, ended,
+  another variant), and subscribe to the reference's state. The React snapshot is the narrowed reference, not the
+  state: `live` is one object, so live in one variant and then in another would be no change to React when the
+  loading between them was never rendered. Why it is nothing shows in `useRefState`. It is true of the render that
+  read it, no guarantee across an `await`. References themselves get no `expectVariant` or `inVariant` (C15
+  unchanged).
+- **A framed source set several times in one batch publishes one frame (2026-11-15; found by Astra in p3's slice 1
+  review, reproduced):** the problem: a list sets its value once per page a commit adopted, so a row moving from
+  one page to another set it twice in one batch. `FramedSource.set` listed the source in the batch each time, the
+  batch delivered it twice, and a link got two entries for one member in one state message: the protocol error
+  `member 0 twice in one state`, which closes the link (p3: 51 archived sessions, `more` once, the last row archived
+  again closed the owner's connection). The rule: a framed source is listed in a batch by its first change only,
+  which keeps the value its watches have; the batch's one frame is the state the batch left (its last value, or its
+  failure), diffed from that kept value. Every change still marks its dependents (a derive may have read the value
+  between two changes). It covers `failWith` and every user of the class (lists, live queries). (`state/framed.ts`;
+  `test/state/framed.test.ts`, `test/host/list.test.ts`.)
+- **A derive read between two changes of its source in one batch publishes one frame (owner, 2026-11-15; found with
+  the framed source's fix, reproduced):** the same defect in `Derive.invalidate`. A derive is marked dirty by a
+  change of a source; a read inside the batch (a reference of the host keeping or binding the member in that
+  commit) makes it clean again, and the source's next change in the batch marked it again: the value kept for its
+  frame was overwritten with the one read in between and the derive was listed a second time. A watched derive then
+  delivered two frames, the first diffed from the wrong value (ops that do not apply to what its watches have), and
+  a link got `member twice in one state` and closed. The rule, as for a framed source: a watched derive is listed by
+  its first marking in a batch only, which keeps what its watches have; its one frame is its value (or failure) at
+  the end of the batch, diffed from that. Every marking still marks its dependents. (`state/derive.ts`;
+  `test/state/derive.test.ts`, `test/remote/provider.test.ts`.)
 - **Swaps: dependents first; calls during a swap never see `not_ready` (owner, 2026-11-04: "if swaps can be invisible
   to dependents that's cool, but I fear correctness bugs"; analysis `/tmp/swap-analysis.md`):** the problem: a reload
   swapping a provider and its pure dependent (61's `todo.store` and `todo.todos(groceries)`) parked the dependent

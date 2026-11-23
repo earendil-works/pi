@@ -18,6 +18,7 @@ import {
 	type Link,
 	type Message,
 	openPart,
+	originOf,
 	originPart,
 	type Part,
 } from "../link/internal.ts";
@@ -39,6 +40,8 @@ type HostLinkOptions = {
 	readonly trusted: boolean;
 	readonly codec: Codec;
 	readonly limits: Limits;
+	/** A route's `opened` (`RouteOptions.resolve`): the peer's incarnation once its `hello` arrived. */
+	readonly opened?: (incarnation: string) => void;
 };
 
 /**
@@ -63,6 +66,7 @@ export class HostLink implements ChannelHandler {
 	 */
 	readonly #providers = new Map<number, ProviderSide>();
 	readonly #channel: Channel;
+	readonly #opened: ((incarnation: string) => void) | undefined;
 	/** Aborted when the link closes: stops its asynchronous inflates at once. */
 	readonly #closing = new AbortController();
 	/**
@@ -77,6 +81,7 @@ export class HostLink implements ChannelHandler {
 		this.principal = options.principal;
 		this.trusted = options.trusted;
 		this.limits = options.limits;
+		this.#opened = options.opened;
 		this.context = context;
 		this.consumer = new ConsumerSide(this);
 		const { codec, trusted } = options;
@@ -124,6 +129,8 @@ export class HostLink implements ChannelHandler {
 	}
 
 	opened(): void {
+		// First: whoever asked knows the peer before anything else it sent is handled, and before this host sends.
+		this.#opened?.(this.#channel.peer);
 		this.consumer.opened(this.#channel.peerCalls);
 		this.host.linkOpened(this);
 	}
@@ -171,7 +178,7 @@ export class HostLink implements ChannelHandler {
 	 */
 	message(message: Message): void | Promise<void> {
 		// A child (a tab, a TUI) relays nothing: its origins would each get their own call window and record.
-		if (this.role === "child" && "origin" in message && message.origin !== undefined) {
+		if (this.role === "child" && originOf(message) !== undefined) {
 			throw new Error(`${message.kind}: an origin on a child link`);
 		}
 		switch (message.kind) {

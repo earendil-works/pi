@@ -26,7 +26,10 @@ export type RouteOptions<P extends Principal, K extends KindShape> = {
 	/**
 	 * The link to `address`: `principal` is who the host at the other end is, `trusted` skips the message check on it,
 	 * `limits` bound its parts (as `accept`'s). `context` is the route's, aborted when this host closes. Runs at most
-	 * once at a time per address.
+	 * once at a time per address. `opened` is called once, when the link's handshake completed, with the incarnation of
+	 * the host at the other end (its calls' `ctx.incarnation`): before anything else that host sent is handled and
+	 * before this host sends on the link, so whoever resolves knows which run of the host its link reaches before that
+	 * host's first call runs; never for a link that closes before its handshake. It must not throw.
 	 */
 	resolve(
 		address: Address<K>,
@@ -37,6 +40,7 @@ export type RouteOptions<P extends Principal, K extends KindShape> = {
 		readonly trusted?: boolean;
 		readonly codec?: Codec;
 		readonly limits?: PartLimits;
+		readonly opened?: (incarnation: string) => void;
 	}>;
 	/**
 	 * The route's admission (slice 14 §2.3): asked once per principal and address with holds on the route, after
@@ -275,8 +279,8 @@ export class Route {
 			resolved.link.close();
 			return;
 		}
-		const { link: made, ...options } = resolved;
-		const link = this.#host.routeLink(made, options, this.#context);
+		const { link: made, opened, ...options } = resolved;
+		const link = this.#host.routeLink(made, options, this.#context, opened);
 		if (!link.open) {
 			const error = new ChordError({ code: "unavailable", message: `${key}: the link closed before its handshake` });
 			resolveEnded(span, error);

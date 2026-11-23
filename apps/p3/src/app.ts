@@ -1,34 +1,22 @@
-// What p3 tells the kit about itself, shared by the server, the worker entry and the tests: its API (name, versions,
-// this process's instances of the modules), its facet kinds, its principals and who may reach a session's worker.
+// What p3 is to its base and its tests: its API (the package and its versions), its facet kinds, and its principals as
+// links stamp them. The API's modules each process evaluates plugins with are `modules-server.ts` and
+// `modules-worker.ts`: a worker never loads the server's (its HTTP stack).
 
-import type { Address } from "@earendil-works/chord";
-import * as v1 from "@p3/app/v1";
-import * as v1server from "@p3/app/v1/server";
-import * as v1worker from "@p3/app/v1/worker";
 import type { P3Principal } from "./principals.ts";
 
-/** p3's API: its package, its versions (newest first) and this process's modules by specifier. */
-export const API = {
-	name: "@p3/app",
-	versions: ["v1"],
-	modules: { "@p3/app/v1": v1, "@p3/app/v1/server": v1server, "@p3/app/v1/worker": v1worker },
-};
+/** p3's API: its package and its versions (newest first). */
+export const API = { name: "@earendil-works/p3", versions: ["v1"] } as const;
 
-/** p3's facet kinds: a plugin has one file per kind it runs on (`server.ts`, `worker.ts`). */
-export const KINDS = { server: { platform: "node" }, worker: { platform: "node" } } as const;
+/** The facet kinds a plugin may have: one file per kind (`server.ts`, `worker.ts`), each with its API modules. */
+export const KINDS = {
+	server: { platform: "node", hostPackages: ["@earendil-works/p3/v1", "@earendil-works/p3/v1/server"] },
+	worker: { platform: "node", hostPackages: ["@earendil-works/p3/v1", "@earendil-works/p3/v1/worker"] },
+} as const;
 
-/** p3's principals as the kit stamps them: the server's, a session worker's, the owner's. */
-export const PRINCIPALS: {
-	readonly server: P3Principal;
-	readonly worker: (address: Address) => P3Principal;
-	readonly owner: P3Principal;
-} = {
-	server: { kind: "server" },
-	worker: (address) => ({ kind: "worker", session: String(address.params.id) }),
-	owner: { kind: "owner" },
-};
+/** The server's principal. */
+export const SERVER: P3Principal = { kind: "server" };
 
-/** Who may reach a session's worker: the owner and the server (persons come with admission, slice 5). */
-export function mayReachSession(principal: P3Principal): boolean {
-	return principal.kind === "owner" || principal.kind === "server";
+/** The principal of session `id`'s worker. */
+export function workerPrincipal(id: string): P3Principal {
+	return { kind: "worker", session: id };
 }

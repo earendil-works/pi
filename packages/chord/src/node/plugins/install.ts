@@ -25,8 +25,8 @@ export type InstallPluginOptions = InstallOptions & {
 
 /** Where `installPlugin` installs from: a git repository at a ref (a branch, tag or commit), or an npm package. */
 export type PluginSource =
-	| { readonly git: string; readonly ref: string }
-	| { readonly npm: string; readonly version: string };
+	| { readonly kind: "git"; readonly git: string; readonly ref: string }
+	| { readonly kind: "npm"; readonly npm: string; readonly version: string };
 
 /** The install's arguments: production dependencies only, no host peers, no scripts, no audit or funding notes. */
 const INSTALL_ARGS = ["install", "--omit=dev", "--legacy-peer-deps", "--ignore-scripts", "--no-audit", "--no-fund"];
@@ -69,7 +69,7 @@ export async function installPlugin(
 		// Hidden: discovery skips it while it is staged; in the root: the rename stays on one file system.
 		staging = await mkdtemp(join(root, STAGING));
 		const staged = join(staging, "package");
-		if ("git" in source) await clone(source.git, source.ref, staged, context);
+		if (source.kind === "git") await clone(source.git, source.ref, staged, context);
 		else await unpack(source.npm, source.version, staged, context, options);
 		await checkPackage(staged, made.target, root, context, options);
 		// The claimed directory is empty: renaming onto it moves the package into place in one step. Windows renames onto
@@ -109,7 +109,7 @@ function targetName(source: PluginSource): string {
 	const option = (value: string, what: string) => {
 		if (value === "" || value.startsWith("-")) throw new Error(`installPlugin: ${what} "${value}" is refused`);
 	};
-	if ("git" in source) {
+	if (source.kind === "git") {
 		option(source.git, "repository");
 		option(source.ref, "ref");
 		const name = basename(source.git.replace(/\/+$/, "")).replace(/\.git$/, "");

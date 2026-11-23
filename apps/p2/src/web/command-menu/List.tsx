@@ -17,7 +17,8 @@ export function List() {
 		const list = meta.list.current;
 		if (!list) return;
 		const observer = new MutationObserver(() => keepHighlight(list));
-		observer.observe(list, { childList: true, subtree: true });
+		// A page's preferred option can change in place (the folder a new session starts in arrives).
+		observer.observe(list, { childList: true, subtree: true, attributeFilter: ["data-preferred"] });
 		return () => observer.disconnect();
 	}, [meta]);
 	// biome-ignore lint/correctness/useExhaustiveDependencies: a new query or page starts again at the first option.

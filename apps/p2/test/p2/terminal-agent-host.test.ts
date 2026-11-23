@@ -49,6 +49,7 @@ async function client(directory: string) {
 	const start = (call: HostCall) => {
 		const id = next++;
 		const result = new Promise<HostResult>((resolve, reject) => {
+			// The terminal host's wire reply: `result` or `error`.
 			replies.set(id, (event) => ("error" in event ? reject(new Error(event.error)) : resolve(event.result)));
 		});
 		send({ type: "call", id, call });

@@ -92,6 +92,13 @@ export type ChatItem =
 const toolStatus = (tool: ToolView): StepStatus =>
 	tool.status === "error" || tool.status === "interrupted" ? "error" : tool.status === "done" ? "done" : "running";
 
+/** The entry a chat item shows, for the kinds that show one. */
+export function chatItemEntryId(item: ChatItem): number | undefined {
+	return item.type === "user" || item.type === "thought" || item.type === "text" || item.type === "answer"
+		? item.entryId
+		: undefined;
+}
+
 type Response = Extract<Item, { type: "assistant" }>;
 /** A run of consecutive tool calls, with the responses that made them (for its time). */
 type Calls = { type: "calls"; key: string; steps: Step[]; from: Response[]; entries?: WheelEntry[] };
@@ -389,6 +396,7 @@ const sameValue = (one: unknown, other: unknown): boolean =>
 			const that: unknown = other[index];
 			if (value === that) return true;
 			if (!value || !that || typeof value !== "object" || typeof that !== "object") return false;
+			// Any list of a chat item: its members are told apart by the fields they have.
 			// An entry on a wheel (detail 1 and 2).
 			if ("kind" in value && "kind" in that) return sameEntry(value as WheelEntry, that as WheelEntry);
 			// A step: the same call in the same state.

@@ -21,8 +21,8 @@ async function waitUntil(done: () => boolean): Promise<void> {
 
 /** One line for what a rollout step did on one of its hosts. */
 function describe(host: RolloutHost): string {
-	if ("report" in host) return `changed ${host.report.plugins.changed.join(", ")}`;
-	if ("stopped" in host) return "stopped";
+	if (host.kind === "reloaded") return `changed ${host.report.plugins.changed.join(", ")}`;
+	if (host.kind === "stopped") return "stopped";
 	return "failed";
 }
 
@@ -47,6 +47,8 @@ const workers = createWorkers(
 		principal: (address) => ({ kind: "worker", session: address.params.id }),
 		start: () => ({}),
 		lock: (address) => `example-43:${process.pid}:${address.key}`,
+		// The server host has no store.
+		store: undefined,
 		plugins,
 		onError: console.error,
 	},

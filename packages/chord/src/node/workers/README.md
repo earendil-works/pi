@@ -19,6 +19,7 @@ const workers = createWorkers(server, Session, {
 	start: (address, ctx) => app.startData(address, ctx),                                  // JSON, before each start
 	lock: (address) => `app:${dataDir}:worker:${address.key}`,                             // one live worker per address
 	idleMs: () => app.idleMs(),                                                            // 5 min by default
+	store,                                                                                 // the server host's (required)
 	plugins,
 	onOutput: (address, stream, chunk) => logs.append(address.key, stream, chunk),
 	onError: (error) => log(error),                                                        // WorkersError
@@ -62,7 +63,8 @@ workerMain(async ({ address, start, parent, plugins, onClose }, ctx) => {
   may run in another order than unbundled (esbuild's splitting; base code must not rely on sibling order). A variable
   specifier stays an import Node resolves at run time, against the module's source file (its
   `import.meta.url`): outside the snapshot, so base code that must be in it imports with a literal specifier. ES modules
-  with inline source maps, forked with `--enable-source-maps` ahead of the app's `execArgv` (stack traces name the
+  minified (whitespace and syntax; names kept, so `name` is what unbundled code sees: every worker holds the base's
+  text), with inline source maps, forked with `--enable-source-maps` ahead of the app's `execArgv` (stack traces name the
   source files). The bundle stays in memory until the first fork, which writes its files into one private directory:
   `baseDir` when given (the component's own while it is open: emptied first; the kit's
   `<dataDir>/cache/workers/<kind>/`), else a new temporary one; written again when a cleaner removed one of them
@@ -79,7 +81,7 @@ workerMain(async ({ address, start, parent, plugins, onClose }, ctx) => {
   that does not resolve is left out; resolved as Node does (no `tsconfig.json` `paths`); other esbuild failures reject.
 - **Per address:** a child's events (`started`, `ready`, `idle`, `fatal`, its exit, its link closed by this side) are
   recorded on that child as they happen (a late event of an old child changes nothing); starts and stops run one after
-  another. A start waits for the previous child's exit and rejects with a crash recorded meanwhile; a stop records its
+  another. A start waits until the previous child's exit was published and rejects with a crash recorded meanwhile; a stop records its
   intent before `shutdown`, so the exit it causes is no crash.
 - **A start:** the app's `start(address, ctx)` (aborted by `close`), then the fork (`serialization: "advanced"`, a
   detached process group, the worker base's file with `--enable-source-maps` and `execArgv`, the server's environment
@@ -90,6 +92,22 @@ workerMain(async ({ address, start, parent, plugins, onClose }, ctx) => {
   polling), makes its parent link and sends `started` when the app's host connects; `resolve` returns the link then.
   The start timer (60 s) covers fork, lock and connect only. `ready` (after the app's function returned, with the idle
   state and the load report) makes the worker `running`.
+- **An exit is published after its link's work ended** (decision "A worker's exit is published after its link's work
+  ended"). When a worker process exits (a stop, a crash, a kill), in this order: (1) its link is closed
+  (`process.ts`, before the exit is told; the IPC channel closes by itself only on its own event, sometimes later):
+  what the worker sent and was not handled yet is dropped, and the calls it made are aborted, so a transaction
+  under a call's `ctx` that is not yet at its commit is refused; (2) the commits those calls had already queued in
+  the server's store settle (`store`, the one given to the server's `createHost`: a queued commit ignores its
+  caller's abort; a required option so it is not forgotten, `undefined` only for a host without a store); (3) the exit shows in
+  `state` (the entry goes, or turns `failed`), `stop` resolves and the address's next start goes on. So nothing an
+  exited worker reported is handled or lands after `state` says it is gone, and no successor runs before:
+  **plugins and apps need no stale-worker check of their own** (no generation in the principal or in a report's
+  arguments). Not covered: a call the server relayed to another host is cancelled there when the cancel arrives,
+  and work a report started outside its call's `ctx` (a job, a background context) is that work's own.
+- **The incarnation:** a worker's `state` entry carries `incarnation`, its host's (the `ctx.incarnation` of every
+  call it makes), from its link's handshake on (the route's `opened`): before its first call is handled, also one
+  its startup makes long before `ready`; absent before the handshake. For data kept across worker runs: store
+  `ctx.incarnation` with a report and compare with the state's.
 - **Failures stay** (R2): a crash (an exit nobody asked for), a `fatal` or a failed start leaves the address `failed`
   (`worker_failed` once, `worker_exited` for the exit) until `retry` or a rollout reaching workers.
 - **A lost link is recovered from** (decision "A lost worker link is recovered from"): a link closed by this side (the
@@ -102,8 +120,8 @@ workerMain(async ({ address, start, parent, plugins, onClose }, ctx) => {
   The server stops a worker idle since `idleMs()` (checked every second, from `ready`). A stop: `shutdown`; the child
   aborts its context, runs its closers in reverse order and exits (forced after 3 s); the server kills the tree after
   5 s.
-- **`state`:** per address key `{ status: "starting" | "running" | "stopping", pid, startedAt }` or `{ status:
-  "failed", error: { message, code?, reason? }, at }`; no entry when stopped. The error is public (decision "worker
+- **`state`:** per address key `{ status: "starting" | "running" | "stopping", pid, startedAt, incarnation? }` or
+  `{ status: "failed", error: { message, code?, reason? }, at }`; no entry when stopped. The error is public (decision "worker
   errors in public"): a `fatal` as the child's `redact` made it, else a fixed message (`worker failed to start`,
   `worker exited (SIGSEGV)`, `worker exited (code 1)`); holders see the same. The full error and the stderr tail go
   only to `onError` (`worker_failed { address, error, stderrTail }`). Every app hook of a start (`start`, the fork,
@@ -114,10 +132,10 @@ workerMain(async ({ address, start, parent, plugins, onClose }, ctx) => {
 - **`close(ctx)`:** starts waiting in `start(address)` are aborted, the worker base's file removed, every child
   stopped, new starts reject `released/closed`; the host's close (the route's context) closes it too, and no exit
   after that is a failure.
-- **`step(name)`** (§4): clears the failures from before it and retries the held ones (listed `{ host, report }` with
-  their load report once ready, or `{ host, error }`), then ships the kind's current set to every worker whose last
-  set is older, in parallel, one reload outstanding per child: `{ host, report }`, `{ host, stopped: true }` (stopped
-  cleanly meanwhile) or `{ host, error }` (a crash, a failed reload). The step's context bounds only its wait (an abort
+- **`step(name)`** (§4): clears the failures from before it and retries the held ones (listed `{ kind: "reloaded", host, report }` with
+  their load report once ready, or `{ kind: "failed", host, error }`), then ships the kind's current set to every worker whose last
+  set is older, in parallel, one reload outstanding per child: `{ kind: "reloaded", host, report }`, `{ kind: "stopped", host }` (stopped
+  cleanly meanwhile) or `{ kind: "failed", host, error }` (a crash, a failed reload). The step's context bounds only its wait (an abort
   lists the waiting ones with the abort's error; a late reply still frees the child's slot).
 - **The child** (`workerMain`): reads the start message, takes the lock, makes its parent link (`started` on the app's
   `connect`), gives the app `plugins` (`WorkerPlugins.load(host, { kind, core })` over the shipped scripts, with the
@@ -132,7 +150,9 @@ workerMain(async ({ address, start, parent, plugins, onClose }, ctx) => {
 ## Examples
 
 `test/examples/`: `41-workers` (a worker started on the first hold, stopped when idle), `42-worker-crash` (a crash
-stays failed, Retry brings it back), `43-rollout` (an edit rolled out to the server and its workers).
+stays failed, Retry brings it back), `43-rollout` (an edit rolled out to the server and its workers),
+`76-worker-reports` (a worker that reports and exits: the report never lands after the exit; what is kept across runs
+is tagged with the incarnation).
 
 ## Inside the directory
 

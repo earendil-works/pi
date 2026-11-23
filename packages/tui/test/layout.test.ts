@@ -31,6 +31,28 @@ describe("viewport layout", () => {
 		assert.deepStrictEqual(visibleLines(frame.lines), ["top", "body", "", ""]);
 	});
 
+	// #9549: scroll frames reuse earlier output, but only the widths the previous frame used.
+	it("reuses earlier frame output without accumulating widths", () => {
+		const widths: number[] = [];
+		const component = {
+			render: (width: number) => {
+				widths.push(width);
+				return ["line"];
+			},
+			invalidate: () => {},
+		};
+		const first = renderLayoutFrame(component, 10, 2, () => {});
+		const reused = renderLayoutFrame(component, 10, 2, () => {}, first.renderCache);
+		assert.deepStrictEqual(widths, [10]);
+
+		const narrower = renderLayoutFrame(component, 8, 2, () => {}, reused.renderCache);
+		assert.deepStrictEqual(widths, [10, 8]);
+		assert.deepStrictEqual([...narrower.renderCache.get(component)!.keys()], [8]);
+
+		renderLayoutFrame(component, 10, 2, () => {}, narrower.renderCache);
+		assert.deepStrictEqual(widths, [10, 8, 10]);
+	});
+
 	it("does not render fixed-basis scroll content during stack measurement", () => {
 		let renderCount = 0;
 		const transcript = new ScrollView({

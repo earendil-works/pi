@@ -68,7 +68,7 @@ async function message(from: string, text: string, requestId: string): Promise<s
 			const visitors = await tx.doc(Visitors, root.id);
 			if (visitors.muted.includes(from)) return `${from} is muted`;
 			// Before the commit's own table writes; document writes may come before or after.
-			const id = await root.submit(tx, {
+			const id = await root.admit(tx, {
 				type: "input",
 				content: `${from}: ${text}`,
 				whenBusy: "steer",

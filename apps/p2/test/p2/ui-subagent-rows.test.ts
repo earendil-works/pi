@@ -1,7 +1,8 @@
-// A session's subagent rows in the sidebar, in Chromium, end to end: while a subagent works its row ends with its
-// step, once stopped with "Stopped", after a provider error with "Failed" (its tooltip says why), and idle with the
-// time since its newest message, in the session's time column; each row's tooltip names its model and where it works.
-// The fake provider answers; a local provider that refuses every request (HTTP 400) makes one subagent fail.
+// A session's subagent items in the sidebar, in Chromium, end to end: pi's working dots while a subagent works, a red
+// dot after a provider error (its label says why), nothing once stopped or idle; the age of its newest message in the
+// session's age column; its model and where it works as its tooltip. Its action on hover: Cancel stops only its run,
+// Archive moves it under "N archived". The fake provider answers; a local provider that refuses every request
+// (HTTP 400) makes one subagent fail.
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
@@ -12,13 +13,14 @@ import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { Chat } from "../../plugins/chat/contract.ts";
 import { Models } from "../../plugins/models/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SessionStatus } from "../../plugins/status/contract.ts";
 import { type Child, Subagents } from "../../plugins/subagents/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
 import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
 import { type BaselineOffset, baselineOffsets } from "./sidebar-baselines.ts";
 
-/** What a subagent's row shows: its end's text, its failure mark's title, and the row's tooltip. */
-type Shown = { end: string; mark: string | null; tooltip: string };
+/** What a subagent's item shows: its details' text, its status mark (`dots`, `failed: <label>`, none), its tooltip. */
+type Shown = { details: string; status: string; tooltip: string };
 
 describe("subagent rows in the sidebar", { skip: !browserTests }, () => {
 	let provider: Server;
@@ -70,7 +72,7 @@ describe("subagent rows in the sidebar", { skip: !browserTests }, () => {
 		await browser.signIn(fixture.owner);
 		await browser.metrics(1280, 800);
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${session}`);
-		const toggle = `document.querySelector('.sidebar-section[data-key=recent] .session-header.has-subagents .subagent-toggle')`;
+		const toggle = `document.querySelector('.sidebar-section[data-key=other] .session-header.has-subagents .subagent-toggle')`;
 		await browser.wait(toggle);
 		if ((await browser.evaluate<string>(`${toggle}.getAttribute('aria-expanded')`)) === "false")
 			await browser.evaluate(`${toggle}.click()`);
@@ -83,88 +85,88 @@ describe("subagent rows in the sidebar", { skip: !browserTests }, () => {
 	});
 
 	const row = (name: string) =>
-		`[...document.querySelectorAll('.sidebar-section[data-key=recent] .nav-row:has(> .subagent-row)')].find(e=>e.querySelector('.session-title').textContent===${JSON.stringify(name)})`;
+		`[...document.querySelectorAll('.sidebar-section[data-key=other] .nav-row:has(> .subagent-row)')].find(e=>e.querySelector('.session-title').textContent===${JSON.stringify(name)})`;
 	const shown = (name: string) =>
 		browser.evaluate<Shown>(
-			`(() => { const e = ${row(name)}; return { end: e.querySelector('.nav-details')?.textContent ?? '', mark: e.querySelector('.failed-mark')?.title ?? null, tooltip: e.querySelector('.subagent-row').title }; })()`,
+			`(() => { const e = ${row(name)}; const m = e.querySelector('.nav-marker > *'); return { details: e.querySelector('.nav-details')?.textContent ?? '', status: !m ? '' : m.classList.contains('pi-dots') ? 'dots' : m.classList.contains('failed-dot') ? 'failed: ' + m.getAttribute('aria-label') : m.className, tooltip: e.querySelector('.subagent-row').title }; })()`,
 		);
+	/** Moves the mouse over item `name`, which shows its action instead of its age. */
+	const hover = async (name: string) => {
+		const at = await browser.evaluate<{ x: number; y: number }>(
+			`(() => { const r = ${row(name)}.querySelector('.session-title').getBoundingClientRect(); return { x: r.left + 4, y: r.top + r.height / 2 }; })()`,
+		);
+		await browser.call("Input.dispatchMouseEvent", { type: "mouseMoved", ...at });
+	};
 	const helper = () => children.find((child) => child.name === "helper")!;
+	const failure = '400: {"message":"fixture bad request","type":"invalid_request_error"}';
 
-	it("shows an idle subagent's time in its session's time column, and its model and location as its tooltip", async () => {
-		await browser.wait(`${row("helper")}.querySelector('.session-time')?.textContent === 'now'`);
-		assert.deepEqual(await shown("helper"), { end: "now", mark: null, tooltip: "faux-1 · off\nFollows the session" });
-		const edges = await browser.evaluate<number[]>(
-			`[${row("helper")}.closest('.session-row').querySelector('.session-header .session-time'), ${row("helper")}.querySelector('.session-time')].map(e=>Math.round(e.getBoundingClientRect().right))`,
-		);
-		assert.equal(edges[0], edges[1], "the subagent's time ends where the session's does");
-		// The subagents are a list one level below the session: no tree guides (those are the branches').
-		assert.deepEqual(
-			await browser.evaluate<string[]>(
-				`[...${row("helper")}.closest('.conversation-items').querySelectorAll('.conversation-row')].map(e=>getComputedStyle(e).getPropertyValue('--depth')+':'+[...e.querySelectorAll(':scope > .tree-guide')].map(g=>g.dataset.guide+g.style.getPropertyValue('--level')).join(' '))`,
-			),
-			["1:", "1:"],
-		);
-	});
-
-	it("shows a provider error as Failed, its text in the tooltip", async () => {
-		assert.deepEqual(await shown("failing"), {
-			end: "Failed",
-			mark: '400: {"message":"fixture bad request","type":"invalid_request_error"}',
-			tooltip:
-				'm1 · off\nFollows the session\nFailed: 400: {"message":"fixture bad request","type":"invalid_request_error"}',
-		});
-	});
-
-	it("shows the step while a subagent works, then Stopped once its run is stopped", async () => {
-		const sub = await holdIn(
-			fixture.browser(),
-			Chat,
-			{ session, conversation: helper().conversationId },
-			"participant",
-		);
-		// Idle its marker is a ring; working, the spinner in the same box of its row (which may move up), so the mark
-		// does not move: the same centre and layout size (a turning spinner's bounds are wider).
-		const mark = (selector: string) =>
-			browser.evaluate<string>(
-				`(() => { const e = ${row("helper")}; const o = e.getBoundingClientRect(); const m = e.querySelector('.nav-marker ${selector}'); const r = m.getBoundingClientRect(); return [(r.left + r.right) / 2 - o.left, (r.top + r.bottom) / 2 - o.top, m.offsetWidth, m.offsetHeight].join(); })()`,
-			);
-		const ring = await mark(".run-mark[data-state=idle]");
-		assert.deepEqual(
-			await browser.evaluate<unknown>(
-				`(() => { const m = ${row("helper")}.querySelector('.nav-marker > .run-mark'); return [m.dataset.state, m.getAttribute('aria-hidden'), m.getAttribute('role')]; })()`,
-			),
-			["idle", "true", null],
-		);
-		await sub.send({ text: "slow rows", requestId: "slow" }, BACKGROUND_CONTEXT);
-		await browser.wait(`${row("helper")}.querySelector('.subagent-step')?.textContent === 'Thinking'`);
-		assert.equal(await mark(".run-mark[data-state=working]"), ring);
-		assert.equal(
-			await browser.evaluate<boolean>(`${row("helper")}.querySelector('.run-mark[data-state=idle]') === null`),
-			true,
-		);
-		// One mark in both states: the idle ring is decoration (the row's end says the state), the spinner says "Working".
-		assert.deepEqual(
-			await browser.evaluate<unknown>(
-				`(() => { const m = ${row("helper")}.querySelectorAll('.nav-marker > .run-mark'); return [m.length, m[0].getAttribute('role'), m[0].getAttribute('aria-label'), m[0].title]; })()`,
-			),
-			[1, "img", "Working", "Working"],
-		);
-		assert.equal((await shown("helper")).tooltip, "faux-1 · off\nFollows the session");
-		await sub.stop(BACKGROUND_CONTEXT);
-		await browser.wait(`${row("helper")}.querySelector('.subagent-step')?.textContent === 'Stopped'`);
+	it("shows an idle subagent's age in its session's age column, no status mark, and its model and location as its tooltip", async () => {
+		await browser.wait(`${row("helper")}.querySelector('.item-age')?.textContent === 'now'`);
 		assert.deepEqual(await shown("helper"), {
-			end: "Stopped",
-			mark: null,
+			details: "now",
+			status: "",
 			tooltip: "faux-1 · off\nFollows the session",
 		});
-		// The failed one keeps its failure while the other one works and stops.
-		assert.equal((await shown("failing")).end, "Failed");
-		sub.release();
+		const edges = await browser.evaluate<number[]>(
+			`[${row("helper")}.closest('.session-row').querySelector('.session-header .item-age'), ${row("helper")}.querySelector('.item-age')].map(e=>Math.round(e.getBoundingClientRect().right))`,
+		);
+		assert.equal(edges[0], edges[1], "the subagent's age ends where the session's does");
 	});
 
-	it("keeps each end text on its label's baseline, the warning sign centred on its word, on a phone and in RTL", async () => {
+	it("shows a provider error as a red dot labelled with its text, and no word at its end", async () => {
+		assert.deepEqual(await shown("failing"), {
+			details: "now",
+			status: `failed: ${failure}`,
+			tooltip: `m1 · off\nFollows the session\nFailed: ${failure}`,
+		});
+	});
+
+	it("shows pi's dots while a subagent works; its Cancel stops its run only", async () => {
+		const owner = fixture.browser();
+		const sub = await holdIn(owner, Chat, { session, conversation: helper().conversationId }, "participant");
+		const main = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
+		const status = await holdIn(owner, SessionStatus, {}, "reader");
+		await main.send({ text: "slow main", requestId: "slow-main" }, BACKGROUND_CONTEXT);
+		await sub.send({ text: "slow rows", requestId: "slow" }, BACKGROUND_CONTEXT);
+		await browser.wait(`${row("helper")}.querySelector('.nav-marker > .pi-dots[role=img][aria-label=Working]')`);
+		assert.equal((await shown("helper")).tooltip, "faux-1 · off\nFollows the session");
+		await hover("helper");
+		const cancel = `.sidebar-section[data-key=other] .conversation-row > button.item-action[data-action=cancel][aria-label="Stop helper"]`;
+		await browser.wait(`getComputedStyle(document.querySelector('${cancel}')).opacity === '1'`);
+		// The action takes the age's place.
+		assert.equal(
+			await browser.evaluate<string>(`getComputedStyle(${row("helper")}.querySelector('.nav-details')).visibility`),
+			"hidden",
+		);
+		await browser.click(cancel);
+		await until(status.statuses, (states) => !states?.[session]?.busy.includes(helper().conversationId));
+		// Stopped, not finished on its own.
+		const last = await until(sub.view, (view) => !(view?.docs["pi.live"] as { run?: unknown } | undefined)?.run);
+		assert.doesNotMatch(JSON.stringify(last?.entries ?? []), /Echo: slow rows/);
+		// A stopped run shows nothing; the main conversation still runs, and the session's item says so.
+		await browser.wait(`!${row("helper")}.querySelector('.nav-marker > *')`);
+		assert.ok(status.statuses.value?.[session]?.busy.includes(1), "the main conversation still runs");
+		assert.ok(
+			await browser.evaluate<boolean>(
+				`Boolean(${row("helper")}.closest('.session-row').querySelector('.session-header .nav-marker > .pi-dots'))`,
+			),
+		);
+		// The failed one keeps its failure while the other one works and stops.
+		assert.equal((await shown("failing")).status, `failed: ${failure}`);
+		await main.stop(BACKGROUND_CONTEXT);
+		await until(status.statuses, (states) => states?.[session]?.busy.length === 0);
+		await browser.call("Input.dispatchMouseEvent", { type: "mouseMoved", x: 900, y: 700 });
+		for (const held of [sub, main, status]) held.release();
+	});
+
+	it("cuts a long name with an ellipsis and keeps each age whole on its name's baseline, on a phone (no action button) and in RTL", async () => {
+		const title = "A session title long enough to be cut at every sidebar width";
+		await (await holdIn(fixture.browser(), Sessions, {}, "owner")).rename({ id: session, title }, BACKGROUND_CONTEXT);
 		const item = `${row("failing")}.closest('.session-row')`;
 		const check = async (where: string) => {
+			await browser.wait(
+				`${item}.querySelector('.session-header .session-title').textContent === ${JSON.stringify(title)}`,
+			);
 			for (const dir of ["ltr", "rtl"]) {
 				await browser.evaluate(`document.documentElement.dir=${JSON.stringify(dir)}`);
 				const offsets = await browser.evaluate<BaselineOffset[]>(
@@ -176,17 +178,19 @@ describe("subagent rows in the sidebar", { skip: !browserTests }, () => {
 					offsets.map((each) => [each.kind, each.end]),
 					[
 						["session", "now"],
-						["subagent", "Stopped"],
-						["subagent", "Failed"],
+						["subagent", "now"],
+						["subagent", "now"],
 					],
 				);
 				for (const { label, end, offset } of offsets)
 					assert(Math.abs(offset) < 0.5, `${label}'s "${end}" is ${offset}px off its baseline (${where}, ${dir})`);
-				// The warning sign's centre on its word's (the word's line box, wrapped for the measure).
-				const apart = await browser.evaluate<number>(
-					`(() => { const m = ${row("failing")}.querySelector('.failed-mark'); const text = [...m.childNodes].find((n) => n.nodeType === 3); const wrap = document.createElement('span'); text.replaceWith(wrap); wrap.append(text); const w = wrap.getBoundingClientRect(); wrap.replaceWith(text); const i = m.querySelector('svg').getBoundingClientRect(); return (i.top + i.bottom) / 2 - (w.top + w.bottom) / 2; })()`,
+				assert.deepEqual(
+					await browser.evaluate<unknown>(
+						`(() => { const header = ${item}.querySelector('.session-header'); const t = header.querySelector('.nav-label'), a = header.querySelector('.item-age'); return [getComputedStyle(t).textOverflow, t.scrollWidth > t.clientWidth, a.scrollWidth <= a.clientWidth]; })()`,
+					),
+					["ellipsis", true, true],
+					`the title is cut, the age whole (${where}, ${dir})`,
 				);
-				assert(Math.abs(apart) < 1, `the warning sign is ${apart}px off its word (${where}, ${dir})`);
 			}
 			await browser.evaluate(`document.documentElement.removeAttribute('dir')`);
 		};
@@ -196,13 +200,47 @@ describe("subagent rows in the sidebar", { skip: !browserTests }, () => {
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${session}`);
 		await browser.click(".topbar button[aria-label=Sessions]");
 		await browser.wait(`document.querySelector('.app.drawer-open')`);
-		const toggle = `document.querySelector('.sidebar-section[data-key=recent] .session-header.has-subagents .subagent-toggle')`;
+		const toggle = `document.querySelector('.sidebar-section[data-key=other] .session-header.has-subagents .subagent-toggle')`;
 		await browser.wait(toggle);
 		if ((await browser.evaluate<string>(`${toggle}.getAttribute('aria-expanded')`)) === "false")
 			await browser.evaluate(`${toggle}.click()`);
 		await browser.wait(`${row("helper")} && ${row("failing")}`);
 		await check("phone");
+		// On touch screens the item's command menu has its action (a long press): no button.
+		assert.equal(
+			await browser.evaluate<string>(`getComputedStyle(${row("helper")}.querySelector('.item-action')).display`),
+			"none",
+		);
+		await browser.evaluate("history.back()");
+		await browser.wait(`!document.querySelector('.app.drawer-open')`);
 		await browser.call("Emulation.setTouchEmulationEnabled", { enabled: false });
 		await browser.metrics(1280, 800);
+	});
+
+	it('archives an idle subagent from its item: it moves under "1 archived"', async () => {
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
+		await browser.wait(`${row("helper")}`);
+		await browser.evaluate(`${row("helper")}.closest('.session-row').querySelector('.subagent-toggle').click()`);
+		await browser.wait(`${row("helper")}.getClientRects().length > 0`);
+		await hover("helper");
+		await browser.click(
+			`.sidebar-section[data-key=other] .conversation-row > button.item-action[data-action=archive][aria-label="Archive helper"]`,
+		);
+		await browser.wait(
+			`document.querySelector('.sidebar-section[data-key=other] .subagent-stored .session-title')?.textContent === '1 archived'`,
+		);
+		// Behind the closed "1 archived" row: the shown list has the failing one only.
+		assert.deepEqual(
+			await browser.evaluate<string[]>(
+				`[...document.querySelectorAll('.sidebar-section[data-key=other] a.subagent-row:not(.subagent-stored)')].filter(e=>!e.closest('[hidden]')).map(e=>e.querySelector('.session-title').textContent)`,
+			),
+			["failing"],
+		);
+		const agents = await holdIn(fixture.browser(), Subagents, {}, "reader");
+		await until(
+			agents.children,
+			(value) => value?.[session]?.find((child) => child.name === "helper")?.archived === true,
+		);
+		agents.release();
 	});
 });

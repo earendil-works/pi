@@ -397,7 +397,8 @@ textarea.input {
 .footer-action,
 .title-cwd,
 .crumb,
-.cwd-pick span {
+.cwd-pick span,
+.project-pick span {
 	text-decoration: underline dotted;
 	text-decoration-color: var(--faint);
 	text-underline-offset: 3px;
@@ -408,7 +409,8 @@ textarea.input {
 	.footer-action:hover,
 	.title-cwd:hover,
 	.crumb:hover,
-	.cwd-pick:hover span {
+	.cwd-pick:hover span,
+	.project-pick:hover span {
 		color: var(--text);
 		text-decoration-color: currentColor;
 	}
@@ -2226,7 +2228,8 @@ button.diff-number:hover {
 	font-weight: var(--fw-strong);
 	letter-spacing: -0.02em;
 }
-.cwd-pick {
+.cwd-pick,
+.project-pick {
 	display: inline-flex;
 	align-items: center;
 	gap: var(--s2);
@@ -2235,13 +2238,20 @@ button.diff-number:hover {
 	font-family: var(--mono);
 	font-size: var(--fs-sm);
 }
-/* The sidebar group a new session joins (a group's "+"), after its location. */
-.cwd-join {
-	color: var(--muted);
-	font-size: var(--fs-sm);
-	white-space: nowrap;
+/* The new-session screen's choices: the project the session joins, then its location, one per line. */
+.new-session-choices {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: var(--s2);
+	max-width: 100%;
 }
-.cwd-pick span {
+/* A project is a name, not a path. */
+.project-pick {
+	font-family: inherit;
+}
+.cwd-pick span,
+.project-pick span {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
@@ -2618,10 +2628,19 @@ button.diff-number:hover {
 	font-family: var(--mono);
 	font-size: var(--fs-xs);
 }
-.subagent-bar span {
+.subagent-bar > span:not(.pi-dots) {
 	flex: 1;
 	min-width: 0;
 	overflow-wrap: anywhere;
+}
+/* The main conversation's running agents (chat's RunningAgents): each name opens its conversation. */
+.running-agent {
+	padding: 0;
+	color: var(--text);
+	font: inherit;
+	text-decoration: underline dotted;
+	text-decoration-color: var(--faint);
+	text-underline-offset: 3px;
 }
 .subagent-bar .round {
 	place-items: center end;
@@ -3068,25 +3087,6 @@ button.diff-number:hover {
 	display: flex;
 	flex-direction: column;
 	margin-top: var(--s3);
-}
-.directory-use,
-.directory-error {
-	margin-top: var(--s3);
-}
-.directory-head {
-	padding-bottom: var(--s3);
-}
-/* A path in the directory picker (the Use button, folder and recent rows): one line, cut with "…" at its end; the
-   element's title has it whole. */
-.directory-path {
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-.list .row-button.mono {
-	font-family: var(--mono);
-	font-size: var(--fs-sm);
 }
 
 .model-list section h3 {
@@ -3600,35 +3600,12 @@ button.history-edge:disabled {
 	overflow-wrap: anywhere;
 }
 
-/* Location picker: loading state while a (remote) listing arrives. */
-.directory-loading {
-	display: flex;
-	align-items: center;
-	gap: var(--s2);
-	padding: var(--s3) 0;
-	color: var(--muted);
-	font-size: var(--fs-sm);
-}
-.directory-busy > .row-button {
-	opacity: 0.5;
-}
-.directory-note {
-	margin: var(--s2) 0 0;
-}
-
 /* The lock of a sandboxed location, in the top bar's location line. */
 .title-lock {
 	display: inline-flex;
 	margin-right: 3px;
 	vertical-align: -1px;
 }
-/* The location's project glyph (plugins/glyphs), before the path in the top bar's location line. */
-.title .glyph-icon {
-	display: inline-block;
-	margin-right: var(--s1);
-	vertical-align: -1px;
-}
-
 /* Touch targets: on a coarse pointer every list row and small control is at least one --row (44px) tall. The
    transcript's own rows keep their rhythm (.row, TranscriptRow.gap in Chat.tsx). */
 @media (pointer: coarse) {

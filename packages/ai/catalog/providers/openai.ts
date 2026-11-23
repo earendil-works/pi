@@ -12,6 +12,7 @@ import {
 	enableOpenAiGrammarTools,
 	enableOpenAiMidConvoSystemMessages,
 	OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
+	OPENAI_MID_CONVO_EFFORT_MODEL_IDS,
 	OPENAI_STANDARD_COSTS,
 	OPENAI_TOOL_SEARCH_MODEL_IDS,
 	withOpenAiLongContextPricing,
@@ -35,6 +36,8 @@ const SHORT_CONTEXT_CAPPED_MODEL_IDS = new Set([
 	"gpt-6-luna",
 	"gpt-6.1-sol",
 	"gpt-6.1-terra",
+	"gpt-6.2-astra",
+	"gpt-6.2-sol",
 ]);
 const LONG_CONTEXT_PRICING_MODEL_IDS = new Set([...SHORT_CONTEXT_CAPPED_MODEL_IDS, "gpt-5.4-pro", "gpt-5.5-pro"]);
 
@@ -52,9 +55,6 @@ const NONE_REASONING_MODEL_IDS = new Set([
 	"gpt-6-sol",
 	"gpt-6-luna",
 ]);
-// OpenAI documents configuration_update for the GPT-6 family.
-// https://developers.openai.com/api/docs/guides/reasoning
-const MID_CONVO_EFFORT_MODEL_IDS = new Set(["gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol", "gpt-6.1-terra"]);
 
 // Not listed by models.dev.
 const GPT_5_CHAT_LATEST: Model<"openai-responses"> = {
@@ -71,7 +71,9 @@ const GPT_5_CHAT_LATEST: Model<"openai-responses"> = {
 };
 
 // OpenAI Decisions API (public beta): gpt-6-luna is its only model. It bills input tokens only,
-// with the same long-context multiplier as chat requests. Only API keys work: Sign in with ChatGPT
+// with the same long-context multiplier as chat requests. Usage reports cache reads and writes
+// within input_tokens; they are priced at the input rate here, so splitting them out of input
+// does not change the cost. Only API keys work: Sign in with ChatGPT
 // tokens are rejected on /v1/decisions, and the Codex backend has no Decisions route.
 // The endpoint rejects inputs above 922K tokens (the model's documented maximum input), but
 // requests running longer than about five seconds, currently above roughly 600K input tokens,
@@ -86,7 +88,7 @@ const CLASSIFIER_MODELS: ClassifierModel<"openai-decisions">[] = [
 		provider: "openai",
 		baseUrl: BASE_URL,
 		input: ["text", "image"],
-		cost: withOpenAiLongContextPricing({ input: 0.1, output: 0, cacheRead: 0, cacheWrite: 0 }),
+		cost: withOpenAiLongContextPricing({ input: 0.1, output: 0, cacheRead: 0.1, cacheWrite: 0.1 }),
 		contextWindow: 922000,
 	},
 ];
@@ -135,7 +137,9 @@ export default defineProvider({
 		// those models accept `prompt_cache_options`; older models reject the parameter.
 		// https://developers.openai.com/api/docs/guides/prompt-caching
 		if (model.cost.cacheWrite > 0) mergeCompat(responsesModel, { supportsExplicitPromptCacheMode: true });
-		if (MID_CONVO_EFFORT_MODEL_IDS.has(model.id)) mergeCompat(responsesModel, { supportsMidConvoEffort: true });
+		if (OPENAI_MID_CONVO_EFFORT_MODEL_IDS.has(model.id)) {
+			mergeCompat(responsesModel, { supportsMidConvoEffort: true });
+		}
 		withInputLimits(model, { maxRequestBytes: 512 * 1024 * 1024, images: { maxPerRequest: 1500 } });
 	},
 });

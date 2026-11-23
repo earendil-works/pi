@@ -85,6 +85,8 @@ const workers = createWorkers(
 		principal: () => ({ kind: "worker" }),
 		start: () => ({}),
 		lock: (address) => `bench:${process.pid}:${address.key}`,
+		// The server host has no store.
+		store: undefined,
 		plugins,
 		onOutput: () => {},
 		onError: () => {},

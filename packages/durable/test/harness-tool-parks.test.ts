@@ -99,11 +99,11 @@ function signalTool(runs: Run[], extra: Partial<ToolRegistration> = {}) {
 		async (_args, api, ctx) => {
 			runs.push({ wake: api.wake, checkpoint: api.checkpoint });
 			const state = await api.readSignal(Done, "done", ctx);
-			if (state !== undefined && "value" in state) return { output: [{ type: "text", text: state.value.text }] };
+			if (state?.kind === "value") return { output: [{ type: "text", text: state.value.text }] };
 			api.output("started\n");
 			api.diagnostic({ severity: "info", message: `run ${runs.length}` });
 			await api.details({ build: runs.length }, ctx);
-			return { sleep: { checkpoint: { build: runs.length }, signals: [Done.key("done")] } };
+			return { kind: "sleep", checkpoint: { build: runs.length }, signals: [Done.key("done")] };
 		},
 		extra,
 	);
@@ -162,7 +162,7 @@ describe("parking on a signal", () => {
 			setup.registry,
 			tool("poll", async (_args, api) => {
 				wakes.push(api.wake);
-				return api.wake === undefined ? { sleep: { until: api.now() + 500 } } : { output: [] };
+				return api.wake === undefined ? { kind: "sleep", until: api.now() + 500 } : { output: [] };
 			}),
 		);
 		setup.faux.setResponses([call("poll"), DONE]);
@@ -272,7 +272,7 @@ describe("parking on tasks", () => {
 					wakes.push(api.wake);
 					if (api.wake !== undefined) return { output: [{ type: "text", text: "joined" }] };
 					child = await api.createTask(Child, null, { ownership: { kind: "task", taskId: api.taskId } }, ctx);
-					return { wait: { on: [child], policy: "any" } };
+					return { kind: "wait", on: [child], policy: "any" };
 				},
 				{ replay: "safe" },
 			),
@@ -292,10 +292,10 @@ describe("parking on tasks", () => {
 describe("invalid parks", () => {
 	it("ends the call with an invalid_park result, through afterTool, and fails its task", async () => {
 		const parks: Record<string, unknown> = {
-			mixed: { sleep: { until: 1 }, wait: { on: [], policy: "any" } },
-			result: { sleep: { until: 1 }, output: [] },
-			empty: { sleep: {} },
-			unowned: { wait: { on: [1], policy: "any" } },
+			unknown: { kind: "nap", until: 1 },
+			result: { kind: "sleep", until: 1, output: [] },
+			empty: { kind: "sleep" },
+			unowned: { kind: "wait", on: [1], policy: "any" },
 		};
 		for (const [name, returned] of Object.entries(parks)) {
 			const setup = chatSetup();
@@ -325,7 +325,7 @@ describe("invalid parks the commit refuses", () => {
 			setup.registry,
 			tool("again", async () => {
 				runs++;
-				return { sleep: { signals: [Done.key("k")] } };
+				return { kind: "sleep", signals: [Done.key("k")] };
 			}),
 		);
 		setup.faux.setResponses([call("again"), DONE]);
@@ -404,7 +404,7 @@ describe("cancel", () => {
 			tool(
 				"ci",
 				async (_args, api, ctx) => {
-					if (api.wake === undefined) return { sleep: { checkpoint: "first", signals: [Done.key("done")] } };
+					if (api.wake === undefined) return { kind: "sleep", checkpoint: "first", signals: [Done.key("done")] };
 					running.resolve();
 					await aborted(ctx.abortSignal!).catch((error) => {
 						cleaned.push("execute");
@@ -462,7 +462,7 @@ describe("cancel", () => {
 					entered.resolve();
 					// The abort arrives while the tool still runs; it ignores the signal and parks anyway.
 					await release.promise;
-					return { sleep: { checkpoint: "started", signals: [Done.key("k")] } };
+					return { kind: "sleep", checkpoint: "started", signals: [Done.key("k")] };
 				},
 				{
 					cancel: async (_args, api, ctx) => {
@@ -528,7 +528,7 @@ describe("waking", () => {
 				"ci",
 				async (_args, api, ctx) => {
 					runs++;
-					if (api.wake === undefined) return { sleep: { checkpoint: "first", signals: [Done.key("done")] } };
+					if (api.wake === undefined) return { kind: "sleep", checkpoint: "first", signals: [Done.key("done")] };
 					api.output("rerun\n");
 					await api.details({ woken: true }, ctx);
 					started.resolve();
@@ -569,7 +569,7 @@ describe("waking", () => {
 					if (api.wake === undefined) {
 						api.diagnostic({ severity: "info", message: "parked" });
 						await api.details({ build: 1 }, ctx);
-						return { sleep: { checkpoint: "first", signals: [Done.key("done")] } };
+						return { kind: "sleep", checkpoint: "first", signals: [Done.key("done")] };
 					}
 					if (seen.length === 2) {
 						api.output("cut off\n");
@@ -619,7 +619,7 @@ describe("wrappers", () => {
 							...inner,
 							execute: async (args, api, ctx) => {
 								const returned = await inner.execute(args, api, ctx);
-								return own && "sleep" in returned ? { sleep: { ...returned.sleep } } : returned;
+								return own && returned.kind === "sleep" ? { ...returned } : returned;
 							},
 						})),
 					],
@@ -644,7 +644,7 @@ describe("wrappers", () => {
 	});
 	it("accept one park object its base returns to calls running at once", async () => {
 		const setup = chatSetup();
-		const shared = { sleep: { signals: [Done.key("done")] } } as const;
+		const shared = { kind: "sleep", signals: [Done.key("done")] } as const;
 		const base = tool("ci", async (_args, api, ctx) =>
 			(await api.readSignal(Done, "done", ctx)) === undefined ? shared : { output: [{ type: "text", text: "ok" }] },
 		);
@@ -684,7 +684,7 @@ describe("wrappers", () => {
 						execute: async (args, api, ctx) => {
 							if (kept !== undefined) return kept;
 							const returned = await inner.execute(args, api, ctx);
-							if ("sleep" in returned && returned.sleep !== undefined) kept = returned;
+							if (returned.kind === "sleep") kept = returned;
 							return returned;
 						},
 					})),

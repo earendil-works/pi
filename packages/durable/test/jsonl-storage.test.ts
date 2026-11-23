@@ -1282,7 +1282,7 @@ describe("JsonlStorage batches", () => {
 		// Reads wait for the append: a read started while it runs sees every batch durable.
 		const result = storage.commit(batches, () => {}, context);
 		const read = storage.entry(entries[2]!, context);
-		expect(await result).toEqual({ stored: 3 });
+		expect(await result).toEqual({ kind: "stored", stored: 3 });
 		expect(await read).toBeDefined();
 		const main = await readFile(mainPath, "utf8");
 		const markers = main

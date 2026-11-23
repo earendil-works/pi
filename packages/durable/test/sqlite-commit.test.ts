@@ -360,7 +360,7 @@ async function commitEach(storage: Storage, batches: readonly (readonly StorageW
 async function commitOutcome(storage: Storage, batches: readonly (readonly StorageWrite[])[]) {
 	const receipts: [number, Seq][] = [];
 	const result = await storage.commit(batches, (index, seq) => receipts.push([index, seq]), context);
-	return { stored: result.stored, refused: "refused" in result, receipts };
+	return { stored: result.stored, refused: result.kind === "refused", receipts };
 }
 
 describe("SqliteStorage batch commits against the memory reference", () => {
@@ -612,7 +612,10 @@ describe("SqliteStorage batch commit regressions", () => {
 					() => {},
 					context,
 				);
-				outcomes.push({ stored: result.stored, refused: String(result.refused) });
+				outcomes.push({
+					stored: result.stored,
+					refused: result.kind === "refused" ? String(result.refused) : "undefined",
+				});
 			}
 			expect(outcomes[1]).toEqual({
 				stored: 1,

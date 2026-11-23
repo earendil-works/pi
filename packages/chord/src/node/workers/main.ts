@@ -208,14 +208,14 @@ class Worker {
 			scripts = this.#reloads.shift()
 		) {
 			if (loaded === undefined) {
-				this.#send({ kind: "reloaded", error: { message: "worker: plugins.load was never called" } });
+				this.#send({ kind: "reload_failed", error: { message: "worker: plugins.load was never called" } });
 				continue;
 			}
 			try {
 				const report = await loaded.runtime.reload(loaded.host, scripts, this.#context);
 				this.#send({ kind: "reloaded", report: crossedReport(report) });
 			} catch (error) {
-				this.#send({ kind: "reloaded", error: crossed(error) });
+				this.#send({ kind: "reload_failed", error: crossed(error) });
 			}
 		}
 		this.#reloading = false;

@@ -106,8 +106,8 @@ type Resolution =
 
 /** A definition that can take a record, or why none can; deciding it runs no task code. */
 type Fit =
-	| { readonly task: AnyTask; readonly migrates: boolean }
-	| { readonly reason: BlockedReason; readonly error?: unknown };
+	| { readonly kind: "fits"; readonly task: AnyTask; readonly migrates: boolean }
+	| { readonly kind: "blocked"; readonly reason: BlockedReason; readonly error?: unknown };
 
 /** One in-memory execution of a task in run or abort mode. */
 type Invocation = {
@@ -181,13 +181,15 @@ export type InvocationBinding = { readonly signal: AbortSignal; check(): void };
 type TaskNode = Pick<AnyTaskRecord, "conversationId" | "owner" | "background">;
 
 /** Where a walk up the ownership tree continues: an owner task, or a conversation. */
-type Up = { readonly task: TaskId } | { readonly conversation: ConversationId };
+type Up =
+	| { readonly kind: "task"; readonly task: TaskId }
+	| { readonly kind: "conversation"; readonly conversation: ConversationId };
 
 /** One step of a walk up: an owner task with its node, a conversation, or an owner edge that is not loaded yet. */
 type Step =
-	| { readonly task: TaskId; readonly node: TaskNode }
-	| { readonly conversation: ConversationId }
-	| { readonly unknown: true };
+	| { readonly kind: "task"; readonly task: TaskId; readonly node: TaskNode }
+	| { readonly kind: "conversation"; readonly conversation: ConversationId }
+	| { readonly kind: "unknown" };
 
 /** Candidate records a commit staged; they override committed records in ownership walks. */
 type Overlay = {
@@ -217,7 +219,7 @@ function parentNode(node: TaskNode): Node {
 }
 
 /** Where ordinary ownership traversal starts: one conversation, or every ownerless conversation. */
-type Scope = { readonly conversation: ConversationId } | { readonly roots: true };
+type Scope = { readonly kind: "conversation"; readonly conversation: ConversationId } | { readonly kind: "roots" };
 
 export type TaskSchedulerOptions = {
 	readonly telemetry?: HarnessOptions["telemetry"];
@@ -549,7 +551,7 @@ export class TaskScheduler {
 			return undefined;
 		}
 		const fit = this.#fit(record, snapshot.task(record.kind));
-		if ("reason" in fit) return fit.reason;
+		if (fit.kind === "blocked") return fit.reason;
 		return fit.migrates && fit.task.definition.migrate === undefined ? "migration_failed" : undefined;
 	}
 
@@ -604,7 +606,7 @@ export class TaskScheduler {
 						this.#report(error, REGISTRY);
 					}
 				}
-				if (snapshot !== undefined && "reason" in this.#fit(record, snapshot.task(record.kind))) continue;
+				if (snapshot !== undefined && this.#fit(record, snapshot.task(record.kind)).kind === "blocked") continue;
 			}
 			return true;
 		}
@@ -705,7 +707,7 @@ export class TaskScheduler {
 		const reached = await this.#session.commitWith(async (tx) => {
 			await this.#published();
 			const queued = await this.#loadScopes(true);
-			const scope = { conversation: conversationId };
+			const scope: Scope = { kind: "conversation", conversation: conversationId };
 			const reached: TaskId[] = [];
 			const walk = this.#walkDown(conversationNode(conversationId), { crossBackground: background });
 			for (const { node, live } of walk) {
@@ -714,7 +716,8 @@ export class TaskScheduler {
 				if (!live.abortRequested || live.abortReason !== undefined) tx.setTask(withAbortMark(live));
 			}
 			for (const id of queued) {
-				if (this.#inScope({ conversation: id }, scope, background) === true) await this.#withdrawInputs(tx, id);
+				if (this.#inScope({ kind: "conversation", conversation: id }, scope, background) === true)
+					await this.#withdrawInputs(tx, id);
 			}
 			return reached;
 		}, context);
@@ -755,7 +758,7 @@ export class TaskScheduler {
 		for (const conversation of conversations) {
 			const owner = conversation.owner?.taskId;
 			if (owner === undefined) continue;
-			await this.#loadChain({ task: owner }, overlay);
+			await this.#loadChain({ kind: "task", task: owner }, overlay);
 			await this.#chainKeys(owner, overlay, keys, reached);
 		}
 		return [...keys];
@@ -797,7 +800,7 @@ export class TaskScheduler {
 				if (gate !== undefined) {
 					await gate;
 					// It may have ended meanwhile, and its node been swept: load the chain above it again.
-					await this.#loadChain({ task: node }, overlay);
+					await this.#loadChain({ kind: "task", task: node }, overlay);
 				}
 				record = this.#live.get(node);
 			}
@@ -884,7 +887,10 @@ export class TaskScheduler {
 			// Only an owner with cancellation intent withdraws it; a later intent's mark runs the cascade then.
 			if (this.#intent.size === 0) continue;
 			const conversation = change.value.conversationId;
-			if (!this.#known(conversationNode(conversation)) || this.#belowCancelled({ conversation })) {
+			if (
+				!this.#known(conversationNode(conversation)) ||
+				this.#belowCancelled({ kind: "conversation", conversation })
+			) {
 				this.#cascadePending = true;
 			}
 		}
@@ -1092,7 +1098,7 @@ export class TaskScheduler {
 				const marks = await this.#marks();
 				for (const { record, reason } of marks.values()) tx.setTask(withAbortMark(record, reason));
 				const withdrawn = await this.#region(
-					() => queued.filter((id) => this.#belowCancelled({ conversation: id })),
+					() => queued.filter((id) => this.#belowCancelled({ kind: "conversation", conversation: id })),
 					this.#reloadScopes,
 				);
 				for (const id of withdrawn) await this.#withdrawInputs(tx, id);
@@ -1131,7 +1137,7 @@ export class TaskScheduler {
 		const ended = new Map<TaskId, AnyTaskRecord | null>();
 		for (;;) {
 			const plan = await this.#region(() => this.#planMarks(ended), this.#reloadScopes);
-			if ("missing" in plan) {
+			if (plan.kind === "missing") {
 				for (const id of plan.missing)
 					ended.set(id, (await this.#session.lineStorage.task(id, this.#context)) ?? null);
 				continue;
@@ -1143,8 +1149,9 @@ export class TaskScheduler {
 
 	/** `#marks()`' decision region; the `failFast` members it needs from Storage first, when `ended` lacks them. */
 	#planMarks(ended: ReadonlyMap<TaskId, AnyTaskRecord | null>):
-		| { readonly missing: readonly TaskId[] }
+		| { readonly kind: "missing"; readonly missing: readonly TaskId[] }
 		| {
+				readonly kind: "marks";
 				readonly marks: Map<TaskId, { readonly record: AnyTaskRecord; readonly reason: "restart" | undefined }>;
 				readonly checked: readonly TaskId[];
 		  } {
@@ -1185,7 +1192,7 @@ export class TaskScheduler {
 				if (record !== undefined && !failedOutcome(record)) mark(record, undefined);
 			}
 		}
-		return missing.length > 0 ? { missing } : { marks, checked };
+		return missing.length > 0 ? { kind: "missing", missing } : { kind: "marks", marks, checked };
 	}
 
 	/** Whether a reconcile pass would have work: a cascade to derive, held outcomes to check, or `failFast` waits. */
@@ -1274,7 +1281,7 @@ export class TaskScheduler {
 	async #loadScopes(queued: boolean): Promise<ConversationId[]> {
 		for (const id of [...this.#unloaded]) {
 			// An earlier load in this loop may have passed it.
-			if (this.#unloaded.has(id)) await this.#loadChain({ task: id });
+			if (this.#unloaded.has(id)) await this.#loadChain({ kind: "task", task: id });
 		}
 		if (!queued) return [];
 		// A scan, which cannot be keyed: it waits for every unpublished commit.
@@ -1283,7 +1290,7 @@ export class TaskScheduler {
 		);
 		const inputs = submissions.filter((submission) => submission.type === "input");
 		const conversations = [...new Set(inputs.map((submission) => submission.conversationId))];
-		for (const id of conversations) await this.#loadChain({ conversation: id });
+		for (const id of conversations) await this.#loadChain({ kind: "conversation", conversation: id });
 		return conversations;
 	}
 
@@ -1299,7 +1306,7 @@ export class TaskScheduler {
 		let at: Up | undefined = start;
 		try {
 			while (at !== undefined) {
-				if ("task" in at) {
+				if (at.kind === "task") {
 					const id: TaskId = at.task;
 					let node: TaskNode | undefined = this.#live.get(id) ?? this.#settled.get(id);
 					// Created in this commit: the load from its own record covers what is above it.
@@ -1333,7 +1340,7 @@ export class TaskScheduler {
 						// A loaded node can reveal a cancelling owner: the next reconcile derives marks again.
 						this.#scheduleReconcile();
 					}
-					at = edge === null ? undefined : { task: edge };
+					at = edge === null ? undefined : { kind: "task", task: edge };
 				}
 			}
 		} finally {
@@ -1425,11 +1432,13 @@ export class TaskScheduler {
 		for (;;) {
 			const keys = new Set<string>();
 			this.#reading = keys;
-			let result: { readonly value: T } | { readonly error: unknown };
+			let result:
+				| { readonly kind: "value"; readonly value: T }
+				| { readonly kind: "error"; readonly error: unknown };
 			try {
-				result = { value: decide() };
+				result = { kind: "value", value: decide() };
 			} catch (error) {
-				result = { error };
+				result = { kind: "error", error };
 			} finally {
 				this.#reading = undefined;
 			}
@@ -1439,7 +1448,7 @@ export class TaskScheduler {
 				if (gate !== undefined) gates.push(gate);
 			}
 			if (gates.length === 0) {
-				if ("error" in result) throw result.error;
+				if (result.kind === "error") throw result.error;
 				return result.value;
 			}
 			await Promise.all(gates);
@@ -1620,22 +1629,22 @@ export class TaskScheduler {
 	*#above(start: Up, overlay?: Overlay): Generator<Step> {
 		let at: Up | undefined = start;
 		while (at !== undefined) {
-			if ("task" in at) {
+			if (at.kind === "task") {
 				const node = this.#node(at.task, overlay);
 				if (node === undefined) {
-					yield { unknown: true };
+					yield { kind: "unknown" };
 					return;
 				}
-				yield { task: at.task, node };
+				yield { kind: "task", task: at.task, node };
 				at = parentOf(node);
 			} else {
-				yield { conversation: at.conversation };
+				yield { kind: "conversation", conversation: at.conversation };
 				const edge = this.#edge(at.conversation, overlay);
 				if (edge === undefined) {
-					yield { unknown: true };
+					yield { kind: "unknown" };
 					return;
 				}
-				at = edge === null ? undefined : { task: edge };
+				at = edge === null ? undefined : { kind: "task", task: edge };
 			}
 		}
 	}
@@ -1745,14 +1754,14 @@ export class TaskScheduler {
 	#inScope(start: Up, scope: Scope, crossBackground = false): boolean | undefined {
 		this.#record(INTENT_KEY);
 		for (const step of this.#above(start)) {
-			if ("unknown" in step) return undefined;
-			if ("conversation" in step) {
-				if ("conversation" in scope && step.conversation === scope.conversation) return true;
+			if (step.kind === "unknown") return undefined;
+			if (step.kind === "conversation") {
+				if (scope.kind === "conversation" && step.conversation === scope.conversation) return true;
 			} else if (step.node.background && !crossBackground) {
 				return false;
 			}
 		}
-		return "roots" in scope;
+		return scope.kind === "roots";
 	}
 
 	/**
@@ -1769,8 +1778,8 @@ export class TaskScheduler {
 		// Nothing cancels, the common case: no walk.
 		if (this.#intent.size === 0) return undefined;
 		for (const step of this.#above(start)) {
-			if ("unknown" in step) return undefined;
-			if (!("task" in step)) continue;
+			if (step.kind === "unknown") return undefined;
+			if (step.kind !== "task") continue;
 			const live = this.#live.get(step.task);
 			if (live !== undefined && cancellationIntent(live)) return live;
 			if (step.node.background) return undefined;
@@ -1893,25 +1902,27 @@ export class TaskScheduler {
 	 * The report info of a task's failure, with the extension that installed its definition: the code that failed is
 	 * that extension's. Built-in tasks have none.
 	 */
-	/** What a report about `task`'s own code says of it: the task, and the extension that installed its definition. */
-	#aboutTask(task: {
-		readonly taskId: TaskId;
-		readonly kind: string;
-		readonly conversationId: ConversationId;
-		/** The installer of the definition whose code ran (an invocation's); absent: the current one's. */
-		readonly extension?: string | undefined;
-	}): { readonly task: ReportTask; readonly extension?: string } {
-		let extension: string | undefined;
-		if ("extension" in task) extension = task.extension;
-		else {
-			try {
-				const snapshot = this.#registry.snapshot();
-				extension = installerOf(snapshot, snapshot.task(task.kind));
-			} catch {
-				// A registry that throws is reported where it is read for scheduling; a report goes out without the name.
-			}
-		}
+	/** What a report about `task`'s code says of it: the task, and `extension`, which installed the definition that ran. */
+	#aboutTask(
+		task: Parameters<typeof reportTask>[0],
+		extension: string | undefined,
+	): { readonly task: ReportTask; readonly extension?: string } {
 		return { task: reportTask(task), ...optionalExtension(extension) };
+	}
+
+	/** What a report about `task` says of it: the task, and the extension that installed its current definition. */
+	#aboutCurrentTask(task: Parameters<typeof reportTask>[0]): {
+		readonly task: ReportTask;
+		readonly extension?: string;
+	} {
+		let extension: string | undefined;
+		try {
+			const snapshot = this.#registry.snapshot();
+			extension = installerOf(snapshot, snapshot.task(task.kind));
+		} catch {
+			// A registry that throws is reported where it is read for scheduling; a report goes out without the name.
+		}
+		return this.#aboutTask(task, extension);
 	}
 
 	/** `settings.restartLimit`, or the default when the host's settings throw. */
@@ -2051,7 +2062,7 @@ export class TaskScheduler {
 		for (const { record, message } of faulted) {
 			this.#report(new Error(message), {
 				kind: "task_faulted",
-				...this.#aboutTask(recordTask(record)),
+				...this.#aboutCurrentTask(recordTask(record)),
 				reason: "restart_limit",
 			});
 		}
@@ -2155,7 +2166,7 @@ export class TaskScheduler {
 	/** Resolve the record's definition by kind, migrating an older stored version. */
 	#resolve(record: RunnableTaskRecord, snapshot: RegistrySnapshot): Resolution {
 		const fit = this.#fit(record, snapshot.task(record.kind));
-		if ("reason" in fit) return { kind: "blocked", reason: fit.reason };
+		if (fit.kind === "blocked") return { kind: "blocked", reason: fit.reason };
 		if (!fit.migrates) return { kind: "ready", task: fit.task, record };
 		const definition = erased(fit.task);
 		try {
@@ -2170,19 +2181,19 @@ export class TaskScheduler {
 			queueMicrotask(() => this.#notifyBlocked());
 			this.#scheduleWake();
 			const extension = installerOf(snapshot, fit.task);
-			this.#report(error, { kind: "migration_failed", ...this.#aboutTask({ ...recordTask(record), extension }) });
+			this.#report(error, { kind: "migration_failed", ...this.#aboutTask(recordTask(record), extension) });
 			return { kind: "blocked", reason: "migration_failed" };
 		}
 	}
 
 	#fit(record: Pick<AnyTaskRecord, "id" | "version">, task: AnyTask | undefined): Fit {
-		if (task === undefined) return { reason: "missing_task" };
+		if (task === undefined) return { kind: "blocked", reason: "missing_task" };
 		const version = task.definition.version;
-		if (version === record.version) return { task, migrates: false };
-		if (version < record.version) return { reason: "task_too_old" };
+		if (version === record.version) return { kind: "fits", task, migrates: false };
+		if (version < record.version) return { kind: "blocked", reason: "task_too_old" };
 		const failed = this.#failedMigrations.get(record.id);
-		if (failed?.task === task) return { reason: "migration_failed", error: failed.error };
-		return { task, migrates: true };
+		if (failed?.task === task) return { kind: "blocked", reason: "migration_failed", error: failed.error };
+		return { kind: "fits", task, migrates: true };
 	}
 
 	/** Sizes of the ownership indexes, for tests that bound the scheduler's memory. */
@@ -2255,7 +2266,7 @@ export class TaskScheduler {
 			return until === undefined ? { kind: "sleeping" } : { kind: "sleeping", until };
 		}
 		const fit = this.#fit(record, snapshot.task(record.kind));
-		if ("reason" in fit) return { kind: "blocked", ...fit };
+		if (fit.kind === "blocked") return fit;
 		if (fit.migrates && fit.task.definition.migrate === undefined) {
 			return { kind: "blocked", reason: "migration_failed", error: missingMigration(record, erased(fit.task)) };
 		}
@@ -2292,7 +2303,11 @@ export class TaskScheduler {
 				if (invocation.mode === "run") await this.#run(reservation);
 				else await this.#runAbort(reservation);
 			} catch (error) {
-				this.#report(error, { kind: "task_error", ...this.#aboutTask(invocation) }, invocation.context);
+				this.#report(
+					error,
+					{ kind: "task_error", ...this.#aboutTask(invocation, invocation.extension) },
+					invocation.context,
+				);
 			} finally {
 				this.#end(invocation);
 				invocation.record = undefined;
@@ -2456,7 +2471,7 @@ export class TaskScheduler {
 				new Error(`Task ${current.id} keeps running under its old ${current.kind} definition`),
 				{
 					kind: "task_outdated",
-					...this.#aboutTask({ ...recordTask(current), extension }),
+					...this.#aboutTask(recordTask(current), extension),
 					reason: outdatedReason(next, current),
 				},
 				context,
@@ -2531,7 +2546,7 @@ export class TaskScheduler {
 			if (fault !== undefined)
 				this.#report(
 					fault.error,
-					{ kind: "task_faulted", ...this.#aboutTask(invocation), reason: "threw" },
+					{ kind: "task_faulted", ...this.#aboutTask(invocation, invocation.extension), reason: "threw" },
 					invocation.context,
 				);
 			return continued;
@@ -2614,7 +2629,7 @@ export class TaskScheduler {
 				this.#reloadScopes,
 			);
 			if (checked === undefined) return;
-			if ("missing" in checked) {
+			if (checked.kind === "missing") {
 				for (const id of checked.missing)
 					ended.set(id, (await this.#session.lineStorage.task(id, this.#context)) ?? null);
 				continue;
@@ -2633,7 +2648,10 @@ export class TaskScheduler {
 		policy: string,
 		overlay: Overlay,
 		ended: ReadonlyMap<TaskId, AnyTaskRecord | null>,
-	): { readonly missing: readonly TaskId[] } | { readonly error: Error } | undefined {
+	):
+		| { readonly kind: "missing"; readonly missing: readonly TaskId[] }
+		| { readonly kind: "refused"; readonly error: Error }
+		| undefined {
 		const targets: TaskId[] = [];
 		const missing: TaskId[] = [];
 		for (const id of on) {
@@ -2642,19 +2660,23 @@ export class TaskScheduler {
 				missing.push(id);
 				continue;
 			}
-			if (member === null) return { error: new Error(`Task ${id} does not exist`) };
+			if (member === null) return { kind: "refused", error: new Error(`Task ${id} does not exist`) };
 			if (policy === "failFast" && member.owner !== current.id) {
-				return { error: new Error(`Task ${current.id} can wait failFast only on tasks it owns; ${id} is not one`) };
+				return {
+					kind: "refused",
+					error: new Error(`Task ${current.id} can wait failFast only on tasks it owns; ${id} is not one`),
+				};
 			}
 			// A live child already holds the waiter (task-owned tasks are never background): waiting on it adds no edge. A
 			// terminal task has no edges.
 			if (member.state.status !== "terminal" && member.owner !== current.id) targets.push(id);
 		}
-		if (missing.length > 0) return { missing };
+		if (missing.length > 0) return { kind: "missing", missing };
 		if (targets.length === 0) return undefined;
 		const cycle = this.#waitCycle(current.id, targets, overlay);
 		if (cycle === undefined) return undefined;
 		return {
+			kind: "refused",
 			error: new Error(
 				`Task ${current.id} cannot wait on ${cycle[0]}: ${[current.id, ...cycle].join(" -> ")} is a wait cycle`,
 			),
@@ -2736,7 +2758,8 @@ export class TaskScheduler {
 
 	/** No live non-background task in the scope that `counts`; one whose owner edges are not loaded yet counts as inside. */
 	#quiet(conversationId: ConversationId | undefined, counts: (record: AnyTaskRecord) => boolean): boolean {
-		const scope: Scope = conversationId === undefined ? { roots: true } : { conversation: conversationId };
+		const scope: Scope =
+			conversationId === undefined ? { kind: "roots" } : { kind: "conversation", conversation: conversationId };
 		// In a decision region, global idle reads the roots it starts from.
 		if (conversationId === undefined) this.#record(ROOTS_KEY);
 		// Tasks whose chain is not loaded are not listed below their scope yet; one counts as inside unless its walk up
@@ -2850,7 +2873,7 @@ export class TaskScheduler {
 						new Error(interrupted.message),
 						{
 							kind: "task_interrupted",
-							...this.#aboutTask(invocation),
+							...this.#aboutTask(invocation, invocation.extension),
 							reason: interrupted.reason,
 							restarts: interrupted.restarts,
 						},
@@ -3053,7 +3076,7 @@ export class TaskScheduler {
 				this.#report(
 					error,
 					from === undefined
-						? { kind: "task_error", ...this.#aboutTask(invocation) }
+						? { kind: "task_error", ...this.#aboutTask(invocation, invocation.extension) }
 						: from.kind === "extension"
 							? { kind: "extension_error", task, ...optionalExtension(from.extension) }
 							: { kind: "host_error", callback: from.callback, task },
@@ -3183,7 +3206,8 @@ export function endedByCrashes<T extends object>(state: T, message: string): T {
 
 function interruptionOf(error: TaskOutcomeError): "restart_limit" | "interrupted" | undefined {
 	const detail = error.detail;
-	if (typeof detail !== "object" || detail === null || !("reason" in detail)) return undefined;
+	// Stored JSON: an error's detail may be any value.
+	if (typeof detail !== "object" || detail === null || Array.isArray(detail)) return undefined;
 	return detail.reason === "restart_limit" || detail.reason === "interrupted" ? detail.reason : undefined;
 }
 
@@ -3217,7 +3241,9 @@ function failedOutcome(record: AnyTaskRecord): boolean {
 }
 
 function parentOf(node: TaskNode): Up {
-	return node.owner !== undefined ? { task: node.owner } : { conversation: node.conversationId };
+	return node.owner !== undefined
+		? { kind: "task", task: node.owner }
+		: { kind: "conversation", conversation: node.conversationId };
 }
 
 function nodeOf(record: AnyTaskRecord): TaskNode {

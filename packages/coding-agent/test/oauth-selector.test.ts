@@ -243,4 +243,53 @@ describe("OAuthSelectorComponent", () => {
 		expect(output).toContain("  OpenRouter ✦ [API key]");
 		expect(output).toContain("  Anthropic [API key]");
 	});
+
+	// Regression test for #12245.
+	it("selects the best match after typing a query, even after scrolling", () => {
+		const providers = ["Anthropic", "Google", "Groq", "Mistral", "OpenAI", "OpenCode Go", "OpenCode Zen", "xAI"].map(
+			(name) => ({ id: name.toLowerCase().replace(" ", "-"), name, authType: "api_key" as const }),
+		);
+		const selected: string[] = [];
+		const selector = new OAuthSelectorComponent(
+			"login",
+			providers,
+			(providerId) => selected.push(providerId),
+			() => {},
+		);
+
+		for (let i = 0; i < 5; i++) selector.handleInput("\x1b[B");
+		for (const char of "openai") selector.handleInput(char);
+
+		expect(stripAnsi(selector.render(120).join("\n"))).toContain("→ OpenAI");
+		selector.handleInput("\r");
+		expect(selected).toEqual(["openai"]);
+	});
+
+	it("keeps the selection when a cursor key leaves the query unchanged", () => {
+		const providers = ["OpenAI", "OpenCode Go", "OpenCode Zen"].map((name) => ({
+			id: name.toLowerCase().replace(" ", "-"),
+			name,
+			authType: "api_key" as const,
+		}));
+		const selector = new OAuthSelectorComponent(
+			"login",
+			providers,
+			() => {},
+			() => {},
+		);
+
+		for (const char of "open") selector.handleInput(char);
+		selector.handleInput("\x1b[B");
+		selector.handleInput("\x1b[B");
+		const selectedRow = () =>
+			stripAnsi(selector.render(120).join("\n"))
+				.split("\n")
+				.find((line) => line.includes("→"));
+		const before = selectedRow();
+		selector.handleInput("\x1b[D"); // Left
+		selector.handleInput("\x1b[H"); // Home
+
+		expect(before).not.toContain("OpenAI");
+		expect(selectedRow()).toBe(before);
+	});
 });

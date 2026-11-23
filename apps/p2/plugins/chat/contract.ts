@@ -244,7 +244,7 @@ export const Chat = remote("p2.chat", {
 				send: method(SendSchema, obj({ submissionId: num() })),
 				/**
 				 * Aborts the current run; queued inputs are withdrawn and the caller's own come back as text. Messages from
-				 * subagents and peer sessions stay as context, without a run.
+				 * subagents and peer sessions stay queued for the next input.
 				 */
 				stop: method(undefined, obj({ restored: arr(str()) })),
 				/** Withdraws a queued input; with `restore`, returns its text if the caller wrote it. */
@@ -272,6 +272,18 @@ export const Chat = remote("p2.chat", {
 			},
 		},
 	},
+});
+
+/**
+ * Stopping a conversation's run from outside its chat (the sidebar's Cancel, the command menu's Stop): every input the
+ * stop withdraws, the caller's own too, waits as its author's draft (`DraftStore`), restored to their composer when
+ * they open that conversation. The chat's own Stop (`Chat.stop`) returns the caller's texts to the composer at once.
+ */
+export const RunControl = remote("p2.run-control", {
+	version: 1,
+	params: { session: param.str(), conversation: param.int() },
+	hostAddress: sessionHost,
+	variants: { participant: { methods: { stop: method() } } },
 });
 
 /**

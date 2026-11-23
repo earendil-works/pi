@@ -167,7 +167,7 @@ describe("whenIdle reject", () => {
 		const draft = { type: "input", content: "work", requestId: "r1", whenBusy: "steer", whenIdle: "reject" } as const;
 		expect((await root.submit(draft, context)).id).toBe(first.id);
 		// Deduplication runs before the idle rejection in the caller's commit too.
-		expect(await harness.commit((tx) => root.submit(tx, draft), context)).toBe(first.id);
+		expect(await harness.commit((tx) => root.admit(tx, draft), context)).toBe(first.id);
 		await harness.close(context);
 	});
 
@@ -212,7 +212,7 @@ describe("submit inside the caller's commit", () => {
 			if ((await tx.doc(LiveDoc, root.id)).run === undefined) throw new Error("not working");
 			// The host's own document write may come before the admission.
 			const sent = await tx.doc(Sent, root.id);
-			const admitted = await root.submit(tx, { type: "input", content: "steer", whenBusy: "steer" });
+			const admitted = await root.admit(tx, { type: "input", content: "steer", whenBusy: "steer" });
 			sent.ids.push(admitted);
 			// The host's own table write comes after it.
 			await tx.appendEntry(root.id, { kind: "app.sent", data: { submission: admitted } });
@@ -235,7 +235,7 @@ describe("submit inside the caller's commit", () => {
 		const { harness, root } = await openChat(storage, chatSetup());
 		const commits = storage.commits.length;
 		const failed = harness.commit(async (tx) => {
-			await root.submit(tx, { type: "input", content: "hi", requestId: "r1" });
+			await root.admit(tx, { type: "input", content: "hi", requestId: "r1" });
 			throw new Error("host check failed");
 		}, context);
 		await expect(failed).rejects.toThrow("host check failed");
@@ -253,7 +253,7 @@ describe("submit inside the caller's commit", () => {
 		const failure = new Error("disk full");
 		storage.failNextCommit(failure);
 		const failed = harness.commit(async (tx) => {
-			await root.submit(tx, { type: "input", content: "hi", requestId: "r1" });
+			await root.admit(tx, { type: "input", content: "hi", requestId: "r1" });
 			await tx.appendEntry(root.id, { kind: "app.sent" });
 		}, context);
 		await expect(failed).rejects.toBe(failure);
@@ -277,7 +277,7 @@ describe("submit inside the caller's commit", () => {
 		setup.faux.setResponses([fauxAssistantMessage([fauxText("answer")])]);
 		// No `resume()`: the admission asks for progress itself.
 		const { harness, root } = await openChat(new ControlledStorage(), setup);
-		const id = await harness.commit((tx) => root.submit(tx, { type: "input", content: "hi" }), context);
+		const id = await harness.commit((tx) => root.admit(tx, { type: "input", content: "hi" }), context);
 		expect(await settledStatus(harness, id)).toMatchObject({ type: "input", status: "done" });
 		await harness.close(context);
 	});
@@ -286,7 +286,7 @@ describe("submit inside the caller's commit", () => {
 		const setup = chatSetup();
 		setup.faux.setResponses([fauxAssistantMessage([fauxText("answer")])]);
 		const { harness, root } = await openChat(new ControlledStorage(), setup);
-		const id = await harness.commit((tx) => root.submit(tx, { type: "input", content: "hi" }), context);
+		const id = await harness.commit((tx) => root.admit(tx, { type: "input", content: "hi" }), context);
 		await settledStatus(harness, id);
 		const found = await harness.commit(async (tx) => {
 			const submission = await tx.submission(id);
@@ -308,7 +308,7 @@ describe("submit inside the caller's commit", () => {
 		await hold.reached.promise;
 		const note = { role: "user", content: "a note the model sees", timestamp: 1 } as const;
 		const id = await harness.commit(
-			(tx) => root.submit(tx, { type: "write", entry: { kind: "test.note", model: [note] } }),
+			(tx) => root.admit(tx, { type: "write", entry: { kind: "test.note", model: [note] } }),
 			context,
 		);
 		expect((await harness.snapshot(InboxDoc, root.id, context))?.items.map((item) => item.id)).toEqual([id]);
@@ -326,9 +326,9 @@ describe("submit inside the caller's commit", () => {
 	it("deduplicates request IDs", async () => {
 		const { harness, root, storage } = await openBusy();
 		const draft = { type: "input", content: "steer", whenBusy: "steer", requestId: "r1" } as const;
-		const first = await harness.commit((tx) => root.submit(tx, draft), context);
+		const first = await harness.commit((tx) => root.admit(tx, draft), context);
 		const commits = storage.commits.length;
-		const again = await harness.commit((tx) => root.submit(tx, draft), context);
+		const again = await harness.commit((tx) => root.admit(tx, draft), context);
 		expect(again).toBe(first);
 		expect(storage.commits.length).toBe(commits);
 		await harness.close(context);
@@ -341,7 +341,7 @@ describe("submit inside the caller's commit", () => {
 		const commits = storage.commits.length;
 		const outcome = await harness.commit(async (tx) => {
 			try {
-				await root.submit(tx, { type: "input", content: "hi", whenBusy: "steer", whenIdle: "reject" });
+				await root.admit(tx, { type: "input", content: "hi", whenBusy: "steer", whenIdle: "reject" });
 				return "admitted";
 			} catch (error) {
 				return error instanceof ConversationIdle ? "idle" : "other";
@@ -359,13 +359,13 @@ describe("submit inside the caller's commit", () => {
 		// A busy input without request ID or trace reads no table, and is still refused.
 		const afterAppend = harness.commit(async (tx) => {
 			await tx.appendEntry(root.id, { kind: "app.note" });
-			await root.submit(tx, { type: "input", content: "steer", whenBusy: "steer" });
+			await root.admit(tx, { type: "input", content: "steer", whenBusy: "steer" });
 		}, context);
 		await expect(afterAppend).rejects.toBeInstanceOf(ReadAfterWrite);
 		await expect(afterAppend).rejects.toThrow("submit(tx, draft) cannot read tables after the first table write");
 		const second = harness.commit(async (tx) => {
-			await root.submit(tx, { type: "input", content: "one", whenBusy: "steer" });
-			await root.submit(tx, { type: "input", content: "two", whenBusy: "steer" });
+			await root.admit(tx, { type: "input", content: "one", whenBusy: "steer" });
+			await root.admit(tx, { type: "input", content: "two", whenBusy: "steer" });
 		}, context);
 		await expect(second).rejects.toBeInstanceOf(ReadAfterWrite);
 		expect((await harness.snapshot(InboxDoc, root.id, context))?.items).toEqual([]);
@@ -373,7 +373,7 @@ describe("submit inside the caller's commit", () => {
 		const idle = await openChat(new ControlledStorage(), chatSetup());
 		const late = idle.harness.commit(async (tx) => {
 			await tx.appendEntry(idle.root.id, { kind: "app.note" });
-			await idle.root.submit(tx, { type: "input", content: "hi" });
+			await idle.root.admit(tx, { type: "input", content: "hi" });
 		}, context);
 		await expect(late).rejects.toBeInstanceOf(ReadAfterWrite);
 		await idle.harness.close(context);
@@ -390,12 +390,12 @@ describe("submit inside the caller's commit", () => {
 
 		const late = harness.commit(async (tx) => {
 			await tx.appendEntry(root.id, { kind: "app.note" });
-			await root.submit(tx, { type: "continue" });
+			await root.admit(tx, { type: "continue" });
 		}, context);
 		await expect(late).rejects.toBeInstanceOf(ReadAfterWrite);
 
 		const id = await harness.commit(async (tx) => {
-			const continued = await root.submit(tx, { type: "continue" });
+			const continued = await root.admit(tx, { type: "continue" });
 			await tx.appendEntry(root.id, { kind: "app.note" });
 			return continued;
 		}, context);
@@ -406,10 +406,10 @@ describe("submit inside the caller's commit", () => {
 	// #11149
 	it("rejects a busy continue and steers with whenIdle inside the commit", async () => {
 		const { harness, root } = await openBusy();
-		const busy = harness.commit((tx) => root.submit(tx, { type: "continue" }), context);
+		const busy = harness.commit((tx) => root.admit(tx, { type: "continue" }), context);
 		await expect(busy).rejects.toBeInstanceOf(ConversationBusy);
 		const steer = await harness.commit(
-			(tx) => root.submit(tx, { type: "input", content: "steer", whenBusy: "steer", whenIdle: "reject" }),
+			(tx) => root.admit(tx, { type: "input", content: "steer", whenBusy: "steer", whenIdle: "reject" }),
 			context,
 		);
 		expect((await harness.snapshot(InboxDoc, root.id, context))?.items.map((item) => item.id)).toEqual([steer]);
@@ -421,11 +421,11 @@ describe("submit inside the caller's commit", () => {
 		const a = await openChat(new ControlledStorage(), chatSetup());
 		const b = await openChat(new ControlledStorage(), chatSetup());
 		const draft = { type: "input", content: "hi" } as const;
-		const foreign = b.harness.commit((tx) => a.root.submit(tx, draft), context);
+		const foreign = b.harness.commit((tx) => a.root.admit(tx, draft), context);
 		await expect(foreign).rejects.toThrow("The transaction belongs to another Session");
-		const proxied = a.harness.commit((tx) => a.root.submit(new Proxy(tx, {}), draft), context);
+		const proxied = a.harness.commit((tx) => a.root.admit(new Proxy(tx, {}), draft), context);
 		await expect(proxied).rejects.toThrow("The transaction belongs to another Session");
-		const plain = a.harness.commit((tx) => a.root.submit({ doc: tx.doc.bind(tx) } as unknown as Tx, draft), context);
+		const plain = a.harness.commit((tx) => a.root.admit({ doc: tx.doc.bind(tx) } as unknown as Tx, draft), context);
 		await expect(plain).rejects.toThrow("The transaction belongs to another Session");
 		expect((await a.harness.snapshot(LiveDoc, a.root.id, context))?.run).toBeUndefined();
 		await a.harness.close(context);
@@ -444,7 +444,7 @@ describe("submit inside the caller's commit", () => {
 		const run = (await harness.inspect(context)).tasks.find((task) => task.record.kind === "pi.generation")!.record;
 		const id = await telemetry.startSpan({ name: "caller" }, (caller) =>
 			harness.commit(
-				(tx) => root.submit(tx, { type: "input", content: "steer", whenBusy: "steer" }),
+				(tx) => root.admit(tx, { type: "input", content: "steer", whenBusy: "steer" }),
 				withTelemetry(caller, context),
 			),
 		);
@@ -470,7 +470,7 @@ describe("submit inside the caller's commit", () => {
 		setup.faux.setResponses([busy.step]);
 		const { harness, root } = await openTraced(setup, telemetry);
 		const id = await telemetry.startSpan({ name: "caller" }, (caller) =>
-			harness.commit((tx) => root.submit(tx, { type: "input", content: "hi" }), withTelemetry(caller, context)),
+			harness.commit((tx) => root.admit(tx, { type: "input", content: "hi" }), withTelemetry(caller, context)),
 		);
 		await busy.reached;
 		const submit = telemetry
@@ -490,7 +490,7 @@ describe("submit inside the caller's commit", () => {
 		const { harness, root } = await openTraced(setup, telemetry);
 		const id = await telemetry.startSpan({ name: "caller" }, (caller) =>
 			harness.commit(
-				(tx) => root.submit(tx, { type: "write", entry: { kind: "app.note" } }),
+				(tx) => root.admit(tx, { type: "write", entry: { kind: "app.note" } }),
 				withTelemetry(caller, context),
 			),
 		);
@@ -515,7 +515,7 @@ describe("submit inside the caller's commit", () => {
 		await telemetry.startSpan({ name: "caller" }, async (caller) => {
 			const failed = harness.commit(
 				async (tx) => {
-					await root.submit(tx, { type: "write", entry: { kind: "app.note" } });
+					await root.admit(tx, { type: "write", entry: { kind: "app.note" } });
 					throw new Error("later");
 				},
 				withTelemetry(caller, context),
@@ -547,7 +547,7 @@ describe("submit inside the caller's commit", () => {
 					toolTask = api.taskId;
 					const handle = (await api.conversation(other!.id, callContext))!;
 					const id = await api.commit(async (tx) => {
-						const admitted = await handle.submit(tx, { type: "input", content: "from the tool" });
+						const admitted = await handle.admit(tx, { type: "input", content: "from the tool" });
 						await tx.appendEntry(other!.id, { kind: "app.delegated", data: { submission: admitted } });
 						return admitted;
 					}, callContext);
@@ -591,7 +591,7 @@ describe("submit inside the caller's commit", () => {
 				run: async (_task, runtime, taskContext) => {
 					const handle = (await runtime.conversation(runtime.conversationId, taskContext))!;
 					await runtime.commit(async (tx) => {
-						const id = await handle.submit(tx, { type: "input", content: "from the task" });
+						const id = await handle.admit(tx, { type: "input", content: "from the task" });
 						return { status: "terminal", outcome: { status: "completed", result: id } };
 					}, taskContext);
 				},
@@ -651,12 +651,12 @@ describe("submit inside the caller's commit", () => {
 		await abortSeen.promise;
 		const draft = { type: "input", content: "late" } as const;
 		await expect(handle!.submit(draft, context)).rejects.toThrow();
-		await expect(harness.commit((tx) => handle!.submit(tx, draft), context)).rejects.toThrow();
+		await expect(harness.commit((tx) => handle!.admit(tx, draft), context)).rejects.toThrow();
 		expect((await harness.snapshot(LiveDoc, other.id, context))?.run).toBeUndefined();
 		release.resolve();
 		await aborting;
 		await run.wait(context);
-		await expect(harness.commit((tx) => handle!.submit(tx, draft), context)).rejects.toThrow();
+		await expect(harness.commit((tx) => handle!.admit(tx, draft), context)).rejects.toThrow();
 		expect((await harness.snapshot(LiveDoc, other.id, context))?.run).toBeUndefined();
 		await harness.close(context);
 	});

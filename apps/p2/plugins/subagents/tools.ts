@@ -39,6 +39,7 @@ import {
 	TEAM_TOOL,
 	type ToolChoice,
 } from "./contract.worker.ts";
+import { listModels } from "./model-list.ts";
 
 const SUBAGENT_EXTENSION = "subagent-tools";
 
@@ -106,7 +107,7 @@ function textOf(message: AssistantMessage | undefined): string {
 /**
  * A subagent's message as an input: the structural entry readers use, and what the model reads: the sender block, then
  * the intent and the text. `replyWith` is the tool call that answers a question (the main agent's `subagent send`, a
- * sibling's `team send`).
+ * sibling's `team send`). A Stop keeps it queued for the next input: the subagent cannot send it again.
  */
 function agentMessageInput(message: AgentMessage, replyWith: string) {
 	const label = {
@@ -121,6 +122,7 @@ function agentMessageInput(message: AgentMessage, replyWith: string) {
 			{ type: "text" as const, text: `[${label}] ${message.text}` },
 		],
 		entry: { kind: AGENT_MESSAGE_ENTRY, data: message as unknown as JsonValue },
+		onAbort: "keep" as const,
 	};
 }
 
@@ -308,7 +310,9 @@ export type SubagentLocator = {
 		target: LocationInput,
 		from: Location,
 		context: Context,
-	) => Promise<Location | { error: string }>;
+	) => Promise<
+		{ readonly kind: "directory"; readonly location: Location } | { readonly kind: "invalid"; readonly error: string }
+	>;
 };
 
 /**
@@ -327,7 +331,7 @@ export async function placeTarget(
 	if (sandbox !== undefined && env !== sandbox)
 		return `You work in sandbox ${sandbox}; your subagents can only work inside it.`;
 	const resolved = await locator.directory({ env, path: args.cwd ?? "" }, caller, context);
-	if (!("error" in resolved)) return resolved;
+	if (resolved.kind === "directory") return resolved.location;
 	const where = `${env === caller.env ? "" : `${env ?? "local"}:`}${args.cwd ?? "~"}`;
 	return resolved.error === "not an existing directory"
 		? `cwd ${where} is not an existing directory.`
@@ -393,7 +397,8 @@ export function createSubagentExtension(
 			"- archive (name): stop it and hide it from the user's sidebar and from status; restore (name) or send brings it back.",
 			"- answer (name): return its latest completed answer, e.g. when a report did not reach you or you need it again.",
 			"- status (optional name): list subagents and whether they are working; archived ones only by name.",
-			"- models: list models that have credentials configured.",
+			"- models (optional model: a provider or parts of a model id, e.g. 'anthropic' or 'sonnet 4'): list models that have",
+			"  credentials configured, or only those matching model.",
 			"Answers are reported back to you as messages when they arrive; do not wait or poll for them.",
 			'Subagents can also message you while they work: a <sender kind="subagent"> message marked [asks; …] needs your',
 			"answer (send to that subagent); a note needs none.",
@@ -440,8 +445,7 @@ export function createSubagentExtension(
 
 			if (action === "models") {
 				const available = await models.getAvailable(undefined, { signal: AbortSignal.timeout(10_000) });
-				const lines = available.slice(0, 200).map((model) => `${model.provider}/${model.id} (${model.name})`);
-				return reply(lines.length ? lines.join("\n") : "No models with configured credentials.");
+				return reply(listModels(available, args.model));
 			}
 			if (action === "status") {
 				const all = Object.entries(registry.agents);

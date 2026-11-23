@@ -770,10 +770,10 @@ describe("compaction outcomes", () => {
 		addHooks(chat.setup.registry, CompactionTask, {
 			beforeCompact: (compaction) => {
 				seen.push(compaction);
-				return { summary: "FROM HOOK" };
+				return { kind: "summary", summary: "FROM HOOK" };
 			},
 		});
-		addHooks(chat.setup.registry, CompactionTask, { beforeCompact: () => ({ decline: true }) });
+		addHooks(chat.setup.registry, CompactionTask, { beforeCompact: () => ({ kind: "decline" }) });
 		await history(chat);
 		const outcome = await result(chat, await chat.root.compact("why", context));
 		expect(outcome.status).toBe("completed");
@@ -800,7 +800,7 @@ describe("compaction outcomes", () => {
 
 	it("completes without a summary when a hook declines", async () => {
 		const chat = await open();
-		addHooks(chat.setup.registry, CompactionTask, { beforeCompact: () => ({ decline: true }) });
+		addHooks(chat.setup.registry, CompactionTask, { beforeCompact: () => ({ kind: "decline" }) });
 		await history(chat);
 		expect(await result(chat, await chat.root.compact(undefined, context))).toEqual({
 			status: "completed",
@@ -870,7 +870,7 @@ describe("compaction outcomes", () => {
 	});
 
 	it("adds no usage when a hook declines or supplies the summary", async () => {
-		for (const decision of [{ decline: true } as const, { summary: "HOOK" }]) {
+		for (const decision of [{ kind: "decline" } as const, { kind: "summary", summary: "HOOK" } as const]) {
 			const chat = await open();
 			addHooks(chat.setup.registry, CompactionTask, { beforeCompact: () => decision });
 			await history(chat);
@@ -1120,7 +1120,7 @@ describe("blocking threshold compaction", () => {
 		const chat = await open({ contextWindow: 1000 });
 		await history(chat);
 		chat.setup.settings.compaction = BLOCKING;
-		addHooks(chat.setup.registry, CompactionTask, { beforeCompact: () => ({ decline: true }) });
+		addHooks(chat.setup.registry, CompactionTask, { beforeCompact: () => ({ kind: "decline" }) });
 		await turn(chat, text("u4", 200), "a4");
 		expect((await kinds(chat.root)).includes("pi.compaction")).toBe(false);
 		expect(firstUserText(chat.faux.agentRequests.at(-1)!.messages)).toBe(text("u1", 100));
@@ -1301,7 +1301,7 @@ describe("overflow compaction", () => {
 	for (const [name, prepare, requests] of [
 		[
 			"declines",
-			(chat: Chat) => addHooks(chat.setup.registry, CompactionTask, { beforeCompact: () => ({ decline: true }) }),
+			(chat: Chat) => addHooks(chat.setup.registry, CompactionTask, { beforeCompact: () => ({ kind: "decline" }) }),
 			0,
 		],
 		["fails", (chat: Chat) => chat.faux.summaries.push(failure("bad request")), 1],
@@ -1522,7 +1522,7 @@ describe("compaction estimates and interactions", () => {
 						{ ownership: { kind: "task", taskId: api.taskId }, conversationId: chat.root.id },
 					);
 				}, hookContext);
-				return { summary: "HOOK" };
+				return { kind: "summary", summary: "HOOK" };
 			},
 		});
 		await history(chat);
@@ -1924,7 +1924,7 @@ describe("compaction edge cases", () => {
 		addHooks(chat.setup.registry, CompactionTask, {
 			beforeCompact: () => {
 				asked++;
-				return { decline: true };
+				return { kind: "decline" };
 			},
 		});
 		chat.faux.agent.push(failure("overloaded"));

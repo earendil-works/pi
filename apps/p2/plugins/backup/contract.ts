@@ -1,9 +1,27 @@
-// Backup of this instance's stores (`src/runtime/backup.ts`): the server holds the backup remote (`BackupUploads`, a
-// native) and every store's status (`Backup`); each session's worker uploads its own store through `BackupRemote`, a
-// slot's body streamed through the server in chunks.
+// Backup of this instance's stores to a backup remote, so that a lost machine loses nothing it uploaded. Each store's
+// owner uploads it (one writer per store): the server its own store, each session's worker the session's
+// (`uploader.ts`). Only the server holds the remote (`BackupUploads`, a native) and every store's status (`Backup`);
+// each session's worker uploads its own store through `BackupRemote`, a slot's body streamed through the server in
+// chunks. Whether backup is on, and where to, is the runtime's (`src/runtime/backup.ts`): the hosts open stores by it.
 import { bool, bytes, int, nul, num, obj, opt, type Static, str, union } from "@earendil-works/pi-schema";
-import { defineRegistry, keyedRegistry, literal, local, method, record, remote, serverHost } from "@p2/app/v1";
-import type { OpenBackupTarget, PutBatchResult } from "@p2/app/v1/node";
+import {
+	defineRegistry,
+	keyedRegistry,
+	literal,
+	local,
+	method,
+	PluginError,
+	record,
+	remote,
+	serverHost,
+} from "@p2/app/v1";
+import type { PutBatchResult, SessionSyncStore } from "@p2/app/v1/node";
+
+/** The remote's name of the server's store. */
+export const SERVER_STORE = "server";
+
+/** The remote's name of a session's store. */
+export const sessionStoreName = (session: string): string => `session-${session}`;
 
 /** At most this much of a body crosses in one `append`. */
 export const CHUNK_BYTES = 1024 * 1024;
@@ -101,6 +119,31 @@ export const BackupRemote = remote("p2.backup-remote", {
 		},
 	},
 });
+
+/**
+ * A backup target a plugin offers: its remote (only the server holds it), and the device the remote records for this
+ * instance's slots. A remote that records its own device (Radius stamps the authenticated server's ID) names it here,
+ * so an upload tells its own earlier slot (a lost answer) from another machine's; otherwise the instance's own.
+ * `server` names the server's store there: one remote may hold several instances' (a user's on Radius).
+ */
+export type OpenBackupTarget = {
+	readonly remote: SessionSyncStore;
+	readonly device: string;
+	readonly server: string;
+	/** Whether a failure of this kind will not pass by retrying (a refused body, a feature off): uploads stop. */
+	readonly terminal?: (error: unknown) => boolean;
+};
+
+/**
+ * The code of a failure that retrying will not fix (`OpenBackupTarget.terminal` said so): the server throws it to a
+ * worker's upload as a `PluginError` with this code, which crosses the link, so the worker stops as the server does.
+ */
+export const BACKUP_TERMINAL = "backup_terminal";
+
+/** Whether `error` is a terminal backup failure that crossed from the server (`BACKUP_TERMINAL`). */
+export function isTerminalBackupError(error: unknown): boolean {
+	return error instanceof PluginError && error.code === BACKUP_TERMINAL;
+}
 
 /**
  * Backup targets plugins offer, by name (`P2_BACKUP=<name>`): `radius` from the Radius plugin. `open` gives the target

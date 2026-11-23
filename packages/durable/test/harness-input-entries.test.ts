@@ -254,6 +254,46 @@ describe("input entries", () => {
 		expect((await allEntries(root)).some((entry) => entry.kind === "chat.mention")).toBe(false);
 		await harness.close(context);
 	});
+
+	it("keeps onAbort: keep inputs queued through a conversation abort; the next input places them", async () => {
+		const setup = chatSetup();
+		const first = gated(answer("first"));
+		const requests: string[][] = [];
+		setup.faux.setResponses([first.step]);
+		const { harness, root } = await openChat(new MemoryStorage(), setup);
+		const input = await root.submit({ type: "input", content: "a" }, context);
+		await first.reached;
+		const withdrawn = await root.submit({ type: "input", content: "w" }, context);
+		const kept = await root.submit(
+			{ type: "input", content: "k", entry: mention("k"), whenBusy: "followUp", onAbort: "keep" },
+			context,
+		);
+		await root.abort(context);
+		expect(await withdrawn.wait(context)).toMatchObject({ status: "unanswered", reason: "aborted" });
+		expect(await input.wait(context)).toMatchObject({ status: "unanswered", reason: "aborted" });
+		// Kept as a failed run keeps its queue: still queued, no run started for it.
+		expect(await inboxItems(harness, root)).toEqual([
+			{ id: kept.id, mode: "followUp", content: "k", entry: mention("k"), onAbort: "keep" },
+		]);
+		expect((await kept.status(context)).status).toBe("queued");
+		expect((await harness.snapshot(LiveDoc, root.id, context))?.run).toBeUndefined();
+		// The next input queues behind it and places it first (one follow-up at a time: a run each).
+		setup.faux.setResponses([requestLog(requests, answer("second")), requestLog(requests, answer("third"))]);
+		const next = await root.submit({ type: "input", content: "n" }, context);
+		expect(await kept.wait(context)).toMatchObject({ status: "done" });
+		expect(await next.wait(context)).toMatchObject({ status: "done" });
+		expect(requests.map((messages) => messages.at(-1))).toEqual(["user:k", "user:n"]);
+		// The explicit withdrawal still withdraws a kept input.
+		const busy = gated(answer("fourth"));
+		setup.faux.setResponses([busy.step]);
+		const running = await root.submit({ type: "input", content: "b" }, context);
+		await busy.reached;
+		const explicit = await root.submit({ type: "input", content: "e", onAbort: "keep" }, context);
+		expect(await explicit.abort(context)).toBe("aborted");
+		busy.release();
+		expect(await running.wait(context)).toMatchObject({ status: "done" });
+		await harness.close(context);
+	});
 });
 
 describe("data-only writes", () => {

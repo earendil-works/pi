@@ -46,7 +46,7 @@ import { ROOT_CONVERSATION_ID } from "../types.ts";
 import { AgentDoc, configure, createAgent, resolveAgent, resolveSettings } from "./agent.ts";
 import { createCompaction } from "./compaction.ts";
 import { readContext } from "./context.ts";
-import { InboxDoc, withdrawQueuedInputs } from "./inbox.ts";
+import { InboxDoc, withdrawAbortedInputs } from "./inbox.ts";
 import { LIMITS_RESTARTS, LiveDoc, settleSchedulerOutcome } from "./live.ts";
 import { ProviderDoc } from "./provider.ts";
 import { BUILTIN_TASKS } from "./registry.ts";
@@ -130,12 +130,12 @@ class ConversationImpl<Tool extends ToolRegistration> implements Conversation {
 		return this.#host.harness.commitWith((tx) => configure(tx, this.id, change), context);
 	}
 
-	submit(submission: SubmissionDraft, context: Context): Promise<Submission>;
-	submit(tx: Tx, submission: SubmissionDraft): Promise<SubmissionId>;
-	submit(first: SubmissionDraft | Tx, second: Context | SubmissionDraft): Promise<Submission | SubmissionId> {
-		// The overloads pair a draft with a context, and anything else (a transaction) with a draft.
-		if ("type" in first) return this.#host.submissions.submit(this.id, first, second as Context);
-		return this.#host.submissions.admit(first, this.id, second as SubmissionDraft);
+	submit(submission: SubmissionDraft, context: Context): Promise<Submission> {
+		return this.#host.submissions.submit(this.id, submission, context);
+	}
+
+	admit(tx: Tx, submission: SubmissionDraft): Promise<SubmissionId> {
+		return this.#host.submissions.admit(tx, this.id, submission);
 	}
 
 	async compact(instructions: string | undefined, context: Context): Promise<TaskId<CompactionResult>> {
@@ -256,7 +256,7 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 			keepsAbandoned: keepsChildren,
 			gated: gatedCall,
 			settleOutcome: settleSchedulerOutcome,
-			withdrawInputs: withdrawQueuedInputs,
+			withdrawInputs: withdrawAbortedInputs,
 			conversation: async (id, binding, callContext) => {
 				const record = await this.readOnLine((line) => line.conversation(id, callContext));
 				return record === undefined ? undefined : boundConversation(id, binding, this.#submissions, this.#tasks);
@@ -575,30 +575,25 @@ function boundConversation(
 			return operation(bind(context));
 		};
 	};
-	function submit(draft: SubmissionDraft, context: Context): Promise<Submission>;
-	function submit(tx: Tx, draft: SubmissionDraft): Promise<SubmissionId>;
-	async function submit(
-		first: SubmissionDraft | Tx,
-		second: Context | SubmissionDraft,
-	): Promise<Submission | SubmissionId> {
+	const submit = async (draft: SubmissionDraft, context: Context): Promise<Submission> => {
 		binding.check();
-		// The overloads pair a draft with a context, and anything else (a transaction) with a draft.
-		if (!("type" in first)) {
-			// The caller's commit carries its own context, so the invocation's abort is checked here.
-			binding.signal.throwIfAborted();
-			return submissions.admit(first, id, second as SubmissionDraft);
-		}
-		const submission = await submissions.submit(id, first, bind(second as Context));
+		const submission = await submissions.submit(id, draft, bind(context));
 		return {
 			id: submission.id,
 			status: bound((callContext) => submission.status(callContext)),
 			wait: bound((callContext) => submission.wait(callContext)),
 			abort: bound((callContext) => submission.abort(callContext)),
 		};
-	}
+	};
 	return {
 		id,
 		submit,
+		admit: async (tx, draft) => {
+			binding.check();
+			// The caller's commit carries its own context, so the invocation's abort is checked here.
+			binding.signal.throwIfAborted();
+			return submissions.admit(tx, id, draft);
+		},
 		abort: async (context, options) => {
 			binding.check();
 			return tasks.abortConversation(id, options?.background === true, bind(context));

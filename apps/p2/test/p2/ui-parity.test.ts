@@ -216,16 +216,19 @@ describe("Pi Mobile UI regressions", { skip: !browserTests }, () => {
 		await browser.evaluate(
 			`(() => { const send=WebSocket.prototype.send;window.originalPickerSend=send;WebSocket.prototype.send=function(data){setTimeout(()=>send.call(this,data),300)}; })()`,
 		);
+		// The folder button opens the location picker; its choice waits for the first listing, said inline.
 		await browser.evaluate('document.querySelector(".cwd-pick").click()');
-		await browser.wait('Boolean(document.querySelector(".directory-loading"))');
+		await browser.wait('Boolean(document.querySelector(".location-loading"))');
 		assert(
-			await browser.evaluate<boolean>('document.querySelector("input[aria-label=Directory]").disabled'),
-			"the directory input must be disabled while its initial listing loads",
+			await browser.evaluate<boolean>('document.querySelector(".location-use").disabled'),
+			"the choice must be disabled while its initial listing loads",
 		);
 		await browser.evaluate("WebSocket.prototype.send=window.originalPickerSend;delete window.originalPickerSend");
 		await browser.wait(
-			'Boolean(document.querySelector("input[aria-label=Directory]:not(:disabled)") && document.querySelector(".directory-use:not(:disabled)"))',
+			'Boolean(!document.querySelector(".location-loading") && document.querySelector(".location-use:not(:disabled)"))',
 		);
+		await browser.evaluate("document.querySelector(\"button[aria-label='Type a path']\").click()");
+		await browser.wait('Boolean(document.querySelector("input[aria-label=Directory]"))');
 		await browser.evaluate(
 			`(() => { const input = document.querySelector("input[aria-label=Directory]"); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, ${JSON.stringify(fixture.workspace)}); input.dispatchEvent(new Event("input", { bubbles: true })); })()`,
 		);

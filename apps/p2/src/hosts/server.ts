@@ -15,7 +15,16 @@ import { webSurface } from "@earendil-works/chord/surfaces";
 import { telemetryIngestFacet } from "@earendil-works/chord/telemetry-ingest";
 import { WebSocketServer } from "ws";
 import { backupConfigured } from "../runtime/backup.ts";
-import { type Ctx, createHost, type Host, type HostError, hostErrorText, Server, Session } from "../runtime/chord.ts";
+import {
+	type Ctx,
+	createHost,
+	type Host,
+	type HostError,
+	hostErrorCause,
+	hostErrorText,
+	Server,
+	Session,
+} from "../runtime/chord.ts";
 import { envDefaultModel } from "../runtime/default-model.ts";
 import { type DevCommand, type DevResult, parseDevCommand } from "../runtime/dev-protocol.ts";
 import { configureFetch } from "../runtime/fetch.ts";
@@ -283,6 +292,7 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 	const workers = await SessionWorkers.create(
 		{
 			host,
+			store,
 			plugins: chordPlugins,
 			app: APP,
 			dataDir,
@@ -586,9 +596,9 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 			hostFailures.set(plugin, [...(hostFailures.get(plugin) ?? []), text]);
 		for (const step of rebuilt.result.steps)
 			for (const each of step.hosts) {
-				if ("report" in each)
+				if (each.kind === "reloaded")
 					for (const { plugin, error } of each.report.failed) fail(plugin, `${each.host}: ${errorText(error)}`);
-				else if ("error" in each)
+				else if (each.kind === "failed")
 					for (const plugin of rebuilt.changed) fail(plugin, `${each.host}: ${errorText(each.error)}`);
 			}
 		return [
@@ -873,7 +883,10 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 		if (sent === null) return { sent, current };
 		return current !== undefined && sent !== current ? { sent, current } : undefined;
 	};
-	/** Stale pages already reported, by who and which version: each is told the owner once per server run. */
+	/**
+	 * Stale pages already logged, by who and which version: each is logged once per server run. A log line, not a notice:
+	 * the page reloads by itself, so the owner has nothing to act on.
+	 */
 	const staleReported = new Set<string>();
 	const reportStalePage = (request: IncomingMessage, principal: P2Principal, { sent, current }: StalePage): void => {
 		const who = principalText(principal);
@@ -882,7 +895,7 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 		const key = `${who}\n${agent}\n${sent}`;
 		if (staleReported.has(key)) return;
 		staleReported.add(key);
-		processLogs.notice("stale-pages", text);
+		processLogs.append("stale-pages", "event", text);
 	};
 	// Mobile's limits: frames up to 1 MiB, 4 MiB unsent output (socket-limits.ts); Chord queues calls behind its window.
 	sockets.on("connection", (socket, request: IncomingMessage) => {
@@ -1013,7 +1026,7 @@ function recentErrors(since: number): string[] {
  */
 function isOwnerNotice(error: HostError): boolean {
 	if (error.kind === "resolve_failed") return false;
-	const failure = "error" in error ? error.error : "failure" in error ? error.failure.error : undefined;
+	const failure = hostErrorCause(error);
 	return !isChordError(failure, "released") && !isChordError(failure, "forbidden");
 }
 

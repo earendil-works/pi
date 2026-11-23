@@ -97,11 +97,11 @@ export async function localOwner(server: Pick<P2Server, "port" | "dataDir">): Pr
  */
 export function clientHost(target: LocalOwner | ClientSocket, facets: readonly PluginFacet<P2Principal>[] = []): Host {
 	const socket =
-		"cookie" in target
-			? new NodeWebSocket(`ws://127.0.0.1:${target.port}${clientLinkPath("script")}`, {
+		target instanceof NodeWebSocket || target instanceof WebSocket
+			? target
+			: new NodeWebSocket(`ws://127.0.0.1:${target.port}${clientLinkPath("script")}`, {
 					headers: { Cookie: target.cookie },
-				})
-			: target;
+				});
 	const host = createHost({ onError: reportTo() });
 	// Both sockets have the subset of the WebSocket API the link uses; the types differ in their event signatures.
 	host.connect(webSocketLink(socket as unknown as WebSocketLike), { principal: SERVER }, TEST);

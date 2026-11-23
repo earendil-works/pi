@@ -1,9 +1,10 @@
-// The server's backup (`src/runtime/backup.ts`): holds the backup remote, uploads the server's own store, gives each
+// The server's backup (`contract.ts`): holds the backup remote, uploads the server's own store, gives each
 // session's worker the remote for its own store (`BackupRemote`: slot bodies streamed through here in chunks), and
 // keeps every store's last reported status. Inert while backup is not configured (`P2_BACKUP_DIR` for a folder,
 // `P2_BACKUP=<name>` for a plugin's target such as `radius`, `BackupTargets`).
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
+import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import {
 	type Context,
 	defineFacet,
@@ -17,35 +18,38 @@ import {
 	withoutAbortSignal,
 } from "@p2/app/v1";
 import {
-	BACKUP_TERMINAL,
 	type BackupTarget,
-	BackupUploader,
-	backupFiles,
 	backupTarget,
-	backupTargetKey,
+	FileSystemSyncRemote,
 	LockedFile,
-	type OpenBackupTarget,
-	openFolderRemote,
 	type PutBatchResult,
 	processLogs,
-	SERVER_STORE,
 	type SessionSyncStore,
 	type SyncBody,
 	serverDirectory,
-	sessionStoreName,
 } from "@p2/app/v1/node";
 import { Server, serverOf } from "@p2/app/v1/server";
 import {
+	BACKUP_TERMINAL,
 	Backup,
 	BackupNative,
 	BackupRemote,
 	type BackupStatus,
 	BackupTargets,
 	type BackupUploads,
+	type OpenBackupTarget,
+	SERVER_STORE,
+	sessionStoreName,
 } from "./contract.ts";
+import { BackupUploader, backupFiles, backupTargetKey } from "./uploader.ts";
 
 /** An upload whose worker sends nothing for this long is dropped (its body was abandoned). */
 const UPLOAD_IDLE_MS = 60_000;
+
+/** A folder's remote, its paths resolved from `dataDir`. */
+export function openFolderRemote(path: string, dataDir: string): SessionSyncStore {
+	return new FileSystemSyncRemote(new NodeExecutionEnv({ cwd: dataDir }), path);
+}
 
 /** This instance's device ID: `device.json` in the data directory, as logins keep it (made on first use). */
 async function deviceId(dataDir: string): Promise<string> {

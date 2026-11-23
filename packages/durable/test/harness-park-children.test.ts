@@ -84,10 +84,10 @@ const research = tool(
 	"research",
 	async (args, api, ctx) => {
 		const state = await api.readSignal(Done, "done", ctx);
-		if (state !== undefined && "value" in state) {
+		if (state?.kind === "value") {
 			return { output: [{ type: "text", text: `${(args as { topic: string }).topic}: ${state.value.text}` }] };
 		}
-		return { sleep: { signals: [Done.key("done")] } };
+		return { kind: "sleep", signals: [Done.key("done")] };
 	},
 	{ replay: "safe" },
 );
@@ -124,7 +124,10 @@ describe("nested calls without waiting", () => {
 					const open = [a, b].filter((nested) => !done.has(nested.taskId));
 					if (open.length > 0) {
 						return {
-							wait: { checkpoint: { done: [...done] }, on: open.map((nested) => nested.taskId), policy: "any" },
+							kind: "wait",
+							checkpoint: { done: [...done] },
+							on: open.map((nested) => nested.taskId),
+							policy: "any",
 						};
 					}
 					const [ra, rb] = await Promise.all([a.result(ctx), b.result(ctx)]);
@@ -167,7 +170,7 @@ describe("nested calls without waiting", () => {
 		addTool(
 			setup.registry,
 			tool("woken", async (_args, api, ctx) => {
-				if (api.wake === undefined) return { sleep: { until: 0 } };
+				if (api.wake === undefined) return { kind: "sleep", until: 0 };
 				await api
 					.executeTool("research", { topic: "x" }, ctx, { wait: false })
 					.catch((error: Error) => errors.push(error.message));
@@ -243,7 +246,7 @@ describe("children after a restart", () => {
 			setup.registry,
 			tool("unsafe", async (_args, api, ctx) => {
 				const nested = await api.executeTool("research", { topic: "x" }, ctx, { key: "a", wait: false });
-				if (api.wake === undefined) return { wait: { on: [nested.taskId], policy: "allSettled" } };
+				if (api.wake === undefined) return { kind: "wait", on: [nested.taskId], policy: "allSettled" };
 				return { output: [{ type: "text", text: String((await nested.result(ctx)).structuredOutput) }] };
 			}),
 		);
@@ -321,7 +324,7 @@ describe("submissions that notify a task", () => {
 				),
 			woke: async (_task, runtime, ctx) => {
 				const state = await runtime.readSignal(SubmissionSettled, "settled", ctx);
-				const status = state !== undefined && "value" in state ? state.value.status : null;
+				const status = state?.kind === "value" ? state.value.status : null;
 				await runtime.commit(() => completed(status), ctx);
 			},
 		},

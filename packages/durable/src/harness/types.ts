@@ -97,6 +97,13 @@ export type SubmissionDraft = {
 			 * answered and waits for its `afterRun` tasks is still busy, and such an input queues and starts the next run.
 			 */
 			readonly whenIdle?: "reject";
+			/**
+			 * What `Conversation.abort()` and abort cascades do with the input while it is queued: `withdraw` (default)
+			 * settles it `unanswered` with reason `aborted`; `keep` leaves it queued, as a failed run leaves its queue under
+			 * `afterFailedRun: "keep"`, so the next input places it and that run answers it. For input its sender cannot
+			 * take back, such as another agent's message. `Submission.abort()` withdraws it either way.
+			 */
+			readonly onAbort?: "withdraw" | "keep";
 			/** Place the input as this entry; default `pi.user` without data. The kind must not start with `pi.`. */
 			readonly entry?: InputEntry;
 	  }
@@ -168,16 +175,16 @@ export type ConversationAbortOptions = {
 export type HooksOf<K> = K extends Task<infer _I, infer _S, infer _R, infer H> ? H : never;
 
 /**
- * Invocation-bound conversation operations for tasks and tools. Rejects after the invocation ends. `submit` takes any
- * submission, in both forms of `Conversation.submit()`: a subagent's conversation is an ordinary one, so a tool may also
- * continue it, and a task may admit a submission in the same commit as its own writes (`runtime.commit()`); entries
- * the admission appends there carry the task's `byTaskId`. The transaction form also rejects once the invocation is
- * aborted.
+ * Invocation-bound conversation operations for tasks and tools. Rejects after the invocation ends. `submit` and `admit`
+ * take any submission, as `Conversation.submit()` and `Conversation.admit()`: a subagent's conversation is an ordinary
+ * one, so a tool may also continue it, and a task may admit a submission in the same commit as its own writes
+ * (`runtime.commit()`); entries the admission appends there carry the task's `byTaskId`. `admit` also rejects once the
+ * invocation is aborted.
  */
 export interface ConversationHandle {
 	readonly id: ConversationId;
 	submit(submission: SubmissionDraft, context: Context): Promise<Submission>;
-	submit(tx: Tx, submission: SubmissionDraft): Promise<SubmissionId>;
+	admit(tx: Tx, submission: SubmissionDraft): Promise<SubmissionId>;
 	/** `Conversation.abort()`: withdraw queued inputs, abort the ordinary ownership scope, and wait until it is idle. */
 	abort(context: Context, options?: ConversationAbortOptions): Promise<void>;
 	/** Resolve when the conversation's ordinary ownership scope has no live non-background task. */
@@ -223,9 +230,8 @@ export type ToolExecutionResult<TDetails extends JsonValue = JsonValue> = {
 	/** Spend of the execution itself, such as a model call; stored on the result and in `pi.usage.tools`. */
 	readonly usage?: Usage;
 	readonly control?: ToolControl;
-	/** A result is no park (`ToolPark`). */
-	readonly sleep?: never;
-	readonly wait?: never;
+	/** A result is no park (`ToolPark`): only parks have a `kind`. */
+	readonly kind?: never;
 };
 
 /**
@@ -252,28 +258,28 @@ export type NestedToolExecutionResult = {
 };
 
 /**
- * What `execute()` returns instead of a result to park the call (spec suspendable §4): `sleep` until `until`, for
- * `signals`, or both; or `wait` for tasks the call's task owns. The call holds no invocation meanwhile, then runs
- * `execute()` again with the same arguments, `api.wake` saying why, and `api.checkpoint` set to `checkpoint`.
+ * What `execute()` returns instead of a result to park the call (spec suspendable §4): kind `sleep` until `until`, for
+ * `signals`, or both; or kind `wait` for tasks the call's task owns (`on`). The call holds no invocation meanwhile,
+ * then runs `execute()` again with the same arguments, `api.wake` saying why, and `api.checkpoint` set to `checkpoint`.
  */
 export type ToolPark<C extends JsonValue = JsonValue> = NoResultFields &
 	(
 		| {
-				readonly sleep: {
-					readonly checkpoint?: C;
-					readonly until?: number;
-					readonly signals?: readonly SignalKey<unknown>[];
-				};
-				readonly wait?: never;
+				readonly kind: "sleep";
+				readonly checkpoint?: C;
+				readonly until?: number;
+				readonly signals?: readonly SignalKey<unknown>[];
 		  }
 		| {
-				readonly wait: { readonly checkpoint?: C; readonly on: readonly TaskId[]; readonly policy: JoinPolicy };
-				readonly sleep?: never;
+				readonly kind: "wait";
+				readonly checkpoint?: C;
+				readonly on: readonly TaskId[];
+				readonly policy: JoinPolicy;
 		  }
 	);
 
 /** A park carries no result field, so code reading a result's fields reads none from a park. */
-type NoResultFields = { readonly [K in Exclude<keyof ToolExecutionResult, "sleep" | "wait">]?: never };
+type NoResultFields = { readonly [K in Exclude<keyof ToolExecutionResult, "kind">]?: never };
 
 /** Whether the tools of one round run at once or one after another in call order. */
 export type ToolExecutionMode = "parallel" | "sequential";
@@ -377,7 +383,7 @@ export interface ToolExecutionApi<TDetails extends JsonValue = JsonValue, C exte
 	 * call is aborted, or when the Harness closes.
 	 *
 	 * Awaiting a nested call holds this call's invocation for as long as it takes, also while it is parked; a tool that
-	 * starts calls with `wait: false` and parks on their tasks (`{ wait: { on } }`) lets the Session go idle instead.
+	 * starts calls with `wait: false` and parks on their tasks (`{ kind: "wait", on }`) lets the Session go idle instead.
 	 */
 	executeTool(
 		name: string,
@@ -492,8 +498,8 @@ export type HookRegistration = { readonly task: string; readonly handlers: objec
 
 /** Built by `wrapTool()` and `wrapSection()`; targets a tool name or a section key. Wrappers are pure. */
 export type Wrap<Tool extends ToolRegistration = ToolRegistration> =
-	| { readonly tool: string; wrap(tool: Tool): Tool }
-	| { readonly section: string; wrap(section: PromptSection<Tool>): PromptSection<Tool> };
+	| { readonly kind: "tool"; readonly tool: string; wrap(tool: Tool): Tool }
+	| { readonly kind: "section"; readonly section: string; wrap(section: PromptSection<Tool>): PromptSection<Tool> };
 
 /** Named bundle of code; installed in a registry and selected by conversations by name. */
 /**
@@ -934,7 +940,7 @@ export interface Conversation {
 	 * they wait for the commit holding the line. Its `pi.durable.submit` span covers the admission only, so its `result`
 	 * is provisional. Throws for a transaction of another Session.
 	 */
-	submit(tx: Tx, submission: SubmissionDraft): Promise<SubmissionId>;
+	admit(tx: Tx, submission: SubmissionDraft): Promise<SubmissionId>;
 	/**
 	 * Admit a write of a `pi.reset` entry that starts a new context, carrying `handoff` as a user message when given.
 	 * Resolves after admission; while busy, it is placed at the next boundary.
@@ -1109,7 +1115,7 @@ export interface GenerationHooks {
 	/** Every terminal provider message, before classification. */
 	afterResponse(message: AssistantMessage, api: HookApi, context: Context): void | Promise<void>;
 	/**
-	 * A final answer; the first result wins. `continue` appends a user message and continues the run. `tasks` decide
+	 * A final answer; the first result wins. Kind `continue` appends a user message and continues the run. `tasks` decide
 	 * whether the answer stands (spec suspendable §6): the answer is appended, the run's inputs stay open
 	 * (`LiveRun.yield`), the tasks run as the generation's children, and the first in creation order that completes with
 	 * a `YieldDecision` holding `continue` provides the continuation; without one the run ends with the answer.
@@ -1118,7 +1124,10 @@ export interface GenerationHooks {
 		answer: AssistantMessage,
 		api: HookApi,
 		context: Context,
-	): HookResult<{ readonly continue: UserInput } | { readonly tasks: readonly HookTask[] }>;
+	): HookResult<
+		| { readonly kind: "continue"; readonly continue: UserInput }
+		| { readonly kind: "tasks"; readonly tasks: readonly HookTask[] }
+	>;
 	/**
 	 * After every tool of the round is terminal; `results` are the round's result entries in call order. Requested tasks
 	 * of every hook, concatenated in extension order, run as the generation's children before the round ends; one that
@@ -1227,5 +1236,5 @@ export interface CompactionHooks {
 		},
 		api: HookApi,
 		context: Context,
-	): HookResult<{ readonly decline: true } | { readonly summary: string }>;
+	): HookResult<{ readonly kind: "decline" } | { readonly kind: "summary"; readonly summary: string }>;
 }

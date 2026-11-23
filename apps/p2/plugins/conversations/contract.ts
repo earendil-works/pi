@@ -27,7 +27,7 @@ export const QuerySchema = union([
 		model: opt(str({ minLength: 1 })),
 		title: opt(str({ minLength: 1, maxLength: 120 })),
 	}),
-	/** Aborts the destination's current run; its queued inputs are withdrawn, agents' and sessions' kept as context. */
+	/** Aborts the destination's current run; people's queued inputs go to their drafts, others' stay queued. */
 	obj({ action: literal("stop"), to: To }),
 	obj({ action: literal("archive"), to: To }),
 	obj({ action: literal("restore"), to: To }),
@@ -55,7 +55,7 @@ const ReplySchema = union([
 			}),
 		),
 		truncated: bool(),
-		/** The owner's projects (`projects.json`): where each lives, by environment (null: this device). */
+		/** The owner's live projects: where each lives, by environment (null: this device), the default first. */
 		projects: arr(ProjectSchema),
 	}),
 	obj({ action: literal("send"), to: str(), submissionId: num() }),

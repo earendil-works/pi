@@ -240,3 +240,16 @@ export function checkMessage(message: unknown, context: Context): Message {
 	// The check above establishes the type.
 	return message as Message;
 }
+
+/** The origin a message carries; none for the kinds that never carry one (`hello`, `revoke`, `ping`, `pong`). */
+export function originOf(message: Message): number | undefined {
+	switch (message.kind) {
+		case "hello":
+		case "revoke":
+		case "ping":
+		case "pong":
+			return undefined;
+		default:
+			return message.origin;
+	}
+}

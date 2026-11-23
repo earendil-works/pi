@@ -253,6 +253,24 @@ export function currentVariants(contract: Contract): ReadonlyMap<string, Variant
 	return contractData(contract).versions.at(-1)!.variants;
 }
 
+/** The member names of one variant of a contract, by kind. */
+export type MemberNames = {
+	readonly state: readonly string[];
+	readonly methods: readonly string[];
+	readonly events: readonly string[];
+};
+
+/**
+ * The names of the state members, methods and event members of `variant` of a contract's current version (a local
+ * contract has one variant: leave `variant` out), in the order declared: for code that fills an implementation from
+ * another object's members. A local contract's keyed and `queries` members are not among them.
+ */
+export function memberNames(contract: Contract, variant: string = LOCAL): MemberNames {
+	const found = currentVariants(contract).get(variant);
+	if (found === undefined) throw new Error(`${contract.name}: no variant "${variant}"`);
+	return { state: [...found.state.keys()], methods: [...found.methods.keys()], events: [...found.events.keys()] };
+}
+
 /** The variants of version `version` of a contract's history (an older consumer's binding, Q10). */
 export function variantsAt(contract: Contract, version: number): ReadonlyMap<string, VariantData> {
 	// Callers name a version the provider binds (`binds`): its history has it.

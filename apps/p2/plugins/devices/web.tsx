@@ -60,8 +60,8 @@ function DevicesSheet({ service }: { service: Held<typeof Devices> | undefined }
 					This token grants full owner access. Give it only to your own device, not to collaborators.
 				</p>
 				<p className="muted small">
-					Open Pi's domain on the other device, paste this token into the sign-in page, and tap Sign in. It expires
-					after ten minutes and works once.
+					Open Pi's domain on the other device, paste this token into the sign-in page, and choose Sign in. It
+					expires after ten minutes and works once.
 				</p>
 				{canMint === false ? (
 					<p className="error" role="alert">

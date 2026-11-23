@@ -131,9 +131,12 @@ describe("activation", () => {
 		await host.load([{ name: "@test/app", facet: defineFacet((h) => serveBoard(h, 3)) }], context);
 		const refused = (await rejection(host.get(Board, {}, context))) as ChordError;
 		expect(refused.message).toContain("stored at version 9");
-		expect(errors.map((error) => [error.kind, "failure" in error ? error.failure.kind : ""])).toEqual([
-			["activation_failed", "broken"],
-		]);
+		expect(
+			errors.map((error) => [
+				error.kind,
+				error.kind === "activation_failed" || error.kind === "object_failed" ? error.failure.kind : "",
+			]),
+		).toEqual([["activation_failed", "broken"]]);
 		await host.close(context);
 		await store.close(context);
 	});
@@ -315,7 +318,7 @@ describe("failure", () => {
 				],
 			],
 		});
-		expect(errors.map((error) => [error.kind, "query" in error ? error.query : ""])).toEqual([
+		expect(errors.map((error) => [error.kind, error.kind === "query_failed" ? error.query : ""])).toEqual([
 			["query_failed", "items"],
 		]);
 		// The object stays live: only the member failed.

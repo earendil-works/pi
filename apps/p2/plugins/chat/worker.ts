@@ -20,7 +20,6 @@ import { type ImageProcessor, imageLimits } from "@earendil-works/pi-durable/too
 import { obj } from "@earendil-works/pi-schema";
 import type { JsonValue } from "@p2/app/v1";
 import {
-	AGENT_MESSAGE_ENTRY,
 	type Author,
 	authorIdOf,
 	authorOf,
@@ -43,7 +42,6 @@ import {
 	isOwner,
 	type MessageData,
 	messageData,
-	PEER_MESSAGE_ENTRY,
 	referenceParts,
 	senderText,
 	serveKeyed,
@@ -71,13 +69,11 @@ import {
 	Conversation,
 	type EntriesPage,
 	type ModelMeta,
+	RunControl,
 	SendRouters,
 	StatsSchema,
 } from "./contract.ts";
 import { ShellCommands, serveShellCommands } from "./shell.ts";
-
-/** A queued input (not a write) in the conversation's inbox. */
-type QueuedInput = Exclude<InboxItem, { mode: "write" }>;
 
 /** Who wrote a queued input and what they typed, from its entry data; tool-originated input has none. */
 function restoredInput(item: InboxItem): { author: Author; text: string } | undefined {
@@ -85,13 +81,6 @@ function restoredInput(item: InboxItem): { author: Author; text: string } | unde
 	const message = messageData(item.entry?.data);
 	return message?.text.trim() ? { author: message.author, text: message.text } : undefined;
 }
-
-/**
- * Entry kinds of queued inputs that Stop places into the context instead of dropping: messages from subagents and
- * peer sessions. Their senders cannot take them back (a subagent's final report is never sent again). A main agent's
- * task for a subagent is not one: its reporter tells the main agent that it was not delivered.
- */
-const KEPT_ON_STOP = new Set([AGENT_MESSAGE_ENTRY, PEER_MESSAGE_ENTRY]);
 
 /** A `Chat.entries` page ends once its entries reach about this many bytes of JSON. */
 const ENTRIES_PAGE_BYTES = 1_000_000;
@@ -263,9 +252,7 @@ export default defineFacet((host) => {
 			const queued = async (context: Context) => {
 				const { harness: durable, conversation: current } = target();
 				const inbox = await durable.snapshot(InboxDoc, current.id, context);
-				return (inbox?.items ?? [])
-					.filter((item): item is QueuedInput => item.mode !== "write")
-					.toSorted((a, b) => a.id - b.id);
+				return (inbox?.items ?? []).filter((item) => item.mode !== "write").toSorted((a, b) => a.id - b.id);
 			};
 			return {
 				view,
@@ -347,29 +334,18 @@ export default defineFacet((host) => {
 				},
 				stop: async (ctx) => {
 					const { harness: durable, conversation: current } = target();
-					// Conversation.abort() discards queued inputs. Withdraw them first, one by one, so each author gets
-					// their text back; already placed ones are skipped. An input that arrives after this loop is still
-					// discarded by the abort.
-					const restored: { author: Author; text: string }[] = [];
-					const kept: (QueuedInput & { entry: NonNullable<QueuedInput["entry"]> })[] = [];
-					for (const item of await queued(ctx)) {
-						if ((await durable.abortSubmission(item.id as SubmissionId, ctx, current.id)) !== "aborted") continue;
-						const input = restoredInput(item);
-						if (input) restored.push(input);
-						else if (item.entry && KEPT_ON_STOP.has(item.entry.kind)) kept.push({ ...item, entry: item.entry });
-					}
+					// The abort withdraws the queued inputs in the commit that marks the run, except other agents' and
+					// sessions' messages (`onAbort: "keep"`), which stay queued for the next input. Each author gets back
+					// the text of their inputs it withdrew; one admitted after this read goes without.
+					const before = await queued(ctx);
 					await current.abort(ctx, { background: false });
-					// Messages from agents and sessions become context without a run, as their input would have been placed:
-					// the transcript shows them, and the agent reads them with the next input.
-					for (const { id, entry, content } of kept)
-						await current.submit(
-							{
-								type: "write",
-								entry: { ...entry, model: [{ role: "user", content, timestamp: Date.now() }] },
-								requestId: `stop-kept:${id}`,
-							},
-							ctx,
-						);
+					const restored: { author: Author; text: string }[] = [];
+					for (const item of before) {
+						const input = restoredInput(item);
+						if (!input) continue;
+						const record = await (await durable.submission(item.id as SubmissionId, ctx))?.status(ctx);
+						if (record?.status === "unanswered" && record.reason === "aborted") restored.push(input);
+					}
 					await status.push(ctx);
 					return { restored };
 				},
@@ -587,6 +563,24 @@ export default defineFacet((host) => {
 		return { variant: "viewer", members: { costs: (ctx) => chat.costs(ctx) } };
 	});
 	host.serve(Chat, chatFactory);
+	host.serve(RunControl, ({ session, conversation }, principal, self) => {
+		if (!canSend(principal, session)) throw forbidden("participants only");
+		const chat = self.get(Conversation, { conversation });
+		const worker = workerOf(self);
+		return {
+			variant: "participant",
+			members: {
+				// Refused while the session moves, as the chat's calls are (`Liveness.call`).
+				stop: (ctx) =>
+					worker().liveness.call(async () => {
+						const { restored } = await chat.stop(ctx);
+						if (restored.length)
+							await (await ctx.get(DraftStore, {})).add({ conversation, items: restored }, ctx);
+						return null;
+					}),
+			},
+		};
+	});
 	host.serve(ChatImages, ({ conversation }, principal, self) => {
 		if (principal.kind !== "server") throw forbidden("server only");
 		const chat = self.get(Conversation, { conversation });

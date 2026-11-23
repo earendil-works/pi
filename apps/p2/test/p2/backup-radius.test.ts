@@ -11,11 +11,11 @@ import { FileSyncStateStore, pullSession } from "@earendil-works/chord/sync";
 import type { ConversationView, LiveState } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { Backup } from "../../plugins/backup/contract.ts";
+import { RadiusSyncRemote } from "../../plugins/backup/radius-remote.ts";
+import { backupFiles } from "../../plugins/backup/uploader.ts";
 import { Chat } from "../../plugins/chat/contract.ts";
 import { readRadiusConfig } from "../../plugins/radius/brain.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
-import { RadiusSyncRemote } from "../../plugins/sync/radius-remote.ts";
-import { backupFiles } from "../../src/runtime/backup.ts";
 import { clientHost, holdIn, localOwner, until } from "./helpers.ts";
 import { radiusFixture } from "./radius-fixture.ts";
 

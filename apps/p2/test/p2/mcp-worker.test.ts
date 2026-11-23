@@ -1,7 +1,7 @@
 // MCP tools in a session worker, end to end with the fake provider: the worker leases the owner's servers at the
 // session's location with the project `.pi/mcp.json` it read there, the `codemode` section lists each server's namespace
-// with its summary, `describeNamespace()` describes it, a code mode script's call returns the server's answer (the
-// model is not offered the tools, as in pi), a relocation moves the lease, a subagent's own location is leased while it
+// with its summary, `describeNamespace()` describes it, a code mode script's call returns the server's whole
+// `CallToolResult`, uncut past the harness's output bound (the model is not offered the tools, as in pi), a relocation moves the lease, a subagent's own location is leased while it
 // is not archived (its project's servers stay out of the main conversation), and with code mode off `tool_search` loads
 // the tools for the model and the `mcp_servers` section lists the servers.
 import assert from "node:assert/strict";
@@ -104,11 +104,19 @@ test(
 		};
 		// As in pi, the tools are for code mode scripts: the model is not offered them, and `tool_search` is not installed.
 		const echo = async (said: string) => {
-			const result = await call(`codemode return await tools.mcp__files__echo({ text: ${JSON.stringify(said)} });`);
+			const result = await call(
+				`codemode return (await tools.mcp__files__echo({ text: ${JSON.stringify(said)} })).content[0].text;`,
+			);
 			assert.equal(result.isError, false, text(result));
 			return scriptOutput(result);
 		};
 		assert.equal(await echo("hello"), "echo: hello");
+		// Past Durable's 50KB output bound and pi's 20KB MCP limit, the script still gets every character.
+		const large = await call(
+			'codemode const r = await tools.mcp__files__echo({ text: "x".repeat(100000) }); return r.content[0].text.length;',
+		);
+		assert.equal(large.isError, false, text(large));
+		assert.equal(scriptOutput(large), String("echo: ".length + 100000));
 		const listing = sections(await until(chat.view, Boolean));
 		assert.equal(listing.mcp_servers, undefined);
 		assert.match(

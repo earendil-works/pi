@@ -137,7 +137,7 @@ describe("one transaction per call", () => {
 			(index, seq) => receipts.push([index, seq]),
 			context,
 		);
-		expect(result).toEqual({ stored: 3 });
+		expect(result).toEqual({ kind: "stored", stored: 3 });
 		expect(counts.transactions - before).toBe(1);
 		expect(receipts).toEqual([
 			[0, last + 1],
@@ -193,7 +193,7 @@ describe("refusals: the batches before the refused one stand", () => {
 			context,
 		);
 		expect(result.stored).toBe(1);
-		expect(String(result.refused)).toBe(`Error: ID ${first} already belongs to entry`);
+		expect(result.kind === "refused" && String(result.refused)).toBe(`Error: ID ${first} already belongs to entry`);
 		expect(receipts).toEqual([0]);
 		expect((await storage.entry(first, context))?.entry.kind).toBe("m");
 		expect(await storage.entry(after, context)).toBeUndefined();
@@ -220,7 +220,9 @@ describe("refusals: the batches before the refused one stand", () => {
 			context,
 		);
 		expect(result.stored).toBe(1);
-		expect(String(result.refused)).toBe(`Error: Document ${document} is retired more than once`);
+		expect(result.kind === "refused" && String(result.refused)).toBe(
+			`Error: Document ${document} is retired more than once`,
+		);
 		expect(receipts).toEqual([0]);
 		expect(await storage.entry(entry, context)).toBeDefined();
 		await store.close(context);
@@ -253,7 +255,12 @@ describe("refusals: the batches before the refused one stand", () => {
 				const receipts: number[] = [];
 				const result = await storage.commit(batches, (index) => receipts.push(index), context);
 				const conversation = await storage.conversation(idFromNumber<ConversationId>(100), context);
-				outcomes.push({ stored: result.stored, refused: String(result.refused), receipts, conversation });
+				outcomes.push({
+					stored: result.stored,
+					refused: result.kind === "refused" ? String(result.refused) : "undefined",
+					receipts,
+					conversation,
+				});
 				await storage.close(context);
 			}
 			expect(outcomes[0]).toMatchObject({ stored: 1, receipts: [0], conversation: { id: 100 } });
@@ -308,7 +315,7 @@ describe("refusals: the batches before the refused one stand", () => {
 		const receipts: number[] = [];
 		const result = await storage.commit(calls(document), (index) => receipts.push(index), context);
 		expect(result.stored).toBe(1);
-		expect(String(result.refused)).toContain(message);
+		expect(result.kind === "refused" && String(result.refused)).toContain(message);
 		expect([receipts, store.lastSeq]).toEqual([[0], last + 1]);
 		expect((await outboxSeqs(store)).at(-1)).toBe(last + 1);
 		await store.close(context);
@@ -325,7 +332,7 @@ describe("refusals: the batches before the refused one stand", () => {
 			context,
 		);
 		expect(result.stored).toBe(1);
-		expect(String(result.refused)).toContain('column "id": 1.5 is not a int value');
+		expect(result.kind === "refused" && String(result.refused)).toContain('column "id": 1.5 is not a int value');
 		expect(receipts).toEqual([0]);
 		expect(await storage.entry(entry, context)).toBeDefined();
 		await store.close(context);
@@ -362,7 +369,7 @@ describe("refusals: the batches before the refused one stand", () => {
 			() => {},
 			context,
 		);
-		expect(result).toEqual({ stored: 3 });
+		expect(result).toEqual({ kind: "stored", stored: 3 });
 		expect((await storage.document(copy, "current", context))?.value).toEqual({ n: 2 });
 		await store.close(context);
 	});
@@ -475,7 +482,12 @@ describe("failures: a rollback rejects, an unknown outcome stops the store", () 
 			(_index, seq) => seqs.push(seq - last),
 			context,
 		);
-		return { stored: result.stored, refused: String(result.refused), seqs, state: await stateOf(storage) };
+		return {
+			stored: result.stored,
+			refused: result.kind === "refused" ? String(result.refused) : "undefined",
+			seqs,
+			state: await stateOf(storage),
+		};
 	}
 
 	/** Every error in `error`'s cause chain, as text. */
@@ -580,7 +592,7 @@ describe("failures: a rollback rejects, an unknown outcome stops the store", () 
 		const queued = storage.commit([[entryWrite(second)]], () => {}, context);
 		const closing = store.close(context);
 		release.resolve();
-		expect(await running).toEqual({ stored: 1 });
+		expect(await running).toEqual({ kind: "stored", stored: 1 });
 		await expect(queued).rejects.toMatchObject({ code: "released" });
 		await closing;
 		const again = await reopen(path);
@@ -742,7 +754,7 @@ describe("other users of the store", () => {
 		await macrotask();
 		expect(settled).toBe(false);
 		await parts.return?.();
-		expect(await series).toEqual({ stored: 1 });
+		expect(await series).toEqual({ kind: "stored", stored: 1 });
 		expect(store.lastSeq).toBe(last + 1);
 		await store.close(context);
 	});

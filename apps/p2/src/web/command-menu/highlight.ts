@@ -1,12 +1,14 @@
 // The command menu's highlighted option, kept in the DOM rather than React state: `aria-selected="true"` on one
 // `[role=option]` of the listbox and the input's `aria-activedescendant`. Moving it re-renders nothing, and the rows of
 // pages and searches, which render on their own, need not report themselves. Until the reader moves it (a key, the
-// pointer), the highlight is the first option, also when rows appear above it later (a `Shown` row, a page's data);
-// the listbox's `data-moved` says that the reader moved it. Enter clicks the highlighted option; pressed before the
+// pointer), the highlight is the first option, also when rows appear above it later (a `Shown` row, a page's data),
+// or, while the input is empty, the option a page prefers (`data-preferred`: the folder a new session starts in); the
+// listbox's `data-moved` says that the reader moved it. Enter clicks the highlighted option; pressed before the
 // typed text's rows rendered, it clicks the first one that does (`enter`).
 
 const OPTION = '[role="option"]';
 const SELECTED = '[role="option"][aria-selected="true"]';
+const PREFERRED = '[role="option"][data-preferred]';
 
 /** The highlighted option of `list`, if any. */
 const highlighted = (list: HTMLElement): HTMLElement | null => list.querySelector<HTMLElement>(SELECTED);
@@ -43,16 +45,19 @@ export function highlight(option: HTMLElement): void {
 	select(list, option);
 }
 
-/** Highlights the first option of `list`, or none when it has none: the query or page changed, the reader starts over. */
+/**
+ * Highlights the first option of `list` (the preferred one while the input is empty), or none when it has none: the
+ * query or page changed, the reader starts over.
+ */
 export function highlightFirst(list: HTMLElement): void {
 	delete list.dataset.moved;
 	waiting.delete(list);
-	select(list, list.querySelector<HTMLElement>(OPTION));
+	select(list, initial(list));
 }
 
-/** Keeps a highlight after rows came or went: the first option until the reader moved it, else when it is gone. */
+/** Keeps a highlight after rows came or went: the initial option until the reader moved it, else when it is gone. */
 export function keepHighlight(list: HTMLElement): void {
-	if (list.dataset.moved === undefined) select(list, list.querySelector<HTMLElement>(OPTION));
+	if (list.dataset.moved === undefined) select(list, initial(list));
 	else if (!highlighted(list)) highlightFirst(list);
 	const pending = waiting.get(list);
 	const option = highlighted(list);
@@ -71,6 +76,12 @@ export function moveHighlight(list: HTMLElement, step: 1 | -1): void {
 	list.dataset.moved = "";
 	select(list, next);
 	next.scrollIntoView({ block: "nearest" });
+}
+
+/** The option highlighted until the reader moves: the preferred one while nothing is typed, else the first. */
+function initial(list: HTMLElement): HTMLElement | null {
+	const preferred = inputOf(list)?.value === "" ? list.querySelector<HTMLElement>(PREFERRED) : null;
+	return preferred ?? list.querySelector<HTMLElement>(OPTION);
 }
 
 function select(list: HTMLElement, option: HTMLElement | null): void {

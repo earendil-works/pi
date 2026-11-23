@@ -41,12 +41,20 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	"servers are currently busy",
 	"currently experiencing high demand",
 	"model is at capacity",
+	// A request that waited too long in the provider's queue, e.g. sference's "waited 73.4s in
+	// queue, reaching this model's admission ceiling of 60s; retry after the hinted delay".
+	"admission ceiling",
 	"rate.?limit",
 	"too many requests",
 	// Status codes must not be part of a longer word or number, e.g. a request id or byte count (#11057).
-	"(?<![a-z0-9])(?:429|500|502|503|504|520|524)(?![a-z0-9])",
+	// 520, 524 and 525 are Cloudflare's: an unknown error, a timeout, and a failed TLS
+	// handshake between Cloudflare and the provider's origin, usually while it restarts.
+	"(?<![a-z0-9])(?:429|500|502|503|504|520|524|525)(?![a-z0-9])",
 	// Also matches "The service is temporarily unavailable" (#10965).
 	"service.?(?:is.?)?(?:temporarily.?)?unavailable",
+	// Gateway wording such as "The provider is temporarily unavailable. Retry shortly." (#12227).
+	// "temporarily" is required: a plain "provider unavailable" is often a lasting routing error.
+	"provider.?(?:is.?)?temporarily.?unavailable",
 	"server.?error",
 	"internal.?error",
 
@@ -54,6 +62,11 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	// "Provider returned error" responses (#2264) and gateway wording such as
 	// "The upstream provider returned an error" (#10842).
 	"provider.?returned.?(?:an.?)?error",
+	// Anthropic's internal error, which it sends as HTTP 500 before streaming and as an event
+	// without a status once the stream has started, e.g. {"type":"error","error":{"type":
+	// "api_error","message":"Unable to complete this request right now. Please try again."}}.
+	// Gateways that copy Anthropic's format use it for their own upstream failures as well.
+	'"type"\\s*:\\s*"api_error"',
 	"exceeded request buffer limit while retrying upstream",
 	// Gateway failure relaying the upstream response stream, sent as an OpenAI
 	// Responses `response.failed` event without an error code (#10920).
@@ -71,8 +84,7 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	"connection.?error",
 	"connection.?refused",
 	"connection.?lost",
-	// Gateway mid-stream drop relayed as an Anthropic-style `api_error` event,
-	// e.g. {"type":"error","error":{"type":"api_error","message":"Connection closed."}} (#12064).
+	// A gateway's mid-stream drop, e.g. "Connection closed." (#12064).
 	"connection.?closed",
 	"other side closed",
 	"fetch failed",
@@ -98,6 +110,9 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	// WebSocket transports can report close/error text instead of HTTP/fetch text.
 	"websocket.?closed",
 	"websocket.?error",
+	// Codex 60-minute WebSocket lifetime limit, as code `websocket_connection_limit_reached` or as
+	// text "Responses websocket connection limit reached". A retry opens a fresh connection (#12124).
+	"websocket.?connection.?limit.?reached",
 
 	// Premature stream endings from SDKs and transports. Anthropic can throw
 	// "stream ended without ..." and "Anthropic stream ended before message_stop"
@@ -106,12 +121,24 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	"stream ended before message_stop",
 	"stream ended before a terminal response event",
 	"http2 request did not get a response",
+	// An OpenAI-compatible stream that ended with `finish_reason: "error"`, which OpenRouter
+	// sends when its provider fails mid-stream; see `mapStopReason` in openai-completions.ts.
+	"provider finish_reason: error",
+	// OpenRouter: "Provider returned an empty response", and its wrapper for a provider that
+	// gave up, e.g. "Upstream error from Relace: The model stopped before completing the response."
+	"returned an empty response",
+	"stopped before completing the response",
 	// Codex CLI mid-stream disconnect, relayed by proxies that wrap the Codex CLI,
 	// e.g. "stream disconnected before completion: stream closed before response.completed" (#11057).
 	"stream disconnected before completion",
 	// Magpie gateway relaying a dropped upstream Anthropic stream, e.g.
 	// "Claude Code's stream from Anthropic was cut short after the reply had begun" (#11879).
 	"cut short after the reply had begun",
+	// Gateway mid-stream failures relayed as SSE `event: error` frames without a
+	// status code, e.g. "The provider ended the response before it was complete." (#12227).
+	"ended the response before it was complete",
+	"connection to the provider was reset",
+	"reported a failure while generating the response",
 	// Node ERR_HTTP2_STREAM_CANCEL: the HTTP/2 session died before the request was
 	// sent, e.g. after the Bedrock SDK's 5-minute session timeout (#10379).
 	"pending stream has been canceled",
@@ -125,6 +152,8 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	"you can retry your request",
 	"try your request again",
 	"please retry your request",
+	// recursive: "Unable to process request. Repeat the request later."
+	"repeat the request later",
 
 	// gRPC based providers (e.g. NVIDIA NIM)
 	"ResourceExhausted",
@@ -187,15 +216,15 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 			reject(new RetrySleepAbortError());
 			return;
 		}
-		const timeout = setTimeout(resolve, ms);
-		signal?.addEventListener(
-			"abort",
-			() => {
-				clearTimeout(timeout);
-				reject(new RetrySleepAbortError());
-			},
-			{ once: true },
-		);
+		const onAbort = () => {
+			clearTimeout(timeout);
+			reject(new RetrySleepAbortError());
+		};
+		const timeout = setTimeout(() => {
+			signal?.removeEventListener("abort", onAbort);
+			resolve();
+		}, ms);
+		signal?.addEventListener("abort", onAbort, { once: true });
 	});
 }
 

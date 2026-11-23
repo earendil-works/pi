@@ -56,6 +56,24 @@ export function foreignBrowserRequest(request: IncomingMessage): boolean {
 }
 
 /**
+ * Whether a route serving a session's bytes (an entry's image, a file) refuses this request: a cross-site one, except a
+ * top-level GET navigation. Such a navigation shows the bytes in a tab of their own, where no other page reads them;
+ * it is how an image or file opened in a new tab arrives through Radius, whose sign-in redirects make it cross-site.
+ * Frames and every fetch, subresource or form of another site stay refused. Local and tunnel requests never get this
+ * far with a credential (the server's foreign-request rule), so the exception only reaches Radius-relayed ones.
+ */
+export function crossSiteRead(request: IncomingMessage): boolean {
+	return (
+		request.headers["sec-fetch-site"] === "cross-site" &&
+		!(
+			(request.method === "GET" || request.method === "HEAD") &&
+			request.headers["sec-fetch-mode"] === "navigate" &&
+			request.headers["sec-fetch-dest"] === "document"
+		)
+	);
+}
+
+/**
  * App pages a link may open: the app, a session or conversation, a sidebar list, the new-session screen, a share's join
  * page, owner sign-in.
  */

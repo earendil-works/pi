@@ -21,13 +21,14 @@ export function Group({ heading, children }: { heading: string; children: ReactN
 /**
  * An option: icon, title, suffix (the provider beside a model), and a check on the current choice (`checked`). Enter
  * clicks the highlighted one, so `onSelect` runs for the pointer and the keyboard alike. The input keeps focus (the
- * menu's frame keeps it there).
+ * menu's frame keeps it there). A `preferred` option is highlighted first while nothing is typed (highlight.ts).
  */
 export function Row({
 	title,
 	icon: Icon,
 	suffix,
 	checked,
+	preferred,
 	onSelect,
 }: {
 	title: string;
@@ -35,6 +36,8 @@ export function Row({
 	suffix?: ReactNode;
 	/** The current choice among the page's rows (a model, a thinking level); absent where rows are no choice. */
 	checked?: boolean;
+	/** Highlighted before the reader moves or types, in place of the first row (one per page). */
+	preferred?: boolean;
 	onSelect: () => void;
 }) {
 	const id = useId();
@@ -46,6 +49,7 @@ export function Row({
 			id={id}
 			tabIndex={-1}
 			aria-checked={checked}
+			data-preferred={preferred ? "" : undefined}
 			onClick={onSelect}
 			// The mouse only: a finger's moves are scrolls and taps (a tap still selects).
 			onPointerMove={(event) => event.pointerType === "mouse" && highlight(event.currentTarget)}

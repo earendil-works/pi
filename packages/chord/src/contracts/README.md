@@ -48,6 +48,10 @@ type NotesProvider = Implementation<typeof Notes>; // { variant: "editor"; membe
 - `evolve(previous, (e) => e...)`: the next version from structured edits (`state`, `addState`, `removeState`, `args`,
   `result`, `method`, `addMethod`, `removeMethod`, `keyed`, `addKeyed`, `removeKeyed`, `event`, `addEvent`,
   `removeEvent`; local ones without the variant); it must return the editor it was given.
+- `memberNames(contract, variant)`: the names of the state members, methods and event members of one variant of a
+  contract's current version, in the order declared (`{ state, methods, events }`; a local contract's without the
+  variant, and without its keyed and `queries` members): for an app's helper that fills a view's implementation from
+  a store's reference. An unknown variant throws.
 - Types: `Contract`, `Implementation<C, X>` (what a factory returns: for `local` a `Watchable` per state member, an
   `EventMember` per event member (an `EventSource` of its own or a reference's member) and a function per method,
   `(args, context)` or `(context)` without arguments; for `remote` one variant, `{ variant,
@@ -55,6 +59,10 @@ type NotesProvider = Implementation<typeof Notes>; // { variant: "editor"; membe
   `HostKind`, `Address<K>`, `KindShape` and `ParamsOfKind<K>`; for events `EventMember<T>` (`on(listener, ctx)`, what
   references expose), `EventSource<T>` (adds `emit`, what `self.events<T>()` returns), `EventSubscription` (`stop`) and
   `EventDeclaration` (the local marker's type).
+- The types a contract's inferred type holds are all exported, so a package that emits declarations for its contracts
+  names them through this entry point: the schema types (`StringSchema`, …, `LiteralsSchema` for `oneOf(...)`), the
+  markers' (`Method`, `KeyedMember`, `QueriesMember`, `EventDeclaration`) and `HostKeyed` (a keyed member with a host
+  kind).
 
 Rules:
 

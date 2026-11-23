@@ -120,7 +120,7 @@ test("plugin settings: merged per setting, bounded, accepted by the launcher's p
 	assert.deepEqual(sanitizeSettings({ plugins: { a: { x: { nested: 1 } } } }).invalid, ["plugins"]);
 	const many = Object.fromEntries(Array.from({ length: 33 }, (_, index) => [`k${index}`, true]));
 	assert.deepEqual(sanitizeSettings({ plugins: { a: many } }).invalid, ["plugins"]);
-	assert.ok("patch" in validatePrefsPatch({ settings: { plugins: { "quiet-tools": { toolCalls: "full" } } } }));
-	assert.ok("patch" in validatePrefsPatch({ settings: { plugins: { "quiet-tools": { toolCalls: null } } } }));
-	assert.ok("error" in validatePrefsPatch({ settings: { plugins: { "quiet-tools": { toolCalls: [1] } } } }));
+	assert.ok(validatePrefsPatch({ settings: { plugins: { "quiet-tools": { toolCalls: "full" } } } }).kind === "valid");
+	assert.ok(validatePrefsPatch({ settings: { plugins: { "quiet-tools": { toolCalls: null } } } }).kind === "valid");
+	assert.ok(validatePrefsPatch({ settings: { plugins: { "quiet-tools": { toolCalls: [1] } } } }).kind === "invalid");
 });

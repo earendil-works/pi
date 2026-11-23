@@ -4,6 +4,13 @@
 
 ### Added
 
+- Added `createMcpResultSchema(outputSchema)`, moved from pi's coding agent: the output schema of an MCP tool for programs that call it, the whole `CallToolResult` with the tool's own output schema as `structuredContent` (its local `$ref`s rewritten to resolve there).
+- Added `toMcpModelContent(server, result, options)`, moved from pi's coding agent: a result's model-facing content with embedded text blobs as text, binary resources saved through the caller's `McpOutputSaver` (left out without one), and resource links that name the caller's `readResourceTool`.
+
+## [1.6.0] - 2026-11-20
+
+### Added
+
 - Added `mcpServerSummary(description, instructions)`, a server's one-line summary for the system prompt as pi's coding agent shows it: the first line of the configured `description`, else of the server's `initialize` instructions.
 
 ## [1.5.2] - 2026-11-10

@@ -20,32 +20,38 @@ const record = (value: unknown): value is Record<string, unknown> =>
 	Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
 /** A valid patch, or why it is refused. Only `keybindings`, `theme` and whitelisted `settings` keys may change. */
-export function validatePrefsPatch(value: unknown): { patch: PrefsPatch } | { error: string } {
-	if (!record(value)) return { error: "not a patch" };
+export function validatePrefsPatch(
+	value: unknown,
+): { readonly kind: "valid"; readonly patch: PrefsPatch } | { readonly kind: "invalid"; readonly error: string } {
+	if (!record(value)) return { kind: "invalid", error: "not a patch" };
 	const extra = Object.keys(value).filter((key) => !["keybindings", "theme", "settings"].includes(key));
-	if (extra.length) return { error: `only keybindings, theme and settings can change (not ${extra.join(", ")})` };
+	if (extra.length)
+		return { kind: "invalid", error: `only keybindings, theme and settings can change (not ${extra.join(", ")})` };
 	const patch: PrefsPatch = {};
 	if (value.keybindings !== undefined) {
-		if (!record(value.keybindings)) return { error: "invalid keybindings" };
+		if (!record(value.keybindings)) return { kind: "invalid", error: "invalid keybindings" };
 		const entries = Object.entries(value.keybindings);
-		if (entries.length > 200) return { error: "too many keybindings" };
+		if (entries.length > 200) return { kind: "invalid", error: "too many keybindings" };
 		const privileged = entries.map(([id]) => id).filter(isPrivileged);
 		if (privileged.length)
-			return { error: `launcher-owned keys are edited only in your own files (${privileged.join(", ")})` };
+			return {
+				kind: "invalid",
+				error: `launcher-owned keys are edited only in your own files (${privileged.join(", ")})`,
+			};
 		const set = Object.fromEntries(entries.filter(([, keys]) => keys !== null));
 		const { config, invalid } = sanitizeKeybindings(set);
 		if (invalid.length || Object.keys(config).length !== Object.keys(set).length)
-			return { error: `invalid keybindings (${invalid.join(", ") || "renamed ids"})` };
+			return { kind: "invalid", error: `invalid keybindings (${invalid.join(", ") || "renamed ids"})` };
 		patch.keybindings = Object.fromEntries(
 			entries.map(([id, keys]) => [id, keys === null ? null : (config[id] as string | string[])]),
 		);
 	}
 	if (value.theme !== undefined) {
-		if (value.theme !== null && !isThemeSetting(value.theme)) return { error: "invalid theme" };
+		if (value.theme !== null && !isThemeSetting(value.theme)) return { kind: "invalid", error: "invalid theme" };
 		patch.theme = value.theme as string | null;
 	}
 	if (value.settings !== undefined) {
-		if (!record(value.settings)) return { error: "invalid settings" };
+		if (!record(value.settings)) return { kind: "invalid", error: "invalid settings" };
 		// Nulls remove; everything else must survive the whitelist unchanged (no editor command, mouse or paths).
 		const strip = (input: Record<string, unknown>): Record<string, unknown> =>
 			Object.fromEntries(
@@ -56,10 +62,10 @@ export function validatePrefsPatch(value: unknown): { patch: PrefsPatch } | { er
 		const set = strip(value.settings);
 		const { settings, invalid } = sanitizeSettings(set);
 		if (invalid.length || JSON.stringify(sortKeys(settings)) !== JSON.stringify(sortKeys(dropEmpty(set))))
-			return { error: `invalid settings (${invalid.join(", ") || "unknown keys"})` };
+			return { kind: "invalid", error: `invalid settings (${invalid.join(", ") || "unknown keys"})` };
 		patch.settings = value.settings as Record<string, Json>;
 	}
-	return { patch };
+	return { kind: "valid", patch };
 }
 function sortKeys(value: unknown): unknown {
 	return record(value)

@@ -201,7 +201,7 @@ const OpenAICompletionsCompatProperties = {
 	),
 	supportsDeveloperRole: optionalCompatBoolean({
 		description:
-			"Whether the provider supports the developer role instead of system. Default: auto-detected from URL.",
+			"Whether to send system messages of reasoning models (the system prompt and mid-conversation system messages) with the developer role instead of system. Default: true only for api.openai.com.",
 	}),
 	supportsReasoningEffort: opt(
 		bool({
@@ -425,7 +425,7 @@ const OpenAIResponsesCompatProperties = {
 	supportsMidConvoEffort: opt(
 		bool({
 			description:
-				"Whether thinking level changes are sent as configuration_update input items instead of changing reasoning.effort, so a change keeps the prompt cache. Only used by the openai-responses API, and ignored with Sign in with ChatGPT on the openai provider.",
+				"Whether thinking level changes are sent as configuration_update input items instead of changing reasoning.effort, so a change keeps the prompt cache. Used by the openai-responses and openai-codex-responses APIs, and ignored with Sign in with ChatGPT on the openai provider.",
 			default: false,
 		}),
 	),
@@ -552,10 +552,26 @@ const MistralConversationsCompatProperties = {
 			"Whether the exact model accepts system messages after the conversation has started. When false, later system messages are folded into the leading system message.",
 		default: false,
 	}),
+	supportsStrictMode: optionalCompatBoolean({
+		description: "Whether the model supports strict (schema-constrained) function tools.",
+		default: false,
+	}),
 };
 
 export const MistralConversationsCompatSchema = openObject(MistralConversationsCompatProperties, {
 	description: "Compatibility settings for the Mistral chat API.",
+	additionalProperties: true,
+});
+
+const GoogleCompatProperties = {
+	supportsStrictMode: optionalCompatBoolean({
+		description:
+			"Whether the model enforces strict tools through Gemini's VALIDATED function-calling mode. Default: true for model IDs containing gemini-3 or a later version, such as gemini-3-pro or vendor-gemini-4-argon, false otherwise. Set true for Gemini 3+ models served under IDs without the version.",
+	}),
+};
+
+export const GoogleCompatSchema = openObject(GoogleCompatProperties, {
+	description: "Compatibility settings for the Google Generative AI and Vertex APIs.",
 	additionalProperties: true,
 });
 
@@ -595,7 +611,7 @@ const ProviderCompatPropertyOverrides = {
 	}),
 	supportsMidConvoEffort: optionalCompatBoolean({
 		description:
-			"Whether thinking level changes are sent inside the conversation instead of changing the request's effort, so a change keeps the prompt cache. Used by the anthropic-messages and openai-responses APIs.",
+			"Whether thinking level changes are sent inside the conversation instead of changing the request's effort, so a change keeps the prompt cache. Used by the anthropic-messages, openai-responses, and openai-codex-responses APIs.",
 		default: false,
 	}),
 	supportsLongCacheRetention: optionalCompatBoolean({
@@ -669,6 +685,8 @@ export const CompatSchemasByApi = {
 	"anthropic-messages": AnthropicMessagesCompatSchema,
 	"bedrock-converse-stream": BedrockCompatSchema,
 	"mistral-conversations": MistralConversationsCompatSchema,
+	"google-generative-ai": GoogleCompatSchema,
+	"google-vertex": GoogleCompatSchema,
 	"typesafe-system-one": SystemOneCompatSchema,
 	"cloudflare-workers-ai-system-one": SystemOneCompatSchema,
 } as const;
@@ -680,6 +698,7 @@ const ProviderCompatProperties = mergeCompatProperties(
 		AnthropicMessagesCompatProperties,
 		BedrockCompatProperties,
 		MistralConversationsCompatProperties,
+		GoogleCompatProperties,
 		SystemOneCompatProperties,
 	],
 	ProviderCompatPropertyOverrides,
@@ -713,5 +732,7 @@ export interface AnthropicMessagesCompat extends Static<typeof AnthropicMessages
 export interface BedrockCompat extends Static<typeof BedrockCompatSchema> {}
 /** Compatibility settings for the Mistral chat API. */
 export interface MistralConversationsCompat extends Static<typeof MistralConversationsCompatSchema> {}
+/** Compatibility settings for the Google Generative AI and Vertex APIs. */
+export interface GoogleCompat extends Static<typeof GoogleCompatSchema> {}
 /** Compatibility settings for System One classifier APIs. */
 export interface SystemOneCompat extends Static<typeof SystemOneCompatSchema> {}

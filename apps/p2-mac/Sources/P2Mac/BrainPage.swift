@@ -2,8 +2,9 @@
 // This Mac's brain loads directly and signs in with the owner key, behind a native placeholder while its server is not
 // reachable. Other Pis load from Radius's forwarded origin for them (`https://<label>.rdtun.com`), as the page itself,
 // through a grant the app gets with the shared Radius credential; when the origin's view cookie has expired it sends
-// the page to Radius's `/pi/forward`, and the app gets a fresh grant instead. A window keeps the pages of its recent
-// brains (PiWindowController), so switching tabs is instant. Every page gets the host bridge (HostBridge.swift).
+// the page to Radius's `/pi/forward`, and the app gets a fresh grant instead; while the page is open, the app renews
+// that cookie before it expires (ViewCookie.swift). A window keeps the pages of its recent brains (PiWindowController),
+// so switching tabs is instant. Every page gets the host bridge (HostBridge.swift).
 import AppKit
 import WebKit
 
@@ -21,6 +22,8 @@ final class BrainPage: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadD
 	private var signInWithToken = false
 	/// A remote Pi's forwarded origin, learned from its first grant URL.
 	private var remoteOrigin: URL?
+	/// Renews a remote Pi's view cookie while the page is open (ViewCookie.swift).
+	private var renewal: Task<Void, Never>?
 	private var urlObservation: NSKeyValueObservation?
 
 	/// The page is directly under the window buttons (no tab bar): it gets their inset and drags the window.
@@ -47,7 +50,8 @@ final class BrainPage: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadD
 		webView = ChromeWebView(frame: .zero, configuration: configuration)
 		webView.isInspectable = true
 		webView.allowsBackForwardNavigationGestures = true
-		webView.allowsMagnification = true
+		// Pinch and smart zoom off: zoom is pageZoom only, through View > Zoom In and Zoom Out (cmd+/-).
+		webView.allowsMagnification = false
 		super.init()
 		if brain.isDirect {
 			ChromeScript.install(in: configuration.userContentController) { [weak webView] rects in
@@ -121,8 +125,32 @@ final class BrainPage: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadD
 			let url = try await host.app.radius.openURL(organization: organization, server: server, path: path)
 			remoteOrigin = URL(string: "\(url.scheme!)://\(url.host!)\(url.port.map { ":\($0)" } ?? "")")
 			webView.load(URLRequest(url: url))
+			renewViewCookie()
 		} catch {
 			placeholder.show(title: "Cannot open \(brain.name)", detail: error.localizedDescription, action: "Try Again")
+		}
+	}
+
+	/// Renews the remote Pi's view cookie every `ViewCookie.renewEvery` from now (the grant just loaded set a fresh one),
+	/// and `ViewCookie.retryAfter` after a failure. The sleep runs on the continuous clock, so a renewal that fell due
+	/// while the Mac slept runs right after it wakes. A closed page ends the loop at its next wake.
+	private func renewViewCookie() {
+		renewal?.cancel()
+		renewal = Task { [weak self] in
+			var wait = ViewCookie.renewEvery
+			while true {
+				try? await Task.sleep(for: wait)
+				guard let self, !Task.isCancelled, case .remote(let organization, let server) = self.brain.route else { return }
+				do {
+					let grant = try await self.host.app.radius.openURL(organization: organization, server: server, path: "/")
+					let cookie = try await ViewCookie.exchange(grant)
+					await self.webView.configuration.websiteDataStore.httpCookieStore.setCookie(cookie)
+					wait = ViewCookie.renewEvery
+				} catch {
+					NSLog("Pi: renewing the view cookie of %@ failed: %@", self.brain.name, error.localizedDescription)
+					wait = ViewCookie.retryAfter
+				}
+			}
 		}
 	}
 
@@ -336,7 +364,7 @@ final class BrainPage: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadD
 		guard bare, let window, !window.styleMask.contains(.fullScreen),
 			let zoom = window.standardWindowButton(.zoomButton), let frame = zoom.superview?.convert(zoom.frame, to: nil)
 		else { return ChromeScript.setInset(0, in: webView) }
-		ChromeScript.setInset((frame.maxX + 12) / (webView.pageZoom * webView.magnification), in: webView)
+		ChromeScript.setInset((frame.maxX + 12) / webView.pageZoom, in: webView)
 	}
 
 	private static func path(of url: URL) -> String {

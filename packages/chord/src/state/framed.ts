@@ -1,5 +1,6 @@
 // Framed sources: a JSON source whose owner sets its value whole (a live query's rows, a list's pages joined), one
-// frame per batch as the diff from the value its watches had; it may fail and recover, as a derive does (design §11).
+// frame per batch as the diff from the value its watches had, however often the batch set it (a list sets once per
+// page a commit touched); it may fail and recover, as a derive does (design §11).
 
 import type { Context } from "../context/index.ts";
 import { ChordError } from "../data/index.ts";
@@ -28,14 +29,17 @@ type FramedState =
 const NO_VALUE: unique symbol = Symbol("no value");
 
 /**
- * A source its subclass feeds with `set` and `failWith`, inside a batch. A failure makes it a failed member (as a
- * throwing derive): its watches get one failure call, its owner one report per failure episode; the next value
- * replaces the value whole (`[["r", value]]`).
+ * A source its subclass feeds with `set` and `failWith`, inside a batch, as often as it likes: the batch delivers one
+ * frame, of the state it ended in. A failure makes it a failed member (as a throwing derive): its watches get one
+ * failure call, its owner one report per failure episode; the next value replaces the value whole (`[["r", value]]`).
  */
 export abstract class FramedSource extends Source {
 	readonly #owner: FramedOwner;
 	#state: FramedState = { kind: "loading" };
-	/** The value its watches have, kept from a change to its frame in the batch; `undefined`: not listed. */
+	/**
+	 * The value its watches have, kept from its first change in a batch to that batch's frame; `undefined`: not listed
+	 * in the batch.
+	 */
 	#framed: JsonValue | typeof NO_VALUE | undefined;
 	/** Set from a failure until the next value: a failure episode is reported once. */
 	#failing = false;
@@ -81,26 +85,27 @@ export abstract class FramedSource extends Source {
 		this.#failing = true;
 	}
 
-	/** Takes `value`, inside a batch: listed for a frame when watched, its dependents marked. */
+	/** Takes `value`, inside a batch: listed for the batch's frame when watched, its dependents marked. */
 	protected set(value: JsonValue): void {
-		if (!this.#list()) return;
+		if (this.#state.kind === "detached") return;
 		this.#failing = false;
-		this.#state = { kind: "value", value };
-		this.changed();
+		this.#change({ kind: "value", value });
 	}
 
 	/** Fails with `error`, inside a batch, keeping its last good value for a watch opened meanwhile. */
 	protected failWith(error: unknown): void {
 		const state = this.#state;
-		if (!this.#list()) return;
+		if (state.kind === "detached") return;
 		if (!this.#failing) this.#owner.report(handedOut(error));
 		this.#failing = true;
 		const last = state.kind === "value" ? state.value : state.kind === "failed" ? state.last : undefined;
-		this.#state = { kind: "failed", error, last };
-		this.changed();
+		this.#change({ kind: "failed", error, last });
 	}
 
-	/** Delivers the frame: the diff from the value its watches had, or one failure call when they had one. */
+	/**
+	 * Delivers the batch's one frame, of the state the batch left: the diff from the value its watches had before
+	 * the batch, or one failure call when they had a value.
+	 */
 	deliver(context: Context): void {
 		const before = this.#framed;
 		this.#framed = undefined;
@@ -123,11 +128,19 @@ export abstract class FramedSource extends Source {
 		this.endWatches();
 	}
 
-	/** Keeps what its watches have for this batch's frame; `false` once detached (nothing changes then). */
-	#list(): boolean {
-		const state = this.#state;
-		if (state.kind === "detached") return false;
-		if (this.watched && this.#framed === undefined) this.#framed = state.kind === "value" ? state.value : NO_VALUE;
-		return true;
+	/**
+	 * Its state becomes `next` in the batch running now. The first change of a batch lists it for that batch's frame
+	 * and keeps what its watches have, which the frame diffs from; a later one lists nothing (a source listed twice
+	 * delivers twice: two frames of one member in one commit, which a link refuses). Every change marks its
+	 * dependents: one may have read the value since the last.
+	 */
+	#change(next: FramedState): void {
+		if (this.watched && this.#framed === undefined) {
+			const state = this.#state;
+			this.#framed = state.kind === "value" ? state.value : NO_VALUE;
+			this.batch.changed(this);
+		}
+		this.#state = next;
+		for (const dependent of this.dependents) dependent.invalidate();
 	}
 }

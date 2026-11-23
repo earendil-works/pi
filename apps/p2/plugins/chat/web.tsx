@@ -10,7 +10,6 @@ import {
 	grantMode,
 	type Held,
 	isChordError,
-	keptIn,
 	liveIn,
 	plainReferences,
 	renameReferences,
@@ -19,6 +18,7 @@ import {
 	whenLive,
 } from "@p2/app/v1";
 import {
+	ALT_KEY,
 	BranchFrom,
 	buildTranscript,
 	ChevronIcon,
@@ -49,6 +49,7 @@ import {
 	keepSessions,
 	keptSizes,
 	knownMain,
+	ListIcon,
 	LockIcon,
 	lightTap,
 	loadKept,
@@ -57,7 +58,9 @@ import {
 	MenuIcon,
 	Messages,
 	type ModelChoice,
+	MoreIcon,
 	modelName,
+	moreVerb,
 	NEW_SESSION,
 	navigate,
 	OneShotAgents,
@@ -79,6 +82,7 @@ import {
 	SendIcon,
 	SessionId,
 	SessionStats,
+	Sheet,
 	Slot,
 	SlotList,
 	Slots,
@@ -105,6 +109,7 @@ import {
 	useOffline,
 	useOptimisticCall,
 	useOwner,
+	usePointerKind,
 	useReadable,
 	useRegistry,
 	useRoute,
@@ -115,6 +120,7 @@ import {
 } from "@p2/app/v1/web";
 import {
 	createContext,
+	Fragment,
 	type ReactNode,
 	useCallback,
 	useContext,
@@ -129,12 +135,10 @@ import { createPortal } from "react-dom";
 import { Drafts } from "../drafts/contract.ts";
 import { Envs } from "../envs/contract.ts";
 import { DirectoryPicker, directoryPickerLayer } from "../envs/contract.web.tsx";
-import { GlyphIcon } from "../glyphs/GlyphIcon.tsx";
 import { Models } from "../models/contract.ts";
 import type { ResourceSnapshot } from "../models/resources.ts";
-import { Projects } from "../projects/contract.ts";
-import { placeSeed } from "../projects/glyph-seed.ts";
 import { type Session, Sessions } from "../sessions/contract.ts";
+import { PiDots } from "../sessions/contract.web.tsx";
 import { SessionMetrics, SessionStatus, WorkerControl } from "../status/contract.ts";
 import { type Child, conversationLocation, SubagentControl, Subagents } from "../subagents/contract.ts";
 import { openMain } from "../subagents/contract.web.ts";
@@ -248,8 +252,6 @@ type PageObjects = {
 	readonly models: Held<typeof Models> | undefined;
 	/** The owner's only. */
 	readonly envs: Held<typeof Envs> | undefined;
-	/** The owner's only: projects.json and the sessions' projects, for the top bar's project glyph. */
-	readonly projects: Held<typeof Projects> | undefined;
 };
 
 const PageObjectsContext = createContext<PageObjects | undefined>(undefined);
@@ -430,6 +432,7 @@ function Composer({
 	const press = useLongPress(() => {
 		if (offered) setChoosing(true);
 	});
+	const pointer = usePointerKind();
 	// Opened from the keyboard or a mouse, the menu's first item takes the focus (no trigger tells Elanor's menu how it
 	// opened); a touch leaves it on the menu.
 	const popup = useRef<HTMLDivElement>(null);
@@ -535,16 +538,19 @@ function Composer({
 										<Menu.Item
 											key={choice.label}
 											onClick={choice.run}
+											// A touch-only device sends with the button, never with Enter (onKeyDown above).
 											endAdornment={
-												<KeyboardShortcut>
-													{index === 0 ? (
-														<KeyboardKey>Enter</KeyboardKey>
-													) : (
-														<>
-															<KeyboardKey>Alt</KeyboardKey>+<KeyboardKey>Enter</KeyboardKey>
-														</>
-													)}
-												</KeyboardShortcut>
+												pointer !== "touch" && (
+													<KeyboardShortcut>
+														{index === 0 ? (
+															<KeyboardKey>Enter</KeyboardKey>
+														) : (
+															<>
+																<KeyboardKey>{ALT_KEY}</KeyboardKey>+<KeyboardKey>Enter</KeyboardKey>
+															</>
+														)}
+													</KeyboardShortcut>
+												)
 											}
 										>
 											{choice.label}
@@ -561,7 +567,7 @@ function Composer({
 						type="submit"
 						className="round send"
 						aria-label="Send"
-						title={choices ? `${send.label} (long press for more)` : send.label}
+						title={choices ? `${send.label} (${moreVerb(pointer)} for more)` : send.label}
 						disabled={!content || disabled}
 						{...(choices ? { "aria-haspopup": "menu" as const, "aria-expanded": choosing } : {})}
 						{...press.handlers}
@@ -613,8 +619,13 @@ type DockContent = {
 	readonly screen: string;
 	readonly above?: ReactNode;
 	readonly composer?: { readonly toBottom?: ReactNode } & (
-		| { readonly bar: ReactNode }
-		| { readonly queued?: ReactNode; readonly props: ComposerProps; readonly footer: ReactNode }
+		| { readonly kind: "bar"; readonly bar: ReactNode }
+		| {
+				readonly kind: "composer";
+				readonly queued?: ReactNode;
+				readonly props: ComposerProps;
+				readonly footer: ReactNode;
+		  }
 	);
 };
 
@@ -686,7 +697,7 @@ function Dock({ frame, dockRef }: { frame: Frame; dockRef: (element: HTMLDivElem
 			{composer && (
 				<div className="composer-wrap">
 					{composer.toBottom}
-					{"bar" in composer ? (
+					{composer.kind === "bar" ? (
 						composer.bar
 					) : (
 						<>
@@ -706,28 +717,21 @@ function TopBar({
 	child,
 	owner = false,
 	moving = false,
+	onAgentOptions,
 }: {
 	session?: Session;
 	child?: Child;
 	owner?: boolean;
 	/** The session is being moved (a relocation job runs). */
 	moving?: boolean;
+	/** Opens the viewed subagent's sheet (its actions), as the main conversation's dots open the Session sheet. */
+	onAgentOptions?: () => void;
 }) {
 	const offline = useOffline();
 	// Only the owner reads environments (`PageObjects.envs`): guests see the location without the sandbox lock.
 	const objects = usePageObjects();
 	const envs = useReadable(objects.envs?.envs);
 	const sandboxed = envs?.find((env) => env.name === session?.env)?.config.type === "gondolin";
-	// The project glyph the sidebar shows for this session (guests read no projects: the path's own glyph).
-	const kept = keptIn(objects.projects, "owner");
-	const projects = useReadable(kept?.projects);
-	const memberships = useReadable(kept?.sessions);
-	const glyph = session && (
-		<GlyphIcon
-			seed={placeSeed(projects ?? [], session.env ?? null, session.cwd, memberships?.[session.id])}
-			size={11}
-		/>
-	);
 	const lock = sandboxed && (
 		<span className="title-lock">
 			<LockIcon size={11} />
@@ -766,16 +770,12 @@ function TopBar({
 									) : (
 										<>
 											{lock}
-											{glyph}
 											{locationLabel(session.env, session.cwd)}
 										</>
 									)}
 								</button>
 							) : (
-								<p>
-									{glyph}
-									{locationLabel(session.env, session.cwd)}
-								</p>
+								<p>{locationLabel(session.env, session.cwd)}</p>
 							))}
 					</>
 				)}
@@ -783,9 +783,15 @@ function TopBar({
 			{offline && <span className="offline">Offline</span>}
 			<Slot name="view-actions" />
 			<Slot name="artifact-actions" />
+			<Slot name="tree-actions" />
 			<Slot name="terminal-actions" />
 			<Slot name="workspace-actions" />
 			<Slot name="session-options" />
+			{onAgentOptions && (
+				<button type="button" className="icon-button" aria-label="Subagent options" onClick={onAgentOptions}>
+					<MoreIcon />
+				</button>
+			)}
 			<Slot name="session-actions" />
 		</header>
 	);
@@ -867,6 +873,31 @@ function viewTarget(
 	return session.main === conversation
 		? { type: "session", id: session.id, kind: "Session", label: session.title }
 		: undefined;
+}
+
+/**
+ * The bar above the main conversation's composer while the session's subagents or one-shot agents run: pi's dots and
+ * their names, each opening its conversation. The main conversation idle shows no wheel, so this says work goes on.
+ */
+function RunningAgents({ agents, onOpen }: { agents: readonly Child[]; onOpen: (conversation: number) => void }) {
+	return (
+		<div className="composer-wrap subagent-wrap">
+			<div className="subagent-bar running-agents">
+				<PiDots />
+				<span className="running-agents-names">
+					{agents.length > 1 ? `${agents.length} agents running: ` : "Running: "}
+					{agents.map((agent, index) => (
+						<Fragment key={agent.conversationId}>
+							{index > 0 && ", "}
+							<button type="button" className="running-agent" onClick={() => onOpen(agent.conversationId)}>
+								{agent.name}
+							</button>
+						</Fragment>
+					))}
+				</span>
+			</div>
+		</div>
+	);
 }
 
 function SessionChat({ sessionId, conversationId }: { sessionId: string; conversationId: number }) {
@@ -966,7 +997,17 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 			void nav.replace(conversationRoute(current, sessionId, main), current);
 	}, [children, child, conversationId, main, nav, sessionId]);
 	const workers = liveIn(objects.status, "reader");
-	const workerError = useReadable(workers?.statuses)?.[sessionId]?.error;
+	const worker = useReadable(workers?.statuses)?.[sessionId];
+	const workerError = worker?.error;
+	// The session's other agents that run while its main conversation shows (the main one's own work is in its transcript).
+	const busyAgents = worker?.busy;
+	const runningAgents = useMemo(
+		() =>
+			main === conversationId && busyAgents?.length
+				? (children?.[sessionId] ?? []).filter((agent) => busyAgents.includes(agent.conversationId))
+				: [],
+		[main, conversationId, busyAgents, children, sessionId],
+	);
 	const [activationError, setActivationError] = useState<string>();
 	const failure = workerError ?? activationError;
 	// A rejected reference is released rather than repeatedly asking a broken worker to start. Chat lingers
@@ -1014,7 +1055,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	const canWrite = owner || grantMode(grant, sessionId) === "full";
 	// Held with the view, not once the subagent list names the child: Archive works right after load.
 	const subagentControl = useObject(SubagentControl, canWrite ? { session: sessionId } : undefined);
-	// The bar's archived mark flips at the tap.
+	// The sheet's Archive and Restore flip at the tap.
 	const [archived, archive] = useOptimisticCall(child?.archived ?? false, (_, next: boolean) => next, fail);
 	const composer = useComposerState();
 	const {
@@ -1076,6 +1117,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	const usage = useReadable(metrics?.usage) ?? undefined;
 	const cwdSheet = useSheet("cwd");
 	const costSheet = useSheet("cost");
+	const agentSheet = useSheet("subagent");
 	/**
 	 * Restored text goes into the composer, which takes the focus, as in Pi Mobile; sending it again is a new message
 	 * (each send has its own request ID). Stop and others' withdrawals put it before the draft, a queue edit after.
@@ -1475,39 +1517,14 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 			<DownIcon />
 		</button>
 	);
-	// The dock (`Dock`): a subagent's bar above, then the composer, or a bar in its place for those who may not write.
-	const subagentBar = child && (
+	// The dock (`Dock`): a one-shot agent's bar above (it has no composer), then the composer, or a bar in its place for
+	// those who may not write.
+	const subagentBar = oneShot && (
 		<div className="composer-wrap subagent-wrap">
-			{/* A one-shot view has no composer, which otherwise carries this button. */}
-			{oneShot && toBottom}
+			{toBottom}
 			<div className="subagent-bar">
-				<span>
-					{oneShot ? "One-shot agent of a script · read-only · " : ""}
-					Tools: {child.tools.join(", ") || "none"}
-					{!oneShot && viewLocation && ` · in ${locationLabel(viewLocation.env, viewLocation.cwd)}`}
-					{!oneShot && !child.location && " · follows the session"}
-					{archived ? " · archived" : ""}
-				</span>
-				{canWrite && !oneShot && subagentControl && (
-					<button
-						type="button"
-						className="text-action"
-						title={
-							archived ? "Show it in the sidebar again" : "Stop it and move it to the sidebar's archived row"
-						}
-						onClick={() =>
-							archive(!archived, () =>
-								subagentControl.archive(
-									{ conversation: child.conversationId, archived: !archived },
-									BACKGROUND_CONTEXT,
-								),
-							)
-						}
-					>
-						{archived ? "Restore" : "Archive"}
-					</button>
-				)}
-				{canWrite && oneShot && busy && (
+				<span>One-shot agent of a script · read-only</span>
+				{canWrite && busy && (
 					<button type="button" className="round stop" aria-label="Stop" onClick={stop}>
 						<StopIcon />
 					</button>
@@ -1515,6 +1532,8 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 			</div>
 		</div>
 	);
+	// A subagent's actions, in its sheet behind the top bar's dots.
+	const agentActions = canWrite && child && !oneShot && subagentControl ? { child, subagentControl } : undefined;
 	const readOnlyBar = (!canWrite || failure) && (
 		<div className="subagent-bar">
 			<span>{failure ? "Session unavailable" : grant ? `Joined as ${grant.name} · read-only` : "Connecting…"}</span>
@@ -1582,15 +1601,18 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	const place = useChatScreen(
 		{
 			screen: conversationKey({ session: sessionId, conversation: conversationId }),
-			above: subagentBar,
+			above:
+				subagentBar ||
+				(runningAgents.length > 0 && <RunningAgents agents={runningAgents} onOpen={openConversation} />),
 			// A one-shot agent's view has no composer: its bar above has the Stop.
 			...(oneShot && canWrite
 				? {}
 				: {
 						composer: readOnlyBar
 							? // As in Pi Mobile, the read-only bar has no scroll-down button.
-								{ bar: readOnlyBar }
+								{ kind: "bar", bar: readOnlyBar }
 							: {
+									kind: "composer",
 									toBottom,
 									queued: queuedRows,
 									props: {
@@ -1613,15 +1635,40 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	);
 	return (
 		<>
-			<TopBar session={session} child={child} owner={owner} moving={moving} />
+			<TopBar
+				session={session}
+				child={child}
+				owner={owner}
+				moving={moving}
+				{...(agentActions ? { onAgentOptions: () => openLayer({ kind: "sheet", name: "subagent" }) } : {})}
+			/>
+			{agentSheet && agentActions && (
+				<Sheet title="Subagent" onClose={closeLayers}>
+					<div className="list">
+						<button
+							type="button"
+							className={`row-button ${archived ? "" : "danger"}`}
+							onClick={() => {
+								closeLayers();
+								archive(!archived, () =>
+									agentActions.subagentControl.archive(
+										{ conversation: agentActions.child.conversationId, archived: !archived },
+										BACKGROUND_CONTEXT,
+									),
+								);
+							}}
+						>
+							<span>{archived ? "Restore" : "Archive"}</span>
+						</button>
+					</div>
+				</Sheet>
+			)}
 			{cwdSheet && owner && session && (
 				<DirectoryPicker
 					value={session.cwd}
 					env={session.env ?? null}
 					moving={{ env: session.env ?? null }}
-					recent={(env) => [
-						...new Set((listed ?? []).filter((row) => (row.env ?? null) === env).map((row) => row.cwd)),
-					]}
+					sessions={listed}
 					onClose={closeLayers}
 					onChange={(env, cwd) => {
 						const catalog = liveIn(sessions, "owner");
@@ -1756,8 +1803,11 @@ function NewSession() {
 		choice: selectedChoice,
 		setChoice,
 	} = useNewSessionState();
+	// Unless chosen, the session starts where the latest session that is not archived works: the first of the recent
+	// folders the folder button lists.
+	const latest = recent.find((session) => session.archivedAt === null);
 	const location =
-		selectedLocation ?? (recent[0] ? { env: recent[0].env ?? null, cwd: recent[0].cwd } : { env: null, cwd: "~" });
+		selectedLocation ?? (latest ? { env: latest.env ?? null, cwd: latest.cwd } : { env: null, cwd: "~" });
 	const choice = newSessionChoice(selectedChoice, resources, recent[0]);
 	useCommandRouteTarget(NEW_SESSION_TARGET);
 	useModelScreen(owner ? NEW_SESSION_TARGET : undefined, choice, {
@@ -1873,6 +1923,7 @@ function NewSession() {
 			screen: conversationKey(NEW_SESSION),
 			composer: owner
 				? {
+						kind: "composer",
 						props: { busy: false, disabled: false, send: { label: "Send", run: send }, attaching },
 						footer: (
 							<div className="session-usage">
@@ -1890,6 +1941,7 @@ function NewSession() {
 						),
 					}
 				: {
+						kind: "bar",
 						bar: (
 							<div className="subagent-bar">
 								<span>Connecting…</span>
@@ -1906,9 +1958,7 @@ function NewSession() {
 				<DirectoryPicker
 					value={location.cwd}
 					env={location.env}
-					recent={(env) => [
-						...new Set(recent.filter((session) => (session.env ?? null) === env).map((session) => session.cwd)),
-					]}
+					sessions={listed}
 					onChange={(env, cwd) => {
 						setLocation({ env, cwd });
 						closeLayers();
@@ -1927,16 +1977,30 @@ function NewSession() {
 								<PiLogo />
 								<h2>What should Pi do?</h2>
 							</div>
-							<button
-								type="button"
-								className="cwd-pick"
-								onClick={() => openLayer(directoryPickerLayer(location.env, location.cwd))}
-							>
-								<FolderIcon />
-								<span>{locationLabel(location.env, location.cwd)}</span>
-								{join && <small className="cwd-join">in {join.label}</small>}
-								<ChevronIcon size={14} />
-							</button>
+							{/* The project the session joins, then where it starts: each opens its own picker. */}
+							<div className="new-session-choices">
+								{owner && (
+									<button
+										type="button"
+										className="project-pick"
+										aria-label={`Project: ${join?.label ?? "No project"}`}
+										onClick={() => openCommandPage("new-session-project", NEW_SESSION_TARGET)}
+									>
+										<ListIcon />
+										<span>{join?.label ?? "No project"}</span>
+										<ChevronIcon size={14} />
+									</button>
+								)}
+								<button
+									type="button"
+									className="cwd-pick"
+									onClick={() => openLayer(directoryPickerLayer(location.env, location.cwd))}
+								>
+									<FolderIcon />
+									<span>{locationLabel(location.env, location.cwd)}</span>
+									<ChevronIcon size={14} />
+								</button>
+							</div>
 							{owner && resources && !resources.credentials.length && (
 								<button
 									type="button"
@@ -1979,10 +2043,9 @@ function Main() {
 	const status = useObject(SessionStatus, {});
 	const models = useObject(Models, owner ? {} : undefined);
 	const envs = useObject(Envs, owner ? {} : undefined);
-	const projects = useObject(Projects, owner ? {} : undefined);
 	const objects = useMemo(
-		() => ({ sessions, access, subagents, status, models, envs, projects }),
-		[sessions, access, subagents, status, models, envs, projects],
+		() => ({ sessions, access, subagents, status, models, envs }),
+		[sessions, access, subagents, status, models, envs],
 	);
 	const grant = useReadable(liveIn(access, "guest")?.grant);
 	// A guest stays within the sessions shared with it; anywhere else it lands in the one shared or joined last.

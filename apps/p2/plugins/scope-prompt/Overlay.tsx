@@ -5,7 +5,17 @@
 // with the scope after it, to route (message.ts). The composer's "To" switches between the two.
 // Outside the mode the page behaves as before: the overlay draws nothing and takes no events.
 import { BACKGROUND_CONTEXT, type Host, withHeld } from "@p2/app/v1";
-import { CloseIcon, navigate, type Route, useComposerState, useHost, useOwner, useRoute } from "@p2/app/v1/web";
+import {
+	CloseIcon,
+	navigate,
+	type PointerKind,
+	type Route,
+	useComposerState,
+	useHost,
+	useOwner,
+	usePointerKind,
+	useRoute,
+} from "@p2/app/v1/web";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Chat } from "../chat/contract.ts";
 import { FAMILIAR_TITLE, Familiar } from "../familiar/contract.ts";
@@ -26,8 +36,12 @@ type Sent =
 	| { readonly kind: "chat" }
 	| { readonly kind: "familiar"; readonly session: string; readonly conversation: number };
 
-/** Touch screens: a tap shows the scope, a second tap on it asks. */
-const COARSE = matchMedia("(pointer: coarse)");
+/** What pointing mode asks for: a mouse picks on click; a tap shows the scope and a second tap on it asks. */
+const POINTING_HINT: Readonly<Record<PointerKind, string>> = {
+	touch: "Tap to see the scope, tap it again to ask",
+	mouse: "Click what to ask about",
+	both: "Click what to ask about, or tap it twice",
+};
 
 /** The overlay, for the owner only (it talks to the Familiar, which is the owner's). */
 export function ScopePrompt() {
@@ -36,6 +50,7 @@ export function ScopePrompt() {
 
 function Overlay() {
 	useModeKeys();
+	const pointer = usePointerKind();
 	const pointing = usePointing();
 	const [hover, setHover] = useState<readonly ScopeLevel[]>();
 	const [pick, setPick] = useState<Pick>();
@@ -141,8 +156,8 @@ function Overlay() {
 			{hover && <Outline level={hover.at(-1)} chain={hover} />}
 			{pointing && (
 				<output className="scope-mode scope-ui">
-					<span>{COARSE.matches ? "Tap to see the scope, tap it again to ask" : "Click what to ask about"}</span>
-					{!COARSE.matches && <span className="muted">Esc to stop</span>}
+					<span>{POINTING_HINT[pointer]}</span>
+					{pointer !== "touch" && <span className="muted">Esc to stop</span>}
 					<button type="button" className="text-action" onClick={() => setPointing(false)}>
 						Stop
 					</button>

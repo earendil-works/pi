@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingHttpHeaders } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -164,6 +164,51 @@ test("Radius-relayed artifact previews may sit below the Radius shell's frame", 
 	);
 	assert.match(String(csp?.[1]), /; frame-ancestors 'self' https:\/\/radius\.earendil\.com$/);
 });
+
+test(
+	"a relayed session file opens in a tab of its own, but no other site's page reads it",
+	{ timeout: 30_000 },
+	async (t) => {
+		const f = await fixture(t);
+		const owner = clientHost(await localOwner(f.server));
+		t.after(() => owner.close(BACKGROUND_CONTEXT));
+		const session = (
+			await (await holdIn(owner, Sessions, {}, "owner")).create({ cwd: f.directory }, BACKGROUND_CONTEXT)
+		).id;
+		await writeFile(join(f.directory, "note.txt"), "hello");
+		const path = `/workspace-file?${new URLSearchParams({ session, conversation: "1", path: "note.txt" })}`;
+		const status = async (headers: [string, string][]) =>
+			(
+				await f.radius.response(
+					f.open(path, { headers: [["x-radius-shell-origin", "https://radius.earendil.com"], ...headers] }),
+				)
+			).status;
+		// Opened in a new tab without the tab's Radius cookie, the request passes Radius sign-in and comes back cross-site.
+		const tab: [string, string][] = [
+			["sec-fetch-site", "cross-site"],
+			["sec-fetch-mode", "navigate"],
+		];
+		assert.equal(await status([...tab, ["sec-fetch-dest", "document"]]), 200);
+		assert.equal(await status([...tab, ["sec-fetch-dest", "iframe"]]), 403, "another site's frame");
+		assert.equal(
+			await status([
+				["sec-fetch-site", "cross-site"],
+				["sec-fetch-mode", "no-cors"],
+				["sec-fetch-dest", "image"],
+			]),
+			403,
+			"another site's subresource",
+		);
+		assert.equal(
+			await status([
+				["sec-fetch-site", "same-origin"],
+				["sec-fetch-mode", "no-cors"],
+				["sec-fetch-dest", "image"],
+			]),
+			200,
+		);
+	},
+);
 
 test("the relayed app page names the Radius shell that frames it", { timeout: 60_000 }, async (t) => {
 	const f = await fixture(t, undefined, {}, { web: true });
@@ -660,10 +705,7 @@ test("Radius brain pings a quiet relay and reconnects when the network goes sile
 	// A lost network: no close, just no traffic. The brain gives up on the socket and connects again.
 	f.state.silent = true;
 	await poll(() => f.statuses.some((status) => status.status === "retrying"));
-	assert.match(
-		String(f.statuses.find((status) => status.status === "retrying" && "error" in status)?.error),
-		/no message from Radius/,
-	);
+	assert.match(String(f.statuses.find((status) => status.status === "retrying")?.error), /no message from Radius/);
 	f.state.silent = false;
 	await poll(() => connectedCount(f.statuses) === 2);
 	assert.equal(f.state.connections, 2);

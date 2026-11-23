@@ -207,11 +207,30 @@ export function untrackDetachedChildPid(pid: number): void {
 	trackedDetachedChildPids.delete(pid);
 }
 
+/** Kill every tracked shell process tree. On Windows this blocks until taskkill finishes. */
 export function killTrackedDetachedChildren(): void {
-	for (const pid of trackedDetachedChildPids) {
-		killProcessTree(pid);
+	if (trackedDetachedChildPids.size === 0) return;
+	if (process.platform === "win32") {
+		// Callers exit right after this. Exiting kills the shell (libuv's job object), and taskkill /T
+		// then no longer finds the shell's descendants, so wait for taskkill. windowsHide gives it its own
+		// console, so a console close (SIGHUP) does not end it too.
+		const pidArgs = [...trackedDetachedChildPids].flatMap((pid) => ["/PID", String(pid)]);
+		spawnSync(getTaskkillPath(), ["/F", "/T", ...pidArgs], {
+			stdio: "ignore",
+			timeout: 2000,
+			windowsHide: true,
+		});
+	} else {
+		for (const pid of trackedDetachedChildPids) {
+			killProcessTree(pid);
+		}
 	}
 	trackedDetachedChildPids.clear();
+}
+
+// Use the trusted System32 executable so cleanup does not depend on PATH.
+function getTaskkillPath(): string {
+	return join(process.env.SystemRoot || "C:\\Windows", "System32", "taskkill.exe");
 }
 
 /**
@@ -219,17 +238,12 @@ export function killTrackedDetachedChildren(): void {
  */
 export function killProcessTree(pid: number): void {
 	if (process.platform === "win32") {
-		// Use the trusted System32 executable so cleanup does not depend on PATH.
 		try {
-			const child = spawn(
-				join(process.env.SystemRoot || "C:\\Windows", "System32", "taskkill.exe"),
-				["/F", "/T", "/PID", String(pid)],
-				{
-					stdio: "ignore",
-					detached: true,
-					windowsHide: true,
-				},
-			);
+			const child = spawn(getTaskkillPath(), ["/F", "/T", "/PID", String(pid)], {
+				stdio: "ignore",
+				detached: true,
+				windowsHide: true,
+			});
 			// A failed spawn emits "error" asynchronously; consume it to avoid crashing Node.
 			child.once("error", () => {});
 		} catch {

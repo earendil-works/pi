@@ -172,6 +172,11 @@ host.serve(Transcript, (params, principal, admitted, self) =>
 - A denial shows `failed { denied }` and keeps no value: reads throw `forbidden`, running calls reject
   `forbidden/revoked`. What your UI already rendered is yours to hide: watch `ref.state`. An object that had failed
   shows the denial too; when the person is allowed again it is retried.
+- **In a component, read the variant with `useVariant(ref, "participant")`** (a terminal: `scope.variant(ref,
+  "participant")`), not with `ref.variant === "participant"`: it returns the reference narrowed to that variant
+  while it is live in it and `undefined` otherwise, and re-renders when the person's value changes. The variant of
+  a held reference is `undefined` before it binds, changes while your component is mounted, and stays the last one
+  while the reference loads, so the comparison alone keeps a participant's controls up for a viewer.
 - **No `self.job` in an admitted type.** Work for a person lives in a `local` store, carries the person in its
   arguments, and asks the person's access again on every run.
 - **The objects an admission reads `accept` their previous version.** A reader whose version is refused is sealed
@@ -179,6 +184,15 @@ host.serve(Transcript, (params, principal, admitted, self) =>
 - The principal is identity only. Plugins never branch on principal kinds beyond "a person"; they read the value.
 - A route's `admit` (the app's base code, `createWorkers`' `admit`) decides who reaches a worker at all; it reads
   only contracts the app's API owns.
+
+## Reports from a worker
+
+A server object a worker reports to needs no check against a worker that is gone. When a worker exits, the app's
+workers component closes its link first (a report not handled yet is dropped, a running one is aborted: its
+transaction under `ctx` does not commit), waits for the commits already queued, and only then shows the exit in its
+state and starts a successor. Write the report inside the call, under its `ctx`. For data you keep across runs of a
+worker (the last report of each), store `ctx.incarnation` with it and compare with the incarnation in the workers'
+state (the app's API shows it): another incarnation is another run.
 
 ## What a plugin may import
 
@@ -319,9 +333,9 @@ export const messages = defineMessages("bob.stats", {
 
 ## Installing
 
-- `plugins.installPlugin({ git: "https://github.com/bob/stats.git", ref: "v1.2.0" }, root, ctx)`: a shallow clone of
+- `plugins.installPlugin({ kind: "git", git: "https://github.com/bob/stats.git", ref: "v1.2.0" }, root, ctx)`: a shallow clone of
   the branch, tag or commit into `<root>/stats`; its plugins are the folders its `chord.plugins` lists, else by
-  convention. `{ npm: "@bob/stats", version: "1.2.0" }`: the package extracted into `<root>/@bob/stats`. Then their
+  convention. `{ kind: "npm", npm: "@bob/stats", version: "1.2.0" }`: the package extracted into `<root>/@bob/stats`. Then their
   dependencies are installed (`npm install --omit=dev --ignore-scripts`; no lifecycle scripts run). Refused: a plugin
   name the app has already, an existing directory, a ref or name starting with `-`.
 - Removing is deleting the directory. To update, install another ref (a new directory) or delete and install again.

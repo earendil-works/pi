@@ -367,6 +367,45 @@ describe("close", () => {
 	});
 });
 
+describe("settled", () => {
+	const create = (key: string) => createDocument({ ...ADDRESS, key }, BASE, "{}");
+
+	it("resolves once the commits queued before it were adopted or rejected", async () => {
+		const store = await memoryStore();
+		const events: string[] = [];
+		const fence = (name: string, admit = true) => ({
+			admit: () => admit,
+			adopt: () => void events.push(`adopt ${name}`),
+		});
+		const held = holdNextCommit(store);
+		const running = store.commit([create("a")], fence("a"), context);
+		await held.entered;
+		const queued = store.commit([create("b")], fence("b"), context);
+		const refused = rejection(store.commit([create("c")], fence("c", false), context));
+		const settled = store.settled().then(() => events.push("settled"));
+		await Promise.resolve();
+		expect(events).toEqual([]);
+		held.release();
+		await settled;
+		expect(events).toEqual(["adopt a", "adopt b", "settled"]);
+		expect(await Promise.all([running, queued])).toEqual([1, 2]);
+		expect(await refused).toMatchObject({ code: "released" });
+	});
+
+	it("does not wait for a commit queued after the call; resolves on a closed store", async () => {
+		const store = await memoryStore();
+		const before = store.settled();
+		const held = holdNextCommit(store);
+		const running = store.commit([create("a")], recording().fence, context);
+		await held.entered;
+		await before;
+		held.release();
+		await running;
+		await (store as Store).close(context);
+		await store.settled();
+	});
+});
+
 describe("onCommitted", () => {
 	it("announces the new lastSeq after commits are durable, once per microtask, never inside a commit", async () => {
 		const store = await memoryStore();
@@ -466,7 +505,7 @@ describe("a commit series", () => {
 			(index, seq, ids) => receipts.push([index, seq, ids]),
 			telemetry.context,
 		);
-		expect(result).toEqual({ stored: 3 });
+		expect(result).toEqual({ kind: "stored", stored: 3 });
 		expect(seen).toEqual([2]);
 		expect(receipts).toEqual([
 			[0, 1, [2]],
@@ -498,7 +537,7 @@ describe("a commit series", () => {
 			(index) => receipts.push(index),
 			context,
 		);
-		expect(result).toEqual({ stored: 1, refused: refusal });
+		expect(result).toEqual({ kind: "refused", stored: 1, refused: refusal });
 		expect(receipts).toEqual([0]);
 		expect(store.lastSeq).toBe(1);
 		const keys = await store.read(
@@ -608,7 +647,10 @@ describe("a commit series", () => {
 			},
 		};
 		const later = { check: async (step: Step) => void seen.push(step.table(TABLE)?.version), writes: [sees] };
-		expect(await store.commitSeries([unchecked([table]), later], () => {}, context)).toEqual({ stored: 2 });
+		expect(await store.commitSeries([unchecked([table]), later], () => {}, context)).toEqual({
+			kind: "stored",
+			stored: 2,
+		});
 		expect(seen).toEqual([1, 1]);
 		expect(store.table(TABLE)?.version).toBe(1);
 	});
@@ -651,7 +693,7 @@ describe("a commit series", () => {
 			(index, seq) => receipts.push([index, seq]),
 			context,
 		);
-		expect(empty).toEqual({ stored: 2 });
+		expect(empty).toEqual({ kind: "stored", stored: 2 });
 		expect(receipts).toEqual([
 			[0, Number.MAX_SAFE_INTEGER],
 			[1, Number.MAX_SAFE_INTEGER],

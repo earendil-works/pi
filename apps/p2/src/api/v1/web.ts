@@ -15,8 +15,14 @@ export {
 	useCommandQuery,
 	useCommandTarget,
 } from "../../web/command-menu/context.ts";
-export { type KeyBinding, matchesBinding } from "../../web/command-menu/keys.ts";
-export { openCommandPage } from "../../web/command-menu/layers.ts";
+export {
+	type KeyBinding,
+	listenModifierTap,
+	MODIFIER_TAPS,
+	type ModifierTap,
+	matchesBinding,
+} from "../../web/command-menu/keys.ts";
+export { commandPageLayer, openCommandPage, pushMenu as openCommandMenu } from "../../web/command-menu/layers.ts";
 export { useCommandMatches } from "../../web/command-menu/match.ts";
 export {
 	type CommandMenuRow,
@@ -34,6 +40,7 @@ export * from "../../web/file-completion.tsx";
 export * from "../../web/haptics.ts";
 export * from "../../web/history.ts";
 export * from "../../web/icons.tsx";
+export * from "../../web/input-hints.ts";
 export { type LongPress, type LongPressHandlers, useLongPress } from "../../web/long-press.ts";
 export * from "../../web/Markdown.tsx";
 export * from "../../web/menu-components.ts";

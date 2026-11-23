@@ -43,13 +43,13 @@ const AskToGoOn = defineTask<null, { phase: "ask" } | { phase: "answered" }, Aft
 		answered: async (_task, runtime, ctx) => {
 			asking.delete(runtime.taskId);
 			const state = await runtime.readSignal(Choice, "choice", ctx);
-			const choice = state !== undefined && "value" in state ? state.value.choice : "stop";
+			const choice = state?.kind === "value" ? state.value.choice : "stop";
 			const handle = (await runtime.conversation(runtime.conversationId, ctx))!;
 			await runtime.commit(async (tx) => {
 				if (choice === "stop")
 					return { status: "terminal", outcome: { status: "completed", result: { terminate: true } } };
 				// A steer in the task's terminal commit: the round's boundary places it before the next request.
-				await handle.submit(tx, { type: "input", content: "The person says: go on.", whenBusy: "steer" });
+				await handle.admit(tx, { type: "input", content: "The person says: go on.", whenBusy: "steer" });
 				return { status: "terminal", outcome: { status: "completed", result: null } };
 			}, ctx);
 		},

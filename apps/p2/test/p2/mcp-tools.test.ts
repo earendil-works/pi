@@ -2,9 +2,13 @@
 // the order; pi's exposures (code mode only by default, `tool_search` without code mode); one composing extension whose
 // wraps give each conversation the servers its location's lease uses, each with its namespace, pi's one-line summary
 // and instructions; variants of one tool at two locations, the session's with the plain name; calls only as the variant
-// the caller's instance describes; the `mcp_servers` section per conversation without code mode; structured output only
-// for tools with an output schema (error results included); and error results with text.
+// the caller's instance describes; the `mcp_servers` section per conversation without code mode; pi's `CallToolResult`
+// as every tool's structured output, whole (error results included); error results with text; and the model's own
+// calls' results cut, with the full text saved where the conversation works.
 import assert from "node:assert/strict";
+import { readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname } from "node:path";
 import { test } from "node:test";
 import type {
 	Agent,
@@ -14,7 +18,8 @@ import type {
 	ToolExecutionApi,
 	ToolRegistration,
 } from "@earendil-works/pi-durable";
-import type { CallToolResult } from "@earendil-works/pi-mcp";
+import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
+import { type CallToolResult, createMcpResultSchema, MCP_OUTPUT_MAX_BYTES } from "@earendil-works/pi-mcp";
 import { BACKGROUND_CONTEXT, type Location } from "@p2/app/v1";
 import type { P2Tool } from "@p2/app/v1/worker";
 import type { Instance, McpTool, SessionLease } from "../../plugins/mcp/contract.ts";
@@ -153,8 +158,8 @@ async function sectionView(extension: Extension<P2Tool>, conversationId: number)
 				callable: agent.callable.map((one) => one.name),
 			}),
 	};
-	const wrap = extension.wraps!.find((each) => "section" in each && each.section === "codemode")!;
-	const wrapped = "section" in wrap ? wrap.wrap(base) : base;
+	const wrap = extension.wraps!.find((each) => each.kind === "section" && each.section === "codemode")!;
+	const wrapped = wrap.kind === "section" ? wrap.wrap(base) : base;
 	const input = {
 		conversationId: conversationId as ConversationId,
 		agent: agentWith(extension),
@@ -289,9 +294,9 @@ test("the codemode and tool_search tools run with the conversation's view; every
 			],
 		},
 	);
-	const targets = extension.wraps!.flatMap((each) => ("tool" in each ? [each.tool] : []));
+	const targets = extension.wraps!.flatMap((each) => (each.kind === "tool" ? [each.tool] : []));
 	assert.deepEqual(targets, ["codemode", "tool_search"]);
-	const wrap = extension.wraps!.find((each) => "tool" in each && each.tool === "codemode")!;
+	const wrap = extension.wraps!.find((each) => each.kind === "tool" && each.tool === "codemode")!;
 	const seen: { agent: Agent; models: unknown; marked: unknown }[] = [];
 	const marker = Symbol("marker");
 	const base: P2Tool = {
@@ -303,7 +308,7 @@ test("the codemode and tool_search tools run with the conversation's view; every
 			return { output: [] };
 		},
 	};
-	const wrapped = "tool" in wrap ? wrap.wrap(base) : base;
+	const wrapped = wrap.kind === "tool" ? wrap.wrap(base) : base;
 	const agent = agentWith(extension) as unknown as Agent;
 	let reads = 0;
 	const api = {
@@ -393,35 +398,51 @@ test("without code mode, the mcp_servers section lists the conversation's server
 	);
 });
 
-/** The registration of `mcpTool` calling a server that answers `result`, and what it was called with. */
-function registration(mcpTool: McpTool, result: CallToolResult) {
+/**
+ * The registration of `mcpTool` calling a server that answers `result`, and what it was called with; reached as `reach`,
+ * the caller's environment `env`.
+ */
+function registration(
+	mcpTool: McpTool,
+	result: CallToolResult,
+	{ reach = "codemode", env }: { reach?: McpReach; env?: NodeExecutionEnv } = {},
+) {
 	const calls: Parameters<McpCall>[0][] = [];
 	const call: McpCall = async (request) => {
 		calls.push(request);
 		return result;
 	};
-	const [registered] = extensionOf([instance("docs", { tools: [mcpTool] })], { call }).tools as ToolRegistration[];
-	// The tool reads only the conversation ID and the reader from the API.
-	const api = { conversationId: 1 } as unknown as ToolExecutionApi;
+	const [registered] = extensionOf([instance("docs", { tools: [mcpTool] })], { call, reach })
+		.tools as ToolRegistration[];
+	// The tool reads only the conversation ID, the reader and the environment from the API.
+	const api = { conversationId: 1, env } as unknown as ToolExecutionApi;
 	return { registered: registered!, calls, run: () => registered!.execute({ q: "x" }, api, BACKGROUND_CONTEXT) };
 }
 
-test("results: structured output only with an output schema, error results included; errors always have text", async () => {
+test("results: pi's CallToolResult without _meta for scripts, error results included; errors always have text", async () => {
 	const schema = { type: "object", properties: { hits: { type: "number" } } };
-	const structured = { content: [{ type: "text" as const, text: "2 hits" }], structuredContent: { hits: 2 } };
+	const structured = {
+		content: [{ type: "text" as const, text: "2 hits" }],
+		structuredContent: { hits: 2 },
+		_meta: { trace: "t" },
+	};
 	const withSchema = registration(tool("search", { outputSchema: schema }), structured);
-	assert.deepEqual(withSchema.registered.structuredOutputSchema, schema);
+	assert.deepEqual(withSchema.registered.structuredOutputSchema, createMcpResultSchema(schema));
 	assert.deepEqual(await withSchema.run(), {
 		output: [{ type: "text", text: "2 hits" }],
 		isError: false,
 		details: { server: "docs", tool: "search" },
-		structuredOutput: { hits: 2 },
+		structuredOutput: { content: [{ type: "text", text: "2 hits" }], structuredContent: { hits: 2 } },
 	});
 	assert.deepEqual(withSchema.calls[0]?.args, { q: "x" });
 	assert.equal(withSchema.calls[0]?.tool, "search");
+	// Without an output schema, too: structured content may then be any JSON value.
 	const withoutSchema = registration(tool("search"), structured);
-	assert.equal(withoutSchema.registered.structuredOutputSchema, undefined);
-	assert.equal("structuredOutput" in (await withoutSchema.run()), false);
+	assert.deepEqual(withoutSchema.registered.structuredOutputSchema, createMcpResultSchema(undefined));
+	assert.deepEqual((await withoutSchema.run()).structuredOutput, {
+		content: [{ type: "text", text: "2 hits" }],
+		structuredContent: { hits: 2 },
+	});
 	const failed = registration(tool("search", { outputSchema: schema }), {
 		content: [],
 		structuredContent: { hits: 0 },
@@ -429,9 +450,75 @@ test("results: structured output only with an output schema, error results inclu
 	});
 	const error = await failed.run();
 	assert.equal(error.isError, true);
-	assert.deepEqual(error.structuredOutput, { hits: 0 });
+	assert.deepEqual(error.structuredOutput, { content: [], structuredContent: { hits: 0 }, isError: true });
 	// Without content the structured content becomes the text; without either, an error still says so.
 	assert.match(JSON.stringify(error.output), /hits/);
 	const bare = await registration(tool("search"), { content: [], isError: true }).run();
 	assert.deepEqual(bare.output, [{ type: "text", text: "MCP tool docs/search returned an error" }]);
+});
+
+test("results: the model's own calls get them cut, the full text saved where it works", async () => {
+	const text = Array.from({ length: 1024 }, (_, line) => `line ${line} ${"x".repeat(32)}`).join("\n");
+	assert(Buffer.byteLength(text) > 2 * MCP_OUTPUT_MAX_BYTES - 2048);
+	const result = { content: [{ type: "text" as const, text }] };
+	/** The text of a result of one text block. */
+	const only = (output: readonly { type: string }[] | undefined): string => {
+		assert.equal(output?.length, 1);
+		const [block] = output!;
+		assert(block?.type === "text" && "text" in block && typeof block.text === "string");
+		return block.text;
+	};
+	const script = await registration(tool("get"), result, { reach: "codemode" }).run();
+	assert.deepEqual(script.structuredOutput, result);
+	const env = new NodeExecutionEnv({ cwd: tmpdir() });
+	const model = await registration(tool("get"), result, { reach: "tool_search", env }).run();
+	const cut = only(model.output);
+	assert.match(cut, /^Warning: truncated output \(original token count: \d+\)/);
+	assert.match(cut, /chars truncated/);
+	const path = /\[Full output: (.+) \(read it with offset\/limit\)\]$/.exec(cut)?.[1];
+	assert(path !== undefined, cut.slice(-200));
+	try {
+		assert.equal(readFileSync(path, "utf8"), text);
+	} finally {
+		rmSync(dirname(path), { recursive: true, force: true });
+	}
+	// Without an environment the text is still cut, and says why the full text is missing.
+	const nowhere = await registration(tool("get"), result, { reach: "tool_search" }).run();
+	assert.match(only(nowhere.output), /\[Could not save the full output: no execution environment\]$/);
+});
+
+test("results: pi's model-facing content, binary resources saved where the conversation works for the model's own calls", async () => {
+	const pdf = {
+		uri: "file:///r/report.pdf",
+		mimeType: "application/pdf",
+		blob: Buffer.from("%PDF").toString("base64"),
+	};
+	const result: CallToolResult = {
+		content: [
+			{ type: "resource_link", uri: "docs://guide", name: "guide", mimeType: "text/markdown", size: 2048 },
+			{ type: "resource", resource: pdf },
+		],
+	};
+	const env = new NodeExecutionEnv({ cwd: tmpdir() });
+	const model = await registration(tool("get"), result, { reach: "tool_search", env }).run();
+	const [linked, saved] = model.output ?? [];
+	// p2 has no tool that reads resources, so the link names none.
+	assert.deepEqual(linked, { type: "text", text: '[Resource docs://guide "guide" (text/markdown, 2.0KB)]' });
+	assert(saved?.type === "text");
+	const path = /^\[Binary resource file:\/\/\/r\/report\.pdf \(application\/pdf, 4B\) saved to (.+)\]$/.exec(
+		saved.text,
+	)?.[1];
+	assert(path !== undefined, saved.text);
+	try {
+		assert.equal(readFileSync(path, "utf8"), "%PDF");
+	} finally {
+		rmSync(dirname(path), { recursive: true, force: true });
+	}
+	// Scripts read the result itself: nothing is saved for them.
+	const script = await registration(tool("get"), result, { reach: "codemode", env }).run();
+	assert.deepEqual(script.output?.[1], {
+		type: "text",
+		text: "[binary resource file:///r/report.pdf (application/pdf) omitted]",
+	});
+	assert.deepEqual(script.structuredOutput, result);
 });

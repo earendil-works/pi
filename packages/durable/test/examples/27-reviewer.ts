@@ -38,7 +38,10 @@ const Reviewer = defineExtension({
 			onYield: (answer) =>
 				textOf(answer).includes(DONE)
 					? undefined
-					: { continue: `Look again for anything you missed. Say "${DONE}" when there is nothing left.` },
+					: {
+							kind: "continue",
+							continue: `Look again for anything you missed. Say "${DONE}" when there is nothing left.`,
+						},
 		}),
 	],
 });

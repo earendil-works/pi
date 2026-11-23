@@ -49,7 +49,7 @@ const line = (report: ReloadReport) =>
 /** A rollout, step by step. */
 function print(result: RolloutResult): void {
 	for (const { name, hosts } of result.steps) {
-		for (const host of hosts) if ("report" in host) console.log(`   ${name}:`, line(host.report));
+		for (const host of hosts) if (host.kind === "reloaded") console.log(`   ${name}:`, line(host.report));
 	}
 	if (result.stopped !== undefined) {
 		console.log(`   stopped at ${result.stopped.step}: ${(result.stopped.error as Error).message}`);
