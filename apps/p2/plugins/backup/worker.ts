@@ -3,20 +3,11 @@
 // Inert while backup is off (the server's `device` is null). The device is the server's: the one it stamps on every
 // slot, which an upload compares with a taken slot's to tell its own lost answer from another machine's upload.
 import { defineFacet, expectVariant, local, untilAborted } from "@p2/app/v1";
-import {
-	BackupUploader,
-	backupFiles,
-	backupTarget,
-	backupTargetKey,
-	isTerminalBackupError,
-	isUrgentCommit,
-	processLogs,
-	sessionDirectory,
-	sessionStoreName,
-} from "@p2/app/v1/node";
+import { backupTarget, processLogs, sessionDirectory } from "@p2/app/v1/node";
 import { harnessOf, workerOf } from "@p2/app/v1/worker";
 import { ChunkedRemote } from "./chunked-remote.ts";
-import { BackupRemote } from "./contract.ts";
+import { BackupRemote, isTerminalBackupError, sessionStoreName } from "./contract.ts";
+import { BackupUploader, backupFiles, backupTargetKey, isUrgentCommit } from "./uploader.ts";
 
 /** The worker's backup of its store, for the worker's life. */
 const StoreBackup = local("p2.store-backup", { version: 1, params: {}, members: {} });

@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { PutBatchResult, SyncBody } from "@p2/app/v1/node";
 import { StreamedUpload } from "../../plugins/backup/server.ts";
-import { isUrgentCommit } from "../../src/runtime/backup.ts";
+import { isUrgentCommit } from "../../plugins/backup/uploader.ts";
 import { INPUT_ENTRY } from "../../src/runtime/input.ts";
 
 /** A remote that reads the whole body, then answers `created` with what it read. */

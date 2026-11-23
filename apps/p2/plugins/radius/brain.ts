@@ -396,7 +396,7 @@ export class RadiusBrain {
 	}
 
 	/**
-	 * What a request to this brain's gateway on its own behalf needs (session sync, `plugins/sync`): the gateway, this
+	 * What a request to this brain's gateway on its own behalf needs (backup, `plugins/backup/radius-remote.ts`): the gateway, this
 	 * brain's server ID and a current access token, refreshed as the connection refreshes it. Rejects while not signed in.
 	 */
 	async syncAccess(): Promise<{ readonly gateway: string; readonly serverId: string; readonly token: string }> {

@@ -13,10 +13,11 @@ import { FileSyncStateStore, pullSession } from "@earendil-works/chord/sync";
 import type { ConversationView, LiveState } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT, type Host } from "@p2/app/v1";
 import { Backup } from "../../plugins/backup/contract.ts";
+import { openFolderRemote } from "../../plugins/backup/server.ts";
+import { backupFiles } from "../../plugins/backup/uploader.ts";
 import { Chat } from "../../plugins/chat/contract.ts";
 import { type Session, Sessions } from "../../plugins/sessions/contract.ts";
 import { type P2Server, startServer } from "../../src/hosts/server.ts";
-import { backupFiles, openFolderRemote } from "../../src/runtime/backup.ts";
 import { clientHost, type Fixture, holdIn, localOwner, startFixture, until } from "./helpers.ts";
 
 const answers = (count: number) => (view: ConversationView | null | undefined) =>

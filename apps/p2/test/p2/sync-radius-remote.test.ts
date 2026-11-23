@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { SYNC_PROTOCOL } from "@earendil-works/chord/sync";
-import { isTerminalSyncError, RadiusSyncRemote } from "../../plugins/sync/radius-remote.ts";
+import { isTerminalSyncError, RadiusSyncRemote } from "../../plugins/backup/radius-remote.ts";
 import { TEST } from "./helpers.ts";
 
 const SERVER = "01234567-89ab-4def-8123-456789abcdef";

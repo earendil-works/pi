@@ -1,9 +1,9 @@
 import { defineFacet, nativeOf, serveNative } from "@p2/app/v1";
 import { RequestResolvers, Server, ServerName, ShareUrls } from "@p2/app/v1/server";
 import { BackupTargets } from "../backup/contract.ts";
+import { isTerminalSyncError, RadiusSyncRemote } from "../backup/radius-remote.ts";
 import { ForwardStore, ForwardsNative } from "../ports/contract.ts";
 import { Shares } from "../sharing/contract.ts";
-import { isTerminalSyncError, RadiusSyncRemote } from "../sync/radius-remote.ts";
 import { RadiusBrain, type RadiusStatus } from "./brain.ts";
 import { RadiusConnections, RadiusService } from "./contract.ts";
 import { RelayAccess } from "./relay-access.ts";
