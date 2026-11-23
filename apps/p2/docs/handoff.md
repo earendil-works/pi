@@ -115,7 +115,7 @@ public instance at p2.mariozechner.at is gone). Node 24: `~/node-v24.4.1-linux-x
   and environment through `Harness.environments`, the session's through `WorkerProcess.location`
   (`docs/p2-notes.md`, Agent locations and Relocation).
 - **Durable** (`packages/durable`) runs the agent: conversations, inputs as custom entries (`p2.input`,
-  `chat.mention`), display-only writes placed immediately, code mode (QuickJS sandbox; scripts call tools as
+  `chat.mention`), display-only writes placed immediately, code mode (djs sandbox on the session worker's thread, resumed from its dump after a restart; scripts call tools as
   `tools.<name>`, one-shot agents via `tools.agent`, tools grouped by the namespaces their extensions declare),
   compaction with visible failures, deferred tools and `tool_search` (MCP tools are for code mode scripts, as in pi;
   `tool_search` loads them only while code mode is off).
