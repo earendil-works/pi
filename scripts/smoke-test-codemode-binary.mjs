@@ -6,7 +6,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { extname, join, resolve } from "node:path";
 
-const WORKER_MARKER = "PI_CODEMODE_WORKER_OK";
+const SCRIPT_MARKER = "PI_CODEMODE_SCRIPT_OK";
 const SUCCESS_MARKER = "PI_CODEMODE_BINARY_SMOKE_OK";
 const FAILURE_MARKER = "PI_CODEMODE_BINARY_SMOKE_FAILED";
 const TIMEOUT_MS = 30_000;
@@ -43,7 +43,7 @@ function toolResultContainsMarker(body) {
 	return (
 		Array.isArray(payload.messages) &&
 		payload.messages.some(
-			(message) => message?.role === "tool" && JSON.stringify(message.content).includes(WORKER_MARKER),
+			(message) => message?.role === "tool" && JSON.stringify(message.content).includes(SCRIPT_MARKER),
 		)
 	);
 }
@@ -75,7 +75,7 @@ async function main() {
 							type: "function",
 							function: {
 								name: "codemode",
-								arguments: JSON.stringify({ code: `text("${WORKER_MARKER}")` }),
+								arguments: JSON.stringify({ code: `text("${SCRIPT_MARKER}")` }),
 							},
 						},
 					],

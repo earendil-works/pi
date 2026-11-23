@@ -142,7 +142,6 @@ for (const entry of [
 	join(codingAgentDistDir, "index.js"),
 	join(codingAgentDistDir, "rpc-entry.js"),
 	join(codingAgentDistDir, "utils", "image-resize-worker.js"),
-	join(codingAgentDistDir, "extensions", "codemode", "worker.js"),
 	join(aiDistDir, "api", "bedrock-converse-stream.js"),
 	join(aiDistDir, "auth", "oauth", "anthropic.js"),
 ]) {
@@ -170,7 +169,6 @@ const mainResult = await build({
 const bedrockLoaderOutput = findContainingOutput(mainResult.metafile, "packages/ai/dist/api/bedrock-converse-stream.lazy.js");
 const oauthLoaderOutput = findContainingOutput(mainResult.metafile, "packages/ai/dist/auth/oauth/load.js");
 const imageResizeOutput = findContainingOutput(mainResult.metafile, "packages/coding-agent/dist/utils/image-resize.js");
-const configOutput = findContainingOutput(mainResult.metafile, "packages/coding-agent/dist/config.js");
 if (dirname(bedrockLoaderOutput) !== dirname(oauthLoaderOutput)) {
 	throw new Error("Bedrock and OAuth lazy loaders were emitted into different directories");
 }
