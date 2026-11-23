@@ -281,6 +281,11 @@ export function resolveHeadersOrThrow(
 	return Object.keys(resolved).length > 0 ? resolved : undefined;
 }
 
+/** Forget the cached result of one config value, so its next resolution runs the command again. */
+export function clearConfigValueCacheEntry(config: string): void {
+	commandResultCache.delete(config);
+}
+
 /** Clear the config value command cache. Exported for testing. */
 export function clearConfigValueCache(): void {
 	commandResultCache.clear();

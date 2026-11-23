@@ -15,12 +15,21 @@ import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { getProviderBrandStyle, type ProviderBrandStyle, startBrandAnimation } from "./provider-brand.ts";
 
+/**
+ * Auth state of a login option: auth that works, or a stored credential that does not resolve to a key,
+ * for example a failing `!command`.
+ */
+export type AuthSelectorStatus =
+	| { kind: "configured"; type: AuthCheck["type"]; source?: string }
+	| { kind: "unresolved" };
+
 export type AuthSelectorProvider = {
 	id: string;
 	name: string;
 	authType: "oauth" | "api_key";
 	method?: ApiKeyAuth | OAuthAuth;
-	status?: AuthCheck;
+	/** Unset when nothing is configured. */
+	status?: AuthSelectorStatus;
 	/**
 	 * Whether the provider's OAuth sign-in is backed by a subscription. `false` labels it as an account;
 	 * unset keeps the "subscription" label.
@@ -38,21 +47,19 @@ export function formatAuthSelectorProviderType(
 
 /** Themed suffix describing whether and how a login option is configured, for example " ✓ configured". */
 export function formatAuthSelectorProviderStatus(provider: AuthSelectorProvider): string {
-	if (!provider.status) return theme.fg("muted", " • not configured");
-	if (provider.status.type !== provider.authType) {
-		const label = `${formatAuthSelectorProviderType(provider.status.type, provider.subscription)} configured`;
+	const { status } = provider;
+	if (!status) return theme.fg("muted", " • not configured");
+	if (status.kind === "unresolved") return theme.fg("muted", " • ") + theme.fg("error", "stored key did not resolve");
+	if (status.type !== provider.authType) {
+		const label = `${formatAuthSelectorProviderType(status.type, provider.subscription)} configured`;
 		return theme.fg("muted", " • ") + theme.fg("warning", label);
 	}
-	if (
-		!provider.status.source ||
-		provider.status.source === "OAuth" ||
-		provider.status.source === "stored credential"
-	) {
+	if (!status.source || status.source === "OAuth" || status.source === "stored credential") {
 		return theme.fg("success", " ✓ configured");
 	}
-	const source = /^[A-Z][A-Z0-9_]*(?:, [A-Z][A-Z0-9_]*)*$/.test(provider.status.source)
-		? `env: ${provider.status.source}`
-		: provider.status.source;
+	const source = /^[A-Z][A-Z0-9_]*(?:, [A-Z][A-Z0-9_]*)*$/.test(status.source)
+		? `env: ${status.source}`
+		: status.source;
 	return theme.fg("success", ` ✓ ${source}`);
 }
 

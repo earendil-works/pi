@@ -1,6 +1,7 @@
 // The artifacts' panes (view kinds `html` and `md`), beside the transcript and inline in it: an html page in its
 // sandboxed frame with the page's side of the bridge (`bridge.ts`: its state, selection, errors and logs, the agent's
-// code), a Markdown document rendered. Both show the artifact's newest version and follow new ones.
+// code), a Markdown document rendered. Both show the artifact's newest version and follow new ones; a document keeps
+// the reader's place across versions.
 import { BACKGROUND_CONTEXT, type JsonValue, liveIn } from "@p2/app/v1";
 import {
 	errorText,
@@ -12,7 +13,7 @@ import {
 	useRegistry,
 	useStatus,
 } from "@p2/app/v1/web";
-import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type RefObject, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ViewsPages } from "../views/contract.web.ts";
 import { excerpt, usePaneSelection } from "../views/pane-kit.tsx";
 import { VIEW_CHANNEL } from "./bridge.ts";
@@ -37,6 +38,8 @@ export function MdPane({ session, item, inline, select }: PaneProps) {
 	const text = useArtifactText(session, id);
 	const body = useRef<HTMLDivElement>(null);
 	const inlineSize = useContext(InlineSizeContext);
+	// Beside the transcript the document scrolls itself: a new version keeps what the reader had at the top in place.
+	useReadingPlace(body, inline ? undefined : text.value);
 	// Inline, the drawn document's height is the card's real height (an error's too).
 	useLayoutEffect(() => {
 		const element = body.current;
@@ -60,12 +63,94 @@ export function MdPane({ session, item, inline, select }: PaneProps) {
 	);
 }
 
-/** The newest version's text of artifact `id`, read again when a new version appears. */
+/**
+ * Where the reader is in a document: the block at the top of the pane and the heading above it, each with its offset,
+ * at scroll position `scrollTop`.
+ */
+type ReadingPlace = { readonly scrollTop: number; readonly top?: BlockPlace; readonly heading?: BlockPlace };
+/** A block by its tag and text (the `index`th of its kind) and its top relative to the pane's. */
+type BlockPlace = { readonly key: string; readonly index: number; readonly offset: number };
+
+/** The blocks a reader's place is kept by, in document order. */
+const BLOCKS = "h1,h2,h3,h4,h5,h6,p,li,pre,blockquote,table,hr";
+const HEADING = /^H[1-6]$/;
+
+/**
+ * Keeps the reader's place in a scrolled document when its `text` changes (a new version): the block that was at the
+ * top of `scroller`, by tag and text, stays where it was; if that block changed, the heading above it does; if
+ * neither is there any more, the scroll position stays. Text inserted above what the reader sees does not move it.
+ */
+function useReadingPlace(scroller: RefObject<HTMLElement | null>, text: string | undefined): void {
+	const place = useRef<ReadingPlace>({ scrollTop: 0 });
+	// Noted once per frame of scrolling (it reads every block's text); a scroll since is taken into account below.
+	useEffect(() => {
+		const element = scroller.current;
+		if (!element || text === undefined) return;
+		let frame: number | undefined;
+		const note = () => {
+			frame ??= requestAnimationFrame(() => {
+				frame = undefined;
+				place.current = readingPlace(element);
+			});
+		};
+		element.addEventListener("scroll", note, { passive: true });
+		return () => {
+			element.removeEventListener("scroll", note);
+			if (frame !== undefined) cancelAnimationFrame(frame);
+		};
+	}, [scroller, text]);
+	useLayoutEffect(() => {
+		const element = scroller.current;
+		if (!element || text === undefined) return;
+		const { scrollTop, top, heading } = place.current;
+		// The new blocks are laid out, the scroll position is still the old one (no browser anchoring: artifacts.css).
+		const scrolled = element.scrollTop - scrollTop;
+		const moved = [top, heading].flatMap((wanted) => {
+			const found = wanted && blockAt(element, wanted);
+			if (!wanted || !found) return [];
+			return [found.getBoundingClientRect().top - element.getBoundingClientRect().top - (wanted.offset - scrolled)];
+		})[0];
+		if (moved !== undefined && Math.abs(moved) >= 1) element.scrollTop += moved;
+		place.current = readingPlace(element);
+	}, [scroller, text]);
+}
+
+/** The block at the top of `scroller` and the heading at or above it. */
+function readingPlace(scroller: HTMLElement): ReadingPlace {
+	const top = scroller.getBoundingClientRect().top;
+	const blocks = [...scroller.querySelectorAll<HTMLElement>(BLOCKS)];
+	const at = blocks.findIndex((block) => block.getBoundingClientRect().bottom > top + 1);
+	if (at < 0) return { scrollTop: scroller.scrollTop };
+	const placed = (index: number): BlockPlace => {
+		const block = blocks[index]!;
+		const key = blockKey(block);
+		return {
+			key,
+			index: blocks.slice(0, index).filter((other) => blockKey(other) === key).length,
+			offset: block.getBoundingClientRect().top - top,
+		};
+	};
+	const heading = blocks.findLastIndex((block, index) => index <= at && HEADING.test(block.tagName));
+	return { scrollTop: scroller.scrollTop, top: placed(at), ...(heading < 0 ? {} : { heading: placed(heading) }) };
+}
+
+/** The block `place` names in `scroller`, if the document still has it. */
+function blockAt(scroller: HTMLElement, place: BlockPlace): HTMLElement | undefined {
+	return [...scroller.querySelectorAll<HTMLElement>(BLOCKS)].filter((block) => blockKey(block) === place.key)[
+		place.index
+	];
+}
+
+const blockKey = (block: HTMLElement) => `${block.tagName}\n${block.textContent?.trim() ?? ""}`;
+
+/**
+ * The newest version's text of artifact `id`, read again when a new version appears; meanwhile the version read last
+ * stays (the document neither blanks nor loses its scroll position).
+ */
 function useArtifactText(session: string, id: string): { value?: string; error?: string } {
 	const { list, reader } = useArtifacts(session);
 	const summary = list?.find((each) => each.id === id);
 	const [text, setText] = useState<{ key: string; value?: string; error?: string }>();
-	const key = summary ? `${id}@${summary.version}` : "";
 	useEffect(() => {
 		if (!reader || !summary) return;
 		let current = true;
@@ -78,7 +163,7 @@ function useArtifactText(session: string, id: string): { value?: string; error?:
 		};
 	}, [reader, id, summary]);
 	if (list && !summary) return { error: `No artifact "${id}" (it was deleted)` };
-	return text?.key === key ? text : {};
+	return text?.key.startsWith(`${id}@`) ? text : {};
 }
 
 /**

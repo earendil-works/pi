@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { stream as streamOpenAICompletions } from "../src/api/openai-completions.ts";
 import type { Model } from "../src/types.ts";
+import { isRetryableAssistantError } from "../src/utils/retry.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
 
 const mockState = vi.hoisted(() => ({
@@ -76,5 +77,18 @@ describe("OpenAI completions raw stop reasons", () => {
 		expect(message.stopReason).toBe("error");
 		expect(message.rawStopReason).toBe("content_filter");
 		expect(message.errorMessage).toBe("Provider finish_reason: content_filter");
+		expect(isRetryableAssistantError(message)).toBe(false);
+	});
+
+	// #12206
+	it("retries a stream that ends with finish_reason error", async () => {
+		mockState.chunks = [{ id: "chatcmpl-3", choices: [{ index: 0, delta: {}, finish_reason: "error" }] }];
+
+		const message = await streamOpenAICompletions(model, context, { apiKey: "test" }).result();
+
+		expect(message.stopReason).toBe("error");
+		expect(message.rawStopReason).toBe("error");
+		expect(message.errorMessage).toBe("Provider finish_reason: error");
+		expect(isRetryableAssistantError(message)).toBe(true);
 	});
 });
