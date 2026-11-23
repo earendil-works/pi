@@ -9,6 +9,10 @@
 - `SeriesResult` (`ChordStore.commitSeries`) is tagged: `{ kind: "stored", stored }` or `{ kind: "refused", stored, refused }` (was `{ stored, refused? }`). Migration: read `refused` after checking `result.kind === "refused"`.
 - Sync (experimental): writer epochs are removed. `uploadSession` no longer takes `epoch`, `putBatch` no longer passes one, and neither `PutBatchResult` nor `UploadResult` has `stale_epoch`: no remote issued epochs.
 
+### Added
+
+- Sync (experimental): `uploadSession` reports a remote that holds no history for a session this copy had shared (`not_head` at head 0, the copy past 0) as `{ type: "remote_empty", at }`, apart from `diverged`: the remote's copy was deleted, and the host may forget its sync state and start over with a full copy.
+
 ## [1.6.0] - 2026-11-20
 
 ### Breaking Changes

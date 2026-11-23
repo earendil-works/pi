@@ -13,6 +13,7 @@ import {
 	type SessionSyncUploader,
 	type Store,
 	type SyncFileSystem,
+	type UploadResult,
 	uploadSession,
 } from "@p2/app/v1/node";
 import type { BackupStatus } from "./contract.ts";
@@ -81,7 +82,7 @@ export class BackupUploader {
 	readonly #options: BackupUploaderOptions;
 	readonly #scheduler: FlushScheduler;
 	readonly #state: FileSyncStateStore;
-	/** A terminal failure stopped uploads (`terminal`): no flush runs again in this process. */
+	/** A terminal failure or a broken history stopped uploads: no flush runs again in this process. */
 	#stopped = false;
 
 	constructor(options: BackupUploaderOptions) {
@@ -122,31 +123,46 @@ export class BackupUploader {
 	}
 
 	async #flush(context: Context): Promise<void> {
-		// Stopped by a terminal failure: nothing is retried (the scheduler's backoff would retry forever).
+		// Stopped: nothing is retried (the scheduler's backoff, or the next commit, would retry forever).
 		if (this.#stopped) return;
-		const { store, name, device, remote, report } = this.#options;
+		const { name, report } = this.#options;
 		report({ state: "uploading", ...this.#head(await this.#synced(context)), at: Date.now() });
-		const result = await uploadSession({
-			sessionId: name,
-			device,
-			source: store,
-			store: remote,
-			state: this.#state,
-			context,
-		});
+		let result = await this.#upload(context);
+		if (result.type === "remote_empty") {
+			// The backup was deleted on the remote, maybe while this instance was offline, so nothing cleared the bookmark:
+			// start over, the whole store from the start.
+			await this.#state.delete(name, context);
+			result = await this.#upload(context);
+		}
 		const head = this.#head(await this.#synced(context));
 		switch (result.type) {
 			case "uploaded":
 			case "idle":
 				report({ state: "synced", ...head, at: Date.now() });
 				return;
-			case "behind":
-				report({ state: "behind", ...head, at: Date.now() });
-				return;
+			// A remote emptied again within this flush: a remote that does not keep what it took.
+			case "remote_empty":
 			case "diverged":
-				report({ state: "diverged", ...head, at: Date.now() });
+				this.#stop("diverged", "the backup's history is not this store's", head);
+				return;
+			case "behind":
+				this.#stop("behind", "the store lost commits the backup holds", head);
 				return;
 		}
+	}
+
+	#upload(context: Context): Promise<UploadResult> {
+		const { store, name, device, remote } = this.#options;
+		return uploadSession({ sessionId: name, device, source: store, store: remote, state: this.#state, context });
+	}
+
+	/**
+	 * Stops uploads until a restart: retrying cannot fix the history (another machine wrote it, the remote refused a body
+	 * for good, the store lost what it uploaded). The commits stay in the outbox.
+	 */
+	#stop(state: "diverged" | "behind", why: string, head: { syncedHead?: number }): void {
+		this.#stopped = true;
+		this.#options.report({ state, ...head, error: `${why} (stopped until a restart)`, at: Date.now() });
 	}
 
 	async #synced(context: Context): Promise<number | undefined> {

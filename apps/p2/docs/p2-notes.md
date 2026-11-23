@@ -371,10 +371,10 @@ p2 runs on Chord v2 (`packages/chord`, `docs/design.md` there); the port's notes
   generations, logs and notices, relocation and pauses on `stop`/`retry`).
 - **Host stores and files** (per-host stores; laid out as the app kit lays out its hosts, `src/runtime/host-dirs.ts`):
   every host has its own Chord store and files directory, private (directories 0700, stores 0600). The server:
-  `<data>/server/store.sqlite` (outbox off: local-only data, credentials included, never goes to a sync) and
-  `<data>/server/files/`; each session: `<data>/sessions/<id>/store.sqlite` (outbox off until p2 syncs: it records
-  nothing while not connected to a sync; turning it on starts at the current commit, and a first sync uploads an
-  archive) and `<data>/sessions/<id>/files/`.
+  `<data>/server/store.sqlite` and `<data>/server/files/`; each session: `<data>/sessions/<id>/store.sqlite` and
+  `<data>/sessions/<id>/files/`. Every store keeps an outbox only while backup is on (**Backup**): turned on, it
+  starts at the current commit, and the first upload is a full copy. With backup on, the server's store is uploaded
+  too, share-link tokens included (open: whether those tables should stay out of it).
   Projects will be another host kind of the same shape. Both hosts load the app kit's `Files` (`chord.app.files`,
   `filesFacet` from `@earendil-works/chord/app/files`); a session's Durable runs on its store through `StoreStorage`
   under the owner name `p2.durable` (`src/runtime/session-store.ts`), beside `Files`' tables. Plugins reach `Files`
@@ -1342,6 +1342,27 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
   (status). A document nobody wrote yet is absent and cannot be followed, so chat mode and artifacts create it empty on
   first follow. A method that writes such a document returns after Durable's commit, by when the follow has the new
   value (`chat-mode.test.ts`). The same holds for p2's own natives: `PromptResources` follows the prompt loads.
+- **Backup** (`plugins/backup`; Chord's decision "Sync serves backup: a full copy after the head, a deleted remote copy
+  starts over"): copies of the server's store and every session's store on a backup remote, so a lost machine loses
+  nothing it uploaded. `P2_BACKUP=radius` (the Radius this server is signed in to, offered by `plugins/radius` through
+  `BackupTargets`) or `P2_BACKUP_DIR=<path>` (a folder); `src/runtime/backup.ts` reads them where the hosts open their
+  stores, the rest is the plugin's. Rules:
+  - **One writer per store:** the server uploads its own store, each session's worker the session's (through the
+    server's `BackupRemote`, in pieces of 1 MiB; only the server holds the remote). Soon after each commit: 200 ms after
+    what a person sent or a finished answer (`isUrgentCommit`), else 5 s; once more as a worker stops. The last seq the
+    backup holds is a bookmark file beside each store (`backup/<target>/`).
+  - **Outbox only while backup is on:** turning backup off drops what the outbox held; turned on again, the next upload
+    is a full copy of the store after what the backup holds, and the backup goes on in the same history.
+  - **Upload answers:** `created`, or `exists` by this server (an answer lost on the way): go on. The remote holds
+    nothing while the bookmark is past 0: the backup was deleted (on Radius, maybe while this server was offline, so
+    nothing cleared the bookmark): forget the bookmark and upload a full copy from 0. Any other `not_head`, a slot
+    another server took, or a store that lost commits the backup holds (`behind`): status `diverged` or `behind`,
+    "stopped until a restart"; the commits stay in the outbox. Refusals that retrying cannot fix (400, 403, 413,
+    `protocol_too_old`) stop the same way; other failures retry with backoff.
+  - **Restore** (not built yet) forks: a restored session gets a new session ID and its own backup, so two machines
+    never write one session's history.
+  - **Not in a backup:** file contents (only their index rows), and sessions whose worker never runs after backup is
+    turned on.
 - **Sharing** (`plugins/sharing`): `Shares` (server local; its tables in the server's store, `plugins/sharing/store.ts`:
   links and grants keyed by their session's address (`host(Session)`), guests with a revision; its lists are live
   queries over them), `Presence` (connected

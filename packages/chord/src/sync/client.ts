@@ -103,6 +103,12 @@ export type UploadResult =
 	 */
 	| { readonly type: "diverged"; readonly at: Seq }
 	/**
+	 * The remote holds no history for the session, though this copy shared it up to `at`: the remote's copy was deleted
+	 * (or the remote was reset) since. The host decides whether to start over: forget the sync state, and the next upload
+	 * sends the whole store from the start.
+	 */
+	| { readonly type: "remote_empty"; readonly at: Seq }
+	/**
 	 * The copy lost commits it had uploaded, for example to a power loss: its head is below `syncedHead`. Its next
 	 * commits would reuse their sequences, so nothing is uploaded. Pull what it lost before the copy commits again; a pull
 	 * applies from the local head.
@@ -165,7 +171,8 @@ export async function uploadSession(options: {
 			await close?.();
 		}
 		// A history that does not end at `after` is another one too: the remote never held this copy's past `after`.
-		if (result.type === "not_head") return { type: "diverged", at: after };
+		if (result.type === "not_head")
+			return result.head === LOG_START ? { type: "remote_empty", at: after } : { type: "diverged", at: after };
 		if (result.type === "exists" && result.device !== device) return { type: "diverged", at: after };
 		synced = result.type === "created" ? to : result.to;
 		await state.set(sessionId, { syncedHead: synced }, context);

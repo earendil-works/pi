@@ -427,6 +427,38 @@ describe("syncing a session between devices", () => {
 		expect(await reads(await replica.store())).toEqual(await reads(await laptop.store()));
 	});
 
+	it("reports a remote that lost the session's history as remote_empty, and starts over from a full copy", async () => {
+		const laptop = device("laptop", await remote());
+		await laptop.commit(seedBatches().slice(0, 4));
+		await laptop.upload();
+		const synced = (await laptop.store()).lastSeq;
+		await laptop.commit(seedBatches().slice(4));
+		// The remote's copy was deleted while the bookmark still says `synced`.
+		const emptied = await remote();
+		const upload = () =>
+			laptop.store().then((source) =>
+				uploadSession({
+					sessionId: SESSION,
+					device: "laptop",
+					source,
+					store: emptied,
+					state: laptop.state,
+					context,
+				}),
+			);
+		expect(await upload()).toEqual({ type: "remote_empty", at: synced });
+		// The host forgets the bookmark: the next upload is the whole store, as an archive (the outbox was trimmed).
+		await laptop.state.set(SESSION, { syncedHead: undefined }, context);
+		const source = await laptop.store();
+		expect(await upload()).toEqual({ type: "uploaded", head: source.lastSeq });
+		expect((await emptied.list(SESSION, context)).batches).toEqual([
+			{ ...slot(0, source.lastSeq, "laptop"), archive: true },
+		]);
+		const replica = device("replica", emptied);
+		await replica.pull();
+		expect(await reads(await replica.store())).toEqual(await reads(source));
+	});
+
 	it("refuses to upload a copy that lost uploaded commits, and pulls them back", async () => {
 		const store = await remote();
 		const batches = seedBatches();

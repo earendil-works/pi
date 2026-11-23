@@ -17,6 +17,7 @@ export {
 	SYNC_PROTOCOL,
 	type SyncBody,
 	type SyncFileSystem,
+	type UploadResult,
 	uploadSession,
 } from "@earendil-works/chord/sync";
 
