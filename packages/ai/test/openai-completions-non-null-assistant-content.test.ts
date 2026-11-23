@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { convertMessages } from "../src/api/openai-completions.ts";
-import { getModel, normalizeContext } from "../src/compat.ts";
+import { getModel, normalizeContext, stream } from "../src/compat.ts";
 import type { AssistantMessage, Model, OpenAICompletionsCompat, Usage } from "../src/types.ts";
 
 const emptyUsage: Usage = {
@@ -83,6 +83,34 @@ function buildContext(model: Model<"openai-completions">) {
 }
 
 describe("requiresNonNullAssistantContent", () => {
+	// Regression for #12194: these Workers AI models reject null when replaying a tool call.
+	it.each([
+		["@cf/ibm-granite/granite-4.0-h-micro", ""],
+		["@cf/meta/llama-3.3-70b-instruct-fp8-fast", ""],
+		["@cf/openai/gpt-oss-120b", ""],
+		["@cf/openai/gpt-oss-20b", ""],
+		["@cf/zai-org/glm-5.3", null],
+	] as const)("sends %s tool-call-only assistant content as %j", async (id, content) => {
+		const model = getModel("cloudflare-workers-ai", id);
+		let payload: unknown;
+		await stream(model, buildContext(model), {
+			apiKey: "test",
+			env: { CLOUDFLARE_ACCOUNT_ID: "test" },
+			onPayload: (value) => {
+				payload = value;
+				throw new Error("payload captured");
+			},
+		}).result();
+		expect(payload).toMatchObject({
+			messages: [
+				{ role: "user" },
+				{ role: "assistant", content, tool_calls: [{ id: "tool-1" }] },
+				{ role: "tool" },
+				{ role: "user" },
+			],
+		});
+	});
+
 	it("sends null content for tool-call-only assistant messages by default", () => {
 		const model = buildModel();
 		const messages = convertMessages(model, buildContext(model), baseCompat);

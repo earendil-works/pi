@@ -41,6 +41,14 @@ const CLASSIFIER_MODELS = [
 	classifier("typesafe/jev-1.14.0", "Jev 1.14", 0.042, 32000, "assets"),
 ];
 
+// These models reject null content when an assistant message contains only tool calls.
+const NON_NULL_ASSISTANT_CONTENT_MODELS = new Set([
+	"@cf/ibm-granite/granite-4.0-h-micro",
+	"@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+	"@cf/openai/gpt-oss-120b",
+	"@cf/openai/gpt-oss-20b",
+]);
+
 export default defineProvider({
 	id: "cloudflare-workers-ai",
 	models: (ctx) =>
@@ -48,6 +56,12 @@ export default defineProvider({
 			api: "openai-completions",
 			baseUrl: CLOUDFLARE_WORKERS_AI_BASE_URL,
 			compat: { sendSessionAffinityHeaders: true },
+			map(model) {
+				if (NON_NULL_ASSISTANT_CONTENT_MODELS.has(model.id)) {
+					model.compat = { ...model.compat, requiresNonNullAssistantContent: true };
+				}
+				return model;
+			},
 		}),
 	classifiers: () => CLASSIFIER_MODELS,
 	compat: {
