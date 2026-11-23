@@ -20,6 +20,7 @@
 - Fixed Google Generative AI and Vertex prompt blocks being reported as retryable missing-finish errors. Block errors now include the reason and safety ratings, while genuinely incomplete streams report the received chunk count ([#12330](https://github.com/earendil-works/pi/issues/12330))
 - Fixed HTTP 400 after tool calls without text on Cloudflare Workers AI's GPT-OSS 120B and 20B, Granite 4.0 H Micro, and Llama 3.3 70B Instruct FP8 Fast. Pi now sends an empty string instead of `null` for those assistant messages ([#12194](https://github.com/earendil-works/pi/issues/12194))
 - Fixed HTTP 400 for non-strict Anthropic tools with Draft 7 tuples by preserving their declared `$schema` ([#12212](https://github.com/earendil-works/pi/issues/12212))
+- Fixed provider errors reading "request rate increased too quickly", such as OpenAI Codex `slow_down` and Alibaba Qwen throttling, not being retried ([#12240](https://github.com/earendil-works/pi/issues/12240))
 
 ## [1.6.0] - 2026-11-20
 
@@ -54,7 +55,6 @@
 - Fixed changing the thinking level on the OpenAI Codex provider invalidating the prompt cache on GPT-6 models. Thinking level changes, including switching to off, are now sent as `configuration_update` input items with a fixed `reasoning.effort`, as on the `openai` provider and in Codex ([#12269](https://github.com/earendil-works/pi/issues/12269))
 - Fixed GitHub Copilot Gemini and Kimi models (`gemini-4-argon`, `gemini-4-carbon`, `gemini-3.8-flash`, `kimi-k3`) never receiving the thinking level, and Copilot usage always reporting 0 reasoning tokens ([#12110](https://github.com/earendil-works/pi/pull/12110) by [@DenielC1](https://github.com/DenielC1))
 - Fixed the OpenAI Codex provider ignoring `maxTokens`; it is now sent as `max_output_tokens` (at least 16) unless the model sets `compat.supportsMaxOutputTokens: false`
-- Fixed provider errors reading "request rate increased too quickly", such as OpenAI Codex `slow_down` and Alibaba Qwen throttling, not being retried ([#12240](https://github.com/earendil-works/pi/issues/12240))
 
 ### Removed
 
