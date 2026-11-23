@@ -5,6 +5,7 @@
 ### Fixed
 
 - Fixed `Editor.addToHistory()` storing a prompt again when it was already in history; it now moves the existing entry to the most recent position ([#12279](https://github.com/earendil-works/pi/issues/12279))
+- Fixed a failed crash-log write replacing the rendered-line-width error and leaving the terminal in raw mode ([#10585](https://github.com/earendil-works/pi/issues/10585))
 
 ## [1.6.0] - 2026-11-20
 

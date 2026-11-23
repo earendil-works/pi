@@ -161,7 +161,8 @@ function isUserBashEventResult(value: unknown): value is UserBashEventResult {
 		(resultRecord.exitCode === undefined || typeof resultRecord.exitCode === "number") &&
 		typeof resultRecord.cancelled === "boolean" &&
 		typeof resultRecord.truncated === "boolean" &&
-		(resultRecord.fullOutputPath === undefined || typeof resultRecord.fullOutputPath === "string")
+		(resultRecord.fullOutputPath === undefined || typeof resultRecord.fullOutputPath === "string") &&
+		(resultRecord.fullOutputError === undefined || typeof resultRecord.fullOutputError === "string")
 	);
 }
 

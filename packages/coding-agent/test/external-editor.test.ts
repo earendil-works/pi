@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { type ExternalEditorResult, editInExternalEditor } from "../src/modes/interactive/external-editor.ts";
 
 const editorFixturePath = fileURLToPath(new URL("./fixtures/fake-external-editor.mjs", import.meta.url));
@@ -59,6 +59,18 @@ describe("editInExternalEditor", () => {
 		const { result } = await runExternalEditor("--empty");
 
 		expect(result).toEqual({ status: "complete", content: "" });
+	});
+
+	// #10585: the editor starts from a key handler, so a full or unwritable temp dir must fail, not throw.
+	it("reports a temp dir it cannot write to", async () => {
+		const missing = join(tmpdir(), `pi-external-editor-missing-${process.pid}`, "tmp");
+		for (const name of ["TMPDIR", "TEMP", "TMP"]) vi.stubEnv(name, missing);
+		const result = await editInExternalEditor({ command: "true", content: "original" });
+
+		expect(result).toEqual({
+			status: "failed",
+			message: expect.stringMatching(/^External editor failed: ENOENT.*; prompt unchanged$/),
+		});
 	});
 
 	// #11592: launch failures must be reported, not silently ignored.

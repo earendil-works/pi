@@ -6,9 +6,8 @@
  * - Direct calls from modes that need bash execution
  */
 
-import type { WriteStream } from "node:fs";
 import { splitIncompleteAnsiSuffix, stripAnsi } from "../utils/ansi.ts";
-import { createOutputFileStream } from "../utils/output-files.ts";
+import { createOutputFileStream, type OutputFileStream } from "../utils/output-files.ts";
 import { sanitizeBinaryOutput } from "../utils/shell.ts";
 import type { BashOperations } from "./tools/bash.ts";
 import { DEFAULT_MAX_BYTES, truncateTail } from "./tools/truncate.ts";
@@ -33,8 +32,10 @@ export interface BashResult {
 	cancelled: boolean;
 	/** Whether the output was truncated */
 	truncated: boolean;
-	/** Path to temp file containing full output (if output exceeded truncation threshold) */
+	/** Path to temp file containing full output (if output exceeded truncation threshold and the file could be saved) */
 	fullOutputPath?: string;
+	/** Why the full output could not be saved to a temp file (if output exceeded truncation threshold) */
+	fullOutputError?: string;
 }
 
 // ============================================================================
@@ -56,17 +57,16 @@ export async function executeBashWithOperations(
 	let discardedOutput = false;
 	const maxOutputBytes = DEFAULT_MAX_BYTES * 2;
 
-	let tempFilePath: string | undefined;
-	let tempFileStream: WriteStream | undefined;
+	let tempFile: OutputFileStream | undefined;
 	let totalBytes = 0;
 
 	const ensureTempFile = () => {
-		if (tempFilePath) {
+		if (tempFile) {
 			return;
 		}
-		({ path: tempFilePath, stream: tempFileStream } = createOutputFileStream("pi-bash", ".log"));
+		tempFile = createOutputFileStream("pi-bash", ".log");
 		for (const chunk of outputChunks) {
-			tempFileStream.write(chunk);
+			tempFile.write(chunk);
 		}
 	};
 
@@ -86,9 +86,7 @@ export async function executeBashWithOperations(
 			ensureTempFile();
 		}
 
-		if (tempFileStream) {
-			tempFileStream.write(text);
-		}
+		tempFile?.write(text);
 
 		// Keep rolling buffer
 		outputChunks.push(text);
@@ -124,7 +122,7 @@ export async function executeBashWithOperations(
 	} catch (err) {
 		// An aborted command still returns the output it produced so far
 		if (!options?.signal?.aborted) {
-			tempFileStream?.end();
+			await tempFile?.close();
 			throw err;
 		}
 	}
@@ -135,7 +133,8 @@ export async function executeBashWithOperations(
 	if (truncationResult.truncated) {
 		ensureTempFile();
 	}
-	tempFileStream?.end();
+	// A failed file is dropped: the result keeps the in-memory tail without a path.
+	const saved = await tempFile?.close();
 	const cancelled = options?.signal?.aborted ?? false;
 
 	return {
@@ -143,6 +142,7 @@ export async function executeBashWithOperations(
 		exitCode: cancelled ? undefined : (exitCode ?? undefined),
 		cancelled,
 		truncated: discardedOutput || truncationResult.truncated,
-		fullOutputPath: tempFilePath,
+		fullOutputPath: saved?.kind === "saved" ? saved.path : undefined,
+		...(saved?.kind === "failed" ? { fullOutputError: saved.error } : {}),
 	};
 }
