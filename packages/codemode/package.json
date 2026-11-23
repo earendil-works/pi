@@ -1,7 +1,7 @@
 {
 	"name": "@earendil-works/pi-codemode",
 	"version": "1.6.0",
-	"description": "Sandboxed JavaScript execution where the only capability is calling injected tools",
+	"description": "Sandboxed JavaScript and TypeScript execution where the only capability is calling injected tools",
 	"type": "module",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
@@ -31,11 +31,6 @@
 			"types": "./dist/cloudflare.d.ts",
 			"import": "./dist/cloudflare.js"
 		},
-		"./worker": {
-			"source": "./src/runtime/worker.ts",
-			"types": "./dist/runtime/worker.d.ts",
-			"import": "./dist/runtime/worker.js"
-		},
 		"./djs": {
 			"source": "./src/djs.ts",
 			"types": "./dist/djs.d.ts",
@@ -56,7 +51,8 @@
 		"pi",
 		"codemode",
 		"sandbox",
-		"quickjs",
+		"djs",
+		"typescript",
 		"wasm",
 		"cloudflare",
 		"durable-objects"
@@ -72,8 +68,7 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"@earendil-works/djs": "file:/Users/mitsuhiko/Development/djs/work/scratch/pi-pack/package",
-		"quickjs-wasi": "3.6.2"
+		"@earendil-works/djs": "file:/Users/mitsuhiko/Development/djs/work/scratch/pi-pack/package"
 	},
 	"devDependencies": {
 		"vitest": "4.1.12"

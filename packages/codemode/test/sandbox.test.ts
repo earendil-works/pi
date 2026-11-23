@@ -183,13 +183,12 @@ describe.each(Object.keys(BACKENDS))("%s backend", (name) => {
 			]);
 		});
 
-		// djs: a cycle passed to a plain host function fails the run instead of the call.
-		it.fails("rejects a value with a cycle in text()", async () => {
+		it("rejects a value with a cycle in text()", async () => {
 			const sandbox = createSandbox();
 			const result = await sandbox.execute(
 				"const c = {}; c.self = c; try { text(c); } catch (error) { return error.name + ': ' + error.message; }",
 			);
-			expect(result).toMatchObject({ ok: true, value: expect.stringMatching(/^TypeError: .*circular/) });
+			expect(result).toMatchObject({ ok: true, value: expect.stringMatching(/^TypeError: .*cyclic/) });
 		});
 
 		// https://github.com/earendil-works/pi/issues/10215
@@ -434,8 +433,7 @@ describe.each(Object.keys(BACKENDS))("%s backend", (name) => {
 			]);
 		});
 
-		// djs 0296: namespaces with a null prototype.
-		it.fails("has no members of Object.prototype in tools", async () => {
+		it("has no members of Object.prototype in tools", async () => {
 			const sandbox = createSandbox([echo]);
 			expect(await sandbox.execute("return String(tools.toString)")).toMatchObject({ ok: true, value: "undefined" });
 		});
@@ -857,15 +855,13 @@ describe.each(Object.keys(BACKENDS))("%s backend", (name) => {
 			});
 		});
 
-		// djs: a thrown Error's message that is not a string arrives empty.
-		it.fails("reports errors whose name or message is not a string", async () => {
+		it("reports errors whose name or message is not a string", async () => {
 			const sandbox = createSandbox();
 			const result = await sandbox.execute("const error = new Error('x'); error.message = 42; throw error;");
 			expect(result).toMatchObject({ ok: false, error: { kind: "script", name: "Error", message: "42" } });
 		});
 
-		// djs: host globals are writable.
-		it.fails("keeps tools and console frozen", async () => {
+		it("keeps tools and console frozen", async () => {
 			const sandbox = createSandbox([echo]);
 			const result = await sandbox.execute(`
 				try { tools.echo = () => 'nope'; } catch {}

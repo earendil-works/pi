@@ -121,9 +121,6 @@
 			"@earendil-works/pi-codemode/source": [
 				"../../../packages/codemode/src/source.ts"
 			],
-			"@earendil-works/pi-codemode/worker": [
-				"../../../packages/codemode/src/runtime/worker.ts"
-			],
 			"@earendil-works/pi-schema": [
 				"../../../packages/schema/src/index.ts"
 			],
