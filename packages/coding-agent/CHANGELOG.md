@@ -21,6 +21,7 @@
 - Fixed the `thinkingLevelMap` reference in the models.json schema and docs suggesting pi does not support the `xhigh` and `max` thinking levels; it now says they are opt-in and only offered when mapped, and the model guide explains how to map thinking levels ([#12281](https://github.com/earendil-works/pi/issues/12281))
 - Fixed Mermaid diagrams wider than the terminal falling back to their source without explanation; a note now says how many columns the diagram needs ([#12324](https://github.com/earendil-works/pi/issues/12324))
 - Fixed copies on Wayland silently failing when `wl-copy` guessed a non-text MIME type from the copied text, for example `application/x-ruby` for text starting with `def`, which clipboard managers such as Klipper discard; pi now copies as `text/plain` ([#12446](https://github.com/earendil-works/pi/pull/12446) by [@ttempaa](https://github.com/ttempaa))
+- Fixed pi crashing when the bash tool or a `!` command could not write its full-output temp file, for example when `/tmp` was full, over a per-user quota or not writable; both now keep the truncated output, and the bash tool says why the full output could not be saved. Opening the external editor and `/share` now report such failures instead of crashing ([#10585](https://github.com/earendil-works/pi/issues/10585))
 
 ## [1.6.0] - 2026-11-20
 

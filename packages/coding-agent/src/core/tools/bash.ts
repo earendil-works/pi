@@ -13,7 +13,7 @@ import {
 	untrackDetachedChildPid,
 } from "../../utils/shell.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
-import { OutputAccumulator } from "./output-accumulator.ts";
+import { OutputAccumulator, type OutputSnapshot } from "./output-accumulator.ts";
 import { BASH_UPDATE_THROTTLE_MS, createShellRenderers } from "./renderers/bash.ts";
 import { type TypeBoxAgentTool, wrapToolDefinition } from "./tool-definition-wrapper.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult } from "./truncate.ts";
@@ -316,7 +316,7 @@ export function createShellToolDefinition(
 					content: [{ type: "text", text: snapshot.content || "" }],
 					details: {
 						truncation: snapshot.truncation.truncated ? snapshot.truncation : undefined,
-						fullOutputPath: snapshot.fullOutputPath,
+						fullOutputPath: savedPath(snapshot),
 					},
 				});
 			};
@@ -358,26 +358,31 @@ export function createShellToolDefinition(
 				output.finish();
 				clearUpdateTimer();
 				emitOutputUpdate();
-				const snapshot = output.snapshot({ persistIfTruncated: true });
+				// The file path is only final after closing: a write can still fail while the file flushes.
 				await output.closeTempFile();
-				return snapshot;
+				return output.snapshot({ persistIfTruncated: true });
 			};
 
-			const formatOutput = (snapshot: Awaited<ReturnType<typeof finishOutput>>, emptyText = "(no output)") => {
+			const formatOutput = (snapshot: OutputSnapshot, emptyText = "(no output)") => {
 				const truncation = snapshot.truncation;
 				let text = snapshot.content || emptyText;
 				let details: BashToolDetails | undefined;
 				if (truncation.truncated) {
-					details = { truncation, fullOutputPath: snapshot.fullOutputPath };
+					details = { truncation, fullOutputPath: savedPath(snapshot) };
+					const file = snapshot.fullOutputFile;
+					const fullOutput =
+						file?.kind === "failed"
+							? `Could not save the full output: ${file.error}`
+							: `Full output: ${file?.path}`;
 					const startLine = truncation.totalLines - truncation.outputLines + 1;
 					const endLine = truncation.totalLines;
 					if (truncation.lastLinePartial) {
 						const lastLineSize = formatSize(output.getLastLineBytes());
-						text += `\n\n[Showing last ${formatSize(truncation.outputBytes)} of line ${startLine} (line is ${lastLineSize}). Full output: ${snapshot.fullOutputPath}]`;
+						text += `\n\n[Showing last ${formatSize(truncation.outputBytes)} of line ${startLine} (line is ${lastLineSize}). ${fullOutput}]`;
 					} else if (truncation.truncatedBy === "lines") {
-						text += `\n\n[Showing lines ${startLine}-${endLine} of ${truncation.totalLines}. Full output: ${snapshot.fullOutputPath}]`;
+						text += `\n\n[Showing lines ${startLine}-${endLine} of ${truncation.totalLines}. ${fullOutput}]`;
 					} else {
-						text += `\n\n[Showing lines ${startLine}-${endLine} of ${truncation.totalLines} (${formatSize(DEFAULT_MAX_BYTES)} limit). Full output: ${snapshot.fullOutputPath}]`;
+						text += `\n\n[Showing lines ${startLine}-${endLine} of ${truncation.totalLines} (${formatSize(DEFAULT_MAX_BYTES)} limit). ${fullOutput}]`;
 					}
 				}
 				return { text, details };
@@ -425,8 +430,8 @@ export function createShellToolDefinition(
 				const structuredContent: BashToolOutput = {
 					output: fullOutput.content,
 					truncated: fullOutput.truncated,
-					...(fullOutput.truncated && snapshot.fullOutputPath
-						? { full_output_path: snapshot.fullOutputPath }
+					...(fullOutput.truncated && snapshot.fullOutputFile?.kind === "saved"
+						? { full_output_path: snapshot.fullOutputFile.path }
 						: {}),
 					exit_code: exitCode,
 					wall_time_seconds: wallTimeSeconds,
@@ -446,6 +451,11 @@ export function createShellToolDefinition(
 		},
 		...createShellRenderers(config.prompt),
 	};
+}
+
+/** The full output file of a snapshot, unless it could not be saved. */
+function savedPath(snapshot: OutputSnapshot): string | undefined {
+	return snapshot.fullOutputFile?.kind === "saved" ? snapshot.fullOutputFile.path : undefined;
 }
 
 const bashToolConfig: ShellToolConfig = {
