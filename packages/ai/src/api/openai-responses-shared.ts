@@ -190,6 +190,7 @@ function renderToolRemovalNotice(names: readonly string[]): string {
 	return `The following tools are no longer available. Do not call them:\n${names.map((name) => `- ${name}`).join("\n")}`;
 }
 
+/** Render input items for replay, as used by Codex WebSocket continuation. Use `prepareResponsesPrompt` to build a request. */
 export function convertResponsesMessages<TApi extends Api>(
 	model: Model<TApi>,
 	context: TranscriptContext,
