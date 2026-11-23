@@ -50,6 +50,16 @@ function stallNextCredentialList(harness: Harness): StalledCredentialList {
 	};
 }
 
+// Providers without an API key of their own, so only their stored credentials configure them.
+const providersWithoutKeys = {
+	providers: Object.fromEntries(
+		["stale-provider", "current-provider"].map((provider) => [
+			provider,
+			{ baseUrl: "https://example.test/v1", api: "openai-completions", models: [{ id: "model" }] },
+		]),
+	),
+};
+
 async function waitForRecoveryRefresh(stalledList: StalledCredentialList, harness: Harness): Promise<void> {
 	const refresh = harness.session.modelRuntime.refresh({ allowNetwork: false });
 	await vi.waitFor(() => expect(stalledList.getCallCount()).toBe(2));
@@ -68,7 +78,7 @@ describe("issue #7301 stalled availability refresh", () => {
 	});
 
 	it("recovers without letting the stalled refresh overwrite the newer snapshot", async () => {
-		harness = await createHarness({ withConfiguredAuth: false });
+		harness = await createHarness({ withConfiguredAuth: false, modelsJson: providersWithoutKeys });
 		const runtime = harness.session.modelRuntime;
 		await harness.authStorage.modify("stale-provider", async () => ({ type: "api_key", key: "stale-key" }));
 		await runtime.refresh({ allowNetwork: false });
