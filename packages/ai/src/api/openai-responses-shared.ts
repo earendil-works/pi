@@ -196,6 +196,31 @@ export function convertResponsesMessages<TApi extends Api>(
 	allowedToolCallProviders: ReadonlySet<string>,
 	options?: ConvertResponsesMessagesOptions,
 ): ResponseInput {
+	return renderResponsesTranscript(model, context, allowedToolCallProviders, options).input;
+}
+
+/** Place transcript-derived declarations and effort changes consistently in input and top-level request fields. */
+export function prepareResponsesPrompt<TApi extends Api>(
+	model: Model<TApi>,
+	context: TranscriptContext,
+	allowedToolCallProviders: ReadonlySet<string>,
+	options?: ConvertResponsesMessagesOptions & { effortBaseline?: "initial" },
+) {
+	const { input, requestTools, requestEffortBaseline } = renderResponsesTranscript(
+		model,
+		context,
+		allowedToolCallProviders,
+		options,
+	);
+	return { input, requestTools: convertResponsesTools(requestTools, options?.toolOptions), requestEffortBaseline };
+}
+
+function renderResponsesTranscript<TApi extends Api>(
+	model: Model<TApi>,
+	context: TranscriptContext,
+	allowedToolCallProviders: ReadonlySet<string>,
+	options?: ConvertResponsesMessagesOptions & { effortBaseline?: "initial" },
+) {
 	const normalizedContext = resolveTranscript(context, options?.supportsMidConvoSystemMessages);
 	const messages: ResponseInput = [];
 
@@ -264,7 +289,17 @@ export function convertResponsesMessages<TApi extends Api>(
 			tools: convertResponsesTools(tools, { ...options?.toolOptions, toolSearchResult: true }),
 		} satisfies ResponseToolSearchOutputItemParam);
 	};
+	let requestEffortBaseline: string | undefined;
+	let previousEffort: string | undefined;
 	const pushConfigurationUpdate = (effort: string): void => {
+		if (options?.effortBaseline === "initial") {
+			if (previousEffort === effort) return;
+			previousEffort = effort;
+			if (requestEffortBaseline === undefined) {
+				requestEffortBaseline = effort;
+				return;
+			}
+		}
 		messages.push({
 			type: "configuration_update",
 			reasoning: { effort: effort as NonNullable<ResponseConfigurationUpdateItemParam.Reasoning["effort"]> },
@@ -435,7 +470,7 @@ export function convertResponsesMessages<TApi extends Api>(
 	}
 	if (options?.configurationUpdateEffort !== undefined) pushConfigurationUpdate(options.configurationUpdateEffort);
 
-	return messages;
+	return { input: messages, requestTools: transcriptTools.requestTools, requestEffortBaseline };
 }
 
 // =============================================================================

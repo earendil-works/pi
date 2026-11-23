@@ -21,6 +21,7 @@
 - Fixed HTTP 400 after tool calls without text on Cloudflare Workers AI's GPT-OSS 120B and 20B, Granite 4.0 H Micro, and Llama 3.3 70B Instruct FP8 Fast. Pi now sends an empty string instead of `null` for those assistant messages ([#12194](https://github.com/earendil-works/pi/issues/12194))
 - Fixed HTTP 400 for non-strict Anthropic tools with Draft 7 tuples by preserving their declared `$schema` ([#12212](https://github.com/earendil-works/pi/issues/12212))
 - Fixed provider errors reading "request rate increased too quickly", such as OpenAI Codex `slow_down` and Alibaba Qwen throttling, not being retried ([#12240](https://github.com/earendil-works/pi/issues/12240))
+- Fixed `openai-codex` starting GPT-6 requests at `medium` regardless of the selected thinking level. Requests now start at the selected effort and send updates only when it changes ([#12361](https://github.com/earendil-works/pi/issues/12361))
 
 ## [1.6.0] - 2026-11-20
 
