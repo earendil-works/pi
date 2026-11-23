@@ -66,6 +66,7 @@ HTTP servers use `url`, `headers`, and `oauth` (see [Authenticate with OAuth](#a
 Both server types support:
 
 - `timeout`: per-request timeout in seconds (default 60). Progress notifications reset it.
+- `protocol`: the MCP protocol to speak (see [Protocol versions](#protocol-versions)). `auto` (default for HTTP servers), `legacy` (default for stdio servers), or `modern`.
 - `enabled: false`: keep the entry without connecting to it.
 - `exposure` and `toolExposure`: control how tools reach the model (see [Control tool exposure](#control-tool-exposure)).
 - `description`: what the server offers, in a sentence. It lists the server in the system prompt (see [Control tool exposure](#control-tool-exposure)), tool search ranks the server's tools by it, and codemode's `describeNamespace()` returns it. Without it, the first line of the server instructions is used once the server connects.
@@ -100,6 +101,21 @@ Pi reports configuration errors, failed connections, and required sign-ins once 
 Pi connects every enabled server in the background when a session starts. A server's tools appear once it connects; the `codemode` description does not list them, so it does not change when servers connect. The first prompt waits up to 10 seconds only for servers with `direct` tools, which must be declared in its request. Other servers are waited for when they are needed: a codemode script waits for the servers it names (`mcp__<server>`) and, when it calls `searchTools()` or reads `ALL_TOOLS`, for all of them; `tool_search` and the resource tools also wait for all of them. HTTP network errors and transient statuses (408, 429, and 5xx) are retried twice. A dropped connection is shown as disconnected and reconnects on the next call. When a server announces a changed tool list, new tools are added and withdrawn tools become unreachable.
 
 Stopping a stdio server closes its stdin, sends SIGTERM, then sends SIGKILL to its process group. This also stops servers launched through wrappers such as `npx` or `uvx`.
+
+### Protocol versions
+
+MCP has two kinds of protocol versions. Up to `2025-11-25`, a connection starts with an `initialize` handshake (`legacy`). `2026-07-28` is stateless (`modern`): there is no handshake and no session, and every request carries the protocol version and pi's capabilities.
+
+With `"protocol": "auto"`, pi first sends `server/discover`. A server that answers it speaks `2026-07-28`; any other answer makes pi fall back to `initialize`. Pi remembers the result for reconnects, so a legacy server is probed once per session, and probes again when a reconnect with the remembered protocol fails. `legacy` never probes, and `modern` fails against servers without `2026-07-28`.
+
+HTTP servers default to `auto`: a legacy HTTP server rejects the probe at once. Stdio servers default to `legacy`, because some older stdio servers do not answer a request before `initialize`, or exit on it; then the probe waits for the request timeout, or pi starts the server again without it. Set `"protocol": "auto"` or `"modern"` for stdio servers that speak `2026-07-28`.
+
+With `2026-07-28` servers, pi:
+
+- sends tool arguments marked with `x-mcp-header` as `Mcp-Param-*` HTTP headers, and leaves out tools whose markings are invalid
+- answers `roots/list` input requests with the session directory, and fails tool calls that ask for elicitation or sampling, which pi does not support
+- keeps a `subscriptions/listen` stream open to follow tool list changes
+- asks for `info` and more severe log messages for `mcp.log`
 
 ## Migrate configuration from another client
 

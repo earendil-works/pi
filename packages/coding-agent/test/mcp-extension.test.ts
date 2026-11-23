@@ -14,7 +14,7 @@ import {
 	McpSessionExpiredError,
 } from "@earendil-works/pi-mcp";
 import { createInMemoryTransportPair, type InMemoryTransport } from "@earendil-works/pi-mcp/testing";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { InMemoryAuthStorageBackend } from "../src/core/auth-storage.ts";
 import {
 	addMcpServerConfig,
@@ -810,6 +810,156 @@ for await (const line of createInterface({ input: process.stdin })) {
 		expect(connection.state).toBe("connected");
 		expect(connection.hasResources).toBe(true);
 		expect(methods).toEqual(["initialize", "tools/list"]);
+		await connection.close();
+	});
+
+	/**
+	 * In-memory server of the stateless protocol (MCP 2026-07-28) with changing tools. `listen` answers
+	 * `subscriptions/listen` after acknowledging it; without it, the subscription stays open.
+	 */
+	function createModernTransport(
+		options: { methods?: string[]; tools?: () => string[]; listen?: (id: string | number) => boolean } = {},
+	) {
+		const pair = createInMemoryTransportPair();
+		servers.push(pair.server);
+		const send = (message: JsonRpcMessage) => queueMicrotask(() => void pair.server.send(message));
+		pair.server.onMessage((message) => {
+			if (!("id" in message) || !("method" in message)) return;
+			options.methods?.push(message.method);
+			const reply = (result: Record<string, unknown>) =>
+				send({ jsonrpc: "2.0", id: message.id, result: { resultType: "complete", ...result } });
+			switch (message.method) {
+				case "server/discover":
+					reply({ supportedVersions: ["2026-07-28"], capabilities: { tools: { listChanged: true } } });
+					return;
+				case "tools/list":
+					reply({
+						tools: (options.tools?.() ?? []).map((name) => ({ name, inputSchema: { type: "object" } })),
+					});
+					return;
+				case "subscriptions/listen": {
+					const meta = { "io.modelcontextprotocol/subscriptionId": message.id };
+					send({
+						jsonrpc: "2.0",
+						method: "notifications/subscriptions/acknowledged",
+						params: { _meta: meta, notifications: { toolsListChanged: true } },
+					});
+					if (options.listen?.(message.id)) reply({ _meta: meta });
+					return;
+				}
+				default:
+					send({ jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "Method not found" } });
+			}
+		});
+		void pair.server.start();
+		return pair.client;
+	}
+
+	it("probes HTTP servers and speaks the stateless protocol to modern ones", async () => {
+		const methods: string[] = [];
+		const { connection } = connect(
+			{ name: "fake", config: { url: "http://unused.invalid", headers: { Authorization: "x" } }, source: "test" },
+			[() => createModernTransport({ methods })],
+		);
+		expect(connection.protocol).toBe("auto");
+		expect((await connection.getClient()).protocolEra).toBe("modern");
+		// The modern server advertises tool list changes, which arrive on a subscription.
+		await vi.waitFor(() => expect(methods).toEqual(["server/discover", "tools/list", "subscriptions/listen"]));
+		await connection.close();
+	});
+
+	it("skips the probe when reconnecting to a legacy HTTP server", async () => {
+		const methods: string[] = [];
+		const { connection } = connect(
+			{ name: "fake", config: { url: "http://unused.invalid", headers: { Authorization: "x" } }, source: "test" },
+			[() => createTransport({ methods }), () => createTransport({ methods })],
+		);
+		expect((await connection.getClient()).protocolEra).toBe("legacy");
+		await servers.at(-1)?.close();
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect((await connection.getClient()).protocolEra).toBe("legacy");
+		expect(methods).toEqual(["server/discover", "initialize", "tools/list", "initialize", "tools/list"]);
+		await connection.close();
+	});
+
+	it("probes again when a server no longer speaks the protocol of the last connection", async () => {
+		const methods: string[] = [];
+		const { connection, opened } = connect(
+			{ name: "fake", config: { url: "http://unused.invalid", headers: { Authorization: "x" } }, source: "test" },
+			[() => createModernTransport(), () => createTransport({ methods }), () => createTransport({ methods })],
+		);
+		expect((await connection.getClient()).protocolEra).toBe("modern");
+		await servers.at(-1)?.close();
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		// The server was replaced by a legacy one.
+		expect((await connection.getClient()).protocolEra).toBe("legacy");
+		expect(opened()).toBe(3);
+		expect(methods).toEqual(["server/discover", "server/discover", "initialize", "tools/list"]);
+		await connection.close();
+	});
+
+	it("does not probe stdio servers unless configured, and restarts one that exits on the probe", async () => {
+		const methods: string[] = [];
+		const plain = connect({ name: "fake", config: { command: "unused" }, source: "test" }, [
+			() => createTransport({ methods }),
+		]);
+		expect(plain.connection.protocol).toBe("legacy");
+		await plain.connection.getClient();
+		expect(methods).toEqual(["initialize", "tools/list"]);
+		await plain.connection.close();
+
+		const exiting = () => {
+			const transport = createTransport({ methods });
+			const send = transport.send.bind(transport);
+			transport.send = async (message: JsonRpcMessage) => {
+				if ("method" in message && message.method === "server/discover") {
+					await transport.close();
+					return;
+				}
+				return send(message);
+			};
+			return transport;
+		};
+		methods.length = 0;
+		const probed = connect({ name: "fake", config: { command: "unused", protocol: "auto" }, source: "test" }, [
+			exiting,
+			exiting,
+		]);
+		expect((await probed.connection.getClient()).protocolEra).toBe("legacy");
+		expect(probed.opened()).toBe(2);
+		expect(methods).toEqual(["initialize", "tools/list"]);
+		await probed.connection.close();
+	});
+
+	it("follows tool changes of modern servers through a subscription and reopens it when it ends", async () => {
+		let tools = ["first"];
+		const methods: string[] = [];
+		let listens = 0;
+		const toolUpdates: string[][] = [];
+		const connection = new McpServerConnection({
+			entry: {
+				name: "fake",
+				config: { url: "http://unused.invalid", headers: { Authorization: "x" } },
+				source: "test",
+			},
+			cwd: process.cwd(),
+			// The first subscription ends gracefully at once; the second stays open.
+			createTransport: () => createModernTransport({ methods, tools: () => tools, listen: () => ++listens === 1 }),
+			credentials: new McpOAuthCredentialStore(new InMemoryAuthStorageBackend()),
+			onTools: (server) => toolUpdates.push(server.tools.map((tool) => tool.name)),
+		});
+		await connection.getClient();
+		await vi.waitFor(() => expect(listens).toBe(2), { timeout: 3_000 });
+		await vi.waitFor(() => expect(methods.filter((method) => method === "tools/list")).toHaveLength(2));
+
+		tools = ["first", "second"];
+		await servers.at(-1)?.send({
+			jsonrpc: "2.0",
+			method: "notifications/tools/list_changed",
+			params: { _meta: { "io.modelcontextprotocol/subscriptionId": 99 } },
+		});
+		await vi.waitFor(() => expect(connection.tools.map((tool) => tool.name)).toEqual(["first", "second"]));
+		expect(toolUpdates.at(-1)).toEqual(["first", "second"]);
 		await connection.close();
 	});
 });
