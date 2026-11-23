@@ -94,6 +94,7 @@ export default defineFacet((host) => {
 					const { serverId } = await brain.syncAccess();
 					return {
 						remote: new RadiusSyncRemote(() => brain.syncAccess()),
+						account: () => brain.account(),
 						device: serverId,
 						server: `server-${serverId}`,
 						terminal: isTerminalSyncError,

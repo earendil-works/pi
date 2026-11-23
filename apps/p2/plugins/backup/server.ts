@@ -37,6 +37,7 @@ import {
 	type BackupStatus,
 	BackupTargets,
 	type BackupUploads,
+	type OpenBackup,
 	type OpenBackupTarget,
 	SERVER_STORE,
 	sessionStoreName,
@@ -184,7 +185,11 @@ async function openTarget(
 	context: Context,
 ): Promise<OpenBackupTarget> {
 	if (target.kind === "folder")
-		return { remote: openFolderRemote(target.path, dataDir), device: await deviceId(dataDir), server: SERVER_STORE };
+		return {
+			remote: openFolderRemote(target.path, dataDir),
+			device: await deviceId(dataDir),
+			server: SERVER_STORE,
+		};
 	const offered = targets.value.get(target.name) ?? (await offeredWithin(targets, target.name, context));
 	// Not signed in or not reachable yet: the open fails `transient` and Chord retries it with backoff.
 	return offered.open();
@@ -315,6 +320,8 @@ export default defineFacet((host) => {
 				const opened = await openTarget(target, dataDir, targets, context);
 				device.set(opened.device);
 				const uploads = openUploads(opened.remote, opened.device, withoutAbortSignal(context), opened.terminal);
+				// Who the target writes as now; null for a target without accounts (a folder).
+				const account = async (): Promise<string | null> => (await opened.account?.()) ?? null;
 				const uploader = new BackupUploader({
 					store,
 					name: opened.server,
@@ -323,6 +330,7 @@ export default defineFacet((host) => {
 					directory: serverDirectory(dataDir),
 					target: backupTargetKey(target),
 					files: backupFiles(dataDir),
+					account,
 					report: (status) => report(SERVER_STORE, status),
 					...(opened.terminal === undefined ? {} : { terminal: opened.terminal }),
 				});
@@ -333,7 +341,7 @@ export default defineFacet((host) => {
 					(error) => processLogs.append("backup:server", "event", `following commits failed: ${text(error)}`),
 				);
 				processLogs.append("backup", "event", `Backing up to ${describe(target)} as device ${opened.device}`);
-				return { uploads, uploader, stopWatching };
+				return { uploads, account, uploader, stopWatching };
 			},
 			async (opened) => {
 				ended = true;
@@ -346,8 +354,8 @@ export default defineFacet((host) => {
 		// A target offered (its plugin's object activated, loaded or reloaded) after a failed open: try at once.
 		self.retryOn(targets);
 		self.contribute(BackupNative, {
-			get uploads() {
-				return backup.value?.uploads;
+			get backup() {
+				return backup.value;
 			},
 		});
 		return {
@@ -366,11 +374,12 @@ export default defineFacet((host) => {
 		const store = sessionStoreName(principal.session);
 		const backup = self.get(Backup, {});
 		const native = nativeOf(self, BackupNative, "The backup");
-		const uploads = (): BackupUploads => {
-			const open = native().uploads;
-			if (open === undefined) throw new Error("Backup is off");
-			return open;
+		const open = (): OpenBackup => {
+			const opened = native().backup;
+			if (opened === undefined) throw new Error("Backup is off");
+			return opened;
 		};
+		const uploads = (): BackupUploads => open().uploads;
 		return {
 			variant: "worker",
 			members: {
@@ -386,6 +395,7 @@ export default defineFacet((host) => {
 					uploads().abort(store, upload);
 					return null;
 				},
+				account: () => open().account(),
 			},
 		};
 	});

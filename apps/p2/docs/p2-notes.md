@@ -1359,6 +1359,18 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
     another server took, or a store that lost commits the backup holds (`behind`): status `diverged` or `behind`,
     "stopped until a restart"; the commits stay in the outbox. Refusals that retrying cannot fix (400, 403, 413,
     `protocol_too_old`) stop the same way; other failures retry with backoff.
+  - **A backup belongs to one account** (owner, 2026-11-23). The case: two people use one machine in turn, person A
+    signs in to Radius, works in a session and backs it up through seq 20; person B signs in instead and continues the
+    same session to 25. Were B's server to upload, the session's history would go on in B's backup, the bookmark would
+    say 25, and when A signs in again A's backup (still at 20) could not continue: `not_head`. So a store's backup
+    belongs to the account of its first upload (`<name>.account` beside its bookmark, `backup/<target>/`; Radius:
+    `<organization ID>/<principal ID>` from Radius's context, `RadiusBrain.account()`). Only a target with accounts has
+    the rule: Radius; a folder has none, so every store is uploaded to it whoever is signed in. Under any other account
+    the store is not uploaded: status `other_account`, its commits wait in the outbox, and when its account signs in
+    again the next upload goes on from where that backup ended (B's work in A's session lands in A's backup: the
+    session is A's). Sessions first backed up as B are B's the same way. Checked before every upload, since the server
+    may sign in as someone else while it runs. A store whose account file was deleted by hand binds to whoever uploads
+    it next.
   - **Restore** (not built yet) forks: a restored session gets a new session ID and its own backup, so two machines
     never write one session's history.
   - **Not in a backup:** file contents (only their index rows), and sessions whose worker never runs after backup is

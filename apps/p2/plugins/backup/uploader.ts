@@ -1,6 +1,7 @@
 // One store's uploads to the backup remote, used by the server (its own store) and each session's worker (the
 // session's): Chord's `uploadSession` from the store's outbox, run by a `FlushScheduler` soon after each commit (about
-// 200 ms after an urgent one, `isUrgentCommit`), with the last sequence the backup holds kept beside the store.
+// 200 ms after an urgent one, `isUrgentCommit`), with the last sequence the backup holds kept beside the store, and,
+// for a target with accounts (Radius), the account the store's backup belongs to (the first one it was uploaded as).
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { CommitPublication } from "@earendil-works/pi-durable";
@@ -65,6 +66,11 @@ export type BackupUploaderOptions = {
 	/** The target's bookmark folder name (`backupTargetKey`). */
 	readonly target: string;
 	readonly files: SyncFileSystem;
+	/**
+	 * The account the target writes as now (`OpenBackupTarget.account`): the store is uploaded only as the account of its
+	 * first upload. Null for a target without accounts (a folder): the store is uploaded whoever is signed in.
+	 */
+	readonly account: (context: Context) => Promise<string | null>;
 	/** Where the backup stands, after each upload or failure. */
 	readonly report: (status: BackupStatus) => void;
 	/**
@@ -126,6 +132,17 @@ export class BackupUploader {
 		// Stopped: nothing is retried (the scheduler's backoff, or the next commit, would retry forever).
 		if (this.#stopped) return;
 		const { name, report } = this.#options;
+		const account = await this.#options.account(context);
+		if (account !== null) {
+			const owner = await this.#owner(context);
+			if (owner !== undefined && owner !== account) {
+				// Another person signed in on this machine: their account never gets this store's backup, which stays with
+				// its owner, its commits waiting in the outbox for the owner's next sign-in.
+				report({ state: "other_account", ...this.#head(await this.#synced(context)), at: Date.now() });
+				return;
+			}
+			if (owner === undefined) await this.#bind(account, context);
+		}
 		report({ state: "uploading", ...this.#head(await this.#synced(context)), at: Date.now() });
 		let result = await this.#upload(context);
 		if (result.type === "remote_empty") {
@@ -163,6 +180,28 @@ export class BackupUploader {
 	#stop(state: "diverged" | "behind", why: string, head: { syncedHead?: number }): void {
 		this.#stopped = true;
 		this.#options.report({ state, ...head, error: `${why} (stopped until a restart)`, at: Date.now() });
+	}
+
+	/** The account this store's backup belongs to: `<name>.account` beside its bookmark; undefined before its first upload. */
+	async #owner(context: Context): Promise<string | undefined> {
+		const read = await this.#options.files.readTextFile(this.#accountFile, context);
+		if (read.ok) return read.value;
+		// The file system's answer (a trust boundary): a missing file is a store never uploaded, anything else fails.
+		if ((read.error as { readonly code?: unknown }).code === "not_found") return undefined;
+		throw read.error;
+	}
+
+	async #bind(account: string, context: Context): Promise<void> {
+		const { files, directory, target } = this.#options;
+		const created = await files.createDir(join(directory, "backup", target), { recursive: true }, context);
+		if (!created.ok) throw created.error;
+		const written = await files.writeFile(this.#accountFile, account, context);
+		if (!written.ok) throw written.error;
+	}
+
+	get #accountFile(): string {
+		const { directory, target, name } = this.#options;
+		return join(directory, "backup", target, `${name}.account`);
 	}
 
 	async #synced(context: Context): Promise<number | undefined> {

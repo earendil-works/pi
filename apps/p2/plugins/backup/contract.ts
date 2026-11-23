@@ -38,6 +38,11 @@ export const BackupStatusSchema = obj({
 		literal("behind"),
 		/** The remote's history went on without this store (another machine writes it): uploads stop. */
 		literal("diverged"),
+		/**
+		 * The store's backup belongs to another account than the one signed in: nothing is uploaded until that account is
+		 * back (`account`); its commits wait in the outbox.
+		 */
+		literal("other_account"),
 	]),
 	/** The last sequence the backup holds. */
 	syncedHead: opt(int()),
@@ -92,9 +97,14 @@ export type BackupUploads = {
 	finish(store: string, upload: string): Promise<PutBatchResult>;
 	abort(store: string, upload: string): void;
 };
+/**
+ * The open backup (undefined while backup is off): its uploads, and the account its target writes as now (null for a
+ * target without accounts, `OpenBackupTarget.account`).
+ */
+export type OpenBackup = { readonly uploads: BackupUploads; readonly account: () => Promise<string | null> };
 export const BackupNative = defineRegistry<
-	{ readonly uploads: BackupUploads | undefined },
-	{ readonly uploads: BackupUploads | undefined } | undefined
+	{ readonly backup: OpenBackup | undefined },
+	{ readonly backup: OpenBackup | undefined } | undefined
 >("p2.backup-uploads", { version: 1 });
 
 /**
@@ -114,6 +124,8 @@ export const BackupRemote = remote("p2.backup-remote", {
 				append: method(obj(ChunkArgs)),
 				finish: method(obj(UploadArgs), PutResultSchema),
 				abort: method(obj(UploadArgs)),
+				/** The account the target writes as now; null for a target without accounts (`OpenBackupTarget.account`). */
+				account: method(obj({}), union([str(), nul()])),
 			},
 		},
 	},
@@ -129,6 +141,12 @@ export type OpenBackupTarget = {
 	readonly remote: SessionSyncStore;
 	readonly device: string;
 	readonly server: string;
+	/**
+	 * The account the target writes as now (Radius: `<organization ID>/<principal ID>`), for a target with accounts; a
+	 * folder has none. A store's backup belongs to the account of its first upload: under any other account it is not
+	 * uploaded, so a machine two people sign in to in turn never mixes one person's backup into the other's.
+	 */
+	readonly account?: () => Promise<string>;
 	/** Whether a failure of this kind will not pass by retrying (a refused body, a feature off): uploads stop. */
 	readonly terminal?: (error: unknown) => boolean;
 };

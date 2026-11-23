@@ -328,6 +328,8 @@ export class RadiusBrain {
 	/** The configuration the host socket connected with; channel sockets authenticate with its credential. */
 	#config: RadiusBrainConfig | undefined;
 	#refreshing: Promise<RadiusBrainConfig> | undefined;
+	/** The account the current credential signs in as (`account()`), asked of Radius once per credential. */
+	#account: { readonly token: string; readonly account: Promise<string> } | undefined;
 	#congestion: NodeJS.Timeout | undefined;
 	#closed = false;
 	readonly #abort = new AbortController();
@@ -402,6 +404,26 @@ export class RadiusBrain {
 	async syncAccess(): Promise<{ readonly gateway: string; readonly serverId: string; readonly token: string }> {
 		const config = await this.#currentConfig();
 		return { gateway: config.gateway, serverId: config.serverId, token: config.credential.access };
+	}
+
+	/**
+	 * The Radius account this brain is signed in as, `<organization ID>/<principal ID>` (Radius's context for the current
+	 * credential): a backup belongs to the account that made it (`plugins/backup`). Rejects while not signed in.
+	 */
+	async account(): Promise<string> {
+		const config = await this.#currentConfig();
+		const token = config.credential.access;
+		let cached = this.#account;
+		if (cached?.token !== token) {
+			const account = this.#owner(config).then((owner) => `${owner.organization_id}/${owner.id}`);
+			cached = { token, account };
+			this.#account = cached;
+			// A failed ask is asked again next time, not remembered.
+			account.catch(() => {
+				if (this.#account?.account === account) this.#account = undefined;
+			});
+		}
+		return cached.account;
 	}
 
 	close(): void {

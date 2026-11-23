@@ -39,6 +39,12 @@ export default defineFacet((host) => {
 				files: backupFiles(init.dataDir),
 				// What the server's target refuses for good crosses as `BACKUP_TERMINAL`: stop, as the server does.
 				terminal: isTerminalBackupError,
+				// The account the server's target writes as now: asked on every upload, as the server may sign in again.
+				account: (context) =>
+					root(
+						async (inner) => expectVariant(await inner.get(BackupRemote, {}), "worker").account({}, inner),
+						context,
+					),
 				// A status the server misses is replaced by the next one; the failure goes to the session's log.
 				report: (status) =>
 					void root(
