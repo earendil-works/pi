@@ -83,7 +83,7 @@ To use a secret manager without writing the resolved key to disk, set a provider
 }
 ```
 
-Pi runs the command when the key is first needed and caches its standard output for the process lifetime. Empty output, a timeout, or a nonzero exit leaves the key unresolved until Pi restarts.
+Pi runs the command when the key is first needed and caches its standard output for the process lifetime. Empty output, a timeout, or a nonzero exit leaves the key unresolved: `/login` shows the provider as `stored key did not resolve`. To retry, for example after signing in to the secret manager, enter the same `!command` again in `/login`, or restart Pi.
 
 ## Provider Specific Config
 

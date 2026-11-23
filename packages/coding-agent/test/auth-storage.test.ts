@@ -43,6 +43,24 @@ describe("AuthStorage", () => {
 		expect(await storage.read("anthropic")).toEqual({ type: "api_key", key: "command-key" });
 	});
 
+	// Regression test for #12164: a failed command stays cached until the key is saved again.
+	test("runs a command-backed key again after it is saved", async () => {
+		const name = `PI_TEST_AUTH_STORAGE_COMMAND_${Date.now()}`;
+		const credential = { type: "api_key" as const, key: `!printenv ${name}` };
+		writeAuthJson({ anthropic: credential });
+		const storage = AuthStorage.create(authJsonPath);
+		try {
+			expect(await storage.read("anthropic")).toEqual({ type: "api_key", key: undefined });
+			process.env[name] = "command-key";
+			expect(await storage.read("anthropic")).toEqual({ type: "api_key", key: undefined });
+
+			await storage.modify("anthropic", async () => credential);
+			expect(await storage.read("anthropic")).toEqual({ type: "api_key", key: "command-key" });
+		} finally {
+			delete process.env[name];
+		}
+	});
+
 	test("returns OAuth credentials unchanged", async () => {
 		const credential = {
 			type: "oauth" as const,
