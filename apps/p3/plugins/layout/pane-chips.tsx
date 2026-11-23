@@ -4,11 +4,12 @@
 // in (unless the person asked for reduced motion). No splits and no dragging here, but the same tree: a pane opened
 // here shows in its group on a wider screen.
 
-import { CloseIcon } from "@earendil-works/elanor-icons-react";
+import { CloseIcon } from "@earendil-works/p3/v1/web";
 import { type PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from "react";
+import type { Pane, PaneLayoutProps } from "./contract.web.tsx";
 import styles from "./pane-chips.module.css";
-import { closeShownPane, type Pane, type PaneLayoutProps, showPane } from "./pane-layout.tsx";
-import { groupsOf, panesOf } from "./pane-tree.ts";
+import { closeShownPane, showPane } from "./pane-layout.tsx";
+import { groupsOf, panesOf } from "./tree.ts";
 
 /** The phone's form of the layout. */
 export function PaneChips(props: PaneLayoutProps) {

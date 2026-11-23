@@ -4,9 +4,10 @@
 // a group's body near an edge to split that group on that side, onto its middle to move into it; the drop's place is
 // shown while dragging, Escape cancels. A click on a tab shows it.
 
-import { CloseIcon } from "@earendil-works/elanor-icons-react";
+import { CloseIcon } from "@earendil-works/p3/v1/web";
 import { Fragment, type PointerEvent as ReactPointerEvent, useRef, useState } from "react";
-import { closeShownPane, type Pane, type PaneLayoutProps, showPane } from "./pane-layout.tsx";
+import type { Pane, PaneLayoutProps } from "./contract.web.tsx";
+import { closeShownPane, showPane } from "./pane-layout.tsx";
 import styles from "./pane-splits.module.css";
 import {
 	groupOf,
@@ -18,7 +19,7 @@ import {
 	type PaneSplit,
 	resizeSplit,
 	splitPane,
-} from "./pane-tree.ts";
+} from "./tree.ts";
 
 /** Where a dragged tab would drop: into a group's tab bar at an index, or on its body's edge or middle. */
 type DropTarget =

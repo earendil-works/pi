@@ -1,5 +1,5 @@
-// One open session of the coding app: its header (back, title, what it holds) and its panes in the page's pane layout
-// (`PaneLayout`, `/v1/web`): the transcript first, then each thing opened from the session's dialog (in the group
+// One open session of the coding app: its header (back, title, what it holds) and its panes in the layout plugin's
+// pane layout (`PaneLayoutView`): the transcript first, then each thing opened from the session's dialog (in the group
 // beside the transcript; a new split on the right when there is none). The route names the focused pane
 // (`/coding/<session>/<thing>`; none: the transcript); the layout's tree is the person's on this device, per session:
 // in page state (through reloads of this plugin) and the browser's storage (through page loads), under their id (two
@@ -17,7 +17,7 @@ import {
 	navigate,
 	openPane,
 	type Pane,
-	PaneLayout,
+	PaneLayoutView,
 	type PaneNode,
 	panesOf,
 	paneTree,
@@ -54,6 +54,7 @@ function SessionPanes(props: {
 }) {
 	const { app, session } = props;
 	const Transcript = useView(TranscriptView);
+	const Layout = useView(PaneLayoutView);
 	const info = useVariant(useHold(SessionInfo, { session }), "info");
 	const row = useWatch(info?.session);
 	const things = useWatch(info?.things);
@@ -121,13 +122,15 @@ function SessionPanes(props: {
 				)}
 			</header>
 			<div className={styles.panes}>
-				<PaneLayout
-					focused={focused}
-					onChange={setTree}
-					onFocus={(pane) => navigate(at(pane === TRANSCRIPT ? undefined : pane))}
-					panes={panes}
-					tree={tidied}
-				/>
+				{Layout === undefined ? null : (
+					<Layout
+						focused={focused}
+						onChange={setTree}
+						onFocus={(pane) => navigate(at(pane === TRANSCRIPT ? undefined : pane))}
+						panes={panes}
+						tree={tidied}
+					/>
+				)}
 			</div>
 			<ThingsDialog
 				onClose={() => setHolding(false)}

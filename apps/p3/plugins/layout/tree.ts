@@ -1,4 +1,4 @@
-// A pane layout's tree (`PaneLayout`, `/v1/web`): plain JSON an app keeps (in page state, in the browser's storage)
+// A pane layout's tree (`PaneLayoutView`; apps reach part of it through `contract.web.tsx`): plain JSON an app keeps (in page state, in the browser's storage)
 // and changes only through these functions. A node is a split (a row or a column of nodes, each with its share of the
 // size) or a group (tabs of panes by id, one of them active). Every change keeps the tree tidy: a group that loses its
 // last pane goes, a split left with one node becomes that node, a split inside a split of its direction merges into

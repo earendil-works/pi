@@ -204,8 +204,10 @@ reported `working` before Durable accepts an input, so a crash in between leaves
   sessions", rename, give away, delete, where it is used).
 - **A kind's views:** `ThingViews`; `<ThingView session thing kind />` renders the right one, so an app never knows
   kinds.
-- **`PaneLayout`** (`/v1/web`): panes in splits and tabs the person drags; on a phone one pane at a time under a strip
-  of chips. An app may use it for its page; the coding app opens things as panes with it.
+- **The pane layout** (`PaneLayoutView`, the `layout` plugin's view; its contract re-exported by `/v1/web` with the
+  tree's types and the few pure functions an app calls on it): panes in splits and tabs the person drags; on a phone
+  one pane at a time under a strip of chips. The app keeps the tree (JSON). An app may use it for its page; the
+  coding app opens things as panes with it. A plugin, not base code: a change of it reloads in place.
 
 ## Registries
 
@@ -217,7 +219,7 @@ reported `working` before Durable accepts an input, so a crash in between leaves
 | `ExecutionEnvironments` | worker | the environments plugin: an `ExecutionEnv` for a location |
 | `SessionHarness` | worker | the harness: the open Durable harness and `submit`, for the transcript and others |
 | `AppPages` | page | each app |
-| `Views` | page | each view's plugin |
+| `Views` | page | each view's plugin (the pane layout: the `layout` plugin) |
 | `ThingViews` | page | each kind's plugin: `View`, `Options`, `Create` |
 | `PageRoot`, `PageConnection` | page | the chrome (the one component the base renders); the base |
 | (base, as on main) `WorkerRunners`, `WorkerRunnerWraps`, `WorkerBusy`, `ServerCommands`, `LinkOpened` | | |
@@ -236,6 +238,7 @@ reported `working` before Durable accepts an input, so a crash in between leaves
 | `tools` | the coding tools: a `plugin` kind (`tools.coding`, options `{ shell: boolean }`), one thing, the Pi's, everywhere |
 | `notes`, `canvas`, `checklist` | three kinds of content: notebooks, a shared drawing board, and the small example below |
 | `chrome` | the page's frame: the top bar and the chosen app's page |
+| `layout` | the pane layout (`PaneLayoutView`): splits, tabs, dragging; chips and swipes on a phone |
 | `coding` | the coding app: its sessions (each follows the owner who made it), new session, the transcript, things as panes |
 | `runner`, `control` | as on main |
 

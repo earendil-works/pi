@@ -1,34 +1,14 @@
-// A layout of panes an app gives its page (`PaneLayout`, `/v1/web`; decision ERNDL-696): the app's panes by id, and a
-// tree (`pane-tree.ts`) of splits and tab groups that says where each one is, which the app keeps as JSON (`onChange`).
+// The pane layout (`PaneLayoutView`, the layout plugin's view; decision ERNDL-696): the app's panes by id, and a tree
+// (`tree.ts`) of splits and tab groups that says where each one is, which the app keeps as JSON (`onChange`).
 // From 48rem the person resizes splits, reorders tabs, moves them between groups and splits groups by dragging
 // (`pane-splits.tsx`); on a phone each pane fills the screen under a row of chips, one per open pane, and a swipe goes
 // to the neighbour (`pane-chips.tsx`). Both forms show the same tree: what is opened on one shows on the other.
 
-import { type ReactNode, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
+import type { PaneLayoutProps } from "./contract.web.tsx";
 import { PaneChips } from "./pane-chips.tsx";
 import { PaneSplits } from "./pane-splits.tsx";
-import { activatePane, closePane, groupOf, groupsOf, type PaneNode, panesOf } from "./pane-tree.ts";
-
-/** A pane: its id (as the tree names it), its tab's title, whether the person may close it, and its content. */
-export type Pane = {
-	readonly id: string;
-	readonly title: string;
-	readonly closable: boolean;
-	readonly render: () => ReactNode;
-};
-
-/**
- * What a pane layout takes: the app's panes (a pane the tree names without one here is not shown), the tree, which
- * the app keeps (`onChange` gets every change), and the focused pane (the one the app's route names), whose change
- * the person asks for with `onFocus`.
- */
-export type PaneLayoutProps = {
-	readonly panes: readonly Pane[];
-	readonly tree: PaneNode;
-	readonly onChange: (tree: PaneNode) => void;
-	readonly focused: string | undefined;
-	readonly onFocus: (pane: string) => void;
-};
+import { activatePane, closePane, groupOf, groupsOf, panesOf } from "./tree.ts";
 
 /** The layout: split and draggable from 48rem, one pane at a time under its chips on a phone. */
 export function PaneLayout(props: PaneLayoutProps) {

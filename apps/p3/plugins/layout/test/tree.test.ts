@@ -1,7 +1,7 @@
-// The pane layout's tree (`src/api/v1/pane-tree.ts`) as plain functions: opening beside an anchor (a new right split
-// when no other group exists), moving within and between groups, splitting at each edge (merging into a split of the
-// same direction), closing with the neighbour activated and empty groups collapsed, resizing clamped to the smallest
-// share, keeping only known panes, and reading a tree from untrusted JSON.
+// The pane layout's tree (`tree.ts`) as plain functions: opening beside an anchor (a new right split when no other
+// group exists), moving within and between groups, splitting at each edge (merging into a split of the same
+// direction), closing with the neighbour activated and empty groups collapsed, resizing clamped to the smallest share,
+// keeping only known panes, and reading a tree from untrusted JSON.
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
@@ -19,7 +19,7 @@ import {
 	parsePaneTree,
 	resizeSplit,
 	splitPane,
-} from "../src/api/v1/pane-tree.ts";
+} from "../tree.ts";
 
 /** A row of two groups: `g1` with the transcript, `g2` with notes and canvas (canvas active). */
 const TWO: PaneNode = {
