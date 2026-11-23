@@ -889,6 +889,34 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 		expect(process.exitCode).toBe(1);
 	});
 
+	it.skipIf(process.platform === "win32")("rejects updating the Windows managed install from WSL", async () => {
+		// https://github.com/earendil-works/pi/issues/12172
+		const targetVersion = getNewerPatchVersion();
+		const { managedRoot, npmRecordPath } = prepareManagedInstall(targetVersion);
+		writeFileSync(
+			join(managedRoot, "managed-install.json"),
+			`${JSON.stringify({
+				kind: "pi-managed-install",
+				schemaVersion: 1,
+				layout: "releases-v1",
+				entrypoint: { type: "script", path: "C:\\Users\\user\\.pi\\agent\\bin\\pi.cmd" },
+			})}\r\n`,
+		);
+		const fetchMock = vi.fn();
+		vi.stubGlobal("fetch", fetchMock);
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
+
+		expect(fetchMock).not.toHaveBeenCalled();
+		expect(existsSync(npmRecordPath)).toBe(false);
+		expect(readFileSync(join(managedRoot, "current-version"), "utf8")).toBe(`${VERSION}\n`);
+		expect(errorSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
+			"Running the Windows installation from WSL is unsupported",
+		);
+		expect(process.exitCode).toBe(1);
+	});
+
 	function writeNodeShim(binDir: string, name: string, scriptPath: string): void {
 		const shimPath = join(binDir, process.platform === "win32" ? `${name}.cmd` : name);
 		writeFileSync(
