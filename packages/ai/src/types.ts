@@ -85,7 +85,8 @@ export type KnownClassifierApi =
 	| "typesafe-system-one"
 	| "cloudflare-workers-ai-system-one"
 	| "llama-cpp-classify"
-	| "openai-decisions";
+	| "openai-decisions"
+	| "pi-classifier";
 
 export type ClassifierApi = KnownClassifierApi | (string & {});
 
