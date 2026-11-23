@@ -14,7 +14,7 @@ export {
 	MAX_STORE_VALUE_CHARS,
 } from "./limits.ts";
 export type { CodemodeHostCall, CodemodeRun, CodemodeSaved, CodemodeScope } from "./run.ts";
-export { CodemodeSandboxBase } from "./runtime/execution.ts";
+export { CodemodeSandboxBase, type VmHost, type VmJob } from "./runtime/execution.ts";
 export { CodemodeSandbox } from "./runtime/host.ts";
 export {
 	type CodemodeRemote,
