@@ -13,7 +13,7 @@ import type { Context } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord/json";
 import type { TextContent } from "@earendil-works/pi-ai";
 import { toCodemodeIdentifier } from "@earendil-works/pi-codemode/declarations";
-import type { CodemodeOutcome, CodemodeSandbox } from "@earendil-works/pi-codemode/portable";
+import type { CodemodeHostCall, CodemodeOutcome, CodemodeSandbox } from "@earendil-works/pi-codemode/portable";
 import { CODEMODE_SOURCE_GRAMMAR } from "@earendil-works/pi-codemode/source";
 import { obj, type Static, str } from "@earendil-works/pi-schema";
 import { defineDoc } from "../documents.ts";
@@ -127,9 +127,6 @@ export type CodemodeToolDetails = {
 	/** Temp file with the complete text output, when the output was cut to its token budget. */
 	fullOutputPath?: string;
 };
-
-/** A call a script made, by target: a tool (also a model call, as its internal tool) or a global. */
-export type ScriptCall = { id: number; target: "tool" | "global"; name: string; args: unknown };
 
 /** A function scripts call as a top-level global. */
 export type CodemodeGlobal = {
@@ -270,7 +267,7 @@ export async function declaredScope(
 }
 
 /** `searchTools()`, `describeTool()`, `describeNamespace()`: answered from the start data. */
-export function discover(start: Start, call: Pick<ScriptCall, "name" | "args">): JsonValue | undefined {
+export function discover(start: Start, call: Pick<CodemodeHostCall, "name" | "args">): JsonValue | undefined {
 	const args = Array.isArray(call.args) ? call.args : [];
 	const { namespaces } = start;
 	const tools = start.tools.filter((tool) => tool.hidden !== true);

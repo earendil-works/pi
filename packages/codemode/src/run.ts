@@ -3,19 +3,26 @@
  * language is a host function named by a stable identity. No code of pi's runs in the VM, so none is in a dump.
  *
  * - Async host functions are the calls the host answers: `tools.<jsName>` for tools, a global's own name
- *   (`searchTools`, `models.classify`), and `<specifier>#<export>` for what scripts import. The VM never calls them:
+ *   (`searchTools`, `models.classify`), and `<specifier>#<tool>` for what scripts import. The VM never calls them:
  *   they show up in `calls`, and the host settles them by id.
  * - Sync host functions are the output and the store: `text`, `image`, `exit`, `store`, `load`, `console.*`
  *   (`ScriptIo`): their checks and messages live on the host.
  *
  * `save()` writes an idle run as {@link CodemodeSaved}: the djs dump (a plain Script that names host functions only by
  * identity, with the script's body inlined) plus the output and store writes so far. `resumeRun()` continues it in a
- * new VM, any time later, given the same scope. Nothing replays. Hosts that do not persist runs never call `save()`.
+ * new VM, any time later, given the same scope. Hosts that do not persist runs never call `save()`.
  */
-import { type Run, RunExit, Sandbox, type SandboxError } from "@earendil-works/djs";
-import { ScriptIo, type StoreWrite } from "./host-io.ts";
-import { missingMemberMessage, scriptError, TOOLS_MISSING_HINT } from "./script-values.ts";
-import type { CodemodeError, CodemodeOutcome, CodemodeOutputItem, CodemodeResult } from "./types.ts";
+import { type OpenCall, type Run, RunExit, Sandbox, SandboxError, type SandboxOptions } from "@earendil-works/djs";
+import { ScriptIo } from "./host-io.ts";
+import { FUEL_PER_SECOND } from "./limits.ts";
+import { missingMemberMessage, scriptError } from "./script-values.ts";
+import type {
+	CodemodeError,
+	CodemodeOutcome,
+	CodemodeOutputItem,
+	CodemodeResult,
+	CodemodeStoreWrites,
+} from "./types.ts";
 import type { CodemodeWasmModule } from "./wasm.ts";
 
 /** What a script can reach. A resumed run gets the scope it started with. */
@@ -27,10 +34,15 @@ export interface CodemodeScope {
 	/** What `load()` sees before the script's own writes. */
 	store: Readonly<Record<string, unknown>>;
 	/**
-	 * Virtual modules: `import { search } from "<specifier>"` binds the export's host function. Its identity is the
-	 * host's stable name for it (`@mcp/github#search-issues`), not the JS name. Default: none.
+	 * Virtual modules: `import { search } from "<specifier>"` binds the export's tool, a call of kind `tool` with the
+	 * identity `<specifier>#<tool>`. Default: none.
 	 */
-	modules?: readonly { specifier: string; exports: readonly { name: string; identity: string }[] }[];
+	modules?: readonly { specifier: string; exports: readonly { name: string; tool: string }[] }[];
+	/**
+	 * Ends the error for a read of a tool that does not exist; a host with a way to find tools names it here.
+	 * Default: "ALL_TOOLS lists every tool."
+	 */
+	missingToolHint?: string;
 }
 
 /** A call the script made that the host answers (`CodemodeRun.settle`). */
@@ -39,24 +51,24 @@ export interface CodemodeHostCall {
 	id: number;
 	/** The host function's identity (`tools.read`, `searchTools`, `@mcp/github#search_issues`). */
 	identity: string;
-	/** The call's arguments as the script passed them: the first is a tool's, a spread global gets all. */
-	args: unknown[];
+	/** `tool`: a tool, from `tools` or a module; `global`: a global of the scope. */
+	kind: "tool" | "global";
+	/** The tool's name (as in the scope, not its JS name), or the global's. */
+	name: string;
+	/** The tool's argument, or the global's (for a spread global, the argument list as JSON makes it). */
+	args: unknown;
 }
 
 /** The persisted form of an idle run: JSON, self-contained (the script's text is in the dump). */
 export type CodemodeSaved = {
-	/** This format: bumped when what the fields mean changes. */
-	v: 1;
-	/** What loads `dump`. */
-	engine: "djs";
 	/** The run as a djs dump, with the script's body inlined. */
 	dump: string;
 	/** Output so far. */
 	output: CodemodeOutputItem[];
-	/** `store()` writes so far, in order: `[key, json]`, `[key]` for a deletion. */
-	writes: StoreWrite[];
+	/** `store()` writes so far. */
+	writes: CodemodeStoreWrites;
 	/** The fuel the run had used: a resumed run goes on counting from it (a dump does not carry it). */
-	fuelUsed?: number;
+	fuelUsed: number;
 };
 
 /** One run of a script, driven by the host: `CodemodeSandbox.begin()` and `resume()` make it. */
@@ -69,7 +81,7 @@ export interface CodemodeRun {
 	readonly output: readonly CodemodeOutputItem[];
 	/** Once the script ended: the calls still open then, which the run no longer waits for. The host cancels them. */
 	readonly dropped: readonly CodemodeHostCall[];
-	/** Answer call `id`; applied at the next `advance()`. */
+	/** Answer call `id` (a value reaches the script after a JSON round trip); applied at the next `advance()`. */
 	settle(id: number, outcome: CodemodeOutcome): void;
 	/**
 	 * Run until the script waits again or ends: the first step, or the results settled since. Yields to the event loop
@@ -87,113 +99,120 @@ export interface RunEngine {
 	module: CodemodeWasmModule;
 	/** Heap cap of the VM. Past it the script fails with `InternalError: out of memory`. Default: none (4 GiB). */
 	memoryLimitBytes?: number;
-	/** Fuel the run may use across its steps (and saves) before it fails with `kind: "timeout"`. Default: none. */
-	fuel?: number;
-	/** Fuel one step (`advance`) may use before the run fails with `kind: "timeout"`. Default: none. */
-	stepFuel?: number;
+	/** Fuel the run may use across its steps and saves before it fails with `kind: "timeout"`. */
+	fuel: number;
 }
 
-/** A new run of `code` (JavaScript or TypeScript, an async function body); `advance()` runs it. */
-export function beginRun(engine: RunEngine, code: string, scope: CodemodeScope): CodemodeRun {
-	return new DjsRun(engine, scope, { kind: "begin", code });
+/** A new run of `code` (JavaScript or TypeScript, an async function body); `observe` sees each output item. */
+export function beginRun(
+	engine: RunEngine,
+	code: string,
+	scope: CodemodeScope,
+	observe?: (item: CodemodeOutputItem) => void,
+): CodemodeRun {
+	return new DjsRun(engine, scope, { kind: "begin", code }, observe);
 }
 
 /** Continues a saved run. The dump carries the script; `scope` must give every identity it refers to. */
 export function resumeRun(engine: RunEngine, scope: CodemodeScope, saved: CodemodeSaved): CodemodeRun {
-	if (saved.v !== 1 || saved.engine !== "djs") {
-		throw new Error(`cannot resume a run saved as ${String(saved.engine)} format ${String(saved.v)}`);
-	}
 	return new DjsRun(engine, scope, { kind: "resume", saved });
 }
 
-const FILENAME = "codemode.js";
+/** The globals every script has, which a scope's globals cannot shadow. */
+export const BUILTIN_GLOBALS: readonly string[] = [
+	"tools",
+	"ALL_TOOLS",
+	"console",
+	"text",
+	"image",
+	"exit",
+	"store",
+	"load",
+];
 
 /** How long a step computes before it lets the event loop run. */
-const YIELD_MS = 10;
+export const YIELD_MS = 10;
+
+const FILENAME = "codemode.js";
+
+const DEFAULT_MISSING_TOOL_HINT = "ALL_TOOLS lists every tool.";
 
 const STALL_MESSAGE =
 	"The script is waiting on a promise that can never settle: no tool call is pending, and timers do not exist here.";
-const STALL_ERROR: CodemodeError = {
-	kind: "script",
-	name: "Error",
-	message: STALL_MESSAGE,
-	stack: `Error: ${STALL_MESSAGE}`,
-};
 
 type Start = { kind: "begin"; code: string } | { kind: "resume"; saved: CodemodeSaved };
 
+/** A run in progress, or its outcome and the calls it dropped. */
+type State =
+	| { kind: "running"; run: Run }
+	| { kind: "ended"; result: CodemodeResult; dropped: readonly CodemodeHostCall[] };
+
 class DjsRun implements CodemodeRun {
-	result: CodemodeResult | undefined;
+	private state: State;
 	private readonly options: RunEngine;
+	private readonly scope: CodemodeScope;
 	private readonly sandbox: Sandbox;
-	private readonly run: Run | undefined;
 	private readonly io: ScriptIo;
 
-	constructor(options: RunEngine, scope: CodemodeScope, start: Start) {
+	constructor(options: RunEngine, scope: CodemodeScope, start: Start, observe?: (item: CodemodeOutputItem) => void) {
 		this.options = options;
+		this.scope = scope;
 		const saved = start.kind === "resume" ? start.saved : undefined;
-		this.io = new ScriptIo(scope.store, saved?.output ?? [], saved?.writes ?? []);
+		this.io = new ScriptIo(scope.store, saved?.output ?? [], saved?.writes ?? { set: {}, delete: [] }, observe);
 		this.sandbox = new Sandbox(sandboxOptions(options, scope, this.io));
+		let run: Run;
 		try {
-			this.run =
+			run =
 				start.kind === "begin"
 					? // The first step runs in `advance()`, bounded like every other.
 						this.sandbox.begin(start.code, {}, { filename: FILENAME, start: false })
-					: this.sandbox.loadRun(start.saved.dump, { fuelUsed: start.saved.fuelUsed ?? 0 });
+					: this.sandbox.loadRun(start.saved.dump, { fuelUsed: start.saved.fuelUsed });
 		} catch (error) {
-			this.run = undefined;
-			this.finish(startError(error));
+			this.state = { kind: "ended", result: this.failed(startError(error)), dropped: [] };
 			return;
 		}
-		this.check();
+		this.state = { kind: "running", run };
+		this.check(run);
+	}
+
+	get result(): CodemodeResult | undefined {
+		return this.state.kind === "ended" ? this.state.result : undefined;
 	}
 
 	get calls(): CodemodeHostCall[] {
-		if (this.result !== undefined || this.run === undefined) return [];
-		return this.run.calls.map((call) => ({ id: call.id, identity: call.fn, args: call.args }));
+		return this.state.kind === "running" ? this.state.run.calls.map((call) => this.hostCall(call)) : [];
 	}
 
 	get output(): readonly CodemodeOutputItem[] {
 		return this.io.output;
 	}
 
-	get dropped(): CodemodeHostCall[] {
-		if (this.result === undefined || this.run === undefined) return [];
-		return this.run.dropped.map((call) => ({ id: call.id, identity: call.fn, args: call.args }));
+	get dropped(): readonly CodemodeHostCall[] {
+		return this.state.kind === "ended" ? this.state.dropped : [];
 	}
 
 	settle(id: number, outcome: CodemodeOutcome): void {
-		if (this.result !== undefined || this.run === undefined) return;
-		if (outcome.ok) this.run.settle(id, { ok: true, value: outcome.value });
-		else this.run.settle(id, { ok: false, value: Object.assign(new Error(outcome.message), outcome.properties) });
+		if (this.state.kind !== "running") return;
+		this.state.run.settle(id, settlement(outcome));
 	}
 
 	async advance(signal?: AbortSignal): Promise<void> {
-		if (this.result !== undefined || this.run === undefined) return;
+		if (this.state.kind !== "running") return;
+		const { run } = this.state;
 		try {
-			await this.run.advance({
-				yieldMs: YIELD_MS,
-				...(this.options.stepFuel === undefined ? {} : { fuel: this.options.stepFuel }),
-				...(signal === undefined ? {} : { signal }),
-			});
+			await run.advance({ yieldMs: YIELD_MS, ...(signal === undefined ? {} : { signal }) });
 		} catch (error) {
 			if (signal?.aborted) throw signal.reason;
-			this.finish(stepError(error as SandboxError, this.options));
+			this.end(run, stepError(error as SandboxError, this.options));
 			return;
 		}
-		this.check();
+		this.check(run);
 	}
 
 	save(): CodemodeSaved {
-		if (this.result !== undefined || this.run === undefined) throw new Error("The script has ended");
-		return {
-			v: 1,
-			engine: "djs",
-			dump: this.run.dump(),
-			output: [...this.io.output],
-			writes: this.io.savedWrites(),
-			fuelUsed: this.run.fuelUsed,
-		};
+		if (this.state.kind !== "running") throw new Error("The script has ended");
+		const { run } = this.state;
+		return { dump: run.dump(), output: [...this.io.output], writes: this.io.storeWrites(), fuelUsed: run.fuelUsed };
 	}
 
 	dispose(): void {
@@ -201,47 +220,74 @@ class DjsRun implements CodemodeRun {
 	}
 
 	/** After a step: the script's outcome, once it has one. */
-	private check(): void {
-		const run = this.run!;
+	private check(run: Run): void {
 		// Past the output limits `text()` ended the run: it fails.
 		if (this.io.failure !== undefined) {
-			const { failure } = this.io;
-			this.finish({
-				kind: "script",
-				name: failure.name,
-				message: failure.message,
-				stack: `${failure.name}: ${failure.message}`,
-			});
-		} else if (run.state === "done") this.finish(undefined, run.exited ? undefined : run.value);
-		else if (run.state === "threw") this.finish(threwError(run.error!));
-		// With no timers or I/O in the VM, nothing can ever resume a script that waits without an open call.
-		else if (run.state === "idle" && run.calls.length === 0) this.finish(STALL_ERROR);
+			this.end(run, { kind: "script", name: this.io.failure.name, message: this.io.failure.message });
+		} else if (run.state === "done") this.end(run, undefined, run.value);
+		else if (run.state === "threw") this.end(run, threwError(run.error!));
 	}
 
-	private finish(error: CodemodeError | undefined, value?: unknown): void {
-		const output = this.io.output;
-		this.result =
+	private end(run: Run, error: CodemodeError | undefined, value?: unknown): void {
+		const result: CodemodeResult =
 			error === undefined
-				? { ok: true, value, output, calls: [], storeWrites: this.io.storeWrites() }
-				: { ok: false, error, output, calls: [] };
+				? { ok: true, value, output: this.io.output, calls: [], storeWrites: this.io.storeWrites() }
+				: this.failed(error);
+		this.state = { kind: "ended", result, dropped: run.dropped.map((call) => this.hostCall(call)) };
+	}
+
+	private failed(error: CodemodeError): CodemodeResult {
+		return { ok: false, error, output: this.io.output, calls: [] };
+	}
+
+	/** The call by what it reaches: a tool by its name, a module's export by its tool, a global with its arguments. */
+	private hostCall(call: OpenCall): CodemodeHostCall {
+		const { id, fn: identity, args } = call;
+		if (identity.startsWith("tools.")) {
+			const jsName = identity.slice("tools.".length);
+			const name = this.scope.tools.find((tool) => tool.jsName === jsName)?.name ?? jsName;
+			return { id, identity, kind: "tool", name, args: args[0] };
+		}
+		const hash = identity.indexOf("#");
+		if (hash !== -1) return { id, identity, kind: "tool", name: identity.slice(hash + 1), args: args[0] };
+		const spread = this.scope.globals.find((global) => global.name === identity)?.spread === true;
+		// A spread global gets the argument list as JSON makes it: `undefined` elements become null.
+		return {
+			id,
+			identity,
+			kind: "global",
+			name: identity,
+			args: spread ? JSON.parse(JSON.stringify(args)) : args[0],
+		};
+	}
+}
+
+/**
+ * What djs applies for an outcome: a value after a JSON round trip, as arguments cross, or one JSON cannot hold as a
+ * rejection; an error with the outcome's properties, but never its `name`, `message`, or `stack`.
+ */
+function settlement(outcome: CodemodeOutcome): { ok: boolean; value: unknown } {
+	if (!outcome.ok) {
+		const error = new Error(outcome.message);
+		for (const [key, value] of Object.entries(outcome.properties ?? {})) {
+			if (key !== "name" && key !== "message" && key !== "stack") Object.assign(error, { [key]: value });
+		}
+		return { ok: false, value: error };
+	}
+	try {
+		return { ok: true, value: outcome.value === undefined ? undefined : JSON.parse(JSON.stringify(outcome.value)) };
+	} catch (error) {
+		return { ok: false, value: new Error(error instanceof Error ? error.message : String(error)) };
 	}
 }
 
 /** The djs sandbox of one run: pi's capabilities as host functions by identity, and the limits. */
-function sandboxOptions(options: RunEngine, scope: CodemodeScope, io: ScriptIo) {
-	const asyncFunctions: Record<string, () => void> = {};
-	const globals: Record<string, string> = {
-		text: "text",
-		image: "image",
-		exit: "exit",
-		store: "store",
-		load: "load",
-		console: "console",
-	};
+function sandboxOptions(options: RunEngine, scope: CodemodeScope, io: ScriptIo): SandboxOptions {
 	// The host settles every call itself: the functions are never called.
 	const host = () => {};
+	const asyncFunctions: Record<string, () => void> = {};
 	for (const module of scope.modules ?? []) {
-		for (const exported of module.exports) asyncFunctions[exported.identity] = host;
+		for (const exported of module.exports) asyncFunctions[`${module.specifier}#${exported.tool}`] = host;
 	}
 	const listed: { name: string; description: string }[] = [];
 	// `tools["my-tool"]` next to `tools.my_tool`.
@@ -253,16 +299,10 @@ function sandboxOptions(options: RunEngine, scope: CodemodeScope, io: ScriptIo) 
 		listed.push({ name: tool.jsName, description: tool.description });
 		if (tool.name !== tool.jsName) aliases[identity] = [tool.name];
 	}
-	// Without tools, `tools` is an empty object of host data: `"x" in tools` still works.
-	if (scope.tools.length > 0) globals.tools = "tools";
-	for (const global of scope.globals) {
-		asyncFunctions[global.name] = host;
-		const dot = global.name.indexOf(".");
-		const bound = dot === -1 ? global.name : global.name.slice(0, dot);
-		globals[bound] = bound;
-	}
+	// Each namespace's members, for the message of a read of one that does not exist.
 	const members = new Map<string, string[]>([["tools", listed.map((tool) => tool.name)]]);
 	for (const global of scope.globals) {
+		asyncFunctions[global.name] = host;
 		const dot = global.name.indexOf(".");
 		if (dot === -1) continue;
 		const namespace = global.name.slice(0, dot);
@@ -272,11 +312,13 @@ function sandboxOptions(options: RunEngine, scope: CodemodeScope, io: ScriptIo) 
 	return {
 		module: options.module,
 		...(options.memoryLimitBytes === undefined ? {} : { memoryLimit: options.memoryLimitBytes }),
-		...(options.fuel === undefined ? {} : { maxFuel: options.fuel }),
+		maxFuel: options.fuel,
 		frozenBuiltins: true,
 		typescript: true,
 		console: { log, info: log, warn: log, error: log, debug: log },
-		unhandledRejections: "collect" as const,
+		// A rejection nobody handles is not the script's failure (its result is what counts): such reasons are dropped.
+		unhandledRejections: "collect",
+		// djs's default binding makes them globals: `text` and the other functions, `tools`, and each namespace.
 		functions: {
 			text: (value: unknown) => io.text(value),
 			image: (value: unknown) => io.image(value),
@@ -288,71 +330,77 @@ function sandboxOptions(options: RunEngine, scope: CodemodeScope, io: ScriptIo) 
 			load: (key: unknown) => io.load(key),
 		},
 		asyncFunctions,
-		globals,
 		aliases,
 		// A read of a member that does not exist names the close matches, instead of a later "not a function".
-		missingMember: (namespace: string, member: string) => {
+		missingMember: (namespace, member) => {
 			const names = members.get(namespace);
 			if (names === undefined) return undefined;
-			return missingMemberMessage(namespace, member, names, namespace === "tools" ? TOOLS_MISSING_HINT : undefined);
+			return missingMemberMessage(
+				namespace,
+				member,
+				names,
+				namespace === "tools" ? (scope.missingToolHint ?? DEFAULT_MISSING_TOOL_HINT) : undefined,
+			);
 		},
-		// Host data: a dump names it, never writes it.
+		// Host data: a dump names it, never writes it. Without tools, `tools` is an empty object: `"x" in tools` works.
 		values: scope.tools.length > 0 ? { ALL_TOOLS: listed } : { ALL_TOOLS: listed, tools: {} },
 		// `import { x } from "<specifier>"`: djs asks for a module once, and binds its exports by identity.
-		modules: (specifier: string) => {
+		modules: (specifier) => {
 			const module = scope.modules?.find((candidate) => candidate.specifier === specifier);
 			if (module === undefined) return undefined;
-			return { exports: Object.fromEntries(module.exports.map((exported) => [exported.name, exported.identity])) };
+			return {
+				exports: Object.fromEntries(
+					module.exports.map((exported) => [exported.name, `${specifier}#${exported.tool}`]),
+				),
+			};
 		},
 		// Dumps carry the body: a resume needs no script.
 		inlineSources: true,
-		// Tools' arguments, results and the run's value cross as JSON; the output and store functions get plain values.
-		jsonBoundary: { except: ["text", "image", "store", "load"] },
+		// Tools' arguments and the run's value cross as JSON; the output and store functions get plain values, so that
+		// `text(NaN)` prints NaN and `store()` reports what JSON cannot hold.
+		jsonBoundary: { except: ["text", "image", "store"] },
 	};
 }
 
 /** Why a run could not start: a compile error of the script (an unknown module too), or a dump that does not load. */
 function startError(error: unknown): CodemodeError {
-	const sandboxError = error as SandboxError;
-	if (sandboxError.kind !== "syntax") return { kind: "sandbox", message: String(sandboxError.message ?? error) };
+	if (!(error instanceof SandboxError) || error.kind !== "syntax") {
+		return { kind: "sandbox", message: error instanceof Error ? error.message : String(error) };
+	}
 	// djs: `SyntaxError: unexpected token in expression: ';' at 2:11`; pi's stack points at `codemode.js:2:11`.
-	const match = /^(?:SyntaxError: )?([\s\S]*?)(?: at (\d+):(\d+))?$/.exec(sandboxError.message)!;
+	const match = /^(?:SyntaxError: )?([\s\S]*?)(?: at (\d+):(\d+))?$/.exec(error.message)!;
 	const message = match[1]!;
-	const head = `SyntaxError: ${message}`;
 	return {
 		kind: "script",
 		name: "SyntaxError",
 		message,
-		stack: match[2] === undefined ? head : `${head}\n    at ${FILENAME}:${match[2]}:${match[3]}`,
+		...(match[2] === undefined
+			? {}
+			: { stack: `SyntaxError: ${message}\n    at ${FILENAME}:${match[2]}:${match[3]}` }),
 	};
 }
 
-/** The outcome of a run that threw: the script's exception, or djs's stall report as pi words it. */
+/** The outcome of a run that threw: the script's exception, or djs's report of a stalled run, as pi words it. */
 function threwError(error: SandboxError): CodemodeError {
-	if (error.value === undefined && /never settles/.test(error.message)) return STALL_ERROR;
+	// With no timers or I/O in the VM, nothing can ever resume a script that waits without an open call.
+	if (error.value === undefined && /never settles/.test(error.message)) {
+		return { kind: "script", name: "Error", message: STALL_MESSAGE };
+	}
 	return scriptError(error);
 }
 
 /** A step that failed outside the script's control: out of fuel, out of memory, or a trap. */
 function stepError(error: SandboxError, options: RunEngine): CodemodeError {
 	switch (error.kind) {
-		case "fuel":
+		case "fuel": {
+			const seconds = Number((options.fuel / FUEL_PER_SECOND).toPrecision(2));
 			return {
 				kind: "timeout",
-				message:
-					options.fuel !== undefined && options.stepFuel === undefined
-						? `Execution exceeded its fuel budget of ${options.fuel}`
-						: `Execution used up its fuel: ${error.message}`,
+				message: `The script used its CPU budget (about ${seconds} s of computation). Make it compute less, or split the work into several scripts.`,
 			};
+		}
 		case "memory":
-			return {
-				kind: "script",
-				name: "InternalError",
-				message: "out of memory",
-				stack: "InternalError: out of memory",
-			};
-		case "threw":
-			return threwError(error);
+			return { kind: "script", name: "InternalError", message: "out of memory" };
 		default:
 			return { kind: "sandbox", message: error.message };
 	}

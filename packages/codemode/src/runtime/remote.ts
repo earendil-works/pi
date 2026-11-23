@@ -23,8 +23,9 @@
  *     execute() resolves ◀────────────────────── VM disposed
  *
  * `exchange` is a function the client passes in; over Workers RPC it becomes a stub that calls back into the client.
- * Output made since the last exchange rides along with the next one, so a script that prints in a loop does not make
- * one RPC per line. Each exchange carries at most one call, so concurrent calls are concurrent RPCs.
+ * Output made since the last exchange rides along with the next one, or goes on its own once 1,000 items or 1 MiB
+ * piled up, so a script that prints in a loop does not make one RPC per line, and one that prints while it computes
+ * still reaches the client. Each exchange carries at most one call, so concurrent calls are concurrent RPCs.
  *
  * Termination: the client cannot interrupt a remote VM that is computing. When the client finishes first (deadline,
  * abort, `close()`), it answers every pending and later exchange with `{ type: "stop" }`, and the remote stops the VM
@@ -34,6 +35,7 @@
  * Failure: if the RPC call rejects (the remote isolate crashed, hit its CPU limit, or was redeployed) or returns
  * without a terminal message, the execution fails with `kind: "sandbox"`.
  */
+import { DEFAULT_CLOUDFLARE_FUEL } from "../limits.ts";
 import { beginRun, type CodemodeHostCall, type CodemodeRun } from "../run.ts";
 import type {
 	CodemodeError,
@@ -43,15 +45,7 @@ import type {
 	CodemodeSandboxBaseOptions,
 } from "../types.ts";
 import type { CodemodeWasmModule } from "../wasm.ts";
-import {
-	CodemodeSandboxBase,
-	drive,
-	errorMessage,
-	failed,
-	type VmHost,
-	type VmJob,
-	type VmRunner,
-} from "./execution.ts";
+import { CodemodeSandboxBase, drive, errorMessage, failed, type VmHost, type VmJob } from "./execution.ts";
 
 export interface CodemodeRemoteRequest {
 	job: VmJob;
@@ -59,12 +53,15 @@ export interface CodemodeRemoteRequest {
 	fuel?: number;
 }
 
-/** What the remote sends to the client. `done` carries the result without its output, which came before it. */
+/**
+ * What the remote sends to the client: output, a call, a call the script dropped, or the outcome (`done`, without the
+ * output, which came before it).
+ */
 export type CodemodeRemoteMessage =
 	| { type: "output"; items: CodemodeOutputItem[] }
 	| { type: "call"; call: CodemodeHostCall }
-	| { type: "done"; result: CodemodeResult }
-	| { type: "failure"; error: CodemodeError };
+	| { type: "dropped"; call: CodemodeHostCall }
+	| { type: "done"; result: CodemodeResult };
 
 /**
  * The client's answer to an exchange: the outcome of the call the exchange carried, `null` when it carried no call, or
@@ -92,12 +89,9 @@ export interface RemoteCodemodeSandboxOptions extends CodemodeSandboxBaseOptions
 	fuel?: number;
 }
 
-/** Default fuel per execution on a remote: about 2 seconds of a tight loop on an Apple M-series laptop. */
-export const DEFAULT_REMOTE_FUEL = 1_000_000_000;
-
 export interface CodemodeServeOptions {
 	wasm: CodemodeWasmModule | Promise<CodemodeWasmModule>;
-	/** Upper bound for a request's fuel, and the budget when a request names none. Default {@link DEFAULT_REMOTE_FUEL}. */
+	/** Upper bound for a request's fuel, and the budget when a request names none. Default `DEFAULT_CLOUDFLARE_FUEL`. */
 	maxFuel?: number;
 	/** Upper bound for a request's VM memory, and the limit when a request names none. */
 	maxMemoryLimitBytes?: number;
@@ -105,73 +99,24 @@ export interface CodemodeServeOptions {
 
 /**
  * Runs each execution's VM on a remote, usually a Cloudflare Durable Object deployed with
- * `CodemodeSandboxDurableObject`, while tools run here. Same API and results as `CodemodeSandbox`. Differences: a
- * script that computes without calling a tool is limited by the remote's fuel budget rather than `timeoutMs`, and
- * after a deadline or abort the remote VM keeps computing until it next calls a tool or uses up that budget.
+ * `CodemodeSandboxDurableObject`, while tools run here. Same API and results as `CodemodeSandbox`'s `execute()`.
+ * Differences: a script that computes without calling a tool is limited by the remote's fuel budget rather than
+ * `timeoutMs`, and after a deadline or abort the remote VM keeps computing until it next calls a tool or uses up that
+ * budget.
  */
 export class RemoteCodemodeSandbox extends CodemodeSandboxBase {
+	private readonly remote: () => CodemodeRemote;
+	private readonly fuel: number | undefined;
+
 	constructor(options: RemoteCodemodeSandboxOptions) {
-		super(options, remoteRunner(options.remote, options.fuel));
+		super(options);
+		this.remote = options.remote;
+		this.fuel = options.fuel;
 	}
-}
 
-/**
- * Remote side of {@link RemoteCodemodeSandbox}: runs one execution's VM on this thread and forwards its calls and
- * output through `exchange`. Resolves once the VM has stopped and the terminal message has been delivered, or the
- * client asked to stop. Never rejects.
- */
-export async function serveCodemodeRemote(
-	request: CodemodeRemoteRequest,
-	exchange: CodemodeRemoteExchange,
-	options: CodemodeServeOptions,
-): Promise<void> {
-	const maxFuel = options.maxFuel ?? DEFAULT_REMOTE_FUEL;
-	const requested = request.job.memoryLimitBytes;
-	const maxMemory = options.maxMemoryLimitBytes;
-	const memoryLimitBytes =
-		requested === undefined ? maxMemory : maxMemory === undefined ? requested : Math.min(requested, maxMemory);
-	let vm: CodemodeRun;
-	try {
-		const engine = {
-			module: await options.wasm,
-			fuel: Math.min(request.fuel ?? maxFuel, maxFuel),
-			...(memoryLimitBytes === undefined ? {} : { memoryLimitBytes }),
-		};
-		vm = beginRun(engine, request.job.code, request.job.scope);
-	} catch (error) {
-		await exchange([{ type: "failure", error: { kind: "sandbox", message: errorMessage(error) } }]).catch(() => null);
-		return;
-	}
-	const stop = new AbortController();
-	let sent = 0;
-	const unsent = (): CodemodeRemoteMessage[] => {
-		const items = vm.output.slice(sent);
-		sent = vm.output.length;
-		return items.length === 0 ? [] : [{ type: "output", items }];
-	};
-	const host: VmHost = {
-		signal: stop.signal,
-		call: async (call) => {
-			const reply = await exchange([...unsent(), { type: "call", call }]).catch(() => ({ type: "stop" }) as const);
-			if (reply?.type === "result") return reply.outcome;
-			stop.abort({ kind: "aborted", message: "The client stopped the execution" });
-			throw new Error("stopped");
-		},
-	};
-	try {
-		const result = await drive(vm, host);
-		if (!stop.signal.aborted) {
-			await exchange([...unsent(), { type: "done", result: { ...result, output: [] } }]).catch(() => null);
-		}
-	} finally {
-		vm.dispose();
-	}
-}
-
-/** Runs each VM on the remote `remote()` picks, answering its calls here. */
-function remoteRunner(remote: () => CodemodeRemote, fuel: number | undefined): VmRunner {
-	return (job, host) =>
-		new Promise<CodemodeResult>((resolve) => {
+	/** Runs the VM on the remote `remote()` picks, answering its calls here. */
+	protected runVm(job: VmJob, host: VmHost): Promise<CodemodeResult> {
+		return new Promise<CodemodeResult>((resolve) => {
 			const output: CodemodeOutputItem[] = [];
 			let settled = false;
 			const waiting = new Set<(reply: CodemodeRemoteReply) => void>();
@@ -196,8 +141,8 @@ function remoteRunner(remote: () => CodemodeRemote, fuel: number | undefined): V
 					for (const message of messages) {
 						if (message.type === "output") output.push(...message.items);
 						else if (message.type === "call") call = message.call;
+						else if (message.type === "dropped") host.dropped(message.call);
 						else if (message.type === "done") finish({ ...message.result, output });
-						else if (message.type === "failure") finish(failed(message.error, output));
 					}
 					if (call === undefined || settled) {
 						reply(settled ? { type: "stop" } : null);
@@ -209,21 +154,9 @@ function remoteRunner(remote: () => CodemodeRemote, fuel: number | undefined): V
 						if (waiting.delete(reply)) reply({ type: "result", id, outcome });
 					});
 				});
-			let target: CodemodeRemote;
-			try {
-				target = remote();
-			} catch (error) {
-				finish(
-					failed(
-						{ kind: "sandbox", message: `Failed to reach the remote sandbox: ${errorMessage(error)}` },
-						output,
-					),
-				);
-				return;
-			}
-			const request: CodemodeRemoteRequest = fuel === undefined ? { job } : { job, fuel };
+			const request: CodemodeRemoteRequest = this.fuel === undefined ? { job } : { job, fuel: this.fuel };
 			Promise.resolve()
-				.then(() => target.execute(request, exchange))
+				.then(() => this.remote().execute(request, exchange))
 				.then(
 					() =>
 						finish(
@@ -233,4 +166,77 @@ function remoteRunner(remote: () => CodemodeRemote, fuel: number | undefined): V
 						finish(failed({ kind: "sandbox", message: `Remote sandbox failed: ${errorMessage(error)}` }, output)),
 				);
 		});
+	}
+}
+
+/** Output buffered on the remote before it is sent without waiting for a call. */
+const FLUSH_ITEMS = 1_000;
+const FLUSH_CHARS = 1 << 20;
+
+/**
+ * Remote side of {@link RemoteCodemodeSandbox}: runs one execution's VM on this thread and forwards its calls and
+ * output through `exchange`. Resolves once the VM has stopped and the terminal message has been delivered, or the
+ * client asked to stop. Never rejects.
+ */
+export async function serveCodemodeRemote(
+	request: CodemodeRemoteRequest,
+	exchange: CodemodeRemoteExchange,
+	options: CodemodeServeOptions,
+): Promise<void> {
+	const maxFuel = options.maxFuel ?? DEFAULT_CLOUDFLARE_FUEL;
+	const requested = request.job.memoryLimitBytes;
+	const maxMemory = options.maxMemoryLimitBytes;
+	const memoryLimitBytes =
+		requested === undefined ? maxMemory : maxMemory === undefined ? requested : Math.min(requested, maxMemory);
+	const stop = new AbortController();
+	const stopped = (reply: CodemodeRemoteReply) => {
+		if (reply?.type === "stop") stop.abort({ kind: "aborted", message: "The client stopped the execution" });
+	};
+	let buffered: CodemodeOutputItem[] = [];
+	let bufferedChars = 0;
+	const dropped: CodemodeRemoteMessage[] = [];
+	const unsent = (): CodemodeRemoteMessage[] => {
+		const items = buffered;
+		buffered = [];
+		bufferedChars = 0;
+		return [...(items.length === 0 ? [] : [{ type: "output", items } as const]), ...dropped.splice(0)];
+	};
+	// A script that prints while it computes sends its output on, so that the client has it and `done` stays small.
+	const observe = (item: CodemodeOutputItem) => {
+		buffered.push(item);
+		bufferedChars += item.type === "text" ? item.text.length : item.data.length;
+		if (buffered.length >= FLUSH_ITEMS || bufferedChars >= FLUSH_CHARS) {
+			exchange(unsent()).then(stopped, () => stopped({ type: "stop" }));
+		}
+	};
+	let vm: CodemodeRun | undefined;
+	let result: CodemodeResult;
+	try {
+		const engine = {
+			module: await options.wasm,
+			fuel: Math.min(request.fuel ?? maxFuel, maxFuel),
+			...(memoryLimitBytes === undefined ? {} : { memoryLimitBytes }),
+		};
+		vm = beginRun(engine, request.job.code, request.job.scope, observe);
+		const host: VmHost = {
+			signal: stop.signal,
+			call: async (call) => {
+				const reply = await exchange([...unsent(), { type: "call", call }]).catch(
+					() => ({ type: "stop" }) as const,
+				);
+				if (reply?.type === "result") return reply.outcome;
+				stopped({ type: "stop" });
+				return { ok: false, message: "The client stopped the execution" };
+			},
+			dropped: (call) => void dropped.push({ type: "dropped", call }),
+		};
+		result = await drive(vm, host);
+	} catch (error) {
+		result = failed({ kind: "sandbox", message: errorMessage(error) }, []);
+	} finally {
+		vm?.dispose();
+	}
+	if (!stop.signal.aborted) {
+		await exchange([...unsent(), { type: "done", result: { ...result, output: [] } }]).catch(() => null);
+	}
 }

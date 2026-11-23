@@ -1,19 +1,20 @@
 /**
  * Host side of an execution, shared by every place a VM can run: the tool table, call records, the deadline, the
- * caller's abort signal, and running the script's calls. The VM runs where a {@link VmRunner} puts it: on the calling
- * thread (`CodemodeSandbox`) or in another isolate reached over RPC (`RemoteCodemodeSandbox`).
+ * caller's abort signal, and running the script's calls. The VM runs where a subclass's `runVm()` puts it: on the
+ * calling thread (`CodemodeSandbox`) or in another isolate reached over RPC (`RemoteCodemodeSandbox`).
  *
  * Lifecycle of one execution:
  * 1. The deadline and the abort listener are armed; either aborts the execution's stop signal with the error the
  *    execution ends with (`timeout` or `aborted`).
- * 2. The runner drives the VM and hands every call the script makes to {@link VmHost.call}, which runs the tool or
+ * 2. `runVm()` drives the VM and hands every call the script makes to {@link VmHost.call}, which runs the tool or
  *    global here and records tool calls.
- * 3. When the runner resolves (the script ended, or the stop signal fired), calls still running are aborted through
+ * 3. When `runVm()` resolves (the script ended, or the stop signal fired), calls still running are aborted through
  *    their tool's signal and recorded as `cancelled`: a script's result does not wait for calls it does not await.
+ *    Calls it made in its last step without awaiting them are never run, and recorded as `cancelled` too.
  */
 
 import { toCodemodeIdentifier } from "../identifier.ts";
-import type { CodemodeHostCall, CodemodeRun, CodemodeScope } from "../run.ts";
+import { BUILTIN_GLOBALS, type CodemodeHostCall, type CodemodeRun, type CodemodeScope, YIELD_MS } from "../run.ts";
 import type {
 	CodemodeCall,
 	CodemodeError,
@@ -25,47 +26,46 @@ import type {
 	CodemodeTool,
 } from "../types.ts";
 
-/** One execution as a runner gets it: plain data, so it can cross an RPC boundary unchanged. */
+/** One execution as `runVm()` gets it: plain data, so it can cross an RPC boundary unchanged. */
 export interface VmJob {
 	code: string;
 	scope: CodemodeScope;
 	memoryLimitBytes: number | undefined;
 }
 
-/** What a runner asks of the host while it drives a VM. */
+/** What `runVm()` asks of the host while it drives a VM. */
 export interface VmHost {
 	/** Aborted when the execution is over for the host; its reason is the {@link CodemodeError} to end with. */
 	readonly signal: AbortSignal;
 	/** Runs one call of the script. Never rejects: a failed call is an `ok: false` outcome. */
 	call(call: CodemodeHostCall): Promise<CodemodeOutcome>;
+	/** A call the script made but no longer awaited when it ended, never run: recorded as cancelled. */
+	dropped(call: CodemodeHostCall): void;
 }
-
-/** Runs one execution's VM to its outcome (its `calls` are left empty). Never rejects. */
-export type VmRunner = (job: VmJob, host: VmHost) => Promise<CodemodeResult>;
 
 const DEFAULT_TIMEOUT_MS = 300_000;
 
 /**
  * Tool table, defaults, and in-flight executions; the behavior every sandbox shares. Subclasses only choose where the
- * VM runs by passing a {@link VmRunner}.
+ * VM runs, in `runVm()`.
  *
  * The script sees `tools.<name>(args)` for every registered tool, `ALL_TOOLS`, the output helpers `text`, `image`,
  * `exit`, and `console.*`, `store`/`load`, and the configured globals; nothing else (no timers, `fetch`, `process`,
  * `require`). Each `execute()` gets its own VM; `close()` aborts in-flight executions.
  */
-export class CodemodeSandboxBase {
+export abstract class CodemodeSandboxBase {
 	private readonly toolsByName = new Map<string, CodemodeTool>();
 	private readonly globalsByName = new Map<string, CodemodeTool>();
 	private readonly timeoutMs: number;
 	private readonly memoryLimitBytes: number | undefined;
-	private readonly runner: VmRunner;
+	private readonly missingToolHint: string | undefined;
 	private readonly running = new Set<Execution>();
 	private closed = false;
 
-	constructor(options: CodemodeSandboxBaseOptions, runner: VmRunner) {
+	constructor(options: CodemodeSandboxBaseOptions) {
 		this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 		this.memoryLimitBytes = options.memoryLimitBytes;
-		this.runner = runner;
+		this.missingToolHint = options.missingToolHint;
 		for (const tool of options.tools ?? []) this.registerTool(tool);
 		checkGlobals(options.globals ?? []);
 		for (const global of options.globals ?? []) this.globalsByName.set(global.name, global);
@@ -114,13 +114,14 @@ export class CodemodeSandboxBase {
 			tools,
 			globals: this.globals.map((global) => ({ name: global.name, spread: global.spread === true })),
 			store: options.store ?? {},
+			...(this.missingToolHint === undefined ? {} : { missingToolHint: this.missingToolHint }),
 		};
 		const execution = new Execution(
 			{ code, scope, memoryLimitBytes: this.memoryLimitBytes },
 			targets,
 			options.timeoutMs ?? this.timeoutMs,
 			options.signal,
-			this.runner,
+			(job, host) => this.runVm(job, host),
 		);
 		this.running.add(execution);
 		return execution.promise.finally(() => this.running.delete(execution));
@@ -131,6 +132,9 @@ export class CodemodeSandboxBase {
 		this.closed = true;
 		await Promise.all([...this.running].map((execution) => execution.abort("Sandbox closed")));
 	}
+
+	/** Runs one execution's VM to its outcome (its `calls` are left empty). Never rejects. */
+	protected abstract runVm(job: VmJob, host: VmHost): Promise<CodemodeResult>;
 }
 
 /**
@@ -154,13 +158,10 @@ export async function drive(vm: CodemodeRun, host: VmHost): Promise<CodemodeResu
 			for (const call of vm.calls) {
 				if (asked.has(call.id)) continue;
 				asked.add(call.id);
-				host.call(call).then(
-					(outcome) => {
-						ready.set(call.id, outcome);
-						wake?.();
-					},
-					() => undefined,
-				);
+				void host.call(call).then((outcome) => {
+					ready.set(call.id, outcome);
+					wake?.();
+				});
 			}
 			if (ready.size === 0 && !host.signal.aborted) {
 				await new Promise<void>((resolve) => {
@@ -178,9 +179,7 @@ export async function drive(vm: CodemodeRun, host: VmHost): Promise<CodemodeResu
 			}
 			await vm.advance(host.signal);
 		}
-		// Calls the script made but no longer awaits when it ended still start, so the host sees and cancels them, as
-		// it does the ones already running.
-		for (const call of vm.dropped) if (!asked.has(call.id)) host.call(call).catch(() => undefined);
+		for (const call of vm.dropped) if (!asked.has(call.id)) host.dropped(call);
 		return vm.result;
 	} catch (error) {
 		if (host.signal.aborted) return failed(host.signal.reason as CodemodeError, vm.output);
@@ -189,8 +188,6 @@ export async function drive(vm: CodemodeRun, host: VmHost): Promise<CodemodeResu
 		host.signal.removeEventListener("abort", onAbort);
 	}
 }
-
-const YIELD_MS = 10;
 
 /** A failed result with the output so far. */
 export function failed(error: CodemodeError, output: readonly CodemodeOutputItem[]): CodemodeResult {
@@ -203,17 +200,7 @@ export function errorMessage(error: unknown): string {
 }
 
 const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
-const RESERVED_GLOBALS: ReadonlySet<string> = new Set([
-	"tools",
-	"ALL_TOOLS",
-	"console",
-	"text",
-	"image",
-	"exit",
-	"globalThis",
-	"store",
-	"load",
-]);
+const RESERVED_GLOBALS: ReadonlySet<string> = new Set([...BUILTIN_GLOBALS, "globalThis"]);
 
 /** Checks global names: identifiers or `namespace.member`, not shadowing a built-in global or each other. */
 function checkGlobals(globals: readonly CodemodeTool[]): void {
@@ -257,7 +244,7 @@ class Execution {
 		targets: ReadonlyMap<string, Target>,
 		timeoutMs: number,
 		signal: AbortSignal | undefined,
-		runner: VmRunner,
+		runVm: (job: VmJob, host: VmHost) => Promise<CodemodeResult>,
 	) {
 		this.targets = targets;
 		this.signal = signal;
@@ -269,10 +256,18 @@ class Execution {
 		}
 		if (signal?.aborted) this.onAbort();
 		else signal?.addEventListener("abort", this.onAbort, { once: true });
-		const host: VmHost = { signal: this.stop.signal, call: (call) => this.call(call) };
+		const host: VmHost = {
+			signal: this.stop.signal,
+			call: (call) => this.call(call),
+			dropped: (call) => {
+				const target = this.targets.get(call.identity);
+				if (target?.kind === "tool")
+					this.calls.push({ name: target.tool.name, status: "cancelled", durationMs: 0 });
+			},
+		};
 		const outcome = this.stop.signal.aborted
 			? Promise.resolve(failed(this.stop.signal.reason as CodemodeError, []))
-			: runner(job, host).catch((error: unknown) => failed({ kind: "sandbox", message: errorMessage(error) }, []));
+			: runVm(job, host).catch((error: unknown) => failed({ kind: "sandbox", message: errorMessage(error) }, []));
 		this.promise = outcome.then((result) => this.finish(result));
 	}
 
@@ -303,12 +298,7 @@ class Execution {
 		try {
 			if (target === undefined) throw new Error(`Unknown function "${call.identity}"`);
 			const fn = target.kind === "tool" ? target.tool : target.global;
-			// A spread global gets the argument list as JSON makes it: `undefined` elements become null.
-			const args =
-				target.kind === "global" && fn.spread === true ? JSON.parse(JSON.stringify(call.args)) : call.args[0];
-			const value = await fn.execute(args, { signal: pending.controller.signal });
-			// Results reach the script after a JSON round trip, as arguments do.
-			outcome = { ok: true, value: value === undefined ? undefined : JSON.parse(JSON.stringify(value)) };
+			outcome = { ok: true, value: await fn.execute(call.args, { signal: pending.controller.signal }) };
 		} catch (error) {
 			outcome = { ok: false, message: errorMessage(error) };
 		}
@@ -323,7 +313,7 @@ class Execution {
 	private finish(result: CodemodeResult): CodemodeResult {
 		clearTimeout(this.timer);
 		this.signal?.removeEventListener("abort", this.onAbort);
-		// The runner is done: nothing waits for the stop signal any more.
+		// runVm() is done: nothing waits for the stop signal any more.
 		this.end({ kind: "aborted", message: "Execution finished" });
 		const now = performance.now();
 		for (const pending of this.pending.values()) {

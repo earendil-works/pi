@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Context } from "@earendil-works/chord/context";
 import { type AssistantMessage, fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
-import { CodemodeSandbox, loadDjsWasm } from "@earendil-works/pi-codemode";
+import { CodemodeSandbox, loadCodemodeWasm } from "@earendil-works/pi-codemode";
 import {
 	defineExtension,
 	defineSignal,
@@ -44,7 +44,7 @@ function tool(
 
 const DONE = fauxAssistantMessage([fauxText("done")]);
 
-const wasm = await loadDjsWasm();
+const wasm = await loadCodemodeWasm();
 
 function script(code: string): AssistantMessage {
 	return fauxAssistantMessage([fauxToolCall("codemode", { code }, { id: "s1" })], { stopReason: "toolUse" });
@@ -70,7 +70,7 @@ async function sqlitePath(): Promise<string> {
  */
 function codemodeChat(globals: CodemodeGlobal[] = [], parkAfterMs?: number) {
 	const setup = chatSetup();
-	const sandbox = new CodemodeSandbox({ wasm, memoryLimitBytes: 64 * 1024 * 1024, stepFuel: 2_000_000_000 });
+	const sandbox = new CodemodeSandbox({ wasm, memoryLimitBytes: 64 * 1024 * 1024 });
 	// VMs started: a new run or a resumed dump.
 	const vm = { starts: 0 };
 	const begin = sandbox.begin.bind(sandbox);
@@ -825,11 +825,10 @@ return [a, answer, await tools.echo({ text: "two" })];`;
 		).items.find((task) => (task.input as { kind: string }).kind === "model")!;
 		await waitFor(async () => (await opened.harness.getTask(script.id, context))?.state.status === "waiting");
 		await waitFor(() => !opened.harness.wake().active);
-		const saved = await opened.harness.snapshot(CodemodeSavedDoc, script.id, context);
-		expect(saved?.saved).toMatchObject({ v: 1, engine: "djs" });
+		const saved = (await opened.harness.snapshot(CodemodeSavedDoc, script.id, context))?.saved as { dump: string };
 		// Calls are open in the dump by id and identity; the script's body is in the dump, not referred to by hash.
-		expect(saved?.saved?.dump).toContain('$djs.resume(2, "tools.ask", [{}])');
-		expect(saved?.saved?.dump).not.toContain("$djs.source");
+		expect(saved.dump).toContain('$djs.resume(2, "tools.ask", [{}])');
+		expect(saved.dump).not.toContain("$djs.source");
 		await opened.harness.close(context);
 
 		// Another process: a new sandbox, the same database.

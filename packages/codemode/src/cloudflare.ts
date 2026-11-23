@@ -13,32 +13,27 @@
  */
 import { DurableObject } from "cloudflare:workers";
 // One of the literal locations of the djs module (with wasm.ts): Wrangler needs the specifier as written.
-import djsWasmImport from "@earendil-works/djs/wasm/djs.wasm";
+import wasmImport from "@earendil-works/djs/wasm/djs.wasm";
+import { DEFAULT_CLOUDFLARE_FUEL } from "./limits.ts";
 import { CodemodeSandbox } from "./runtime/host.ts";
-import {
-	type CodemodeRemoteExchange,
-	type CodemodeRemoteRequest,
-	DEFAULT_REMOTE_FUEL,
-	serveCodemodeRemote,
-} from "./runtime/remote.ts";
+import { type CodemodeRemoteExchange, type CodemodeRemoteRequest, serveCodemodeRemote } from "./runtime/remote.ts";
 import type { CodemodeSandboxOptions } from "./types.ts";
 import type { CodemodeWasmModule } from "./wasm.ts";
 
 export * from "./portable.ts";
 
-// Wrangler's `CompiledWasm` rule makes this a compiled module; the declaration cannot say so (see
-// cloudflare-modules.d.ts).
-const djsWasm = djsWasmImport as unknown as CodemodeWasmModule;
+/**
+ * The module, compiled by Wrangler. Its `CompiledWasm` rule makes the import a compiled module; the declaration
+ * cannot say so (see cloudflare-modules.d.ts).
+ */
+export const cloudflareCodemodeWasm = wasmImport as unknown as CodemodeWasmModule;
 
 /** Default VM memory limit of {@link CodemodeSandboxDurableObject}. Isolates have 128 MB in total. */
 export const DEFAULT_REMOTE_MEMORY_LIMIT_BYTES = 32 * 1024 * 1024;
 
-/** The djs module, compiled by Wrangler. */
-export const cloudflareDjsWasm: CodemodeWasmModule = djsWasm;
-
-/** `CodemodeSandbox` on the djs module Wrangler bundled, with a fuel budget (default {@link DEFAULT_REMOTE_FUEL}). */
+/** `CodemodeSandbox` on the module Wrangler bundled, with the CPU budget of `DEFAULT_CLOUDFLARE_FUEL` unless given. */
 export function createCodemodeSandbox(options: Omit<CodemodeSandboxOptions, "wasm"> = {}): CodemodeSandbox {
-	return new CodemodeSandbox({ fuel: DEFAULT_REMOTE_FUEL, ...options, wasm: djsWasm });
+	return new CodemodeSandbox({ fuel: DEFAULT_CLOUDFLARE_FUEL, ...options, wasm: cloudflareCodemodeWasm });
 }
 
 /**
@@ -62,14 +57,14 @@ export function createCodemodeSandbox(options: Omit<CodemodeSandboxOptions, "was
  */
 export class CodemodeSandboxDurableObject<Env = unknown> extends DurableObject<Env> {
 	/** Fuel per execution; the client may only ask for less. */
-	protected maxFuel: number = DEFAULT_REMOTE_FUEL;
+	protected maxFuel: number = DEFAULT_CLOUDFLARE_FUEL;
 	/** VM memory per execution; the client may only ask for less. */
 	protected maxMemoryLimitBytes: number = DEFAULT_REMOTE_MEMORY_LIMIT_BYTES;
 
 	/** Called by `RemoteCodemodeSandbox` over RPC. Resolves when the script has settled or was stopped. */
 	execute(request: CodemodeRemoteRequest, exchange: CodemodeRemoteExchange): Promise<void> {
 		return serveCodemodeRemote(request, exchange, {
-			wasm: djsWasm,
+			wasm: cloudflareCodemodeWasm,
 			maxFuel: this.maxFuel,
 			maxMemoryLimitBytes: this.maxMemoryLimitBytes,
 		});

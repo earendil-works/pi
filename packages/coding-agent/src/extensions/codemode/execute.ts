@@ -19,12 +19,12 @@ import {
 	type CodemodeResult,
 	CodemodeSandbox,
 	type CodemodeTool,
-	loadDjsWasm,
+	loadCodemodeWasm,
 	parseCodemodeSource,
 	renderToolSample,
 	toCodemodeIdentifier,
 } from "@earendil-works/pi-codemode";
-import { getDjsWasmPath } from "../../config.ts";
+import { getCodemodeWasmPath } from "../../config.ts";
 import type { ExtensionToolContext, ToolNamespace } from "../../core/extensions/types.ts";
 import type { SessionEntry } from "../../core/session-manager.ts";
 import { formatSize, sliceHead, sliceTail } from "../../core/tools/truncate.ts";
@@ -495,7 +495,6 @@ export async function executeCodemode(
 		},
 	}));
 
-	let result: CodemodeResult;
 	const sandbox = new CodemodeSandbox({
 		tools: sandboxTools,
 		globals: [
@@ -506,14 +505,11 @@ export async function executeCodemode(
 		],
 		timeoutMs: sourceOptions.timeoutMs ?? Number.POSITIVE_INFINITY,
 		memoryLimitBytes: CODEMODE_MEMORY_LIMIT_BYTES,
-		wasm: loadDjsWasm(getDjsWasmPath()),
+		missingToolHint: "ALL_TOOLS lists every tool; searchTools(query) finds tools by topic.",
+		wasm: loadCodemodeWasm(getCodemodeWasmPath()),
 	});
-	try {
-		const store = ctx ? readCodemodeStore(ctx.sessionManager.getBranch()) : {};
-		result = await sandbox.execute(code, { signal, store });
-	} finally {
-		await sandbox.close();
-	}
+	const store = ctx ? readCodemodeStore(ctx.sessionManager.getBranch()) : {};
+	const result: CodemodeResult = await sandbox.execute(code, { signal, store });
 	// Calls still marked running were cut off by the script ending, a timeout, or an abort.
 	for (const call of calls) {
 		if (call.status === "running") call.status = "cancelled";

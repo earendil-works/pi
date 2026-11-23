@@ -52,7 +52,6 @@ import {
 	errorResult,
 	OUTPUT_LIMITS,
 	outcomeOf,
-	type ScriptCall,
 	type Start,
 } from "./codemode.ts";
 import {
@@ -66,8 +65,8 @@ import {
 import { DEFAULT_MAX_OUTPUT_TOKENS, formatResult, type OutputFile } from "./output.ts";
 
 type SavedState = {
-	/** The script at its latest idle point. */
-	saved?: CodemodeSaved;
+	/** The script at its latest idle point: a `CodemodeSaved`, as JSON (its store writes are JSON values). */
+	saved?: JsonObject;
 	/** The script held a value a dump cannot write: it ran in memory only, and cannot resume. */
 	unsaved?: true;
 	/** The `details` rows as of the dump, so a resumed script's result still lists the calls it finished before. */
@@ -89,6 +88,9 @@ const DEFAULT_PARK_AFTER_MS = 1000;
 
 const ARGS_PREVIEW_CHARS = 200;
 const ERROR_PREVIEW_CHARS = 500;
+
+/** How a script finds a tool it misnamed. */
+const MISSING_TOOL_HINT = "ALL_TOOLS lists every tool; searchTools(query) finds tools by topic.";
 
 /** The reason a step stops at the script's deadline. */
 const DEADLINE = new Error("The script's deadline passed");
@@ -186,12 +188,11 @@ export class CodemodeCall {
 		const { saved } = found.saved;
 		for (const row of found.saved.rows ?? []) this.rows.set(row.id, row);
 		const { sandbox } = this.options;
-		let vm: CodemodeRun;
-		try {
-			vm = saved === undefined ? await sandbox.begin(code, this.scope()) : await sandbox.resume(this.scope(), saved);
-		} catch (error) {
-			return this.decide(errorResult(`The script cannot resume: ${errorMessage(error)}`));
-		}
+		// A dump that does not load ends the run at once, with a sandbox error.
+		const vm =
+			saved === undefined
+				? await sandbox.begin(code, this.scope())
+				: await sandbox.resume(this.scope(), saved as unknown as CodemodeSaved);
 		try {
 			// Every call open in the loaded dump may have its nested call already: they are found by key.
 			return await this.drive(vm, saved === undefined, Math.max(0, ...vm.calls.map((call) => call.id)));
@@ -207,15 +208,12 @@ export class CodemodeCall {
 			tools: this.start.tools.filter((tool) => tool.hidden !== true),
 			globals: this.start.globals,
 			store: this.start.store,
-			// Each declared namespace is a virtual module: `import { x } from "<namespace>"`; an export's identity is the
-			// tool's own name, its JS name only the binding.
+			// Each declared namespace is a virtual module: `import { x } from "<namespace>"` calls the tool by its own name.
 			modules: this.start.namespaces.map((namespace) => ({
 				specifier: namespace.name,
-				exports: namespace.tools.map((name) => ({
-					name: toCodemodeIdentifier(name),
-					identity: `${namespace.name}#${name}`,
-				})),
+				exports: namespace.tools.map((name) => ({ name: toCodemodeIdentifier(name), tool: name })),
 			})),
+			missingToolHint: MISSING_TOOL_HINT,
 		};
 	}
 
@@ -250,17 +248,12 @@ export class CodemodeCall {
 					// Calls the script no longer awaits are not launched; those running end with this call (the Harness
 					// aborts them). Their rows show them as cancelled.
 					for (const call of vm.dropped) {
-						const host = this.hostCall(call);
-						if (host.target === "tool") this.started(host);
+						const host = this.asTool(call);
+						if (host.kind === "tool") this.started(host);
 					}
 					return await this.complete(vm.result);
 				}
 				const open = vm.calls;
-				if (open.length === 0) {
-					return await this.decide(
-						errorResult("The script waits on a promise that can never settle: no call is open."),
-					);
-				}
 				const newest = open.reduce((max, call) => Math.max(max, call.id), launched);
 				if (newest > launched) {
 					await this.save(vm);
@@ -339,7 +332,7 @@ export class CodemodeCall {
 			if (saved === undefined) {
 				delete doc.saved;
 				doc.unsaved = true;
-			} else doc.saved = copyJson(saved as unknown as JsonValue) as unknown as CodemodeSaved;
+			} else doc.saved = copyJson(saved as unknown as JsonValue) as JsonObject;
 			doc.rows = copyJson([...this.rows.values()] as unknown as JsonValue) as unknown as CodemodeNestedCall[];
 		}, this.context);
 	}
@@ -347,9 +340,9 @@ export class CodemodeCall {
 	/** Answer one call: a tool's by its nested call, found by key after a restart; a global's here. */
 	private answer(call: CodemodeHostCall): void {
 		this.answering.add(call.id);
-		const host = this.hostCall(call);
-		if (host.target === "tool") this.started(host);
-		const running = host.target === "tool" ? this.callTool(host) : this.callGlobal(host);
+		const host = this.asTool(call);
+		if (host.kind === "tool") this.started(host);
+		const running = host.kind === "tool" ? this.callTool(host) : this.callGlobal(host);
 		running.then(
 			(outcome) => {
 				if (this.ended) return;
@@ -364,35 +357,16 @@ export class CodemodeCall {
 		);
 	}
 
-	/** The VM's call by identity: `tools.<jsName>` and `<specifier>#<tool name>` are tools, model calls their tools. */
-	private hostCall(call: CodemodeHostCall): ScriptCall {
-		if (call.identity.startsWith("tools.")) {
-			const jsName = call.identity.slice("tools.".length);
-			const tool = this.start.tools.find((candidate) => candidate.jsName === jsName);
-			return { id: call.id, target: "tool", name: tool?.name ?? jsName, args: call.args[0] ?? {} };
-		}
-		const hash = call.identity.indexOf("#");
-		if (hash !== -1) {
-			return { id: call.id, target: "tool", name: call.identity.slice(hash + 1), args: call.args[0] ?? {} };
-		}
-		const spread = this.start.globals.find((global) => global.name === call.identity)?.spread === true;
-		// A spread global gets the argument list as JSON makes it: `undefined` elements become null.
-		const args = spread ? JSON.parse(JSON.stringify(call.args)) : call.args[0];
-		const model = MODEL_CALLS[call.identity];
-		if (model !== undefined) {
-			const [modelArg, contextArg] = args as unknown[];
-			return {
-				id: call.id,
-				target: "tool",
-				name: model,
-				args: { model: modelArg ?? null, context: contextArg ?? null },
-			};
-		}
-		return { id: call.id, target: "global", name: call.identity, args };
+	/** A call of `models.classify()` or `models.generateImages()` as the call of its internal tool; others as they are. */
+	private asTool(call: CodemodeHostCall): CodemodeHostCall {
+		const model = call.kind === "global" ? MODEL_CALLS[call.name] : undefined;
+		if (model === undefined) return call;
+		const [modelArg, contextArg] = call.args as unknown[];
+		return { ...call, kind: "tool", name: model, args: { model: modelArg ?? null, context: contextArg ?? null } };
 	}
 
 	/** A tool call as a nested call, keyed by the VM's call id; model calls wait for one of their slots. */
-	private async callTool(call: ScriptCall): Promise<CodemodeOutcome> {
+	private async callTool(call: CodemodeHostCall): Promise<CodemodeOutcome> {
 		const model = call.name.startsWith(CODEMODE_INTERNAL_PREFIX);
 		if (model) {
 			await this.modelSlot();
@@ -421,7 +395,7 @@ export class CodemodeCall {
 	}
 
 	/** `searchTools()` and friends from the start, the model catalog, or a host global. */
-	private async callGlobal(call: ScriptCall): Promise<CodemodeOutcome> {
+	private async callGlobal(call: CodemodeHostCall): Promise<CodemodeOutcome> {
 		try {
 			if ((DISCOVERY_GLOBALS as readonly string[]).includes(call.name)) {
 				return { ok: true, value: discover(this.start, call) };
@@ -451,7 +425,7 @@ export class CodemodeCall {
 	}
 
 	/** The script made a tool call: its row appears, running, also while it waits for a model slot. */
-	private started(call: ScriptCall): void {
+	private started(call: CodemodeHostCall): void {
 		if (this.rows.has(call.id)) return;
 		const args = call.args === undefined ? "" : (JSON.stringify(call.args) ?? "");
 		const name = call.name.startsWith(CODEMODE_INTERNAL_PREFIX)

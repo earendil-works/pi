@@ -5,6 +5,9 @@
  */
 export { toCodemodeIdentifier } from "./identifier.ts";
 export {
+	DEFAULT_CLOUDFLARE_FUEL,
+	DEFAULT_FUEL,
+	FUEL_PER_SECOND,
 	MAX_OUTPUT_CHARS,
 	MAX_OUTPUT_ITEMS,
 	MAX_STORE_TOTAL_CHARS,
@@ -20,7 +23,6 @@ export {
 	type CodemodeRemoteReply,
 	type CodemodeRemoteRequest,
 	type CodemodeServeOptions,
-	DEFAULT_REMOTE_FUEL,
 	RemoteCodemodeSandbox,
 	type RemoteCodemodeSandboxOptions,
 	serveCodemodeRemote,
@@ -41,4 +43,4 @@ export type {
 	CodemodeTool,
 	CodemodeToolContext,
 } from "./types.ts";
-export { type CodemodeWasmModule, DJS_WASM_FILE, loadDjsWasm } from "./wasm.ts";
+export { type CodemodeWasmModule, loadCodemodeWasm } from "./wasm.ts";

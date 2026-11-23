@@ -6,10 +6,7 @@ import { MAX_OUTPUT_CHARS, MAX_OUTPUT_ITEMS, MAX_STORE_TOTAL_CHARS, MAX_STORE_VA
 import { consoleText, toJson } from "./script-values.ts";
 import type { CodemodeOutputItem, CodemodeStoreWrites } from "./types.ts";
 
-/** `store()` writes in order: `[key, json]`, `[key]` for a deletion. */
-export type StoreWrite = [string, string] | [string];
-
-/** Output and store of one script; a saved run carries `output` and `writes`, and a resumed one starts from them. */
+/** Output and store of one script; a saved run carries its output and writes, and a resumed one starts from them. */
 export class ScriptIo {
 	readonly output: CodemodeOutputItem[];
 	/** Set once the output passed its limits: the run ended at once (the script cannot catch it) and fails with it. */
@@ -21,14 +18,22 @@ export class ScriptIo {
 	private readonly stored: Map<string, string>;
 	private storedChars = 0;
 
+	private readonly observe: ((item: CodemodeOutputItem) => void) | undefined;
+
+	/** `observe` sees each output item as the script adds it. */
 	constructor(
 		store: Readonly<Record<string, unknown>>,
 		output: readonly CodemodeOutputItem[],
-		writes: readonly StoreWrite[],
+		writes: CodemodeStoreWrites,
+		observe?: (item: CodemodeOutputItem) => void,
 	) {
+		this.observe = observe;
 		this.output = [...output];
 		for (const item of this.output) this.outputChars += item.type === "text" ? item.text.length : item.data.length;
-		this.writes = new Map(writes.map((write) => [write[0], write[1]]));
+		this.writes = new Map<string, string | undefined>([
+			...Object.entries(writes.set).map(([key, value]): [string, string] => [key, JSON.stringify(value)]),
+			...writes.delete.map((key): [string, undefined] => [key, undefined]),
+		]);
 		this.stored = new Map();
 		for (const [key, value] of Object.entries(store)) {
 			const json = JSON.stringify(value);
@@ -97,12 +102,7 @@ export class ScriptIo {
 		return json === undefined ? undefined : JSON.parse(json);
 	}
 
-	/** The writes in order, for a saved run. */
-	savedWrites(): StoreWrite[] {
-		return [...this.writes].map(([key, json]): StoreWrite => (json === undefined ? [key] : [key, json]));
-	}
-
-	/** The writes as a successful result reports them. */
+	/** The writes, as a successful result reports them and a saved run keeps them. */
 	storeWrites(): CodemodeStoreWrites {
 		const writes: CodemodeStoreWrites = { set: {}, delete: [] };
 		for (const [key, json] of this.writes) {
@@ -124,6 +124,7 @@ export class ScriptIo {
 		}
 		this.outputChars = chars;
 		this.output.push(item);
+		this.observe?.(item);
 	}
 }
 

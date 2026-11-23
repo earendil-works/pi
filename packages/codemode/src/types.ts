@@ -123,9 +123,14 @@ export interface CodemodeSandboxBaseOptions {
 	 * Default: no limit beyond wasm32's 4 GiB address space.
 	 */
 	memoryLimitBytes?: number;
+	/**
+	 * Ends the error for a read of a tool that does not exist, for example "ALL_TOOLS lists every tool; searchTools(query)
+	 * finds tools by topic." where `searchTools` is a global. Default: "ALL_TOOLS lists every tool."
+	 */
+	missingToolHint?: string;
 }
 
-/** Options of `CodemodeSandbox`, which runs each VM on the calling thread of a Node or Bun host. */
+/** Options of `CodemodeSandbox`, which runs each VM on the calling thread. */
 export interface CodemodeSandboxOptions extends CodemodeSandboxBaseOptions {
 	/**
 	 * The compiled djs module, usually from `loadDjsWasm()`. Default: `loadDjsWasm()`, the file in the installed
@@ -133,13 +138,12 @@ export interface CodemodeSandboxOptions extends CodemodeSandboxBaseOptions {
 	 */
 	wasm?: CodemodeWasmModule | Promise<CodemodeWasmModule>;
 	/**
-	 * Fuel one execution may use before it fails with `kind: "timeout"`, across its waits on tools: the only limit on a
-	 * script that computes where the clock stands still while code runs (Cloudflare). About 1e9 is 2 seconds of a tight
-	 * loop on an Apple M-series laptop. Default: none; `timeoutMs` bounds the script.
+	 * The CPU budget of one execution or run, as fuel (see `FUEL_PER_SECOND`): only computing counts, not waiting on
+	 * tools, and a saved run carries what it used. Past it the script fails with `kind: "timeout"`. The only limit on a
+	 * script that computes where the clock stands still while code runs (Cloudflare). Default `DEFAULT_FUEL`, about a
+	 * minute.
 	 */
 	fuel?: number;
-	/** Fuel one step of a script may use (its computing between two waits) before it fails with `kind: "timeout"`. */
-	stepFuel?: number;
 }
 
 /**

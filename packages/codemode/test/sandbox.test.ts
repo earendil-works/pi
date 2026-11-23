@@ -4,12 +4,11 @@ import {
 	type CodemodeSandboxBase,
 	type CodemodeSandboxBaseOptions,
 	type CodemodeTool,
-	loadDjsWasm,
 	MAX_OUTPUT_CHARS,
 	MAX_OUTPUT_ITEMS,
 	RemoteCodemodeSandbox,
-	serveCodemodeRemote,
 } from "../src/index.ts";
+import { inProcessRemote } from "./remote-support.ts";
 
 /**
  * Every behavior test runs against each place a VM can run: the calling thread, and a remote served in process that
@@ -17,18 +16,10 @@ import {
  */
 const BACKENDS: Record<string, (options: CodemodeSandboxBaseOptions) => CodemodeSandboxBase> = {
 	local: (options) => new CodemodeSandbox(options),
-	remote: (options) =>
-		new RemoteCodemodeSandbox({
-			...options,
-			remote: () => ({
-				execute: (request, exchange) =>
-					serveCodemodeRemote(
-						structuredClone(request),
-						async (messages) => structuredClone(await exchange(structuredClone(messages))),
-						{ wasm: loadDjsWasm(), maxFuel: 1e12 },
-					),
-			}),
-		}),
+	remote: (options) => {
+		const { remote } = inProcessRemote({ maxFuel: 1e12 });
+		return new RemoteCodemodeSandbox({ ...options, remote: () => remote });
+	},
 };
 
 let backend = "local";
@@ -246,12 +237,7 @@ describe.each(Object.keys(BACKENDS))("%s backend", (name) => {
 			expect(result.ok).toBe(false);
 			if (result.ok) return;
 			expect(result.error).toMatchObject({ kind: "script", name: "TypeError", message: "boom 1" });
-		});
-
-		it("reports thrown errors with their stack", async () => {
-			const sandbox = createSandbox();
-			const result = await sandbox.execute("const a = 1;\nthrow new TypeError('boom ' + a)");
-			expect(result.ok ? undefined : result.error.stack).toMatch(/codemode\.js:2/);
+			expect(result.error.stack).toMatch(/codemode\.js:2/);
 		});
 
 		it("formats stacks like V8", async () => {
@@ -392,31 +378,43 @@ describe.each(Object.keys(BACKENDS))("%s backend", (name) => {
 			expect(result).toMatchObject({ ok: false, error: { kind: "script", name: "TypeError" } });
 		});
 
-		it("aborts unawaited calls when the script returns", async () => {
+		it("cancels calls the script does not await when it returns, and never runs those it just made", async () => {
+			const started: string[] = [];
 			let aborted = false;
-			const sandbox = newSandbox({
-				timeoutMs: 500,
-				tools: [
-					{
-						name: "slow",
-						execute: (_args, { signal }) =>
-							new Promise((_resolve, reject) => {
-								signal.addEventListener("abort", () => {
-									aborted = true;
-									reject(new Error("aborted"));
-								});
-							}),
+			const sandbox = createSandbox([
+				echo,
+				{
+					name: "slow",
+					execute: (args, { signal }) => {
+						started.push(String(args));
+						return new Promise((_resolve, reject) => {
+							signal.addEventListener("abort", () => {
+								aborted = true;
+								reject(new Error("aborted"));
+							});
+						});
 					},
-				],
-			});
-			const result = await sandbox.execute("tools.slow(); return 'early'");
+				},
+			]);
+			const result = await sandbox.execute(
+				"tools.slow('running'); await tools.echo(1); tools.slow('late'); return 'early'",
+			);
 			expect(result).toMatchObject({ ok: true, value: "early" });
-			expect(result.calls).toMatchObject([{ name: "slow", status: "cancelled" }]);
+			expect(result.calls).toMatchObject([
+				{ name: "slow", status: "cancelled" },
+				{ name: "echo", status: "ok" },
+				{ name: "slow", status: "cancelled" },
+			]);
+			// The call running when the script ended was aborted; the one made in its last step never started.
+			expect(started).toEqual(["running"]);
 			expect(aborted).toBe(true);
 		});
 
 		it("names close matches when a script reads a tool that does not exist", async () => {
-			const sandbox = createSandbox([echo, { name: "web-search", execute: () => "" }]);
+			const sandbox = newSandbox({
+				tools: [echo, { name: "web-search", execute: () => "" }],
+				missingToolHint: "ALL_TOOLS lists every tool; searchTools(query) finds tools by topic.",
+			});
 			const attempt = async (expression: string) => {
 				const result = await sandbox.execute(`return ${expression};`);
 				return result.ok ? result.value : result.error.message;
@@ -533,7 +531,7 @@ describe.each(Object.keys(BACKENDS))("%s backend", (name) => {
 			`);
 			expect(result).toMatchObject({ ok: true, value: ["function", "function", 2] });
 			expect(result.calls.map((call) => call.name)).toEqual(["echo"]);
-			// Messages are handled in order, so an unawaited global still runs before the script settles.
+			// An unawaited call made before the script waits again runs like any other.
 			expect(seen).toEqual([{ ref: 1 }, "not awaited"]);
 		});
 

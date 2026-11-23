@@ -505,20 +505,20 @@ export function getBundledInteractiveAssetPath(name: string): string {
 	return join(getInteractiveAssetsDir(), name);
 }
 
-let djsWasmPath: string | undefined;
+let codemodeWasmPath: string | undefined;
 
 /** Called by the Bun entry with the path of the djs wasm file embedded in the compiled executable. */
-export function setEmbeddedDjsWasmPath(path: string): void {
-	djsWasmPath = path;
+export function setEmbeddedCodemodeWasmPath(path: string): void {
+	codemodeWasmPath = path;
 }
 
 /**
  * Get path to `@earendil-works/djs/wasm/djs.wasm`, the VM that runs codemode scripts. Resolved once so the
  * compiled module cached per path keeps working after an update removes this install (#10439).
  */
-export function getDjsWasmPath(): string {
-	djsWasmPath ??= createRequire(import.meta.url).resolve("@earendil-works/djs/wasm/djs.wasm");
-	return djsWasmPath;
+export function getCodemodeWasmPath(): string {
+	codemodeWasmPath ??= createRequire(import.meta.url).resolve("@earendil-works/djs/wasm/djs.wasm");
+	return codemodeWasmPath;
 }
 
 export type InstallChange = { kind: "updated"; version: string } | { kind: "removed" };

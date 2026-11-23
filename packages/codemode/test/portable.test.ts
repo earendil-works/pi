@@ -1,37 +1,8 @@
 import { describe, expect, it } from "vitest";
-import {
-	type CodemodeRemote,
-	type CodemodeRemoteExchange,
-	type CodemodeRemoteRequest,
-	CodemodeSandbox,
-	type CodemodeServeOptions,
-	loadDjsWasm,
-	RemoteCodemodeSandbox,
-	serveCodemodeRemote,
-} from "../src/portable.ts";
+import { CodemodeSandbox, loadCodemodeWasm, RemoteCodemodeSandbox } from "../src/portable.ts";
+import { inProcessRemote } from "./remote-support.ts";
 
-const wasm = loadDjsWasm();
-
-/** An in-process remote that records what crosses the boundary, cloned as Workers RPC would. */
-function recordingRemote(options: Partial<CodemodeServeOptions> = {}) {
-	const exchanges: number[] = [];
-	const served: Promise<void>[] = [];
-	const remote: CodemodeRemote = {
-		execute(request: CodemodeRemoteRequest, exchange: CodemodeRemoteExchange) {
-			const done = serveCodemodeRemote(
-				structuredClone(request),
-				async (messages) => {
-					exchanges.push(messages.length);
-					return structuredClone(await exchange(structuredClone(messages)));
-				},
-				{ wasm, ...options },
-			);
-			served.push(done);
-			return done;
-		},
-	};
-	return { remote, exchanges, served };
-}
+const wasm = loadCodemodeWasm();
 
 describe("CodemodeSandbox with a fuel budget", () => {
 	it("fails a script that computes past its fuel as a timeout", async () => {
@@ -40,7 +11,10 @@ describe("CodemodeSandbox with a fuel budget", () => {
 			const result = await sandbox.execute(code, { timeoutMs: Number.POSITIVE_INFINITY });
 			expect(result).toMatchObject({
 				ok: false,
-				error: { kind: "timeout", message: "Execution exceeded its fuel budget of 10000000" },
+				error: {
+					kind: "timeout",
+					message: expect.stringContaining("The script used its CPU budget (about 0.02 s of computation)"),
+				},
 			});
 		}
 	});
@@ -50,14 +24,17 @@ describe("CodemodeSandbox with a fuel budget", () => {
 		const result = await sandbox.execute("for (;;) { for (let i = 0; i < 1e5; i++); await tools.tick(); }", {
 			timeoutMs: 1000,
 		});
-		expect(result).toMatchObject({ ok: false, error: { kind: "timeout", message: expect.stringContaining("fuel") } });
+		expect(result).toMatchObject({
+			ok: false,
+			error: { kind: "timeout", message: expect.stringContaining("CPU budget") },
+		});
 		expect(result.calls.length).toBeGreaterThan(1);
 	});
 });
 
 describe("RemoteCodemodeSandbox", () => {
 	it("runs tools in the caller and the script on the remote", async () => {
-		const { remote, served } = recordingRemote();
+		const { remote, served } = inProcessRemote();
 		const seen: unknown[] = [];
 		const sandbox = new RemoteCodemodeSandbox({
 			remote: () => remote,
@@ -79,7 +56,7 @@ describe("RemoteCodemodeSandbox", () => {
 	});
 
 	it("batches output instead of making one exchange per line", async () => {
-		const { remote, exchanges } = recordingRemote();
+		const { remote, exchanges } = inProcessRemote();
 		const sandbox = new RemoteCodemodeSandbox({ remote: () => remote, tools: [{ name: "tick", execute: () => 1 }] });
 		const result = await sandbox.execute(
 			"for (let i = 0; i < 5000; i++) console.log(i); await tools.tick(); text('after'); return 'ok'",
@@ -88,15 +65,19 @@ describe("RemoteCodemodeSandbox", () => {
 		expect(result.output).toHaveLength(5001);
 		expect(result.output[4999]).toEqual({ type: "text", text: "4999", console: true });
 		expect(result.output.at(-1)).toEqual({ type: "text", text: "after" });
-		expect(exchanges).toEqual([2, 2]);
+		// Five batches of 1,000 lines on their own, the call, then the last line with the result.
+		expect(exchanges).toEqual([1, 1, 1, 1, 1, 1, 2]);
 	});
 
 	it("caps the fuel and memory at the remote's limits", async () => {
-		const { remote } = recordingRemote({ maxFuel: 10_000_000, maxMemoryLimitBytes: 8 * 1024 * 1024 });
+		const { remote } = inProcessRemote({ maxFuel: 10_000_000, maxMemoryLimitBytes: 8 * 1024 * 1024 });
 		const sandbox = new RemoteCodemodeSandbox({ remote: () => remote, fuel: 1e12 });
 		expect(await sandbox.execute("while (true) {}")).toMatchObject({
 			ok: false,
-			error: { kind: "timeout", message: "Execution exceeded its fuel budget of 10000000" },
+			error: {
+				kind: "timeout",
+				message: expect.stringContaining("The script used its CPU budget (about 0.02 s of computation)"),
+			},
 		});
 		const memory = await sandbox.execute(
 			"const parts = []; for (;;) parts.push('x'.repeat(1 << 20) + parts.length);",
@@ -106,7 +87,7 @@ describe("RemoteCodemodeSandbox", () => {
 	});
 
 	it("tells the remote to stop when the caller aborts", async () => {
-		const { remote, served } = recordingRemote();
+		const { remote, served } = inProcessRemote();
 		let started: () => void = () => {};
 		const call = new Promise<void>((resolve) => {
 			started = resolve;
@@ -154,7 +135,7 @@ describe("RemoteCodemodeSandbox", () => {
 		});
 		expect(await unreachable.execute("return 1")).toMatchObject({
 			ok: false,
-			error: { kind: "sandbox", message: "Failed to reach the remote sandbox: no binding" },
+			error: { kind: "sandbox", message: "Remote sandbox failed: no binding" },
 		});
 	});
 });

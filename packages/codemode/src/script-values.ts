@@ -9,11 +9,8 @@ import type { CodemodeError } from "./types.ts";
  */
 export function scriptError(error: SandboxError): CodemodeError {
 	const { value } = error;
-	if (value instanceof Error) {
-		const head = value.message === "" ? value.name : `${value.name}: ${value.message}`;
-		const frames = typeof value.stack === "string" ? stackFrames(value.stack) : [];
-		return { kind: "script", name: value.name, message: value.message, stack: [head, ...frames].join("\n") };
-	}
+	if (value instanceof Error)
+		return { kind: "script", name: value.name, message: value.message, stack: errorText(value) };
 	return { kind: "script", message: error.message };
 }
 
@@ -24,10 +21,7 @@ export function scriptError(error: SandboxError): CodemodeError {
 export function consoleText(value: unknown): string {
 	if (typeof value === "string") return value;
 	if (typeof value === "number") return String(value);
-	if (value instanceof Error) {
-		const head = value.message ? `${value.name}: ${value.message}` : value.name;
-		return [head, ...(typeof value.stack === "string" ? stackFrames(value.stack) : [])].join("\n");
-	}
+	if (value instanceof Error) return errorText(value);
 	try {
 		return toJson(value) ?? String(value);
 	} catch {
@@ -43,9 +37,11 @@ export function toJson(value: unknown): string | undefined {
 	return JSON.stringify(value, (_key, item: unknown) => (item instanceof Opaque ? undefined : item));
 }
 
-/** The `    at ...` lines of a stack. */
-function stackFrames(stack: string): string[] {
-	return stack.split("\n").filter((line) => /^\s+at /.test(line));
+/** An Error as V8 prints it: `Name: message` and the `    at ...` lines of its stack. */
+function errorText(error: Error): string {
+	const head = error.message === "" ? error.name : `${error.name}: ${error.message}`;
+	const frames = typeof error.stack === "string" ? error.stack.split("\n").filter((line) => /^\s+at /.test(line)) : [];
+	return [head, ...frames].join("\n");
 }
 
 /**
@@ -72,6 +68,3 @@ export function missingMemberMessage(label: string, member: string, names: reado
 	if (hint) message += ` ${hint}`;
 	return `${message} Check for a member with "${member}" in ${label}.`;
 }
-
-/** The hint `tools` adds to {@link missingMemberMessage}. */
-export const TOOLS_MISSING_HINT = "ALL_TOOLS lists every tool; searchTools(query) finds tools by topic.";
