@@ -1,6 +1,6 @@
 // The checklist plugin on a session's worker (`testPlugin`), beside a stand-in server serving `Checklist` with the
 // admission a case sets: the session's checklists give the agent `checklist_list` and `checklist_read` always and
-// `checklist_tick` only while one of them lets it tick; the tools reach the server's checklist through the agent's
+// `checklist_add` and `checklist_tick` only while one of them lets it tick; the tools reach the server's checklist through the agent's
 // `call`, as the session's worker; a tick in a checklist that does not allow it, in an id that is no checklist, or one
 // the server's admission no longer allows (options changed meanwhile) fails.
 
@@ -41,7 +41,11 @@ const standIn = defineFacet((host) => {
 				variant: "checker",
 				members: {
 					...reader,
-					add: async () => "i9",
+					add: async ({ text }) => {
+						items = [...items, { id: "i9", text, done: false }];
+						shown.set(items);
+						return "i9";
+					},
 					tick: async ({ id, done }) => {
 						items = items.map((item) => (item.id === id ? { ...item, done } : item));
 						shown.set(items);
@@ -97,10 +101,11 @@ async function run(extension: Extension, name: string, args: object): Promise<st
 }
 
 describe("what a checklist gives the agent", () => {
-	it("offers checklist_tick only while one of the checklists lets the agent tick", () => {
+	it("offers checklist_add and checklist_tick only while one of the checklists lets the agent tick", () => {
 		const names = (extension: Extension) => extension.tools?.map(({ name }) => name);
-		assert.deepEqual(names(gift(true)), ["checklist_list", "checklist_read", "checklist_tick"]);
-		assert.deepEqual(names(gift(false, true)), ["checklist_list", "checklist_read", "checklist_tick"]);
+		const all = ["checklist_list", "checklist_read", "checklist_add", "checklist_tick"];
+		assert.deepEqual(names(gift(true)), all);
+		assert.deepEqual(names(gift(false, true)), all);
 		assert.deepEqual(names(gift(false)), ["checklist_list", "checklist_read"]);
 	});
 
@@ -120,6 +125,17 @@ describe("what a checklist gives the agent", () => {
 			[true, true],
 		);
 		assert.deepEqual([...new Set(holders)], ["worker"]);
+	});
+
+	it("adds an item and answers its id; refuses an add in a checklist that does not allow it", async () => {
+		const extension = gift(true);
+		assert.equal(await run(extension, "checklist_add", { checklist: "c1", text: "eggs" }), "Added i9.");
+		assert.deepEqual(items.at(-1), { id: "i9", text: "eggs", done: false });
+		await assert.rejects(
+			run(extension, "checklist_add", { checklist: "c2", text: "dust" }),
+			(error: unknown) => isChordError(error) && error.code === "forbidden" && /"Chores" \(c2\)/.test(error.message),
+		);
+		assert.equal(items.length, 3);
 	});
 
 	it("fails a tick in a checklist that does not allow it, and in an id that is no checklist, naming it", async () => {
