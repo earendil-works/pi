@@ -478,3 +478,25 @@ older entries that say `docs/<file>` or `apps/p3/docs/<file>` now are `apps/p3/d
   writing every session and entering every app; `admitOwner` admits the owner's objects); the owner is a member of
   groups and sessions, brings things and has options like anyone, and whatever was stored as `owner` (who brought a
   thing, an author) is the owner's person's id. The owner link and `p3`'s command sign in as the owner's person.
+- **Things are made by how their kind says; sessions follow one party (Mario, 2026-11-23; `base.md`, "Things"):**
+  a thing is one record of its kind with one id, a name and an owner (a person, a group, the Pi, or nobody), kept by
+  the sessions plugin; its kind keeps only what is in it, by that id, on the server. Sessions use things through
+  links, with options per party.
+  - **A kind says how its things come to exist** (`creation`): `content` (a canvas, notes, a checklist: a writer of
+    a session or its agent makes one there, owned by nobody), `person` (a login, an inbox, an MCP server: a person
+    makes one in "My things", for themselves, one of their groups, or as the owner for the Pi), `plugin` (the coding
+    tools: only server code, `ensureThing`; the default for a kind that says nothing). Why: the agent works for
+    every writer of its session, so whatever it could make for someone, any writer, a guest too, could have it make.
+    It therefore makes only content, never an owned thing, never gives one an owner, never changes options. And
+    power belongs to whoever pays for it or owns the machine: a login is made by the person who signs in, the coding
+    tools on this machine by the Pi, never by a guest who adds a second one with other options.
+  - **"In all my sessions"** (`everywhere`) is the thing's owner's choice; **a session follows one party, or
+    nobody**, and has that party's `everywhere` things, live, while the party writes in it (following the owner
+    includes the Pi's). The owner and an app's server code choose whom a session follows; the coding app's sessions
+    follow the owner who made them. Why: defaults without adding by hand. A new session has the coding tools and
+    the owner's login, and a login added later reaches the sessions that follow its owner, with no copies to keep in
+    step. This is live inheritance, which the owner ruled out on 2026-11-22; he took it back for this one case,
+    with one party per session so it stays explainable. Its open problems, and those of the reviews of the things
+    model, are decided with Armin (`next.md`, "Open, with Armin").
+  - Superseded: a kind's own records with `ref`, members bringing things (`BringThings`, `ThingKinds.records`), the
+    agent making things for a member or the Pi and keeping them.

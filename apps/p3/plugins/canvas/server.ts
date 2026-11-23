@@ -1,10 +1,10 @@
-// The canvas plugin on the server: its kind of thing (`ThingKinds`; a board stands for no record, so only the owner
-// and apps add one), the store of the boards' shapes (`store.ts`), each board's motion (`BoardMotion`: pointers and
-// drafts as events, shared by everyone on the board) and `Canvas`, admitted by `admitThing`: a viewer sees the shapes
-// and the pointers, a drawer (writes, and `draw` applies to them) also changes the shapes.
+// The canvas plugin on the server: its kind (`serveThing`: content, which any writer of a session or its agent makes
+// there; its shapes dropped with it), the store of the canvases' shapes (`store.ts`), each canvas's motion in a
+// session (`BoardMotion`: pointers and drafts as events) and `Canvas`, admitted by the thing's admission: a viewer
+// sees the shapes and the pointers, a drawer (writes, and `draw` applies to them) also changes the shapes. A canvas
+// is a thing: its shapes are keyed by the thing's id, its name is the thing's.
 
 import {
-	admitThing,
 	type Context,
 	type Ctx,
 	defineFacet,
@@ -15,16 +15,20 @@ import {
 	type P3Principal,
 	str,
 } from "@earendil-works/p3/v1";
-import { ThingKinds } from "@earendil-works/p3/v1/server";
+import { SessionsStore, serveThing } from "@earendil-works/p3/v1/server";
 import { Canvas, CanvasKind, Motion, type Pointer } from "./contract.ts";
 import { CanvasStore, serveStore } from "./store.ts";
 
-/** How many shapes a page of a board's list holds. */
+/** How many shapes a page of a canvas's list holds. */
 const PAGE = 500;
 
+/** The name of a canvas nobody named. */
+const CANVAS = "Canvas";
+
 /**
- * One board's motion, once per board: what everyone on it does (`motion`, events), and `send`, which every holder's
- * `Canvas` calls with its caller's motion, so each holder sees every other's.
+ * One canvas's motion in one session: what everyone there does on it (`motion`, events), and `send`, which every
+ * holder's `Canvas` calls with its caller's motion. Per session, not per canvas: a canvas used in two sessions shows
+ * each session's people only to that session's.
  */
 const BoardMotion = local("canvas.motion", {
 	version: 1,
@@ -32,9 +36,8 @@ const BoardMotion = local("canvas.motion", {
 	members: { motion: event(Motion), send: method(Motion) },
 });
 
-export default defineFacet((host, self) => {
+export default defineFacet((host) => {
 	serveStore(host);
-	self.contribute(ThingKinds, { kind: CanvasKind, title: "Canvas" });
 
 	host.serve(BoardMotion, (_params, self) => {
 		const motion = self.events<Motion>();
@@ -47,47 +50,56 @@ export default defineFacet((host, self) => {
 		};
 	});
 
-	host.serve(
-		Canvas,
-		({ session, thing }, _principal, { access, options }, self) => {
-			const store = self.get(CanvasStore, {});
-			const board = self.get(BoardMotion, { session, thing });
-			const list = self.list("shapes", [[store.shapes.of, { session, thing }]], { first: PAGE });
-			const point = async (pointer: Pointer, ctx: Ctx<P3Principal>) => {
-				const { who, name } = await caller(ctx);
-				await board.send({ kind: "point", who, name, ...pointer }, ctx);
-				return null;
-			};
-			const viewer = {
-				shapes: list.value,
-				more: (ctx: Context) => list.more(ctx),
-				leave: async (ctx: Ctx<P3Principal>) => {
-					await board.send({ kind: "leave", who: (await caller(ctx)).who }, ctx);
-					return null;
-				},
-				motion: board.motion,
-			};
-			if (access !== "write" || !options.draw) {
-				// A viewer shows where it looks, never a shape it could not commit.
-				return {
-					variant: "viewer",
-					members: { ...viewer, point: (pointer, ctx) => point({ ...pointer, draft: null }, ctx) },
-				};
-			}
-			return {
-				variant: "drawer",
-				members: {
-					...viewer,
-					point,
-					add: async ({ shapes }, ctx) =>
-						store.add({ session, thing, shapes, author: (await caller(ctx)).who }, ctx),
-					remove: ({ id }, ctx) => store.remove({ session, thing, id }, ctx),
-					clear: (ctx) => store.clear({ session, thing }, ctx),
-				},
-			};
+	serveThing(host, CanvasKind, {
+		title: CANVAS,
+		creation: "content",
+		// A new canvas starts empty: nothing to set up. Its shapes go with it.
+		delete: async (thing, ctx) => {
+			await (await ctx.get(CanvasStore, {})).clear({ canvas: thing }, ctx);
 		},
-		{ admit: admitThing(CanvasKind) },
-	);
+		object: {
+			contract: Canvas,
+			factory: ({ session, thing }, { access, options }, self) => {
+				const store = self.get(CanvasStore, {});
+				const board = self.get(BoardMotion, { session, thing });
+				const named = self.liveQuery(self.get(SessionsStore, {}).things.one, { id: thing }, { first: 1 });
+				const list = self.list("shapes", [[store.shapes.of, { canvas: thing }]], { first: PAGE });
+				const point = async (pointer: Pointer, ctx: Ctx<P3Principal>) => {
+					const { who, name } = await caller(ctx);
+					await board.send({ kind: "point", who, name, ...pointer }, ctx);
+					return null;
+				};
+				const viewer = {
+					name: self.derive([named], ([{ rows }]) => rows[0]?.name || CANVAS),
+					shapes: list.value,
+					more: (ctx: Context) => list.more(ctx),
+					leave: async (ctx: Ctx<P3Principal>) => {
+						await board.send({ kind: "leave", who: (await caller(ctx)).who }, ctx);
+						return null;
+					},
+					motion: board.motion,
+				};
+				if (access !== "write" || !options.draw) {
+					// A viewer shows where it looks, never a shape it could not commit.
+					return {
+						variant: "viewer",
+						members: { ...viewer, point: (pointer, ctx) => point({ ...pointer, draft: null }, ctx) },
+					};
+				}
+				return {
+					variant: "drawer",
+					members: {
+						...viewer,
+						point,
+						add: async ({ shapes }, ctx) =>
+							store.add({ canvas: thing, shapes, author: (await caller(ctx)).who }, ctx),
+						remove: ({ id }, ctx) => store.remove({ canvas: thing, id }, ctx),
+						clear: (ctx) => store.clear({ canvas: thing }, ctx),
+					},
+				};
+			},
+		},
+	});
 });
 
 /**

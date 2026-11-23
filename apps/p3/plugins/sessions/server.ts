@@ -1,9 +1,9 @@
 // The sessions plugin on the server: the store of the sessions, their members and things (`store.ts`), the access
-// answer every session object admits with (`access.ts`), the waker (`waker.ts`), what writers bring of their own
-// (`bring.ts`), and the objects of its audiences: the owner's `Sessions` (what the owner adds is the owner's), the
-// kinds of things the owner may add (`ThingKindCatalog`, from `ThingKinds`, served here), a screen's `SessionsList`
-// (the owner's every session of an app, a person's their memberships'), a page's `SessionInfo`, and each worker's
-// `SessionFacts` (its row, its things with the agent's options, its report).
+// answer every session object admits with (`access.ts`), the waker (`waker.ts`), what a session has, linked and from
+// whom it follows (`follow.ts`), a session's things as its writers manage them and a person's own things
+// (`things.ts`), a worker's facts (`facts.ts`), and the objects of its other audiences: the owner's `Sessions` (what
+// the owner adds is the owner's person's; a session they make follows them), a screen's `SessionsList` (the owner's
+// every session of an app, a person's their memberships'), and a page's `SessionInfo`.
 
 import {
 	type Admission,
@@ -20,19 +20,19 @@ import {
 	type Member,
 	type P3Principal,
 	type Self,
-	SessionFacts,
 	SessionInfo,
 	type SessionRow,
 	Sessions,
 	SessionsList,
-	ThingKindCatalog,
 	type Watchable,
 } from "@earendil-works/p3/v1";
 import { PeopleStore, SessionsStore, ThingKinds } from "@earendil-works/p3/v1/server";
 import { serveAccess } from "./access.ts";
-import { serveBring } from "./bring.ts";
-import { currentOptions, type StoredOptions } from "./options.ts";
+import { serveFacts } from "./facts.ts";
+import { SessionHas, serveHas } from "./follow.ts";
+import { currentOptions, type StoredOptions, unset } from "./options.ts";
 import { optionsForOf, serveStore } from "./store.ts";
+import { mustBeContent, serveThings } from "./things.ts";
 import { serveWaker } from "./waker.ts";
 
 /** How many sessions a page of a list holds. */
@@ -48,26 +48,13 @@ export default defineFacet((host) => {
 	serveStore(host);
 	serveAccess(host);
 	serveWaker(host);
-	serveBring(host);
+	serveHas(host);
+	serveThings(host);
+	serveFacts(host);
 
 	host.serve(ThingKinds, {
 		compose: (table, { report }) => keyedEntries(table, (entry) => ({ [entry.kind.name]: entry }), report),
 	});
-
-	host.serve(
-		ThingKindCatalog,
-		(_params, _principal, _admitted, self) => {
-			const kinds = self.derive([self.registry(ThingKinds)], ([table]) =>
-				// A kind with records is brought by whose records they are (`BringThings`), never added with `{ kind }`.
-				[...table.values()]
-					.filter(({ value }) => value.records === undefined)
-					.map(({ value }) => ({ kind: value.kind.name, title: value.title }))
-					.sort((a, b) => (a.title < b.title ? -1 : a.title > b.title ? 1 : 0)),
-			);
-			return { variant: "owner", members: { kinds } };
-		},
-		{ admit: admitOwner },
-	);
 
 	host.serve(
 		Sessions,
@@ -75,11 +62,22 @@ export default defineFacet((host) => {
 			// Admitted as the owner: a person.
 			if (principal.kind !== "person") throw forbidden("sessions: the owner's");
 			const store = self.get(SessionsStore, {});
-			// What the owner adds is the owner's person's.
+			const kinds = self.registry(ThingKinds);
+			// What the owner adds is the owner's person's; a session they make follows them unless they say otherwise.
 			const by = { kind: "person", id: principal.id } as const;
 			return forward(store, Sessions, "owner", {
-				create: (args, ctx) => store.create({ ...args, by }, ctx),
-				addThing: (args, ctx) => store.addThing({ ...args, by }, ctx),
+				create: ({ follows, ...args }, ctx) => {
+					// A page makes content only, owned by nobody; other things are server code's (`SessionsStore`).
+					for (const use of args.things ?? []) {
+						if (use.use !== "new") continue;
+						mustBeContent(kinds.value, use.kind);
+						if (use.owner !== undefined && use.owner.kind !== "none") {
+							throw forbidden("sessions: a session's new things belong to nobody");
+						}
+					}
+					return store.create({ ...args, by, follows: follows === undefined ? by : follows }, ctx);
+				},
+				follow: (args, ctx) => store.follow({ ...args, by }, ctx),
 			});
 		},
 		{ admit: admitOwner },
@@ -112,8 +110,8 @@ export default defineFacet((host) => {
 		SessionInfo,
 		({ session }, _principal, { access }, self) => {
 			const store = self.get(SessionsStore, {});
-			const found = self.liveQuery(store.sessions.one, { id: session }, { first: 1 });
-			const things = self.liveQuery(store.things.of, { session }, { first: READ_WHOLE });
+			// The session's row, and what it has: linked, and from whom it follows.
+			const { session: found, things } = self.get(SessionHas, { session });
 			// Every option set in the session (each thing's default and its overrides), read whole.
 			const set = self.liveQuery(store.options.inSession, { session }, { first: READ_WHOLE });
 			const members = self.liveQuery(store.members.of, { session }, { first: READ_WHOLE });
@@ -122,26 +120,50 @@ export default defineFacet((host) => {
 			const people = self.get(PeopleStore, {});
 			const idsOf = (kind: Member["kind"]) =>
 				self.derive([members], ([{ rows }]) => rows.filter((m) => m.kind === kind).map(({ id }) => id));
-			// The persons: the members and whoever brought a thing (members or not, the owner among them).
-			const personIds = self.derive([idsOf("person"), things], ([ofMembers, { rows }]) => ({
-				ids: [...new Set([...ofMembers, ...rows.flatMap(({ by }) => (by.kind === "person" ? [by.id] : []))])],
+			// Whom it follows (a person or a group), for its name.
+			const followsOf = (kind: Member["kind"]) =>
+				self.derive([found], ([row]) => (row?.follows?.kind === kind ? [row.follows.id] : []));
+			// The persons and groups: the members, whom it follows, the things' owners and whoever linked a thing
+			// (members or not).
+			const personIds = self.derive(
+				[idsOf("person"), followsOf("person"), things],
+				([ofMembers, followed, rows]) => ({
+					ids: unique([
+						...ofMembers,
+						...followed,
+						...rows.flatMap(({ by, owner }) => [
+							...(by.kind === "person" ? [by.id] : []),
+							...(owner.kind === "person" ? [owner.id] : []),
+						]),
+					]),
+				}),
+			);
+			const groupIds = self.derive([idsOf("group"), followsOf("group"), things], ([ofMembers, followed, rows]) => ({
+				ids: unique([
+					...ofMembers,
+					...followed,
+					...rows.flatMap(({ owner }) => (owner.kind === "group" ? [owner.id] : [])),
+				]),
 			}));
-			const groupIds = self.derive([idsOf("group")], ([ids]) => ({ ids }));
 			const persons = self.liveQuery(people.persons.ofIds, personIds, { first: READ_WHOLE });
 			const groups = self.liveQuery(people.groups.ofIds, groupIds, { first: READ_WHOLE });
-			const personNames = self.derive([persons], ([{ rows }]) =>
-				Object.fromEntries(rows.map(({ id, name }) => [id, name])),
+			const names = self.derive([persons, groups], ([ofPersons, ofGroups]) =>
+				namesOf(ofPersons.rows, ofGroups.rows),
 			);
 			return {
 				variant: "info",
 				members: {
 					// Admitted: the session exists (its access is none otherwise).
-					session: self.derive([found], ([{ rows }]) => rows[0] ?? fail(`no session ${session}`)),
+					session: self.derive([found], ([row]) => row ?? fail(`no session ${session}`)),
 					access: constant(access),
-					things: self.derive([things, set, kinds, personNames], ([of, written, table, names]) => {
-						if (of.more || written.more) fail(`session ${session} has more than ${READ_WHOLE} things or options`);
+					// One who left shows their id, as a member does.
+					followsName: self.derive([found, names], ([row, named]) =>
+						row === null || row.follows === null ? "" : nameOf(named, row.follows),
+					),
+					things: self.derive([things, set, kinds, names], ([of, written, table, named]) => {
+						if (written.more) fail(`session ${session} has more than ${READ_WHOLE} options`);
 						const byThing = Map.groupBy(written.rows, (row) => row.thing);
-						return of.rows.map(({ thing, kind, ref, by }) => {
+						return of.map(({ thing, kind, name, owner, by }) => {
 							const entry = table.get(kind)?.value;
 							const read = (row: StoredOptions) => currentOptions(entry, row)?.options ?? null;
 							const rows = byThing.get(thing) ?? [];
@@ -154,65 +176,33 @@ export default defineFacet((host) => {
 							return {
 								thing,
 								kind,
-								ref,
+								name,
+								owner,
+								// The owner's and the linker's names now; one who left shows their id.
+								ownerName: owner.kind === "person" || owner.kind === "group" ? nameOf(named, owner) : "",
 								by,
-								// The bringer's name now; a person who left shows their id.
-								byName: by.kind === "person" ? (names[by.id] ?? by.id) : "",
-								options: everyone === undefined ? null : read(everyone),
+								byName: by.kind === "person" ? nameOf(named, by) : "",
+								// None set (a followed thing): its kind's initial.
+								options: everyone === undefined ? (unset(entry)?.options ?? null) : read(everyone),
 								overrides,
 								title,
 							};
 						});
 					}),
-					members: self.derive([members, persons, groups], ([{ rows, more }, ofPersons, ofGroups]) => {
-						if (more || ofPersons.more || ofGroups.more)
-							fail(`session ${session} has more than ${READ_WHOLE} members`);
-						const names = new Map([
-							...ofPersons.rows.map(({ id, name }) => [`person:${id}`, name] as const),
-							...ofGroups.rows.map(({ id, name }) => [`group:${id}`, name] as const),
-						]);
-						// A member whose person or group is gone (until its row goes too) shows its id.
-						return rows.map((member) => ({
-							...member,
-							name: names.get(`${member.kind}:${member.id}`) ?? member.id,
-						}));
-					}),
+					members: self.derive(
+						[members, persons, groups, names],
+						([{ rows, more }, ofPersons, ofGroups, named]) => {
+							if (more || ofPersons.more || ofGroups.more)
+								fail(`session ${session} has more than ${READ_WHOLE} members`);
+							// A member whose person or group is gone (until its row goes too) shows its id.
+							return rows.map((member) => ({ ...member, name: nameOf(named, member) }));
+						},
+					),
 				},
 			};
 		},
 		{ admit: admitSession },
 	);
-
-	host.serve(SessionFacts, (_params, principal, self) => {
-		if (principal.kind !== "worker") throw forbidden("sessions: a session's worker only");
-		const session = principal.session;
-		const store = self.get(SessionsStore, {});
-		const found = self.liveQuery(store.sessions.one, { id: session }, { first: 1 });
-		const things = self.liveQuery(store.things.of, { session }, { first: READ_WHOLE });
-		const defaults = self.liveQuery(store.options.ofSession, { session, for: "everyone" }, { first: READ_WHOLE });
-		const agent = self.liveQuery(store.options.ofSession, { session, for: "agent" }, { first: READ_WHOLE });
-		const kinds = self.registry(ThingKinds);
-		const agentThings = self.derive([things, defaults, agent, kinds], ([of, everyone, own, table]) => {
-			if (of.more || everyone.more || own.more) fail(`session ${session} has more than ${READ_WHOLE} things`);
-			const stored = new Map([...everyone.rows, ...own.rows].map((row) => [row.thing, row]));
-			return of.rows.map(({ thing, kind, ref }) => {
-				const row = stored.get(thing)!;
-				// Nothing for options no installed kind reads now: the harness gives such a thing nothing.
-				const current = currentOptions(table.get(kind)?.value, row);
-				return current === undefined
-					? { thing, kind, ref, version: row.version, options: null }
-					: { thing, kind, ref, ...current };
-			});
-		});
-		return {
-			variant: "worker",
-			members: {
-				session: self.derive([found], ([{ rows }]) => rows[0] ?? null),
-				things: agentThings,
-				report: ({ state }, ctx) => store.report({ session, state }, ctx),
-			},
-		};
-	});
 });
 
 /**
@@ -228,6 +218,30 @@ function onceEach(
 		const seen = new Set<string>();
 		return { rows: rows.filter(({ id }) => !seen.has(id) && seen.add(id) !== undefined), moreAfter };
 	});
+}
+
+/** Each of `ids` once, in the order first met. */
+function unique(ids: readonly string[]): string[] {
+	return [...new Set(ids)];
+}
+
+/** The names of persons and groups by key (`person:<id>`, `group:<id>`). */
+function namesOf(
+	persons: readonly { readonly id: string; readonly name: string }[],
+	groups: readonly { readonly id: string; readonly name: string }[],
+): Record<string, string> {
+	return Object.fromEntries([
+		...persons.map(({ id, name }) => [`person:${id}`, name]),
+		...groups.map(({ id, name }) => [`group:${id}`, name]),
+	]);
+}
+
+/** The name of `party` in `names` (`namesOf`); its id while it has none (a person or group that is gone). */
+function nameOf(
+	names: Readonly<Record<string, string>>,
+	party: { readonly kind: string; readonly id: string },
+): string {
+	return names[`${party.kind}:${party.id}`] ?? party.id;
 }
 
 /** Fails the member being computed: a read that cannot be shown whole. */

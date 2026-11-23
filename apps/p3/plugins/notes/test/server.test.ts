@@ -1,14 +1,14 @@
 // The notes plugin on the server (`testPlugin`, beside the real sessions, people, environments, apps, coding and
-// sign-in facets): each caller's own notebook offered to bring, the same notebook in two sessions, the admission
-// (a reader, a writer whose options say no edit, an editor, the agent by its options, a removed member denied
-// live), authors as `Me` says (an agent as `agent`) with names read live, a session's own notebook for a thing without a record, and a
-// notebook's list with `more`.
+// sign-in facets): notebooks are content (a writer or the agent makes them in a session, a reader none), two in one
+// session hold their own notes, one kept and used in a second session shows the same notes, its name is its thing's,
+// its notes go with it; a notebook's list with `more`; the admission (a reader, a writer whose options say no edit,
+// an editor, the default changed live, the agent by its options, a removed member denied live) and authors as `Me`
+// says (an agent as `agent`) with names read live.
 
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
-	BringThings,
 	type Ctx,
 	BACKGROUND_CONTEXT as context,
 	isChordError,
@@ -16,9 +16,9 @@ import {
 	type OptionsFor,
 	type P3Principal,
 	type Reference,
-	Sessions,
+	SessionFacts,
+	SessionThings,
 	THIS_DEVICE,
-	thingOf,
 	until,
 } from "@earendil-works/p3/v1";
 import { PeopleStore, SessionsStore } from "@earendil-works/p3/v1/server";
@@ -31,9 +31,10 @@ import peopleServer from "../../people/server.ts";
 import sessionsServer from "../../sessions/server.ts";
 import signInServer from "../../sign-in/server.ts";
 import { Notes, NotesKind } from "../contract.ts";
+import { NotesStore } from "../store.ts";
 
 /** The owner's person in this test's Pi (made at its first start). */
-let OWNER: Extract<P3Principal, { kind: "person" }>;
+let OWNER: Person;
 
 /** Where the tests' sessions work. */
 const HERE = { environment: THIS_DEVICE, folder: "/tmp/p3-notes-test" };
@@ -77,7 +78,7 @@ async function person(name: string): Promise<Person> {
 	return { kind: "person", id, name };
 }
 
-/** Makes a coding session with `members` and no things; its id. */
+/** Makes a coding session with `members`, following nobody; its id. */
 function session(members: Member[]): Promise<string> {
 	return t.root(
 		async (ctx) => (await ctx.get(SessionsStore, {})).create({ app: "coding", location: HERE, members }, ctx),
@@ -85,29 +86,34 @@ function session(members: Member[]): Promise<string> {
 	);
 }
 
-/** `who` brings their own notebook into session `id`; the thing's id. */
-function bring(who: Person, id: string): Promise<string> {
+/** Runs `fn` with `principal`'s writer of session `id`'s things, failing the test for a reader. */
+function managing<T>(
+	principal: P3Principal,
+	id: string,
+	fn: (things: Extract<Reference<typeof SessionThings>, { variant: "writer" }>, ctx: Ctx<P3Principal>) => Promise<T>,
+): Promise<T> {
 	return t.root(
 		async (ctx) => {
-			const bringing = await ctx.get(BringThings, { session: id });
-			if (bringing.variant !== "writer") return assert.fail(bringing.variant);
-			return bringing.bring({ kind: NotesKind.name, ref: `person:${who.id}` }, ctx);
+			const things = await ctx.get(SessionThings, { session: id });
+			if (things.variant !== "writer") return assert.fail(things.variant);
+			return fn(things, ctx);
 		},
 		context,
-		{ principal: who },
+		{ principal },
+	);
+}
+
+/** `who` makes a notebook (named `name`) in session `id`; its thing's id. */
+function make(who: Person, id: string, name?: string): Promise<string> {
+	return managing(who, id, (things, ctx) =>
+		things.create({ kind: NotesKind.name, ...(name === undefined ? {} : { name }) }, ctx),
 	);
 }
 
 /** Sets the options of thing `thing` of session `id` for `forWhom`, as the owner. */
 function setOptions(id: string, thing: string, forWhom: OptionsFor, edit: boolean | null): Promise<null> {
-	return t.root(
-		async (ctx) =>
-			(await ctx.get(Sessions, {})).setOptions(
-				{ session: id, thing, for: forWhom, options: edit === null ? null : { edit } },
-				ctx,
-			),
-		context,
-		{ principal: OWNER },
+	return managing(OWNER, id, (things, ctx) =>
+		things.setOptions({ thing, for: forWhom, options: edit === null ? null : { edit } }, ctx),
 	);
 }
 
@@ -119,6 +125,11 @@ function holding<T>(
 	fn: (notes: NotesRef, ctx: Ctx<P3Principal>) => Promise<T>,
 ) {
 	return t.root(async (ctx) => fn(await ctx.get(Notes, { session: id, thing }), ctx), context, { principal });
+}
+
+/** The texts of notebook `thing` of session `id`, as `who` reads them. */
+function texts(who: P3Principal, id: string, thing: string): Promise<string[]> {
+	return holding(who, id, thing, async (notes) => notes.list.value.rows.map(({ text }) => text));
 }
 
 /** The editor of `notes`, failing the test for a reader. */
@@ -137,75 +148,91 @@ async function refused(promise: Promise<unknown>, code = "forbidden"): Promise<v
 	await assert.rejects(promise, (error: unknown) => isChordError(error) && error.code === code);
 }
 
-describe("the notebooks a caller may bring", () => {
-	it("offer each person their own, titled with their name, the owner theirs, and nobody another's", async () => {
+describe("making notebooks", () => {
+	it("is a writer's: two notebooks of one session hold their own notes; a reader makes none", async () => {
 		const ann = await person("Ann");
 		const ben = await person("Ben");
 		const id = await session([
 			{ kind: "person", id: ann.id, access: "write" },
-			{ kind: "person", id: ben.id, access: "write" },
+			{ kind: "person", id: ben.id, access: "read" },
 		]);
-		const offered = (principal: P3Principal) =>
-			t.root(
-				async (ctx) => {
-					const bringing = await ctx.get(BringThings, { session: id });
-					if (bringing.variant !== "writer") return assert.fail(bringing.variant);
-					return (await bringing.kinds({}, ctx)).find(({ kind }) => kind === NotesKind.name)?.records;
-				},
-				context,
-				{ principal },
-			);
-		assert.deepEqual(await offered(ann), [{ ref: `person:${ann.id}`, title: "Ann's notes" }]);
-		assert.deepEqual(await offered(OWNER), [{ ref: `person:${OWNER.id}`, title: `${OWNER.name}'s notes` }]);
-		await refused(
-			t.root(
-				async (ctx) => {
-					const bringing = await ctx.get(BringThings, { session: id });
-					if (bringing.variant !== "writer") return assert.fail(bringing.variant);
-					return bringing.bring({ kind: NotesKind.name, ref: `person:${ann.id}` }, ctx);
-				},
-				context,
-				{ principal: ben },
-			),
+		assert.ok(
+			(await managing(ann, id, async (things) => things.kinds.value)).some(({ kind }) => kind === NotesKind.name),
 		);
+		const work = await make(ann, id, "Work");
+		const home = await make(ann, id);
+		await holding(ann, id, work, (notes, ctx) => editorOf(notes).add({ text: "ship it" }, ctx));
+		await holding(ann, id, home, (notes, ctx) => editorOf(notes).add({ text: "water the plants" }, ctx));
+		assert.deepEqual(await texts(ann, id, work), ["ship it"]);
+		assert.deepEqual(await texts(ann, id, home), ["water the plants"]);
+		// Its name is its thing's; none shows the kind's title.
+		assert.equal(await holding(ben, id, work, async (notes) => notes.name.value), "Work");
+		assert.equal(await holding(ben, id, home, async (notes) => notes.name.value), "Notes");
+		assert.equal(
+			await t.root(async (ctx) => (await ctx.get(SessionThings, { session: id })).variant, context, {
+				principal: ben,
+			}),
+			"reader",
+		);
+	});
+
+	it("is the agent's too, as content of its session", async () => {
+		const ann = await person("Ann");
+		const id = await session([{ kind: "person", id: ann.id, access: "write" }]);
+		const thing = await t.root(
+			async (ctx) => (await ctx.get(SessionFacts, {})).create({ kind: NotesKind.name, name: "Agent's" }, ctx),
+			context,
+			{ principal: { kind: "worker", session: id } },
+		);
+		await holding(ann, id, thing, async (notes, ctx) => {
+			assert.equal(notes.name.value, "Agent's");
+			await editorOf(notes).add({ text: "for the agent" }, ctx);
+		});
+	});
+
+	it("renames live, and shows the same notes in a second session once kept and added there", async () => {
+		const ann = await person("Ann");
+		const first = await session([{ kind: "person", id: ann.id, access: "write" }]);
+		const second = await session([{ kind: "person", id: ann.id, access: "write" }]);
+		const thing = await make(ann, first, "Shared");
+		const note = await holding(ann, first, thing, (notes, ctx) => editorOf(notes).add({ text: "shared" }, ctx));
+		await managing(ann, first, (things, ctx) => things.keep({ thing, owner: { kind: "person", id: ann.id } }, ctx));
+		await managing(ann, second, (things, ctx) => things.add({ thing }, ctx));
+		await holding(ann, second, thing, async (notes, ctx) => {
+			assert.deepEqual(
+				notes.list.value.rows.map(({ id, text, author }) => [id, text, author]),
+				[[note, "shared", { kind: "person", id: ann.id, name: "Ann" }]],
+			);
+			await managing(ann, first, (things, inner) => things.rename({ thing, name: "Ours" }, inner));
+			await until(notes.name, (name) => name === "Ours", within("the new name", ctx));
+		});
+	});
+
+	it("drops a notebook's notes with it: deleted, or nobody's content unlinked from its last session", async () => {
+		const ann = await person("Ann");
+		const id = await session([{ kind: "person", id: ann.id, access: "write" }]);
+		const stored = (notebook: string) =>
+			t.root(
+				async (ctx) => (await (await ctx.get(NotesStore, {})).notes.of.page({ notebook }, 10, ctx)).items,
+				context,
+			);
+		const deleted = await make(ann, id);
+		const removed = await make(ann, id);
+		for (const thing of [deleted, removed]) {
+			await holding(ann, id, thing, (notes, ctx) => editorOf(notes).add({ text: "gone soon" }, ctx));
+		}
+		await managing(ann, id, (things, ctx) => things.delete({ thing: deleted }, ctx));
+		await managing(ann, id, (things, ctx) => things.remove({ thing: removed }, ctx));
+		assert.deepEqual(await stored(deleted), []);
+		assert.deepEqual(await stored(removed), []);
 	});
 });
 
-describe("a notebook", () => {
-	it("is the same in every session it is brought into", async () => {
-		const ann = await person("Ann");
-		const first = await session([{ kind: "person", id: ann.id, access: "write" }]);
-		const second = await session([{ kind: "person", id: ann.id, access: "write" }]);
-		const here = await bring(ann, first);
-		const there = await bring(ann, second);
-		const id = await holding(ann, first, here, (notes, ctx) => editorOf(notes).add({ text: "shared" }, ctx));
-		const shown = await holding(ann, second, there, async (notes) => notes.list.value.rows);
-		assert.deepEqual(
-			shown.map(({ id: note, text, author }) => [note, text, author]),
-			[[id, "shared", { kind: "person", id: ann.id, name: "Ann" }]],
-		);
-	});
-
-	it("is its session's own for a thing without a record", async () => {
-		const ann = await person("Ann");
-		const first = await session([{ kind: "person", id: ann.id, access: "write" }]);
-		const second = await session([{ kind: "person", id: ann.id, access: "write" }]);
-		const add = (id: string) =>
-			t.root(
-				async (ctx) => (await ctx.get(SessionsStore, {})).addThing({ session: id, thing: thingOf(NotesKind) }, ctx),
-				context,
-			);
-		const here = await add(first);
-		const there = await add(second);
-		await holding(OWNER, first, here, (notes, ctx) => editorOf(notes).add({ text: "only here" }, ctx));
-		assert.equal((await holding(ann, first, here, async (notes) => notes.list.value.rows)).length, 1);
-		assert.deepEqual(await holding(ann, second, there, async (notes) => notes.list.value.rows), []);
-	});
-
+describe("a notebook's list", () => {
 	it("loads a page of 50, the last written first, and the next with more", async () => {
 		const ann = await person("Ann");
 		const id = await session([{ kind: "person", id: ann.id, access: "write" }]);
-		const thing = await bring(ann, id);
+		const thing = await make(ann, id);
 		await holding(ann, id, thing, async (notes, ctx) => {
 			for (let i = 0; i < 55; i++) await editorOf(notes).add({ text: `note ${i}` }, ctx);
 		});
@@ -222,7 +249,7 @@ describe("a notebook", () => {
 });
 
 describe("who may do what in a notebook", () => {
-	/** A session with Ann (writes, brings her notebook), Ben (reads) and Cleo (writes); the notebook's thing. */
+	/** A session with Ann (writes, makes a notebook), Ben (reads) and Cleo (writes); the notebook's thing. */
 	async function setup() {
 		const ann = await person("Ann");
 		const ben = await person("Ben");
@@ -232,7 +259,7 @@ describe("who may do what in a notebook", () => {
 			{ kind: "person", id: ben.id, access: "read" },
 			{ kind: "person", id: cleo.id, access: "write" },
 		]);
-		return { ann, ben, cleo, id, thing: await bring(ann, id) };
+		return { ann, ben, cleo, id, thing: await make(ann, id) };
 	}
 
 	it("gives a reader and a writer whose options say no edit the reader; an editor adds, edits and removes", async () => {
@@ -339,7 +366,7 @@ describe("who may do what in a notebook", () => {
 				within("Ben denied", ctx),
 			);
 		});
-		// Ann leaves the session: her notebook goes with her, and her notes stay hers.
+		// Ann leaves the session: the notebook is the session's content, it stays.
 		await t.root(
 			async (server) =>
 				(await server.get(SessionsStore, {})).removeMember(
@@ -348,10 +375,6 @@ describe("who may do what in a notebook", () => {
 				),
 			context,
 		);
-		await refused(
-			t.root(async (ctx) => ctx.get(Notes, { session: id, thing }, { readyTimeout: 500 }), context, {
-				principal: OWNER,
-			}),
-		);
+		assert.equal(await holding(OWNER, id, thing, async (notes) => notes.variant), "editor");
 	});
 });

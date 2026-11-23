@@ -1,217 +1,283 @@
-// The view `SessionThingsView`: what a session holds, opened on demand. Everyone with access sees its location, its
-// things (each by its kind's title, with who brought it, and "Open" when the app shows things and the kind has a view)
-// and its members. A writer (a person or the
-// owner) brings their own records (`BringThings`), withdraws what they brought and sets its options (with its kind's
-// form, `thing-options.tsx`); the owner also adds and removes any thing (the kinds without records of
-// `ThingKindCatalog`), sets any thing's options, and adds and removes members (the persons of `PeopleList`), through
-// `Sessions`.
+// The view `SessionThingsView`, the session sheet: what a session holds, opened on demand. Everyone with access sees
+// its location, whom it follows, its things (each by its name, else its kind's title, with whose it is, "from" whom
+// the session follows for a thing it has that way, and "Open" when the app shows things and the kind has a view) and
+// its members. A writer (a person or the owner) makes content here ("New": the session's kinds of content, owned by
+// nobody), adds a thing they manage ("Add existing"), gives content an owner ("Keep"), and removes, renames and sets
+// the options of the things they manage (a thing the session follows is not removed here); the owner also changes
+// whom the session follows, and adds and removes members (the persons of `PeopleList`), through `Sessions`.
 
 import { Button, Heading } from "@earendil-works/elanor-react";
 import {
 	type Access,
-	type Bringer,
-	BringThings,
 	type Context,
 	Me,
 	type Member,
+	type Party,
 	PeopleList,
 	SessionInfo,
 	type SessionRow,
 	Sessions,
 	type SessionThing,
-	ThingKindCatalog,
+	SessionThings as SessionThingsObject,
 } from "@earendil-works/p3/v1";
 import { useHold, useRefState, useRegistry, useVariant, useWatch } from "@earendil-works/p3/v1/web";
 import { type ReactNode, useState } from "react";
 import { type Action, useAction } from "./action.ts";
-import { BringOwn, broughtKey, useBringable } from "./bring-own.tsx";
+import { AddExisting } from "./add-existing.tsx";
 import { Choice } from "./choice.tsx";
 import { ThingViews } from "./contract.web.tsx";
+import { type FollowChoice, Following, followName } from "./following.tsx";
+import { GiveThing } from "./give-thing.tsx";
 import { useViewId } from "./session-list.tsx";
 import styles from "./session-things.module.css";
+import { NameField, ThingName } from "./thing-name.tsx";
 import { ThingOptions, type ThingOptionsOf } from "./thing-options.tsx";
 
 /** Who the viewer is, as `Me` answers for a person (the owner among them). */
 type Viewer = { readonly id: string; readonly name: string; readonly owner: boolean };
 
-/** A thing as the view shows it: its id, kind, who brought it (and their name), its kind's title and its options. */
-type ShownThing = Pick<SessionThing, "thing" | "kind" | "ref" | "by"> &
-	ThingOptionsOf & { readonly title: string; readonly byName: string };
+/** A thing as the view shows it: its id, kind, name, owner (and their name), its kind's title and its options. */
+type ShownThing = Pick<SessionThing, "thing" | "kind" | "name" | "owner" | "by"> &
+	ThingOptionsOf & { readonly title: string; readonly ownerName: string; readonly byName: string };
 
 /** A member as the view shows it: who, their access and their name. */
 type ShownMember = Member & { readonly name: string };
 
-/** Session `session`'s things and members; writers bring their own, the owner manages them. */
+/** What every part of the sheet reads: the session, the viewer, its things and members, and the sheet's action. */
+type Sheet = {
+	readonly row: SessionRow;
+	readonly followsName: string;
+	readonly things: readonly ShownThing[];
+	readonly members: readonly ShownMember[];
+	readonly me: Viewer;
+	readonly onOpen: ((thing: string) => void) | undefined;
+	readonly action: Action;
+};
+
+/** Session `session`'s sheet; writers make and manage things, the owner also members and whom it follows. */
 export function SessionThings(props: { readonly session: string; readonly onOpen?: (thing: string) => void }) {
 	const infoRef = useHold(SessionInfo, { session: props.session });
 	const info = useVariant(infoRef, "info");
 	const state = useRefState(infoRef);
 	const me = useWatch(useVariant(useHold(Me, {}), "me")?.me);
 	const row = useWatch(info?.session);
-	const access = useWatch(info?.access);
 	const things = useWatch(info?.things);
 	const members = useWatch(info?.members);
+	const followsName = useWatch(info?.followsName);
+	const action = useAction();
 	if (state?.kind === "failed" && state.cause.kind === "denied") {
 		return <p className={styles.note}>You have no access to this session.</p>;
 	}
 	if (state?.kind === "failed" || state?.kind === "ended") {
 		return <p className={styles.note}>This session cannot be shown now.</p>;
 	}
-	if (row === undefined || access === undefined || things === undefined || members === undefined || me === undefined) {
+	if (
+		row === undefined ||
+		things === undefined ||
+		members === undefined ||
+		followsName === undefined ||
+		me === undefined
+	) {
 		return <p className={styles.note}>Loading…</p>;
 	}
 	// A page is never a session's worker.
 	if (me.kind === "agent") return null;
-	if (me.owner) return <Managed me={me} members={members} onOpen={props.onOpen} row={row} things={things} />;
-	return <Working access={access} me={me} members={members} onOpen={props.onOpen} row={row} things={things} />;
-}
-
-/** A person's view: the lists, and for a writer their own things to bring and withdraw. */
-function Working(props: {
-	readonly row: SessionRow;
-	readonly access: Access;
-	readonly things: readonly ShownThing[];
-	readonly members: readonly ShownMember[];
-	readonly me: Viewer;
-	readonly onOpen: ((thing: string) => void) | undefined;
-}) {
-	const session = props.row.id;
-	const bring = useVariant(useHold(BringThings, { session }), "writer");
-	const bringable = useBringable(bring?.kinds);
-	const change = useAction();
-	const mine = (by: Bringer) => by.kind === "person" && by.id === props.me.id;
+	const sheet: Sheet = { row, followsName, things, members, me, onOpen: props.onOpen, action };
 	return (
 		<div className={styles.things} data-session-things="">
-			<Location row={props.row} />
-			<Things
-				onOpen={props.onOpen}
-				removal={(thing) =>
-					bring === undefined || !mine(thing.by)
-						? undefined
-						: { label: "Withdraw", run: () => change.run((ctx) => bring.withdraw({ thing: thing.thing }, ctx)) }
-				}
-				options={(thing) =>
-					bring === undefined || !mine(thing.by) ? null : (
-						<ThingOptions
-							action={change}
-							members={props.members}
-							onSave={(forWhom, options) =>
-								change.run((ctx) => bring.setOptions({ thing: thing.thing, for: forWhom, options }, ctx))
-							}
-							session={session}
-							thing={thing}
-						/>
-					)
-				}
-				session={session}
-				things={props.things}
-				whose={(thing) => whose(thing, props.me)}
-			/>
-			{bring === undefined || bringable.kinds === undefined ? null : (
-				<BringOwn
-					action={change}
-					brought={broughtBy(props.things, mine)}
-					kinds={bringable.kinds}
-					onBring={(kind, ref) => change.run((ctx) => bring.bring({ kind, ref }, ctx))}
-				/>
-			)}
-			<Members members={props.members} me={props.me} />
-			<Failures errors={[change.error, bringable.error]} />
+			<Location row={row} />
+			{me.owner ? <OwnerFollowing sheet={sheet} /> : <Following {...followingOf(sheet)} onFollow={undefined} />}
+			<SheetThings sheet={sheet} />
+			{me.owner ? <ManagedMembers sheet={sheet} /> : <Members me={me} members={members} />}
+			<Failures errors={[action.error]} />
 		</div>
 	);
 }
 
-/** The owner's view: the lists with their removals, what they bring, and the forms that add a thing and a member. */
-function Managed(props: {
-	readonly row: SessionRow;
-	readonly things: readonly ShownThing[];
-	readonly members: readonly ShownMember[];
-	readonly me: Viewer;
-	readonly onOpen: ((thing: string) => void) | undefined;
-}) {
-	const session = props.row.id;
+/**
+ * Whom the session follows and its name (the viewer as "You"), and the parties the owner may make it follow
+ * (themselves as "You", its members).
+ */
+function followingOf(sheet: Sheet): {
+	follows: Party | null;
+	name: string;
+	choices: readonly FollowChoice[];
+	action: Action;
+} {
+	const you: FollowChoice = { party: { kind: "person", id: sheet.me.id }, name: "You" };
+	const members = sheet.members
+		.filter((member) => !(member.kind === "person" && member.id === sheet.me.id))
+		.map((member) => ({ party: { kind: member.kind, id: member.id }, name: member.name }));
+	return {
+		follows: sheet.row.follows,
+		name: followName(sheet.row.follows, sheet.me.id, sheet.followsName),
+		choices: sheet.me.owner ? [you, ...members] : [],
+		action: sheet.action,
+	};
+}
+
+/** The owner's "Follows" with its change (`Sessions.follow`, keeping what the session had). */
+function OwnerFollowing(props: { readonly sheet: Sheet }) {
 	const sessions = useVariant(useHold(Sessions, {}), "owner");
-	const bring = useVariant(useHold(BringThings, { session }), "writer");
-	const bringable = useBringable(bring?.kinds);
-	const kinds = useWatch(useVariant(useHold(ThingKindCatalog, {}), "owner")?.kinds) ?? [];
-	const peopleRef = useVariant(useHold(PeopleList, { view: useViewId() }), "owner");
-	const people = useWatch(peopleRef?.list);
-	const change = useAction();
-	const manage = (call: (owner: NonNullable<typeof sessions>, context: Context) => Promise<unknown>) => {
-		if (sessions !== undefined) change.run((ctx) => call(sessions, ctx));
+	const { sheet } = props;
+	return (
+		<Following
+			{...followingOf(sheet)}
+			onFollow={
+				sessions === undefined
+					? undefined
+					: (follows) =>
+							sheet.action.run((ctx) => sessions.follow({ session: sheet.row.id, follows, keep: true }, ctx))
+			}
+		/>
+	);
+}
+
+/**
+ * The things with what the viewer's `SessionThings` lets them do (a writer's; a reader's has nothing): open, rename,
+ * set the options of, keep and remove the things they manage (`manages`: the server decides again), make content
+ * here ("New") and add a thing they manage ("Add existing").
+ */
+function SheetThings(props: { readonly sheet: Sheet }) {
+	const { sheet } = props;
+	const { action } = sheet;
+	const writer = useVariant(useHold(SessionThingsObject, { session: sheet.row.id }), "writer");
+	const kinds = useWatch(writer?.kinds) ?? [];
+	const owners = useWatch(writer?.owners) ?? [];
+	const titles = new Map([
+		...sheet.things.map((thing) => [thing.kind, thing.title] as const),
+		...kinds.map((kind) => [kind.kind, kind.title] as const),
+	]);
+	const from = `From ${followingOf(sheet).name}`;
+	const run = (call: (thing: NonNullable<typeof writer>, context: Context) => Promise<unknown>) => {
+		if (writer !== undefined) action.run((ctx) => call(writer, ctx));
 	};
 	return (
-		<div className={styles.things} data-session-things="">
-			<Location row={props.row} />
+		<>
 			<Things
-				onOpen={props.onOpen}
-				removal={(thing) => ({
-					label: "Remove",
-					run: () => manage((owner, ctx) => owner.removeThing({ session, thing: thing.thing }, ctx)),
-				})}
-				options={(thing) => (
-					<ThingOptions
-						action={change}
-						members={props.members}
-						onSave={(forWhom, options) =>
-							manage((owner, ctx) =>
-								owner.setOptions({ session, thing: thing.thing, for: forWhom, options }, ctx),
-							)
-						}
-						session={session}
-						thing={thing}
+				describe={(thing) => {
+					const managed = writer !== undefined && manages(thing, sheet.me);
+					const followed = thing.by.kind === "followed";
+					return {
+						whose: followed ? `${whose(thing, sheet.me)} · ${from}` : whose(thing, sheet.me),
+						rename: managed ? (name) => run((w, ctx) => w.rename({ thing: thing.thing, name }, ctx)) : undefined,
+						options: managed ? (
+							<ThingOptions
+								action={action}
+								members={sheet.members}
+								onSave={(forWhom, options) =>
+									run((w, ctx) => w.setOptions({ thing: thing.thing, for: forWhom, options }, ctx))
+								}
+								session={sheet.row.id}
+								thing={thing}
+							/>
+						) : null,
+						actions: (
+							<>
+								{writer === undefined || thing.owner.kind !== "none" ? null : (
+									<GiveThing
+										action={action}
+										current={thing.owner}
+										label="Keep"
+										onGive={(owner) => run((w, ctx) => w.keep({ thing: thing.thing, owner }, ctx))}
+										owners={owners}
+									/>
+								)}
+								{!managed || followed ? null : (
+									<Button
+										data-remove-thing=""
+										density="compact"
+										hierarchy="tertiary"
+										onClick={() => run((w, ctx) => w.remove({ thing: thing.thing }, ctx))}
+										semantic="negative"
+									>
+										Remove
+									</Button>
+								)}
+							</>
+						),
+					};
+				}}
+				onOpen={sheet.onOpen}
+				session={sheet.row.id}
+				things={sheet.things}
+				action={action}
+			/>
+			{writer === undefined ? null : (
+				<>
+					<NewThing
+						action={action}
+						kinds={kinds.map((kind) => ({ value: kind.kind, label: kind.title }))}
+						onAdd={(kind, name) => run((w, ctx) => w.create({ kind, ...(name === "" ? {} : { name }) }, ctx))}
 					/>
-				)}
-				session={session}
-				things={props.things}
-				whose={(thing) => whose(thing, props.me)}
-			/>
-			<AddThing
-				action={change}
-				kinds={kinds.map((kind) => ({ value: kind.kind, label: kind.title }))}
-				onAdd={(kind) => manage((owner, ctx) => owner.addThing({ session, thing: { kind } }, ctx))}
-			/>
-			{bring === undefined || bringable.kinds === undefined ? null : (
-				<BringOwn
-					action={change}
-					brought={broughtBy(props.things, (by) => by.kind === "person" && by.id === props.me.id)}
-					kinds={bringable.kinds}
-					onBring={(kind, ref) => change.run((ctx) => bring.bring({ kind, ref }, ctx))}
-				/>
+					<AddExisting
+						action={action}
+						onAdd={(thing) => run((w, ctx) => w.add({ thing }, ctx))}
+						present={new Set(sheet.things.map((thing) => thing.thing))}
+						titles={titles}
+					/>
+				</>
 			)}
+		</>
+	);
+}
+
+/** Whether the viewer manages `thing` as the page can tell: the owner any, a person their own and nobody's. */
+function manages(thing: ShownThing, me: Viewer): boolean {
+	if (me.owner) return true;
+	return thing.owner.kind === "none" || (thing.owner.kind === "person" && thing.owner.id === me.id);
+}
+
+/** Whose a thing is, as the viewer `me` reads it: yours, a person's or a group's by name, the Pi's, or the session's. */
+function whose(thing: ShownThing, me: Viewer): string {
+	switch (thing.owner.kind) {
+		case "none":
+			return "This session's";
+		case "pi":
+			return "The Pi's";
+		case "group":
+			return `${thing.ownerName}'s`;
+		case "person":
+			return thing.owner.id === me.id ? "Yours" : `${thing.ownerName}'s`;
+	}
+}
+
+/** The owner's members: removal, and the form that adds one. */
+function ManagedMembers(props: { readonly sheet: Sheet }) {
+	const { sheet } = props;
+	const session = sheet.row.id;
+	const sessions = useVariant(useHold(Sessions, {}), "owner");
+	const peopleRef = useVariant(useHold(PeopleList, { view: useViewId() }), "owner");
+	const people = useWatch(peopleRef?.list);
+	const manage = (call: (owner: NonNullable<typeof sessions>, context: Context) => Promise<unknown>) => {
+		if (sessions !== undefined) sheet.action.run((ctx) => call(sessions, ctx));
+	};
+	return (
+		<>
 			<Members
-				members={props.members}
-				me={props.me}
+				me={sheet.me}
+				members={sheet.members}
 				onRemove={(party) => manage((owner, ctx) => owner.removeMember({ session, party }, ctx))}
 			/>
 			<AddMember
-				action={change}
+				action={sheet.action}
 				more={
 					peopleRef !== undefined && people?.moreAfter === true
-						? () => change.run((ctx) => peopleRef.more(ctx))
+						? () => sheet.action.run((ctx) => peopleRef.more(ctx))
 						: undefined
 				}
 				onAdd={(member) => manage((owner, ctx) => owner.addMember({ session, member }, ctx))}
-				persons={(people?.rows ?? []).map((person) => ({ value: person.id, label: person.name }))}
+				// Not the owner (they write every session), not who is a member already.
+				persons={(people?.rows ?? [])
+					.filter(
+						(person) =>
+							!person.owner &&
+							!sheet.members.some((member) => member.kind === "person" && member.id === person.id),
+					)
+					.map((person) => ({ value: person.id, label: person.name }))}
 			/>
-			<Failures errors={[change.error, bringable.error]} />
-		</div>
+		</>
 	);
-}
-
-/** The records among `things` that someone `theirs` says brought, as `BringOwn` tells them apart. */
-function broughtBy(things: readonly ShownThing[], theirs: (by: Bringer) => boolean): ReadonlySet<string> {
-	return new Set(things.filter((thing) => theirs(thing.by)).map((thing) => broughtKey(thing.kind, thing.ref)));
-}
-
-/** Whose a thing is, as the viewer `me` reads it: yours, a person's by their name, or the app's. */
-function whose(thing: ShownThing, me: Viewer): string {
-	switch (thing.by.kind) {
-		case "app":
-			return "The app's";
-		case "person":
-			return thing.by.id === me.id ? "Yours" : `${thing.byName}'s`;
-	}
 }
 
 /** The failures of the view's actions, one line each. */
@@ -234,18 +300,24 @@ function Location(props: { readonly row: SessionRow }) {
 	);
 }
 
+/** What a thing's row shows besides its name: whose it is, its rename, its options control and its actions. */
+type Described = {
+	readonly whose: string;
+	readonly rename: ((name: string) => void) | undefined;
+	readonly options: ReactNode;
+	readonly actions: ReactNode;
+};
+
 /**
- * The session's things, each by its kind's title with whose it is, "Open" when `onOpen` is given and its kind has a
- * view, the options control `options` gives it (none: `null`), and the removal `removal` offers for it (none:
- * `undefined`).
+ * The session's things, each by its name (`ThingName`) with what `describe` gives it, and "Open" when `onOpen` is
+ * given and its kind has a view.
  */
 function Things(props: {
 	readonly session: string;
-	readonly onOpen: ((thing: string) => void) | undefined;
 	readonly things: readonly ShownThing[];
-	readonly whose: (thing: ShownThing) => string;
-	readonly options: (thing: ShownThing) => ReactNode;
-	readonly removal: (thing: ShownThing) => { readonly label: string; readonly run: () => void } | undefined;
+	readonly onOpen: ((thing: string) => void) | undefined;
+	readonly describe: (thing: ShownThing) => Described;
+	readonly action: Action;
 }) {
 	const views = useRegistry(ThingViews);
 	return (
@@ -256,40 +328,45 @@ function Things(props: {
 			{props.things.length === 0 ? <p className={styles.note}>None.</p> : null}
 			<ul className={styles.items}>
 				{props.things.map((thing) => {
-					const removal = props.removal(thing);
+					const described = props.describe(thing);
 					return (
 						<li
 							className={styles.item}
 							data-by={thing.by.kind === "person" ? `person:${thing.by.id}` : thing.by.kind}
+							data-owner={
+								thing.owner.kind === "person" || thing.owner.kind === "group"
+									? `${thing.owner.kind}:${thing.owner.id}`
+									: thing.owner.kind
+							}
 							data-thing={thing.kind}
+							data-thing-id={thing.thing}
 							key={thing.thing}
 						>
 							<div className={styles.grow}>
-								<span className={styles.title}>{thing.title}</span>
-								<span className={styles.whose}>{props.whose(thing)}</span>
-								{props.options(thing)}
+								<ThingName
+									action={props.action}
+									name={thing.name}
+									rename={described.rename}
+									title={thing.title}
+								/>
+								<span className={styles.whose} data-whose="">
+									{described.whose}
+								</span>
+								{described.options}
 							</div>
-							{props.onOpen === undefined || views?.get(thing.kind)?.value.View === undefined ? null : (
-								<Button
-									data-open-thing={thing.thing}
-									density="compact"
-									hierarchy="secondary"
-									onClick={() => props.onOpen?.(thing.thing)}
-								>
-									Open
-								</Button>
-							)}
-							{removal === undefined ? null : (
-								<Button
-									data-remove-thing=""
-									density="compact"
-									hierarchy="tertiary"
-									onClick={removal.run}
-									semantic="negative"
-								>
-									{removal.label}
-								</Button>
-							)}
+							<div className={styles.rowActions}>
+								{props.onOpen === undefined || views?.get(thing.kind)?.value.View === undefined ? null : (
+									<Button
+										data-open-thing={thing.thing}
+										density="compact"
+										hierarchy="secondary"
+										onClick={() => props.onOpen?.(thing.thing)}
+									>
+										Open
+									</Button>
+								)}
+								{described.actions}
+							</div>
 						</li>
 					);
 				})}
@@ -298,24 +375,31 @@ function Things(props: {
 	);
 }
 
-/** The owner's pick of a kind of thing to add. */
-function AddThing(props: {
+/** "New": a writer's pick of a kind of content to make here, with its optional name (empty: the kind's title). */
+function NewThing(props: {
 	readonly kinds: readonly { readonly value: string; readonly label: string }[];
-	readonly onAdd: (kind: string) => void;
+	readonly onAdd: (kind: string, name: string) => void;
 	readonly action: Action;
 }) {
 	const [kind, setKind] = useState<string | undefined>(undefined);
-	const picked = kind ?? props.kinds[0]?.value;
+	const [name, setName] = useState("");
+	const picked = props.kinds.find((each) => each.value === kind) ?? props.kinds[0];
 	if (props.kinds.length === 0) return null;
 	return (
 		<div className={styles.add} data-add-thing="">
-			<Choice items={props.kinds} label="Add a thing" name="kind" onChange={setKind} value={picked ?? null} />
+			<Choice items={props.kinds} label="New" name="kind" onChange={setKind} value={picked?.value ?? null} />
+			<NameField onChange={setName} title={picked?.label} value={name} />
 			<Button
+				data-add-thing-save=""
 				disabled={picked === undefined}
-				onClick={() => picked !== undefined && props.onAdd(picked)}
+				onClick={() => {
+					if (picked === undefined) return;
+					props.onAdd(picked.value, name.trim());
+					setName("");
+				}}
 				pending={props.action.pending}
 			>
-				Add
+				Make
 			</Button>
 		</div>
 	);

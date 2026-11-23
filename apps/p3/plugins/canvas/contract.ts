@@ -1,12 +1,14 @@
-// The canvas plugin's contract: a shared drawing board as a kind of thing (`canvas.board`; the thing is the board, it
-// stands for no record), its shapes, and one board in a session as its members and its agent see it (`Canvas`).
-// Committed shapes are rows on the server; cursors and the shapes people are drawing travel as events, lossy and
-// never stored, so everyone sees everyone draw as it happens.
+// The canvas plugin's contract: shared drawing boards as a kind of thing (`canvas.board`, content: any writer of a
+// session or its agent makes one there), their shapes, and one canvas in a session as its members and its agent see
+// it (`Canvas`). A canvas is a thing with one id: kept by someone and linked into another session, it shows the same
+// drawing there, while who may draw stays each session's (access and options). Committed shapes are rows on the
+// server; cursors and the shapes people are drawing travel as events, lossy and never stored, so everyone in the
+// session sees everyone draw as it happens.
 
 import {
 	arr,
 	bool,
-	defineThingKind,
+	defineThing,
 	lit,
 	method,
 	nul,
@@ -21,7 +23,7 @@ import {
 } from "@earendil-works/p3/v1";
 
 /** A board in a session; `draw: false` leaves whoever it applies to (a member, the agent) looking only. */
-export const CanvasKind = defineThingKind("canvas.board", {
+export const CanvasKind = defineThing("canvas.board", {
 	version: 1,
 	options: obj({ draw: bool() }),
 	initial: { draw: true },
@@ -101,11 +103,12 @@ export const Motion = union([
 export type Motion = Static<typeof Motion>;
 
 /**
- * The viewer's members: the board's shapes loaded so far, oldest first, and `more` for the next page; everyone's
- * motion as events; `point` and `leave`, which show the caller's own pointer to the others.
+ * The viewer's members: the canvas's name (its thing's; "Canvas" while it has none), its shapes loaded so far, oldest
+ * first, and `more` for the next page; everyone's motion in the session as events; `point` and `leave`, which show the
+ * caller's own pointer to the others.
  */
 const viewer = {
-	state: { shapes: obj({ rows: arr(PlacedShape), moreAfter: bool() }) },
+	state: { name: str(), shapes: obj({ rows: arr(PlacedShape), moreAfter: bool() }) },
 	methods: {
 		more: method(),
 		/** Shows the caller's pointer at `x`, `y` to everyone on the board (a viewer's draft is dropped). */
@@ -119,7 +122,7 @@ const viewer = {
 /**
  * One board of a session (`thing`, a thing of `CanvasKind`), for its members and its agent: a viewer sees the shapes
  * and everyone's pointers; a drawer (who writes in the session and whose options say `draw`) also adds and removes
- * shapes and clears the board.
+ * shapes and clears the board. `thing` is the canvas's id, its shapes' key.
  */
 export const Canvas = remote("canvas.board", {
 	version: 1,

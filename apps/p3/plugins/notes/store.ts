@@ -1,6 +1,7 @@
-// The notes store on the server (`NotesStore`): one table of every notebook's notes, its named query, and every
-// write. A notebook is a key (`person:<id>`, the owner's too, `session:<id>`); its notes outlive every session it is in.
-// Server code of this plugin only: it checks no caller (`Notes` admits them).
+// The notes store on the server (`NotesStore`): every notebook's notes, keyed by the notebook's thing id (the thing
+// itself, its name and owner are the sessions plugin's), its named query, and every write. A notebook's notes live as
+// long as its thing: its kind's `delete` clears them. Server code of this plugin only: it checks no caller (`Notes`
+// admits them).
 
 import {
 	defineTable,
@@ -24,7 +25,7 @@ const StoredNote = obj({ id: str(), text: str(), at: num(), author: str() });
 
 /**
  * The notebooks' notes, once per server: each notebook's notes as a named query, the last written first, and the
- * writes. An author is a key: `person:<id>` (the owner's too), `agent`.
+ * writes. A notebook is its thing's id; an author is a key: `person:<id>` (the owner's too), `agent`.
  */
 export const NotesStore = local("notes.store", {
 	version: 1,
@@ -39,6 +40,8 @@ export const NotesStore = local("notes.store", {
 		/** Replaces note `id`'s text: written now, by `author`. */
 		edit: method(obj({ notebook: str(), id: str(), text: str(), author: str() })),
 		remove: method(obj({ notebook: str(), id: str() })),
+		/** Removes every note of `notebook` (its thing is gone). */
+		clear: method(obj({ notebook: str() })),
 	},
 });
 
@@ -95,6 +98,12 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				self.tx(async (tx) => {
 					if ((await tx.get(rows, { notebook, id })) === undefined) throw noNote(notebook, id);
 					tx.delete(rows, { notebook, id });
+					return null;
+				}, ctx),
+			clear: ({ notebook }, ctx) =>
+				self.tx(async (tx) => {
+					// The key's prefix `notebook`: one statement.
+					tx.deleteWhere(rows, (note) => eq(note.notebook, notebook));
 					return null;
 				}, ctx),
 		};

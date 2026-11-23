@@ -1,5 +1,6 @@
 // The tools plugin alone (`testPlugin`): its server facet offers the coding tools as a kind of thing (`ThingKinds`),
-// its worker facet gives a `tools.coding` thing Durable's coding tools, bash only with `shell` on.
+// its worker facet gives the session's `tools.coding` things Durable's coding tools once, bash when one of them has
+// `shell` on.
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
@@ -23,19 +24,25 @@ describe("the tools plugin", () => {
 		}
 	});
 
-	it("gives read, write, edit and bash, and leaves bash out with shell off", async () => {
+	it("gives read, write, edit and bash once, bash when a thing has shell on", async () => {
 		const t = await testPlugin(ROOT, { kind: "worker", session: "s" }, context);
 		try {
 			const [entry] = t.contributions(ThingExtensions);
 			assert.equal(entry?.value.kind, CodingTools);
 			const agent = { session: "s", call: () => Promise.reject(new Error("no call")) };
-			const tools = (shell: boolean) =>
+			const tools = (...shells: boolean[]) =>
 				entry?.value
-					.give({ thing: "t", ref: "", options: { shell } }, agent)
+					.give(
+						shells.map((shell, at) => ({ thing: `t${at}`, name: "", options: { shell } })),
+						agent,
+					)
 					.extension?.tools?.map((tool) => tool.name)
 					.toSorted();
 			assert.deepEqual(tools(true), ["bash", "edit", "read", "write"]);
 			assert.deepEqual(tools(false), ["edit", "read", "write"]);
+			// Two coding tools things give the tools once; one with a shell gives bash.
+			assert.deepEqual(tools(false, true), ["bash", "edit", "read", "write"]);
+			assert.deepEqual(tools(false, false), ["edit", "read", "write"]);
 		} finally {
 			await t.close(context);
 		}

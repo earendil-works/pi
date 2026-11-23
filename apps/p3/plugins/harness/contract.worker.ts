@@ -14,16 +14,20 @@ import {
 import type { Provider } from "@earendil-works/pi-ai";
 import type { Extension, Harness } from "@earendil-works/pi-durable";
 
-/** One thing of the session as its kind's plugin gets it: its id in the session, its record and the agent's options. */
+/**
+ * One thing of the session as its kind's plugin gets it: its id (its content's key), its name (empty: none given) and
+ * the agent's options.
+ */
 export type AgentThing<O extends JsonValue = JsonValue> = {
 	readonly thing: string;
-	readonly ref: string;
+	readonly name: string;
 	readonly options: O;
 };
 
 /**
- * What one thing gives the agent: a Durable extension (tools, prompt sections, hooks; its name is made unique per
- * thing by the harness) and model providers (a login's).
+ * What a kind's things give the agent together: one Durable extension (tools, prompt sections, hooks; its tools take
+ * the thing they act on as an argument, so two canvases are one `canvas_draw` with `canvas: <id>`, and a list tool
+ * names the things, so descriptions stay fixed text) and model providers (a login's, one per thing).
  */
 export type ThingGift = { readonly extension?: Extension; readonly providers?: readonly Provider[] };
 
@@ -40,17 +44,18 @@ export type Agent = {
 /**
  * A kind's gift to the agent: the kind (its version is matched against the options' version the session stores, so
  * a worker whose plugin is older or newer than the server's gives that thing nothing until they agree), and what
- * one thing of it gives. Made with `thingExtension`.
+ * the session's things of it give together: `give` gets every one of them, in the session's order, again whenever
+ * they change, and never none. Made with `thingExtension`.
  */
 export type ThingExtension = {
 	readonly kind: ThingKind<JsonValue>;
-	give(thing: AgentThing, agent: Agent): ThingGift;
+	give(things: readonly AgentThing[], agent: Agent): ThingGift;
 };
 
-/** The gift of `kind`'s things: `give` gets each thing with its options typed by the kind, and the agent. */
+/** The gift of `kind`'s things: `give` gets the session's things of the kind, options typed by it, and the agent. */
 export function thingExtension<O extends JsonValue>(
 	kind: ThingKind<O>,
-	give: (thing: AgentThing<O>, agent: Agent) => ThingGift,
+	give: (things: readonly AgentThing<O>[], agent: Agent) => ThingGift,
 ): ThingExtension {
 	// The harness calls `give` only with options of this kind's version, which the server checked against its schema.
 	return { kind, give } as unknown as ThingExtension;

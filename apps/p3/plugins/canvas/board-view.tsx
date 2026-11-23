@@ -1,8 +1,8 @@
-// The board kind's view of one board in a session (`ThingViews`): the shapes, live, on a board of fixed units that
-// scales to the screen, with everyone else's pointer and name and what they are drawing as they draw it. A drawer
-// (admitted with write access and options that say `draw`) draws with the pen (mouse, pen or finger), rectangles and
-// text in a few colours, undoes their own last shape and clears the board; a viewer only looks, their pointer shown.
-// The view follows the admission live: `draw` taken back turns it into the viewer's at once.
+// The board kind's view of one canvas in a session (`ThingViews`): its name, the shapes, live, on a board of fixed
+// units that scales to the screen, with everyone else's pointer and name and what they are drawing as they draw it. A
+// drawer (admitted with write access and options that say `draw`) draws with the pen (mouse, pen or finger),
+// rectangles and text in a few colours, undoes their own last shape and clears the board; a viewer only looks, their
+// pointer shown. The view follows the admission live: `draw` taken back turns it into the viewer's at once.
 
 import { Button, Input, SegmentedControl } from "@earendil-works/elanor-react";
 import { BACKGROUND_CONTEXT, type Context, Me, type Reference } from "@earendil-works/p3/v1";
@@ -38,6 +38,7 @@ export function BoardView(props: { readonly session: string; readonly thing: str
 	const state = useRefState(ref);
 	const live = drawer ?? viewer;
 	const shapes = useWatch(live?.shapes);
+	const name = useWatch(live?.name);
 	const me = useWatch(useVariant(useHold(Me, {}), "me")?.me);
 	const myKey = me === undefined ? undefined : me.kind === "person" ? `person:${me.id}` : me.kind;
 	const others = useOthers(live?.motion, myKey);
@@ -59,7 +60,14 @@ export function BoardView(props: { readonly session: string; readonly thing: str
 	}
 	return (
 		<section aria-label="Canvas" className={styles.board} data-canvas={live?.variant ?? "loading"}>
-			{drawer === undefined ? <p className={styles.hint}>{live === undefined ? "Loading…" : "View only"}</p> : null}
+			<p className={styles.title} data-canvas-name="">
+				{name ?? "Canvas"}
+				{live === undefined ? (
+					<span className={styles.hint}>Loading…</span>
+				) : drawer === undefined ? (
+					<span className={styles.hint}>View only</span>
+				) : null}
+			</p>
 			<Board drawer={drawer} live={live} myKey={myKey} run={run} others={others} shapes={shapes?.rows ?? []} />
 			{failure === undefined ? null : <p className={styles.error}>{failure}</p>}
 		</section>

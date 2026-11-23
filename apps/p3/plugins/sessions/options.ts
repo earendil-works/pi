@@ -1,6 +1,7 @@
 // A thing's options as its kind reads them now: stored at the kind's version, or migrated from an older one by the
-// kind's `migrate` and checked against its schema; otherwise nothing (never the kind's defaults instead). Where the
-// sessions plugin answers options (`ThingAccess`, `SessionFacts`, `SessionInfo`).
+// kind's `migrate` and checked against its schema; otherwise nothing (never the kind's defaults instead). A thing a
+// session has from whom it follows has no options of the session's until someone sets them: its kind's initial
+// options apply (`unset`). Where the sessions plugin answers options (`ThingAccess`, `SessionFacts`, `SessionInfo`).
 
 import { BACKGROUND_CONTEXT, checkValue, type JsonValue, reportError, type ThingKind } from "@earendil-works/p3/v1";
 import type { ThingKindEntry } from "@earendil-works/p3/v1/server";
@@ -35,4 +36,9 @@ function migratedOptions(kind: ThingKind<JsonValue>, stored: StoredOptions): Jso
 		reportError(`p3 sessions: ${kind.name}'s migrate from ${stored.version}`, error, BACKGROUND_CONTEXT);
 		return undefined;
 	}
+}
+
+/** The options of a thing nobody set any for in its session (a followed one): its kind's initial; none without a kind. */
+export function unset(entry: ThingKindEntry | undefined): CurrentOptions | undefined {
+	return entry === undefined ? undefined : { version: entry.kind.version, options: entry.kind.initial };
 }

@@ -80,13 +80,14 @@ function SessionPanes(props: {
 			closable: false,
 			render: () => (Transcript === undefined ? null : <Transcript key={session} session={session} />),
 		},
-		...(things ?? []).map(({ thing, kind, title }) => ({
+		...(things ?? []).map(({ thing, kind, name, title }) => ({
 			id: thing,
-			title,
+			// A thing's tab shows its name in the session, else its kind's title: two canvases are "Plan" and "Sketches".
+			title: name === "" ? title : name,
 			closable: true,
 			render: () => (
 				<div className={styles.paneScroll}>
-					<ThingView fallback={<p>{title}</p>} kind={kind} session={session} thing={thing} />
+					<ThingView fallback={<p>{name === "" ? title : name}</p>} kind={kind} session={session} thing={thing} />
 				</div>
 			),
 		})),

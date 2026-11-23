@@ -1,10 +1,10 @@
 // The harness plugin on a session's worker: Durable's harness on the session's store, which gets exactly the session's
 // things. One host-lifetime object opens it once the session's facts arrived (`SessionFacts`), with a registry and
-// models kept in step with the session's things (`agent-things.ts`) and the environment of the session's location;
-// it resumes the work left only for a session that is not archived. It contributes the open harness (`SessionHarness`),
-// whose `submit` is the one way to start work, reports the session's state to the server on each transition
-// (`activity.ts`) and keeps the worker alive while working (`WorkerBusy`). It serves `ThingExtensions`, the kinds'
-// gifts, and `SessionHarness`.
+// models kept in step with the session's things and content kinds (`agent-things.ts`, `thing-create.ts`) and the
+// environment of the session's location; it resumes the work left only for a session that is not archived. It
+// contributes the open harness (`SessionHarness`), whose `submit` is the one way to start work, reports the
+// session's state to the server on each transition (`activity.ts`) and keeps the worker alive while working
+// (`WorkerBusy`). It serves `ThingExtensions`, the kinds' gifts, and `SessionHarness`.
 
 import {
 	BACKGROUND_CONTEXT,
@@ -75,13 +75,14 @@ export default defineFacet((host) => {
 			const row = facts.session.value;
 			if (row !== null && row.state !== now) await facts.report({ state: now }, context);
 		};
-		const apply = (): void => opened.value.things.apply(facts.things.value, kinds.value);
+		const apply = (): void => opened.value.things.apply(facts.things.value, kinds.value, facts.kinds.value);
 		self.contribute(
 			WorkerBusy,
 			self.derive([state], ([now]) => (now === "working" ? 1 : 0)),
 		);
 		self.on(state, ({ value }, ctx) => serial(() => push(value, ctx)));
 		self.on(facts.things, () => apply());
+		self.on(facts.kinds, () => apply());
 		self.on(kinds, () => apply());
 		// The work a previous worker left runs once the registry holds the current things, never for an archived session.
 		self.on(archived, ({ value }) => {
@@ -132,8 +133,10 @@ type Sources = {
 async function openAgent(sources: Sources, opening: Context): Promise<{ durable: Harness; things: AgentThings }> {
 	const { runtime, facts, kinds, environments } = sources;
 	const { session, host: worker, store } = runtime;
-	const things = new AgentThings({ session, call: (fn, context) => worker.root(fn, context) });
-	things.apply(facts.things.value, kinds.value);
+	const things = new AgentThings({ session, call: (fn, context) => worker.root(fn, context) }, (thing, context) =>
+		facts.create(thing, context),
+	);
+	things.apply(facts.things.value, kinds.value, facts.kinds.value);
 	const durable = await openHarness(
 		store,
 		{

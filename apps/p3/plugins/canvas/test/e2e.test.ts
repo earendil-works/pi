@@ -1,8 +1,9 @@
 // The canvas plugin end to end (`testServer`: the real server, workers as processes, the faux login under test, a
-// copy of the built-in plugins the test edits): a faux model's script calls `canvas_draw`, and the shape appears in
-// a board held open as a page holds it, by the agent; `canvas_read` gives the model the board as JSON; with the
-// agent's `draw` off the model is offered `canvas_read` alone; a reload of the canvas plugin (server and worker
-// facets) while the board is held keeps its shapes, and its pointers and the agent's drawing go on.
+// copy of the built-in plugins the test edits): a session with a canvas (its content) and a faux login; the faux
+// model's script calls `canvas_draw` with the canvas's id, and the shape appears in the canvas held open as a page
+// holds it, by the agent; `canvas_list` names the canvas and `canvas_read` gives the model its shapes as JSON; with the
+// agent's `draw` off the model is offered no `canvas_draw`; a reload of the canvas plugin (server and worker facets)
+// while the canvas is held keeps its shapes, and its pointers and the agent's drawing go on.
 
 import assert from "node:assert/strict";
 import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -15,7 +16,7 @@ import {
 	type Host,
 	type P3Principal,
 	type Reference,
-	Sessions,
+	SessionThings,
 	THIS_DEVICE,
 	Transcript,
 	thingOf,
@@ -36,15 +37,20 @@ const BOX: Shape = { kind: "rect", color: "#1a7f37", x: 300, y: 200, w: 400, h: 
 /** The agent's label. */
 const LABEL: Shape = { kind: "text", color: "#0969da", x: 320, y: 260, text: "Drawn by the agent", size: 40 };
 
-/** The faux model's script: draw on `@draw`, read on `@read`, say what it got back. */
-const SCRIPT: Step[] = [
-	{ when: "@draw", reply: [{ kind: "tool", name: "canvas_draw", args: JSON.stringify({ shapes: [BOX] }) }] },
-	{ when: "@label", reply: [{ kind: "tool", name: "canvas_draw", args: JSON.stringify({ shapes: [LABEL] }) }] },
-	{ when: "@read", reply: [{ kind: "tool", name: "canvas_read", args: "{}" }] },
-	{ when: "drew", reply: [{ kind: "text", text: "Drawn." }] },
-	{ when: '"author":"agent"', reply: [{ kind: "text", text: "I see my box." }] },
-	{ when: "@hello", reply: [{ kind: "text", text: "Hello." }] },
-];
+/** The faux model's script for board `canvas`: draw on `@draw`, read on `@read`, say what it got back. */
+function script(canvas: string): Step[] {
+	const tool = (name: string, args: object) => ({ kind: "tool" as const, name, args: JSON.stringify(args) });
+	return [
+		{ when: "@draw", reply: [tool("canvas_draw", { canvas, shapes: [BOX] })] },
+		{ when: "@label", reply: [tool("canvas_draw", { canvas, shapes: [LABEL] })] },
+		{ when: "@read", reply: [tool("canvas_read", { canvas })] },
+		{ when: "@list", reply: [tool("canvas_list", {})] },
+		{ when: '"name":"Board"', reply: [{ kind: "text", text: "One canvas." }] },
+		{ when: "drew", reply: [{ kind: "text", text: "Drawn." }] },
+		{ when: '"author":"agent"', reply: [{ kind: "text", text: "I see my box." }] },
+		{ when: "@hello", reply: [{ kind: "text", text: "Hello." }] },
+	];
+}
 
 describe("the canvas end to end", () => {
 	let t: TestServer;
@@ -61,6 +67,7 @@ describe("the canvas end to end", () => {
 		await cp(fileURLToPath(new URL("../../", import.meta.url)), built, { recursive: true });
 		t = await testServer({ plugins: [FAUX], builtIn: built }, context);
 		owner = await t.client(context);
+		// A session following nobody (the Pi's faux login stays out), with a canvas and a faux login of its own.
 		session = await t.host.root(
 			async (ctx) =>
 				(await ctx.get(SessionsStore, {})).create(
@@ -68,15 +75,22 @@ describe("the canvas end to end", () => {
 						app: "coding",
 						title: "Canvas",
 						location: { environment: THIS_DEVICE, folder: dir },
-						things: [thingOf(FauxLogin, { provider: "faux", script: SCRIPT, tool: false }), thingOf(CanvasKind)],
+						things: [thingOf(CanvasKind, { name: "Board" }), thingOf(FauxLogin)],
+						follows: null,
 					},
 					ctx,
 				),
 			context,
 		);
+		// The login's script names the canvas, known once it is made.
 		board = await t.host.root(async (ctx) => {
-			const things = (await (await ctx.get(SessionsStore, {})).things.of.page({ session }, 10, ctx)).items;
-			return things.find((thing) => thing.kind === CanvasKind.name)!.thing;
+			const store = await ctx.get(SessionsStore, {});
+			const links = (await store.links.of.page({ session }, 10, ctx)).items;
+			const made = links.find(({ kind }) => kind === CanvasKind.name)?.thing ?? assert.fail("no canvas");
+			const login = links.find(({ kind }) => kind === FauxLogin.name)?.thing ?? assert.fail("no login");
+			const options = { provider: "faux", script: script(made), tool: false };
+			await store.setOptions({ session, thing: login, for: { kind: "everyone" }, options }, ctx);
+			return made;
 		}, context);
 		// The board open, as a page holds it.
 		canvas = await owner.get(Canvas, { session, thing: board }, context);
@@ -111,7 +125,8 @@ describe("the canvas end to end", () => {
 		);
 	});
 
-	it("gives the model the board as JSON", async () => {
+	it("names the canvas to the model and gives it the canvas's shapes as JSON", async () => {
+		await ask("@list", "One canvas.");
 		await ask("@read", "I see my box.");
 		const requests = await owner.root(
 			async (ctx) => (await ctx.get(FauxRequests, { session })).requests.value,
@@ -120,9 +135,10 @@ describe("the canvas end to end", () => {
 		assert.ok(requests.some(({ last }) => last.includes('"kind":"rect"') && last.includes('"author":"agent"')));
 	});
 
-	it("offers the model canvas_read alone while the agent's draw is off", async () => {
-		const sessions = await owner.get(Sessions, {}, context);
-		await sessions.setOptions({ session, thing: board, for: { kind: "agent" }, options: { draw: false } }, context);
+	it("offers the model no canvas_draw while the agent's draw is off", async () => {
+		const things = await owner.get(SessionThings, { session }, context);
+		if (things.variant !== "writer") return assert.fail(things.variant);
+		await things.setOptions({ thing: board, for: { kind: "agent" }, options: { draw: false } }, context);
 		await ask("@hello", "Hello.");
 		const requests = await owner.root(
 			async (ctx) => (await ctx.get(FauxRequests, { session })).requests.value,
@@ -133,7 +149,7 @@ describe("the canvas end to end", () => {
 		assert.equal(last.tools.includes("canvas_draw"), false);
 		// The members' own board is unchanged: the owner still draws.
 		assert.equal(canvas.variant, "drawer");
-		await sessions.setOptions({ session, thing: board, for: { kind: "agent" }, options: null }, context);
+		await things.setOptions({ thing: board, for: { kind: "agent" }, options: null }, context);
 	});
 
 	it("keeps the held board through a reload of the canvas plugin: its shapes, its pointers, the agent's drawing", async () => {

@@ -1,6 +1,6 @@
 // What the tests of the whole share besides `/v1/testing`'s `testServer`: the probe's directory (a plugin under test
-// that drives a session's worker), the faux login's and a session whose agent works until the test opens its gate
-// (`gated`, `startRun`, `openGate`), a single-file worker plugin serving one value (`constantPlugin`), and for launched
+// that drives a session's worker), the faux login's, its script in a session (`scriptFaux`) and a session whose agent
+// works until the test opens its gate (`gatedSession`, `startRun`, `openGate`), a single-file worker plugin serving one value (`constantPlugin`), and for launched
 // processes (the command's and the release's tests, the bench) a foreground `p3 server` (`launch`), a process's
 // children (`childrenOf`), whether a process lives (`alive`) and when it started (`startOf`, to kill only that one).
 
@@ -15,12 +15,16 @@ import {
 	type P3Principal,
 	remote,
 	Session,
+	SessionInfo,
+	Sessions,
 	SessionsList,
+	SessionThings,
 	str,
 	THIS_DEVICE,
 	Transcript,
 	until,
 } from "@earendil-works/p3/v1";
+import { FauxLogin, type Step } from "./plugins/faux-login/contract.ts";
 
 /** The probe (`test/plugins/probe/`): a test server's plugin under test (`testServer({ plugins: [PROBE] })`). */
 export const PROBE = fileURLToPath(new URL("./plugins/probe/", import.meta.url));
@@ -32,26 +36,50 @@ export const FAUX = fileURLToPath(new URL("./plugins/faux-login/", import.meta.u
 const UNTIL_GATE = "until [ -e gate ]; do sleep 0.05; done; echo opened";
 
 /**
- * What the owner's `Sessions.create` takes for a coding session titled `title` in `folder` whose agent works until
- * `folder` has a file `gate` (`openGate`): a faux login (`FAUX`) whose every answer is a bash call waiting for it (a run
- * cut off asks again and waits again) until the gate is open, and the coding tools. Its row says `working` because the
- * harness says so, as for any run: a test never reports a state the harness owns.
+ * Scripts the Pi's faux login (`FAUX`, made by its plugin "in all my sessions") in `session`, which follows the owner:
+ * the session's options for it, for everyone, once the session has it. As the owner of `client`.
  */
-export function gated(title: string, folder: string) {
+export async function scriptFaux(
+	client: Host<P3Principal>,
+	session: string,
+	script: readonly Step[],
+	context: Context,
+): Promise<void> {
+	await client.root(async (ctx) => {
+		const info = await ctx.get(SessionInfo, { session });
+		const things = await until(info.things, (now) => now.some(({ kind }) => kind === FauxLogin.name), ctx);
+		const faux = things.find(({ kind }) => kind === FauxLogin.name)!;
+		const options = { provider: "faux", script, tool: false };
+		const manage = await ctx.get(SessionThings, { session });
+		if (manage.variant !== "writer") throw new Error(`scriptFaux: the owner is a ${manage.variant}`);
+		await manage.setOptions({ thing: faux.thing, for: { kind: "everyone" }, options }, ctx);
+	}, context);
+}
+
+/**
+ * A coding session titled `title` in `folder`, made by the owner of `client` (so it follows them: the Pi's coding
+ * tools and faux login), whose agent works until `folder` has a file `gate` (`openGate`): the faux login answers every
+ * request with a bash call waiting for it (a run cut off asks again and waits again) until the gate is open. Its row
+ * says `working` because the harness says so, as for any run: a test never reports a state the harness owns.
+ */
+export async function gatedSession(
+	client: Host<P3Principal>,
+	title: string,
+	folder: string,
+	context: Context,
+): Promise<string> {
 	const wait = { kind: "tool", name: "bash", args: JSON.stringify({ command: UNTIL_GATE }) } as const;
-	const script = [
+	const script: Step[] = [
 		{ when: "opened", reply: [{ kind: "text", text: "done" }] },
 		{ when: "", reply: [wait] },
 	];
-	return {
-		app: "coding",
-		title,
-		location: { environment: THIS_DEVICE, folder },
-		things: [
-			{ kind: "faux.login", options: { provider: "faux", script, tool: false } },
-			{ kind: "tools.coding", options: { shell: true } },
-		],
-	};
+	const sessions = await client.get(Sessions, {}, context);
+	const session = await sessions.create(
+		{ app: "coding", title, location: { environment: THIS_DEVICE, folder } },
+		context,
+	);
+	await scriptFaux(client, session, script, context);
+	return session;
 }
 
 /** Lets a gated session's run (`gated`) in `folder` finish: its bash calls, on any worker, see the gate. */

@@ -11,7 +11,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { BACKGROUND_CONTEXT as context, isChordError, type P3Principal, until } from "@earendil-works/p3/v1";
+import {
+	BACKGROUND_CONTEXT as context,
+	isChordError,
+	type P3Principal,
+	SessionFacts,
+	until,
+} from "@earendil-works/p3/v1";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
 import {
 	LiveDoc,
@@ -30,12 +36,12 @@ const OWNER: P3Principal = { kind: "person", id: "owner", name: "Owner" };
 
 /** A faux login thing `thing` of provider `provider` answering from `script`. */
 function login(thing: string, provider: string, script: Step[], tool = false): Thing {
-	return { thing, kind: "faux.login", ref: "", version: 1, options: { provider, script, tool } };
+	return { thing, kind: "faux.login", name: "", version: 1, options: { provider, script, tool } };
 }
 
 /** The coding tools thing. */
 function coding(shell = true): Thing {
-	return { thing: "tools", kind: "tools.coding", ref: "", version: 1, options: { shell } };
+	return { thing: "tools", kind: "tools.coding", name: "", version: 1, options: { shell } };
 }
 
 /** A scripted step answering `when` with text. */
@@ -101,6 +107,14 @@ describe("the harness plugin on a worker", () => {
 		const open = await harness();
 		await open.submit(undefined, { text, requestId: text }, context);
 		await open.durable.waitForIdle(context);
+	}
+
+	/** Waits until the worker has facts from the server that pass `done` (a change made there travels to it). */
+	async function arrived(done: (facts: { kinds: readonly unknown[] }) => boolean): Promise<void> {
+		await tested().root(async (ctx) => {
+			const facts = await ctx.get(SessionFacts, {});
+			await until(facts.kinds, (kinds) => done({ kinds }), within("the facts", ctx));
+		}, context);
 	}
 
 	/** What the faux logins received so far. */
@@ -172,7 +186,7 @@ describe("the harness plugin on a worker", () => {
 
 	it("gives a thing whose kind no plugin on the worker serves nothing, and the others theirs", async () => {
 		await start([
-			{ thing: "x", kind: "elsewhere.kind", ref: "", version: 1, options: {} },
+			{ thing: "x", kind: "elsewhere.kind", name: "", version: 1, options: {} },
 			login("login", "faux", [says("", "ok")]),
 			coding(),
 		]);
@@ -259,5 +273,53 @@ describe("the harness plugin on a worker", () => {
 		]);
 		await ask("who");
 		assert.equal((await requests())[1]?.last, "title: Test session");
+	});
+
+	it("gives the tools of two coding tools things once, bash when one of them has shell on", async () => {
+		await start([
+			login("login", "faux", [says("", "ok")]),
+			{ ...coding(false), thing: "tools-a" },
+			{ ...coding(true), thing: "tools-b" },
+		]);
+		await ask("hi");
+		assert.deepEqual((await requests())[0]?.tools, ["bash", "edit", "read", "write"]);
+	});
+
+	it("offers thing_create only while the session has content kinds, and makes content there through the server", async () => {
+		const make = {
+			kind: "tool" as const,
+			name: "thing_create",
+			args: JSON.stringify({ kind: "test.board", name: "Plan" }),
+		};
+		const odd = {
+			kind: "tool" as const,
+			name: "thing_create",
+			args: JSON.stringify({ kind: "test.other", name: "X" }),
+		};
+		const server = await start([
+			login("login", "faux", [{ when: "@make", reply: [make] }, { when: "@odd", reply: [odd] }, says("", "ok")]),
+		]);
+		await ask("plain");
+		server.kinds([{ kind: "test.board", title: "Board" }]);
+		await arrived((facts) => facts.kinds.length === 1);
+		await ask("@make");
+		await ask("@odd");
+		server.kinds([]);
+		await arrived((facts) => facts.kinds.length === 0);
+		await ask("again");
+		const seen = await requests();
+		assert.deepEqual(
+			seen.map(({ last, tools }) => [last, tools.includes("thing_create")]),
+			[
+				["plain", false],
+				["@make", true],
+				['Made Board "Plan": id made-1.', true],
+				["@odd", true],
+				[seen[4]?.last, true],
+				["again", false],
+			],
+		);
+		assert.match(seen[4]?.last ?? "", /no kind test\.other; its kinds: `test\.board` \(Board\)/);
+		assert.deepEqual(server.created, [{ kind: "test.board", name: "Plan" }]);
 	});
 });

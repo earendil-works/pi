@@ -2,7 +2,7 @@
 // session has), and `ThingViews`, through which each kind of thing shows one thing of a session (`<ThingView>`
 // renders the right one, so an app never knows kinds). `/v1/web` re-exports it.
 
-import { defineRegistry, type JsonValue, type OptionsFor, type TableItem } from "@earendil-works/p3/v1";
+import { defineRegistry, type JsonValue, type OptionsFor, type TableItem, type ThingUse } from "@earendil-works/p3/v1";
 import { defineView, useRegistry } from "@earendil-works/p3/v1/web";
 import type { ComponentType, ReactNode } from "react";
 
@@ -23,14 +23,23 @@ export type ThingOptionsProps = {
 };
 
 /**
+ * A kind's creation view, shown inside the base's "New thing" dialog (My things) for a kind of `creation: "person"`
+ * that needs a step of its own (a sign-in): it runs that step with its plugin's own objects and hands the dialog the
+ * input its `create` hook takes (`onReady`; a random sign-in id, never a secret). Without one the dialog makes the
+ * thing at once, with no input.
+ */
+export type ThingCreateProps = { readonly onReady: (input: JsonValue) => void };
+
+/**
  * A kind's view of one thing: the kind's name, its component (the thing's object admits the viewer; none for a kind
- * with nothing to show but its title, such as the coding tools: an app offers no pane for it) and, for a kind with
- * options people set in the page, its options form.
+ * with nothing to show but its title, such as the coding tools: an app offers no pane for it), for a kind with
+ * options people set in the page its options form, and its creation view (see `ThingCreateProps`).
  */
 export type ThingViewEntry = {
 	readonly kind: string;
 	readonly View?: ComponentType<ThingViewProps>;
 	readonly Options?: ComponentType<ThingOptionsProps>;
+	readonly Create?: ComponentType<ThingCreateProps>;
 };
 
 /** The kinds' views of a thing by kind name (the first by plugin name wins a kind; a second is reported). */
@@ -52,10 +61,10 @@ export const SessionListView = defineView<{
 	readonly onOpen: (session: string) => void;
 }>("sessions.list");
 
-/** A form that makes a session of `app` (the owner's: title and location); `onCreated` gets its id. */
+/** A form that makes a session of `app` (the owner's: title and location) with `things`; `onCreated` gets its id. */
 export const NewSessionView = defineView<{
 	readonly app: string;
-	readonly things?: readonly { readonly kind: string }[];
+	readonly things?: readonly ThingUse[];
 	readonly onCreated: (session: string) => void;
 }>("sessions.new");
 
@@ -68,3 +77,10 @@ export const SessionThingsView = defineView<{
 	readonly session: string;
 	readonly onOpen?: (thing: string) => void;
 }>("sessions.things");
+
+/**
+ * The things a person manages outside sessions (their own, their groups', the Pi's for the owner): make one of a
+ * `creation: "person"` kind (its kind's creation view in the dialog), "in all my sessions", rename, give away,
+ * delete, and where each is used.
+ */
+export const MyThingsView = defineView<Record<string, never>>("sessions.my-things");

@@ -4,7 +4,7 @@
 import {
 	arr,
 	bool,
-	defineThingKind,
+	defineThing,
 	lit,
 	obj,
 	remote,
@@ -34,7 +34,7 @@ export type Step = Static<typeof Step>;
  * A faux login: its provider's id (its one model is `<provider>-model`), its script, and whether it also gives the
  * tool `faux_session` (the session's title, read from the server through the agent's `call`).
  */
-export const FauxLogin = defineThingKind("faux.login", {
+export const FauxLogin = defineThing("faux.login", {
 	version: 1,
 	options: obj({ provider: str(), script: arr(Step), tool: bool() }),
 	initial: { provider: "faux", script: [], tool: false },

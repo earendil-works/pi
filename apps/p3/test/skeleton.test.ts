@@ -14,7 +14,17 @@ import { type TestServer, testServer } from "@earendil-works/p3/v1/testing";
 import { Sessions, SessionWorker } from "../plugins/sessions/contract.ts";
 import { askServer } from "../src/local-socket.ts";
 import { Probe } from "./plugins/probe/contract.ts";
-import { alive, coding, constantContract, constantPlugin, FAUX, gated, openGate, PROBE, startRun } from "./support.ts";
+import {
+	alive,
+	coding,
+	constantContract,
+	constantPlugin,
+	FAUX,
+	gatedSession,
+	openGate,
+	PROBE,
+	startRun,
+} from "./support.ts";
 import { eventually, within } from "./until.ts";
 
 let running: TestServer | undefined;
@@ -113,7 +123,7 @@ describe("session workers", () => {
 			await rm(folder, { recursive: true, force: true });
 		});
 		const client = await t.client(context);
-		const id = await (await client.get(Sessions, {}, context)).create(gated("one", folder), context);
+		const id = await gatedSession(client, "one", folder, context);
 		// The harness reports the run `working` (a report by the test would race the harness's own).
 		await startRun(client, id, context);
 		running = await t.restart(context);

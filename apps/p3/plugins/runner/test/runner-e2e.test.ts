@@ -23,7 +23,7 @@ import {
 	constantContract,
 	constantPlugin,
 	FAUX,
-	gated,
+	gatedSession,
 	openGate,
 	PROBE,
 	startRun,
@@ -84,7 +84,7 @@ async function workingSession(t: TestServer): Promise<{ readonly id: string; rea
 	const folder = await mkdtemp(join(tmpdir(), "p3-e2e-run-"));
 	folders.push(folder);
 	const client = await t.client(context);
-	const id = await (await client.get(Sessions, {}, context)).create(gated("one", folder), context);
+	const id = await gatedSession(client, "one", folder, context);
 	const held = await client.get(Probe, { session: id }, context);
 	if (held.variant !== "owner") return assert.fail(held.variant);
 	const pid = held.pid.value;

@@ -19,7 +19,7 @@ import faux from "../../../test/plugins/faux-login/worker.ts";
 import tools from "../../tools/worker.ts";
 
 /** A thing as `SessionFacts` gives it to the worker. */
-export type Thing = { thing: string; kind: string; ref: string; version: number; options: JsonValue };
+export type Thing = { thing: string; kind: string; name: string; version: number; options: JsonValue };
 
 /** What the test drives the stand-ins with. */
 export type Server = {
@@ -29,6 +29,10 @@ export type Server = {
 	row(change: Partial<SessionRow>): void;
 	/** Sets the session's things. */
 	things(things: readonly Thing[]): void;
+	/** Sets the session's content kinds, which the agent may make (none at first). */
+	kinds(kinds: readonly { kind: string; title: string }[]): void;
+	/** What the agent made (`SessionFacts.create`), in order; each made thing joins the session's things. */
+	readonly created: { kind: string; name: string }[];
 	/** Sets the access of callers by key (`owner`, `person:<id>`); unset: `none`. */
 	access(caller: string, access: "none" | "read" | "write"): void;
 	/** Makes the next reports wait until `release` resolves (a slow server). */
@@ -46,6 +50,7 @@ export function sessionRow(id: string, folder: string): SessionRow {
 		state: "settled",
 		lastTouch: 1,
 		archivedAt: null,
+		follows: null,
 	};
 }
 
@@ -56,9 +61,12 @@ export function standIns(
 ): { stubs: PluginFacet<P3Principal>[]; server: PluginFacet<P3Principal>[]; control: Server } {
 	let rowValue = row;
 	let thingsValue = things;
+	let kindsValue: readonly { kind: string; title: string }[] = [];
 	let held: Promise<void> = Promise.resolve();
 	const rows = new Set<Writable<SessionRow>>();
 	const lists = new Set<Writable<readonly Thing[]>>();
+	const kindLists = new Set<Writable<readonly { kind: string; title: string }[]>>();
+	const created: { kind: string; name: string }[] = [];
 	const accesses = new Map<string, "none" | "read" | "write">([["person:owner", "write"]]);
 	const answers = new Set<{ caller: string; access: Writable<string> }>();
 	const reports: SessionState[] = [];
@@ -72,6 +80,11 @@ export function standIns(
 			thingsValue = next;
 			for (const writable of lists) writable.set(thingsValue);
 		},
+		kinds: (next) => {
+			kindsValue = next;
+			for (const writable of kindLists) writable.set(kindsValue);
+		},
+		created,
 		access: (caller, access) => {
 			accesses.set(caller, access);
 			for (const answer of answers) if (answer.caller === caller) answer.access.set(access);
@@ -84,13 +97,22 @@ export function standIns(
 		host.serve(SessionFacts, (_params, _principal, self) => {
 			const session = self.writable(rowValue);
 			const list = self.writable(thingsValue);
+			const kinds = self.writable(kindsValue);
 			rows.add(session);
 			lists.add(list);
+			kindLists.add(kinds);
 			return {
 				variant: "worker",
 				members: {
 					session: self.derive([session], ([value]) => value),
 					things: self.derive([list], ([value]) => [...value]),
+					kinds: self.derive([kinds], ([value]) => [...value]),
+					create: async ({ kind, name }) => {
+						const id = `made-${created.length + 1}`;
+						created.push({ kind, name: name ?? "" });
+						server.things([...thingsValue, { thing: id, kind, name: name ?? "", version: 1, options: {} }]);
+						return id;
+					},
 					report: async ({ state }) => {
 						await held;
 						reports.push(state);

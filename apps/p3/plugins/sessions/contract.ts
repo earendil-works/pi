@@ -74,7 +74,9 @@ export type Member = Static<typeof Member>;
 
 /**
  * A session as lists, pages and its worker see it: its id, app, title, location, when it was made, its state, when
- * it was last touched, and when it was archived (`null`: it is not).
+ * it was last touched, when it was archived (`null`: it is not), and whom it follows (`null`: nobody): a session
+ * that follows a person or a group also has, live, every thing that party has "in all my sessions" (`everywhere`;
+ * following the owner includes the Pi's), while that party writes in the session.
  */
 export const SessionRow = obj({
 	id: str(),
@@ -85,6 +87,7 @@ export const SessionRow = obj({
 	state: SessionState,
 	lastTouch: num(),
 	archivedAt: union([num(), nul()]),
+	follows: union([Party, nul()]),
 });
 
 /** A session as lists and its worker see it (see `SessionRow`). */
@@ -107,7 +110,7 @@ export type ThingKind<O extends JsonValue> = {
 };
 
 /** Defines a kind of thing (see `ThingKind`). */
-export function defineThingKind<const O extends JsonValue>(
+export function defineThing<const O extends JsonValue>(
 	name: string,
 	definition: {
 		readonly version: number;
@@ -122,36 +125,125 @@ export function defineThingKind<const O extends JsonValue>(
 /** The options of a thing of `Kind`. */
 export type OptionsOf<Kind> = Kind extends ThingKind<infer O> ? O : never;
 
-/** Who brought a thing into a session: a person (the owner too; their own record, such as their mail), or the app. */
-export const Bringer = union([obj({ kind: lit("person"), id: str() }), obj({ kind: lit("app") })]);
+/**
+ * How a session has a thing: linked by a person (the owner too), the app (its server code) or the session's agent;
+ * or `followed`: not linked, the session has it from whom it follows.
+ */
+export const Bringer = union([
+	obj({ kind: lit("person"), id: str() }),
+	obj({ kind: lit("app") }),
+	obj({ kind: lit("agent") }),
+	obj({ kind: lit("followed") }),
+]);
 
-/** Who brought a thing (see `Bringer`). */
+/** Who linked a thing (see `Bringer`). */
 export type Bringer = Static<typeof Bringer>;
 
+/** A thing's name ("Plan", "Sketches"), the same in every session: at most 100 characters; empty shows its kind's title. */
+export const ThingName = str({ max: 100 });
+
 /**
- * A thing as a session has it: its id in the session, its kind, the record of its kind's plugin it stands for (`""`
- * for a kind without records, such as the coding tools), who brought it, and the session's default options for it.
+ * Whom a thing belongs to: a person, a group, the Pi, or nobody (content of the sessions that use it, gone with the
+ * last of them). Ownership is the sessions plugin's, never a kind's.
  */
-export const SessionThing = obj({ thing: str(), kind: str(), ref: str(), by: Bringer, options: unknown() });
+export const ThingOwner = union([
+	obj({ kind: lit("person"), id: str() }),
+	obj({ kind: lit("group"), id: str() }),
+	obj({ kind: lit("pi") }),
+	obj({ kind: lit("none") }),
+]);
 
-/** A thing as a session has it (see `SessionThing`). */
-export type SessionThing = {
-	readonly thing: string;
-	readonly kind: string;
-	readonly ref: string;
-	readonly by: Bringer;
-	readonly options: JsonValue;
-};
+/** Whom a thing belongs to (see `ThingOwner`). */
+export type ThingOwner = Static<typeof ThingOwner>;
 
-/** A thing to add to a session: its kind, its record (none: `""`) and its default options (none: the kind's initial). */
-export const NewThing = obj({ kind: str(), ref: opt(str()), options: opt(unknown()) });
+/** Whom a thing may be given (`keep`): a person, a group, or the Pi; never back to nobody. */
+export const ThingKeeper = union([
+	obj({ kind: lit("person"), id: str() }),
+	obj({ kind: lit("group"), id: str() }),
+	obj({ kind: lit("pi") }),
+]);
 
-/** A thing to add to a session (see `NewThing`). */
-export type NewThing = { readonly kind: string; readonly ref?: string; readonly options?: JsonValue };
+/** Whom a thing may be given (see `ThingKeeper`). */
+export type ThingKeeper = Static<typeof ThingKeeper>;
 
-/** A thing of `kind` to add, its options typed by the kind (none: the kind's initial). */
-export function thingOf<O extends JsonValue>(kind: ThingKind<O>, options?: O, ref?: string): NewThing {
-	return { kind: kind.name, ...(options === undefined ? {} : { options }), ...(ref === undefined ? {} : { ref }) };
+/**
+ * A thing: a record of its kind with one id (its kind's plugin keys its content by it), its name, its owner, when
+ * made, and `everywhere` ("in all my sessions", its owner's choice): every session that follows its owner has it.
+ */
+export const Thing = obj({
+	id: str(),
+	kind: str(),
+	name: ThingName,
+	owner: ThingOwner,
+	createdAt: num(),
+	everywhere: bool(),
+});
+
+/** A thing with its kind's title (the kind's name while no plugin serves it), as lists of things show it. */
+export const TitledThing = obj({
+	id: str(),
+	kind: str(),
+	name: ThingName,
+	owner: ThingOwner,
+	createdAt: num(),
+	everywhere: bool(),
+	title: str(),
+});
+
+/** A thing (see `Thing`). */
+export type Thing = Static<typeof Thing>;
+
+/**
+ * A thing as a session uses it (a link): the session, the thing's id, kind, name and owner, and who linked it. Its
+ * options are per party (`SessionsStore.options`).
+ */
+export const SessionThing = obj({
+	session: str(),
+	thing: str(),
+	kind: str(),
+	name: ThingName,
+	owner: ThingOwner,
+	by: Bringer,
+});
+
+/** A thing as a session uses it (see `SessionThing`). */
+export type SessionThing = Static<typeof SessionThing>;
+
+/**
+ * A thing a session gets as it is made: a new one (its kind, name, owner (none: the session's content), the input its
+ * kind's `create` takes, and its default options), or an existing one by id (with its default options here).
+ */
+export const ThingUse = union([
+	obj({
+		use: lit("new"),
+		kind: str(),
+		name: opt(ThingName),
+		owner: opt(ThingOwner),
+		input: opt(unknown()),
+		options: opt(unknown()),
+	}),
+	obj({ use: lit("existing"), thing: str(), options: opt(unknown()) }),
+]);
+
+/** A thing a session gets as it is made (see `ThingUse`). */
+export type ThingUse = Static<typeof ThingUse>;
+
+/** A new thing of `kind` for a session, its options typed by the kind (none: the kind's initial; owner: nobody). */
+export function thingOf<O extends JsonValue>(
+	kind: ThingKind<O>,
+	given: {
+		readonly name?: string;
+		readonly owner?: ThingOwner;
+		readonly input?: JsonValue;
+		readonly options?: O;
+	} = {},
+): ThingUse {
+	return { use: "new", kind: kind.name, ...given };
+}
+
+/** An existing thing `thing` for a session, with its default options there (none: its kind's initial). */
+export function usingThing(thing: string, options?: JsonValue): ThingUse {
+	return { use: "existing", thing, ...(options === undefined ? {} : { options }) };
 }
 
 /** Whose options for a thing: the session's default (`everyone`), the agent's, or one member's. */
@@ -160,7 +252,10 @@ export const OptionsFor = union([obj({ kind: lit("everyone") }), obj({ kind: lit
 /** Whose options for a thing (see `OptionsFor`). */
 export type OptionsFor = Static<typeof OptionsFor>;
 
-/** What the owner does with sessions: makes them, and manages their title, archive, members and things. */
+/**
+ * What the owner does with sessions: makes them (with their things), and manages their title, archive and members.
+ * Things are managed in a session through `SessionThings` (the owner writes every session) and in `MyThings`.
+ */
 export const Sessions = remote("sessions.sessions", {
 	version: 1,
 	params: {},
@@ -177,38 +272,27 @@ export const Sessions = remote("sessions.sessions", {
 						title: opt(Title),
 						location: Location,
 						members: opt(arr(Member)),
-						things: opt(arr(NewThing)),
+						/** New things for the session (its content unless owned), and existing ones. */
+						things: opt(arr(ThingUse)),
+						/** Whom it follows; left out: the owner who makes it; `null`: nobody. */
+						follows: opt(union([Party, nul()])),
 					}),
 					str(),
 				),
+				/**
+				 * Makes the session follow `follows` (`null`: nobody). With `keep` (the default), the things it had from
+				 * whom it followed until now are linked to it, so stopping to follow takes nothing away until removed.
+				 */
+				follow: method(obj({ session: str(), follows: union([Party, nul()]), keep: opt(bool()) })),
 				rename: method(obj({ session: str(), title: Title })),
 				archive: method(obj({ session: str() })),
 				restore: method(obj({ session: str() })),
 				/** Adds a member, or changes its access. */
 				addMember: method(obj({ session: str(), member: Member })),
 				removeMember: method(obj({ session: str(), party: Party })),
-				/** Adds a thing; answers its id in the session. */
-				addThing: method(obj({ session: str(), thing: NewThing }), str()),
-				/** Removes a thing from the session (nothing else: its record stays its plugin's). */
-				removeThing: method(obj({ session: str(), thing: str() })),
-				/** Sets whose options for a thing; `null` removes a member's or the agent's (they get the default again). */
-				setOptions: method(obj({ session: str(), thing: str(), for: OptionsFor, options: unknown() })),
 			},
 		},
 	},
-});
-
-/**
- * The kinds of things the owner may add to a session (`ThingKinds`, by title): each kind's name and title. A kind
- * whose things stand for records (a login) is added through its own plugin's view; this list adds with `{ kind }`.
- */
-export const ThingKindCatalog = remote("sessions.thing-kinds", {
-	version: 1,
-	params: {},
-	hostAddress: () => Server(),
-	// The owner's only (`admitOwner`, the people plugin's; its value `OwnerAdmission`, none).
-	admission: nul(),
-	variants: { owner: { state: { kinds: arr(obj({ kind: str(), title: str() })) } } },
 });
 
 /**
@@ -276,7 +360,7 @@ export const ThingAccess = remote("sessions.thing-access", {
 			state: {
 				answer: union([
 					obj({ access: lit("none") }),
-					obj({ access: Access, kind: str(), ref: str(), version: num(), options: unknown() }),
+					obj({ access: Access, kind: str(), version: num(), options: unknown() }),
 				]),
 			},
 		},
@@ -285,10 +369,10 @@ export const ThingAccess = remote("sessions.thing-access", {
 
 /**
  * The admission value of a thing's object, typed by its kind (`admission: thingAdmission(Kind)`): the caller's
- * access, the thing's record (`ref`, never taken from the page) and the options that apply to them.
+ * access and the options that apply to them. The thing is the params' `thing`: its id, its content's key.
  */
 export function thingAdmission<O extends JsonValue>(kind: ThingKind<O>) {
-	return obj({ access: Access, ref: str(), options: kind.options });
+	return obj({ access: Access, options: kind.options });
 }
 
 /**
@@ -301,32 +385,31 @@ export function admitThing<O extends JsonValue>(kind: ThingKind<O>) {
 		params: { readonly session: string; readonly thing: string },
 		principal: P3Principal,
 		self: AdmitSelf,
-	): Watchable<Admission<{ access: Access; ref: string; options: O }>> => {
+	): Watchable<Admission<{ access: Access; options: O }>> => {
 		const answer = self.get(ThingAccess, { ...params, caller: callerKey(principal) });
 		return self.derive([answer.answer], ([found]) => {
 			if (found.access === "none") return deny("no access to this thing");
 			if (found.kind !== kind.name) return deny(`not a thing of ${kind.name}`);
 			if (found.version !== kind.version) return deny(`its options are of version ${found.version}`);
 			// The options were checked against the kind's schema when they were written, at this version.
-			return allow({ access: found.access, ref: found.ref, options: found.options as O });
+			return allow({ access: found.access, options: found.options as O });
 		});
 	};
 }
 
-/** A record of a kind a caller may bring into a session: its id in the kind's plugin and its title. */
-export const ThingRecord = obj({ ref: str(), title: str() });
-
-/** A record a caller may bring (see `ThingRecord`). */
-export type ThingRecord = Static<typeof ThingRecord>;
+/** Whom a caller may make a thing for, or give one (`none` only to make): with a name to show. */
+export const ThingOwnerChoice = obj({ owner: ThingOwner, name: str() });
 
 /**
- * What a writer of a session brings into it of their own (their mail, their calendar): every writer, the owner too.
- * `kinds` lists the kinds whose plugin offers the caller records, with them; `bring` adds one of those records as a
- * thing (its kind's initial options unless given), which everyone in the session then uses, through its views and
- * through the agent; `withdraw` and `setOptions` act on things the caller brought (the owner: on any). A thing of a
- * kind without records (the coding tools) only the owner and the app add.
+ * A session's things as a writer of it manages them (every writer, the owner too): `kinds`, the kinds of content
+ * (`creation: "content"`), the only ones made inside a session; `owners`, whom the caller may give a thing (`keep`):
+ * themselves, their groups, the Pi for the owner. `create` makes content (owned by nobody) and links it here; `add`
+ * links an owned thing the caller manages; `remove`, `keep`, `rename`, `delete` and `setOptions` act on a thing this
+ * session has that the caller manages: the owner any; a person their own and their groups'; the Pi's only the owner;
+ * nobody's any writer of a session that uses it. A thing the session has from whom it follows cannot be removed here
+ * (stop following, `Sessions.follow`); its options can be set. A reader gets nothing.
  */
-export const BringThings = remote("sessions.bring", {
+export const SessionThings = remote("sessions.things", {
 	version: 1,
 	params: { session: str() },
 	hostAddress: () => Server(),
@@ -334,12 +417,84 @@ export const BringThings = remote("sessions.bring", {
 	variants: {
 		reader: {},
 		writer: {
+			state: {
+				kinds: arr(obj({ kind: str(), title: str() })),
+				owners: arr(ThingOwnerChoice),
+			},
 			methods: {
-				kinds: method(obj({}), arr(obj({ kind: str(), title: str(), records: arr(ThingRecord) }))),
-				bring: method(obj({ kind: str(), ref: str(), options: opt(unknown()) }), str()),
-				withdraw: method(obj({ thing: str() })),
+				/** Makes content of `kind` (owned by nobody) and links it here; answers its id. */
+				create: method(obj({ kind: str(), name: opt(ThingName), options: opt(unknown()) }), str()),
+				/** Links an owned thing the caller manages (theirs, their group's, the Pi's for the owner) here. */
+				add: method(obj({ thing: str(), options: opt(unknown()) })),
+				/** Unlinks a thing; one nobody owns is deleted with its last link. */
+				remove: method(obj({ thing: str() })),
+				/** Gives a thing an owner (from nobody, or away); it stays linked. */
+				keep: method(obj({ thing: str(), owner: ThingKeeper })),
+				rename: method(obj({ thing: str(), name: ThingName })),
+				/** Deletes a thing everywhere, with its content. */
+				delete: method(obj({ thing: str() })),
+				/** Sets whose options for a thing here; `null` removes a member's or the agent's (they get the default again). */
 				setOptions: method(obj({ thing: str(), for: OptionsFor, options: unknown() })),
 			},
+		},
+	},
+});
+
+/**
+ * One screen's list of the things a person manages outside sessions: their own, their groups', and for the owner the
+ * Pi's, by owner then name, those whose name starts with `prefix`; `more` loads the next page. `kinds`, the kinds a
+ * person makes (`creation: "person"`: a login, an inbox, an MCP server), and `owners`, whom the caller may make them
+ * for (themselves, their groups, the Pi for the owner). `create` makes one (never through the agent: it works for
+ * everyone who writes in its session), "in all my sessions" unless `everywhere` is false; `setEverywhere`,
+ * `rename`, `keep` (give away) and `delete` act on one of them. Who uses a thing: `ThingUses`.
+ */
+export const MyThings = remote("sessions.my-things", {
+	version: 1,
+	params: { view: str(), prefix: ThingName },
+	hostAddress: () => Server(),
+	variants: {
+		mine: {
+			state: {
+				list: obj({ rows: arr(TitledThing), moreAfter: bool() }),
+				kinds: arr(obj({ kind: str(), title: str() })),
+				owners: arr(ThingOwnerChoice),
+			},
+			methods: {
+				more: method(),
+				/** Makes a thing of `kind` for `owner`, with the `input` its kind's creation view collected; answers its id. */
+				create: method(
+					obj({
+						kind: str(),
+						name: opt(ThingName),
+						owner: ThingKeeper,
+						input: opt(unknown()),
+						everywhere: opt(bool()),
+					}),
+					str(),
+				),
+				/** Whether every session that follows the thing's owner has it ("in all my sessions"). */
+				setEverywhere: method(obj({ thing: str(), everywhere: bool() })),
+				rename: method(obj({ thing: str(), name: ThingName })),
+				keep: method(obj({ thing: str(), owner: ThingKeeper })),
+				delete: method(obj({ thing: str() })),
+			},
+		},
+	},
+});
+
+/**
+ * One screen's list of the sessions a thing is in (each with who linked it there), for whoever manages the thing
+ * (admitted live: the owner any; a person their own and their groups'); `more` loads the next page.
+ */
+export const ThingUses = remote("sessions.thing-uses", {
+	version: 1,
+	params: { thing: str(), view: str() },
+	hostAddress: () => Server(),
+	admission: nul(),
+	variants: {
+		uses: {
+			state: { list: obj({ rows: arr(obj({ session: str(), by: Bringer })), moreAfter: bool() }) },
+			methods: { more: method() },
 		},
 	},
 });
@@ -358,17 +513,22 @@ export const SessionInfo = remote("sessions.info", {
 			state: {
 				session: SessionRow,
 				access: Access,
+				/** The name of whom it follows now (a person's, a group's; `""` for nobody). */
+				followsName: str(),
 				/**
-				 * Each thing with its kind's title (the kind's name while no plugin serves it), who brought it and their
-				 * name now (`byName`; `""` for the app), its default options and its `overrides`: the options set for
-				 * the agent and for members, in the order of whom they are for. Options are as the kind reads them now:
-				 * `null` when it cannot (no plugin, another version).
+				 * Each thing with its name, its kind's title (the kind's name while no plugin serves it), its owner and
+				 * their name now (`ownerName`: a person's, a group's, `""` for the Pi and nobody), who linked it and
+				 * their name now (`byName`; `""` for the app and the agent), its default options here and its
+				 * `overrides`: the options set for the agent and for members, in the order of whom they are for.
+				 * Options are as the kind reads them now: `null` when it cannot (no plugin, another version).
 				 */
 				things: arr(
 					obj({
 						thing: str(),
 						kind: str(),
-						ref: str(),
+						name: ThingName,
+						owner: ThingOwner,
+						ownerName: str(),
 						by: Bringer,
 						byName: str(),
 						options: unknown(),
@@ -385,8 +545,11 @@ export const SessionInfo = remote("sessions.info", {
 
 /**
  * A session's own facts for its worker, which holds it as itself: its row (`null` for a session the server does not
- * know), its things with the options the agent gets (a thing whose options are not of its kind's current version
- * shows with `options: null`; the harness gives it nothing), and `report`, which says what its agent is doing now.
+ * know), its things (linked, and from whom it follows) with the options the agent gets (a thing whose options are
+ * not of its kind's current version shows with `options: null`; the harness gives it nothing), `kinds`, the kinds of
+ * content the agent may make, `report`, which says what its agent is doing now, and `create`. The agent makes only
+ * content, owned by nobody: it works for everyone who writes in the session, so what it could make for someone, any
+ * writer could. It never sets options and never gives a thing an owner.
  */
 export const SessionFacts = remote("sessions.facts", {
 	version: 1,
@@ -396,9 +559,14 @@ export const SessionFacts = remote("sessions.facts", {
 		worker: {
 			state: {
 				session: union([SessionRow, nul()]),
-				things: arr(obj({ thing: str(), kind: str(), ref: str(), version: num(), options: unknown() })),
+				things: arr(obj({ thing: str(), kind: str(), name: ThingName, version: num(), options: unknown() })),
+				kinds: arr(obj({ kind: str(), title: str() })),
 			},
-			methods: { report: method(obj({ state: SessionState })) },
+			methods: {
+				report: method(obj({ state: SessionState })),
+				/** Makes content of one of `kinds` (owned by nobody) and links it here (by the agent); answers its id. */
+				create: method(obj({ kind: str(), name: opt(ThingName) }), str()),
+			},
 		},
 	},
 });

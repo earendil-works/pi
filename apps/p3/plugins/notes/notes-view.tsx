@@ -1,6 +1,6 @@
-// The notes kind's view of one notebook in a session (`ThingViews`): its notes, the last written first, with older
-// ones on demand; an editor (admitted with write access and options that say `edit`) adds notes and edits and removes
-// any of them, a reader only reads. The view follows the admission live: options set to read only turn it into the
+// The notes kind's view of one notebook in a session (`ThingViews`): its name, its notes, the last written first, with
+// older ones on demand; an editor (admitted with write access and options that say `edit`) adds notes and edits and
+// removes any of them, a reader only reads. The view follows the admission live: options set to read only turn it into the
 // reader's at once.
 
 import { Button, TextArea } from "@earendil-works/elanor-react";
@@ -24,6 +24,7 @@ export function NotesView(props: { readonly session: string; readonly thing: str
 	const state = useRefState(ref);
 	const live = editor ?? reader;
 	const list = useWatch(live?.list);
+	const name = useWatch(live?.name);
 	const me = useWatch(useVariant(useHold(Me, {}), "me")?.me);
 	const action = useAction();
 	const viewer: Viewer = me?.kind === "person" ? { id: me.id } : undefined;
@@ -35,8 +36,8 @@ export function NotesView(props: { readonly session: string; readonly thing: str
 	}
 	return (
 		<section aria-label="Notes" className={styles.notes} data-notes={live?.variant ?? "loading"}>
-			<p className={styles.title}>
-				Notes
+			<p className={styles.title} data-notes-name="">
+				{name ?? "Notes"}
 				{live?.variant === "reader" ? <span className={styles.readOnly}>Read only</span> : null}
 			</p>
 			{editor === undefined ? null : <AddNote action={action} editor={editor} />}

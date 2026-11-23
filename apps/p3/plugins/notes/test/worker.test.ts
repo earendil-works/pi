@@ -1,7 +1,8 @@
 // The notes plugin on a session's worker (`testPlugin`), beside a stand-in server serving `Notes` with the admission a
-// case sets: a notebook gives the agent `notes_read` always and `notes_write` only when its options say edit; the
-// tools reach the server's notes through the agent's `call`, as the session's worker; a write the server's admission
-// no longer allows (options changed meanwhile) is refused.
+// case sets: the session's notebooks give the agent `notes_list` and `notes_read` always and `notes_write` when it may
+// edit one of them; `notes_list` names each with its id and whether the agent may write there; the tools reach the
+// server's notes through the agent's `call`, as the session's worker; a write in a notebook the agent may not edit, in
+// an id that is no notebook, or one the server's admission no longer allows (options changed meanwhile) is refused.
 
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
@@ -21,7 +22,7 @@ import { type Note, Notes } from "../contract.ts";
 const SESSION = "s1";
 
 /** What the stand-in server admits callers of `Notes` with; a case changes it before the call. */
-let admitted = { access: "write" as "read" | "write", ref: "person:ann", options: { edit: true } };
+let admitted = { access: "write" as "read" | "write", options: { edit: true } };
 
 /** The notes added through the stand-in, and the principals that held `Notes`. */
 const added: string[] = [];
@@ -35,7 +36,11 @@ const standIn = defineFacet((host) => {
 			holders.push(principal.kind);
 			const rows = (): Note[] => added.map((text, at) => ({ id: `n${at}`, text, at, author: { kind: "agent" } }));
 			const list = self.writable({ rows: rows(), moreAfter: false });
-			const reader = { list: self.derive([list], ([value]) => value), more: async () => null };
+			const reader = {
+				name: constant("Ideas"),
+				list: self.derive([list], ([value]) => value),
+				more: async () => null,
+			};
 			if (access === "read" || !options.edit) return { variant: "reader", members: reader };
 			return {
 				variant: "editor",
@@ -60,7 +65,7 @@ let t: TestedPlugin<P3Principal>;
 beforeEach(async () => {
 	added.length = 0;
 	holders.length = 0;
-	admitted = { access: "write", ref: "person:ann", options: { edit: true } };
+	admitted = { access: "write", options: { edit: true } };
 	t = await testPlugin(
 		fileURLToPath(new URL("../", import.meta.url)),
 		{ kind: "worker", session: SESSION, server: [{ name: "test.server", facet: standIn }] },
@@ -70,12 +75,16 @@ beforeEach(async () => {
 
 afterEach(() => t.close(context));
 
-/** The extension the notes kind gives notebook `n1` with the agent's options `{ edit }`. */
-function gift(edit: boolean): Extension {
+/** The extension the notes kind gives the session's notebooks `n1` ("Ideas") and `n2` ("Log") with the agent's `edit`s. */
+function gift(edit: boolean, log = false): Extension {
 	const [entry] = t.contributions(ThingExtensions);
 	assert.equal(entry?.value.kind.name, "notes.notes");
 	const agent: Agent = { session: SESSION, call: (fn, ctx) => t.root(fn, ctx) };
-	const given = entry.value.give({ thing: "n1", ref: "person:ann", options: { edit } }, agent);
+	const notebooks = [
+		{ thing: "n1", name: "Ideas", options: { edit } },
+		{ thing: "n2", name: "Log", options: { edit: log } },
+	];
+	const given = entry.value.give(notebooks, agent);
 	assert.ok(given.extension !== undefined);
 	return given.extension;
 }
@@ -91,31 +100,51 @@ async function run(extension: Extension, name: string, args: object): Promise<st
 }
 
 describe("what a notebook gives the agent", () => {
-	it("offers notes_write only when the agent's options say edit", () => {
+	it("offers notes_write only when the agent may edit one of the notebooks", () => {
 		assert.deepEqual(
 			gift(true).tools?.map(({ name }) => name),
-			["notes_read", "notes_write"],
+			["notes_list", "notes_read", "notes_write"],
 		);
 		assert.deepEqual(
 			gift(false).tools?.map(({ name }) => name),
-			["notes_read"],
+			["notes_list", "notes_read"],
 		);
+	});
+
+	it("lists the notebooks by id and name, with whether the agent may write there", async () => {
+		assert.deepEqual(JSON.parse(await run(gift(true), "notes_list", {})), [
+			{ id: "n1", name: "Ideas", write: true },
+			{ id: "n2", name: "Log", write: false },
+		]);
 	});
 
 	it("writes and reads the server's notes as the session's worker", async () => {
 		const extension = gift(true);
-		assert.equal(await run(extension, "notes_read", {}), "The notebook is empty.");
-		assert.equal(await run(extension, "notes_write", { text: "remember the milk" }), "Added note n0.");
+		assert.equal(await run(extension, "notes_read", { notebook: "n1" }), "The notebook is empty.");
+		assert.equal(
+			await run(extension, "notes_write", { notebook: "n1", text: "remember the milk" }),
+			"Added note n0.",
+		);
 		assert.deepEqual(added, ["remember the milk"]);
-		assert.match(await run(extension, "notes_read", {}), /^- \S+ an agent: remember the milk$/);
+		assert.match(await run(extension, "notes_read", { notebook: "n1" }), /^- \S+ an agent: remember the milk$/);
 		assert.deepEqual([...new Set(holders)], ["worker"]);
+	});
+
+	it("refuses a write in a notebook the agent may not edit, and in an id that is no notebook, naming it", async () => {
+		const extension = gift(true);
+		await assert.rejects(
+			run(extension, "notes_write", { notebook: "n2", text: "no" }),
+			(error: unknown) => isChordError(error) && error.code === "forbidden" && /"Log" \(n2\)/.test(error.message),
+		);
+		await assert.rejects(run(extension, "notes_write", { notebook: "n9", text: "no" }), /no notebook "n9"/);
+		assert.deepEqual(added, []);
 	});
 
 	it("refuses a write the server no longer admits", async () => {
 		const extension = gift(true);
 		admitted = { ...admitted, options: { edit: false } };
 		await assert.rejects(
-			run(extension, "notes_write", { text: "too late" }),
+			run(extension, "notes_write", { notebook: "n1", text: "too late" }),
 			(error: unknown) => isChordError(error) && error.code === "forbidden",
 		);
 		assert.deepEqual(added, []);

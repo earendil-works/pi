@@ -1,9 +1,9 @@
-// The plans of the stores' named queries (sessions, people, environments, notes, canvas), as SQLite runs them: each read must search
-// the index its comment names, with no sort (a temporary B-tree would read and sort every row of a tie, or of the list,
-// for one page), except the joins ordered by a partner's column, which say in their comment that SQLite sorts their
-// few rows: for those the plan asserted is the one they get. The test opens the server's store on a SQLite database of
-// its own, records the statements Chord runs while each query reads its first page and the page after a bookmark, and
-// asks SQLite for each one's plan.
+// The plans of the stores' named queries (sessions, people, environments, notes, canvas, checklist), as SQLite runs
+// them: each read must search the index its comment names, with no sort (a temporary B-tree would read and sort every
+// row of a tie, or of the list, for one page), except the joins ordered by a partner's column, which say in their
+// comment that SQLite sorts their few rows: for those the plan asserted is the one they get. The test opens the
+// server's store on a SQLite database of its own, records the statements Chord runs while each query reads its first
+// page and the page after a bookmark, and asks SQLite for each one's plan.
 
 import assert from "node:assert/strict";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
@@ -11,11 +11,12 @@ import { describe, it } from "node:test";
 import { createHost, openStore, sqliteBackend } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { NodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
-import { type P3Principal, Server, THIS_DEVICE } from "@earendil-works/p3/v1";
+import { type P3Principal, Server, THIS_DEVICE, thingOf } from "@earendil-works/p3/v1";
 import { EnvironmentsStore, PeopleStore, type ServerRuntime, SessionsStore } from "@earendil-works/p3/v1/server";
 import appsServer from "../plugins/apps/server.ts";
 import canvasServer from "../plugins/canvas/server.ts";
 import { CanvasStore } from "../plugins/canvas/store.ts";
+import checklistServer, { ChecklistStore } from "../plugins/checklist/server.ts";
 import codingServer from "../plugins/coding/server.ts";
 import environmentsServer from "../plugins/environments/server.ts";
 import notesServer from "../plugins/notes/server.ts";
@@ -66,6 +67,7 @@ describe("the plans of the stores' queries", () => {
 					{ name: "p3.server", facet: serverCoreFacet(runtime) },
 					{ name: "@earendil-works/p3-apps", facet: appsServer },
 					{ name: "@earendil-works/p3-canvas", facet: canvasServer },
+					{ name: "@earendil-works/p3-checklist", facet: checklistServer },
 					{ name: "@earendil-works/p3-coding", facet: codingServer },
 					{ name: "@earendil-works/p3-environments", facet: environmentsServer },
 					{ name: "@earendil-works/p3-notes", facet: notesServer },
@@ -79,8 +81,14 @@ describe("the plans of the stores' queries", () => {
 			const people = await host.get(PeopleStore, {}, context);
 			const environments = await host.get(EnvironmentsStore, {}, context);
 			const notes = await host.get(NotesStore, {}, context);
-			for (const notebook of ["person:owner", "person:ann"]) {
+			// Notebooks are things' ids: three notebooks of three notes each.
+			const notebooks = ["n1", "n2", "n3"];
+			for (const notebook of notebooks) {
 				for (let i = 0; i < 3; i++) await notes.add({ notebook, text: `n${i}`, author: "person:owner" }, context);
+			}
+			const checklists = await host.get(ChecklistStore, {}, context);
+			for (const checklist of ["c1", "c2"]) {
+				for (let i = 0; i < 3; i++) await checklists.add({ checklist, text: `i${i}` }, context);
 			}
 			const ann = await people.createPerson({ name: "Ann" }, context);
 			await people.createPerson({ name: "Ben" }, context);
@@ -99,20 +107,32 @@ describe("the plans of the stores' queries", () => {
 							{ kind: "person", id: ann, access: "read" },
 							{ kind: "group", id: coaches, access: "write" },
 						],
-						things: [{ kind: Notes.name }, { kind: Notes.name }],
+						things: [thingOf(Notes), thingOf(Notes)],
 					},
 					context,
 				);
 				if (i % 2 === 0) await sessions.archive({ session: one }, context);
 			}
-			const thing = (await sessions.things.of.page({ session: one }, 1, context)).items[0]!.thing;
+			const thing = (await sessions.links.of.page({ session: one }, 1, context)).items[0]!.thing;
+			// Ann's own things: two, one of them linked to a session.
+			const owner = { kind: "person", id: ann } as const;
+			await sessions.createThing({ kind: Notes.name, name: "a", owner }, context);
+			const owned = await sessions.createThing({ kind: Notes.name, name: "b", owner, session: one }, context);
+			// A session that follows Ann (she writes in it through the coaches), and the Pi's thing of a plugin.
+			const following = await sessions.create(
+				{
+					app: "coding",
+					location: { environment: THIS_DEVICE, folder: "/tmp" },
+					members: [{ kind: "group", id: coaches, access: "write" }],
+					follows: { kind: "person", id: ann },
+				},
+				context,
+			);
+			await sessions.ensureThing({ kind: Notes.name, owner: { kind: "pi" } }, context);
 			const canvas = await host.get(CanvasStore, {}, context);
 			for (const board of ["b1", "b2"]) {
 				const rect = { kind: "rect", color: "#000000", x: 0, y: 0, w: 10, h: 10, fill: false } as const;
-				await canvas.add(
-					{ session: one, thing: board, shapes: [rect, rect, rect], author: "person:owner" },
-					context,
-				);
+				await canvas.add({ canvas: board, shapes: [rect, rect, rect], author: "person:owner" }, context);
 			}
 			/** The plans of the statements `read` makes Chord prepare. */
 			const plansOf = async (read: Read): Promise<string[]> => {
@@ -144,6 +164,7 @@ describe("the plans of the stores' queries", () => {
 			const E = "environments.store:environments";
 			const N = "notes.store:notes";
 			const C = "canvas.store:canvas";
+			const K = "checklist.store:checklist";
 			const cases: readonly (readonly [string, readonly Read[], Expected])[] = [
 				["sessions.active", pages(sessions.sessions.active, { app: "coding" }), { index: `${S}.rows:active` }],
 				[
@@ -163,8 +184,25 @@ describe("the plans of the stores' queries", () => {
 					pages(sessions.memberships.archived, { app: "coding", members }),
 					{ index: `${S}.members:by_member`, sorts: true },
 				],
-				["things.of", pages(sessions.things.of, { session: one }), { sorts: true }],
-				["things.one", pages(sessions.things.one, { session: one, thing }), {}],
+				["links.of", pages(sessions.links.of, { session: one }), { index: `${S}.links:by_position` }],
+				["links.one", pages(sessions.links.one, { session: one, thing }), {}],
+				["links.ofThing", pages(sessions.links.ofThing, { thing: owned }), { index: `${S}.links:by_thing` }],
+				["things.one", pages(sessions.things.one, { id: thing }), {}],
+				[
+					"things.owned",
+					pages(sessions.things.owned, { owners: [`person:${ann}`, `group:${coaches}`], prefix: "" }),
+					{ index: `${S}.things:by_owner` },
+				],
+				[
+					"things.everywhere",
+					pages(sessions.things.everywhere, { owners: [`person:${ann}`, "pi"] }),
+					{ index: `${S}.things:by_everywhere` },
+				],
+				[
+					"things.ofKind",
+					pages(sessions.things.ofKind, { owner: "pi", kind: Notes.name }),
+					{ index: `${S}.things:of_kind` },
+				],
 				["options.of", pages(sessions.options.of, { session: one, thing }), {}],
 				["options.ofSession", pages(sessions.options.ofSession, { session: one, for: "everyone" }), {}],
 				["options.inSession", pages(sessions.options.inSession, { session: one }), {}],
@@ -184,8 +222,9 @@ describe("the plans of the stores' queries", () => {
 				["members.of (people)", pages(people.members.of, { group: coaches }), { sorts: true }],
 				["environments.all", pages(environments.environments.all, {}), { index: `${E}.rows:by_name` }],
 				["environments.one", pages(environments.environments.one, { id: THIS_DEVICE }), {}],
-				["notes.of", pages(notes.notes.of, { notebook: "person:owner" }), { index: `${N}.rows:by_time` }],
-				["shapes.of", pages(canvas.shapes.of, { session: one, thing: "b1" }), { index: `${C}.shapes:by_order` }],
+				["notes.of", pages(notes.notes.of, { notebook: "n1" }), { index: `${N}.rows:by_time` }],
+				["shapes.of", pages(canvas.shapes.of, { canvas: "b1" }), { index: `${C}.shapes:by_order` }],
+				["items.of", pages(checklists.items.of, { checklist: "c1" }), { index: `${K}.items:by_order` }],
 			];
 			for (const [name, read, expected] of cases) {
 				const plans = (await Promise.all(read.map((each) => plansOf(each)))).flat();
@@ -204,8 +243,30 @@ describe("the plans of the stores' queries", () => {
 					`${name}: ${plans.join(" | ")}`,
 				);
 			}
-			// A person leaving the Pi: their memberships by `by_member`, what they brought by `by_bringer`, each thing's
-			// rows by its key; no read walks a table or sorts.
+			// Making a plugin's thing once: the first of its kind and owner by `of_kind`.
+			const ensured = await plansOf(() =>
+				sessions.ensureThing({ kind: Notes.name, owner: { kind: "pi" } }, context),
+			);
+			assert.ok(
+				ensured.some((step) => step.includes(`${S}.things:of_kind`)),
+				ensured.join(" | "),
+			);
+			// Stopping to follow, keeping what it had: the followed person's things "in all my sessions" by
+			// `by_everywhere`; no read walks a table or sorts.
+			const followed = await plansOf(() => sessions.follow({ session: following, follows: null }, context));
+			assert.ok(
+				followed.some((step) => step.includes(`${S}.things:by_everywhere`)),
+				followed.join(" | "),
+			);
+			// The owners come as a list (`inArray`): SQLite reads it from a JSON table, nothing of ours.
+			for (const step of followed.filter((each) => !/^(LIST SUBQUERY|SCAN json_each)/.test(each))) {
+				assert.ok(
+					/^SEARCH [tp] USING /.test(step) && !step.includes("TEMP B-TREE"),
+					`follow: ${followed.join(" | ")}`,
+				);
+			}
+			// A person leaving the Pi: their memberships by `by_member`, the things they own by `by_owner`, those things'
+			// links and options by `by_thing`, each link's rows by its key; no read walks a table or sorts.
 			const removal = await plansOf(() => sessions.removePerson({ person: ann }, context));
 			const shown = removal.join(" | ");
 			assert.ok(
@@ -213,7 +274,15 @@ describe("the plans of the stores' queries", () => {
 				shown,
 			);
 			assert.ok(
-				removal.some((step) => step.includes(`${S}.things:by_bringer`)),
+				removal.some((step) => step.includes(`${S}.things:by_owner`)),
+				shown,
+			);
+			assert.ok(
+				removal.some((step) => step.includes(`${S}.links:by_thing`)),
+				shown,
+			);
+			assert.ok(
+				removal.some((step) => step.includes(`${S}.options:by_thing`)),
 				shown,
 			);
 			for (const step of removal) {

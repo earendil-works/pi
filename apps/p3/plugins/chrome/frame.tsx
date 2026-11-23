@@ -18,6 +18,7 @@ import { AppBoundary } from "./app-boundary.tsx";
 import { CornerMenu } from "./corner-menu.tsx";
 import styles from "./frame.module.css";
 import { InviteDialog } from "./invite.tsx";
+import { MyThingsDialog } from "./my-things-dialog.tsx";
 import { TopBar } from "./top-bar.tsx";
 
 /** Who the caller is, as `Me` answers: a person (the owner among them), or a session's agent (never a page). */
@@ -32,6 +33,7 @@ export type ChromeProps = {
 	readonly connection: ConnectionState;
 	readonly caller: Caller | undefined;
 	readonly onInvite: () => void;
+	readonly onMyThings: () => void;
 };
 
 /** The frame: the chrome and the route's app page. */
@@ -48,7 +50,15 @@ export function Frame() {
 	useEffect(() => {
 		if (current === undefined && first !== undefined) redirect(`/${first}`);
 	}, [current, first]);
-	const chrome: ChromeProps = { apps: apps ?? [], current, connection, caller, onInvite: () => setInviting(true) };
+	const [mine, setMine] = useState(false);
+	const chrome: ChromeProps = {
+		apps: apps ?? [],
+		current,
+		connection,
+		caller,
+		onInvite: () => setInviting(true),
+		onMyThings: () => setMine(true),
+	};
 	return (
 		<div className={styles.frame} data-chrome={current?.chrome ?? "bar"}>
 			{current?.chrome === "button" ? <CornerMenu {...chrome} /> : <TopBar {...chrome} />}
@@ -58,6 +68,7 @@ export function Frame() {
 			{caller?.kind === "person" && caller.owner ? (
 				<InviteDialog onClose={() => setInviting(false)} open={inviting} />
 			) : null}
+			{caller?.kind === "person" ? <MyThingsDialog onClose={() => setMine(false)} open={mine} /> : null}
 		</div>
 	);
 }

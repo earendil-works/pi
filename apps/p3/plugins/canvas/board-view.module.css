@@ -101,7 +101,20 @@
 	gap: var(--semantic-dimension-space-gap-small);
 }
 
-.hint,
+.title {
+	display: flex;
+	align-items: baseline;
+	gap: var(--semantic-dimension-space-gap-small);
+	margin: 0;
+	font: var(--semantic-typography-ui-secondary);
+	font-weight: var(--semantic-font-weight-ui-emphasis);
+}
+
+.hint {
+	color: var(--semantic-color-text-secondary);
+	font: var(--semantic-typography-ui-tertiary);
+}
+
 .note,
 .error {
 	margin: 0;

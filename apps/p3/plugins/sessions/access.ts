@@ -24,7 +24,8 @@ import {
 	type Watchable,
 } from "@earendil-works/p3/v1";
 import { PeopleStore, SessionsStore, ThingKinds } from "@earendil-works/p3/v1/server";
-import { type CurrentOptions, currentOptions } from "./options.ts";
+import { SessionHas } from "./follow.ts";
+import { type CurrentOptions, currentOptions, unset } from "./options.ts";
 import { keyOf } from "./store.ts";
 
 /**
@@ -60,32 +61,28 @@ export function serveAccess(host: FacetHost<P3Principal>): void {
 		mayAsk(principal, session, caller);
 		const { standing } = self.get(SessionStanding, { session, caller });
 		const store = self.get(SessionsStore, {});
-		const found = self.liveQuery(store.things.one, { session, thing }, { first: 1 });
+		// What the session has: linked, or from whom it follows.
+		const has = self.get(SessionHas, { session }).things;
 		const set = self.liveQuery(store.options.of, { session, thing }, { first: READ_WHOLE });
 		const kinds = self.registry(ThingKinds);
-		const answer = self.derive(
-			[standing, found, set, kinds],
-			([
-				theirs,
-				{
-					rows: [row],
-				},
-				written,
-				table,
-			]) => {
-				if (theirs.access === "none" || row === undefined || written.more) return { access: "none" as const };
-				const by = new Map(written.rows.map((options) => [options.for, options]));
-				// Every thing has its `everyone` options, and `everyone` ends every standing's list.
-				const applies = by.get(theirs.options.find((key) => by.has(key))!)!;
-				// Options stored at another version stay as stored (JSON, as written) when no migration reads them:
-				// `admitThing` then denies.
-				const answered: CurrentOptions = currentOptions(table.get(row.kind)?.value, applies) ?? {
-					version: applies.version,
-					options: applies.options as JsonValue,
-				};
-				return { access: theirs.access, kind: row.kind, ref: row.ref, ...answered };
-			},
-		);
+		const answer = self.derive([standing, has, set, kinds], ([theirs, things, written, table]) => {
+			const row = things.find((each) => each.thing === thing);
+			if (theirs.access === "none" || row === undefined || written.more) return NO_ANSWER;
+			const by = new Map(written.rows.map((options) => [options.for, options]));
+			const applies = theirs.options.map((key) => by.get(key)).find((options) => options !== undefined);
+			const entry = table.get(row.kind)?.value;
+			// Options stored at another version stay as stored (JSON, as written) when no migration reads them:
+			// `admitThing` then denies. None set (a followed thing): its kind's initial.
+			const answered: CurrentOptions | undefined =
+				applies === undefined
+					? unset(entry)
+					: (currentOptions(entry, applies) ?? {
+							version: applies.version,
+							options: applies.options as JsonValue,
+						});
+			if (answered === undefined) return NO_ANSWER;
+			return { access: theirs.access, kind: row.kind, ...answered };
+		});
 		return { variant: "answer", members: { answer } };
 	});
 }
@@ -140,6 +137,9 @@ type Standing = { access: "none" } | { access: Access; options: string[] };
 
 /** No access. */
 const NONE: Standing = { access: "none" };
+
+/** No access to a thing. */
+const NO_ANSWER = { access: "none" } as const;
 
 /** The server's standing: write, the session's default options. */
 const SERVER: Standing = { access: "write", options: ["everyone"] };

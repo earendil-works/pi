@@ -1,21 +1,11 @@
-// The notes plugin on the server: the notebooks' store (`store.ts`), the kind in `ThingKinds` with each caller's own
-// notebook as the record they may bring, and `Notes`, one notebook of a session for whom `admitThing` admits: an
-// editor (write access and options that say `edit`) or a reader. A note's author is who `Me` says the caller is,
-// asked as the caller at each write; authors' names are read by id, live, never copied into the notes.
+// The notes plugin on the server: the notebooks' store (`store.ts`), and the kind (`serveThing`): content any writer
+// of a session or its agent makes there, its notes cleared with its thing (`delete`), and `Notes`, one notebook of a
+// session for whom `admitThing` admits: an editor (write access and options that say `edit`) or a reader. A notebook
+// is a thing: its notes are keyed by the thing's id, its name is the thing's. A note's author is who `Me` says the
+// caller is, asked as the caller at each write; authors' names are read by id, live, never copied into the notes.
 
-import {
-	admitThing,
-	type Context,
-	type Ctx,
-	contribute,
-	defineFacet,
-	Me,
-	type P3Principal,
-	type Reference,
-	type Self,
-	type Watchable,
-} from "@earendil-works/p3/v1";
-import { PeopleStore, type RecordsFor, ThingKinds } from "@earendil-works/p3/v1/server";
+import { type Ctx, defineFacet, Me, type P3Principal, type Self, type Watchable } from "@earendil-works/p3/v1";
+import { PeopleStore, SessionsStore, serveThing } from "@earendil-works/p3/v1/server";
 import { type Author, type Note, Notes, NotesKind } from "./contract.ts";
 import { NotesStore, serveStore } from "./store.ts";
 
@@ -28,46 +18,46 @@ const PAGE = 50;
  */
 const READ_WHOLE = 1000;
 
+/** What a notebook whose thing has no name shows: its kind's title. */
+const TITLE = "Notes";
+
 export default defineFacet((host) => {
 	serveStore(host);
 
-	contribute(host, "notes.kind", (self) => {
-		const people = self.get(PeopleStore, {});
-		self.contribute(ThingKinds, {
-			kind: NotesKind,
-			title: "Notes",
-			records: (who, context) => recordsOf(who, people, context),
-		});
-	});
-
-	host.serve(
-		Notes,
-		({ session }, _principal, { access, ref, options }, self) => {
-			// A thing without a record (an app's) is its session's own notebook.
-			const notebook = ref === "" ? `session:${session}` : ref;
-			const store = self.get(NotesStore, {});
-			const list = self.list("notes", [[store.notes.of, { notebook }]], { first: PAGE });
-			const reader = { list: shown(list.value, self), more: (ctx: Ctx<P3Principal>) => list.more(ctx) };
-			if (access === "read" || !options.edit) return { variant: "reader", members: reader };
-			return {
-				variant: "editor",
-				members: {
-					...reader,
-					add: async ({ text }, ctx) => store.add({ notebook, text, author: await authorKey(ctx) }, ctx),
-					edit: async ({ id, text }, ctx) => store.edit({ notebook, id, text, author: await authorKey(ctx) }, ctx),
-					remove: ({ id }, ctx) => store.remove({ notebook, id }, ctx),
-				},
-			};
+	serveThing(host, NotesKind, {
+		title: TITLE,
+		creation: "content",
+		// A notebook starts empty; its notes go with it.
+		delete: async (thing, ctx) => {
+			await (await ctx.get(NotesStore, {})).clear({ notebook: thing }, ctx);
 		},
-		{ admit: admitThing(NotesKind) },
-	);
+		object: {
+			contract: Notes,
+			factory: ({ thing }, { access, options }, self) => {
+				const notebook = thing;
+				const store = self.get(NotesStore, {});
+				const named = self.liveQuery(self.get(SessionsStore, {}).things.one, { id: thing }, { first: 1 });
+				const list = self.list("notes", [[store.notes.of, { notebook }]], { first: PAGE });
+				const reader = {
+					name: self.derive([named], ([{ rows }]) => rows[0]?.name || TITLE),
+					list: shown(list.value, self),
+					more: (ctx: Ctx<P3Principal>) => list.more(ctx),
+				};
+				if (access === "read" || !options.edit) return { variant: "reader", members: reader };
+				return {
+					variant: "editor",
+					members: {
+						...reader,
+						add: async ({ text }, ctx) => store.add({ notebook, text, author: await authorKey(ctx) }, ctx),
+						edit: async ({ id, text }, ctx) =>
+							store.edit({ notebook, id, text, author: await authorKey(ctx) }, ctx),
+						remove: ({ id }, ctx) => store.remove({ notebook, id }, ctx),
+					},
+				};
+			},
+		},
+	});
 });
-
-/** The notebook `who` may bring: their own (titled with their name; none for a person who left). */
-async function recordsOf(who: RecordsFor, people: Reference<typeof PeopleStore>, context: Context) {
-	const [found] = (await people.persons.one.page({ id: who.id }, 1, context)).items;
-	return found === undefined ? [] : [{ ref: `person:${found.id}`, title: `${found.name}'s notes` }];
-}
 
 /** The caller's key as an author, as `Me` answers it for them. */
 async function authorKey(ctx: Ctx<P3Principal>): Promise<string> {

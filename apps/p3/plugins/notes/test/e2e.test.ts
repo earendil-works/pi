@@ -1,5 +1,5 @@
 // The notes plugin end to end (`testServer`: the real server, the session's worker as a process, the tests' faux
-// login under test, clients over `/chord`): a person brings her notebook and keeps it open; the agent's scripted
+// login under test, clients over `/chord`): a person makes a notebook in her session and keeps it open; the agent's scripted
 // answer calls `notes_write` and the note appears in her view, written by the agent; with the agent's options set to
 // no edit, the next request offers `notes_read` only; a reload of the notes plugin (server and worker facets) while
 // her view is open and the worker runs keeps the notes, and the agent writes again after it.
@@ -11,12 +11,11 @@ import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
-	BringThings,
 	BACKGROUND_CONTEXT as context,
 	type Host,
 	type P3Principal,
 	type Reference,
-	Sessions,
+	SessionThings,
 	Transcript,
 	thingOf,
 	until,
@@ -30,13 +29,25 @@ import { Notes, NotesKind } from "../contract.ts";
 /** The faux login plugin, a plugin under test of a root of its own. */
 const FAUX = fileURLToPath(new URL("../../../test/plugins/faux-login/", import.meta.url));
 
-/** The agent's script: `@<tag>` writes a note `from the agent: <tag>`; a tool's result is answered with "noted". */
-const SCRIPT: Step[] = ["first", "second"].flatMap((tag) => [
-	{
-		when: `@${tag}`,
-		reply: [{ kind: "tool" as const, name: "notes_write", args: JSON.stringify({ text: `from the agent: ${tag}` }) }],
-	},
-]);
+/**
+ * The agent's script for notebook `notebook`: `@<tag>` writes a note `from the agent: <tag>` there; a tool's result
+ * and anything else are answered with "noted".
+ */
+function script(notebook: string): Step[] {
+	return [
+		...["first", "second"].map((tag) => ({
+			when: `@${tag}`,
+			reply: [
+				{
+					kind: "tool" as const,
+					name: "notes_write",
+					args: JSON.stringify({ notebook, text: `from the agent: ${tag}` }),
+				},
+			],
+		})),
+		{ when: "", reply: [{ kind: "text" as const, text: "noted" }] },
+	];
+}
 
 let running: TestServer | undefined;
 const cleanups: (() => Promise<void>)[] = [];
@@ -54,15 +65,15 @@ async function start(options: TestServerOptions = {}): Promise<TestServer> {
 }
 
 /**
- * On `t`: Ann, a coding session she writes in with a faux login answering `SCRIPT` (plain text otherwise), her
- * notebook brought by her, and her client holding it open.
+ * On `t`: Ann, a coding session she writes in (following nobody) with a faux login, a notebook she makes there and
+ * her client holding it open; then the login's script set for that notebook (the tools take the notebook's id, known
+ * once it is made).
  */
 async function annsNotebook(t: TestServer) {
 	const id = await t.host.root(
 		async (ctx) => (await ctx.get(PeopleStore, {})).createPerson({ name: "Ann" }, ctx),
 		context,
 	);
-	const script = [...SCRIPT, { when: "", reply: [{ kind: "text" as const, text: "noted" }] }];
 	const session = await t.host.root(
 		async (ctx) =>
 			(await ctx.get(SessionsStore, {})).create(
@@ -70,18 +81,25 @@ async function annsNotebook(t: TestServer) {
 					app: "coding",
 					title: "Notes",
 					members: [{ kind: "person", id, access: "write" }],
-					things: [thingOf(FauxLogin, { provider: "faux", script, tool: false })],
+					things: [thingOf(FauxLogin)],
 				},
 				ctx,
 			),
 		context,
 	);
 	const client = await t.client(context, { kind: "person", id, name: "Ann" });
-	const bring = await client.get(BringThings, { session }, context);
-	if (bring.variant !== "writer") return assert.fail(bring.variant);
-	const thing = await bring.bring({ kind: NotesKind.name, ref: `person:${id}` }, context);
+	const things = await client.get(SessionThings, { session }, context);
+	if (things.variant !== "writer") return assert.fail(things.variant);
+	const thing = await things.create({ kind: NotesKind.name, name: "Ann's notebook" }, context);
 	const notes = await client.get(Notes, { session, thing }, context);
 	assert.equal(notes.variant, "editor");
+	await t.host.root(async (ctx) => {
+		const store = await ctx.get(SessionsStore, {});
+		const links = (await store.links.of.page({ session }, 10, ctx)).items;
+		const login = links.find(({ kind }) => kind === FauxLogin.name)?.thing ?? assert.fail("no faux login");
+		const options = { provider: "faux", script: script(thing), tool: false };
+		await store.setOptions({ session, thing: login, for: { kind: "everyone" }, options }, ctx);
+	}, context);
 	return { session, thing, notes };
 }
 
@@ -111,10 +129,9 @@ describe("the notes end to end", () => {
 		await send(owner, session, "@first");
 		await written(notes, "first");
 		// The agent's own options: no edit. Its next request offers reading only.
-		await (await owner.get(Sessions, {}, context)).setOptions(
-			{ session, thing, for: { kind: "agent" }, options: { edit: false } },
-			context,
-		);
+		const managed = await owner.get(SessionThings, { session }, context);
+		if (managed.variant !== "writer") return assert.fail(managed.variant);
+		await managed.setOptions({ thing, for: { kind: "agent" }, options: { edit: false } }, context);
 		await send(owner, session, "plain");
 		const requests = await owner.get(FauxRequests, { session }, context);
 		const last = await until(

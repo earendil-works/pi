@@ -187,8 +187,11 @@ export class Browser {
 			);
 		} catch (error) {
 			const at = await this.evaluate<string>("location.pathname").catch(() => "?");
+			// What the page showed when the wait gave up, for whoever reads the failure.
+			const shot = join(tmpdir(), `p3-browser-failure-${process.pid}.png`);
+			await this.screenshot(shot).catch(() => {});
 			throw new Error(
-				`waiting for ${expression} (at ${at}): ${(error as Error).message}\nconsole:\n${this.console.join("\n")}`,
+				`waiting for ${expression} (at ${at}, screenshot ${shot}): ${(error as Error).message}\nconsole:\n${this.console.join("\n")}`,
 			);
 		}
 	}
@@ -277,20 +280,18 @@ export class Browser {
 
 	/**
 	 * Waits until the first element `selector` matches has finished appearing (no animation or transition runs on it
-	 * or inside it, and it is fully opaque), then checks that it is on top: the element at its centre is it or inside it.
+	 * or inside it, and it is fully opaque) and is on top: the element at its centre is it or inside it.
 	 */
 	async settled(selector: string): Promise<void> {
 		const at = JSON.stringify(selector);
+		// One wait for all three: an element still under something fading out (a dialog's backdrop) is not settled; one
+		// that stays under something fails the wait, naming it.
 		await this.wait(
-			`(() => { const e = document.querySelector(${at}); return e !== null && e.getAnimations({ subtree: true }).length === 0` +
-				` && getComputedStyle(e).opacity === "1"; })()`,
-		);
-		const onTop = await this.evaluate<boolean>(
-			`(() => { const e = document.querySelector(${at}); const r = e.getBoundingClientRect();` +
+			`(() => { const e = document.querySelector(${at}); if (e === null || e.getAnimations({ subtree: true }).length > 0` +
+				` || getComputedStyle(e).opacity !== "1") return false; const r = e.getBoundingClientRect();` +
 				" const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);" +
 				" return hit !== null && (e === hit || e.contains(hit)); })()",
 		);
-		if (!onTop) throw new Error(`Browser: ${selector} is not on top`);
 	}
 
 	/** Saves a screenshot of the viewport as a PNG at `path`. */

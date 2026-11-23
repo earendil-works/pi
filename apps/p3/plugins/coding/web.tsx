@@ -4,7 +4,7 @@
 // screen with a back button.
 
 import { Button, IconButton } from "@earendil-works/elanor-react";
-import { CodingTools, defineFacet, Me, thingOf } from "@earendil-works/p3/v1";
+import { defineFacet, Me } from "@earendil-works/p3/v1";
 import {
 	AddIcon,
 	AppPages,
@@ -24,9 +24,6 @@ import styles from "./web.module.css";
 
 /** The app's id: its pages live under `/coding`. */
 const APP = "coding";
-
-/** The things every new coding session gets: the coding tools, with their default options. */
-const THINGS = [thingOf(CodingTools)];
 
 export default defineFacet((_host, self) => self.contribute(AppPages, { app: APP, Page: CodingPage }));
 
@@ -95,7 +92,6 @@ function Creating(props: { readonly onBack: () => void }) {
 							props.onBack();
 							navigate(`/${APP}/${id}`);
 						}}
-						things={THINGS}
 					/>
 				)}
 			</div>

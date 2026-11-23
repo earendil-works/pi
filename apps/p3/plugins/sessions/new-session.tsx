@@ -2,7 +2,7 @@
 // (an environment of `Environments` and a folder on it) and the things the app gives every new session.
 
 import { Button, Field, Form, Heading, Input } from "@earendil-works/elanor-react";
-import { Environments, type NewThing, Sessions, THIS_DEVICE } from "@earendil-works/p3/v1";
+import { Environments, Sessions, THIS_DEVICE, type ThingUse } from "@earendil-works/p3/v1";
 import { useHold, useRefState, useVariant, useWatch } from "@earendil-works/p3/v1/web";
 import { useState } from "react";
 import { useAction } from "./action.ts";
@@ -12,7 +12,7 @@ import styles from "./new-session.module.css";
 /** The form; `onCreated` gets the new session's id. A caller who is not the owner is told so. */
 export function NewSession(props: {
 	readonly app: string;
-	readonly things?: readonly NewThing[];
+	readonly things?: readonly ThingUse[];
 	readonly onCreated: (session: string) => void;
 }) {
 	const sessionsRef = useHold(Sessions, {});

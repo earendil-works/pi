@@ -1,9 +1,10 @@
 // The canvas plugin on the server (`testPlugin`, beside the real sessions, people, environments, apps, coding and
-// sign-in facets): the kind (no records), the admission (a viewer: who reads, or writes with options that say no
-// draw; a drawer; the agent by its own options; a removed member denied live; nobody outside), shapes keyed per
-// session and board and carried by the session's delete, authors as `Me` says, removing and clearing, the list with
-// `more`, and motion as events: everyone on the board sees a pointer move with the shape being drawn, a viewer's
-// pointer without a draft, nothing of another board.
+// sign-in facets): the kind (content, which a writer makes in a session; its shapes dropped when it goes), the
+// admission (a viewer: who reads, or writes with options that say no draw; a drawer; the agent by its own options; a
+// removed member denied live; nobody outside), shapes keyed by the canvas's id, so the same canvas linked into two
+// sessions shows the same drawing while who may draw stays each session's, authors as `Me` says, removing and
+// clearing, the list with `more`, and motion as events: everyone on the canvas in the session sees a pointer move
+// with the shape being drawn, a viewer's pointer without a draft, nothing of another canvas or another session.
 
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
@@ -16,11 +17,8 @@ import {
 	type OptionsFor,
 	type P3Principal,
 	type Reference,
-	Session,
-	Sessions,
+	SessionThings,
 	THIS_DEVICE,
-	ThingKindCatalog,
-	thingOf,
 	until,
 } from "@earendil-works/p3/v1";
 import { PeopleStore, SessionsStore } from "@earendil-works/p3/v1/server";
@@ -32,12 +30,8 @@ import environmentsServer from "../../environments/server.ts";
 import peopleServer from "../../people/server.ts";
 import sessionsServer from "../../sessions/server.ts";
 import signInServer from "../../sign-in/server.ts";
-import { CodingTools } from "../../tools/contract.ts";
-import toolsServer from "../../tools/server.ts";
 import { Canvas, CanvasKind, type Motion, type Shape } from "../contract.ts";
-
-/** The owner's person in this test's Pi (made at its first start). */
-let OWNER: Extract<P3Principal, { kind: "person" }>;
+import { CanvasStore } from "../store.ts";
 
 /** Where the tests' sessions work. */
 const HERE = { environment: THIS_DEVICE, folder: "/tmp/p3-canvas-test" };
@@ -48,6 +42,9 @@ type Person = Extract<P3Principal, { kind: "person" }>;
 /** `Canvas` as a test holds it. */
 type CanvasRef = Reference<typeof Canvas>;
 
+/** `SessionThings`' writer, as a test holds it. */
+type Writer = Extract<Reference<typeof SessionThings>, { readonly variant: "writer" }>;
+
 /** A short red stroke. */
 const STROKE: Shape = { kind: "line", color: "#cf222e", width: 6, points: [10, 10, 20, 20, 30, 10] };
 
@@ -55,6 +52,9 @@ const STROKE: Shape = { kind: "line", color: "#cf222e", width: 6, points: [10, 1
 const BOX: Shape = { kind: "rect", color: "#0969da", x: 100, y: 100, w: 50, h: 40, fill: false };
 
 let t: TestedPlugin<P3Principal>;
+
+/** The owner's person in this test's Pi. */
+let OWNER: Person;
 
 beforeEach(async () => {
 	t = await testPlugin(
@@ -68,7 +68,6 @@ beforeEach(async () => {
 				{ name: "@earendil-works/p3-people", facet: peopleServer },
 				{ name: "@earendil-works/p3-sessions", facet: sessionsServer },
 				{ name: "@earendil-works/p3-sign-in", facet: signInServer },
-				{ name: "@earendil-works/p3-tools", facet: toolsServer },
 			],
 		},
 		context,
@@ -88,28 +87,54 @@ async function person(name: string): Promise<Person> {
 	return { kind: "person", id, name };
 }
 
-/** Makes a coding session with `members` and two boards; its id and the boards' things. */
-async function session(members: Member[]): Promise<{ id: string; board: string; other: string }> {
-	return t.root(async (ctx) => {
-		const store = await ctx.get(SessionsStore, {});
-		const id = await store.create({ app: "coding", location: HERE, members }, ctx);
-		const board = await store.addThing({ session: id, thing: thingOf(CanvasKind) }, ctx);
-		const other = await store.addThing({ session: id, thing: thingOf(CanvasKind) }, ctx);
-		return { id, board, other };
-	}, context);
-}
-
-/** Sets the options of board `thing` of session `id` for `forWhom`, as the owner. */
-function setOptions(id: string, thing: string, forWhom: OptionsFor, draw: boolean): Promise<null> {
+/** Makes a coding session with `members`, following nobody; its id. */
+function session(members: Member[]): Promise<string> {
 	return t.root(
 		async (ctx) =>
-			(await ctx.get(Sessions, {})).setOptions({ session: id, thing, for: forWhom, options: { draw } }, ctx),
+			(await ctx.get(SessionsStore, {})).create({ app: "coding", location: HERE, members, follows: null }, ctx),
 		context,
-		{ principal: OWNER },
 	);
 }
 
-/** Runs `fn` with `principal`'s `Canvas` of board `thing` of session `id`. */
+/** Runs `fn` with `principal`'s `SessionThings` writer of session `id`. */
+function managing<T>(principal: P3Principal, id: string, fn: (things: Writer, ctx: Ctx<P3Principal>) => Promise<T>) {
+	return t.root(
+		async (ctx) => {
+			const things = await ctx.get(SessionThings, { session: id });
+			if (things.variant !== "writer") return assert.fail(things.variant);
+			return fn(things, ctx);
+		},
+		context,
+		{ principal },
+	);
+}
+
+/** `principal` makes a canvas (named `name`) in session `id`; its id. */
+function canvasIn(principal: P3Principal, id: string, name?: string): Promise<string> {
+	return managing(principal, id, (things, ctx) =>
+		things.create({ kind: CanvasKind.name, ...(name === undefined ? {} : { name }) }, ctx),
+	);
+}
+
+/** A session with Ann (writes), Ben (reads) and Cleo (writes), and two canvases the owner made there. */
+async function setup() {
+	const ann = await person("Ann");
+	const ben = await person("Ben");
+	const cleo = await person("Cleo");
+	const id = await session([
+		{ kind: "person", id: ann.id, access: "write" },
+		{ kind: "person", id: ben.id, access: "read" },
+		{ kind: "person", id: cleo.id, access: "write" },
+	]);
+	return { ann, ben, cleo, id, board: await canvasIn(OWNER, id, "Plan"), other: await canvasIn(OWNER, id) };
+}
+
+/** Sets the options of canvas `thing` in session `id` for `forWhom`, as the owner. */
+function setOptions(id: string, thing: string, forWhom: OptionsFor, draw: boolean): Promise<null> {
+	return managing(OWNER, id, (things, ctx) => things.setOptions({ thing, for: forWhom, options: { draw } }, ctx));
+}
+
+/** Runs `fn` with `principal`'s `Canvas` of canvas `thing` in session `id`. */
 function holding<T>(
 	principal: P3Principal,
 	id: string,
@@ -130,9 +155,14 @@ function variantOf(canvas: CanvasRef): string {
 	return canvas.variant;
 }
 
-/** The variant `principal` gets of board `thing` of session `id`. */
+/** The variant `principal` gets of canvas `thing` in session `id`. */
 function variant(principal: P3Principal, id: string, thing: string): Promise<string> {
 	return holding(principal, id, thing, async (canvas) => canvas.variant);
+}
+
+/** The shapes of canvas `thing` as `principal` sees them in session `id`. */
+function shapesOf(principal: P3Principal, id: string, thing: string) {
+	return holding(principal, id, thing, async (canvas) => canvas.shapes.value.rows);
 }
 
 /** Whether `promise` rejects with a ChordError of `code`. */
@@ -140,7 +170,7 @@ async function refused(promise: Promise<unknown>, code = "forbidden"): Promise<v
 	await assert.rejects(promise, (error: unknown) => isChordError(error) && error.code === code);
 }
 
-/** Whether `principal` is refused board `thing` of session `id`. */
+/** Whether `principal` is refused canvas `thing` in session `id`. */
 function denied(principal: P3Principal, id: string, thing: string): Promise<void> {
 	return refused(
 		t.root(async (ctx) => ctx.get(Canvas, { session: id, thing }, { readyTimeout: 500 }), context, { principal }),
@@ -148,32 +178,45 @@ function denied(principal: P3Principal, id: string, thing: string): Promise<void
 }
 
 describe("the kind", () => {
-	it("is a board without records, which the owner adds by its kind", async () => {
-		const kinds = await t.root(async (ctx) => (await ctx.get(ThingKindCatalog, {})).kinds.value, context, {
-			principal: OWNER,
-		});
+	it("is content: a writer makes a canvas in a session, named by its thing, else Canvas", async () => {
+		const ann = await person("Ann");
+		const id = await session([{ kind: "person", id: ann.id, access: "write" }]);
+		const kinds = await managing(ann, id, async (things) => things.kinds.value);
 		assert.deepEqual(
 			kinds.filter(({ kind }) => kind === CanvasKind.name),
 			[{ kind: CanvasKind.name, title: "Canvas" }],
 		);
-		assert.deepEqual(CanvasKind.initial, { draw: true });
+		const named = await canvasIn(ann, id, "Sketches");
+		const unnamed = await canvasIn(ann, id);
+		assert.equal(await holding(ann, id, named, async (canvas) => canvas.name.value), "Sketches");
+		assert.equal(await holding(ann, id, unnamed, async (canvas) => canvas.name.value), "Canvas");
+		// Renamed, the same everywhere: the view follows.
+		await holding(ann, id, unnamed, async (canvas, ctx) => {
+			await managing(ann, id, (things, inner) => things.rename({ thing: unnamed, name: "Ideas" }, inner));
+			await until(canvas.name, (name) => name === "Ideas", within("the new name", ctx));
+		});
+	});
+
+	it("drops a canvas's shapes when the canvas goes with its last link, and only its", async () => {
+		const { id, board, other } = await setup();
+		await holding(OWNER, id, board, (canvas, ctx) => drawerOf(canvas).add({ shapes: [STROKE, BOX] }, ctx));
+		await holding(OWNER, id, other, (canvas, ctx) => drawerOf(canvas).add({ shapes: [BOX] }, ctx));
+		await managing(OWNER, id, (things, ctx) => things.remove({ thing: board }, ctx));
+		const stored = (canvas: string) =>
+			t.root(
+				async (ctx) => (await (await ctx.get(CanvasStore, {})).shapes.of.page({ canvas }, 10, ctx)).items,
+				context,
+			);
+		await eventually(
+			() => stored(board),
+			(rows) => rows.length === 0,
+			2000,
+		);
+		assert.equal((await stored(other)).length, 1);
 	});
 });
 
-describe("who may do what on a board", () => {
-	/** A session with Ann (writes), Ben (reads) and Cleo (writes); its boards. */
-	async function setup() {
-		const ann = await person("Ann");
-		const ben = await person("Ben");
-		const cleo = await person("Cleo");
-		const made = await session([
-			{ kind: "person", id: ann.id, access: "write" },
-			{ kind: "person", id: ben.id, access: "read" },
-			{ kind: "person", id: cleo.id, access: "write" },
-		]);
-		return { ann, ben, cleo, ...made };
-	}
-
+describe("who may do what on a canvas", () => {
 	it("gives a reader and a writer whose options say no draw the viewer, writers and the owner the drawer", async () => {
 		const { ann, ben, cleo, id, board } = await setup();
 		await setOptions(id, board, { kind: "person", id: cleo.id }, false);
@@ -204,14 +247,11 @@ describe("who may do what on a board", () => {
 		await denied({ kind: "worker", session: "other" }, id, board);
 	});
 
-	it("denies a member the moment they are removed, a person outside, and a thing of another kind", async () => {
+	it("denies a member the moment they are removed, a person outside, and a canvas the session does not have", async () => {
 		const { ben, id, board } = await setup();
 		await denied(await person("Dana"), id, board);
-		const tools = await t.root(
-			async (ctx) => (await ctx.get(SessionsStore, {})).addThing({ session: id, thing: thingOf(CodingTools) }, ctx),
-			context,
-		);
-		await denied(OWNER, id, tools);
+		const elsewhere = await canvasIn(OWNER, await session([]));
+		await denied(OWNER, id, elsewhere);
 		await denied(OWNER, id, "no-such-thing");
 		await holding(ben, id, board, async (canvas, ctx) => {
 			assert.equal(canvas.variant, "viewer");
@@ -232,19 +272,42 @@ describe("who may do what on a board", () => {
 	});
 });
 
-describe("a board's shapes", () => {
-	it("are kept per session and board, with who drew them as Me says", async () => {
+describe("a canvas's shapes", () => {
+	it("are the canvas's: the same drawing in every session it is linked into, who may draw each session's", async () => {
 		const ann = await person("Ann");
 		const first = await session([{ kind: "person", id: ann.id, access: "write" }]);
-		const second = await session([{ kind: "person", id: ann.id, access: "write" }]);
-		const [stroke] = await holding(ann, first.id, first.board, (canvas, ctx) =>
+		const second = await session([{ kind: "person", id: ann.id, access: "read" }]);
+		const shared = await canvasIn(ann, first, "Shared");
+		// Ann keeps it (it is hers now), and the owner links it into the second session, where Ann only reads.
+		await managing(ann, first, (things, ctx) =>
+			things.keep({ thing: shared, owner: { kind: "person", id: ann.id } }, ctx),
+		);
+		await t.root(
+			async (ctx) => (await ctx.get(SessionsStore, {})).addThing({ session: second, thing: shared }, ctx),
+			context,
+		);
+		const [stroke] = await holding(ann, first, shared, (canvas, ctx) =>
 			drawerOf(canvas).add({ shapes: [STROKE] }, ctx),
 		);
-		await holding(OWNER, first.id, first.board, (canvas, ctx) => drawerOf(canvas).add({ shapes: [BOX] }, ctx));
-		await holding({ kind: "worker", session: first.id }, first.id, first.board, (canvas, ctx) =>
+		await holding(ann, second, shared, async (canvas) => {
+			assert.equal(canvas.variant, "viewer");
+			assert.equal(canvas.name.value, "Shared");
+			assert.deepEqual(canvas.shapes.value.rows, [{ id: stroke, author: `person:${ann.id}`, shape: STROKE }]);
+		});
+		// Drawing off in the first session leaves the second's rights alone, and the other way round.
+		await setOptions(first, shared, { kind: "everyone" }, false);
+		assert.equal(await variant(OWNER, first, shared), "viewer");
+		assert.equal(await variant(OWNER, second, shared), "drawer");
+	});
+
+	it("are kept per canvas, with who drew them as Me says", async () => {
+		const { ann, id, board, other } = await setup();
+		const [stroke] = await holding(ann, id, board, (canvas, ctx) => drawerOf(canvas).add({ shapes: [STROKE] }, ctx));
+		await holding(OWNER, id, board, (canvas, ctx) => drawerOf(canvas).add({ shapes: [BOX] }, ctx));
+		await holding({ kind: "worker", session: id }, id, board, (canvas, ctx) =>
 			drawerOf(canvas).add({ shapes: [BOX] }, ctx),
 		);
-		const rows = await holding(ann, first.id, first.board, async (canvas) => canvas.shapes.value.rows);
+		const rows = await shapesOf(ann, id, board);
 		assert.deepEqual(
 			rows.map(({ author, shape }) => [author, shape.kind]),
 			[
@@ -254,31 +317,11 @@ describe("a board's shapes", () => {
 			],
 		);
 		assert.deepEqual(rows[0], { id: stroke, author: `person:${ann.id}`, shape: STROKE });
-		// The session's other board, and the same thing id in another session, have none of them.
-		assert.deepEqual(await holding(ann, first.id, first.other, async (canvas) => canvas.shapes.value.rows), []);
-		assert.deepEqual(await holding(ann, second.id, second.board, async (canvas) => canvas.shapes.value.rows), []);
-	});
-
-	it("go with their session's data, and only theirs", async () => {
-		const first = await session([]);
-		const second = await session([]);
-		await holding(OWNER, first.id, first.board, (canvas, ctx) => drawerOf(canvas).add({ shapes: [STROKE] }, ctx));
-		await holding(OWNER, second.id, second.board, (canvas, ctx) => drawerOf(canvas).add({ shapes: [BOX] }, ctx));
-		await t.host.deleteHostData(Session({ id: first.id }), context, { plugin: "@earendil-works/p3-canvas" });
-		assert.deepEqual(await holding(OWNER, first.id, first.board, async (canvas) => canvas.shapes.value.rows), []);
-		assert.equal(
-			(await holding(OWNER, second.id, second.board, async (canvas) => canvas.shapes.value.rows)).length,
-			1,
-		);
+		assert.deepEqual(await shapesOf(ann, id, other), []);
 	});
 
 	it("are removed one by one and cleared by a drawer, live for every holder", async () => {
-		const ann = await person("Ann");
-		const ben = await person("Ben");
-		const { id, board, other } = await session([
-			{ kind: "person", id: ann.id, access: "write" },
-			{ kind: "person", id: ben.id, access: "read" },
-		]);
+		const { ann, ben, id, board, other } = await setup();
 		await holding(OWNER, id, other, (canvas, ctx) => drawerOf(canvas).add({ shapes: [BOX] }, ctx));
 		await holding(ben, id, board, async (watching, ctx) => {
 			assert.equal(watching.variant, "viewer");
@@ -297,12 +340,12 @@ describe("a board's shapes", () => {
 				await until(watching.shapes, (list) => list.rows.length === 0, within("cleared", ctx));
 			});
 		});
-		// Clearing one board leaves the other.
-		assert.equal((await holding(OWNER, id, other, async (canvas) => canvas.shapes.value.rows)).length, 1);
+		// Clearing one canvas leaves the other.
+		assert.equal((await shapesOf(OWNER, id, other)).length, 1);
 	});
 
 	it("refuses shapes outside the schema", async () => {
-		const { id, board } = await session([]);
+		const { id, board } = await setup();
 		await holding(OWNER, id, board, async (canvas, ctx) => {
 			const drawer = drawerOf(canvas);
 			const bad = [
@@ -318,7 +361,7 @@ describe("a board's shapes", () => {
 	});
 
 	it("loads a page of 500, oldest first, and the next with more", async () => {
-		const { id, board } = await session([]);
+		const { id, board } = await setup();
 		await holding(OWNER, id, board, async (canvas, ctx) => {
 			const drawer = drawerOf(canvas);
 			for (let batch = 0; batch < 6; batch++) {
@@ -340,33 +383,36 @@ describe("a board's shapes", () => {
 	});
 });
 
-describe("a board's motion", () => {
-	it("shows every holder a pointer with the shape being drawn, a viewer's without, and nothing of another board", async () => {
-		const ann = await person("Ann");
-		const ben = await person("Ben");
-		const { id, board, other } = await session([
-			{ kind: "person", id: ann.id, access: "write" },
-			{ kind: "person", id: ben.id, access: "read" },
-		]);
+describe("a canvas's motion", () => {
+	it("shows every holder in the session a pointer with the shape being drawn, a viewer's without, nothing elsewhere", async () => {
+		const { ann, ben, id, board, other } = await setup();
+		// The same canvas in another session: its people see nothing of this session's.
+		await managing(OWNER, id, (things, ctx) => things.keep({ thing: board, owner: { kind: "pi" } }, ctx));
+		const second = await session([]);
+		await t.root(
+			async (ctx) => (await ctx.get(SessionsStore, {})).addThing({ session: second, thing: board }, ctx),
+			context,
+		);
 		const seen: Motion[] = [];
 		const elsewhere: Motion[] = [];
 		await holding(OWNER, id, other, async (away, outer) => {
 			await away.motion.on(({ value }) => elsewhere.push(value), outer);
-			await holding(OWNER, id, board, async (watching, ctx) => {
-				await watching.motion.on(({ value }) => seen.push(value), ctx);
-				await holding(ann, id, board, async (canvas, inner) => {
-					await canvas.point({ x: 5, y: 6, draft: STROKE }, inner);
-					await canvas.leave(inner);
+			await holding(OWNER, second, board, async (there, inner) => {
+				await there.motion.on(({ value }) => elsewhere.push(value), inner);
+				await holding(OWNER, id, board, async (watching, ctx) => {
+					await watching.motion.on(({ value }) => seen.push(value), ctx);
+					await holding(ann, id, board, async (canvas, call) => {
+						await canvas.point({ x: 5, y: 6, draft: STROKE }, call);
+						await canvas.leave(call);
+					});
+					await holding(ben, id, board, (canvas, call) => canvas.point({ x: 7, y: 8, draft: STROKE }, call));
+					// Events show in no watchable: the listener's log is polled.
+					await eventually(
+						() => seen.length,
+						(count) => count === 3,
+						2000,
+					);
 				});
-				await holding(ben, id, board, async (canvas, inner) => {
-					await canvas.point({ x: 7, y: 8, draft: STROKE }, inner);
-				});
-				// Events show in no watchable: the listener's log is polled.
-				await eventually(
-					() => seen.length,
-					(count) => count === 3,
-					2000,
-				);
 			});
 		});
 		assert.deepEqual(seen, [

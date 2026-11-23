@@ -251,9 +251,10 @@ describe("counted work", () => {
 	});
 
 	// The route's admission and the worker's `admitSession` share one standing (the owner's person's: the session's row,
-	// the person's row, their groups and the session's members); the worker's facts read its row, its things, and
-	// their default and the agent's options.
-	it("a hold of a session's worker costs eight reads: the owner's standing and its worker's facts; a second hold none", async () => {
+	// the person's row, their groups and the session's members); the worker's facts read what the session has (its
+	// row, its links, its members, the followed person's row and groups, and their things "in all my sessions") and
+	// its things' default and the agent's options.
+	it("a hold of a session's worker costs twelve reads: the owner's standing and its worker's facts; a second hold none", async () => {
 		const { t, owner, id } = await withSession();
 		await owner.get(SessionsList, { app: "coding", set: "active", view: "v" }, context);
 		const counted = () => [t.count("chord.query.runs"), t.count("chord.query.probes")];
@@ -264,7 +265,7 @@ describe("counted work", () => {
 		const after = counted();
 		assert.deepEqual(
 			[second[0]! - first[0]!, second[1]! - first[1]!, after[0]! - second[0]!, after[1]! - second[1]!],
-			[8, 0, 0, 0],
+			[12, 0, 0, 0],
 		);
 	});
 });

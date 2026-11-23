@@ -101,8 +101,12 @@ try {
 					title: `s${i}`,
 					location: { environment: THIS_DEVICE, folder },
 					things: [
-						{ kind: "faux.login", options: { provider: "faux", script: SCRIPT, tool: false } },
-						{ kind: "tools.coding", options: { shell: true } },
+						{
+							use: "new" as const,
+							kind: "faux.login",
+							options: { provider: "faux", script: SCRIPT, tool: false },
+						},
+						{ use: "new" as const, kind: "tools.coding", options: { shell: true } },
 					],
 				},
 				context,

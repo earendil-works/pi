@@ -1,9 +1,10 @@
 // The harness end to end (`testServer`: the real server, workers as processes, the faux login plugin under test): a
-// session with a faux login and the coding tools answers through its transcript, its tool running in the session's
+// session that follows the owner, so it has the Pi's faux login and coding tools, answers through its transcript, its tool running in the session's
 // folder; its state reaches the owner's list (working, then settled); the worker stays alive while working with no
 // holder; a server restart mid-call resumes the run; an archived session's cut-off run schedules nothing; a row left
 // `working` with nothing to do (a crash before Durable took the input, or before the settled report) is settled by
-// the waker's start; a reload of the harness plugin mid-call finishes the run.
+// the waker's start; a reload of the harness plugin mid-call finishes the run; with two canvases and two notebooks the
+// agent draws and writes in the ones it names, and makes a third canvas (`thing_create`), owned by nobody.
 
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
@@ -16,8 +17,11 @@ import {
 	BACKGROUND_CONTEXT as context,
 	type Host,
 	type P3Principal,
+	SessionInfo,
 	type SessionState,
+	Sessions,
 	SessionsList,
+	SessionThings,
 	THIS_DEVICE,
 	Transcript,
 	until,
@@ -25,7 +29,10 @@ import {
 import { SessionsStore } from "@earendil-works/p3/v1/server";
 import { type TestServer, type TestServerOptions, testServer } from "@earendil-works/p3/v1/testing";
 import { type FauxRequest, FauxRequests, type Step } from "../../../test/plugins/faux-login/contract.ts";
+import { scriptFaux } from "../../../test/support.ts";
 import { eventually, within } from "../../../test/until.ts";
+import { Canvas, CanvasKind } from "../../canvas/contract.ts";
+import { Notes, NotesKind } from "../../notes/contract.ts";
 
 /** The faux login plugin, a plugin under test of a root of its own. */
 const FAUX = fileURLToPath(new URL("../../../test/plugins/faux-login/", import.meta.url));
@@ -49,23 +56,19 @@ async function directory(prefix: string): Promise<string> {
 	return dir;
 }
 
-/** A coding session on `t` in `folder` with a faux login answering from `script` and the coding tools; its id. */
-function session(t: TestServer, folder: string, script: Step[]): Promise<string> {
-	return t.host.root(async (ctx) => {
-		const store = await ctx.get(SessionsStore, {});
-		return store.create(
-			{
-				app: "coding",
-				title: "s",
-				location: { environment: THIS_DEVICE, folder },
-				things: [
-					{ kind: "faux.login", options: { provider: "faux", script, tool: false } },
-					{ kind: "tools.coding", options: { shell: true } },
-				],
-			},
-			ctx,
-		);
-	}, context);
+/**
+ * A coding session on `t` in `folder`, made by the owner, so it follows them: the Pi's coding tools and faux login,
+ * scripted here with `script`; its id.
+ */
+async function session(t: TestServer, folder: string, script: Step[]): Promise<string> {
+	const owner = await t.client(context);
+	const sessions = await owner.get(Sessions, {}, context);
+	const id = await sessions.create(
+		{ app: "coding", title: "s", location: { environment: THIS_DEVICE, folder } },
+		context,
+	);
+	await scriptFaux(owner, id, script, context);
+	return id;
 }
 
 /** Sends `text` to `session`'s transcript as `client`'s owner, holding nothing afterwards. */
@@ -215,6 +218,71 @@ describe("the harness end to end", () => {
 			(view) => JSON.stringify(view).includes("after the reload"),
 			within("the answer in the held transcript", context, 10_000),
 		);
+		assert.deepEqual(t.errors, []);
+	});
+
+	it("draws on the named one of two canvases, writes in the named one of two notebooks, and makes a third canvas", async () => {
+		const folder = await directory("p3-harness-e2e-");
+		const t = await start();
+		const owner = await t.client(context);
+		const sessions = await owner.get(Sessions, {}, context);
+		const id = await sessions.create(
+			{ app: "coding", title: "things", location: { environment: THIS_DEVICE, folder } },
+			context,
+		);
+		const things = await owner.get(SessionThings, { session: id }, context);
+		if (things.variant !== "writer") return assert.fail(things.variant);
+		const [plan, sketches, ideas, log] = [
+			await things.create({ kind: CanvasKind.name, name: "Plan" }, context),
+			await things.create({ kind: CanvasKind.name, name: "Sketches" }, context),
+			await things.create({ kind: NotesKind.name, name: "Ideas" }, context),
+			await things.create({ kind: NotesKind.name, name: "Log" }, context),
+		];
+		const box = { kind: "rect", color: "#1a7f37", x: 10, y: 10, w: 100, h: 50, fill: false };
+		const tool = (name: string, args: object) => ({ kind: "tool" as const, name, args: JSON.stringify(args) });
+		await scriptFaux(
+			owner,
+			id,
+			[
+				{ when: "@draw", reply: [tool("canvas_draw", { canvas: sketches, shapes: [box] })] },
+				{ when: "drew", reply: [tool("notes_write", { notebook: log, text: "drew a box" })] },
+				{ when: "@make", reply: [tool("thing_create", { kind: CanvasKind.name, name: "Third" })] },
+				{ when: "", reply: [{ kind: "text", text: "done" }] },
+			],
+			context,
+		);
+		const board = (thing: string) => owner.get(Canvas, { session: id, thing }, context);
+		const notebook = (thing: string) => owner.get(Notes, { session: id, thing }, context);
+		const [planBoard, sketchesBoard, ideasBook, logBook] = [
+			await board(plan),
+			await board(sketches),
+			await notebook(ideas),
+			await notebook(log),
+		];
+		await send(owner, id, "@draw");
+		await until(logBook.list, (list) => list.rows.length === 1, within("the agent's note", context, 20_000));
+		assert.deepEqual(
+			sketchesBoard.shapes.value.rows.map(({ author, shape }) => [author, shape]),
+			[["agent", box]],
+		);
+		assert.deepEqual(planBoard.shapes.value.rows, []);
+		assert.deepEqual(
+			logBook.list.value.rows.map(({ text }) => text),
+			["drew a box"],
+		);
+		assert.deepEqual(ideasBook.list.value.rows, []);
+		await reaches(owner, id, "settled");
+		await send(owner, id, "@make");
+		const info = await owner.get(SessionInfo, { session: id }, context);
+		const made = await until(
+			info.things,
+			(now) => now.some(({ name }) => name === "Third"),
+			within("the agent's canvas", context, 20_000),
+		);
+		const third = made.find(({ name }) => name === "Third")!;
+		assert.deepEqual([third.kind, third.owner, third.by], [CanvasKind.name, { kind: "none" }, { kind: "agent" }]);
+		// The run ends before the server does: a report cut off by the close would be reported.
+		await reaches(owner, id, "settled");
 		assert.deepEqual(t.errors, []);
 	});
 });

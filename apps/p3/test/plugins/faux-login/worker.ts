@@ -1,6 +1,6 @@
 // The faux login on a session's worker, for tests only: each `faux.login` thing gives a pi-ai faux provider answering
 // from the thing's script (the first step whose `when` its request's last message contains; none: an error answer),
-// and with `tool` the tool `faux_session`, which reads the session's title from the server through the agent's `call`.
+// and when one of them has `tool`, the tool `faux_session`, which reads the session's title from the server through the agent's `call`.
 // Every request is recorded with the tools it offered (`FauxRequests`).
 
 import { admitSession, arr, defineFacet, local, SessionFacts } from "@earendil-works/p3/v1";
@@ -27,9 +27,9 @@ export default defineFacet((host) => {
 		const record = (request: FauxRequest): void => log.set([...log.value, request]);
 		self.contribute(
 			ThingExtensions,
-			thingExtension(FauxLogin, ({ options }, agent) => ({
-				providers: [scripted(options.provider, options.script, record)],
-				...(options.tool ? { extension: sessionTool(agent) } : {}),
+			thingExtension(FauxLogin, (things, agent) => ({
+				providers: things.map(({ options }) => scripted(options.provider, options.script, record)),
+				...(things.some(({ options }) => options.tool) ? { extension: sessionTool(agent) } : {}),
 			})),
 		);
 		return { requests: self.derive([log], ([value]) => [...value]) };

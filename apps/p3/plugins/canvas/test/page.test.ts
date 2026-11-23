@@ -1,5 +1,5 @@
 // The canvas in real browsers (only when asked: `P3_BROWSER_TESTS=1` with `CHROMIUM_BIN`), on p3's real server: the
-// owner on a desktop and Ada, an invited person who writes, on a phone open the same board in the session's view.
+// owner on a desktop and Ada, an invited person who writes, on a phone open the same canvas ("Ideas") as a pane.
 // Each sees the other's pointer with their name and the stroke they are drawing while they draw it (events), then the
 // committed stroke (a row); Ada draws with her finger, the owner with the mouse, a rectangle and text too; undo takes
 // back one's own last shape; with "May draw" off for Ada (the kind's options form) she sees the board read only, at
@@ -55,7 +55,7 @@ describe("the canvas in two browsers", { skip: BROWSER_SKIP }, () => {
 				title: "Sketches",
 				location: { environment: "this-device", folder: t.dataDir },
 				members: [{ kind: "person", id: ada, access: "write" }],
-				things: [thingOf(CanvasKind)],
+				things: [thingOf(CanvasKind, { name: "Ideas" })],
 			},
 			context,
 		);
@@ -91,6 +91,10 @@ describe("the canvas in two browsers", { skip: BROWSER_SKIP }, () => {
 	it("shows each the other's pointer, name and stroke as they draw, then the committed strokes", async () => {
 		await openBoard(mine, "drawer");
 		await openBoard(hers, "drawer");
+		// Each sees the canvas by its name.
+		for (const browser of [mine, hers]) {
+			await browser.wait(`document.querySelector("[data-canvas-name]")?.textContent.startsWith("Ideas")`);
+		}
 		// The owner draws with the mouse, and stops before letting go.
 		const desk = await surface(mine);
 		await mouse(mine, "mouseMoved", desk.at(0.2, 0.3), 0);

@@ -1,10 +1,10 @@
 // The top bar, as Inkling's app header: Elanor's `Layout.Header` with `TopNavigation`. On the left the app switcher
-// (the apps the caller may enter), on the right the connection and the person menu (for the owner: "Invite a
+// (the apps the caller may enter), on the right the connection and the person menu (My things; for the owner: "Invite a
 // person").
 
 import { Button, Layout, Menu, ProjectSwitcher, TopNavigation } from "@earendil-works/elanor-react";
 import type { AppInfo } from "@earendil-works/p3/v1";
-import { KeyboardArrowDownIcon, navigate, PersonAddIcon } from "@earendil-works/p3/v1/web";
+import { FolderIcon, KeyboardArrowDownIcon, navigate, PersonAddIcon } from "@earendil-works/p3/v1/web";
 import { ConnectionStatus } from "./connection.tsx";
 import styles from "./frame.module.css";
 import type { Caller, ChromeProps } from "./frame.tsx";
@@ -19,7 +19,9 @@ export function TopBar(props: ChromeProps) {
 			</TopNavigation.Identity>
 			<TopNavigation.Actions className={styles.actions}>
 				<ConnectionStatus state={props.connection} />
-				{props.caller === undefined ? null : <PersonMenu caller={props.caller} onInvite={props.onInvite} />}
+				{props.caller === undefined ? null : (
+					<PersonMenu caller={props.caller} onInvite={props.onInvite} onMyThings={props.onMyThings} />
+				)}
 			</TopNavigation.Actions>
 		</Layout.Header>
 	);
@@ -47,8 +49,12 @@ function AppSwitcher(props: { readonly apps: readonly AppInfo[]; readonly curren
 	);
 }
 
-/** The caller's menu: who is signed in, and for the owner the invite. */
-function PersonMenu(props: { readonly caller: Caller; readonly onInvite: () => void }) {
+/** The caller's menu: who is signed in, their things, and for the owner the invite. */
+function PersonMenu(props: {
+	readonly caller: Caller;
+	readonly onInvite: () => void;
+	readonly onMyThings: () => void;
+}) {
 	const name = callerName(props.caller);
 	return (
 		<Menu.Root>
@@ -65,6 +71,11 @@ function PersonMenu(props: { readonly caller: Caller; readonly onInvite: () => v
 						<Menu.Group>
 							<Menu.GroupLabel>Signed in as {name}</Menu.GroupLabel>
 						</Menu.Group>
+						{props.caller.kind === "person" ? (
+							<Menu.Item data-my-things-open="" icon={<FolderIcon />} onClick={props.onMyThings}>
+								My things
+							</Menu.Item>
+						) : null}
 						{props.caller.kind === "person" && props.caller.owner ? (
 							<Menu.Item data-invite-open="" icon={<PersonAddIcon />} onClick={props.onInvite}>
 								Invite a person

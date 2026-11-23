@@ -1,8 +1,9 @@
 // The chrome of an app that shows no bar (`chrome: "button"`, an app for a child): one button in the corner over the
-// app's page, opening a menu with what the bar holds (the apps, who is signed in, the connection, the invite).
+// app's page, opening a menu with what the bar holds (the apps, who is signed in, the connection, My things, the
+// invite).
 
 import { IconButton, Menu } from "@earendil-works/elanor-react";
-import { MenuIcon, navigate, PersonAddIcon } from "@earendil-works/p3/v1/web";
+import { FolderIcon, MenuIcon, navigate, PersonAddIcon } from "@earendil-works/p3/v1/web";
 import { CONNECTION_LABELS } from "./connection.tsx";
 import styles from "./frame.module.css";
 import type { ChromeProps } from "./frame.tsx";
@@ -42,6 +43,11 @@ export function CornerMenu(props: ChromeProps) {
 								{props.caller === undefined ? "" : `Signed in as ${callerName(props.caller)}. `}
 								{CONNECTION_LABELS[props.connection]}
 							</Menu.GroupLabel>
+							{props.caller?.kind === "person" ? (
+								<Menu.Item data-my-things-open="" icon={<FolderIcon />} onClick={props.onMyThings}>
+									My things
+								</Menu.Item>
+							) : null}
 							{props.caller?.kind === "person" && props.caller.owner ? (
 								<Menu.Item data-invite-open="" icon={<PersonAddIcon />} onClick={props.onInvite}>
 									Invite a person

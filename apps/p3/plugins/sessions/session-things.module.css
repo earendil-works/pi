@@ -93,3 +93,79 @@
 	border: var(--semantic-dimension-border-width-small) solid var(--semantic-color-border-secondary);
 	border-radius: var(--semantic-dimension-radius-medium);
 }
+
+/* A thing's name: its kind's title small beside it when it has one; renamed in place in a short field. */
+.named {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: var(--semantic-dimension-space-gap-x-small);
+}
+
+.kind {
+	color: var(--semantic-color-text-secondary);
+	font: var(--semantic-typography-ui-tertiary);
+}
+
+.renameButton {
+	margin-inline-start: auto;
+}
+
+.renaming {
+	display: flex;
+	align-items: center;
+	gap: var(--semantic-dimension-space-gap-x-small);
+}
+
+.name {
+	min-inline-size: 10rem;
+}
+
+/* A row's buttons (Open, Keep, Remove) at its end, wrapping under the name on a phone. */
+.rowActions {
+	display: flex;
+	flex: none;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: flex-end;
+	gap: var(--semantic-dimension-space-gap-x-small);
+}
+
+/* A pick and its buttons in one line (Keep, Give away, Follow). */
+.give {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-end;
+	gap: var(--semantic-dimension-space-gap-x-small);
+}
+
+.follows {
+	display: flex;
+	align-items: center;
+	gap: var(--semantic-dimension-space-gap-small);
+	margin: 0;
+}
+
+/* My things: each thing a row that wraps (name, switch, actions), where it is used below it. */
+.myThing {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--semantic-dimension-space-gap-small);
+	padding-block: var(--semantic-dimension-space-gap-x-small);
+	border-block-end: var(--semantic-dimension-border-width-small) solid var(--semantic-color-border-secondary);
+}
+
+.uses {
+	flex: 1 0 100%;
+	padding-inline-start: var(--semantic-dimension-space-padding-small);
+}
+
+.makeThing {
+	display: flex;
+	flex-direction: column;
+	gap: var(--semantic-dimension-space-gap-small);
+	padding: var(--semantic-dimension-space-padding-small);
+	border: var(--semantic-dimension-border-width-small) solid var(--semantic-color-border-secondary);
+	border-radius: var(--semantic-dimension-radius-small);
+}
