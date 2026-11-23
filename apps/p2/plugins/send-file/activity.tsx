@@ -1,5 +1,5 @@
 // How the `send_file` tool shows in the chat: "Sent <name>", and the file as a card after the turn's answer that opens
-// the viewer.
+// the viewer (images and videos with a thumbnail).
 import {
 	CodeBlock,
 	detailsOf,
@@ -42,13 +42,15 @@ function SentFile({ tool }: { tool: ToolView }) {
 	const viewerHref = useContext(ViewerHref);
 	const file = sentFileOf(tool);
 	if (!sessionId || !file) return null;
+	const url = fileUrl(sessionId, file);
 	return (
 		<FileCard
 			icon={<FileIcon />}
 			title={file.name}
 			meta={fileMeta(file)}
-			href={fileUrl(sessionId, file)}
+			href={url}
 			download={file.name}
+			thumbnail={url}
 			openHref={viewerHref({ kind: "file", file })}
 			onOpen={() => openViewer({ kind: "file", file })}
 		/>

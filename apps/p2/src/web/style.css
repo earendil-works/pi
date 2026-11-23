@@ -1135,12 +1135,29 @@ textarea.input {
 }
 /* Artifact and file cards: the body opens the viewer; the bordered end downloads. */
 .file-card {
-	display: flex;
-	align-items: stretch;
 	max-width: 420px;
 	border: 1px solid var(--line);
 	border-radius: var(--radius);
 	overflow: hidden;
+}
+.file-card-row {
+	display: flex;
+	align-items: stretch;
+}
+/* A fixed height, so the transcript never moves when the image loads; the image is fitted, never enlarged. */
+.file-card-thumbnail {
+	display: block;
+	width: 100%;
+	height: 240px;
+	padding: 0;
+	border-bottom: 1px solid var(--line);
+}
+.file-card-thumbnail > img,
+.file-card-thumbnail > video {
+	display: block;
+	width: 100%;
+	height: 100%;
+	object-fit: scale-down;
 }
 .file-card-main {
 	display: flex;
@@ -3232,14 +3249,22 @@ button.diff-number:hover {
 	overflow: auto;
 	padding: var(--s5) var(--x) calc(2 * var(--s5));
 }
+/*
+ * One cell exactly the area's size, and images and videos fill it (`scale-down`: fitted, never enlarged). With an auto
+ * row WebKit sized the row by the image's height at full width and centred the capped image in it, below the view.
+ */
 .viewer-content.media {
 	display: grid;
+	grid-template: minmax(0, 1fr) / minmax(0, 1fr);
 	place-items: center;
 	overflow: auto;
 	padding: var(--s4) var(--x);
 }
-.viewer-content.media .file-media {
-	max-height: 100%;
+.viewer-content.media img.file-media,
+.viewer-content.media video.file-media {
+	height: 100%;
+	max-height: none;
+	object-fit: scale-down;
 }
 /* A plain-text document wraps; code blocks inside rendered Markdown keep their lines and scroll sideways. */
 .viewer-content.document > pre {
