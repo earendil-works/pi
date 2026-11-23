@@ -7,7 +7,8 @@
 
 import { type ConnectionState, defineRegistry, type TableItem } from "@earendil-works/chord";
 import { useRegistry } from "@earendil-works/chord/react";
-import { type ComponentType, useSyncExternalStore } from "react";
+import { type ComponentType, useEffect, useSyncExternalStore } from "react";
+import { BACKGROUND_CONTEXT, reportError } from "./index.ts";
 
 export * from "@earendil-works/chord/react";
 // The icons p3 offers web facets, by name: Elanor's whole set would weigh 695 KB gzipped in every page, so a plugin
@@ -96,9 +97,23 @@ export const Views = defineRegistry<readonly ViewEntry[], ReadonlyMap<string, Ta
 	version: 1,
 });
 
-/** The component of `view`, or `undefined` while no plugin offers it. */
+/**
+ * The component of `view`, or `undefined` while no plugin offers it, and for a token the running page does not have
+ * (reported once per mount): a plugin built against a newer API than this page's base, whose token is undefined here.
+ */
 export function useView<Props>(view: ViewToken<Props>): ComponentType<Props> | undefined {
 	const views = useRegistry(Views);
+	// Trust boundary: version skew between a plugin and the page's base, which the types cannot see.
+	const missing = (view as ViewToken<Props> | undefined) === undefined;
+	useEffect(() => {
+		if (missing)
+			reportError(
+				"p3 web: a view this page's base does not have (restart the server)",
+				undefined,
+				BACKGROUND_CONTEXT,
+			);
+	}, [missing]);
+	if (missing) return undefined;
 	// The entry was registered for this token's name with its props (`viewOf`).
 	return views?.get(view.name)?.value.component as ComponentType<Props> | undefined;
 }

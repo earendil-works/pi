@@ -2,17 +2,17 @@
 // copy of the built-in plugins the test edits and the tests' faux login: the bar shows the app and the connection; a
 // session made through the form appears in the list and opens in the transcript, which streams a scripted answer; a
 // phone shows one screen at a time; a reload of the chrome plugin keeps the open page, as does an apply whose web
-// contracts are newer than the page's base; an app without the bar gets a corner button, and an app that throws shows
-// its error below the bar; a person invited from the person menu and
-// added to the session enters Coding and works in it, brings her own notebook and writes in it as a pane (the owner
-// sees it as hers, sets its options in the page: everyone reads only, the agent writes; the agent's scripted note
-// appears, her view turns read only) and withdraws it, sees the session refused once removed from it, and no app once
-// removed from every session of Coding; things open as panes (a tab dragged to an edge splits, dividers resize, the
-// layout survives a page load; on a phone chips and swipes); things named in the dialog show by name in their tabs
-// and follow a rename; the sheet makes content and keeps it, My things lists the Pi's things, and a session stops
-// following without losing what it had; a person's thing is made in My things through its kind's creation view, is in
-// a following session "in all my sessions", and is given away and deleted. Screenshots of the steps at the phone's
-// and the desktop's size go to `/tmp/p3-base/shots/` (`P3_SHOTS` names another directory).
+// contracts are newer than the page's base; an app without the bar gets a corner button, an app that throws shows its
+// error below the bar, and one asking for a view the base lacks renders, reported once; a person invited from the
+// person menu and added to the session enters Coding and works in it, brings her own notebook and writes in it as a
+// pane (the owner sees it as hers, sets its options in the page: everyone reads only, the agent writes; the agent's
+// scripted note appears, her view turns read only) and withdraws it, sees the session refused once removed from it, and
+// no app once removed from every session of Coding; things open as panes (a tab dragged to an edge splits, dividers
+// resize, the layout survives a page load; on a phone chips and swipes); things named in the dialog show by name in
+// their tabs and follow a rename; the sheet makes content and keeps it, My things lists the Pi's things, and a session
+// stops following without losing what it had; a person's thing is made in My things through its kind's creation view,
+// is in a following session "in all my sessions", and is given away and deleted. Screenshots of the steps at the
+// phone's and the desktop's size go to `/tmp/p3-base/shots/` (`P3_SHOTS` names another directory).
 
 import assert from "node:assert/strict";
 import { cp, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
@@ -34,7 +34,7 @@ import {
 import { type TestServer, testServer } from "@earendil-works/p3/v1/testing";
 import { FauxInboxStore } from "../../../test/plugins/faux-inbox/contract.ts";
 import { FauxLogin, type Step } from "../../../test/plugins/faux-login/contract.ts";
-import { within } from "../../../test/until.ts";
+import { eventually, within } from "../../../test/until.ts";
 import { CanvasKind } from "../../canvas/contract.ts";
 import { BROWSER_SKIP, Browser, DESKTOP, PHONE } from "./browser.ts";
 
@@ -451,6 +451,41 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await browser.wait(`document.querySelector("[data-app-error]")?.textContent.includes("the page broke")`);
 		await browser.wait(`document.querySelector("[data-app-switcher]")?.textContent === "Broken"`);
 		await browser.screenshot(join(SHOTS, "09-app-error-desktop.png"));
+		await browser.click("[data-app-switcher]");
+		await browser.click('[data-app-menu] [data-app="coding"]');
+		await browser.wait(`location.pathname === "/coding" && document.querySelector("[data-session-list]")`);
+	});
+
+	it("renders an app that asks for a view the page's base lacks, reporting it once instead of failing", async () => {
+		// A plugin built against a newer API than the page's base: a view token the base does not have is `undefined`
+		// here (`useView` of `undefined` stands for it).
+		await writeFile(join(t.userRoot, "skew.server.ts"), appServer("skew", "Skew", "bar"));
+		await writeFile(
+			join(t.userRoot, "skew.web.tsx"),
+			[
+				'import { defineFacet } from "@earendil-works/p3/v1";',
+				'import { AppPages, useView, type ViewToken } from "@earendil-works/p3/v1/web";',
+				"function Page() {",
+				"	const Missing = useView(undefined as unknown as ViewToken<Record<string, never>>);",
+				'	return <main><p data-skew="">Still here</p>{Missing === undefined ? <p data-skew-missing="">No view</p> : <Missing />}</main>;',
+				"}",
+				'export default defineFacet((_host, self) => self.contribute(AppPages, { app: "skew", Page }));',
+			].join("\n"),
+		);
+		await until(t.plugins, (state) => state.set, within("the new plugin seen", context, 10_000));
+		await t.apply(context);
+		const reported = () => browser.console.filter((line) => line.includes(MISSING_VIEW)).length;
+		const before = reported();
+		await browser.open(`${origin}/skew`);
+		await browser.wait(`document.querySelector("[data-skew]")?.textContent === "Still here"`);
+		await browser.wait(`document.querySelector("[data-skew-missing]")`);
+		assert.equal(await browser.evaluate(`document.querySelector("[data-app-error]") === null`), true);
+		await browser.wait(`document.querySelector("[data-app-switcher]")?.textContent === "Skew"`);
+		await eventually(reported, (count) => count === before + 1);
+		// Once per mount: rendering again reports nothing more.
+		await browser.evaluate("dispatchEvent(new Event('resize'))");
+		assert.equal(reported(), before + 1);
+		// The rest of the page goes on.
 		await browser.click("[data-app-switcher]");
 		await browser.click('[data-app-menu] [data-app="coding"]');
 		await browser.wait(`location.pathname === "/coding" && document.querySelector("[data-session-list]")`);
@@ -907,12 +942,16 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 
 	it("leaves nothing reported on the server, and no error in the page but the broken app's", () => {
 		assert.deepEqual(t.errors, []);
+		// The broken app's error, and the one report of a view the base lacks (the skew app's): nothing else.
 		assert.deepEqual(
-			browser.console.filter((line) => !line.includes("the page broke")),
+			browser.console.filter((line) => !line.includes("the page broke") && !line.includes(MISSING_VIEW)),
 			[],
 		);
 	});
 });
+
+/** What `useView` reports for a view token the page's base does not have. */
+const MISSING_VIEW = "a view this page's base does not have";
 
 /** A single-file plugin's server facet saying app `id` exists, with `chrome`. */
 function appServer(id: string, title: string, chrome: "bar" | "button"): string {
