@@ -53,27 +53,27 @@ export function createOutputFileStream(prefix: string, extension: string): Outpu
 	stream.once("open", () => {
 		opened = true;
 	});
-	const finished = new Promise<void>((resolve) => {
-		stream.once("finish", resolve);
-		stream.on("error", (cause) => {
-			if (result.kind === "saved") result = { kind: "failed", error: cause.message };
-			// A partial file would pass for the full output. A failed open (`wx` found a file) leaves
-			// the path alone: whatever is there is not ours.
-			if (opened) removed ??= rm(path, { force: true }).catch(() => {});
-			resolve();
-		});
+	stream.on("error", (cause) => {
+		if (result.kind === "saved") result = { kind: "failed", error: cause.message };
+		// A partial file would pass for the full output. A failed open (`wx` found a file) leaves
+		// the path alone: whatever is there is not ours.
+		if (opened) removed ??= rm(path, { force: true }).catch(() => {});
 	});
+	// `close`, not `finish`: closing the descriptor can still fail (delayed ENOSPC or EDQUOT on quota,
+	// NFS or FUSE file systems), and that error comes after `finish`. It always comes before `close`.
+	const closed = new Promise<void>((resolve) => stream.once("close", resolve));
 	return {
 		get result() {
 			return result;
 		},
 		write(data) {
-			if (result.kind === "saved" && !stream.destroyed) stream.write(data);
+			// Not after a failure, and not after `close()`: a write after `end()` would fail the file.
+			if (result.kind === "saved" && stream.writable) stream.write(data);
 		},
 		async close() {
-			// A stream destroyed by an error never emits `finish` after `end()`; `finished` already settled.
+			// A stream destroyed by an error is already closing; `end()` would do nothing.
 			if (!stream.destroyed) stream.end();
-			await finished;
+			await closed;
 			await removed;
 			return result;
 		},

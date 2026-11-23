@@ -318,6 +318,12 @@ describe("TUI crash dump without configured log directory", () => {
 		writeFileSync(logDirectory, "");
 		try {
 			const terminal = new VirtualTerminal(40, 10);
+			let terminalStops = 0;
+			const stopTerminal = terminal.stop.bind(terminal);
+			terminal.stop = () => {
+				terminalStops++;
+				stopTerminal();
+			};
 			const tui: TUI = new TuiMainScreen(terminal, false, logDirectory);
 			const component = new TestComponent();
 			tui.addChild(component);
@@ -335,6 +341,8 @@ describe("TUI crash dump without configured log directory", () => {
 					return true;
 				},
 			);
+			// The terminal leaves raw mode before the error propagates.
+			assert.equal(terminalStops, 1);
 		} finally {
 			rmSync(crashDir, { recursive: true, force: true });
 		}

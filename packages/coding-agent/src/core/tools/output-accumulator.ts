@@ -87,11 +87,7 @@ export class OutputAccumulator {
 	}
 
 	snapshot(options: { persistIfTruncated?: boolean } = {}): OutputSnapshot {
-		// Clipping drops the partial first line of the retained tail. When the tail is only the end of
-		// one over-long line (plus blank lines), nothing is left, so show the end of that line instead.
-		const clippedText = this.getSnapshotText();
-		const snapshotText = clippedText.trim().length === 0 ? this.tailText : clippedText;
-		const tailTruncation = truncateTail(snapshotText, {
+		const tailTruncation = truncateTail(this.getRetainedText(), {
 			maxLines: this.maxLines,
 			maxBytes: this.maxBytes,
 		});
@@ -125,7 +121,8 @@ export class OutputAccumulator {
 	 * The complete output, for callers that can take more than the display snapshot. Call after
 	 * `finish()` and `closeTempFile()`. Output longer than `maxBytes` raw bytes keeps its first and
 	 * last `maxBytes / 2` bytes around an omission marker. When the temp file could not be saved, only
-	 * the retained tail is left, behind the same marker.
+	 * the retained tail is left: up to its last `maxBytes` bytes, behind the same marker when output is
+	 * missing.
 	 */
 	async readFullOutput(maxBytes: number): Promise<FullOutput> {
 		const fullOutputFile = this.tempFile?.result;
@@ -133,9 +130,7 @@ export class OutputAccumulator {
 			return { content: new TextDecoder().decode(Buffer.concat(this.rawChunks)), truncated: false };
 		}
 		if (fullOutputFile.kind === "failed") {
-			const tail = this.getSnapshotText();
-			const omitted = this.totalDecodedBytes - byteLength(tail);
-			return { content: `[... ${omitted} bytes omitted ...]\n\n${tail}`, truncated: true };
+			return this.readRetainedOutput(maxBytes);
 		}
 		const file = await open(fullOutputFile.path, "r");
 		try {
@@ -212,6 +207,32 @@ export class OutputAccumulator {
 		this.tailStartsAtLineBoundary = start === 0 ? this.tailStartsAtLineBoundary : buffer[start - 1] === 0x0a;
 		this.tailText = buffer.subarray(start).toString("utf-8");
 		this.tailBytes = byteLength(this.tailText);
+	}
+
+	/**
+	 * The retained tail, for display and as the fallback of `readFullOutput()`. Clipping drops the partial
+	 * first line of the tail. When the tail is only the end of one over-long line (plus blank lines),
+	 * nothing is left, so it keeps the end of that line instead.
+	 */
+	private getRetainedText(): string {
+		const clippedText = this.getSnapshotText();
+		return clippedText.trim().length === 0 ? this.tailText : clippedText;
+	}
+
+	/** The retained tail within `maxBytes`, marked as truncated only when output is missing. */
+	private readRetainedOutput(maxBytes: number): FullOutput {
+		let bytes = Buffer.from(this.getRetainedText(), "utf-8");
+		if (bytes.length > maxBytes) {
+			let start = bytes.length - maxBytes;
+			while (start < bytes.length && (bytes[start] & 0xc0) === 0x80) start++;
+			bytes = bytes.subarray(start);
+		}
+		const tail = bytes.toString("utf-8");
+		const omitted = this.totalDecodedBytes - bytes.length;
+		if (omitted === 0) {
+			return { content: tail, truncated: false };
+		}
+		return { content: `[... ${omitted} bytes omitted ...]\n\n${tail}`, truncated: true };
 	}
 
 	private getSnapshotText(): string {

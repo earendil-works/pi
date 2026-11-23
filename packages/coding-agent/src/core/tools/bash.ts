@@ -68,6 +68,8 @@ export type BashToolOutput = Static<typeof bashOutputSchema>;
 export interface BashToolDetails {
 	truncation?: TruncationResult;
 	fullOutputPath?: string;
+	/** Why the full output could not be saved to a temp file, when it could not. */
+	fullOutputError?: string;
 }
 
 /**
@@ -319,7 +321,7 @@ export function createShellToolDefinition(
 					content: [{ type: "text", text: snapshot.content || "" }],
 					details: {
 						truncation: snapshot.truncation.truncated ? snapshot.truncation : undefined,
-						fullOutputPath: savedPath(snapshot),
+						...outputFileDetails(snapshot),
 					},
 				});
 			};
@@ -371,7 +373,7 @@ export function createShellToolDefinition(
 				let text = snapshot.content || emptyText;
 				let details: BashToolDetails | undefined;
 				if (truncation.truncated) {
-					details = { truncation, fullOutputPath: savedPath(snapshot) };
+					details = { truncation, ...outputFileDetails(snapshot) };
 					const file = snapshot.fullOutputFile;
 					const fullOutput =
 						file?.kind === "failed"
@@ -459,9 +461,11 @@ export function createShellToolDefinition(
 	};
 }
 
-/** The full output file of a snapshot, unless it could not be saved. */
-function savedPath(snapshot: OutputSnapshot): string | undefined {
-	return snapshot.fullOutputFile?.kind === "saved" ? snapshot.fullOutputFile.path : undefined;
+/** Where a snapshot's full output went: its file, or why it could not be saved. */
+function outputFileDetails(snapshot: OutputSnapshot): Pick<BashToolDetails, "fullOutputPath" | "fullOutputError"> {
+	const file = snapshot.fullOutputFile;
+	if (file === undefined) return {};
+	return file.kind === "saved" ? { fullOutputPath: file.path } : { fullOutputError: file.error };
 }
 
 const bashToolConfig: ShellToolConfig = {
