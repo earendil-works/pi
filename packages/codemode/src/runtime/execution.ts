@@ -14,7 +14,14 @@
  */
 
 import { toCodemodeIdentifier } from "../identifier.ts";
-import { BUILTIN_GLOBALS, type CodemodeHostCall, type CodemodeRun, type CodemodeScope, YIELD_MS } from "../run.ts";
+import {
+	BUILTIN_GLOBALS,
+	type CodemodeHostCall,
+	type CodemodeRun,
+	type CodemodeSaved,
+	type CodemodeScope,
+	YIELD_MS,
+} from "../run.ts";
 import type {
 	CodemodeCall,
 	CodemodeError,
@@ -57,7 +64,8 @@ export abstract class CodemodeSandboxBase {
 	private readonly toolsByName = new Map<string, CodemodeTool>();
 	private readonly globalsByName = new Map<string, CodemodeTool>();
 	private readonly timeoutMs: number;
-	private readonly memoryLimitBytes: number | undefined;
+	/** The VM's memory limit, also for the runs `begin()` and `resume()` make. */
+	protected readonly memoryLimitBytes: number | undefined;
 	private readonly missingToolHint: string | undefined;
 	private readonly running = new Set<Execution>();
 	private closed = false;
@@ -132,6 +140,16 @@ export abstract class CodemodeSandboxBase {
 		this.closed = true;
 		await Promise.all([...this.running].map((execution) => execution.abort("Sandbox closed")));
 	}
+
+	/**
+	 * A new run of `code` (an async function body, JavaScript or TypeScript) that reaches what `scope` declares, not
+	 * the sandbox's tools and globals: its calls go to the caller, which answers them with `run.settle()`. `advance()`
+	 * runs it to its first idle point.
+	 */
+	abstract begin(code: string, scope: CodemodeScope): Promise<CodemodeRun>;
+
+	/** Continues a run `run.save()` wrote, in a new VM. `scope` must give every identity the run refers to. */
+	abstract resume(scope: CodemodeScope, saved: CodemodeSaved): Promise<CodemodeRun>;
 
 	/** Runs one execution's VM to its outcome (its `calls` are left empty). Never rejects. */
 	protected abstract runVm(job: VmJob, host: VmHost): Promise<CodemodeResult>;

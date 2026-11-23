@@ -16,7 +16,14 @@ import { DurableObject } from "cloudflare:workers";
 import wasmImport from "@earendil-works/djs/wasm/djs.wasm";
 import { DEFAULT_CLOUDFLARE_FUEL } from "./limits.ts";
 import { CodemodeSandbox } from "./runtime/host.ts";
-import { type CodemodeRemoteExchange, type CodemodeRemoteRequest, serveCodemodeRemote } from "./runtime/remote.ts";
+import {
+	type CodemodeRemoteExchange,
+	type CodemodeRemoteRequest,
+	type CodemodeStepReply,
+	type CodemodeStepRequest,
+	serveCodemodeRemote,
+	serveCodemodeStep,
+} from "./runtime/remote.ts";
 import type { CodemodeSandboxOptions } from "./types.ts";
 import type { CodemodeWasmModule } from "./wasm.ts";
 
@@ -56,7 +63,7 @@ export function createCodemodeSandbox(options: Omit<CodemodeSandboxOptions, "was
  *     }
  */
 export class CodemodeSandboxDurableObject<Env = unknown> extends DurableObject<Env> {
-	/** Fuel per execution; the client may only ask for less. */
+	/** Fuel per execution, and per step of a run the client drives; the client may only ask for less. */
 	protected maxFuel: number = DEFAULT_CLOUDFLARE_FUEL;
 	/** VM memory per execution; the client may only ask for less. */
 	protected maxMemoryLimitBytes: number = DEFAULT_REMOTE_MEMORY_LIMIT_BYTES;
@@ -64,6 +71,15 @@ export class CodemodeSandboxDurableObject<Env = unknown> extends DurableObject<E
 	/** Called by `RemoteCodemodeSandbox` over RPC. Resolves when the script has settled or was stopped. */
 	execute(request: CodemodeRemoteRequest, exchange: CodemodeRemoteExchange): Promise<void> {
 		return serveCodemodeRemote(request, exchange, {
+			wasm: cloudflareCodemodeWasm,
+			maxFuel: this.maxFuel,
+			maxMemoryLimitBytes: this.maxMemoryLimitBytes,
+		});
+	}
+
+	/** Called by `RemoteCodemodeSandbox` over RPC for each step of a run it drives. Keeps nothing afterwards. */
+	step(request: CodemodeStepRequest): Promise<CodemodeStepReply> {
+		return serveCodemodeStep(request, {
 			wasm: cloudflareCodemodeWasm,
 			maxFuel: this.maxFuel,
 			maxMemoryLimitBytes: this.maxMemoryLimitBytes,

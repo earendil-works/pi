@@ -23,9 +23,12 @@ export {
 	type CodemodeRemoteReply,
 	type CodemodeRemoteRequest,
 	type CodemodeServeOptions,
+	type CodemodeStepReply,
+	type CodemodeStepRequest,
 	RemoteCodemodeSandbox,
 	type RemoteCodemodeSandboxOptions,
 	serveCodemodeRemote,
+	serveCodemodeStep,
 } from "./runtime/remote.ts";
 export type {
 	CodemodeCall,

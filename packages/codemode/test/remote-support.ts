@@ -5,12 +5,14 @@ import {
 	type CodemodeServeOptions,
 	loadCodemodeWasm,
 	serveCodemodeRemote,
+	serveCodemodeStep,
 } from "../src/portable.ts";
 
-/** The remote, the number of messages of each exchange, and each execution's serve promise. */
+/** The remote, the number of messages of each exchange, each execution's serve promise, and the steps it served. */
 export function inProcessRemote(options: Partial<CodemodeServeOptions> = {}) {
 	const exchanges: number[] = [];
 	const served: Promise<void>[] = [];
+	const steps = { count: 0 };
 	const remote: CodemodeRemote = {
 		execute(request, exchange) {
 			const done = serveCodemodeRemote(
@@ -24,6 +26,12 @@ export function inProcessRemote(options: Partial<CodemodeServeOptions> = {}) {
 			served.push(done);
 			return done;
 		},
+		async step(request) {
+			steps.count++;
+			return structuredClone(
+				await serveCodemodeStep(structuredClone(request), { wasm: loadCodemodeWasm(), ...options }),
+			);
+		},
 	};
-	return { remote, exchanges, served };
+	return { remote, exchanges, served, steps };
 }

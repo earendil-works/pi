@@ -34,9 +34,23 @@
  *
  * Failure: if the RPC call rejects (the remote isolate crashed, hit its CPU limit, or was redeployed) or returns
  * without a terminal message, the execution fails with `kind: "sandbox"`.
+ *
+ * Runs the host drives (`begin()`, `resume()`) use a stateless step protocol instead, so that nothing stays alive on
+ * the remote while tools run or the script is parked (a Durable Object is billed for wall-clock time while active):
+ * each `advance()` is one RPC, `remote.step()`, that carries the script (its code, or its saved run), the results
+ * settled since the last step, and the CPU budget. The remote starts or loads the run, applies the results, runs it
+ * until it waits again or ends, saves it, disposes of its VM, and replies with the saved run and its calls, or the
+ * outcome. The client's `save()` returns the last step's saved run without an RPC.
  */
-import { DEFAULT_CLOUDFLARE_FUEL } from "../limits.ts";
-import { beginRun, type CodemodeHostCall, type CodemodeRun } from "../run.ts";
+import { DEFAULT_CLOUDFLARE_FUEL, DEFAULT_FUEL } from "../limits.ts";
+import {
+	beginRun,
+	type CodemodeHostCall,
+	type CodemodeRun,
+	type CodemodeSaved,
+	type CodemodeScope,
+	resumeRun,
+} from "../run.ts";
 import type {
 	CodemodeError,
 	CodemodeOutcome,
@@ -71,12 +85,30 @@ export type CodemodeRemoteReply = { type: "result"; id: number; outcome: Codemod
 
 export type CodemodeRemoteExchange = (messages: CodemodeRemoteMessage[]) => Promise<CodemodeRemoteReply>;
 
+/** One step of a run the host drives: what the remote starts or loads, and the results settled since the last step. */
+export interface CodemodeStepRequest {
+	start: { kind: "begin"; code: string } | { kind: "resume"; saved: CodemodeSaved };
+	scope: CodemodeScope;
+	settled: { id: number; outcome: CodemodeOutcome }[];
+	/** The run's CPU budget, as fuel, across its steps. The remote may lower what one step uses. */
+	fuel: number;
+	memoryLimitBytes: number | undefined;
+}
+
+/** What a step leaves: the run waiting on `calls`, saved, or its outcome and the calls it dropped. */
+export type CodemodeStepReply =
+	| { kind: "idle"; saved: CodemodeSaved; calls: CodemodeHostCall[] }
+	| { kind: "done"; result: CodemodeResult; dropped: CodemodeHostCall[] };
+
 /**
- * The remote end, usually a Durable Object stub for `CodemodeSandboxDurableObject`. Anything with this method works,
- * for example an in-process object in tests.
+ * The remote end, usually a Durable Object stub for `CodemodeSandboxDurableObject`. Anything with these methods
+ * works, for example an in-process object in tests.
  */
 export interface CodemodeRemote {
+	/** One `execute()`, with the client answering the script's calls through `exchange`. */
 	execute(request: CodemodeRemoteRequest, exchange: CodemodeRemoteExchange): Promise<void>;
+	/** One step of a run the client drives (`begin()`, `resume()`). */
+	step(request: CodemodeStepRequest): Promise<CodemodeStepReply>;
 }
 
 export interface RemoteCodemodeSandboxOptions extends CodemodeSandboxBaseOptions {
@@ -91,7 +123,10 @@ export interface RemoteCodemodeSandboxOptions extends CodemodeSandboxBaseOptions
 
 export interface CodemodeServeOptions {
 	wasm: CodemodeWasmModule | Promise<CodemodeWasmModule>;
-	/** Upper bound for a request's fuel, and the budget when a request names none. Default `DEFAULT_CLOUDFLARE_FUEL`. */
+	/**
+	 * Upper bound for the fuel of one request (an execution, or one step of a run the client drives), and the budget of
+	 * an execution whose request names none. Default `DEFAULT_CLOUDFLARE_FUEL`.
+	 */
 	maxFuel?: number;
 	/** Upper bound for a request's VM memory, and the limit when a request names none. */
 	maxMemoryLimitBytes?: number;
@@ -112,6 +147,30 @@ export class RemoteCodemodeSandbox extends CodemodeSandboxBase {
 		super(options);
 		this.remote = options.remote;
 		this.fuel = options.fuel;
+	}
+
+	/** A run whose steps run on the remote, one RPC each; nothing stays there between them. */
+	async begin(code: string, scope: CodemodeScope): Promise<CodemodeRun> {
+		return new RemoteRun(this.stepper(scope), { kind: "begin", code });
+	}
+
+	/** Continues a saved run: one step on the remote loads it, to learn the calls it waits on. */
+	async resume(scope: CodemodeScope, saved: CodemodeSaved): Promise<CodemodeRun> {
+		const run = new RemoteRun(this.stepper(scope), { kind: "idle", saved, calls: [] });
+		await run.advance();
+		return run;
+	}
+
+	/** One step of a run with `scope`, on the remote `remote()` picks. */
+	private stepper(scope: CodemodeScope): Stepper {
+		return (start, settled) =>
+			this.remote().step({
+				start,
+				scope,
+				settled,
+				fuel: this.fuel ?? DEFAULT_FUEL,
+				memoryLimitBytes: this.memoryLimitBytes,
+			});
 	}
 
 	/** Runs the VM on the remote `remote()` picks, answering its calls here. */
@@ -184,10 +243,7 @@ export async function serveCodemodeRemote(
 	options: CodemodeServeOptions,
 ): Promise<void> {
 	const maxFuel = options.maxFuel ?? DEFAULT_CLOUDFLARE_FUEL;
-	const requested = request.job.memoryLimitBytes;
-	const maxMemory = options.maxMemoryLimitBytes;
-	const memoryLimitBytes =
-		requested === undefined ? maxMemory : maxMemory === undefined ? requested : Math.min(requested, maxMemory);
+	const memoryLimitBytes = capped(request.job.memoryLimitBytes, options.maxMemoryLimitBytes);
 	const stop = new AbortController();
 	const stopped = (reply: CodemodeRemoteReply) => {
 		if (reply?.type === "stop") stop.abort({ kind: "aborted", message: "The client stopped the execution" });
@@ -239,4 +295,114 @@ export async function serveCodemodeRemote(
 	if (!stop.signal.aborted) {
 		await exchange([...unsent(), { type: "done", result: { ...result, output: [] } }]).catch(() => null);
 	}
+}
+
+/**
+ * Remote side of a step of a run the client drives (see {@link CodemodeStepRequest}): starts or loads the run here,
+ * applies the settled results, runs it until it waits again or ends, and saves it. Keeps nothing.
+ */
+export async function serveCodemodeStep(
+	request: CodemodeStepRequest,
+	options: CodemodeServeOptions,
+): Promise<CodemodeStepReply> {
+	const { start, scope } = request;
+	const used = start.kind === "resume" ? start.saved.fuelUsed : 0;
+	const memoryLimitBytes = capped(request.memoryLimitBytes, options.maxMemoryLimitBytes);
+	const engine = {
+		module: await options.wasm,
+		// The run's budget, but no more than one request may use here.
+		fuel: Math.min(request.fuel, used + (options.maxFuel ?? DEFAULT_CLOUDFLARE_FUEL)),
+		...(memoryLimitBytes === undefined ? {} : { memoryLimitBytes }),
+	};
+	const run = start.kind === "begin" ? beginRun(engine, start.code, scope) : resumeRun(engine, scope, start.saved);
+	try {
+		for (const { id, outcome } of request.settled) run.settle(id, outcome);
+		await run.advance();
+		if (run.result !== undefined) return { kind: "done", result: run.result, dropped: [...run.dropped] };
+		let saved: CodemodeSaved;
+		try {
+			saved = run.save();
+		} catch (error) {
+			const message = `The script holds a value a saved run cannot keep, which a remote sandbox needs between steps: ${errorMessage(error)}`;
+			return { kind: "done", result: failed({ kind: "sandbox", message }, run.output), dropped: [...run.calls] };
+		}
+		return { kind: "idle", saved, calls: [...run.calls] };
+	} finally {
+		run.dispose();
+	}
+}
+
+/** A requested limit, lowered to the remote's. */
+function capped(requested: number | undefined, max: number | undefined): number | undefined {
+	return requested === undefined ? max : max === undefined ? requested : Math.min(requested, max);
+}
+
+/** Runs one step on the remote: from `start`, with `settled` applied. */
+type Stepper = (
+	start: CodemodeStepRequest["start"],
+	settled: CodemodeStepRequest["settled"],
+) => Promise<CodemodeStepReply>;
+
+/** Where a remote run is: not started yet, waiting on calls (saved), or ended. */
+type RemoteState =
+	| { kind: "begin"; code: string }
+	| { kind: "idle"; saved: CodemodeSaved; calls: readonly CodemodeHostCall[] }
+	| { kind: "done"; result: CodemodeResult; dropped: readonly CodemodeHostCall[] };
+
+/** A run the client drives whose steps run on a remote: its state is the last step's saved run. */
+class RemoteRun implements CodemodeRun {
+	private state: RemoteState;
+	private readonly step: Stepper;
+	private settled: CodemodeStepRequest["settled"] = [];
+
+	constructor(step: Stepper, state: RemoteState) {
+		this.step = step;
+		this.state = state;
+	}
+
+	get calls(): readonly CodemodeHostCall[] {
+		return this.state.kind === "idle" ? this.state.calls : [];
+	}
+
+	get result(): CodemodeResult | undefined {
+		return this.state.kind === "done" ? this.state.result : undefined;
+	}
+
+	get output(): readonly CodemodeOutputItem[] {
+		if (this.state.kind === "idle") return this.state.saved.output;
+		return this.state.kind === "done" ? this.state.result.output : [];
+	}
+
+	get dropped(): readonly CodemodeHostCall[] {
+		return this.state.kind === "done" ? this.state.dropped : [];
+	}
+
+	settle(id: number, outcome: CodemodeOutcome): void {
+		if (this.state.kind === "idle") this.settled.push({ id, outcome });
+	}
+
+	/** One step on the remote. A step in flight cannot be stopped: its fuel bounds it; `signal` stops the next. */
+	async advance(signal?: AbortSignal): Promise<void> {
+		if (this.state.kind === "done") return;
+		signal?.throwIfAborted();
+		const start: CodemodeStepRequest["start"] =
+			this.state.kind === "begin" ? this.state : { kind: "resume", saved: this.state.saved };
+		const settled = this.settled;
+		this.settled = [];
+		try {
+			const reply = await this.step(start, settled);
+			this.state = reply;
+		} catch (error) {
+			const message = `Remote sandbox failed: ${errorMessage(error)}`;
+			this.state = { kind: "done", result: failed({ kind: "sandbox", message }, this.output), dropped: [] };
+		}
+		signal?.throwIfAborted();
+	}
+
+	save(): CodemodeSaved {
+		if (this.state.kind !== "idle") throw new Error("The script has not started or has ended");
+		return this.state.saved;
+	}
+
+	dispose(): void {}
 }

@@ -34,16 +34,10 @@ export class CodemodeSandbox extends CodemodeSandboxBase {
 		this.options = options;
 	}
 
-	/**
-	 * A new run of `code` (an async function body, JavaScript or TypeScript) that reaches what `scope` declares, not
-	 * the sandbox's tools and globals: its calls go to the caller, which answers them with `run.settle()`. `advance()`
-	 * runs it to its first idle point.
-	 */
 	async begin(code: string, scope: CodemodeScope): Promise<CodemodeRun> {
 		return beginRun(await this.engine(), code, scope);
 	}
 
-	/** Continues a run `run.save()` wrote, in a new VM. `scope` must give every identity the run refers to. */
 	async resume(scope: CodemodeScope, saved: CodemodeSaved): Promise<CodemodeRun> {
 		return resumeRun(await this.engine(), scope, saved);
 	}
@@ -64,11 +58,11 @@ export class CodemodeSandbox extends CodemodeSandboxBase {
 
 	/** The module, loaded on first use, and the limits. */
 	private async engine(): Promise<RunEngine> {
-		const { wasm, memoryLimitBytes, fuel } = this.options;
+		const { wasm, fuel } = this.options;
 		return {
 			module: await (wasm ?? loadCodemodeWasm()),
 			fuel: fuel ?? DEFAULT_FUEL,
-			...(memoryLimitBytes === undefined ? {} : { memoryLimitBytes }),
+			...(this.memoryLimitBytes === undefined ? {} : { memoryLimitBytes: this.memoryLimitBytes }),
 		};
 	}
 }

@@ -13,7 +13,7 @@ import type { Context } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord/json";
 import type { TextContent } from "@earendil-works/pi-ai";
 import { toCodemodeIdentifier } from "@earendil-works/pi-codemode/declarations";
-import type { CodemodeHostCall, CodemodeOutcome, CodemodeSandbox } from "@earendil-works/pi-codemode/portable";
+import type { CodemodeHostCall, CodemodeOutcome, CodemodeSandboxBase } from "@earendil-works/pi-codemode/portable";
 import { CODEMODE_SOURCE_GRAMMAR } from "@earendil-works/pi-codemode/source";
 import { obj, type Static, str } from "@earendil-works/pi-schema";
 import { defineDoc } from "../documents.ts";
@@ -143,7 +143,7 @@ export type CodemodeToolOptions = {
 	 * Runs the scripts on the calling thread. An idle script is saved, and parks while its calls take longer than
 	 * `parkAfterMs`.
 	 */
-	readonly sandbox: CodemodeSandbox;
+	readonly sandbox: CodemodeSandboxBase;
 	/** How long the script waits on its calls before it parks. Default 1000. */
 	readonly parkAfterMs?: number;
 	/** Estimated tokens the tool declarations in the `codemode` section may use. Default 3000. */

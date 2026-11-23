@@ -4,7 +4,14 @@ import { dirname, join } from "node:path";
 import type { Context } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord/json";
 import { type AssistantMessage, fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
-import { CodemodeSandbox, loadCodemodeWasm } from "@earendil-works/pi-codemode";
+import {
+	CodemodeSandbox,
+	type CodemodeSandboxBase,
+	type CodemodeSandboxOptions,
+	loadCodemodeWasm,
+	RemoteCodemodeSandbox,
+	serveCodemodeStep,
+} from "@earendil-works/pi-codemode";
 import {
 	defineExtension,
 	defineSignal,
@@ -17,7 +24,7 @@ import {
 	type ToolTaskInput,
 } from "@earendil-works/pi-durable";
 import { bool, num, obj, opt, str } from "@earendil-works/pi-schema";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CodemodeSavedDoc } from "../src/codemode/call.ts";
 import {
 	type CodemodeGlobal,
@@ -57,6 +64,26 @@ const JournalDoc = defineDoc<{ entries: JsonValue[] }>({
 
 const wasm = await loadCodemodeWasm();
 
+/**
+ * The scripts run on the calling thread, or step by step on a remote served in process that structured-clones every
+ * request and reply, as Workers RPC would: nothing stays on it between steps.
+ */
+const BACKENDS = {
+	local: (options: CodemodeSandboxOptions) => new CodemodeSandbox({ wasm, ...options }),
+	remote: (options: CodemodeSandboxOptions) =>
+		new RemoteCodemodeSandbox({
+			...options,
+			remote: () => ({
+				execute: () => Promise.reject(new Error("only steps")),
+				step: async (request) => structuredClone(await serveCodemodeStep(structuredClone(request), { wasm })),
+			}),
+		}),
+};
+let backend: keyof typeof BACKENDS = "local";
+
+/** A sandbox of the backend under test, as a new process would make. */
+const newSandbox = (options: CodemodeSandboxOptions = {}) => BACKENDS[backend](options);
+
 function script(code: string): AssistantMessage {
 	return fauxAssistantMessage([fauxToolCall("codemode", { code }, { id: "s1" })], { stopReason: "toolUse" });
 }
@@ -65,6 +92,7 @@ const directories = new Set<string>();
 afterEach(async () => {
 	for (const directory of directories) await rm(directory, { recursive: true, force: true });
 	directories.clear();
+	backend = "local";
 });
 
 async function sqlitePath(): Promise<string> {
@@ -81,11 +109,7 @@ async function sqlitePath(): Promise<string> {
  */
 function codemodeChat(globals: CodemodeGlobal[] = [], parkAfterMs?: number, fuel?: number) {
 	const setup = chatSetup();
-	const sandbox = new CodemodeSandbox({
-		wasm,
-		memoryLimitBytes: 64 * 1024 * 1024,
-		...(fuel === undefined ? {} : { fuel }),
-	});
+	const sandbox = newSandbox({ memoryLimitBytes: 64 * 1024 * 1024, ...(fuel === undefined ? {} : { fuel }) });
 	// VMs started: a new run or a resumed dump.
 	const vm = { starts: 0 };
 	const begin = sandbox.begin.bind(sandbox);
@@ -221,7 +245,11 @@ async function restart(
 	return { ...opened, result: await resultText(chat.setup, opened.root) };
 }
 
-describe("durable code mode", () => {
+describe.each(Object.keys(BACKENDS) as (keyof typeof BACKENDS)[])("durable code mode (%s)", (name) => {
+	beforeEach(() => {
+		backend = name;
+	});
+
 	it("runs a script that calls tools as nested calls", async () => {
 		const chat = codemodeChat();
 		chat.holds.block = false;
@@ -241,9 +269,9 @@ describe("durable code mode", () => {
 		const { harness, result } = await restart(
 			chat,
 			`const a = await tools.echo({ text: "a" });
-			const held = await tools.hold({ id: 1 });
-			const b = await tools.echo({ text: "b" });
-			return [a, held, b, Date.now() > 0];`,
+				const held = await tools.hold({ id: 1 });
+				const b = await tools.echo({ text: "b" });
+				return [a, held, b, Date.now() > 0];`,
 		);
 		expect(result).toEqual({ text: '["echo a","held 1","echo b",true]', isError: false });
 		expect(Object.fromEntries(chat.echo)).toEqual({ a: 1, b: 1 });
@@ -266,9 +294,9 @@ describe("durable code mode", () => {
 		const { harness, result } = await restart(
 			chat,
 			`const before = [Date.now(), Math.random()];
-			await tools.hold({});
-			await tools.echo({ text: String(before[0]) + "/" + String(before[1]) });
-			return "ok";`,
+				await tools.hold({});
+				await tools.echo({ text: String(before[0]) + "/" + String(before[1]) });
+				return "ok";`,
 		);
 		expect(result.text).toBe("ok");
 		// One echo: the same arguments, so the rerun admitted no second call.
@@ -406,8 +434,8 @@ describe("durable code mode", () => {
 		chat.setup.faux.setResponses([
 			script(
 				`const r = await tools.run({});
-				let e; try { await tools.denied({}); } catch (error) { e = [error.message, error.structuredOutput ?? null]; }
-				return [r.exitCode, r.output, e];`,
+					let e; try { await tools.denied({}); } catch (error) { e = [error.message, error.structuredOutput ?? null]; }
+					return [r.exitCode, r.output, e];`,
 			),
 			DONE,
 		]);
@@ -480,9 +508,9 @@ describe("durable code mode", () => {
 		const { harness, result } = await restart(
 			chat,
 			`for (let i = 0; i < 12_000_000; i++);
-			await tools.hold({});
-			for (let i = 0; i < 12_000_000; i++);
-			return "done";`,
+				await tools.hold({});
+				for (let i = 0; i < 12_000_000; i++);
+				return "done";`,
 		);
 		expect(result.isError).toBe(true);
 		expect(result.text).toContain("Script timed out: The script used its CPU budget (about 0.2 s of computation)");
@@ -496,7 +524,7 @@ describe("durable code mode", () => {
 		const { harness, result } = await restart(
 			chat,
 			`// @options: {"timeout_ms": 300}
-			await tools.hold({}); await tools.echo({ text: "late" });`,
+				await tools.hold({}); await tools.echo({ text: "late" });`,
 			() => new Promise((resolve) => setTimeout(resolve, 400)),
 		);
 		expect(result.isError).toBe(true);
@@ -795,7 +823,7 @@ describe("durable code mode output and tool search", () => {
 
 const Answer = defineSignal({ name: "test.answer", version: 1, schema: obj({ text: str() }) });
 /** A chat whose code mode parks after 20 ms, with `echo` (recording its texts) and `ask` (parks on `Answer`). */
-function setupWith(sandbox: CodemodeSandbox, echoes: string[]): ChatSetup {
+function setupWith(sandbox: CodemodeSandboxBase, echoes: string[]): ChatSetup {
 	const setup = chatSetup();
 	addTool(setup.registry, createCodemodeTool({ sandbox, parkAfterMs: 20 }));
 	addTool(
@@ -829,7 +857,6 @@ function setupWith(sandbox: CodemodeSandbox, echoes: string[]): ChatSetup {
 }
 
 /** A new sandbox on the module loaded once, as another process would make. */
-const newSandbox = () => new CodemodeSandbox({ wasm });
 
 async function nested(harness: Harness, name: string) {
 	const tasks = (await harness.commit((tx) => tx.scanTasks({ kind: ToolTask.definition.name }, 100), context)).items;
@@ -843,13 +870,17 @@ async function parkedResult(root: Awaited<ReturnType<typeof openChat>>["root"]) 
 	return { isError: message.isError, text: message.content.map((item) => item.text ?? "").join("\n") };
 }
 
-describe("durable code mode saves and parks", () => {
+describe.each(Object.keys(BACKENDS) as (keyof typeof BACKENDS)[])("durable code mode saves and parks (%s)", (name) => {
+	beforeEach(() => {
+		backend = name;
+	});
+
 	it("parks with its dump while a nested call is parked, and resumes it after a reopen", async () => {
 		const path = await sqlitePath();
 		const echoes: string[] = [];
 		const code = `const a = await tools.echo({ text: "one" });
-const answer = await tools.ask({});
-return [a, answer, await tools.echo({ text: "two" })];`;
+	const answer = await tools.ask({});
+	return [a, answer, await tools.echo({ text: "two" })];`;
 		let setup = setupWith(newSandbox(), echoes);
 		setup.faux.setResponses([
 			fauxAssistantMessage([fauxToolCall("codemode", { code }, { id: "s1" })], { stopReason: "toolUse" }),
@@ -917,7 +948,8 @@ return [a, answer, await tools.echo({ text: "two" })];`;
 		await harness.close(context);
 	});
 
-	it("runs a script that holds what a dump cannot write in memory only, and never parks it", async () => {
+	it("runs a script that holds what a dump cannot write in memory only, and never parks it", async (test) => {
+		if (backend === "remote") test.skip();
 		const setup = setupWith(newSandbox(), []);
 		const code = `const seen = new WeakMap(); seen.set({}, 1); await tools.echo({ text: "x" }); return "kept " + typeof seen;`;
 		setup.faux.setResponses([
@@ -928,6 +960,24 @@ return [a, answer, await tools.echo({ text: "two" })];`;
 		harness.resume();
 		await root.submit({ type: "input", content: "go" }, context);
 		expect(await parkedResult(root)).toMatchObject({ isError: false, text: expect.stringContaining("kept object") });
+		await harness.close(context);
+	});
+
+	it("ends a script that holds what a dump cannot write on a remote, which keeps nothing between steps", async (test) => {
+		if (backend === "local") test.skip();
+		const setup = setupWith(newSandbox(), []);
+		const code = `const seen = new WeakMap(); seen.set({}, 1); await tools.echo({ text: "x" }); return "kept " + typeof seen;`;
+		setup.faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("codemode", { code }, { id: "s1" })], { stopReason: "toolUse" }),
+			fauxAssistantMessage([fauxText("done")]),
+		]);
+		const { harness, root } = await openChat(await openNodeSqliteStorage(await sqlitePath()), setup);
+		harness.resume();
+		await root.submit({ type: "input", content: "go" }, context);
+		expect(await parkedResult(root)).toMatchObject({
+			isError: true,
+			text: expect.stringContaining("a saved run cannot keep"),
+		});
 		await harness.close(context);
 	});
 });

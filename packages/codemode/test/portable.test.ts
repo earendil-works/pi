@@ -114,15 +114,23 @@ describe("RemoteCodemodeSandbox", () => {
 	});
 
 	it("reports a failing or vanishing remote as a sandbox error", async () => {
-		const failing = new RemoteCodemodeSandbox({
-			remote: () => ({ execute: () => Promise.reject(new Error("object reset")) }),
-		});
+		const reset = () => Promise.reject(new Error("object reset"));
+		const failing = new RemoteCodemodeSandbox({ remote: () => ({ execute: reset, step: reset }) });
 		expect(await failing.execute("return 1")).toMatchObject({
 			ok: false,
 			error: { kind: "sandbox", message: "Remote sandbox failed: object reset" },
 		});
+		// A run the client drives ends the same way when its step fails.
+		const run = await failing.begin("return 1", { tools: [], globals: [], store: {} });
+		await run.advance();
+		expect(run.result).toMatchObject({
+			ok: false,
+			error: { kind: "sandbox", message: "Remote sandbox failed: object reset" },
+		});
 
-		const silent = new RemoteCodemodeSandbox({ remote: () => ({ execute: () => Promise.resolve() }) });
+		const silent = new RemoteCodemodeSandbox({
+			remote: () => ({ execute: () => Promise.resolve(), step: () => Promise.reject(new Error("unused")) }),
+		});
 		expect(await silent.execute("return 1")).toMatchObject({
 			ok: false,
 			error: { kind: "sandbox", message: "Remote sandbox returned before the script settled" },
