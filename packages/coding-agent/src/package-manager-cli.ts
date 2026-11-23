@@ -86,7 +86,7 @@ function getActiveManagedInstallRoot(): string | undefined {
 		/^(?:[A-Za-z]:\\|\\\\)/.test(entrypointPath)
 	) {
 		throw new Error(
-			`This is the Windows installation of ${APP_NAME}, run from WSL. Running the Windows installation from WSL is unsupported, so it cannot update itself here. Update it from Windows, or install ${APP_NAME} in WSL: curl -fsSL https://pi.dev/install.sh | sh`,
+			`This is the Windows installation of ${APP_NAME}, run from WSL. Running the Windows installation from WSL is unsupported, so it cannot update itself here. Update it from Windows, or install ${APP_NAME} in WSL.`,
 		);
 	}
 
