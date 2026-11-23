@@ -362,6 +362,7 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 
 				this.pasteMode = false;
 				this.pasteBuffer = "";
+				this.pasteTail = "";
 				this.pendingKittyPrintableCodepoint = undefined;
 
 				this.emit("paste", pastedContent);
@@ -397,6 +398,7 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 
 				this.pasteMode = false;
 				this.pasteBuffer = "";
+				this.pasteTail = "";
 				this.pendingKittyPrintableCodepoint = undefined;
 
 				this.emit("paste", pastedContent);
@@ -474,6 +476,7 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 		this.buffer = "";
 		this.pasteMode = false;
 		this.pasteBuffer = "";
+		this.pasteTail = "";
 		this.pendingKittyPrintableCodepoint = undefined;
 	}
 
