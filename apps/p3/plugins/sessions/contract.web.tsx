@@ -37,6 +37,8 @@ export type ThingCreateProps = { readonly onReady: (input: JsonValue) => void };
  */
 export type ThingViewEntry = {
 	readonly kind: string;
+	/** The kind's icon (one of `/v1/web`'s), shown beside its things' names; none: a page icon. */
+	readonly Icon?: ComponentType;
 	readonly View?: ComponentType<ThingViewProps>;
 	readonly Options?: ComponentType<ThingOptionsProps>;
 	readonly Create?: ComponentType<ThingCreateProps>;
@@ -84,3 +86,9 @@ export const SessionThingsView = defineView<{
  * delete, and where each is used.
  */
 export const MyThingsView = defineView<Record<string, never>>("sessions.my-things");
+
+/**
+ * Who is in a session (persons and groups, reading or writing), opened on demand ("Share"): everyone with access sees
+ * it; the owner adds and removes members there.
+ */
+export const SessionMembersView = defineView<{ readonly session: string }>("sessions.members");

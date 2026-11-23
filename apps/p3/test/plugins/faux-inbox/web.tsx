@@ -3,11 +3,11 @@
 
 import { Button } from "@earendil-works/elanor-react";
 import { defineFacet } from "@earendil-works/p3/v1";
-import { type ThingCreateProps, ThingViews } from "@earendil-works/p3/v1/web";
+import { LinkIcon, type ThingCreateProps, ThingViews } from "@earendil-works/p3/v1/web";
 import { FauxInboxKind } from "./contract.ts";
 
 export default defineFacet((_host, self) =>
-	self.contribute(ThingViews, { kind: FauxInboxKind.name, Create: FauxInboxCreate }),
+	self.contribute(ThingViews, { kind: FauxInboxKind.name, Icon: LinkIcon, Create: FauxInboxCreate }),
 );
 
 /** The creation step: a button standing in for a sign-in. */

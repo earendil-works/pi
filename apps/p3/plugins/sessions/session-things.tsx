@@ -1,37 +1,35 @@
-// The view `SessionThingsView`, the session sheet: what a session holds, opened on demand. Everyone with access sees
-// its location, whom it follows, its things (each by its name, else its kind's title, with whose it is, "from" whom
-// the session follows for a thing it has that way, and "Open" when the app shows things and the kind has a view) and
-// its members. A writer (a person or the owner) makes content here ("New": the session's kinds of content, owned by
-// nobody), adds a thing they manage ("Add existing"), gives content an owner ("Keep"), and removes, renames and sets
-// the options of the things they manage (a thing the session follows is not removed here); the owner also changes
-// whom the session follows, and adds and removes members (the persons of `PeopleList`), through `Sessions`.
+// The view `SessionThingsView`, the session sheet: what a session holds, calm on a phone. Its things as rows (the
+// kind's icon, the name, one muted line of whose it is or whom it comes from); a tap opens one where the app shows
+// things, when its kind has a view. Each row's "⋯" holds what the caller may do with it: rename, options, keep (give
+// the session's content an owner), remove (not a thing the session has from whom it follows). A writer's "+" makes
+// content at once (named after its kind, renamed later) or links one of their own ("One of mine…"). At the foot,
+// for the owner, whom the session follows ("Has your things · Change"), and where it works. Members are another view
+// (`SessionMembersView`).
 
-import { Button, Heading } from "@earendil-works/elanor-react";
+import { Heading, IconButton, Menu } from "@earendil-works/elanor-react";
 import {
-	type Access,
 	type Context,
 	Me,
 	type Member,
 	type Party,
-	PeopleList,
+	type Reference,
 	SessionInfo,
 	type SessionRow,
 	Sessions,
 	type SessionThing,
 	SessionThings as SessionThingsObject,
 } from "@earendil-works/p3/v1";
-import { useHold, useRefState, useRegistry, useVariant, useWatch } from "@earendil-works/p3/v1/web";
+import { AddIcon, useHold, useRefState, useRegistry, useVariant, useWatch } from "@earendil-works/p3/v1/web";
 import { type ReactNode, useState } from "react";
 import { type Action, useAction } from "./action.ts";
-import { AddExisting } from "./add-existing.tsx";
-import { Choice } from "./choice.tsx";
+import { AddExistingDialog } from "./add-existing.tsx";
 import { ThingViews } from "./contract.web.tsx";
-import { type FollowChoice, Following, followName } from "./following.tsx";
-import { GiveThing } from "./give-thing.tsx";
-import { useViewId } from "./session-list.tsx";
+import { type FollowChoice, FollowLine, followName } from "./following.tsx";
+import { GivePanel, keepersOf, type OwnerChoice } from "./give-thing.tsx";
 import styles from "./session-things.module.css";
-import { NameField, ThingName } from "./thing-name.tsx";
-import { ThingOptions, type ThingOptionsOf } from "./thing-options.tsx";
+import { RenameField } from "./thing-name.tsx";
+import { type ThingOptionsOf, ThingOptionsPanel } from "./thing-options.tsx";
+import { type RowAction, ThingRow } from "./thing-row.tsx";
 
 /** Who the viewer is, as `Me` answers for a person (the owner among them). */
 type Viewer = { readonly id: string; readonly name: string; readonly owner: boolean };
@@ -54,7 +52,7 @@ type Sheet = {
 	readonly action: Action;
 };
 
-/** Session `session`'s sheet; writers make and manage things, the owner also members and whom it follows. */
+/** Session `session`'s sheet; writers make and manage things, the owner also whom it follows. */
 export function SessionThings(props: { readonly session: string; readonly onOpen?: (thing: string) => void }) {
 	const infoRef = useHold(SessionInfo, { session: props.session });
 	const info = useVariant(infoRef, "info");
@@ -85,58 +83,46 @@ export function SessionThings(props: { readonly session: string; readonly onOpen
 	const sheet: Sheet = { row, followsName, things, members, me, onOpen: props.onOpen, action };
 	return (
 		<div className={styles.things} data-session-things="">
-			<Location row={row} />
-			{me.owner ? <OwnerFollowing sheet={sheet} /> : <Following {...followingOf(sheet)} onFollow={undefined} />}
 			<SheetThings sheet={sheet} />
-			{me.owner ? <ManagedMembers sheet={sheet} /> : <Members me={me} members={members} />}
-			<Failures errors={[action.error]} />
+			<footer className={styles.foot}>
+				{me.owner ? <OwnerFollowing sheet={sheet} /> : null}
+				<p className={styles.location} data-location="">
+					{row.location.environment}: {row.location.folder}
+				</p>
+			</footer>
+			{action.error === undefined ? null : <p className={styles.error}>{action.error}</p>}
 		</div>
 	);
 }
 
-/**
- * Whom the session follows and its name (the viewer as "You"), and the parties the owner may make it follow
- * (themselves as "You", its members).
- */
-function followingOf(sheet: Sheet): {
-	follows: Party | null;
-	name: string;
-	choices: readonly FollowChoice[];
-	action: Action;
-} {
+/** The owner's line of whom the session follows, with its change (`Sessions.follow`, keeping what it had). */
+function OwnerFollowing(props: { readonly sheet: Sheet }) {
+	const { sheet } = props;
+	const sessions = useVariant(useHold(Sessions, {}), "owner");
 	const you: FollowChoice = { party: { kind: "person", id: sheet.me.id }, name: "You" };
 	const members = sheet.members
 		.filter((member) => !(member.kind === "person" && member.id === sheet.me.id))
 		.map((member) => ({ party: { kind: member.kind, id: member.id }, name: member.name }));
-	return {
-		follows: sheet.row.follows,
-		name: followName(sheet.row.follows, sheet.me.id, sheet.followsName),
-		choices: sheet.me.owner ? [you, ...members] : [],
-		action: sheet.action,
-	};
-}
-
-/** The owner's "Follows" with its change (`Sessions.follow`, keeping what the session had). */
-function OwnerFollowing(props: { readonly sheet: Sheet }) {
-	const sessions = useVariant(useHold(Sessions, {}), "owner");
-	const { sheet } = props;
 	return (
-		<Following
-			{...followingOf(sheet)}
-			onFollow={
-				sessions === undefined
-					? undefined
-					: (follows) =>
-							sheet.action.run((ctx) => sessions.follow({ session: sheet.row.id, follows, keep: true }, ctx))
-			}
+		<FollowLine
+			action={sheet.action}
+			choices={[you, ...members]}
+			follows={sheet.row.follows}
+			name={followName(sheet.row.follows, sheet.me.id, sheet.followsName)}
+			onFollow={(follows: Party | null) => {
+				if (sessions === undefined) return;
+				sheet.action.run((ctx) => sessions.follow({ session: sheet.row.id, follows, keep: true }, ctx));
+			}}
 		/>
 	);
 }
 
+/** What a row's action opened under it. */
+type Panel = { readonly thing: string; readonly kind: "rename" | "options" | "keep" };
+
 /**
- * The things with what the viewer's `SessionThings` lets them do (a writer's; a reader's has nothing): open, rename,
- * set the options of, keep and remove the things they manage (`manages`: the server decides again), make content
- * here ("New") and add a thing they manage ("Add existing").
+ * The things as rows with what the viewer's `SessionThings` lets them do (a writer's; a reader's has nothing), and a
+ * writer's "+".
  */
 function SheetThings(props: { readonly sheet: Sheet }) {
 	const { sheet } = props;
@@ -144,81 +130,178 @@ function SheetThings(props: { readonly sheet: Sheet }) {
 	const writer = useVariant(useHold(SessionThingsObject, { session: sheet.row.id }), "writer");
 	const kinds = useWatch(writer?.kinds) ?? [];
 	const owners = useWatch(writer?.owners) ?? [];
-	const titles = new Map([
-		...sheet.things.map((thing) => [thing.kind, thing.title] as const),
-		...kinds.map((kind) => [kind.kind, kind.title] as const),
-	]);
-	const from = `From ${followingOf(sheet).name}`;
+	const [panel, setPanel] = useState<Panel | undefined>(undefined);
+	const [adding, setAdding] = useState(false);
 	const run = (call: (thing: NonNullable<typeof writer>, context: Context) => Promise<unknown>) => {
 		if (writer !== undefined) action.run((ctx) => call(writer, ctx));
 	};
 	return (
-		<>
-			<Things
-				describe={(thing) => {
-					const managed = writer !== undefined && manages(thing, sheet.me);
-					const followed = thing.by.kind === "followed";
-					return {
-						whose: followed ? `${whose(thing, sheet.me)} · ${from}` : whose(thing, sheet.me),
-						rename: managed ? (name) => run((w, ctx) => w.rename({ thing: thing.thing, name }, ctx)) : undefined,
-						options: managed ? (
-							<ThingOptions
-								action={action}
-								members={sheet.members}
-								onSave={(forWhom, options) =>
-									run((w, ctx) => w.setOptions({ thing: thing.thing, for: forWhom, options }, ctx))
-								}
-								session={sheet.row.id}
-								thing={thing}
-							/>
-						) : null,
-						actions: (
-							<>
-								{writer === undefined || thing.owner.kind !== "none" ? null : (
-									<GiveThing
-										action={action}
-										current={thing.owner}
-										label="Keep"
-										onGive={(owner) => run((w, ctx) => w.keep({ thing: thing.thing, owner }, ctx))}
-										owners={owners}
-									/>
-								)}
-								{!managed || followed ? null : (
-									<Button
-										data-remove-thing=""
-										density="compact"
-										hierarchy="tertiary"
-										onClick={() => run((w, ctx) => w.remove({ thing: thing.thing }, ctx))}
-										semantic="negative"
-									>
-										Remove
-									</Button>
-								)}
-							</>
-						),
-					};
-				}}
-				onOpen={sheet.onOpen}
-				session={sheet.row.id}
-				things={sheet.things}
-				action={action}
-			/>
+		<section aria-label="Things" className={styles.section}>
+			<div className={styles.sheetHead}>
+				<Heading level={3} size={6}>
+					Things
+				</Heading>
+				{writer === undefined ? null : (
+					<AddMenu
+						kinds={kinds}
+						onExisting={() => setAdding(true)}
+						onNew={(kind) => run((w, ctx) => w.create({ kind }, ctx))}
+					/>
+				)}
+			</div>
+			{sheet.things.length === 0 ? <p className={styles.note}>Nothing yet.</p> : null}
+			<ul className={styles.items}>
+				{sheet.things.map((thing) => (
+					<SheetThing
+						key={thing.thing}
+						owners={owners}
+						panel={panel?.thing === thing.thing ? panel.kind : undefined}
+						run={run}
+						setPanel={setPanel}
+						sheet={sheet}
+						thing={thing}
+						writer={writer}
+					/>
+				))}
+			</ul>
 			{writer === undefined ? null : (
-				<>
-					<NewThing
-						action={action}
-						kinds={kinds.map((kind) => ({ value: kind.kind, label: kind.title }))}
-						onAdd={(kind, name) => run((w, ctx) => w.create({ kind, ...(name === "" ? {} : { name }) }, ctx))}
-					/>
-					<AddExisting
-						action={action}
-						onAdd={(thing) => run((w, ctx) => w.add({ thing }, ctx))}
-						present={new Set(sheet.things.map((thing) => thing.thing))}
-						titles={titles}
-					/>
-				</>
+				<AddExistingDialog
+					action={action}
+					onAdd={(thing) => run((w, ctx) => w.add({ thing }, ctx))}
+					onClose={() => setAdding(false)}
+					open={adding}
+					present={new Set(sheet.things.map((thing) => thing.thing))}
+				/>
 			)}
-		</>
+		</section>
+	);
+}
+
+/** The writer's `SessionThings` as rows call it (`undefined`: a reader). */
+type Writer = Extract<Reference<typeof SessionThingsObject>, { readonly variant: "writer" }> | undefined;
+
+/** One thing's row: its line, its actions (those the viewer may take) and the panel one of them opened. */
+function SheetThing(props: {
+	readonly thing: ShownThing;
+	readonly sheet: Sheet;
+	readonly writer: Writer;
+	readonly owners: readonly OwnerChoice[];
+	readonly panel: Panel["kind"] | undefined;
+	readonly setPanel: (panel: Panel | undefined) => void;
+	readonly run: (call: (thing: NonNullable<Writer>, context: Context) => Promise<unknown>) => void;
+}) {
+	const { thing, sheet, writer, owners, run } = props;
+	const { action } = sheet;
+	const entry = useRegistry(ThingViews)?.get(thing.kind)?.value;
+	const from = followName(sheet.row.follows, sheet.me.id, sheet.followsName);
+	const close = () => props.setPanel(undefined);
+	const managed = writer !== undefined && manages(thing, sheet.me);
+	const followed = thing.by.kind === "followed";
+	// An action opens its panel, or closes it when it is the one open.
+	const open = (kind: Panel["kind"]) => () =>
+		props.setPanel(props.panel === kind ? undefined : { thing: thing.thing, kind });
+	const actions: RowAction[] = [
+		...(managed ? [{ key: "rename", label: "Rename", run: open("rename") }] : []),
+		...(managed && entry?.Options !== undefined ? [{ key: "options", label: "Options", run: open("options") }] : []),
+		...(writer !== undefined && thing.owner.kind === "none" && keepersOf(owners, thing.owner).length > 0
+			? [{ key: "keep", label: "Keep", run: open("keep") }]
+			: []),
+		...(managed && !followed
+			? [
+					{
+						key: "remove",
+						label: "Remove",
+						run: () => run((w, ctx) => w.remove({ thing: thing.thing }, ctx)),
+					},
+				]
+			: []),
+	];
+	const shown = props.panel;
+	let below: ReactNode = null;
+	if (shown === "rename") {
+		below = (
+			<RenameField
+				action={action}
+				name={thing.name}
+				onDone={close}
+				onRename={(name) => run((w, ctx) => w.rename({ thing: thing.thing, name }, ctx))}
+				title={thing.title}
+			/>
+		);
+	} else if (shown === "options") {
+		below = (
+			<ThingOptionsPanel
+				action={action}
+				members={sheet.members}
+				onSave={(forWhom, options) =>
+					run((w, ctx) => w.setOptions({ thing: thing.thing, for: forWhom, options }, ctx))
+				}
+				session={sheet.row.id}
+				thing={thing}
+			/>
+		);
+	} else if (shown === "keep") {
+		below = (
+			<GivePanel
+				action={action}
+				current={thing.owner}
+				label="Keep"
+				onDone={close}
+				onGive={(owner) => run((w, ctx) => w.keep({ thing: thing.thing, owner }, ctx))}
+				owners={owners}
+			/>
+		);
+	}
+	return (
+		<ThingRow
+			actions={actions}
+			data={{
+				"data-thing": thing.kind,
+				"data-thing-id": thing.thing,
+				"data-by": thing.by.kind === "person" ? `person:${thing.by.id}` : thing.by.kind,
+				"data-owner":
+					thing.owner.kind === "person" || thing.owner.kind === "group"
+						? `${thing.owner.kind}:${thing.owner.id}`
+						: thing.owner.kind,
+			}}
+			kind={thing.kind}
+			line={followed ? `From ${from === "You" ? "you" : from}` : whose(thing, sheet.me)}
+			name={thing.name === "" ? thing.title : thing.name}
+			onOpen={
+				sheet.onOpen === undefined || entry?.View === undefined ? undefined : () => sheet.onOpen?.(thing.thing)
+			}
+			panel={below}
+		/>
+	);
+}
+
+/** A writer's "+": a new thing of one of `kinds` (made at once), or "One of mine…". */
+function AddMenu(props: {
+	readonly kinds: readonly { readonly kind: string; readonly title: string }[];
+	readonly onNew: (kind: string) => void;
+	readonly onExisting: () => void;
+}) {
+	return (
+		<Menu.Root>
+			<Menu.Trigger data-add-open="" render={<IconButton aria-label="Add a thing" />}>
+				<AddIcon />
+			</Menu.Trigger>
+			<Menu.Portal>
+				<Menu.Positioner align="end" sideOffset={4}>
+					<Menu.Popup data-add-popup="">
+						{props.kinds.map((kind) => (
+							<Menu.Item data-new-kind={kind.kind} key={kind.kind} onClick={() => props.onNew(kind.kind)}>
+								{kind.title}
+							</Menu.Item>
+						))}
+						{props.kinds.length === 0 ? null : <Menu.Separator />}
+						<Menu.Item data-add-existing-open="" onClick={props.onExisting}>
+							One of mine…
+						</Menu.Item>
+					</Menu.Popup>
+				</Menu.Positioner>
+			</Menu.Portal>
+		</Menu.Root>
 	);
 }
 
@@ -240,250 +323,4 @@ function whose(thing: ShownThing, me: Viewer): string {
 		case "person":
 			return thing.owner.id === me.id ? "Yours" : `${thing.ownerName}'s`;
 	}
-}
-
-/** The owner's members: removal, and the form that adds one. */
-function ManagedMembers(props: { readonly sheet: Sheet }) {
-	const { sheet } = props;
-	const session = sheet.row.id;
-	const sessions = useVariant(useHold(Sessions, {}), "owner");
-	const peopleRef = useVariant(useHold(PeopleList, { view: useViewId() }), "owner");
-	const people = useWatch(peopleRef?.list);
-	const manage = (call: (owner: NonNullable<typeof sessions>, context: Context) => Promise<unknown>) => {
-		if (sessions !== undefined) sheet.action.run((ctx) => call(sessions, ctx));
-	};
-	return (
-		<>
-			<Members
-				me={sheet.me}
-				members={sheet.members}
-				onRemove={(party) => manage((owner, ctx) => owner.removeMember({ session, party }, ctx))}
-			/>
-			<AddMember
-				action={sheet.action}
-				more={
-					peopleRef !== undefined && people?.moreAfter === true
-						? () => sheet.action.run((ctx) => peopleRef.more(ctx))
-						: undefined
-				}
-				onAdd={(member) => manage((owner, ctx) => owner.addMember({ session, member }, ctx))}
-				// Not the owner (they write every session), not who is a member already.
-				persons={(people?.rows ?? [])
-					.filter(
-						(person) =>
-							!person.owner &&
-							!sheet.members.some((member) => member.kind === "person" && member.id === person.id),
-					)
-					.map((person) => ({ value: person.id, label: person.name }))}
-			/>
-		</>
-	);
-}
-
-/** The failures of the view's actions, one line each. */
-function Failures(props: { readonly errors: readonly (string | undefined)[] }) {
-	return props.errors.map((error) =>
-		error === undefined ? null : (
-			<p className={styles.error} key={error}>
-				{error}
-			</p>
-		),
-	);
-}
-
-/** Where the session works. */
-function Location(props: { readonly row: SessionRow }) {
-	return (
-		<p className={styles.location} data-location="">
-			{props.row.location.environment}: {props.row.location.folder}
-		</p>
-	);
-}
-
-/** What a thing's row shows besides its name: whose it is, its rename, its options control and its actions. */
-type Described = {
-	readonly whose: string;
-	readonly rename: ((name: string) => void) | undefined;
-	readonly options: ReactNode;
-	readonly actions: ReactNode;
-};
-
-/**
- * The session's things, each by its name (`ThingName`) with what `describe` gives it, and "Open" when `onOpen` is
- * given and its kind has a view.
- */
-function Things(props: {
-	readonly session: string;
-	readonly things: readonly ShownThing[];
-	readonly onOpen: ((thing: string) => void) | undefined;
-	readonly describe: (thing: ShownThing) => Described;
-	readonly action: Action;
-}) {
-	const views = useRegistry(ThingViews);
-	return (
-		<section aria-label="Things" className={styles.section}>
-			<Heading level={3} size={6}>
-				Things
-			</Heading>
-			{props.things.length === 0 ? <p className={styles.note}>None.</p> : null}
-			<ul className={styles.items}>
-				{props.things.map((thing) => {
-					const described = props.describe(thing);
-					return (
-						<li
-							className={styles.item}
-							data-by={thing.by.kind === "person" ? `person:${thing.by.id}` : thing.by.kind}
-							data-owner={
-								thing.owner.kind === "person" || thing.owner.kind === "group"
-									? `${thing.owner.kind}:${thing.owner.id}`
-									: thing.owner.kind
-							}
-							data-thing={thing.kind}
-							data-thing-id={thing.thing}
-							key={thing.thing}
-						>
-							<div className={styles.grow}>
-								<ThingName
-									action={props.action}
-									name={thing.name}
-									rename={described.rename}
-									title={thing.title}
-								/>
-								<span className={styles.whose} data-whose="">
-									{described.whose}
-								</span>
-								{described.options}
-							</div>
-							<div className={styles.rowActions}>
-								{props.onOpen === undefined || views?.get(thing.kind)?.value.View === undefined ? null : (
-									<Button
-										data-open-thing={thing.thing}
-										density="compact"
-										hierarchy="secondary"
-										onClick={() => props.onOpen?.(thing.thing)}
-									>
-										Open
-									</Button>
-								)}
-								{described.actions}
-							</div>
-						</li>
-					);
-				})}
-			</ul>
-		</section>
-	);
-}
-
-/** "New": a writer's pick of a kind of content to make here, with its optional name (empty: the kind's title). */
-function NewThing(props: {
-	readonly kinds: readonly { readonly value: string; readonly label: string }[];
-	readonly onAdd: (kind: string, name: string) => void;
-	readonly action: Action;
-}) {
-	const [kind, setKind] = useState<string | undefined>(undefined);
-	const [name, setName] = useState("");
-	const picked = props.kinds.find((each) => each.value === kind) ?? props.kinds[0];
-	if (props.kinds.length === 0) return null;
-	return (
-		<div className={styles.add} data-add-thing="">
-			<Choice items={props.kinds} label="New" name="kind" onChange={setKind} value={picked?.value ?? null} />
-			<NameField onChange={setName} title={picked?.label} value={name} />
-			<Button
-				data-add-thing-save=""
-				disabled={picked === undefined}
-				onClick={() => {
-					if (picked === undefined) return;
-					props.onAdd(picked.value, name.trim());
-					setName("");
-				}}
-				pending={props.action.pending}
-			>
-				Make
-			</Button>
-		</div>
-	);
-}
-
-/** The session's members: who, and whether they read or write; `onRemove` if managed. */
-function Members(props: {
-	readonly members: readonly ShownMember[];
-	readonly me: Viewer;
-	readonly onRemove?: (party: { readonly kind: Member["kind"]; readonly id: string }) => void;
-}) {
-	return (
-		<section aria-label="Members" className={styles.section}>
-			<Heading level={3} size={6}>
-				Members
-			</Heading>
-			{props.members.length === 0 ? <p className={styles.note}>Only the owner.</p> : null}
-			<ul className={styles.items}>
-				{props.members.map((member) => (
-					<li className={styles.item} data-member={member.id} key={`${member.kind}:${member.id}`}>
-						<span className={styles.grow}>
-							{member.kind === "person" && member.id === props.me.id ? "You" : member.name}
-						</span>
-						<span className={styles.access}>{ACCESS_LABELS[member.access]}</span>
-						{props.onRemove === undefined ? null : (
-							<Button
-								density="compact"
-								hierarchy="tertiary"
-								onClick={() => props.onRemove?.({ kind: member.kind, id: member.id })}
-								semantic="negative"
-							>
-								Remove
-							</Button>
-						)}
-					</li>
-				))}
-			</ul>
-		</section>
-	);
-}
-
-/** How an access reads. */
-const ACCESS_LABELS: Readonly<Record<Access, string>> = { read: "Reads", write: "Writes" };
-
-/** The access a new member can get, as the owner picks it. */
-const ACCESS_ITEMS = [
-	{ value: "write", label: "Writes" },
-	{ value: "read", label: "Reads" },
-] as const;
-
-/** The owner's pick of a person (from the loaded pages of their persons; `more` loads the next) and their access. */
-function AddMember(props: {
-	readonly persons: readonly { readonly value: string; readonly label: string }[];
-	readonly more: (() => void) | undefined;
-	readonly onAdd: (member: Member) => void;
-	readonly action: Action;
-}) {
-	const [person, setPerson] = useState<string | undefined>(undefined);
-	const [access, setAccess] = useState<Access>("write");
-	const picked = person ?? props.persons[0]?.value;
-	if (props.persons.length === 0) return <p className={styles.note}>Invite a person to add them here.</p>;
-	return (
-		<div className={styles.add} data-add-member="">
-			<Choice items={props.persons} label="Add a person" name="person" onChange={setPerson} value={picked ?? null} />
-			<Choice
-				items={ACCESS_ITEMS}
-				label="Access"
-				name="access"
-				// The items are the two accesses.
-				onChange={(value) => setAccess(value as Access)}
-				value={access}
-			/>
-			<Button
-				disabled={picked === undefined}
-				onClick={() => picked !== undefined && props.onAdd({ kind: "person", id: picked, access })}
-				pending={props.action.pending}
-			>
-				Add
-			</Button>
-			{props.more === undefined ? null : (
-				<Button density="compact" hierarchy="tertiary" onClick={props.more}>
-					More persons
-				</Button>
-			)}
-		</div>
-	);
 }

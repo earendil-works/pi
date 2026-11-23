@@ -1,5 +1,5 @@
 // Giving a thing an owner, as the session sheet ("Keep": a session's content to me, a group of mine, or the Pi for the
-// owner) and My things ("Give away") offer it: a button that opens a pick of whom (the caller's `owners`, nobody left
+// owner) and My things ("Give away") offer it from a row's menu: a pick of whom (the caller's `owners`, nobody left
 // out: a thing is never given back to nobody) and the button that gives it.
 
 import { Button } from "@earendil-works/elanor-react";
@@ -12,50 +12,53 @@ import styles from "./session-things.module.css";
 /** Whom the caller may give a thing, with a name to show (`SessionThings.owners`, `MyThings.owners`). */
 export type OwnerChoice = { readonly owner: ThingOwner; readonly name: string };
 
-/**
- * `label` ("Keep", "Give away"), opening the pick of `owners` (those a thing may be given) without `current` (the
- * thing's owner now); `onGive` gets the one picked.
- */
-export function GiveThing(props: {
+/** Whom a thing owned by `current` may be given among `owners`: everyone there but nobody and its owner now. */
+export function keepersOf(
+	owners: readonly OwnerChoice[],
+	current: ThingOwner,
+): { keeper: ThingKeeper; name: string }[] {
+	return owners.flatMap((choice) => {
+		const { owner } = choice;
+		return owner.kind === "none" || ownerKey(owner) === ownerKey(current)
+			? []
+			: [{ keeper: owner, name: choiceName(choice) }];
+	});
+}
+
+/** The pick of whom (`keepersOf`) and `label` ("Keep", "Give away"), which gives it; `onDone` closes it either way. */
+export function GivePanel(props: {
 	readonly label: string;
 	readonly owners: readonly OwnerChoice[];
 	readonly current: ThingOwner;
 	readonly onGive: (owner: ThingKeeper) => void;
+	readonly onDone: () => void;
 	readonly action: Action;
 }) {
-	const [open, setOpen] = useState(false);
 	const [picked, setPicked] = useState<string | undefined>(undefined);
-	const keepers = props.owners.flatMap(({ owner, name }) => {
-		const keeper = keeperOf(owner);
-		return keeper === undefined || ownerKey(owner) === ownerKey(props.current)
-			? []
-			: [{ keeper, name: choiceName({ owner, name }) }];
-	});
-	if (keepers.length === 0) return null;
-	if (!open) {
-		return (
-			<Button data-give-open="" density="compact" hierarchy="tertiary" onClick={() => setOpen(true)}>
-				{props.label}
-			</Button>
-		);
-	}
-	const items = keepers.map(({ keeper, name }) => ({ value: ownerKey(keeper), label: name }));
-	const chosen = keepers.find(({ keeper }) => ownerKey(keeper) === picked) ?? keepers[0]!;
+	const keepers = keepersOf(props.owners, props.current);
+	const chosen = keepers.find(({ keeper }) => ownerKey(keeper) === picked) ?? keepers[0];
+	if (chosen === undefined) return null;
 	return (
 		<span className={styles.give} data-give="">
-			<Choice items={items} label="To" name="keeper" onChange={setPicked} value={ownerKey(chosen.keeper)} />
+			<Choice
+				items={keepers.map(({ keeper, name }) => ({ value: ownerKey(keeper), label: name }))}
+				label="To"
+				name="keeper"
+				onChange={setPicked}
+				value={ownerKey(chosen.keeper)}
+			/>
 			<Button
 				data-give-save=""
 				density="compact"
 				onClick={() => {
 					props.onGive(chosen.keeper);
-					setOpen(false);
+					props.onDone();
 				}}
 				pending={props.action.pending}
 			>
 				{props.label}
 			</Button>
-			<Button density="compact" hierarchy="tertiary" onClick={() => setOpen(false)}>
+			<Button density="compact" hierarchy="tertiary" onClick={props.onDone}>
 				Cancel
 			</Button>
 		</span>
@@ -70,9 +73,4 @@ export function choiceName(choice: OwnerChoice): string {
 /** An owner as a key: `pi`, `none`, `person:<id>`, `group:<id>`. */
 export function ownerKey(owner: ThingOwner): string {
 	return owner.kind === "person" || owner.kind === "group" ? `${owner.kind}:${owner.id}` : owner.kind;
-}
-
-/** `owner` as someone a thing may be given (`undefined` for nobody). */
-function keeperOf(owner: ThingOwner): ThingKeeper | undefined {
-	return owner.kind === "none" ? undefined : owner;
 }

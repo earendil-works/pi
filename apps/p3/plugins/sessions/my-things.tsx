@@ -1,23 +1,30 @@
 // The view `MyThingsView`: the things a person manages outside sessions (their own, their groups', the Pi's for the
-// owner; `MyThings`, one list per mounted view, found by the start of their name, the next page on request). Each
-// shows its name and whose it is, and offers "In all my sessions" (every session that follows its owner has it),
-// rename, give away, delete (after a second press) and where it is used. "New" makes a thing of a kind people make.
+// owner; `MyThings`, one list per mounted view, the next page on request). One row per thing: its kind's icon, its
+// name, its kind and whose it is, and the "In all my sessions" switch (every session that follows its owner has it);
+// rename, give away, where it is used and delete (after a second press) behind the row's "⋯". "New" makes a thing of a
+// kind people make (shown only when there is such a kind); the search by the start of a name shows once the list is
+// long, else behind a small search button.
 
-import { Button, Field, Input, SelectionControlAndLabel, Switch } from "@earendil-works/elanor-react";
+import { Button, Field, IconButton, Input, SelectionControlAndLabel, Switch } from "@earendil-works/elanor-react";
 import { type Context, Me, MyThings, type Reference, type Static, type TitledThing } from "@earendil-works/p3/v1";
-import { useHold, useVariant, useWatch } from "@earendil-works/p3/v1/web";
-import { useState } from "react";
+import { SearchIcon, useHold, useVariant, useWatch } from "@earendil-works/p3/v1/web";
+import { type ReactNode, useState } from "react";
 import { type Action, useAction } from "./action.ts";
-import { GiveThing, type OwnerChoice, ownerKey } from "./give-thing.tsx";
+import { GivePanel, keepersOf, type OwnerChoice, ownerKey } from "./give-thing.tsx";
 import { MakeThing } from "./make-thing.tsx";
 import { useViewId } from "./session-list.tsx";
 import styles from "./session-things.module.css";
-import { ThingName } from "./thing-name.tsx";
+import { RenameField } from "./thing-name.tsx";
+import { type RowAction, ThingRow } from "./thing-row.tsx";
 import { ThingUsesList } from "./thing-uses.tsx";
 
-/** The caller's things, with search, "New" and each one's actions. */
+/** How many things a list shows before its search shows by itself. */
+const SEARCH_FROM = 10;
+
+/** The caller's things, with "New", the search and each one's row. */
 export function MyThingsList() {
 	const [prefix, setPrefix] = useState("");
+	const [searching, setSearching] = useState(false);
 	const [making, setMaking] = useState(false);
 	const mine = useVariant(useHold(MyThings, { view: useViewId(), prefix: prefix.trim() }), "mine");
 	const me = useWatch(useVariant(useHold(Me, {}), "me")?.me);
@@ -26,14 +33,28 @@ export function MyThingsList() {
 	const owners = useWatch(mine?.owners) ?? [];
 	const action = useAction();
 	const myId = me?.kind === "person" ? me.id : undefined;
+	const long = (list?.rows.length ?? 0) > SEARCH_FROM || list?.moreAfter === true;
+	const search = long || searching || prefix !== "";
 	return (
 		<div className={styles.things} data-my-things="">
 			<div className={styles.give}>
-				<Field.Root className={styles.name}>
-					<Field.Label>Search</Field.Label>
-					<Input data-field="search" onValueChange={setPrefix} placeholder="Name starts with…" value={prefix} />
-				</Field.Root>
-				{making ? null : (
+				{search ? (
+					<Field.Root className={styles.name}>
+						<Field.Label>Search</Field.Label>
+						<Input
+							autoFocus={searching}
+							data-field="search"
+							onValueChange={setPrefix}
+							placeholder="Name starts with…"
+							value={prefix}
+						/>
+					</Field.Root>
+				) : (
+					<IconButton aria-label="Search" data-search-open="" onClick={() => setSearching(true)}>
+						<SearchIcon />
+					</IconButton>
+				)}
+				{making || kinds.length === 0 ? null : (
 					<Button data-make-open="" onClick={() => setMaking(true)}>
 						New
 					</Button>
@@ -76,7 +97,10 @@ export function MyThingsList() {
 /** The caller's `MyThings`, as a row calls it. */
 type Mine = Extract<Reference<typeof MyThings>, { readonly variant: "mine" }>;
 
-/** One thing: its name (renamed in place), whose, its kind, its switch and its actions, and where it is used. */
+/** What a row's action opened under it. */
+type Panel = "rename" | "give" | "uses" | "delete";
+
+/** One thing: its row with its switch and its menu, and the panel an action opened. */
 function MyThing(props: {
 	readonly thing: Static<typeof TitledThing>;
 	readonly me: string | undefined;
@@ -85,8 +109,7 @@ function MyThing(props: {
 	readonly action: Action;
 }) {
 	const { thing, mine, action } = props;
-	const [uses, setUses] = useState(false);
-	const [deleting, setDeleting] = useState(false);
+	const [panel, setPanel] = useState<Panel | undefined>(undefined);
 	const run = (call: (my: Mine, context: Context) => Promise<unknown>) => {
 		if (mine !== undefined) action.run((ctx) => call(mine, ctx));
 	};
@@ -97,81 +120,81 @@ function MyThing(props: {
 			: thing.owner.kind === "pi"
 				? "The Pi's"
 				: `${owner ?? "Someone"}'s`;
-	return (
-		<li className={styles.myThing} data-my-thing={thing.id}>
-			<div className={styles.grow}>
-				<ThingName
-					action={action}
-					name={thing.name}
-					rename={(name) => run((my, ctx) => my.rename({ thing: thing.id, name }, ctx))}
-					title={thing.title}
-				/>
-				<span className={styles.whose} data-whose="">
-					{whose}
-				</span>
-			</div>
-			<SelectionControlAndLabel
-				control={
-					<Switch.Root
-						checked={thing.everywhere}
-						data-everywhere={thing.id}
-						onCheckedChange={(everywhere) =>
-							run((my, ctx) => my.setEverywhere({ thing: thing.id, everywhere }, ctx))
-						}
-					>
-						<Switch.Thumb />
-					</Switch.Root>
-				}
-			>
-				In all my sessions
-			</SelectionControlAndLabel>
-			<div className={styles.rowActions}>
+	const close = () => setPanel(undefined);
+	const actions: RowAction[] = [
+		{ key: "rename", label: "Rename", run: () => setPanel("rename") },
+		...(keepersOf(props.owners, thing.owner).length > 0
+			? [{ key: "give", label: "Give away", run: () => setPanel("give") }]
+			: []),
+		{ key: "uses", label: "Used in", run: () => setPanel(panel === "uses" ? undefined : "uses") },
+		{ key: "delete", label: "Delete", run: () => setPanel("delete") },
+	];
+	const panels: Readonly<Record<Panel, () => ReactNode>> = {
+		rename: () => (
+			<RenameField
+				action={action}
+				name={thing.name}
+				onDone={close}
+				onRename={(name) => run((my, ctx) => my.rename({ thing: thing.id, name }, ctx))}
+				title={thing.title}
+			/>
+		),
+		give: () => (
+			<GivePanel
+				action={action}
+				current={thing.owner}
+				label="Give away"
+				onDone={close}
+				onGive={(to) => run((my, ctx) => my.keep({ thing: thing.id, owner: to }, ctx))}
+				owners={props.owners}
+			/>
+		),
+		uses: () => <ThingUsesList action={action} followers={followersOf(thing, props.me, owner)} thing={thing.id} />,
+		delete: () => (
+			<span className={styles.give}>
 				<Button
-					aria-expanded={uses}
-					data-uses-open=""
+					data-delete-confirm=""
 					density="compact"
-					hierarchy="tertiary"
-					onClick={() => setUses(!uses)}
+					onClick={() => run((my, ctx) => my.delete({ thing: thing.id }, ctx))}
+					semantic="negative"
 				>
-					Used in
+					Delete everywhere
 				</Button>
-				<GiveThing
-					action={action}
-					current={thing.owner}
-					label="Give away"
-					onGive={(to) => run((my, ctx) => my.keep({ thing: thing.id, owner: to }, ctx))}
-					owners={props.owners}
-				/>
-				{deleting ? (
-					<>
-						<Button
-							data-delete-confirm=""
-							density="compact"
-							onClick={() => run((my, ctx) => my.delete({ thing: thing.id }, ctx))}
-							semantic="negative"
+				<Button density="compact" hierarchy="tertiary" onClick={close}>
+					Keep it
+				</Button>
+			</span>
+		),
+	};
+	return (
+		<ThingRow
+			actions={actions}
+			beside={
+				<SelectionControlAndLabel
+					className={styles.everywhere}
+					control={
+						<Switch.Root
+							aria-label="In all my sessions"
+							checked={thing.everywhere}
+							data-everywhere={thing.id}
+							onCheckedChange={(everywhere) =>
+								run((my, ctx) => my.setEverywhere({ thing: thing.id, everywhere }, ctx))
+							}
 						>
-							Delete everywhere
-						</Button>
-						<Button density="compact" hierarchy="tertiary" onClick={() => setDeleting(false)}>
-							Keep it
-						</Button>
-					</>
-				) : (
-					<Button
-						data-delete-open=""
-						density="compact"
-						hierarchy="tertiary"
-						onClick={() => setDeleting(true)}
-						semantic="negative"
-					>
-						Delete
-					</Button>
-				)}
-			</div>
-			{uses ? (
-				<ThingUsesList action={action} followers={followersOf(thing, props.me, owner)} thing={thing.id} />
-			) : null}
-		</li>
+							<Switch.Thumb />
+						</Switch.Root>
+					}
+				>
+					<span className={styles.everywhereLabel}>In all my sessions</span>
+				</SelectionControlAndLabel>
+			}
+			data={{ "data-my-thing": thing.id }}
+			kind={thing.kind}
+			line={`${thing.title} · ${whose}`}
+			name={thing.name === "" ? thing.title : thing.name}
+			onOpen={undefined}
+			panel={panel === undefined ? null : panels[panel]()}
+		/>
 	);
 }
 

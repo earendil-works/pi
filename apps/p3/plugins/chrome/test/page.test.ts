@@ -62,6 +62,8 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 	/** The owner: their person's id and name. */
 	let ownerId: string;
 	let ownerName: string;
+	/** The board the owner made and kept in the first session (its thing's id). */
+	let boardId: string;
 	/** The owner's notebook in the session (its thing's id), once they brought it. */
 	let ownerNotes: string;
 	/** The session's faux login (its thing's id) and its script so far. */
@@ -104,6 +106,46 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await browser.wait(
 			`document.querySelector(${JSON.stringify(trigger)})?.textContent.includes(${JSON.stringify(label)})`,
 		);
+	}
+
+	/** Opens the "⋯" menu of the first element `row` matches and, with `item`, picks that action. */
+	async function menu(row: string, item?: string): Promise<void> {
+		await press(`${row} [data-row-menu]`);
+		await browser.wait(`document.querySelector("[data-row-popup]")`);
+		if (item !== undefined) await browser.click(`[data-row-popup] [data-menu-item="${item}"]`);
+		await browser.wait(item === undefined ? "true" : `document.querySelector("[data-row-popup]") === null`);
+	}
+
+	/** The actions in the "⋯" menu of `row` (none: `[]`, no menu), the menu closed again. */
+	async function menuItems(row: string): Promise<string[]> {
+		if (await browser.evaluate<boolean>(`document.querySelector('${row} [data-row-menu]') === null`)) return [];
+		await menu(row);
+		const items = await browser.evaluate<string[]>(
+			`[...document.querySelectorAll("[data-row-popup] [data-menu-item]")].map((e) => e.dataset.menuItem)`,
+		);
+		await browser.click(`${row} [data-row-menu]`);
+		await browser.wait(`document.querySelector("[data-row-popup]") === null`);
+		return items;
+	}
+
+	/** Renames the thing of `row` to `name` through its menu, and waits for its row to show it. */
+	async function rename(row: string, name: string): Promise<void> {
+		await menu(row, "rename");
+		const field = `${row} [data-field="rename"]`;
+		await browser.wait(`document.querySelector('${field}')`);
+		// Emptied as a person would (React sees the change), then typed.
+		await browser.evaluate(
+			`(() => { const input = document.querySelector('${field}'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, ""); input.dispatchEvent(new Event("input", { bubbles: true })); })()`,
+		);
+		await browser.type(field, name);
+		await browser.wait(`document.querySelector('${field}')?.value === ${JSON.stringify(name)}`);
+		await press(`${row} [data-rename-save]`);
+		await browser.wait(`document.querySelector('${row} [data-thing-name]')?.textContent === ${JSON.stringify(name)}`);
+	}
+
+	/** The ids of the session sheet's things of `kind`. */
+	function thingIds(kind: string): Promise<string[]> {
+		return browser.evaluate(`[...document.querySelectorAll('[data-thing="${kind}"]')].map((e) => e.dataset.thingId)`);
 	}
 
 	/** Opens My things from the person menu, settled. */
@@ -211,22 +253,26 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		// The session follows the owner who made it: it has the Pi's coding tools from that, not removable here.
 		await browser.click("[data-things-open]");
 		await browser.settled("[data-things-dialog]");
-		await browser.wait(`document.querySelector('[data-following] [data-follows]')?.textContent === "You"`);
+		await browser.wait(
+			`document.querySelector('[data-following] [data-follows]')?.textContent === "Has your things"`,
+		);
 		const tools = '[data-thing="tools.coding"][data-by="followed"]';
-		await browser.wait(`document.querySelector('${tools} [data-whose]')?.textContent.includes("From You")`);
-		assert.equal(await browser.evaluate(`document.querySelector('${tools} [data-remove-thing]') === null`), true);
-		// "New": a canvas, this session's content.
-		await pick('[data-add-thing] [data-field="kind"]', "canvas.board", "Canvas");
-		await press('[data-add-thing] [data-field="name"]');
-		await browser.type('[data-add-thing] [data-field="name"]', "Board");
-		await press("[data-add-thing-save]");
-		const board = `[data-thing="canvas.board"]:has([data-thing-name])`;
-		const named = `[...document.querySelectorAll('${board}')].find((e) => e.querySelector("[data-thing-name]").textContent === "Board")`;
-		await browser.wait(`${named}?.querySelector("[data-whose]")?.textContent === "This session's"`);
-		const boardId = await browser.evaluate<string>(`${named}.dataset.thingId`);
+		await browser.wait(`document.querySelector('${tools} [data-whose]')?.textContent === "From you"`);
+		assert.deepEqual(await menuItems(tools), ["rename", "options"]);
+		// "+": a canvas, this session's content, made at once and named after its kind; then renamed.
+		const before = await thingIds("canvas.board");
+		await press("[data-add-open]");
+		await browser.click('[data-add-popup] [data-new-kind="canvas.board"]');
+		await browser.wait(
+			`[...document.querySelectorAll('[data-thing="canvas.board"]')].some((e) => !${JSON.stringify(before)}.includes(e.dataset.thingId))`,
+		);
+		boardId = (await thingIds("canvas.board")).find((id) => !before.includes(id))!;
 		const row = `[data-thing-id="${boardId}"]`;
+		await browser.wait(`document.querySelector('${row} [data-thing-name]')?.textContent === "Canvas"`);
+		await browser.wait(`document.querySelector('${row} [data-whose]')?.textContent === "This session's"`);
+		await rename(row, "Board");
 		// "Keep": the owner gives it to themselves; it stays in the session.
-		await press(`${row} [data-give-open]`);
+		await menu(row, "keep");
 		// Whatever the server calls the owner among whom they may give it (their name, "You"): picked by value.
 		await press(`${row} [data-field="keeper"]`);
 		await browser.click(`[data-choice="person:${ownerId}"]`);
@@ -237,6 +283,12 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await browser.size(PHONE);
 		await browser.settled("[data-things-dialog]");
 		await shots("26-sheet-phone");
+		// Its options, behind its menu, and closed again from it.
+		await menu(row, "options");
+		await browser.wait(`document.querySelector('${row} [data-thing-options]')`);
+		await shots("26-options-phone");
+		await menu(row, "options");
+		await browser.wait(`document.querySelector('${row} [data-thing-options]') === null`);
 		await browser.size(DESKTOP);
 		await press('[data-things-dialog] button[aria-label="Close"]');
 		await browser.wait(`document.querySelector("[data-things-dialog]") === null`);
@@ -260,7 +312,9 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await press("[data-follow-open]");
 		await pick('[data-following] [data-field="follows"]', "nobody", "Nobody");
 		await press("[data-follow-save]");
-		await browser.wait(`document.querySelector('[data-following="nobody"]')`);
+		await browser.wait(
+			`document.querySelector('[data-following="nobody"] [data-follows]')?.textContent === "Has nobody's things"`,
+		);
 		await browser.wait(`document.querySelector('[data-thing="tools.coding"]:not([data-by="followed"])')`);
 		await browser.wait(`document.querySelector('[data-thing="faux.login"]:not([data-by="followed"])')`);
 		await browser.settled("[data-things-dialog]");
@@ -364,8 +418,8 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await browser.screenshot(join(SHOTS, "10-invite-desktop.png"));
 		const link = await browser.evaluate<string>(`document.querySelector("[data-invite-link]").value`);
 		await browser.click('[data-invite] button[aria-label="Close"]');
-		// The owner adds Ada to the session in its view.
-		await browser.click("[data-things-open]");
+		// The owner adds Ada to the session in its members ("Share").
+		await browser.click("[data-members-open]");
 		await browser.wait(
 			`document.querySelector('[data-add-member] [data-field="person"]')?.textContent.includes("Ada")`,
 		);
@@ -395,25 +449,30 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		const adasThings = await writerOf(adas, session);
 		const adasNotes = await adasThings.create({ kind: "notes.notes", name: "Ada's notes" }, context);
 		await adasThings.keep({ thing: adasNotes, owner: { kind: "person", id: ada } }, context);
+		// She reads herself as "You" among the session's members.
+		await browser.click("[data-members-open]");
+		await browser.settled("[data-members-dialog]");
+		await browser.wait(`document.querySelector('[data-member="${ada}"]')?.textContent.includes("You")`);
+		assert.equal(await browser.evaluate(`document.querySelector("[data-add-member]") === null`), true);
+		await press('[data-members-dialog] button[aria-label="Close"]');
+		await browser.wait(`document.querySelector("[data-members-dialog]") === null`);
 		await browser.click("[data-things-open]");
 		await browser.settled("[data-things-dialog]");
-		// She reads the kinds by their titles and herself as "You"; the coding tools have no pane to open.
+		// She reads the kinds by their titles; the coding tools have no pane to open, and nothing she may do to them.
 		await browser.wait(`document.querySelector('[data-thing="tools.coding"]')?.textContent.includes("Coding tools")`);
-		await browser.wait(`document.querySelector('[data-member="${ada}"]')?.textContent.includes("You")`);
 		assert.equal(
-			await browser.evaluate(`document.querySelector('[data-thing="tools.coding"] [data-open-thing]') === null`),
+			await browser.evaluate(`document.querySelector('[data-thing="tools.coding"] [data-row-open]') === null`),
 			true,
 		);
+		assert.deepEqual(await menuItems('[data-thing="tools.coding"]'), []);
 		const hers = `[data-thing="notes.notes"][data-by="person:${ada}"]`;
 		await browser.wait(`document.querySelector('${hers}')?.textContent.includes("Yours")`);
 		await browser.screenshot(join(SHOTS, "13-bring-person-desktop.png"));
 		// She opens it as a pane beside the transcript and writes in it: she writes in the session and the default
 		// options say edit.
-		const notebook = await browser.evaluate<string>(
-			`document.querySelector('${hers} [data-open-thing]').dataset.openThing`,
-		);
+		const notebook = await browser.evaluate<string>(`document.querySelector('${hers}').dataset.thingId`);
 		const pane = `[data-pane-body][data-pane="${notebook}"]`;
-		await press(`${hers} [data-open-thing]`);
+		await press(`${hers} [data-row-open]`);
 		await browser.wait(`document.querySelector("[data-things-dialog]") === null`);
 		await browser.wait(`location.pathname === "/coding/${session}/${notebook}"`);
 		await browser.wait(`document.querySelector('${pane} [data-notes="editor"]')`);
@@ -434,7 +493,7 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await browser.settled("[data-things-dialog]");
 		await browser.wait(`document.querySelector('${hers}')?.textContent.includes("Ada's")`);
 		// The owner sets the notebook's options: everyone reads only, the agent writes.
-		await press(`${hers} [data-options-open]`);
+		await menu(hers, "options");
 		const panel = `${hers} [data-thing-options]`;
 		await browser.wait(
 			`document.querySelector('${panel} [data-option="edit"]')?.getAttribute("aria-checked") === "true"`,
@@ -451,7 +510,7 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await browser.wait(`document.querySelector('${panel} [data-options-source="own"]')`);
 		await shots("notes-02-options-phone");
 		// The owner, without options of their own, reads it only now too: in its pane, full screen on the phone.
-		await press(`${hers} [data-open-thing]`);
+		await press(`${hers} [data-row-open]`);
 		await browser.wait(`document.querySelector('${pane} [data-notes="reader"]')`);
 		await browser.wait(`document.querySelector('${pane} [data-note]')?.textContent.includes("Ada")`);
 		// The agent writes a note through its scripted answer; it appears in the owner's open view.
@@ -489,9 +548,7 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await browser.settled("[data-things-dialog]");
 		const owners = `[data-thing="notes.notes"][data-by="person:${ownerId}"]`;
 		await browser.wait(`document.querySelector('${owners}')?.textContent.includes("Yours")`);
-		ownerNotes = await browser.evaluate<string>(
-			`document.querySelector('${owners} [data-open-thing]').dataset.openThing`,
-		);
+		ownerNotes = await browser.evaluate<string>(`document.querySelector('${owners}').dataset.thingId`);
 		await browser.screenshot(join(SHOTS, "14-bring-owner-phone.png"));
 		await press('[data-things-dialog] button[aria-label="Close"]');
 		// Ada's pane of her notebook is read only now, with the agent's note; she sees the owner's notes as theirs,
@@ -507,8 +564,8 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await browser.click("[data-things-open]");
 		await browser.settled("[data-things-dialog]");
 		await browser.wait(`document.querySelector('${owners}')?.textContent.includes("${ownerName}'s")`);
-		assert.equal(await browser.evaluate(`document.querySelector('${owners} [data-remove-thing]') === null`), true);
-		await press(`${hers} [data-remove-thing]`);
+		assert.deepEqual(await menuItems(owners), []);
+		await menu(hers, "remove");
 		await browser.wait(`document.querySelector('${hers}') === null`);
 		await browser.screenshot(join(SHOTS, "15-withdrawn-desktop.png"));
 		await press('[data-things-dialog] button[aria-label="Close"]');
@@ -550,14 +607,14 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		// Opening the notebook from the dialog splits a group off to the right of the transcript's.
 		await browser.click("[data-things-open]");
 		await browser.settled("[data-things-dialog]");
-		await press(`[data-open-thing="${ownerNotes}"]`);
+		await press(`[data-thing-id="${ownerNotes}"] [data-row-open]`);
 		await browser.wait(`location.pathname === "/coding/${session}/${ownerNotes}"`);
 		await browser.wait(`document.querySelectorAll("[data-pane-group]").length === 2`);
 		await browser.wait(`document.querySelector('[data-pane-body][data-pane="${ownerNotes}"] [data-notes]')`);
 		// The canvas joins the notebook's group, active there.
 		await browser.click("[data-things-open]");
 		await browser.settled("[data-things-dialog]");
-		await press(`[data-open-thing="${canvas}"]`);
+		await press(`[data-thing-id="${canvas}"] [data-row-open]`);
 		await browser.wait(`document.querySelector('[data-pane-body][data-pane="${canvas}"]')`);
 		// The dialog's backdrop fades out over the panes: a drag waits until it is gone.
 		await browser.wait(
@@ -644,25 +701,26 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await browser.wait(`document.querySelectorAll("[data-pane-group]").length === 2`);
 	});
 
-	it("names things: two canvases added with names show as two tabs, and a tab follows a rename", async () => {
+	it("names things: two canvases made and renamed show as two tabs, and a tab follows a rename", async () => {
 		await browser.size(DESKTOP);
 		await browser.open(`${origin}/coding/${session}`);
-		/** Adds a canvas named `name` in the dialog; answers its id. */
+		/** Makes a canvas with the sheet's "+" (named "Canvas") and renames it `name`; answers its id. */
 		const add = async (name: string): Promise<string> => {
 			await browser.click("[data-things-open]");
 			await browser.settled("[data-things-dialog]");
-			await pick('[data-add-thing] [data-field="kind"]', "canvas.board", "Canvas");
-			await browser.wait(`document.querySelector('[data-add-thing] [data-field="name"]')?.placeholder === "Canvas"`);
-			await press('[data-add-thing] [data-field="name"]');
-			await browser.type('[data-add-thing] [data-field="name"]', name);
-			await press("[data-add-thing-save]");
-			const row = `[...document.querySelectorAll('[data-thing="canvas.board"]')].find((e) => e.querySelector("[data-thing-name]")?.textContent === ${JSON.stringify(name)})`;
-			await browser.wait(`${row}?.querySelector("[data-thing-kind]")?.textContent === "Canvas"`);
-			return browser.evaluate<string>(`${row}.querySelector("[data-open-thing]").dataset.openThing`);
+			const before = await thingIds("canvas.board");
+			await press("[data-add-open]");
+			await browser.click('[data-add-popup] [data-new-kind="canvas.board"]');
+			await browser.wait(
+				`[...document.querySelectorAll('[data-thing="canvas.board"]')].some((e) => !${JSON.stringify(before)}.includes(e.dataset.thingId))`,
+			);
+			const made = (await thingIds("canvas.board")).find((id) => !before.includes(id))!;
+			await rename(`[data-thing-id="${made}"]`, name);
+			return made;
 		};
 		/** Opens thing `thing` from the dialog as a pane. */
 		const open = async (thing: string): Promise<void> => {
-			await press(`[data-open-thing="${thing}"]`);
+			await press(`[data-thing-id="${thing}"] [data-row-open]`);
 			await browser.wait(
 				`document.querySelector("[data-things-dialog]") === null && document.querySelector("[data-ending-style]") === null`,
 			);
@@ -676,8 +734,8 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		// The owner renames the plan in place; its tab follows.
 		await browser.click("[data-things-open]");
 		await browser.settled("[data-things-dialog]");
-		const planRow = `[data-thing="canvas.board"]:has([data-open-thing="${plan}"])`;
-		await press(`${planRow} [data-rename-open]`);
+		const planRow = `[data-thing-id="${plan}"]`;
+		await menu(planRow, "rename");
 		await browser.wait(`document.querySelector('${planRow} [data-field="rename"]')?.value === "Plan"`);
 		// Emptied as a person would (`type` clicks into the field first, which would undo a selection).
 		await browser.evaluate(
@@ -722,7 +780,7 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await shots("29-make-thing-desktop");
 		await press("[data-faux-sign-in]");
 		const row = `[...document.querySelectorAll("[data-my-thing]")].find((e) => e.querySelector("[data-thing-name]")?.textContent === "Inbox")`;
-		await browser.wait(`${row}?.querySelector("[data-thing-kind]")?.textContent === "Faux inbox"`);
+		await browser.wait(`${row}?.querySelector("[data-whose]")?.textContent === "Faux inbox · Yours"`);
 		const inbox = await browser.evaluate<string>(`${row}.dataset.myThing`);
 		const mine = `[data-my-thing="${inbox}"]`;
 		// The sign-in its creation view handed over reached the kind's create hook.
@@ -736,7 +794,7 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await press(`${mine} [data-everywhere]`);
 		await everywhere(true);
 		// "Used in": no session links it, yet every session that follows its owner has it.
-		await press(`${mine} [data-uses-open]`);
+		await menu(mine, "uses");
 		await browser.wait(
 			`document.querySelector('${mine} [data-followers]')?.textContent === "It is in every session that follows you."`,
 		);
@@ -752,21 +810,40 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await browser.click("[data-things-open]");
 		await browser.settled("[data-things-dialog]");
 		await browser.wait(
-			`document.querySelector('[data-thing-id="${inbox}"][data-by="followed"] [data-whose]')?.textContent.includes("From You")`,
+			`document.querySelector('[data-thing-id="${inbox}"][data-by="followed"] [data-whose]')?.textContent === "From you"`,
 		);
 		await shots("31-followed-inbox-desktop");
+		// "One of mine…": the board kept in the first session, found by the start of its name and linked here.
+		await press("[data-add-open]");
+		await browser.click("[data-add-popup] [data-add-existing-open]");
+		await browser.settled("[data-add-existing]");
+		await press('[data-add-existing] [data-field="search"]');
+		await browser.type('[data-add-existing] [data-field="search"]', "Bo");
+		await browser.wait(`document.querySelector('[data-existing="${boardId}"]')`);
+		await shots("32-one-of-mine-desktop");
+		await browser.click(`[data-existing="${boardId}"] [data-row-open]`);
+		await browser.wait(`document.querySelector("[data-add-existing]") === null`);
+		await browser.wait(
+			`document.querySelector('[data-thing-id="${boardId}"] [data-whose]')?.textContent === "Yours"`,
+		);
 		await press('[data-things-dialog] button[aria-label="Close"]');
 		await browser.wait(`document.querySelector("[data-things-dialog]") === null`);
+		// It appeared in the session while the page was open: it opened by itself, beside the transcript, which keeps
+		// the focus.
+		await browser.wait(`document.querySelector('[data-pane-tab="${boardId}"]')`);
+		assert.equal(await browser.evaluate("location.pathname"), `/coding/${mail}`);
+		await browser.settled("[data-pane-layout]");
+		await shots("33-opened-by-itself-desktop");
 		// Given away to the Pi.
 		await openMyThings();
-		await press(`${mine} [data-give-open]`);
+		await menu(mine, "give");
 		await press(`${mine} [data-field="keeper"]`);
 		await browser.wait(`document.querySelector('[data-choice="pi"]')?.textContent === "The Pi"`);
 		await browser.click('[data-choice="pi"]');
 		await press(`${mine} [data-give-save]`);
-		await browser.wait(`document.querySelector('${mine} [data-whose]')?.textContent === "The Pi's"`);
+		await browser.wait(`document.querySelector('${mine} [data-whose]')?.textContent === "Faux inbox · The Pi's"`);
 		// Deleted, after a second press: gone from My things, from the session, and its sign-in with it.
-		await press(`${mine} [data-delete-open]`);
+		await menu(mine, "delete");
 		await press(`${mine} [data-delete-confirm]`);
 		await browser.wait(`document.querySelector('${mine}') === null`);
 		assert.equal(await signInOf(inbox), null);

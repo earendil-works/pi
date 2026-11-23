@@ -79,7 +79,7 @@ describe("the canvas in two browsers", { skip: BROWSER_SKIP }, () => {
 		await browser.open(`${origin}/coding/${session}`);
 		await browser.click("[data-things-open]");
 		await browser.settled("[data-things-dialog]");
-		await browser.click('[data-thing="canvas.board"] [data-open-thing]');
+		await browser.click('[data-thing="canvas.board"] [data-row-open]');
 		// The dialog's backdrop fades out over the pane: drawing waits until it is gone.
 		await browser.wait(
 			`document.querySelector("[data-things-dialog]") === null && document.querySelector("[data-ending-style]") === null`,
@@ -162,7 +162,9 @@ describe("the canvas in two browsers", { skip: BROWSER_SKIP }, () => {
 	it("leaves Ada the board read only once the owner turns her drawing off in the options form", async () => {
 		await mine.click("[data-things-open]");
 		await mine.settled("[data-things-dialog]");
-		await mine.click("[data-options-open]");
+		// The board's options, behind its row's "⋯".
+		await mine.click('[data-thing="canvas.board"] [data-row-menu]');
+		await mine.click('[data-row-popup] [data-menu-item="options"]');
 		await mine.wait(`document.querySelector("[data-canvas-options]")`);
 		// The form for Ada: her own options, "May draw" off.
 		await mine.click('[data-thing-options] [data-field="whose"]');

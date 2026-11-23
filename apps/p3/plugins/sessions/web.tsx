@@ -1,10 +1,18 @@
 // The sessions plugin's web facet: it serves `ThingViews` (each kind's view of a thing, the first by plugin name wins a
 // kind; a second is reported) and offers its views: the session list, the new session form, the session sheet (what a
-// session holds) and My things.
+// session holds), its members ("Share") and My things.
 
 import { defineFacet, keyedEntries } from "@earendil-works/p3/v1";
 import { Views, viewOf } from "@earendil-works/p3/v1/web";
-import { MyThingsView, NewSessionView, SessionListView, SessionThingsView, ThingViews } from "./contract.web.tsx";
+import {
+	MyThingsView,
+	NewSessionView,
+	SessionListView,
+	SessionMembersView,
+	SessionThingsView,
+	ThingViews,
+} from "./contract.web.tsx";
+import { SessionMembers } from "./members.tsx";
 import { MyThingsList } from "./my-things.tsx";
 import { NewSession } from "./new-session.tsx";
 import { SessionList } from "./session-list.tsx";
@@ -19,5 +27,6 @@ export default defineFacet((host, self) => {
 		viewOf(NewSessionView, NewSession),
 		viewOf(SessionThingsView, SessionThings),
 		viewOf(MyThingsView, MyThingsList),
+		viewOf(SessionMembersView, SessionMembers),
 	]);
 });

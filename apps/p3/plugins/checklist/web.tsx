@@ -4,6 +4,7 @@
 import { Button, Checkbox, Input, SelectionControlAndLabel, Switch } from "@earendil-works/elanor-react";
 import { BACKGROUND_CONTEXT, type Context, defineFacet, type OptionsOf } from "@earendil-works/p3/v1";
 import {
+	CheckIcon,
 	type ThingOptionsProps,
 	type ThingViewProps,
 	ThingViews,
@@ -17,7 +18,12 @@ import { Checklist, ChecklistKind } from "./contract.ts";
 import styles from "./web.module.css";
 
 export default defineFacet((_host, self) =>
-	self.contribute(ThingViews, { kind: ChecklistKind.name, View: ChecklistView, Options: ChecklistOptions }),
+	self.contribute(ThingViews, {
+		kind: ChecklistKind.name,
+		Icon: CheckIcon,
+		View: ChecklistView,
+		Options: ChecklistOptions,
+	}),
 );
 
 /** Checklist `thing` of session `session`, as the viewer's admission allows: a checker ticks and adds. */

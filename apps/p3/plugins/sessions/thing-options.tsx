@@ -1,7 +1,7 @@
-// The "Options" control of one thing in `SessionThingsView`, for whoever may set its options (the owner: any thing;
-// a person: what they brought): a pick of whose options (everyone's, the agent's, a member's) and the thing's kind's
-// own form (`ThingViews`' `Options`) over the options that party has now. A party without options of its own (the
-// agent, a member) shows the default and saves its own; one with its own may go back to the default.
+// The options panel of one thing in `SessionThingsView` (a row's "Options", for whoever may set its options): a pick
+// of whose options (everyone's, the agent's, a member's) and the thing's kind's own form (`ThingViews`' `Options`)
+// over the options that party has now. A party without options of its own (the agent, a member) shows the default
+// and saves its own; one with its own may go back to the default.
 
 import { Button } from "@earendil-works/elanor-react";
 import type { JsonValue, Member, OptionsFor } from "@earendil-works/p3/v1";
@@ -21,10 +21,10 @@ export type ThingOptionsOf = {
 };
 
 /**
- * The control: a button that opens the pick and the kind's form; `onSave` sets options for a party (`null`: back to
- * the default). Nothing for a kind whose plugin offers no form.
+ * The panel: the pick and the kind's form; `onSave` sets options for a party (`null`: back to the default). Nothing
+ * for a kind whose plugin offers no form.
  */
-export function ThingOptions(props: {
+export function ThingOptionsPanel(props: {
 	readonly session: string;
 	readonly thing: ThingOptionsOf;
 	readonly members: readonly (Member & { readonly name: string })[];
@@ -32,7 +32,6 @@ export function ThingOptions(props: {
 	readonly action: Action;
 }) {
 	const Form = useRegistry(ThingViews)?.get(props.thing.kind)?.value.Options;
-	const [open, setOpen] = useState(false);
 	const [whom, setWhom] = useState("everyone");
 	if (Form === undefined) return null;
 	const parties = [
@@ -47,45 +46,32 @@ export function ThingOptions(props: {
 	// Options came from the server as the kind reads them (JSON), or `null`.
 	const current = (picked === "everyone" ? props.thing.options : (own?.options ?? props.thing.options)) as JsonValue;
 	return (
-		<div className={styles.options}>
-			<Button
-				aria-expanded={open}
-				data-options-open=""
-				density="compact"
-				hierarchy="tertiary"
-				onClick={() => setOpen(!open)}
-			>
-				Options
-			</Button>
-			{open ? (
-				<div className={styles.optionsPanel} data-thing-options={props.thing.thing}>
-					<Choice items={parties} label="Whose" name="whose" onChange={setWhom} value={picked} />
-					{picked === "everyone" ? null : (
-						<p className={styles.note} data-options-source={own === undefined ? "default" : "own"}>
-							{own === undefined ? "Uses the default." : "Their own options."}
-							{own === undefined ? null : (
-								<Button
-									data-options-reset=""
-									density="compact"
-									hierarchy="tertiary"
-									onClick={() => props.onSave(forWhom, null)}
-									pending={props.action.pending}
-								>
-									Use the default
-								</Button>
-							)}
-						</p>
+		<div className={styles.optionsPanel} data-thing-options={props.thing.thing}>
+			<Choice items={parties} label="Whose" name="whose" onChange={setWhom} value={picked} />
+			{picked === "everyone" ? null : (
+				<p className={styles.note} data-options-source={own === undefined ? "default" : "own"}>
+					{own === undefined ? "Uses the default." : "Their own options."}
+					{own === undefined ? null : (
+						<Button
+							data-options-reset=""
+							density="compact"
+							hierarchy="tertiary"
+							onClick={() => props.onSave(forWhom, null)}
+							pending={props.action.pending}
+						>
+							Use the default
+						</Button>
 					)}
-					<Form
-						for={forWhom}
-						key={`${picked} ${JSON.stringify(current)}`}
-						onSave={(target, options) => props.onSave(target, options)}
-						options={current}
-						session={props.session}
-						thing={props.thing.thing}
-					/>
-				</div>
-			) : null}
+				</p>
+			)}
+			<Form
+				for={forWhom}
+				key={`${picked} ${JSON.stringify(current)}`}
+				onSave={(target, options) => props.onSave(target, options)}
+				options={current}
+				session={props.session}
+				thing={props.thing.thing}
+			/>
 		</div>
 	);
 }
