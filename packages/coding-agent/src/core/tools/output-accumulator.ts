@@ -52,7 +52,6 @@ export class OutputAccumulator {
 	private finished = false;
 
 	private tempFile: OutputFileStream | undefined;
-	private tempFileResult: OutputFileResult | undefined;
 
 	constructor(options: OutputAccumulatorOptions = {}) {
 		this.maxLines = options.maxLines ?? DEFAULT_MAX_LINES;
@@ -114,15 +113,12 @@ export class OutputAccumulator {
 			this.ensureTempFile();
 		}
 
-		return { content: truncation.content, truncation, fullOutputFile: this.getTempFileState() };
+		return { content: truncation.content, truncation, fullOutputFile: this.tempFile?.result };
 	}
 
 	/** Flush and close the temp file. Never rejects: a failed file shows up as `failed` in later snapshots. */
 	async closeTempFile(): Promise<void> {
-		if (!this.tempFile || this.tempFileResult) {
-			return;
-		}
-		this.tempFileResult = await this.tempFile.close();
+		await this.tempFile?.close();
 	}
 
 	/**
@@ -132,7 +128,7 @@ export class OutputAccumulator {
 	 * the retained tail is left, behind the same marker.
 	 */
 	async readFullOutput(maxBytes: number): Promise<FullOutput> {
-		const fullOutputFile = this.getTempFileState();
+		const fullOutputFile = this.tempFile?.result;
 		if (!fullOutputFile) {
 			return { content: new TextDecoder().decode(Buffer.concat(this.rawChunks)), truncated: false };
 		}
@@ -244,13 +240,5 @@ export class OutputAccumulator {
 		}
 		this.rawChunks = [];
 		return tempFile;
-	}
-
-	private getTempFileState(): OutputFileResult | undefined {
-		if (this.tempFileResult || !this.tempFile) {
-			return this.tempFileResult;
-		}
-		const error = this.tempFile.error;
-		return error === undefined ? { kind: "saved", path: this.tempFile.path } : { kind: "failed", error };
 	}
 }

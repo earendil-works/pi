@@ -45,7 +45,7 @@ vi.mock("node:fs", async (importOriginal) => {
 
 import { executeBashWithOperations } from "../src/core/bash-executor.ts";
 import { type BashOperations, type BashToolOutput, createBashTool } from "../src/core/tools/bash.ts";
-import { createOutputFileStream } from "../src/utils/output-files.ts";
+import { createOutputFileStream, type OutputFileStream } from "../src/utils/output-files.ts";
 
 /** 3000 numbered lines: over the 2000-line limit, so the full output goes to a temp file. */
 const operations: BashOperations = {
@@ -73,41 +73,49 @@ function useMissingTempDir(): void {
 	for (const name of ["TMPDIR", "TEMP", "TMP"]) vi.stubEnv(name, missing);
 }
 
+/** Open an output file and return it with its path, which a `failed` result no longer carries. */
+function openOutputFile(): { file: OutputFileStream; path: string } {
+	const file = createOutputFileStream("pi-test", ".log");
+	if (file.result.kind !== "saved") throw new Error("a new output file starts as saved");
+	return { file, path: file.result.path };
+}
+
 describe("createOutputFileStream", () => {
 	it("reports an open failure from close() instead of crashing", async () => {
 		useMissingTempDir();
-		const file = createOutputFileStream("pi-test", ".log");
+		const { file, path } = openOutputFile();
 		file.write("data");
 		const result = await file.close();
 		expect(result).toEqual({ kind: "failed", error: expect.stringContaining("ENOENT") });
-		expect(existsSync(file.path)).toBe(false);
+		expect(existsSync(path)).toBe(false);
 	});
 
 	it("drops a partially written file and does not hang on close", async () => {
 		fsMocks.failure = "write";
-		const file = createOutputFileStream("pi-test", ".log");
+		const { file, path } = openOutputFile();
 		file.write("data");
-		await vi.waitFor(() => expect(file.error).toContain("ENOSPC"));
+		await vi.waitFor(() => expect(file.result).toEqual({ kind: "failed", error: expect.stringContaining("ENOSPC") }));
 		file.write("more");
 		expect(await file.close()).toEqual({ kind: "failed", error: expect.stringContaining("ENOSPC") });
-		expect(existsSync(file.path)).toBe(false);
+		expect(existsSync(path)).toBe(false);
 	});
 
 	it("leaves a file it did not create in place", async () => {
 		fsMocks.failure = "exists";
-		const file = createOutputFileStream("pi-test", ".log");
+		const { file, path } = openOutputFile();
 		file.write("data");
 		expect(await file.close()).toEqual({ kind: "failed", error: expect.stringContaining("EEXIST") });
-		expect(existsSync(file.path)).toBe(true);
-		rmSync(file.path);
+		expect(existsSync(path)).toBe(true);
+		rmSync(path);
 	});
 
 	it("saves the full output when writing succeeds", async () => {
-		const file = createOutputFileStream("pi-test", ".log");
+		const { file, path } = openOutputFile();
 		file.write("data");
-		expect(await file.close()).toEqual({ kind: "saved", path: file.path });
-		expect(existsSync(file.path)).toBe(true);
-		rmSync(file.path);
+		expect(await file.close()).toEqual({ kind: "saved", path });
+		expect(file.result).toEqual({ kind: "saved", path });
+		expect(existsSync(path)).toBe(true);
+		rmSync(path);
 	});
 });
 

@@ -36,10 +36,8 @@ export type OutputFileResult = { kind: "saved"; path: string } | { kind: "failed
  * process. The first failure drops the file instead, and `close()` reports why.
  */
 export interface OutputFileStream {
-	/** Path of the file being written. Only complete once `close()` returns `saved`. */
-	readonly path: string;
-	/** Why writing failed, once it has. */
-	readonly error: string | undefined;
+	/** `saved` while writing has not failed; the file is complete only once `close()` resolves. */
+	readonly result: OutputFileResult;
 	write(data: string | Uint8Array): void;
 	/** Flush and close the file. Never rejects. */
 	close(): Promise<OutputFileResult>;
@@ -49,7 +47,7 @@ export interface OutputFileStream {
 export function createOutputFileStream(prefix: string, extension: string): OutputFileStream {
 	const path = createOutputFilePath(prefix, extension);
 	const stream: WriteStream = createWriteStream(path, { mode: OUTPUT_FILE_MODE, flags: "wx" });
-	let error: string | undefined;
+	let result: OutputFileResult = { kind: "saved", path };
 	let opened = false;
 	let removed: Promise<void> | undefined;
 	stream.once("open", () => {
@@ -58,7 +56,7 @@ export function createOutputFileStream(prefix: string, extension: string): Outpu
 	const finished = new Promise<void>((resolve) => {
 		stream.once("finish", resolve);
 		stream.on("error", (cause) => {
-			error ??= cause.message;
+			if (result.kind === "saved") result = { kind: "failed", error: cause.message };
 			// A partial file would pass for the full output. A failed open (`wx` found a file) leaves
 			// the path alone: whatever is there is not ours.
 			if (opened) removed ??= rm(path, { force: true }).catch(() => {});
@@ -66,19 +64,18 @@ export function createOutputFileStream(prefix: string, extension: string): Outpu
 		});
 	});
 	return {
-		path,
-		get error() {
-			return error;
+		get result() {
+			return result;
 		},
 		write(data) {
-			if (error === undefined && !stream.destroyed) stream.write(data);
+			if (result.kind === "saved" && !stream.destroyed) stream.write(data);
 		},
 		async close() {
 			// A stream destroyed by an error never emits `finish` after `end()`; `finished` already settled.
 			if (!stream.destroyed) stream.end();
 			await finished;
 			await removed;
-			return error === undefined ? { kind: "saved", path } : { kind: "failed", error };
+			return result;
 		},
 	};
 }
