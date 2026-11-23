@@ -112,6 +112,8 @@ first and win until the design is updated.
   their deadline, then its VMs and worker threads end (`closeWhenIdle` in `pi-codemode`, or a counter in the plugin).
   New scripts start on the new sandbox through the registry entry. `RunningCalls`, the removal message and
   `abortTask` on reload go away; after a worker stop Durable replays as today.
+  *Note (code mode on djs):* pi-codemode no longer has worker threads or a sandbox to drain: scripts run on the
+  calling thread, and Durable resumes them from saved runs (djs dumps) instead of replaying a journal.
 - **Invariants across owners (#5):** the owner of the dependent data enforces the rule by reconciling from the other
   owner's state with an idempotent routine; no cross-owner transactions, no "notify the other owner" calls that can
   be lost. Example: ports' forward store watches the catalog and closes forwards of archived sessions (also after a

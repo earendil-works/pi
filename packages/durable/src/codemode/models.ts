@@ -2,7 +2,7 @@
  * `models.*` for code mode scripts, copied from the coding agent's code mode: the model catalog, and classifier and
  * image model calls.
  *
- * The catalog functions are host globals, journaled like any global. `models.classify()` and `models.generateImages()`
+ * The catalog functions are host globals. `models.classify()` and `models.generateImages()`
  * are paid effects, so each runs as an internal tool (`callers: ["tools"]`, a reserved name, hidden from scripts'
  * tool listings): a nested durable call with its own task, live row, abort, usage accounting, and replay policy. The
  * code mode tool turns a script's call of the global into a call of that tool.

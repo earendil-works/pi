@@ -5037,8 +5037,8 @@ memory only: it never parks, and a restart ends it as interrupted.
 
 A rerun (`execute()` after recovery or a wake) returns a stored `result`
 without a VM. Otherwise it ends the call with a stored error result, admitting
-no new nested call, when the module version differs (a call started by the
-QuickJS journal format of version 2 asks the model to run the script again),
+no new nested call, when the module version differs (a call started under
+another code mode version asks to be run again),
 when the deadline passed, or when the script was unsaved; else it resumes the
 dump, or begins the script when none was saved. Closing the Harness while a
 script runs decides nothing: the call stores no outcome, and the next process

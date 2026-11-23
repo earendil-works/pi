@@ -40,8 +40,7 @@ import { CATALOG_GLOBALS, CODEMODE_INTERNAL_PREFIX, createModelTools, MODEL_CALL
 
 /**
  * Version of what a stored call means: the start data, the saved dump, result mapping, globals. Bump it when that
- * changes; a call started under another version ends with an error result instead of resuming. 3: djs dumps (2 was
- * the QuickJS journal).
+ * changes; a call started under another version ends with an error result that asks for the script to be run again.
  */
 export const CODEMODE_MODULE_VERSION = 3;
 

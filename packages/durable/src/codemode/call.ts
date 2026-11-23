@@ -18,8 +18,8 @@
  * - While the script waits on its calls longer than `parkAfterMs`, the tool parks (`wait` on those calls' tasks,
  *   policy `any`) and its VM is gone. The wake runs `execute()` again, which resumes the dump.
  *
- * A run started by an older code mode (the QuickJS journal format) cannot resume: it ends with an error result that
- * asks the model to run the script again.
+ * A call started under another code mode version cannot resume: it ends with an error result that asks for the script
+ * to be run again.
  */
 import type { Context } from "@earendil-works/chord/context";
 import { ownedSlice } from "@earendil-works/chord/delta";

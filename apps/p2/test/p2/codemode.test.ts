@@ -130,7 +130,7 @@ describe("code mode (fake provider)", () => {
 		process.kill(pid, "SIGKILL");
 		await until(hosts.workers, (value) => value?.[session]?.running === false);
 		chat.release();
-		// Opening the session again starts a worker; Durable resumes the replay-safe codemode call from its journal.
+		// Opening the session again starts a worker; Durable resumes the replay-safe codemode call from its saved run.
 		chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
 		const view = await until(chat.view, (value) => codemodeResults(value).length === 2 && !live(value)?.run, 30_000);
 		const result = codemodeResults(view)[1]!;
@@ -160,8 +160,8 @@ describe("code mode (fake provider)", () => {
 			),
 		);
 		chat.release();
-		// Stopping closes the sandbox while the Harness is still open (holders are disposed first). Durable stores no
-		// outcome for a run the sandbox ended on its own, so the restarted worker replays the script.
+		// Stopping closes the Harness while the script runs: the call stores no outcome, and the restarted worker resumes
+		// the script from its saved run.
 		await fixture.server.close();
 		const restarted = await startServer({
 			dataDir: fixture.dataDir,

@@ -647,8 +647,7 @@ document chat reads; send-file reads its tool calls from the `Chat` view. `insta
   classes. The bundler externalizes relative paths into `src/` (9.2).
 - **B4 `import.meta.url`:** `plugins/dev-tools/worker.ts`, `plugins/prompt/worker.ts`, `plugins/terminals/detached.ts`.
   Inject per file.
-- **B5 Dynamic `import()`:** none in plugin code; the base keeps resolving pi-ai's lazy API loaders and pi-codemode's
-  worker-thread entries.
+- **B5 Dynamic `import()`:** none in plugin code; the base keeps resolving pi-ai's lazy API loaders.
 - **B6 Top-level await:** none in facets; `plugins/terminals/main.ts` and `plugins/radius/login.ts` are process entries.
 - **B7 CommonJS and builtins:** `ws` and `yaml` become host packages; Node builtins come through a `require` the loader
   passes.

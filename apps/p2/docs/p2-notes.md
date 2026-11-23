@@ -1133,8 +1133,8 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
     the Familiar's worker; a declared cheap check (for example `git rev-parse HEAD`) that decides whether such a
     script runs; editing a rollup's code from its options; the TUI shows no rollups. `auto` rollups run on the
     server, so after an edit (a new or moved session) their section follows one round trip and a run later; the
-    built-ins are computed in the browser at once. Running `auto` scripts in the browser would need QuickJS in the web
-    bundle (about 640 KB of wasm, `InlineCodemodeSandbox`), which p2 does not ship today.
+    built-ins are computed in the browser at once. Running `auto` scripts in the browser would need djs in the web
+    bundle (about 1.9 MB of wasm, `CodemodeSandbox`), which p2 does not ship today.
 - **Principals** (`src/runtime/principals.ts`, typed: `P2Principal`, with Chord's API typed by it in
   `src/runtime/chord.ts`): `owner` (a local owner session on loopback `access: "local"`, authenticated Radius `access: "relay"`, or a
   signed owner cookie `access: "device"` with a device ID), `guest`, `worker` (stamped by the server's `session:` route
@@ -1770,17 +1770,14 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
   its agent use every tool it has. What a session's agents reach is decided by its tool selection (subagent and
   one-shot `tools`), its location (a sandbox) and its lock. `test/p2/tool-access.test.ts`, `dev-tools.test.ts`.
 - **Code mode** (`plugins/codemode`): the worker facet registers Durable's `codemode` extension
-  (`createCodemodeExtension`, tool `codemode`, callers `["model"]`, replay-safe) in `Extensions`. One sandbox per worker
-  (`CodemodeSandbox`, 256 MiB VM heap: `CODEMODE_MEMORY_LIMIT_BYTES`, kept constant because it is part of the VM
-  fingerprint a resumed script must match) is a native of `CodemodeRuntime`: a reload opens a new sandbox and drains
-  the old one (it closes once its running calls ended), so scripts running in it go on. Removing the plugin by a reload first ends its running calls (`plugins/codemode/calls.ts`:
-  each reports "Code mode was removed while this script ran." in its output, then is aborted through Durable's
-  `abortTask`, which ends its script and nested calls and settles it with an error), then closes the sandbox (VMs and
-  worker threads end); the turn goes on without the tool. A worker stop (`Liveness.stopping`) skips that step, so
-  the next worker replays the scripts. The extension reads the sandbox
-  through a getter when a script starts. At worker shutdown the sandbox closes while the Harness is
-  still open (Chord disposes holders first); Durable stores no outcome for a run the sandbox ended on its own, so the
-  next worker replays the script. `codemode.test.ts` covers a script calling two tools (and its `details.calls`), live nested slots, a
+  (`createCodemodeExtension`, tool `codemode`, callers `["model"]`, replay-safe) in `Extensions`. One
+  `CodemodeSandbox` per worker (256 MiB VM heap: `CODEMODE_MEMORY_LIMIT_BYTES`) runs the scripts on the worker's
+  thread; a script saves its run (a djs dump) before its calls launch and when it parks, and resumes from it. A
+  reload leaves running scripts alone. Removing the plugin by a reload ends its running calls
+  (`plugins/codemode/calls.ts`: each reports "Code mode was removed while this script ran." in its output, then is
+  aborted through Durable's `abortTask`, which ends its script and nested calls and settles it with an error); the turn
+  goes on without the tool. A worker stop (`Liveness.stopping`) skips that step: the Harness closes, the calls store no
+  outcome, and the next worker resumes the scripts from their saved runs. `codemode.test.ts` covers a script calling two tools (and its `details.calls`), live nested slots, a
   reload during a script, SIGKILL and graceful restarts mid-call (finished calls do not rerun; the interrupted unsafe
   `bash` call returns an error the script catches); the removal mid-script (prompt error, turn ends, the script's thread goes); `codemode-plugin.test.ts` the
   sandbox across reload/removal.
