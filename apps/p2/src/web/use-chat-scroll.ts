@@ -214,6 +214,8 @@ export class TranscriptScroll {
 	/** React rendered `range` (a layout effect): place the spacers and keep the reader's place. */
 	committed(range: RowRange): void {
 		this.#rendered = range;
+		// A hidden transcript (a phone showing another pane) is left as it is until it shows again (`#measured`).
+		if (this.#hidden()) return;
 		// The spacers are already right (rendered with the rows, `spacers`); placed again before any measurement reads
 		// the layout, in case a width change re-estimated rows since.
 		this.#setSpacers();
@@ -652,7 +654,7 @@ export class TranscriptScroll {
 	/** After any layout change: place the spacers, then keep the anchor where it was (or the end, when pinned). */
 	#sync(): void {
 		const scroller = this.#scroller;
-		if (!scroller) return;
+		if (!scroller || this.#hidden()) return;
 		this.#viewport = scroller.clientHeight;
 		const width = this.#list?.clientWidth ?? this.#width;
 		if (width !== this.#width) {
@@ -692,6 +694,7 @@ export class TranscriptScroll {
 	}
 
 	#measured(entries: ResizeObserverEntry[]): void {
+		if (this.#hidden()) return;
 		for (const entry of entries) {
 			const element = entry.target as HTMLElement;
 			const key = element.dataset.row;
@@ -705,6 +708,16 @@ export class TranscriptScroll {
 	/** The rows' width, for estimates (before the list is laid out, a guess that is never measured against). */
 	#rowWidth(): number {
 		return this.#width || this.#list?.clientWidth || 600;
+	}
+
+	/**
+	 * Whether the transcript is not laid out (in a pane hidden with `display: none`): its rows measure 0 there, and
+	 * each render's measurement would let a viewport more of rows in, until React stops the loop (error #185) or every
+	 * loaded row is rendered with a cached height of 0. Showing it again resizes the scroller and its rows, and the
+	 * observer measures them then.
+	 */
+	#hidden(): boolean {
+		return this.#scroller !== null && this.#scroller.getClientRects().length === 0;
 	}
 
 	/** Records a row's height; a row measured for the first time teaches the estimates. */
