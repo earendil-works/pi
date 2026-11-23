@@ -85,13 +85,8 @@ describe("max thinking level", () => {
 		expect(clampThinkingLevel(model, "xhigh")).toBe("max");
 	});
 
-	it("sends max as reasoning.effort to the Codex Responses API for gpt-5.6-sol", async () => {
-		expect(await captureCodexMaxRequest(getModel("openai-codex", "gpt-5.6-sol"))).toMatchObject({
-			reasoning: { effort: "max", summary: "auto" },
-		});
-	});
-
 	it.each([
+		"gpt-5.6-sol",
 		"gpt-6-astra",
 		"gpt-6-sol",
 		"gpt-6-luna",
@@ -99,8 +94,10 @@ describe("max thinking level", () => {
 		"gpt-6.1-terra",
 		"gpt-6.2-astra",
 		"gpt-6.2-sol",
-	] as const)("sends max as a configuration_update item to the Codex Responses API for %s", async (modelId) => {
-		const request = (await captureCodexMaxRequest(getModel("openai-codex", modelId))) as { input: unknown[] };
-		expect(request.input.at(-1)).toEqual({ type: "configuration_update", reasoning: { effort: "max" } });
+	] as const)("sends max as the initial reasoning.effort for openai-codex/%s", async (modelId) => {
+		expect(await captureCodexMaxRequest(getModel("openai-codex", modelId))).toMatchObject({
+			reasoning: { effort: "max", summary: "auto" },
+			input: expect.not.arrayContaining([expect.objectContaining({ type: "configuration_update" })]),
+		});
 	});
 });
