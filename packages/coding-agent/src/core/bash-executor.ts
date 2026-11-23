@@ -59,6 +59,8 @@ export async function executeBashWithOperations(
 
 	let tempFile: OutputFileStream | undefined;
 	let totalBytes = 0;
+	// Output after the command ended (from processes it left running) is not part of its result.
+	let acceptingOutput = true;
 
 	const ensureTempFile = () => {
 		if (tempFile) {
@@ -104,6 +106,9 @@ export async function executeBashWithOperations(
 	};
 
 	const onData = (data: Buffer) => {
+		if (!acceptingOutput) {
+			return;
+		}
 		totalBytes += data.length;
 		const { complete, pending } = splitIncompleteAnsiSuffix(pendingAnsi + decoder.decode(data, { stream: true }));
 		pendingAnsi = pending;
@@ -122,10 +127,15 @@ export async function executeBashWithOperations(
 	} catch (err) {
 		// An aborted command still returns the output it produced so far
 		if (!options?.signal?.aborted) {
+			acceptingOutput = false;
 			await tempFile?.close();
 			throw err;
 		}
 	}
+	// The result is decided when the command ends: closing the file below takes time, and an abort or
+	// output during it must not change the result.
+	acceptingOutput = false;
+	const cancelled = options?.signal?.aborted ?? false;
 
 	flushOutput();
 	const fullOutput = outputChunks.join("");
@@ -135,14 +145,16 @@ export async function executeBashWithOperations(
 	}
 	// A failed file is dropped: the result keeps the in-memory tail without a path.
 	const saved = await tempFile?.close();
-	const cancelled = options?.signal?.aborted ?? false;
+	const truncated = discardedOutput || truncationResult.truncated;
 
 	return {
 		output: truncationResult.truncated ? truncationResult.content : fullOutput,
 		exitCode: cancelled ? undefined : (exitCode ?? undefined),
 		cancelled,
-		truncated: discardedOutput || truncationResult.truncated,
+		truncated,
 		fullOutputPath: saved?.kind === "saved" ? saved.path : undefined,
-		...(saved?.kind === "failed" ? { fullOutputError: saved.error } : {}),
+		// The file opens on raw bytes, before ANSI codes and carriage returns are stripped, so it can fail
+		// for output that turns out not to be truncated; nothing is missing then.
+		...(truncated && saved?.kind === "failed" ? { fullOutputError: saved.error } : {}),
 	};
 }
