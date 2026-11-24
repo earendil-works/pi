@@ -120,6 +120,8 @@ interface ClassifierResult {
   /** Answers by question ID. */
   answers: Record<string, ClassifierAnswer>;
   usage?: ModelUsage;
+  /** Provider-specific response ID when reported, such as OpenRouter's generation ID. */
+  responseId?: string;
   stopReason: "stop" | "error" | "aborted";
   errorMessage?: string;
 }
