@@ -8,6 +8,7 @@
 - Fixed a failed crash-log write replacing the rendered-line-width error and leaving the terminal in raw mode ([#10585](https://github.com/earendil-works/pi/issues/10585))
 - Fixed Markdown after an unclosed `$` before a number, such as `+$50`, rendering as raw text for the rest of the paragraph ([#12389](https://github.com/earendil-works/pi/issues/12389) by [@wuhaoyujerry](https://github.com/wuhaoyujerry))
 - Fixed right-click paste inserting the clipboard twice in Tabby on Windows, which pastes on right-click itself ([#12406](https://github.com/earendil-works/pi/issues/12406))
+- Fixed rendering a bare URL that runs into a multi-megabyte line exhausting the heap in terminals with OSC 8 hyperlinks: `hyperlink()` no longer links URLs longer than 8192 characters ([#12416](https://github.com/earendil-works/pi/issues/12416))
 
 ## [1.6.0] - 2026-11-20
 

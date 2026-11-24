@@ -1864,6 +1864,17 @@ bar`,
 			assert.ok(stripAnsi(output).includes("\x1b]8;;\x1b\\.，后面的中文"));
 		});
 
+		it("should not hyperlink a bare URL that runs into a very long line", () => {
+			// A bare URL ends only at whitespace, so it can swallow a long base64 line. Wrapping re-opens
+			// a hyperlink on every line with the full URL, which made the output quadratic in its length.
+			setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+			const url = `https://example.com/path,data:${"x".repeat(20_000)}`;
+			const output = new Markdown(url, 0, 0, defaultMarkdownTheme).render(80).join("");
+			assert.ok(!output.includes("\x1b]8;"));
+			assert.ok(output.length < 3 * url.length);
+			assert.strictEqual(stripAnsi(output).replace(/\s/g, ""), url);
+		});
+
 		it("should not duplicate URL for autolinked emails", () => {
 			// Hyperlinks capability does not affect the mailto: display check.
 			setCapabilities({ images: null, trueColor: false, hyperlinks: false });
