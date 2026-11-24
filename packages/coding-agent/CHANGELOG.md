@@ -30,6 +30,7 @@
 - Fixed `pi update` run from WSL through the Windows installation of pi rebuilding that installation with Linux npm; it now stops and says that running the Windows installation from WSL is unsupported ([#12172](https://github.com/earendil-works/pi/issues/12172))
 - Fixed right-click paste inserting the clipboard twice in Tabby on Windows, which pastes on right-click itself ([#12406](https://github.com/earendil-works/pi/issues/12406))
 - Fixed dialogs shown before interactive mode starts, such as the project trust prompt, the missing session folder prompt and first-time setup, reporting no `blocked` program status (OSC 7501). Blocked messages of multi-line dialog titles are now the first line only, for example `Trust project folder?` instead of the folder path and explanation. The project trust prompt and first-time setup report `kind=permission` ([#12439](https://github.com/earendil-works/pi/issues/12439))
+- Fixed the bash tool on Windows not finding Git for Windows installed outside Program Files and running commands through the WSL launcher `System32\bash.exe` instead. pi now asks the `git.exe` on `PATH` for its installation (`git var GIT_SHELL_PATH`, Git 2.47+) and uses its Git Bash before other `bash.exe` on `PATH` ([#12408](https://github.com/earendil-works/pi/issues/12408))
 
 ## [1.6.0] - 2026-11-20
 

@@ -76,11 +76,33 @@ function findExecutableOnPath(executable: string): string | null {
 	return null;
 }
 
+// Keep in sync with packages/durable/src/env/node.ts.
+// Git for Windows reports its POSIX shell as `<root>/usr/bin/sh.exe`.
+const GIT_FOR_WINDOWS_SHELL_SUFFIX = win32.join("usr", "bin", "sh.exe");
+
+/**
+ * Find Git Bash of the Git for Windows installation whose git.exe is on PATH. Git itself reports
+ * where it is installed (`git var GIT_SHELL_PATH`, Git 2.47+), so this works for any install
+ * directory and any PATH layout (`cmd`, `bin`, `mingw64\bin`, `ucrt64\bin`, package-manager shims).
+ * It returns `<root>\bin\bash.exe`, not the shell Git reports: that launcher sets up MSYSTEM and
+ * PATH, without which `usr\bin\bash.exe` cannot find tools like `ls`.
+ */
+function findGitBashOfGitOnPath(): string | null {
+	const git = findExecutableOnPath("git.exe");
+	if (!git) return null;
+	const result = spawnSync(git, ["var", "GIT_SHELL_PATH"], { encoding: "utf-8", timeout: 5000, windowsHide: true });
+	if (result.status !== 0) return null;
+	const gitShell = win32.normalize(result.stdout.trim());
+	if (!gitShell.toLowerCase().endsWith(`\\${GIT_FOR_WINDOWS_SHELL_SUFFIX}`)) return null;
+	const bash = win32.join(gitShell.slice(0, -GIT_FOR_WINDOWS_SHELL_SUFFIX.length), "bin", "bash.exe");
+	return shellPathExists(bash) ? bash : null;
+}
+
 /**
  * Resolve shell configuration based on platform and an optional explicit shell path.
  * Resolution order:
  * 1. User-specified shellPath
- * 2. On Windows: Git Bash in known locations, then bash on PATH
+ * 2. On Windows: Git Bash in known locations, then Git Bash of git on PATH, then bash on PATH
  * 3. On Unix: /bin/bash, then bash on PATH, then fallback to sh
  */
 export function getShellConfig(customShellPath?: string): ShellConfig {
@@ -110,7 +132,14 @@ export function getShellConfig(customShellPath?: string): ShellConfig {
 			}
 		}
 
-		// 3. Fallback: search bash.exe on PATH (Cygwin, MSYS2, WSL, etc.)
+		// 3. Git Bash installed elsewhere, found through git on PATH. This must precede the generic
+		// bash.exe lookup, which usually finds the WSL launcher in System32 first.
+		const gitBash = findGitBashOfGitOnPath();
+		if (gitBash) {
+			return getBashShellConfig(gitBash);
+		}
+
+		// 4. Fallback: search bash.exe on PATH (Cygwin, MSYS2, WSL, etc.)
 		const bashOnPath = findExecutableOnPath("bash.exe");
 		if (bashOnPath) {
 			return getBashShellConfig(bashOnPath);
@@ -121,7 +150,8 @@ export function getShellConfig(customShellPath?: string): ShellConfig {
 				`  1. Install Git for Windows: https://git-scm.com/download/win\n` +
 				`  2. Add your bash to PATH (Cygwin, MSYS2, etc.)\n` +
 				"  3. Set shellPath in settings.json\n\n" +
-				`Searched Git Bash in:\n${paths.map((p) => `  ${p}`).join("\n")}`,
+				`Searched Git Bash in:\n${paths.map((p) => `  ${p}`).join("\n")}\n` +
+				"  the Git for Windows installation of git.exe on PATH",
 		);
 	}
 
