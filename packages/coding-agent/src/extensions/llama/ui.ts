@@ -286,7 +286,9 @@ class HuggingFaceSearch extends Container implements Focusable {
 			return;
 		}
 		if (this.keybindings.matches(data, "tui.select.confirm")) {
-			const exact = /^[^/\s]+\/[^:\s]+(?::[^\s:]+)?$/u.test(this.query) ? this.query : undefined;
+			// A typed owner/repository wins only until the user moves the selection to a result.
+			const exact =
+				!this.selectionTouched && /^[^/\s]+\/[^:\s]+(?::[^\s:]+)?$/u.test(this.query) ? this.query : undefined;
 			const selected = exact ?? this.filteredResults[this.selectedIndex]?.id;
 			if (selected) this.close(selected);
 			return;
