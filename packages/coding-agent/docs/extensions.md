@@ -2888,6 +2888,16 @@ if (confirmed) {
 
 See [examples/extensions/timed-confirm.ts](../examples/extensions/timed-confirm.ts) for complete examples.
 
+#### Program Status Kind
+
+While a dialog waits, terminals that support [program status](terminal-setup.md#program-status) show pi as blocked, with the first line of the title as the message. `confirm()` reports `"permission"`, `select()` and `input()` report `"question"`. Pass `blockedKind` when the dialog asks for something else, for example a select that approves an action:
+
+```typescript
+const choice = await ctx.ui.select("Deploy to production?", ["Deploy", "Deploy and tag", "Cancel"], {
+  blockedKind: "permission", // "permission" | "question" | "auth"
+});
+```
+
 ### Widgets, Status, and Footer
 
 ```typescript
