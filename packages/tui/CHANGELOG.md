@@ -7,6 +7,7 @@
 - Fixed `Editor.addToHistory()` storing a prompt again when it was already in history; it now moves the existing entry to the most recent position ([#12279](https://github.com/earendil-works/pi/issues/12279))
 - Fixed a failed crash-log write replacing the rendered-line-width error and leaving the terminal in raw mode ([#10585](https://github.com/earendil-works/pi/issues/10585))
 - Fixed Markdown after an unclosed `$` before a number, such as `+$50`, rendering as raw text for the rest of the paragraph ([#12389](https://github.com/earendil-works/pi/issues/12389) by [@wuhaoyujerry](https://github.com/wuhaoyujerry))
+- Fixed right-click paste inserting the clipboard twice in Tabby on Windows, which pastes on right-click itself ([#12406](https://github.com/earendil-works/pi/issues/12406))
 
 ## [1.6.0] - 2026-11-20
 
