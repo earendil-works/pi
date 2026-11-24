@@ -6,6 +6,7 @@
 
 - Added `compat.supportsStrictMode` to the `google-generative-ai` and `google-vertex` APIs, so Gemini 3+ models served under IDs without the version can use strict tools (`VALIDATED` function calling); unset keeps the model ID detection ([#12321](https://github.com/earendil-works/pi/issues/12321))
 - Added `responseId` to classifier results. OpenRouter's System One endpoint fills it with its generation ID, and its billed cost now replaces the catalog estimate in `usage.cost.total` (`totalFromProvider: true`), as it does for chat
+- Added the `gpt-6-luna-decisions` classifier for GitHub Copilot, callable from codemode `models.classify()` with text and images ([#12395](https://github.com/earendil-works/pi/issues/12395))
 
 ### Changed
 
@@ -35,6 +36,7 @@
 - Fixed `openai-codex` starting GPT-6 requests at `medium` regardless of the selected thinking level. Requests now start at the selected effort and send updates only when it changes ([#12361](https://github.com/earendil-works/pi/issues/12361))
 - Fixed the model catalog still listing `gpt-5-chat-latest` for `openai` and `azure` after OpenAI shut it down on July 23, 2026 ([#12202](https://github.com/earendil-works/pi/issues/12202))
 - Fixed `openai-completions` dropping OpenRouter's `native_finish_reason`, the upstream provider's own finish reason. `rawStopReason` now records it next to `finish_reason`, e.g. `stop.MALFORMED_RESPONSE`, and error messages include it, e.g. `Provider finish_reason: error (native_finish_reason: MALFORMED_FUNCTION_CALL)`. Stop reasons are unchanged ([#11931](https://github.com/earendil-works/pi/issues/11931))
+- Fixed GitHub Copilot listing classifier models the account cannot use, such as `microsoft-decision-1` on accounts whose plan does not include it, where every call failed with HTTP 400. After OAuth login or the next token refresh, only the decision models in the account's Copilot model catalog are listed ([#12395](https://github.com/earendil-works/pi/issues/12395))
 
 ## [1.6.0] - 2026-11-20
 

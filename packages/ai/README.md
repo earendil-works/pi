@@ -891,7 +891,7 @@ console.log(model.output); // ['image'] or ['image', 'text']
 
 ## Classification
 
-Classifier models consume structured JSON state, and optionally images, and answer one or more typed questions. They do not use chat or image-generation APIs. TypeSafe's Jev model, Cloudflare's Clef models, OpenAI's GPT-6 Luna, and Microsoft-Decision-1 are available from these built-in providers:
+Classifier models consume structured JSON state, and optionally images, and answer one or more typed questions. They do not use chat or image-generation APIs. TypeSafe's Jev model, Cloudflare's Clef models, OpenAI's GPT-6 Luna, GPT-6 Luna Decisions, and Microsoft-Decision-1 are available from these built-in providers:
 
 | Provider | Model IDs | Auth |
 | --- | --- | --- |
@@ -901,7 +901,9 @@ Classifier models consume structured JSON state, and optionally images, and answ
 | `vercel-ai-gateway` | `typesafe-ai/jev` | `AI_GATEWAY_API_KEY` |
 | `opencode` | `jev-1.13`, `jev-1.13-free` | `OPENCODE_API_KEY` |
 | `openai` | `gpt-6-luna` | `OPENAI_API_KEY` |
-| `github-copilot` | `microsoft-decision-1` | `COPILOT_GITHUB_TOKEN` or GitHub Copilot OAuth |
+| `github-copilot` | `gpt-6-luna-decisions`, `microsoft-decision-1` | `COPILOT_GITHUB_TOKEN` or GitHub Copilot OAuth |
+
+GitHub Copilot OAuth credentials record the decision models in the account's Copilot model catalog, and `getAvailableOfType('classifier')` lists only those. Microsoft-Decision-1 is limited to Business and Enterprise plans. `gpt-6-luna-decisions` uses the `openai-decisions` API at the account's `/v1/decisions` endpoint.
 
 ```typescript
 import { builtinModels } from '@earendil-works/pi-ai/providers/all';
