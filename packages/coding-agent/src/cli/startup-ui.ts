@@ -191,7 +191,6 @@ export async function showFirstTimeSetup(settingsManager: SettingsManager): Prom
 			}
 			settled = true;
 			if (result) {
-				settingsManager.setTheme(result.theme);
 				settingsManager.setEnableAnalytics(result.shareAnalytics);
 				await settingsManager.flush();
 			}
@@ -201,23 +200,13 @@ export async function showFirstTimeSetup(settingsManager: SettingsManager): Prom
 			resolve();
 		};
 
-		ui.start();
-		let previewTheme = SYSTEM_THEME_NAME;
-		setTheme(previewTheme);
 		const component = new FirstTimeSetupComponent({
-			onThemePreview: (themeName) => {
-				previewTheme = themeName;
-				setTheme(themeName);
-				ui.requestRender();
-			},
 			onSubmit: (result) => void finish(result),
 			onCancel: () => void finish(undefined),
 		});
 		ui.addChild(component);
 		ui.setFocus(component);
-		ui.requestRender();
-		// The terminal's colors regenerate the system theme; re-rendering rebuilds the dialog with it.
-		queryStartupTerminalColors(ui, () => setTheme(previewTheme));
+		startStartupTui(ui, settingsManager);
 	});
 }
 
