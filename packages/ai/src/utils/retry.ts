@@ -126,6 +126,11 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	// An OpenAI-compatible stream that ended with `finish_reason: "error"`, which OpenRouter
 	// sends when its provider fails mid-stream; see `mapStopReason` in openai-completions.ts.
 	"provider finish_reason: error",
+	// OpenRouter's upstream failures hidden behind `finish_reason: "stop"`, surfaced from
+	// `native_finish_reason` by `mapStopReason` in openai-completions.ts. Gemini's malformed output is
+	// transient (#12407); `network_error` is OpenRouter's upstream connection failure (#8499).
+	// Content-safety reasons (SAFETY, RECITATION, refusal, ...) are deliberately not retried.
+	"provider native_finish_reason: (?:malformed_response|malformed_function_call|network_error)",
 	// Mistral's `finish_reason: "error"` for a transient server failure; see `mapChatStopReason`
 	// in mistral-conversations.ts (#10487).
 	"provider stopped with: error",

@@ -1573,6 +1573,39 @@ function parseChunkUsage(
 	return usage;
 }
 
+/**
+ * Upstream finish reasons that OpenRouter can collapse into a successful `finish_reason` such as
+ * `"stop"` while passing the original in `native_finish_reason` (#12407, #8499). Gemini values are the
+ * failures in `mapStopReason` of google-shared.ts plus `MALFORMED_RESPONSE`, which the Google SDK enum
+ * lacks; Anthropic values follow `mapStopReason` in anthropic-messages.ts. Unknown native values keep
+ * the `finish_reason` mapping, because their meaning is not documented.
+ */
+const NATIVE_FAILURE_FINISH_REASONS = new Set([
+	// Gemini
+	"MALFORMED_RESPONSE",
+	"MALFORMED_FUNCTION_CALL",
+	"UNEXPECTED_TOOL_CALL",
+	"TOO_MANY_TOOL_CALLS",
+	"FINISH_REASON_UNSPECIFIED",
+	"OTHER",
+	"LANGUAGE",
+	"SAFETY",
+	"RECITATION",
+	"BLOCKLIST",
+	"PROHIBITED_CONTENT",
+	"SPII",
+	"IMAGE_SAFETY",
+	"IMAGE_PROHIBITED_CONTENT",
+	"IMAGE_RECITATION",
+	"IMAGE_OTHER",
+	"NO_IMAGE",
+	// Anthropic
+	"refusal",
+	"sensitive",
+	// OpenRouter upstreams that fail on the request, e.g. a model without tool support (#8499)
+	"network_error",
+]);
+
 function mapStopReason(
 	reason: ChatCompletionChunk.Choice["finish_reason"] | string,
 	nativeReason: string | undefined,
@@ -1581,9 +1614,15 @@ function mapStopReason(
 	errorMessage?: string;
 } {
 	const result = mapFinishReason(reason);
-	if (nativeReason === undefined || result.stopReason !== "error") return result;
-	// Keep the finish_reason message, which retry matching relies on, and add the upstream cause (#11931).
-	return { ...result, errorMessage: `${result.errorMessage} (native_finish_reason: ${nativeReason})` };
+	if (nativeReason === undefined) return result;
+	if (result.stopReason === "error") {
+		// Keep the finish_reason message, which retry matching relies on, and add the upstream cause (#11931).
+		return { ...result, errorMessage: `${result.errorMessage} (native_finish_reason: ${nativeReason})` };
+	}
+	if (NATIVE_FAILURE_FINISH_REASONS.has(nativeReason)) {
+		return { stopReason: "error", errorMessage: `Provider native_finish_reason: ${nativeReason}` };
+	}
+	return result;
 }
 
 function mapFinishReason(reason: ChatCompletionChunk.Choice["finish_reason"] | string): {

@@ -93,6 +93,36 @@ describe("OpenAI completions raw stop reasons", () => {
 	});
 
 	// #12407
+	it("retries a stop that OpenRouter reports with native_finish_reason MALFORMED_RESPONSE", async () => {
+		mockState.chunks = [
+			{
+				id: "gen-1",
+				choices: [{ index: 0, delta: {}, finish_reason: "stop", native_finish_reason: "MALFORMED_RESPONSE" }],
+			},
+		];
+
+		const message = await streamOpenAICompletions(model, context, { apiKey: "test" }).result();
+
+		expect(message.stopReason).toBe("error");
+		expect(message.rawStopReason).toBe("stop.MALFORMED_RESPONSE");
+		expect(message.errorMessage).toBe("Provider native_finish_reason: MALFORMED_RESPONSE");
+		expect(isRetryableAssistantError(message)).toBe(true);
+	});
+
+	// #12407
+	it("surfaces content-safety native finish reasons as errors without retrying", async () => {
+		mockState.chunks = [
+			{ id: "gen-2", choices: [{ index: 0, delta: {}, finish_reason: "stop", native_finish_reason: "SAFETY" }] },
+		];
+
+		const message = await streamOpenAICompletions(model, context, { apiKey: "test" }).result();
+
+		expect(message.stopReason).toBe("error");
+		expect(message.errorMessage).toBe("Provider native_finish_reason: SAFETY");
+		expect(isRetryableAssistantError(message)).toBe(false);
+	});
+
+	// #12407
 	it("keeps finish_reason for normal and unknown native finish reasons", async () => {
 		mockState.chunks = [
 			{
@@ -119,6 +149,22 @@ describe("OpenAI completions raw stop reasons", () => {
 		expect(unknownMessage.stopReason).toBe("stop");
 		expect(unknownMessage.rawStopReason).toBe("stop.eos");
 		expect(unknownMessage.errorMessage).toBeUndefined();
+	});
+
+	// #12407
+	it("keeps the native failure when a trailing chunk repeats finish_reason without it", async () => {
+		mockState.chunks = [
+			{
+				id: "gen-5",
+				choices: [{ index: 0, delta: {}, finish_reason: "stop", native_finish_reason: "MALFORMED_RESPONSE" }],
+			},
+			{ id: "gen-5", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] },
+		];
+
+		const message = await streamOpenAICompletions(model, context, { apiKey: "test" }).result();
+
+		expect(message.stopReason).toBe("error");
+		expect(message.errorMessage).toBe("Provider native_finish_reason: MALFORMED_RESPONSE");
 	});
 
 	// #11931
