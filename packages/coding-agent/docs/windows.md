@@ -21,7 +21,8 @@ Pi resolves Bash in this order:
 1. `shellPath` from `~/.pi/agent/settings.json`
 2. Git Bash at `%ProgramFiles%\Git\bin\bash.exe`
 3. Git Bash at `%ProgramFiles(x86)%\Git\bin\bash.exe`
-4. `bash.exe` on `PATH`, including Cygwin, MSYS2, or legacy WSL Bash
+4. Git Bash of the Git for Windows installation whose `git.exe` is on `PATH`, wherever it is installed (Git 2.47 or later)
+5. `bash.exe` on `PATH`, including Cygwin, MSYS2, or legacy WSL Bash
 
 Start Pi and enter this command to verify the shell:
 
