@@ -970,8 +970,8 @@ describe("Generate E2E Tests", () => {
 		});
 	});
 
-	describe.skipIf(!process.env.MISTRAL_API_KEY)("Mistral Provider (devstral-medium-latest)", () => {
-		const llm = getModel("mistral", "devstral-medium-latest");
+	describe.skipIf(!process.env.MISTRAL_API_KEY)("Mistral Provider (mistral-medium-latest)", () => {
+		const llm = getModel("mistral", "mistral-medium-latest");
 
 		it("should complete basic text generation", { retry: 3 }, async () => {
 			await basicTextGeneration(llm);
@@ -996,8 +996,8 @@ describe("Generate E2E Tests", () => {
 		});
 	});
 
-	describe.skipIf(!process.env.MISTRAL_API_KEY)("Mistral Provider (pixtral-12b with image support)", () => {
-		const llm = getModel("mistral", "pixtral-12b");
+	describe.skipIf(!process.env.MISTRAL_API_KEY)("Mistral Provider (ministral-14b-latest with image support)", () => {
+		const llm = getModel("mistral", "ministral-14b-latest");
 
 		it("should complete basic text generation", { retry: 3 }, async () => {
 			await basicTextGeneration(llm);

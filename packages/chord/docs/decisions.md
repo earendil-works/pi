@@ -3729,6 +3729,25 @@ From `research/chord-on-durable-objects.md`, adopted for the Chord v2 kernel bec
   `limits.ephemeralSessions` to `limits.ephemeralSignIns`, the files `sign-ins.ts` and `ephemeral-sign-ins.ts`, example
   `54-app-sign-ins`. No migration: nothing deployed uses the kit's sign-ins (p2 has its own); a kit app's existing
   sign-ins and cookies are not read under the new names (everyone signs in again).
+- **Sync: no writer epochs (owner, 2026-11-23):** p2 uses the sync layer (`@earendil-works/chord/sync`) only to back
+  sessions up, one writer per session; a backup restored on another machine will fork into a new session instead of
+  sharing one history. Writer epochs (`uploadSession`'s `epoch`, the `stale_epoch` results) are removed: no remote
+  issued them. They can come back as an addition: a session without an epoch grants one to the device that wrote its
+  last slot when it first uploads under the new rules, and a remote raises a session's minimum protocol
+  (`SYNC_PROTOCOL`, `protocol_too_old`) only once the session needs epochs, so older writers keep their other
+  sessions; reads are never gated.
+- **Sync serves backup: a full copy after the head, a deleted remote copy starts over (owner, 2026-11-20 to
+  2026-11-23):** p2 uses the sync layer (`@earendil-works/chord/sync`) only to back sessions up, one writer per session.
+  (1) A store whose outbox does not reach back to what the remote holds (turned off, dropping its commits, and on
+  again) uploads an archive into the slot after the remote's head; a restore starts from the newest archive along the
+  chain (supersedes "only the slot after 0 can be one"). An archive and not the commits between, because the store
+  holds only its current state: it cannot tell which rows changed since the last upload or which were deleted; sending
+  only the difference would need a download of the backup to compare with, or a per-row seq with deletion markers in
+  the store, both costlier than a rare full copy. (2) `uploadSession` reports a remote without history for a copy that
+  shared it (`not_head` at head 0, the copy past 0) as `remote_empty`, apart from `diverged`: the remote's copy was
+  deleted, and the host decides whether to start over (p2 does: deleting a backup must not need the writing machine
+  online to clear its bookmark). Every other `not_head`, a slot taken by another device, and `behind` are errors the
+  host stops on. The host's rules: `apps/p2/docs/p2-notes.md`, **Backup**.
 
 ## Still valid from `target-design.md`
 

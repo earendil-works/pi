@@ -1759,9 +1759,10 @@ describe('calls in flight across a `loading` unbind (decision "Calls in flight s
 		await peer.next("hello");
 		hold(peer, 0, Kept);
 		await peer.next("bound");
-		const reload = (next: KeptCode | ReturnType<typeof keptFacet>) =>
-			server.reload([{ name: "@test/app", facet: "n" in next ? keptFacet(next) : next }], context);
-		return { server, peer, reload };
+		const reloadFacet = (next: ReturnType<typeof keptFacet>) =>
+			server.reload([{ name: "@test/app", facet: next }], context);
+		const reload = (next: KeptCode) => reloadFacet(keptFacet(next));
+		return { server, peer, reload, reloadFacet };
 	}
 
 	/** Sends call `call` of `method` (an index of `Kept`'s variant `a`) on hold 0. */
@@ -1902,7 +1903,7 @@ describe('calls in flight across a `loading` unbind (decision "Calls in flight s
 	it("a kept call of a version the new code drops is rejected contract_mismatch with the hold's failed", async () => {
 		const opened = Promise.withResolvers<void>();
 		const ran: string[] = [];
-		const { server, peer, reload } = await keptServer({ n: 1, native: true });
+		const { server, peer, reloadFacet } = await keptServer({ n: 1, native: true });
 		const v2 = defineFacet<TestPrincipal>((h) =>
 			h.serve(KeptV2, (_, _principal, self) => {
 				self.open(
@@ -1919,7 +1920,7 @@ describe('calls in flight across a `loading` unbind (decision "Calls in flight s
 				return { variant: "a", members: { label: constant({ text: "v2" }), bump: ping, ping } };
 			}),
 		);
-		await reload(v2);
+		await reloadFacet(v2);
 		call(peer, 0, "ping");
 		await peer.next("loading");
 		opened.resolve();
@@ -2096,7 +2097,7 @@ describe('calls in flight across a `loading` unbind (decision "Calls in flight s
 	});
 
 	it("a call crossing a version refusal's failed gets contract_mismatch, never not_ready (audit F3)", async () => {
-		const { server, peer, reload } = await keptServer({ n: 1 });
+		const { server, peer, reloadFacet } = await keptServer({ n: 1 });
 		// The new code serves version 2 only: the version 1 hold is refused.
 		const answer = async () => 2;
 		const v2 = defineFacet<TestPrincipal>((h) =>
@@ -2105,7 +2106,7 @@ describe('calls in flight across a `loading` unbind (decision "Calls in flight s
 				members: { label: constant({ text: "v2" }), bump: answer, ping: answer },
 			})),
 		);
-		await reload(v2);
+		await reloadFacet(v2);
 		const failed = await peer.next("failed");
 		expect(failed.cause).toMatchObject({ kind: "waiting", error: { error: { code: "contract_mismatch" } } });
 		call(peer, 0, "ping");

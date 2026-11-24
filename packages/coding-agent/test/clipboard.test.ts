@@ -185,6 +185,16 @@ describe("copyToClipboard", () => {
 		await copyToClipboard("hello");
 		expect(mocks.command).toHaveBeenCalledOnce();
 	});
+	test("wl-copy copies as text/plain", async () => {
+		// Regression test for #12374: an inferred type such as application/x-ruby is dropped by Klipper.
+		mocks.platform.mockReturnValue("linux");
+		vi.stubEnv("WAYLAND_DISPLAY", "wayland-0");
+		await copyToClipboard("def foo");
+		expect(mocks.command).toHaveBeenCalledExactlyOnceWith("wl-copy", ["-t", "text/plain"], {
+			input: "def foo",
+			timeoutMs: 5000,
+		});
+	});
 	test("tries xclip and xsel after wl-copy fails", async () => {
 		mocks.platform.mockReturnValue("linux");
 		vi.stubEnv("WAYLAND_DISPLAY", "wayland-0");

@@ -110,8 +110,9 @@ export async function completeLocation(
 	const cut = Math.max(rest.lastIndexOf("/"), rest.lastIndexOf("\\"));
 	const dir = cut >= 0 ? rest.slice(0, cut + 1) : "";
 	const name = rest.slice(cut + 1).toLowerCase();
-	const location = parseLocation(`${head}${dir}`, names, fallback);
-	if ("error" in location) return envItems.length ? envItems : null;
+	const parsed = parseLocation(`${head}${dir}`, names, fallback);
+	if (parsed.kind === "invalid") return envItems.length ? envItems : null;
+	const { location } = parsed;
 	let directories: string[] = [];
 	try {
 		const envs = await ownerEnvs(ctx);
@@ -189,8 +190,8 @@ export class LocationInput implements Component, Focusable {
 				env: this.env,
 				...(this.env === this.origin.env && this.origin.cwd ? { cwd: this.origin.cwd } : {}),
 			});
-			if ("error" in parsed) this.error = parsed.error;
-			else options.onSubmit(parsed);
+			if (parsed.kind === "invalid") this.error = parsed.error;
+			else options.onSubmit(parsed.location);
 			ctx.requestRender();
 		};
 		void envNames(ctx).then((names) => {

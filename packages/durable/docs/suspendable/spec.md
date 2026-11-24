@@ -144,7 +144,7 @@ const AskPerson = defineTask<{ question: string }, { phase: "ask" } | { phase: "
       ),
     answered: async (_task, runtime, context) => {
       const state = await runtime.readSignal(Answer, "answer", context); // { value } when answered, { expired } after the deadline
-      const text = state !== undefined && "value" in state ? state.value.text : undefined;
+      const text = state?.kind === "value" ? state.value.text : undefined;
       return runtime.commit(() => ({ status: "terminal", outcome: { status: "completed", result: { text } } }), context);
     },
   },
@@ -283,7 +283,7 @@ runs, or sleeps on other keys, is kept, and a later sleep on that key wakes at
 once. `delivered` means durably accepted, not consumed: the task may end
 without waiting on the key.
 
-`tx.signal()` reads a table: like `submit(tx)` it comes before the commit's
+`tx.signal()` reads a table: like `admit(tx)` it comes before the commit's
 first table write and throws `ReadAfterWrite` after it (spec §12). Its result
 is provisional until the commit is stored.
 `Harness.signal()` enables scheduling, like `submit()`, and joins the calls
@@ -308,7 +308,7 @@ candidate of that record, so no write erases another; a terminal or
 Code reads a key without waiting:
 
 ```ts
-type SignalState<T> = { readonly value: T } | { readonly expired: true };
+type SignalState<T> = { readonly kind: "value"; readonly value: T } | { readonly kind: "expired" };
 
 interface TaskRuntime {
   /** The key's state, the value migrated to the token's version; undefined while nothing came. */
@@ -346,8 +346,8 @@ document ID, a CI run ID to fetch the log by).
 
 ```ts
 type ToolPark<C extends JsonValue = JsonValue> =
-  | { readonly sleep: { readonly checkpoint?: C; readonly until?: number; readonly signals?: readonly SignalKey<unknown>[] }; readonly wait?: never }
-  | { readonly wait: { readonly checkpoint?: C; readonly on: readonly TaskId[]; readonly policy: JoinPolicy }; readonly sleep?: never };
+  | { readonly kind: "sleep"; readonly checkpoint?: C; readonly until?: number; readonly signals?: readonly SignalKey<unknown>[] }
+  | { readonly kind: "wait"; readonly checkpoint?: C; readonly on: readonly TaskId[]; readonly policy: JoinPolicy };
 
 type ToolRegistration<TParameters extends object = object, TDetails extends JsonValue = JsonValue, C extends JsonValue = JsonValue> =
   Tool<TParameters> & {
@@ -413,7 +413,7 @@ const runCi = defineTool<typeof CiParameters, JsonValue, { buildId: string }>({
   async execute({ ref }, api, context) {
     // Read from the live record in memory: the result, the deadline's expiry, or nothing yet (a fresh call).
     const state = await api.readSignal(CiResult, "done", context);
-    if (state !== undefined && "value" in state) {
+    if (state?.kind === "value") {
       const { status, logUrl } = state.value;
       return { output: [{ type: "text", text: `CI ${status}: ${logUrl}` }], isError: status !== "passed" };
     }
@@ -425,7 +425,7 @@ const runCi = defineTool<typeof CiParameters, JsonValue, { buildId: string }>({
     // Register before triggering, so a fast webhook already finds this task.
     await webhooks.expect(runId, api.taskId, CiResult, "done", context);
     const build = await ci.trigger({ ref, correlationId: runId, idempotencyKey: runId }, context);
-    return { sleep: { checkpoint: { buildId: build.id }, signals: [CiResult.key("done")], until: api.now() + 2 * HOUR } };
+    return { kind: "sleep", checkpoint: { buildId: build.id }, signals: [CiResult.key("done")], until: api.now() + 2 * HOUR };
   },
   async cancel(_args, api, context) {
     if (api.checkpoint !== undefined) await ci.cancel(api.checkpoint.buildId, context);
@@ -595,7 +595,7 @@ const research = defineTool<typeof ResearchParameters, JsonValue, ResearchCheckp
     const done = new Set(api.checkpoint?.done ?? []);
     if (api.wake?.reason === "tasks") for (const id of api.wake.ended) done.add(id);
     const open = [a, b].filter((call) => !done.has(call.taskId));
-    if (open.length > 0) return { wait: { checkpoint: { done: [...done] }, on: open.map((call) => call.taskId), policy: "any" } };
+    if (open.length > 0) return { kind: "wait", checkpoint: { done: [...done] }, on: open.map((call) => call.taskId), policy: "any" };
     const [ra, rb] = await Promise.all([a.result(context), b.result(context)]);
     return { output: [{ type: "text", text: `${String(ra.structuredOutput)}\n${String(rb.structuredOutput)}` }] };
   },
@@ -648,7 +648,7 @@ export const Subagent = defineExtension({
       replay: "safe",
       async execute({ task }, api, context) {
         const state = await api.readSignal(SubmissionSettled, "answered", context);
-        if (state !== undefined && "value" in state) {
+        if (state?.kind === "value") {
           const settled = state.value;
           if (settled.status !== "done") return { output: [{ type: "text", text: `Subagent ended: ${settled.status}` }], isError: true };
           return { output: [{ type: "text", text: await answerText(api, settled, context) }] };
@@ -668,7 +668,7 @@ export const Subagent = defineExtension({
           { type: "input", content: task, requestId: `subagent:${api.taskId}`, notify: { taskId: api.taskId, key: "answered" } },
           context,
         );
-        return { sleep: { signals: [SubmissionSettled.key("answered")] } };
+        return { kind: "sleep", signals: [SubmissionSettled.key("answered")] };
       },
     }),
   ],
@@ -736,7 +736,7 @@ export const Approvals = defineExtension({
         // One deadline per question, fixed at the first pass: later passes (wakes, registry changes) keep it.
         const until = await api.memo(`approvals.until.${key}`, api.now() + DAY, context);
         if (state === undefined) return { sleep: { signals: [Approval.key(key)], until } };
-        if ("expired" in state) return { block: "No approval within a day" };
+        if (state.kind === "expired") return { block: "No approval within a day" };
         return state.value.allow ? undefined : { block: "Not approved" };
       },
     }),
@@ -801,7 +801,7 @@ interface GenerationHooks {
   /** All observers today; may now request tasks, concatenated in extension order. */
   afterTools(assistant: EntryId, results: readonly EntryId[], api: HookApi, context: Context): HookResult<{ readonly tasks: readonly HookTask[] }>;
   /** The first result wins: a continuation now, or tasks whose result may carry one. */
-  onYield(answer: AssistantMessage, api: HookApi, context: Context): HookResult<{ readonly continue: UserInput } | { readonly tasks: readonly HookTask[] }>;
+  onYield(answer: AssistantMessage, api: HookApi, context: Context): HookResult<{ readonly kind: "continue"; readonly continue: UserInput } | { readonly kind: "tasks"; readonly tasks: readonly HookTask[] }>;
 }
 
 /** What an onYield task completes with to continue the run. */
@@ -1026,7 +1026,7 @@ claude-opus-5-5 against spec.md and the code. Fixed here:
   wake names the key only, no `token.read()`).
 - `HookApi` lacked `readSignal`, and gates could not tell expired from not yet
   answered (opus, astra): `readSignal()` on `HookApi`, returning
-  `{ value } | { expired: true } | undefined`.
+  `{ kind: "value", value } | { kind: "expired" } | undefined`.
 - A task's wake was dropped by an intent re-commit and counted as progress
   (opus): the wake stays until the checkpoint changes; progress compares
   checkpoints.

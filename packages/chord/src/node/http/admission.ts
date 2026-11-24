@@ -22,6 +22,7 @@ export type Connection = {
 
 /** An admitted request: its provenance, its own origin, the origin allowed to frame it (a relay's), how it came. */
 export type Admitted = {
+	readonly kind: "admitted";
 	readonly provenance: Provenance;
 	readonly origin: string;
 	readonly framer: string | undefined;
@@ -56,6 +57,7 @@ export function admit(
 		if (localAddress === undefined || !isLoopbackAddress(localAddress)) return REFUSED;
 		if (!request.forwarded())
 			return {
+				kind: "admitted",
 				provenance: LOCAL,
 				origin: `http://${host}`,
 				framer: undefined,
@@ -66,6 +68,7 @@ export function admit(
 	}
 	if (!hosts.has(host)) return REFUSED;
 	return {
+		kind: "admitted",
 		provenance: { kind: "remote", host },
 		origin: `https://${host}`,
 		framer: undefined,
@@ -79,7 +82,7 @@ export type HeaderSource = Pick<Incoming, "header">;
 
 /** Whether `admission` refused its request. */
 export function refused(admission: Admitted | Refused): admission is Refused {
-	return "kind" in admission;
+	return admission.kind === "refused";
 }
 
 /**
@@ -151,6 +154,7 @@ function relayed(request: Incoming, relays: readonly HttpRelay[]): Admitted | Re
 			return { kind: "refused", failed: { relay: relay.name, error } };
 		}
 		return {
+			kind: "admitted",
 			provenance: { kind: "relayed", relay: relay.name, origin: verified.origin },
 			origin: verified.origin,
 			framer: verified.framer,

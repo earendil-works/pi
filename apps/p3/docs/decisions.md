@@ -456,3 +456,17 @@ older entries that say `docs/<file>` or `apps/p3/docs/<file>` now are `apps/p3/d
   fixed a high-severity hole in the permission model (CVE-2026-58043) that the terminal's sandbox (slice 27) relies on.
   The sandbox accepts the older Nodes p3 supports (from 26.3.1, the phone's Termux Node) with that hole; the Node p3 ships
   with is 26.5.1 or newer, so shipped installs have the fix.
+- **Packages: owners, audits, sign-off and browser testing (owner, 2026-11-18, for the team's package work; the guides
+  in `guides/` carry them):**
+  - **Chord and Durable belong to Mario.** Package builders and their agents never change `packages/chord` or
+    `packages/durable`; an agent that needs a change there writes it up (the problem, an example, the change it needs)
+    and tells its user to take it to Mario.
+  - **p3's shared base and test code belong to Mario:** `src/kit`, `src/api`, `src/bootstrap`, `src/install.ts`, the
+    test harnesses (`test/topology.ts`, `test/launched.ts`, `test/commands.ts`); changes there go to him.
+  - **The whole team audits.** Whoever pushes a package posts a short video or explainer on its Linear issue and in
+    #packages on Discord; the team signs off.
+  - **Browser testing beyond headless Chromium is manual, by people with the devices, and part of the sign-off:** Safari
+    on iOS, Firefox on Android, Chrome on Android.
+- **No lazy loading in plugins for now (owner, 2026-11-18):** plugins keep loading their whole facet at a process's
+  start (the plugin build refuses `import()`); no Chord change for it. A package that wants a heavy library in a worker
+  facet measures its cost per idle worker and brings it to Mario.

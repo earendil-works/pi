@@ -98,7 +98,7 @@ export class PublishedScripts<P extends Principal> {
 						.map(([plugin]) => plugin),
 					removed: [...before.keys()].filter((plugin) => !this.#current.has(plugin)),
 				};
-				return { hosts: [{ host: name, report: { plugins, failed, objects: [] } }] };
+				return { hosts: [{ kind: "reloaded", host: name, report: { plugins, failed, objects: [] } }] };
 			},
 		};
 	}

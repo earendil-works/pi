@@ -24,6 +24,7 @@ function defaultHeaders(...args: Parameters<DefaultHeaders["of"]>) {
 }
 
 const LOCAL: Admitted = {
+	kind: "admitted",
 	provenance: { kind: "local" },
 	origin: "http://127.0.0.1:8788",
 	framer: undefined,

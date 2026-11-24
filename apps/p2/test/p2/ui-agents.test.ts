@@ -94,13 +94,16 @@ describe("one-shot agents and subagent archiving in the browser", { skip: !brows
 		await browser.wait(`document.querySelector('.subagent-wrap .subagent-bar')`);
 		assert.equal(
 			await browser.evaluate(text(".subagent-wrap .subagent-bar span")),
-			"One-shot agent of a script · read-only · Tools: none",
+			"One-shot agent of a script · read-only",
 		);
-		// Read-only: no composer, no model chip, no Archive; it shows its transcript.
+		// Read-only: no composer, no model chip, no subagent options; it shows its transcript.
 		await browser.wait(`document.querySelector('.scroller')?.textContent.includes('{"ok":true}')`);
 		assert.equal(await browser.evaluate(`document.querySelector('.composer')===null`), true);
 		assert.equal(await browser.evaluate(`document.querySelector('.model-control')===null`), true);
-		assert.equal(await browser.evaluate(`document.querySelector('.subagent-bar .text-action')===null`), true);
+		assert.equal(
+			await browser.evaluate(`document.querySelector('button[aria-label="Subagent options"]')===null`),
+			true,
+		);
 		// Its row in the sidebar is the selected one.
 		assert.equal(
 			await browser.evaluate(text(".sidebar-section[data-key=other] .agent-row.active .session-title")),
@@ -166,19 +169,43 @@ describe("one-shot agents and subagent archiving in the browser", { skip: !brows
 		await browser.metrics(1280, 900);
 	});
 
-	it("archives a subagent behind the sidebar's archived row and restores it", async () => {
+	it("archives a subagent from its options sheet, behind the sidebar's archived row, and restores it", async () => {
+		const options = 'button[aria-label="Subagent options"]';
+		const sheet = "[role=dialog][aria-label=Subagent]";
+		const row = `[...document.querySelectorAll('${sheet} .row-button')].find((e) => e.querySelector('span')?.textContent === %s)`;
+		const choose = async (label: string) => {
+			await browser.click(options);
+			await browser.wait(row.replace("%s", JSON.stringify(label)));
+			await browser.evaluate(`${row.replace("%s", JSON.stringify(label))}.click()`);
+			await browser.wait(`!document.querySelector('${sheet}')`);
+		};
+		await browser.metrics(390, 844);
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${session}/c/${helper.conversationId}`);
-		await browser.wait(`document.querySelector('.subagent-bar .text-action')?.textContent==='Archive'`);
+		await browser.wait(`document.querySelector('${COMPOSER}') && document.querySelector('${options}')`);
 		assert.equal(await browser.evaluate(text(".topbar .sub-tag")), "subagent");
-		assert.equal(await browser.evaluate(`document.querySelector('${COMPOSER}')!==null`), true);
-		await browser.click(".subagent-bar .text-action");
+		// No panel above the composer: no tool list, no location.
+		assert.equal(await browser.evaluate(`document.querySelector('.subagent-bar')===null`), true);
+		const screenshot = async (name: string) => {
+			if (!process.env.P2_SCREENSHOTS) return;
+			// After the sheet's slide-in.
+			await new Promise((resolve) => setTimeout(resolve, 500));
+			const shot = (await browser.call("Page.captureScreenshot")) as { data: string };
+			writeFileSync(join(process.env.P2_SCREENSHOTS, `${name}.png`), Buffer.from(shot.data, "base64"));
+		};
+		await screenshot("subagent-view");
+		// The sheet is a step back navigation undoes.
+		await browser.click(options);
+		await browser.wait(`document.querySelector('${sheet}')`);
+		await screenshot("subagent-options");
+		await browser.evaluate("history.back()");
+		await browser.wait(`!document.querySelector('${sheet}')`);
+		await choose("Archive");
 		await until(
 			list.children,
 			(value) => value?.[session]?.find((child) => child.kind !== "agent")?.archived === true,
 		);
-		await browser.wait(`document.querySelector('.subagent-bar .text-action')?.textContent==='Restore'`);
-		assert.match(String(await browser.evaluate(text(".subagent-wrap .subagent-bar span"))), / · archived$/);
 		// Viewing an archived subagent opens its row.
+		await browser.metrics(1280, 900);
 		await browser.wait(`document.querySelector('.subagent-stored')?.getAttribute('aria-expanded')==='true'`);
 		assert.equal(await browser.evaluate(text(".subagent-stored .session-title")), "1 archived");
 		assert.equal(
@@ -187,9 +214,8 @@ describe("one-shot agents and subagent archiving in the browser", { skip: !brows
 			),
 			1,
 		);
-		await browser.click(".subagent-bar .text-action");
+		await choose("Restore");
 		await until(list.children, (value) => !value?.[session]?.find((child) => child.kind !== "agent")?.archived);
-		await browser.wait(`document.querySelector('.subagent-bar .text-action')?.textContent==='Archive'`);
 		await browser.wait(`document.querySelector('.subagent-stored')===null`);
 		assert.equal(
 			await browser.evaluate(
@@ -199,8 +225,8 @@ describe("one-shot agents and subagent archiving in the browser", { skip: !brows
 		);
 	});
 
-	// Pi Mobile 24e3fccdd: a subagent spawned with its own cwd shows it in its bar and spawn card, and its workspace
-	// panel opens there.
+	// Pi Mobile 24e3fccdd: a subagent spawned with its own cwd shows it in its spawn card and its row's tooltip, and its
+	// workspace panel opens there.
 	it("shows a subagent's own cwd and opens its workspace panel there", async () => {
 		const worktree = join(fixture.workspace, "worktree");
 		mkdirSync(worktree);
@@ -231,11 +257,7 @@ describe("one-shot agents and subagent archiving in the browser", { skip: !brows
 			"faux/faux-1 · thinking off · tools none · cwd worktree",
 		);
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${session}/c/${wt.conversationId}`);
-		await browser.wait(`document.querySelector('.subagent-wrap .subagent-bar span')`);
-		assert.equal(
-			await browser.evaluate(text(".subagent-wrap .subagent-bar span")),
-			`Tools: none · in ${worktree.replace(/^\/home\/[^/]+/, "~")}`,
-		);
+		await browser.wait(`document.querySelector('.topbar h1')?.textContent==='subagent wt'`);
 		// Its row's tooltip names its own location (it stays there when the session moves).
 		const tooltip = await browser.evaluate<string>(
 			`document.querySelector('.nav-row:has(> .subagent-row.active) .subagent-row').title`,

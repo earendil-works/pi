@@ -453,6 +453,7 @@ export class TuiRuntime implements Component, Focusable {
 				return component.focused ?? false;
 			},
 			set focused(value) {
+				// pi-tui's `Focusable` is a capability: only a component that has the field takes focus.
 				if ("focused" in component) component.focused = value;
 			},
 			render: (width) => component.render(width),

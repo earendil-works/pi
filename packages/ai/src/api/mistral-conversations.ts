@@ -917,9 +917,6 @@ function mapChatStopReason(reason: string | null): { stopReason: StopReason; err
 			return { stopReason: "length" };
 		case "tool_calls":
 			return { stopReason: "toolUse" };
-		case "error":
-			// Mistral reports transient server failures this way; "server error" makes the message retryable.
-			return { stopReason: "error", errorMessage: "Provider stopped with: error (server error)" };
 		default:
 			return { stopReason: "error", errorMessage: `Provider stopped with: ${reason}` };
 	}

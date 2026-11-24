@@ -449,7 +449,7 @@ describe("Durable telemetry", () => {
 		const setup = chatSetup({ models: [{ id: "faux-1", contextWindow: 1000, maxTokens: 100 }] });
 		setup.settings.compaction = { enabled: true, reserveTokens: 300, keepRecentTokens: 150, backgroundTokens: 1000 };
 		const telemetry = new InMemoryTelemetryContext();
-		addHooks(setup.registry, CompactionTask, { beforeCompact: () => ({ decline: true }) });
+		addHooks(setup.registry, CompactionTask, { beforeCompact: () => ({ kind: "decline" }) });
 		setup.faux.setResponses([fauxAssistantMessage("done")]);
 		const { harness, root } = await openTracked(new MemoryStorage(), setup, telemetry);
 		await root.commit(async (tx) => {
@@ -581,7 +581,7 @@ describe("Durable telemetry", () => {
 		addHooks(setup.registry, CompactionTask, {
 			beforeCompact: () => {
 				held = storage.holdCommits();
-				return { summary: "private-summary" };
+				return { kind: "summary", summary: "private-summary" };
 			},
 		});
 		const { harness, root } = await openTracked(storage, setup, telemetry);

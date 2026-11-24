@@ -185,4 +185,43 @@ describe("runPrintMode", () => {
 		await run;
 		expect(process.listenerCount("SIGTERM")).toBe(listenersBefore);
 	});
+
+	// Windows emits SIGHUP when the console window is closed. pi used to listen for it only on POSIX,
+	// so closing the window skipped session_shutdown and left the bash tool's processes running.
+	it("disposes and exits on SIGHUP on Windows", async () => {
+		const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+		Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+		try {
+			const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+			const runtimeHost = createRuntimeHost(createAssistantMessage({ text: "done" }));
+			let finishPrompt = () => {};
+			runtimeHost.session.prompt.mockImplementation(
+				() =>
+					new Promise<void>((resolve) => {
+						finishPrompt = resolve;
+					}),
+			);
+			const listenersBefore = process.listenerCount("SIGHUP");
+
+			const run = runPrintMode(runtimeHost as unknown as Parameters<typeof runPrintMode>[0], {
+				mode: "text",
+				initialMessage: "Say done",
+			});
+			await vi.waitFor(() => expect(runtimeHost.session.prompt).toHaveBeenCalledTimes(1));
+			expect(process.listenerCount("SIGHUP")).toBe(listenersBefore + 1);
+
+			process.emit("SIGHUP");
+			await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledWith(129));
+			expect(runtimeHost.session.extensionRunner.emit).toHaveBeenCalledWith({
+				type: "session_shutdown",
+				reason: "quit",
+			});
+
+			finishPrompt();
+			await run;
+			expect(process.listenerCount("SIGHUP")).toBe(listenersBefore);
+		} finally {
+			if (platformDescriptor) Object.defineProperty(process, "platform", platformDescriptor);
+		}
+	});
 });

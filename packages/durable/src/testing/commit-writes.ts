@@ -13,6 +13,6 @@ export async function commitWrites(storage: Storage, writes: readonly StorageWri
 		},
 		context,
 	);
-	if (result.stored === 0) throw result.refused;
+	if (result.kind === "refused") throw result.refused;
 	return stored!;
 }

@@ -1,5 +1,13 @@
 export type JsonRpcId = string | number;
 
+/**
+ * The client's request IDs and progress tokens are integers. Some servers echo them back as strings
+ * ("1" for 1); map those to the integer so they match, like other MCP clients do.
+ */
+export function normalizeOwnRequestId(id: JsonRpcId): JsonRpcId {
+	return typeof id === "string" && /^(0|[1-9]\d*)$/.test(id) ? Number(id) : id;
+}
+
 export interface JsonRpcRequest {
 	jsonrpc: "2.0";
 	id: JsonRpcId;

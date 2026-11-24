@@ -1,16 +1,75 @@
-# Building p3 on Chord: practices
+# Building p3 on Chord
 
-For whoever builds p3 (people, agents, the builder after a handoff). **Read in full before every slice**, with
-`names.md`, `decisions.md` and `packages/chord/docs/design.md`. Chord's own plugin guide
-(`packages/chord/docs/plugin-authoring.md`) has the generic rules (layout, imports, named queries, admission,
-reloads, messages); this file is p3's: the shape a p3 plugin has, the rules we decided, and the mistakes we made,
-each with its fix. Add to it whenever a slice teaches something.
+How p3 fits together, what a p3 plugin looks like, the rules, and the mistakes we made with their fixes. Add to the
+mistakes table whenever a package teaches something.
 
-## The shape of a p3 plugin (the sessions plugin, slice 1)
+## How p3 fits together
 
-**One audience per contract.** The owner, a session's worker and the server never share a contract through
-variants; variants are levels of one audience (`viewer`, `participant`). A worker reading its own session gets its
-own contract.
+```text
+pages, terminal clients   not addressable; reach everything through the server (WebSocket /chord, a sign-in)
+        │
+     server               one per Pi: host at Server(), its store, HTTP, every plugin built here at start
+        │                 one link per worker; the server relays clients' holds and calls
+session workers           one process per session: host at Session({ id }), its own store, the worker facets
+```
+
+- **A host** is one participant; **a link** joins two. A plugin never sees processes: it serves objects on a host
+  kind and asks for objects by contract (`ctx.get`, `self.get`); Chord routes and relays.
+- **A plugin** is a folder in a plugins root with one file per facet kind: `server.ts`, `worker.ts` (p3's kinds today;
+  `web` and `terminal` come with the UI). The server builds every facet with esbuild at each start and ships the
+  worker facets to the workers. A plugin imports only `@earendil-works/p3/v1` (and `/v1/server`, `/v1/worker` in
+  those facets), its own files, other plugins' contract files by relative path, and its npm dependencies (inlined).
+  Never Chord directly; never `import()` (plugins load whole, at start).
+- **The store:** the server and every worker have one SQLite store, synchronous (a query blocks the event loop).
+  What is needed while no worker runs lives on the server; the session's own data in the worker's store; never one
+  fact in both.
+- **Admission:** before an object of a remote type is built, its `admit` reads data about the caller and allows (with
+  a value for the factory) or denies. The route to session workers has one too: no worker starts for a session that
+  does not exist, and no worker reaches another session's worker (`apps/p3/src/server.ts`).
+- **Reload:** applying a plugin's new code restarts its live objects on that code; documents and tables stay; running
+  calls finish on the old code. Server first, then workers, then clients. Base code (`src/`, the API, Chord) changes
+  only with a restart. Everything a plugin keeps across a reload is in its store.
+- **The base** (`apps/p3/src/`) is only what must exist before plugins load: per host kind a bootstrap (`server.ts`:
+  the data directory's lock, the store, the host, Chord's HTTP and plugins components, the route to session workers;
+  `worker.ts`: the session's store and host, connected to the server), and the registries of process values it serves
+  (`ServerRuntime`, `WorkerRuntime`). Everything else is a plugin: how a session's worker runs (`runner`), who someone
+  is (`sign-in`), the owner's stop and apply (`control`), the sessions (`sessions`).
+- **Session workers:** the route's `resolve` asks the `WorkerRunners` registry; the `runner` plugin forks one process
+  per session. A worker stops itself once it was idle for its idle time (the runner's worker facet: no holds, calls,
+  jobs, and every `WorkerBusy` count 0; the harness contributes "a run is active"), closing its host and store first.
+  A crashed worker fails its session until `retry` or an apply. After a server restart the sessions plugin's waker
+  starts the workers of every `working` session.
+
+## The API (`@earendil-works/p3/v1`)
+
+| Module | What you get |
+| --- | --- |
+| `/v1` | everything of Chord's root (`remote`, `local`, `method`, the schema helpers, `defineTable`, `query`, `queries`, `defineState`, `defineRegistry`, `allow`, `deny`, `forbidden`, `invalid`, ...), `BACKGROUND_CONTEXT`, `Context`, `JsonValue`, `defineFacet` typed with p3's principals, the host kinds `Server()` and `Session({ id })`, the helpers `forward` and `contribute`, `P3Principal`, and the contracts p3 promises to third-party plugins (the sessions plugin's: `Sessions`, `SessionsList`, `SessionFacts`, `SessionWorker`, `SessionStart`, `SessionRow`, `SessionState`) |
+| `/v1/server` | Chord's HTTP surface (`Http`, `Authenticators`, cookies), `ServerRuntime` (the data directory, the host, the store, the route to workers, apply, stop), `WorkerRunners` (how session workers run), `LinkOpened` (hooks on accepted links), `SessionRoute`, the worker control messages, the rollout types |
+| `/v1/worker` | `WorkerRuntime` (the session, the host, the store, the directory, the idle time, `close`), `WorkerBusy` (counts that keep the worker alive) |
+
+Principals are identity only: `{ kind: "owner" }`, `{ kind: "person", id, name }`, `{ kind: "worker", session }`,
+`{ kind: "server" }`. What a person may do is data, read by admissions, never stored in the principal.
+
+A plugin of another root (a third party's, in `<data directory>/plugins`) reaches the built-in plugins' contracts only
+through the API (Chord decision "The app kit, point 5"): a relative path out of its root is a build error.
+
+Missing today (ask Mario, `process.md`): `withoutAbortSignal` and `pluginFile` are not exported; there is no `web` or
+`terminal` facet kind yet.
+
+## The shape of a p3 plugin (the sessions plugin, `apps/p3/plugins/sessions/`)
+
+```text
+package.json         { "name": "@earendil-works/p3-sessions", "private": true, "type": "module" }
+contract.ts          contracts every kind imports (one per audience)
+contract.server.ts   the store's contract, for server facets only
+server.ts            the server facet: the table, the store, the views
+worker.ts            the worker facet
+sessions.test.ts     the plugin tier test
+```
+
+**One audience per contract.** The owner, a session's worker and the server never share a contract through variants;
+variants are levels of one audience (`viewer`, `participant`). A worker reading its own session gets its own contract.
 
 ```ts
 // contract.ts: what other plugins and facets import
@@ -81,111 +140,78 @@ host.serve(SessionFacts, (_params, principal, self) => {
 });
 ```
 
-**No worker starts for a session that does not exist.** The session route's admission reads data through a contract the API owns
-(`SessionRoute`, `@earendil-works/p3/v1/server`), served by the sessions plugin (`src/session-route.ts`, `sessionExists`).
-
-**Helpers in p3's API** (`src/kit/`): `forward(store, Remote, variant, own?)` (a view's members from a store,
-by the remote contract's names; never derive a public contract from a store: it would publish whatever internal
-member is added next); `contribute(host, name, register)` (an object that only contributes, when a contribution
-needs a reference or a native). No stale-worker check exists or is needed (below).
+**Helpers in p3's API:** `forward(store, Remote, variant, own?)` fills a view's members from a store by the remote
+contract's names (never derive a public contract from a store: it would publish whatever internal member is added
+next); `contribute(host, name, register)` makes an object that only contributes, when a contribution needs a
+reference or a native.
 
 ## Rules
 
 **Data**
-- One owner per datum, written only through it. **No copies** of a value in a second place (no facts document beside
-  a row, no last touch mirrored into another plugin's row): read it with a named query, a join or `exists`.
+- One owner per datum, written only through it. **No copies** of a value in a second place: read it with a named
+  query, a join or `exists`.
 - **No hidden caps.** A list is `self.list` with `more`; a set that decides access is read whole or fails closed when
   it has more rows than it read. Never `{ first: 1000 }` and hope.
 - Index and order columns are never optional (store "none" as 0, show `null`). Every named query says in a comment
-  which index serves its condition and order, and a plan test (`EXPLAIN QUERY PLAN` on the statements Chord runs, as
-  `apps/p3/test/plans.test.ts` does) proves it. A list's whole order, the key Chord appends included, must be its
-  index's order, or SQLite sorts every page: one index per list's order. An `inArray` on one column with an order on
-  another walks the order's index (order by the `inArray` column first).
-- A write that changes a few columns is a `tx.update` (a touch, a rename), never a `put`: readers that depend on none
-  of the columns skip, the others probe once.
-- Hot details (tokens streaming, tool progress, timers) never reach a table a list reads. A session's row holds
-  transitions only (state, last touch).
-- Node's SQLite is synchronous: a query blocks the event loop. Offsets and counts read every row they pass:
-  `self.count` is exact and expensive, used only where a key or an index bounds it; lists use "more".
+  which index serves its condition and order, and a plan test proves it (`testing.md`). A list's whole order, the key
+  Chord appends included, must be its index's order, or SQLite sorts every page: one index per list's order. An
+  `inArray` on one column with an order on another walks the order's index: order by the `inArray` column first.
+- A write that changes a few columns is a `tx.update`, never a `put`: readers that depend on none of the columns skip.
+- Hot details (tokens streaming, progress, timers) never reach a table a list reads. A session's row holds
+  transitions only.
+- Counts read every row they pass: `self.count` only where a key or an index bounds it; lists use `more`.
 
 **Lists**
-- One remote object per screen, the screen's own id in its params; `self.list` tiles internally between fixed
-  bookmarks, so rows that reorder leave no gap and no duplicate, and `more` sends only new rows. Never chain pages,
-  never grow "the first n".
-- Drive a list from what the person has (their teams, their shares, what they created), each a source of one
-  `self.list`; an `exists` is never the selective part of a list.
-- A screen composed from several plugins (the sidebar) is a server object per person composing small reads in
-  memory; the client gets a range.
-- An open list grows with what is created: a new row enters its first page, so a list can show more than one page
-  without `more`. A test that wants "the first page, then `more`" opens the list after creating the rows.
-- Reads are not shared between readers yet (Chord's carry-over): two objects reading the same named query with the
-  same arguments are two reads, and a write runs both. When it matters, one local object per entity holds the read
-  and the others read it.
+- One remote object per screen, the screen's own id in its params; `self.list` tiles pages between fixed bookmarks,
+  so rows that reorder leave no gap and no duplicate, and `more` sends only new rows. Never chain pages, never grow
+  "the first n".
+- Drive a list from what the person has (their memberships, their shares, what they created); an `exists` is never
+  the selective part of a list.
+- A screen composed from several plugins (the sidebar) is one server object per person composing small reads.
+- A new row enters an open list's first page: a test that wants "the first page, then `more`" opens the list after
+  creating the rows.
+- Two objects reading the same named query with the same arguments are two reads; when it matters, one local object
+  per entity holds the read and the others read it.
 
 **Access**
-- A person's data comes from admission, never from params. Params only narrow inside what the admission allows
-  (the club's team page takes its team from the admission).
-- App-specific views check the session's **current** app: cleanup after a move is not an access boundary.
-- Conditions are built by server code; clients send values. A condition passed as data is a trust boundary
-  (`whereNode` checks it).
+- A person's data comes from admission, never from params. Params only narrow inside what admission allows.
+- App-specific views check the session's **current** app.
+- Conditions are built by server code; clients send values only.
 - Per-person rows (pins, unread marks) are filtered by the person, not only by the access condition.
-- Admission values are small (a mode, a role); what a list shows is its query's argument, not the admitted value.
+- Admission values are small (a mode, a role).
 - No `self.job` in an admitted type: work for a person lives in a local store, carries the person, asks again on
   every run.
-
-**Workers**
-- Plugins never check whether a call comes from a worker that is gone: Chord's workers component closes an exiting
-  worker's link and settles its queued commits before it publishes the exit or starts a successor. Data kept across a
-  worker's runs is tagged with `ctx.incarnation`.
+- Workers: never check whether a call comes from a worker that is gone; Chord settles an exiting worker's calls
+  before it publishes the exit. Data kept across a worker's runs is tagged with `ctx.incarnation`.
 
 **Reload**
-- Everything a plugin keeps across a reload is in its store's tables and documents; writables start over. A list's
-  bookmarks are kept by its object in memory: they survive a reload, not a server restart (the screen opens it anew). Readers of a restarting store re-read on its successor; nothing is stale.
-- Every slice edits and reloads each plugin it touches while it is used (a list open, a worker running), in a test:
-  nothing lost, no error.
+- Everything kept across a reload is in the store's tables and documents; writables start over. A list's bookmarks
+  survive a reload, not a restart.
+- Edit and reload every facet you touch while it is used (a list open, a worker running), in a test: nothing lost, no
+  error.
 
-## Releases
+**Releases** (p3 runs from the checkout and as an installed release; both must work)
+- Plugins ship as source and are built at start; their tests end in `.test.ts` (the release leaves those out).
+- Node flags go into the worker's `execArgv` (`apps/p3/src/install.ts`), never only into `npm test`.
+- A package that changes what the release ships runs `npm run release:p3:local` (`testing.md`).
 
-p3 runs two ways: from the checkout (TypeScript through `--conditions=source`) and as the installed release
-(`npm run release:p3:local`, slice 26: base code bundled with Chord inlined, plugins as source). Both must work.
-
-- Base code asks `src/install.ts` where p3's files are; it never builds paths from `import.meta` itself.
-- Plugins ship as source: they import only the API and their own files, and their tests end in `.test.ts` (the build
-  leaves those out).
-- A new base-code dependency is inlined into the bundle or added to the build's list of allowed externals (the build
-  fails on any other).
-- Node flags go into the launcher or the session worker's `execArgv`, never only into `npm test`.
-- A slice that touches base code runs `release:p3:local` (its release tests) before reporting.
-
-## Tests
-
-- Three tiers: plugin (`testPlugin`), topology (server and workers in one process, `test/topology.ts`), end to end
-  (the real `startP3`, a forked worker, a WebSocket client). Most coverage in the topology tier.
-- One test per case of the brief; a test waits for an effect it caused (`test/until.ts`), never for a pattern that
-  may already be there; nothing may fail in the background but the refusals the test asked for.
-- **Every reproduction a reviewer writes becomes a regression test** in the repository.
-- **Mutation check before reporting:** undo each fix and each rule one at a time in a copy under `/tmp`; a test must
-  fail for each. A rule no test catches is untested.
-- Where a rule is subtle (skip rules, tiling), a randomized test compares the optimized result with a fresh run,
-  across several owners and group commits, checked after every frame.
-- Numbers: `bench/slice-<n>.ts`, at the sizes the brief states (1k, 10k, 100k rows), medians of 20 or more runs,
-  the first (cold) run reported apart, on slayer; a worker's memory as its private memory (USS), and its total for
-  several workers at once.
-- The mutation copy needs its own package links: copy `apps/p3` to `/tmp/x/apps/p3` and make
-  `/tmp/x/node_modules/@earendil-works/` a directory of links: `p3` to the copy, every other entry to the repository's
-  (a mutation in Chord copies `packages/chord` too and links `chord` to it). Linking the whole scope resolves p3 back to
-  the checkout, and mutations take no effect. A mutation must keep its imports used: an unused import trips the
-  build's externals check.
-- A failed case leaves no socket or launched process open (`finally`, `t.after`, `--test-force-exit`): one leak hangs
-  the whole runner. Supervisors are detached, so a mutation runner kills them by command line.
-- Reload tests reload every facet the slice touches while it is used: the server's (a list open) and the worker's (the
-  owner holding the worker's object).
+**Code** (the Chord v2 code style of the root `AGENTS.md`, for plugin code too)
+- One concept per file, named after it; the first line says what the file is for; the public entry first, helpers
+  below in the order used.
+- Every export has a one-line doc comment. Comments explain a non-obvious why, never what the next line does.
+- Short functions with one job; no boolean flag parameters; never the same lines twice; context last
+  (`fn(args, ctx)`).
+- Tagged unions for states and results; casts only where TypeScript cannot express an invariant, with a why; runtime
+  checks only at trust boundaries (wire input, schema-checked arguments, files people edit), each named.
+- Caches are `WeakMap`s keyed by their owner, with a GC test; no module-level strong caches; no hot-path work nobody
+  asked for.
+- Names from `names.md`; no `any`; no inline imports; no dev or test modes.
 
 ## Mistakes we made (and the fix)
 
 | Mistake | Fix |
 | --- | --- |
-| The newest 200 as "the list" (slice 1, first build) | `self.list` with `more` |
+| The newest 200 as "the list" | `self.list` with `more` |
 | A facts document beside each row, written twice | the worker reads its row with `self.liveQuery` by id |
 | Two page objects tiled by row number: a row moving to the top fell between them | one list per screen; pages bounded by bookmarks inside `self.list` |
 | Growing a window ("first 100, then 150") re-sent every loaded row | `more` on the same object: only new rows travel |
@@ -196,23 +222,15 @@ p3 runs two ways: from the checkout (TypeScript through `--conditions=source`) a
 | An `exists` as the selective part of a person's list: a guest's list walked the whole app | drive the list from the person's own rows |
 | `inArray(state)` ordered by `lastTouch` walked all 10,000 rows | order by the `inArray` column first |
 | Mirroring last touch into the team's row to make the order cheap | a keyed probe skips reads a write cannot affect; no copy |
-| A count behind a hot column | count only what a key or an index bounds, never behind a column every touch writes |
+| A count behind a hot column | count only what a key or an index bounds |
 | A whole store exposed as a remote contract | an explicit contract and `forward` |
-| Seven plugins checking a worker's generation by hand | the workers component guarantees it |
-| A list cost measured once, after a start (2.3 ms, cold) | medians of 20 or more runs (0.7 ms warm), the cold run apart |
-| A mutation copy that still resolved `@earendil-works/p3` to the checkout | its own package links |
-| One index for two lists: the archived list's tie-break on the key was not in its index, so SQLite sorted every page | one index per list's order, and a plan test |
-| A revoked device's open socket kept working (inherited from Chord's kit) | a sign-in closes its own links (`links.opened`'s `close`), never `host.revoke` (it ends shared objects for every device) |
-
-## How we work
-
-`workflow.md` is the process; this is what it means for the builder:
-
-- **Models:** builders are Opus. Fable plans and reviews, never builds (owner, 2026-11-15). Sol and Astra review.
-
-- Read the brief's "Read first" list and this file in full before touching code. Never present an invented API: real
-  with its file, or marked PROPOSED.
-- Fill out the brief before building: p2's features first. Every decision goes to the owner, one at a time, with an
-  example, options and a recommendation, and into `decisions.md` at once.
-- Keep it small: copy only what a slice needs, cut what it does not use, split by concept.
-- Commit only after the owner's review; docs may be committed earlier. Stage explicit paths, never `git add -A`.
+| Seven plugins checking a worker's generation by hand | the runner counts a worker's exit once the commits its calls queued settled |
+| A test plugin re-declared another plugin's contract (a second root cannot import it): Chord refused the different schema | the API re-exports the contracts p3 promises; a plugin of another root imports them from there |
+| `"report" in entry` to tell apart the members of an untagged union | tagged unions (`kind`), a `switch` on the tag; `in` only at a trust boundary on an `unknown` value |
+| The worker's bundle imported the server's API module, and with it Chord's HTTP stack (`ws`, `node:http`) | the API modules per process (`modules-server.ts`, `modules-worker.ts`); the release's lean check catches it |
+| One index for two lists: the archived list's tie-break was not in its index, so SQLite sorted every page | one index per list's order, and a plan test |
+| A revoked device's open socket kept working | a sign-in closes its own links (`links.opened`'s `close`), never `host.revoke` (it ends shared objects for every device) |
+| A secret file linked into place: Android forbids hard links, p3 could not start | write a temporary file, then rename it |
+| A test helper read `/proc/<pid>/task/<pid>/children`, which Android's kernel lacks | scan `/proc/*/stat` for the parent |
+| A worker thread per code-mode script (p2): 10 to 28 MiB per worker | QuickJS inline, opened on first use |
+| Braille glyphs for the working dots: Android's font draws one frame in the wrong column | draw the dots ourselves |

@@ -371,10 +371,10 @@ p2 runs on Chord v2 (`packages/chord`, `docs/design.md` there); the port's notes
   generations, logs and notices, relocation and pauses on `stop`/`retry`).
 - **Host stores and files** (per-host stores; laid out as the app kit lays out its hosts, `src/runtime/host-dirs.ts`):
   every host has its own Chord store and files directory, private (directories 0700, stores 0600). The server:
-  `<data>/server/store.sqlite` (outbox off: local-only data, credentials included, never goes to a sync) and
-  `<data>/server/files/`; each session: `<data>/sessions/<id>/store.sqlite` (outbox off until p2 syncs: it records
-  nothing while not connected to a sync; turning it on starts at the current commit, and a first sync uploads an
-  archive) and `<data>/sessions/<id>/files/`.
+  `<data>/server/store.sqlite` and `<data>/server/files/`; each session: `<data>/sessions/<id>/store.sqlite` and
+  `<data>/sessions/<id>/files/`. Every store keeps an outbox only while backup is on (**Backup**): turned on, it
+  starts at the current commit, and the first upload is a full copy. With backup on, the server's store is uploaded
+  too, share-link tokens included (open: whether those tables should stay out of it).
   Projects will be another host kind of the same shape. Both hosts load the app kit's `Files` (`chord.app.files`,
   `filesFacet` from `@earendil-works/chord/app/files`); a session's Durable runs on its store through `StoreStorage`
   under the owner name `p2.durable` (`src/runtime/session-store.ts`), beside `Files`' tables. Plugins reach `Files`
@@ -1342,6 +1342,44 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
   (status). A document nobody wrote yet is absent and cannot be followed, so chat mode and artifacts create it empty on
   first follow. A method that writes such a document returns after Durable's commit, by when the follow has the new
   value (`chat-mode.test.ts`). The same holds for p2's own natives: `PromptResources` follows the prompt loads.
+- **Backup** (`plugins/backup`; Chord's decision "Sync serves backup: a full copy after the head, a deleted remote copy
+  starts over"): copies of the server's store and every session's store on a backup remote, so a lost machine loses
+  nothing it uploaded. `P2_BACKUP=radius` (the Radius this server is signed in to, offered by `plugins/radius` through
+  `BackupTargets`) or `P2_BACKUP_DIR=<path>` (a folder); `src/runtime/backup.ts` reads them where the hosts open their
+  stores, the rest is the plugin's. Rules:
+  - **One writer per store:** the server uploads its own store, each session's worker the session's (through the
+    server's `BackupRemote`, in pieces of 1 MiB; only the server holds the remote). Soon after each commit: 200 ms after
+    what a person sent or a finished answer (`isUrgentCommit`), else 5 s; once more as a worker stops. The last seq the
+    backup holds is a bookmark file beside each store (`backup/<target>/`).
+  - **Its own state is files, not the store** (owner, 2026-11-23; a deliberate exception to "everything kept is in
+    the store"): a store's bookmark (`<name>.json`) and account (`<name>.account`) are files in `backup/<target>/`
+    beside it, each replaced whole (a temporary file, then a rename). In the store they would be commits: every upload
+    would commit its own bookmark, the next upload would carry that commit, and the uploader would never be idle; and a
+    restored store would bring the old machine's bookmark with it. Written only by the store's owner, as the store is.
+  - **Outbox only while backup is on:** turning backup off drops what the outbox held; turned on again, the next upload
+    is a full copy of the store after what the backup holds, and the backup goes on in the same history.
+  - **Upload answers:** `created`, or `exists` by this server (an answer lost on the way): go on. The remote holds
+    nothing while the bookmark is past 0: the backup was deleted (on Radius, maybe while this server was offline, so
+    nothing cleared the bookmark): forget the bookmark and upload a full copy from 0. Any other `not_head`, a slot
+    another server took, or a store that lost commits the backup holds (`behind`): status `diverged` or `behind`,
+    "stopped until a restart"; the commits stay in the outbox. Refusals that retrying cannot fix (400, 403, 413,
+    `protocol_too_old`) stop the same way; other failures retry with backoff.
+  - **A backup belongs to one account** (owner, 2026-11-23). The case: two people use one machine in turn, person A
+    signs in to Radius, works in a session and backs it up through seq 20; person B signs in instead and continues the
+    same session to 25. Were B's server to upload, the session's history would go on in B's backup, the bookmark would
+    say 25, and when A signs in again A's backup (still at 20) could not continue: `not_head`. So a store's backup
+    belongs to the account of its first upload (`<name>.account` beside its bookmark, `backup/<target>/`; Radius:
+    `<organization ID>/<principal ID>` from Radius's context, `RadiusBrain.account()`). Only a target with accounts has
+    the rule: Radius; a folder has none, so every store is uploaded to it whoever is signed in. Under any other account
+    the store is not uploaded: status `other_account`, its commits wait in the outbox, and when its account signs in
+    again the next upload goes on from where that backup ended (B's work in A's session lands in A's backup: the
+    session is A's). Sessions first backed up as B are B's the same way. Checked before every upload, since the server
+    may sign in as someone else while it runs. A store whose account file was deleted by hand binds to whoever uploads
+    it next.
+  - **Restore** (not built yet) forks: a restored session gets a new session ID and its own backup, so two machines
+    never write one session's history.
+  - **Not in a backup:** file contents (only their index rows), and sessions whose worker never runs after backup is
+    turned on.
 - **Sharing** (`plugins/sharing`): `Shares` (server local; its tables in the server's store, `plugins/sharing/store.ts`:
   links and grants keyed by their session's address (`host(Session)`), guests with a revision; its lists are live
   queries over them), `Presence` (connected
@@ -1594,8 +1632,12 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
   `openBrowserOnConfirm: false` (a provider asking clients not to offer opening its page) shows the verification
   address as text instead of the Open link (web), and the TUI offers no "open in browser" for it. No pi-ai changes or custom
   callback URL. API keys and pasted codes pass through the tunnel/relay; use a trusted transport. Once no browser
-  holds the sheet (no reference to its owner's `ProviderLogin` left, `host.references`), its unfinished login is
-  cancelled. Tests use fake providers (login.test.ts and remote-login.test.ts).
+  holds it (no reference to its owner's `ProviderLogin` left, `host.references`) for five minutes, its unfinished login
+  ends ("Login ended: no page of yours was connected…"); a reference coming back (a reconnect, a reload) keeps it. Mobile
+  Safari drops a background tab's socket while the owner is in the provider's tab, so ending at once cancelled every
+  remote browser-callback login before the redirect URL could be pasted. Closing the sheet still cancels at once (the
+  web sheet's cleanup), and a new start by the same owner replaces their own unfinished login (a reloaded page shows it
+  only on that provider's screen). Tests use fake providers (login.test.ts, login-owners.test.ts and remote-login.test.ts).
 - **Web slots**: `SlotList({ prefix })` renders every `prefix:<name>` slot (e.g. `sidebar-actions:settings`); `Sheet` is
   the shared modal with scroll memory (Escape and the scrim close the whole modal stack). Shell-level
   `workspace-panel` docks beside `main`; `workspace-terminal` is an optional terminals-plugin surface.
@@ -1809,7 +1851,10 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
   instructions come from `describeNamespace()`. Without code mode, the `mcp` extension's `mcp_servers` section lists
   the conversation's servers with their summaries, as pi's does for `tool_search` servers. Deferred
   tools named by `createMcpToolName` (every tool of a colliding name gets the hash suffix, as in pi), results through
-  `toLlmContent` and `limitMcpContent`, `structuredOutput` only for tools with an output schema. Without code mode,
+  `toMcpModelContent` and `limitMcpContent` (for `tool_search` calls, binary resources and the full text saved in the
+  conversation's environment; resource links name no tool, since p2 has no `read_mcp_resource`),
+  every tool's `structuredOutput` the server's `CallToolResult` without `_meta` (`createMcpResultSchema`), so scripts
+  get it whole as in pi. Without code mode,
   `tool_search` is installed by the worker's registry (`durableRegistry`: once, while code mode is off and any extension
   has a deferred tool the model may call; MCP's and the terminal tool share it). Tests: `mcp.test.ts` (manager and views on a bare host with `test/fixtures/mcp-server.mjs` and
   an HTTP fixture; projects, where sessions work, and an environment through the debug pi-env daemon, skipped without
@@ -2019,7 +2064,8 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
   Chord v2 has none), more than 4 MiB unsent output beyond the frame being sent
   terminates it, socket errors never crash the server. Terminal sockets keep their own 1 MiB frames and 8 MiB
   backlog. A provider login belongs to the owner principal that started it: only it sees, answers, cancels or
-  dismisses it, and its leaving (all holds of its Providers sheet gone) ends it; another owner device cannot.
+  dismisses it, and its staying away (no hold of its `ProviderLogin` for five minutes) ends it; another owner device
+  cannot.
 - **Reuse** of apps/mobile: none. Adapted implementations live beside their plugins; shared backend helpers live
   in `src/runtime`, shared browser code in `src/web`. p2 is an independent npm workspace with pinned dependencies.
   `src/web/style.css` is a copy of mobile's stylesheet; terminal and environment styles live beside their plugins.
@@ -2040,9 +2086,14 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
   contract: a final transcript is `send` (steering while busy), new answers (keys present when voice mode started are
   skipped) stream through `SpeechChunker` (sentences, no code blocks or tables) to `/voice/speak`, played in order.
   While audio plays the microphone is not streamed; pibot's barge-in detector (energy the playback does not explain)
-  only starts streaming it. Owner rule: only words interrupt. The speech service sends interim transcripts
+  only starts streaming it. Its level is relative to the microphone's own noise floor (3.5 times it, at least 0.003, at
+  most pibot's fixed 0.018): a laptop microphone without gain control hears a speaker at arm's length far under 0.018.
+  The microphone runs without the browser's echo canceller while the default output is headphones or earphones (by
+  its label; reopened when the output changes): Chrome's desktop canceller suppresses the speaker while the agent's
+  speech plays. The voice log has the microphone's raw levels (RMS peak and mean, floor, level, residual ratio) about
+  once a second while the agent speaks or someone talks. Owner rule: only words interrupt. The speech service sends interim transcripts
   (sts-server `interim`); the first with a real word (no filler, not the agent's own speech heard back) cuts the speech
   and stops the run at once, also while the agent works silently (`interruption.ts`); a trigger the room never hears as
   words is dropped and the agent goes on. Transcripts without words are never sent; a stop phrase also calls `stop`. A `voice.mode` conversation document turns the `voice` prompt
-  section on (short spoken answers); the switch follows the button. Tests: `voice.test.ts`, `voice-ui.test.ts`
-  (Chromium fake microphone).
+  section on (short spoken answers); the switch follows the button. Tests: `voice.test.ts`, `voice-barge-in.test.ts`,
+  `voice-ui.test.ts` (Chromium fake microphone).

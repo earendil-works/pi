@@ -81,6 +81,7 @@ const INDIVIDUAL_TEXT_MODELS = [
 	"qwen3.7-plus",
 	"qwen3.8-flash",
 	"qwen3.8-max",
+	"qwen4-max-preview",
 ];
 
 const IMAGE_MODELS = ["qwen-image-2.0", "qwen-image-2.0-pro", "wan2.7-image", "wan2.7-image-pro"];

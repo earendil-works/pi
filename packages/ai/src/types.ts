@@ -12,6 +12,7 @@ import type { PiMessagesOptions } from "./api/pi-messages.ts";
 import type {
 	AnthropicMessagesCompat,
 	BedrockCompat,
+	GoogleCompat,
 	MistralConversationsCompat,
 	OpenAICompletionsCompat,
 	OpenAIResponsesCompat,
@@ -36,6 +37,7 @@ export type {
 	AnthropicMessagesCompat,
 	BedrockCompat,
 	ChatTemplateKwargValue,
+	GoogleCompat,
 	MistralConversationsCompat,
 	OpenAICompletionsCompat,
 	OpenAIResponsesCompat,
@@ -83,7 +85,8 @@ export type KnownClassifierApi =
 	| "typesafe-system-one"
 	| "cloudflare-workers-ai-system-one"
 	| "llama-cpp-classify"
-	| "openai-decisions";
+	| "openai-decisions"
+	| "pi-classifier";
 
 export type ClassifierApi = KnownClassifierApi | (string & {});
 
@@ -893,7 +896,9 @@ export interface Model<TApi extends Api> extends BaseModel<TApi> {
 					? BedrockCompat
 					: TApi extends "mistral-conversations"
 						? MistralConversationsCompat
-						: never;
+						: TApi extends "google-generative-ai" | "google-vertex"
+							? GoogleCompat
+							: never;
 }
 
 /** Image-generation model: usable with `generateImages()` only. */

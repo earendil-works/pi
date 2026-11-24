@@ -20,6 +20,7 @@ import {
 import type { Context, Location } from "@p2/app/v1";
 import type { P2Tool } from "@p2/app/v1/worker";
 import { modelRefOf } from "./contract.ts";
+import { closeModels } from "./model-list.ts";
 
 export const THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 export const TEAM_TOOL = "team";
@@ -123,8 +124,15 @@ export async function resolveChoice(
 	const text = choice.model ?? current?.model;
 	const ref = text === undefined ? own.model : modelRefOf(text);
 	const model = ref ? models.getModel(ref.provider, ref.modelId) : undefined;
-	if (!ref || !model)
-		return `Unknown model ${choice.model ?? "(none)"}. Use the subagent tool's models action to list them.`;
+	if (!ref || !model) {
+		const available = await models.getAvailable(undefined, { signal: AbortSignal.timeout(10_000) });
+		const close = text === undefined ? [] : closeModels(available, text);
+		return [
+			`Unknown model ${choice.model ?? "(none)"}.`,
+			...(close.length ? [`Close matches: ${close.join(", ")}.`] : []),
+			"Use the subagent tool's models action (model: a provider or parts of a model id) to list them.",
+		].join(" ");
+	}
 	if (choice.thinkingLevel !== undefined && !THINKING.includes(choice.thinkingLevel))
 		return `Invalid thinkingLevel ${choice.thinkingLevel}.`;
 	const requested = (choice.thinkingLevel ?? current?.thinkingLevel ?? own.thinkingLevel) as ModelThinkingLevel;

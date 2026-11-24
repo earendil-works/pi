@@ -2,13 +2,47 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `compat.supportsStrictMode` for `google-generative-ai` and `google-vertex` models in `models.json`, so Gemini 3+ models served under IDs without the version can use strict tools ([#12321](https://github.com/earendil-works/pi/issues/12321))
+- Added `full_output_error` to the bash tool's structured output and `fullOutputError` to its details, `BashResult` and `BashExecutionMessage`, giving the reason when truncated output could not be saved to a temp file. User bash output that was truncated without a saved file now says so in the model context and the TUI ([#10585](https://github.com/earendil-works/pi/issues/10585))
+
+### Changed
+
+- Changed the default Mistral model from `devstral-medium-latest` to `mistral-medium-latest`, because Mistral retired Devstral and the model catalog no longer lists it
+
+### Fixed
+
+- Fixed sessions with very many entries after the last compaction (about 120k or more) failing to load with `RangeError: Maximum call stack size exceeded` when building the context ([#12154](https://github.com/earendil-works/pi/issues/12154))
+- Fixed `ctx.ui.pasteToEditor()` and `ctx.ui.setEditorText()` not repainting the editor when called outside terminal input handling, such as after an `await` in a command handler ([#12295](https://github.com/earendil-works/pi/issues/12295))
+- Fixed the bash tool returning `(no output)` when the output ended with a line over 50KB followed by an empty line; it now shows the end of that line ([#12350](https://github.com/earendil-works/pi/issues/12350))
+- Fixed `/tree` navigation adding the branch's prompts to Up-arrow history again on every navigation; prompts already in history now move to the most recent position instead of repeating ([#12279](https://github.com/earendil-works/pi/issues/12279))
+- Fixed closing the console window or terminal tab on Windows skipping `session_shutdown` and leaving commands started by the bash tool running, for example `sleep 300` from `bash -c "sleep 300"`. pi now handles SIGHUP on Windows like on POSIX and waits for `taskkill` to finish before it exits. Quitting with Ctrl+D or `/quit` while a `!` command runs, or ending RPC mode while a `bash` command runs, no longer leaves that command running on Windows either
+- Fixed the `AuthStorage` coalesced-reload test failing intermittently on systems with coarse file timestamps ([#12190](https://github.com/earendil-works/pi/issues/12190))
+- Fixed the `thinkingLevelMap` reference in the models.json schema and docs suggesting pi does not support the `xhigh` and `max` thinking levels; it now says they are opt-in and only offered when mapped, and the model guide explains how to map thinking levels ([#12281](https://github.com/earendil-works/pi/issues/12281))
+- Fixed Mermaid diagrams wider than the terminal falling back to their source without explanation; a note now says how many columns the diagram needs ([#12324](https://github.com/earendil-works/pi/issues/12324))
+- Fixed copies on Wayland silently failing when `wl-copy` guessed a non-text MIME type from the copied text, for example `application/x-ruby` for text starting with `def`, which clipboard managers such as Klipper discard; pi now copies as `text/plain` ([#12446](https://github.com/earendil-works/pi/pull/12446) by [@ttempaa](https://github.com/ttempaa))
+- Fixed pi crashing when the bash tool or a `!` command could not write its full-output temp file, for example when `/tmp` was full, over a per-user quota or not writable; both now keep the truncated output and say why the full output could not be saved. Opening the external editor and `/share` now report such failures instead of crashing ([#10585](https://github.com/earendil-works/pi/issues/10585))
+- Fixed `/login` showing a provider as configured when its stored `auth.json` key is a `!command` that fails, while requests failed with `No API key found`. `/login` now shows `stored key did not resolve`, `getProviderAuthStatus()` returns `{ configured: false, source: "stored" }`, and entering the same `!command` again in `/login` runs it again instead of reusing the cached failure ([#12164](https://github.com/earendil-works/pi/issues/12164))
+- Fixed `/login` showing a provider as configured when its stored `auth.json` key is a `!command` that fails, while requests failed with `No API key found`; the provider now shows as not configured ([#12164](https://github.com/earendil-works/pi/issues/12164))
+- Fixed `pi update` run from WSL through the Windows installation of pi rebuilding that installation with Linux npm; it now stops and says that running the Windows installation from WSL is unsupported ([#12172](https://github.com/earendil-works/pi/issues/12172))
+
+## [1.6.0] - 2026-11-20
+
+### New Features
+
+- **GPT-6.2 Astra and GPT-6.2 Sol**: both models are available on the `openai`, `azure`, and `openai-codex` providers, and GPT-6.2 Sol is now the default model for all three. See [Providers](docs/providers.md).
+
 ### Breaking Changes
 
 - Extension components: `render()` now returns `readonly string[]`, and `Container` returns the same cached array while its children are unchanged. Extensions that modify render output in place, including `super.render()` in a `Container` subclass or an embedded component's output, must copy it first ([#9549](https://github.com/earendil-works/pi/issues/9549))
 
 ### Added
 
+- Added GPT-6.2 Astra and GPT-6.2 Sol to the `openai`, `azure`, and `openai-codex` providers. Both reject reasoning effort `none` and `minimal`, so thinking level `off` is unavailable. Azure serves them with a 1.05M context window; Codex serves GPT-6.2 Sol with 500K and GPT-6.2 Astra with 272K
+- Added `qwen4-max-preview` to the Qwen Token Plan Individual providers ([#12259](https://github.com/earendil-works/pi/issues/12259))
 - Added `deepseek-v4.1-flash` and `deepseek-v4.1-flash-1017` to the Qwen Token Plan Individual providers, and per-plan key variables `QWEN_TOKEN_PLAN_TEAM_API_KEY`, `QWEN_TOKEN_PLAN_TEAM_CN_API_KEY`, `QWEN_TOKEN_PLAN_INDIVIDUAL_API_KEY`, and `QWEN_TOKEN_PLAN_INDIVIDUAL_CN_API_KEY`; the shared `QWEN_TOKEN_PLAN_API_KEY` and `QWEN_TOKEN_PLAN_CN_API_KEY` still work ([#11773](https://github.com/earendil-works/pi/issues/11773))
+- Added a transcript notice when OpenAI drops reasoning items from a request, such as `OpenAI dropped 2 reasoning items: prefix_mismatch (details in session)` after compaction on GPT-6.2. Like the Anthropic thinking notice, it is shown when `showCacheMissNotices` is on and only when more items are dropped than in the previous response. Both notices now name the reasons
 
 ### Changed
 
@@ -16,6 +50,8 @@
 - Updated `undici` to 8.12.4 for security advisories GHSA-mqg3-3v4r-cm32, GHSA-7xg3-fphp-28hg, GHSA-5rm8-gv32-r954, GHSA-9v6h-8rgp-m69f, GHSA-3g9m-rv3r-w5w2, and GHSA-r4pc-4jcp-7pqc ([#12200](https://github.com/earendil-works/pi/issues/12200))
 - The default model for the `openai`, `azure`, and `openai-codex` providers is now GPT-6.2 Sol (`gpt-6.2-sol`) instead of GPT-6.1 Sol, at the same price
 - The find tool's path patterns are now relative to the search directory, like grep's `glob`: `src/*.ts` finds `src/a.ts` but no longer `pkg/src/a.ts`; use `**/src/*.ts` to match at any depth. Patterns without `/` still match file names at any depth ([#12066](https://github.com/earendil-works/pi/issues/12066))
+- The llama.cpp extension now connects to `http://127.0.0.1:9931` by default, the current llama-server default port, instead of port 8080 ([#12001](https://github.com/earendil-works/pi/pull/12001) by [@julien-c](https://github.com/julien-c))
+- Anthropic message threads are now on by default for any provider whose baseUrl is on api.anthropic.com, not only the `anthropic` provider ([#11987](https://github.com/earendil-works/pi/issues/11987))
 - The resume command printed on exit is now on its own line after `To resume this session:`, so it can be selected with a triple-click ([#12237](https://github.com/earendil-works/pi/issues/12237))
 
 ### Fixed
@@ -32,6 +68,7 @@
 - Fixed the bash tool returning no output, with a footer like `[Showing lines 3-2 of 2]`, when the output ends in one line longer than about 100KB, such as a `grep` match in a minified file; it now shows the end of that line ([#12062](https://github.com/earendil-works/pi/issues/12062))
 - Fixed provider errors reading "Connection closed." not triggering automatic retries ([#12064](https://github.com/earendil-works/pi/issues/12064))
 - Fixed `/resume` sometimes selecting an unrelated session while the list reloads after deleting or renaming a session ([#12106](https://github.com/earendil-works/pi/issues/12106))
+- Fixed Groq Qwen models failing with `400 Unexpected message role`; OpenAI-compatible providers other than OpenAI now receive system messages (the system prompt and mid-conversation system messages) with the `system` role ([#10741](https://github.com/earendil-works/pi/issues/10741))
 - Fixed `enabledModels`/`--models` warnings such as `No models match pattern "github-copilot/nope"` being written over the interactive TUI on every `/new`, `/resume` and `/fork`, which left stale lines in fullscreen mode. The warnings are now shown once at startup, in the chat in interactive mode and on stderr in other modes; RPC mode no longer repeats them on stderr for each `new_session`, `switch_session` or `fork` ([#11264](https://github.com/earendil-works/pi/issues/11264))
 - Fixed the find tool matching path patterns through folders above the search path: with the project in `~/src/app`, `src/**/*.ts` returned every `.ts` file in the project ([#12066](https://github.com/earendil-works/pi/issues/12066))
 - Fixed pi crashing with `RangeError: Maximum call stack size exceeded` when rendering a very large edit diff, for example after editing a file with a multi-megabyte line, and again on every resume of that session ([#8036](https://github.com/earendil-works/pi/issues/8036))
@@ -45,6 +82,28 @@
 - Fixed `Could not restore model <provider>/<model>. Using <fallback>` being shown only at interactive startup. Resuming or forking into a session whose model no longer exists or has no login switched to another model without notice, and print, JSON and RPC modes never showed it. It is now reported in every mode, at startup and after `/resume`, `/fork` and RPC `switch_session` or `fork`
 - Fixed git and npm output, such as `Cloning into ...` or `added 12 packages`, being drawn over the interactive TUI when pi installed or refreshed packages during `/reload`, `/new`, `/resume` and `/fork`, including temporary `-e git:` and `-e npm:` packages. In interactive mode their output is now captured, and a failed install reports the end of it. Until the TUI starts, each install is announced as `Installing <source>...` on stderr instead of showing git and npm output. git and ssh can no longer prompt in interactive mode: a package that needs a typed password or passphrase fails with a hint to set up a credential helper or ssh agent, or to run `pi install <source>` once from the shell. `pi install` and `pi update` keep live output ([#11264](https://github.com/earendil-works/pi/issues/11264))
 - Fixed fullscreen scrolling in long sessions saturating a CPU core by re-rendering the whole transcript on every wheel event ([#9549](https://github.com/earendil-works/pi/issues/9549))
+- Fixed search in `/login`, `/logout`, `/scoped-models` and `/resume` keeping the highlight on the row scrolled to before typing, so Enter picked whichever entry landed there instead of the best match; a query now highlights the top match, as `/model` does ([#12245](https://github.com/earendil-works/pi/issues/12245), [#12246](https://github.com/earendil-works/pi/pull/12246) by [@acmerfight](https://github.com/acmerfight))
+- Fixed exiting pi, `pi config` and the `--resume` and other startup pickers dropping terminal output still queued in stdout, such as the resets that turn off mouse tracking and Kitty keyboard reporting; the shell could then print mouse and key reports as text. pi now waits up to one second for queued output before exiting or continuing ([#12133](https://github.com/earendil-works/pi/issues/12133))
+- Fixed moving the cursor in a search field with Left, Right, Home or End moving the highlight back to the first entry in `/login`, `/logout`, `/model`, `/scoped-models`, `/resume`, `/settings`, the per-model settings model picker and `pi config` ([#12245](https://github.com/earendil-works/pi/issues/12245))
+- Fixed llama.cpp decision classifiers ignoring the image input that llama.cpp reports, such as Clef with its `mmproj`; `models.classify()` now sends their images to `/v1/systemone` ([#12282](https://github.com/earendil-works/pi/issues/12282))
+- Fixed `kill -TSTP` from outside pi stopping it without restoring the terminal, which left mouse tracking and the Kitty keyboard protocol on at the shell prompt and turned mouse movement into garbage input. pi now suspends as with Ctrl+Z and redraws on `fg` ([#12283](https://github.com/earendil-works/pi/pull/12283) by [@haoqixu](https://github.com/haoqixu))
+- Fixed changing the thinking level on the `openai-codex` provider invalidating the prompt cache on GPT-6 models ([#12269](https://github.com/earendil-works/pi/issues/12269))
+- Fixed unscoped syntax-highlighted text inheriting the terminal foreground and becoming unreadable on contrasting tool cards ([#11092](https://github.com/earendil-works/pi/issues/11092))
+- Fixed `/copy` saying "No agent messages to copy yet." after Esc during a tool call or after a provider error; it now copies the previous answer. RPC `get_last_assistant_text` skips the same messages ([#12119](https://github.com/earendil-works/pi/issues/12119), [#12121](https://github.com/earendil-works/pi/pull/12121) by [@acmerfight](https://github.com/acmerfight))
+- Fixed `pi.exec` reporting exit code 0 for commands ended by a signal, such as a timeout, an abort or a crash; it now reports 128 + the signal number, like a shell (143 for SIGTERM, 137 for SIGKILL) ([#12088](https://github.com/earendil-works/pi/issues/12088), [#12089](https://github.com/earendil-works/pi/pull/12089) by [@acmerfight](https://github.com/acmerfight))
+- Fixed GitHub Copilot Gemini and Kimi models (`gemini-4-argon`, `gemini-4-carbon`, `gemini-3.8-flash`, `kimi-k3`) ignoring the thinking level, and Copilot usage always reporting 0 reasoning tokens ([#12110](https://github.com/earendil-works/pi/pull/12110) by [@DenielC1](https://github.com/DenielC1))
+- Fixed provider errors that report only a Node socket error code, such as `read ECONNRESET`, `write EPIPE`, or `connect ETIMEDOUT`, not triggering automatic retries ([#12128](https://github.com/earendil-works/pi/issues/12128))
+- Fixed OpenAI rejecting requests with a 400 error when a tool's schema contains a node without a `type` (such as `items: {}` or `Type.Unknown()`); such tools are now sent in non-strict mode ([#12049](https://github.com/earendil-works/pi/issues/12049))
+- Fixed Mistral Large 4 tool calls stalling for minutes; Mistral models no longer receive strict tools unless `compat.supportsStrictMode` is set ([#12148](https://github.com/earendil-works/pi/issues/12148))
+- Fixed non-strict Anthropic tool schemas not telling the model that extra arguments are forbidden ([#12067](https://github.com/earendil-works/pi/issues/12067))
+- Fixed GitHub Copilot models on the Responses API (GPT, Grok, MAI-Code) filling omitted optional tool arguments with empty strings or invented values ([#12286](https://github.com/earendil-works/pi/issues/12286))
+- Fixed the OpenAI Codex WebSocket 60-minute connection limit failing the turn when it hit mid-stream, for example during long thinking; the request is now retried on a fresh connection ([#12124](https://github.com/earendil-works/pi/issues/12124))
+- Fixed the `openai-codex` provider getting almost no prompt cache hits for the system prompt on GPT-6.2 models ([#12273](https://github.com/earendil-works/pi/issues/12273))
+- Fixed the `openai-codex` provider ignoring a model's `maxTokens`
+- Fixed fullscreen Kitty images disappearing after a full redraw such as a window resize ([#12010](https://github.com/earendil-works/pi/issues/12010))
+- Fixed text after a multi-row inline image in Markdown drawing over the image ([#12017](https://github.com/earendil-works/pi/issues/12017))
+- Fixed Kitty and iTerm2 images covering overlays drawn over them ([#11584](https://github.com/earendil-works/pi/issues/11584))
+- Fixed Enter on a Tab path menu for an absolute path (`look at /tmp/fi`) or a slash command argument menu (`/open /tm`) submitting the prompt instead of accepting the completion ([#12309](https://github.com/earendil-works/pi/issues/12309), [#12312](https://github.com/earendil-works/pi/pull/12312) by [@acmerfight](https://github.com/acmerfight))
 
 ### Removed
 

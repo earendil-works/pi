@@ -472,7 +472,7 @@ describe("subagents with code mode (fake provider)", () => {
 				);
 		const before = scripts().length;
 		const sentAfter = newest();
-		const script = 'return await tools.mcp__files__echo({ text: "from coder" });';
+		const script = 'return (await tools.mcp__files__echo({ text: "from coder" })).content[0].text;';
 		await subagent({ action: "send", name: "coder", message: `codemode ${script}` });
 		await until(sub.view, () => scripts().length > before);
 		const ran = scripts().at(-1);

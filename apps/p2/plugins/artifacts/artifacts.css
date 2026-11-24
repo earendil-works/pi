@@ -38,3 +38,8 @@
 	padding: 0;
 	overflow: visible;
 }
+/* A document beside the transcript keeps the reader's place across versions itself (panes.tsx, `useReadingPlace`), as
+   browsers without scroll anchoring (Safari) need: the browser's own anchoring would correct the same change twice. */
+.artifact-md:not(.inline) {
+	overflow-anchor: none;
+}

@@ -280,8 +280,8 @@ describe("Context overflow error handling", () => {
 	// =============================================================================
 
 	describe.skipIf(!process.env.GROQ_API_KEY)("Groq", () => {
-		it("llama-3.3-70b-versatile - should detect overflow via isContextOverflow", async () => {
-			const model = getModel("groq", "llama-3.3-70b-versatile");
+		it("gpt-oss-120b - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("groq", "openai/gpt-oss-120b");
 			const result = await testContextOverflow(model, process.env.GROQ_API_KEY!);
 			logResult(result);
 
@@ -385,8 +385,8 @@ describe("Context overflow error handling", () => {
 	// =============================================================================
 
 	describe.skipIf(!process.env.MISTRAL_API_KEY)("Mistral", () => {
-		it("devstral-medium-latest - should detect overflow via isContextOverflow", async () => {
-			const model = getModel("mistral", "devstral-medium-latest");
+		it("mistral-medium-latest - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("mistral", "mistral-medium-latest");
 			const result = await testContextOverflow(model, process.env.MISTRAL_API_KEY!);
 			logResult(result);
 

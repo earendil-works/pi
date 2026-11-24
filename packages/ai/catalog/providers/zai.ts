@@ -24,7 +24,6 @@ export function zaiCodingPlanModels(ctx: ProviderContext, source: string, baseUr
 				...(thinkingLevelMap ? { thinkingLevelMap } : {}),
 				cost: modelsDevCost(apiModel?.source.cost ? apiModel.cost : source.cost),
 				compat: {
-					supportsDeveloperRole: false,
 					thinkingFormat: "zai",
 					...(thinkingLevelMap ? { supportsReasoningEffort: true } : {}),
 					...(!TOOL_STREAM_UNSUPPORTED_MODEL_IDS.has(model.id) ? { zaiToolStream: true } : {}),
@@ -36,7 +35,6 @@ export function zaiCodingPlanModels(ctx: ProviderContext, source: string, baseUr
 
 export const ZAI_COMPLETIONS_COMPAT = {
 	supportsStore: false,
-	supportsDeveloperRole: false,
 	supportsReasoningEffort: false,
 	maxTokensField: "max_tokens",
 	thinkingFormat: "zai",

@@ -51,7 +51,7 @@ const Review = defineTask<null, { phase: "review" }, YieldDecision>({
 const Reviewer = defineExtension({
 	name: "reviewer",
 	tasks: [Review],
-	hooks: [hook(GenerationTask, { onYield: async () => ({ tasks: [hookTask(Review, null)] }) })],
+	hooks: [hook(GenerationTask, { onYield: async () => ({ kind: "tasks", tasks: [hookTask(Review, null)] }) })],
 });
 
 const faux = fauxProvider();

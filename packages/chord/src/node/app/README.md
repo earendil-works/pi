@@ -46,7 +46,7 @@ console.log(`Open ${app.ownerLink()}`);
 app.host; app.http; app.workers.get("project"); app.plugins.state; app.dataDir; app.ownerTokenFile;
 await app.basesBuilt;                                       // the bases built after the listen (failures reported)
 await app.baseWatched;                                      // base code recorded and watched (after the start)
-await app.plugins.install({ git: url, ref: "v1" }, ctx);   // into <dataDir>/plugins/
+await app.plugins.install({ kind: "git", git: url, ref: "v1" }, ctx);   // into <dataDir>/plugins/
 await app.applyChanges(ctx);                                // build the dirty plugins, roll out: server, then workers
 await app.exportData(Project({ id }), "p.tar", ctx);
 await app.importData("p.tar", Project({ id: "copy" }), ctx);

@@ -755,7 +755,9 @@ describe("installs", () => {
 			"v1",
 		);
 		const { app, dataDir } = await testApp({ install: { npmCommand: [process.execPath, join(tools, "npm.mjs")] } });
-		expect(await app.plugins.install({ git: repository.url, ref: "v1" }, context)).toEqual(["@bob/echo"]);
+		expect(await app.plugins.install({ kind: "git", git: repository.url, ref: "v1" }, context)).toEqual([
+			"@bob/echo",
+		]);
 		expect(await readdir(join(dataDir, "plugins"))).toEqual(["echo"]);
 		expect(app.plugins.state.value.set).toBe(true);
 		await app.applyChanges(context);

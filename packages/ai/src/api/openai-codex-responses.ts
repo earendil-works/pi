@@ -30,23 +30,11 @@ import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { getIdentityHeaders } from "../utils/identity.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
-import { getSystemMessageText } from "../utils/text.ts";
-import {
-	getDeclaredTools,
-	getInitialSystemMessage,
-	normalizeContext,
-	resolveTranscript,
-	resolveTranscriptTools,
-} from "../utils/transcript.ts";
+import { getDeclaredTools, normalizeContext, resolveTranscript } from "../utils/transcript.ts";
 import { uuidv7 } from "../utils/uuid.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
-import {
-	convertResponsesMessages,
-	convertResponsesTools,
-	getResponsesToolSupport,
-	processResponsesStream,
-} from "./openai-responses-shared.ts";
+import { convertResponsesMessages, prepareResponsesPrompt, processResponsesStream } from "./openai-responses-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 
 // ============================================================================
@@ -66,6 +54,8 @@ const CODEX_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]
 const WEBSOCKET_MESSAGE_TOO_BIG_CLOSE_CODE = 1009;
 const WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE = "websocket_connection_limit_reached";
 const PREVIOUS_RESPONSE_NOT_FOUND_CODE = "previous_response_not_found";
+// The Responses API rejects max_output_tokens below 16: https://github.com/earendil-works/pi/issues/6265
+const MIN_OUTPUT_TOKENS = 16;
 
 const CODEX_RESPONSE_STATUSES = new Set<CodexResponseStatus>([
 	"completed",
@@ -94,9 +84,9 @@ interface RequestBody {
 	model: string;
 	store?: boolean;
 	stream?: boolean;
-	instructions?: string;
 	previous_response_id?: string;
 	input?: ResponseInput;
+	max_output_tokens?: number;
 	tools?: OpenAITool[];
 	tool_choice?: OpenAICodexResponsesOptions["toolChoice"];
 	parallel_tool_calls?: boolean;
@@ -252,12 +242,14 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 	const normalizedContext = resolveTranscript(context, model.compat?.supportsMidConvoSystemMessages);
 
 	(async () => {
+		const configurationUpdateEffort = getConfigurationUpdateEffort(model, options);
 		const output: AssistantMessage = {
 			role: "assistant",
 			content: [],
 			api: "openai-codex-responses" as Api,
 			provider: model.provider,
 			model: model.id,
+			...(configurationUpdateEffort === undefined ? {} : { providerThinkingLevel: configurationUpdateEffort }),
 			usage: {
 				input: 0,
 				output: 0,
@@ -283,7 +275,14 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 			);
 			const cacheSessionId = options?.cacheRetention === "none" ? undefined : options?.sessionId;
 			const codexSessionId = clampOpenAIPromptCacheKey(cacheSessionId);
-			let body = buildRequestBody(model, normalizedContext, options, codexSessionId, grammarToolInputProperties);
+			let body = buildRequestBody(
+				model,
+				normalizedContext,
+				options,
+				codexSessionId,
+				grammarToolInputProperties,
+				configurationUpdateEffort,
+			);
 			const nextBody = await options?.onPayload?.(body, model);
 			if (nextBody !== undefined) {
 				body = nextBody as RequestBody;
@@ -525,8 +524,9 @@ export const streamSimple: StreamFunction<"openai-codex-responses", SimpleStream
 		...buildBaseOptions(model, context, options, apiKey),
 		toolChoice: options?.toolChoice,
 	} satisfies OpenAICodexResponsesOptions;
-	const clampedReasoning = options?.reasoning ? clampThinkingLevel(model, options.reasoning) : undefined;
-	const reasoningEffort = clampedReasoning === "off" ? undefined : clampedReasoning;
+	const clampedReasoning = options?.reasoning ? clampThinkingLevel(model, options.reasoning) : "off";
+	// Off is sent as effort none, so with configuration_update items switching to it keeps the cache.
+	const reasoningEffort = clampedReasoning !== "off" ? clampedReasoning : model.reasoning ? "none" : undefined;
 
 	return stream(model, context, {
 		...base,
@@ -538,51 +538,72 @@ export const streamSimple: StreamFunction<"openai-codex-responses", SimpleStream
 // Request Building
 // ============================================================================
 
+/** Effort to send in configuration_update items, or undefined to send it as reasoning.effort. */
+function getConfigurationUpdateEffort(
+	model: Model<"openai-codex-responses">,
+	options: OpenAICodexResponsesOptions | undefined,
+): string | undefined {
+	if (!model.compat?.supportsMidConvoEffort || options?.reasoningEffort === undefined) return undefined;
+	return resolveReasoningEffort(model, options.reasoningEffort) ?? undefined;
+}
+
+/** Provider-native effort for a requested level; null when the model takes no reasoning field for it. */
+function resolveReasoningEffort(
+	model: Model<"openai-codex-responses">,
+	reasoningEffort: NonNullable<OpenAICodexResponsesOptions["reasoningEffort"]>,
+): string | null {
+	if (reasoningEffort === "none") {
+		return model.thinkingLevelMap?.off === undefined ? "none" : model.thinkingLevelMap.off;
+	}
+	return model.thinkingLevelMap?.[reasoningEffort] ?? reasoningEffort;
+}
+
 function buildRequestBody(
 	model: Model<"openai-codex-responses">,
 	context: TranscriptContext,
 	options: OpenAICodexResponsesOptions | undefined,
 	cacheSessionId: string | undefined,
-	grammarToolInputProperties: ReadonlyMap<string, string> = createGrammarToolInputProperties(
-		getDeclaredTools(context.messages),
-		model.compat?.supportsOpenAIGrammarTools ?? false,
-	),
+	grammarToolInputProperties: ReadonlyMap<string, string>,
+	configurationUpdateEffort: string | undefined,
 ): RequestBody {
 	const supportsStrictMode = model.compat?.supportsStrictMode ?? true;
 	const supportsOpenAIGrammarTools = model.compat?.supportsOpenAIGrammarTools ?? false;
 	const supportsAdditionalTools = model.compat?.supportsAdditionalTools ?? false;
 	const supportsToolSearch = model.compat?.supportsToolSearch ?? false;
-	const transcriptTools = resolveTranscriptTools(
-		context.messages,
-		getResponsesToolSupport({
+	// Keep the system prompt in a leading developer item, not top-level instructions: GPT-6.2+
+	// appends instructions after input, preventing cache reuse across turns (#12273).
+	// On the Codex backend, medium + a high update can reason less than request-level high (#12361).
+	// Pin the initial effort instead. The public OpenAI Responses API was not implicated.
+	const { input, requestTools, requestEffortBaseline } = prepareResponsesPrompt(
+		model,
+		context,
+		CODEX_TOOL_CALL_PROVIDERS,
+		{
+			grammarToolInputProperties,
 			supportsMidConvoSystemMessages: model.compat?.supportsMidConvoSystemMessages ?? false,
 			supportsAdditionalTools,
 			supportsToolSearch,
-		}),
+			toolOptions: { strict: null, supportsStrictMode, supportsOpenAIGrammarTools },
+			configurationUpdateEffort,
+			effortBaseline: "initial",
+		},
 	);
-	const messages = convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, {
-		includeSystemPrompt: false,
-		grammarToolInputProperties,
-		supportsMidConvoSystemMessages: model.compat?.supportsMidConvoSystemMessages ?? false,
-		supportsAdditionalTools,
-		supportsToolSearch,
-		toolOptions: { strict: null, supportsStrictMode, supportsOpenAIGrammarTools },
-	});
 
-	const initialSystemMessage = getInitialSystemMessage(context.messages);
-	const instructions = initialSystemMessage ? getSystemMessageText(initialSystemMessage) : "";
 	const body: RequestBody = {
 		model: model.id,
 		store: false,
 		stream: true,
-		instructions: instructions || "You are a helpful assistant.",
-		input: messages,
+		input,
 		text: { verbosity: options?.textVerbosity || "low" },
 		include: ["reasoning.encrypted_content"],
 		prompt_cache_key: cacheSessionId,
 		tool_choice: options?.toolChoice ?? "auto",
 		parallel_tool_calls: true,
 	};
+
+	if (options?.maxTokens && (model.compat?.supportsMaxOutputTokens ?? true)) {
+		body.max_output_tokens = Math.max(options.maxTokens, MIN_OUTPUT_TOKENS);
+	}
 
 	if (options?.temperature !== undefined) {
 		body.temperature = options.temperature;
@@ -592,21 +613,10 @@ function buildRequestBody(
 		body.service_tier = options.serviceTier;
 	}
 
-	if (transcriptTools.requestTools.length > 0) {
-		body.tools = convertResponsesTools(transcriptTools.requestTools, {
-			strict: null,
-			supportsStrictMode,
-			supportsOpenAIGrammarTools,
-		});
-	}
+	if (requestTools.length > 0) body.tools = requestTools;
 
 	if (options?.reasoningEffort !== undefined) {
-		const effort =
-			options.reasoningEffort === "none"
-				? model.thinkingLevelMap?.off === undefined
-					? "none"
-					: model.thinkingLevelMap.off
-				: (model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort);
+		const effort = requestEffortBaseline ?? resolveReasoningEffort(model, options.reasoningEffort);
 		if (effort !== null) {
 			body.reasoning = {
 				effort,
@@ -1590,10 +1600,7 @@ async function processWebSocketStream(
 				model,
 				normalizeContext({ messages: [output] }),
 				CODEX_TOOL_CALL_PROVIDERS,
-				{
-					includeSystemPrompt: false,
-					grammarToolInputProperties,
-				},
+				{ grammarToolInputProperties },
 			).filter((item) => item.type !== "function_call_output" && item.type !== "custom_tool_call_output");
 			entry.continuation = {
 				lastRequestBody: fullBody,

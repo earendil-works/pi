@@ -1,7 +1,7 @@
 // A session's worker uploads its store through the server's `BackupRemote`: a slot's body sent in chunks of at most
 // `CHUNK_BYTES` (Chord carries bytes only as whole method arguments), streamed on to the remote as they arrive. A worker
 // only uploads its own store, which the server names from the worker's principal.
-import type { Context, Ctx, RefIn } from "@p2/app/v1";
+import { type Context, type Ctx, invalid, type RefIn } from "@p2/app/v1";
 import type { PutBatchResult, SessionSyncUploader, SyncBody } from "@p2/app/v1/node";
 import { type BackupRemote, CHUNK_BYTES } from "./contract.ts";
 
@@ -33,7 +33,7 @@ export class ChunkedRemote implements SessionSyncUploader {
 		this.#own(sessionId);
 		return this.#with(async (remote, ctx) => {
 			const begun = await remote.begin({ after, to, ...(options.archive === true ? { archive: true } : {}) }, ctx);
-			if ("result" in begun) return begun.result;
+			if (begun.kind === "result") return begun.result;
 			const { upload } = begun;
 			try {
 				for await (const chunk of chunks(body)) await remote.append({ upload, bytes: chunk }, ctx);
@@ -47,7 +47,8 @@ export class ChunkedRemote implements SessionSyncUploader {
 	}
 
 	#own(sessionId: string): void {
-		if (sessionId !== this.#name) throw new Error(`A worker uploads only its own store, not ${sessionId}`);
+		if (sessionId !== this.#name)
+			throw invalid("args", `backup: a worker uploads only its own store, not ${sessionId}`);
 	}
 }
 

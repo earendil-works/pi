@@ -16,6 +16,7 @@ import { ActivityRow } from "./activity/ActivityRow.tsx";
 import { ActivityLayer } from "./activity/ActivitySheet.tsx";
 import {
 	type ChatItem,
+	chatItemEntryId,
 	chatItems,
 	DEFAULT_DETAIL,
 	type Detail,
@@ -685,9 +686,10 @@ export function transcriptRows(
 		const gap = before && TURN_PARTS.has(before.type) && TURN_PARTS.has(item.type) ? ("step" as const) : undefined;
 		const cached = rowsOf.get(item);
 		if (cached && cached.first === first && cached.gap === gap) return cached.row;
+		const entryId = chatItemEntryId(item);
 		const row: TranscriptRow = {
 			key: item.key,
-			...("entryId" in item && item.entryId !== undefined ? { entryId: item.entryId } : {}),
+			...(entryId !== undefined ? { entryId } : {}),
 			...(item.type === "activity" && item.entryIds?.length ? { entryIds: item.entryIds } : {}),
 			item,
 			first,

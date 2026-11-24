@@ -8,6 +8,7 @@
 // projects are dragged (drag.ts). It renders what model.ts computes and calls back for every action.
 import { type Grant, grantMode } from "@p2/app/v1";
 import {
+	listenModifierTap,
 	NavAddIcon,
 	NavFolderIcon,
 	NavLockIcon,
@@ -27,6 +28,7 @@ import { type GroupSection, type NewTarget, PROJECTS, type Section, type Sidebar
 import { NavRow } from "./NavRow.tsx";
 import {
 	HiddenAttention,
+	openFrom,
 	pageRoute,
 	type RowActions,
 	SessionItem,
@@ -277,6 +279,16 @@ function placesOf(sections: readonly Section[], id: string): string[] {
 	});
 }
 
+/** The session rows of the sidebar's expanded sections, top to bottom, with the place (rollup's or group's key) of each. */
+function shownRows(sections: readonly Section[]): { id: string; scope: string }[] {
+	return sections.flatMap((section) => {
+		if (section.layout === "sessions") return section.rows.map((row) => ({ id: row.id, scope: section.key }));
+		if (section.layout === "groups")
+			return section.groups.flatMap((group) => group.rows.map((row) => ({ id: row.id, scope: group.key })));
+		return [];
+	});
+}
+
 /** Memoized: the composer re-renders App on every keypress, and the session list need not follow. */
 export const SidebarView = memo(function SidebarView({
 	rows,
@@ -381,6 +393,18 @@ export const SidebarView = memo(function SidebarView({
 		projectMenus: drop !== undefined,
 	};
 	useSidebarDrag(guest ? undefined : drop);
+	// Cmd+Shift (Ctrl+Shift off macOS), tapped: the session below the open one's row, from the top after the last.
+	useEffect(() => {
+		if (guest) return;
+		return listenModifierTap("p2.sessions.next", () => {
+			const shown = shownRows(sections);
+			if (shown.length === 0) return;
+			const at = shown.findIndex((row) => row.id === activeId && row.scope === activeScope);
+			const next = shown[(at + 1) % shown.length]!;
+			openFrom(next.id, next.scope);
+			onOpen(next.id);
+		});
+	}, [guest, sections, activeId, activeScope, onOpen]);
 	// p2's layout hides a collapsed sidebar, so the root is never shown collapsed: its trigger only asks for it.
 	const frame = (label: string, header: ReactNode, content: ReactNode, foot: ReactNode) => (
 		<Sidebar.Root

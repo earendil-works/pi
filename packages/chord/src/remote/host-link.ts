@@ -18,6 +18,7 @@ import {
 	type Link,
 	type Message,
 	openPart,
+	originOf,
 	originPart,
 	type Part,
 } from "../link/internal.ts";
@@ -177,7 +178,7 @@ export class HostLink implements ChannelHandler {
 	 */
 	message(message: Message): void | Promise<void> {
 		// A child (a tab, a TUI) relays nothing: its origins would each get their own call window and record.
-		if (this.role === "child" && "origin" in message && message.origin !== undefined) {
+		if (this.role === "child" && originOf(message) !== undefined) {
 			throw new Error(`${message.kind}: an origin on a child link`);
 		}
 		switch (message.kind) {

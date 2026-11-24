@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { classify } from "../src/api/openai-decisions.ts";
+import { getBuiltinClassifierModel } from "../src/providers/all.ts";
 import type { ClassifierContext, ClassifierModel, ImageContent } from "../src/types.ts";
 
 const model: ClassifierModel<"openai-decisions"> = {
@@ -136,6 +137,33 @@ describe("OpenAI Decisions", () => {
 		});
 
 		expect(result.usage?.cost.total).toBeCloseTo(0.06, 12);
+	});
+
+	it("reports cached and cache-write input tokens separately at the catalog price", async () => {
+		const luna = getBuiltinClassifierModel("openai", "gpt-6-luna");
+		if (!luna) throw new Error("missing OpenAI Decisions model");
+		const result = await classify(luna, context, {
+			apiKey: "secret",
+			fetch: async () =>
+				Response.json({
+					answers: wireAnswers,
+					usage: {
+						input_tokens: 2000,
+						input_tokens_details: { cached_tokens: 1600, cache_write_tokens: 100 },
+						output_tokens: 0,
+						total_tokens: 2000,
+					},
+				}),
+		});
+
+		expect(result.usage).toMatchObject({
+			input: 300,
+			output: 0,
+			cacheRead: 1600,
+			cacheWrite: 100,
+			totalTokens: 2000,
+		});
+		expect(result.usage?.cost.total).toBeCloseTo(0.0002, 12);
 	});
 
 	it("sends images after the state in one user message", async () => {

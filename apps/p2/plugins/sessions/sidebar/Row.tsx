@@ -113,7 +113,7 @@ const REMEMBERED = 200;
  * Remembers, per tab, the place (a rollup's or a group's key) session `session` was opened from: it is selected there
  * only, also when Back returns to it.
  */
-function openFrom(session: string, scope: string): void {
+export function openFrom(session: string, scope: string): void {
 	const { [session]: _, ...others } = openedFrom;
 	openedFrom = Object.fromEntries([...Object.entries(others), [session, scope]].slice(-REMEMBERED));
 	try {

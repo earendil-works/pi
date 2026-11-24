@@ -349,9 +349,12 @@ describe("failures", () => {
 		await host.load(facets, context);
 		const refused = (await rejection(host.get(Broken, {}, context))) as ChordError;
 		expect(refused).toMatchObject({ code: "invalid", reason: "args" });
-		expect(errors.map((error) => [error.kind, "failure" in error ? error.failure.kind : ""])).toEqual([
-			["activation_failed", "broken"],
-		]);
+		expect(
+			errors.map((error) => [
+				error.kind,
+				error.kind === "activation_failed" || error.kind === "object_failed" ? error.failure.kind : "",
+			]),
+		).toEqual([["activation_failed", "broken"]]);
 		await host.close(context);
 		await store.close(context);
 	});

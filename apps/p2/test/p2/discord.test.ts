@@ -818,7 +818,7 @@ function sections(view: ConversationView | null | undefined): Record<string, str
 	const result: Record<string, string> = {};
 	for (const entry of view?.entries ?? [])
 		for (const message of entry.model ?? []) {
-			if (message.role !== "system" || !("sections" in message)) continue;
+			if (message.role !== "system") continue;
 			for (const [key, value] of Object.entries(
 				(message as { sections?: Record<string, string | null> }).sections ?? {},
 			))

@@ -1352,8 +1352,13 @@ export interface Session extends DocumentObserver {
 	): Promise<Readonly<T> | undefined>;
 }
 
-/** What `Storage.commit()` stored: the number of durable batches, and why the next one was refused, if one was. */
-export type CommitResult = { readonly stored: number; readonly refused?: unknown };
+/**
+ * What `Storage.commit()` stored: the number of durable batches (`stored`: every one), and, when one was refused
+ * (`refused`), why.
+ */
+export type CommitResult =
+	| { readonly kind: "stored"; readonly stored: number }
+	| { readonly kind: "refused"; readonly stored: number; readonly refused: unknown };
 
 /**
  * Atomic persistence boundary for Session records.

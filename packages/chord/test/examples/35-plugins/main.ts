@@ -88,7 +88,7 @@ console.log(
 const rolled = await plugins.rollout(steps, built, context);
 for (const { name, hosts } of rolled.steps) {
 	for (const host of hosts) {
-		if ("report" in host) {
+		if (host.kind === "reloaded") {
 			console.log(
 				`   ${name}:`,
 				JSON.stringify(host.report.plugins),

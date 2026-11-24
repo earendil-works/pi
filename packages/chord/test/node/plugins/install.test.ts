@@ -154,15 +154,15 @@ describe("installPlugin (slice 12 §5)", () => {
 		const root = await tempRoot();
 		const tools = await tempRoot();
 		const npmCommand = await fakeNpm(tools, 0);
-		expect(await installPlugin({ git: repository.url, ref: "v1" }, root, context, { npmCommand })).toEqual([
-			"@bob/hello",
-		]);
+		expect(
+			await installPlugin({ kind: "git", git: repository.url, ref: "v1" }, root, context, { npmCommand }),
+		).toEqual(["@bob/hello"]);
 		expect(JSON.parse(await readFile(join(tools, "record.json"), "utf8")).cwd).toBe(
 			await realpath(join(root, "hello")),
 		);
 		// No updating in place.
 		expect(
-			await rejection(installPlugin({ git: repository.url, ref: "v1" }, root, context, { npmCommand })),
+			await rejection(installPlugin({ kind: "git", git: repository.url, ref: "v1" }, root, context, { npmCommand })),
 		).toMatchObject({
 			message: `installPlugin: ${join(root, "hello")} exists already`,
 		});
@@ -180,7 +180,7 @@ describe("installPlugin (slice 12 §5)", () => {
 		await gitRepository("bob-plugins", { "later/package.json": JSON.stringify({ name: "@bob/later" }) }, "v2", first);
 		const root = await tempRoot();
 		const tools = await tempRoot();
-		const names = await installPlugin({ git: first.url, ref: first.commit }, root, context, {
+		const names = await installPlugin({ kind: "git", git: first.url, ref: first.commit }, root, context, {
 			npmCommand: await fakeNpm(tools, 0),
 		});
 		expect([...names].sort()).toEqual(["@bob/notes", "@bob/search"]);
@@ -199,7 +199,11 @@ describe("installPlugin (slice 12 §5)", () => {
 			encoding: "utf8",
 		}).trim();
 		const root = await tempRoot();
-		const names = await installPlugin({ npm: "@bob/clock", version: `file:${join(source, packed)}` }, root, context);
+		const names = await installPlugin(
+			{ kind: "npm", npm: "@bob/clock", version: `file:${join(source, packed)}` },
+			root,
+			context,
+		);
 		expect(names).toEqual(["@bob/clock"]);
 		expect(JSON.parse(await readFile(join(root, "@bob", "clock", "package.json"), "utf8"))).toMatchObject({
 			version: "1.2.0",
@@ -234,9 +238,9 @@ describe("installPlugin (slice 12 §5)", () => {
 		});
 		const root = await tempRoot();
 		const npmCommand = [process.execPath, script];
-		expect(await installPlugin({ npm: "@bob/clock", version: "1.2.0" }, root, context, { npmCommand })).toEqual([
-			"@bob/clock",
-		]);
+		expect(
+			await installPlugin({ kind: "npm", npm: "@bob/clock", version: "1.2.0" }, root, context, { npmCommand }),
+		).toEqual(["@bob/clock"]);
 		expect(JSON.parse(await readFile(join(root, "@bob", "clock", "package.json"), "utf8"))).toMatchObject({
 			version: "1.2.0",
 		});
@@ -258,7 +262,7 @@ describe("installPlugin (slice 12 §5)", () => {
 		);
 		const root = await tempRoot();
 		const tools = await tempRoot();
-		const names = await installPlugin({ git: repository.url, ref: "v1" }, root, context, {
+		const names = await installPlugin({ kind: "git", git: repository.url, ref: "v1" }, root, context, {
 			npmCommand: await fakeNpm(tools, 0),
 		});
 		expect(names).toEqual(["@bob/notes"]);
@@ -269,12 +273,12 @@ describe("installPlugin (slice 12 §5)", () => {
 		const root = await tempRoot();
 		const marker = join(root, "..", "upload-pack-ran");
 		for (const source of [
-			{ git: repository.url, ref: `--upload-pack=touch ${marker}` },
-			{ git: "--upload-pack=x", ref: "v1" },
-			{ npm: "--registry=http://evil", version: "1.0.0" },
-			{ npm: "x", version: "--foreground-scripts" },
-			{ npm: "../escaped", version: "1.0.0" },
-		]) {
+			{ kind: "git", git: repository.url, ref: `--upload-pack=touch ${marker}` },
+			{ kind: "git", git: "--upload-pack=x", ref: "v1" },
+			{ kind: "npm", npm: "--registry=http://evil", version: "1.0.0" },
+			{ kind: "npm", npm: "x", version: "--foreground-scripts" },
+			{ kind: "npm", npm: "../escaped", version: "1.0.0" },
+		] as const) {
 			expect(await rejection(installPlugin(source, root, context))).toMatchObject({
 				message: expect.stringMatching(/^installPlugin: .* (is refused|is not an npm package name)$/),
 			});
@@ -290,7 +294,7 @@ describe("installPlugin (slice 12 §5)", () => {
 		const repository = await gitRepository("alpha", { "package.json": JSON.stringify({ name: "@test/same" }) }, "v1");
 		const roots = [first, root];
 		expect(
-			await rejection(installPlugin({ git: repository.url, ref: "v1" }, root, context, { roots })),
+			await rejection(installPlugin({ kind: "git", git: repository.url, ref: "v1" }, root, context, { roots })),
 		).toMatchObject({
 			message: `installPlugin: plugin "@test/same" is in ${join(await realpath(first), "zeta")} already`,
 		});
@@ -303,8 +307,8 @@ describe("installPlugin (slice 12 §5)", () => {
 		const tools = await tempRoot();
 		const npmCommand = await fakeNpm(tools, 0);
 		const both = await Promise.allSettled([
-			installPlugin({ git: repository.url, ref: "v1" }, root, context, { npmCommand }),
-			installPlugin({ git: repository.url, ref: "v1" }, root, context, { npmCommand }),
+			installPlugin({ kind: "git", git: repository.url, ref: "v1" }, root, context, { npmCommand }),
+			installPlugin({ kind: "git", git: repository.url, ref: "v1" }, root, context, { npmCommand }),
 		]);
 		expect(both.map((each) => each.status).sort()).toEqual(["fulfilled", "rejected"]);
 		expect(both.find((each) => each.status === "rejected")).toMatchObject({
@@ -318,7 +322,7 @@ describe("installPlugin (slice 12 §5)", () => {
 		const tools = await tempRoot();
 		expect(
 			await rejection(
-				installPlugin({ npm: "@bob/notes", version: "1.0.0" }, root, context, {
+				installPlugin({ kind: "npm", npm: "@bob/notes", version: "1.0.0" }, root, context, {
 					npmCommand: await fakeNpm(tools, 1),
 				}),
 			),
@@ -334,14 +338,18 @@ describe("installPlugin (slice 12 §5)", () => {
 		const hourAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
 		await utimes(join(root, ".chord-install-old"), hourAgo, hourAgo);
 		const tools = await tempRoot();
-		await installPlugin({ git: repository.url, ref: "v1" }, root, context, { npmCommand: await fakeNpm(tools, 0) });
+		await installPlugin({ kind: "git", git: repository.url, ref: "v1" }, root, context, {
+			npmCommand: await fakeNpm(tools, 0),
+		});
 		expect((await readdir(root)).sort()).toEqual([".chord-install-recent", "hello"]);
 	});
 
 	it("removes what arrived when it holds no plugin", async () => {
 		const repository = await gitRepository("empty", { "readme.md": "" }, "v1");
 		const root = await tempRoot();
-		expect(await rejection(installPlugin({ git: repository.url, ref: "v1" }, root, context))).toMatchObject({
+		expect(
+			await rejection(installPlugin({ kind: "git", git: repository.url, ref: "v1" }, root, context)),
+		).toMatchObject({
 			message: expect.stringMatching(/^installPlugin: .*empty: no package\.json$/),
 		});
 		expect(await readdir(root)).toEqual([]);

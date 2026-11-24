@@ -15,7 +15,13 @@ export {
 	useCommandQuery,
 	useCommandTarget,
 } from "../../web/command-menu/context.ts";
-export { type KeyBinding, matchesBinding } from "../../web/command-menu/keys.ts";
+export {
+	type KeyBinding,
+	listenModifierTap,
+	MODIFIER_TAPS,
+	type ModifierTap,
+	matchesBinding,
+} from "../../web/command-menu/keys.ts";
 export { commandPageLayer, openCommandPage, pushMenu as openCommandMenu } from "../../web/command-menu/layers.ts";
 export { useCommandMatches } from "../../web/command-menu/match.ts";
 export {
