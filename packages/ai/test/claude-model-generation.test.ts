@@ -85,4 +85,30 @@ describe("Claude thinking off", () => {
 		expect(getSupportedThinkingLevels(models["claude-sonnet-5.5"])).not.toContain("off");
 		expect(getSupportedThinkingLevels(models["claude-haiku-5.5"])).toContain("off");
 	});
+
+	it("finds Anthropic's entry through canonical_id when the host id does not resemble Anthropic's", () => {
+		const models = generateCatalog(
+			{
+				anthropic: {
+					models: { "claude-sonnet-5-5": claudeModel("claude-sonnet-5-5", { supported: true, effort }) },
+				},
+				"amazon-bedrock": {
+					models: {
+						"us.anthropic.claude-sonnet-5-5": claudeModel(
+							"us.anthropic.claude-sonnet-5-5",
+							{ supported: true, effort },
+							"anthropic/claude-sonnet-5-5",
+						),
+					},
+				},
+			},
+			"amazon-bedrock",
+		);
+		expect(getSupportedThinkingLevels(models["us.anthropic.claude-sonnet-5-5"])).not.toContain("off");
+	});
+
+	it("keeps thinking off unsupported on Fable models models.dev does not list yet", () => {
+		const models = generateCatalog({}, "anthropic");
+		expect(getSupportedThinkingLevels(models["claude-fable-5-2"])).not.toContain("off");
+	});
 });

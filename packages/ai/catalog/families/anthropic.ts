@@ -97,7 +97,8 @@ const XHIGH_AND_MAX_EFFORT = [
 export function applyClaudeFamilyRules(model: ChatModel, ctx: ProviderContext): void {
 	if (idIncludesAny(model.id, MAX_EFFORT_ONLY)) mergeThinking(model, { max: "max" });
 	if (idIncludesAny(model.id, XHIGH_AND_MAX_EFFORT)) mergeThinking(model, { xhigh: "xhigh", max: "max" });
-	if (model.id.includes("fable-5")) mergeThinking(model, { xhigh: "xhigh", max: "max" });
+	// Kept for Fable models authored or listed by gateways before models.dev has their Anthropic entry.
+	if (model.id.includes("fable-5")) mergeThinking(model, { off: null, xhigh: "xhigh", max: "max" });
 	if (cannotTurnThinkingOff(model, ctx)) mergeThinking(model, { off: null });
 	if (model.api !== "anthropic-messages") return;
 	const messagesModel = model as Model<"anthropic-messages">;

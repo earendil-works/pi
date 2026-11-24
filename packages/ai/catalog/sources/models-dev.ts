@@ -45,7 +45,7 @@ interface V2ApiEntry {
 /** The subset of a models.dev v2 model the catalog reads. */
 export interface ModelsDevV2Model {
 	id: string;
-	/** The lab's own `<provider>/<id>`, e.g. `anthropic/claude-sonnet-5-5`. Absent on the lab's own entries. */
+	/** The lab's own `<provider>/<id>`, e.g. `anthropic/claude-sonnet-5-5`. Some of the lab's own entries omit it. */
 	canonical_id?: string;
 	type: string;
 	name: string;
