@@ -1,13 +1,15 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type * as PiTui from "@earendil-works/pi-tui";
 import type { ProgramStatus, Terminal } from "@earendil-works/pi-tui";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createProjectTrustContext } from "../src/cli/project-trust.ts";
-import { showStartupInput, showStartupSelector } from "../src/cli/startup-ui.ts";
+import { showFirstTimeSetup, showStartupInput, showStartupSelector } from "../src/cli/startup-ui.ts";
 import { ENV_AGENT_DIR } from "../src/config.ts";
+import { resolveProjectTrusted } from "../src/core/project-trust.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
+import { ProjectTrustStore } from "../src/core/trust-manager.ts";
 
 // Hoisted with vi.mock, which replaces the startup TUI's terminal.
 const { FakeTerminal } = vi.hoisted(() => {
@@ -115,6 +117,59 @@ describe("startup dialog program status", () => {
 
 		terminal.type("\r");
 		expect(await result).toBe(true);
+	});
+
+	// The spec defines permission as approval to do something; trusting a folder lets pi run its extensions.
+	it("reports the project trust prompt as a permission request", async () => {
+		const projectDir = join(agentDir, "project");
+		mkdirSync(join(projectDir, ".pi"), { recursive: true });
+		writeFileSync(join(projectDir, ".pi", "settings.json"), "{}");
+		const trusted = resolveProjectTrusted({
+			cwd: projectDir,
+			trustStore: new ProjectTrustStore(agentDir),
+			defaultProjectTrust: "ask",
+			projectTrustContext: createProjectTrustContext({
+				cwd: projectDir,
+				mode: "interactive",
+				settingsManager: SettingsManager.inMemory(),
+				hasUI: true,
+			}),
+		});
+		const terminal = await startedTerminal();
+		expect(terminal.reports).toEqual([
+			{ state: "blocked", app: "pi", kind: "permission", message: "Trust project folder?" },
+		]);
+
+		terminal.type("\r");
+		expect(await trusted).toBe(true);
+	});
+
+	it("reports the kind an extension passes to a project trust select", async () => {
+		const context = createProjectTrustContext({
+			cwd: "/work/project",
+			mode: "interactive",
+			settingsManager: SettingsManager.inMemory(),
+			hasUI: true,
+		});
+		const result = context.ui.select("Run project hooks?", ["Run", "Skip"], { blockedKind: "permission" });
+		const terminal = await startedTerminal();
+		expect(terminal.reports).toEqual([
+			{ state: "blocked", app: "pi", kind: "permission", message: "Run project hooks?" },
+		]);
+
+		terminal.type("\r");
+		expect(await result).toBe("Run");
+	});
+
+	it("reports first-time setup as a permission request", async () => {
+		const done = showFirstTimeSetup(SettingsManager.inMemory());
+		const terminal = await startedTerminal();
+		expect(terminal.reports).toEqual([
+			{ state: "blocked", app: "pi", kind: "permission", message: "Opt-in to anonymous usage data sharing?" },
+		]);
+
+		terminal.type("\x1b");
+		await done;
 	});
 
 	it("reports an input as blocked on its title", async () => {

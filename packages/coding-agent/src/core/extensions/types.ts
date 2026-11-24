@@ -118,6 +118,11 @@ export interface ExtensionUIDialogOptions {
 	signal?: AbortSignal;
 	/** Timeout in milliseconds. Dialog auto-dismisses with live countdown display. */
 	timeout?: number;
+	/**
+	 * What the dialog waits for, reported as blocked program status (OSC 7501) with the first line of the title.
+	 * Defaults to `"permission"` for `confirm()` and `"question"` for `select()` and `input()`.
+	 */
+	blockedKind?: NonNullable<ProgramStatus["kind"]>;
 }
 
 /** Placement for extension widgets. */

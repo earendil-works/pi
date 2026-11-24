@@ -2928,7 +2928,6 @@ export class InteractiveMode {
 		title: string,
 		options: string[],
 		opts?: ExtensionUIDialogOptions,
-		blocked: BlockedStatus = dialogBlockedStatus("question", title),
 	): Promise<string | undefined> {
 		return new Promise((resolve) => {
 			if (opts?.signal?.aborted) {
@@ -2952,7 +2951,7 @@ export class InteractiveMode {
 				() => finish(undefined),
 				{ tui: this.ui, timeout: opts?.timeout, onToggleToolsExpanded: () => this.toggleToolOutputExpansion() },
 			);
-			this.pushExtensionDialog(selector, blocked);
+			this.pushExtensionDialog(selector, dialogBlockedStatus(opts?.blockedKind ?? "question", title));
 		});
 	}
 
@@ -2964,12 +2963,10 @@ export class InteractiveMode {
 		message: string,
 		opts?: ExtensionUIDialogOptions,
 	): Promise<boolean> {
-		const result = await this.showExtensionSelector(
-			`${title}\n${message}`,
-			["Yes", "No"],
-			opts,
-			dialogBlockedStatus("permission", title),
-		);
+		const result = await this.showExtensionSelector(`${title}\n${message}`, ["Yes", "No"], {
+			...opts,
+			blockedKind: opts?.blockedKind ?? "permission",
+		});
 		return result === "Yes";
 	}
 
@@ -3014,7 +3011,7 @@ export class InteractiveMode {
 				() => finish(undefined),
 				{ tui: this.ui, timeout: opts?.timeout },
 			);
-			this.pushExtensionDialog(input, dialogBlockedStatus("question", title));
+			this.pushExtensionDialog(input, dialogBlockedStatus(opts?.blockedKind ?? "question", title));
 		});
 	}
 

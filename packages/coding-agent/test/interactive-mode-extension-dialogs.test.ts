@@ -22,7 +22,11 @@ type DialogContext = {
 };
 
 type DialogMethods = {
-	showExtensionSelector(title: string, options: string[]): Promise<string | undefined>;
+	showExtensionSelector(
+		title: string,
+		options: string[],
+		opts?: { blockedKind?: "permission" | "question" | "auth" },
+	): Promise<string | undefined>;
 	showExtensionConfirm(title: string, message: string, opts?: { signal?: AbortSignal }): Promise<boolean>;
 	showExtensionCustom<T>(
 		factory: (tui: unknown, theme: unknown, keybindings: unknown, done: (result: T) => void) => Component,
@@ -127,6 +131,20 @@ describe("InteractiveMode extension dialogs", () => {
 
 		context.focused?.handleInput?.("\r");
 		await expect(choice).resolves.toBe("Trust");
+	});
+
+	it("reports the kind passed with blockedKind", async () => {
+		const context = createContext();
+		const choice = context.showExtensionSelector("Deploy to production?", ["Deploy", "Cancel"], {
+			blockedKind: "permission",
+		});
+		expect(context.programStatus.setBlocked).toHaveBeenLastCalledWith("extension-dialog", {
+			kind: "permission",
+			message: "Deploy to production?",
+		});
+
+		context.focused?.handleInput?.("\r");
+		await expect(choice).resolves.toBe("Deploy");
 	});
 
 	it("removes a hidden dialog when its signal aborts", async () => {

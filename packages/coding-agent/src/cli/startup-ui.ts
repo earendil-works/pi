@@ -171,7 +171,7 @@ export async function showStartupSelector<T>(
 	settingsManager: SettingsManager,
 	title: string,
 	options: Array<{ label: string; value: T }>,
-	blocked: BlockedStatus = dialogBlockedStatus("question", title),
+	blockedKind: BlockedStatus["kind"] = "question",
 ): Promise<T | undefined> {
 	const ui = await createStartupTui(settingsManager);
 	return new Promise((resolve) => {
@@ -194,7 +194,7 @@ export async function showStartupSelector<T>(
 			() => void finish(undefined),
 			{ tui: ui },
 		);
-		showStartupDialog(ui, selector, blocked, settingsManager);
+		showStartupDialog(ui, selector, dialogBlockedStatus(blockedKind, title), settingsManager);
 	});
 }
 
@@ -222,7 +222,7 @@ export async function showFirstTimeSetup(settingsManager: SettingsManager): Prom
 			onSubmit: (result) => void finish(result),
 			onCancel: () => void finish(undefined),
 		});
-		showStartupDialog(ui, component, dialogBlockedStatus("question", FIRST_TIME_SETUP_QUESTION), settingsManager);
+		showStartupDialog(ui, component, dialogBlockedStatus("permission", FIRST_TIME_SETUP_QUESTION), settingsManager);
 	});
 }
 
@@ -230,6 +230,7 @@ export async function showStartupInput(
 	settingsManager: SettingsManager,
 	title: string,
 	placeholder?: string,
+	blockedKind: BlockedStatus["kind"] = "question",
 ): Promise<string | undefined> {
 	const ui = await createStartupTui(settingsManager);
 	return new Promise((resolve) => {
@@ -255,6 +256,6 @@ export async function showStartupInput(
 				tui: ui,
 			},
 		);
-		showStartupDialog(ui, input, dialogBlockedStatus("question", title), settingsManager);
+		showStartupDialog(ui, input, dialogBlockedStatus(blockedKind, title), settingsManager);
 	});
 }

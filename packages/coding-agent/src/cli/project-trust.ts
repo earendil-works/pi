@@ -2,7 +2,6 @@ import chalk from "chalk";
 import type { ProjectTrustContext } from "../core/extensions/types.ts";
 import type { AppMode } from "../core/project-trust.ts";
 import type { SettingsManager } from "../core/settings-manager.ts";
-import { dialogBlockedStatus } from "../modes/interactive/program-status-reporter.ts";
 import { showStartupInput, showStartupSelector } from "./startup-ui.ts";
 
 export function createProjectTrustContext(options: {
@@ -16,7 +15,7 @@ export function createProjectTrustContext(options: {
 		mode: options.mode === "interactive" ? "tui" : options.mode,
 		hasUI: options.hasUI,
 		ui: {
-			select: async (title, selectOptions) => {
+			select: async (title, selectOptions, opts) => {
 				if (!options.hasUI) {
 					return undefined;
 				}
@@ -27,9 +26,10 @@ export function createProjectTrustContext(options: {
 					options.settingsManager,
 					title,
 					selectOptions.map((option) => ({ label: option, value: option })),
+					opts?.blockedKind,
 				);
 			},
-			confirm: async (title, message) => {
+			confirm: async (title, message, opts) => {
 				if (!options.hasUI) {
 					return false;
 				}
@@ -44,18 +44,18 @@ export function createProjectTrustContext(options: {
 							{ label: "Yes", value: true },
 							{ label: "No", value: false },
 						],
-						dialogBlockedStatus("permission", title),
+						opts?.blockedKind ?? "permission",
 					)) ?? false
 				);
 			},
-			input: async (title, placeholder) => {
+			input: async (title, placeholder, opts) => {
 				if (!options.hasUI) {
 					return undefined;
 				}
 				if (options.mode !== "interactive") {
 					return undefined;
 				}
-				return showStartupInput(options.settingsManager, title, placeholder);
+				return showStartupInput(options.settingsManager, title, placeholder, opts?.blockedKind);
 			},
 			notify: (message, type = "info") => {
 				if (options.mode !== "interactive") {
