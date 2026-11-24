@@ -680,7 +680,6 @@ export function mapStopReason(reason: `${FinishReason}`): StopReason {
 		case "OTHER":
 		case "LANGUAGE":
 		case "MALFORMED_FUNCTION_CALL":
-		case "MALFORMED_RESPONSE" as `${FinishReason}`:
 		case "UNEXPECTED_TOOL_CALL":
 		case "TOO_MANY_TOOL_CALLS":
 		case "NO_IMAGE":
@@ -691,6 +690,8 @@ export function mapStopReason(reason: `${FinishReason}`): StopReason {
 		case "MODEL_ARMOR":
 			return "error";
 		default: {
+			const _exhaustive: never = reason;
+			void _exhaustive;
 			return "error";
 		}
 	}

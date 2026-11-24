@@ -30,7 +30,7 @@ type AntigravityProviderModel = AntigravityModel | ImageModel<"antigravity-image
  * Bump when persisted routing or grouping output changes shape or meaning, so a
  * catalog written by an older build is refreshed instead of trusted for 4h.
  */
-const CATALOG_SCHEMA_VERSION = 2;
+const CATALOG_SCHEMA_VERSION = 3;
 
 /**
  * Identifies the account and schema that produced a persisted catalog. Stored in

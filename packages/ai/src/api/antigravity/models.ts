@@ -31,6 +31,17 @@ import type { AntigravityRouting, ThinkingWire } from "./types.ts";
  * advertised by the backend for each model.
  */
 export const ANTIGRAVITY_ROUTING: Record<string, AntigravityRouting> = {
+	"gemini-4-neon": {
+		off: "gemini-4-neon-low",
+		routing: {
+			minimal: "gemini-4-neon-low",
+			low: "gemini-4-neon-low",
+			medium: "gemini-4-neon-medium",
+			high: "gemini-4-neon-high",
+			xhigh: "gemini-4-neon-xhigh",
+		},
+		defaultRequestId: "gemini-4-neon-low",
+	},
 	"gemini-4-hydrogen": {
 		off: "gemini-4-hydrogen-low",
 		routing: {
@@ -183,6 +194,11 @@ export const ANTIGRAVITY_ROUTING: Record<string, AntigravityRouting> = {
  * (streamResponse), so carbon and hydrogen reach the 262144 the backend advertises over several requests.
  */
 export const RUNTIME_MAX_OUTPUT_TOKENS: Record<string, number> = {
+	"gemini-4-neon": 262144,
+	"gemini-4-neon-low": 262144,
+	"gemini-4-neon-medium": 262144,
+	"gemini-4-neon-high": 262144,
+	"gemini-4-neon-xhigh": 262144,
 	"gemini-4-hydrogen": 262144,
 	"gemini-4-hydrogen-low": 262144,
 	"gemini-4-hydrogen-medium": 262144,
@@ -244,7 +260,12 @@ export function getMaxOutputTokens(modelId: string, runtimeModel?: string): numb
 		if (runtimeModel.startsWith("claude-opus-5") || runtimeModel.startsWith("claude-sonnet-5")) return 128000;
 		if (runtimeModel.startsWith("claude-")) return 64000;
 		if (runtimeModel.startsWith("gpt-oss-")) return 32768;
-		if (runtimeModel.startsWith("gemini-4-carbon") || runtimeModel.startsWith("gemini-4-hydrogen")) return 262144;
+		if (
+			runtimeModel.startsWith("gemini-4-carbon") ||
+			runtimeModel.startsWith("gemini-4-hydrogen") ||
+			runtimeModel.startsWith("gemini-4-neon")
+		)
+			return 262144;
 		if (runtimeModel.startsWith("gemini-3.1-pro") || runtimeModel === "gemini-pro-agent") return 65535;
 		if (runtimeModel.startsWith("gemini-")) return 65536;
 	}
@@ -254,6 +275,7 @@ export function getMaxOutputTokens(modelId: string, runtimeModel?: string): numb
 const geminiFlashCost = { input: 0.75, output: 3.75, cacheRead: 0.075, cacheWrite: 0 };
 const geminiHydrogenCost = { input: 1.5, output: 7.5, cacheRead: 0.075, cacheWrite: 0 };
 const geminiProCost = { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 0 };
+const geminiNeonCost = { input: 3, output: 15, cacheRead: 0.15, cacheWrite: 0 };
 const claudeSonnetCost = { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 };
 const claudeOpusCost = { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 };
 const gptOssCost = { input: 0.6, output: 2.4, cacheRead: 0.15, cacheWrite: 0.6 };
@@ -343,6 +365,16 @@ export const ANTIGRAVITY_MODELS: ProviderModelConfig[] = [
 		maxTokens: 262144,
 	},
 	{
+		id: "gemini-4-neon",
+		name: "Gemini 4 Neon (Antigravity)",
+		reasoning: true,
+		thinkingLevelMap: thinkingLevelMaps.lowMediumHighXhigh,
+		input: ["text", "image"],
+		cost: geminiNeonCost,
+		contextWindow: 1048576,
+		maxTokens: 262144,
+	},
+	{
 		id: "gemini-4-hydrogen",
 		name: "Gemini 4 Hydrogen (Antigravity)",
 		reasoning: true,
@@ -402,6 +434,12 @@ export function getAntigravityRequestModelId(modelId: string, effort: string | u
 export type { ThinkingWire };
 
 export const ANTIGRAVITY_MODEL_ENUM: Record<string, string> = {
+	// Gemini 4 Neon
+	"gemini-4-neon": "MODEL_PLACEHOLDER_M532",
+	"gemini-4-neon-xhigh": "MODEL_PLACEHOLDER_M535",
+	"gemini-4-neon-high": "MODEL_PLACEHOLDER_M532",
+	"gemini-4-neon-medium": "MODEL_PLACEHOLDER_M533",
+	"gemini-4-neon-low": "MODEL_PLACEHOLDER_M534",
 	// Gemini 4 Hydrogen
 	"gemini-4-hydrogen": "MODEL_PLACEHOLDER_M525",
 	"gemini-4-hydrogen-xhigh": "MODEL_PLACEHOLDER_M528",

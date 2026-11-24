@@ -92,7 +92,7 @@ describe("Google CONTINUATION finish reason", () => {
 		}
 	});
 
-	it.each(["gemini-4-argon", "gemini-4-carbon", "gemini-4-hydrogen"])(
+	it.each(["gemini-4-argon", "gemini-4-carbon", "gemini-4-hydrogen", "gemini-4-neon"])(
 		"defaults %s on google and google-vertex to a 131072 whole-turn budget across mid-session hops",
 		async (modelId) => {
 			const models = builtinModels();
@@ -171,29 +171,32 @@ describe("Google CONTINUATION finish reason", () => {
 
 describe("Google malformed generations", () => {
 	it("maps MALFORMED_RESPONSE and unknown finish reasons to error instead of throwing", () => {
-		expect(mapStopReason("MALFORMED_RESPONSE" as FinishReason)).toBe("error");
+		expect(mapStopReason(FinishReason.MALFORMED_RESPONSE)).toBe("error");
 		expect(mapStopReason("SOME_FUTURE_REASON" as FinishReason)).toBe("error");
 	});
 
-	it.each(["MALFORMED_RESPONSE", "MALFORMED_FUNCTION_CALL"])("words %s so the agent retries it", async (finish) => {
-		const sse = () =>
-			new Response(
-				`data: ${JSON.stringify({ candidates: [{ content: { role: "model", parts: [] }, finishReason: finish }] })}\n\n`,
-				{ headers: { "content-type": "text/event-stream" } },
-			);
-		const google = await streamGoogleGenerativeAI(createModel("google-generative-ai"), context, {
-			apiKey: "test-key",
-			fetch: async () => sse(),
-		}).result();
-		const vertex = await streamGoogleVertex(createModel("google-vertex"), context, {
-			apiKey: "test-key",
-			fetch: async () => sse(),
-		}).result();
-		expect(google.stopReason).toBe("error");
-		expect(google.errorMessage).toContain(`ended without a valid function call (${finish})`);
-		expect(vertex.stopReason).toBe("error");
-		expect(vertex.errorMessage).toContain(`ended without a valid function call (${finish})`);
-	});
+	it.each(["MALFORMED_RESPONSE", "MALFORMED_FUNCTION_CALL"])(
+		"surfaces %s with upstream Provider stopped wording without retrying",
+		async (finish) => {
+			const sse = () =>
+				new Response(
+					`data: ${JSON.stringify({ candidates: [{ content: { role: "model", parts: [] }, finishReason: finish }] })}\n\n`,
+					{ headers: { "content-type": "text/event-stream" } },
+				);
+			const google = await streamGoogleGenerativeAI(createModel("google-generative-ai"), context, {
+				apiKey: "test-key",
+				fetch: async () => sse(),
+			}).result();
+			const vertex = await streamGoogleVertex(createModel("google-vertex"), context, {
+				apiKey: "test-key",
+				fetch: async () => sse(),
+			}).result();
+			expect(google.stopReason).toBe("error");
+			expect(google.errorMessage).toBe(`Provider stopped with: ${finish}`);
+			expect(vertex.stopReason).toBe("error");
+			expect(vertex.errorMessage).toBe(`Provider stopped with: ${finish}`);
+		},
+	);
 });
 
 describe("Google live v1beta/models catalog refresh", () => {
@@ -252,6 +255,14 @@ describe("Google live v1beta/models catalog refresh", () => {
 						supportedGenerationMethods: ["generateContent", "countTokens"],
 					},
 					{
+						name: "models/gemini-4-neon-preview",
+						displayName: "Gemini 4 Neon Preview",
+						inputTokenLimit: 1_048_576,
+						outputTokenLimit: 65_536,
+						thinking: true,
+						supportedGenerationMethods: ["generateContent"],
+					},
+					{
 						name: "models/gemini-4-experimental",
 						displayName: "Gemini 4 Experimental",
 						inputTokenLimit: 1_048_576,
@@ -297,6 +308,13 @@ describe("Google live v1beta/models catalog refresh", () => {
 			maxTokens: 65_536,
 			reasoning: true,
 			input: ["text", "image"],
+		});
+		expect(models.getModel("google", "gemini-4-neon-preview")).toMatchObject({
+			name: "Gemini 4 Neon Preview",
+			contextWindow: 1_048_576,
+			maxTokens: 131_072,
+			reasoning: true,
+			thinkingLevelMap: { low: "low", medium: "medium", high: "high", xhigh: "xhigh" },
 		});
 		expect(models.getModel("google", "gemini-4-experimental")).toMatchObject({
 			name: "Gemini 4 Experimental",

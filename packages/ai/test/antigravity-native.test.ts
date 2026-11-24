@@ -662,50 +662,54 @@ describe("Gemini 3 Flash thinking config", () => {
 	});
 });
 
-it.each(["gemini-3.8-flash", "gemini-4-argon", "gemini-4-carbon", "gemini-4-hydrogen", "gemini-3.1-pro"])(
-	"pins discrete thinking wire config for %s",
-	async (id) => {
-		const current = antigravityProvider()
-			.getModels()
-			.find((m) => m.id === id) ?? {
-			...model,
-			id,
-			thinkingLevelMap: {
-				off: null,
-				minimal: null,
-				low: "low",
-				medium: null,
-				high: "high",
-				xhigh: null,
-				max: null,
-			},
-		};
-		const efforts =
-			id === "gemini-4-hydrogen"
-				? (["low", "medium", "high", "xhigh"] as const)
-				: (["low", "medium", "high"] as const);
-		for (const effort of efforts) {
-			const request = await buildRequest(current, context, "project", { reasoning: effort }, id);
-			const expectedLevel = id === "gemini-3.1-pro" && effort === "medium" ? "HIGH" : effort.toUpperCase();
-			expect(request.request.generationConfig?.thinkingConfig).toEqual({
-				includeThoughts: true,
-				thinkingLevel: expectedLevel,
-			});
-			if (id === "gemini-4-carbon" || id === "gemini-4-hydrogen") {
-				expect(request.request.generationConfig?.maxOutputTokens).toBe(262144);
-			}
+it.each([
+	"gemini-3.8-flash",
+	"gemini-4-argon",
+	"gemini-4-carbon",
+	"gemini-4-hydrogen",
+	"gemini-4-neon",
+	"gemini-3.1-pro",
+])("pins discrete thinking wire config for %s", async (id) => {
+	const current = antigravityProvider()
+		.getModels()
+		.find((m) => m.id === id) ?? {
+		...model,
+		id,
+		thinkingLevelMap: {
+			off: null,
+			minimal: null,
+			low: "low",
+			medium: null,
+			high: "high",
+			xhigh: null,
+			max: null,
+		},
+	};
+	const efforts =
+		id === "gemini-4-hydrogen" || id === "gemini-4-neon"
+			? (["low", "medium", "high", "xhigh"] as const)
+			: (["low", "medium", "high"] as const);
+	for (const effort of efforts) {
+		const request = await buildRequest(current, context, "project", { reasoning: effort }, id);
+		const expectedLevel = id === "gemini-3.1-pro" && effort === "medium" ? "HIGH" : effort.toUpperCase();
+		expect(request.request.generationConfig?.thinkingConfig).toEqual({
+			includeThoughts: true,
+			thinkingLevel: expectedLevel,
+		});
+		if (id === "gemini-4-carbon" || id === "gemini-4-hydrogen" || id === "gemini-4-neon") {
+			expect(request.request.generationConfig?.maxOutputTokens).toBe(262144);
 		}
-		const off = await buildRequest(current, context, "project", {}, id);
-		expect(JSON.stringify(off.request.generationConfig)).not.toContain('"thinkingBudget":0');
-		if (id === "gemini-4-argon") expect(off.request.generationConfig?.thinkingConfig).toBeUndefined();
-		if (id === "gemini-4-carbon" || id === "gemini-4-hydrogen") {
-			expect(off.request.generationConfig?.thinkingConfig).toEqual({
-				includeThoughts: false,
-				thinkingLevel: "LOW",
-			});
-		}
-	},
-);
+	}
+	const off = await buildRequest(current, context, "project", {}, id);
+	expect(JSON.stringify(off.request.generationConfig)).not.toContain('"thinkingBudget":0');
+	if (id === "gemini-4-argon") expect(off.request.generationConfig?.thinkingConfig).toBeUndefined();
+	if (id === "gemini-4-carbon" || id === "gemini-4-hydrogen" || id === "gemini-4-neon") {
+		expect(off.request.generationConfig?.thinkingConfig).toEqual({
+			includeThoughts: false,
+			thinkingLevel: "LOW",
+		});
+	}
+});
 
 describe("antigravity convertMessages — unsigned tool calls on the bridge", () => {
 	const zeroUsage = {
@@ -762,18 +766,22 @@ describe("antigravity convertMessages — unsigned tool calls on the bridge", ()
 			.flatMap((c) => c.parts)
 			.filter((p): p is Extract<typeof p, { functionCall: unknown }> => "functionCall" in p);
 
-	it.each(["gemini-3.8-flash", "gemini-4-argon", "gemini-4-carbon", "gemini-4-hydrogen", "gemini-pro-agent"])(
-		"adds the validator bypass only to the first call of an unsigned step for %s",
-		(id) => {
-			const target = { ...model, id };
-			const calls = functionCalls(convertMessages(target, history(target, "claude-sonnet-5-5"), id));
-			expect(calls.map((p) => p.functionCall.id)).toEqual(["call_1", "call_2"]);
-			expect(calls.map((p) => p.thoughtSignature)).toEqual([SKIP_THOUGHT_SIGNATURE_VALIDATOR, undefined]);
-			expect(JSON.stringify(convertMessages(target, history(target, "claude-sonnet-5-5"), id))).not.toContain(
-				"Historical context",
-			);
-		},
-	);
+	it.each([
+		"gemini-3.8-flash",
+		"gemini-4-argon",
+		"gemini-4-carbon",
+		"gemini-4-hydrogen",
+		"gemini-4-neon",
+		"gemini-pro-agent",
+	])("adds the validator bypass only to the first call of an unsigned step for %s", (id) => {
+		const target = { ...model, id };
+		const calls = functionCalls(convertMessages(target, history(target, "claude-sonnet-5-5"), id));
+		expect(calls.map((p) => p.functionCall.id)).toEqual(["call_1", "call_2"]);
+		expect(calls.map((p) => p.thoughtSignature)).toEqual([SKIP_THOUGHT_SIGNATURE_VALIDATOR, undefined]);
+		expect(JSON.stringify(convertMessages(target, history(target, "claude-sonnet-5-5"), id))).not.toContain(
+			"Historical context",
+		);
+	});
 
 	it("keeps a valid Gemini signature across same-provider Gemini switches and leaves parallel siblings bare", () => {
 		const validSig = "AAAAAAAAAAAAAAAAAAAAAA==";
@@ -810,6 +818,7 @@ describe("antigravity convertMessages — unsigned tool calls on the bridge", ()
 		[true, "gemini-4-argon-high"],
 		[true, "gemini-4-carbon-high"],
 		[true, "gemini-4-hydrogen-xhigh"],
+		[true, "gemini-4-neon-xhigh"],
 		[true, "gemini-pro-agent"],
 		[false, "gemini-2.5-flash"],
 		[false, "claude-opus-5-5-high"],

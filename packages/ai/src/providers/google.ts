@@ -7,7 +7,7 @@ import { GOOGLE_MODELS } from "./google.models.ts";
 const GOOGLE_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 const GOOGLE_MODELS_TIMEOUT_MS = 15_000;
 const GOOGLE_REFRESH_INTERVAL_MS = 4 * 60 * 60 * 1000;
-const CATALOG_SCHEMA_VERSION = 1;
+const CATALOG_SCHEMA_VERSION = 2;
 const GEMINI_LONG_DECODE_MAX_TOKENS = 131_072;
 const DEFAULT_CONTEXT_WINDOW = 131_072;
 const DEFAULT_MAX_TOKENS = 8_192;
@@ -42,7 +42,7 @@ function inferredThinkingLevelMap(id: string, reasoning: boolean): ThinkingLevel
 			low: "low",
 			medium: "medium",
 			high: "high",
-			xhigh: lower.includes("hydrogen") ? "xhigh" : null,
+			xhigh: lower.includes("hydrogen") || lower.includes("neon") ? "xhigh" : null,
 			max: null,
 		};
 	}

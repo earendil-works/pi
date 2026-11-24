@@ -198,6 +198,10 @@ function buildModelMatchRegex(requestedId: string): RegExp {
 	//   gemini-3.5-flash-extra-low → "Gemini 3.5 Flash (Low)"
 	//   gemini-3.5-flash-low       → "Gemini 3.5 Flash (Medium)"
 	//   gemini-3-flash-agent       → "Gemini 3.5 Flash (High)"
+	if (req === "gemini-4-neon-low") return /gemini[- ]4[- ]neon \(low\)/i;
+	if (req === "gemini-4-neon-medium") return /gemini[- ]4[- ]neon \(medium\)/i;
+	if (req === "gemini-4-neon-high") return /gemini[- ]4[- ]neon \(high\)/i;
+	if (req === "gemini-4-neon-xhigh") return /gemini[- ]4[- ]neon \(xhigh\)/i;
 	if (req === "gemini-4-hydrogen-low") return /gemini[- ]4[- ]hydrogen \(low\)/i;
 	if (req === "gemini-4-hydrogen-medium") return /gemini[- ]4[- ]hydrogen \(medium\)/i;
 	if (req === "gemini-4-hydrogen-high") return /gemini[- ]4[- ]hydrogen \(high\)/i;

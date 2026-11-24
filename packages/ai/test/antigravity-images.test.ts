@@ -374,6 +374,7 @@ it.each([
 	"gemini-4-argon",
 	"gemini-4-carbon",
 	"gemini-4-hydrogen",
+	"gemini-4-neon",
 ])("encodes tool image responses for %s", (id) => {
 	const chat = { ...antigravityProvider().getModels()[0], id };
 	const nested = !id.startsWith("gemini-2");

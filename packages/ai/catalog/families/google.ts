@@ -10,6 +10,7 @@ export const GOOGLE_LONG_DECODE_MAX_TOKENS: Record<string, number> = {
 	"gemini-4-argon": 131072,
 	"gemini-4-carbon": 131072,
 	"gemini-4-hydrogen": 131072,
+	"gemini-4-neon": 131072,
 };
 
 function isGemma4Model(modelId: string): boolean {
