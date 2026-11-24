@@ -30,6 +30,9 @@ const EXTENDED_CONTEXT_MODEL_IDS = new Set([
 	"gpt-6-sol",
 ]);
 
+// models.dev may list these before their effort metadata is complete. Both reject disabled thinking.
+const CLAUDE_55_MODEL_IDS = new Set(["claude-opus-5.5", "claude-sonnet-5.5"]);
+
 const EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_MODEL_IDS = new Set([
 	"claude-haiku-4.5",
 	"claude-sonnet-4",
@@ -119,7 +122,7 @@ export default defineProvider({
 								source.reasoningOptions?.some((option) => option.type === "effort") ?? false,
 						};
 					}
-					if (model.id === "claude-opus-5.5") mergeThinking(result, claude55ThinkingLevels(model.id));
+					if (CLAUDE_55_MODEL_IDS.has(model.id)) mergeThinking(result, claude55ThinkingLevels(model.id));
 					return result;
 				},
 			}),

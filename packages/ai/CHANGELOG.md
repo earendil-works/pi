@@ -37,6 +37,7 @@
 - Fixed the model catalog still listing `gpt-5-chat-latest` for `openai` and `azure` after OpenAI shut it down on July 23, 2026 ([#12202](https://github.com/earendil-works/pi/issues/12202))
 - Fixed `openai-completions` dropping OpenRouter's `native_finish_reason`, the upstream provider's own finish reason. `rawStopReason` now records it next to `finish_reason`, e.g. `stop.MALFORMED_RESPONSE`, and error messages include it, e.g. `Provider finish_reason: error (native_finish_reason: MALFORMED_FUNCTION_CALL)`. Stop reasons are unchanged ([#11931](https://github.com/earendil-works/pi/issues/11931))
 - Fixed GitHub Copilot listing classifier models the account cannot use, such as `microsoft-decision-1` on accounts whose plan does not include it, where every call failed with HTTP 400. After OAuth login or the next token refresh, only the decision models in the account's Copilot model catalog are listed ([#12395](https://github.com/earendil-works/pi/issues/12395))
+- Fixed HTTP 400 with thinking `off` on GitHub Copilot's Claude Sonnet 5.5, which rejects `thinking: {type: "disabled"}`. The catalog no longer offers `off` or `minimal` for it, matching Claude Opus 5.5 and Anthropic's own Sonnet 5.5 ([#12429](https://github.com/earendil-works/pi/issues/12429))
 
 ## [1.6.0] - 2026-11-20
 
