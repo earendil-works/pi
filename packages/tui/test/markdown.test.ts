@@ -976,6 +976,21 @@ A=
 			assert.deepStrictEqual(shellLines, [shellVariables]);
 		});
 
+		it("keeps Markdown after an unclosed currency dollar sign", () => {
+			const cases = [
+				["Costs +$50 for **this** option.", ["Costs +$50 for this option."]],
+				["**A:** costs +$50 (once).\n**B:** next.", ["A: costs +$50 (once).", "B: next."]],
+				["**A:** costs $x + y\n**B:** next.", ["A: costs $x + y", "B: next."]],
+			] as const;
+
+			for (const [source, expected] of cases) {
+				const lines = new Markdown(source, 0, 0, defaultMarkdownTheme)
+					.render(80)
+					.map((line) => stripAnsi(line).trimEnd());
+				assert.deepStrictEqual(lines, expected);
+			}
+		});
+
 		it("preserves unsupported and incomplete LaTeX exactly", () => {
 			const cases = [String.raw`Unknown $x + \unknown{y}$ after`, String.raw`Streaming $\mathbb{C}^3`];
 
