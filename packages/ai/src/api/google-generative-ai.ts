@@ -16,7 +16,6 @@ import type {
 	StreamFunction,
 	StreamOptions,
 	TextContent,
-	ThinkingBudgets,
 	ThinkingContent,
 	ToolCall,
 	TranscriptContext,
@@ -28,12 +27,13 @@ import { type ClientIdentity, getIdentityHeaders } from "../utils/identity.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { getSystemMessageText } from "../utils/text.ts";
 import { collapseSystemMessages, getCurrentTools, getInitialSystemMessage } from "../utils/transcript.ts";
-import type { GoogleApiThinkingLevel, ResolvedGoogleThinkingLevel } from "./google-shared.ts";
+import type { GoogleApiThinkingLevel } from "./google-shared.ts";
 import {
 	convertMessages,
 	convertTools,
 	formatGooglePromptBlockError,
 	getDisabledGoogleThinkingConfig,
+	getGoogleBudget,
 	isThinkingPart,
 	mapStopReason,
 	resolveGoogleFunctionCallingMode,
@@ -434,46 +434,4 @@ function buildParams(
 	};
 
 	return params;
-}
-
-function getGoogleBudget(
-	model: Model<"google-generative-ai">,
-	level: ResolvedGoogleThinkingLevel,
-	customBudgets?: ThinkingBudgets,
-): number {
-	if (customBudgets?.[level] !== undefined) {
-		return customBudgets[level]!;
-	}
-
-	if (model.id.includes("2.5-pro")) {
-		const budgets: Record<ResolvedGoogleThinkingLevel, number> = {
-			minimal: 128,
-			low: 2048,
-			medium: 8192,
-			high: 32768,
-		};
-		return budgets[level];
-	}
-
-	if (model.id.includes("2.5-flash-lite")) {
-		const budgets: Record<ResolvedGoogleThinkingLevel, number> = {
-			minimal: 512,
-			low: 2048,
-			medium: 8192,
-			high: 24576,
-		};
-		return budgets[level];
-	}
-
-	if (model.id.includes("2.5-flash")) {
-		const budgets: Record<ResolvedGoogleThinkingLevel, number> = {
-			minimal: 128,
-			low: 2048,
-			medium: 8192,
-			high: 24576,
-		};
-		return budgets[level];
-	}
-
-	return -1;
 }

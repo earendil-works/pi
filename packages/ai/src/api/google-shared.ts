@@ -18,6 +18,7 @@ import type {
 	StopReason,
 	StreamOptions,
 	TextContent,
+	ThinkingBudgets,
 	ThinkingLevel,
 	Tool,
 	TranscriptContext,
@@ -31,11 +32,11 @@ import { transformMessages } from "./transform-messages.ts";
 type GoogleApiType = "google-generative-ai" | "google-vertex";
 
 /**
- * Thinking level for Gemini 3 models.
+ * Thinking level for Gemini models that use `thinkingLevel` instead of `thinkingBudget`.
  * Mirrors Google's ThinkingLevel enum values.
  */
-export type GoogleApiThinkingLevel = "THINKING_LEVEL_UNSPECIFIED" | "MINIMAL" | "LOW" | "MEDIUM" | "HIGH";
-export type ResolvedGoogleThinkingLevel = Exclude<ThinkingLevel, "xhigh" | "max">;
+export type GoogleApiThinkingLevel = "THINKING_LEVEL_UNSPECIFIED" | "MINIMAL" | "LOW" | "MEDIUM" | "HIGH" | "XHIGH";
+export type ResolvedGoogleThinkingLevel = Exclude<ThinkingLevel, "max">;
 
 const GOOGLE_SDK_THINKING_LEVEL_MAP: Record<GoogleApiThinkingLevel, GoogleSdkThinkingLevel> = {
 	THINKING_LEVEL_UNSPECIFIED: GoogleSdkThinkingLevel.THINKING_LEVEL_UNSPECIFIED,
@@ -43,6 +44,7 @@ const GOOGLE_SDK_THINKING_LEVEL_MAP: Record<GoogleApiThinkingLevel, GoogleSdkThi
 	LOW: GoogleSdkThinkingLevel.LOW,
 	MEDIUM: GoogleSdkThinkingLevel.MEDIUM,
 	HIGH: GoogleSdkThinkingLevel.HIGH,
+	XHIGH: GoogleSdkThinkingLevel.XHIGH,
 };
 
 /** Resolve a supported pi level or model-specific Google mapping to a standard Google level. */
@@ -57,6 +59,7 @@ export function resolveGoogleThinkingLevel<T extends GoogleApiType>(
 		case "low":
 		case "medium":
 		case "high":
+		case "xhigh":
 			return resolvedLevel;
 		default:
 			throw new Error(
@@ -95,7 +98,53 @@ export function toGoogleThinkingLevel(level: ResolvedGoogleThinkingLevel): Googl
 			return "MEDIUM";
 		case "high":
 			return "HIGH";
+		case "xhigh":
+			return "XHIGH";
 	}
+}
+
+/** Token budget for Gemini models that use `thinkingBudget`: custom budgets first, then per-model defaults, else -1 (dynamic). */
+export function getGoogleBudget<T extends GoogleApiType>(
+	model: Model<T>,
+	resolvedLevel: ResolvedGoogleThinkingLevel,
+	customBudgets?: ThinkingBudgets,
+): number {
+	// Budgets stop at high, so xhigh uses the high budget.
+	const level = resolvedLevel === "xhigh" ? "high" : resolvedLevel;
+	const customBudget = customBudgets?.[level];
+	if (customBudget !== undefined) return customBudget;
+
+	if (model.id.includes("2.5-pro")) {
+		const budgets: Record<keyof ThinkingBudgets, number> = {
+			minimal: 128,
+			low: 2048,
+			medium: 8192,
+			high: 32768,
+		};
+		return budgets[level];
+	}
+
+	if (model.id.includes("2.5-flash-lite")) {
+		const budgets: Record<keyof ThinkingBudgets, number> = {
+			minimal: 512,
+			low: 2048,
+			medium: 8192,
+			high: 24576,
+		};
+		return budgets[level];
+	}
+
+	if (model.id.includes("2.5-flash")) {
+		const budgets: Record<keyof ThinkingBudgets, number> = {
+			minimal: 128,
+			low: 2048,
+			medium: 8192,
+			high: 24576,
+		};
+		return budgets[level];
+	}
+
+	return -1;
 }
 
 export function toGoogleSdkThinkingLevel(level: GoogleApiThinkingLevel): GoogleSdkThinkingLevel {
@@ -544,6 +593,11 @@ export function mapStopReason(reason: FinishReason): StopReason {
 		case FinishReason.UNEXPECTED_TOOL_CALL:
 		case FinishReason.TOO_MANY_TOOL_CALLS:
 		case FinishReason.NO_IMAGE:
+		case FinishReason.MISSING_THOUGHT_SIGNATURE:
+		case FinishReason.MALFORMED_RESPONSE:
+		case FinishReason.ESCALATION:
+		case FinishReason.PUP_LIMITED_DISABLED:
+		case FinishReason.MODEL_ARMOR:
 			return "error";
 		default: {
 			const _exhaustive: never = reason;
