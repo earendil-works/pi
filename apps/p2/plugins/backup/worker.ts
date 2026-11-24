@@ -8,7 +8,7 @@ import { backupTarget, processLogs, sessionDirectory } from "@p2/app/v1/node";
 import { harnessOf, workerOf } from "@p2/app/v1/worker";
 import { ChunkedRemote } from "./chunked-remote.ts";
 import { BackupRemote, isTerminalBackupError, sessionStoreName } from "./contract.ts";
-import { BackupUploader, backupFiles, backupTargetKey, errorText } from "./uploader.ts";
+import { BackupUploader, backupFiles, backupTargetKey, errorText, pausedWhileOff } from "./uploader.ts";
 
 /** The worker's backup of its store, for the worker's life. */
 const StoreBackup = local("p2.store-backup", { version: 1, params: {}, members: {} });
@@ -21,10 +21,16 @@ export default defineFacet((host) => {
 		self.onLive(async (ctx) => {
 			const device = expectVariant(remote, "worker").device.value;
 			const target = backupTarget();
-			if (device === null || target === undefined) return;
 			const { init, store, root } = worker();
-			if (store === undefined) return;
 			const session = init.values.session.id;
+			if (target === undefined) {
+				// Backup is off: a store backed up before says so (paused), instead of nothing.
+				const files = backupFiles(init.dataDir);
+				const paused = await pausedWhileOff(files, sessionDirectory(init.dataDir, session), ctx);
+				if (paused !== undefined) await expectVariant(remote, "worker").report({ status: paused }, ctx);
+				return;
+			}
+			if (device === null || store === undefined) return;
 			const name = sessionStoreName(session);
 			const log = (message: string): void => processLogs.append(`backup:${name}`, "event", message);
 			const uploader = new BackupUploader({

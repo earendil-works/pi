@@ -27,7 +27,7 @@ import {
 	sessionStoreName,
 } from "./contract.ts";
 import { describe, openTarget } from "./target.ts";
-import { BackupUploader, backupFiles, backupTargetKey, errorText } from "./uploader.ts";
+import { BackupUploader, backupFiles, backupTargetKey, errorText, pausedWhileOff } from "./uploader.ts";
 import { openUploads } from "./uploads.ts";
 
 export default defineFacet((host) => {
@@ -42,8 +42,10 @@ export default defineFacet((host) => {
 		let ended = false;
 		const report = (store: string, status: BackupStatus): void => {
 			if (!ended) statuses.set({ ...statuses.value, [store]: status });
-			if (status.state === "error" || status.state === "behind" || status.state === "diverged")
-				processLogs.append(`backup:${store}`, "event", `${status.state}${status.error ? `: ${status.error}` : ""}`);
+			// A pause is not an error: only what fails is logged.
+			if (status.state === "retrying") processLogs.append(`backup:${store}`, "event", `retrying: ${status.error}`);
+			if (status.state === "stopped")
+				processLogs.append(`backup:${store}`, "event", `stopped (${status.reason}): ${status.error}`);
 		};
 		// The remote, this instance's device, the uploads workers stream through it, and the server store's uploader (its
 		// outbox is on while backup is configured: the server opens the store so).
@@ -52,8 +54,14 @@ export default defineFacet((host) => {
 			async (context) => {
 				const target = backupTarget();
 				const store = natives().store;
-				if (target === undefined || store === undefined) return undefined;
 				const { dataDir } = server.info.value;
+				if (target === undefined) {
+					// Backup is off: a store backed up before says so (paused), instead of nothing.
+					const paused = await pausedWhileOff(backupFiles(dataDir), serverDirectory(dataDir), context);
+					if (paused !== undefined) report(SERVER_STORE, paused);
+					return undefined;
+				}
+				if (store === undefined) return undefined;
 				const opened = await openTarget(target, dataDir, targets, context);
 				device.set(opened.device);
 				const uploads = openUploads(opened.remote, opened.device, withoutAbortSignal(context), opened.terminal);
@@ -138,4 +146,5 @@ export default defineFacet((host) => {
 	});
 });
 
-const failed = (error: unknown): BackupStatus => ({ state: "error", error: errorText(error), at: Date.now() });
+// The last upload as the server stops: its commits stay in the outbox for the next start, which retries them.
+const failed = (error: unknown): BackupStatus => ({ state: "retrying", error: errorText(error), at: Date.now() });

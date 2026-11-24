@@ -113,10 +113,12 @@ test("stops uploading when Radius refuses sync (403: the feature off), instead o
 	t.after(() => backup.release());
 	const stopped = await until(
 		backup.statuses,
-		(value) => value?.server?.state === "error" && (value.server.error ?? "").includes("stopped until a restart"),
+		(value) => value?.server?.state === "stopped" && value.server.reason === "refused",
 		20_000,
 	);
-	assert.match(stopped?.server?.error ?? "", /403/);
+	const status = stopped?.server;
+	assert.ok(status?.state === "stopped");
+	assert.match(status.error, /403/);
 	// No retries after the stop: the request count stays.
 	const requests = radius.sync.tokens.length;
 	await new Promise((resolve) => setTimeout(resolve, 3000));
@@ -174,7 +176,10 @@ test("keeps a session's backup with the account that made it when another person
 	radius.actor.id = "usr_2";
 	await as(await restart(), async (owner, statuses) => {
 		await send(owner, session, "person B");
-		await statuses((value) => value?.[name]?.state === "other_account");
+		await statuses((value) => {
+			const status = value?.[name];
+			return status?.state === "paused" && status.reason === "other_account";
+		});
 	});
 	assert.equal(slots(), uploaded, "nothing uploaded as person B");
 
