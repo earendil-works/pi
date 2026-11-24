@@ -44,15 +44,17 @@ export async function* decodeJsonl(bytes: AsyncIterable<Uint8Array>): AsyncItera
 		}
 	};
 	for await (const chunk of bytes) {
-		rest += decode(chunk);
+		// Only the new text is scanned, so a long line arriving in many chunks is not rescanned per chunk.
+		const decoded = decode(chunk);
 		let start = 0;
-		for (let end = rest.indexOf("\n"); end >= 0; end = rest.indexOf("\n", start)) {
-			const text = rest.slice(start, end);
+		for (let end = decoded.indexOf("\n"); end >= 0; end = decoded.indexOf("\n", start)) {
+			const text = rest + decoded.slice(start, end);
+			rest = "";
 			start = end + 1;
 			line++;
 			if (text.trim().length > 0) yield parse(text);
 		}
-		rest = rest.slice(start);
+		rest += decoded.slice(start);
 	}
 	rest += decode();
 	line++;

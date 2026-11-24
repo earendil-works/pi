@@ -13,6 +13,10 @@
 
 - Sync (experimental): `uploadSession` reports a remote that holds no history for a session this copy had shared (`not_head` at head 0, the copy past 0) as `{ type: "remote_empty", at }`, apart from `diverged`: the remote's copy was deleted, and the host may forget its sync state and start over with a full copy.
 
+### Fixed
+
+- Fixed sync batches and `importStore` JSONL rescanning an incomplete line on every chunk, which made long lines take time quadratic in their length ([#12224](https://github.com/earendil-works/pi/issues/12224))
+
 ## [1.6.0] - 2026-11-20
 
 ### Breaking Changes
