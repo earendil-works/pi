@@ -92,3 +92,112 @@ describe("OpenAI completions raw stop reasons", () => {
 		expect(isRetryableAssistantError(message)).toBe(true);
 	});
 });
+
+// #12407, #11931
+describe("OpenRouter native_finish_reason", () => {
+	const openRouterModel: Model<"openai-completions"> = {
+		...model,
+		id: "google/gemini-4-neon",
+		provider: "openrouter",
+		baseUrl: "https://openrouter.ai/api/v1",
+	};
+
+	beforeEach(() => {
+		mockState.chunks = [];
+	});
+
+	it("records a native reason hidden behind a successful finish_reason without changing the stop reason", async () => {
+		mockState.chunks = [
+			{
+				id: "gen-1",
+				choices: [{ index: 0, delta: {}, finish_reason: "stop", native_finish_reason: "MALFORMED_RESPONSE" }],
+			},
+		];
+
+		const message = await streamOpenAICompletions(openRouterModel, context, { apiKey: "test" }).result();
+
+		expect(message.stopReason).toBe("stop");
+		expect(message.rawStopReason).toBe("stop.MALFORMED_RESPONSE");
+		expect(message.errorMessage).toBeUndefined();
+	});
+
+	it("records the native reason of a tool call", async () => {
+		mockState.chunks = [
+			{
+				id: "gen-2",
+				choices: [
+					{
+						index: 0,
+						delta: { tool_calls: [{ index: 0, id: "call_1", function: { name: "read", arguments: "{}" } }] },
+						finish_reason: null,
+					},
+				],
+			},
+			// Gemini reports STOP for tool calls; OpenRouter's finish_reason carries the tool call.
+			{ id: "gen-2", choices: [{ index: 0, delta: {}, finish_reason: "tool_calls", native_finish_reason: "STOP" }] },
+		];
+
+		const message = await streamOpenAICompletions(openRouterModel, context, { apiKey: "test" }).result();
+
+		expect(message.stopReason).toBe("toolUse");
+		expect(message.rawStopReason).toBe("tool_calls.STOP");
+	});
+
+	it("adds the native reason to an error message and keeps it retryable", async () => {
+		mockState.chunks = [
+			{
+				id: "gen-3",
+				choices: [{ index: 0, delta: {}, finish_reason: "error", native_finish_reason: "MALFORMED_FUNCTION_CALL" }],
+			},
+		];
+
+		const message = await streamOpenAICompletions(openRouterModel, context, { apiKey: "test" }).result();
+
+		expect(message.stopReason).toBe("error");
+		expect(message.rawStopReason).toBe("error.MALFORMED_FUNCTION_CALL");
+		expect(message.errorMessage).toBe(
+			"Provider finish_reason: error (native_finish_reason: MALFORMED_FUNCTION_CALL)",
+		);
+		expect(isRetryableAssistantError(message)).toBe(true);
+	});
+
+	it("keeps the native reason when a trailing chunk repeats finish_reason without it", async () => {
+		mockState.chunks = [
+			{
+				id: "gen-4",
+				choices: [{ index: 0, delta: {}, finish_reason: "error", native_finish_reason: "MALFORMED_FUNCTION_CALL" }],
+			},
+			{ id: "gen-4", choices: [{ index: 0, delta: {}, finish_reason: "error" }] },
+		];
+
+		const message = await streamOpenAICompletions(openRouterModel, context, { apiKey: "test" }).result();
+
+		expect(message.rawStopReason).toBe("error.MALFORMED_FUNCTION_CALL");
+		expect(message.errorMessage).toBe(
+			"Provider finish_reason: error (native_finish_reason: MALFORMED_FUNCTION_CALL)",
+		);
+	});
+
+	it("does not repeat a native reason equal to finish_reason", async () => {
+		mockState.chunks = [
+			{ id: "gen-5", choices: [{ index: 0, delta: {}, finish_reason: "stop", native_finish_reason: "stop" }] },
+		];
+
+		const message = await streamOpenAICompletions(openRouterModel, context, { apiKey: "test" }).result();
+
+		expect(message.rawStopReason).toBe("stop");
+	});
+
+	it("ignores native_finish_reason from providers other than OpenRouter", async () => {
+		mockState.chunks = [
+			{
+				id: "chatcmpl-6",
+				choices: [{ index: 0, delta: {}, finish_reason: "stop", native_finish_reason: "MALFORMED_RESPONSE" }],
+			},
+		];
+
+		const message = await streamOpenAICompletions(model, context, { apiKey: "test" }).result();
+
+		expect(message.rawStopReason).toBe("stop");
+	});
+});
