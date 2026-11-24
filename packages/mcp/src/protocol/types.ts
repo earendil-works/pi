@@ -2,9 +2,8 @@ import type { BlobResourceContents, ContentAnnotations, TextResourceContents } f
 import type { JsonRpcId } from "./jsonrpc.ts";
 
 /**
- * The latest protocol version that starts with an `initialize` handshake ("legacy" in the terms of MCP
- * 2026-07-28). It names what `initialize` requests, so it stays a legacy version; the stateless
- * revisions are {@link MODERN_PROTOCOL_VERSIONS}.
+ * The newest version with the `initialize` handshake ("legacy" in the terms of MCP 2026-07-28), and
+ * the one `initialize` asks for by default. The stateless versions are {@link MODERN_PROTOCOL_VERSIONS}.
  */
 export const LATEST_PROTOCOL_VERSION = "2025-11-25";
 /**
@@ -14,6 +13,11 @@ export const LATEST_PROTOCOL_VERSION = "2025-11-25";
 export const SUPPORTED_PROTOCOL_VERSIONS = [LATEST_PROTOCOL_VERSION, "2025-06-18", "2025-03-26", "2024-11-05"] as const;
 export type SupportedProtocolVersion = (typeof SUPPORTED_PROTOCOL_VERSIONS)[number];
 
+/** Whether a version a server sent (wire input) is one of {@link SUPPORTED_PROTOCOL_VERSIONS}. */
+export function isSupportedProtocolVersion(version: string): version is SupportedProtocolVersion {
+	return (SUPPORTED_PROTOCOL_VERSIONS as readonly string[]).includes(version);
+}
+
 /**
  * Stateless ("modern") protocol versions, newest first: no `initialize` handshake and no session, every
  * request carries its version and the client's capabilities in `_meta`.
@@ -22,16 +26,23 @@ export const MODERN_PROTOCOL_VERSIONS = ["2026-07-28"] as const;
 export type ModernProtocolVersion = (typeof MODERN_PROTOCOL_VERSIONS)[number];
 export const LATEST_MODERN_PROTOCOL_VERSION: ModernProtocolVersion = MODERN_PROTOCOL_VERSIONS[0];
 
-/**
- * `legacy`: the `initialize` handshake (2025-11-25 and earlier). `modern`: per-request metadata
- * (2026-07-28 and later).
- */
-export type McpProtocolEra = "legacy" | "modern";
+/** Whether a version read from a message (wire input) is one of {@link MODERN_PROTOCOL_VERSIONS}. */
+export function isModernProtocolVersion(version: string): version is ModernProtocolVersion {
+	return (MODERN_PROTOCOL_VERSIONS as readonly string[]).includes(version);
+}
 
 /**
- * Which protocol a client speaks to a server, as in OpenCode's `protocol` setting. `auto` probes the
- * server with `server/discover` and falls back to `legacy` when the server does not answer like a modern
- * server. A modern version (`2026-07-28`) requires that version and fails otherwise.
+ * The protocol a connected client negotiated. `legacy`: the `initialize` handshake (2025-11-25 and
+ * earlier). `modern`: per-request metadata (2026-07-28 and later).
+ */
+export type McpNegotiatedProtocol =
+	| { era: "legacy"; version: SupportedProtocolVersion }
+	| { era: "modern"; version: ModernProtocolVersion };
+
+/**
+ * Which protocol a client speaks to a server. `auto` probes the server with `server/discover` and falls
+ * back to `legacy` when the server does not answer like a modern server. A modern version (`2026-07-28`)
+ * requires that version and fails otherwise.
  */
 export type McpProtocolMode = "auto" | "legacy" | ModernProtocolVersion;
 

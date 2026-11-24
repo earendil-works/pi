@@ -9,6 +9,7 @@ import {
 	type LoggingLevel,
 	MODERN_PROTOCOL_VERSIONS,
 	type ModernProtocolVersion,
+	type SubscriptionFilter,
 } from "./types.ts";
 
 export const META_PROTOCOL_VERSION = "io.modelcontextprotocol/protocolVersion";
@@ -107,8 +108,14 @@ export function mutualModernVersion(
 	return clientVersions.find((version) => serverVersions.includes(version));
 }
 
+/** A validated `server/discover` result, and the server's name and version from it. */
+export interface DiscoveredServer {
+	result: DiscoverResult;
+	serverInfo: Implementation | undefined;
+}
+
 /** Validate a `server/discover` result (wire input). */
-export function validateDiscoverResult(value: unknown): DiscoverResult {
+export function validateDiscoverResult(value: unknown): DiscoveredServer {
 	if (
 		!isObject(value) ||
 		!Array.isArray(value.supportedVersions) ||
@@ -118,21 +125,41 @@ export function validateDiscoverResult(value: unknown): DiscoverResult {
 	) {
 		throw invalid("Invalid MCP server/discover result");
 	}
-	return value as unknown as DiscoverResult;
+	return { result: value as unknown as DiscoverResult, serverInfo: serverInfoOf(value) };
 }
 
 /**
  * The server's name and version from a result's `_meta`. Some servers put `serverInfo` next to the
  * result fields instead; it is accepted there too.
  */
-export function serverInfoOf(result: Record<string, unknown>): Implementation | undefined {
+function serverInfoOf(result: Record<string, unknown>): Implementation | undefined {
 	const meta = isObject(result._meta) ? result._meta : {};
 	for (const candidate of [meta[META_SERVER_INFO], result.serverInfo]) {
-		if (isObject(candidate) && typeof candidate.name === "string" && typeof candidate.version === "string") {
-			return candidate as unknown as Implementation;
+		if (!isObject(candidate)) continue;
+		const { name, version, title } = candidate;
+		if (typeof name === "string" && typeof version === "string") {
+			return { name, version, ...(typeof title === "string" ? { title } : {}) };
 		}
 	}
 	return undefined;
+}
+
+const SUBSCRIPTION_FLAGS = ["toolsListChanged", "promptsListChanged", "resourcesListChanged"] as const;
+
+/**
+ * The notification types a `notifications/subscriptions/acknowledged` agrees to (wire input). Fields of
+ * the wrong type are left out.
+ */
+export function readSubscriptionFilter(value: unknown): SubscriptionFilter {
+	if (!isObject(value)) return {};
+	const filter: SubscriptionFilter = {};
+	for (const key of SUBSCRIPTION_FLAGS) {
+		const flag = value[key];
+		if (typeof flag === "boolean") filter[key] = flag;
+	}
+	const uris = value.resourceSubscriptions;
+	if (Array.isArray(uris) && uris.every((uri) => typeof uri === "string")) filter.resourceSubscriptions = uris;
+	return filter;
 }
 
 function invalid(message: string): McpError {

@@ -29,7 +29,7 @@ interface McpServerConfigBase {
 	/**
 	 * MCP protocol to speak: `legacy` (the `initialize` handshake of 2025-11-25 and earlier),
 	 * `2026-07-28` (the stateless protocol, required), or `auto` (probe with `server/discover`, fall back
-	 * to `legacy`). The same values as OpenCode's `protocol`. The application picks the default.
+	 * to `legacy`). The application picks the default.
 	 */
 	protocol?: McpProtocolMode;
 }

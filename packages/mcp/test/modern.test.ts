@@ -4,7 +4,7 @@ import {
 	isModernProtocolError,
 	mutualModernVersion,
 	readModernResult,
-	serverInfoOf,
+	readSubscriptionFilter,
 	supportedVersions,
 	validateDiscoverResult,
 	withModernMeta,
@@ -97,7 +97,7 @@ describe("modern errors", () => {
 
 describe("server/discover", () => {
 	it("validates the result and reads the server's name from _meta or the result", () => {
-		const result = validateDiscoverResult({
+		const discovered = validateDiscoverResult({
 			resultType: "complete",
 			supportedVersions: ["2026-07-28"],
 			capabilities: { tools: {} },
@@ -105,11 +105,27 @@ describe("server/discover", () => {
 			ttlMs: 0,
 			cacheScope: "public",
 		});
-		expect(serverInfoOf(result as unknown as Record<string, unknown>)).toEqual({ name: "server", version: "2.0.0" });
-		expect(serverInfoOf({ serverInfo: { name: "inline", version: "1" } })).toEqual({ name: "inline", version: "1" });
-		expect(serverInfoOf({})).toBeUndefined();
+		expect(discovered.serverInfo).toEqual({ name: "server", version: "2.0.0" });
+		const inline = { supportedVersions: [], capabilities: {}, serverInfo: { name: "inline", version: "1" } };
+		expect(validateDiscoverResult(inline).serverInfo).toEqual({ name: "inline", version: "1" });
+		expect(validateDiscoverResult({ supportedVersions: [], capabilities: {} }).serverInfo).toBeUndefined();
 		expect(() => validateDiscoverResult({ supportedVersions: "2026-07-28", capabilities: {} })).toThrow(
 			"Invalid MCP server/discover result",
 		);
+	});
+});
+
+describe("readSubscriptionFilter", () => {
+	it("keeps the fields of the right type and drops the rest", () => {
+		expect(
+			readSubscriptionFilter({
+				toolsListChanged: true,
+				promptsListChanged: "yes",
+				resourceSubscriptions: ["file:///a"],
+				unknown: 1,
+			}),
+		).toEqual({ toolsListChanged: true, resourceSubscriptions: ["file:///a"] });
+		expect(readSubscriptionFilter({ resourceSubscriptions: [1] })).toEqual({});
+		expect(readSubscriptionFilter(undefined)).toEqual({});
 	});
 });

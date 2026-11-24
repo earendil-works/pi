@@ -10,28 +10,29 @@ import {
 	normalizeOwnRequestId,
 } from "./protocol/jsonrpc.ts";
 import {
+	type DiscoveredServer,
 	isModernProtocolError,
 	META_SUBSCRIPTION_ID,
 	type ModernRequestMeta,
 	mutualModernVersion,
 	readModernResult,
-	serverInfoOf,
+	readSubscriptionFilter,
 	supportedVersions,
 	validateDiscoverResult,
 	withModernMeta,
 } from "./protocol/modern.ts";
 import {
 	type ClientCapabilities,
-	type DiscoverResult,
 	type Implementation,
 	type InitializeResult,
 	type InputRequest,
+	isSupportedProtocolVersion,
 	LATEST_MODERN_PROTOCOL_VERSION,
 	LATEST_PROTOCOL_VERSION,
 	type ListResourcesResult,
 	type ListResourceTemplatesResult,
 	type LoggingLevel,
-	type McpProtocolEra,
+	type McpNegotiatedProtocol,
 	type McpProtocolMode,
 	MODERN_PROTOCOL_VERSIONS,
 	type ModernProtocolVersion,
@@ -41,7 +42,6 @@ import {
 	type ResourceTemplate,
 	type Root,
 	type ServerCapabilities,
-	SUPPORTED_PROTOCOL_VERSIONS,
 	type SubscriptionFilter,
 	type SupportedProtocolVersion,
 	type Tool,
@@ -194,12 +194,12 @@ function isLegacyProbeAnswer(error: unknown): boolean {
 	return status >= 400 && status < 500 && ![401, 403, 408, 429].includes(status);
 }
 
-/** The protocol a connected client speaks. */
+/** The protocol a connected client speaks, with what the client needs to speak a modern one. */
 type Session =
-	| { era: "legacy"; protocolVersion: string }
+	| { era: "legacy"; version: SupportedProtocolVersion }
 	| {
 			era: "modern";
-			protocolVersion: ModernProtocolVersion;
+			version: ModernProtocolVersion;
 			/** Versions the client may switch to after an `UnsupportedProtocolVersionError`. */
 			versions: readonly ModernProtocolVersion[];
 			headers: boolean;
@@ -250,13 +250,13 @@ export class McpClient {
 		return this.instructionsValue;
 	}
 
-	get protocolVersion(): string | undefined {
-		return this.session?.protocolVersion;
+	get protocolVersion(): SupportedProtocolVersion | ModernProtocolVersion | undefined {
+		return this.session?.version;
 	}
 
-	/** Whether the connection uses the `initialize` handshake (`legacy`) or per-request metadata (`modern`). */
-	get protocolEra(): McpProtocolEra | undefined {
-		return this.session?.era;
+	/** The negotiated protocol: the `initialize` handshake (`legacy`) or per-request metadata (`modern`). */
+	get negotiatedProtocol(): McpNegotiatedProtocol | undefined {
+		return this.session;
 	}
 
 	/**
@@ -284,7 +284,7 @@ export class McpClient {
 			const discovered = transport.modernProtocol && mode !== "legacy" ? await this.discover(mode) : undefined;
 			const result = discovered
 				? this.startModern(
-						discovered.result,
+						discovered.server,
 						discovered.version,
 						mode === "auto" ? MODERN_PROTOCOL_VERSIONS : [discovered.version],
 						transport.modernProtocol?.headers ?? false,
@@ -484,14 +484,15 @@ export class McpClient {
 				{ timeoutMs: this.requestTimeoutMs(), notifyCancel: false },
 			),
 		);
-		if (!(SUPPORTED_PROTOCOL_VERSIONS as readonly string[]).includes(result.protocolVersion)) {
-			throw new Error(`MCP server selected unsupported protocol version ${result.protocolVersion}`);
+		const version = result.protocolVersion;
+		if (!isSupportedProtocolVersion(version)) {
+			throw new Error(`MCP server selected unsupported protocol version ${version}`);
 		}
-		this.session = { era: "legacy", protocolVersion: result.protocolVersion };
+		this.session = { era: "legacy", version };
 		this.serverInfoValue = result.serverInfo;
 		this.serverCapabilitiesValue = result.capabilities;
 		this.instructionsValue = result.instructions;
-		transport.setProtocolVersion?.(result.protocolVersion);
+		transport.setProtocolVersion?.(version);
 		await this.rpc.notify("notifications/initialized", undefined);
 		return result;
 	}
@@ -505,7 +506,7 @@ export class McpClient {
 	 */
 	private async discover(
 		mode: "auto" | ModernProtocolVersion,
-	): Promise<{ result: DiscoverResult; version: ModernProtocolVersion } | undefined> {
+	): Promise<{ server: DiscoveredServer; version: ModernProtocolVersion } | undefined> {
 		const versions = mode === "auto" ? MODERN_PROTOCOL_VERSIONS : [mode];
 		let version: ModernProtocolVersion = mode === "auto" ? LATEST_MODERN_PROTOCOL_VERSION : mode;
 		for (let attempt = 0; ; attempt++) {
@@ -525,30 +526,28 @@ export class McpClient {
 				if (mode === "auto" && (supported ? !mutual : isLegacyProbeAnswer(error))) return undefined;
 				throw error;
 			}
-			let result: DiscoverResult;
+			let server: DiscoveredServer;
 			try {
-				result = validateDiscoverResult(raw);
+				server = validateDiscoverResult(raw);
 			} catch (error) {
 				if (mode === "auto") return undefined;
 				throw error;
 			}
-			const mutual = mutualModernVersion(result.supportedVersions, versions);
-			if (mutual) return { result, version: mutual };
+			const serverVersions = server.result.supportedVersions;
+			const mutual = mutualModernVersion(serverVersions, versions);
+			if (mutual) return { server, version: mutual };
 			if (mode === "auto") return undefined;
-			throw new Error(
-				`MCP server supports none of this client's protocol versions: ${result.supportedVersions.join(", ")}`,
-			);
+			throw new Error(`MCP server supports none of this client's protocol versions: ${serverVersions.join(", ")}`);
 		}
 	}
 
 	private startModern(
-		result: DiscoverResult,
+		{ result, serverInfo }: DiscoveredServer,
 		version: ModernProtocolVersion,
 		versions: readonly ModernProtocolVersion[],
 		headers: boolean,
 	): InitializeResult {
-		this.session = { era: "modern", protocolVersion: version, versions, headers };
-		const serverInfo = serverInfoOf(result as unknown as Record<string, unknown>);
+		this.session = { era: "modern", version, versions, headers };
 		this.serverInfoValue = serverInfo;
 		this.serverCapabilitiesValue = result.capabilities;
 		this.instructionsValue = result.instructions;
@@ -602,21 +601,17 @@ export class McpClient {
 				: params;
 			let raw: unknown;
 			try {
-				raw = await this.rpc.request(
-					method,
-					withModernMeta(attemptParams, this.modernMeta(session.protocolVersion)),
-					{
-						...this.peerOptions(options),
-						...(headers === undefined ? {} : { headers }),
-						...(onSent === undefined ? {} : { onSent }),
-					},
-				);
+				raw = await this.rpc.request(method, withModernMeta(attemptParams, this.modernMeta(session.version)), {
+					...this.peerOptions(options),
+					...(headers === undefined ? {} : { headers }),
+					...(onSent === undefined ? {} : { onSent }),
+				});
 			} catch (error) {
 				const supported = error instanceof McpError ? supportedVersions(error) : undefined;
 				const mutual = supported && mutualModernVersion(supported, session.versions);
 				if (!mutual || versionRetried) throw error;
 				versionRetried = true;
-				this.session = { ...session, protocolVersion: mutual };
+				this.session = { ...session, version: mutual };
 				continue;
 			}
 			if (!INPUT_METHODS.has(method)) {
@@ -732,8 +727,8 @@ export class McpClient {
 	/** `notifications/subscriptions/acknowledged` names the subscription it acknowledges in `_meta`. */
 	private handleAcknowledged(params: unknown): void {
 		const id = subscriptionIdOf(params);
-		const filter = isObject(params) && isObject(params.notifications) ? params.notifications : {};
-		if (id !== undefined) this.subscriptions.get(id)?.acknowledge(filter as SubscriptionFilter);
+		const notifications = isObject(params) ? params.notifications : undefined;
+		if (id !== undefined) this.subscriptions.get(id)?.acknowledge(readSubscriptionFilter(notifications));
 	}
 
 	/** Modern servers send `notifications/cancelled` only to end a subscription. */

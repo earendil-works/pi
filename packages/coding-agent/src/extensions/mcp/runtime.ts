@@ -367,11 +367,11 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 		let reprobed = false;
 		for (let attempt = 0; ; attempt++) {
 			this.stderrTail = undefined;
-			const protocol = this.protocol === "auto" ? (this.detected ?? "auto") : this.protocol;
+			const protocol = this.protocol === "auto" && this.detected ? this.detected : this.protocol;
 			try {
 				const client = await this.connectOnce(protocol);
-				// A modern client's version is one of MODERN_PROTOCOL_VERSIONS, which the getter's type does not say.
-				this.detected = client.protocolEra === "modern" ? (client.protocolVersion as McpProtocolMode) : "legacy";
+				const negotiated = client.negotiatedProtocol;
+				this.detected = negotiated?.era === "modern" ? negotiated.version : "legacy";
 				return client;
 			} catch (error) {
 				if (!reprobed && !this.closed && this.protocol === "auto") {
@@ -441,7 +441,7 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 			this.error = undefined;
 			this.onTools(this);
 			this.changed();
-			if (client.protocolEra === "modern" && client.serverCapabilities?.tools?.listChanged) {
+			if (client.negotiatedProtocol?.era === "modern" && client.serverCapabilities?.tools?.listChanged) {
 				void this.watchToolChanges(client);
 			}
 			return client;
@@ -492,7 +492,7 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 				if (opened > 0) void this.refreshTools(client);
 				await subscription.closed;
 			} catch {
-				// Ended like a closed stream: reopened below while the connection lasts.
+				// A failed subscription is reopened below, like one that ended.
 			}
 			const lastDelay = LISTEN_RETRY_DELAYS_MS[LISTEN_RETRY_DELAYS_MS.length - 1] ?? 0;
 			ends = Date.now() - openedAt > lastDelay ? 1 : ends + 1;

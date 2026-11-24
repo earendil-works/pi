@@ -101,7 +101,7 @@ describe("StreamableHttpTransport with the stateless protocol", () => {
 	it("sends the version, method, and name headers and no session", async () => {
 		const { url, requests } = await startModernServer();
 		const client = await connect(url);
-		expect(client.protocolEra).toBe("modern");
+		expect(client.negotiatedProtocol?.era).toBe("modern");
 		await client.listTools();
 		await client.callTool("query", { region: "eu-wést", verbose: false, sql: "select 1" });
 
@@ -157,7 +157,7 @@ describe("StreamableHttpTransport with the stateless protocol", () => {
 			return true;
 		});
 		const client = await connect(url);
-		expect(client.protocolEra).toBe("modern");
+		expect(client.negotiatedProtocol?.era).toBe("modern");
 		expect(requests.filter((request) => request.message?.method === "server/discover")).toHaveLength(2);
 		await expect(client.request("prompts/list")).rejects.toMatchObject({ code: -32601 });
 		await client.close();
@@ -203,7 +203,7 @@ describe("StreamableHttpTransport with the stateless protocol", () => {
 			}
 		});
 		const client = await connect(`${origin}/mcp`);
-		expect(client.protocolEra).toBe("legacy");
+		expect(client.negotiatedProtocol?.era).toBe("legacy");
 		expect(await client.listTools()).toEqual([]);
 		expect(requests.map((request) => request.message?.method)).toEqual([
 			"server/discover",

@@ -1,4 +1,5 @@
 import { type JsonRpcMessage, toError } from "../protocol/jsonrpc.ts";
+import type { SupportedProtocolVersion } from "../protocol/types.ts";
 
 export const DEFAULT_MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
 
@@ -34,7 +35,7 @@ export interface McpTransport {
 	onError(listener: McpTransportErrorListener): () => void;
 	onClose(listener: McpTransportCloseListener): () => void;
 	/** Legacy protocol: the version `initialize` negotiated, for transports that send it with every message. */
-	setProtocolVersion?(version: string): void;
+	setProtocolVersion?(version: SupportedProtocolVersion): void;
 	/**
 	 * Set by transports that can carry the stateless protocol. A client uses only the legacy protocol
 	 * over transports without it, since it cannot know what they do with modern requests.

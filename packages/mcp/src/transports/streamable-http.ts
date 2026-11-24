@@ -1,6 +1,8 @@
 import type { AuthProvider, McpFetch } from "../auth-provider.ts";
-import { standardRequestHeaders } from "../protocol/http-headers.ts";
+import { PROTOCOL_VERSION_HEADER, standardRequestHeaders } from "../protocol/http-headers.ts";
 import {
+	isJsonRpcId,
+	isJsonRpcNotification,
 	isJsonRpcRequest,
 	isJsonRpcResponse,
 	isObject,
@@ -15,6 +17,11 @@ import {
 	toError,
 } from "../protocol/jsonrpc.ts";
 import { META_PROTOCOL_VERSION } from "../protocol/modern.ts";
+import {
+	isModernProtocolVersion,
+	type ModernProtocolVersion,
+	type SupportedProtocolVersion,
+} from "../protocol/types.ts";
 import { McpAuthRequiredError, McpHttpError, McpSessionExpiredError } from "./http-errors.ts";
 import {
 	DEFAULT_MAX_MESSAGE_BYTES,
@@ -231,11 +238,14 @@ interface StreamCursor {
 	received: boolean;
 }
 
-/** The version a request of the stateless protocol (MCP 2026-07-28) declares in its `_meta`. */
-function modernVersionOf(message: JsonRpcMessage): string | undefined {
-	if (!isJsonRpcRequest(message) || !isObject(message.params) || !isObject(message.params._meta)) return undefined;
+/**
+ * The version a request of the stateless protocol (MCP 2026-07-28) declares in its `_meta`. Read from
+ * the message, so the `MCP-Protocol-Version` header always matches the body, as servers require.
+ */
+function modernVersionOf(message: JsonRpcRequest): ModernProtocolVersion | undefined {
+	if (!isObject(message.params) || !isObject(message.params._meta)) return undefined;
 	const version = message.params._meta[META_PROTOCOL_VERSION];
-	return typeof version === "string" ? version : undefined;
+	return typeof version === "string" && isModernProtocolVersion(version) ? version : undefined;
 }
 
 /** The JSON-RPC error response in an HTTP error body, which modern servers send with 4xx statuses. */
@@ -262,7 +272,7 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 	private started = false;
 	private closed = false;
 	private sessionIdValue: string | undefined;
-	private protocolVersion: string | undefined;
+	private protocolVersion: SupportedProtocolVersion | undefined;
 	private getStreamStarted = false;
 	/** Access token of the latest request, which `close()` reuses instead of asking the auth provider. */
 	private lastToken: string | undefined;
@@ -289,22 +299,25 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 		this.started = true;
 	}
 
-	setProtocolVersion(version: string): void {
+	setProtocolVersion(version: SupportedProtocolVersion): void {
 		this.protocolVersion = version;
 	}
 
 	async send(message: JsonRpcMessage, options: McpTransportSendOptions = {}): Promise<void> {
 		if (!this.started || this.closed) throw new McpConnectionClosedError();
-		const modernVersion = modernVersionOf(message);
-		if (modernVersion !== undefined && isJsonRpcRequest(message)) {
-			await this.sendModern(message, modernVersion, options);
-			return;
+		if (isJsonRpcRequest(message)) {
+			const modernVersion = modernVersionOf(message);
+			if (modernVersion !== undefined) {
+				await this.sendModern(message, modernVersion, options);
+				return;
+			}
 		}
 		if (
-			"method" in message &&
+			isJsonRpcNotification(message) &&
 			message.method === "notifications/cancelled" &&
 			isObject(message.params) &&
-			this.modernRequests.has(message.params.requestId as JsonRpcId)
+			isJsonRpcId(message.params.requestId) &&
+			this.modernRequests.has(message.params.requestId)
 		) {
 			// MCP 2026-07-28 over HTTP cancels by closing the response stream, which aborting the send did.
 			return;
@@ -351,7 +364,7 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 	 */
 	private async sendModern(
 		message: JsonRpcRequest,
-		version: string,
+		version: ModernProtocolVersion,
 		{ signal, headers }: McpTransportSendOptions,
 	): Promise<void> {
 		this.modernRequests.add(message.id);
@@ -366,7 +379,7 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 	/** Resolves to whether the answer streams in the background. */
 	private async postModern(
 		message: JsonRpcRequest,
-		version: string,
+		version: ModernProtocolVersion,
 		signal: AbortSignal | undefined,
 		headers: Record<string, string> | undefined,
 	): Promise<boolean> {
@@ -378,7 +391,7 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 					"content-type": "application/json",
 					...headers,
 					...standardRequestHeaders(message.method, message.params),
-					"MCP-Protocol-Version": version,
+					[PROTOCOL_VERSION_HEADER]: version,
 				},
 				body: JSON.stringify(message),
 				session: false,
@@ -432,9 +445,6 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 		this.emitClose();
 	}
 
-	/**
-	 * Emit the JSON-RPC messages of an `application/json` response body.
-	 */
 	private async readJsonResponse(response: Response): Promise<void> {
 		const maxBytes = this.options.maxMessageBytes ?? DEFAULT_MAX_MESSAGE_BYTES;
 		const { text, truncated } = await readBodyText(response, maxBytes);
@@ -490,7 +500,7 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 	private buildHeaders(extra: Record<string, string>, token: string | undefined, session = true): Headers {
 		const headers = new Headers(this.options.headers);
 		if (session && this.sessionIdValue) headers.set("Mcp-Session-Id", this.sessionIdValue);
-		if (session && this.protocolVersion) headers.set("MCP-Protocol-Version", this.protocolVersion);
+		if (session && this.protocolVersion) headers.set(PROTOCOL_VERSION_HEADER, this.protocolVersion);
 		for (const [name, value] of Object.entries(extra)) headers.set(name, value);
 		if (token) headers.set("Authorization", `Bearer ${token}`);
 		return headers;

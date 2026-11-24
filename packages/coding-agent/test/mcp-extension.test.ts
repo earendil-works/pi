@@ -862,7 +862,7 @@ for await (const line of createInterface({ input: process.stdin })) {
 			[() => createModernTransport({ methods })],
 		);
 		expect(connection.protocol).toBe("auto");
-		expect((await connection.getClient()).protocolEra).toBe("modern");
+		expect((await connection.getClient()).negotiatedProtocol?.era).toBe("modern");
 		// The modern server advertises tool list changes, which arrive on a subscription.
 		await vi.waitFor(() => expect(methods).toEqual(["server/discover", "tools/list", "subscriptions/listen"]));
 		await connection.close();
@@ -874,10 +874,10 @@ for await (const line of createInterface({ input: process.stdin })) {
 			{ name: "fake", config: { url: "http://unused.invalid", headers: { Authorization: "x" } }, source: "test" },
 			[() => createTransport({ methods }), () => createTransport({ methods })],
 		);
-		expect((await connection.getClient()).protocolEra).toBe("legacy");
+		expect((await connection.getClient()).negotiatedProtocol?.era).toBe("legacy");
 		await servers.at(-1)?.close();
 		await new Promise((resolve) => setTimeout(resolve, 0));
-		expect((await connection.getClient()).protocolEra).toBe("legacy");
+		expect((await connection.getClient()).negotiatedProtocol?.era).toBe("legacy");
 		expect(methods).toEqual(["server/discover", "initialize", "tools/list", "initialize", "tools/list"]);
 		await connection.close();
 	});
@@ -888,11 +888,11 @@ for await (const line of createInterface({ input: process.stdin })) {
 			{ name: "fake", config: { url: "http://unused.invalid", headers: { Authorization: "x" } }, source: "test" },
 			[() => createModernTransport(), () => createTransport({ methods }), () => createTransport({ methods })],
 		);
-		expect((await connection.getClient()).protocolEra).toBe("modern");
+		expect((await connection.getClient()).negotiatedProtocol?.era).toBe("modern");
 		await servers.at(-1)?.close();
 		await new Promise((resolve) => setTimeout(resolve, 0));
 		// The server was replaced by a legacy one.
-		expect((await connection.getClient()).protocolEra).toBe("legacy");
+		expect((await connection.getClient()).negotiatedProtocol?.era).toBe("legacy");
 		expect(opened()).toBe(3);
 		expect(methods).toEqual(["server/discover", "server/discover", "initialize", "tools/list"]);
 		await connection.close();
@@ -925,7 +925,7 @@ for await (const line of createInterface({ input: process.stdin })) {
 			exiting,
 			exiting,
 		]);
-		expect((await probed.connection.getClient()).protocolEra).toBe("legacy");
+		expect((await probed.connection.getClient()).negotiatedProtocol?.era).toBe("legacy");
 		expect(probed.opened()).toBe(2);
 		expect(methods).toEqual(["initialize", "tools/list"]);
 		await probed.connection.close();

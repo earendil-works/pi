@@ -37,12 +37,10 @@ MCP `2026-07-28` is stateless: there is no `initialize` handshake and no session
 - `auto`: probe with `server/discover`; use `2026-07-28` when the server answers it, otherwise fall back to `initialize`. An `UnsupportedProtocolVersionError` is retried once with a version from its list.
 - a modern version (`2026-07-28`): `server/discover`, requiring that version, without the fallback.
 
-The values match OpenCode's `protocol` setting.
-
 ```typescript
 const client = new McpClient({ name: "my-client", version: "1.0.0", protocol: "auto", logLevel: "info" });
 await client.connect(new StreamableHttpTransport({ url }));
-client.protocolEra; // "modern" or "legacy"
+client.negotiatedProtocol; // { era: "modern", version: "2026-07-28" } or { era: "legacy", version: "2025-11-25" }
 ```
 
 The rest of the API is the same for both. With a modern server, the client:

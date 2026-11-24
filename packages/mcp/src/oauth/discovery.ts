@@ -5,6 +5,7 @@
  */
 
 import type { McpFetch } from "../auth-provider.ts";
+import { PROTOCOL_VERSION_HEADER } from "../protocol/http-headers.ts";
 import { LATEST_PROTOCOL_VERSION } from "../protocol/types.ts";
 import { OAuthIssuerMismatchError } from "./errors.ts";
 import {
@@ -62,7 +63,7 @@ async function fetchMetadata(
 	signal: AbortSignal | undefined,
 ): Promise<Response> {
 	return fetch(url, {
-		headers: { Accept: "application/json", "MCP-Protocol-Version": protocolVersion },
+		headers: { Accept: "application/json", [PROTOCOL_VERSION_HEADER]: protocolVersion },
 		signal,
 	});
 }

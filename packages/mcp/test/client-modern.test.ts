@@ -99,7 +99,7 @@ async function connect(
 describe("McpClient protocol detection", () => {
 	it("speaks the stateless protocol to a server that answers server/discover", async () => {
 		const { client, server } = await connect("dual", { logLevel: "info" });
-		expect(client.protocolEra).toBe("modern");
+		expect(client.negotiatedProtocol?.era).toBe("modern");
 		expect(client.protocolVersion).toBe("2026-07-28");
 		expect(client.serverInfo).toEqual({ name: "modern-server", version: "3.0.0" });
 		expect(client.serverCapabilities).toEqual({ tools: { listChanged: true } });
@@ -124,7 +124,7 @@ describe("McpClient protocol detection", () => {
 
 	it("falls back to initialize when the server answers server/discover like a legacy server", async () => {
 		const { client, server } = await connect("legacy");
-		expect(client.protocolEra).toBe("legacy");
+		expect(client.negotiatedProtocol?.era).toBe("legacy");
 		expect(client.protocolVersion).toBe(LATEST_PROTOCOL_VERSION);
 		expect(server.messages.map((message) => ("method" in message ? message.method : "response"))).toEqual([
 			"server/discover",
@@ -143,7 +143,7 @@ describe("McpClient protocol detection", () => {
 		server.setHandler("server/discover", () => NO_RESPONSE);
 		const client = new McpClient({ name: "test-client", version: "2.0.0", protocol: "auto", requestTimeoutMs: 20 });
 		await client.connect(transport);
-		expect(client.protocolEra).toBe("legacy");
+		expect(client.negotiatedProtocol?.era).toBe("legacy");
 		// The probe is not cancelled: a legacy server would not know the request.
 		expect(
 			server.messages.some((message) => "method" in message && message.method === "notifications/cancelled"),
@@ -164,7 +164,7 @@ describe("McpClient protocol detection", () => {
 		});
 		const client = new McpClient({ name: "test-client", version: "2.0.0", protocol: "auto" });
 		await client.connect(transport);
-		expect(client.protocolEra).toBe("modern");
+		expect(client.negotiatedProtocol?.era).toBe("modern");
 		expect(server.requests("server/discover")).toHaveLength(2);
 		await client.close();
 	});
@@ -179,7 +179,7 @@ describe("McpClient protocol detection", () => {
 		});
 		const client = new McpClient({ name: "test-client", version: "2.0.0", protocol: "auto" });
 		await client.connect(transport);
-		expect(client.protocolEra).toBe("legacy");
+		expect(client.negotiatedProtocol?.era).toBe("legacy");
 		await client.close();
 	});
 
@@ -211,7 +211,7 @@ describe("McpClient protocol detection", () => {
 		const byDefault = await createServer("dual");
 		const client = new McpClient({ name: "test-client", version: "2.0.0" });
 		await client.connect(byDefault.client);
-		expect(client.protocolEra).toBe("legacy");
+		expect(client.negotiatedProtocol?.era).toBe("legacy");
 		expect(byDefault.server.requests("server/discover")).toEqual([]);
 		await client.close();
 
@@ -226,7 +226,7 @@ describe("McpClient protocol detection", () => {
 		};
 		const auto = new McpClient({ name: "test-client", version: "2.0.0", protocol: "auto" });
 		await auto.connect(legacyOnly);
-		expect(auto.protocolEra).toBe("legacy");
+		expect(auto.negotiatedProtocol?.era).toBe("legacy");
 		expect(custom.server.requests("server/discover")).toEqual([]);
 		await auto.close();
 	});

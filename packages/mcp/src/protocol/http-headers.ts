@@ -1,6 +1,10 @@
-// HTTP headers that MCP 2026-07-28 mirrors from the request body: `Mcp-Method`, `Mcp-Name`, and
-// `Mcp-Param-*` for tool arguments a tool's input schema marks with `x-mcp-header`.
+// HTTP headers that MCP mirrors from the request body: `MCP-Protocol-Version`, and since 2026-07-28
+// `Mcp-Method`, `Mcp-Name`, and `Mcp-Param-*` for tool arguments a tool's input schema marks with
+// `x-mcp-header`.
 import { isObject } from "./jsonrpc.ts";
+
+/** The header naming the protocol version of a request. */
+export const PROTOCOL_VERSION_HEADER = "MCP-Protocol-Version";
 
 /** One tool argument mirrored into a header: the `properties` path to it and the header name part. */
 export interface ToolHeaderBinding {
@@ -11,6 +15,7 @@ export interface ToolHeaderBinding {
 /** A tool's header bindings, or why its `x-mcp-header` annotations are invalid. */
 export type ToolHeaderBindings = { kind: "valid"; bindings: ToolHeaderBinding[] } | { kind: "invalid"; reason: string };
 
+const HEADER_ANNOTATION = "x-mcp-header";
 const BASE64_SENTINEL = /^=\?base64\?.*\?=$/s;
 // RFC 9110 token characters.
 const HEADER_TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
@@ -62,17 +67,23 @@ export function toolHeaderBindings(inputSchema: Record<string, unknown>): ToolHe
 			return;
 		}
 		if (!isObject(schema)) return;
-		if ("x-mcp-header" in schema) {
-			problem = path ? annotationProblem(schema, seen) : "x-mcp-header outside of nested properties";
-			if (problem) return;
-			const header = schema["x-mcp-header"] as string;
-			seen.add(header.toLowerCase());
-			bindings.push({ path: path ?? [], header });
+		if (HEADER_ANNOTATION in schema) {
+			if (!path) {
+				problem = `${HEADER_ANNOTATION} outside of nested properties`;
+				return;
+			}
+			const annotation = readAnnotation(schema, seen);
+			if (annotation.kind === "invalid") {
+				problem = annotation.reason;
+				return;
+			}
+			seen.add(annotation.header.toLowerCase());
+			bindings.push({ path, header: annotation.header });
 		}
 		for (const [key, value] of Object.entries(schema)) {
 			if (key === "properties" && path && isObject(value)) {
 				for (const [name, property] of Object.entries(value)) visit(property, [...path, name], depth + 1);
-			} else if (key !== "x-mcp-header" && !DATA_KEYWORDS.has(key)) {
+			} else if (key !== HEADER_ANNOTATION && !DATA_KEYWORDS.has(key)) {
 				visit(value, undefined, depth + 1);
 			}
 		}
@@ -81,22 +92,27 @@ export function toolHeaderBindings(inputSchema: Record<string, unknown>): ToolHe
 		for (const [name, property] of Object.entries(inputSchema.properties)) visit(property, [name], 1);
 	}
 	for (const [key, value] of Object.entries(inputSchema)) {
-		if (key === "x-mcp-header") problem ??= "x-mcp-header on the schema root";
+		if (key === HEADER_ANNOTATION) problem ??= `${HEADER_ANNOTATION} on the schema root`;
 		else if (key !== "properties" && !DATA_KEYWORDS.has(key)) visit(value, undefined, 1);
 	}
 	return problem ? { kind: "invalid", reason: problem } : { kind: "valid", bindings };
 }
 
-function annotationProblem(schema: Record<string, unknown>, seen: Set<string>): string | undefined {
-	const header = schema["x-mcp-header"];
-	if (typeof header !== "string" || header === "") return "x-mcp-header must be a non-empty string";
-	if (!HEADER_TOKEN.test(header)) return `x-mcp-header "${header}" is not a valid header name`;
-	if (seen.has(header.toLowerCase())) return `x-mcp-header "${header}" is not unique`;
+/** The header name of a property's annotation, or why the annotation is invalid. */
+function readAnnotation(
+	schema: Record<string, unknown>,
+	seen: Set<string>,
+): { kind: "valid"; header: string } | { kind: "invalid"; reason: string } {
+	const header = schema[HEADER_ANNOTATION];
+	const invalid = (reason: string) => ({ kind: "invalid" as const, reason: `${HEADER_ANNOTATION} ${reason}` });
+	if (typeof header !== "string" || header === "") return invalid("must be a non-empty string");
+	if (!HEADER_TOKEN.test(header)) return invalid(`"${header}" is not a valid header name`);
+	if (seen.has(header.toLowerCase())) return invalid(`"${header}" is not unique`);
 	const types = Array.isArray(schema.type) ? schema.type.filter((type) => type !== "null") : [schema.type];
 	if (types.length !== 1 || typeof types[0] !== "string" || !PRIMITIVE_TYPES.has(types[0])) {
-		return `x-mcp-header "${header}" must be on a string, integer, or boolean property`;
+		return invalid(`"${header}" must be on a string, integer, or boolean property`);
 	}
-	return undefined;
+	return { kind: "valid", header };
 }
 
 /** `Mcp-Param-*` headers for a tool call. Arguments that are absent, null, or not primitive get no header. */
@@ -108,9 +124,15 @@ export function toolParamHeaders(
 	for (const { path, header } of bindings) {
 		let value: unknown = args;
 		for (const key of path) value = isObject(value) ? value[key] : undefined;
-		if (typeof value === "string") headers[`Mcp-Param-${header}`] = encodeHeaderValue(value);
-		else if (typeof value === "boolean") headers[`Mcp-Param-${header}`] = String(value);
-		else if (typeof value === "number" && Number.isSafeInteger(value)) headers[`Mcp-Param-${header}`] = String(value);
+		const encoded = paramHeaderValue(value);
+		if (encoded !== undefined) headers[`Mcp-Param-${header}`] = encoded;
 	}
 	return headers;
+}
+
+function paramHeaderValue(value: unknown): string | undefined {
+	if (typeof value === "string") return encodeHeaderValue(value);
+	if (typeof value === "boolean") return String(value);
+	if (typeof value === "number" && Number.isSafeInteger(value)) return String(value);
+	return undefined;
 }
