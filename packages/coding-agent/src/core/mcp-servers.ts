@@ -88,8 +88,7 @@ interface McpServerConfigBase {
 	timeout?: number;
 	/**
 	 * MCP protocol: `legacy` (`initialize` handshake), `2026-07-28` (stateless, required), or `auto`
-	 * (probe with `server/discover`, fall back to `legacy`). Default: `auto` for HTTP servers, `legacy`
-	 * for stdio servers.
+	 * (probe with `server/discover`, fall back to `legacy`). Default: `auto`.
 	 */
 	protocol?: "auto" | "legacy" | "2026-07-28";
 }

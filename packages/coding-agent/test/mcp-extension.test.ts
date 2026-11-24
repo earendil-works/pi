@@ -581,7 +581,7 @@ for await (const line of createInterface({ input: process.stdin })) {
 		await connection.getClient();
 		expect(connection.state).toBe("connected");
 		expect(connection.tools).toEqual([]);
-		expect(methods).toEqual(["initialize"]);
+		expect(methods).toEqual(["server/discover", "initialize"]);
 		await connection.close();
 	});
 
@@ -809,7 +809,7 @@ for await (const line of createInterface({ input: process.stdin })) {
 		await connection.getClient();
 		expect(connection.state).toBe("connected");
 		expect(connection.hasResources).toBe(true);
-		expect(methods).toEqual(["initialize", "tools/list"]);
+		expect(methods).toEqual(["server/discover", "initialize", "tools/list"]);
 		await connection.close();
 	});
 
@@ -898,12 +898,20 @@ for await (const line of createInterface({ input: process.stdin })) {
 		await connection.close();
 	});
 
-	it("does not probe stdio servers unless configured, and restarts one that exits on the probe", async () => {
+	it("probes stdio servers, and restarts one that exits on the probe", async () => {
 		const methods: string[] = [];
-		const plain = connect({ name: "fake", config: { command: "unused" }, source: "test" }, [
+		const probing = connect({ name: "fake", config: { command: "unused" }, source: "test" }, [
 			() => createTransport({ methods }),
 		]);
-		expect(plain.connection.protocol).toBe("legacy");
+		expect(probing.connection.protocol).toBe("auto");
+		expect((await probing.connection.getClient()).negotiatedProtocol?.era).toBe("legacy");
+		expect(methods).toEqual(["server/discover", "initialize", "tools/list"]);
+		await probing.connection.close();
+
+		methods.length = 0;
+		const plain = connect({ name: "fake", config: { command: "unused", protocol: "legacy" }, source: "test" }, [
+			() => createTransport({ methods }),
+		]);
 		await plain.connection.getClient();
 		expect(methods).toEqual(["initialize", "tools/list"]);
 		await plain.connection.close();
@@ -921,10 +929,7 @@ for await (const line of createInterface({ input: process.stdin })) {
 			return transport;
 		};
 		methods.length = 0;
-		const probed = connect({ name: "fake", config: { command: "unused", protocol: "auto" }, source: "test" }, [
-			exiting,
-			exiting,
-		]);
+		const probed = connect({ name: "fake", config: { command: "unused" }, source: "test" }, [exiting, exiting]);
 		expect((await probed.connection.getClient()).negotiatedProtocol?.era).toBe("legacy");
 		expect(probed.opened()).toBe(2);
 		expect(methods).toEqual(["initialize", "tools/list"]);

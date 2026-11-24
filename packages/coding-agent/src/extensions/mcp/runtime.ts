@@ -227,11 +227,11 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 	}
 
 	/**
-	 * HTTP servers are probed by default: a legacy server rejects the probe with an HTTP error at once.
-	 * A stdio server may not answer a request before `initialize` at all, so the probe is opt-in there.
+	 * Every server is probed by default, as the spec recommends. A legacy stdio server that exits on the
+	 * probe is started again without it (see `open()`).
 	 */
 	get protocol(): McpProtocolMode {
-		return this.entry.config.protocol ?? ("url" in this.entry.config ? "auto" : "legacy");
+		return this.entry.config.protocol ?? "auto";
 	}
 
 	/** Server URL when the server authenticates with OAuth. */
