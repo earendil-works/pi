@@ -4,6 +4,7 @@
 
 import type { Model, ThinkingLevelMap } from "../../src/types.ts";
 import { type ChatModel, mergeCompat, mergeThinking, type ProviderContext } from "../define.ts";
+import { normalizeModelsDevModel } from "../sources/models-dev.ts";
 
 function stripPrefix(modelId: string): string {
 	return modelId.toLowerCase().replace(/^~?anthropic\//, "");
@@ -97,8 +98,7 @@ const XHIGH_AND_MAX_EFFORT = [
 export function applyClaudeFamilyRules(model: ChatModel, ctx: ProviderContext): void {
 	if (idIncludesAny(model.id, MAX_EFFORT_ONLY)) mergeThinking(model, { max: "max" });
 	if (idIncludesAny(model.id, XHIGH_AND_MAX_EFFORT)) mergeThinking(model, { xhigh: "xhigh", max: "max" });
-	// Kept for Fable models authored or listed by gateways before models.dev has their Anthropic entry.
-	if (model.id.includes("fable-5")) mergeThinking(model, { off: null, xhigh: "xhigh", max: "max" });
+	if (model.id.includes("fable-5")) mergeThinking(model, { xhigh: "xhigh", max: "max" });
 	if (cannotTurnThinkingOff(model, ctx)) mergeThinking(model, { off: null });
 	if (model.api !== "anthropic-messages") return;
 	const messagesModel = model as Model<"anthropic-messages">;
@@ -111,18 +111,19 @@ export function applyClaudeFamilyRules(model: ChatModel, ctx: ProviderContext): 
 }
 
 /**
- * Whether Anthropic's own models.dev entry for this Claude model lacks a thinking toggle. Such
+ * Whether Anthropic's own models.dev entry for this Claude model lists no thinking toggle. Such
  * models reject `thinking: {type: "disabled"}` on every host (Opus 5.5, Sonnet 5.5, Fable 5.x),
- * while hosts other than Anthropic and Bedrock often omit the toggle (#12429). Other hosts' ids
- * are matched through models.dev's `canonical_id`, or for hosts not built from models.dev, through
- * their spelling of Anthropic's id: dotted, `anthropic/`-prefixed, with `-batch`/`-fast` variants.
+ * but most other hosts' entries list no toggle on any Claude model (#12429). Hosts built from
+ * models.dev name Anthropic's entry in `canonical_id`. Vercel's gateway, which has no thinking
+ * metadata of its own, spells Anthropic's id dotted, `anthropic/`-prefixed, and with `-batch` or
+ * `-fast` variants.
  */
 function cannotTurnThinkingOff(model: ChatModel, ctx: ProviderContext): boolean {
 	const canonicalId = ctx.modelsDevSource(model)?.canonicalId ?? `anthropic/${anthropicModelId(model.id)}`;
 	if (!canonicalId.startsWith("anthropic/")) return false;
-	const reasoning =
-		ctx.sources.modelsDev.anthropic?.models?.[canonicalId.slice("anthropic/".length)]?.capabilities.reasoning;
-	return reasoning?.supported === true && reasoning.toggle !== true;
+	const entry = ctx.sources.modelsDev.anthropic?.models?.[canonicalId.slice("anthropic/".length)];
+	const options = entry && normalizeModelsDevModel(entry).reasoningOptions;
+	return options !== undefined && !options.some((option) => option.type === "toggle");
 }
 
 function anthropicModelId(modelId: string): string {

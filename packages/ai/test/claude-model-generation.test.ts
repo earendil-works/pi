@@ -107,7 +107,7 @@ describe("Claude thinking off", () => {
 		expect(getSupportedThinkingLevels(models["us.anthropic.claude-sonnet-5-5"])).not.toContain("off");
 	});
 
-	it("keeps thinking off unsupported on Fable models models.dev does not list yet", () => {
+	it("keeps thinking off unsupported on the authored Fable 5.2 when models.dev does not list it", () => {
 		const models = generateCatalog({}, "anthropic");
 		expect(getSupportedThinkingLevels(models["claude-fable-5-2"])).not.toContain("off");
 	});
