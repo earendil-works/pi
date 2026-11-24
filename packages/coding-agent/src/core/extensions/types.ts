@@ -939,7 +939,10 @@ export interface BeforeProviderHeadersEvent {
 	headers: ProviderHeaders;
 }
 
-/** Fired after a provider response is received and before the response stream is consumed. */
+/**
+ * Fired for each provider HTTP response, including error responses and retried attempts. Successful responses fire
+ * before the response stream is consumed. Coverage depends on provider and transport.
+ */
 export interface AfterProviderResponseEvent {
 	type: "after_provider_response";
 	status: number;

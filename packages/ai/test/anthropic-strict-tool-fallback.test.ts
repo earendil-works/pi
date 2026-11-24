@@ -99,7 +99,8 @@ describe("Anthropic preferred strict tool fallback", () => {
 		expect(events).toEqual(["start", "done"]);
 		expect(payloads).toHaveLength(2);
 		expect(onPayload).toHaveBeenCalledTimes(2);
-		expect(onResponse).toHaveBeenCalledTimes(1);
+		// The rejected request and the fallback each report their response (#12376).
+		expect(onResponse.mock.calls.map(([response]) => response.status)).toEqual([400, 200]);
 		const first = payloads[0].tools as BetaTool[];
 		const second = payloads[1].tools as BetaTool[];
 		expect(first[0]).toMatchObject({

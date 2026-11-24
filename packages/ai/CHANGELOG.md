@@ -11,6 +11,7 @@
 ### Changed
 
 - Upgraded `@google/genai` from 2.32.0 to 3.6.1. `GoogleApiThinkingLevel` now includes `"XHIGH"` and `ResolvedGoogleThinkingLevel` now includes `"xhigh"`
+- Changed `onResponse` to also fire for HTTP error responses (4xx/5xx) and for each retried attempt in the `openai-completions`, `openai-responses`, `azure-openai-responses`, `anthropic-messages`, `google-generative-ai`, and `google-vertex` APIs, OpenRouter image generation, and classifiers, as it already did for `openai-codex-responses`, `mistral-conversations`, `pi-messages`, and Amazon Bedrock. Callers can now read the status and headers such as `retry-after` of a failed request; Google reports error responses with empty headers ([#12376](https://github.com/earendil-works/pi/issues/12376))
 
 ### Fixed
 
