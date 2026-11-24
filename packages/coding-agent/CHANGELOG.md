@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Replaced the `showCacheMissNotices` setting with one setting per transcript notice: `notices.cacheMisses`, `notices.cacheWarming`, `notices.compactionCosts`, and `notices.reasoningDrops`, configured under Notices in `/settings`. An existing `showCacheMissNotices` value is migrated to all four. `SettingsManager.getShowCacheMissNotices()` and `setShowCacheMissNotices()` are removed; use `getNotices()` and `setNotice()` instead
+
 ### Added
 
 - Added `compat.supportsStrictMode` for `google-generative-ai` and `google-vertex` models in `models.json`, so Gemini 3+ models served under IDs without the version can use strict tools ([#12321](https://github.com/earendil-works/pi/issues/12321))

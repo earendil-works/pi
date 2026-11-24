@@ -279,7 +279,7 @@ Nested keys are shown as pi spells them.
 | `externalEditor` | **G**, launcher only | never sent to the worker |
 | `images.autoResize`, `images.blockImages` | server | Attachment policy is the server's. Show read-only. |
 | `defaultProvider/defaultModel`, `defaultThinkingLevel`, `modelThinkingLevels`, `thinkingBudgets`, `enabledModels` | server | p2 has `defaultModel`/`thinkingLevel` (`P2/src/runtime/settings.ts`); the others are **new** or (c) |
-| `steeringMode`, `followUpMode`, `transport`, `httpIdleTimeoutMs`, `websocketConnectTimeoutMs`, `retry.*`, `compaction.*` (incl. `modelOverrides`), `cacheWarming`, `showCacheMissNotices` | server | p2 has a subset (`P2/src/runtime/settings.ts`). Read-only display. |
+| `steeringMode`, `followUpMode`, `transport`, `httpIdleTimeoutMs`, `websocketConnectTimeoutMs`, `retry.*`, `compaction.*` (incl. `modelOverrides`), `cacheWarming`, `notices.*` | server | p2 has a subset (`P2/src/runtime/settings.ts`). Read-only display. |
 | `defaultTools`, `codemode.*`, `shellPath`, `shellCommandPrefix`, `npmCommand` | server / env | Tool loadout and shell are server or env configuration (`P2/plugins/envs`). Not TUI settings. |
 | warning toggles, `enableInstallTelemetry`, `defaultProjectTrust`, `treeFilterMode`, `branchSummary.*`, `sessionDir`, `httpProxy` | (c) | No equivalent concept in p2. |
 
