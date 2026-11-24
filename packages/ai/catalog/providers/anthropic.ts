@@ -1,7 +1,7 @@
 import type { Model } from "../../src/types.ts";
 import { addMissing, defineProvider, mergeCompat, mergeThinking, modelsDevModels, withInputLimits } from "../define.ts";
 import {
-	claude55ThinkingLevels,
+	CLAUDE_55_THINKING_LEVELS,
 	enableClaudeMidConvoEffort,
 	supportsClaudeMidConvoEffort,
 	supportsClaudeMidConvoSystemMessages,
@@ -40,7 +40,7 @@ export default defineProvider({
 				api: "anthropic-messages",
 				baseUrl: "https://api.anthropic.com",
 				map: (model) => {
-					if (MODELS_55.has(model.id)) mergeThinking(model, claude55ThinkingLevels(model.id));
+					if (MODELS_55.has(model.id)) mergeThinking(model, CLAUDE_55_THINKING_LEVELS);
 					if (MODELS_WITH_1M_CONTEXT.has(model.id)) model.contextWindow = 1000000;
 					return model;
 				},
