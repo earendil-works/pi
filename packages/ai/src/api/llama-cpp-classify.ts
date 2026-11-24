@@ -243,7 +243,7 @@ async function post(request: RequestContext, path: string, body: unknown, observ
 			model.headers,
 			options?.headers,
 		) ?? {};
-	const { response, json } = await retryProviderRequest(
+	return retryProviderRequest(
 		async () => {
 			const timeoutSignal = options?.timeoutMs !== undefined ? AbortSignal.timeout(options.timeoutMs) : undefined;
 			const signal =
@@ -257,8 +257,12 @@ async function post(request: RequestContext, path: string, body: unknown, observ
 					body: JSON.stringify(payload),
 					signal,
 				});
+				// Reported before the body is read, so a body that fails to arrive still reports its status.
+				if (observe) {
+					await options?.onResponse?.({ status: next.status, headers: headersToRecord(next.headers) }, model);
+				}
 				if (!next.ok) throw httpError(next, await next.text());
-				return { response: next, json: (await next.json()) as unknown };
+				return (await next.json()) as unknown;
 			} catch (error) {
 				if (timeoutSignal?.aborted && !options?.signal?.aborted) throw timeoutError(options!.timeoutMs!);
 				throw error;
@@ -266,10 +270,6 @@ async function post(request: RequestContext, path: string, body: unknown, observ
 		},
 		{ maxRetries: options?.maxRetries ?? 2, maxRetryDelayMs: options?.maxRetryDelayMs, signal: options?.signal },
 	);
-	if (observe) {
-		await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
-	}
-	return json;
 }
 
 function tokenIds(body: unknown): number[] {

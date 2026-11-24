@@ -127,6 +127,30 @@ describe("Pi Classifier", () => {
 		expect(result.errorMessage).toContain("Insufficient credits");
 	});
 
+	// #12376
+	it("reports an error response to onResponse even when its body fails", async () => {
+		const body = new ReadableStream({
+			start(controller) {
+				controller.error(new Error("body stream failed"));
+			},
+		});
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValue(new Response(body, { status: 503, headers: { "retry-after": "7" } }));
+		const onResponse = vi.fn();
+
+		const result = await classify(model, context, {
+			apiKey: "radius-key",
+			maxRetries: 0,
+			fetch: fetchMock,
+			onResponse,
+		});
+
+		expect(result.stopReason).toBe("error");
+		expect(onResponse).toHaveBeenCalledTimes(1);
+		expect(onResponse.mock.calls[0][0]).toMatchObject({ status: 503, headers: { "retry-after": "7" } });
+	});
+
 	it("rejects out-of-range probabilities and unknown choices", async () => {
 		const badChoiceFetch = vi.fn<typeof fetch>().mockResolvedValue(
 			new Response(

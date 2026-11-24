@@ -13,6 +13,7 @@ import {
 } from "@google/genai";
 import { clampThinkingLevel } from "../models.ts";
 import type {
+	Api,
 	ImageContent,
 	Model,
 	StopReason,
@@ -613,11 +614,13 @@ export function mapStopReason(reason: FinishReason): StopReason {
  * retryProviderRequest. The SDK's ApiError has a `status` property but no
  * `headers` property, and retryProviderRequest only retries errors that carry
  * both, so normalize the error by adding the missing `headers` before
- * rethrowing.
+ * rethrowing. Failed attempts reach `onResponse` with their status and no
+ * headers.
  */
 export function retryGoogleRequest<T>(
 	request: () => Promise<T>,
-	options?: Pick<StreamOptions, "maxRetries" | "maxRetryDelayMs" | "signal">,
+	model: Model<Api>,
+	options?: Pick<StreamOptions, "maxRetries" | "maxRetryDelayMs" | "signal" | "onResponse">,
 ): Promise<T> {
 	return retryProviderRequest(
 		async () => {
@@ -634,6 +637,7 @@ export function retryGoogleRequest<T>(
 			maxRetries: options?.maxRetries,
 			maxRetryDelayMs: options?.maxRetryDelayMs,
 			signal: options?.signal,
+			onErrorResponse: (errorResponse) => options?.onResponse?.(errorResponse, model),
 		},
 	);
 }

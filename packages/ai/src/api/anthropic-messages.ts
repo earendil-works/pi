@@ -886,6 +886,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					maxRetries: options?.maxRetries,
 					maxRetryDelayMs: options?.maxRetryDelayMs,
 					signal: options?.signal,
+					onErrorResponse: (errorResponse) => options?.onResponse?.(errorResponse, model),
 				});
 			let disablePreferredStrictTools = hasExceededStrictToolLimits(options?.sessionId);
 			let response: Response;

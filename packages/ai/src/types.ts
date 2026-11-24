@@ -184,7 +184,9 @@ export interface ProviderRequestOptions<TModel = Model<Api>> {
 	 */
 	onPayload?: (payload: unknown, model: TModel) => unknown | undefined | Promise<unknown | undefined>;
 	/**
-	 * Optional callback invoked after an HTTP response is received.
+	 * Optional callback invoked after each HTTP response is received, including error responses and
+	 * responses to retried attempts. Coverage depends on provider and transport: some report empty headers or
+	 * only some responses.
 	 */
 	onResponse?: (response: ProviderResponse, model: TModel) => void | Promise<void>;
 	/**
@@ -223,8 +225,9 @@ export interface ProviderRequestOptions<TModel = Model<Api>> {
 
 export interface StreamOptions extends ProviderRequestOptions<Model<Api>> {
 	/**
-	 * Optional callback invoked after an HTTP response is received and before
-	 * its body stream is consumed.
+	 * Optional callback invoked after each HTTP response is received, including error responses and
+	 * responses to retried attempts. Successful responses are reported before their body stream is consumed.
+	 * Coverage depends on provider and transport: some report empty headers or only some responses.
 	 */
 	onResponse?: (response: ProviderResponse, model: Model<Api>) => void | Promise<void>;
 	/**
