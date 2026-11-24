@@ -1,4 +1,5 @@
 import type { ClassifierFunction, ClassifierOptions } from "../types.ts";
+import { isOpenRouterModel } from "../utils/openrouter-cost.ts";
 import { isRecord } from "./classifier-shared.ts";
 import { classifySystemOne, type SystemOneTransport } from "./system-one-shared.ts";
 
@@ -15,9 +16,8 @@ import { classifySystemOne, type SystemOneTransport } from "./system-one-shared.
 const transport: SystemOneTransport = {
 	api: "typesafe-system-one",
 	label: "System One API",
-	// OpenRouter by provider ID, which survives baseUrl overrides, or by host, which covers regional endpoints.
 	detectCompat: (model) =>
-		model.provider === "openrouter" || model.baseUrl.includes("openrouter.ai")
+		isOpenRouterModel(model)
 			? { imageInput: "state-image-urls", sendImageOptInHeader: false }
 			: { imageInput: "assets", sendImageOptInHeader: true },
 	url: (model) => new URL("systemone", `${model.baseUrl.replace(/\/+$/u, "")}/`),

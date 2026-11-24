@@ -746,8 +746,13 @@ export interface ClassifierResult {
 	provider: ProviderId;
 	model: string;
 	answers: Record<string, ClassifierAnswer>;
-	/** Token usage and its cost at the model's catalog price, when the service reports token counts. */
+	/**
+	 * Token usage and its cost, when the service reports token counts. The cost is the model's catalog price,
+	 * or the billed amount (`cost.totalFromProvider`) when the service reports one, such as OpenRouter.
+	 */
 	usage?: Usage;
+	/** Provider-specific response identifier when the service reports one, such as OpenRouter's generation ID. */
+	responseId?: string;
 	stopReason: ClassifierStopReason;
 	errorMessage?: string;
 	timestamp: number; // Unix timestamp in milliseconds

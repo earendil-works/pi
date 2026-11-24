@@ -5,6 +5,7 @@
 ### Added
 
 - Added `compat.supportsStrictMode` to the `google-generative-ai` and `google-vertex` APIs, so Gemini 3+ models served under IDs without the version can use strict tools (`VALIDATED` function calling); unset keeps the model ID detection ([#12321](https://github.com/earendil-works/pi/issues/12321))
+- Added `responseId` to classifier results. OpenRouter's System One endpoint fills it with its generation ID, and its billed cost now replaces the catalog estimate in `usage.cost.total` (`totalFromProvider: true`), as it does for chat
 
 ### Changed
 

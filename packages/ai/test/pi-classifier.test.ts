@@ -58,6 +58,7 @@ describe("Pi Classifier", () => {
 						totalTokens: 123,
 						cost: { input: 0.0001, output: 0.00001, cacheRead: 0, cacheWrite: 0, total: 0.00011 },
 					},
+					responseId: "gen-dec-1",
 				}),
 				{ status: 200, headers: { "content-type": "application/json" } },
 			),
@@ -105,6 +106,7 @@ describe("Pi Classifier", () => {
 				totalTokens: 123,
 				cost: { total: 0.00011 },
 			},
+			responseId: "gen-dec-1",
 		});
 	});
 

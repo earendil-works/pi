@@ -939,6 +939,8 @@ The public contract uses `bool` questions and `{ type: "bool", probability }` an
 
 When the service reports token counts, `result.usage` carries them with their cost at the model's catalog price, the same `Usage` shape as chat messages. All System One services report token counts; a request that was answered with malformed answers keeps its usage. Local classifiers such as `llama-cpp-classify` report no usage.
 
+On OpenRouter, System One results also carry the generation ID as `result.responseId`. When OpenRouter reports what it billed, `result.usage.cost.total` is that amount and `cost.totalFromProvider` is `true`, as for chat messages.
+
 `ClassifierOptions.temperature` divides the answer logits by the given value before they are normalized; values above 1 soften the distribution. APIs that cannot apply it, such as System One and OpenAI Decisions, ignore it.
 
 `ClassifierContext.images` holds image blocks (`{ type: "image", data, mimeType }`) judged together with the state. Only models whose `input` includes `"image"` accept them; `classify()` returns an error result for other models.

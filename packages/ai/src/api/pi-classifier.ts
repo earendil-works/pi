@@ -18,7 +18,7 @@ import { isRecord, postClassifierRequest, requiredNumber } from "./classifier-sh
  *
  * Sends pi's own classifier protocol directly to a backend: the request is a
  * single POST of `{ model, context, options }` to `<baseUrl>/classify`, and
- * a `200 OK` response is a completed `{ answers, usage? }` JSON object. Errors
+ * a `200 OK` response is a completed `{ answers, usage?, responseId? }` JSON object. Errors
  * use non-2xx HTTP statuses with the `{ error: { message, code?, details? } }`
  * envelope, matching `pi-messages`.
  */
@@ -43,6 +43,7 @@ export type PiClassifierRequest = {
 export type PiClassifierResponse = {
 	answers: Record<string, ClassifierAnswer>;
 	usage?: Usage;
+	responseId?: string;
 };
 
 function finiteNonNegative(value: unknown): number {
@@ -176,6 +177,7 @@ export const classify: ClassifierFunction<PiClassifierOptions> = async (model, c
 		};
 		const body = await postClassifierRequest(LABEL, url, model, requestBody, options);
 		if (!isRecord(body)) throw new Error(`${LABEL} returned an unexpected response`);
+		if (typeof body.responseId === "string" && body.responseId) output.responseId = body.responseId;
 		const usage = parseUsage(body.usage, model);
 		if (usage) output.usage = usage;
 		output.answers = parseAnswers(body.answers, context);
