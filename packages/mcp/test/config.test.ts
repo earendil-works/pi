@@ -23,7 +23,7 @@ describe("validateMcpServerConfig", () => {
 			oauth: { clientId: "id", callbackPort: 8080, scope: "read" },
 			timeout: 30,
 			description: "Docs",
-			protocol: "auto",
+			protocol: "2026-07-28",
 		};
 		const result = validateMcpServerConfig("docs", http);
 		expect(result).toEqual({ kind: "http", config: http });
@@ -55,7 +55,7 @@ describe("validateMcpServerConfig", () => {
 			["s", { command: "x", enabled: "yes" }, 'server "s": enabled must be a boolean'],
 			["s", { command: "x", description: 1 }, 'server "s": description must be a string'],
 			["s", { command: "x", timeout: 0 }, 'server "s": timeout must be a positive number of seconds'],
-			["s", { command: "x", protocol: "2026-07-28" }, 'server "s": protocol must be "auto", "legacy", or "modern"'],
+			["s", { command: "x", protocol: "modern" }, 'server "s": protocol must be "auto", "legacy", or "2026-07-28"'],
 			["s", { command: "x", args: "a b" }, 'server "s": args must be an array of strings'],
 			["s", { command: "x", env: { A: 1 } }, 'server "s": env must map names to strings'],
 			["s", { command: "x", cwd: 1 }, 'server "s": cwd must be a string'],

@@ -29,10 +29,11 @@ export const LATEST_MODERN_PROTOCOL_VERSION: ModernProtocolVersion = MODERN_PROT
 export type McpProtocolEra = "legacy" | "modern";
 
 /**
- * Which protocol a client speaks to a server. `auto` probes the server with `server/discover` and falls
- * back to `legacy` when the server does not answer like a modern server.
+ * Which protocol a client speaks to a server, as in OpenCode's `protocol` setting. `auto` probes the
+ * server with `server/discover` and falls back to `legacy` when the server does not answer like a modern
+ * server. A modern version (`2026-07-28`) requires that version and fails otherwise.
  */
-export type McpProtocolMode = "auto" | McpProtocolEra;
+export type McpProtocolMode = "auto" | "legacy" | ModernProtocolVersion;
 
 export type LoggingLevel = "debug" | "info" | "notice" | "warning" | "error" | "critical" | "alert" | "emergency";
 

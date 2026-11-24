@@ -87,11 +87,11 @@ interface McpServerConfigBase {
 	/** Per-request timeout in seconds. Progress notifications from the server reset it. Default: 60. */
 	timeout?: number;
 	/**
-	 * MCP protocol: `legacy` (`initialize` handshake), `modern` (stateless, 2026-07-28), or `auto`
+	 * MCP protocol: `legacy` (`initialize` handshake), `2026-07-28` (stateless, required), or `auto`
 	 * (probe with `server/discover`, fall back to `legacy`). Default: `auto` for HTTP servers, `legacy`
 	 * for stdio servers.
 	 */
-	protocol?: "auto" | "legacy" | "modern";
+	protocol?: "auto" | "legacy" | "2026-07-28";
 }
 
 export interface McpStdioServerConfig extends McpStdioServerFields, McpServerConfigBase {

@@ -16,7 +16,7 @@
  * for the caller to check afterwards.
  */
 
-import type { McpProtocolMode } from "./protocol/types.ts";
+import { type McpProtocolMode, MODERN_PROTOCOL_VERSIONS } from "./protocol/types.ts";
 
 /** Fields every server entry may have. */
 interface McpServerConfigBase {
@@ -27,9 +27,9 @@ interface McpServerConfigBase {
 	/** Per-request timeout in seconds. */
 	timeout?: number;
 	/**
-	 * MCP protocol to speak: `legacy` (the `initialize` handshake of 2025-11-25 and earlier), `modern`
-	 * (the stateless protocol of 2026-07-28), or `auto` (probe with `server/discover`, fall back to
-	 * `legacy`). The application picks the default.
+	 * MCP protocol to speak: `legacy` (the `initialize` handshake of 2025-11-25 and earlier),
+	 * `2026-07-28` (the stateless protocol, required), or `auto` (probe with `server/discover`, fall back
+	 * to `legacy`). The same values as OpenCode's `protocol`. The application picks the default.
 	 */
 	protocol?: McpProtocolMode;
 }
@@ -113,7 +113,7 @@ export interface McpServerConfigOptions {
 }
 
 const SERVER_NAME = /^[A-Za-z0-9_-]+$/;
-const PROTOCOL_MODES: readonly unknown[] = ["auto", "legacy", "modern"] satisfies McpProtocolMode[];
+const PROTOCOL_MODES: readonly unknown[] = ["auto", "legacy", ...MODERN_PROTOCOL_VERSIONS] satisfies McpProtocolMode[];
 
 /**
  * Validate one entry of the `mcpServers` shape (configuration files are a trust boundary). Server
@@ -155,7 +155,7 @@ function validateBaseFields(entry: Record<string, unknown>): string | undefined 
 	const { enabled, timeout, description, protocol } = entry;
 	if (enabled !== undefined && typeof enabled !== "boolean") return "enabled must be a boolean";
 	if (protocol !== undefined && !PROTOCOL_MODES.includes(protocol)) {
-		return 'protocol must be "auto", "legacy", or "modern"';
+		return `protocol must be "auto", "legacy", or ${MODERN_PROTOCOL_VERSIONS.map((version) => `"${version}"`).join(", ")}`;
 	}
 	if (description !== undefined && typeof description !== "string") return "description must be a string";
 	if (timeout !== undefined && (typeof timeout !== "number" || !(timeout > 0))) {

@@ -19,7 +19,6 @@ import {
 	McpConnectionClosedError,
 	McpError,
 	McpHttpError,
-	type McpProtocolEra,
 	type McpProtocolMode,
 	type McpRequestOptions,
 	McpSessionExpiredError,
@@ -171,7 +170,7 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 	 * The protocol the server spoke on its last connection. With `auto`, reconnects use it: a legacy
 	 * server is not probed again. Dropped when a connection with it fails.
 	 */
-	private era: McpProtocolEra | undefined;
+	private detected: McpProtocolMode | undefined;
 	private readonly cwd: string;
 	private readonly createTransport: McpTransportFactory;
 	private readonly authProvider: McpAuthProvider | undefined;
@@ -368,24 +367,25 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 		let reprobed = false;
 		for (let attempt = 0; ; attempt++) {
 			this.stderrTail = undefined;
-			const protocol = this.protocol === "auto" ? (this.era ?? "auto") : this.protocol;
+			const protocol = this.protocol === "auto" ? (this.detected ?? "auto") : this.protocol;
 			try {
 				const client = await this.connectOnce(protocol);
-				this.era = client.protocolEra;
+				// A modern client's version is one of MODERN_PROTOCOL_VERSIONS, which the getter's type does not say.
+				this.detected = client.protocolEra === "modern" ? (client.protocolVersion as McpProtocolMode) : "legacy";
 				return client;
 			} catch (error) {
 				if (!reprobed && !this.closed && this.protocol === "auto") {
 					if (protocol !== "auto") {
 						// The server may have changed protocol since the last connection: probe it again.
 						reprobed = true;
-						this.era = undefined;
+						this.detected = undefined;
 						attempt--;
 						continue;
 					}
 					if (error instanceof McpConnectionClosedError && !("url" in this.entry.config)) {
 						// A legacy stdio server may exit on a request before `initialize`; start it again without one.
 						reprobed = true;
-						this.era = "legacy";
+						this.detected = "legacy";
 						attempt--;
 						continue;
 					}

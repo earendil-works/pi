@@ -99,9 +99,12 @@ export function supportedVersions(error: McpError): string[] | undefined {
 	return Array.isArray(supported) && supported.every((version) => typeof version === "string") ? supported : undefined;
 }
 
-/** The newest modern version both sides support. */
-export function mutualModernVersion(serverVersions: readonly string[]): ModernProtocolVersion | undefined {
-	return MODERN_PROTOCOL_VERSIONS.find((version) => serverVersions.includes(version));
+/** The newest of `clientVersions` (default: every modern version) that the server supports. */
+export function mutualModernVersion(
+	serverVersions: readonly string[],
+	clientVersions: readonly ModernProtocolVersion[] = MODERN_PROTOCOL_VERSIONS,
+): ModernProtocolVersion | undefined {
+	return clientVersions.find((version) => serverVersions.includes(version));
 }
 
 /** Validate a `server/discover` result (wire input). */

@@ -66,7 +66,7 @@ HTTP servers use `url`, `headers`, and `oauth` (see [Authenticate with OAuth](#a
 Both server types support:
 
 - `timeout`: per-request timeout in seconds (default 60). Progress notifications reset it.
-- `protocol`: the MCP protocol to speak (see [Protocol versions](#protocol-versions)). `auto` (default for HTTP servers), `legacy` (default for stdio servers), or `modern`.
+- `protocol`: the MCP protocol to speak (see [Protocol versions](#protocol-versions)). `auto` (default for HTTP servers), `legacy` (default for stdio servers), or `2026-07-28`. The values match OpenCode's.
 - `enabled: false`: keep the entry without connecting to it.
 - `exposure` and `toolExposure`: control how tools reach the model (see [Control tool exposure](#control-tool-exposure)).
 - `description`: what the server offers, in a sentence. It lists the server in the system prompt (see [Control tool exposure](#control-tool-exposure)), tool search ranks the server's tools by it, and codemode's `describeNamespace()` returns it. Without it, the first line of the server instructions is used once the server connects.
@@ -106,9 +106,9 @@ Stopping a stdio server closes its stdin, sends SIGTERM, then sends SIGKILL to i
 
 MCP has two kinds of protocol versions. Up to `2025-11-25`, a connection starts with an `initialize` handshake (`legacy`). `2026-07-28` is stateless (`modern`): there is no handshake and no session, and every request carries the protocol version and pi's capabilities.
 
-With `"protocol": "auto"`, pi first sends `server/discover`. A server that answers it speaks `2026-07-28`; any other answer makes pi fall back to `initialize`. Pi remembers the result for reconnects, so a legacy server is probed once per session, and probes again when a reconnect with the remembered protocol fails. `legacy` never probes, and `modern` fails against servers without `2026-07-28`.
+With `"protocol": "auto"`, pi first sends `server/discover`. A server that answers it speaks `2026-07-28`; any other answer makes pi fall back to `initialize`. Pi remembers the result for reconnects, so a legacy server is probed once per session, and probes again when a reconnect with the remembered protocol fails. `legacy` never probes, and `"2026-07-28"` fails against servers without that version.
 
-HTTP servers default to `auto`: a legacy HTTP server rejects the probe at once. Stdio servers default to `legacy`, because some older stdio servers do not answer a request before `initialize`, or exit on it; then the probe waits for the request timeout, or pi starts the server again without it. Set `"protocol": "auto"` or `"modern"` for stdio servers that speak `2026-07-28`.
+HTTP servers default to `auto`: a legacy HTTP server rejects the probe at once. Stdio servers default to `legacy`, because some older stdio servers do not answer a request before `initialize`, or exit on it; then the probe waits for the request timeout, or pi starts the server again without it. Set `"protocol": "auto"` or `"2026-07-28"` for stdio servers that speak `2026-07-28`.
 
 With `2026-07-28` servers, pi:
 

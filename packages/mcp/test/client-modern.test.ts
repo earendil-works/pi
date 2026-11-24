@@ -193,9 +193,18 @@ describe("McpClient protocol detection", () => {
 		expect(mismatch.server.requests("initialize")).toEqual([]);
 
 		const legacy = await createServer("legacy");
-		const strict = new McpClient({ name: "test-client", version: "2.0.0", protocol: "modern" });
+		const strict = new McpClient({ name: "test-client", version: "2.0.0", protocol: "2026-07-28" });
 		await expect(strict.connect(legacy.client)).rejects.toMatchObject({ code: -32601 });
 		expect(strict.connectionState).toBe("closed");
+	});
+
+	it("uses only the pinned version", async () => {
+		const { client: transport, server } = await createServer("modern");
+		server.setHandler("server/discover", () => ({ ...DISCOVER_RESULT, supportedVersions: ["2099-01-01"] }));
+		const pinned = new McpClient({ name: "test-client", version: "2.0.0", protocol: "2026-07-28" });
+		await expect(pinned.connect(transport)).rejects.toThrow("supports none of this client's protocol versions");
+		const [discover] = server.requests("server/discover");
+		expect(meta(discover!)["io.modelcontextprotocol/protocolVersion"]).toBe("2026-07-28");
 	});
 
 	it("uses only the legacy protocol by default and over transports that do not declare modern support", async () => {
