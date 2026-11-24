@@ -20,7 +20,6 @@ const STATIC_HEADERS = {
 const EXTENDED_CONTEXT_MODEL_IDS = new Set([
 	"claude-fable-5",
 	"claude-opus-4.8",
-	"claude-opus-5",
 	"claude-opus-5.5",
 	"claude-sonnet-4.6",
 	"claude-sonnet-5",
@@ -40,7 +39,6 @@ const EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_MODEL_IDS = new Set([
 // Keep this to narrow corrections over models.dev metadata instead of snapshotting Copilot's catalog.
 const THINKING_LEVEL_OVERRIDES: Record<string, ThinkingLevelMap> = {
 	"claude-opus-4.8": { minimal: "low" },
-	"claude-opus-5": { minimal: "low" },
 	"claude-sonnet-4.6": { minimal: "low", max: "max" },
 };
 

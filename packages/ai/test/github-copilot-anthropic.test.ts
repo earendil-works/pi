@@ -57,12 +57,12 @@ describe("Copilot Claude via Anthropic Messages", () => {
 	});
 
 	it("applies Copilot-specific adaptive thinking effort overrides", () => {
-		const opus5 = getModel("github-copilot", "claude-opus-5");
-		expect(opus5.api).toBe("anthropic-messages");
-		expect(opus5.contextWindow).toBe(1000000);
-		expect(opus5.thinkingLevelMap).toMatchObject({ minimal: "low", xhigh: "xhigh", max: "max" });
-		expect(getSupportedThinkingLevels(opus5)).toContain("xhigh");
-		expect(getSupportedThinkingLevels(opus5)).toContain("max");
+		const opus48 = getModel("github-copilot", "claude-opus-4.8");
+		expect(opus48.api).toBe("anthropic-messages");
+		expect(opus48.contextWindow).toBe(1000000);
+		expect(opus48.thinkingLevelMap).toMatchObject({ minimal: "low", xhigh: "xhigh", max: "max" });
+		expect(getSupportedThinkingLevels(opus48)).toContain("xhigh");
+		expect(getSupportedThinkingLevels(opus48)).toContain("max");
 
 		const opus55 = getModel("github-copilot", "claude-opus-5.5");
 		expect(opus55.api).toBe("anthropic-messages");
