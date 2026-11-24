@@ -23,10 +23,7 @@ const LONG_CACHE_RETENTION_UNSUPPORTED_MODELS = new Set([
 	"opencode:deepseek-v4-flash",
 	"opencode:deepseek-v4.1-flash",
 	"opencode:deepseek-v4-pro",
-	"opencode:kimi-k2.5",
-	"opencode:kimi-k2.6",
 	"opencode:minimax-m2.7",
-	"opencode-go:kimi-k2.6",
 ]);
 
 // OpenCode serves each model on one protocol-specific endpoint. Native protocols
@@ -92,11 +89,6 @@ export function opencodeModels(ctx: ProviderContext): ChatModel[] {
 			if (provider === "opencode" && model.id === "grok-build-0.1") {
 				compat = { ...compat, supportsReasoningEffort: false };
 			}
-			if (model.id === "kimi-k2.6") {
-				// OpenCode Kimi K2.6 accepts Anthropic-style thinking objects
-				// and rejects string thinking values or combined reasoning_effort.
-				compat = { ...compat, thinkingFormat: "deepseek", supportsReasoningEffort: false };
-			}
 			// models.dev reports these as @ai-sdk/anthropic, but OpenCode Go serves
 			// them through the OpenAI-compatible /openai/v1/chat/completions path.
 			if (
@@ -149,10 +141,6 @@ export const OPENCODE_COMPLETIONS_COMPAT = {
 export function finalizeOpencodeModel(model: ChatModel): void {
 	if (model.provider === "opencode-go" && model.id === "glm-5.2") {
 		mergeThinking(model, { off: null, minimal: null, low: null, medium: null, high: "high", max: "max" });
-	}
-	if (model.provider === "opencode-go" && model.id === "kimi-k2.6") {
-		// OpenCode Go exposes Kimi K2.6 thinking as on/off, not distinct effort tiers.
-		mergeThinking(model, { minimal: null, low: null, medium: null });
 	}
 	if (model.provider === "opencode" && model.id === "grok-build-0.1") {
 		// OpenCode Zen Grok Build reasons by default but rejects explicit reasoningEffort.

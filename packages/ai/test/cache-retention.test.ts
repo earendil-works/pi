@@ -514,8 +514,6 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 		it.each([
 			MODELS.opencode["deepseek-v4.1-flash"],
 			MODELS.opencode["deepseek-v4-pro"],
-			MODELS.opencode["kimi-k2.5"],
-			MODELS.opencode["kimi-k2.6"],
 			MODELS.opencode["minimax-m2.7"],
 		] as const)("should omit long cache retention for $provider/$id", async (metadata) => {
 			const model = metadata as Model<"openai-completions">;
