@@ -175,6 +175,15 @@ describe("SettingsManager", () => {
 	});
 
 	describe("notices", () => {
+		it("shows every notice by default", () => {
+			expect(SettingsManager.inMemory().getNotices()).toEqual({
+				cacheMisses: true,
+				cacheWarming: true,
+				compactionCosts: true,
+				reasoningDrops: true,
+			});
+		});
+
 		it("fills in defaults for unset notices", () => {
 			const manager = SettingsManager.inMemory({ notices: { cacheMisses: true } });
 

@@ -624,22 +624,22 @@
         "cacheMisses": {
           "type": "boolean",
           "description": "Show a notice when a response re-bills a significant part of the prompt cache.",
-          "default": false
+          "default": true
         },
         "cacheWarming": {
           "type": "boolean",
           "description": "Show the cost of cache warming requests.",
-          "default": false
+          "default": true
         },
         "compactionCosts": {
           "type": "boolean",
           "description": "Show the cost of compactions and branch summaries.",
-          "default": false
+          "default": true
         },
         "reasoningDrops": {
           "type": "boolean",
           "description": "Show a notice when a provider drops reasoning items from a request.",
-          "default": false
+          "default": true
         }
       }
     },

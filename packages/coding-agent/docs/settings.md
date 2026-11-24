@@ -17,10 +17,10 @@ Add `"$schema": "https://pi.dev/schemas/settings.schema.json"` to `settings.json
 | `thinkingBudgets` | object | Built-in budgets | Token budgets for `minimal`, `low`, `medium`, and `high` thinking levels. |
 | `enabledModels` | `string[]` | All available models | Model patterns used for startup selection and model cycling. Uses the same format as `--models`. |
 | `hideThinkingBlock` | boolean | `false` | Hide thinking blocks in the transcript. |
-| `notices.cacheMisses` | boolean | `false` | Show a notice when a response re-bills a significant part of the prompt cache, such as after a model switch or an idle gap. |
-| `notices.cacheWarming` | boolean | `false` | Show the cost of cache warming requests. |
-| `notices.compactionCosts` | boolean | `false` | Show the cost of compactions and branch summaries. |
-| `notices.reasoningDrops` | boolean | `false` | Show a notice when a provider drops reasoning items from a request, such as OpenAI reasoning items after a prefix mismatch or Anthropic thinking blocks during recovery. |
+| `notices.cacheMisses` | boolean | `true` | Show a notice when a response re-bills a significant part of the prompt cache, such as after a model switch or an idle gap. |
+| `notices.cacheWarming` | boolean | `true` | Show the cost of cache warming requests. |
+| `notices.compactionCosts` | boolean | `true` | Show the cost of compactions and branch summaries. |
+| `notices.reasoningDrops` | boolean | `true` | Show a notice when a provider drops reasoning items from a request, such as OpenAI reasoning items after a prefix mismatch or Anthropic thinking blocks during recovery. |
 | `cacheWarming` | `"off" \| "streaming" \| "idle"` | `"idle"` | Keep eligible provider prompt caches warm during active runs and, with `"idle"`, for up to 30 minutes between runs. `"streaming"` warms only during active runs. Global setting only. |
 
 Cache warming runs only when the model declares a cache lifetime and Pi estimates at least $0.05 in avoided cache-miss cost. Refresh usage counts toward session totals but does not enter model context. `/session` shows the next decision; extensions can override it with `cache_warming_decision`. See [Prompt Cache Lifetimes](models.md#prompt-cache-lifetimes).
