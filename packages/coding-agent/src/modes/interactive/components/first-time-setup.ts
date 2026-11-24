@@ -14,6 +14,9 @@ export interface FirstTimeSetupOptions {
 	onCancel: () => void;
 }
 
+/** The question the dialog asks. */
+export const FIRST_TIME_SETUP_QUESTION = "Opt-in to anonymous usage data sharing?";
+
 const ANALYTICS_OPTIONS: Array<{ value: boolean; label: string }> = [
 	{ value: true, label: "Share anonymous usage data" },
 	{ value: false, label: "Don't share" },
@@ -48,7 +51,7 @@ export class FirstTimeSetupComponent extends Container {
 		);
 		this.addChild(new Spacer(1));
 
-		this.addChild(new Text(theme.fg("text", "Opt-in to anonymous usage data sharing?"), 1, 0));
+		this.addChild(new Text(theme.fg("text", FIRST_TIME_SETUP_QUESTION), 1, 0));
 		this.addChild(
 			new Text(
 				theme.fg(

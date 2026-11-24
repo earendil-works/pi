@@ -2,6 +2,7 @@ import chalk from "chalk";
 import type { ProjectTrustContext } from "../core/extensions/types.ts";
 import type { AppMode } from "../core/project-trust.ts";
 import type { SettingsManager } from "../core/settings-manager.ts";
+import { dialogBlockedStatus } from "../modes/interactive/program-status-reporter.ts";
 import { showStartupInput, showStartupSelector } from "./startup-ui.ts";
 
 export function createProjectTrustContext(options: {
@@ -36,10 +37,15 @@ export function createProjectTrustContext(options: {
 					return false;
 				}
 				return (
-					(await showStartupSelector(options.settingsManager, `${title}\n${message}`, [
-						{ label: "Yes", value: true },
-						{ label: "No", value: false },
-					])) ?? false
+					(await showStartupSelector(
+						options.settingsManager,
+						`${title}\n${message}`,
+						[
+							{ label: "Yes", value: true },
+							{ label: "No", value: false },
+						],
+						dialogBlockedStatus("permission", title),
+					)) ?? false
 				);
 			},
 			input: async (title, placeholder) => {
