@@ -13,7 +13,7 @@ Use `shellPath` to choose the Bash executable and `shellCommandPrefix` to run se
 | Model calls the optional `powershell` tool | PowerShell 7 (`pwsh.exe`) or Windows PowerShell |
 | An extension provides or replaces a shell tool | The operations implemented by that extension |
 
-Pi normally invokes Bash with `bash -c`. On Unix systems, it uses `/bin/bash`, then `bash` on `PATH`, and finally `sh` when Bash is unavailable. Native Windows first checks the configured path, then Git Bash, then `bash.exe` on `PATH`.
+Pi normally invokes Bash with `bash -c`. On Unix systems, it uses `/bin/bash`, then `bash` on `PATH`, and finally `sh` when Bash is unavailable. Native Windows first checks the configured path, then Git Bash under Program Files, then Git Bash of the `git.exe` on `PATH`, then `bash.exe` on `PATH`.
 
 ## Choose a Bash executable
 
