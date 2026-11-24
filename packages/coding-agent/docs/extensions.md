@@ -894,7 +894,7 @@ pi.on("after_provider_response", (event, ctx) => {
 });
 ```
 
-Coverage depends on provider and transport. Some providers report empty headers or only some responses. Errors that arrive inside an already started stream and WebSocket transports do not fire this event; use `provider_stream_event` to observe them.
+Coverage depends on provider and transport. Some providers report empty headers or only some responses. It does not fire for errors that arrive inside an already started SSE stream, or for WebSocket transports, including a WebSocket connection that fails to open.
 
 #### provider_stream_event
 
