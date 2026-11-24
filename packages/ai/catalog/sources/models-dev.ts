@@ -45,6 +45,8 @@ interface V2ApiEntry {
 /** The subset of a models.dev v2 model the catalog reads. */
 export interface ModelsDevV2Model {
 	id: string;
+	/** The lab's own `<provider>/<id>`, e.g. `anthropic/claude-sonnet-5-5`. Some of the lab's own entries omit it. */
+	canonical_id?: string;
 	type: string;
 	name: string;
 	status?: string;
@@ -86,6 +88,8 @@ export interface ModelsDevApi {
 /** A models.dev model normalized for the catalog. */
 export interface ModelsDevModel {
 	id: string;
+	/** The model's id on its lab's own models.dev provider, e.g. `anthropic/claude-sonnet-5-5`. */
+	canonicalId?: string;
 	name: string;
 	type: string;
 	status?: string;
@@ -184,6 +188,7 @@ export function normalizeModelsDevModel(model: ModelsDevV2Model): ModelsDevModel
 	const reasoning = model.capabilities?.reasoning;
 	return {
 		id: model.id,
+		canonicalId: model.canonical_id,
 		name: model.name,
 		type: model.type,
 		status: model.status,

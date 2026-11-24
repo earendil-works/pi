@@ -75,6 +75,12 @@ describe("Copilot Claude via Anthropic Messages", () => {
 		expect(getSupportedThinkingLevels(sonnet46)).not.toContain("xhigh");
 	});
 
+	// Copilot rejects `thinking: {type: "disabled"}` on Sonnet 5.5 (#12429).
+	it("does not offer thinking off on Claude Sonnet 5.5", () => {
+		const sonnet55 = getModel("github-copilot", "claude-sonnet-5.5");
+		expect(getSupportedThinkingLevels(sonnet55)).not.toContain("off");
+	});
+
 	it("uses Bearer auth, Copilot headers, and valid Anthropic Messages payload", async () => {
 		const model = getModel("github-copilot", "claude-sonnet-4.6");
 		expect(model.api).toBe("anthropic-messages");

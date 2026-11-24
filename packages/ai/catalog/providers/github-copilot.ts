@@ -1,6 +1,6 @@
 import type { Api, ClassifierModel, Model, ThinkingLevelMap } from "../../src/types.ts";
 import { addMissing, type ChatModel, defineProvider, mergeCompat, mergeThinking, modelsDevModels } from "../define.ts";
-import { claude55ThinkingLevels, supportsClaudeMidConvoSystemMessages } from "../families/anthropic.ts";
+import { CLAUDE_55_THINKING_LEVELS, supportsClaudeMidConvoSystemMessages } from "../families/anthropic.ts";
 import {
 	enableOpenAiGrammarTools,
 	enableOpenAiMidConvoSystemMessages,
@@ -119,7 +119,7 @@ export default defineProvider({
 								source.reasoningOptions?.some((option) => option.type === "effort") ?? false,
 						};
 					}
-					if (model.id === "claude-opus-5.5") mergeThinking(result, claude55ThinkingLevels(model.id));
+					if (model.id === "claude-opus-5.5") mergeThinking(result, CLAUDE_55_THINKING_LEVELS);
 					return result;
 				},
 			}),
