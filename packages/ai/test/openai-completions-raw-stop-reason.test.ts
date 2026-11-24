@@ -91,4 +91,68 @@ describe("OpenAI completions raw stop reasons", () => {
 		expect(message.errorMessage).toBe("Provider finish_reason: error");
 		expect(isRetryableAssistantError(message)).toBe(true);
 	});
+
+	// #12407
+	it("keeps finish_reason for normal and unknown native finish reasons", async () => {
+		mockState.chunks = [
+			{
+				id: "gen-3",
+				choices: [
+					{
+						index: 0,
+						delta: { tool_calls: [{ index: 0, id: "call_1", function: { name: "read", arguments: "{}" } }] },
+						finish_reason: null,
+					},
+				],
+			},
+			// Gemini reports STOP for tool calls; OpenRouter's finish_reason carries the tool call.
+			{ id: "gen-3", choices: [{ index: 0, delta: {}, finish_reason: "tool_calls", native_finish_reason: "STOP" }] },
+		];
+		const toolMessage = await streamOpenAICompletions(model, context, { apiKey: "test" }).result();
+		expect(toolMessage.stopReason).toBe("toolUse");
+		expect(toolMessage.rawStopReason).toBe("tool_calls.STOP");
+
+		mockState.chunks = [
+			{ id: "gen-4", choices: [{ index: 0, delta: {}, finish_reason: "stop", native_finish_reason: "eos" }] },
+		];
+		const unknownMessage = await streamOpenAICompletions(model, context, { apiKey: "test" }).result();
+		expect(unknownMessage.stopReason).toBe("stop");
+		expect(unknownMessage.rawStopReason).toBe("stop.eos");
+		expect(unknownMessage.errorMessage).toBeUndefined();
+	});
+
+	// #11931
+	it("adds the native reason to an error finish_reason and keeps it retryable", async () => {
+		mockState.chunks = [
+			{
+				id: "gen-6",
+				choices: [{ index: 0, delta: {}, finish_reason: "error", native_finish_reason: "OTHER" }],
+			},
+		];
+
+		const message = await streamOpenAICompletions(model, context, { apiKey: "test" }).result();
+
+		expect(message.stopReason).toBe("error");
+		expect(message.rawStopReason).toBe("error.OTHER");
+		expect(message.errorMessage).toBe("Provider finish_reason: error (native_finish_reason: OTHER)");
+		expect(isRetryableAssistantError(message)).toBe(true);
+	});
+
+	// #11931
+	it("keeps the native reason when a trailing chunk repeats finish_reason without it", async () => {
+		mockState.chunks = [
+			{
+				id: "gen-7",
+				choices: [{ index: 0, delta: {}, finish_reason: "error", native_finish_reason: "MALFORMED_FUNCTION_CALL" }],
+			},
+			{ id: "gen-7", choices: [{ index: 0, delta: {}, finish_reason: "error" }] },
+		];
+
+		const message = await streamOpenAICompletions(model, context, { apiKey: "test" }).result();
+
+		expect(message.rawStopReason).toBe("error.MALFORMED_FUNCTION_CALL");
+		expect(message.errorMessage).toBe(
+			"Provider finish_reason: error (native_finish_reason: MALFORMED_FUNCTION_CALL)",
+		);
+	});
 });

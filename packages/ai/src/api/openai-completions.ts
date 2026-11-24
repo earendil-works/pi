@@ -410,6 +410,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			let textBlock: TextContent | null = null;
 			let thinkingBlock: ThinkingContent | null = null;
 			let hasFinishReason = false;
+			let nativeFinishReason: string | undefined;
 			const toolCallBlocksByIndex = new Map<number, ToolCall>();
 			const toolCallBlocksById = new Map<string, ToolCall>();
 			const toolCallStates = new Map<ToolCall, ToolCallState>();
@@ -564,9 +565,21 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 					output.usage = parseChunkUsage((choice as any).usage, model);
 				}
 
+				// OpenRouter extension (wire input, absent from the SDK types): the upstream provider's own
+				// finish reason. Kept across chunks so a trailing chunk that repeats finish_reason without it
+				// does not drop it.
+				const native = (choice as { native_finish_reason?: unknown }).native_finish_reason;
+				if (typeof native === "string" && native.length > 0) {
+					nativeFinishReason = native;
+				}
+
 				if (choice.finish_reason) {
-					output.rawStopReason = choice.finish_reason;
-					const finishReasonResult = mapStopReason(choice.finish_reason);
+					// Distinct native reasons only, e.g. "stop.MALFORMED_RESPONSE" (like openai-responses' "incomplete.max_output_tokens").
+					const distinctNative = nativeFinishReason !== choice.finish_reason ? nativeFinishReason : undefined;
+					output.rawStopReason = distinctNative
+						? `${choice.finish_reason}.${distinctNative}`
+						: choice.finish_reason;
+					const finishReasonResult = mapStopReason(choice.finish_reason, distinctNative);
 					output.stopReason = finishReasonResult.stopReason;
 					if (finishReasonResult.errorMessage) {
 						output.errorMessage = finishReasonResult.errorMessage;
@@ -1560,7 +1573,20 @@ function parseChunkUsage(
 	return usage;
 }
 
-function mapStopReason(reason: ChatCompletionChunk.Choice["finish_reason"] | string): {
+function mapStopReason(
+	reason: ChatCompletionChunk.Choice["finish_reason"] | string,
+	nativeReason: string | undefined,
+): {
+	stopReason: StopReason;
+	errorMessage?: string;
+} {
+	const result = mapFinishReason(reason);
+	if (nativeReason === undefined || result.stopReason !== "error") return result;
+	// Keep the finish_reason message, which retry matching relies on, and add the upstream cause (#11931).
+	return { ...result, errorMessage: `${result.errorMessage} (native_finish_reason: ${nativeReason})` };
+}
+
+function mapFinishReason(reason: ChatCompletionChunk.Choice["finish_reason"] | string): {
 	stopReason: StopReason;
 	errorMessage?: string;
 } {
