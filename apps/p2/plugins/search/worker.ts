@@ -4,7 +4,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import {
 	AssistantEntry,
 	type Conversation,
-	type ConversationId,
+	type ConversationRecord,
 	type Cursor,
 	type EntryId,
 	type EntryRecord,
@@ -25,7 +25,7 @@ import {
 	signalOf,
 	until,
 } from "@p2/app/v1";
-import { CommitSignal, harnessOf, topLevelRecords } from "@p2/app/v1/worker";
+import { CommitSignal, harnessOf, topLevelConversations } from "@p2/app/v1/worker";
 import { Subagents } from "../subagents/contract.worker.ts";
 import { type IndexedMessage, IndexScan, SearchFeed } from "./contract.ts";
 
@@ -134,17 +134,26 @@ export default defineFacet((host) => {
 				const seen = signal.version;
 				try {
 					const registry = await durable.snapshot(Subagents, ROOT_CONVERSATION_ID, ctx);
-					// A branch's history starts after its fork point: what it inherits is indexed with the conversation
-					// storing it.
-					const starts = new Map<number, number>(
-						(await topLevelRecords(durable, ctx)).map((record) => [record.id, record.parent?.at ?? 0]),
-					);
-					for (const agent of Object.values(registry?.agents ?? {})) starts.set(agent.conversationId, 0);
-					for (const [id, start] of starts) {
-						const conversation = await durable.conversation(id as ConversationId, ctx);
+					const ids = [
+						...(await topLevelConversations(durable, ctx)),
+						...Object.values(registry?.agents ?? {}).map((agent) => agent.conversationId),
+					];
+					// Records are table reads, in a commit. A fork's history (a `/tree` branch, a subagent forked from the
+					// main conversation: a Discord thread's) starts after its fork point: what it inherits is indexed with
+					// the conversation storing it, and the server refuses it in the fork's batches.
+					const records = await durable.commit(async (tx) => {
+						const found: ConversationRecord[] = [];
+						for (const id of ids) {
+							const record = await tx.conversation(id);
+							if (record) found.push(record);
+						}
+						return found;
+					}, ctx);
+					for (const record of records) {
+						const conversation = await durable.conversation(record.id, ctx);
 						if (!conversation) continue;
-						const through = await feed.cursor({ conversation: id }, ctx);
-						await catchUp(conversation, feed, Math.max(through, start), ctx);
+						const through = await feed.cursor({ conversation: record.id }, ctx);
+						await catchUp(conversation, feed, Math.max(through, record.parent?.at ?? 0), ctx);
 					}
 					scanned.set(true);
 				} catch (error) {

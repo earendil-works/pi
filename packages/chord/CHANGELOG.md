@@ -4,6 +4,23 @@
 
 ### Breaking Changes
 
+- `RolloutHost` is a tagged union: `{ kind: "reloaded", host, report }`, `{ kind: "stopped", host }` or `{ kind: "failed", host, error }` (was `{ host, report }`, `{ host, stopped: true }`, `{ host, error }`). Migration: a rollout step's `reload` returns entries with `kind`; readers switch on `kind` instead of `"report" in entry`. A worker's reply to a reload is `reloaded` (with its report) or `reload_failed` (with its error).
+- `PluginSource` (`installPlugin`, the app kit's `plugins.install`) is tagged: `{ kind: "git", git, ref }` or `{ kind: "npm", npm, version }`. Migration: add the `kind`.
+- `SeriesResult` (`ChordStore.commitSeries`) is tagged: `{ kind: "stored", stored }` or `{ kind: "refused", stored, refused }` (was `{ stored, refused? }`). Migration: read `refused` after checking `result.kind === "refused"`.
+- Sync (experimental): writer epochs are removed. `uploadSession` no longer takes `epoch`, `putBatch` no longer passes one, and neither `PutBatchResult` nor `UploadResult` has `stale_epoch`: no remote issued epochs.
+
+### Added
+
+- Sync (experimental): `uploadSession` reports a remote that holds no history for a session this copy had shared (`not_head` at head 0, the copy past 0) as `{ type: "remote_empty", at }`, apart from `diverged`: the remote's copy was deleted, and the host may forget its sync state and start over with a full copy.
+
+### Fixed
+
+- Fixed sync batches and `importStore` JSONL rescanning an incomplete line on every chunk, which made long lines take time quadratic in their length ([#12224](https://github.com/earendil-works/pi/issues/12224))
+
+## [1.6.0] - 2026-11-20
+
+### Breaking Changes
+
 - `createWorkers` requires `store`, the store given to the server host's `createHost` (`undefined` only for a host without one): a worker's exit is published only once the commits queued in it before the exit settled. The app kit passes its own.
 - `telemetryIngestFacet` requires `admit(principal)`: only the pages of principals it admits may send their spans to `PageTelemetry`; a refused principal's hold fails `forbidden`. The app kit admits every signed-in page. Migration: pass `admit` (`() => true` keeps the old behaviour).
 - `HostError` `query_failed` carries `query` (the table's name for `self.query`, the named query's label for `self.liveQuery`, `self.count` and `self.list`) in place of `table`.
@@ -37,6 +54,8 @@
 - A list or live query whose value was set several times in one commit (a list's row moving from one loaded page to another) published one frame per set; over a link that was two entries for one member in one state message, the protocol error `member twice in one state`, which closed the link. It publishes one frame per commit now: its last value, diffed from the value before the commit.
 - The workers component closes a worker's link when the worker exits, before it publishes the exit in `state` and before the address's next worker starts: a call the worker sent that was not handled yet is dropped and a running one is aborted, so nothing an exited worker reported is handled or commits after `state` says it is gone. Apps need no stale-worker check of their own.
 - The optional peer dependencies on `react`, `ws` and `esbuild` are ranges (`^19.3.0`, `^8.21.0`, `^0.28.2`), not exact versions: npm no longer refuses to install Chord in a project with another patch release of them, such as react 19.3.1 ([#12008](https://github.com/earendil-works/pi/issues/12008)).
+- Sync: a store whose outbox was turned off and on again after it committed could not upload any more (`uploadSession` failed with `OutboxUnavailableError` on every attempt): the commits between what the remote holds and the outbox's start were gone. The upload now creates an archive slot after the remote's head (the store's `export()`), so the session's history goes on from a full state, and `remoteHistory`/`pullSession` restore from the newest archive slot along the chain; a copy behind it gets `HistoryUnavailableError` and restores fresh.
+- Sync: a pull that read a remote body and then refused it (a copy behind an archive slot) left the body's file open until garbage collection, which Node 22 warns about (DEP0137) and Node 26 throws for, uncaught. `pullSession` now calls `return()` on every body it read, and a `FileSystemSyncRemote` body closes its file on `return()` also before its first read.
 
 ## [1.5.2] - 2026-11-10
 

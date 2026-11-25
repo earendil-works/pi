@@ -506,7 +506,10 @@ function call(client: Client, id: number, request: HostCall): void {
 	const cancelled = Promise.withResolvers<never>();
 	cancelled.promise.catch(() => {});
 	client.calls.set(id, () => cancelled.reject(new Error("cancelled")));
-	const result = "key" in request ? once(request) : perform(request, cancelled.promise);
+	const result =
+		request.op === "open" || request.op === "send" || request.op === "close"
+			? once(request)
+			: perform(request, cancelled.promise);
 	Promise.race([result, cancelled.promise])
 		.then(
 			(value) => send(client, { type: "reply", id, result: value }),
@@ -600,7 +603,10 @@ function target(sessionId: string, name: string): Hosted {
 	return found;
 }
 
-/** A terminal the agent opens; its program has started when this returns, or it is gone with the error. */
+/**
+ * A terminal the agent opens; its program has started and its command is typed when this returns, or it is gone with
+ * the error.
+ */
 async function openForAgent(request: Extract<HostCall, { op: "open" }>): Promise<TerminalInfo> {
 	const running = sessionTerminals(request.sessionId).filter((hosted) => hosted.info.agent && !hosted.info.exited);
 	if (running.length >= MAX_AGENT_TERMINALS)
@@ -619,15 +625,48 @@ async function openForAgent(request: Extract<HostCall, { op: "open" }>): Promise
 		},
 		DEFAULT_THEME,
 	);
-	// The shell reads it once it is ready, as typed ahead.
-	if (request.command) input(hosted, new TextEncoder().encode(`${request.command}\r`));
 	await started;
 	const failed = hosted.info.exited?.error;
 	if (failed) {
 		close(hosted);
 		throw new Error(failed);
 	}
+	if (request.command) {
+		// Typed ahead, a shell without a line editor (dash) prints its prompt after the echoed command, so the command's
+		// output would start on the prompt's line (`$ hi-there`): type it once the prompt is out.
+		await shellReady(hosted);
+		if (terminals.get(hosted.info.id) === hosted && !hosted.info.exited)
+			input(hosted, new TextEncoder().encode(`${request.command}\r`));
+	}
 	return hosted.info;
+}
+
+/** How long a shell may take to print its first prompt before the agent's command is typed anyway. */
+const SHELL_READY_MS = 5000;
+/** The pause in output after the shell started printing that says its prompt is out. */
+const SHELL_SETTLE_MS = 150;
+
+/** Resolves once the shell printed its first output and paused, exited or closed, or after `SHELL_READY_MS`. */
+function shellReady(hosted: Hosted): Promise<void> {
+	return new Promise((resolve) => {
+		let settle: ReturnType<typeof setTimeout> | undefined;
+		const finish = () => {
+			clearTimeout(timeout);
+			clearTimeout(settle);
+			hosted.waiters.delete(waiter);
+			resolve();
+		};
+		const waiter = () => {
+			if (terminals.get(hosted.info.id) !== hosted || hosted.info.exited) finish();
+			else if (hosted.ring.end > 0) {
+				clearTimeout(settle);
+				settle = setTimeout(finish, SHELL_SETTLE_MS);
+			}
+		};
+		const timeout = setTimeout(finish, SHELL_READY_MS);
+		hosted.waiters.add(waiter);
+		waiter();
+	});
 }
 
 /** Output since `from` (default: the read cursor) as plain text, after the wait; moves the read cursor past it. */

@@ -6,6 +6,10 @@ import type { Resources } from "../models/contract.ts";
 import type { LoginEvent, LoginPrompt, LoginState } from "./contract.ts";
 
 type PendingPrompt = { prompt: LoginPrompt; resolve: (value: string) => void };
+
+/** Why a login was ended before it finished, by its owner or by p2. */
+type Ending = { kind: "cancelled" } | { kind: "away" } | { kind: "replaced" };
+
 type Attempt = {
 	id: string;
 	owner: string;
@@ -14,7 +18,17 @@ type Attempt = {
 	controller: AbortController;
 	prompts: Map<string, PendingPrompt>;
 	done: Promise<void>;
+	/** Set right before `controller` aborts for an ending. */
+	ending: Ending | undefined;
+	/** Armed while no page of its owner holds the login (see `away`). */
+	awayTimer: ReturnType<typeof setTimeout> | undefined;
 };
+
+/**
+ * How long an unfinished login survives its owner having no page that holds it. A phone's browser drops a background
+ * tab's connection within seconds, and the owner is in the provider's tab then; a closed tab must still free the slot.
+ */
+export const AWAY_MS = 5 * 60_000;
 
 /** The current login (one at a time) and the principal key of the owner that started it. */
 export type LoginsState = { readonly login: LoginState | null; readonly owner: string | null };
@@ -31,9 +45,12 @@ export class Logins {
 	private readonly listeners = new Set<() => void>();
 	private active: Attempt | undefined;
 	private current: LoginsState = { login: null, owner: null };
+	private readonly awayMs: number;
 
-	constructor(resources: Resources) {
+	/** Logins over `resources`; one whose owner is away `awayMs` ends (tests shorten it). */
+	constructor(resources: Resources, awayMs = AWAY_MS) {
 		this.resources = resources;
+		this.awayMs = awayMs;
 		this.device = new LockedFile(join(resources.directory, "device.json"));
 	}
 
@@ -52,17 +69,27 @@ export class Logins {
 		return this.current.owner === owner ? this.current.login : null;
 	}
 
-	start(owner: string, providerId: string, authType: AuthType, remote = false): string {
+	/**
+	 * Starts a login for `owner`, ending their own unfinished one first: a page that was reloaded or lost its sheet
+	 * cannot reach that one any more. Another owner's unfinished login refuses the start.
+	 */
+	async start(owner: string, providerId: string, authType: AuthType, remote = false): Promise<string> {
 		if (this.lifetime.signal.aborted) throw new Error("Server is shutting down");
+		const provider = this.resources.models.getProvider(providerId);
+		if (!(authType === "oauth" ? provider?.auth.oauth?.login : provider?.auth.apiKey?.login))
+			throw new Error("Provider does not support this login method");
+		const previous = this.active;
+		if (previous?.owner === owner) {
+			// Waits for it to end: its flow may still hold a callback port the new one needs.
+			this.end(previous, { kind: "replaced" });
+			await previous.done;
+		}
 		if (this.active)
 			throw new Error(
 				this.active.owner === owner
 					? "A provider login is already in progress; cancel it first"
 					: "Another owner device is signing in to a provider; try again when it has finished",
 			);
-		const provider = this.resources.models.getProvider(providerId);
-		if (!(authType === "oauth" ? provider?.auth.oauth?.login : provider?.auth.apiKey?.login))
-			throw new Error("Provider does not support this login method");
 		const attempt: Attempt = {
 			id: randomUUID(),
 			owner,
@@ -71,6 +98,8 @@ export class Logins {
 			controller: new AbortController(),
 			prompts: new Map(),
 			done: Promise.resolve(),
+			ending: undefined,
+			awayTimer: undefined,
 		};
 		this.active = attempt;
 		this.emit(owner, { type: "started", attemptId: attempt.id, providerId, authType });
@@ -179,17 +208,39 @@ export class Logins {
 			this.emit(attempt.owner, {
 				type: "finished",
 				attemptId: attempt.id,
-				status: committed ? "success" : signal.aborted ? "cancelled" : "error",
-				message: committed
-					? "Signed in; resource refresh did not complete."
-					: signal.aborted
-						? "Login cancelled."
-						: "Provider login failed. Check the provider configuration and try again.",
+				...(committed
+					? { status: "success", message: "Signed in; resource refresh did not complete." }
+					: this.failure(attempt, deadline)),
 			});
 		} finally {
+			clearTimeout(attempt.awayTimer);
 			attempt.controller.abort(); // Withdraw leftover/manual prompts after callback success.
 			if (this.active === attempt) this.active = undefined;
 		}
+	}
+
+	/** How an attempt that threw before committing ended, and the message that says why. */
+	private failure(attempt: Attempt, deadline: AbortSignal): { status: "cancelled" | "error"; message: string } {
+		switch (attempt.ending?.kind) {
+			case "cancelled":
+				return { status: "cancelled", message: "Login cancelled." };
+			case "replaced":
+				return { status: "cancelled", message: "Replaced by a new login." };
+			case "away":
+				return {
+					status: "error",
+					message: "Login ended: no page of yours was connected for too long. Start it again.",
+				};
+		}
+		if (this.lifetime.signal.aborted) return { status: "cancelled", message: "Login cancelled: the server stopped." };
+		if (deadline.aborted) return { status: "error", message: "Login expired. Start it again." };
+		return { status: "error", message: "Provider login failed. Check the provider configuration and try again." };
+	}
+
+	/** Ends `attempt` for `ending` (the first ending is the one it reports). */
+	private end(attempt: Attempt, ending: Ending): void {
+		attempt.ending ??= ending;
+		attempt.controller.abort();
 	}
 
 	private owned(owner: string, id: string): Attempt {
@@ -213,7 +264,7 @@ export class Logins {
 	/** Cancels the login; resolves once it finished (its state shows "cancelled", or what it reached first). */
 	async cancel(owner: string, attemptId: string): Promise<void> {
 		const attempt = this.owned(owner, attemptId);
-		attempt.controller.abort();
+		this.end(attempt, { kind: "cancelled" });
 		await attempt.done;
 	}
 
@@ -225,9 +276,22 @@ export class Logins {
 		this.changed();
 	}
 
-	/** Its owner left (closed the sheet everywhere, or disconnected): end its unfinished login, nobody else's. */
-	disconnect(owner: string): void {
-		if (this.active?.owner === owner) this.active.controller.abort();
+	/**
+	 * No page of `owner` holds the login any more (tabs closed, connections dropped): their unfinished login ends after
+	 * `awayMs` unless `back` comes first. Nobody else's login is touched.
+	 */
+	away(owner: string): void {
+		const attempt = this.active;
+		if (attempt?.owner !== owner || attempt.awayTimer !== undefined) return;
+		attempt.awayTimer = setTimeout(() => this.end(attempt, { kind: "away" }), this.awayMs);
+	}
+
+	/** The unfinished login's owner holds it again (a page reconnected or reloaded): it no longer ends for being away. */
+	back(): void {
+		const attempt = this.active;
+		if (attempt === undefined) return;
+		clearTimeout(attempt.awayTimer);
+		attempt.awayTimer = undefined;
 	}
 
 	async logout(providerId: string): Promise<void> {

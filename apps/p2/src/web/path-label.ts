@@ -1,7 +1,7 @@
 // Compact directory and environment labels for the web UI; the underlying paths stay unchanged.
 import { shortPath } from "../runtime/location.ts";
 
-// Every process shortens paths alike (project glyphs hash the short form), so the rule lives in the runtime.
+// The runtime's rule, so every process shortens paths alike.
 export { shortPath };
 
 /** Where a session's tools run: a compact path, prefixed by its remote environment when present. */

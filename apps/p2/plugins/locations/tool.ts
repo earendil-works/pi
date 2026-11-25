@@ -61,14 +61,15 @@ export function createLocationExtension({ server, locate }: LocationTools) {
 		const envs = await server.envs(context);
 		const names = envs.map((env) => env.name);
 		const sandbox = sandboxAt(here, envs);
-		const parsed =
+		const result =
 			args.location !== undefined
 				? parseLocation(args.location, names, here)
 				: parseLocation(args.cwd ?? "", names, {
 						env: args.env === undefined ? here.env : args.env,
 						...(args.env === undefined || args.env === here.env ? { cwd: here.cwd } : {}),
 					});
-		if ("error" in parsed) return parsed.error;
+		if (result.kind === "invalid") return result.error;
+		const parsed = result.location;
 		if (sandbox !== undefined && parsed.env !== sandbox)
 			return `You work in sandbox ${sandbox} and cannot leave it; use paths inside ${sandbox}.`;
 		if (parsed.env !== null && !names.includes(parsed.env))

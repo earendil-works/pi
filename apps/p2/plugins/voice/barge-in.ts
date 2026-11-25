@@ -1,12 +1,59 @@
-// Talking over the agent (ported from badlogic/pibot src/client/barge-in.ts at 2ef6b69, kept as it is there; only
-// the phase type and the class syntax are adapted, and the resampler keeps its state across frames). A trigger only
-// streams the speaker to the room; whether it interrupts is interruption.ts's decision. While the agent works or speaks, the microphone is buffered rather
-// than streamed; the speaker interrupts when enough frames in a row hold energy that the played audio does not explain
+// Talking over the agent (ported from badlogic/pibot src/client/barge-in.ts at 2ef6b69; the phase type and the class
+// syntax are adapted, the resampler keeps its state across frames, and the level is relative to the microphone's own
+// noise floor instead of pibot's fixed 0.018). A trigger only streams the speaker to the room; whether it interrupts is
+// interruption.ts's decision. While the agent works or speaks, the microphone is buffered rather than streamed; the
+// speaker interrupts when enough frames in a row are loud enough and hold energy that the played audio does not explain
 // (its residual after the best-correlated delay of the playback reference). The detector then streams until the phase
 // leaves "hearing".
+//
+// Loud enough: a frame's RMS at least MARGIN times the noise floor (about +11 dB), never below MIN_LEVEL (silence and
+// faint hiss never count) and never above pibot's 0.018 (no stricter than before). Without automatic gain control a
+// laptop's built-in microphone hears a speaker at arm's length at about 0.005: under pibot's fixed level, so only a
+// voice right at the keyboard interrupted. The floor follows every frame: down quickly (a pause), up slowly (steady
+// noise, a fan), so a few seconds of speech hardly move it. Automatic gain control is no alternative: it pumps while
+// the agent's speech plays.
 
 /** The phases the detector tells apart (pibot's robot phases; voice mode maps its own onto them). */
 export type BargeInPhase = "inactive" | "listening" | "hearing" | "thinking" | "tool" | "speaking" | "error";
+
+/** A frame's RMS must reach this many times the noise floor to count as speech. */
+export const MARGIN = 3.5;
+/** The lowest RMS that ever counts as speech, however quiet the floor. */
+export const MIN_LEVEL = 0.003;
+/** The highest level ever required: pibot's fixed one. */
+export const MAX_LEVEL = 0.018;
+/** How fast the floor follows a quieter frame, and a louder one (time constants, seconds). */
+const FLOOR_FALL_S = 0.3;
+const FLOOR_RISE_S = 8;
+
+/** The level a frame must reach over a noise floor of `floor` (see the header). */
+export const speechLevel = (floor: number): number => Math.min(MAX_LEVEL, Math.max(MIN_LEVEL, floor * MARGIN));
+
+/** What the microphone heard over some frames, for the voice log: while the agent's speech played, or not. */
+export type MicLevels = {
+	readonly playing: boolean;
+	readonly frames: number;
+	readonly peakRms: number;
+	readonly meanRms: number;
+	/** The noise floor and the level required, at the end of the window. */
+	readonly floor: number;
+	readonly level: number;
+	/** The residual ratio of the loudest frame, and the highest one (frames buffered for barge-in only). */
+	readonly residualAtPeak?: number;
+	readonly maxResidual?: number;
+	/** Frames that passed both checks. */
+	readonly candidates: number;
+};
+
+/** A window of `MicLevels` being collected. */
+type LevelWindow = {
+	frames: number;
+	peakRms: number;
+	energy: number;
+	residualAtPeak?: number;
+	maxResidual?: number;
+	candidates: number;
+};
 
 export interface BargeInResult {
 	triggered: boolean;
@@ -27,15 +74,42 @@ export class BargeInDetector {
 	#micBufferWrite = 0;
 	#micBufferSamples = 0;
 	readonly #micBufferRing: Int16Array;
-	readonly #micThreshold: number;
 	readonly #residualThreshold: number;
 	readonly #triggerFrames: number;
+	/** The microphone's noise floor (frame RMS); undefined before the first frame. */
+	#floor: number | undefined;
+	/** The levels since the last `takeLevels`, while the agent's speech played and while it did not. */
+	readonly #windows = new Map<boolean, LevelWindow>();
 
-	constructor(targetSampleRate: number, micThreshold = 0.018, residualThreshold = 0.62, triggerFrames = 5) {
+	constructor(targetSampleRate: number, residualThreshold = 0.62, triggerFrames = 5) {
 		this.#micBufferRing = new Int16Array(targetSampleRate);
-		this.#micThreshold = micThreshold;
 		this.#residualThreshold = residualThreshold;
 		this.#triggerFrames = triggerFrames;
+	}
+
+	/** The noise floor now (0 before any frame). */
+	get floor(): number {
+		return this.#floor ?? 0;
+	}
+
+	/** The levels heard since the last call (at most one window while playing and one while not), then cleared. */
+	takeLevels(): MicLevels[] {
+		const floor = this.floor;
+		const taken = [...this.#windows].map(
+			([playing, window]): MicLevels => ({
+				playing,
+				frames: window.frames,
+				peakRms: window.peakRms,
+				meanRms: Math.sqrt(window.energy / window.frames),
+				floor,
+				level: speechLevel(floor),
+				...(window.residualAtPeak === undefined ? {} : { residualAtPeak: window.residualAtPeak }),
+				...(window.maxResidual === undefined ? {} : { maxResidual: window.maxResidual }),
+				candidates: window.candidates,
+			}),
+		);
+		this.#windows.clear();
+		return taken;
 	}
 
 	resetStreaming(): void {
@@ -72,10 +146,19 @@ export class BargeInDetector {
 		ttsSpeaking: boolean,
 	): BargeInResult {
 		this.#appendMicBuffer(pcm);
-		if (!this.#shouldBufferForBargeIn(phase) || this.#streaming) return { triggered: false };
 		const rms = this.#micRms(input);
-		const ratio = phase === "tool" && !ttsSpeaking ? 1 : this.#bargeResidualRatio(input, sampleRate);
-		const triggered = rms >= this.#micThreshold && ratio >= this.#residualThreshold;
+		// The level against the floor before this frame: a frame of speech does not raise its own bar.
+		const level = speechLevel(this.#floor ?? rms);
+		this.#follow(rms, input.length / sampleRate);
+		const buffering = this.#shouldBufferForBargeIn(phase) && !this.#streaming;
+		const ratio = !buffering
+			? undefined
+			: phase === "tool" && !ttsSpeaking
+				? 1
+				: this.#bargeResidualRatio(input, sampleRate);
+		const triggered = ratio !== undefined && rms >= level && ratio >= this.#residualThreshold;
+		this.#record(ttsSpeaking, rms, ratio, triggered);
+		if (ratio === undefined) return { triggered: false };
 		this.#consecutiveFrames = triggered ? this.#consecutiveFrames + 1 : Math.max(0, this.#consecutiveFrames - 1);
 		if (this.#consecutiveFrames < this.#triggerFrames) return { triggered: false };
 		this.#streaming = true;
@@ -107,6 +190,32 @@ export class BargeInDetector {
 			output[index] = this.#micBufferRing[(start + index) % this.#micBufferRing.length] ?? 0;
 		}
 		return output;
+	}
+
+	/** The floor follows a frame of `rms` lasting `seconds`: down fast, up slowly. */
+	#follow(rms: number, seconds: number): void {
+		if (this.#floor === undefined) {
+			this.#floor = rms;
+			return;
+		}
+		const tau = rms < this.#floor ? FLOOR_FALL_S : FLOOR_RISE_S;
+		this.#floor += (rms - this.#floor) * (1 - Math.exp(-seconds / tau));
+	}
+
+	#record(playing: boolean, rms: number, ratio: number | undefined, candidate: boolean): void {
+		let window = this.#windows.get(playing);
+		if (!window) {
+			window = { frames: 0, peakRms: 0, energy: 0, candidates: 0 };
+			this.#windows.set(playing, window);
+		}
+		window.frames += 1;
+		window.energy += rms * rms;
+		if (candidate) window.candidates += 1;
+		if (rms >= window.peakRms) {
+			window.peakRms = rms;
+			if (ratio !== undefined) window.residualAtPeak = ratio;
+		}
+		if (ratio !== undefined) window.maxResidual = Math.max(window.maxResidual ?? 0, ratio);
 	}
 
 	#micRms(input: Float32Array): number {

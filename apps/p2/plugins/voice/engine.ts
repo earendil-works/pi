@@ -28,7 +28,7 @@ import { pointerKind, pressVerb } from "@p2/app/v1/web";
 import { BargeInDetector, type BargeInPhase, Pcm16kResampler } from "./barge-in.ts";
 import { Interruption } from "./interruption.ts";
 import { SpeechPlayback } from "./playback.ts";
-import { bargeInPhase } from "./policy.ts";
+import { bargeInPhase, echoCancellationFor } from "./policy.ts";
 import {
 	AGENT_AUDIO,
 	HUMAN_AUDIO,
@@ -84,15 +84,19 @@ const targetSttSampleRate = 16000;
 /** The room's largest microphone frame: 16000 bytes of PCM16. */
 const MAX_MIC_SAMPLES = 8000;
 type ExtendedMicAudioConstraints = MediaTrackConstraints & { latency?: ConstrainDouble };
-/** pibot's microphone constraints. */
-const micAudioConstraints: ExtendedMicAudioConstraints = {
-	echoCancellation: { ideal: true },
+/** pibot's microphone constraints; the echo canceller off for headphones (`echoCancellationFor`). */
+const micAudioConstraints = (echoCancellation: boolean): ExtendedMicAudioConstraints => ({
+	echoCancellation: { ideal: echoCancellation },
 	noiseSuppression: { ideal: false },
 	autoGainControl: { ideal: false },
 	channelCount: { ideal: 1 },
 	sampleRate: { ideal: 48000 },
 	latency: { ideal: 0.02 },
-};
+});
+/** How often the microphone's levels go to the voice log: while the agent's speech plays, and while someone speaks. */
+const LEVELS_MS = 1000;
+/** How often while nothing louder than the floor is heard and nothing plays. */
+const QUIET_LEVELS_MS = 10_000;
 /** A sentence whose speech has not ended this long after it was asked for is given up (the room queues them). */
 const SPEAK_TIMEOUT_MS = 120_000;
 /**
@@ -180,6 +184,13 @@ export class VoiceEngine {
 	readonly #producer: () => boolean;
 	#running = false;
 	#micStream: MediaStream | undefined;
+	/** Whether the microphone runs with the browser's echo canceller (off while the output is headphones). */
+	#echoCancellation = true;
+	/** The microphone being reopened for another output, so device changes reopen it one after another. */
+	#reopening: Promise<void> = Promise.resolve();
+	/** When the microphone's levels were last taken, and last logged while quiet. */
+	#levelsTaken = 0;
+	#quietLogged = 0;
 	#micAudioContext: AudioContext | undefined;
 	#micSource: MediaStreamAudioSourceNode | undefined;
 	#micProcessor: ScriptProcessorNode | undefined;
@@ -275,7 +286,10 @@ export class VoiceEngine {
 		onError: (message) => this.#report(message),
 		onChange: () => this.#update(),
 	});
-	readonly #onDevices = (): void => void this.#logDevices();
+	readonly #onDevices = (): void => {
+		void this.#logDevices();
+		this.#followOutput();
+	};
 	readonly #client = Math.random().toString(36).slice(2, 8);
 	#logs: LogBatch["events"] = [];
 	#dropped = 0;
@@ -371,16 +385,11 @@ export class VoiceEngine {
 		addEventListener("pagehide", this.#onHide);
 		document.addEventListener("visibilitychange", this.#onHide);
 		try {
-			// pibot's startRecognition.
-			const micStream = await navigator.mediaDevices.getUserMedia({ audio: micAudioConstraints, video: false });
+			// pibot's startRecognition, with the echo canceller; headphones turn it off right after (`#followOutput`).
+			this.#echoCancellation = true;
+			const micStream = await this.#openMicrophone(true);
 			this.#micStream = micStream;
 			if (!this.#running) return this.#release();
-			const [audioTrack] = micStream.getAudioTracks();
-			await audioTrack?.applyConstraints(micAudioConstraints).catch((error: unknown) => {
-				this.#log(`mic constraint apply failed: ${messageOf(error)}`);
-			});
-			const settings = audioTrack?.getSettings();
-			if (settings) this.#log(`mic settings: ${JSON.stringify(settings)}`);
 			const micAudioContext = new AudioContext();
 			this.#micAudioContext = micAudioContext;
 			this.#micSource = micAudioContext.createMediaStreamSource(micStream);
@@ -400,6 +409,7 @@ export class VoiceEngine {
 			};
 			// Where the sound goes (labels are readable once the microphone is allowed), now and on every change.
 			void this.#logDevices();
+			this.#followOutput();
 			navigator.mediaDevices.addEventListener("devicechange", this.#onDevices);
 			this.#wakeLock = await navigator.wakeLock?.request("screen").catch(() => undefined);
 		} catch (error) {
@@ -815,9 +825,10 @@ export class VoiceEngine {
 		this.#interruption.tick();
 		const phase = this.#bargeInPhase();
 		const barge = this.#bargeInDetector.observeMic(input, sampleRate, pcm, phase, this.#playback.speaking);
+		this.#logLevels();
 		if (barge.triggered) {
 			const metrics = barge.metrics
-				? ` rms=${barge.metrics.micRms.toFixed(4)} residual=${barge.metrics.residualRatio.toFixed(3)}`
+				? ` rms=${barge.metrics.micRms.toFixed(4)} floor=${this.#bargeInDetector.floor.toFixed(4)} residual=${barge.metrics.residualRatio.toFixed(3)}`
 				: "";
 			this.#log(`barge-in during ${phase}: metrics${metrics}`);
 			this.#startBargeInStream(socket, barge.preroll ?? new Int16Array());
@@ -1021,6 +1032,88 @@ export class VoiceEngine {
 		this.#rates.clear();
 		if (bargeIn) this.#playback.cancelSpeechForBargeIn();
 		else this.#playback.cancelSpeech(reason);
+	}
+
+	/** The microphone with pibot's constraints and the echo canceller as given; its settings go to the log. */
+	async #openMicrophone(echoCancellation: boolean): Promise<MediaStream> {
+		const constraints = micAudioConstraints(echoCancellation);
+		const stream = await navigator.mediaDevices.getUserMedia({ audio: constraints, video: false });
+		const [audioTrack] = stream.getAudioTracks();
+		await audioTrack?.applyConstraints(constraints).catch((error: unknown) => {
+			this.#log(`mic constraint apply failed: ${messageOf(error)}`);
+		});
+		const settings = audioTrack?.getSettings();
+		if (settings) this.#log(`mic settings: ${JSON.stringify(settings)}`);
+		return stream;
+	}
+
+	/** Whether the default output wants the echo canceller (see `echoCancellationFor`); on when it cannot tell. */
+	async #echoCancellationWanted(): Promise<boolean> {
+		try {
+			return echoCancellationFor(await navigator.mediaDevices.enumerateDevices());
+		} catch {
+			return true;
+		}
+	}
+
+	/**
+	 * Reopens the microphone when the output changed between headphones and speakers: the echo canceller is a property
+	 * of the capture, which Chrome does not change on a running track. The new stream feeds the same processor; the
+	 * old one stops once it is replaced.
+	 */
+	#followOutput(): void {
+		this.#reopening = this.#reopening.then(async () => {
+			const wanted = await this.#echoCancellationWanted();
+			const context = this.#micAudioContext;
+			const processor = this.#micProcessor;
+			if (!this.#running || !context || !processor || wanted === this.#echoCancellation) return;
+			this.#log(
+				`output ${wanted ? "is a speaker" : "is headphones"}: microphone echo cancellation ${wanted ? "on" : "off"}`,
+			);
+			let stream: MediaStream;
+			try {
+				stream = await this.#openMicrophone(wanted);
+			} catch (error) {
+				this.#log(`microphone reopen failed: ${messageOf(error)}`);
+				return;
+			}
+			if (!this.#running || this.#micAudioContext !== context || this.#micProcessor !== processor) {
+				for (const track of stream.getTracks()) track.stop();
+				return;
+			}
+			const source = context.createMediaStreamSource(stream);
+			source.connect(processor);
+			this.#micSource?.disconnect();
+			for (const track of this.#micStream?.getTracks() ?? []) track.stop();
+			this.#micSource = source;
+			this.#micStream = stream;
+			this.#echoCancellation = wanted;
+		});
+	}
+
+	/**
+	 * The microphone's levels for the voice log, about once a second while the agent's speech plays or someone is louder
+	 * than the floor (every ten seconds otherwise): raw RMS before any threshold, the floor and the level required, the
+	 * residual ratio. Telling the speaker's level with and without the agent's speech apart shows whether the echo
+	 * canceller swallows them, or the microphone is too quiet.
+	 */
+	#logLevels(): void {
+		const now = Date.now();
+		if (now - this.#levelsTaken < LEVELS_MS) return;
+		this.#levelsTaken = now;
+		const digits = (value: number) => value.toFixed(4);
+		for (const levels of this.#bargeInDetector.takeLevels()) {
+			const loud = levels.peakRms >= 2 * levels.floor;
+			if (!levels.playing && !loud && now - this.#quietLogged < QUIET_LEVELS_MS) continue;
+			if (!levels.playing) this.#quietLogged = now;
+			const residual =
+				levels.maxResidual === undefined
+					? ""
+					: `, residual at peak ${levels.residualAtPeak?.toFixed(2) ?? "?"} max ${levels.maxResidual.toFixed(2)}`;
+			this.#log(
+				`mic levels ${levels.playing ? "while the agent speaks" : "while listening"} (echo cancellation ${this.#echoCancellation ? "on" : "off"}): ${levels.frames} frames, rms peak ${digits(levels.peakRms)} mean ${digits(levels.meanRms)}, floor ${digits(levels.floor)}, level ${digits(levels.level)}, peak/floor ${(levels.peakRms / Math.max(levels.floor, 1e-6)).toFixed(1)}${residual}, ${levels.candidates} over both`,
+			);
+		}
 	}
 
 	/** The audio devices by label (never their IDs), and the output the playback context uses where the browser says. */

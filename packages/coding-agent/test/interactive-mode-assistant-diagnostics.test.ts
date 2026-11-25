@@ -50,7 +50,7 @@ const message: AssistantMessage = {
 
 type NoticeContext = {
 	chatContainer: Container;
-	settingsManager: { getShowCacheMissNotices(): boolean };
+	settingsManager: { getNotices(): { reasoningDrops: boolean } };
 	sessionManager: { getBranch(): Array<{ type: "message"; message: AssistantMessage }> };
 };
 
@@ -60,20 +60,20 @@ const maybeShowThinkingDropNotice = Reflect.get(InteractiveMode.prototype, "mayb
 ) => void;
 
 describe("InteractiveMode assistant diagnostics", () => {
-	test("shows Anthropic thinking drops when cache miss notices are enabled", () => {
+	test("shows Anthropic thinking drops when reasoning drop notices are enabled", () => {
 		initTheme("dark");
 		const enabled = {
 			chatContainer: new Container(),
-			settingsManager: { getShowCacheMissNotices: () => true },
+			settingsManager: { getNotices: () => ({ reasoningDrops: true }) },
 			sessionManager: { getBranch: () => [] },
 		};
 		maybeShowThinkingDropNotice.call(enabled, message);
 		const output = stripAnsi(enabled.chatContainer.render(120).join("\n"));
-		expect(output).toContain("Anthropic dropped 3 thinking blocks (details in session)");
+		expect(output).toContain("Anthropic dropped 3 thinking blocks: prefix_binding_mismatch (details in session)");
 
 		const disabled = {
 			chatContainer: new Container(),
-			settingsManager: { getShowCacheMissNotices: () => false },
+			settingsManager: { getNotices: () => ({ reasoningDrops: false }) },
 			sessionManager: { getBranch: () => [] },
 		};
 		maybeShowThinkingDropNotice.call(disabled, message);
@@ -84,7 +84,7 @@ describe("InteractiveMode assistant diagnostics", () => {
 		initTheme("dark");
 		const context = {
 			chatContainer: new Container(),
-			settingsManager: { getShowCacheMissNotices: () => true },
+			settingsManager: { getNotices: () => ({ reasoningDrops: true }) },
 			sessionManager: { getBranch: () => [{ type: "message" as const, message }] },
 		};
 
@@ -92,4 +92,66 @@ describe("InteractiveMode assistant diagnostics", () => {
 
 		expect(context.chatContainer.children).toHaveLength(0);
 	});
+
+	test("shows OpenAI reasoning removals with their reasons", () => {
+		initTheme("dark");
+		const context = {
+			chatContainer: new Container(),
+			settingsManager: { getNotices: () => ({ reasoningDrops: true }) },
+			sessionManager: { getBranch: () => [{ type: "message" as const, message }] },
+		};
+
+		// The previous Anthropic response dropped more blocks; that must not hide the OpenAI removals.
+		maybeShowThinkingDropNotice.call(
+			context,
+			openAIMessage(["rs_1", "rs_2"], ["prefix_mismatch", "organization_mismatch"]),
+		);
+
+		const output = stripAnsi(context.chatContainer.render(120).join("\n"));
+		expect(output).toContain(
+			"OpenAI dropped 2 reasoning items: prefix_mismatch, organization_mismatch (details in session)",
+		);
+	});
+
+	test("shows OpenAI reasoning removals only when new items are removed", () => {
+		initTheme("dark");
+		// OpenAI reports a removed item again on every later request that replays it.
+		const previous = openAIMessage(["rs_1", "rs_2"], ["prefix_mismatch"]);
+		const context = {
+			chatContainer: new Container(),
+			settingsManager: { getNotices: () => ({ reasoningDrops: true }) },
+			sessionManager: { getBranch: () => [{ type: "message" as const, message: previous }] },
+		};
+
+		maybeShowThinkingDropNotice.call(context, openAIMessage(["rs_1", "rs_2"], ["prefix_mismatch"]));
+		expect(context.chatContainer.children).toHaveLength(0);
+
+		maybeShowThinkingDropNotice.call(context, openAIMessage(["rs_1", "rs_2", "rs_3"], ["prefix_mismatch"]));
+		const output = stripAnsi(context.chatContainer.render(120).join("\n"));
+		expect(output).toContain("OpenAI dropped 3 reasoning items: prefix_mismatch (details in session)");
+	});
 });
+
+function openAIMessage(ids: string[], reasons: string[]): AssistantMessage {
+	return {
+		...message,
+		api: "openai-responses",
+		provider: "openai",
+		model: "gpt-6.2-sol",
+		timestamp: 3,
+		diagnostics: [
+			{
+				type: "openai_input_transformations",
+				timestamp: 3,
+				details: {
+					transformations: ids.map((id, index) => ({
+						type: "reasoning",
+						id,
+						action: "removed",
+						reason: reasons[Math.min(index, reasons.length - 1)],
+					})),
+				},
+			},
+		],
+	};
+}

@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- Fixed `RemoteExecutionEnv` text line readers rescanning an incomplete line after every read, which made long lines take time quadratic in their length ([#12224](https://github.com/earendil-works/pi/issues/12224))
+
+## [1.6.0] - 2026-11-20
+
+### Fixed
+
 - `RemoteExecutionEnv.listDir()` leaves out an entry removed between enumeration and `lstat` instead of failing, like `NodeExecutionEnv.listDir()` and both directory readers. Names that are not valid UTF-8, which `lstat` also reports as missing, are now left out the same way instead of failing the listing, as the directory readers already did ([#11994](https://github.com/earendil-works/pi/issues/11994))
 - Fixed the end of a program's output going missing when the program exited while the link was backed up: the daemon stopped reading 100 ms after the exit even though the rest still sat in the pipe, so `exec` without an output window, `pty` and `process` could lose up to one pipe buffer (64 KiB on Linux). Reading now continues while the link holds output back
 

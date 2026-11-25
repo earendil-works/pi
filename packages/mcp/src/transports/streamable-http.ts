@@ -7,6 +7,7 @@ import {
 	type JsonRpcMessage,
 	McpAbortError,
 	McpConnectionClosedError,
+	normalizeOwnRequestId,
 	parseJsonRpcMessage,
 	toError,
 } from "../protocol/jsonrpc.ts";
@@ -41,7 +42,10 @@ export interface ConsumeSseOptions {
 export async function consumeSseStream(stream: ReadableStream<Uint8Array>, options: ConsumeSseOptions): Promise<void> {
 	const reader = stream.getReader();
 	const decoder = new TextDecoder();
-	let buffered = "";
+	// The incomplete last line. Only new text is scanned and the line is read once when it ends, so a large
+	// line arriving in many chunks costs time linear in its size.
+	let pendingLine = "";
+	let pendingLineBytes = 0;
 	let eventName: string | undefined;
 	let eventId: string | undefined;
 	let dataLines: string[] = [];
@@ -87,22 +91,26 @@ export async function consumeSseStream(stream: ReadableStream<Uint8Array>, optio
 
 	// SSE lines end with CRLF, LF, or a lone CR.
 	let skipLeadingLf = false;
-	const consumeLines = () => {
+	const consumeLines = (text: string) => {
 		let start = 0;
-		for (let i = 0; i < buffered.length; i++) {
-			const char = buffered[i];
+		for (let i = 0; i < text.length; i++) {
+			const char = text[i];
 			if (char !== "\r" && char !== "\n") continue;
-			processLine(buffered.slice(start, i));
+			processLine(pendingLine + text.slice(start, i));
+			pendingLine = "";
+			pendingLineBytes = 0;
 			if (char === "\r") {
-				if (i + 1 < buffered.length) {
-					if (buffered[i + 1] === "\n") i++;
+				if (i + 1 < text.length) {
+					if (text[i + 1] === "\n") i++;
 				} else {
 					skipLeadingLf = true;
 				}
 			}
 			start = i + 1;
 		}
-		buffered = buffered.slice(start);
+		const rest = text.slice(start);
+		pendingLine += rest;
+		pendingLineBytes += Buffer.byteLength(rest);
 	};
 
 	try {
@@ -115,16 +123,13 @@ export async function consumeSseStream(stream: ReadableStream<Uint8Array>, optio
 				if (text.startsWith("\n")) text = text.slice(1);
 				skipLeadingLf = false;
 			}
-			buffered += text;
-			consumeLines();
-			if (Buffer.byteLength(buffered) > maxEventBytes)
-				throw new Error(`MCP SSE event exceeds ${maxEventBytes} bytes`);
+			consumeLines(text);
+			if (pendingLineBytes > maxEventBytes) throw new Error(`MCP SSE event exceeds ${maxEventBytes} bytes`);
 		}
 		let tail = decoder.decode();
 		if (skipLeadingLf && tail.startsWith("\n")) tail = tail.slice(1);
-		buffered += tail;
-		consumeLines();
-		if (buffered) processLine(buffered);
+		consumeLines(tail);
+		if (pendingLine) processLine(pendingLine);
 		dispatch();
 	} catch (error) {
 		// Releasing the lock alone leaves the response open; the original error wins over a failed cancel.
@@ -441,7 +446,7 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 		const cursor: StreamCursor = { lastEventId: undefined, retryMs: undefined, received: false };
 		let answered = false;
 		const onMessage = (message: JsonRpcMessage) => {
-			if (isJsonRpcResponse(message) && message.id === requestId) answered = true;
+			if (isJsonRpcResponse(message) && normalizeOwnRequestId(message.id) === requestId) answered = true;
 		};
 		let stream: ReadableStream<Uint8Array> | undefined = body;
 		let failure: unknown;

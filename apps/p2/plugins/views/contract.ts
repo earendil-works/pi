@@ -302,6 +302,7 @@ export const VIEWS_ACCEPTS: AcceptsTable<typeof Views> = {
 
 /** An older page's open: a Markdown file or the changes (saved views are gone). */
 function openOfV2(old: Static<typeof OpenSchemaV2>): OpenInput {
+	// Version 2's wire schema is frozen: its saved-view form has no `kind` to tell it apart by.
 	if ("saved" in old) throw new Error("Saved views are gone");
 	return {
 		kind: old.kind,

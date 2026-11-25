@@ -4,7 +4,7 @@ import { getModel, normalizeContext } from "../src/compat.ts";
 import type { FetchFunction } from "../src/types.ts";
 import { isRetryableAssistantError } from "../src/utils/retry.ts";
 
-const model = getModel("mistral", "devstral-medium-latest");
+const model = getModel("mistral", "mistral-medium-latest");
 const context = normalizeContext({
 	messages: [{ role: "user", content: "hello", timestamp: Date.now() }],
 });
@@ -52,7 +52,7 @@ describe("Mistral raw stop reasons", () => {
 
 		expect(message.stopReason).toBe("error");
 		expect(message.rawStopReason).toBe("error");
-		expect(message.errorMessage).toBe("Provider stopped with: error (server error)");
+		expect(message.errorMessage).toBe("Provider stopped with: error");
 		// #10487
 		expect(isRetryableAssistantError(message)).toBe(true);
 	});

@@ -49,7 +49,7 @@ const waitForJob = defineTool<typeof Parameters, never, { id: string; polls: num
 		if (status === "done") return { output: [{ type: "text", text: `${id} done after ${polls} polls` }] };
 		// Back off: 1s, 2s, 4s, ... up to a minute.
 		const delayMs = Math.min((api.checkpoint?.delayMs ?? 500) * 2, 60_000);
-		return { sleep: { checkpoint: { id, polls, delayMs }, until: api.now() + delayMs } };
+		return { kind: "sleep", checkpoint: { id, polls, delayMs }, until: api.now() + delayMs };
 	},
 });
 

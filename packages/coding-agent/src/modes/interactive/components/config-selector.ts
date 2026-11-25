@@ -501,9 +501,11 @@ class ResourceList implements Component, Focusable {
 			return;
 		}
 
-		// Pass to search input
+		// Pass to search input. Cursor keys leave the query as it is and must not move the selection.
+		const previousQuery = this.searchInput.getValue();
 		this.searchInput.handleInput(data);
-		this.filterItems(this.searchInput.getValue());
+		const query = this.searchInput.getValue();
+		if (query !== previousQuery) this.filterItems(query);
 	}
 
 	private toggleResource(item: ResourceItem): boolean | undefined {

@@ -2,6 +2,8 @@
 // of contents, for the tree panel (`@p2/app/v1/web`). The icons are renamed: p2's own icon set (icons.tsx) has some of the same names.
 export {
 	AddIcon as NavAddIcon,
+	ArchiveIcon as NavArchiveIcon,
+	CancelIcon as NavCancelIcon,
 	EditIcon as NavEditIcon,
 	FolderIcon as NavFolderIcon,
 	KeyboardArrowDownIcon as NavDisclosureIcon,

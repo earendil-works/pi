@@ -31,7 +31,11 @@ import { context, ENTRY, fleet, Notes, Session, type TestPrincipal, until } from
 function listed(hosts: readonly RolloutHost[]) {
 	return hosts.map((entry) => [
 		entry.host,
-		"report" in entry ? entry.report.plugins : "stopped" in entry ? "stopped" : (entry.error as Error).message,
+		entry.kind === "reloaded"
+			? entry.report.plugins
+			: entry.kind === "stopped"
+				? "stopped"
+				: (entry.error as Error).message,
 	]);
 }
 
@@ -372,10 +376,12 @@ describe("failures stay until retry or a rollout (R2)", () => {
 		try {
 			behaviours.set("S1", { hang: true });
 			const notes = server.hold(Notes, { id: "S1" }, context);
-			await vi.waitFor(() => expect(stateOf(workers.state.value, "S1")?.status).toBe("starting"), {
+			// The incarnation comes with the link's handshake, after `started` cleared the start timer: a forked worker
+			// connects in its own time, so advancing the clock before it would fire the timer (CI flake).
+			await vi.waitFor(() => expect(stateOf(workers.state.value, "S1")?.incarnation).toBeDefined(), {
 				timeout: 5_000,
 			});
-			await new Promise((resolve) => setImmediate(resolve));
+			expect(stateOf(workers.state.value, "S1")?.status).toBe("starting");
 			await vi.advanceTimersByTimeAsync(120_000);
 			expect(stateOf(workers.state.value, "S1")?.status).toBe("starting");
 			expect(notes.state.value.kind).toBe("loading");
@@ -767,7 +773,9 @@ describe("fix round 1", () => {
 		const built = await plugins.build(plugins.state.value.dirty, context);
 		const failed = (result: { steps: readonly { hosts: readonly RolloutHost[] }[] }) => {
 			const [entry] = result.steps[0]!.hosts;
-			return entry !== undefined && "report" in entry ? entry.report.failed.map(({ plugin }) => plugin) : entry;
+			return entry !== undefined && entry.kind === "reloaded"
+				? entry.report.failed.map(({ plugin }) => plugin)
+				: entry;
 		};
 		expect(failed(await plugins.rollout([workers.step("one")], built, context))).toEqual(["@test/notes"]);
 		expect(failed(await plugins.rollout([workers.step("two")], built, context))).toEqual(["@test/notes"]);
@@ -815,7 +823,7 @@ describe("fix round 1", () => {
 			const built = await env.plugins.build(["@test/notes"], context);
 			const result = await env.plugins.rollout([env.workers.step("workers")], built, context);
 			const [entry] = result.steps[0]!.hosts;
-			if (entry === undefined || !("report" in entry)) throw new Error("no report");
+			if (entry === undefined || entry.kind !== "reloaded") throw new Error("no report");
 			return new WeakRef(entry.report);
 		})();
 		await expectCollected(report);

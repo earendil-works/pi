@@ -374,10 +374,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 	};
 
 	const registerSignalHandlers = (): void => {
-		const signals: NodeJS.Signals[] = ["SIGTERM"];
-		if (process.platform !== "win32") {
-			signals.push("SIGHUP");
-		}
+		const signals: NodeJS.Signals[] = ["SIGTERM", "SIGHUP"];
 
 		for (const signal of signals) {
 			const exitCode = signal === "SIGHUP" ? 129 : 143;
@@ -743,6 +740,9 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		if (signal !== "SIGTERM") {
 			await flushRawStdout();
 		}
+		// dispose() only starts killing a running `bash` command, which on Windows loses the race with
+		// exit. After the last await, so it also catches a shell spawned after the abort.
+		killTrackedDetachedChildren();
 		process.exit(exitCode);
 	}
 

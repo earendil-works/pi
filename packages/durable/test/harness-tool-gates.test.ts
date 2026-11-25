@@ -85,7 +85,7 @@ function approvals(passes: { count: number }): HookRegistration {
 			const state = await api.readSignal(Approval, key, ctx);
 			const until = await api.memo(`approvals.until.${key}`, api.now() + DAY, ctx);
 			if (state === undefined) return { sleep: { signals: [Approval.key(key)], until } };
-			if ("expired" in state) return { block: "No approval within a day" };
+			if (state.kind === "expired") return { block: "No approval within a day" };
 			return state.value.allow ? undefined : { block: "Not approved" };
 		},
 	});
@@ -306,7 +306,7 @@ describe("registry changes and opens", () => {
 				parameters: obj({ command: str() }),
 				execute: async (_args, api) => {
 					runs++;
-					return api.wake === undefined ? { sleep: { signals: [Approval.key("done")] } } : { output: [] };
+					return api.wake === undefined ? { kind: "sleep", signals: [Approval.key("done")] } : { output: [] };
 				},
 			}),
 		);

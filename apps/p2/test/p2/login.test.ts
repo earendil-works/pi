@@ -117,10 +117,6 @@ describe("provider login (fixture provider)", () => {
 		const { attemptId } = await login.start({ providerId: "faux", authType: "oauth" }, BACKGROUND_CONTEXT);
 		assert.equal(login.login.value?.attemptId, attemptId, "the started login is shown when the call resolves");
 		await assert.rejects(
-			login.start({ providerId: "faux", authType: "api_key" }, BACKGROUND_CONTEXT),
-			/already in progress/,
-		);
-		await assert.rejects(
 			(async () => {
 				const state = await until(login.login, (current) => current?.prompt?.type === "select");
 				await login.answer({ attemptId, promptId: state?.prompt?.id ?? "", value: "unlisted" }, BACKGROUND_CONTEXT);
@@ -157,26 +153,42 @@ describe("provider login (fixture provider)", () => {
 		assert.deepEqual(await login.refresh({ providerId: "faux" }, BACKGROUND_CONTEXT), { models: 2 });
 	});
 
-	it("cancels an unfinished login, also when the sheet is gone", async () => {
+	it("cancels an unfinished login, and a new start replaces the owner's own", async () => {
 		const first = await login.start({ providerId: "faux", authType: "oauth" }, BACKGROUND_CONTEXT);
 		await login.cancel({ attemptId: first.attemptId }, BACKGROUND_CONTEXT);
 		assert.equal(login.login.value?.status, "cancelled", "cancel resolves once the login finished");
+		assert.equal(login.login.value?.message, "Login cancelled.");
+		// A reloaded page that lost its sheet starts afresh: the owner's unfinished login gives way, once it has ended.
+		const unfinished = await login.start({ providerId: "faux", authType: "oauth" }, BACKGROUND_CONTEXT);
+		await until(login.login, (current) => current?.attemptId === unfinished.attemptId && current.prompt !== null);
+		const replacing = await login.start({ providerId: "faux", authType: "api_key" }, BACKGROUND_CONTEXT);
+		assert.notEqual(replacing.attemptId, unfinished.attemptId);
+		const replaced = await until(login.login, (current) => current?.prompt?.type === "secret");
+		assert.equal(replaced?.attemptId, replacing.attemptId);
+		await login.cancel({ attemptId: replacing.attemptId }, BACKGROUND_CONTEXT);
+	});
+
+	it("keeps an unfinished login while no page holds it, for the owner's next page", async () => {
 		const otherBrowser = fixture.browser();
 		const other = otherBrowser.hold(ProviderLogin, {}, BACKGROUND_CONTEXT);
 		const { attemptId } = await other.start({ providerId: "faux", authType: "oauth" }, BACKGROUND_CONTEXT);
 		await until(login.login, (current) => current?.attemptId === attemptId && current.prompt !== null);
-		// Both browsers hold the owner's sheet; once neither does (closed sheets, disconnects), the owner has left and the
-		// flow ends. The server's own service shows it (a new hold of the sheet would make the owner present again).
+		// Neither browser holds the owner's sheet any more (a phone's background tab lost its connection while its owner
+		// signs in in the provider's tab): the login waits for them (`AWAY_MS`, five minutes).
 		other.release();
 		login.release();
 		const service = await fixture.server.host.get(LoginService, {}, BACKGROUND_CONTEXT);
-		const ended = await until(
-			service.login,
-			(current) => current?.attemptId === attemptId && current.status !== "working",
-		);
-		assert.equal(ended?.status, "cancelled");
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		assert.equal(service.login.value?.attemptId, attemptId);
+		assert.equal(service.login.value?.status, "working");
+		// The owner's page coming back shows the prompt still waiting, and may answer it.
 		const again = owner.hold(ProviderLogin, {}, BACKGROUND_CONTEXT);
-		assert.equal((await until(again.login, (current) => current?.attemptId === attemptId))?.status, "cancelled");
+		const waiting = await until(
+			again.login,
+			(current) => current?.attemptId === attemptId && current.prompt !== null,
+		);
+		assert.equal(waiting?.prompt?.type, "select");
+		await again.cancel({ attemptId }, BACKGROUND_CONTEXT);
 		login = again;
 	});
 });

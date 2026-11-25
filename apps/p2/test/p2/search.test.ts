@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT, type Held, isChordError, whenLive } from "@p2/app/v1";
 import { Chat } from "../../plugins/chat/contract.ts";
+import { DiscordIngress } from "../../plugins/discord/contract.ts";
 import { Search, SearchFeed, SearchIndex } from "../../plugins/search/contract.ts";
 import { type Session, Sessions } from "../../plugins/sessions/contract.ts";
 import { Subagents } from "../../plugins/subagents/contract.ts";
@@ -177,6 +178,24 @@ describe("search (fake provider)", () => {
 		}, BACKGROUND_CONTEXT);
 		sub.release();
 		children.release();
+	});
+
+	it("indexes a forked subagent from its fork point; what it inherits stays with the main conversation", async () => {
+		const forked = await sessions.create({ cwd: fixture.workspace, title: "Forked" }, BACKGROUND_CONTEXT);
+		const chat = await chatOf(forked.id);
+		await chat.send({ text: "inherited narwhal", requestId: "narwhal" }, BACKGROUND_CONTEXT);
+		await found("narwhal", (value) => value.messages.length === 2);
+		// A Discord thread's subagent: forked from the main conversation at its last finished answer.
+		const ingress = fixture.server.host.hold(DiscordIngress, { session: forked.id }, BACKGROUND_CONTEXT);
+		const { conversation } = await ingress.thread({ name: "fork", before: Date.now() }, BACKGROUND_CONTEXT);
+		ingress.release();
+		const sub = await holdIn(owner, Chat, { session: forked.id, conversation }, "participant");
+		await sub.send({ text: "own okapi", requestId: "okapi" }, BACKGROUND_CONTEXT);
+		const own = await found("okapi", (value) => value.messages.length === 2);
+		assert.ok(own.messages.every((hit) => hit.session === forked.id && hit.conversationId === conversation));
+		const inherited = await found("narwhal", (value) => value.messages.length === 2);
+		assert.ok(inherited.messages.every((hit) => hit.conversationId === 1));
+		sub.release();
 	});
 
 	it("derives a default title once and advances activity without undoing renames", async () => {

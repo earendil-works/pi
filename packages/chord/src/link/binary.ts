@@ -78,7 +78,8 @@ export const binaryCodec: Codec = {
 	name: "binary",
 	encode(message) {
 		const writer = new Writer();
-		const origin = "origin" in message ? message.origin : undefined;
+		// Encoded on any kind: the message schema, after decoding, refuses an origin on a kind that has none.
+		const origin = (message as { readonly origin?: number }).origin;
 		const trace = message.kind === "hold" || message.kind === "call" ? message.trace : undefined;
 		const old =
 			(message.kind === "call" && message.old === true) || (message.kind === "ack" && message.events !== undefined)

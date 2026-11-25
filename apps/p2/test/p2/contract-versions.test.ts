@@ -1,10 +1,12 @@
 // Pages, TUIs, workers and plugins built before a deploy keep working: the providers of `Sessions`, `SessionTree`,
-// `Catalog`, `Envs`, `SessionStatus`, `Subagents` and `Projects` still bind the versions released before, through their `accepts`,
+// `Catalog`, `Envs`, `SessionStatus`, `Subagents` and `Projects` still bind the versions released before, through their
+// `accepts`,
 // and map the current state, arguments and results between versions. The old contracts below are copied verbatim from
 // the releases that bundled them (`Sessions` v3 and `Catalog` v2 from 0a730c8a7, `Sessions` v4, `Catalog` v3 and
 // `SessionTree` v1 from e88525506, `SessionTree` v2 from 7670c8be4, `Sessions` v5 from 9ff0ebfd0, `Catalog` v4 from
-// 0a180b049, `Sessions` v6 from 20d86c365, `Envs` v1 from 2a32a605a, v2 from d07548004 and v3 from 4ffe32c6f, `SessionStatus` v1 and
-// `Subagents` v2 from 6e11a00a0, `Projects` v1 from b58642efa), so their fingerprints are the ones old bundles send.
+// 0a180b049, `Sessions` v6 from 20d86c365, `Envs` v1 from 2a32a605a, v2 from d07548004 and v3 from 4ffe32c6f,
+// `SessionStatus` v1 and `Subagents` v2 from 6e11a00a0, `SessionStatus` v2 from 335814952, `Projects` v1 from b58642efa
+// and v2 from 0826f9f39), so their fingerprints are the ones old bundles send.
 
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
@@ -33,6 +35,7 @@ import { Chat } from "../../plugins/chat/contract.ts";
 import { Envs, EnvTestSchema, SandboxStatusSchema } from "../../plugins/envs/contract.ts";
 import { SandboxMountSchema, SshEnvConfigSchema } from "../../plugins/envs/schema.ts";
 import { ForwardSchema, Ports, QuerySchema, ReplySchema } from "../../plugins/ports/contract.ts";
+import { Projects } from "../../plugins/projects/contract.ts";
 import { CreateSchema, MAX_TITLE, type Session, Sessions } from "../../plugins/sessions/contract.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
 import { Subagents } from "../../plugins/subagents/contract.ts";
@@ -407,6 +410,19 @@ const ProjectsV1 = remote("p2.projects", {
 	},
 });
 
+/** 0826f9f39's `Projects` (version 2): `create`, projects.json's `failure` still in its state. */
+const ProjectsV2 = evolve(ProjectsV1, (e) =>
+	e.addMethod(
+		"owner",
+		"create",
+		obj({
+			name: str({ minLength: 1, maxLength: 64 }),
+			place: obj({ env: union([str({ maxLength: 32 }), nul()]), path: str({ minLength: 1, maxLength: 4096 }) }),
+		}),
+		nul(),
+	),
+);
+
 /** 2a32a605a's `Envs` (version 1): rows without `users`, `delete` without `force`. */
 const EnvName = obj({ name: str() });
 const EnvKey = obj({ publicKey: str(), identityFile: str() });
@@ -558,6 +574,38 @@ const SessionStatusV1 = remote("p2.session-status", {
 	},
 });
 
+/** 335814952's `WorkStepSchema`, `WorkSchema`, `StatusSchema` and `ReportFields`: work, no run failure. */
+const WorkStepSchemaV2 = union([
+	obj({ kind: literal("thinking") }),
+	obj({ kind: literal("tools"), names: arr(str(), { minItems: 1 }) }),
+	obj({ kind: literal("compacting") }),
+	obj({ kind: literal("working") }),
+]);
+const WorkSchemaV2 = obj({ since: num(), rounds: num(), step: WorkStepSchemaV2 });
+const StatusSchemaV2 = obj({
+	/** A worker process runs for the session. */
+	running: bool(),
+	error: opt(str()),
+	usage: opt(unsafe<Usage>(unknown())),
+	/** Live Durable tasks (foreground and background). */
+	tasks: num(),
+	/** Conversations with foreground work, ascending. */
+	busy: arr(num()),
+	/** What each busy conversation does, by conversation ID. */
+	work: record(WorkSchemaV2),
+});
+const ReportSchemaV2 = obj({
+	tasks: num(),
+	busy: arr(num()),
+	work: record(WorkSchemaV2),
+	usage: opt(unsafe<Usage>(unknown())),
+});
+
+/** `SessionStatus` as 335814952 declared it. */
+const SessionStatusV2 = evolve(SessionStatusV1, (e) =>
+	e.state("reader", "statuses", record(StatusSchemaV2)).args("report", ReportSchemaV2),
+);
+
 /** 6e11a00a0's `ChildSchema`: no time or failure. */
 const ChildSchemaV2 = obj({
 	/** A subagent's name; a one-shot agent's label. */
@@ -592,6 +640,7 @@ const SubagentsV2 = remote("p2.subagents", {
 
 /** The fields a status and a child had in the released versions (the current ones add more). */
 const STATUS_KEYS_V1 = new Set(["running", "error", "usage", "tasks", "busy"]);
+const STATUS_KEYS_V2 = new Set([...STATUS_KEYS_V1, "work"]);
 const CHILD_KEYS_V2 = new Set([
 	"name",
 	"kind",
@@ -728,6 +777,20 @@ describe("older contract versions against the current server (fake provider)", (
 		ref.release();
 	});
 
+	it("binds Projects v2: create and assign into the store; no failure any more", async () => {
+		const ref = await boundIn(owner, ProjectsV2, {}, "owner");
+		assert.equal(await until(ref.failure, (value) => value !== undefined), null);
+		await ref.create({ name: "v2-project", place: { env: null, path: "/v2" } }, BACKGROUND_CONTEXT);
+		await until(ref.projects, (list) => Boolean(list?.some((project) => project.name === "v2-project")));
+		await ref.assign({ session: session.id, project: "v2-project" }, BACKGROUND_CONTEXT);
+		await until(ref.sessions, (map) => map?.[session.id] === "v2-project");
+		const current = await holdIn(owner, Projects, {}, "owner");
+		await current.remove({ name: "v2-project" }, BACKGROUND_CONTEXT);
+		await until(ref.sessions, (map) => map?.[session.id] === undefined);
+		current.release();
+		ref.release();
+	});
+
 	it("binds Envs v2: rows with users, sandboxes without a disk size", async () => {
 		const current = await holdIn(owner, Envs, {}, "owner");
 		await current.save({ name: "v2-host", config: { type: "ssh", host: "v2.example" } }, BACKGROUND_CONTEXT);
@@ -831,6 +894,33 @@ describe("older contract versions against the current server (fake provider)", (
 		worker.release();
 		current.release();
 		chat.release();
+	});
+
+	it("binds SessionStatus v2 as a reader and a worker: statuses with work, without the run's failure", async () => {
+		const chat = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+		const current = await holdIn(owner, SessionStatus, {}, "reader");
+		await until(current.statuses, (value) => value?.[session.id]?.running === true);
+		const generation = await workerGeneration(session.id);
+		const worker = fixture.as({ kind: "worker", session: session.id, generation });
+		// A current worker reports a failed run: a version 2 reader sees the status without it.
+		const reporter = await holdIn(worker, SessionStatus, {}, "reporter");
+		await reporter.report(
+			{ tasks: 0, busy: [], work: {}, failure: { reason: "model_error", detail: "overloaded" } },
+			BACKGROUND_CONTEXT,
+		);
+		await until(current.statuses, (value) => value?.[session.id]?.failure?.reason === "model_error");
+		const reader = await boundIn(owner, SessionStatusV2, {}, "reader");
+		const statuses = await until(reader.statuses, (value) => value?.[session.id]?.running === true);
+		assert.deepEqual(added(statuses[session.id]!, STATUS_KEYS_V2), {});
+		// A version 2 worker's report is accepted, with its work; it says nothing of a failure.
+		const old = await boundIn(worker, SessionStatusV2, {}, "reporter");
+		const work = { since: 1, rounds: 2, step: { kind: "thinking" as const } };
+		await old.report({ tasks: 1, busy: [2], work: { 2: work } }, BACKGROUND_CONTEXT);
+		const now = await until(current.statuses, (value) => value?.[session.id]?.tasks === 1);
+		assert.deepEqual([now[session.id]!.work, now[session.id]!.failure], [{ 2: work }, undefined]);
+		await old.report({ tasks: 0, busy: [], work: {} }, BACKGROUND_CONTEXT);
+		await until(current.statuses, (value) => value?.[session.id]?.tasks === 0);
+		for (const ref of [old, reader, reporter, current, chat]) ref.release();
 	});
 
 	it("binds Subagents v2 as a reader and a worker: children without time and failure", async () => {

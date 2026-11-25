@@ -34,7 +34,6 @@ export default defineProvider({
 			headers: { "NVCF-POLL-SECONDS": "3600" },
 			compat: {
 				supportsStore: false,
-				supportsDeveloperRole: false,
 				supportsReasoningEffort: false,
 				maxTokensField: "max_tokens",
 				supportsStrictMode: false,
@@ -55,7 +54,6 @@ export default defineProvider({
 	compat: {
 		"openai-completions": {
 			supportsStore: false,
-			supportsDeveloperRole: false,
 			supportsReasoningEffort: false,
 			maxTokensField: "max_tokens",
 			supportsLongCacheRetention: false,

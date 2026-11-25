@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -306,6 +306,44 @@ describe("TUI crash dump without configured log directory", () => {
 			assert.match(readFileSync(crashLogPath, "utf-8"), /Terminal width: 40/);
 		} finally {
 			restoreTmpdirEnv();
+			rmSync(crashDir, { recursive: true, force: true });
+		}
+	});
+
+	// #10585: a full or unwritable temp dir must not replace the width error.
+	it("reports the width error when the crash dump cannot be written", async () => {
+		const crashDir = mkdtempSync(join(tmpdir(), "pi-tui-crash-"));
+		// A regular file where the log directory should be makes the dump fail to write.
+		const logDirectory = join(crashDir, "not-a-directory");
+		writeFileSync(logDirectory, "");
+		try {
+			const terminal = new VirtualTerminal(40, 10);
+			let terminalStops = 0;
+			const stopTerminal = terminal.stop.bind(terminal);
+			terminal.stop = () => {
+				terminalStops++;
+				stopTerminal();
+			};
+			const tui: TUI = new TuiMainScreen(terminal, false, logDirectory);
+			const component = new TestComponent();
+			tui.addChild(component);
+			component.lines = ["ok"];
+			tui.start();
+			await terminal.waitForRender();
+
+			component.lines = ["ok", "x".repeat(60)];
+			assert.throws(
+				() => tui.renderNow(),
+				(error: unknown) => {
+					assert.ok(error instanceof Error);
+					assert.match(error.message, /exceeds terminal width/);
+					assert.match(error.message, /Could not write debug log to /);
+					return true;
+				},
+			);
+			// The terminal leaves raw mode before the error propagates.
+			assert.equal(terminalStops, 1);
+		} finally {
 			rmSync(crashDir, { recursive: true, force: true });
 		}
 	});

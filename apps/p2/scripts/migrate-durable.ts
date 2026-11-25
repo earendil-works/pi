@@ -112,8 +112,10 @@ export async function convertDurable(
 				},
 				context,
 			);
-			if (result.refused !== undefined || result.stored !== chunk.length)
-				throw new Error(`The store refused a replayed commit`, { cause: result.refused });
+			if (result.kind === "refused" || result.stored !== chunk.length)
+				throw new Error(`The store refused a replayed commit`, {
+					cause: result.kind === "refused" ? result.refused : undefined,
+				});
 		}
 		return {
 			seqs,

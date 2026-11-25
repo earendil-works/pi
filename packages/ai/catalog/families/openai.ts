@@ -38,6 +38,19 @@ export const OPENAI_STANDARD_COSTS: Record<string, ModelCost> = {
 	"gpt-6.2-sol": { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
 };
 
+/**
+ * GPT-6 Luna on the Decisions API bills input tokens only, with the same long-context multiplier as
+ * chat requests. Usage reports cache reads and writes within input_tokens; they are priced at the input
+ * rate, so splitting them out of input does not change the cost.
+ * https://developers.openai.com/api/docs/guides/decisions
+ */
+export const OPENAI_DECISIONS_COST: ModelCost = withOpenAiLongContextPricing({
+	input: 0.1,
+	output: 0,
+	cacheRead: 0.1,
+	cacheWrite: 0.1,
+});
+
 /** The standard price of an OpenAI model with long-context pricing. */
 export function openAiStandardCost(id: string): ModelCost {
 	return withOpenAiLongContextPricing(OPENAI_STANDARD_COSTS[id]);
@@ -51,6 +64,19 @@ export const OPENAI_TOOL_SEARCH_MODEL_IDS = new Set([
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
+	"gpt-6-astra",
+	"gpt-6-sol",
+	"gpt-6-luna",
+	"gpt-6.1-sol",
+	"gpt-6.1-terra",
+	"gpt-6.2-astra",
+	"gpt-6.2-sol",
+]);
+// OpenAI documents configuration_update for the GPT-6 family; the Codex backend applies it to the
+// same models (verified November 2026).
+// https://developers.openai.com/api/docs/guides/reasoning
+/** Models that take reasoning effort changes as configuration_update input items. */
+export const OPENAI_MID_CONVO_EFFORT_MODEL_IDS = new Set([
 	"gpt-6-astra",
 	"gpt-6-sol",
 	"gpt-6-luna",

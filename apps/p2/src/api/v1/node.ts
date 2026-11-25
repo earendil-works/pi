@@ -1,6 +1,27 @@
 // p2's plugin API, version 1, for Node facets (`@p2/app/v1/node`: server and worker): configuration files, logs,
 // Durable contexts, a session's files (the kit's `Files`, its spaces and downloads) and environment helpers. Files a plugin's server and worker facets share import this.
 
+// Chord's store and its sync layer, for the backup plugin (`plugins/backup`): plugins reach Chord only through this API.
+export type { Store } from "@earendil-works/chord";
+export {
+	type BatchInfo,
+	FileSyncStateStore,
+	FileSystemSyncRemote,
+	FlushScheduler,
+	type JsonObject,
+	type PutBatchResult,
+	type RemoteListing,
+	type Seq,
+	type SessionChanges,
+	type SessionSyncStore,
+	type SessionSyncUploader,
+	SYNC_PROTOCOL,
+	type SyncBody,
+	type SyncFileSystem,
+	type UploadResult,
+	uploadSession,
+} from "@earendil-works/chord/sync";
+
 export * from "../../runtime/backup.ts";
 export * from "../../runtime/config-json.ts";
 export * from "../../runtime/default-model.ts";

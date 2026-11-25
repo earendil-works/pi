@@ -1,9 +1,10 @@
 import type { Api, ClassifierModel, Model, ThinkingLevelMap } from "../../src/types.ts";
 import { addMissing, type ChatModel, defineProvider, mergeCompat, mergeThinking, modelsDevModels } from "../define.ts";
-import { claude55ThinkingLevels, supportsClaudeMidConvoSystemMessages } from "../families/anthropic.ts";
+import { CLAUDE_55_THINKING_LEVELS, supportsClaudeMidConvoSystemMessages } from "../families/anthropic.ts";
 import {
 	enableOpenAiGrammarTools,
 	enableOpenAiMidConvoSystemMessages,
+	OPENAI_DECISIONS_COST,
 	openAiStandardCost,
 } from "../families/openai.ts";
 
@@ -20,7 +21,6 @@ const STATIC_HEADERS = {
 const EXTENDED_CONTEXT_MODEL_IDS = new Set([
 	"claude-fable-5",
 	"claude-opus-4.8",
-	"claude-opus-5",
 	"claude-opus-5.5",
 	"claude-sonnet-4.6",
 	"claude-sonnet-5",
@@ -40,7 +40,6 @@ const EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_MODEL_IDS = new Set([
 // Keep this to narrow corrections over models.dev metadata instead of snapshotting Copilot's catalog.
 const THINKING_LEVEL_OVERRIDES: Record<string, ThinkingLevelMap> = {
 	"claude-opus-4.8": { minimal: "low" },
-	"claude-opus-5": { minimal: "low" },
 	"claude-sonnet-4.6": { minimal: "low", max: "max" },
 };
 
@@ -83,6 +82,22 @@ const MICROSOFT_DECISION_1: ClassifierModel<"typesafe-system-one"> = {
 	headers: { ...STATIC_HEADERS },
 };
 
+// The authenticated Copilot catalog lists this decision model on /v1/decisions with an 872K prompt limit and
+// restricts it to the Pro, Pro+, Business, and Enterprise plans, among others (checked 2026-11-22), while
+// Microsoft-Decision-1 is restricted to Business and Enterprise. It answers as gpt-6-luna and accepts images. GitHub's Copilot pricing page does not list it; these are OpenAI's Decisions API prices.
+const GPT_6_LUNA_DECISIONS: ClassifierModel<"openai-decisions"> = {
+	type: "classifier",
+	id: "gpt-6-luna-decisions",
+	name: "GPT-6 Luna Decisions",
+	api: "openai-decisions",
+	provider: "github-copilot",
+	baseUrl: BASE_URL,
+	input: ["text", "image"],
+	cost: OPENAI_DECISIONS_COST,
+	contextWindow: 872000,
+	headers: { ...STATIC_HEADERS },
+};
+
 export default defineProvider({
 	id: "github-copilot",
 	models: (ctx) =>
@@ -100,19 +115,25 @@ export default defineProvider({
 					if (api === "openai-completions") {
 						result.compat = {
 							supportsStore: false,
-							supportsDeveloperRole: false,
 							supportsReasoningEffort:
 								source.reasoningOptions?.some((option) => option.type === "effort") ?? false,
 						};
 					}
-					if (model.id === "claude-opus-5.5") mergeThinking(result, claude55ThinkingLevels(model.id));
+					if (model.id === "claude-opus-5.5") mergeThinking(result, CLAUDE_55_THINKING_LEVELS);
 					return result;
 				},
 			}),
 			[GPT_6_LUNA],
 		).map((model) => (EXTENDED_CONTEXT_MODEL_IDS.has(model.id) ? { ...model, contextWindow: 1000000 } : model)),
-	classifiers: () => [MICROSOFT_DECISION_1],
-	compat: { "openai-completions": { supportsStrictMode: true } },
+	classifiers: () => [GPT_6_LUNA_DECISIONS, MICROSOFT_DECISION_1],
+	// Copilot's /responses treats a function tool without `strict` as strict and fills omitted optional arguments
+	// with "" or invented values (#12286); it accepts both `strict: false` and `strict: true` (checked 2026-11-19).
+	// Its Messages endpoint accepts strict tools on Claude and passes Claude's strict tool limit errors through.
+	compat: {
+		"anthropic-messages": { supportsStrictTools: true },
+		"openai-completions": { supportsStrictMode: true },
+		"openai-responses": { supportsStrictMode: true },
+	},
 	finalize: (model) => {
 		if (model.id.startsWith("gpt-5")) mergeThinking(model, { minimal: "low" });
 		const override = THINKING_LEVEL_OVERRIDES[model.id];

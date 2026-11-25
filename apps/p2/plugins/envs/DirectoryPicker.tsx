@@ -1,7 +1,13 @@
+// The location picker: one sheet to choose a machine (this device, an SSH environment, a sandbox) and a folder on it.
+// Per machine it offers the folders sessions worked in most recently, then a folder browser; every step is a history
+// entry. Used for a new session's location, moving a session, and a new project's folder.
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import {
-	ChevronIcon,
-	FolderIcon,
+	CheckIcon,
+	NavDisclosureIcon,
+	NavEditIcon,
+	NavFolderIcon,
+	NavLockIcon,
 	QueryCache,
 	Sheet,
 	shortPath,
@@ -10,8 +16,9 @@ import {
 	useReadable,
 	useSheet,
 } from "@p2/app/v1/web";
-import { useEffect, useRef, useState } from "react";
+import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { type DirectoryListing, Envs } from "./contract.ts";
+import type { EnvConfig } from "./schema.ts";
 
 /** The picker at the location its view passes (`env`, `value`): the session's, or the new session's. */
 export const DIRECTORY_PICKER = { kind: "sheet", name: "cwd" } as const;
@@ -20,8 +27,9 @@ export const DIRECTORY_PICKER = { kind: "sheet", name: "cwd" } as const;
 export function directoryPickerLayer(env: string | null, path: string, name: string = DIRECTORY_PICKER.name) {
 	return { kind: "sheet" as const, name, locator: JSON.stringify({ env, path }) };
 }
+
 function locationLabel(env: string | null, cwd: string): string {
-	return env ? `${env}:${cwd}` : shortPath(cwd);
+	return env ? `${env}:${shortPath(cwd)}` : shortPath(cwd);
 }
 
 /** Listings by environment and requested path: Back and revisits show them at once, then refresh. */
@@ -32,37 +40,39 @@ function name(path: string): string {
 	return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
 }
 
+/** A session's location and when it was last active: what the recent folders are made of. */
+export type LocationUse = { readonly env?: string | null; readonly cwd: string; readonly updatedAt: number };
+
 export function DirectoryPicker({
 	env: initialEnv,
 	moving,
 	value,
-	recent = () => [],
+	sessions,
 	sheet: sheetName = DIRECTORY_PICKER.name,
-	title = "Working directory",
+	title = "Location",
 	onChange,
 	onClose,
-	onBack,
 }: {
 	/** The environment browsed: a remote env's name, or null for this device. */
 	env: string | null;
 	/** An existing session's environment: choosing another one moves the session there. */
 	moving?: { env: string | null };
 	value: string;
-	recent?: (env: string | null) => string[];
+	/** The owner's sessions, archived ones included: each machine's recent folders are theirs (none without). */
+	sessions?: readonly LocationUse[] | undefined;
 	/** The name of its layer (`directoryPickerLayer`'s `name`): the chat's pickers use the default. */
 	sheet?: string;
 	title?: string;
 	onChange: (env: string | null, value: string) => void;
 	onClose: () => void;
-	/** Where the sheet's Back leads (the new-session screen's recent folders); no Back control without it. */
-	onBack?: () => void;
 }) {
 	const service = useObject(Envs, {});
-	const envs = useReadable(service?.envs) ?? [];
+	const envs = useReadable(service?.envs);
 	// The environments' connections start now, as in Pi Mobile: the first listing need not wait for ssh.
 	useEffect(() => {
 		void service?.warm(BACKGROUND_CONTEXT).catch(() => {});
 	}, [service]);
+	const recentOf = useRecentFolders(sessions);
 	const nav = useNavigation();
 	const sheet = useSheet(sheetName);
 	let directory = value;
@@ -78,27 +88,31 @@ export function DirectoryPicker({
 			/* Old routes start at the session's current location. */
 		}
 	}
-	const [input, setInput] = useState(value);
 	/** The listing shown, with the environment it belongs to: another environment's folders are never shown. */
 	const [listing, setListing] = useState<DirectoryListing & { env: string | null }>();
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string>();
+	/** The path being typed, while the path line is a text field. */
+	const [typing, setTyping] = useState<string>();
+	/** The folder whose move out of the sandbox waits for the owner's confirmation. */
+	const [leaving, setLeaving] = useState<string>();
 
-	const shown = directory ?? value;
 	const request = (path: string, where: string | null) => () =>
 		service!.listDirectory({ path, ...(where === null ? {} : { env: where }) }, BACKGROUND_CONTEXT);
-	// Every folder change, and a change of environment, is a step: Back returns to the previous one. The listing is
+	// Every folder change, and a change of machine, is a step: Back returns to the previous one. The listing is
 	// requested with the tap, not after the step has rendered.
-	const browse = (path: string, environment = env) => {
+	const browse = (path: string, machine = env) => {
+		setTyping(undefined);
+		setLeaving(undefined);
 		const route = nav.route;
 		const top = route.layers.at(-1);
 		if (top?.kind !== "sheet" || top.name !== sheetName) return;
-		listings.prefetch(listingKey(environment, path), request(path, environment));
-		if (path === shown && environment === env) load(path);
+		listings.prefetch(listingKey(machine, path), request(path, machine));
+		if (path === directory && machine === env) load(path);
 		else
 			void nav.push({
 				...route,
-				layers: [...route.layers.slice(0, -1), directoryPickerLayer(environment, path, sheetName)],
+				layers: [...route.layers.slice(0, -1), directoryPickerLayer(machine, path, sheetName)],
 			});
 	};
 	/** Only the latest folder's answer is shown: an earlier, slower one must not replace it. */
@@ -109,10 +123,8 @@ export function DirectoryPicker({
 		setLoading(true);
 		setError(undefined);
 		const cached = listings.get(key);
-		if (cached) {
-			setListing({ ...cached, env });
-			setInput(cached.path);
-		} else setListing((current) => (current?.env === env ? current : undefined));
+		if (cached) setListing({ ...cached, env });
+		else setListing((current) => (current?.env === env ? current : undefined));
 		if (!service) return;
 		void listings
 			.fetch(key, request(path, env))
@@ -125,9 +137,8 @@ export function DirectoryPicker({
 					!Array.isArray(next.directories) ||
 					!next.directories.every((entry) => typeof entry === "string")
 				)
-					throw new Error("Directory listing was interrupted. Press Enter or select a folder to retry.");
+					throw new Error("The folder listing was interrupted.");
 				setListing({ ...next, env });
-				setInput(next.path);
 			})
 			.catch((caught: Error) => {
 				if (latest.current !== key) return;
@@ -139,182 +150,350 @@ export function DirectoryPicker({
 			});
 	};
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: lists again when the folder or environment changes; load is recreated each render.
-	useEffect(() => load(shown), [shown, env, service]);
-	const moves = moving !== undefined && moving.env !== env;
-	const sandboxHost = (name: string | null) => {
-		const config = envs.find((entry) => entry.name === name)?.config;
+	// biome-ignore lint/correctness/useExhaustiveDependencies: lists again when the folder or machine changes; load is recreated each render.
+	useEffect(() => load(directory), [directory, env, service]);
+	const sandboxHost = (machine: string | null) => {
+		const config = envs?.find((entry) => entry.name === machine)?.config;
 		return config?.type === "gondolin" ? config.host : undefined;
 	};
+	const machines = useMemo(() => machinesOf(envs, env), [envs, env]);
+	const moves = moving !== undefined && moving.env !== env;
 	const sandbox = sandboxHost(env) !== undefined;
 	// Leaving a sandbox is confirmed: outside every sandbox its tools run unconfined, in another one they get its
 	// folders and network access.
 	const leaves = moves && sandboxHost(moving.env) !== undefined;
-	const [leaving, setLeaving] = useState<string>();
-	const target = listing ? listingKey(env, listing.path) : undefined;
-	const use = listing && `${moves ? "Move session to" : "Use"} ${locationLabel(env, listing.path)}`;
+	const pick = (path: string) => {
+		if (env === initialEnv && path === value) onClose();
+		else if (leaves) setLeaving(path);
+		else onChange(env, path);
+	};
+	const recent = recentOf(env);
+	const here = listing?.path ?? directory;
+	const verb = moves ? "Move session to" : "Use";
 
 	return (
-		<Sheet title={title} onClose={onClose} {...(onBack ? { onBack } : {})}>
-			{/* Path and the choice stay pinned while the folder list scrolls with the sheet. */}
-			<div className="sheet-sticky directory-head">
-				{envs.length > 0 && (
-					<select
-						className="input"
-						aria-label="Environment"
-						value={env ?? ""}
-						onChange={(event) => browse("~", event.target.value || null)}
-						disabled={loading}
-					>
-						<option value="">This device</option>
-						{envs.map(
-							(entry) =>
-								entry.config.type !== "gondolin" && (
-									<option key={entry.name} value={entry.name}>
-										{entry.name} (remote)
-									</option>
-								),
-						)}
-						{envs.some((entry) => entry.config.type === "gondolin") && (
-							<optgroup label="Sandboxes">
-								{envs.map(
-									(entry) =>
-										entry.config.type === "gondolin" && (
-											<option key={entry.name} value={entry.name}>
-												{entry.name} · sandbox on {entry.config.host}
-											</option>
-										),
-								)}
-							</optgroup>
-						)}
-					</select>
-				)}
-				<form
-					onSubmit={(event) => {
-						event.preventDefault();
-						if (input.trim()) browse(input.trim());
-					}}
-				>
-					<input
-						className="input mono"
-						value={input}
-						onChange={(event) => setInput(event.target.value)}
-						aria-label="Directory"
-						autoCapitalize="off"
-						autoCorrect="off"
-						spellCheck={false}
-						disabled={loading}
-					/>
-				</form>
-				{sandbox && (
-					<p className="muted small directory-note">
-						Tools of this session run in the {env} VM and can't leave it. Only you can move the session out.
-					</p>
-				)}
-				{listing &&
-					(leaves && leaving === target ? (
-						<div className="notice env-test directory-leave" role="alert">
-							<p>
-								<strong>Leave sandbox {moving?.env}?</strong>
-							</p>
-							<p>
-								{sandbox
-									? `Moving to ${locationLabel(env, listing.path)} gives this session's tools sandbox ${env}'s folders and allowed hosts instead.`
-									: `Moving to ${locationLabel(env, listing.path)} lets this session's tools run directly on ${env ?? "this device"}, with its full network access and files.`}
-							</p>
-							<p className="muted small">Files written in the sandbox stay in its folders.</p>
-							<div className="inline-form">
-								<button
-									type="button"
-									className="button danger"
-									disabled={loading}
-									onClick={() => onChange(env, listing.path)}
-								>
-									Move out
-								</button>
-								<button type="button" className="button" onClick={() => setLeaving(undefined)}>
-									Cancel
-								</button>
-							</div>
-						</div>
-					) : (
+		<Sheet title={title} onClose={onClose} className="location-sheet">
+			{machines.length > 1 && (
+				<div className="location-machines">
+					{machines.map((machine) => (
 						<button
 							type="button"
-							className="button primary block directory-use"
-							title={use}
-							disabled={loading}
-							onClick={() => (leaves ? setLeaving(target) : onChange(env, listing.path))}
+							key={machine.name ?? ""}
+							aria-pressed={machine.name === env}
+							className="location-machine"
+							title={machine.title}
+							onClick={() => machine.name !== env && browse("~", machine.name)}
 						>
-							<span className="directory-path">{use}</span>
+							{machine.sandbox && <NavLockIcon size={14} aria-label="Sandbox" />}
+							{machine.label}
 						</button>
 					))}
-				{moves && (
-					<p className="muted small directory-note">
-						Tools will run {env === null ? "on this device" : `on ${env}`}. The history stays; files are not
-						copied.
-					</p>
-				)}
-			</div>
-			{error && <p className="notice error directory-error">{error}</p>}
-			{loading && !listing && (
-				<div className="directory-loading">
-					<div className="spinner" />
-					<span>{env ? `Connecting to ${env}…` : "Loading…"}</span>
 				</div>
 			)}
-			{listing && (
-				<div className={`list ${loading ? "directory-busy" : ""}`} aria-busy={loading}>
-					{loading && (
-						<div className="directory-loading">
-							<div className="spinner" />
-							<span>Loading…</span>
-						</div>
-					)}
-					{listing.parent && (
-						<button
-							type="button"
-							className="row-button mono"
-							onClick={() => browse(listing.parent ?? listing.path)}
-						>
-							<span>
-								<FolderIcon /> ..
-							</span>
-							<ChevronIcon />
-						</button>
-					)}
-					{listing.directories.map((path) => (
-						<button type="button" key={path} className="row-button mono" onClick={() => browse(path)}>
-							<span>
-								<FolderIcon /> <span className="directory-path">{name(path)}</span>
-							</span>
-							<ChevronIcon />
-						</button>
-					))}
-					{!listing.directories.length && <p className="empty-note">No subdirectories.</p>}
-					{listing.truncated && <p className="muted small">Showing the first 1,000 directories.</p>}
-				</div>
+			{sandbox && (
+				<p className="location-note">
+					{moving
+						? `Tools of this session run in the ${env} VM and can't leave it. Only you can move the session out.`
+						: `Tools of a session here run in the ${env} VM and can't leave it.`}
+				</p>
 			)}
-			{recent(env).length > 0 && (
-				<div className="list">
-					<span className="label">Recent</span>
-					{recent(env)
-						.slice(0, 8)
-						.map((path) => (
+			{recent.length > 0 && (
+				<section className="location-section" aria-label="Recent folders">
+					<h3 className="location-heading">Recent</h3>
+					<ul className="location-rows">
+						{recent.map((path) => {
+							const current = env === initialEnv && path === value;
+							return (
+								<li key={path} className={`location-row ${current ? "current" : ""}`}>
+									<button
+										type="button"
+										className="location-link"
+										title={`${verb} ${locationLabel(env, path)}`}
+										onClick={() => pick(path)}
+									>
+										<NavFolderIcon size={16} />
+										{/* Cut at its start when long: the folder's own name stays. */}
+										<span className="location-name location-name-tail">
+											<span>{shortPath(path)}</span>
+										</span>
+										{current && <CheckIcon />}
+									</button>
+									<button
+										type="button"
+										className="location-control"
+										aria-label={`Browse ${shortPath(path)}`}
+										onClick={() => browse(path)}
+									>
+										<NavDisclosureIcon size={16} className="location-chevron" aria-hidden="true" />
+									</button>
+								</li>
+							);
+						})}
+					</ul>
+				</section>
+			)}
+			<section className="location-section location-browse" aria-label="Folders">
+				<div className="location-path">
+					{typing === undefined ? (
+						<>
+							<Crumbs path={here} onBrowse={browse} />
+							{loading && listing && <span className="spinner location-spinner" aria-hidden="true" />}
 							<button
 								type="button"
-								key={path}
-								className="row-button mono"
-								title={locationLabel(env, path)}
-								onClick={() => browse(path)}
+								className="location-control"
+								aria-label="Type a path"
+								title="Type a path"
+								onClick={() => setTyping(here)}
 							>
-								<span>
-									<FolderIcon /> <span className="directory-path">{locationLabel(env, path)}</span>
-								</span>
-								<ChevronIcon />
+								<NavEditIcon size={16} />
 							</button>
-						))}
+						</>
+					) : (
+						<PathInput
+							value={typing}
+							onChange={setTyping}
+							onSubmit={(path) => browse(path)}
+							onCancel={() => setTyping(undefined)}
+						/>
+					)}
 				</div>
-			)}
+				{error && (
+					<p className="location-error" role="alert">
+						{error}{" "}
+						<button type="button" className="text-action" onClick={() => load(directory)}>
+							Retry
+						</button>
+					</p>
+				)}
+				{loading && !listing && !error && (
+					<p className="location-loading">
+						<span className="spinner" />
+						{env ? `Connecting to ${env}…` : "Loading…"}
+					</p>
+				)}
+				{listing && (
+					<ul className={`location-rows ${loading ? "busy" : ""}`} aria-busy={loading}>
+						{listing.parent && (
+							<li className="location-row">
+								<button
+									type="button"
+									className="location-link"
+									onClick={() => browse(listing.parent ?? listing.path)}
+								>
+									<NavFolderIcon size={16} />
+									<span className="location-name">..</span>
+								</button>
+							</li>
+						)}
+						{listing.directories.map((path) => (
+							<li key={path} className="location-row">
+								<button type="button" className="location-link" onClick={() => browse(path)}>
+									<NavFolderIcon size={16} />
+									<span className="location-name">{name(path)}</span>
+									<NavDisclosureIcon size={16} className="location-chevron" aria-hidden="true" />
+								</button>
+							</li>
+						))}
+						{!listing.directories.length && <li className="location-empty">No subfolders</li>}
+						{listing.truncated && <li className="location-empty">Showing the first 1,000 folders</li>}
+					</ul>
+				)}
+			</section>
+			<footer className="location-foot">
+				{leaving !== undefined ? (
+					<div className="location-leave" role="alert">
+						<p>
+							<strong>Leave sandbox {moving?.env}?</strong>
+						</p>
+						<p>
+							{sandbox
+								? `Moving to ${locationLabel(env, leaving)} gives this session's tools sandbox ${env}'s folders and allowed hosts instead.`
+								: `Moving to ${locationLabel(env, leaving)} lets this session's tools run directly on ${env ?? "this device"}, with its full network access and files.`}
+						</p>
+						<p className="location-note">Files written in the sandbox stay in its folders.</p>
+						<div className="inline-form">
+							<button type="button" className="button danger" onClick={() => onChange(env, leaving)}>
+								Move out
+							</button>
+							<button type="button" className="button" onClick={() => setLeaving(undefined)}>
+								Cancel
+							</button>
+						</div>
+					</div>
+				) : (
+					<>
+						{moves && (
+							<p className="location-note">
+								Tools will run {env === null ? "on this device" : `on ${env}`}. The history stays; files are not
+								copied.
+							</p>
+						)}
+						<button
+							type="button"
+							className="button primary block location-use"
+							title={`${verb} ${locationLabel(env, here)}`}
+							disabled={loading || !listing}
+							onClick={() => listing && pick(listing.path)}
+						>
+							<span className="location-name">
+								{verb} {locationLabel(env, here)}
+							</span>
+						</button>
+					</>
+				)}
+			</footer>
 		</Sheet>
+	);
+}
+
+/** How many recent folders a machine offers. */
+const RECENT = 5;
+
+/**
+ * The folders sessions worked in, per machine (null: this device), the most recently active first, archived sessions
+ * included: what the owner used last, without storing anything of its own.
+ */
+function useRecentFolders(sessions: readonly LocationUse[] | undefined): (env: string | null) => readonly string[] {
+	const byMachine = useMemo(() => {
+		const folders = new Map<string, string[]>();
+		for (const session of (sessions ?? []).toSorted((a, b) => b.updatedAt - a.updatedAt)) {
+			const machine = session.env ?? "";
+			const list = folders.get(machine) ?? [];
+			if (list.length < RECENT && !list.includes(session.cwd)) list.push(session.cwd);
+			folders.set(machine, list);
+		}
+		return folders;
+	}, [sessions]);
+	return (env) => byMachine.get(env ?? "") ?? [];
+}
+
+type Machine = {
+	readonly name: string | null;
+	readonly label: string;
+	readonly title: string;
+	readonly sandbox: boolean;
+};
+
+/**
+ * This device, then the SSH environments and Radius machines, then the sandboxes; `env` too when it is not configured
+ * (any more).
+ */
+function machinesOf(
+	envs: readonly { readonly name: string; readonly config: EnvConfig }[] | undefined,
+	env: string | null,
+): readonly Machine[] {
+	const machines: Machine[] = [{ name: null, label: "This device", title: "This device", sandbox: false }];
+	for (const entry of envs ?? [])
+		if (entry.config.type !== "gondolin")
+			machines.push({
+				name: entry.name,
+				label: entry.name,
+				title: `${entry.name} (${entry.config.type === "ssh" ? "SSH" : "Radius"})`,
+				sandbox: false,
+			});
+	for (const entry of envs ?? [])
+		if (entry.config.type === "gondolin")
+			machines.push({
+				name: entry.name,
+				label: entry.name,
+				title: `${entry.name}: sandbox on ${entry.config.host}`,
+				sandbox: true,
+			});
+	if (env !== null && !machines.some((machine) => machine.name === env))
+		machines.push({ name: env, label: env, title: `${env} (not configured)`, sandbox: false });
+	return machines;
+}
+
+/**
+ * The path as steps to tap: the home folder as `~`, else the root, then each folder below it; the last one is where
+ * the browser is.
+ */
+function Crumbs({ path, onBrowse }: { path: string; onBrowse: (path: string) => void }) {
+	const steps = crumbsOf(path);
+	return (
+		<nav className="location-crumbs" aria-label="Path" title={path}>
+			{steps.map((step, index) =>
+				index === steps.length - 1 ? (
+					<span key={step.path} className="location-crumb" aria-current="location">
+						{step.label}
+					</span>
+				) : (
+					<span key={step.path} className="location-crumb-step">
+						<button type="button" className="location-crumb" onClick={() => onBrowse(step.path)}>
+							{step.label}
+						</button>
+						{/* The root's own name is the separator already. */}
+						{step.label !== "/" && (
+							<span className="location-crumb-gap" aria-hidden="true">
+								/
+							</span>
+						)}
+					</span>
+				),
+			)}
+		</nav>
+	);
+}
+
+/** `path`'s steps: `~` (the conventional home folders `shortPath` knows), `/`, a Windows drive, then its folders. */
+function crumbsOf(path: string): readonly { label: string; path: string }[] {
+	const separator = /^[A-Za-z]:\\|^\\\\/.test(path) ? "\\" : "/";
+	const short = shortPath(path);
+	const drive = /^[A-Za-z]:/.exec(path)?.[0];
+	const first =
+		short !== path && short.startsWith("~")
+			? { label: "~", path: path.slice(0, path.length - short.length + 1), rest: short.slice(1) }
+			: drive
+				? { label: drive, path: `${drive}${separator}`, rest: path.slice(drive.length) }
+				: path.startsWith("/")
+					? { label: "/", path: "/", rest: path }
+					: { label: path, path, rest: "" };
+	const steps = [{ label: first.label, path: first.path }];
+	let at = first.path;
+	for (const part of first.rest.split(/[\\/]/).filter(Boolean)) {
+		at = at.endsWith(separator) ? `${at}${part}` : `${at}${separator}${part}`;
+		steps.push({ label: part, path: at });
+	}
+	return steps;
+}
+
+/** The path line as a text field: Enter browses there, Escape goes back to the steps. */
+function PathInput({
+	value,
+	onChange,
+	onSubmit,
+	onCancel,
+}: {
+	value: string;
+	onChange: (value: string) => void;
+	onSubmit: (path: string) => void;
+	onCancel: () => void;
+}) {
+	const submit = (event: FormEvent) => {
+		event.preventDefault();
+		if (value.trim()) onSubmit(value.trim());
+	};
+	// Escape leaves the field, not the sheet (the sheet closes on an Escape nobody handled).
+	const key = (event: KeyboardEvent) => {
+		if (event.key !== "Escape") return;
+		event.preventDefault();
+		onCancel();
+	};
+	return (
+		<form className="location-type" onSubmit={submit}>
+			<input
+				className="location-input"
+				value={value}
+				onChange={(event) => onChange(event.target.value)}
+				onKeyDown={key}
+				aria-label="Directory"
+				autoCapitalize="off"
+				autoCorrect="off"
+				spellCheck={false}
+				enterKeyHint="go"
+				// biome-ignore lint/a11y/noAutofocus: the field appears because the owner asked to type a path.
+				autoFocus
+			/>
+		</form>
 	);
 }

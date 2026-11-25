@@ -133,7 +133,7 @@ function SettingsWindow() {
 						type="button"
 						className="settings-nav-item"
 						aria-current={own === entry.id ? "page" : undefined}
-						onClick={() => showSettingsSection({ locator: entry.id }, wide)}
+						onClick={() => showSettingsSection({ kind: "own", locator: entry.id }, wide)}
 					>
 						{entry.label}
 					</button>

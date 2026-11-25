@@ -239,7 +239,7 @@ type Child = {
 	/** Its reloads, one outstanding at a time; settles to nothing (a report kept as its value would stay alive). */
 	reloading: Promise<void>;
 	/** The waiter of its outstanding reload. */
-	reloaded: ((reply: Extract<FromWorker, { readonly kind: "reloaded" }>) => void) | undefined;
+	reloaded: ((reply: Extract<FromWorker, { readonly kind: "reloaded" | "reload_failed" }>) => void) | undefined;
 	/** Set once its link is gone or it exited: every reload queued behind settles with it. */
 	ended: Ended | undefined;
 	/** The grace timer of a stop or of a lost link. */
@@ -629,6 +629,7 @@ class WorkersComponent implements Workers<HostKind> {
 				child.process.kill();
 				return;
 			case "reloaded":
+			case "reload_failed":
 				child.reloaded?.(message);
 		}
 	}
@@ -737,7 +738,7 @@ class WorkersComponent implements Workers<HostKind> {
 			child.stopping && child.cause === undefined
 				? { kind: "stopped" }
 				: { kind: "failed", error: new ChordError({ code: "unavailable", message: "worker: its link is gone" }) };
-		child.reloaded?.({ kind: "reloaded", error: { message: "worker: its link is gone" } });
+		child.reloaded?.({ kind: "reload_failed", error: { message: "worker: its link is gone" } });
 	}
 
 	/**
@@ -849,9 +850,9 @@ class WorkersComponent implements Workers<HostKind> {
 			await started;
 			const child = routed.child;
 			if (child === undefined) throw new Error("worker: exited");
-			return { host, report: uncrossedReport(await child.ready.promise) };
+			return { kind: "reloaded", host, report: uncrossedReport(await child.ready.promise) };
 		} catch (error) {
-			return { host, error };
+			return { kind: "failed", host, error };
 		}
 	}
 
@@ -864,7 +865,11 @@ class WorkersComponent implements Workers<HostKind> {
 			() =>
 				new Promise<RolloutHost>((resolve) => {
 					const settle = (ended: Ended): void => {
-						resolve(ended.kind === "stopped" ? { host, stopped: true } : { host, error: ended.error });
+						resolve(
+							ended.kind === "stopped"
+								? { kind: "stopped", host }
+								: { kind: "failed", host, error: ended.error },
+						);
 					};
 					if (child.ended !== undefined) {
 						settle(child.ended);
@@ -872,13 +877,13 @@ class WorkersComponent implements Workers<HostKind> {
 					}
 					child.reloaded = (reply) => {
 						child.reloaded = undefined;
-						if ("report" in reply) {
+						if (reply.kind === "reloaded") {
 							if (reply.report.failed.length === 0) child.shipped = key;
-							resolve({ host, report: uncrossedReport(reply.report) });
+							resolve({ kind: "reloaded", host, report: uncrossedReport(reply.report) });
 						} else if (child.ended !== undefined) {
 							settle(child.ended);
 						} else {
-							resolve({ host, error: uncrossed(reply.error) });
+							resolve({ kind: "failed", host, error: uncrossed(reply.error) });
 						}
 					};
 					child.process.send({ kind: "reload", scripts });
@@ -935,7 +940,7 @@ async function bounded(host: string, entry: Promise<RolloutHost>, context: Conte
 	try {
 		return await awaitWithContext(entry, context);
 	} catch (error) {
-		return { host, error };
+		return { kind: "failed", host, error };
 	}
 }
 

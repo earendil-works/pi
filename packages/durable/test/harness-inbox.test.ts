@@ -524,7 +524,9 @@ describe("inbox", () => {
 		const first = gated(answer("first"));
 		setup.faux.setResponses([first.step, answer("second")]);
 		let yields = 0;
-		addHooks(setup.registry, GenerationTask, { onYield: () => (yields++ === 0 ? { continue: "more" } : undefined) });
+		addHooks(setup.registry, GenerationTask, {
+			onYield: () => (yields++ === 0 ? { kind: "continue", continue: "more" } : undefined),
+		});
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		const input = await root.submit({ type: "input", content: "a" }, context);
 		await first.reached;
@@ -675,7 +677,9 @@ describe("inbox", () => {
 		const first = gated(answer("first"));
 		setup.faux.setResponses([first.step, answer("second")]);
 		let yields = 0;
-		addHooks(setup.registry, GenerationTask, { onYield: () => (yields++ === 0 ? { continue: "more" } : undefined) });
+		addHooks(setup.registry, GenerationTask, {
+			onYield: () => (yields++ === 0 ? { kind: "continue", continue: "more" } : undefined),
+		});
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		const input = await root.submit({ type: "input", content: "a" }, context);
 		await first.reached;
@@ -699,7 +703,7 @@ describe("inbox", () => {
 		const setup = chatSetup();
 		const first = gated(answer("first"));
 		setup.faux.setResponses([first.step]);
-		addHooks(setup.registry, GenerationTask, { onYield: () => ({ continue: "more" }) });
+		addHooks(setup.registry, GenerationTask, { onYield: () => ({ kind: "continue", continue: "more" }) });
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		const input = await root.submit({ type: "input", content: "a" }, context);
 		await first.reached;

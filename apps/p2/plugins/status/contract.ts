@@ -18,6 +18,13 @@ export type WorkStep = Static<typeof WorkStepSchema>;
 export const WorkSchema = obj({ since: num(), rounds: num(), step: WorkStepSchema });
 export type Work = Static<typeof WorkSchema>;
 
+/**
+ * Why a conversation's last run ended without an answer: Durable's run failure reason (e.g. `model_error`, `aborted`)
+ * and its detail (an error's text; owners only).
+ */
+export const RunFailureSchema = obj({ reason: str(), detail: opt(str()) });
+export type RunFailure = Static<typeof RunFailureSchema>;
+
 export const StatusSchema = obj({
 	/** A worker process runs for the session. */
 	running: bool(),
@@ -29,22 +36,28 @@ export const StatusSchema = obj({
 	busy: arr(num()),
 	/** What each busy conversation does, by conversation ID. */
 	work: record(WorkSchema),
+	/** Why the main conversation's last run ended without an answer, while it is not busy. */
+	failure: opt(RunFailureSchema),
 });
 export type Status = Static<typeof StatusSchema>;
 export const StatusesSchema = record(StatusSchema);
 
-/** What a worker reports of its work: its live tasks, its busy conversations and what they do, and its spend. */
+/**
+ * What a worker reports of its work: its live tasks, its busy conversations and what they do, its main conversation's
+ * last run failure, and its spend.
+ */
 export const ReportFields = {
 	tasks: num(),
 	busy: arr(num()),
 	work: record(WorkSchema),
+	failure: opt(RunFailureSchema),
 	usage: opt(unsafe<Usage>(unknown())),
 };
 const ReportSchema = obj(ReportFields);
 
-/** Live status of every session (server, in memory). Reports are fenced by worker generation. 2: `work`. */
+/** Live status of every session (server, in memory), fenced by worker generation. 2: `work`. 3: `failure`. */
 export const StatusStore = local("p2.status-store", {
-	version: 2,
+	version: 3,
 	params: {},
 	members: {
 		statuses: StatusesSchema,
@@ -72,11 +85,30 @@ const SessionStatusV1 = remote("p2.session-status", {
 	},
 });
 
+/** Version 2, as 335814952 released it: `work`, no `failure` (pages and workers built then still bind it). */
+const StatusSchemaV2 = obj({
+	running: bool(),
+	error: opt(str()),
+	usage: opt(unsafe<Usage>(unknown())),
+	tasks: num(),
+	busy: arr(num()),
+	work: record(WorkSchema),
+});
+const SessionStatusV2 = evolve(SessionStatusV1, (e) =>
+	e
+		.state("reader", "statuses", record(StatusSchemaV2))
+		.args(
+			"report",
+			obj({ tasks: num(), busy: arr(num()), work: record(WorkSchema), usage: opt(unsafe<Usage>(unknown())) }),
+		),
+);
+
 /**
  * Readers (owner) see every session's status; a worker reports its own session's (its principal names it). 2: what
- * each busy conversation does (`work`). The provider still serves 1 (its `accepts`).
+ * each busy conversation does (`work`). 3: why the main conversation's last run failed (`failure`). The provider still
+ * serves 1 and 2 (its `accepts`).
  */
-export const SessionStatus = evolve(SessionStatusV1, (e) =>
+export const SessionStatus = evolve(SessionStatusV2, (e) =>
 	e.state("reader", "statuses", StatusesSchema).args("report", ReportSchema),
 );
 

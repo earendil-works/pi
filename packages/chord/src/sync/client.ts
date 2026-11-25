@@ -103,24 +103,27 @@ export type UploadResult =
 	 */
 	| { readonly type: "diverged"; readonly at: Seq }
 	/**
+	 * The remote holds no history for the session, though this copy shared it up to `at`: the remote's copy was deleted
+	 * (or the remote was reset) since. The host decides whether to start over: forget the sync state, and the next upload
+	 * sends the whole store from the start.
+	 */
+	| { readonly type: "remote_empty"; readonly at: Seq }
+	/**
 	 * The copy lost commits it had uploaded, for example to a power loss: its head is below `syncedHead`. Its next
 	 * commits would reuse their sequences, so nothing is uploaded. Pull what it lost before the copy commits again; a pull
 	 * applies from the local head.
 	 */
-	| { readonly type: "behind"; readonly head: Seq; readonly syncedHead: Seq }
-	/**
-	 * The remote refused this device's epoch: another device holds the right to write the session now. Like
-	 * `diverged`, the copy's commits after `at` are a different history, so the host forks the copy (S7).
-	 */
-	| { readonly type: "stale_epoch"; readonly at: Seq; readonly epoch: number };
+	| { readonly type: "behind"; readonly head: Seq; readonly syncedHead: Seq };
 
 /**
  * Upload what this copy committed since it last shared the remote's history, from the store's outbox, and trim the
  * outbox through what the remote acknowledged. Every device continues a session as its own; whichever creates the slot
  * first continues the session, so an upload that is acknowledged stays.
  *
- * A session the remote does not have yet, whose outbox does not reach back to its first commit (turned on later, or
- * trimmed, as for a copy renamed after it diverged), starts with an archive slot: the store's `export()` at its head.
+ * Where the outbox does not reach back to what the copy shares with the remote, the next slot is an archive slot: the
+ * store's `export()` at its head. For a session the remote does not have yet, that is its first slot (the outbox was
+ * turned on later, or trimmed, as for a copy renamed after it diverged); for one it has, the slot after its head (the
+ * outbox was turned off, dropping commits not uploaded yet, and on again), so the history goes on from a full state.
  *
  * A slot this device created already is an upload whose response was lost: the remote has the history up to its end,
  * and the upload goes on from there.
@@ -132,11 +135,9 @@ export async function uploadSession(options: {
 	/** Only `putBatch` is used: an upload creates slots and never reads the remote. */
 	readonly store: SessionSyncUploader;
 	readonly state: SyncStateStore;
-	/** The writer's epoch, from whatever grants it (the remote, Radius); sent with every slot. */
-	readonly epoch?: number;
 	readonly context: Context;
 }): Promise<UploadResult> {
-	const { sessionId, device, source, store, state, epoch, context } = options;
+	const { sessionId, device, source, store, state, context } = options;
 	const outbox = outboxOf(source);
 	let synced = sharedHead(await state.get(sessionId, context), storeHead(source));
 	let uploaded: Seq | undefined;
@@ -148,7 +149,7 @@ export async function uploadSession(options: {
 		let body: SyncBody;
 		let archive = false;
 		let close: (() => Promise<void>) | undefined;
-		if (synced === LOG_START && outbox.floor > 0) {
+		if (outbox.floor > synced) {
 			const snapshot = await exportSnapshot(source, context);
 			to = snapshot.to;
 			body = snapshot.body;
@@ -164,17 +165,14 @@ export async function uploadSession(options: {
 		const after = synced;
 		let result: PutBatchResult;
 		try {
-			result = await store.putBatch(sessionId, after, to, device, body, context, {
-				...(archive ? { archive } : {}),
-				...(epoch === undefined ? {} : { epoch }),
-			});
+			result = await store.putBatch(sessionId, after, to, device, body, context, archive ? { archive } : {});
 		} finally {
 			// A remote that answered without reading the archive leaves the export holding the commit queue.
 			await close?.();
 		}
 		// A history that does not end at `after` is another one too: the remote never held this copy's past `after`.
-		if (result.type === "stale_epoch") return { type: "stale_epoch", at: after, epoch: result.epoch };
-		if (result.type === "not_head") return { type: "diverged", at: after };
+		if (result.type === "not_head")
+			return result.head === LOG_START ? { type: "remote_empty", at: after } : { type: "diverged", at: after };
 		if (result.type === "exists" && result.device !== device) return { type: "diverged", at: after };
 		synced = result.type === "created" ? to : result.to;
 		await state.set(sessionId, { syncedHead: synced }, context);
@@ -319,13 +317,13 @@ export type LocalCopy =
 	| { readonly kind: "empty"; readonly backend: Backend };
 
 /**
- * Apply what the remote has after the local head; into an empty backend, that restores the session (from an archive
- * when the history starts with one) and opens its store with an outbox. Resolves with the store, which the caller
+ * Apply what the remote has after the local head; into an empty backend, that restores the session (from the newest
+ * archive along its history, if any) and opens its store with an outbox. Resolves with the store, which the caller
  * owns and closes. Nothing may hold the store's claims (no `StoreStorage`, no Harness): `applyBatch()` refuses then.
  *
  * A copy with commits it has not uploaded rejects with `UnsyncedCommitsError` instead of getting the remote's commits
- * spliced onto its own. A copy whose history folding removed rejects with `HistoryUnavailableError` and restores into
- * a fresh backend.
+ * spliced onto its own. A copy whose history folding removed, or that an archive slot continues (a full state, which
+ * does not apply on top of a store), rejects with `HistoryUnavailableError` and restores into a fresh backend.
  */
 export async function pullSession(options: {
 	readonly sessionId: string;
@@ -356,20 +354,22 @@ export async function pullSession(options: {
 		}
 		for (const body of bodies) {
 			if (body.to <= at()) continue;
-			const bytes = await body.read();
-			if (bytes === undefined) throw new HistoryUnavailableError(at());
-			await state.set(sessionId, { syncedHead: at(), pulling: body.to }, context);
-			if (body.archive) {
-				// An archive restores a whole store: only into an empty backend.
-				if (target !== undefined || local.kind !== "empty") throw new HistoryUnavailableError(at());
-				target = await importStore(local.backend, decodeSnapshot(bytes), context, { outbox: true });
-			} else {
-				if (target === undefined) {
-					if (local.kind !== "empty") throw new Error("unreachable: a store copy always has a target");
-					target = await openStore(local.backend, context, { outbox: true });
+			const opened = await body.read();
+			if (opened === undefined) throw new HistoryUnavailableError(at());
+			await readBody(opened, async (bytes) => {
+				await state.set(sessionId, { syncedHead: at(), pulling: body.to }, context);
+				if (body.archive) {
+					// An archive restores a whole store: only into an empty backend.
+					if (target !== undefined || local.kind !== "empty") throw new HistoryUnavailableError(at());
+					target = await importStore(local.backend, decodeSnapshot(bytes), context, { outbox: true });
+				} else {
+					if (target === undefined) {
+						if (local.kind !== "empty") throw new Error("unreachable: a store copy always has a target");
+						target = await openStore(local.backend, context, { outbox: true });
+					}
+					await applyBody(target as ChordStore, bytes, context);
 				}
-				await applyBody(target as ChordStore, bytes, context);
-			}
+			});
 			await state.set(sessionId, { syncedHead: at() }, context);
 		}
 		if (target === undefined) {
@@ -387,6 +387,19 @@ export async function pullSession(options: {
 		// A store this pull opened is the caller's only on success.
 		if (local.kind === "empty" && target !== undefined) await target.close(context).catch(() => {});
 		throw error;
+	}
+}
+
+/**
+ * Run `read` over a remote's body, then release the body: also when `read` stopped early or never started it. A body
+ * may hold a file or a connection until its iterator's `return()`, which `for await` calls only once it started.
+ */
+async function readBody(body: SyncBody, read: (body: SyncBody) => Promise<void>): Promise<void> {
+	const iterator = body[Symbol.asyncIterator]();
+	try {
+		await read({ [Symbol.asyncIterator]: () => iterator });
+	} finally {
+		await iterator.return?.();
 	}
 }
 
@@ -421,7 +434,10 @@ export async function foldSession(options: {
 		}
 		await store.foldBatches(
 			sessionId,
-			history.batches.filter((batch: BatchInfo) => batch.to <= snapshot.to).map((batch) => batch.after),
+			// Every slot the snapshot covers, also those before an archive slot the restore started from.
+			listing.batches
+				.filter((batch: BatchInfo) => batch.to <= snapshot.to && batch.folded !== true)
+				.map((batch) => batch.after),
 			context,
 		);
 		await store.deleteSnapshots(

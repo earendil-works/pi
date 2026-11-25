@@ -148,7 +148,7 @@ export class Bot implements DiscordPort {
 		files: readonly { name: string; data: Uint8Array }[] = [],
 	): Promise<void> {
 		const channel = await this.#text(channelId);
-		if (!("send" in channel)) throw new Error("The channel takes no messages");
+		if (!channel.isSendable()) throw new Error("The channel takes no messages");
 		// discord.js uploads attachments as a multipart request.
 		await channel.send({
 			...(text ? { content: text } : {}),
@@ -163,14 +163,14 @@ export class Bot implements DiscordPort {
 
 	async uploadLimit(channelId: string): Promise<number> {
 		const channel = await this.#text(channelId);
-		const tier = "guild" in channel ? channel.guild.premiumTier : GuildPremiumTier.None;
+		const tier = channel.isDMBased() ? GuildPremiumTier.None : channel.guild.premiumTier;
 		// Discord's per-message upload limit by the server's boost level.
 		return (tier === GuildPremiumTier.Tier3 ? 100 : tier === GuildPremiumTier.Tier2 ? 50 : 10) * 1024 * 1024;
 	}
 
 	async typing(channelId: string): Promise<void> {
 		const channel = await this.#text(channelId);
-		if ("sendTyping" in channel) await channel.sendTyping();
+		if (channel.isSendable()) await channel.sendTyping();
 	}
 
 	/** Server `guildId`'s text channels and roles (without @everyone), by name. */

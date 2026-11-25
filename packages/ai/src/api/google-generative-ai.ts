@@ -16,7 +16,6 @@ import type {
 	StreamFunction,
 	StreamOptions,
 	TextContent,
-	ThinkingBudgets,
 	ThinkingContent,
 	ToolCall,
 	TranscriptContext,
@@ -28,11 +27,13 @@ import { type ClientIdentity, getIdentityHeaders } from "../utils/identity.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { getSystemMessageText } from "../utils/text.ts";
 import { collapseSystemMessages, getCurrentTools, getInitialSystemMessage } from "../utils/transcript.ts";
-import type { GoogleApiThinkingLevel, ResolvedGoogleThinkingLevel } from "./google-shared.ts";
+import type { GoogleApiThinkingLevel } from "./google-shared.ts";
 import {
 	convertMessages,
 	convertTools,
+	formatGooglePromptBlockError,
 	getDisabledGoogleThinkingConfig,
+	getGoogleBudget,
 	isThinkingPart,
 	mapStopReason,
 	resolveGoogleFunctionCallingMode,
@@ -96,14 +97,24 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 			if (nextParams !== undefined) {
 				params = nextParams as GenerateContentParameters;
 			}
-			const googleStream = await retryGoogleRequest(() => client.models.generateContentStream(params), options);
+			const googleStream = await retryGoogleRequest(
+				() => client.models.generateContentStream(params),
+				model,
+				options,
+			);
 
 			stream.push({ type: "start", partial: output });
 			let currentBlock: TextContent | ThinkingContent | null = null;
+			let receivedChunkCount = 0;
+			let promptBlockError: string | undefined;
 			const blocks = output.content;
 			const blockIndex = () => blocks.length - 1;
 			for await (const chunk of googleStream) {
 				await options?.onProviderStreamEvent?.(chunk, model);
+				receivedChunkCount++;
+				if (chunk.promptFeedback?.blockReason) {
+					promptBlockError ??= formatGooglePromptBlockError("Google", chunk.promptFeedback);
+				}
 				// @google/genai documents GenerateContentResponse.responseId as an output-only field
 				// used to identify each response. Keep the first non-empty one from the stream.
 				output.responseId ||= chunk.responseId;
@@ -273,7 +284,11 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 			}
 
 			if (output.stopReason === "pending") {
-				throw new Error("Google stream ended without a finish reason");
+				if (promptBlockError) throw new Error(promptBlockError);
+				const chunkLabel = receivedChunkCount === 1 ? "chunk" : "chunks";
+				throw new Error(
+					`Google stream ended without a finish reason after receiving ${receivedChunkCount} ${chunkLabel}`,
+				);
 			}
 			if (output.stopReason === "aborted" || output.stopReason === "error") {
 				const errorMessage = output.rawStopReason
@@ -377,7 +392,7 @@ function buildParams(
 		generationConfig.maxOutputTokens = options.maxTokens;
 	}
 
-	const supportsStrictMode = supportsGoogleStrictToolSampling(model.id);
+	const supportsStrictMode = supportsGoogleStrictToolSampling(model);
 	const functionCallingMode =
 		currentTools.length > 0
 			? resolveGoogleFunctionCallingMode(currentTools, options.toolChoice, supportsStrictMode)
@@ -423,46 +438,4 @@ function buildParams(
 	};
 
 	return params;
-}
-
-function getGoogleBudget(
-	model: Model<"google-generative-ai">,
-	level: ResolvedGoogleThinkingLevel,
-	customBudgets?: ThinkingBudgets,
-): number {
-	if (customBudgets?.[level] !== undefined) {
-		return customBudgets[level]!;
-	}
-
-	if (model.id.includes("2.5-pro")) {
-		const budgets: Record<ResolvedGoogleThinkingLevel, number> = {
-			minimal: 128,
-			low: 2048,
-			medium: 8192,
-			high: 32768,
-		};
-		return budgets[level];
-	}
-
-	if (model.id.includes("2.5-flash-lite")) {
-		const budgets: Record<ResolvedGoogleThinkingLevel, number> = {
-			minimal: 512,
-			low: 2048,
-			medium: 8192,
-			high: 24576,
-		};
-		return budgets[level];
-	}
-
-	if (model.id.includes("2.5-flash")) {
-		const budgets: Record<ResolvedGoogleThinkingLevel, number> = {
-			minimal: 128,
-			low: 2048,
-			medium: 8192,
-			high: 24576,
-		};
-		return budgets[level];
-	}
-
-	return -1;
 }

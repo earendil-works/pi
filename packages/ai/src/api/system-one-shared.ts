@@ -9,6 +9,11 @@ import type {
 	SystemOneCompat,
 } from "../types.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
+import {
+	applyOpenRouterReportedCost,
+	isOpenRouterModel,
+	type OpenRouterUsageAccounting,
+} from "../utils/openrouter-cost.ts";
 import { isRecord, parseClassifierUsage, postClassifierRequest, requiredNumber } from "./classifier-shared.ts";
 
 /** A System One image asset: base64 file bytes, referenced by its name from the state. */
@@ -65,7 +70,7 @@ export interface SystemOneTransport {
 	url(model: ClassifierModel<ClassifierApi>): URL;
 	/** Wraps the System One request in the service's request envelope. */
 	payload(model: ClassifierModel<ClassifierApi>, request: SystemOneWireRequest): unknown;
-	/** Extracts the System One output (`{ answers, usage }`) from the service's response envelope. */
+	/** Extracts the System One output (`{ answers, usage }`, and `id` when reported) from the service's response envelope. */
 	output(body: unknown): Record<string, unknown>;
 }
 
@@ -224,9 +229,15 @@ export async function classifySystemOne(
 			requestOptions,
 		);
 		const result = transport.output(body);
+		if (typeof result.id === "string" && result.id) output.responseId = result.id;
 		// Set before parsing answers: a request with malformed answers was still billed.
 		const usage = parseClassifierUsage(result.usage, model);
-		if (usage) output.usage = usage;
+		if (usage) {
+			if (isOpenRouterModel(model)) {
+				applyOpenRouterReportedCost(usage, result.usage as OpenRouterUsageAccounting);
+			}
+			output.usage = usage;
+		}
 		output.answers = parseAnswers(transport.label, result.answers, context);
 		return output;
 	} catch (error) {

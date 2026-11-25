@@ -69,14 +69,14 @@ export type Built = {
 };
 
 /**
- * What a rollout step did on one of its hosts (`host` named by the step): its reload's report; `stopped` when the host
- * stopped cleanly during the step (it gets the current set at its next start); `error` when it crashed or its reload
- * failed (every plugin of the step's kinds in the build counts as failed there).
+ * What a rollout step did on one of its hosts (`host` named by the step): `reloaded` with its reload's report;
+ * `stopped` when the host stopped cleanly during the step (it gets the current set at its next start); `failed` when
+ * it crashed or its reload failed (every plugin of the step's kinds in the build counts as failed there).
  */
 export type RolloutHost =
-	| { readonly host: string; readonly report: ReloadReport }
-	| { readonly host: string; readonly stopped: true }
-	| { readonly host: string; readonly error: unknown };
+	| { readonly kind: "reloaded"; readonly host: string; readonly report: ReloadReport }
+	| { readonly kind: "stopped"; readonly host: string }
+	| { readonly kind: "failed"; readonly host: string; readonly error: unknown };
 
 /** What a rollout step does: reloads its hosts with the facets of its kinds, one result per host (D12). */
 export type RolloutStep = {
@@ -267,7 +267,7 @@ class PluginsComponent implements Plugins {
 			name,
 			kinds: [kind],
 			reload: async (built, context) => ({
-				hosts: [{ host: name, report: await this.reload(host, built, context) }],
+				hosts: [{ kind: "reloaded", host: name, report: await this.reload(host, built, context) }],
 			}),
 		};
 	}
@@ -286,8 +286,8 @@ class PluginsComponent implements Plugins {
 			}
 			for (const kind of step.kinds) shipped.add(kind);
 			for (const entry of hosts) {
-				if ("report" in entry) for (const { plugin } of entry.report.failed) failed.add(plugin);
-				else if ("error" in entry) for (const plugin of builtOf(built, step.kinds)) failed.add(plugin);
+				if (entry.kind === "reloaded") for (const { plugin } of entry.report.failed) failed.add(plugin);
+				else if (entry.kind === "failed") for (const plugin of builtOf(built, step.kinds)) failed.add(plugin);
 			}
 			done.push({ name: step.name, hosts });
 		}

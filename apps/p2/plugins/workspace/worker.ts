@@ -228,7 +228,13 @@ export default defineFacet((host) => {
 			),
 			query: (query, ctx) =>
 				worker().liveness.call(async () => {
-					if ("path" in query && workspacePath(query.path) === undefined)
+					if (
+						(query.kind === "list" ||
+							query.kind === "file" ||
+							query.kind === "search" ||
+							query.kind === "diff") &&
+						workspacePath(query.path) === undefined
+					)
 						throw new Error("Invalid workspace path");
 					if (query.kind === "search" && !workspaceSearchText(query.text)) throw new Error("Invalid search text");
 					const { workspace, location } = await workspaceResource.value.current();

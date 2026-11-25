@@ -24,6 +24,7 @@ describe("provenance", () => {
 	it("is local on a loopback connection with a loopback Host and its port (without it on port 80)", () => {
 		for (const host of ["127.0.0.1:8788", "LOCALHOST:8788", "[::1]:8788"]) {
 			expect(admitted([["host", host]])).toEqual({
+				kind: "admitted",
 				provenance: { kind: "local" },
 				origin: `http://${host.toLowerCase()}`,
 				framer: undefined,
@@ -49,6 +50,7 @@ describe("provenance", () => {
 
 	it("admits an allowed host as remote https; refuses another, another port, two Hosts, none", () => {
 		expect(admitted([["host", "Notes.Example.com"]])).toEqual({
+			kind: "admitted",
 			provenance: { kind: "remote", host: "notes.example.com" },
 			origin: "https://notes.example.com",
 			framer: undefined,
@@ -92,6 +94,7 @@ describe("provenance", () => {
 		const host: [string, string] = ["host", "127.0.0.1:8788"];
 		const forwarded: [string, string] = ["x-forwarded-for", "203.0.113.9"];
 		expect(admitted([host, forwarded, ["x-relay-secret", "s"]], LOOPBACK, [radius])).toEqual({
+			kind: "admitted",
 			provenance: { kind: "relayed", relay: "radius", origin: "https://me.radius.example" },
 			origin: "https://me.radius.example",
 			framer: "https://radius.example",

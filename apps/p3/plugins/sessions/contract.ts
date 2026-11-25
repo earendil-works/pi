@@ -26,7 +26,14 @@ export const Creator = union([obj({ kind: lit("owner") }), obj({ kind: lit("pers
 /** Who made a session (see `Creator`). */
 export type Creator = Static<typeof Creator>;
 
-/** What a session's agent is doing: working, waiting for someone, settled (nothing to do), or failed. */
+/**
+ * What a session's agent is doing:
+ * - `working`: a run is in progress (its worker keeps itself alive; after a restart the waker starts it again);
+ * - `waiting`: the run waits for a person;
+ * - `settled`: nothing to do (a new session too);
+ * - `failed`: the last run ended with an error.
+ * Its worker reports each change (`SessionFacts.report`).
+ */
 export const SessionState = oneOf("working", "waiting", "settled", "failed");
 
 /** What a session's agent is doing (see `SessionState`). */
@@ -94,13 +101,29 @@ export const SessionsList = remote("sessions.list", {
 
 /**
  * A session's row for its own worker, which holds it as itself: its principal names the session (design §4). `null`
- * for a session the server does not know.
+ * for a session the server does not know. `report` says what its agent is doing now (`SessionState`).
  */
 export const SessionFacts = remote("sessions.facts", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
-	variants: { worker: { state: { session: union([SessionRow, nul()]) } } },
+	variants: {
+		worker: {
+			state: { session: union([SessionRow, nul()]) },
+			methods: { report: method(obj({ state: SessionState })) },
+		},
+	},
+});
+
+/**
+ * A session's worker, for the server's waker: holding it starts the worker (after a restart, for a session whose run
+ * was cut off), where the harness resumes the run once loaded.
+ */
+export const SessionStart = remote("sessions.start", {
+	version: 1,
+	params: { session: str() },
+	hostAddress: ({ session }) => Session({ id: session }),
+	variants: { server: { state: { session: str() } } },
 });
 
 /** A session's worker as the owner sees it: the row it follows from the server. */

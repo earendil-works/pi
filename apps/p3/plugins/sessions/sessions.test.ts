@@ -12,6 +12,7 @@ import { type TestedPlugin, testPlugin } from "@earendil-works/chord/plugins";
 import { type P3Principal, Server } from "@earendil-works/p3/v1";
 import { SessionRoute } from "@earendil-works/p3/v1/server";
 import { API } from "../../src/app.ts";
+import { SERVER_MODULES } from "../../src/modules-server.ts";
 import { CODING, SessionFacts, Sessions, SessionsList } from "./contract.ts";
 
 const OWNER: P3Principal = { kind: "owner" };
@@ -28,7 +29,7 @@ describe("the sessions plugin on the server", () => {
 			{
 				kind: "server",
 				api: { name: API.name, versions: API.versions },
-				modules: API.modules,
+				modules: SERVER_MODULES,
 				principal: { kind: "server" },
 				address: Server(),
 			},

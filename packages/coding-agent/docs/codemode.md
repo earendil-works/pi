@@ -1,6 +1,6 @@
 # Codemode
 
-The `codemode` tool lets the model write a JavaScript script that calls pi's other tools and runs non-LLM models, such as classifiers and image models. Only the script's output reaches the model, so a script can run calls in parallel and filter large results before the model sees them. To turn it on, see [Enable codemode](cli.md#enable-codemode).
+The `codemode` tool lets the model write a JavaScript script that calls pi's other tools and runs non-LLM models, such as decision models and image models. Only the script's output reaches the model, so a script can run calls in parallel and filter large results before the model sees them. To turn it on, see [Enable codemode](cli.md#enable-codemode).
 
 ## Scripts
 
@@ -40,7 +40,7 @@ Every tool the session can call is a method of `tools`, named by its identifier:
 
 What a call resolves to depends on the tool:
 
-- Tools with an output schema resolve to a structured value. `bash` resolves to `{ output, truncated, full_output_path?, exit_code, wall_time_seconds }`, also for non-zero exit codes. Its `output` is not limited to the 2000 lines or 50KB the model sees: it holds up to 1 MiB, and longer output keeps its first and last 512 KiB around an omission marker, with `truncated` set and the full output in `full_output_path`.
+- Tools with an output schema resolve to a structured value. `bash` resolves to `{ output, truncated, full_output_path?, full_output_error?, exit_code, wall_time_seconds }`, also for non-zero exit codes. Its `output` is not limited to the 2000 lines or 50KB the model sees: it holds up to 1 MiB, and longer output keeps its first and last 512 KiB around an omission marker, with `truncated` set and the full output in `full_output_path`. When the full output could not be saved (for example a full temp directory), `full_output_error` says why and `output` holds only the retained tail.
 - MCP tools resolve to their `CallToolResult`, including `isError` and `structuredContent`.
 - `read` resolves to the file's text, or for an image to an image block `{ type: "image", data, mimeType, note }` that `image()` shows. `data` is the base64 image the model would see and `note` the text that goes with it, such as resize hints.
 - Other tools, such as `edit` and `write`, resolve to their text output.
@@ -59,7 +59,7 @@ The store is for small state such as IDs, cursors, or summaries. One value may h
 
 ## Models
 
-`models` reaches the model catalog and runs non-LLM models with the session's credentials: classifiers, which answer typed questions about JSON state and, for some models, images, and image models, which generate images. Chat models are listed but cannot be run from scripts. Which classifier and image models exist is described in [Use classifier models](models.md#use-classifier-models) and [Use image models](models.md#use-image-models).
+`models` reaches the model catalog and runs non-LLM models with the session's credentials: decision models (type `"classifier"`), which answer typed questions about JSON state and, for some models, images, and image models, which generate images. Chat models are listed but cannot be run from scripts. Which decision and image models exist is described in [Use decision models](models.md#use-decision-models) and [Use image models](models.md#use-image-models).
 
 ```ts
 type ModelType = "chat" | "image" | "classifier";
@@ -120,6 +120,8 @@ interface ClassifierResult {
   /** Answers by question ID. */
   answers: Record<string, ClassifierAnswer>;
   usage?: ModelUsage;
+  /** Provider-specific response ID when reported, such as OpenRouter's generation ID. */
+  responseId?: string;
   stopReason: "stop" | "error" | "aborted";
   errorMessage?: string;
 }
@@ -165,7 +167,7 @@ return results.map((result, i) =>
 );
 ```
 
-Classifiers whose `input` includes `"image"` also judge images. `tools.read()` returns an image file as an image block that `images` accepts. Other classifiers return an error result when `images` is not empty.
+Decision models whose `input` includes `"image"` also judge images. `tools.read()` returns an image file as an image block that `images` accepts. Other decision models return an error result when `images` is not empty.
 
 ```js
 const luna = await models.getModelOfType("classifier", "openai", "gpt-6-luna");

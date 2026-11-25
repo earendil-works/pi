@@ -700,10 +700,7 @@ test("Radius brain pings a quiet relay and reconnects when the network goes sile
 	// A lost network: no close, just no traffic. The brain gives up on the socket and connects again.
 	f.state.silent = true;
 	await poll(() => f.statuses.some((status) => status.status === "retrying"));
-	assert.match(
-		String(f.statuses.find((status) => status.status === "retrying" && "error" in status)?.error),
-		/no message from Radius/,
-	);
+	assert.match(String(f.statuses.find((status) => status.status === "retrying")?.error), /no message from Radius/);
 	f.state.silent = false;
 	await poll(() => connectedCount(f.statuses) === 2);
 	assert.equal(f.state.connections, 2);

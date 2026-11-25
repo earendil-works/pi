@@ -69,6 +69,7 @@ import {
 	Conversation,
 	type EntriesPage,
 	type ModelMeta,
+	RunControl,
 	SendRouters,
 	StatsSchema,
 } from "./contract.ts";
@@ -562,6 +563,24 @@ export default defineFacet((host) => {
 		return { variant: "viewer", members: { costs: (ctx) => chat.costs(ctx) } };
 	});
 	host.serve(Chat, chatFactory);
+	host.serve(RunControl, ({ session, conversation }, principal, self) => {
+		if (!canSend(principal, session)) throw forbidden("participants only");
+		const chat = self.get(Conversation, { conversation });
+		const worker = workerOf(self);
+		return {
+			variant: "participant",
+			members: {
+				// Refused while the session moves, as the chat's calls are (`Liveness.call`).
+				stop: (ctx) =>
+					worker().liveness.call(async () => {
+						const { restored } = await chat.stop(ctx);
+						if (restored.length)
+							await (await ctx.get(DraftStore, {})).add({ conversation, items: restored }, ctx);
+						return null;
+					}),
+			},
+		};
+	});
 	host.serve(ChatImages, ({ conversation }, principal, self) => {
 		if (principal.kind !== "server") throw forbidden("server only");
 		const chat = self.get(Conversation, { conversation });

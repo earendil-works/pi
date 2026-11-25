@@ -1,10 +1,11 @@
 // The session worker's part of status: its Durable task graph, followed, and pushed to the server's index of statuses
-// (the sidebar's working dot and what each busy conversation does). The worker pushes; the server never asks.
+// (the sidebar's working dots, what each busy conversation does, and why the main conversation's last run failed). The
+// worker pushes; the server never asks.
 import type { Usage } from "@earendil-works/pi-ai";
 import { type ConversationId, type Harness, LiveDoc, type LiveState, type TaskGraph } from "@earendil-works/pi-durable";
 import { type Ctx, defineFacet, expectVariant } from "@p2/app/v1";
-import { harnessOf, workerOf } from "@p2/app/v1/worker";
-import { SessionStatus, StatusReport, type Work, type WorkStep } from "./contract.ts";
+import { harnessOf, mainConversation, workerOf } from "@p2/app/v1/worker";
+import { type RunFailure, SessionStatus, StatusReport, type Work, type WorkStep } from "./contract.ts";
 
 /**
  * Live tasks, and conversations with foreground work with their tasks' kinds: a background reporter does not make a
@@ -54,6 +55,25 @@ export function stepOf(live: LiveState | undefined, kinds: ReadonlySet<string>):
 	return { kind: "working" };
 }
 
+/**
+ * Why the main conversation's last run ended without an answer, while it is not busy (a run in progress has no
+ * failure yet). Read at each report: one document of one conversation, and a run's end is a change of the task graph
+ * that wakes the report.
+ */
+async function mainFailure(
+	durable: Harness,
+	busy: ReadonlyMap<ConversationId, ReadonlySet<string>>,
+	ctx: Ctx,
+): Promise<RunFailure | undefined> {
+	const main = await mainConversation(durable, ctx);
+	if (busy.has(main)) return undefined;
+	const failure = (await durable.snapshot(LiveDoc, main, ctx))?.runFailure;
+	if (failure === undefined) return undefined;
+	return failure.detail === undefined
+		? { reason: failure.reason }
+		: { reason: failure.reason, detail: failure.detail };
+}
+
 /** The session's spend: every model and tool bucket summed, or undefined before the first one. */
 function totalUsage(totals: { models: Record<string, Usage>; tools: Record<string, Usage> }): Usage | undefined {
 	const buckets = [...Object.values(totals.models), ...Object.values(totals.tools)];
@@ -89,10 +109,20 @@ export default defineFacet((host) => {
 			const { tasks, busy } = summarize(graph.value as TaskGraph);
 			worker().liveness.setDurableTasks(tasks);
 			const durable = harness().durable;
-			const [work, totals] = await Promise.all([workOf(durable, busy, since, ctx), durable.usage(ctx)]);
+			const [work, failure, totals] = await Promise.all([
+				workOf(durable, busy, since, ctx),
+				mainFailure(durable, busy, ctx),
+				durable.usage(ctx),
+			]);
 			const usage = totalUsage(totals);
 			await expectVariant(status, "reporter").report(
-				{ tasks, busy: [...busy.keys()].sort((a, b) => a - b), work, ...(usage ? { usage } : {}) },
+				{
+					tasks,
+					busy: [...busy.keys()].sort((a, b) => a - b),
+					work,
+					...(failure ? { failure } : {}),
+					...(usage ? { usage } : {}),
+				},
 				ctx,
 			);
 		};

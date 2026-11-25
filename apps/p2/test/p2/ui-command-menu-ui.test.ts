@@ -289,7 +289,7 @@ describe("command menu: app and views commands", { skip: !browserTests }, () => 
 			const open = await create("Open with views");
 			const other = await create("Other row");
 			await openSession(open, "Open with views");
-			const row = `.sidebar-section[data-key=recent] .nav-row:has(> a.session-main[href="/s/${other}"])`;
+			const row = `.sidebar-section[data-key=other] .nav-row:has(> a.session-main[href="/s/${other}"])`;
 			await browser.wait(`document.querySelector(${JSON.stringify(row)})`);
 			const point = await browser.evaluate<{ x: number; y: number }>(
 				`(() => { const r = document.querySelector(${JSON.stringify(row)}).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`,

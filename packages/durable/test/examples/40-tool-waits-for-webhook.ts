@@ -87,7 +87,7 @@ const runCi = defineTool<typeof CiParameters, { buildId: string }, { buildId: st
 	async execute({ ref }, api, ctx) {
 		// The result, the deadline's expiry, or nothing yet (a fresh call, or a rerun after a crash before the park).
 		const state = await api.readSignal(CiResult, "done", ctx);
-		if (state !== undefined && "value" in state) {
+		if (state?.kind === "value") {
 			const { status, logUrl } = state.value;
 			return { output: [{ type: "text", text: `CI ${status}: ${logUrl}` }], isError: status !== "passed" };
 		}
@@ -109,7 +109,10 @@ const runCi = defineTool<typeof CiParameters, { buildId: string }, { buildId: st
 			await new Promise((_, reject) => ctx.abortSignal?.addEventListener("abort", reject, { once: true }));
 		}
 		return {
-			sleep: { checkpoint: { buildId: build.id }, signals: [CiResult.key("done")], until: api.now() + 2 * HOUR },
+			kind: "sleep",
+			checkpoint: { buildId: build.id },
+			signals: [CiResult.key("done")],
+			until: api.now() + 2 * HOUR,
 		};
 	},
 	async cancel(_args, api, ctx) {

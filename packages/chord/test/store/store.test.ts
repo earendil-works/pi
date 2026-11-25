@@ -505,7 +505,7 @@ describe("a commit series", () => {
 			(index, seq, ids) => receipts.push([index, seq, ids]),
 			telemetry.context,
 		);
-		expect(result).toEqual({ stored: 3 });
+		expect(result).toEqual({ kind: "stored", stored: 3 });
 		expect(seen).toEqual([2]);
 		expect(receipts).toEqual([
 			[0, 1, [2]],
@@ -537,7 +537,7 @@ describe("a commit series", () => {
 			(index) => receipts.push(index),
 			context,
 		);
-		expect(result).toEqual({ stored: 1, refused: refusal });
+		expect(result).toEqual({ kind: "refused", stored: 1, refused: refusal });
 		expect(receipts).toEqual([0]);
 		expect(store.lastSeq).toBe(1);
 		const keys = await store.read(
@@ -647,7 +647,10 @@ describe("a commit series", () => {
 			},
 		};
 		const later = { check: async (step: Step) => void seen.push(step.table(TABLE)?.version), writes: [sees] };
-		expect(await store.commitSeries([unchecked([table]), later], () => {}, context)).toEqual({ stored: 2 });
+		expect(await store.commitSeries([unchecked([table]), later], () => {}, context)).toEqual({
+			kind: "stored",
+			stored: 2,
+		});
 		expect(seen).toEqual([1, 1]);
 		expect(store.table(TABLE)?.version).toBe(1);
 	});
@@ -690,7 +693,7 @@ describe("a commit series", () => {
 			(index, seq) => receipts.push([index, seq]),
 			context,
 		);
-		expect(empty).toEqual({ stored: 2 });
+		expect(empty).toEqual({ kind: "stored", stored: 2 });
 		expect(receipts).toEqual([
 			[0, Number.MAX_SAFE_INTEGER],
 			[1, Number.MAX_SAFE_INTEGER],

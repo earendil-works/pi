@@ -1,6 +1,6 @@
 import type { Context } from "../context/index.ts";
 import type { SyncBody } from "./batch.ts";
-import { isNotFound, type SyncFileSystem, unwrap } from "./files.ts";
+import { isNotFound, type SyncFileReader, type SyncFileSystem, unwrap } from "./files.ts";
 import {
 	type BatchInfo,
 	type JsonObject,
@@ -186,19 +186,7 @@ export class FileSystemSyncRemote implements SessionSyncMaintenance {
 			context,
 		);
 		if (isNotFound(opened)) return undefined;
-		const reader = unwrap(opened);
-		return (async function* () {
-			try {
-				for (let offset = 0; ; ) {
-					const chunk = unwrap(await reader.read(offset, READ_CHUNK, context));
-					if (chunk.length === 0) return;
-					offset += chunk.length;
-					yield chunk;
-				}
-			} finally {
-				await reader.close(context);
-			}
-		})();
+		return readerBody(unwrap(opened), context);
 	}
 
 	/**
@@ -230,4 +218,36 @@ export class FileSystemSyncRemote implements SessionSyncMaintenance {
 	async #path(context: Context, sessionId: string, ...parts: string[]): Promise<string> {
 		return unwrap(await this.#fs.joinPath([this.#root, checkSessionId(sessionId), ...parts], context));
 	}
+}
+
+/**
+ * An open file as a body, a chunk at a time, closed at its end, on a failed read, or on `return()`. Not an async
+ * generator: its `finally` runs only once started, and a file left to garbage collection is an uncaught error on Node 26.
+ */
+function readerBody(reader: SyncFileReader, context: Context): SyncBody {
+	let offset = 0;
+	let closing: Promise<void> | undefined;
+	const close = async (): Promise<IteratorReturnResult<undefined>> => {
+		closing ??= reader.close(context);
+		await closing;
+		return { done: true, value: undefined };
+	};
+	const body: AsyncIterableIterator<Uint8Array, undefined> = {
+		async next() {
+			if (closing !== undefined) return close();
+			let chunk: Uint8Array;
+			try {
+				chunk = unwrap(await reader.read(offset, READ_CHUNK, context));
+			} catch (error) {
+				await close();
+				throw error;
+			}
+			if (chunk.length === 0) return close();
+			offset += chunk.length;
+			return { done: false, value: chunk };
+		},
+		return: close,
+		[Symbol.asyncIterator]: () => body,
+	};
+	return body;
 }

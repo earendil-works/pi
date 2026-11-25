@@ -1,43 +1,49 @@
-// `projects.json` observed: every valid save applies at once, an invalid one keeps the last valid projects.
-import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
-import { Observer } from "@p2/app/v1/node";
-import { loadProjects, projectsPath } from "./config.ts";
-import type { Project } from "./contract.ts";
+// The projects' tables in the server's store: one row per project (its order a position with gaps, so a move writes one
+// row) and
+// one row per session that belongs to a project (a move of a session writes one row). Lists of hundreds of projects
+// and thousands of sessions stay cheap: no write rewrites a whole collection.
+import { arr, str } from "@earendil-works/pi-schema";
+import {
+	columnInt,
+	columnOpt,
+	columnStr,
+	defineTable,
+	jsonColumn,
+	query,
+	type RowOf,
+	type Table,
+	type TableOf,
+} from "@p2/app/v1";
+import { ProjectPlaceSchema } from "./contract.ts";
 
-export type ProjectSnapshot = { projects: Project[]; error: string | null };
+/**
+ * A project: its name (the key: sessions name it), its places (the default first), its position in the owner's order,
+ * and while archived, when and the sessions archived with it (a restore brings back these only).
+ */
+export const ProjectRows = defineTable("projects", {
+	version: 1,
+	columns: {
+		name: columnStr(),
+		places: jsonColumn(arr(ProjectPlaceSchema), { version: 1 }),
+		position: columnInt(),
+		archivedAt: columnOpt(columnInt()),
+		archivedSessions: jsonColumn(arr(str()), { version: 1 }),
+	},
+	key: ["name"],
+});
 
-/** Watch before loading. Invalid saves keep the last valid projects and say why. One observer per process. */
-export class ProjectStore {
-	readonly observer: Observer;
-	#snapshot: ProjectSnapshot = { projects: [], error: null };
-	readonly #listeners = new Set<(snapshot: ProjectSnapshot) => void>();
-	constructor(directory: string) {
-		this.observer = new Observer(
-			[{ env: new NodeExecutionEnv({ cwd: directory }), targets: () => [{ path: projectsPath(directory) }] }],
-			async (retrying) => {
-				try {
-					this.#snapshot = { projects: await loadProjects(directory), error: null };
-				} catch (error) {
-					// An editor's save caught half-way: read once more before reporting it.
-					if (!retrying) return true;
-					const reason = error instanceof Error ? error.message : String(error);
-					this.#snapshot = {
-						projects: this.#snapshot.projects,
-						error: `Could not load projects.json (${reason}); keeping the last valid projects`,
-					};
-				}
-				for (const listener of this.#listeners) listener(this.#snapshot);
-				return false;
-			},
-			2000,
-		);
-	}
-	get snapshot(): ProjectSnapshot {
-		return this.#snapshot;
-	}
-	/** `listener` hears of every load's snapshot from now on; the result stops it. */
-	subscribe(listener: (snapshot: ProjectSnapshot) => void): () => void {
-		this.#listeners.add(listener);
-		return () => this.#listeners.delete(listener);
-	}
-}
+/** The project a session belongs to, by its name; a session in none has no row. */
+export const MemberRows = defineTable("project_members", {
+	version: 1,
+	columns: { session: columnStr(), project: columnStr() },
+	key: ["session"],
+	indexes: { by_project: ["project"] },
+});
+
+/** Every project in the owner's order. */
+export const BY_POSITION = query(ProjectRows).orderBy((row) => row.position, "asc");
+
+type RowsOf<T> = T extends Table<infer C, readonly string[]> ? RowOf<C> : never;
+
+/** A project's row as stored. */
+export type ProjectRow = RowsOf<TableOf<typeof ProjectRows>>;

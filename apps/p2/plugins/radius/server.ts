@@ -1,9 +1,9 @@
 import { defineFacet, nativeOf, serveNative } from "@p2/app/v1";
 import { RequestResolvers, Server, ServerName, ShareUrls } from "@p2/app/v1/server";
 import { BackupTargets } from "../backup/contract.ts";
+import { isTerminalSyncError, RadiusSyncRemote } from "../backup/radius-remote.ts";
 import { ForwardStore, ForwardsNative } from "../ports/contract.ts";
 import { Shares } from "../sharing/contract.ts";
-import { isTerminalSyncError, RadiusSyncRemote } from "../sync/radius-remote.ts";
 import { RadiusBrain, type RadiusStatus } from "./brain.ts";
 import { RadiusConnections, RadiusService } from "./contract.ts";
 import { RelayAccess } from "./relay-access.ts";
@@ -13,7 +13,7 @@ export function radiusStatusText(status: RadiusStatus): string {
 	return status.status === "connected"
 		? status.name === undefined
 			? `connected as brain ${status.serverId}`
-			: `connected as brain ${status.name}`
+			: `connected as brain "${status.name}" (${status.serverId})`
 		: status.status === "retrying"
 			? `not connected (${status.error})`
 			: "";
@@ -94,6 +94,7 @@ export default defineFacet((host) => {
 					const { serverId } = await brain.syncAccess();
 					return {
 						remote: new RadiusSyncRemote(() => brain.syncAccess()),
+						account: () => brain.account(),
 						device: serverId,
 						server: `server-${serverId}`,
 						terminal: isTerminalSyncError,

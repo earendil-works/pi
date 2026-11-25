@@ -1,4 +1,5 @@
 import {
+	type Component,
 	ProcessTerminal,
 	setCapabilityOverrides,
 	setKeybindings,
@@ -14,9 +15,11 @@ import { SettingsManager } from "../core/settings-manager.ts";
 import { ExtensionInputComponent } from "../modes/interactive/components/extension-input.ts";
 import { ExtensionSelectorComponent } from "../modes/interactive/components/extension-selector.ts";
 import {
+	FIRST_TIME_SETUP_QUESTION,
 	FirstTimeSetupComponent,
 	type FirstTimeSetupResult,
 } from "../modes/interactive/components/first-time-setup.ts";
+import { type BlockedStatus, dialogBlockedStatus } from "../modes/interactive/program-status-reporter.ts";
 import { SYSTEM_THEME_NAME } from "../modes/interactive/theme/system-theme.ts";
 import {
 	getTerminalTheme,
@@ -30,6 +33,7 @@ import {
 	type Theme,
 } from "../modes/interactive/theme/theme.ts";
 import { requestTerminalColors } from "../modes/interactive/theme/theme-controller.ts";
+import { flushStdout } from "../utils/flush-stdout.ts";
 
 const OFFICIAL_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
 const OFFICIAL_APP_NAME = "pi";
@@ -115,6 +119,22 @@ function queryStartupTerminalColors(ui: TUI, onColors: () => void): void {
 	});
 }
 
+/**
+ * Show a startup dialog and report pi as blocked on it (OSC 7501). Interactive mode is not running yet, so its
+ * status reporter cannot do this; stopping the startup TUI clears the report.
+ */
+function showStartupDialog(
+	ui: TUI,
+	component: Component,
+	blocked: BlockedStatus,
+	settingsManager: SettingsManager,
+): void {
+	ui.addChild(component);
+	ui.setFocus(component);
+	ui.terminal.setProgramStatus({ state: "blocked", app: APP_NAME, ...blocked });
+	startStartupTui(ui, settingsManager);
+}
+
 async function clearStartupTui(ui: TUI): Promise<void> {
 	ui.clear();
 	ui.requestRender();
@@ -151,6 +171,7 @@ export async function showStartupSelector<T>(
 	settingsManager: SettingsManager,
 	title: string,
 	options: Array<{ label: string; value: T }>,
+	blockedKind: BlockedStatus["kind"] = "question",
 ): Promise<T | undefined> {
 	const ui = await createStartupTui(settingsManager);
 	return new Promise((resolve) => {
@@ -162,6 +183,7 @@ export async function showStartupSelector<T>(
 			settled = true;
 			await clearStartupTui(ui);
 			ui.stop();
+			await flushStdout();
 			resolve(result);
 		};
 
@@ -172,9 +194,7 @@ export async function showStartupSelector<T>(
 			() => void finish(undefined),
 			{ tui: ui },
 		);
-		ui.addChild(selector);
-		ui.setFocus(selector);
-		startStartupTui(ui, settingsManager);
+		showStartupDialog(ui, selector, dialogBlockedStatus(blockedKind, title), settingsManager);
 	});
 }
 
@@ -189,32 +209,20 @@ export async function showFirstTimeSetup(settingsManager: SettingsManager): Prom
 			}
 			settled = true;
 			if (result) {
-				settingsManager.setTheme(result.theme);
 				settingsManager.setEnableAnalytics(result.shareAnalytics);
 				await settingsManager.flush();
 			}
 			await clearStartupTui(ui);
 			ui.stop();
+			await flushStdout();
 			resolve();
 		};
 
-		ui.start();
-		let previewTheme = SYSTEM_THEME_NAME;
-		setTheme(previewTheme);
 		const component = new FirstTimeSetupComponent({
-			onThemePreview: (themeName) => {
-				previewTheme = themeName;
-				setTheme(themeName);
-				ui.requestRender();
-			},
 			onSubmit: (result) => void finish(result),
 			onCancel: () => void finish(undefined),
 		});
-		ui.addChild(component);
-		ui.setFocus(component);
-		ui.requestRender();
-		// The terminal's colors regenerate the system theme; re-rendering rebuilds the dialog with it.
-		queryStartupTerminalColors(ui, () => setTheme(previewTheme));
+		showStartupDialog(ui, component, dialogBlockedStatus("permission", FIRST_TIME_SETUP_QUESTION), settingsManager);
 	});
 }
 
@@ -222,6 +230,7 @@ export async function showStartupInput(
 	settingsManager: SettingsManager,
 	title: string,
 	placeholder?: string,
+	blockedKind: BlockedStatus["kind"] = "question",
 ): Promise<string | undefined> {
 	const ui = await createStartupTui(settingsManager);
 	return new Promise((resolve) => {
@@ -234,6 +243,7 @@ export async function showStartupInput(
 			input.dispose();
 			await clearStartupTui(ui);
 			ui.stop();
+			await flushStdout();
 			resolve(result);
 		};
 
@@ -246,8 +256,6 @@ export async function showStartupInput(
 				tui: ui,
 			},
 		);
-		ui.addChild(input);
-		ui.setFocus(input);
-		startStartupTui(ui, settingsManager);
+		showStartupDialog(ui, input, dialogBlockedStatus(blockedKind, title), settingsManager);
 	});
 }

@@ -106,7 +106,7 @@ export async function copyToClipboard(text: string): Promise<void> {
 		else if (p === "win32") commands.push(["clip", []]);
 		else {
 			if (env.TERMUX_VERSION) commands.push(["termux-clipboard-set", []]);
-			if (env.WAYLAND_DISPLAY) commands.push(["wl-copy", []]);
+			if (env.WAYLAND_DISPLAY) commands.push(["wl-copy", ["-t", "text/plain"]]);
 			if (env.DISPLAY) {
 				commands.push(["xclip", ["-selection", "clipboard"]], ["xsel", ["--clipboard", "--input"]]);
 			}

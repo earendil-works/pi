@@ -152,6 +152,8 @@ export async function fakeRadius(options: { channels?: boolean; rejectChannels?:
 	};
 	const shares: string[][] = [];
 	const names: string[] = [];
+	/** Who the credential signs in as (`/v1/context`): a test switches it to play another person on the machine. */
+	const actor = { ...OWNER };
 	const server = createServer((request, response) => {
 		if (request.url?.includes("/sync/sessions/")) {
 			void handleSync(sync, request, response).then((handled) => {
@@ -289,8 +291,8 @@ export async function fakeRadius(options: { channels?: boolean; rejectChannels?:
 		response.writeHead(200, { "content-type": "application/json" });
 		response.end(
 			JSON.stringify({
-				actor: { principal_id: OWNER.id, principal_kind: OWNER.kind },
-				organization: { id: OWNER.organization_id },
+				actor: { principal_id: actor.id, principal_kind: actor.kind },
+				organization: { id: actor.organization_id },
 			}),
 		);
 	});
@@ -376,6 +378,7 @@ export async function fakeRadius(options: { channels?: boolean; rejectChannels?:
 		shares,
 		/** Every name the brain sent on a rename, in order. */
 		names,
+		actor,
 		hostReady,
 		controls,
 		frames,

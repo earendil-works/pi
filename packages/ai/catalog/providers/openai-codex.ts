@@ -3,6 +3,7 @@ import { defineProvider, mergeCompat, mergeThinking } from "../define.ts";
 import {
 	enableOpenAiGrammarTools,
 	enableOpenAiMidConvoSystemMessages,
+	OPENAI_MID_CONVO_EFFORT_MODEL_IDS,
 	OPENAI_TOOL_SEARCH_MODEL_IDS,
 	openAiStandardCost,
 	supportsOpenAiXhigh,
@@ -67,5 +68,8 @@ export default defineProvider({
 			});
 		}
 		enableOpenAiMidConvoSystemMessages(model, { proxy: false });
+		if (OPENAI_MID_CONVO_EFFORT_MODEL_IDS.has(model.id)) {
+			mergeCompat(model as Model<"openai-codex-responses">, { supportsMidConvoEffort: true });
+		}
 	},
 });

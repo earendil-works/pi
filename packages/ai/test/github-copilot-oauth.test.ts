@@ -175,6 +175,47 @@ describe("GitHub Copilot OAuth device flow", () => {
 		expect((await models.getAvailable("github-copilot")).map((model) => model.id)).toEqual([pickerModelId]);
 	});
 
+	// #12395
+	it("filters classifier models to the decision models in the account catalog", async () => {
+		const provider = githubCopilotProvider();
+		const pickerModelId = requireModelId(provider.getModels(), 0);
+		const credentials = await refreshGitHubCopilotModelsForTest(
+			[
+				{
+					id: pickerModelId,
+					model_picker_enabled: true,
+					capabilities: { type: "chat", supports: { tool_calls: true } },
+				},
+				{
+					id: "gpt-6-luna-decisions",
+					model_picker_enabled: false,
+					capabilities: { type: "decisions", supports: {} },
+				},
+				{
+					id: "disabled-decisions",
+					model_picker_enabled: false,
+					policy: { state: "disabled" },
+					capabilities: { type: "decisions", supports: {} },
+				},
+			],
+			"proxy.business.githubcopilot.com",
+		);
+		expect(credentials.availableModelIds).toEqual([pickerModelId]);
+		expect(credentials.availableClassifierModelIds).toEqual(["gpt-6-luna-decisions"]);
+
+		const store = new InMemoryCredentialStore();
+		await store.modify("github-copilot", async () => ({ ...credentials, type: "oauth" }));
+		const models = createModels({ credentials: store });
+		models.setProvider(provider);
+		expect((await models.getAvailableOfType("classifier", "github-copilot")).map((model) => model.id)).toEqual([
+			"gpt-6-luna-decisions",
+		]);
+		expect((await models.getAllAvailable("github-copilot")).map((model) => model.id)).toEqual([
+			pickerModelId,
+			"gpt-6-luna-decisions",
+		]);
+	});
+
 	it("falls back to explicitly enabled policy models when the picker catalog is empty", async () => {
 		const provider = githubCopilotProvider();
 		const enabledModelId = requireModelId(provider.getModels(), 0);

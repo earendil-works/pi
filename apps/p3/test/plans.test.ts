@@ -27,12 +27,17 @@ describe("the plans of the sessions store's queries", () => {
 			const statement = prepare(sql);
 			if (!sql.startsWith("SELECT ") || !sql.includes(TABLE)) return statement;
 			const all = statement.all.bind(statement);
+			const iterate = statement.iterate.bind(statement);
 			// Chord passes positional parameters only.
 			const recorded = (...parameters: SQLInputValue[]) => {
 				reads.add(sql);
 				return all(...parameters);
 			};
-			return Object.assign(statement, { all: recorded });
+			const iterated = (...parameters: SQLInputValue[]) => {
+				reads.add(sql);
+				return iterate(...parameters);
+			};
+			return Object.assign(statement, { all: recorded, iterate: iterated });
 		};
 		const store = await openStore(sqliteBackend(new NodeSqliteDatabase(database)), context);
 		const onError = (error: { readonly kind: string }) => assert.fail(error.kind);
@@ -72,6 +77,11 @@ describe("the plans of the sessions store's queries", () => {
 				for (const step of plans) {
 					assert.match(step, new RegExp(`^SEARCH t USING (COVERING )?INDEX ${index} `), `${name}: ${step}`);
 				}
+			}
+			// The waker's read of every working session: the index `state`, never the whole table.
+			const working = await plansOf(() => sessions.working({}, context));
+			for (const step of working) {
+				assert.match(step, new RegExp(`^SEARCH t USING (COVERING )?INDEX ${TABLE}:state `), `working: ${step}`);
 			}
 			const one = await plansOf(() => sessions.sessions.one.page({ id: "x" }, 1, context));
 			assert.deepEqual(
