@@ -440,8 +440,12 @@ p2 runs on Chord v2 (`packages/chord`, `docs/design.md` there); the port's notes
 - **References:** `host.hold(T, params, ctx)` gives a reference at once (loading, live, failed, ended);
   `ctx.get`/`host.get` one once live. UIs use `src/runtime/refs.ts`: `follow` (a value with its current one first),
   `followRegistry`, `whenLive`, `statusOf`, `live(ref)`, `liveWith(ref, ...members)` and `kept`/`keptWith` (types
-  `RefWith`, `With`), `withHeld`/`withGranted`, `UI_LINGER`. A reference's grantable members are `undefined` until
-  its binding granted them: `liveWith` narrows to them; a worker that knows its grant uses `expectGranted`.
+  `RefWith`, `With`), `withHeld`/`withGranted`, `UI_LINGER`. A reference's grantable members have two states:
+  until the reference was first live, every grantable member's handle is there (so a factory can wire a dependency's
+  members before it binds), though nothing is granted yet (`granted` is empty); once it was live, a grantable member
+  is there only while its binding granted it, else `undefined` (also while it loads again or failed: the last
+  binding's grant holds). So test `granted`, never the member's presence: `liveWith`/`keptWith` do (they return
+  `undefined` before the first binding); a worker that knows its grant uses `expectGranted`.
 - **Objects and state:** factories declare state with `defineState` (`defineTypedState` where pi-schema's optional
   fields are not JSON to TypeScript) and change it with `change(fn, ctx)`; derived members are `self.derive`; a
   `self.writable` is exposed through a derive. Natives (a Durable Harness, a database, a socket) are `self.open`
@@ -468,7 +472,41 @@ p2 runs on Chord v2 (`packages/chord`, `docs/design.md` there); the port's notes
   version as the base, verbatim, so old bundles' fingerprints match) and give the provider an `accepts` table mapping
   current state and results back (`Sessions` v3/v4, `Catalog` v2/v3, `SessionTree` v1/v2, `Envs` v1/v2;
   `test/p2/contract-versions.test.ts` binds the released declarations). Without it, old clients wait unbound
-  (`contract_mismatch`) until they reload.
+  (`contract_mismatch`) until they reload. Exception: grantable members replaced variants (Chord slice 15, commit
+  `43bb1900c`), and versions declared with variants cannot be declared any more, so every remote contract restarted
+  as a new base then (version bumped, no `accepts`); clients from before reload once. `Catalog` (local) kept its
+  history.
+
+### Plugins written before grantable members (migration)
+
+Plugins outside `apps/p2/plugins` (a user plugin root, `<P2_DATA_DIR>/plugins`) built against the variant API no
+longer load: `remote(...)` refuses a `variants` key, so the plugin is not served while the rest of p2 starts and runs
+(tried 2026-11-25: the server logged nothing about it at startup; its objects just wait, "is not served here"). No
+compatibility shim (e.g. `withHeld(ref, "owner", action)` taking the old string): the contract itself must change,
+so every such plugin is edited anyway, and a shim would only keep half-ported code alive. Replacements:
+
+| Before | After |
+| --- | --- |
+| `variants: { owner: { state, methods, events } }` (one variant) | `state`, `methods`, `events` at the top of `remote(...)`; bump `version` |
+| several variants (`owner`/`guest`, `reader`/`editor`) | one shape; the members only some callers get are `grantable(schema)` / `grantable(method(...))` |
+| factory returning `{ variant: "x", members: M }` | return `M` |
+| (several variants) factory branches per principal | serve with `{ admit: grantBy((principal, params) => [names]) }`; the factory is `(params, principal, admitted, self)`; a grantable state or event member is returned as a builder `() => watchable`; a branch returns `notGranted` (or `...ungranted([names])`) for the grantable members its principal never gets |
+| `evolve(C, (e) => e.addMethod("owner", "m", A, R))` | `evolve(C, (e) => e.addMethod("m", A, R))` (no variant argument); an `accepts` table is flat: `state: { member: map }` |
+| `liveIn(ref, "owner")` for a one-variant contract | `live(ref)` |
+| `liveIn(ref, "editor")` (a variant with more members) | `liveWith(ref, "member", ...)` (narrows to those members) |
+| `keptIn(ref, ...)` | `kept(ref)` / `keptWith(ref, "member", ...)` |
+| `withHeld(ref, "owner", action)` | `withHeld(ref, action)`; with a variant's members: `withGranted(ref, ["member"], action)` |
+| `expectVariant(ref, "worker")` | `ref` for a one-variant contract; else `expectGranted(ref, "member", ...)` |
+| `ref.variant === "owner"` | `ref.granted.has("member")` (or `liveWith`) |
+| `HeldIn<C, "v">`, `RefIn<C, "v">`, `Held<C>` | `RefWith<C, "member" \| ...>`, `Ref<C>` |
+| `useObject(T, params, { variant: "owner" })` | `liveWith(useObject(T, params), "member")` (or `live(...)`) |
+| `useVariant(ref, v)` (Chord React), `scope.variant(ref)` (Chord TUI) | `useLive(ref)`, `scope.live(ref)` with `granted` |
+| stub `[C, () => ({ variant: "x", ...members })]` (tests) | `[C, () => members, grants?]` (`grants` for a contract with grantable members) |
+
+Find the sites with `grep -rnE "variants:|variant:|liveIn|keptIn|expectVariant|inVariant|useVariant|HeldIn|RefIn|withHeld\([^,]+, \"" <root>`.
+The owner's device root (`/data/data/com.termux/files/home/.pi/p2/plugins`) has `calendar`, `context-reminder` and
+`mail` (2026-11-25); slayer has no user plugins. Migrate them after this merge reaches the device's p2, then
+`reload_plugins`.
 
 ## Radius and port forwards
 
