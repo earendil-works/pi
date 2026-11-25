@@ -37,7 +37,7 @@ import type { PinnedKey } from "./attempt.ts";
 import { type Caller, withLinkedAbortSignal } from "./ctx.ts";
 import { type EventListener, type EventNode, type HostEvents, subscribe } from "./events.ts";
 import type { KeyedBinding } from "./members.ts";
-import { type OwnQuery, ReferenceQuery } from "./named-query.ts";
+import { type OwnQuery, referenceQueries } from "./named-query.ts";
 import type { ChordObject, Holder, Removal } from "./object.ts";
 import { ParkedCalls } from "./parked.ts";
 import { type Ended, type Failed, LOADING, ReferenceState, type RefState } from "./ref-state.ts";
@@ -349,10 +349,7 @@ export class Binding implements Holder, UnboundRequest {
 		}
 		for (const member of members.state.keys()) expose(member, new ReferenceMember(this, member));
 		for (const [member, { key }] of members.keyed) reference[member] = new ReferenceKeyed(this, member, key);
-		for (const [member, { args }] of members.queries) {
-			const named = [...args.keys()].map((name) => [name, new ReferenceQuery(this, member, name)] as const);
-			reference[member] = Object.fromEntries(named);
-		}
+		for (const [member, queries] of members.queries) reference[member] = referenceQueries(this, member, queries);
 		for (const [member, method] of members.methods) {
 			// A method without arguments omits them; `null` is their internal and wire form.
 			expose(

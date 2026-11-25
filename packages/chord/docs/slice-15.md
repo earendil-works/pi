@@ -250,5 +250,10 @@ and `78-denial-messages.ts`.
   a mutation check (an index without its bucket lookups leaves reads stale). The old path also ran reads whose probe
   limit ran out on rows that could not concern them; the index does not (`skip.test.ts`' cost case now writes rows of
   the read's bucket).
+- **§5:** a `queries` member's object is an instance of a class made once per member of a contract version (cached
+  weakly by its `QueriesData`), a getter per name on its prototype; the first read makes the `ReferenceQuery` and
+  keeps it as an own property. Before any read the object has no own property: `Object.keys` lists nothing (`in` and
+  `for…in` see the names). Heap per reference to a store of 23 named queries, none read: 6.35 KiB before, 1.30 KiB
+  after (`test/bench/reference-heap.ts`).
 - **§2:** a denial's message travels as the `forbidden` error's `details.message` (no new field in a failure or on the
   wire); `sameCause` compares details, so a changed message reaches the holders.

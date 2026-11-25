@@ -406,7 +406,8 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
   builder })` for the member (a query not listed is private and given as `[argsSchema, builder]`). Any object on
   the host reads one in its factory with `self.liveQuery(ref.member.name, args, { first })` (`{ rows, more }`) or
   `self.count(ref.member.name, args)` (exact, every matching row read on each run), or anywhere with `page(args, n,
-  ctx, { after })`. `args` may be a watchable: the member keeps its rows until the read for the new arguments has
+  ctx, { after })`. A reference's `queries` member makes each named query's handle (`ReferenceQuery`) on its first use
+  and keeps it as an own property; its label is built when asked (slice 15 §5). `args` may be a watchable: the member keeps its rows until the read for the new arguments has
   run. Readers open during activation, after the member check and before the natives (a waiting attempt holds
   none); a first run that fails parks the object `failed { waiting }` until a later run succeeds; refused arguments and a throwing builder fail it `broken`. A
   provider's restart does not restart its readers: they read the successor's query and give one frame, none when

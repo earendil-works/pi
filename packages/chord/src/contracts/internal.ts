@@ -16,6 +16,7 @@ export {
 	type MethodData,
 	memberOrder,
 	NO_GRANTS,
+	type QueriesData,
 	type ShapeOf,
 	takesNoArgs,
 	type VersionData,

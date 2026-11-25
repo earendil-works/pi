@@ -1,11 +1,11 @@
 // Named queries (slice 14 §3.1): what `self.queries(table, options, builders)` returns, one `OwnQuery` per name, and
-// what a reference shows for a `queries` member, one `ReferenceQuery` per name. A reader (`self.liveQuery`,
-// `self.count`, `self.list`, `page`) asks either for the provider's declaration, checks its arguments, builds the
-// query and reads it through the store.
+// what a reference shows for a `queries` member, one `ReferenceQuery` per name, each made by its first use (slice 15
+// §5). A reader (`self.liveQuery`, `self.count`, `self.list`, `page`) asks either for the provider's declaration,
+// checks its arguments, builds the query and reads it through the store.
 
 import type { Context } from "../context/index.ts";
 import type { QueryPage } from "../contracts/index.ts";
-import type { Snapshot } from "../contracts/internal.ts";
+import type { QueriesData, Snapshot } from "../contracts/internal.ts";
 import { check, validatorFor } from "../data/internal.ts";
 import type { JsonValue } from "../json.ts";
 import type { ColumnSet } from "../store/column-set.ts";
@@ -194,19 +194,65 @@ function partnerRow(set: ColumnSet, names: readonly string[] | undefined, stored
 	return row;
 }
 
+/**
+ * A reference's `queries` member (slice 15 §5): its named queries, each made by its first use and kept as an own
+ * property. A store offers many and a reader reads few, so a reference made pays for none it does not read.
+ */
+export function referenceQueries(binding: Binding, member: string, queries: QueriesData): object {
+	let Queries = QUERIES_CLASSES.get(queries);
+	if (Queries === undefined) {
+		Queries = class extends ReferenceQueries {};
+		for (const name of queries.args.keys()) {
+			const get = function (this: ReferenceQueries): ReferenceQuery {
+				return ReferenceQueries.make(this, name);
+			};
+			Object.defineProperty(Queries.prototype, name, { get, enumerable: true });
+		}
+		QUERIES_CLASSES.set(queries, Queries);
+	}
+	return new Queries(binding, member);
+}
+
+/**
+ * The class of a `queries` member's object per member of a contract version (its `QueriesData`): a getter per name
+ * on its prototype. Weak: a contract nobody holds takes its classes along.
+ */
+const QUERIES_CLASSES = new WeakMap<QueriesData, new (binding: Binding, member: string) => ReferenceQueries>();
+
+/** What a `queries` member's object knows: the reference and the member; its names are its class's getters. */
+class ReferenceQueries {
+	readonly #binding: Binding;
+	readonly #member: string;
+
+	constructor(binding: Binding, member: string) {
+		this.#binding = binding;
+		this.#member = member;
+	}
+
+	/** The query `name` of `queries`, made now and kept as its own property (a static: no name of a query shadows it). */
+	static make(queries: ReferenceQueries, name: string): ReferenceQuery {
+		const query = new ReferenceQuery(queries.#binding, queries.#member, name);
+		Object.defineProperty(queries, name, { value: query, enumerable: true });
+		return query;
+	}
+}
+
 /** A named query of a reference's `queries` member: the provider's declaration of that name, while it is live. */
 export class ReferenceQuery extends NamedQueryHandle {
-	readonly label: string;
 	readonly #binding: Binding;
 	readonly #member: string;
 	readonly #name: string;
 
 	constructor(binding: Binding, member: string, name: string) {
 		super();
-		this.label = `${binding.label}: query "${member}.${name}"`;
 		this.#binding = binding;
 		this.#member = member;
 		this.#name = name;
+	}
+
+	/** Built when asked: only error paths and reports read it (slice 15 §5). */
+	get label(): string {
+		return `${this.#binding.label}: query "${this.#member}.${this.#name}"`;
 	}
 
 	provided(): OwnQuery {

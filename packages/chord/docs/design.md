@@ -1696,7 +1696,9 @@ gets only the columns `reads` (and `partnerReads`) list: a change of another col
 object on the store's host declares `self.liveQuery(ref.sessions.one, args, { first })` in its factory (its member
 is `{ rows, more }`), `self.count(…)` (the exact number, expensive: every run reads every matching row, and every
 write to its tables runs it again except an `update` that assigns none of its condition's columns), or calls
-`ref.sessions.visible.page(args, n, ctx, { after })` anywhere (not live). `args` may be a watchable of the
+`ref.sessions.visible.page(args, n, ctx, { after })` anywhere (not live). A reference makes a named query's handle on
+its first use and keeps it (slice 15 §5): a reference to a store of 23 named queries, none read, costs 1.3 KiB, not
+6.4. `args` may be a watchable of the
 arguments: the member shows the previous rows until the read for the new arguments has run, then switches in one
 frame. A reader's reads open during its activation, after the member check and before its natives (a waiting
 attempt holds none; arguments computed from a followed source or a native have no value there and fail the attempt
