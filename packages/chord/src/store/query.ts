@@ -87,7 +87,8 @@ export class Query<
 		// A copy of what is expected so far: the compilation adds what this condition's `exists` use.
 		const expected: Expected = new Map([...this.expected].map(([set, columns]) => [set, new Map(columns)]));
 		const compiled = compileCondition(this.#scope(), fn(...this.#refs()), "where", expected);
-		return this.#and(compiled, expected);
+		// Nothing expected (no `exists` so far: most queries): the map it had, none kept per query.
+		return this.#and(compiled, expected.size === 0 ? this.expected : expected);
 	}
 
 	/**
@@ -160,7 +161,8 @@ export class Query<
 
 	/** The order of its rows: the `orderBy` columns, then the key columns not among them. */
 	get order(): Order {
-		const columns = [...this.#orderBy, ...this.table.key.filter((column) => !this.#orderBy.includes(column))];
+		// `concat`: a list of exactly its columns (a plan keeps it; a spread reserves room for 16 more).
+		const columns = this.#orderBy.concat(this.table.key.filter((column) => !this.#orderBy.includes(column)));
 		return { columns, direction: this.#direction ?? "asc" };
 	}
 

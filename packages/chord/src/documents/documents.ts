@@ -50,6 +50,12 @@ export type DocumentsOwner = {
 	readonly telemetry: TelemetryContext;
 };
 
+/** No pins held: the shared empty list. */
+const NO_PINS: readonly (() => void)[] = [];
+
+/** No slots (most objects declare no document): the shared empty map; never written (it has no entry to drop). */
+const NO_SLOTS = new Map<string, SingletonSlot | KeyedSlot>();
+
 /**
  * The documents of one object, from its first activation to its end: one slot per declared name, kept across
  * attempts, and the line. Each attempt declares its handles under its own seal token; the object's own transactions
@@ -62,27 +68,40 @@ export class Documents {
 	/** The object's context. */
 	readonly context: Context;
 	readonly line = new Line();
-	/**
-	 * The idle persisted keyed documents and their eviction. A sweep's only rejection is `onLine`'s `released` once
-	 * the object ended (a sweep itself drops trackers in memory and does not throw): nothing to report.
-	 */
-	readonly residency = new Residency((sweep) => void this.onLine(async () => sweep()).catch(() => {}));
+	/** Its residency, made by the first keyed slot that asks (most objects have no keyed document). */
+	#residency: Residency | undefined;
 	readonly #owner: DocumentsOwner;
 	/** The token of the object's own transactions: sealed with the object (`seal`). */
 	readonly own = new SealToken();
-	readonly #slots = new Map<string, SingletonSlot | KeyedSlot>();
+	/** Its slots by name, made by the first declaration (most objects declare no document). */
+	#slots: Map<string, SingletonSlot | KeyedSlot> | undefined;
 	/** The transaction holding the line, until it settles or its token is sealed. */
 	#holder: Transaction | undefined;
 	/** `sealed`: the object is ending; its documents stay readable, its transactions throw `released`. */
 	#state: "open" | "sealed" | "ended" = "open";
 	/** The pins the last factory that returned declared (`at(key)`): held until the next one returns (rule 6). */
-	#pins: readonly (() => void)[] = [];
+	#pins: readonly (() => void)[] = NO_PINS;
 
 	constructor(owner: DocumentsOwner) {
 		this.label = owner.label;
 		this.batch = owner.batch;
 		this.context = owner.context;
 		this.#owner = owner;
+	}
+
+	/**
+	 * The idle persisted keyed documents and their eviction. A sweep's only rejection is `onLine`'s `released` once
+	 * the object ended (a sweep itself drops trackers in memory and does not throw): nothing to report. One made after
+	 * the object ended (a slot dropped at its end) evicts nothing.
+	 */
+	get residency(): Residency {
+		let residency = this.#residency;
+		if (residency === undefined) {
+			residency = new Residency((sweep) => void this.onLine(async () => sweep()).catch(() => {}));
+			if (this.#state === "ended") residency.end();
+			this.#residency = residency;
+		}
+		return residency;
 	}
 
 	/**
@@ -95,7 +114,7 @@ export class Documents {
 		token: SealToken,
 		declarer: KeyDeclarer,
 	): HandleOf<D> {
-		const slot = this.#slots.get(definition.name);
+		const slot = this.#slots?.get(definition.name);
 		if (slot !== undefined) slot.definition.check(definition);
 		const persistence = slot === undefined && definition.persist ? this.#persistence(definition) : undefined;
 		// The definition's `keyed` decides the slot's class and the handle's; its documents are the definition's `T`.
@@ -112,7 +131,7 @@ export class Documents {
 	 * declares against the documents the object has).
 	 */
 	check(definition: AnyDefinition): void {
-		this.#slots.get(definition.name)?.definition.check(definition);
+		this.#slots?.get(definition.name)?.definition.check(definition);
 	}
 
 	/**
@@ -124,14 +143,15 @@ export class Documents {
 		const previous = this.#pins;
 		this.#pins = pins;
 		for (const release of previous) release();
+		const slots = this.#slots ?? NO_SLOTS;
 		// A dropped persisted slot goes whole, its loaded documents too: observably the same as keeping them, since
 		// every committed write is in the store and a later declaration reloads from there.
-		for (const [name, slot] of this.#slots) {
+		for (const [name, slot] of slots) {
 			if (declared.has(name)) continue;
-			this.#slots.delete(name);
+			slots.delete(name);
 			slot.drop();
 		}
-		for (const [name, definition] of declared) this.#slots.get(name)!.hydrate(definition, context);
+		for (const [name, definition] of declared) slots.get(name)!.hydrate(definition, context);
 	}
 
 	/**
@@ -140,7 +160,9 @@ export class Documents {
 	 * fails the activation.
 	 */
 	load(context: Context): Promise<void> | undefined {
-		const persisted = [...this.#slots.values()].filter((slot) => slot.persisted !== undefined);
+		const slots = this.#slots;
+		if (slots === undefined) return undefined;
+		const persisted = [...slots.values()].filter((slot) => slot.persisted !== undefined);
 		// In memory only: nothing to wait for (an activation without persisted documents takes no extra turn).
 		if (persisted.length === 0) return undefined;
 		return this.onLine(async () => {
@@ -262,7 +284,7 @@ export class Documents {
 	/** The persisted slots keyed by addresses of host kind `kind`: the documents of this object belonging to such hosts. */
 	hostSlots(kind: string): KeyedSlot[] {
 		const slots: KeyedSlot[] = [];
-		for (const slot of this.#slots.values()) {
+		for (const slot of (this.#slots ?? NO_SLOTS).values()) {
 			if (slot instanceof KeyedSlot && slot.persisted !== undefined && slot.definition.current.host?.kind === kind) {
 				slots.push(slot);
 			}
@@ -273,10 +295,10 @@ export class Documents {
 	/** Drops every document and pin; watches end `ended`, and every later use throws `released`. */
 	end(): void {
 		this.#state = "ended";
-		this.residency.end();
-		for (const slot of this.#slots.values()) slot.drop();
-		this.#slots.clear();
-		this.#pins = [];
+		this.#residency?.end();
+		for (const slot of (this.#slots ?? NO_SLOTS).values()) slot.drop();
+		this.#slots = undefined;
+		this.#pins = NO_PINS;
 	}
 
 	/** The `released` error of this object's documents. */
@@ -292,6 +314,7 @@ export class Documents {
 	}
 
 	#add<S extends SingletonSlot | KeyedSlot>(slot: S): S {
+		this.#slots ??= new Map();
 		this.#slots.set(slot.definition.current.name, slot);
 		return slot;
 	}

@@ -51,6 +51,7 @@ import {
 	type StateEntry,
 	wireError,
 } from "../link/internal.ts";
+import { appended, NO_ITEMS } from "../lists.ts";
 import { type DeriveSource, Source, type Subscriber } from "../state/internal.ts";
 import { chordMetrics } from "../telemetry.ts";
 import type { HostLink } from "./host-link.ts";
@@ -97,7 +98,7 @@ type HoldState =
 			/** Their names, which the wire's indexes point into. */
 			readonly names: MemberNames;
 			/** The members it follows, in the order they were subscribed. */
-			readonly followed: Followed[];
+			followed: readonly Followed[];
 			/** The instance it was bound to: it follows it on while it still changes (a restart's open old attempt). */
 			readonly instance: unknown;
 	  }
@@ -174,11 +175,11 @@ export class Hold implements Holder, UnboundRequest {
 	/**
 	 * One fence per `bound` its consumer has not acknowledged, oldest first: A, B, C sent before the first `ack` are two
 	 * fences, and a call sent between B's and C's application is decoded by B's names. Each goes with the `ack` of
-	 * its `bound` (`acknowledged`).
+	 * its `bound` (`acknowledged`). Made by the first rebinding, dropped with the last fence: most holds bind once.
 	 */
-	readonly #fences: Fence[] = [];
+	#fences: Fence[] | undefined;
 	/** The members the current batch changed, with their ops, in order. */
-	#changes: (readonly [Followed, readonly Op[]])[] = [];
+	#changes: readonly (readonly [Followed, readonly Op[]])[] = NO_ITEMS;
 	/** The members that failed since the last message that carried this hold. */
 	#failed: FailedMember[] = [];
 	/** The members whose document was retired since the last message that carried this hold (ORed while it waits). */
@@ -248,9 +249,11 @@ export class Hold implements Holder, UnboundRequest {
 	 * Drops the fences its consumer acknowledged (acks arrive in order: they are the first ones) and returns the rest:
 	 * a hold keeps one fence per `bound` not acknowledged yet, never one per rebinding of its life.
 	 */
-	#acknowledge(): Fence[] {
+	#acknowledge(): readonly Fence[] {
 		const fences = this.#fences;
+		if (fences === undefined) return NO_ITEMS;
 		while (fences.length > 0 && this.#provider.acknowledged(fences[0]!.until)) fences.shift();
+		if (fences.length === 0) this.#fences = undefined;
 		return fences;
 	}
 
@@ -393,7 +396,7 @@ export class Hold implements Holder, UnboundRequest {
 	#unbind(cause: FailureCause | undefined, object: ChordObject): void {
 		const state = this.#state;
 		if (state.kind === "bound") this.#unfollow(state);
-		this.#changes = [];
+		this.#changes = NO_ITEMS;
 		this.#failed = [];
 		this.#retired = NO_RETIRED;
 		this.#touched = false;
@@ -515,7 +518,7 @@ export class Hold implements Holder, UnboundRequest {
 		}
 		// A binding without event members taps nothing (no cost per binding for contracts without events).
 		if (state.names.events.length > 0) this.#tapEvents(state, instance, version);
-		this.#changes = [];
+		this.#changes = NO_ITEMS;
 		this.#failed = [];
 		this.#retired = NO_RETIRED;
 		chordMetrics(context.telemetry.metrics).counter("chord.link.encodes").add(1);
@@ -602,9 +605,10 @@ export class Hold implements Holder, UnboundRequest {
 	#bindTo(instance: Attempt): Bound {
 		const members = grantedMembers(versionAt(instance.served.contract, this.contract.version), instance.granted);
 		const names = memberOrder(members);
-		const state: Bound = { kind: "bound", members, names, followed: [], instance };
+		const state: Bound = { kind: "bound", members, names, followed: NO_ITEMS, instance };
 		const latest = this.#latest;
 		if (latest !== undefined) {
+			this.#fences ??= [];
 			this.#fences.push({ until: this.#provider.nextOwn, before: latest });
 			this.#provider.fenced(this);
 		}
@@ -659,7 +663,7 @@ export class Hold implements Holder, UnboundRequest {
 		const state = this.#state;
 		if (state.kind === "released" || this.#object === undefined) return;
 		if (state.kind === "bound") this.#unfollow(state);
-		this.#changes = [];
+		this.#changes = NO_ITEMS;
 		this.#failed = [];
 		this.#retired = NO_RETIRED;
 		this.#touched = false;
@@ -688,7 +692,7 @@ export class Hold implements Holder, UnboundRequest {
 					this.#memberHealed(index);
 					const { ops, retired } = call;
 					// A retired derive's frame may carry no ops (rule 21): only the flag travels.
-					if (ops.length > 0) this.#changes.push([followed, ops]);
+					if (ops.length > 0) this.#changes = appended(this.#changes, [followed, ops]);
 					// A new list per retirement (rare): the shared empty one is never written to.
 					if (retired && !this.#retired.includes(index)) this.#retired = [...this.#retired, index];
 				},
@@ -701,13 +705,13 @@ export class Hold implements Holder, UnboundRequest {
 		};
 		// A constant never changes: nothing to subscribe to.
 		if (source instanceof Source) source.subscribe(followed.subscriber);
-		state.followed.push(followed);
+		state.followed = appended(state.followed, followed);
 	}
 
 	/** Takes the current batch's changes; the hold is untouched again. */
-	#take(): (readonly [Followed, readonly Op[]])[] {
+	#take(): readonly (readonly [Followed, readonly Op[]])[] {
 		const changes = this.#changes;
-		this.#changes = [];
+		this.#changes = NO_ITEMS;
 		this.#touched = false;
 		return changes;
 	}

@@ -150,6 +150,9 @@ export class LiveQuery extends FramedSource {
 /** A row as a run decoded it, with the stored row it came from. */
 type Decoded = { readonly stored: StoredRead; readonly row: JsonValue };
 
+/** No rows decoded yet: the shared empty map. */
+const NO_ROWS: ReadonlyMap<unknown, Decoded> = new Map();
+
 /**
  * The decoded rows of a live source's last value, by key: a row whose stored columns are all the same in the next
  * run is that value's object (one comparison per selected column), any other is decoded. So a frame, the diff from
@@ -157,28 +160,28 @@ type Decoded = { readonly stored: StoredRead; readonly row: JsonValue };
  * removal, not a comparison of every row with every other).
  */
 export class DecodedRows {
-	#byKey: ReadonlyMap<unknown, Decoded> = new Map();
+	#byKey: ReadonlyMap<unknown, Decoded> = NO_ROWS;
 
 	/** The rows of `stored` as `target` decodes them, unchanged ones reused; a row the code cannot read throws. */
 	decode(stored: readonly StoredRead[], target: LiveTarget, context: Context): JsonValue[] {
 		const key = target.spec.query.table.key;
-		const rows: JsonValue[] = [];
 		const byKey = new Map<unknown, Decoded>();
-		for (const each of stored) {
+		// `map`: a list of exactly its rows (the value keeps it; one pushed to reserves room for 16 more).
+		const rows = stored.map((each) => {
 			const id = identity(key, each);
 			const before = this.#byKey.get(id);
 			const row =
 				before !== undefined && sameStored(before.stored, each) ? before.row : target.decode(each, context);
-			rows.push(row);
 			byKey.set(id, { stored: each, row });
-		}
+			return row;
+		});
 		this.#byKey = byKey;
 		return rows;
 	}
 
 	/** Forgets the last value's rows: another target decodes its own way, nothing of the previous one is reused. */
 	reset(): void {
-		this.#byKey = new Map();
+		this.#byKey = NO_ROWS;
 	}
 }
 

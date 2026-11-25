@@ -141,6 +141,6 @@ export abstract class FramedSource extends Source {
 			this.batch.changed(this);
 		}
 		this.#state = next;
-		for (const dependent of this.dependents) dependent.invalidate();
+		this.dependents.invalidate();
 	}
 }

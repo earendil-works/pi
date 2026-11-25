@@ -7,12 +7,13 @@
 // owner's: an attempt parks, goes on or is sealed (`attempt.ts`, `object.ts`), a route holds back, forwards or releases
 // (`route-admission.ts`).
 
-import { type Context, withAbortSignal } from "../context/index.ts";
+import type { Context } from "../context/index.ts";
 import type { AllowedOf, Contract, NamedQuery, ParamsOf } from "../contracts/index.ts";
 import { NO_GRANTS } from "../contracts/internal.ts";
 import { ChordError, forbidden, type MessageData, type Principal } from "../data/index.ts";
 import { asChordError, canonicalJson, checkParams, isMessageData } from "../data/internal.ts";
 import type { JsonValue } from "../json.ts";
+import { appended, NO_ITEMS } from "../lists.ts";
 import type { Registry, RegistryValue } from "../registries/index.ts";
 import type { RegistryWaiter } from "../registries/internal.ts";
 import { type Dependent, Derive, type DeriveSource, Source } from "../state/internal.ts";
@@ -125,6 +126,9 @@ type Declared = { readonly binding: Binding; readonly contract: Contract; readon
 /** No state members: a decision's derives are exposed by none. */
 const NO_MEMBERS: ReadonlyMap<string, DeriveSource> = new Map();
 
+/** A decision without live queries follows none: the shared wake, never told. */
+const NO_WAKE: Dependent = { invalidate: () => {}, sourceRetired: () => {} };
+
 /**
  * One decision: the `self` its `admit` declares with, the requests it made (held until `release`), and what it says.
  * `settle` brings it to a verdict (its pinned keys loaded, its live queries opened); `now` reads it again, in the
@@ -135,34 +139,42 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 	readonly #owner: DecisionOwner;
 	/** The context `admit` declares under, while it runs (its params are checked with it). */
 	#declaring: Context | undefined;
-	readonly #references: Declared[] = [];
-	/** Its requests in declaration order: what its owner parks on. */
-	readonly dependencies: Dependency[] = [];
-	readonly #derives: Derive[] = [];
-	readonly #readers: Reader[] = [];
-	/** What ends its follows of its references and registries: `release`. */
-	readonly #following = new AbortController();
-	readonly #releases: (() => void)[] = [];
+	#references: readonly Declared[] = NO_ITEMS;
+	#dependencies: readonly Dependency[] = NO_ITEMS;
+	#derives: readonly Derive[] = NO_ITEMS;
+	#readers: readonly Reader[] = NO_ITEMS;
+	/** Ends its follows of its references' states (`unfollow`). */
+	#unfollows: readonly (() => void)[] = NO_ITEMS;
+	/** Ends its reads of its registries: `release`. */
+	#releases: readonly (() => void)[] = NO_ITEMS;
 	/** The watchable `admit` returned, as Chord follows it. */
 	#source: DeriveSource | undefined;
-	/** The last allow or denial it read, with an allow's value as canonical JSON: an equal one is the same object. */
+	/**
+	 * The last allow or denial it read, with its key (an allow's value as canonical JSON, a denial's reason and
+	 * message): one of the same kind and key is the same object.
+	 */
 	#decided: { readonly verdict: Allowed | Denied; readonly key: string } | undefined;
 	/** Whether a change of its source waits for the current batch's flush: one check per batch. */
 	#flushing = false;
-	/** Follows a live query it waits on: its next adoption checks again. */
-	readonly #readerWake: Dependent = { invalidate: () => this.#owner.moved(), sourceRetired: () => {} };
+	/** Follows a live query it waits on: its next adoption checks again. Made by the first settle with live queries. */
+	#readerWake: Dependent | undefined;
 	#released = false;
 
 	constructor(owner: DecisionOwner) {
 		this.#owner = owner;
 	}
 
+	/** Its requests in declaration order: what its owner parks on; none once released. */
+	get dependencies(): readonly Dependency[] {
+		return this.#dependencies;
+	}
+
 	get<C extends Contract>(Type: C, params: ParamsOf<C>): Reference<C> {
 		const { host, dependent, caller } = this.#owner;
 		const checked = checkParams(Type, params, this.#assertDeclaring("get"));
 		const binding = host.reference(Type, dependent, caller, {});
-		this.#references.push({ binding, contract: Type, params: checked });
-		this.dependencies.push({ kind: "reference", binding });
+		this.#references = appended(this.#references, { binding, contract: Type, params: checked });
+		this.#dependencies = appended(this.#dependencies, { kind: "reference", binding });
 		// The binding was built from `Type`'s members.
 		return binding.reference as Reference<C>;
 	}
@@ -170,7 +182,7 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 	registry<C, V>(R: Registry<C, V>): RegistryValue<V> {
 		this.#assertDeclaring("registry");
 		const value = this.#owner.host.registryRecord(R.name).value(R.version);
-		this.dependencies.push({ kind: "registry", value });
+		this.#dependencies = appended(this.#dependencies, { kind: "registry", value });
 		// Its values are the composition as `R`'s version has it, `V`.
 		return value as RegistryValue<V>;
 	}
@@ -190,7 +202,7 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 		this.#assertDeclaring("derive");
 		// The values are the sources' values, in order; the result is `T`.
 		const derive = new Derive(sources, compute as (values: readonly unknown[]) => T, this.#owner.host.batch);
-		this.#derives.push(derive);
+		this.#derives = appended(this.#derives, derive);
 		return derive as unknown as Watchable<T>;
 	}
 
@@ -203,7 +215,7 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 		const { host, label } = this.#owner;
 		const at = readerSite(host, label, () => this.#owner.moved());
 		const { reader, source } = rowsReader(at, query, args, range);
-		this.#readers.push(reader);
+		this.#readers = appended(this.#readers, reader);
 		// Its value is what `present` builds from the query's items.
 		return source as unknown as Watchable<{ rows: T[]; more: boolean }>;
 	}
@@ -234,20 +246,21 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 			const { target } = binding;
 			if (target !== undefined) dependent?.assertNoCycle(target, context);
 		}
-		const following = withAbortSignal(this.#following.signal, context);
+		// Told now and at every change of a reference, until the release or `context`'s abort (`unfollow`): its owner
+		// checks it again.
+		const moved = (): void => this.#owner.moved();
+		const signal = context.abortSignal;
 		for (const dependency of this.dependencies) {
 			if (dependency.kind === "registry") {
 				// Read until its release: an older version's mapping is kept meanwhile.
-				this.#releases.push(dependency.value.read(), dependency.value.wait(this));
+				this.#releases = appended(appended(this.#releases, dependency.value.read()), dependency.value.wait(this));
 				continue;
 			}
-			// Checked at every change of the reference until the release (never done): its owner checks it again.
-			const moved = (): boolean => {
-				this.#owner.moved();
-				return false;
-			};
-			dependency.binding.until(moved, following).catch(() => {});
+			// Aborted already (by what an earlier reference's first telling did, too): this one is not followed.
+			if (signal?.aborted) continue;
+			this.#unfollows = appended(this.#unfollows, dependency.binding.followState(moved));
 		}
+		if (signal?.aborted) this.unfollow();
 		attachDerives(this.#derives, NO_MEMBERS, () => (error) => {
 			host.report({ kind: "derive_failed", object: label, error });
 		});
@@ -270,7 +283,11 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 		const pinned = await pinKeys(bindings, long, context);
 		if (pinned !== undefined) return { kind: "parked", shown: pinned, firstPass: true, cause: pinned.cause };
 		const label = `${this.#owner.label}: a live query of its admission`;
-		const reading = await openReaders(this.#readers, this.#readerWake, long, label, context);
+		// Without live queries nothing is followed: no wake is made.
+		if (this.#readers.length > 0) {
+			this.#readerWake ??= { invalidate: () => this.#owner.moved(), sourceRetired: () => {} };
+		}
+		const reading = await openReaders(this.#readers, this.#readerWake ?? NO_WAKE, long, label, context);
 		if (reading.kind !== "ready") {
 			// A live query whose read has not run yet keeps the last decision, as a source that only loads does.
 			const loading = reading.kind === "parked" && reading.shown.kind === "loading";
@@ -300,18 +317,34 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 		this.#released = true;
 		const { label } = this.#owner;
 		const ended = new ChordError({ code: "released", reason: "ended", message: `${label}: its admission ended` });
-		this.#following.abort(ended);
+		this.unfollow();
 		const source = this.#source;
 		if (source instanceof Source) source.dependents.delete(this);
 		this.#source = undefined;
+		const wake = this.#readerWake;
 		for (const reader of this.#readers) {
-			reader.source.dependents.delete(this.#readerWake);
+			if (wake !== undefined) reader.source.dependents.delete(wake);
 			reader.close(ended);
 		}
 		for (const derive of this.#derives) derive.detach(ended);
-		for (const release of this.#releases.splice(0)) release();
-		for (const { binding } of this.#references.splice(0)) binding.release();
-		this.dependencies.length = 0;
+		const releases = this.#releases;
+		this.#releases = NO_ITEMS;
+		for (const release of releases) release();
+		const references = this.#references;
+		this.#references = NO_ITEMS;
+		for (const { binding } of references) binding.release();
+		this.#dependencies = NO_ITEMS;
+	}
+
+	/**
+	 * Ends its follows of its references' states. Its owner calls it when the context it declared under is aborted,
+	 * where a wait under that context would end: an abandoned attempt's decision is told of its references no more,
+	 * only of its source. No listener per decision: an abort listener costs each admitted object 0.4 KiB.
+	 */
+	unfollow(): void {
+		const unfollows = this.#unfollows;
+		this.#unfollows = NO_ITEMS;
+		for (const unfollow of unfollows) unfollow();
 	}
 
 	/** Its source changed in the current batch: its owner checks it in that batch's flush, once however many changed. */
@@ -374,7 +407,7 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 			const admitted =
 				read === undefined ? value : { ...(read.normal as { readonly [field: string]: JsonValue }), granted };
 			const key = canonicalJson(read?.normal ?? value, context);
-			return this.#decide(`allow ${key}`, () => ({ kind: "allow", value: admitted, granted }));
+			return this.#decide("allow", key, () => ({ kind: "allow", value: admitted, granted }));
 		}
 		if (kind === "deny" && typeof reason === "string") {
 			if (message !== undefined && !isMessageData(message, context)) {
@@ -384,16 +417,19 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 			// Checked just above. A structured key: a reason ending like a message's JSON is not that message.
 			const details = message === undefined ? undefined : { message: message as MessageData };
 			const key = canonicalJson(details === undefined ? [reason] : [reason, details.message], context);
-			return this.#decide(`deny ${key}`, () => ({ kind: "deny", error: forbidden(reason, details) }));
+			return this.#decide("deny", key, () => ({ kind: "deny", error: forbidden(reason, details) }));
 		}
 		const error = new Error("its admission's value is neither allow(value) nor deny(reason)");
 		return { kind: "broken", error: asChordError(error, label) };
 	}
 
-	/** The decision with `key`: the one it had when the key is the same, else the one `make` makes. */
-	#decide(key: string, make: () => Allowed | Denied): Allowed | Denied {
-		if (this.#decided?.key !== key) this.#decided = { verdict: make(), key };
-		return this.#decided.verdict;
+	/** The decision of `kind` with `key`: the one it had when both are the same, else the one `make` makes. */
+	#decide(kind: "allow" | "deny", key: string, make: () => Allowed | Denied): Allowed | Denied {
+		const decided = this.#decided;
+		if (decided !== undefined && decided.verdict.kind === kind && decided.key === key) return decided.verdict;
+		const verdict = make();
+		this.#decided = { verdict, key };
+		return verdict;
 	}
 
 	/** The context `admit` runs under; outside it, `declaration` is refused. */
@@ -434,8 +470,42 @@ function grantedOf(
 	const names = [...new Set(listed as string[])].sort();
 	// No names is no grant: `allow({})` and `allow({ granted: [] })` are one decision.
 	if (names.length === 0) return { kind: "read", normal: data, granted: NO_GRANTS };
-	return { kind: "read", normal: { ...data, granted: names }, granted: new Set(names) };
+	return { kind: "read", normal: { ...data, granted: names }, granted: grantedSet(grants, names) };
 }
+
+/**
+ * The set of `names` (sorted, not empty, of the contract whose grantable names are `grants`): one per version and set
+ * of names while any decision has it, shared by every decision that grants them (a thousand callers granted the same
+ * names keep one set). Held weakly: a set goes with the last decision that granted it, its entry right after, and
+ * all of a version's with its contract.
+ */
+function grantedSet(grants: readonly string[], names: readonly string[]): ReadonlySet<string> {
+	let sets = grantedSets.get(grants);
+	if (sets === undefined) {
+		sets = new Map();
+		grantedSets.set(grants, sets);
+	}
+	const key = JSON.stringify(names);
+	let granted = sets.get(key)?.deref();
+	if (granted === undefined) {
+		granted = new Set(names);
+		sets.set(key, new WeakRef(granted));
+		collectedSets.register(granted, { sets, key });
+	}
+	return granted;
+}
+
+/** A version's granted sets by their names' JSON, each while a decision has it. */
+type GrantedSets = Map<string, WeakRef<ReadonlySet<string>>>;
+
+const grantedSets = new WeakMap<readonly string[], GrantedSets>();
+
+/** Drops the entry of a collected set, unless the same names were granted again meanwhile. */
+const collectedSets = new FinalizationRegistry<{ readonly sets: GrantedSets; readonly key: string }>(
+	({ sets, key }) => {
+		if (sets.get(key)?.deref() === undefined) sets.delete(key);
+	},
+);
 
 /**
  * Refuses `self.job` in an admitted type's factory (slice 14 §2.1), in an attempt and in staging: work for a person

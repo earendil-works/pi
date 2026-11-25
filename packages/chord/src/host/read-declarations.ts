@@ -154,12 +154,13 @@ export function rowsReader(
 	args: unknown,
 	range: unknown,
 ): { readonly reader: Reader; readonly source: LiveQuery } {
-	const shape = {
-		kind: "rows",
-		range: { limit: firstOf(at.label, "liveQuery", range) },
-		present: (rows: JsonValue[], more: boolean): JsonValue => ({ rows, more }),
-	} as const;
+	const shape = { kind: "rows", range: { limit: firstOf(at.label, "liveQuery", range) }, present } as const;
 	return liveReader(at, "liveQuery", query, args, shape);
+}
+
+/** A live query's value of its rows: `{ rows, more }`. */
+function present(rows: JsonValue[], more: boolean): JsonValue {
+	return { rows, more };
 }
 
 /** The reader of `self.liveQuery(query, args, range)` (shape `rows`) or of `self.count(query, args)` (`count`). */

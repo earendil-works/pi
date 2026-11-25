@@ -153,17 +153,25 @@ export class Read {
 		const { plan } = this;
 		const keyColumns = plan.query.table.key;
 		const keys = new Set<unknown>();
-		const paired = new Map<Use, Set<unknown>>();
-		for (const use of plan.uses) if (use.role !== "own" && use.pairs !== undefined) paired.set(use, new Set());
+		// Made by the first use that pairs: a read of its own table alone (most reads) shares the empty map.
+		let paired: Map<Use, Set<unknown>> | undefined;
+		for (const use of plan.uses) {
+			if (use.role === "own" || use.pairs === undefined) continue;
+			paired ??= new Map();
+			paired.set(use, new Set());
+		}
 		for (const row of stored) {
 			keys.add(identity(keyColumns, row));
-			for (const [use, values] of paired) values.add(identity(use.pairs!, row));
+			if (paired !== undefined) for (const [use, values] of paired) values.add(identity(use.pairs!, row));
 		}
 		const more = stored.length > range.limit;
 		const past = more ? plan.order.columns.map((name) => stored[range.limit]![name]!) : undefined;
-		return { rows: more ? stored.slice(0, range.limit) : stored, more, keys, paired, past };
+		return { rows: more ? stored.slice(0, range.limit) : stored, more, keys, paired: paired ?? NOTHING_PAIRED, past };
 	}
 }
+
+/** No use pairs with another table: the shared empty map. */
+const NOTHING_PAIRED: ReadonlyMap<Use, ReadonlySet<unknown>> = new Map();
 
 /**
  * The identity of `row` in `columns`, for a set or a map of rows of one read: the value itself for one column (most

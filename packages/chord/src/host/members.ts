@@ -154,6 +154,11 @@ function checkQueries(
 /** No event members: shared, never written. */
 const NO_EVENTS: ReadonlyMap<string, EventNode> = new Map();
 
+/** No methods, state members or keyed members: shared, never written (each written only when the contract has some). */
+const NO_METHODS = new Map<string, Method>();
+const NO_STATE = new Map<string, DeriveSource>();
+const NO_KEYED = new Map<string, KeyedBinding>();
+
 /**
  * Checks an implementation against `members` (exactly those, methods being functions, state members JSON watchables,
  * keyed members keyed document handles and event members the attempt's own sources or references' event members); a
@@ -178,19 +183,20 @@ function checkMembers(
 	// Own properties only: an inherited `toString` is no implementation of a member named so.
 	const own = (member: string): unknown =>
 		Object.hasOwn(implementation, member) ? implementation[member] : undefined;
+	// A map per kind of member the contract has: an object without any of a kind shares the empty one.
 	const checked = {
-		methods: new Map<string, Method>(),
-		state: new Map<string, DeriveSource>(),
-		keyed: new Map<string, KeyedBinding>(),
+		methods: methods.size === 0 ? NO_METHODS : new Map<string, Method>(),
+		state: state.size === 0 ? NO_STATE : new Map<string, DeriveSource>(),
+		keyed: keyed.size === 0 ? NO_KEYED : new Map<string, KeyedBinding>(),
 		events: NO_EVENTS,
 		queries: NO_QUERIES,
 	};
 	for (const [member, data] of methods) {
 		const method = own(member);
 		if (typeof method !== "function") throw new Error(`${member}: a method is a function`);
-		const call: Method = takesNoArgs(data)
-			? (_args, context) => method(context)
-			: (args, context) => method(args, context);
+		// A method with arguments is called as it is (no wrapper per object and method): plugin code, called with its
+		// arguments and a context, whatever it returns made a promise by its caller.
+		const call = takesNoArgs(data) ? (_args: unknown, context: Context) => method(context) : (method as Method);
 		checked.methods.set(member, call);
 	}
 	for (const member of state.keys()) {

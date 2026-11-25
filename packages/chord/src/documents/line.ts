@@ -1,9 +1,12 @@
 // An object's line (§9): its transactions, cold loads, key pages and eviction sweeps run on it one at a time, in the
 // order they asked.
 
+/** A line nobody took yet: the shared settled tail (most objects never take theirs). */
+const FREE: Promise<void> = Promise.resolve();
+
 /** An object's line: `acquire()` resolves with the release once every earlier holder released; releasing twice is harmless. */
 export class Line {
-	#tail: Promise<void> = Promise.resolve();
+	#tail: Promise<void> = FREE;
 
 	/** Resolves with this holder's release once every earlier holder released. */
 	acquire(): Promise<() => void> {

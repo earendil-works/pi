@@ -11,6 +11,15 @@ describe("canonicalJson", () => {
 		expect(canonicalJson("x", BACKGROUND_CONTEXT)).toBe('"x"');
 	});
 
+	it("writes what is no JSON as JSON.stringify does in a list (nothing) and as its text in an object", () => {
+		// Plugin code hands values the types call JSON: the text is what it always was for them.
+		const odd = { list: [1, undefined, null, [undefined]], gone: undefined, nan: Number.NaN } as never;
+		expect(canonicalJson(odd, BACKGROUND_CONTEXT)).toBe('{"gone":undefined,"list":[1,,null,[]],"nan":null}');
+		expect(canonicalJson([], BACKGROUND_CONTEXT)).toBe("[]");
+		expect(canonicalJson({}, BACKGROUND_CONTEXT)).toBe("{}");
+		expect(canonicalJson(null, BACKGROUND_CONTEXT)).toBe("null");
+	});
+
 	it("counts one walk", async () => {
 		expect(await counted((context) => canonicalJson({ a: [1, 2] }, context))).toEqual({
 			walks: 1,

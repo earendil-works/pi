@@ -54,6 +54,7 @@ import {
 	metered,
 	rejection,
 	Server,
+	settledHeap,
 	statesOf,
 	type TestPrincipal,
 	valuesOf,
@@ -725,6 +726,31 @@ describe("a failed admitted object", () => {
 		await set("read");
 		await delivered();
 		expect([doc.state.value.kind, role(doc), built]).toEqual(["live", "reader", ["a:write", "a:read"]]);
+		doc.release();
+		await h.close(context);
+	});
+
+	// Found by the review of the hold-memory pass (2026-11-25): a decision follows its references' states until its
+	// attempt's context is aborted, not for its own life.
+	it("whose factory broke is not retried by a reference of its admission that went down and came back", async () => {
+		const built: string[] = [];
+		const admit: Admit<typeof Doc, TestPrincipal> = (_params, _principal, self) => {
+			self.get(Access, {});
+			return constant(allow({ mode: "read" }));
+		};
+		const declare = () => {
+			if (built.length === 1) throw new Error("the factory is broken");
+		};
+		const { h, reload } = await served({ built, admit, declare });
+		const doc = h.hold(Doc, { id: "a" }, context);
+		await delivered();
+		expect(doc.state.value).toMatchObject({ kind: "failed", cause: { kind: "broken" } });
+		// Its admission's reference parks on a type nobody serves, then is live again: the decision is the same allow.
+		await reload({ access: accessFacet({ needsMissing: true }) });
+		await delivered();
+		await reload({ access: accessFacet() });
+		await delivered();
+		expect([doc.state.value, built]).toMatchObject([{ kind: "failed", cause: { kind: "broken" } }, ["a:read"]]);
 		doc.release();
 		await h.close(context);
 	});
@@ -1558,4 +1584,106 @@ describe("a commit in flight at the cut", () => {
 		await h.close(context);
 		await store.close(context);
 	});
+});
+
+describe("what a decision keeps (hold memory)", () => {
+	/** A thing: plain and grantable members and a flag; admitted by the names a shared object lists. */
+	const Thing = remote("heap.thing", {
+		version: 1,
+		params: { id: str() },
+		hostAddress: () => Server(),
+		state: { name: str() },
+		methods: { use: method(str(), str()), add: grantable(method(str(), str())) },
+		flags: { export: "Export" },
+	});
+	const Roles = local("heap.roles", { version: 1, params: {}, members: { names: map(str()) } });
+
+	function things(host: FacetHost<TestPrincipal>): void {
+		host.serve(Roles, () => ({ names: constant({ owner: "add" }) }));
+		host.serve(Thing, ({ id }) => ({ name: constant(id), use: async (text) => text, add: async (text) => text }), {
+			admit: (_params, principal, self) =>
+				self.derive([self.get(Roles, {}).names], ([names]) =>
+					names[principal.kind] === "add" ? allow({ granted: ["add", "export"] }) : allow({}),
+				),
+		});
+	}
+
+	it("decisions granting the same names share one set", async () => {
+		const { server, client } = await linked(things, { child: { kind: "owner" } });
+		const first = await client.get(Thing, { id: "a" }, context);
+		const second = await client.get(Thing, { id: "b" }, context);
+		expect([[...first.granted], [...second.granted]]).toEqual([
+			["add", "export"],
+			["add", "export"],
+		]);
+		const granted = objects
+			.map((object) => object.deref())
+			.filter((object) => object?.label.startsWith("heap.thing(") === true)
+			.map((object) => object!.granted);
+		expect(granted.length).toBe(2);
+		expect(granted[0]).toBe(granted[1]);
+		first.release();
+		second.release();
+		await client.close(context);
+		await server.close(context);
+	});
+
+	// Found by the review of the hold-memory pass (2026-11-25): shared sets were kept for the contract's life.
+	it("a set of names no decision grants any more is collected while its contract is served (255 combinations)", async () => {
+		const Flagged = remote("heap.flagged", {
+			version: 1,
+			params: { n: int() },
+			hostAddress: () => Server(),
+			state: { name: str() },
+			flags: { f0: "0", f1: "1", f2: "2", f3: "3", f4: "4", f5: "5", f6: "6", f7: "7" },
+		});
+		const flags = ["f0", "f1", "f2", "f3", "f4", "f5", "f6", "f7"] as const;
+		const namesOf = (n: number) => flags.filter((_, index) => (n & (1 << index)) !== 0);
+		const errors: HostError[] = [];
+		const onError = (error: HostError) => void errors.push(error);
+		const h = createHost<TestPrincipal>({ address: Server(), principal: { kind: "server" }, onError });
+		const facet = defineFacet<TestPrincipal>((host) =>
+			host.serve(Flagged, () => ({ name: constant("n") }), {
+				admit: ({ n }) => constant(allow({ granted: namesOf(n) })),
+			}),
+		);
+		await h.load([{ name: "@test/flags", facet }], context);
+		// In a function of its own: the last reference stays in no variable of this test.
+		const granted = async (): Promise<WeakRef<ReadonlySet<string>>[]> => {
+			const sets: WeakRef<ReadonlySet<string>>[] = [];
+			for (let n = 1; n < 256; n++) {
+				const reference = await h.get(Flagged, { n }, context);
+				sets.push(new WeakRef(reference.granted));
+				reference.release();
+			}
+			return sets;
+		};
+		await expectCollected(...(await granted()));
+		// Granted again: a set of the same names.
+		const again = await h.get(Flagged, { n: 5 }, context);
+		expect([[...again.granted], errors]).toEqual([["f0", "f2"], []]);
+		again.release();
+		await h.close(context);
+	});
+
+	it("an admitted object held over a link, its admission reading one reference: under 14 KiB at both ends", async () => {
+		const { server, client } = await linked(things, { child: { kind: "owner" } });
+		const hold = async (from: number, to: number) => {
+			const references = [];
+			for (let id = from; id < to; id++) references.push(await client.get(Thing, { id: `t${id}` }, context));
+			return references;
+		};
+		// A warm-up first: what the first holds make for good (compiled code, caches) is no hold's.
+		const warm = await hold(0, 300);
+		const before = await settledHeap();
+		const held = await hold(300, 2_300);
+		const each = ((await settledHeap()) - before) / held.length;
+		// Measured 10.3 KiB for both ends (the object, its attempt, decision, reference and derive here; the hold's
+		// reference and replica there); 18.4 KiB when a decision followed its references through an abort signal joined
+		// with its attempt's, and every source kept a set for its one dependent.
+		expect(each).toBeLessThan(14 * 1024);
+		for (const reference of [...warm, ...held]) reference.release();
+		await client.close(context);
+		await server.close(context);
+	}, 60_000);
 });

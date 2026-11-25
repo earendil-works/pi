@@ -18,13 +18,15 @@ import type { Contract, ParamsOf } from "../contracts/index.ts";
 import { type ContractShape, NO_GRANTS } from "../contracts/internal.ts";
 import { ChordError, type FailureCause, type Principal } from "../data/index.ts";
 import { asChordError, binds, invalid, type Provider, sameCause } from "../data/internal.ts";
-import { Documents, type KeyedSlot } from "../documents/internal.ts";
+import { Documents, type DocumentsOwner, type KeyedSlot, type TransactionCancelled } from "../documents/internal.ts";
 import type { JobDefinition } from "../jobs/index.ts";
 import { JobRecords } from "../jobs/internal.ts";
 import type { JsonValue } from "../json.ts";
 import { CHAIN } from "../link/internal.ts";
+import { appended, NO_ITEMS } from "../lists.ts";
 import type { RegistryContribution } from "../registries/internal.ts";
-import type { DeriveSource } from "../state/internal.ts";
+import type { Batch, DeriveSource } from "../state/internal.ts";
+import type { ChordStore } from "../store/store.ts";
 import type { TableDefinition } from "../store/table.ts";
 import { chordMetrics } from "../telemetry.ts";
 import { refusal } from "./adapted.ts";
@@ -179,14 +181,59 @@ const CLOSE: NativeCloseReason = { kind: "close" };
 
 const RELOAD: NativeCloseReason = { kind: "reload" };
 
+/** Before its first attempt: the shared state. */
+const WAITING: ObjectState = { kind: "waiting" };
+
 /** No holders listed: what presence gets of an admitted object that is not allowed. */
 const NO_HOLDERS: ReadonlySet<Holder> = new Set();
 
 /** No dependencies waited for: the shared empty list. */
 const NO_DEPENDENCIES: readonly Dependency[] = [];
 
+/** No job runs: the shared empty list. */
+const NO_JOBS: readonly JobRecords[] = [];
+
 /** No contributions leaving: the shared empty list. */
 const NO_CONTRIBUTIONS: readonly RegistryContribution[] = [];
+
+/**
+ * An object as the owner of its documents: what `Documents` asks of it, read from the object when asked (one small
+ * record per object, where an owner made of closures cost 280 B).
+ */
+class ObjectDocuments implements DocumentsOwner {
+	readonly #object: ChordObject;
+	readonly context: Context;
+
+	constructor(object: ChordObject, context: Context) {
+		this.#object = object;
+		this.context = context;
+	}
+
+	get label(): string {
+		return this.#object.label;
+	}
+
+	get batch(): Batch {
+		return this.#object.host.batch;
+	}
+
+	get store(): { readonly store: ChordStore; readonly owner: string } | undefined {
+		const { host, served } = this.#object;
+		return host.store === undefined ? undefined : { store: host.store, owner: served.contract.name };
+	}
+
+	get telemetry(): TelemetryContext {
+		return this.#object.host.telemetry;
+	}
+
+	fail(error: ChordError): void {
+		this.#object.documentFailed(error);
+	}
+
+	report(error: TransactionCancelled): void {
+		this.#object.host.report(error);
+	}
+}
 
 /**
  * One object. Each attempt is a fresh `Attempt`; the documents, the line, the job runs and the holders outlive it. An
@@ -225,11 +272,11 @@ export class ChordObject implements Target {
 	#trigger: TelemetryContext;
 	/** Its attempts so far (the activation span's `attempt`). */
 	#attempts = 0;
-	/** Its job runs by job name, across its attempts. */
-	readonly #jobs = new Map<string, JobRecords>();
+	/** Its job runs by job name, across its attempts; made by the first job. */
+	#jobs: Map<string, JobRecords> | undefined;
 	/** This instance's id (uuidv7), minted at its first attempt: a restarted object is a new instance (D4). */
 	#instance: string | undefined;
-	#state: ObjectState = { kind: "waiting" };
+	#state: ObjectState = WAITING;
 	/** References and holds of this object. */
 	readonly #holders = new Set<Holder>();
 	/** The dependencies its parked attempt waits for; their objects are followed to find cycles (Q5). */
@@ -289,7 +336,7 @@ export class ChordObject implements Target {
 	 * one's are released once a later one bound its own, so a source held only by admissions never ends across a
 	 * rebuild. Made by the first (admitted types only).
 	 */
-	#admissions: Attempt[] | undefined;
+	#admissions: readonly Attempt[] | undefined;
 	/**
 	 * Whether presence lists show an admitted object's holders (§19): from its first allow until a denial. Always true
 	 * for a type without an admission.
@@ -315,23 +362,18 @@ export class ChordObject implements Target {
 		this.principal = principal;
 		this.key = key;
 		this.identity = identity;
-		this.label = key === "" ? served.contract.name : `${served.contract.name}(${key})`;
+		// Joined: one flat string (a template's result is kept as the tree of its parts, three times its size).
+		this.label = key === "" ? served.contract.name : [served.contract.name, "(", key, ")"].join("");
 		this.chain = chain;
 		this.#trigger = trigger;
 		this.#context = context;
 		this.#allowed = served.kind !== "remote" || served.admission === undefined;
-		const { store } = host;
-		this.documents = new Documents({
-			label: this.label,
-			batch: host.batch,
-			context,
-			store: store === undefined ? undefined : { store, owner: served.contract.name },
-			fail: (error) => {
-				if (this.#state.kind === "live") this.failLive(this.#state.attempt, { kind: "broken", error });
-			},
-			report: (error) => host.report(error),
-			telemetry: host.telemetry,
-		});
+		this.documents = new Documents(new ObjectDocuments(this, context));
+	}
+
+	/** A document of the live object the code cannot read fails it `broken` (slice 6a §1.4); ignored when not live. */
+	documentFailed(error: ChordError): void {
+		if (this.#state.kind === "live") this.failLive(this.#state.attempt, { kind: "broken", error });
 	}
 
 	/** The object's state as its references show it. */
@@ -748,6 +790,7 @@ export class ChordObject implements Target {
 	 * version with another fingerprint is refused (`checkJob`).
 	 */
 	jobRecords(definition: JobDefinition<unknown, unknown, unknown>): JobRecords {
+		this.#jobs ??= new Map();
 		const records = this.#jobs.get(definition.name);
 		if (records === undefined) {
 			const { store } = this.host;
@@ -771,7 +814,7 @@ export class ChordObject implements Target {
 
 	/** Refuses a declaration of a job its records cannot take (`JobRecords.check`); a reload's staging checks it too. */
 	checkJob(definition: JobDefinition<unknown, unknown, unknown>): void {
-		this.#jobs.get(definition.name)?.check(definition);
+		this.#jobs?.get(definition.name)?.check(definition);
 	}
 
 	/**
@@ -846,7 +889,7 @@ export class ChordObject implements Target {
 		this.#flush = undefined;
 		if (this.#state.kind === "ended") return;
 		const now = Date.now();
-		const jobs = [...this.#jobs.values()];
+		const jobs = [...(this.#jobs?.values() ?? NO_JOBS)];
 		await Promise.all(jobs.map((records) => records.flushHeld(now)));
 		const next = Math.min(...jobs.map((records) => records.nextDeadline()));
 		if (Number.isFinite(next)) this.#heldUntil(next);
@@ -894,8 +937,7 @@ export class ChordObject implements Target {
 	 * §2.2, rule 4).
 	 */
 	admitting(attempt: Attempt): void {
-		this.#admissions ??= [];
-		this.#admissions.push(attempt);
+		this.#admissions = appended(this.#admissions ?? NO_ITEMS, attempt);
 		this.#releaseSuperseded();
 	}
 
@@ -907,10 +949,13 @@ export class ChordObject implements Target {
 		const admissions = this.#admissions;
 		if (admissions === undefined) return;
 		const last = admissions.at(-1);
-		for (const attempt of [...admissions]) {
+		// The list as it is now: each release takes its attempt out by replacing the list.
+		for (const attempt of admissions) {
 			if (attempt === last || !attempt.sealed) continue;
 			attempt.releaseAdmission();
-			admissions.splice(admissions.indexOf(attempt), 1);
+			const left = this.#admissions ?? NO_ITEMS;
+			const at = left.indexOf(attempt);
+			if (at !== -1) this.#admissions = left.slice(0, at).concat(left.slice(at + 1));
 		}
 	}
 
@@ -1382,9 +1427,10 @@ export class ChordObject implements Target {
 	 * runs of the jobs it declares are retried.
 	 */
 	#takeJobs(attempt: Attempt): void {
-		if (this.#jobs.size === 0) return;
+		const jobs = this.#jobs;
+		if (jobs === undefined || jobs.size === 0) return;
 		const reloaded = attempt.reloadStarted;
-		for (const [name, records] of this.#jobs) {
+		for (const [name, records] of jobs) {
 			if (!attempt.declaresJob(name)) records.undeclare();
 			else if (reloaded) void records.retryBlocked(this.#context);
 		}
@@ -1575,7 +1621,7 @@ export class ChordObject implements Target {
 		this.#startSuccessor = undefined;
 		this.#state = { kind: "ended", ended: { kind: "ended", error } };
 		this.#wakeGate();
-		for (const records of this.#jobs.values()) records.end(error);
+		for (const records of this.#jobs?.values() ?? NO_JOBS) records.end(error);
 		if (this.#flush !== undefined) clearTimeout(this.#flush.timer);
 		this.#flush = undefined;
 		this.documents.seal();
@@ -1660,12 +1706,14 @@ export class ChordObject implements Target {
 			teardown.attempt.releaseReferences();
 		}
 		// Last, as its references: nothing of it is admitted any more.
-		for (const attempt of this.#admissions?.splice(0) ?? []) attempt.releaseAdmission();
+		const admissions = this.#admissions ?? NO_ITEMS;
+		this.#admissions = undefined;
+		for (const attempt of admissions) attempt.releaseAdmission();
 		await this.documents.settled();
 		this.documents.end();
 		this.host.store?.claims.release(this);
-		for (const records of this.#jobs.values()) records.drop();
-		this.#jobs.clear();
+		for (const records of this.#jobs?.values() ?? NO_JOBS) records.drop();
+		this.#jobs = undefined;
 		return failures;
 	}
 

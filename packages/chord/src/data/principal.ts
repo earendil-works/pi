@@ -58,20 +58,41 @@ function customKeyCache(customKey: PrincipalKeyFunction<never>): WeakMap<Princip
 	return cache;
 }
 
-/** Canonical JSON: sorted object keys, `-0` written as `0`. Counts one walk. */
+/**
+ * Canonical JSON: sorted object keys, `-0` written as `0`. Counts one walk. Built from its parts in one join, so the
+ * text is one flat string: keys are kept (a decision's, a reader's arguments), and text concatenated piece by piece
+ * is kept as the tree of its pieces (several times its size).
+ */
 export function canonicalJson(value: JsonValue, context: Context): string {
 	chordMetrics(context.telemetry.metrics).counter("chord.data.walks").add(1);
-	return canonical(value);
-}
-
-function canonical(value: JsonValue): string {
 	// JSON.stringify writes -0 as 0.
 	if (value === null || typeof value !== "object") return JSON.stringify(value);
-	if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
-	const fields = Object.keys(value)
-		.sort()
-		.map((key) => `${JSON.stringify(key)}:${canonical(value[key]!)}`);
-	return `{${fields.join(",")}}`;
+	const parts: string[] = [];
+	canonical(value, parts);
+	return parts.join("");
+}
+
+/** Appends the canonical text of the array or object `value` to `parts`. */
+function canonical(value: JsonValue[] | { readonly [key: string]: JsonValue }, parts: string[]): void {
+	if (Array.isArray(value)) {
+		parts.push("[");
+		for (const [index, item] of value.entries()) {
+			if (index > 0) parts.push(",");
+			// What is no JSON (`undefined` in a list of plugin code's making) is written as nothing, as a join writes it.
+			if (item !== null && typeof item === "object") canonical(item, parts);
+			else parts.push(JSON.stringify(item) ?? "");
+		}
+		parts.push("]");
+		return;
+	}
+	parts.push("{");
+	for (const [index, key] of Object.keys(value).sort().entries()) {
+		parts.push(index > 0 ? "," : "", JSON.stringify(key), ":");
+		const field = value[key]!;
+		if (field !== null && typeof field === "object") canonical(field, parts);
+		else parts.push(`${JSON.stringify(field)}`);
+	}
+	parts.push("}");
 }
 
 /**

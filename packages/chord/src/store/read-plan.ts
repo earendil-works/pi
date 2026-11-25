@@ -67,6 +67,7 @@ const OWN = "t";
 const PARTNER = "p";
 const NO_COLUMNS: readonly never[] = [];
 const UNBOUNDED: Range = { limit: 0 };
+const NO_PARAMS: readonly SqliteValue[] = [];
 
 /**
  * A query compiled against the store's bindings. Its statements select the columns the mapping gets, the own key,
@@ -90,8 +91,10 @@ export class ReadPlan {
 	readonly #from: string;
 	/** The condition rendered once, with its parameters; no text without a condition. */
 	readonly #where: { readonly sql: string | undefined; readonly params: readonly SqliteValue[] };
-	/** Its statements' texts by shape (`#text`). */
-	readonly #texts = new Map<string, string>();
+	/** The text of the statement shape rendered first (a read's one `select`, mostly), by its key (`#text`). */
+	#first: { readonly key: string; readonly text: string } | undefined;
+	/** Its other statements' texts by shape, made by the second shape. */
+	#texts: Map<string, string> | undefined;
 
 	/** `shape`: what the plan is read as. A count depends on its condition and match columns only (slice 14 §3.3). */
 	constructor(query: Query, table: string, projection: Projection, shape: "rows" | "count", bindings: Bindings) {
@@ -132,7 +135,9 @@ export class ReadPlan {
 		);
 		this.#from = fromClause(table, joined, partner);
 		const params: SqliteValue[] = [];
-		this.#where = { sql: condition === undefined ? undefined : whereSql(condition, params, this.#render()), params };
+		const sql = condition === undefined ? undefined : whereSql(condition, params, this.#render());
+		// Kept for the plan's life: a list of exactly its parameters (the one they were pushed to has room for 16 more).
+		this.#where = { sql, params: params.length === 0 ? NO_PARAMS : params.slice() };
 	}
 
 	/** The rows of `range` in the plan's order. */
@@ -168,10 +173,16 @@ export class ReadPlan {
 	 */
 	#text(kind: string, range: Range, columns: readonly string[], render: (filter: string) => string): string {
 		const key = `${kind}|${range.after?.length ?? "-"}|${range.through?.length ?? "-"}|${columns.join(",")}`;
-		let text = this.#texts.get(key);
+		const first = this.#first;
+		if (first?.key === key) return first.text;
+		let text = this.#texts?.get(key);
 		if (text === undefined) {
 			text = render(this.#filter(range));
-			this.#texts.set(key, text);
+			if (first === undefined) this.#first = { key, text };
+			else {
+				this.#texts ??= new Map();
+				this.#texts.set(key, text);
+			}
 		}
 		return text;
 	}
@@ -224,6 +235,13 @@ type Sides = {
 };
 
 function sidesOf(joined: Joined | undefined): Sides {
+	return joined === undefined ? OWN_SIDES : sidesOfQuery(joined);
+}
+
+/** The sides of a query without a join (most queries): every column is the own table's; shared. */
+const OWN_SIDES: Sides = sidesOfQuery(undefined);
+
+function sidesOfQuery(joined: Joined | undefined): Sides {
 	const prefix = joined === undefined ? undefined : partnerName(joined.set.name, "");
 	const isPartner = (name: string): boolean => prefix !== undefined && name.startsWith(prefix);
 	const strip = (name: string): string => name.slice(prefix?.length ?? 0);
@@ -387,7 +405,8 @@ function selectList(
 
 /** The tables a statement reads from. `CROSS JOIN` keeps SQLite from reordering: a read is driven from its own table. */
 function fromClause(table: string, joined: Joined | undefined, partner: Bound | undefined): string {
-	if (joined === undefined || partner === undefined) return `${quote(table)} AS ${OWN}`;
+	// Joined: one flat string (a plan keeps it).
+	if (joined === undefined || partner === undefined) return [quote(table), " AS ", OWN].join("");
 	const on = joined.pairs.map(([key, name]) => `${PARTNER}.${quote(key)} = ${OWN}.${quote(name)}`).join(" AND ");
 	return `${quote(table)} AS ${OWN} CROSS JOIN ${quote(partner.table)} AS ${PARTNER} ON ${on}`;
 }

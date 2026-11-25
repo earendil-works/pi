@@ -161,12 +161,12 @@ export class ReferenceSource extends Source implements Dependent {
 
 	/** The bound member changed: its dependents are marked (its frames reach the subscribers directly). */
 	invalidate(): void {
-		for (const dependent of this.dependents) dependent.invalidate();
+		this.dependents.invalidate();
 	}
 
 	/** The bound member's document was retired: its dependents carry the flag on. */
 	sourceRetired(visited: Set<Dependent>): void {
-		for (const dependent of this.dependents) dependent.sourceRetired(visited);
+		this.dependents.sourceRetired(visited);
 	}
 
 	/**
@@ -257,7 +257,7 @@ export class ReferenceSource extends Source implements Dependent {
 		const passed = this.#passed;
 		this.#passed = undefined;
 		if (passed !== undefined) for (const subscriber of [...passed]) subscriber.end(ENDED);
-		for (const dependent of this.dependents) dependent.invalidate();
+		this.dependents.invalidate();
 	}
 
 	/** Delivers a move's frame: the diff from the watches' value to the new member's. */

@@ -33,6 +33,24 @@ export function uuidv7(): string {
 	bytes[9] = Number((sequence >> 15n) & 0xffn);
 	bytes[10] = Number((sequence >> 7n) & 0xffn);
 	bytes[11] = Number((sequence & 0x7fn) << 1n) | (bytes[11]! & 0x01);
-	const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0"));
-	return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex.slice(6, 8).join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10).join("")}`;
+	return uuidText(bytes);
+}
+
+const HEX = "0123456789abcdef";
+
+/** The char code of `-`. */
+const DASH = 45;
+
+/**
+ * The 16 `bytes` as a UUID's text, built from its char codes as one flat string: joined parts in a template are kept
+ * as a tree of strings (about 300 B for as long as the id lives; an object keeps its instance id for its life).
+ */
+function uuidText(bytes: Uint8Array): string {
+	const codes: number[] = [];
+	for (let index = 0; index < 16; index++) {
+		if (index === 4 || index === 6 || index === 8 || index === 10) codes.push(DASH);
+		const byte = bytes[index]!;
+		codes.push(HEX.charCodeAt(byte >> 4), HEX.charCodeAt(byte & 0x0f));
+	}
+	return String.fromCharCode(...codes);
 }

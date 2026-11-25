@@ -29,6 +29,9 @@ const DIRTY: DeriveState = { kind: "dirty" };
 
 const NO_OPS: readonly Op[] = [];
 
+/** No sources: before a derive is attached and once it is detached. */
+const NO_SOURCES: readonly DeriveInput[] = [];
+
 /** What a failed derive's watches had: no value, so its next value frame replaces the value whole. */
 const NO_VALUE: unique symbol = Symbol("no value");
 
@@ -41,8 +44,8 @@ export class Derive extends Source implements Dependent {
 	readonly #compute: (values: readonly unknown[]) => JsonValue;
 	/** The sources as declared, until `attach` resolves them. */
 	#declared: readonly unknown[] | undefined;
-	#sources: readonly DeriveInput[] = [];
-	#state: DeriveState = { kind: "dirty" };
+	#sources: readonly DeriveInput[] = NO_SOURCES;
+	#state: DeriveState = DIRTY;
 	/**
 	 * The value this derive's watches have, kept from its first marking in a batch to that batch's frame; `undefined`:
 	 * not listed in the batch.
@@ -98,7 +101,7 @@ export class Derive extends Source implements Dependent {
 		for (const source of this.#sources) {
 			if (source instanceof Source || source instanceof NativeSource) source.dependents.delete(this);
 		}
-		this.#sources = [];
+		this.#sources = NO_SOURCES;
 		this.#declared = undefined;
 		this.#state = { kind: "detached", error };
 		this.#framed = undefined;
@@ -121,7 +124,7 @@ export class Derive extends Source implements Dependent {
 			this.batch.changed(this);
 		}
 		this.#state = DIRTY;
-		for (const dependent of this.dependents) dependent.invalidate();
+		this.dependents.invalidate();
 	}
 
 	/**
@@ -133,7 +136,7 @@ export class Derive extends Source implements Dependent {
 		if (visited.has(this)) return;
 		visited.add(this);
 		if (this.watched) this.#retired = true;
-		for (const derive of this.dependents) derive.sourceRetired(visited);
+		this.dependents.sourceRetired(visited);
 	}
 
 	/**

@@ -21,7 +21,14 @@ import {
 	str,
 	union,
 } from "../../src/contracts/index.ts";
-import { checkAccepts, currentMembers, takesNoArgs } from "../../src/contracts/internal.ts";
+import {
+	checkAccepts,
+	currentMembers,
+	currentVersion,
+	grantedMembers,
+	memberOrder,
+	takesNoArgs,
+} from "../../src/contracts/internal.ts";
 import { bindProvider, checkParams } from "../../src/data/internal.ts";
 import type { Watchable } from "../../src/state/index.ts";
 import { expectCollected, Server } from "../support.ts";
@@ -82,6 +89,27 @@ describe("member names", () => {
 
 	it("refuses a copy of a contract", () => {
 		expect(() => memberNames({ ...Notes })).toThrow("not a declared contract");
+	});
+});
+
+describe("member order", () => {
+	it("is made once per members: every binding of them shares the lists, each kind sorted", () => {
+		const members = currentMembers(Notes);
+		const order = memberOrder(members);
+		expect(order).toEqual({ state: ["notes"], methods: ["add", "clear"], events: [] });
+		expect(memberOrder(members)).toBe(order);
+		// Granted members are members of their own: their order is theirs, made once too.
+		const granted = grantedMembers(currentVersion(Notes), new Set(["add"]));
+		expect(memberOrder(granted)).toEqual({ state: ["notes"], methods: ["add"], events: [] });
+		expect(memberOrder(grantedMembers(currentVersion(Notes), new Set(["add"])))).toBe(memberOrder(granted));
+	});
+
+	it("is kept by no contract: both are collected", async () => {
+		const refs = (() => {
+			const contract = local("gc.order", { version: 1, params: {}, members: { s: str(), go: method() } });
+			return [new WeakRef(contract), new WeakRef(memberOrder(currentMembers(contract)))];
+		})();
+		await expectCollected(...refs);
 	});
 });
 

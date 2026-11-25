@@ -5,7 +5,7 @@
 // three in a row); one decision per principal and address (two principals on one address, several holds sharing one,
 // released with the last); a failed source; `RouteHandle.retry`; a hold behind the route's own route (`invalid/cycle`).
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
 import { local, map, method, obj, str } from "../../src/contracts/index.ts";
 import type { ChordError } from "../../src/data/index.ts";
@@ -320,6 +320,25 @@ describe("one decision per principal and address", () => {
 		await transported();
 		await expectCollected(...decisions.slice(before));
 		await server.close(context);
+	});
+
+	// From the review of the hold-memory pass (2026-11-25): a decision's follows of its references end where the
+	// context it declared under is aborted, as a wait under it would; for a route that is its host's close.
+	it("follows its references no more from its host's close on, before its holds leave", async () => {
+		const { tab, server, set } = await gated();
+		await set("yes");
+		await tab.get(PlacedNotes, { session: "S1" }, context);
+		const unfollow = vi.spyOn(Decision.prototype, "unfollow");
+		const release = vi.spyOn(Decision.prototype, "release");
+		try {
+			await server.close(context);
+			const routes = release.mock.contexts.filter((decision) => unfollow.mock.contexts[0] === decision);
+			expect(routes.length).toBe(1);
+			expect(unfollow.mock.invocationCallOrder[0]).toBeLessThan(release.mock.invocationCallOrder[0]!);
+		} finally {
+			unfollow.mockRestore();
+			release.mockRestore();
+		}
 	});
 
 	it("a failed source leaves bound holds alone and fails new ones waiting; it heals with the source", async () => {

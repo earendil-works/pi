@@ -97,6 +97,21 @@ slice spec's section citations are for orientation, not a reading limit (owner, 
 - **Slice 15, lazy named queries** (built 2026-11-25, `slice-15.md` §5): a reference's `queries` member makes its
   `ReferenceQuery`s on first use (`referenceQueries` in `host/named-query.ts`, a class per member and contract
   version, cached weakly), labels built when asked; `test/bench/reference-heap.ts`.
+- **Hold memory** (built 2026-11-25 on slice 15, no slice of its own; `benchmarks.md` "Hold memory"): what an object
+  keeps while it is held, about halved with no change of behaviour. Maps, sets and lists of an attempt, an object,
+  its documents, a decision and a reference are made by their first entry (`host/attempt.ts`, `object.ts`,
+  `admission.ts`, `reference.ts`, `documents/documents.ts`); short lists are built without a `push`'s slack
+  (`src/lists.ts`: `appended`, `NO_ITEMS`); a source keeps none or one dependent without a set
+  (`state/dependents.ts`, telling whom a set's iteration tells whatever its dependents do meanwhile); a decision
+  follows its references' states directly, with no abort signal joined with its attempt's (`Binding.followState`;
+  its owner ends the follows where that signal aborted: `Decision.unfollow` from `Attempt.abandon` and a route's
+  context); a granted set is shared by the decisions granting the same names of a contract version, held weakly
+  (`grantedSet` in `host/admission.ts`), a member order by every binding of the same members (`memberOrder` in
+  `contracts/contract.ts`); canonical JSON, labels and
+  instance ids are flat strings (`data/principal.ts`, `host/object.ts`, `host/uuid.ts`); a read plan of an unjoined
+  query shares its sides and keeps exact lists (`store/read-plan.ts`, `query.ts`, `read.ts`, `live-query.ts`).
+  `test/bench/hold-heap.ts`; cost guards in `test/lists.test.ts`, `test/state/dependents.test.ts`,
+  `test/host/object.test.ts` and `test/host/admission.test.ts`.
 - **Chord's shared code** (upstream pi): `src/watch.ts` (`Watch`, `NativeWatch`, `WatchHandle`, `WatchEnd`,
   `NativeWatchable`), Delta (`track`, `diffRevisions`, `applyImmutable`, encoders, `PendingOps`, `appendText`),
   context, JSON, output, SQLite drivers.
@@ -271,6 +286,23 @@ deleted (the slice's spec and code are the record). Moved here from `carry-over.
   it only if a real case needs it. (Slice 3b spec.)
 - No CBOR; revisit only if benchmarks show encoding as a bottleneck (slice 3a's and 4a's do not). (L2 decisions.)
 - **The Durable conversation view's size on re-hold** is a known cost until pi #11327 (windowed view) lands. (Slice 4.)
+
+### Any slice (memory of held objects; from the hold-memory pass, 2026-11-25)
+
+- **A read plan per live query.** Every open query compiles its own `ReadPlan` (its uses with two sets, its select
+  list and statement texts, about 4 KiB of the 5.5 KiB a live query keeps), though every read of one named query
+  differs only in its condition's parameters. Share the compiled shape per named query and bound table, with the
+  parameters per read; recompile on a binding change as today. (`test/bench/hold-heap.ts`, case 4.)
+- **A reference is an object in dictionary mode.** Its `state`, its `granted` and each grantable member are own
+  accessors (`Object.defineProperty`), which V8 keeps in a dictionary (256 B and about 130 B per accessor, for every
+  `self.get`, `host.get` and hold). Accessors on a prototype per contract version would be fast properties, but they
+  are no own properties then (`Object.keys`, a spread); decide whether that may change.
+- **The members of a checked implementation are two maps per object** (methods and state, 216 B each): the names are
+  the contract's, only the values are the object's.
+- **A hold keeps its request's params as a copied `Uint8Array`** (about 260 B for a few bytes) and the decoded address
+  and fingerprint of its message.
+- **An `Attempt` and a `ChordObject` are 46 and 42 fields** (368 B and 336 B), most of them for reloads, parking and
+  declarations few objects make; the rare ones could move into records made on first use.
 
 ### Any slice (lifetimes)
 

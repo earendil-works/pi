@@ -5,6 +5,7 @@ import type { Op } from "../delta/index.ts";
 import type { JsonValue } from "../json.ts";
 import { Watch, type Watchable, type WatchCall, type WatchEnd } from "../watch.ts";
 import type { Batch } from "./batch.ts";
+import { Dependents } from "./dependents.ts";
 
 /**
  * A synchronous subscriber of a source (a hold over a link, a reference's member): fed the source's call inside the batch
@@ -63,7 +64,7 @@ const ENDED: WatchEnd = { kind: "ended" };
  */
 export abstract class Source implements Watchable<JsonValue> {
 	/** Derives reading this source (and references' members forwarding to some); each removes itself when it stops. */
-	readonly dependents = new Set<Dependent>();
+	readonly dependents = new Dependents();
 	protected readonly batch: Batch;
 	/** Its watches and subscribers, each made by its first: most sources (a reference's members) never have one. */
 	#watches: Set<Watch<JsonValue>> | undefined;
@@ -124,7 +125,7 @@ export abstract class Source implements Watchable<JsonValue> {
 	/** Records a change in the current batch: listed for a frame when watched, and every dependent marked dirty. */
 	protected changed(): void {
 		if (this.watched) this.batch.changed(this);
-		for (const derive of this.dependents) derive.invalidate();
+		this.dependents.invalidate();
 	}
 
 	/**
@@ -134,7 +135,7 @@ export abstract class Source implements Watchable<JsonValue> {
 	protected retiredInBatch(): void {
 		// Allocated only for a retirement, which is rare.
 		const visited = new Set<Dependent>();
-		for (const derive of this.dependents) derive.sourceRetired(visited);
+		this.dependents.sourceRetired(visited);
 	}
 
 	/** Queues one frame on every watch and feeds it to every subscriber. */

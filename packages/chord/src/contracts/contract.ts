@@ -354,16 +354,24 @@ export function grantIndexes(version: VersionData, granted: ReadonlySet<string>)
 const NO_INDEXES: number[] = [];
 
 /**
- * Members' names in the order links index them: each kind sorted; members without event members share one empty list
- * (contracts without events pay nothing for them per binding).
+ * Members' names in the order links index them: each kind sorted; members without event members share one empty list.
+ * Made once per `members` (a version's, or a version's granted to one set of names: every binding of them shares the
+ * lists) and kept weakly: gone with its contract.
  */
 export function memberOrder(members: MembersData): MemberNames {
-	return {
-		state: [...members.state.keys()].sort(),
-		methods: [...members.methods.keys()].sort(),
-		events: members.events.size === 0 ? NO_NAMES : [...members.events.keys()].sort(),
-	};
+	let order = memberOrders.get(members);
+	if (order === undefined) {
+		order = {
+			state: [...members.state.keys()].sort(),
+			methods: [...members.methods.keys()].sort(),
+			events: members.events.size === 0 ? NO_NAMES : [...members.events.keys()].sort(),
+		};
+		memberOrders.set(members, order);
+	}
+	return order;
 }
+
+const memberOrders = new WeakMap<MembersData, MemberNames>();
 
 const NO_NAMES: readonly string[] = [];
 

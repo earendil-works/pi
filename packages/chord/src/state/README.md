@@ -72,7 +72,9 @@ Rules:
   registry work on the host's metrics (`chord.derive.computes`, `chord.derive.diffs`, `chord.registry.composes`,
   `chord.registry.adapts`). `changed(source)` takes any `Delivered` (JSON or native source).
 - `Source`: a changing value on a host (a singleton document, a derive, a replica) with its watches, subscribers and
-  dependents (`Dependent`: derives, and member sources passing changes on to theirs). Subclasses call `changed()` when
+  dependents (`Dependent`: derives, and member sources passing changes on to theirs; kept in a `Dependents`, which
+  holds none or one without a set and tells whom a set's iteration would: `add`, `delete`, `clear`, `size`,
+  `invalidate()`, `sourceRetired(visited)`). Subclasses call `changed()` when
   a commit changes them and implement `deliver(ctx)` (`publish` a value, `failWatches` a recoverable failure,
   `endWatches` for good). `openWatch(ctx)` is `watch` without the Promise. `subscribe(subscriber)`: a `Subscriber` (a
   hold over a link, a member source) takes the watch's own sink shape, `advance(call, ctx)` synchronously inside each
