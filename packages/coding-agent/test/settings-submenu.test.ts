@@ -1,5 +1,5 @@
 import { setKeybindings } from "@earendil-works/pi-tui";
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
 import { SelectSubmenu } from "../src/modes/interactive/components/settings-submenu.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
@@ -33,5 +33,29 @@ describe("select submenu search", () => {
 		submenu.handleInput("\r");
 
 		expect(selected).toEqual(["dark-green"]);
+	});
+});
+
+describe("select submenu hint", () => {
+	beforeAll(() => {
+		initTheme("dark");
+	});
+
+	afterEach(() => {
+		setKeybindings(new KeybindingsManager());
+	});
+
+	it("names the configured select keys", () => {
+		setKeybindings(new KeybindingsManager({ "tui.select.confirm": "ctrl+y", "tui.select.cancel": "ctrl+q" }));
+		const submenu = new SelectSubmenu(
+			"Theme",
+			"",
+			[{ value: "dark", label: "dark" }],
+			"dark",
+			() => {},
+			() => {},
+		);
+
+		expect(submenu.render(120).join("\n")).toContain("ctrl+y to select \u00b7 ctrl+q to go back");
 	});
 });
