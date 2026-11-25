@@ -2,8 +2,7 @@
 // registries followed, one `changed` callback for every change, everything released at `dispose`, and the host's page
 // state shared by every scope (decision "Tutorial gaps" (1)), and messages in the host's language, a change redrawing
 // (decision "Messages and languages in the app kit"), an optimistic value shown while a call is pending (decision
-// "A call's answer follows its state"), and a reference read in one variant (decision "C15 stands; the UI bindings
-// follow the variant").
+// "A call's answer follows its state"), and a reference read while live (`live`, slice 15 §1.5).
 
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";

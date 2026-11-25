@@ -135,15 +135,15 @@ function originOf({ origin }: Held): { origin?: number } {
 }
 
 /** Binds `held` on a raw worker with `PlacedNotes` granted as an owner's (or a guest's) and `count`. */
-function bindPlaced(peer: RawPeer, held: Held, count = 0, variant = EDITOR): void {
+function bindPlaced(peer: RawPeer, held: Held, count = 0, grant = EDITOR): void {
 	const members = [
-		{ member: variant.state.notes!, value: "[]" },
-		{ member: variant.state.count!, value: jsonPart(count) },
+		{ member: grant.state.notes!, value: "[]" },
+		{ member: grant.state.count!, value: jsonPart(count) },
 	];
 	peer.send({
 		kind: "bound",
 		...originOf(held),
-		holds: [{ hold: held.hold, granted: variant.granted, members, failed: [] }],
+		holds: [{ hold: held.hold, granted: grant.granted, members, failed: [] }],
 	});
 }
 
@@ -543,7 +543,7 @@ forEachCodec(() => {
 			expect(callsOf(next)).toEqual([]);
 		});
 
-		it("loading: the waiting calls are rejected unavailable, the forwarded ones kept; a bound of another variant gets none of them", async () => {
+		it("loading: the waiting calls are rejected unavailable, the forwarded ones kept; a bound of another grant gets none of them", async () => {
 			const { raw, worker, held } = await bound();
 			callFrom(raw, [0, 1, 2, 3]);
 			await transported();
@@ -626,7 +626,7 @@ forEachCodec(() => {
 	describe("an upstream drop", () => {
 		fakeTimers();
 
-		it("sends loading downstream, fails relayed calls unavailable, holds again with the same id and forwards the new bound, another variant allowed (race 12)", async () => {
+		it("sends loading downstream, fails relayed calls unavailable, holds again with the same id and forwards the new bound, another grant allowed (race 12)", async () => {
 			const { tab, workers, errors } = await rawRelay();
 			const got = tab.get(PlacedNotes, { session: "S1" }, context);
 			const first = await workerAt(workers);

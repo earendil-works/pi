@@ -58,7 +58,7 @@ const remoteObjects = instancesOf(RemoteObject, "hold");
 
 forEachCodec(() => {
 	describe("references over a link", () => {
-		it("are live and hydrated when got, with the variant of the link's principal", async () => {
+		it("are live and hydrated when got, with the grant of the link's principal", async () => {
 			const { client, server } = await linked((h) => void serveNotes(h), {
 				child: { kind: "guest", session: "S1" },
 			});
@@ -230,7 +230,7 @@ forEachCodec(() => {
 	describe("protocol errors at the consumer", () => {
 		it.each([
 			["wire ops failing Delta's checks", [{ member: EDITOR.state.count!, ops: '[["x"]]' }]],
-			["a member index outside the variant", [{ member: 9, ops: '[["r",1]]' }]],
+			["a member index outside the grant", [{ member: 9, ops: '[["r",1]]' }]],
 			[
 				"a member twice",
 				[
@@ -545,7 +545,7 @@ forEachCodec(() => {
 
 forEachCodec(() => {
 	describe("limits per part at the consumer", () => {
-		/** `[member, value]` of `Notes`'s editor variant: `notes` and `count`, the notes' JSON given as text. */
+		/** `[member, value]` of `Notes`' editor grant: `notes` and `count`, the notes' JSON given as text. */
 		const members = (notes: string): { member: number; value: Part }[] => [
 			{ member: EDITOR.state.notes!, value: notes },
 			{ member: EDITOR.state.count!, value: "1" },
@@ -908,10 +908,10 @@ const WATCHER = wireNames(Match);
 
 /**
  * A client connected to a raw provider with `limits` and `compression`, holding `Match` bound (granted a player's
- * members unless `variant` says otherwise); its background errors and its telemetry's counters.
+ * members unless `role` says otherwise); its background errors and its telemetry's counters.
  */
 async function eventClient(
-	options: { readonly limits?: PartLimits; readonly compression?: Compression; readonly variant?: "watcher" } = {},
+	options: { readonly limits?: PartLimits; readonly compression?: Compression; readonly role?: "watcher" } = {},
 ) {
 	const errors: HostError[] = [];
 	const telemetry = new InMemoryTelemetryContext();
@@ -928,7 +928,7 @@ async function eventClient(
 	// Taken before it binds, when a reference has every member: its subscriptions are dormant while a binding lacks it.
 	const paddle = match.paddle!;
 	const { hold } = await peer.next("hold");
-	bindMatch(peer, hold, options.variant);
+	bindMatch(peer, hold, options.role);
 	await waitLive(match);
 	const counts = (): Record<string, number> => {
 		const result: Record<string, number> = {};
@@ -942,8 +942,8 @@ async function eventClient(
 }
 
 /** Sends `bound` for `hold` granted as a player (or a watcher) with a score of 0. */
-function bindMatch(peer: RawPeer, hold: number, variant: "player" | "watcher" = "player"): void {
-	const names = variant === "player" ? PLAYER : WATCHER;
+function bindMatch(peer: RawPeer, hold: number, role: "player" | "watcher" = "player"): void {
+	const names = role === "player" ? PLAYER : WATCHER;
 	const members = [{ member: names.state.score!, value: "0" }];
 	peer.send({ kind: "bound", holds: [{ hold, granted: names.granted, members, failed: [] }] });
 }
@@ -1031,22 +1031,22 @@ forEachCodec(() => {
 			expect(errors).toMatchObject([{ kind: "protocol_error" }]);
 		});
 
-		it("deliver nothing of an earlier binding: an event, a loading and a bound (the same variant, another) in one turn", async () => {
+		it("deliver nothing of an earlier binding: an event, a loading and a bound (the same grant, another) in one turn", async () => {
 			const { peer, match, paddle, hold } = await eventClient();
 			const seen: unknown[] = [];
 			await paddle.on(({ value }) => void seen.push(value.y), context);
-			for (const variant of ["player", "watcher"] as const) {
+			for (const role of ["player", "watcher"] as const) {
 				peer.send({ kind: "event", events: [paddleEvent(hold, 1)] });
 				peer.send({ kind: "loading", hold });
-				bindMatch(peer, hold, variant);
+				bindMatch(peer, hold, role);
 				await transported();
 			}
 			expect(seen).toEqual([]);
 			expect([grantOf(match), match.paddle]).toEqual([[], undefined]);
 		});
 
-		it("deliver none while bound to a variant without the member, and again once a binding has it", async () => {
-			const { peer, paddle, hold } = await eventClient({ variant: "watcher" });
+		it("deliver none while bound without the member granted, and again once a binding has it", async () => {
+			const { peer, paddle, hold } = await eventClient({ role: "watcher" });
 			const seen: unknown[] = [];
 			await paddle.on(({ value }) => void seen.push(value.y), context);
 			peer.send({ kind: "loading", hold });

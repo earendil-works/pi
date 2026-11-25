@@ -78,6 +78,12 @@ export class ReadPlan {
 	readonly table: string;
 	readonly order: Order;
 	readonly uses: readonly Use[];
+	/**
+	 * The own columns its condition fixes in its top-level `and` terms, each with the values a row of its result may
+	 * have there: an `eq`'s value, an `inArray`'s list (the first term of a column counts). As stored: a boolean as 0
+	 * or 1, an address as its key. The commit index files the read under them (slice 15 §3).
+	 */
+	readonly equalities: ReadonlyMap<string, readonly SqliteValue[]>;
 	readonly #bindings: Bindings;
 	readonly #sides: Sides;
 	readonly #select: string;
@@ -103,7 +109,9 @@ export class ReadPlan {
 		const reads = counted ? NO_COLUMNS : (projection.reads ?? query.table.columns.map(({ name }) => name));
 		const partnerReads = counted ? NO_COLUMNS : (projection.partnerReads ?? [...(joined?.set.byName.keys() ?? [])]);
 		const used = [...(condition === undefined ? [] : columnsOf(condition)), ...(counted ? [] : this.order.columns)];
-		const fixed = condition === undefined ? new Set<string>() : fixedBy(condition);
+		const fixed = new Map<string, readonly SqliteValue[]>();
+		if (condition !== undefined) collectEqualities(condition, sides, fixed);
+		this.equalities = fixed;
 		const what = `${query.table.name}: exists`;
 		const tested = condition === undefined ? [] : existsUses(condition, (name) => query.column(name), bindings, what);
 		const own = ownUse(
@@ -125,18 +133,6 @@ export class ReadPlan {
 		this.#from = fromClause(table, joined, partner);
 		const params: SqliteValue[] = [];
 		this.#where = { sql: condition === undefined ? undefined : whereSql(condition, params, this.#render()), params };
-	}
-
-	/**
-	 * The own columns its condition fixes in its top-level `and` terms, each with the values a row of its result may
-	 * have there: an `eq`'s value, an `inArray`'s list (the first term of a column counts). As stored: a boolean as 0
-	 * or 1, an address as its key. The commit index files the read under them (slice 15 §3).
-	 */
-	equalities(): Map<string, readonly SqliteValue[]> {
-		const found = new Map<string, readonly SqliteValue[]>();
-		const { condition } = this.query;
-		if (condition !== undefined) collectEqualities(condition, this.#sides, found);
-		return found;
 	}
 
 	/** The rows of `range` in the plan's order. */
@@ -291,7 +287,7 @@ function joinedUse(
 	partner: Bound,
 	used: readonly string[],
 	partnerReads: readonly string[],
-	fixed: ReadonlySet<string>,
+	fixed: ReadonlyMap<string, unknown>,
 	sides: Sides,
 ): Use {
 	const { set, pairs } = query.joined!;
@@ -357,7 +353,7 @@ function existsUses(
  * An `exists`' use with the own columns it pairs by: its enclosing columns when they are own ones; the join's own
  * columns when it is matched on the partner's key; none otherwise (the read runs then).
  */
-function pairedWithOwn(use: Use, query: Query, fixed: ReadonlySet<string>, sides: Sides): Use {
+function pairedWithOwn(use: Use, query: Query, fixed: ReadonlyMap<string, unknown>, sides: Sides): Use {
 	const toOwn = (name: string): string | undefined =>
 		sides.isPartner(name) ? query.joined!.pairs.find(([key]) => key === sides.strip(name))?.[1] : name;
 	const mapped = use.pairs?.map(toOwn);
@@ -416,7 +412,7 @@ function checkColumn(expected: Column | undefined, found: Column | undefined, se
 	throw invalid("args", `column "${name}" of column set "${set}" is not what this read was written for`);
 }
 
-/** `equalities`' walk: the own `eq` and `inArray` terms of `node`'s top-level `and`. */
+/** A plan's `equalities`: the own `eq` and `inArray` terms of `node`'s top-level `and`, added to `into`. */
 function collectEqualities(node: WhereNode, sides: Sides, into: Map<string, readonly SqliteValue[]>): void {
 	if ("and" in node) {
 		for (const each of node.and) collectEqualities(each, sides, into);
@@ -437,18 +433,11 @@ function collectEqualities(node: WhereNode, sides: Sides, into: Map<string, read
 	);
 }
 
-/** The own columns a condition fixes with `eq` or `inArray` in its top-level `and` terms. */
-function fixedBy(node: WhereNode): Set<string> {
-	if ("and" in node) return new Set(node.and.flatMap((each) => [...fixedBy(each)]));
-	if ("eq" in node) return new Set([node.eq[0]]);
-	return new Set("inArray" in node ? [node.inArray[0]] : []);
-}
-
 /**
  * Whether an equality on `columns` is keyed in `table`: together with the `fixed` columns before them they are a
  * leading prefix of its key or of one of its indexes.
  */
-function keyedBy(table: TableDefinition, fixed: ReadonlySet<string>, columns: readonly string[]): boolean {
+function keyedBy(table: TableDefinition, fixed: ReadonlyMap<string, unknown>, columns: readonly string[]): boolean {
 	const paths = [table.key, ...[...table.indexes.values()].map((index) => indexPath(index, table.key))];
 	return paths.some((path) => {
 		let covered = 0;

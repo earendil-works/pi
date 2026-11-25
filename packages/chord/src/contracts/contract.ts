@@ -48,7 +48,7 @@ export type GrantableName<C extends Contract> =
 	| (ShapeOf<C> extends { readonly flags: infer F } ? keyof F & string : never);
 
 /** The grantable members of a members shape, by name. */
-type GrantableIn<S extends MembersShape> =
+export type GrantableIn<S extends MembersShape> =
 	| { [M in keyof S["state"]]: S["state"][M] extends Grantable ? M : never }[keyof S["state"]]
 	| { [M in keyof S["methods"]]: S["methods"][M] extends Grantable ? M : never }[keyof S["methods"]]
 	| {
@@ -59,29 +59,23 @@ type GrantableIn<S extends MembersShape> =
  * The value a contract's admission hands its factory (slice 14 §2.1, slice 15 §1.2): the data its `admission` schema
  * describes and the names granted to the caller; `never` for a contract that takes no admission.
  */
-export type AdmittedOf<C extends Contract> = [TakesAdmission<C>] extends [never]
-	? never
-	: AdmittedData<C> & { readonly granted: ReadonlySet<GrantableName<C>> };
+export type AdmittedOf<C extends Contract> = WithData<C, { readonly granted: ReadonlySet<GrantableName<C>> }>;
 
 /**
  * The value an admission allows (`allow(value)`): the data its `admission` schema describes, and the grantable names
  * the caller gets (none when left out).
  */
-export type AllowedOf<C extends Contract> = [TakesAdmission<C>] extends [never]
-	? never
-	: AdmittedData<C> & { readonly granted?: readonly GrantableName<C>[] };
+export type AllowedOf<C extends Contract> = WithData<C, { readonly granted?: readonly GrantableName<C>[] }>;
 
-/** `true` for a contract served with `admit`: one declaring an `admission`, grantable members or flags. */
-type TakesAdmission<C extends Contract> = ShapeOf<C> extends { readonly admission: Schema }
-	? true
+/**
+ * `G` with the data `C`'s `admission` schema declares; `never` for a contract not served with `admit` (it declares no
+ * `admission`, grantable members or flags).
+ */
+type WithData<C extends Contract, G> = ShapeOf<C> extends { readonly admission: infer A extends Schema }
+	? Static<A> & G
 	: [GrantableName<C>] extends [never]
 		? never
-		: true;
-
-/** The data an admission hands its factory besides `granted`: what the contract's `admission` schema declares. */
-type AdmittedData<C extends Contract> = ShapeOf<C> extends { readonly admission: infer A extends Schema }
-	? Static<A>
-	: unknown;
+		: G;
 
 /** The params object of a contract. */
 export type ParamsOf<C extends Contract> = { [F in keyof ShapeOf<C>["params"]]: Static<ShapeOf<C>["params"][F]> };
@@ -121,27 +115,10 @@ export type MembersImplementation<V extends MembersShape, X extends Context = Co
 
 /** A remote factory's members: as `MembersImplementation`, with grantable state and event members as builders. */
 type RemoteImplementation<V extends MembersShape, X extends Context> = {
-	[M in keyof MembersImplementation<V, X>]: M extends keyof V["methods"]
-		? MembersImplementation<V, X>[M]
-		: IsGrantable<V, M> extends true
-			? () => MembersImplementation<V, X>[M]
-			: MembersImplementation<V, X>[M];
+	[M in keyof MembersImplementation<V, X>]: M extends Exclude<GrantableIn<V>, keyof V["methods"]>
+		? () => MembersImplementation<V, X>[M]
+		: MembersImplementation<V, X>[M];
 };
-
-/** Whether member `M` of `V` is `grantable(...)`. */
-export type IsGrantable<V extends MembersShape, M> = M extends keyof V["state"]
-	? V["state"][M] extends Grantable
-		? true
-		: false
-	: M extends keyof V["methods"]
-		? V["methods"][M] extends Grantable
-			? true
-			: false
-		: M extends keyof NonNullable<V["events"]>
-			? NonNullable<V["events"]>[M] extends Grantable
-				? true
-				: false
-			: false;
 
 /** The named queries of a `queries` member declaration: one per listed name, typed by its item and arguments. */
 export type NamedQueriesOf<Q> = Q extends QueriesMember<infer I, infer A>
@@ -376,18 +353,11 @@ export function grantIndexes(version: VersionData, granted: ReadonlySet<string>)
 /** No indexes: shared (a message's lists are never written once made). */
 const NO_INDEXES: number[] = [];
 
-/** A binding's members' names in the order links index them (2b): its state members, methods and event members. */
-export type MemberOrder = {
-	readonly state: readonly string[];
-	readonly methods: readonly string[];
-	readonly events: readonly string[];
-};
-
 /**
  * Members' names in the order links index them: each kind sorted; members without event members share one empty list
  * (contracts without events pay nothing for them per binding).
  */
-export function memberOrder(members: MembersData): MemberOrder {
+export function memberOrder(members: MembersData): MemberNames {
 	return {
 		state: [...members.state.keys()].sort(),
 		methods: [...members.methods.keys()].sort(),

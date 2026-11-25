@@ -612,7 +612,6 @@ export async function transported(): Promise<void> {
 	for (let hop = 0; hop < 6; hop++) await flushed();
 }
 
-/** The variants of the notes types: an editor variant for owners, a reader one for guests. */
 /** `Notes`' members: owners are granted `add`, `fail` and `echo` (`serveNotes`), guests read and wait. */
 const NOTES_MEMBERS = {
 	state: { notes: arr(obj({ text: str() })), count: int() },

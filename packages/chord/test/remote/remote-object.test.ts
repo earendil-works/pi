@@ -169,7 +169,7 @@ forEachCodec(() => {
 		});
 
 		it.each([
-			["names a member outside the variant", [7]],
+			["names a member outside the grant", [7]],
 			["names a member twice", [EDITOR.state.count!, EDITOR.state.count!]],
 		])("that %s closes the link", async (_, retired) => {
 			const { client, peer, errors } = await rawProvider();
@@ -940,15 +940,15 @@ const WIDE = wireNames(Panel, ["y", "poke"]);
 
 const NARROW = wireNames(Panel);
 
-/** Binds `hold` of `Panel` in `variant` with `values` (absent members failed with `failure`). */
+/** Binds `hold` of `Panel` granted `grant` with `values` (absent members failed with `failure`). */
 function bindPanel(
 	peer: RawPeer,
 	hold: number,
-	variant: "wide" | "narrow",
+	grant: "wide" | "narrow",
 	values: { readonly x?: number; readonly y?: number },
 	failure = "member threw",
 ): void {
-	const names = variant === "wide" ? WIDE : NARROW;
+	const names = grant === "wide" ? WIDE : NARROW;
 	const members: { member: number; value: ReturnType<typeof jsonPart> }[] = [];
 	const failed: { member: number; error: ReturnType<typeof wireError> }[] = [];
 	for (const [member, index] of Object.entries(names.state)) {
@@ -960,8 +960,8 @@ function bindPanel(
 }
 
 /** Sends a `state` message setting `x` of `Panel`'s hold (bound `wide` or `narrow`), or failing it. */
-function setX(peer: RawPeer, hold: number, x: number | undefined, variant: "wide" | "narrow" = "wide"): void {
-	const member = (variant === "wide" ? WIDE : NARROW).state.x!;
+function setX(peer: RawPeer, hold: number, x: number | undefined, grant: "wide" | "narrow" = "wide"): void {
+	const member = (grant === "wide" ? WIDE : NARROW).state.x!;
 	if (x === undefined) {
 		const failed = [{ member, error: wireError(new PluginError("derive", "x threw")) }];
 		peer.send({ kind: "state", holds: [{ hold, members: [], failed, retired: [] }] });

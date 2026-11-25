@@ -446,12 +446,11 @@ export class ChordObject implements Target {
 	}
 
 	/**
-	 * The names a live remote object's admission granted (a restart's open old attempt's meanwhile, slice 15 §1.2); while
-	 * it loads or failed the last live attempt's; none for a local object, before it is live and while denied.
+	 * The names its last live attempt's admission granted (slice 15 §1.2: a restart's open old attempt's while its
+	 * successor loads), kept while it loads or failed; none for a local object, before it is live and while denied.
 	 */
 	get granted(): ReadonlySet<string> {
-		const attempt = this.#state.kind === "live" ? this.#state.attempt : this.openOldAttempt;
-		return attempt?.granted ?? this.#granted;
+		return this.#granted;
 	}
 
 	/** The live object's state members, as Chord follows them. */

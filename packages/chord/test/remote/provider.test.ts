@@ -77,7 +77,7 @@ function hold(
 	});
 }
 
-/** Sends a call of the method at index `method` of the bound variant, with `args` (none when left out). */
+/** Sends a call of the method at index `method` of the binding's grant, with `args` (none when left out). */
 function call(peer: RawPeer, id: number, holdId: number, method: number, args?: unknown, origin?: number) {
 	const from = origin === undefined ? {} : { origin };
 	const payload = args === undefined ? {} : { args: jsonPart(args) };
@@ -92,7 +92,7 @@ const Kept = remote("app.kept", {
 	state: { n: int() },
 });
 
-/** The wire's indexes of `Notes`'s reader variant. */
+/** The wire's indexes of `Notes`' reader grant. */
 const READER = wireNames(Notes);
 
 const { add, fail, wait } = EDITOR.methods as { add: number; fail: number; wait: number };
@@ -118,7 +118,7 @@ async function notesServer(
 
 forEachCodec(() => {
 	describe("holds arriving on a link", () => {
-		it("bind as the link's principal: bound with the variant and the snapshot", async () => {
+		it("bind as the link's principal: bound with the grant and the snapshot", async () => {
 			const { peer, server } = await notesServer({ kind: "guest", session: "S1" });
 			await addNote(server, "S1", "a");
 			hold(peer, 0, Notes, { session: "S1" });
@@ -205,11 +205,11 @@ forEachCodec(() => {
 			expect(probe.waits[0]).toMatchObject({ principal: { kind: "owner" }, incarnation: RAW_PEER });
 		});
 
-		it("outside the binding's variant cannot be named: an index past its methods, forged at the wire, closes the link", async () => {
+		it("outside the binding's grant cannot be named: an index past its methods, forged at the wire, closes the link", async () => {
 			const { peer, errors } = await notesServer({ kind: "guest", session: "S1" });
 			hold(peer, 0, Notes, { session: "S1" });
 			await peer.next("bound");
-			// The reader variant has one method, `wait`; the editor's `add` has no index in it.
+			// The reader grant has one method, `wait`; the editor's `add` has no index in it.
 			call(peer, 0, 0, Object.keys(READER.methods).length, { text: "x" });
 			await transported();
 			expect(peer.closed).toBe(true);
@@ -884,7 +884,7 @@ forEachCodec(() => {
 			expect(statesOf(peer).map(({ origin }) => origin)).toEqual([undefined]);
 		});
 
-		it("carry constants and failed members, and an empty variant's binding, in a first bound (race 24)", async () => {
+		it("carry constants and failed members, and an empty grant's binding, in a first bound (race 24)", async () => {
 			const Empty = remote("app.empty", {
 				version: 1,
 				params: {},
@@ -1325,7 +1325,7 @@ const TickView = remote("app.tick-view", {
 /** Every provider side sending events in this file, weakly. */
 const sides = instancesOf(ProviderSide, "sendEvents");
 
-/** The event members' wire indexes of `Match`'s player variant (sorted). */
+/** The event members' wire indexes of `Match`'s player grant (sorted). */
 const EVENTS = { ball: 0, paddle: 1 } as const;
 
 /** A server serving `Match` and a raw consumer, with the server's options. */
@@ -1397,7 +1397,7 @@ forEachCodec(() => {
 			]);
 		});
 
-		it("send nothing to a variant without the member, and none before a bound the state window holds back", async () => {
+		it("send nothing to a binding without the member granted, and none before a bound the state window holds back", async () => {
 			const { peer, probe } = await matchServer({ ack: false, child: { kind: "owner" } });
 			hold(peer, 0, Match, { id: 1 });
 			await peer.next("bound");

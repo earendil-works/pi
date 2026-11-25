@@ -50,7 +50,7 @@ const S1: TestPrincipal = { kind: "guest", session: "S1" };
 /** A host-lifetime type whose activation waits for an open: `load` waits for it (the start barrier). */
 const Barrier = local("app.barrier", { version: 1, params: {}, members: { n: int() } });
 
-/** A guest's variant: its `wait` method's index. */
+/** A guest's grant: its `wait` method's index. */
 const { wait } = wireNames(Notes).methods as { wait: number };
 
 /** A worker of session S1 serving `Notes` (as `serveNotes`, at the address `Notes` names), its parent a raw peer whose holds name their principal. */

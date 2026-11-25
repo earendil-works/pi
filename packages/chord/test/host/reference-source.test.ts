@@ -625,7 +625,7 @@ describe('what a reference keeps (decision "References are the only indirection"
 	});
 });
 
-describe("a reference keeps the last values of its attached instance's variant (final review)", () => {
+describe("a reference keeps the last values of what its attached instance granted (final review)", () => {
 	it("keeps an unread member of a remote contract served on its host when the type is removed (Astra)", async () => {
 		const Type = remote("app.remote-unread", {
 			version: 1,
@@ -638,7 +638,7 @@ describe("a reference keeps the last values of its attached instance's variant (
 		const host = createHost<typeof owner>({ address: Server(), principal: owner, onError: () => {} });
 		await host.load([{ name: "@app/remote-unread", facet }], context);
 		const ref = await host.get(Type, {}, context);
-		// `n` never read: the removal takes its last value from the instance's variant (the object is live no more).
+		// `n` never read: the removal takes its last value from what the instance granted (the object is live no more).
 		await host.reload([], context);
 		await delivered();
 		expect(ref.n.value).toBe(7);

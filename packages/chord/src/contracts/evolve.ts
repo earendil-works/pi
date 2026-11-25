@@ -226,12 +226,14 @@ class Draft {
 	readonly path: string;
 	readonly #data: ContractData;
 	readonly #version: number;
-	readonly #state: Map<string, Snapshot>;
-	readonly #methods: Map<string, MethodData>;
-	readonly #keyed: Map<string, KeyedSnapshot>;
-	readonly #events: Map<string, Snapshot>;
-	/** `queries` members are carried over as they are: no edit changes one yet (slice 14, carry-over). */
-	readonly #queries: ReadonlyMap<string, QueriesData>;
+	/** Its members; `queries` members are carried over as they are: no edit changes one yet (slice 14, carry-over). */
+	readonly #members: {
+		readonly state: Map<string, Snapshot>;
+		readonly methods: Map<string, MethodData>;
+		readonly keyed: Map<string, KeyedSnapshot>;
+		readonly events: Map<string, Snapshot>;
+		readonly queries: ReadonlyMap<string, QueriesData>;
+	};
 	readonly #grantable: Set<string>;
 	readonly #kinds: Map<string, MemberKind>;
 	readonly #changes: Change[] = [];
@@ -245,11 +247,13 @@ class Draft {
 		this.#data = data;
 		this.#version = current.version + 1;
 		this.path = `${data.name} v${this.#version}`;
-		this.#state = new Map(state);
-		this.#methods = new Map(methods);
-		this.#keyed = new Map(keyed);
-		this.#events = new Map(events);
-		this.#queries = queries;
+		this.#members = {
+			state: new Map(state),
+			methods: new Map(methods),
+			keyed: new Map(keyed),
+			events: new Map(events),
+			queries,
+		};
 		this.#grantable = new Set(current.grantable);
 		this.#kinds = new Map(data.kinds);
 		this.#admission = data.admission;
@@ -262,7 +266,7 @@ class Draft {
 	}
 
 	state(member: string, schema: Schema): object {
-		if (!this.#state.has(member)) throw new Error(`${this.#path(member, "state")}: no such state member`);
+		if (!this.#members.state.has(member)) throw new Error(`${this.#path(member, "state")}: no such state member`);
 		return this.#putState(member, schema);
 	}
 
@@ -272,7 +276,7 @@ class Draft {
 	}
 
 	removeState(member: string): object {
-		if (!this.#state.delete(member)) throw new Error(`${this.#path(member, "state")}: no such state member`);
+		if (!this.#members.state.delete(member)) throw new Error(`${this.#path(member, "state")}: no such state member`);
 		this.#grantable.delete(member);
 		return this;
 	}
@@ -296,19 +300,19 @@ class Draft {
 		// Declaration policy: JavaScript callers reach it.
 		if (!(method instanceof Method))
 			throw new Error(`${this.#path(member, "method")}: expected grantable(method(...))`);
-		this.#methods.set(member, readMethod(method, this.#path(member, "method")));
+		this.#members.methods.set(member, readMethod(method, this.#path(member, "method")));
 		this.#changes.push([member, "args"], [member, "result"]);
 		return this.#checked();
 	}
 
 	removeMethod(member: string): object {
-		if (!this.#methods.delete(member)) throw new Error(`${this.path}: no method "${member}"`);
+		if (!this.#members.methods.delete(member)) throw new Error(`${this.path}: no method "${member}"`);
 		this.#grantable.delete(member);
 		return this;
 	}
 
 	keyed(member: string, schema: Schema, key?: KindShape): object {
-		if (!this.#keyed.has(member)) throw new Error(`${this.#path(member, "keyed")}: no such keyed member`);
+		if (!this.#members.keyed.has(member)) throw new Error(`${this.#path(member, "keyed")}: no such keyed member`);
 		return this.#putKeyed(member, schema, key);
 	}
 
@@ -318,12 +322,12 @@ class Draft {
 	}
 
 	removeKeyed(member: string): object {
-		if (!this.#keyed.delete(member)) throw new Error(`${this.#path(member, "keyed")}: no such keyed member`);
+		if (!this.#members.keyed.delete(member)) throw new Error(`${this.#path(member, "keyed")}: no such keyed member`);
 		return this;
 	}
 
 	event(member: string, schema: Schema): object {
-		if (!this.#events.has(member)) throw new Error(`${this.#path(member, "event")}: no such event member`);
+		if (!this.#members.events.has(member)) throw new Error(`${this.#path(member, "event")}: no such event member`);
 		return this.#putEvent(member, schema);
 	}
 
@@ -333,7 +337,7 @@ class Draft {
 	}
 
 	removeEvent(member: string): object {
-		if (!this.#events.delete(member)) throw new Error(`${this.#path(member, "event")}: no such event member`);
+		if (!this.#members.events.delete(member)) throw new Error(`${this.#path(member, "event")}: no such event member`);
 		this.#grantable.delete(member);
 		return this;
 	}
@@ -341,22 +345,8 @@ class Draft {
 	/** The contract data with this version appended. */
 	next(): ContractData {
 		const { kind, params, versions, flags } = this.#data;
-		const members = {
-			state: this.#state,
-			methods: this.#methods,
-			keyed: this.#keyed,
-			events: this.#events,
-			queries: this.#queries,
-		};
-		const version = materialize(
-			kind,
-			params,
-			this.#version,
-			members,
-			this.#grantable,
-			[...flags.keys()],
-			this.#changes,
-		);
+		const grants = [...flags.keys()];
+		const version = materialize(kind, params, this.#version, this.#members, this.#grantable, grants, this.#changes);
 		return { ...this.#data, versions: [...versions, version], kinds: this.#kinds, admission: this.#admission };
 	}
 
@@ -377,13 +367,13 @@ class Draft {
 	}
 
 	#putState(member: string, schema: Schema): object {
-		this.#state.set(member, snapshotSchema(schema, this.#path(member, "state")));
+		this.#members.state.set(member, snapshotSchema(schema, this.#path(member, "state")));
 		this.#changes.push([member, "state"]);
 		return this.#checked();
 	}
 
 	#putEvent(member: string, schema: Schema): object {
-		this.#events.set(member, eventSnapshot(schema, this.#path(member, "event")));
+		this.#members.events.set(member, eventSnapshot(schema, this.#path(member, "event")));
 		this.#changes.push([member, "event"]);
 		return this.#checked();
 	}
@@ -391,26 +381,26 @@ class Draft {
 	#putKeyed(member: string, schema: Schema, key: KindShape | undefined): object {
 		if (this.kind === "remote")
 			throw new Error(`${this.#path(member, "keyed")}: keyed members are only in local contracts`);
-		this.#keyed.set(member, keyedSnapshot(schema, key, this.#path(member, "keyed")));
+		this.#members.keyed.set(member, keyedSnapshot(schema, key, this.#path(member, "keyed")));
 		this.#changes.push([member, "keyed"]);
 		return this.#checked();
 	}
 
 	/** Changes the given sides of a method. */
 	#changeMethod(member: string, args: Schema | undefined, result: Schema | undefined): object {
-		const old = this.#methods.get(member);
+		const old = this.#members.methods.get(member);
 		if (old === undefined) throw new Error(`${this.path}: no method "${member}"`);
 		const path = this.#path(member, "method");
 		const newArgs = args === undefined ? undefined : snapshotArguments(args, `${path}.args`);
 		const newResult = result === undefined ? undefined : snapshotSchema(result, `${path}.result`);
-		this.#methods.set(member, { args: newArgs ?? old.args, result: newResult ?? old.result });
+		this.#members.methods.set(member, { args: newArgs ?? old.args, result: newResult ?? old.result });
 		if (newArgs !== undefined) this.#changes.push([member, "args"]);
 		if (newResult !== undefined) this.#changes.push([member, "result"]);
 		return this.#checked();
 	}
 
 	#refuseDeclared(member: string, kind: MemberKind): void {
-		const declared = [this.#state, this.#methods, this.#keyed, this.#events, this.#queries];
+		const declared = Object.values(this.#members);
 		if (declared.some((members) => members.has(member)) || this.#data.flags.has(member)) {
 			throw new Error(`${this.#path(member, kind)}: already declared`);
 		}
@@ -422,14 +412,7 @@ class Draft {
 
 	/** A member's kind never changes, also not after a removal. */
 	#checked(): object {
-		const members = {
-			state: this.#state,
-			methods: this.#methods,
-			keyed: this.#keyed,
-			events: this.#events,
-			queries: this.#queries,
-		};
-		checkMembers(members, this.#kinds, (member, kind) => this.#path(member, kind));
+		checkMembers(this.#members, this.#kinds, (member, kind) => this.#path(member, kind));
 		return this;
 	}
 }

@@ -13,7 +13,7 @@ import {
 	currentMembers,
 	currentVersion,
 	grantedMembers,
-	type MemberOrder,
+	type MemberNames,
 	type MethodData,
 	memberOrder,
 	NO_GRANTS,
@@ -65,7 +65,7 @@ import { type MemberSnapshot, Replica } from "./replica.ts";
 type Bound = {
 	readonly granted: ReadonlySet<string>;
 	readonly methods: ReadonlyMap<string, MethodData>;
-	readonly names: MemberOrder;
+	readonly names: MemberNames;
 	readonly replicas: ReadonlyMap<string, Replica>;
 	/** Event member `member`'s node (its reference binds at its own version: the provider mapped what arrives). */
 	eventNode(member: string): EventNode | undefined;

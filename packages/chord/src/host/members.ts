@@ -15,13 +15,7 @@
 
 import type { Context } from "../context/index.ts";
 import type { Contract } from "../contracts/index.ts";
-import {
-	currentMembers,
-	currentVersion,
-	grantedMembers,
-	type MembersData,
-	takesNoArgs,
-} from "../contracts/internal.ts";
+import { currentVersion, grantedMembers, type MembersData, takesNoArgs } from "../contracts/internal.ts";
 import { type ChordError, forbidden } from "../data/index.ts";
 import { invalid } from "../data/internal.ts";
 import type { KeyedSlot } from "../documents/internal.ts";
@@ -107,10 +101,8 @@ export function checkImplementation(
 	sources: SourceOwner | undefined,
 	granted: ReadonlySet<string>,
 ): Members {
-	const members =
-		contract.kind === "local" ? currentMembers(contract) : grantedMembers(currentVersion(contract), granted);
 	// The member check establishes the shape.
-	return checkMembers(members, implementation as Implementation, sources);
+	return checkMembers(grantedMembers(currentVersion(contract), granted), implementation as Implementation, sources);
 }
 
 type Implementation = { readonly [member: string]: unknown };

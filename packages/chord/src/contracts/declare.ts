@@ -10,6 +10,7 @@ import {
 	type Kind,
 	type MemberKind,
 	type MethodData,
+	NO_GRANTS,
 } from "./contract.ts";
 import { fingerprintOf, materialize } from "./fingerprint.ts";
 import { type Address, type KindShape, kindParams } from "./host-kind.ts";
@@ -46,14 +47,7 @@ type SchemaOf<M> = M extends KeyedMember<infer S, infer K> ? (K extends KindShap
  * D11, slice 15 §1.1: a name is one member or one flag of a remote contract, never two; state and event members are
  * schemas (keyed, `queries` and `event(...)` members are only in local contracts).
  */
-type Distinct<D, Others, Plain> = {
-	[M in keyof D]: M extends keyof Others ? never : D[M] extends Plain ? D[M] : never;
-};
-
-/** What a state or event member of a remote contract may be: a schema or a grantable one, none of the local markers. */
-type NoMarker<D> = {
-	[M in keyof D]: D[M] extends KeyedMember | EventDeclaration | QueriesMember | Method ? never : D[M];
-};
+type Distinct<D, Others> = { [M in keyof D]: M extends keyof Others ? never : D[M] };
 
 /**
  * Declares a remote contract: one shape for every caller (slice 15 §1). Its state, methods and events; a member marked
@@ -81,11 +75,11 @@ export function remote<
 		 * the caller (a mode, a role). Never part of the fingerprint, never validated at runtime.
 		 */
 		readonly admission?: A;
-		readonly state?: S & NoInfer<Distinct<S, M & E & F, StateDeclarations[string]>> & NoInfer<NoMarker<S>>;
-		readonly methods?: M & NoInfer<Distinct<M, S & E & F, MethodDeclarations[string]>>;
-		readonly events?: E & NoInfer<Distinct<E, S & M & F, StateDeclarations[string]>> & NoInfer<NoMarker<E>>;
+		readonly state?: S & NoInfer<Distinct<S, M & E & F>>;
+		readonly methods?: M & NoInfer<Distinct<M, S & E & F>>;
+		readonly events?: E & NoInfer<Distinct<E, S & M & F>>;
 		/** Rights that are no member, each with its label (English, for the access UI); never part of the fingerprint. */
-		readonly flags?: F & NoInfer<Distinct<F, S & M & E, string>>;
+		readonly flags?: F & NoInfer<Distinct<F, S & M & E>>;
 	},
 ): Contract<
 	{
@@ -214,12 +208,10 @@ export function local<
 		else state.set(member, snapshotSchema(value, path));
 	}
 	const base = { kind: "local", name, hostAddress: undefined, admission: undefined, flags: NO_FLAGS } as const;
-	return declare(base, declaration, { state, methods, keyed, events, queries }, NO_GRANTABLE);
+	return declare(base, declaration, { state, methods, keyed, events, queries }, NO_GRANTS);
 }
 
 const NO_FLAGS: ReadonlyMap<string, string> = new Map();
-
-const NO_GRANTABLE: ReadonlySet<string> = new Set();
 
 /** An event member's snapshot: JSON only (declaration policy: no `bytes()` leaf, events travel as JSON parts). */
 export function eventSnapshot(schema: unknown, path: string): Snapshot {

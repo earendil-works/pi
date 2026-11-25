@@ -1673,7 +1673,7 @@ describe('calls in flight across a `loading` unbind (decision "Calls in flight s
 	type KeptCode = {
 		/** What `bump` and `ping` answer. */
 		readonly n: number;
-		readonly variant?: "a" | "b";
+		readonly grant?: "a" | "b";
 		/** Whether it opens a native (a reload then restarts it), which opens once `opened` resolves. */
 		readonly native?: boolean;
 		readonly opened?: Promise<void>;
@@ -1715,7 +1715,7 @@ describe('calls in flight across a `loading` unbind (decision "Calls in flight s
 					const label = constant(`v${code.n}`);
 					return { label, bump, ping };
 				},
-				{ admit: () => constant(code.variant === "b" ? allow({}) : allow({ granted: ["bump"] })) },
+				{ admit: () => constant(code.grant === "b" ? allow({}) : allow({ granted: ["bump"] })) },
 			);
 		});
 	}
@@ -1746,7 +1746,7 @@ describe('calls in flight across a `loading` unbind (decision "Calls in flight s
 		return { server, peer, reload, reloadFacet };
 	}
 
-	/** Sends call `call` of `method` (an index of `Kept`'s variant `a`) on hold 0. */
+	/** Sends call `call` of `method` (an index of `Kept` granted as `a`) on hold 0. */
 	function call(peer: RawPeer, call: number, method: "bump" | "ping"): void {
 		peer.send({ kind: "call", call, hold: 0, method: KEPT.methods[method]! });
 	}
@@ -1864,10 +1864,10 @@ describe('calls in flight across a `loading` unbind (decision "Calls in flight s
 		await server.close(context);
 	});
 
-	it("across a variant change a kept call runs by name: one the new variant lacks fails invalid/member", async () => {
+	it("across a grant change a kept call runs by name: one the new grant lacks fails forbidden", async () => {
 		const opened = Promise.withResolvers<void>();
 		const { server, peer, reload } = await keptServer({ n: 1, native: true });
-		await reload({ n: 2, variant: "b", native: true, opened: opened.promise });
+		await reload({ n: 2, grant: "b", native: true, opened: opened.promise });
 		call(peer, 0, "bump");
 		call(peer, 1, "ping");
 		await peer.next("loading");
@@ -1989,7 +1989,7 @@ describe('calls in flight across a `loading` unbind (decision "Calls in flight s
 		const ran: string[] = [];
 		const { server, peer, reload } = await keptServer({ n: 1, ran }, { ack: false });
 		peer.ack();
-		await reload({ n: 2, variant: "b", ran });
+		await reload({ n: 2, grant: "b", ran });
 		const bound = await peer.next("bound");
 		expect(bound.holds[0]!.granted).toEqual([]);
 		// Sent before the consumer applied that `bound`: by the old binding's indexes (`bump` is 0, `ping` in the new).
@@ -2013,9 +2013,9 @@ describe('calls in flight across a `loading` unbind (decision "Calls in flight s
 		const { server, peer, reload } = await keptServer({ n: 1, ran }, { ack: false });
 		peer.ack();
 		// A (granted `bump`, acknowledged), then B (granted nothing) and C (`bump` again), neither acknowledged.
-		await reload({ n: 2, variant: "b", ran });
+		await reload({ n: 2, grant: "b", ran });
 		expect((await peer.next("bound")).holds[0]!.granted).toEqual([]);
-		await reload({ n: 3, variant: "a", ran });
+		await reload({ n: 3, grant: "a", ran });
 		expect((await peer.next("bound")).holds[0]!.granted).toEqual([0]);
 		// Sent before B was applied: index 0 is A's `bump`.
 		peer.send({ kind: "call", call: 0, hold: 0, method: 0 });

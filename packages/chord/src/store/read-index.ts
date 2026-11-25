@@ -195,7 +195,7 @@ function bucketOf(read: Read): { readonly columns: string[]; readonly identities
 	if (plan.uses.filter((use) => use.table === plan.table).length > 1) return undefined;
 	const columns: string[] = [];
 	let combinations: SqliteValue[][] = [[]];
-	for (const [column, values] of [...plan.equalities()].sort(([a], [b]) => (a < b ? -1 : 1))) {
+	for (const [column, values] of [...plan.equalities].sort(([a], [b]) => (a < b ? -1 : 1))) {
 		// An empty `in` matches no row: no bucket of it (a bucket without values would be dropped by its first leaver).
 		if (values.length === 0 || combinations.length * values.length > COMBINATIONS) continue;
 		columns.push(column);

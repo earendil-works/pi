@@ -16,7 +16,7 @@ import type { Context } from "../context/index.ts";
 import {
 	grantedMembers,
 	grantIndexes,
-	type MemberOrder,
+	type MemberNames,
 	type MembersData,
 	memberOrder,
 	versionAt,
@@ -95,7 +95,7 @@ type HoldState =
 			/** The members granted to its caller, at the hold's version. */
 			readonly members: MembersData;
 			/** Their names, which the wire's indexes point into. */
-			readonly names: MemberOrder;
+			readonly names: MemberNames;
 			/** The members it follows, in the order they were subscribed. */
 			readonly followed: Followed[];
 			/** The instance it was bound to: it follows it on while it still changes (a restart's open old attempt). */
@@ -116,7 +116,7 @@ type Bound = Extract<HoldState, { readonly kind: "bound" }>;
  * What calls need of a binding: the members granted at the hold's version and the names the wire's indexes point into.
  * Only contract data: kept after an unbind, it keeps no instance and no source.
  */
-type BoundNames = { readonly members: MembersData; readonly names: MemberOrder };
+type BoundNames = { readonly members: MembersData; readonly names: MemberNames };
 
 /**
  * What a call is decoded by: the names of a binding (while the hold rebinds after a `loading` its object's gate takes

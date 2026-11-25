@@ -437,7 +437,7 @@ function holdPlaced(peer: RawPeer, hold: number): void {
 /** A hold as a raw worker received it. */
 type Held = Extract<Message, { readonly kind: "hold" }>;
 
-/** `held`'s binding on the raw worker: the editor variant with `count`. */
+/** `held`'s binding on the raw worker: an editor's grant with `count`. */
 function bound(held: Held, count: number): Message {
 	const members = [
 		{ member: EDITOR.state.notes!, value: "[]" },

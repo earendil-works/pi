@@ -16,8 +16,8 @@ import type {
 import {
 	type CurrentMembers,
 	currentVersion,
+	type GrantableIn,
 	grantedMembers,
-	type IsGrantable,
 	keyOfAddress,
 	type MembersImplementation,
 	type MembersShape,
@@ -57,14 +57,8 @@ export type Reference<C extends Contract> = ShapeOf<C>["kind"] extends "local"
 
 /** A remote reference's members: the plain ones always, the grantable ones optional. */
 type RemoteMembers<V extends MembersShape> = {
-	readonly [M in keyof MembersImplementation<V> as IsGrantable<V, M> extends true
-		? never
-		: M]: MembersImplementation<V>[M];
-} & {
-	readonly [M in keyof MembersImplementation<V> as IsGrantable<V, M> extends true
-		? M
-		: never]?: MembersImplementation<V>[M];
-};
+	readonly [M in Exclude<keyof MembersImplementation<V>, GrantableIn<V>>]: MembersImplementation<V>[M];
+} & { readonly [M in GrantableIn<V> & keyof MembersImplementation<V>]?: MembersImplementation<V>[M] };
 
 /** What every reference has besides its members. */
 type Lifecycle = {

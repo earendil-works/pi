@@ -364,7 +364,7 @@ forEachCodec(() => {
 	});
 });
 
-/** Binds a hold a raw worker received (its id and origin): `PlacedNotes`'s editor variant, no notes. */
+/** Binds a hold a raw worker received (its id and origin): `PlacedNotes`'s editor grant, no notes. */
 function bindPlaced(peer: RawPeer, { hold, origin }: { readonly hold: number; readonly origin?: number }): void {
 	const members = [
 		{ member: EDITOR.state.notes!, value: "[]" },
