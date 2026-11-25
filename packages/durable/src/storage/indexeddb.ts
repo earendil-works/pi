@@ -359,6 +359,7 @@ const writeId = (write: StorageWrite): Id<string> | undefined => {
 			return write.record.id;
 		case "document.change":
 		case "document.retire":
+		case "conversation.delete":
 			return undefined;
 	}
 };
@@ -483,6 +484,10 @@ export class IndexedDbStorage implements Storage {
 				const seq = seqFromNumber(next++);
 				for (const write of writes) await this.applyTableWrite(transaction, write, seq);
 				await this.applyDocumentActions(transaction, documentActions, seq);
+				// After every other write of the batch, which may settle or retire what the deletion removes.
+				for (const write of writes) {
+					if (write.type === "conversation.delete") await this.deleteConversation(transaction, write.id);
+				}
 				for (const write of writes) {
 					const id = writeId(write);
 					if (id !== undefined) nextId = Math.max(nextId, id + 1);
@@ -1002,7 +1007,12 @@ export class IndexedDbStorage implements Storage {
 		const store = transaction.objectStore(STORES.recordIds);
 		const claimed = new Map<Id<string>, TableName>();
 		for (const write of writes) {
-			if (write.type === "document.change" || write.type === "document.retire") continue;
+			if (
+				write.type === "document.change" ||
+				write.type === "document.retire" ||
+				write.type === "conversation.delete"
+			)
+				continue;
 			const document = write.type === "document.create" || write.type === "document.copy";
 			const table: TableName = document ? "document" : write.type;
 			const id = document ? write.record.id : write.value.id;
@@ -1178,7 +1188,46 @@ export class IndexedDbStorage implements Storage {
 			case "document.copy":
 			case "document.change":
 			case "document.retire":
+			case "conversation.delete":
 				break;
+		}
+	}
+
+	/**
+	 * Remove a conversation with its entries, tasks, submissions, and every document scoped to it or its tasks,
+	 * revisions included; `record_ids` keeps its IDs claimed.
+	 */
+	private async deleteConversation(transaction: IDBTransaction, id: ConversationId): Promise<void> {
+		const byConversation = compoundIdRange([id], 0, MAX_KEY);
+		const tasks = transaction.objectStore(STORES.tasks);
+		const taskIds = (await requestResult(
+			tasks.index(INDEXES.tasksByConversation).getAllKeys(byConversation),
+		)) as TaskId[];
+		await this.deleteDocuments(transaction, scopeColumns({ kind: "conversation", conversationId: id }));
+		for (const taskId of taskIds) {
+			await this.deleteDocuments(transaction, scopeColumns({ kind: "task", taskId }));
+			await requestResult(tasks.delete(taskId));
+		}
+		for (const [store, index] of [
+			[STORES.entries, INDEXES.entriesByConversation],
+			[STORES.submissions, INDEXES.submissionsByConversation],
+		] as const) {
+			const rows = transaction.objectStore(store);
+			for (const key of await requestResult(rows.index(index).getAllKeys(byConversation))) {
+				await requestResult(rows.delete(key));
+			}
+		}
+		await requestResult(transaction.objectStore(STORES.conversations).delete(id));
+	}
+
+	/** Remove every incarnation in one scope, retired ones included, with all its revisions. */
+	private async deleteDocuments(transaction: IDBTransaction, scope: ScopeColumns): Promise<void> {
+		const documents = transaction.objectStore(STORES.documents);
+		const revisions = transaction.objectStore(STORES.documentRevisions);
+		const range = compoundIdRange([scope.scopeKind, scope.ownerId], 0, MAX_KEY);
+		for (const key of await requestResult(documents.index(INDEXES.documentsByScope).getAllKeys(range))) {
+			await requestResult(revisions.delete(compoundIdRange([key as number], 0, MAX_KEY)));
+			await requestResult(documents.delete(key));
 		}
 	}
 

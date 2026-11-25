@@ -26,7 +26,11 @@ import type { Context } from "@earendil-works/chord/context";
 import { BACKGROUND_CONTEXT, withTelemetry } from "@earendil-works/chord/context";
 import { openNodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
 import { createModels } from "@earendil-works/pi-ai";
-import { registerStorageConformance } from "@earendil-works/pi-durable/testing";
+import {
+	createExpectAssertions,
+	createStorageConformance,
+	type StorageConformanceProvider,
+} from "@earendil-works/pi-durable/testing";
 import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { describe, expect, it } from "vitest";
 import { StorageRequestError } from "../src/errors.ts";
@@ -106,7 +110,18 @@ class ReopeningStorage implements Storage {
 	}
 }
 
-registerStorageConformance({ describe, expect, it }, "StoreStorage", async (use) => {
+/** The conformance suite, except conversation deletion, which the store refuses: it cannot remove document revisions. */
+function registerStoreConformance(name: string, withStorage: StorageConformanceProvider): void {
+	const cases = createStorageConformance({ assertions: createExpectAssertions(expect), withStorage });
+	describe(name, () => {
+		for (const testCase of cases) {
+			if (testCase.name.startsWith("deletes a conversation")) it.skip(testCase.name, testCase.run);
+			else it(testCase.name, testCase.run);
+		}
+	});
+}
+
+registerStoreConformance("StoreStorage", async (use) => {
 	const storage = await openStoreStorage(":memory:");
 	try {
 		await use(storage);
@@ -115,7 +130,7 @@ registerStorageConformance({ describe, expect, it }, "StoreStorage", async (use)
 	}
 });
 
-registerStorageConformance({ describe, expect, it }, "StoreStorage across reopen", async (use) => {
+registerStoreConformance("StoreStorage across reopen", async (use) => {
 	const directory = await mkdtemp(join(tmpdir(), "pi-durable-store-conformance-"));
 	const path = join(directory, "store.sqlite");
 	const storage = new ReopeningStorage(await openStoreStorage(path), path);
@@ -176,6 +191,17 @@ describe("the store's semantics (D4)", () => {
 		};
 		await commitWrites(storage, [{ type: "entry", value: entry }], context);
 		expect((await storage.entry(entry.id, context))?.entry).toEqual(entry);
+		await store.close(context);
+	});
+
+	it("refuses to delete a conversation and keeps it", async () => {
+		const store = await memoryStore();
+		const storage = await StoreStorage.open(store, "harness", context);
+		await commitWrites(storage, [{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }], context);
+		await expect(
+			commitWrites(storage, [{ type: "conversation.delete", id: ROOT_CONVERSATION_ID }], context),
+		).rejects.toThrow("StoreStorage does not support deleting conversations");
+		expect(await storage.conversation(ROOT_CONVERSATION_ID, context)).toEqual({ id: ROOT_CONVERSATION_ID });
 		await store.close(context);
 	});
 

@@ -1357,6 +1357,7 @@ export class SessionImpl implements Session {
 					break;
 				case "conversation":
 				case "task":
+				case "conversation.delete":
 					changes?.push(write);
 			}
 		}

@@ -21,8 +21,9 @@ import {
 	type ResolvedAddress,
 	resolveAddress,
 } from "../documents.ts";
-import { ReadAfterWrite } from "../errors.ts";
+import { ConversationBusy, ReadAfterWrite } from "../errors.ts";
 import type { SettledSubmissionRecord } from "../harness/types.ts";
+import { scanAll } from "../harness/util.ts";
 import { deliverSignal, isSettled, type SignalResult, type SignalToken, SubmissionSettled } from "../signals.ts";
 import type {
 	ConversationDocFamilyToken,
@@ -272,6 +273,8 @@ export class Transaction implements Tx {
 	readonly #submissions = new Map<SubmissionId, SubmissionRecord>();
 	/** Submission settlements and placements in staging order; resolved against the latest candidate record during assembly. */
 	readonly #submissionChanges: { readonly id: SubmissionId; readonly change: SubmissionChange }[] = [];
+	/** Conversations `deleteConversations()` staged, written after every other write of the batch. */
+	readonly #deletedConversationIds: ConversationId[] = [];
 
 	/** Write and publication plans of every staged incarnation, built during assembly. */
 	readonly #plans: DocumentPlan[] = [];
@@ -422,6 +425,90 @@ export class Transaction implements Tx {
 		await this.#host.conversationCreated(this, record);
 		this.#assertOpen();
 		return record;
+	}
+
+	/**
+	 * Internal: delete conversations `ids` and, transitively, the conversations their tasks own, with everything in them
+	 * (`conversation.delete`). Unknown IDs are skipped. It reads tables, so it comes before the commit's first table write.
+	 * Refuses the root conversation, a conversation with a live task (`ConversationBusy`), one whose owner task outside
+	 * the deleted set is live, and one with a fork outside it. Settles the queued and placed submissions `unanswered`
+	 * (reason `deleted`) and retires the current documents, so waiters, watches, and the cache follow the deletion.
+	 */
+	deleteConversations(ids: readonly ConversationId[]): Promise<void> {
+		try {
+			this.#assertOpen();
+			if (this.#hasTableWrite) throw new ReadAfterWrite("Transaction.deleteConversations()");
+			this.#hasTableWrite = true;
+			return this.#track(this.#stageDeletion(ids));
+		} catch (error) {
+			return Promise.reject(error);
+		}
+	}
+
+	async #stageDeletion(ids: readonly ConversationId[]): Promise<void> {
+		const storage = this.#host.storage;
+		const context = this.#context;
+		const deleted = new Map<ConversationId, ConversationRecord>();
+		for (const id of ids) {
+			const record = await storage.conversation(id, context);
+			if (record !== undefined) deleted.set(id, record);
+		}
+		// A Map iterates the entries added while it iterates: the owned conversations of owned conversations too.
+		for (const id of deleted.keys()) {
+			const owned = await scanAll((cursor) =>
+				storage.scanConversations({ ownerConversationId: id }, INTERNAL_SCAN_PAGE_SIZE, cursor, context),
+			);
+			for (const record of owned) if (!deleted.has(record.id)) deleted.set(record.id, record);
+		}
+		if (deleted.has(ROOT_CONVERSATION_ID)) throw new Error("The root conversation cannot be deleted");
+		for (const record of deleted.values()) {
+			const owner = record.owner;
+			if (owner === undefined || deleted.has(owner.conversationId)) continue;
+			const task = await this.#committedTask(owner.taskId);
+			if (task !== undefined && task.state.status !== "terminal") {
+				throw new Error(`Conversation ${record.id} is owned by live task ${owner.taskId}`);
+			}
+		}
+		// Forks read their parent's entries; nothing indexes them, and deletion is rare, so every conversation is scanned.
+		const all = await scanAll((cursor) => storage.scanConversations({}, INTERNAL_SCAN_PAGE_SIZE, cursor, context));
+		for (const record of all) {
+			const parent = record.parent?.conversationId;
+			if (parent !== undefined && deleted.has(parent) && !deleted.has(record.id)) {
+				throw new Error(`Conversation ${parent} has fork ${record.id}, which is not deleted with it`);
+			}
+		}
+		for (const id of deleted.keys()) {
+			const tasks = await scanAll((cursor) =>
+				storage.scanTasks({ conversationId: id }, INTERNAL_SCAN_PAGE_SIZE, cursor, context),
+			);
+			if (tasks.some((task) => task.state.status !== "terminal")) throw new ConversationBusy(id);
+			const submissions = await scanAll((cursor) =>
+				storage.scanSubmissions({ conversationId: id }, INTERNAL_SCAN_PAGE_SIZE, cursor, context),
+			);
+			for (const submission of submissions) {
+				if (submission.status !== "queued" && submission.status !== "placed") continue;
+				this.#submissionChanges.push({ id: submission.id, change: { status: "unanswered", reason: "deleted" } });
+			}
+			const documents = await scanAll((cursor) =>
+				storage.scanDocuments(
+					{ scope: { kind: "conversation", conversationId: id }, at: "current" },
+					INTERNAL_SCAN_PAGE_SIZE,
+					cursor,
+					context,
+				),
+			);
+			for (const record of documents) {
+				const entry: DocumentEntry = {
+					addressId: addressId(record),
+					address: record,
+					target: { kind: "retire-only", record },
+					retireOnCommit: true,
+				};
+				this.#documents.push(entry);
+				this.#latestDocumentByAddress.set(entry.addressId, entry);
+			}
+			this.#deletedConversationIds.push(id);
+		}
 	}
 
 	appendEntry(conversationId: ConversationId, value: EntryDraft): Promise<EntryRecord>;
@@ -1101,6 +1188,8 @@ export class Transaction implements Tx {
 			if (plan.content !== undefined) writes.push(plan.content);
 			if (plan.retire) writes.push({ type: "document.retire", id: plan.record.id });
 		}
+		// Last: what the batch settles or retires in a deleted conversation is published, then deleted with it.
+		for (const id of this.#deletedConversationIds) writes.push({ type: "conversation.delete", id });
 		return writes;
 	}
 

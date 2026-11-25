@@ -18,6 +18,7 @@ import {
 } from "@earendil-works/pi-telemetry";
 import { ResetEntry } from "../entries.ts";
 import type { ExecutionEnv } from "../env/index.ts";
+import { ConversationBusy } from "../errors.ts";
 import { contained, SessionImpl } from "../session/session.ts";
 import type { Transaction } from "../session/transaction.ts";
 import type { SignalResult, SignalToken } from "../signals.ts";
@@ -82,6 +83,9 @@ import { conversationEntries, scanAll } from "./util.ts";
 import { type ConversationView, ConversationViews, type ConversationWindow } from "./view.ts";
 
 const SCAN_PAGE_SIZE = 256;
+
+/** Deletion attempts: work can start in a conversation between its abort and the deleting commit. */
+const DELETE_ATTEMPTS = 3;
 
 type CreateTarget =
 	| { readonly kind: "root" }
@@ -426,6 +430,24 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 
 	createConversation(options: ConversationCreateOptions, context: Context): Promise<Conversation> {
 		return this.#create({ kind: "independent", ownership: options.ownership }, options, context);
+	}
+
+	/** Try the deleting commit first, so a refusal aborts nothing; abort the work it finds live, then try again. */
+	async deleteConversations(ids: readonly ConversationId[], context: Context): Promise<void> {
+		this.assertUsable();
+		for (let attempt = 1; ; attempt++) {
+			try {
+				await this.commitWith((tx) => tx.deleteConversations(ids), context);
+				return;
+			} catch (error) {
+				if (!(error instanceof ConversationBusy) || attempt === DELETE_ATTEMPTS) throw error;
+			}
+			this.#tasks.resume();
+			for (const id of ids) {
+				const record = await this.readOnLine((storage) => storage.conversation(id, context));
+				if (record !== undefined) await this.#tasks.abortConversation(id, true, context);
+			}
+		}
 	}
 
 	override report(error: unknown, info: ReportInfo = { kind: "listener_error" }, context?: Context): void {

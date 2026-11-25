@@ -38,7 +38,10 @@ const textDecoder = new TextDecoder("utf-8", { fatal: true });
 type StoredTask = TaskRecord<JsonValue, JsonValue, JsonValue>;
 
 type MainOperation =
-	| Extract<StorageWrite, { readonly type: "conversation" | "entry" | "submission" | "document.retire" }>
+	| Extract<
+			StorageWrite,
+			{ readonly type: "conversation" | "entry" | "submission" | "document.retire" | "conversation.delete" }
+	  >
 	| { readonly type: "task"; readonly value: StoredTask }
 	| { readonly type: "task.sidecar"; readonly id: TaskId; readonly ordinal: number }
 	| { readonly type: "document.create"; readonly record: DocumentCreate; readonly ordinal: number }
@@ -166,6 +169,10 @@ const validateMainOperation = (value: unknown, description: string): MainOperati
 			return value as MainOperation;
 		case "document.retire":
 			if (!isSafeInteger(value.id)) throw new JsonlCorruptionError(`Invalid document retirement in ${description}`);
+			return value as MainOperation;
+		case "conversation.delete":
+			if (!isSafeInteger(value.id))
+				throw new JsonlCorruptionError(`Invalid conversation deletion in ${description}`);
 			return value as MainOperation;
 		case "task.sidecar":
 			if (!isSafeInteger(value.id) || !isSafeInteger(value.ordinal) || value.ordinal < 0) {
@@ -501,6 +508,8 @@ export class JsonlStorage implements Storage {
 				case "entry":
 				case "submission":
 				case "document.retire":
+				// Only a marker: `main.jsonl` and the sidecars keep the conversation's records (spec §11.3).
+				case "conversation.delete":
 					mainWrites.push(write);
 					break;
 				case "task":
@@ -745,6 +754,7 @@ export class JsonlStorage implements Storage {
 					case "submission":
 					case "task":
 					case "document.retire":
+					case "conversation.delete":
 						writes.push(operation);
 						break;
 					case "task.sidecar": {

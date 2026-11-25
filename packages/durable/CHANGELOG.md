@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- `StorageWrite` has a `conversation.delete` write, and `TableCommitChange` (`observeCommits()`) carries it. Migration: a custom Storage removes the conversation with its entries, tasks, submissions, and documents after the other writes of the batch, keeping its IDs claimed (the conformance suite checks it); a commit observer that replicates stored state applies it.
+
+### Added
+
+- Added `Harness.deleteConversations(ids, context)`, which aborts a conversation's work, background work included, and removes it for good with the conversations its tasks own. Memory, SQLite, Cloudflare Durable Object, and IndexedDB storage remove the records; JSONL only marks the deletion, and `StoreStorage` refuses it ([#11026](https://github.com/earendil-works/pi/issues/11026))
+
 ## [1.6.1] - 2026-11-25
 
 ### Breaking Changes

@@ -170,6 +170,13 @@ const insertMapId = <K, I extends Id<string>>(index: Map<K, I[]>, key: K, id: I)
 	insertSorted(ids, id);
 };
 
+const removeMapId = <K, I extends Id<string>>(index: Map<K, I[]>, key: K, id: I): void => {
+	const ids = index.get(key);
+	if (ids === undefined) return;
+	removeSorted(ids, id);
+	if (ids.length === 0) index.delete(key);
+};
+
 const scopeKey = (scope: DocumentRecord["scope"]): string => {
 	switch (scope.kind) {
 		case "session":
@@ -446,13 +453,71 @@ export class MemoryStorage implements Storage {
 				case "document.create":
 				case "document.change":
 				case "document.retire":
+				case "conversation.delete":
 					break;
 			}
 		}
 
 		this.applyDocumentActions(documentActions, seq);
+		// After every other write of the batch, which may settle or retire what the deletion removes.
+		for (const write of prepared) if (write.type === "conversation.delete") this.deleteConversation(write.id);
 		this.nextSeq = seq + 1;
 		return seq;
+	}
+
+	/**
+	 * Remove a conversation with its entries, tasks, submissions, and the documents scoped to it or its tasks. Its IDs
+	 * stay in `recordTypes`, so none is claimed again.
+	 */
+	private deleteConversation(id: ConversationId): void {
+		const state = this.state;
+		const conversation = state.conversations.get(id);
+		if (conversation === undefined) return;
+		state.conversations.delete(id);
+		removeSorted(state.conversationIds, id);
+		const owner = conversation.owner;
+		if (owner !== undefined) {
+			removeMapId(state.conversationIdsByOwnerConversation, owner.conversationId, id);
+			removeMapId(state.conversationIdsByOwnerTask, owner.taskId, id);
+		}
+		for (const entryId of state.entryIds.get(id) ?? []) {
+			state.entries.delete(entryId);
+			state.entryCommitSeqs.delete(entryId);
+		}
+		state.entryIds.delete(id);
+		state.headEntryIds.delete(id);
+		this.deleteDocuments({ kind: "conversation", conversationId: id });
+		for (const taskId of state.taskIds.filter((taskId) => state.tasks.get(taskId)!.conversationId === id)) {
+			const task = state.tasks.get(taskId)!;
+			state.tasks.delete(taskId);
+			removeSorted(state.taskIds, taskId);
+			removeSorted(state.taskIdsByStatus[task.state.status], taskId);
+			this.deleteDocuments({ kind: "task", taskId });
+		}
+		for (const submissionId of state.submissionIds) {
+			const submission = state.submissions.get(submissionId)!;
+			if (submission.conversationId !== id) continue;
+			state.submissions.delete(submissionId);
+			removeSorted(state.submissionIdsByStatus[submission.status], submissionId);
+		}
+		state.submissionIds = state.submissionIds.filter((submissionId) => state.submissions.has(submissionId));
+		state.submissionIdsByRequest.delete(id);
+	}
+
+	/** Remove every incarnation in `scope`, retired ones included, with all its revisions. */
+	private deleteDocuments(scope: DocumentRecord["scope"]): void {
+		const state = this.state;
+		const key = scopeKey(scope);
+		for (const documentId of state.documentIdsByScope.get(key) ?? []) {
+			const record = state.documents.get(documentId)!.record;
+			state.documents.delete(documentId);
+			const addressKey = recordAddressKey(record);
+			const address = state.documentAddresses.get(addressKey)!;
+			removeSorted(address.ids, documentId);
+			if (address.currentId === documentId) delete address.currentId;
+			if (address.ids.length === 0) state.documentAddresses.delete(addressKey);
+		}
+		state.documentIdsByScope.delete(key);
 	}
 
 	async mintId<I extends Id<string>>(): Promise<I> {
@@ -764,7 +829,12 @@ export class MemoryStorage implements Storage {
 	private checkGlobalIds(writes: readonly StorageWrite[]): void {
 		const claimed = new Map<Id<string>, TableName>();
 		for (const write of writes) {
-			if (write.type === "document.change" || write.type === "document.retire") continue;
+			if (
+				write.type === "document.change" ||
+				write.type === "document.retire" ||
+				write.type === "conversation.delete"
+			)
+				continue;
 			const document = write.type === "document.create" || write.type === "document.copy";
 			const table: TableName = document ? "document" : write.type;
 			const id = document ? write.record.id : write.value.id;

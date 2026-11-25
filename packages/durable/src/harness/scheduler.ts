@@ -828,6 +828,8 @@ export class TaskScheduler {
 			if (change.type === "conversation" && !this.#edges.has(change.value.id)) {
 				this.#setEdge(change.value.id, change.value.owner?.taskId ?? null);
 			}
+			// A deleted conversation had no live work; its kept context holds its entries.
+			if (change.type === "conversation.delete") this.#dropContext(change.id);
 		}
 		for (const change of publication.changes) {
 			if (change.type !== "task") continue;

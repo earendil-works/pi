@@ -75,7 +75,8 @@ Required invariants:
    initial-fork conversation documents (section 4.1). Every stored document is
    a state memory had.
 4. External effects do not run inside the Session mutation transaction.
-5. Entries and IDs are immutable and never reused after a committed write.
+5. Entries are immutable until their conversation is deleted (section 2.2), and
+   IDs are never reused after a committed write, a deletion's included.
 6. Document drafts are fully revoked when their transaction callback settles:
    the Session synchronously prepares or aborts every open change at that point.
    Values assigned into a draft are copied by value and must be strict JSON.
@@ -777,6 +778,8 @@ interface Harness extends Session {
   ): Promise<Conversation>;
   conversation(id: ConversationId, context: Context): Promise<Conversation | undefined>;
   createConversation(options: ConversationCreateOptions, context: Context): Promise<Conversation>;
+  /** Abort, then delete for good, with the conversations their tasks own (below). */
+  deleteConversations(ids: readonly ConversationId[], context: Context): Promise<void>;
 
   getTask<R>(id: TaskId<R>, context: Context): Promise<TaskRecord<JsonValue, JsonValue, R> | undefined>;
   inspect(context: Context): Promise<HarnessInspection>;
@@ -1091,6 +1094,32 @@ submission, at once when idle, otherwise at the next boundary (section 8.7). `re
 a user message when given, and then resolves; while busy, placement follows
 section 6 and may occur later. Observe its placement through the conversation
 watch. An idle wait does not guarantee placement of queued passive writes.
+A reset deletes nothing: the older entries stay in storage.
+
+`deleteConversations(ids)` removes conversations for good. The set it deletes
+is the given conversations and, transitively, every conversation a task of one
+of them owns; unknown IDs are skipped, so a repeated call is harmless. It
+first tries the deleting commit, which refuses, so that nothing is aborted or
+deleted:
+
+- the root conversation, which `root()` would create again with its reserved ID;
+- a conversation whose owner task, outside the set, is live;
+- a conversation with a fork outside the set, whose history reads the parent's
+  entries. Forks are found by scanning every conversation record, as nothing
+  indexes them and deletion is rare.
+
+While a task in the set is live, the commit rejects with `ConversationBusy`;
+the method then aborts each given conversation with `{ background: true }`
+(section 5.4) and tries again, up to three attempts, as new work may start
+between the abort and the commit. The deleting commit settles the set's queued
+and placed submissions `unanswered` with reason `deleted`, so their waits and
+`notify` signals resolve, retires every current document of the set, so
+watches and the document cache follow, and then writes one
+`conversation.delete` per conversation (section 10), after its other writes.
+Its publication drops the conversations from the Session's record cache, the
+newest-entry index, and the kept contexts, and ends their conversation views
+`ended`. Every later write to a deleted conversation fails as for an unknown
+one: there is no separate tombstone. `usage()` no longer counts it.
 
 `abortTask()` commits `abortRequested`, then signals and joins the active run;
 the scheduler then starts the abort invocation and marks the foreground-owned
@@ -6689,7 +6718,8 @@ type StorageWrite =
       readonly id: DocumentId;
       readonly content: DocumentContent;
     }
-  | { readonly type: "document.retire"; readonly id: DocumentId };
+  | { readonly type: "document.retire"; readonly id: DocumentId }
+  | { readonly type: "conversation.delete"; readonly id: ConversationId };
 
 /**
  * Trusts the owning Session to supply semantically valid records, references,
@@ -6834,6 +6864,15 @@ retirement independent of write-array order. Create plus retire stamps both
 lifetime bounds with the batch sequence. Retire plus create at one logical
 address makes the new incarnation current at that sequence. Deltas cannot cross
 a stored version boundary; a version transition must be a base.
+
+A `conversation.delete` applies after every other write of its batch. It
+removes the conversation record, its entries, tasks, and submissions, and every
+document incarnation scoped to the conversation or to one of its tasks, retired
+ones and all their content included. The IDs stay claimed, so no later write
+reuses one, and `mintId()` stays above them. An unknown conversation is no
+error. Storage trusts the Session to delete only conversations without live
+tasks and without forks outside the deletion. Commit observers get the write
+in the publication (`TableCommitChange`), so a replica applies it too.
 
 The semantic conformance suite covers memory, SQLite, and JSONL.
 
@@ -6990,7 +7029,7 @@ Memory storage is the reference semantics. It copies retained write values and
 all read results. This deliberately simulates the ownership boundary naturally
 created by SQLite encoding/decoding and JSONL serialization; it is not defensive
 validation. It preserves rewindable records and reclaims latest records only
-after a committed base or retirement.
+after a committed base or retirement. A deletion removes the records from memory.
 
 ### 11.2 SQLite
 
@@ -7018,6 +7057,13 @@ functions.
 Schema shape, WAL checkpoint cadence, and synchronous defaults are backend
 implementation choices validated by conformance, reopen, query-plan, and storage
 benchmarks.
+
+A batch that deletes conversations is written first; the deletion then runs a
+few `DELETE` statements on the existing indexes, `record_ids` untouched. SQLite
+keeps the deleted bytes in free pages and in the WAL until the host enables
+`secure_delete` or runs `VACUUM`, and checkpoints the WAL with `TRUNCATE`; the
+host owns the connection, so these stay its choice. IndexedDB deletes the same
+records through its indexes.
 
 ### 11.3 JSONL
 
@@ -7082,6 +7128,18 @@ temporary replacement, renames it, and invalidates cached file descriptors so
 future appends cannot target an unlinked inode. Flushing `main.jsonl` to
 authorize reclamation does not compact it. `main.jsonl` is not compacted in the
 initial implementation.
+
+JSONL deletes logically only: a `conversation.delete` is a marker in
+`main.jsonl`, and replay removes the conversation from memory, but `main.jsonl`
+keeps its entries, submissions, and records, and its sidecar files stay. Erasing
+them needs a rewrite of `main.jsonl` this backend does not have yet.
+
+### 11.4 Chord store
+
+The store backend (`StoreStorage`) refuses a `conversation.delete`, which fails
+the Session: Chord's store has no write that removes a document's revisions,
+which a rewindable document keeps after its retirement, and its outbox keeps
+every commit's writes until trimmed.
 
 ## 12. API footguns
 
@@ -7283,6 +7341,13 @@ These are contracts, not invitations to add defensive machinery:
 - **JSONL durability:** default JSONL ordering handles ordinary process crashes;
   without durable mode it does not promise acknowledged commits survive power or
   host failure.
+- **Deleting what others wait on:** deletion checks the owner of each deleted
+  conversation, not every task that names a deleted task: a live task elsewhere
+  waiting on one of them finds no record when it reads the outcomes. Delete the
+  waiter's work first.
+- **Deletion and copies:** backups, replicas, and exports made before a deletion
+  keep the conversation. A host that restores one calls `deleteConversations()`
+  again; a replica fed by `observeCommits()` applies the `conversation.delete`.
 
 ## 13. Non-goals
 

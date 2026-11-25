@@ -28,6 +28,7 @@ Built on [`@earendil-works/pi-ai`](../ai/README.md) for model access and `@earen
 - [Hooks](#hooks)
 - [More Conversations and Forks](#more-conversations-and-forks)
 - [Abort and Subagents](#abort-and-subagents)
+- [Deleting Conversations](#deleting-conversations)
 - [Child Tasks](#child-tasks)
 - [Task Graph](#task-graph)
 - [Your Own State](#your-own-state)
@@ -693,7 +694,7 @@ It behaves like any other input: it starts a run, steers, follows up, or rejects
 
 ## Reset and Handoff
 
-`reset()` starts a new context. The model no longer sees older entries, but they stay in storage:
+`reset()` starts a new context. The model no longer sees older entries, but they stay in storage; to remove them, [delete the conversation](#deleting-conversations):
 
 ```typescript
 await root.reset(undefined, context);                                  // start from nothing
@@ -926,6 +927,25 @@ The examples show both patterns as product code:
 - [`21-subagent-foreground.ts`](test/examples/21-subagent-foreground.ts): the tool above, returning the child's answer. The UI finds the child through the call's `details` and prints the child's events indented under the call.
 - [`22-subagent-background.ts`](test/examples/22-subagent-background.ts): persistent subagents behind one `subagent` tool that spawns, messages (steer or follow-up), waits for, stops, and lists them. Each child is owned by a background anchor task, so the parent's Esc and idle waits never reach it. Each message is delivered by a background reporter task that posts the answer back to the parent as a follow-up input once it arrives; request IDs keep a restart from sending a message or a report twice.
 
+## Deleting Conversations
+
+```typescript
+await harness.deleteConversations([conversation.id], context);
+```
+
+Deletion is for good. It aborts the live work of each conversation, background work included, then one commit removes the conversations and the conversations their tasks own, such as subagents, with their entries, tasks, submissions, and documents. Their queued submissions settle `unanswered` with reason `deleted`, and their views end. Unknown IDs are skipped, so a call repeated after a crash, or after restoring a backup, is harmless; IDs are never reused. It refuses, aborting nothing, the root conversation, a conversation owned by a live task of another conversation, and a conversation with a fork that is not deleted with it: pass the forks in the same call. `usage()` sums the conversations that remain, so its total drops.
+
+What is erased depends on the backend:
+
+| Backend | Deletion |
+|---|---|
+| Memory, IndexedDB | The records are removed. |
+| SQLite, Cloudflare Durable Object | The rows are removed. SQLite keeps their bytes in free pages and in the WAL until the host runs `PRAGMA secure_delete = ON` (before deleting) or `VACUUM`, and `PRAGMA wal_checkpoint(TRUNCATE)`. |
+| JSONL | Only marked: reads no longer find the conversation, but `main.jsonl` and the sidecar files keep its records. |
+| Chord store (`StoreStorage`) | Not supported: the commit is refused, which fails the Session. |
+
+Files and other effects of the conversation's tools stay, and so does what a provider retained.
+
 ## Child Tasks
 
 A task can own child tasks, created with `ownership: { kind: "task", taskId }`, and wait for them by committing a `waiting` state:
@@ -1059,7 +1079,7 @@ await database.transaction(async (transaction) => {
 });
 ```
 
-A custom backend's `commit(batches, receive, context)` stores `batches` in order, each as one atomic commit with its own seq, checked against the state the earlier ones left, in as few round trips as it can. It stops at the first batch its own checks refuse (global IDs, document actions, copy resolution): the batches before it stay stored, it and the later ones are not. Once they are durable it calls `receive(index, seq)` per stored batch, in order and synchronously, then resolves with `{ stored, refused? }`; it rejects for an unknown outcome (connection lost, a failed statement or `COMMIT`). `receive` is a durability receipt: the Session publishes each batch later, one at a time, so memory and every view never show a partial log. `receive` calls no Storage method and never throws. Custom backends can run the shared conformance suite, which checks this too, with any Vitest- or Jest-compatible runner:
+A custom backend's `commit(batches, receive, context)` stores `batches` in order, each as one atomic commit with its own seq, checked against the state the earlier ones left, in as few round trips as it can. It stops at the first batch its own checks refuse (global IDs, document actions, copy resolution): the batches before it stay stored, it and the later ones are not. Once they are durable it calls `receive(index, seq)` per stored batch, in order and synchronously, then resolves with `{ stored, refused? }`; it rejects for an unknown outcome (connection lost, a failed statement or `COMMIT`). `receive` is a durability receipt: the Session publishes each batch later, one at a time, so memory and every view never show a partial log. `receive` calls no Storage method and never throws. A `conversation.delete` write applies after the other writes of its batch and removes the conversation with everything scoped to it, keeping its IDs claimed. Custom backends can run the shared conformance suite, which checks this too, with any Vitest- or Jest-compatible runner:
 
 ```typescript
 import { registerStorageConformance } from "@earendil-works/pi-durable/testing";

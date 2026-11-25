@@ -35,7 +35,14 @@ import type {
 	TaskRecord,
 } from "../../types.ts";
 import { nextCursor, type ScanStart, scanStart } from "../scan.ts";
-import { CommitState, claimOf, type DocumentAction, PendingWrites, prepareDocumentActions } from "./commit.ts";
+import {
+	CommitState,
+	claimOf,
+	type DocumentAction,
+	deleteConversations,
+	PendingWrites,
+	prepareDocumentActions,
+} from "./commit.ts";
 import { applySqliteMigrationsForSchema } from "./migrations.ts";
 import { addressParts, encodeIndexedString, isCurrentOnly, parseJson, scopeColumns } from "./rows.ts";
 import { createSqliteSchema, type SqliteSchema } from "./schema.ts";
@@ -156,7 +163,7 @@ export class SqliteStorage implements Storage {
 	 * read the stored state of all batches up front and run in memory, and the accepted batches are written per table in
 	 * multi-row statements (`commit.ts`), so a call costs a few statements whatever its number of batches. A batch with a
 	 * copy reads the copy's source from the database: the batches before it are written first, so a call of many fork
-	 * batches costs a few statements per fork.
+	 * batches costs a few statements per fork. A batch that deletes conversations is written, then the deletion runs.
 	 */
 	async commit(
 		batches: readonly (readonly StorageWrite[])[],
@@ -182,6 +189,12 @@ export class SqliteStorage implements Storage {
 				const seq = seqFromNumber(next++);
 				state.apply(writes, checked.actions, seq);
 				pending.add(writes, checked.actions, seq, state);
+				const deleted = writes.flatMap((write) => (write.type === "conversation.delete" ? [write.id] : []));
+				if (deleted.length > 0) {
+					// After every other write of the batch, which may settle or retire what the deletion removes.
+					await pending.flush(transaction, this.schema.tables);
+					await deleteConversations(transaction, this.schema.tables, deleted);
+				}
 				seqs.push(seq);
 				candidateNextId = Math.max(candidateNextId, this.candidateNextId(writes));
 			}

@@ -221,6 +221,9 @@ export class DurableCommit implements SeriesCommit, StagedWrite {
 				action.retire = true;
 				return;
 			}
+			// The store has no write that removes a document's revisions, and its outbox keeps every commit's writes.
+			case "conversation.delete":
+				throw new Error("StoreStorage does not support deleting conversations");
 		}
 	}
 

@@ -2135,6 +2135,148 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 			expect((await storage.document(sourceId, "current", context))?.value).toEqual({ count: 2 });
 		}),
 
+		createCase(
+			options,
+			"deletes a conversation with everything in it, after the other writes of its batch",
+			async (storage) => {
+				const rootId = await createRoot(storage);
+				const doomed = await storage.mintId<ConversationId>();
+				const kept = await storage.mintId<ConversationId>();
+				const first = await storage.mintId<EntryId>();
+				const marker = await storage.mintId<EntryId>();
+				const keptEntry = await storage.mintId<EntryId>();
+				const task = await storage.mintId<TaskId<JsonValue>>();
+				const submission = await storage.mintId<SubmissionId>();
+				const notes = await storage.mintId<DocumentId>();
+				const taskNotes = await storage.mintId<DocumentId>();
+				const keptNotes = await storage.mintId<DocumentId>();
+				const notesRecord = (id: DocumentId, conversationId: ConversationId) =>
+					({
+						id,
+						kind: "conversation.notes",
+						scope: { kind: "conversation", conversationId },
+						history: "rewindable",
+						fork: "asOf",
+					}) satisfies DocumentCreate;
+				const base = (value: JsonObject) => ({ kind: "base", version: 1, value }) as const;
+				await commitWrites(
+					storage,
+					[
+						{ type: "conversation", value: { id: doomed } },
+						{ type: "conversation", value: { id: kept } },
+						{ type: "entry", value: entry(first, doomed) },
+						{ type: "entry", value: entry(marker, doomed, "summary", { head: first }) },
+						{ type: "entry", value: entry(keptEntry, kept) },
+						{ type: "task", value: pendingTask(task, doomed) },
+						{
+							type: "submission",
+							value: {
+								id: submission,
+								conversationId: doomed,
+								requestId: "request",
+								type: "write",
+								status: "queued",
+							},
+						},
+						{ type: "document.create", record: notesRecord(notes, doomed), content: base({ text: "secret" }) },
+						{
+							type: "document.create",
+							record: { id: taskNotes, kind: "task.notes", scope: { kind: "task", taskId: task } },
+							content: base({ text: "task secret" }),
+						},
+						{ type: "document.create", record: notesRecord(keptNotes, kept), content: base({ text: "kept" }) },
+					],
+					context,
+				);
+				await commitWrites(
+					storage,
+					[
+						{
+							type: "document.change",
+							id: notes,
+							content: { kind: "delta", version: 1, ops: [["s", ["text"], "more"]] },
+						},
+					],
+					context,
+				);
+				// What the Session writes before a deletion: the task's end, the submission's settlement, the retirements.
+				await commitWrites(
+					storage,
+					[
+						{
+							type: "task",
+							value: {
+								...pendingTask(task, doomed),
+								state: { status: "terminal", outcome: { status: "aborted" } },
+							},
+						},
+						{ type: "document.retire", id: taskNotes },
+					],
+					context,
+				);
+				await commitWrites(
+					storage,
+					[
+						{ type: "conversation.delete", id: doomed },
+						{
+							type: "submission",
+							value: {
+								id: submission,
+								conversationId: doomed,
+								requestId: "request",
+								type: "write",
+								status: "unanswered",
+								reason: "deleted",
+							},
+						},
+						{ type: "document.retire", id: notes },
+					],
+					context,
+				);
+
+				expect(await storage.conversation(doomed, context)).toBeUndefined();
+				expect((await storage.scanConversations({}, 10, undefined, context)).items.map(({ id }) => id)).toEqual([
+					rootId,
+					kept,
+				]);
+				expect(await storage.entry(first, context)).toBeUndefined();
+				expect(await storage.entry(marker, context)).toBeUndefined();
+				await expect(storage.scanEntries({ conversationId: doomed }, 10, undefined, context)).rejects.toThrow(
+					"Unknown conversation",
+				);
+				expect(await storage.task(task, context)).toBeUndefined();
+				expect((await storage.scanTasks({ conversationId: doomed }, 10, undefined, context)).items).toEqual([]);
+				expect(await storage.submission(submission, context)).toBeUndefined();
+				expect(await storage.submissionByRequest(doomed, "request", context)).toBeUndefined();
+				expect((await storage.scanSubmissions({}, 10, undefined, context)).items).toEqual([]);
+				expect(await storage.document(notes, "current", context)).toBeUndefined();
+				expect(await storage.document(taskNotes, "current", context)).toBeUndefined();
+				const scope = { kind: "conversation", conversationId: doomed } as const;
+				expect(
+					await storage.findDocument({ kind: "conversation.notes", scope }, "current", context),
+				).toBeUndefined();
+				expect((await storage.scanDocuments({ scope, at: "current" }, 10, undefined, context)).items).toEqual([]);
+
+				// The other conversation keeps everything; the deleted IDs stay claimed.
+				expect((await storage.scanEntries({ conversationId: kept }, 10, undefined, context)).items).toEqual([
+					entry(keptEntry, kept),
+				]);
+				expect((await storage.document(keptNotes, "current", context))?.value).toEqual({ text: "kept" });
+				expect(await storage.mintId<ConversationId>()).toBeGreaterThan(keptNotes);
+				await expect(
+					commitWrites(storage, [{ type: "conversation", value: { id: doomed } }], context),
+				).rejects.toThrow(`ID ${doomed} already belongs to conversation`);
+				// Deleting it again, or a conversation that never was, changes nothing.
+				await commitWrites(storage, [{ type: "conversation.delete", id: doomed }], context);
+				await commitWrites(
+					storage,
+					[{ type: "conversation.delete", id: idFromNumber<ConversationId>(999) }],
+					context,
+				);
+				expect((await storage.scanConversations({}, 10, undefined, context)).items).toHaveLength(2);
+			},
+		),
+
 		createCase(options, "rejects every operation after close", async (storage) => {
 			await createRoot(storage);
 			await storage.close(context);
