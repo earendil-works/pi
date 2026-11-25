@@ -48,7 +48,7 @@ from `@earendil-works/chord`.
   `followActiveTheme(host, mode, changed, ctx)`.
 - **Messages and languages** (`messages.ts`, `language.ts`, `format.ts`, `translations.ts`, `locale-choice.ts`,
   `active-language.ts`; design §23): `defineMessages(namespace, catalogs)` (a typed `t`; `t.message`, `t.render`,
-  `t.in(language)`, `t.translations`), `MessagesOf`, `MessageData`, `MessageSchema`; `Language`
+  `t.in(language)`, `t.translations`), `MessagesOf`, `MessageData` and `MessageSchema` (defined in `data`, re-exported); `Language`
   (`createLanguage(locale, translations, report)`; internally the render scope `inLanguage`, `matchLocale`,
   `resolveLocale`); `formatTime`, `formatNumber`; the `Translations` registry (a list of `{ namespace, locale, messages, override? }` per
   contributor; one catalog per namespace and locale) with `translationsFacet`; `LocaleChoice` with

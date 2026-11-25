@@ -50,6 +50,10 @@ type Names = GrantableName<typeof Canvas>; // "history" | "reported" | "add" | "
   **(B)**: documents' stored fingerprints carry it (a bump would refuse every stored document), and the remote node's
   new shape changes remote fingerprints by itself. Contract versions are not bumped for the change: every remote
   fingerprint changes, so an old consumer meets `contract_mismatch` and reloads once.
+- **Old releases are refused, not accepted (B):** versions declared with variants cannot be declared any more, and
+  their fingerprints differ, so an app's `accepts` for them (p2 binds 11 such older versions) is dropped. An old
+  page, terminal client or worker is refused `contract_mismatch` on its first hold and takes the app's stale-client
+  path (p2: the page reloads, a terminal client says to update, a worker is replaced by the rollout).
 - **`evolve`**: the remote editor is the local one without keyed members (no variant argument): `state(member, s)`,
   `addState`, `removeState`, `addMethod`, `args`, `result`, `method`, `removeMethod`, `event`, `addEvent`,
   `removeEvent`, `admission`. An `add…` edit takes `grantable(...)` for a new grantable member. **Whether a member is
@@ -134,6 +138,9 @@ type Reference<C> = PlainMembers<C> & { readonly [M in Grantable]?: Member<M> } 
 - A denial whose message changed is a new decision: the holder sees the new failure, nothing is rebuilt, no new hold.
 - A message that is not a valid `MessageData` (checked against `MessageSchema`: an admission is plugin code) breaks
   the attempt like a value that is no decision, reported once.
+- **The message travels as the error's `details.message` (B):** no new field in a failure or on the wire; `details`
+  crosses links already, and a failure's cause compares its details (`sameCause`), so a changed message wakes the
+  holders. No size limit beyond what `MessageSchema` says (none): a message is a key and a few parameters.
 
 ## 3. The commit index for live reads
 

@@ -170,7 +170,10 @@ host.serve(Transcript, (params, principal, { mode, granted }, self) => ({
 ```
 
 - `admit` declares only `self.get` (and `at(key)`), `self.registry`, `self.derive` and `self.liveQuery`, and returns
-  a watchable of `allow(value)` or `deny(reason)`. It runs first in every attempt; the reason is shown to the person.
+  a watchable of `allow(value)` or `deny(reason, message?)`. It runs first in every attempt. The reason is English,
+  for logs; the message is what the person sees, a message as data (`t.message("notShared", owner)`) their client
+  renders in their language: it arrives as the `forbidden` error's `details.message` (example
+  `test/examples/78-denial-messages.ts`).
 - **The value is small and changes rarely** (a mode, a role, the names it grants). Chord builds and sends only the
   granted grantable members; a call to one not granted fails `forbidden`. Another value
   rebuilds the person's object; an equal one changes nothing. What a list shows is not in it: a list's condition is

@@ -417,8 +417,9 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
 - Admission (slice 14; `admission.ts`, `route-admission.ts`): a remote contract may declare `admission: schema`;
   its type is served with `host.serve(Type, (params, principal, admitted, self) => …, { admit })`. `admit(params,
   principal, self)` runs first in every attempt, declares what it reads (`self.get` with `at(key)`,
-  `self.registry`, `self.derive`, `self.liveQuery`) and returns a watchable of `allow(value)` or `deny(reason)`.
-  The attempt parks on those requests, and on a denial showing `failed { denied }` (`forbidden(reason)`; getters
+  `self.registry`, `self.derive`, `self.liveQuery`) and returns a watchable of `allow(value)` or `deny(reason, message?)`.
+  The attempt parks on those requests, and on a denial showing `failed { denied }` (`forbidden(reason, { message })`,
+  the message as data for the person in `details.message`, part of the decision; one that is no `MessageSchema` breaks; getters
   reject at once, dependents show the denial and heal with it, no `parked_long`). From its allow on it follows the
   decision in the flush of the batch that changed it: an equal value (canonical JSON) changes nothing, a source that
   only loads keeps the last decision, another value seals the attempt (calls `unavailable`) and a new one admits, a

@@ -7,8 +7,8 @@
 // `t.message` builds a message as data (`{ namespace, key, params }`) for state, notices and errors, which each client
 // renders with `t.render` in its own language, checked at runtime (it crossed a link).
 
-import { arr, bool, nul, num, obj, str, union } from "../contracts/index.ts";
 import { checkName } from "../contracts/names.ts";
+import type { MessageData, MessageParam } from "../data/index.ts";
 import { currentLanguage, inLanguage, type Language } from "./language.ts";
 import { canonicalLocale, type Translation } from "./translations.ts";
 
@@ -23,27 +23,6 @@ export type CatalogShape<M> = { readonly [K in keyof M]: M[K] extends string ? s
 
 /** The arguments of a message: its function's parameters, none for a text. */
 export type MessageArgs<V> = V extends (...args: infer A) => string ? A : [];
-
-/** A parameter of a message as data: plain JSON (a date as an ISO string or a number), so it crosses links. */
-export type MessageParam = string | number | boolean | null;
-
-/**
- * A message as data: its namespace, its key and its parameters; typed by `t.message` (`MessageData<"notes", "saved">`),
- * any namespace and key as `MessageSchema` carries it across a link. (`Message` is the link protocol's.)
- */
-export type MessageData<N extends string = string, K extends string = string> = {
-	readonly namespace: N;
-	readonly key: K;
-	// Not a readonly array: a message goes into documents, whose drafts are mutable (immutable by convention).
-	readonly params: MessageParam[];
-};
-
-/** The schema of a message as data, for contract members (`notice: union([MessageSchema, nul()])`). */
-export const MessageSchema = obj({
-	namespace: str(),
-	key: str(),
-	params: arr(union([str(), num(), bool(), nul()])),
-});
 
 /** The keys of `M` whose arguments are all `MessageParam`s: those `t.message` can build. */
 export type DataKeys<M> = {

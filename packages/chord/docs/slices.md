@@ -83,6 +83,9 @@ slice spec's section citations are for orientation, not a reading limit (owner, 
   grantable members and `granted` (`host/reference.ts`), `granted` indexes on the wire's `bound`, `useLive` and
   `TuiScope.live` (`surfaces/live.ts`); variants removed everywhere (contracts, `evolve`, `accepts`, factories,
   references, wire, React and TUI bindings); example 77.
+- **Slice 15, denials with a message** (built 2026-11-25, `slice-15.md` §2): `deny(reason, message?)`, the message
+  as data in the `forbidden` error's `details.message` and part of the decision (`host/admission.ts`);
+  `MessageData` and `MessageSchema` in `data/message.ts` (re-exported by `surfaces`); example 78.
 - **Chord's shared code** (upstream pi): `src/watch.ts` (`Watch`, `NativeWatch`, `WatchHandle`, `WatchEnd`,
   `NativeWatchable`), Delta (`track`, `diffRevisions`, `applyImmutable`, encoders, `PendingOps`, `appendText`),
   context, JSON, output, SQLite drivers.
@@ -187,6 +190,7 @@ pattern, no code. Decided cuts are noted where they apply.
 | 11 | lists over one named query (`self.list`: pages between bookmarks, `more`, splits and merges, overflow, bookmarks across a reload) | 14 |
 | 11 | lists over several named queries merged into one | 14 (carry-over) |
 | 6 | admission with a typed value (`admission`, `admit`, the watch table, staging's rehearsal, no jobs in an admitted object) | 14 |
+| 6 | `deny(reason, message?)`: a message as data for the person in the denial's `details.message` | 15 |
 | 3 | a route's admission (`RouteOptions.admit`, one decision per principal and address, the fence after a denial, `createWorkers`' `admit`) | 14 |
 | 10 | `deleteHostData(address, ctx, { plugin })` | 14 |
 | 22 | the failure kind `denied`; binding fences per acknowledgement | 14 |

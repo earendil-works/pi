@@ -335,6 +335,87 @@ function reports(errors: readonly HostError[]): string[] {
 	);
 }
 
+/** Denies with the message of key `<key>` for a mode `deny:<key>`, an invalid one for `bad`, else as `decide`. */
+const messageAdmit: Admit<typeof Doc, TestPrincipal> = (_params, principal, self) =>
+	self.derive([self.get(Access, {}).modes], ([all]) => {
+		const mode = all[principal.kind];
+		if (mode === "bad") return deny("no access", { namespace: "docs", key: 7 } as never);
+		if (mode?.startsWith("deny:")) {
+			return deny("no access", { namespace: "docs", key: mode.slice(5), params: [principal.kind] });
+		}
+		return decide(mode);
+	});
+
+/** The message a reference's failure carries for the person, if any (`details.message`, slice 15 §2). */
+function messageOf(doc: { readonly state: { readonly value: unknown } }): unknown {
+	const state = doc.state.value as { cause?: { error: ChordError } };
+	return (state.cause?.error.details as { message?: unknown } | undefined)?.message;
+}
+
+describe("a denial's message (slice 15 §2)", () => {
+	const admit = messageAdmit;
+
+	it("reaches the holder with the reason; without one there are no details", async () => {
+		const built: string[] = [];
+		const { h, set } = await served({ built, admit }, { mode: "deny:noShare" });
+		const doc = h.hold(Doc, { id: "a" }, context);
+		await vi.waitFor(() => expect(doc.state.value).toMatchObject({ kind: "failed", cause: { kind: "denied" } }));
+		expect(told((doc.state.value as { cause: { error: unknown } }).cause.error)).toEqual({
+			code: "forbidden",
+			message: "no access",
+		});
+		expect(messageOf(doc)).toEqual({ namespace: "docs", key: "noShare", params: ["server"] });
+		await set("none");
+		await delivered();
+		expect(doc.state.value).toMatchObject({ kind: "failed", cause: { kind: "denied" } });
+		expect(messageOf(doc)).toBe(undefined);
+		expect(built).toEqual([]);
+		await h.close(context);
+	});
+
+	it("goes with a call refused by the denial and with one running at the seal", async () => {
+		const gate = Promise.withResolvers<void>();
+		const { h, set } = await served({ built: [], admit, gate: gate.promise }, { mode: "write" });
+		const doc = await h.get(Doc, { id: "a" }, context);
+		const running = rejection(doc.write!("x", context));
+		await set("deny:revoked");
+		const revokedCall = (await running) as ChordError;
+		expect([revokedCall.code, revokedCall.reason]).toEqual(["forbidden", "revoked"]);
+		expect((revokedCall.details as { message: unknown }).message).toEqual({
+			namespace: "docs",
+			key: "revoked",
+			params: ["server"],
+		});
+		const refused = (await rejection(doc.text.watch(context).then(() => doc.text.value))) as ChordError;
+		expect(refused.code).toBe("forbidden");
+		expect((refused.details as { message: unknown }).message).toMatchObject({ key: "revoked" });
+		gate.resolve();
+		await h.close(context);
+	});
+
+	it("is part of the decision: another message is a new failure, without a rebuild or a new hold", async () => {
+		const built: string[] = [];
+		const { h, set } = await served({ built, admit }, { mode: "deny:first" });
+		const doc = h.hold(Doc, { id: "a" }, context);
+		await vi.waitFor(() => expect(messageOf(doc)).toMatchObject({ key: "first" }));
+		const started = decisions.length;
+		await set("deny:second");
+		await vi.waitFor(() => expect(messageOf(doc)).toMatchObject({ key: "second" }));
+		expect([built, decisions.length - started]).toEqual([[], 0]);
+		await h.close(context);
+	});
+
+	it("that is no message as data breaks the attempt, reported once", async () => {
+		const { h, errors } = await served({ built: [], admit }, { mode: "bad" });
+		const doc = h.hold(Doc, { id: "a" }, context);
+		await vi.waitFor(() => expect(doc.state.value).toMatchObject({ kind: "failed", cause: { kind: "broken" } }));
+		expect(reports(errors)).toEqual([
+			"activation_failed: test.doc(a): its denial's message is no message as data (MessageSchema): no access",
+		]);
+		await h.close(context);
+	});
+});
+
 describe("deny, then allow", () => {
 	it("a direct hold shows failed { denied } with the reason, then binds with what the value grants", async () => {
 		const built: string[] = [];
@@ -923,6 +1004,18 @@ describe("over a link", () => {
 		expect([doc.state.value.kind, role(doc), doc.text.value]).toEqual(["live", "reader", "t"]);
 		expect(valuesOf(frames)).toEqual([{ failed: "no access" }, "t"]);
 		expect(states).toEqual(["failed: no access", "loading", "live", "failed: no access", "loading", "live"]);
+		doc.release();
+		await client.close(context);
+		await server.close(context);
+	});
+
+	it("a denial's message reaches the holder over the link (slice 15 §2)", async () => {
+		const { server, client, set } = await overLink({ built: [], admit: messageAdmit });
+		await set("deny:noShare");
+		const doc = client.hold(Doc, { id: "a" }, context);
+		await vi.waitFor(() => expect(messageOf(doc)).toEqual({ namespace: "docs", key: "noShare", params: ["owner"] }));
+		await set("deny:later");
+		await vi.waitFor(() => expect(messageOf(doc)).toMatchObject({ key: "later" }));
 		doc.release();
 		await client.close(context);
 		await server.close(context);

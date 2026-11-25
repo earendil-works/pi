@@ -11,6 +11,8 @@
 ### Added
 
 - `grantable(member)`, `GrantableName<C>`, `AllowedOf<C>` and flags in remote contracts (slice 15).
+- `deny(reason, message?)`: an admission's denial carries a message as data for the person (`MessageData`), in the `forbidden` error's `details.message` (the denied reference's failure, a call's `forbidden`, a cut call's `forbidden/revoked`). A changed message is a new decision without a rebuild.
+- `MessageData`, `MessageParam` and `MessageSchema` are exported from the package root's data layer as well (still from `/surfaces`).
 
 ## [1.6.1] - 2026-11-25
 

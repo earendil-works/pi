@@ -932,8 +932,12 @@ host.serve(Transcript, (params, principal, { mode, granted }, self) => ({ title,
 - **Remote types only.** A contract that declares an `admission`, grantable members or flags is served with `admit`
   (the types require it); `admit` for any other, or on a `local` type, is a declaration error. `admit`'s `self` (`AdmitSelf`) has `get` (and `at(key)` on what it gets), `registry`, `derive` and
   `liveQuery`, nothing else: an admission decides and owns nothing. The value is plain JSON, small and rarely
-  changing (a mode, a role): an object, `allow({ granted: [...], ...data })`; `deny`'s reason reaches the denied
-  caller.
+  changing (a mode, a role): an object, `allow({ granted: [...], ...data })`. **`deny(reason, message?)`**
+  (slice 15 §2): `reason` is English, for logs, the message of the `forbidden` error; `message` is a message as data
+  (`MessageData`, `{ namespace, key, params }`, §23), what the person sees, rendered by their client in their language.
+  It travels as the error's `details.message`: in the denied object's `failed { denied }`, in a call's `forbidden` on
+  it and in the `forbidden/revoked` of the calls the denial cut. A denial whose message changed is a new decision (a
+  new failure for the holders, nothing rebuilt); a message that is no `MessageSchema` breaks the attempt.
 - **Granted** (slice 15 §1.2): Chord sorts and dedupes `granted` before it compares decisions (canonical JSON), so the
   same names in another order are the same decision. A name that is no grantable member or flag of the contract (a
   plain member included: a plain member is never granted) breaks the attempt, naming the contract and the name. The
@@ -942,7 +946,7 @@ host.serve(Transcript, (params, principal, { mode, granted }, self) => ({ title,
   parks on its requests with the existing parking. The admission phase does not wait for the previous attempt's
   teardown; only the factory does.
 - **Decide.** With every request live and hydrated the decision is read: `deny` parks the attempt and the object
-  shows `failed { kind: "denied", error: forbidden(reason) }`; `allow(value)` runs the factory with `value` (`granted` a set). A
+  shows `failed { kind: "denied", error: forbidden(reason, { message }) }`; `allow(value)` runs the factory with `value` (`granted` a set). A
   value that is neither breaks the attempt.
 - **Watch.** From its allow on the attempt follows the decision and its sources through the host's publication: a
   change takes effect in the flush of the batch that changed it, also while the attempt opens its natives and on
@@ -3234,7 +3238,8 @@ draft.notice = messages.message("saved", note.title, note.at);   // { namespace:
   and `dir` on its root element. Reports go to the client's `onError` once each (`{ kind: "messages", report }`).
 - **Messages as data:** `t.message(key, ...args)` returns `MessageData<"notes", "saved">` (`{ namespace, key, params }`;
   `Message` is the link protocol's), only for keys whose arguments are JSON scalars (`MessageParam`), so a `Date`
-  argument does not compile. A contract member uses `MessageSchema` (any namespace and key). `t.render(message)`
+  argument does not compile. A contract member uses `MessageSchema` (any namespace and key). Both live in the kernel's
+  `data` since slice 15 (a denial carries one, §6), re-exported by `surfaces`. `t.render(message)`
   refuses another literal namespace at the type level and checks at runtime what crossed a link: another namespace, a
   key the first catalog lacks or params that are no list show the key (reported `unknown`), a message that throws on
   its params shows the key (reported `failed`). Prompts, model output, logs and error codes are never translated.

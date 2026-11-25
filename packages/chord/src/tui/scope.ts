@@ -9,10 +9,10 @@
 
 import { BACKGROUND_CONTEXT, withAbortSignal } from "../context/index.ts";
 import type { Contract, EventMember, ParamsOf } from "../contracts/index.ts";
-import type { Principal } from "../data/index.ts";
+import type { MessageData, Principal } from "../data/index.ts";
 import type { Host, Reference } from "../host/index.ts";
 import type { Registry } from "../registries/index.ts";
-import { hostLanguage, type Language, type MessageData, type Messages, type Translator } from "../surfaces/index.ts";
+import { hostLanguage, type Language, type Messages, type Translator } from "../surfaces/index.ts";
 import { type LiveRef, liveGrant } from "../surfaces/live.ts";
 import { type PageState, pageState } from "../surfaces/page-state.ts";
 import type { NativeWatchable, Watchable } from "../watch.ts";

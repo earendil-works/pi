@@ -11,4 +11,5 @@ export {
 	PluginError,
 } from "./errors.ts";
 export { broken, type FailureCause } from "./failure.ts";
+export { type MessageData, type MessageParam, MessageSchema } from "./message.ts";
 export type { Principal, PrincipalKeyFunction } from "./principal.ts";

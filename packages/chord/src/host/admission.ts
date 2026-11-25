@@ -10,8 +10,8 @@
 import { type Context, withAbortSignal } from "../context/index.ts";
 import type { AllowedOf, Contract, NamedQuery, ParamsOf } from "../contracts/index.ts";
 import { NO_GRANTS } from "../contracts/internal.ts";
-import { ChordError, forbidden, type Principal } from "../data/index.ts";
-import { asChordError, canonicalJson, checkParams } from "../data/internal.ts";
+import { ChordError, forbidden, type MessageData, type Principal } from "../data/index.ts";
+import { asChordError, canonicalJson, checkParams, isMessageData } from "../data/internal.ts";
 import type { JsonValue } from "../json.ts";
 import type { Registry, RegistryValue } from "../registries/index.ts";
 import type { RegistryWaiter } from "../registries/internal.ts";
@@ -36,10 +36,13 @@ import type { Reader } from "./query-reader.ts";
 import { openReaders, readerSite, rowsReader } from "./read-declarations.ts";
 import { type Binding, type CheckedParams, type Reference, resolveWatchable } from "./reference.ts";
 
-/** An admission's decision: the value the factory is handed about the caller, or a denial with the reason it is shown. */
+/**
+ * An admission's decision: the value the factory is handed about the caller, or a denial with its reason (English, for
+ * logs) and the message the person sees (as data, slice 15 §2).
+ */
 export type Admission<T> =
 	| { readonly kind: "allow"; readonly value: T }
-	| { readonly kind: "deny"; readonly reason: string };
+	| { readonly kind: "deny"; readonly reason: string; readonly message?: MessageData };
 
 /**
  * What `admit` declares with, valid only while it runs: references (`at(key)` on their keyed members), registries,
@@ -108,9 +111,12 @@ export function allow<const T extends JsonValue>(value: T): Admission<T> {
 	return { kind: "allow", value };
 }
 
-/** Denies the caller. `reason` reaches it as the message of its `forbidden` error: it is user-facing. */
-export function deny(reason: string): Admission<never> {
-	return { kind: "deny", reason };
+/**
+ * Denies the caller. `reason` is English, for logs: the message of its `forbidden` error. `message` is what the person
+ * sees, as data their client renders in their language (slice 15 §2): it travels in the error's `details.message`.
+ */
+export function deny(reason: string, message?: MessageData): Admission<never> {
+	return message === undefined ? { kind: "deny", reason } : { kind: "deny", reason, message };
 }
 
 /** A reference a decision declared, bound when `admit` returned. */
@@ -353,7 +359,12 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 			const shown = waitingOn(`${label}: its admission`, asChordError(error, label));
 			return { kind: "parked", shown, firstPass: true, cause: shown.cause };
 		}
-		const { kind, value, reason } = (decision ?? {}) as { kind?: unknown; value?: JsonValue; reason?: unknown };
+		const { kind, value, reason, message } = (decision ?? {}) as {
+			kind?: unknown;
+			value?: JsonValue;
+			reason?: unknown;
+			message?: unknown;
+		};
 		if (kind === "allow" && value !== undefined) {
 			const { grants } = this.#owner;
 			if (grants === undefined) {
@@ -373,7 +384,16 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 			}));
 		}
 		if (kind === "deny" && typeof reason === "string") {
-			return this.#decide(`deny ${reason}`, () => ({ kind: "deny", error: forbidden(reason) }));
+			if (message === undefined)
+				return this.#decide(`deny ${reason}`, () => ({ kind: "deny", error: forbidden(reason) }));
+			if (!isMessageData(message, context)) {
+				const error = new Error(`its denial's message is no message as data (MessageSchema): ${reason}`);
+				return { kind: "broken", error: asChordError(error, label) };
+			}
+			return this.#decide(`deny ${reason} ${canonicalJson(message, context)}`, () => ({
+				kind: "deny",
+				error: forbidden(reason, { message }),
+			}));
 		}
 		const error = new Error("its admission's value is neither allow(value) nor deny(reason)");
 		return { kind: "broken", error: asChordError(error, label) };
@@ -439,8 +459,10 @@ export function refuseAdmittedJob(served: Served, label: string): void {
 
 /**
  * What a denial rejects the calls running for the denied caller with (slice 14 §2.2): `forbidden/revoked`, naming
- * `label` and the denial's reason. The denied object itself shows `denial`, `forbidden` with the reason alone.
+ * `label` and the denial's reason, with its details (the message for the person, slice 15 §2). The denied object
+ * itself shows `denial`, `forbidden` with the reason alone and the same details.
  */
 export function revoked(label: string, denial: ChordError): ChordError {
-	return new ChordError({ code: "forbidden", reason: "revoked", message: `${label}: ${denial.message}` });
+	const { details } = denial;
+	return new ChordError({ code: "forbidden", reason: "revoked", message: `${label}: ${denial.message}`, details });
 }

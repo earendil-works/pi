@@ -25,6 +25,9 @@ try {
   interfaces (an interface does not fit `Principal`'s index signature). A custom principal key function must be the
   same on every host; a different one silently splits identities.
 - `broken(cause)`: thrown by an open to mark a bad configuration; `FailureCause` is what Chord reports.
+- `MessageData` (`{ namespace, key, params }`), `MessageParam` and `MessageSchema`: a message as data, rendered by
+  each client in its language (`surfaces` builds and renders them); a denial carries one for the person
+  (`deny(reason, message)`, slice 15 §2).
 - `new PluginError(code, message, details?)`: what a method throws to give its callers a code of its own. On one host
   callers get the thrown value itself; over a link only `code`, `message` and JSON `details` cross and the consumer
   rethrows a PluginError. Any other thrown value crosses as a PluginError with the code `internal` and its message.
@@ -42,6 +45,7 @@ try {
   `check(validator, value, reason, context)` runs it (counted) and throws `invalid/<reason>` naming the path (a job's
   args, `jobs/`).
 - `principalKey(principal, context, customKey?)`, `canonicalJson(value, context)`.
+- `isMessageData(value, context)`: whether plugin code handed a message as data (`MessageSchema`, compiled once).
 - `invalid`, `asChordError`, `chordErrorFromJson`, `PROTOCOL_VERSION`, `CHORD_ERROR_REASONS`;
   `openFailure(thrown, label)`.
 
