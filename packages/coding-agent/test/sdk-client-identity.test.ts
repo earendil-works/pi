@@ -24,6 +24,7 @@ describe("createAgentSession client identity", () => {
 	let cwd: string;
 	let agentDir: string;
 	let originalTelemetryEnv: string | undefined;
+	let originalDoNotTrackEnv: string | undefined;
 
 	beforeEach(() => {
 		tempDir = join(tmpdir(), `pi-sdk-identity-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -33,6 +34,8 @@ describe("createAgentSession client identity", () => {
 		mkdirSync(agentDir, { recursive: true });
 		originalTelemetryEnv = process.env.PI_TELEMETRY;
 		delete process.env.PI_TELEMETRY;
+		originalDoNotTrackEnv = process.env.DO_NOT_TRACK;
+		delete process.env.DO_NOT_TRACK;
 	});
 
 	afterEach(() => {
@@ -40,6 +43,11 @@ describe("createAgentSession client identity", () => {
 			delete process.env.PI_TELEMETRY;
 		} else {
 			process.env.PI_TELEMETRY = originalTelemetryEnv;
+		}
+		if (originalDoNotTrackEnv === undefined) {
+			delete process.env.DO_NOT_TRACK;
+		} else {
+			process.env.DO_NOT_TRACK = originalDoNotTrackEnv;
 		}
 		if (tempDir && existsSync(tempDir)) {
 			rmSync(tempDir, { recursive: true, force: true });
@@ -168,6 +176,21 @@ describe("createAgentSession client identity", () => {
 		const options = await captureOptions(createModel("openrouter", "https://openrouter.ai/api/v1"));
 
 		expect(options?.identity?.attribution).toBeNull();
+	});
+
+	it("turns attribution off with DO_NOT_TRACK=1", async () => {
+		process.env.DO_NOT_TRACK = "1";
+		const options = await captureOptions(createModel("openrouter", "https://openrouter.ai/api/v1"));
+
+		expect(options?.identity?.attribution).toBeNull();
+	});
+
+	it("lets PI_TELEMETRY=1 override DO_NOT_TRACK=1", async () => {
+		process.env.DO_NOT_TRACK = "1";
+		process.env.PI_TELEMETRY = "1";
+		const options = await captureOptions(createModel("openrouter", "https://openrouter.ai/api/v1"));
+
+		expect(options?.identity?.attribution).toEqual(PI_ATTRIBUTION);
 	});
 
 	it("adds OpenCode session headers for custom OpenCode providers", async () => {

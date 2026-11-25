@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added support for the `DO_NOT_TRACK` environment variable: `DO_NOT_TRACK=1` turns off the install/update ping and provider attribution headers. `PI_TELEMETRY` still takes precedence
+
 ### Changed
 
 - The default model for `cloudflare-workers-ai` and `cloudflare-ai-gateway` is now `@cf/zai-org/glm-5.3`, because Cloudflare deprecated Workers AI Kimi K2.6 and K2.7 Code
