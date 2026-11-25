@@ -6,6 +6,7 @@
 
 - Fixed `/llama` "Download model" downloading the typed text instead of the highlighted result when the query looked like `owner/repository` and the user had moved the selection with the arrow keys ([#12465](https://github.com/earendil-works/pi/issues/12465))
 - Fixed key hints that named the wrong keybinding or a hardcoded key: the extension editor and session rename now name `tui.input.submit`, `/hotkeys` names `tui.select.cancel` for cancelling autocomplete, and the settings submenu, `/config` selector, session selector and fullscreen copy setting follow remapped keys
+- Fixed a console Ctrl+Break on Windows ending pi without restoring the terminal, which left the shell in the alternate screen with mouse reports typed into the prompt. A child process in the same console can send Ctrl+Break too. pi now shuts down normally on it ([#12133](https://github.com/earendil-works/pi/issues/12133))
 
 ## [1.6.1] - 2026-11-25
 
