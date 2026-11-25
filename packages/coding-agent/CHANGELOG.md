@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- The default model for `cloudflare-workers-ai` and `cloudflare-ai-gateway` is now `@cf/zai-org/glm-5.3`, because Cloudflare deprecated Workers AI Kimi K2.6 and K2.7 Code
+
 ### Fixed
 
 - Fixed `/llama` "Download model" downloading the typed text instead of the highlighted result when the query looked like `owner/repository` and the user had moved the selection with the arrow keys ([#12465](https://github.com/earendil-works/pi/issues/12465))

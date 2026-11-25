@@ -49,7 +49,7 @@ const CLOUDFLARE_COMPAT_URL = "https://gateway.ai.cloudflare.com/v1/test-account
 describe("ModelRegistry Cloudflare compat streaming", () => {
 	it("materializes the Cloudflare endpoint through ModelRuntime streaming", async () => {
 		const { modelRuntime } = await createCloudflareRuntime();
-		const model = modelRuntime.getModel("cloudflare-ai-gateway", "workers-ai/@cf/moonshotai/kimi-k2.6");
+		const model = modelRuntime.getModel("cloudflare-ai-gateway", "workers-ai/@cf/zai-org/glm-5.3");
 		expect(model).toBeDefined();
 
 		resetApiProviders();
@@ -64,7 +64,7 @@ describe("ModelRegistry Cloudflare compat streaming", () => {
 
 	it("materializes the Cloudflare endpoint after extension-style auth resolution", async () => {
 		const { modelRegistry } = await createCloudflareRuntime();
-		const model = modelRegistry.find("cloudflare-ai-gateway", "workers-ai/@cf/moonshotai/kimi-k2.6");
+		const model = modelRegistry.find("cloudflare-ai-gateway", "workers-ai/@cf/zai-org/glm-5.3");
 		expect(model).toBeDefined();
 
 		resetApiProviders();
