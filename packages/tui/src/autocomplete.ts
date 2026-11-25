@@ -7,6 +7,7 @@ import { autocompleteBoundaryRegex, autocompleteSeparatorRegex } from "./utils.t
 
 const PATH_DELIMITERS = new Set([" ", "\t", '"', "'", "="]);
 const tokenStartRegex = new RegExp(`${autocompleteBoundaryRegex.source}$`, "u");
+const RECURSIVE_ATTACHMENT_SEARCH_TIMEOUT_MS = 200;
 // Opening wrappers that may precede a path in prose, mapped to their closing counterpart.
 const PATH_WRAPPERS: Record<string, string> = { "(": ")", "[": "]", "{": "}", "<": ">", "`": "`" };
 
@@ -323,6 +324,7 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			const suggestions = await this.getFuzzyFileSuggestions(rawPrefix, {
 				isQuotedPrefix,
 				signal: options.signal,
+				force: options.force,
 			});
 			if (suggestions.length === 0) return null;
 
@@ -417,6 +419,15 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 		prefix: string,
 	): { lines: string[]; cursorLine: number; cursorCol: number } {
 		const currentLine = lines[cursorLine] || "";
+		// For attachments, the list may still show matches for the previous query while the new search runs.
+		// Slash-command arguments can also start with "@" ("@alice re"), but are not a single attachment token.
+		if (prefix.startsWith("@") && this.extractAtPrefix(prefix) === prefix) {
+			const currentPrefix = this.extractAtPrefix(currentLine.slice(0, cursorCol));
+			if (!currentPrefix || !(currentPrefix.startsWith(prefix) || prefix.startsWith(currentPrefix))) {
+				return { lines, cursorLine, cursorCol };
+			}
+			prefix = currentPrefix;
+		}
 		const beforePrefix = currentLine.slice(0, cursorCol - prefix.length);
 		const afterCursor = currentLine.slice(cursorCol);
 		const isQuotedPrefix = prefix.startsWith('"') || prefix.startsWith('@"');
@@ -768,7 +779,7 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 	// Fuzzy file search using fd (fast, respects .gitignore)
 	private async getFuzzyFileSuggestions(
 		query: string,
-		options: { isQuotedPrefix: boolean; signal: AbortSignal },
+		options: { isQuotedPrefix: boolean; signal: AbortSignal; force?: boolean },
 	): Promise<AutocompleteItem[]> {
 		if (!this.fdPath || options.signal.aborted) {
 			return [];
@@ -779,7 +790,15 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			const fdBaseDir = scopedQuery?.baseDir ?? this.basePath;
 			const fdQuery = scopedQuery?.query ?? query;
 			const baseDirEntries = await this.getBaseDirSuggestions(fdBaseDir, fdQuery, options.signal);
-			const recursiveEntries = await walkDirectoryWithFd(fdBaseDir, this.fdPath, fdQuery, 100, options.signal);
+			const score = (entry: { path: string; isDirectory: boolean }) =>
+				fdQuery ? this.scoreEntry(entry.path, fdQuery, entry.isDirectory) : 1;
+			// If we already have direct matches, don't make automatic completion wait on a slow tree walk.
+			// fd --full-path can match direct children by the base path alone, so count only hits that score.
+			const recursiveSignal =
+				!options.force && baseDirEntries.some((entry) => score(entry) > 0)
+					? AbortSignal.any([options.signal, AbortSignal.timeout(RECURSIVE_ATTACHMENT_SEARCH_TIMEOUT_MS)])
+					: options.signal;
+			const recursiveEntries = await walkDirectoryWithFd(fdBaseDir, this.fdPath, fdQuery, 100, recursiveSignal);
 			const seenPaths = new Set(baseDirEntries.map((entry) => entry.path));
 			const entries = [
 				...baseDirEntries,
@@ -794,10 +813,7 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			}
 
 			const scoredEntries = entries
-				.map((entry) => ({
-					...entry,
-					score: fdQuery ? this.scoreEntry(entry.path, fdQuery, entry.isDirectory) : 1,
-				}))
+				.map((entry) => ({ ...entry, score: score(entry) }))
 				.filter((entry) => entry.score > 0);
 
 			scoredEntries.sort((a, b) => {

@@ -114,6 +114,75 @@ describe("CombinedAutocompleteProvider", () => {
 		});
 	});
 
+	test("replaces the current @ token when accepting a suggestion for an earlier prefix", () => {
+		const provider = new CombinedAutocompleteProvider([], tmpdir());
+		const item = { value: "@Downloads/", label: "Downloads/" };
+		const result = provider.applyCompletion(["see @Dow tail"], 0, "see @Dow".length, item, "@Do");
+		assert.deepStrictEqual(result, {
+			lines: ["see @Downloads/ tail"],
+			cursorLine: 0,
+			cursorCol: "see @Downloads/".length,
+		});
+	});
+
+	test("does not apply a stale @ suggestion to an unrelated token", () => {
+		const provider = new CombinedAutocompleteProvider([], tmpdir());
+		const item = { value: "@Downloads/", label: "Downloads/" };
+		const result = provider.applyCompletion(["see @other"], 0, "see @other".length, item, "@Do");
+		assert.deepStrictEqual(result, { lines: ["see @other"], cursorLine: 0, cursorCol: "see @other".length });
+	});
+
+	test("applies slash-command argument completions that start with @", async () => {
+		const provider = new CombinedAutocompleteProvider([], tmpdir());
+		const item = { value: "@alice reviewer", label: "@alice reviewer" };
+		const line = "/assign @alice re";
+		const result = provider.applyCompletion([line], 0, line.length, item, "@alice re");
+		assert.deepStrictEqual(result, {
+			lines: ["/assign @alice reviewer "],
+			cursorLine: 0,
+			cursorCol: "/assign @alice reviewer ".length,
+		});
+	});
+
+	test(
+		"bounds slow recursive @ searches only when automatic completion has direct matches",
+		{ skip: process.platform === "win32" },
+		async (t) => {
+			const baseDir = mkdtempSync(join(tmpdir(), "pi-autocomplete-slow-"));
+			t.after(() => rmSync(baseDir, { recursive: true, force: true }));
+			const fakeFdPath = join(baseDir, "fd");
+			// "Zed" stands for a --full-path query whose direct hits match only through the base path.
+			writeFileSync(
+				fakeFdPath,
+				`#!${process.execPath}
+const query = process.argv.at(-1);
+if (process.argv.includes("--max-depth")) {
+	if (query === "Dow") console.log("Downloads/");
+	if (query === "Zed") console.log("other.txt");
+} else if (query === "Zed") {
+	setTimeout(() => console.log("nested/Zed.txt"), 500);
+} else {
+	setTimeout(() => console.log("nested/Download.txt"), 500);
+}
+`,
+				{ mode: 0o755 },
+			);
+			const provider = new CombinedAutocompleteProvider([], baseDir, fakeFdPath);
+			for (const [line, force, expected] of [
+				["@Dow", false, ["@Downloads/"]],
+				["@Dow", true, ["@Downloads/", "@nested/Download.txt"]],
+				["@Download.txt", false, ["@nested/Download.txt"]],
+				["@Zed", false, ["@nested/Zed.txt"]],
+			] as const) {
+				const result = await getSuggestions(provider, [line], 0, line.length, force);
+				assert.deepStrictEqual(
+					result?.items.map((item) => item.value),
+					expected,
+				);
+			}
+		},
+	);
+
 	describe("fd @ file suggestions", { skip: !isFdInstalled }, () => {
 		let rootDir = "";
 		let baseDir = "";
@@ -384,7 +453,7 @@ describe("CombinedAutocompleteProvider", () => {
 
 			const provider = new CombinedAutocompleteProvider([], baseDir, requireFdPath());
 			const line = "@scope/pro";
-			const result = await getSuggestions(provider, [line], 0, line.length);
+			const result = await getSuggestions(provider, [line], 0, line.length, true);
 
 			const values = result?.items.map((item) => item.value) ?? [];
 			assert.strictEqual(values[0], "@scope/projects/");
@@ -403,7 +472,7 @@ describe("CombinedAutocompleteProvider", () => {
 
 			const provider = new CombinedAutocompleteProvider([], baseDir, requireFdPath());
 			const line = "@scope/pro";
-			const result = await getSuggestions(provider, [line], 0, line.length);
+			const result = await getSuggestions(provider, [line], 0, line.length, true);
 
 			const values = result?.items.map((item) => item.value) ?? [];
 			assert.strictEqual(values[0], "@scope/projects/");
