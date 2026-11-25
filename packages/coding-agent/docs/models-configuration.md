@@ -184,6 +184,7 @@ Also applies to `azure-openai-responses` and `openai-codex-responses`.
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `supportsStrictMode` | boolean | `false` | Whether the model supports Bedrock strict tool schemas. |
+| `supportsReasoningReplay` | boolean | `true` | Whether the model accepts reasoning blocks from earlier assistant messages. When false, earlier reasoning is not sent back. The generated catalog disables this for Kimi K3 models, which fail on Converse when it is sent. |
 
 ### `mistral-conversations`
 

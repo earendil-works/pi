@@ -11,6 +11,10 @@ const INFERENCE_PROFILE_ONLY_MODEL_IDS = new Set(["anthropic.claude-opus-5"]);
 // although models.dev lists effort values for both.
 const FLAT_REASONING_EFFORT_FAMILIES = ["moonshotai.kimi-k3", "zai.glm-5.3"];
 
+// Kimi K3 and K3.1 fail on Converse with InternalServerException when reasoning from earlier
+// turns is sent back; their AWS model cards say to drop it.
+const NO_REASONING_REPLAY_FAMILIES = ["moonshotai.kimi-k3"];
+
 function bedrockBaseUrl(modelId: string): string {
 	return modelId.startsWith("eu.")
 		? "https://bedrock-runtime.eu-central-1.amazonaws.com"
@@ -34,11 +38,17 @@ export default defineProvider({
 				const thinkingLevelMap = FLAT_REASONING_EFFORT_FAMILIES.some((family) => source.id.includes(family))
 					? getEffortThinkingLevelMap(source.reasoningOptions ?? [])
 					: undefined;
+				const compat = {
+					...(source.structuredOutput ? { supportsStrictMode: true } : {}),
+					...(NO_REASONING_REPLAY_FAMILIES.some((family) => source.id.includes(family))
+						? { supportsReasoningReplay: false }
+						: {}),
+				};
 				return {
 					...model,
 					baseUrl: bedrockBaseUrl(model.id),
 					...(thinkingLevelMap ? { thinkingLevelMap } : {}),
-					...(source.structuredOutput ? { compat: { supportsStrictMode: true } } : {}),
+					compat,
 				};
 			},
 		}),

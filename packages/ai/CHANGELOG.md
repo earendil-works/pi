@@ -6,6 +6,10 @@
 
 - Removed the `thinkingFormat: "ant-ling"` compat value. Ant Ling ignores `reasoning.effort`, so it could not turn thinking off; use `thinkingFormat: "deepseek"`, which sends `thinking: { type }`. Ant Ling endpoints are now detected as `"deepseek"`
 
+### Added
+
+- Added `compat.supportsReasoningReplay` to the `bedrock-converse-stream` API. When `false`, reasoning from earlier assistant messages is not sent back
+
 ### Changed
 
 - Qwen Token Plan Individual now lists `qwen4-max` instead of the retired `qwen4-max-preview`
@@ -15,6 +19,7 @@
 ### Fixed
 
 - Fixed Amazon Bedrock Kimi K3.1 and GLM 5.3 ignoring the selected thinking level: they always reasoned at `max`, offered `minimal`, and hid `xhigh` and `max`. Pi now offers the effort levels models.dev lists and sends them as `reasoning_effort`, with `none` for `off` on Kimi K3.1 (GLM 5.3 cannot turn thinking off). Bedrock models outside the Claude and GPT families now send `reasoning_effort` whenever their `thinkingLevelMap` maps the selected level ([#12462](https://github.com/earendil-works/pi/issues/12462))
+- Fixed Amazon Bedrock Kimi K3 and K3.1 multi-turn requests sending earlier reasoning back, which AWS documents as failing on Converse with `InternalServerException`. Earlier reasoning is no longer sent for these models
 
 ## [1.6.1] - 2026-11-25
 

@@ -1089,6 +1089,7 @@ function convertMessages(
 							});
 							break;
 						case "thinking": {
+							if (model.compat?.supportsReasoningReplay === false) continue;
 							// Encrypted reasoning is opaque: replay the stored payload as the
 							// `redactedContent` member instead of lowering it to reasoning text.
 							if (c.redacted) {
