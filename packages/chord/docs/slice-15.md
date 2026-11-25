@@ -268,5 +268,12 @@ and `78-denial-messages.ts`.
   attempt that refuses a version does not serve it meanwhile (`oldServes`); a call that waited at the reload gate is
   refused when the new provider refuses its version; a refused hold leaves its object to idle; waiting again for the
   same cause shows the same state; a denial unbinds the holders of versions the provider no longer binds (F3).
+  The final checks made the rule hold everywhere a refusal is decided: a denial also unbinds the holders of versions
+  the provider refuses a member (granttest G1), a fresh hold of a refused version on a denied or failed object waits
+  instead of showing the denial (Astra 3; main showed the denial, the fix removed lines), a getter old work makes in a
+  restart's drain binds when the open old attempt serves its version though the successor refuses it (Astra 1, a
+  regression against main), and an instance that refuses a version gives that version no member, so a restart's
+  refusing old attempt shows a reference of it nothing while the successor that serves it waits (Astra 2, Sol; main
+  showed it `live` with the old values).
 - **§2:** a denial's message travels as the `forbidden` error's `details.message` (no new field in a failure or on the
   wire); `sameCause` compares details, so a changed message reaches the holders.

@@ -169,12 +169,12 @@ export class AdaptedMembers {
 	event(member: string): EventNode | undefined {
 		const instance = this.#instance;
 		const { served } = instance;
-		if (!served.provider.accepted.some(({ version }) => version === this.version)) return undefined;
+		if (refusal(served, this.version) !== undefined) return undefined;
 		const node = instance.event(member);
 		if (node === undefined) return undefined;
 		const mapping = this.#mappings?.events?.[member];
 		if (mapping === undefined) return node;
-		// A refused member refused the binding (`refusal`): no binding of this version taps it.
+		// Refused, the version gets no node (`refusal` above).
 		if (mapping === "refuse") return undefined;
 		this.#events ??= new Map();
 		let mapped = this.#events.get(member);
@@ -200,7 +200,7 @@ export class AdaptedMembers {
 
 	/** The mapping of keyed member `member`, counted; `contract_mismatch` when refused. */
 	#keyed(member: string): ((current: JsonValue) => JsonValue) | undefined {
-		this.#assertAccepted();
+		this.#assertServed();
 		const mapping = this.#mappings?.keyed?.[member];
 		if (mapping === undefined) return undefined;
 		if (mapping === "refuse") throw refused(this.#contract, this.version, member);
@@ -217,7 +217,7 @@ export class AdaptedMembers {
 	 * member when the current version has it, else of the whole current state its caller was granted (a removed member).
 	 */
 	#make(member: string): DeriveSource {
-		this.#assertAccepted();
+		this.#assertServed();
 		const instance = this.#instance;
 		const { granted, batch } = instance;
 		// A member its version marks grantable and its caller was not granted is refused before any mapping sees
@@ -254,14 +254,13 @@ export class AdaptedMembers {
 		return derive;
 	}
 
-	/** Throws `contract_mismatch` unless the provider accepts this version. */
-	#assertAccepted(): void {
-		const { contract, provider } = this.#instance.served;
-		if (provider.accepted.some(({ version }) => version === this.version)) return;
-		throw new ChordError({
-			code: "contract_mismatch",
-			message: `${contract.name} v${this.version} is not served here`,
-		});
+	/**
+	 * Throws `contract_mismatch` unless the provider serves this version (`refusal`): an instance that refuses it a
+	 * member gives it none (a restart's old one, while the successor that binds it waits for the drain).
+	 */
+	#assertServed(): void {
+		const error = refusal(this.#instance.served, this.version);
+		if (error !== undefined) throw error;
 	}
 
 	get #contract(): Contract {

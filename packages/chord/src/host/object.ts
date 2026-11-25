@@ -716,12 +716,9 @@ export class ChordObject implements Target {
 	 * lingering object stays.
 	 */
 	hold(holder: Holder): void {
-		// A version it binds whose member its provider refuses (an older consumer): it waits unbound for a publication.
-		const state = this.#state;
-		let unfit = state.kind === "live" ? this.#unfit(holder, state.attempt) : undefined;
-		// Activating: the provider's refusal (a version only a restart's old attempt binds waits for it); a failure or
-		// denial shows instead, as main had it.
-		if (state.kind === "activating" && state.shown.kind !== "failed") unfit = this.#refusedBy(state.attempt, holder);
+		// A version it binds whose member its provider refuses (an older consumer): it waits unbound for a publication,
+		// also on a failed or denied object. Not live, a version only a restart's old attempt binds waits for it.
+		const unfit = this.#state.kind === "live" ? this.#unfit(holder) : this.#refusedBy(holder);
 		if (unfit !== undefined) {
 			this.#unbound(holder, unfit);
 			// It may hold nothing else: it ends as at a release, once the caller's bind is over.
@@ -1025,9 +1022,9 @@ export class ChordObject implements Target {
 	/** An admitted object is denied: presence lists its holders no more, until its next allow (§19). */
 	#disallow(): void {
 		this.#granted = NO_GRANTS;
-		// A holder of a version its provider no longer binds waits for one that does: the denial is no answer for it (F3).
-		// Its last holders gone, it ends as at their release, once the caller told the rest.
-		if (this.#unbindUnfit(undefined)) queueMicrotask(() => this.#idle());
+		// A holder of a version its provider no longer binds or refuses a member waits for one that serves it: the denial
+		// is no answer for it (F3, G1). Its last holders gone, it ends as at their release, once the caller told the rest.
+		if (this.#unbindUnfit()) queueMicrotask(() => this.#idle());
 		if (!this.#allowed) return;
 		this.host.unreferenced(this, this.#holders, this.#context);
 		this.#allowed = false;
@@ -1344,7 +1341,7 @@ export class ChordObject implements Target {
 		if (this.#wakes !== undefined) this.#wakes.during = undefined;
 		// Before the new instance is shown: holders of a version its provider does not bind leave with their last values,
 		// which their references take from the instance shown so far.
-		const unbound = this.#unbindUnfit(attempt);
+		const unbound = this.#unbindUnfit();
 		this.#state = { kind: "live", attempt };
 		this.#granted = attempt.granted;
 		this.#exposed = attempt;
@@ -1392,15 +1389,15 @@ export class ChordObject implements Target {
 	}
 
 	/**
-	 * Its holders whose version `attempt`'s provider (going live) does not bind (a reload dropped it, slice 7b §6), or
-	 * of which it refuses a member (`contract_mismatch`), leave it: they wait unbound `version` (`failed { waiting }`),
+	 * Its holders whose version its provider (going live, or denied) does not bind (a reload dropped it, slice 7b §6),
+	 * or of which it refuses a member (`contract_mismatch`), leave it: they wait unbound `version` (`failed { waiting }`),
 	 * references with their last values, until a publication serves their version again. The object and its other
 	 * holders stay.
 	 */
-	#unbindUnfit(attempt: Attempt | undefined): boolean {
+	#unbindUnfit(): boolean {
 		let unfit: [Holder, ChordError][] | undefined;
 		for (const holder of this.#holders) {
-			const error = this.#unfit(holder, attempt);
+			const error = this.#unfit(holder);
 			if (error === undefined) continue;
 			unfit ??= [];
 			unfit.push([holder, error]);
@@ -1423,24 +1420,24 @@ export class ChordObject implements Target {
 	}
 
 	/**
-	 * Why `holder` cannot bind to `attempt` (live; none for a denial, which no member refusal concerns): its version is
-	 * not one the provider binds, or the provider refuses a member of it (`contract_mismatch`); `undefined` when it binds.
+	 * Why `holder` cannot bind to its served provider: its version is not one the provider binds, or the provider
+	 * refuses a member of it (`contract_mismatch`); `undefined` when it binds.
 	 */
-	#unfit(holder: Holder, attempt: Attempt | undefined): ChordError | undefined {
+	#unfit(holder: Holder): ChordError | undefined {
 		const { contract, provider } = this.served;
 		const { version, fingerprint } = holder.contract;
-		if (version === contract.version && fingerprint === contract.fingerprint) return undefined;
-		if (binds(provider, version, fingerprint)) return this.#refusedBy(attempt, holder);
+		if (binds(provider, version, fingerprint)) return refusal(this.served, version);
 		return new ChordError({ code: "contract_mismatch", message: `${contract.name} v${version} is not served here` });
 	}
 
-	/** The member of `holder`'s older version that `attempt`'s provider refuses at its grant (`contract_mismatch`). */
-	#refusedBy(attempt: Attempt | undefined, holder: Holder): ChordError | undefined {
+	/**
+	 * The member of `holder`'s older version that its served provider, binding it, refuses (`contract_mismatch`); none
+	 * while a restart's open old attempt serves that version (old work's getters use it, as consumers of it do).
+	 */
+	#refusedBy(holder: Holder): ChordError | undefined {
 		const { version, fingerprint } = holder.contract;
-		const served = attempt?.served;
-		return served !== undefined && binds(served.provider, version, fingerprint)
-			? refusal(served, version)
-			: undefined;
+		if (!binds(this.served.provider, version, fingerprint) || this.oldServes(version, fingerprint)) return undefined;
+		return refusal(this.served, version);
 	}
 
 	/**

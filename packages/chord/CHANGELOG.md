@@ -20,6 +20,10 @@
 - A reference makes its named queries' handles on first use: a reference to a store with 23 named queries, none read, takes 1.3 KiB instead of 6.4 KiB.
 - A store commit skip-tests only the live reads its writes can concern (the commit index): reads are filed by the values their condition fixes with `eq`/`inArray` and by the keys of their last result. One write to one session's row with 10,000 open reads of other sessions now tests one read instead of 10,000; `chord.query.skips` counts only the reads tested.
 
+### Fixed
+
+- A reference of an older version its provider refuses a member waits unbound (`failed { waiting }`, `contract_mismatch`) also when its object is denied (it showed the denial), and reads nothing from an instance that refuses its version: during a restart whose old attempt refuses it, it shows `loading` and its reads throw `not_ready` until the successor serves it (it showed `live` with the old attempt's values).
+
 ## [1.6.1] - 2026-11-25
 
 ### Breaking Changes

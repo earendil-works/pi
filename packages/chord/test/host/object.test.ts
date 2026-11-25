@@ -2432,7 +2432,6 @@ describe("versions and grants together (review round 2, granttest F3 and F5)", (
 	});
 	const V2 = evolve(V1, (e) => e.addState("t", str()).event("e0", obj({ y: str() })));
 
-	/** The gate, and `version`'s provider admitting by it (v2 accepting v1 with `e0` refused). */
 	/** The gate's plugin, loaded once: the versioned provider's reloads keep its mode. */
 	const gate = defineFacet<TestPrincipal>((h) =>
 		h.serve(Gate, (_, self) => {
@@ -2450,7 +2449,10 @@ describe("versions and grants together (review round 2, granttest F3 and F5)", (
 		self.derive([self.get(Gate, {}).mode], ([mode]) =>
 			mode === "deny" ? deny("no access") : allow({ granted: mode === "e0" ? (["e0"] as const) : [] }),
 		);
-	const facet = (version: 1 | 2) =>
+	/** How v2 serves v1's `e0`: refused, mapped; `slow`: its objects open a native that takes a few milliseconds. */
+	type Serving = { readonly e0: "refuse" | "map"; readonly slow: boolean };
+	/** `version`'s provider admitting by the gate (v2 accepting v1 with `e0` as `serving` says). */
+	const facet = (version: 1 | 2, serving: Serving) =>
 		defineFacet<TestPrincipal>((h) => {
 			if (version === 1) {
 				h.serve(V1, (_p, _principal, _admitted, self) => ({ s: constant("s"), e0: () => self.events() }), {
@@ -2460,18 +2462,25 @@ describe("versions and grants together (review round 2, granttest F3 and F5)", (
 			}
 			h.serve(
 				V2,
-				(_p, _principal, _admitted, self) => ({ s: constant("s"), t: constant("t"), e0: () => self.events() }),
+				(_p, _principal, _admitted, self) => {
+					if (serving.slow)
+						self.open(
+							() => new Promise((resolve) => setTimeout(resolve, 5)),
+							() => {},
+						);
+					return { s: constant("s"), t: constant("t"), e0: () => self.events() };
+				},
 				{
 					// The same decisions: v2's grantable names are v1's.
 					admit: admit as unknown as Admit<typeof V2, TestPrincipal>,
-					accepts: { 1: { events: { e0: "refuse" } } },
+					accepts: { 1: { events: { e0: serving.e0 === "refuse" ? "refuse" : ({ y }) => ({ y: y.length }) } } },
 				},
 			);
 		});
-	/** The server's plugins: the gate and `version`'s provider. */
-	const plugins = (version: 1 | 2) => [
+	/** The server's plugins: the gate and `version`'s provider (v2 refusing v1's `e0` unless `serving` says else). */
+	const plugins = (version: 1 | 2, serving: Serving = { e0: "refuse", slow: false }) => [
 		{ name: "@test/gate", facet: gate },
-		{ name: "@test/app", facet: facet(version) },
+		{ name: "@test/app", facet: facet(version, serving) },
 	];
 
 	/** A reference's state, shortly: its kind, and the cause's kind and code when failed. */
@@ -2491,6 +2500,40 @@ describe("versions and grants together (review round 2, granttest F3 and F5)", (
 			await server.reload(plugins(1), context);
 			await flushed();
 			expect(shown(ref)).toBe("failed waiting contract_mismatch");
+			await client.close(context);
+			await server.close(context);
+		});
+
+		for (const slow of [false, true]) {
+			const opening = slow ? ", slow to open" : "";
+			it(`a denied holder waits contract_mismatch once a reload refuses its version a member (G1${opening}, ${where})`, async () => {
+				const { server, client } = await linked(() => {});
+				await server.reload(plugins(2, { e0: "map", slow }), context);
+				const holder = where === "on its host" ? server : client;
+				const ref = holder.hold(V1, {}, context);
+				await vi.waitFor(() => expect(shown(ref)).toBe("live"));
+				await (await server.get(Gate, {}, context)).set("deny", context);
+				await vi.waitFor(() => expect(shown(ref)).toBe("failed denied forbidden"));
+				// The provider refuses v1 a member now: the denial is no answer for its holder, as for a fresh hold.
+				await server.reload(plugins(2, { e0: "refuse", slow }), context);
+				await vi.waitFor(() => expect(shown(ref)).toBe("failed waiting contract_mismatch"));
+				const fresh = holder.hold(V1, {}, context);
+				await vi.waitFor(() => expect(shown(fresh)).toBe("failed waiting contract_mismatch"));
+				await client.close(context);
+				await server.close(context);
+			});
+		}
+
+		it(`a fresh holder refused a member waits contract_mismatch on a denied object (final check, Astra 3, ${where})`, async () => {
+			const { server, client } = await linked(() => {});
+			await server.reload(plugins(2), context);
+			await (await server.get(Gate, {}, context)).set("deny", context);
+			const holder = where === "on its host" ? server : client;
+			const current = holder.hold(V2, {}, context);
+			await vi.waitFor(() => expect(shown(current)).toBe("failed denied forbidden"));
+			// Refusals are static per provider and version: the denial is no answer for v1.
+			const older = holder.hold(V1, {}, context);
+			await vi.waitFor(() => expect(shown(older)).toBe("failed waiting contract_mismatch"));
 			await client.close(context);
 			await server.close(context);
 		});
@@ -3276,6 +3319,76 @@ describe("refusals are static per provider and version (final review, Astra and 
 			gate.resolve();
 			await client.close(context);
 			await server.close(context);
+		}
+	});
+});
+
+describe("a restart's old attempt and the versions it refuses (final check, Astra 1 and 2, Sol)", () => {
+	/** v2 removed v1's `gone`: its provider maps it for v1 or refuses it (and so v1). */
+	const V1 = local("test.restart-refusal", {
+		version: 1,
+		params: {},
+		members: { x: str(), gone: str(), work: method(undefined, str()) },
+	});
+	const V2 = evolve(V1, (e) => e.removeState("gone"));
+	/** A v2 provider showing `text` as `x`, v1's `gone` as `gone` says; `work` waits for `gate`, then runs `then`. */
+	const provider = (
+		text: string,
+		gone: "refuse" | "map",
+		gate: Promise<void>,
+		then: (ctx: Ctx) => Promise<string> = async () => "ok",
+	) =>
+		defineFacet((h) =>
+			h.serve(
+				V2,
+				() => ({
+					x: constant(text),
+					work: async (ctx) => {
+						await gate;
+						return then(ctx);
+					},
+				}),
+				{ accepts: { 1: { state: { gone: gone === "refuse" ? "refuse" : () => "mapped" } } } },
+			),
+		);
+
+	it("a getter old work makes in the drain uses the old attempt that serves its version (Astra 1)", async () => {
+		const gate = Promise.withResolvers<void>();
+		const readsV1 = async (ctx: Ctx) => (await ctx.get(V1, {})).x.value;
+		const host = createHost({ onError: () => {} });
+		try {
+			await host.load([{ name: "test", facet: provider("old", "map", gate.promise, readsV1) }], context);
+			const working = (await host.get(V2, {}, context)).work(context);
+			await flushed();
+			// The successor refuses v1; the old attempt, still draining, maps it.
+			await host.reload([{ name: "test", facet: provider("new", "refuse", gate.promise) }], context);
+			gate.resolve();
+			expect(await working).toBe("old");
+		} finally {
+			gate.resolve();
+			await host.close(context);
+		}
+	});
+
+	it("a version the old attempt refuses reads nothing of it while the successor that serves it waits (Astra 2, Sol)", async () => {
+		const gate = Promise.withResolvers<void>();
+		const host = createHost({ onError: () => {} });
+		try {
+			await host.load([{ name: "test", facet: provider("old", "refuse", gate.promise) }], context);
+			const working = (await host.get(V2, {}, context)).work(context);
+			await flushed();
+			const ref = host.hold(V1, {}, context);
+			expect(ref.state.value).toMatchObject({ kind: "failed", cause: { kind: "waiting" } });
+			// The successor maps v1; the drain keeps the old attempt open, which refuses v1 every member.
+			await host.reload([{ name: "test", facet: provider("new", "map", gate.promise) }], context);
+			expect(ref.state.value.kind).toBe("loading");
+			expect(() => ref.x.value).toThrow(expect.objectContaining({ code: "not_ready" }));
+			gate.resolve();
+			await working;
+			await vi.waitFor(() => expect(ref.x.value).toBe("new"));
+		} finally {
+			gate.resolve();
+			await host.close(context);
 		}
 	});
 });
