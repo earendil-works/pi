@@ -1314,6 +1314,11 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		adapted.detach(this.#object.ended());
 	}
 
+	/** Why its provider refuses consumers of `version` (`refusal`), found once per version; `undefined` when it serves them. */
+	refusalAt(version: number): ChordError | undefined {
+		return version === this.#served.contract.version ? undefined : this.#adaptedAt(version).refused;
+	}
+
 	/** Its mapping for `version`, made by the first use, reading this instance's own members and provider. */
 	#adaptedAt(version: number): AdaptedMembers {
 		this.#adapted ??= new Map();

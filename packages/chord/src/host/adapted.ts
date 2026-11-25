@@ -90,10 +90,16 @@ export class AdaptedMembers {
 	#keys: Map<string, Map<DeriveSource, MappedKey>> | undefined;
 	/** The event members mapped so far, each tapping the instance's node; made by the first. */
 	#events: Map<string, MappedEvents> | undefined;
+	/**
+	 * Why its provider refuses this version (`refusal`, static per provider and version, so found once); `undefined`
+	 * when it serves it. A refused version gets no member (a restart's old instance, while the successor serving it waits).
+	 */
+	readonly refused: ChordError | undefined;
 
 	constructor(instance: AdaptedInstance, version: number) {
 		this.#instance = instance;
 		this.version = version;
+		this.refused = refusal(instance.served, version);
 	}
 
 	/**
@@ -168,13 +174,12 @@ export class AdaptedMembers {
 	 */
 	event(member: string): EventNode | undefined {
 		const instance = this.#instance;
-		const { served } = instance;
-		if (refusal(served, this.version) !== undefined) return undefined;
+		if (this.refused !== undefined) return undefined;
 		const node = instance.event(member);
 		if (node === undefined) return undefined;
 		const mapping = this.#mappings?.events?.[member];
 		if (mapping === undefined) return node;
-		// Refused, the version gets no node (`refusal` above).
+		// Refused, the version gets no node (`refused` above).
 		if (mapping === "refuse") return undefined;
 		this.#events ??= new Map();
 		let mapped = this.#events.get(member);
@@ -200,7 +205,7 @@ export class AdaptedMembers {
 
 	/** The mapping of keyed member `member`, counted; `contract_mismatch` when refused. */
 	#keyed(member: string): ((current: JsonValue) => JsonValue) | undefined {
-		this.#assertServed();
+		if (this.refused !== undefined) throw this.refused;
 		const mapping = this.#mappings?.keyed?.[member];
 		if (mapping === undefined) return undefined;
 		if (mapping === "refuse") throw refused(this.#contract, this.version, member);
@@ -217,7 +222,7 @@ export class AdaptedMembers {
 	 * member when the current version has it, else of the whole current state its caller was granted (a removed member).
 	 */
 	#make(member: string): DeriveSource {
-		this.#assertServed();
+		if (this.refused !== undefined) throw this.refused;
 		const instance = this.#instance;
 		const { granted, batch } = instance;
 		// A member its version marks grantable and its caller was not granted is refused before any mapping sees
@@ -252,15 +257,6 @@ export class AdaptedMembers {
 			(error) => instance.report(member, error),
 		);
 		return derive;
-	}
-
-	/**
-	 * Throws `contract_mismatch` unless the provider serves this version (`refusal`): an instance that refuses it a
-	 * member gives it none (a restart's old one, while the successor that binds it waits for the drain).
-	 */
-	#assertServed(): void {
-		const error = refusal(this.#instance.served, this.version);
-		if (error !== undefined) throw error;
 	}
 
 	get #contract(): Contract {

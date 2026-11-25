@@ -274,6 +274,11 @@ and `78-denial-messages.ts`.
   restart's drain binds when the open old attempt serves its version though the successor refuses it (Astra 1, a
   regression against main), and an instance that refuses a version gives that version no member, so a restart's
   refusing old attempt shows a reference of it nothing while the successor that serves it waits (Astra 2, Sol; main
-  showed it `live` with the old values).
+  showed it `live` with the old values). The verification after them: a failed activation also unbinds the holders of
+  versions its provider refuses a member, as a fresh hold does (Astra; main showed both existing and fresh holders the
+  failure, this branch had shown a fresh one waiting; holders of a version it no longer binds still see the failure, as
+  on main); a named query of a version the open old attempt does not serve
+  throws `not_ready`, as its state shows `loading` (Astra, Sol; main paged the refusing old attempt, showing it
+  `live`); the refusal is found once per instance and version (`AdaptedMembers.refused`), not per member lookup (Sol).
 - **§2:** a denial's message travels as the `forbidden` error's `details.message` (no new field in a failure or on the
   wire); `sameCause` compares details, so a changed message reaches the holders.

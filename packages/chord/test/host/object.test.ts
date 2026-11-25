@@ -1,6 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
 import { type Context, BACKGROUND_CONTEXT as context, withoutAbortSignal } from "../../src/context/index.ts";
-import { arr, bool, evolve, grantable, int, local, method, obj, remote, str } from "../../src/contracts/index.ts";
+import {
+	arr,
+	bool,
+	evolve,
+	grantable,
+	int,
+	local,
+	method,
+	obj,
+	queries,
+	remote,
+	type Static,
+	str,
+} from "../../src/contracts/index.ts";
 import { broken, ChordError } from "../../src/data/index.ts";
 import { defineState, type SingletonHandle } from "../../src/documents/index.ts";
 import { Attempt } from "../../src/host/attempt.ts";
@@ -3391,4 +3404,106 @@ describe("a restart's old attempt and the versions it refuses (final check, Astr
 			await host.close(context);
 		}
 	});
+
+	it("a version the old attempt refuses pages no named query of it while the successor that serves it waits (Astra, Sol)", async () => {
+		const Rows = defineTable("test-rows", { version: 1, columns: { id: str() }, key: ["id"] });
+		const All = obj({});
+		const Q1 = local("test.restart-refusal-query", {
+			version: 1,
+			params: {},
+			members: { refused: str(), rows: queries(str(), { all: All }), put: method(), drain: method() },
+		});
+		const Q2 = evolve(Q1, (e) => e.removeState("refused"));
+		const gate = Promise.withResolvers<void>();
+		const running = Promise.withResolvers<void>();
+		/** The members both versions share: `rows` maps each row to `text`; `drain` waits for `gate`. */
+		const members = (self: StoreSelf, text: string) => {
+			const table = self.table(Rows);
+			return {
+				rows: self.queries(table, { map: () => text }, { all: (_: Static<typeof All>) => query(Rows) }),
+				put: async (ctx: Context) => {
+					await self.tx(async (tx) => tx.put(table, { id: "row" }), ctx);
+					return null;
+				},
+				drain: async () => {
+					running.resolve();
+					await gate.promise;
+					return null;
+				},
+			};
+		};
+		const v2 = defineFacet((h) =>
+			h.serve(Q2, (_, self) => members(self, "old"), { accepts: { 1: { state: { refused: "refuse" } } } }),
+		);
+		const v1 = defineFacet((h) =>
+			h.serve(Q1, (_, self) => ({ ...members(self, "new"), refused: constant("present") })),
+		);
+		const store = await memoryStore();
+		const host = createHost({ store, onError: () => {} });
+		try {
+			await host.load([{ name: "test", facet: v2 }], context);
+			const current = await host.get(Q2, {}, context);
+			await current.put(context);
+			const ref = host.hold(Q1, {}, context);
+			const working = current.drain(context);
+			await running.promise;
+			// The successor serves v1; the draining old attempt, which refuses it, pages nothing for it.
+			await host.reload([{ name: "test", facet: v1 }], context);
+			expect(ref.state.value.kind).toBe("loading");
+			expect(() => ref.rows.all.page({}, 1, context)).toThrow(expect.objectContaining({ code: "not_ready" }));
+			gate.resolve();
+			await working;
+			await vi.waitFor(() => expect(ref.state.value.kind).toBe("live"));
+			expect((await ref.rows.all.page({}, 1, context)).items).toEqual(["new"]);
+		} finally {
+			gate.resolve();
+			await host.close(context);
+			await store.close(context);
+		}
+	});
+});
+
+describe("a failed successor and the versions it refuses (final check, Astra)", () => {
+	const V1 = remote("test.failed-refusal", {
+		version: 1,
+		params: {},
+		hostAddress: () => Server(),
+		state: { s: str(), x: str() },
+	});
+	const V2 = evolve(V1, (e) => e.removeState("x"));
+	/** v2 refusing v1 (its `x`), whose objects fail opening their native. */
+	const failing = defineFacet<TestPrincipal>((h) =>
+		h.serve(
+			V2,
+			(_p, _principal, self) => {
+				self.open(
+					async () => {
+						throw broken(new Error("open failed"));
+					},
+					() => {},
+				);
+				return { s: constant("new") };
+			},
+			{ accepts: { 1: { state: { x: "refuse" } } } },
+		),
+	);
+
+	for (const where of ["on its host", "over a link"] as const) {
+		it(`an existing holder of a version a failing successor refuses waits as a fresh one does (${where})`, async () => {
+			const { server, client } = await linked((h) => h.serve(V1, () => ({ s: constant("old"), x: constant("x") })));
+			const holder = where === "on its host" ? server : client;
+			const existing = await holder.get(V1, {}, context);
+			await server.reload([{ name: "@test/app", facet: failing }], context);
+			await vi.waitFor(() => expect(existing.state.value.kind).toBe("failed"));
+			const fresh = holder.hold(V1, {}, context);
+			await vi.waitFor(() => expect(fresh.state.value.kind).toBe("failed"));
+			// The failure is no answer for v1: both wait for a provider that serves it, and nobody is listed.
+			for (const ref of [existing, fresh]) {
+				expect(ref.state.value).toMatchObject({ cause: { kind: "waiting", error: { code: "contract_mismatch" } } });
+			}
+			expect((await server.references(V1).watch(context)).value).toEqual([]);
+			await client.close(context);
+			await server.close(context);
+		});
+	}
 });

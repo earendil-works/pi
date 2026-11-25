@@ -125,8 +125,11 @@ export interface Target {
 	readonly instance: unknown;
 	/** The keyed member `member` of the live object: its ultimate slot (slice 6a §12; only local objects have any). */
 	keyedMember(member: string): KeyedSlot;
-	/** The named query `name` of `queries` member `member` of the live object (slice 14 §3.1; local objects only). */
-	queryMember(member: string, name: string): OwnQuery;
+	/**
+	 * The named query `name` of `queries` member `member` of the live object, as a consumer of `contract` sees it (slice
+	 * 14 §3.1; local objects only).
+	 */
+	queryMember(member: string, name: string, contract: Contract): OwnQuery;
 	/**
 	 * How a consumer of `version` reads keyed member `member`'s documents: mapped back to its version when older
 	 * (slice 7b §7), `undefined` when as they are; `contract_mismatch` when the provider refuses it.
@@ -756,7 +759,7 @@ export class Binding implements Holder, UnboundRequest {
 
 	/** The named query `name` of `queries` member `member` of the live object, as `keyedSlot` resolves a keyed one. */
 	queryMember(member: string, name: string): OwnQuery {
-		return this.#target().queryMember(member, name);
+		return this.#target().queryMember(member, name, this.contract);
 	}
 
 	/** How this reference reads keyed member `member`'s documents (`Target.keyedMapping`), as `keyedSlot` resolves. */

@@ -368,9 +368,7 @@ export class ChordObject implements Target {
 		const old = this.openOldAttempt;
 		// One that refuses the version a member serves it nothing (its mapping would throw, N1).
 		return (
-			old !== undefined &&
-			binds(old.served.provider, version, fingerprint) &&
-			refusal(old.served, version) === undefined
+			old !== undefined && binds(old.served.provider, version, fingerprint) && old.refusalAt(version) === undefined
 		);
 	}
 
@@ -701,8 +699,12 @@ export class ChordObject implements Target {
 		return memory;
 	}
 
-	/** The named query `name` of `queries` member `member` of the live object (slice 14 §3.1). */
-	queryMember(member: string, name: string): OwnQuery {
+	/** The named query `name` of `queries` member `member` of the live object, as a consumer of `contract` sees it. */
+	queryMember(member: string, name: string, contract: Contract): OwnQuery {
+		// A restart's old attempt serves no query to a version it does not serve (`stateFor`): it waits for the successor.
+		if (this.#state.kind === "activating" && !this.oldServes(contract.version, contract.fingerprint)) {
+			throw new ChordError({ code: "not_ready", message: `${this.label}: not live yet` });
+		}
 		return this.#live().queryMember(member, name);
 	}
 
@@ -1024,7 +1026,7 @@ export class ChordObject implements Target {
 		this.#granted = NO_GRANTS;
 		// A holder of a version its provider no longer binds or refuses a member waits for one that serves it: the denial
 		// is no answer for it (F3, G1). Its last holders gone, it ends as at their release, once the caller told the rest.
-		if (this.#unbindUnfit()) queueMicrotask(() => this.#idle());
+		if (this.#unbindUnfit((holder) => this.#unfit(holder))) queueMicrotask(() => this.#idle());
 		if (!this.#allowed) return;
 		this.host.unreferenced(this, this.#holders, this.#context);
 		this.#allowed = false;
@@ -1341,7 +1343,7 @@ export class ChordObject implements Target {
 		if (this.#wakes !== undefined) this.#wakes.during = undefined;
 		// Before the new instance is shown: holders of a version its provider does not bind leave with their last values,
 		// which their references take from the instance shown so far.
-		const unbound = this.#unbindUnfit();
+		const unbound = this.#unbindUnfit((holder) => this.#unfit(holder));
 		this.#state = { kind: "live", attempt };
 		this.#granted = attempt.granted;
 		this.#exposed = attempt;
@@ -1389,15 +1391,15 @@ export class ChordObject implements Target {
 	}
 
 	/**
-	 * Its holders whose version its provider (going live, or denied) does not bind (a reload dropped it, slice 7b §6),
-	 * or of which it refuses a member (`contract_mismatch`), leave it: they wait unbound `version` (`failed { waiting }`),
+	 * Its holders `check` finds unfit (`#unfit`: a version its provider does not bind, a reload dropped it, slice 7b §6,
+	 * or of which it refuses a member, `contract_mismatch`) leave it: they wait unbound `version` (`failed { waiting }`),
 	 * references with their last values, until a publication serves their version again. The object and its other
 	 * holders stay.
 	 */
-	#unbindUnfit(): boolean {
+	#unbindUnfit(check: (holder: Holder) => ChordError | undefined): boolean {
 		let unfit: [Holder, ChordError][] | undefined;
 		for (const holder of this.#holders) {
-			const error = this.#unfit(holder);
+			const error = check(holder);
 			if (error === undefined) continue;
 			unfit ??= [];
 			unfit.push([holder, error]);
@@ -1471,6 +1473,9 @@ export class ChordObject implements Target {
 		});
 		this.host.ending(this.identity, this.#reported(closing));
 		this.host.report({ kind: "activation_failed", object: this.label, failure: cause });
+		// A holder of a version its provider refuses a member waits for a publication, as a fresh hold does (`hold`); one
+		// of a version it no longer binds sees the failure, as on main.
+		this.#unbindUnfit((holder) => this.#refusedBy(holder));
 		this.#notify();
 		this.#settleFirstOutcome();
 		// Job runs kept it while it activated; failed, they keep it no longer.

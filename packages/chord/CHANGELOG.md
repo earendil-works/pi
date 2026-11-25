@@ -22,7 +22,7 @@
 
 ### Fixed
 
-- A reference of an older version its provider refuses a member waits unbound (`failed { waiting }`, `contract_mismatch`) also when its object is denied (it showed the denial), and reads nothing from an instance that refuses its version: during a restart whose old attempt refuses it, it shows `loading` and its reads throw `not_ready` until the successor serves it (it showed `live` with the old attempt's values).
+- A reference of an older version its provider refuses a member waits unbound (`failed { waiting }`, `contract_mismatch`) also when its object is denied (it showed the denial), and reads nothing from an instance that refuses its version: during a restart whose old attempt refuses it, it shows `loading` and its reads throw `not_ready` until the successor serves it (it showed `live` with the old attempt's values); its named queries throw `not_ready` meanwhile. A failed activation also leaves such holders waiting unbound (they showed the failure).
 
 ## [1.6.1] - 2026-11-25
 
