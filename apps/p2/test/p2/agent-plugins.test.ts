@@ -247,6 +247,16 @@ describe("the agent's plugins", () => {
 				JSON.stringify(result),
 			);
 		}
+		// Moved back into the root in a folder of another name (the plugin's name is its package's) and reloaded by name in
+		// the same tick: applied again, not refused.
+		cpSync(EXAMPLE, join(root, "counter-ported"), { recursive: true });
+		const back = await natives.plugins.reload(["counter"]);
+		assert.deepEqual(
+			back.plugins.filter((each) => each.plugin === "counter"),
+			[{ plugin: "counter", outcome: "applied" }],
+			JSON.stringify(back),
+		);
+		await holdWith(owner, Counter, { session });
 	});
 
 	it("reports build errors with file and line, and refusals with the reason; a failed build applies nothing", async () => {

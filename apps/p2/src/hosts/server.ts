@@ -557,10 +557,12 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 						...plugins.filter((name) => !listed.has(name)),
 					]),
 				].sort();
-			const unknown = wanted.filter((name) => !listed.has(name) && !plugins.includes(name));
-			const names = wanted.filter((name) => !unknown.includes(name));
-			const rebuilt = await rebuild(names);
-			// After the build, which discovered the roots anew.
+			const loaded = plugins;
+			const rebuilt = await rebuild(wanted);
+			// Judged by Chord's discovery after the build, which discovered the roots anew when a named plugin was unknown
+			// to it: a plugin put back (or laid out as p2's own listing does not see it) is applied, not refused.
+			const discovered = new Set(chordPlugins.discovery.plugins.map(({ name }) => name));
+			const unknown = wanted.filter((name) => !discovered.has(name) && !loaded.includes(name));
 			const refusals = [
 				...unknown.map((plugin) => ({ plugin, outcome: "refused" as const, errors: ["No such plugin"] })),
 				...(await discoveryProblems()),
