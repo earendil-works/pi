@@ -2,9 +2,14 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Removed the `thinkingFormat: "ant-ling"` compat value. Ant Ling ignores `reasoning.effort`, so it could not turn thinking off; use `thinkingFormat: "deepseek"`, which sends `thinking: { type }`. Ant Ling endpoints are now detected as `"deepseek"`
+
 ### Changed
 
 - Qwen Token Plan Individual now lists `qwen4-max` instead of the retired `qwen4-max-preview`
+- Changed the `ant-ling` provider to load its models from models.dev (`bailing`), replacing the retired Ling 2.6 and Ring 2.6 models with Ling 3.0 Tiny, Ling 3.0 Flash, Ling 3.0 Flash VL, Ling 3.1 Flash, and Ling 3.2 Flash. Thinking is either off or high ([#11800](https://github.com/earendil-works/pi/pull/11800) by [@lvisei](https://github.com/lvisei))
 
 ## [1.6.1] - 2026-11-25
 

@@ -5,6 +5,7 @@
 ### Changed
 
 - The default model for `cloudflare-workers-ai` and `cloudflare-ai-gateway` is now `@cf/zai-org/glm-5.3`, because Cloudflare deprecated Workers AI Kimi K2.6 and K2.7 Code
+- Changed the `ant-ling` default model from the retired `Ring-2.6-1T` to `Ling-3.1-flash` ([#11800](https://github.com/earendil-works/pi/pull/11800) by [@lvisei](https://github.com/lvisei))
 
 ### Fixed
 
