@@ -211,13 +211,10 @@ export default defineFacet((host) => {
 		const broker = self.get(ConversationBroker, {});
 		const hosts = self.get(Hosts, {});
 		return {
-			variant: "worker",
-			members: {
-				query: async ({ requestId, query }, ctx) => {
-					const current = hosts.workers.value[principal.session];
-					if (!current?.running || current.generation !== principal.generation) throw forbidden("stale worker");
-					return broker.query({ source: principal.session, requestId, query }, ctx);
-				},
+			query: async ({ requestId, query }, ctx) => {
+				const current = hosts.workers.value[principal.session];
+				if (!current?.running || current.generation !== principal.generation) throw forbidden("stale worker");
+				return broker.query({ source: principal.session, requestId, query }, ctx);
 			},
 		};
 	});

@@ -1,6 +1,6 @@
 import { arr, bool, num, obj, opt, type Static, str } from "@earendil-works/pi-schema";
 import {
-	evolve,
+	grantable,
 	type Location,
 	LocationSchema,
 	literal,
@@ -105,41 +105,31 @@ export const ChildStore = local("p2.child-store", {
 	},
 });
 
-/** Version 2, as 6e11a00a0 released it (open pages and running workers built then still bind it). */
-const SubagentsV2 = remote("p2.subagents", {
-	// 2: a child's own location instead of its own cwd.
-	version: 2,
+/**
+ * Every session's subagents for people (`children`: the owner every session's, a guest its sessions'); a worker reports
+ * its own session's (`report`). Readers never start workers just to fill the sidebar. 2: a child's own location
+ * instead of its own cwd. 3: a child's time and failure. 4: a new base (grantable members replaced variants; older
+ * versions are refused, their pages reload).
+ */
+export const Subagents = remote("p2.subagents", {
+	version: 4,
 	params: {},
 	hostAddress: serverHost,
-	variants: {
-		reader: { state: { children: record(arr(ChildSchemaV2)) } },
-		reporter: { methods: { report: method(obj({ children: arr(ChildSchemaV2) })) } },
-	},
+	state: { children: grantable(ChildrenSchema) },
+	methods: { report: grantable(method(obj({ children: arr(ChildSchema) }))) },
 });
-
-/**
- * Workers report their own children; readers never start workers just to fill the sidebar. 3: a child's time and
- * failure. The provider still serves 2 (its `accepts`).
- */
-export const Subagents = evolve(SubagentsV2, (e) =>
-	e.state("reader", "children", ChildrenSchema).args("report", obj({ children: arr(ChildSchema) })),
-);
 
 /** Changing a session's subagents from the browser (worker): the owner and read/write guests. */
 export const SubagentControl = remote("p2.subagent-control", {
-	version: 1,
+	version: 2,
 	params: { session: param.str() },
 	hostAddress: sessionHost,
-	variants: {
-		participant: {
-			methods: {
-				/**
-				 * Archives a subagent (stopping its work first) or restores it. One-shot agents are read-only: they belong to
-				 * the script waiting for their answer.
-				 */
-				archive: method(obj({ conversation: num(), archived: bool() })),
-			},
-		},
+	methods: {
+		/**
+		 * Archives a subagent (stopping its work first) or restores it. One-shot agents are read-only: they belong to
+		 * the script waiting for their answer.
+		 */
+		archive: method(obj({ conversation: num(), archived: bool() })),
 	},
 });
 

@@ -145,12 +145,12 @@ describe("the subagents worker's reads", () => {
 				[
 					Subagents,
 					() => ({
-						variant: "reporter",
 						report: ({ children }: { children: (typeof reports)[number] }) => {
 							reports.push(children);
 							return null;
 						},
 					}),
+					["report"],
 				],
 			],
 		});

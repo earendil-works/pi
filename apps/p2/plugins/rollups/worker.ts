@@ -3,7 +3,7 @@
 import { schemaToType } from "@earendil-works/pi-codemode";
 import { defineExtension } from "@earendil-works/pi-durable";
 import { obj, opt, type Static, str, union } from "@earendil-works/pi-schema";
-import { type Ctx, defineFacet, expectVariant, literal, local, type RefIn } from "@p2/app/v1";
+import { type Ctx, defineFacet, expectGranted, literal, local, type RefWith } from "@p2/app/v1";
 import { defineP2Tool, Extensions, type P2Tool, type WorkerParts, workerOf } from "@p2/app/v1/worker";
 import { FAMILIAR_INIT } from "../familiar/contract.ts";
 import {
@@ -75,7 +75,7 @@ function rollupsExtension(worker: () => WorkerParts) {
 					});
 					try {
 						const text = await worker().root(async (ctx) => {
-							const rollups = expectVariant(await ctx.get(SidebarRollups, {}), "familiar");
+							const rollups = expectGranted(await ctx.get(SidebarRollups, {}), "list");
 							return act(args, rollups, ctx);
 						}, context);
 						return reply(text);
@@ -90,7 +90,7 @@ function rollupsExtension(worker: () => WorkerParts) {
 }
 
 /** The tool's text for `args`: one action on the server's rollups. */
-async function act(args: ToolArgs, rollups: RefIn<typeof SidebarRollups, "familiar">, ctx: Ctx): Promise<string> {
+async function act(args: ToolArgs, rollups: RefWith<typeof SidebarRollups, "list">, ctx: Ctx): Promise<string> {
 	switch (args.action) {
 		case "list": {
 			const entries = await rollups.list(ctx);

@@ -18,7 +18,6 @@ import {
 import { fitImage } from "@earendil-works/pi-durable/images/fit";
 import { type ImageProcessor, imageLimits } from "@earendil-works/pi-durable/tools";
 import { obj } from "@earendil-works/pi-schema";
-import type { JsonValue } from "@p2/app/v1";
 import {
 	type Author,
 	authorIdOf,
@@ -33,18 +32,21 @@ import {
 	defineTypedState,
 	deriveTyped,
 	entryImageRefs,
-	expectVariant,
+	expectGranted,
 	type Factory,
 	forbidden,
+	grantBy,
 	INPUT_ENTRY,
 	imageAt,
 	isGuest,
 	isOwner,
+	type JsonValue,
 	type MessageData,
 	messageData,
 	referenceParts,
 	senderText,
 	serveKeyed,
+	ungranted,
 } from "@p2/app/v1";
 import {
 	ContextTally,
@@ -63,6 +65,7 @@ import { WorkerModels } from "../models/contract.ts";
 import { Sessions } from "../sessions/contract.ts";
 import { StatusReport } from "../status/contract.ts";
 import {
+	CHAT_PARTICIPANT,
 	Chat,
 	ChatCosts,
 	ChatImages,
@@ -419,7 +422,7 @@ export default defineFacet((host) => {
 	);
 
 	/** A conversation as a principal sees it (a declared factory, so the call below can take options). */
-	const chatFactory: Factory<typeof Chat> = ({ session, conversation }, principal, self) => {
+	const chatFactory: Factory<typeof Chat> = ({ session, conversation }, principal, _admitted, self) => {
 		if (!canView(principal, session)) throw forbidden("viewers only");
 		if (!isOwner(principal) && !isGuest(principal)) throw forbidden("people only");
 		const authorId = authorIdOf(principal);
@@ -432,8 +435,12 @@ export default defineFacet((host) => {
 		const entries: typeof chat.entries = (query, ctx) => chat.entries(query, ctx);
 		if (!canSend(principal, session))
 			return {
-				variant: "viewer",
-				members: { view: chat.view, stats: chat.stats, model: chat.model, liveShell, entries },
+				view: chat.view,
+				stats: chat.stats,
+				model: chat.model,
+				liveShell,
+				entries,
+				...ungranted(CHAT_PARTICIPANT),
 			};
 		const worker = workerOf(self);
 		const harness = harnessOf(self);
@@ -456,134 +463,129 @@ export default defineFacet((host) => {
 			return restored.filter((item) => item.author.id === authorId).map((item) => item.text);
 		};
 		return {
-			variant: "participant",
-			members: {
-				view: chat.view,
-				stats: chat.stats,
-				model: chat.model,
-				liveShell,
-				entries,
+			view: chat.view,
+			stats: chat.stats,
+			model: chat.model,
+			liveShell,
+			entries,
 
-				compact: (args, ctx) =>
-					call(async () => {
-						await writable(ctx);
-						return chat.compact(args, ctx);
-					}),
-				abortCompaction: (ctx) => call(() => chat.abortCompaction(ctx)),
-				reset: (args, ctx) =>
-					call(async () => {
-						// A new context changes what the agent knows for everyone in the session: the owner's choice.
-						if (principal.kind !== "owner") throw forbidden("only the owner starts a new context");
-						await writable(ctx);
-						return chat.reset(args, ctx);
-					}),
-				shell: ({ command, includeInContext, requestId }, ctx) =>
-					call(async () => {
-						// Anyone who may send may run commands, as tools run them for them (full guests included).
-						await writable(ctx);
-						if (!command.trim()) throw new Error("Invalid command");
-						for (const gate of gates.value.values()) await gate(ctx);
-						return shells.start({ conversation, command, includeInContext, requestId, author: author() }, ctx);
-					}),
-				abortShell: ({ shellId }, ctx) =>
-					call(async () => {
-						// Its author or the owner; the command's author comes from its running state.
-						const live = liveShell.value;
-						// Only this conversation's command: `shellId` is its caller's request ID, not secret.
-						if (live?.id !== shellId) return { aborted: false };
-						if (principal.kind !== "owner" && live.author.id !== authorId)
-							throw forbidden("only its author or the owner cancels a command");
-						return shells.abort({ shellId }, ctx);
-					}),
-				dequeueOwn: (ctx) =>
-					call(async () => {
-						await writable(ctx);
-						const { restored, skipped } = await chat.dequeueOwn({ authorId }, ctx);
-						return { restored: restored.map((item) => item.text), skipped };
-					}),
-				send: ({ attachments, ...input }, ctx) =>
-					call(async () => {
-						// As Pi Mobile: a message has text or attachments.
-						if (!input.text.trim() && !attachments?.length) throw new Error("Invalid content");
-						await writable(ctx);
-						for (const route of routers.value.values()) {
-							const routed = await route(
-								{ ...input, conversation, author: author(), attachments: attachments ?? [] },
-								ctx,
-							);
-							if (routed) return routed;
-						}
-						const files = attachments?.length
-							? await (await ctx.get(Attachments, {})).resolve({ ids: attachments, conversation }, ctx)
-							: undefined;
-						return chat.submit({ ...input, author: author(), ...(files ? { files } : {}) }, ctx);
-					}),
-				stop: (ctx) =>
-					call(async () => {
-						const { restored } = await chat.stop(ctx);
-						return { restored: await own(restored, ctx) };
-					}),
-				dequeue: ({ submissionId, restore }, ctx) =>
-					call(async () => {
-						await writable(ctx);
-						// Moving back to the editor returns the caller's own text and files other authors' as their drafts;
-						// removing (×) discards it, whoever wrote it.
-						const { restored } = await chat.dequeue({ submissionId, restore: restore ?? false }, ctx);
-						const [text] = await own(restored, ctx);
-						return { text: text ?? null };
-					}),
-				configure: (change, ctx) =>
-					call(async () => {
-						// The model and thinking level are the owner's choice (and cost).
-						if (principal.kind !== "owner") throw forbidden("only the owner configures the model");
-						await writable(ctx);
-						await chat.configure(change, ctx);
-						// The main conversation's model is the session's: the sidebar and the next worker start use it. Either
-						// field alone updates it (Pi Mobile's configure).
-						if (
-							(change.model || change.thinkingLevel) &&
-							conversation === (await mainConversation(harness().durable, ctx))
-						) {
-							await expectVariant(await ctx.get(Sessions, {}), "worker").configureSelf(
-								{
-									...(change.model ? { model: change.model } : {}),
-									...(change.thinkingLevel ? { thinkingLevel: change.thinkingLevel } : {}),
-								},
-								ctx,
-							);
-						}
-						return null;
-					}),
-			},
+			compact: (args, ctx) =>
+				call(async () => {
+					await writable(ctx);
+					return chat.compact(args, ctx);
+				}),
+			abortCompaction: (ctx) => call(() => chat.abortCompaction(ctx)),
+			reset: (args, ctx) =>
+				call(async () => {
+					// A new context changes what the agent knows for everyone in the session: the owner's choice.
+					if (principal.kind !== "owner") throw forbidden("only the owner starts a new context");
+					await writable(ctx);
+					return chat.reset(args, ctx);
+				}),
+			shell: ({ command, includeInContext, requestId }, ctx) =>
+				call(async () => {
+					// Anyone who may send may run commands, as tools run them for them (full guests included).
+					await writable(ctx);
+					if (!command.trim()) throw new Error("Invalid command");
+					for (const gate of gates.value.values()) await gate(ctx);
+					return shells.start({ conversation, command, includeInContext, requestId, author: author() }, ctx);
+				}),
+			abortShell: ({ shellId }, ctx) =>
+				call(async () => {
+					// Its author or the owner; the command's author comes from its running state.
+					const live = liveShell.value;
+					// Only this conversation's command: `shellId` is its caller's request ID, not secret.
+					if (live?.id !== shellId) return { aborted: false };
+					if (principal.kind !== "owner" && live.author.id !== authorId)
+						throw forbidden("only its author or the owner cancels a command");
+					return shells.abort({ shellId }, ctx);
+				}),
+			dequeueOwn: (ctx) =>
+				call(async () => {
+					await writable(ctx);
+					const { restored, skipped } = await chat.dequeueOwn({ authorId }, ctx);
+					return { restored: restored.map((item) => item.text), skipped };
+				}),
+			send: ({ attachments, ...input }, ctx) =>
+				call(async () => {
+					// As Pi Mobile: a message has text or attachments.
+					if (!input.text.trim() && !attachments?.length) throw new Error("Invalid content");
+					await writable(ctx);
+					for (const route of routers.value.values()) {
+						const routed = await route(
+							{ ...input, conversation, author: author(), attachments: attachments ?? [] },
+							ctx,
+						);
+						if (routed) return routed;
+					}
+					const files = attachments?.length
+						? await (await ctx.get(Attachments, {})).resolve({ ids: attachments, conversation }, ctx)
+						: undefined;
+					return chat.submit({ ...input, author: author(), ...(files ? { files } : {}) }, ctx);
+				}),
+			stop: (ctx) =>
+				call(async () => {
+					const { restored } = await chat.stop(ctx);
+					return { restored: await own(restored, ctx) };
+				}),
+			dequeue: ({ submissionId, restore }, ctx) =>
+				call(async () => {
+					await writable(ctx);
+					// Moving back to the editor returns the caller's own text and files other authors' as their drafts;
+					// removing (×) discards it, whoever wrote it.
+					const { restored } = await chat.dequeue({ submissionId, restore: restore ?? false }, ctx);
+					const [text] = await own(restored, ctx);
+					return { text: text ?? null };
+				}),
+			configure: (change, ctx) =>
+				call(async () => {
+					// The model and thinking level are the owner's choice (and cost).
+					if (principal.kind !== "owner") throw forbidden("only the owner configures the model");
+					await writable(ctx);
+					await chat.configure(change, ctx);
+					// The main conversation's model is the session's: the sidebar and the next worker start use it. Either
+					// field alone updates it (Pi Mobile's configure).
+					if (
+						(change.model || change.thinkingLevel) &&
+						conversation === (await mainConversation(harness().durable, ctx))
+					) {
+						await expectGranted(await ctx.get(Sessions, {}), "configureSelf").configureSelf(
+							{
+								...(change.model ? { model: change.model } : {}),
+								...(change.thinkingLevel ? { thinkingLevel: change.thinkingLevel } : {}),
+							},
+							ctx,
+						);
+					}
+					return null;
+				}),
 		};
 	};
 	host.serve(ChatCosts, ({ session, conversation }, principal, self) => {
 		if (!canView(principal, session)) throw forbidden("viewers only");
 		const chat = self.get(Conversation, { conversation });
-		return { variant: "viewer", members: { costs: (ctx) => chat.costs(ctx) } };
+		return { costs: (ctx) => chat.costs(ctx) };
 	});
-	host.serve(Chat, chatFactory);
+	host.serve(Chat, chatFactory, {
+		admit: grantBy((principal, { session }) => (canSend(principal, session) ? CHAT_PARTICIPANT : [])),
+	});
 	host.serve(RunControl, ({ session, conversation }, principal, self) => {
 		if (!canSend(principal, session)) throw forbidden("participants only");
 		const chat = self.get(Conversation, { conversation });
 		const worker = workerOf(self);
 		return {
-			variant: "participant",
-			members: {
-				// Refused while the session moves, as the chat's calls are (`Liveness.call`).
-				stop: (ctx) =>
-					worker().liveness.call(async () => {
-						const { restored } = await chat.stop(ctx);
-						if (restored.length)
-							await (await ctx.get(DraftStore, {})).add({ conversation, items: restored }, ctx);
-						return null;
-					}),
-			},
+			// Refused while the session moves, as the chat's calls are (`Liveness.call`).
+			stop: (ctx) =>
+				worker().liveness.call(async () => {
+					const { restored } = await chat.stop(ctx);
+					if (restored.length) await (await ctx.get(DraftStore, {})).add({ conversation, items: restored }, ctx);
+					return null;
+				}),
 		};
 	});
 	host.serve(ChatImages, ({ conversation }, principal, self) => {
 		if (principal.kind !== "server") throw forbidden("server only");
 		const chat = self.get(Conversation, { conversation });
-		return { variant: "server", members: { image: (place, ctx) => chat.image(place, ctx) } };
+		return { image: (place, ctx) => chat.image(place, ctx) };
 	});
 });

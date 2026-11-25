@@ -7,9 +7,9 @@ import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { Familiar } from "../../plugins/familiar/contract.ts";
 import { Models } from "../../plugins/models/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 describe("the Familiar as home", { skip: !browserTests }, () => {
 	let fixture: Fixture;
@@ -30,12 +30,12 @@ describe("the Familiar as home", { skip: !browserTests }, () => {
 
 	it("is home and the sidebar's first row, made on first use, and leaves the rollups", async () => {
 		const owner = fixture.browser();
-		const sessions = await holdIn(owner, Sessions, {}, "owner");
+		const sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		await sessions.create({ cwd: fixture.workspace, title: "Ordinary" }, BACKGROUND_CONTEXT);
 		await browser.metrics(1280, 900);
 		// Home makes the Familiar and shows its session, as "Ask Pi".
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/`);
-		const familiar = await holdIn(owner, Familiar, {}, "owner");
+		const familiar = await holdWith(owner, Familiar, {});
 		const id = await until(familiar.session, (value) => typeof value === "string");
 		await browser.wait(`location.pathname.startsWith('/s/${id}')`);
 		assert.equal(

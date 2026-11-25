@@ -7,9 +7,9 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Browser, browserTests, COMPOSER, composerText, setComposer } from "./browser.ts";
-import { type Fixture, holdIn, startFixture } from "./helpers.ts";
+import { type Fixture, holdWith, startFixture } from "./helpers.ts";
 
 const key = (browser: Browser, name: string, code: number) =>
 	(async () => {
@@ -58,7 +58,7 @@ describe("web composer file completion", { skip: !browserTests }, () => {
 		writeFileSync(join(fixture.workspace, "README.md"), "");
 		id = (
 			await (
-				await holdIn(fixture.browser(), Sessions, {}, "owner")
+				await holdWith(fixture.browser(), Sessions, {}, ...SESSIONS_OWNER)
 			).create({ cwd: fixture.workspace, title: "Completion" }, BACKGROUND_CONTEXT)
 		).id;
 		browser = await Browser.start();

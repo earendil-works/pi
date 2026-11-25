@@ -4,8 +4,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { ChatMode } from "../../plugins/chat-mode/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
-import { holdIn, startFixture, until } from "./helpers.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
+import { holdWith, startFixture, until } from "./helpers.ts";
 
 const PLUGINS = [
 	"chat",
@@ -27,11 +27,11 @@ describe("chat-mode reload", () => {
 		const fixture = await startFixture({ plugins: PLUGINS });
 		t.after(() => fixture.close());
 		const browser = fixture.browser();
-		const session = await (await holdIn(browser, Sessions, {}, "owner")).create(
+		const session = await (await holdWith(browser, Sessions, {}, ...SESSIONS_OWNER)).create(
 			{ cwd: fixture.workspace },
 			BACKGROUND_CONTEXT,
 		);
-		const mode = await holdIn(browser, ChatMode, { session: session.id, conversation: 1 }, "owner");
+		const mode = await holdWith(browser, ChatMode, { session: session.id, conversation: 1 }, "set", "rename");
 		await mode.set({ enabled: true }, BACKGROUND_CONTEXT);
 		await mode.rename({ name: "Claude" }, BACKGROUND_CONTEXT);
 		await until(mode.name, (name) => name === "Claude");

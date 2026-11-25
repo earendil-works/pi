@@ -6,12 +6,12 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ConversationView, LiveState } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT, follow, whenLive } from "@p2/app/v1";
-import { Chat, RunControl } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat, RunControl } from "../../plugins/chat/contract.ts";
 import { Drafts } from "../../plugins/drafts/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
-import { type Fixture, holdIn, http, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, http, startFixture, until } from "./helpers.ts";
 
 const live = (view: ConversationView | null | undefined) => view?.docs["pi.live"] as LiveState | undefined;
 const queued = (view: ConversationView | null | undefined) =>
@@ -41,15 +41,17 @@ test(
 		t.after(() => fixture.close());
 		const owner = fixture.browser();
 		const session = (
-			await (await holdIn(owner, Sessions, {}, "owner")).create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT)
+			await (
+				await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)
+			).create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT)
 		).id;
 		const guest = await guestOf(fixture, session, "full");
 		const viewer = await guestOf(fixture, session, "view");
-		const ownerChat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
-		const guestChat = await holdIn(guest, Chat, { session, conversation: 1 }, "participant");
-		const ownerDrafts = await holdIn(owner, Drafts, { session, conversation: 1 }, "author");
-		const guestDrafts = await holdIn(guest, Drafts, { session, conversation: 1 }, "author");
-		const status = await holdIn(owner, SessionStatus, {}, "reader");
+		const ownerChat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
+		const guestChat = await holdWith(guest, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
+		const ownerDrafts = await holdWith(owner, Drafts, { session, conversation: 1 });
+		const guestDrafts = await holdWith(guest, Drafts, { session, conversation: 1 });
+		const status = await holdWith(owner, SessionStatus, {}, "statuses");
 		t.after(follow(ownerChat.view, () => {}));
 
 		await ownerChat.send({ text: "slow run", requestId: "run" }, BACKGROUND_CONTEXT);
@@ -66,7 +68,7 @@ test(
 		// A viewer may not stop it; a read/write guest may, as the owner.
 		const viewed = viewer.hold(RunControl, { session, conversation: 1 }, BACKGROUND_CONTEXT);
 		await assert.rejects(whenLive(viewed));
-		const control = await holdIn(guest, RunControl, { session, conversation: 1 }, "participant");
+		const control = await holdWith(guest, RunControl, { session, conversation: 1 });
 		await control.stop(BACKGROUND_CONTEXT);
 
 		await until(ownerChat.view, (view) => !live(view)?.run && queued(view).length === 0);

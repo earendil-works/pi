@@ -12,12 +12,12 @@ import {
 import { stripTerminalSequences, Text, TuiAltScreen, visibleWidth } from "@earendil-works/pi-tui";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { VirtualTerminal } from "../../../../packages/tui/test/virtual-terminal.ts";
-import { Chat, type EntriesPage } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat, type EntriesPage } from "../../plugins/chat/contract.ts";
 import chatTui, { ChatSurface } from "../../plugins/chat/tui.ts";
 import { Devices } from "../../plugins/devices/contract.ts";
 import { Drafts } from "../../plugins/drafts/contract.ts";
 import { Models } from "../../plugins/models/contract.ts";
-import { type Session, Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, type Session, Sessions } from "../../plugins/sessions/contract.ts";
 import { SessionMetrics } from "../../plugins/status/contract.ts";
 import statusTui from "../../plugins/status/tui.ts";
 import { startTuiClient } from "../../src/hosts/tui-client.ts";
@@ -36,7 +36,7 @@ import { BUILTIN_THEMES, createTheme } from "../../src/tui/theme/theme.ts";
 import { buildTranscript, type ToolView } from "../../src/web/transcript.ts";
 import { PLUGIN_TUI_RENDERERS } from "../fixtures/tui-tools.ts";
 import { wholeView } from "../fixtures/whole-view.ts";
-import { type Cell, holdIn, poll, startFixture } from "./helpers.ts";
+import { type Cell, holdWith, poll, startFixture } from "./helpers.ts";
 import { SESSION, type Stub, sessionsStub, topology } from "./tui-fixture.ts";
 
 const plain = (lines: readonly string[]): string =>
@@ -343,7 +343,6 @@ async function chatRuntime(
 				sent,
 			});
 			return {
-				variant: "participant",
 				view,
 				stats,
 				model,
@@ -365,11 +364,11 @@ async function chatRuntime(
 				configure: () => {},
 			};
 		},
+		CHAT_PARTICIPANT,
 	];
 	const drafts: Stub = [
 		Drafts,
 		(_input, _principal, self) => ({
-			variant: "author",
 			drafts: self.state([]),
 			claim: () => ({ texts: [] }),
 		}),
@@ -610,18 +609,17 @@ test("footer provenance: owner sees context against the model window, guests get
 	const chat: Stub = [
 		Chat,
 		(_input, _principal, self) => ({
-			variant: "viewer",
 			view: self.state(view),
 			stats: self.state(stats),
 			model: self.state(null),
 			liveShell: self.state(null),
 			entries: () => ({ items: [], more: false }),
 		}),
+		[],
 	];
 	const metrics: Stub = [
 		SessionMetrics,
 		(_input, _principal, self) => ({
-			variant: "reader",
 			clients: self.state(1),
 			usage: self.state({
 				...usage,
@@ -634,7 +632,6 @@ test("footer provenance: owner sees context against the model window, guests get
 		(_input, _principal, self) => {
 			modelsRequested++;
 			return {
-				variant: "owner",
 				models: self.state([
 					{ provider: "faux", modelId: "faux-1", name: "Faux", thinkingLevels: ["off"], contextWindow: 1000 },
 				]),
@@ -685,8 +682,7 @@ test(
 		const url = new URL(`http://127.0.0.1:${fixture.server.port}`);
 		const browser = fixture.browser();
 		const token = (await browser.hold(Devices, {}, BACKGROUND_CONTEXT).token(BACKGROUND_CONTEXT)).token;
-		const sessions = await holdIn(browser, Sessions, {}, "owner");
-		if (sessions.variant !== "owner") return;
+		const sessions = await holdWith(browser, Sessions, {}, ...SESSIONS_OWNER);
 		await sessions.create({ cwd: fixture.workspace, env: null }, BACKGROUND_CONTEXT);
 		const terminal = new VirtualTerminal(100, 40);
 		const failures: string[] = [];

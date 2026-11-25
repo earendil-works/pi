@@ -12,31 +12,27 @@ import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type { ConversationView } from "@earendil-works/pi-durable";
 import { arr, int, obj, str } from "@earendil-works/pi-schema";
 import { BACKGROUND_CONTEXT, method, param, remote, serverHost } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { CHAT_PARTICIPANT, Chat, type ChatParticipant } from "../../plugins/chat/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import { Subagents } from "../../plugins/subagents/contract.ts";
-import { Views } from "../../plugins/views/contract.ts";
-import type { Host, RefIn } from "../../src/runtime/chord.ts";
+import { VIEWS_EDITING, Views } from "../../plugins/views/contract.ts";
+import type { Host } from "../../src/runtime/chord.ts";
 import { ServerNatives } from "../../src/runtime/server.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { APP, type Fixture, failureOf, holdIn, http, poll, startFixture, until, webAssets } from "./helpers.ts";
+import { APP, type Fixture, failureOf, holdWith, http, poll, startFixture, until, webAssets } from "./helpers.ts";
 
 /** The skill's example plugin. */
 const EXAMPLE = join(APP, "plugins/agent-plugins/skills/writing-p2-plugins/example/counter");
 
 /** The example's contract, as a page built with it holds it (the same declaration as `counter/contract.ts`). */
 const Counter = remote("counter.board", {
-	version: 1,
+	version: 2,
 	params: { session: param.str() },
 	hostAddress: serverHost,
-	variants: {
-		player: {
-			state: { count: int(), present: arr(str()) },
-			events: { waved: obj({ from: str() }) },
-			methods: { add: method(obj({ by: int({ minimum: -100, maximum: 100 }) })), wave: method() },
-		},
-	},
+	state: { count: int(), present: arr(str()) },
+	events: { waved: obj({ from: str() }) },
+	methods: { add: method(obj({ by: int({ minimum: -100, maximum: 100 }) })), wave: method() },
 });
 
 /** A user-root plugin's server object telling what its `pluginFile` resolves to (written below as `notes`). */
@@ -44,7 +40,7 @@ const Notes = remote("notes.file", {
 	version: 1,
 	params: {},
 	hostAddress: serverHost,
-	variants: { reader: { methods: { read: method(undefined, obj({ path: str(), text: str() })) } } },
+	methods: { read: method(undefined, obj({ path: str(), text: str() })) },
 });
 
 const NOTES: Record<string, string> = {
@@ -55,7 +51,7 @@ export const Notes = remote("notes.file", {
 	version: 1,
 	params: {},
 	hostAddress: serverHost,
-	variants: { reader: { methods: { read: method(undefined, obj({ path: str(), text: str() })) } } },
+	methods: { read: method(undefined, obj({ path: str(), text: str() })) },
 });
 `,
 	"server.ts": `import { readFileSync } from "node:fs";
@@ -64,8 +60,7 @@ import { defineFacet } from "@p2/app/v1";
 import { Notes } from "./contract.ts";
 export default defineFacet((host) => {
 	host.serve(Notes, () => ({
-		variant: "reader",
-		members: { read: async () => ({ path: pluginFile("note.txt"), text: readFileSync(pluginFile("note.txt"), "utf8") }) },
+		read: async () => ({ path: pluginFile("note.txt"), text: readFileSync(pluginFile("note.txt"), "utf8") }),
 	}));
 });
 `,
@@ -115,14 +110,14 @@ describe("the agent's plugins", () => {
 	const start = async (web = false) => {
 		fixture = await startFixture({ web, allowedHosts: ["share.test"] });
 		const owner = fixture.browser();
-		const sessions = await holdIn(owner, Sessions, {}, "owner");
+		const sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		const session = (await sessions.create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT)).id;
-		const chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
 		return { fixture, owner, session, chat, root: join(fixture.dataDir, "plugins") };
 	};
 
 	/** Has `chat`'s agent call `tool` with `args` (`text`: the whole input); the call's result. */
-	const call = async (chat: RefIn<typeof Chat, "participant">, tool: string, args: object | string) => {
+	const call = async (chat: ChatParticipant, tool: string, args: object | string) => {
 		const before = results(chat.view.value).length;
 		const text = typeof args === "string" ? `${tool} ${args}` : `${tool} ${JSON.stringify(args)}`;
 		await chat.send({ text, requestId: `plugins-${++sent}` }, BACKGROUND_CONTEXT);
@@ -133,7 +128,7 @@ describe("the agent's plugins", () => {
 	};
 
 	/** Copies the example into the user root and reloads through `chat`'s agent; the reload's text. */
-	const applyExample = async (chat: RefIn<typeof Chat, "participant">, root: string) => {
+	const applyExample = async (chat: ChatParticipant, root: string) => {
 		cpSync(EXAMPLE, join(root, "counter"), { recursive: true });
 		return textOf(await call(chat, "reload_plugins", {}));
 	};
@@ -147,7 +142,7 @@ describe("the agent's plugins", () => {
 			/<name>writing-p2-plugins<\/name>.*<location>[^<]*plugins\/agent-plugins\/skills\/writing-p2-plugins\/SKILL\.md</,
 		);
 		assert.equal(sections(chat.view.value)["p2-plugins"], undefined, "no hint on the server's machine");
-		const children = await holdIn(owner, Subagents, {}, "reader");
+		const children = await holdWith(owner, Subagents, {}, "children");
 		/** Sends `message` to the subagent and waits for its tool's result and the main agent's turn on its report. */
 		let reports = 0;
 		const builder = async (message: string) => {
@@ -163,7 +158,7 @@ describe("the agent's plugins", () => {
 			);
 			const listed = await until(children.children, (value) => Boolean(value?.[session]?.length));
 			const conversation = listed?.[session]?.find((each) => each.name === "builder")?.conversationId ?? 0;
-			const sub = await holdIn(owner, Chat, { session, conversation }, "participant");
+			const sub = await holdWith(owner, Chat, { session, conversation }, ...CHAT_PARTICIPANT);
 			const result = results(await until(sub.view, (value) => results(value).length >= reports)).at(-1);
 			sub.release();
 			return result;
@@ -178,7 +173,7 @@ describe("the agent's plugins", () => {
 		assert.equal(applied?.toolName, "reload_plugins");
 		assert.match(textOf(applied), /^counter: applied$/m, textOf(applied));
 		// Its server object: the count, who is there, adding, an event.
-		const board = await holdIn(owner, Counter, { session }, "player");
+		const board = await holdWith(owner, Counter, { session });
 		await until(board.present, (value) => value.includes("owner"));
 		await board.add({ by: 2 }, BACKGROUND_CONTEXT);
 		await until(board.count, (value) => value === 2);
@@ -198,7 +193,7 @@ describe("the agent's plugins", () => {
 			textOf(await call(chat, "codemode", 'return await tools.view_open({ kind: "counter", title: "Counter" });')),
 			/"id":"counter"/,
 		);
-		const views = await holdIn(owner, Views, { session }, "editor");
+		const views = await holdWith(owner, Views, { session }, ...VIEWS_EDITING);
 		await until(views.views, (value) => value.some((view) => view.kind === "counter"));
 		const assets = await webAssets(fixture.server.port, { Cookie: fixture.owner.cookie });
 		assert.match((await fixture.http(assets.plugins)).body, /counter\.web/);
@@ -207,7 +202,7 @@ describe("the agent's plugins", () => {
 	it("reloads an edited plugin in place: the objects held go on with the new code", async () => {
 		const { owner, session, chat, root } = await start();
 		assert.match(await applyExample(chat, root), /^counter: applied$/m);
-		const board = await holdIn(owner, Counter, { session }, "player");
+		const board = await holdWith(owner, Counter, { session });
 		await board.add({ by: 1 }, BACKGROUND_CONTEXT);
 		await until(board.count, (value) => value === 1);
 		const edited = await call(chat, "edit", {
@@ -223,7 +218,7 @@ describe("the agent's plugins", () => {
 	it("reports a deleted plugin as removed, named or not, and its objects end", async () => {
 		const { fixture, owner, session, chat, root } = await start();
 		assert.match(await applyExample(chat, root), /^counter: applied$/m);
-		const board = await holdIn(owner, Counter, { session }, "player");
+		const board = await holdWith(owner, Counter, { session });
 		rmSync(join(root, "counter"), { recursive: true });
 		const named = textOf(await call(chat, "reload_plugins", { plugins: ["counter"] }));
 		assert.match(named, /^counter: removed$/m, named);
@@ -293,7 +288,7 @@ describe("the agent's plugins", () => {
 			"---\nname: clashing\ndescription: The project's clashing skill.\n---\n",
 		);
 		assert.match(textOf(await call(chat, "reload_plugins", {})), /^notes: applied$/m);
-		const notes = await holdIn(owner, Notes, {}, "reader");
+		const notes = await holdWith(owner, Notes, {});
 		assert.deepEqual(await notes.read(BACKGROUND_CONTEXT), {
 			path: join(root, "notes", "note.txt"),
 			text: "a note in the user root",
@@ -317,12 +312,12 @@ describe("the agent's plugins", () => {
 		);
 		const lean = await spawn({ action: "spawn", name: "lean", message: "reload_plugins {}", tools: ["read"] });
 		assert.deepEqual(lean.tools, ["read"]);
-		const children = await holdIn(owner, Subagents, {}, "reader");
+		const children = await holdWith(owner, Subagents, {}, "children");
 		const listed = await until(children.children, (value) =>
 			Boolean(value?.[session]?.some((each) => each.name === "lean")),
 		);
 		const conversation = listed?.[session]?.find((each) => each.name === "lean")?.conversationId ?? 0;
-		const sub = await holdIn(owner, Chat, { session, conversation }, "participant");
+		const sub = await holdWith(owner, Chat, { session, conversation }, ...CHAT_PARTICIPANT);
 		const view = await until(sub.view, (value) =>
 			results(value).some((message) => message.toolName === "reload_plugins"),
 		);
@@ -346,7 +341,7 @@ describe("the agent's plugins", () => {
 			...headers,
 			Cookie: String(joined.headers["set-cookie"]).split(";")[0]!,
 		}).host;
-		const guestChat = await holdIn(guest, Chat, { session, conversation: 1 }, "participant");
+		const guestChat = await holdWith(guest, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
 		const reloaded = await call(guestChat, "reload_plugins", {});
 		assert.equal(reloaded.isError, false, textOf(reloaded));
 		const listed = await call(guestChat, "codemode", "return await tools.view_list({});");

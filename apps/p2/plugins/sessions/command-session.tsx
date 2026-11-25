@@ -1,7 +1,7 @@
 // What the command menu's session commands share, here and in other plugins (workspace, terminals, subagents): the
 // session a command acts on, opening a panel in it, opening a conversation from a menu row, and the wrapper that hides
 // a command while its session is archived.
-import { keptIn } from "@p2/app/v1";
+import { keptWith } from "@p2/app/v1";
 import {
 	type CommandTarget,
 	conversationRoute,
@@ -71,4 +71,4 @@ export function useCommandSession(): { readonly id: string | undefined; readonly
 
 /** The catalog's rows the reader sees: every session for the owner, its own for a guest (kept while reconnecting). */
 export const useSessions = (): readonly Session[] | undefined =>
-	useReadable(keptIn(useObject(Sessions, {}), "owner", "guest")?.sessions);
+	useReadable(keptWith(useObject(Sessions, {}), "sessions")?.sessions);

@@ -14,10 +14,8 @@ export { LogNotices, NoticesSchema } from "@p2/app/v1";
 
 /** Owner-only diagnostics. Changing source acquires a new view, not a new worker. */
 export const Logs = remote("p2.logs", {
-	version: 1,
+	version: 2,
 	params: { source: param.str({ max: 128 }) },
 	hostAddress: serverHost,
-	variants: {
-		owner: { state: { sources: LogSourcesSchema, lines: arr(LogLineSchema) } },
-	},
+	state: { sources: LogSourcesSchema, lines: arr(LogLineSchema) },
 });

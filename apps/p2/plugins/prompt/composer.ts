@@ -9,7 +9,7 @@ export const promptComposer = defineFacet((_host, self) =>
 		prompt: async (client, session, conversation, text) => {
 			const ref = await client.get(PromptResources, { session, conversation }, BACKGROUND_CONTEXT);
 			try {
-				return ref.variant === "participant" ? (await ref.expand({ text }, BACKGROUND_CONTEXT)).text : undefined;
+				return (await ref.expand({ text }, BACKGROUND_CONTEXT)).text;
 			} finally {
 				ref.release();
 			}

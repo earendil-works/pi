@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { AgentDoc, type ConversationId, configure, ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
-import { BACKGROUND_CONTEXT, type Context, type Held, whenLive } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, type Context, type Ref, whenLive } from "@p2/app/v1";
 import fileIndexWorker from "../../plugins/file-index/worker.ts";
 import { createP2Models } from "../../plugins/models/models.ts";
 import { PowerShell } from "../../plugins/powershell/contract.ts";
@@ -242,7 +242,7 @@ test("a workspace follows a move made while it activates, and retries a failed r
 	const third = directory(parent, "third", ["third.txt"]);
 	const w = await worker(t, { cwd: first, env: "blocked" }, machines);
 	await w.host.root(async (ctx) => {
-		const list = async (ref: Held<typeof WorkspaceBackend>) => {
+		const list = async (ref: Ref<typeof WorkspaceBackend>) => {
 			const result = await ref.query({ kind: "list", path: "" }, ctx);
 			assert(result.kind === "list");
 			return result.entries.map((entry) => entry.name);

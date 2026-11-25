@@ -14,13 +14,14 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, beforeEach, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { Models } from "../../plugins/models/contract.ts";
 import { Projects } from "../../plugins/projects/contract.ts";
-import { Sessions, SidebarSettings } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions, type SessionsOwner, SidebarSettings } from "../../plugins/sessions/contract.ts";
 import { folderKey, projectKey } from "../../plugins/sessions/sidebar/model.ts";
+import type { Ref } from "../../src/runtime/chord.ts";
 import { Browser, browserTests, COMPOSER, setComposer } from "./browser.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 /** Each rollup's key, then its sessions' titles, or its groups' names with their sessions' titles. */
 const SECTIONS = `[...document.querySelectorAll('.sidebar-section')].map(s=>[s.dataset.key,s.querySelector('.sidebar-group')?[...s.querySelectorAll('.sidebar-group')].map(g=>[g.querySelector('.group-link').textContent,[...g.querySelectorAll('.session-main .session-title')].map(e=>e.textContent)]):[...s.querySelectorAll('.session-main .session-title')].map(e=>e.textContent)])`;
@@ -57,18 +58,18 @@ describe("sidebar rollups", { skip: !browserTests }, () => {
 	let fixture: Fixture;
 	let browser: Browser;
 	let root: string;
-	let sessions: Awaited<ReturnType<typeof holdIn<typeof Sessions, "owner">>>;
-	let settings: Awaited<ReturnType<typeof holdIn<typeof SidebarSettings, "owner">>>;
-	let projects: Awaited<ReturnType<typeof holdIn<typeof Projects, "owner">>>;
+	let sessions: SessionsOwner;
+	let settings: Ref<typeof SidebarSettings>;
+	let projects: Ref<typeof Projects>;
 	before(async () => {
 		fixture = await startFixture({ web: true });
 		const owner = fixture.browser();
 		await owner
 			.hold(Models, {}, BACKGROUND_CONTEXT)
 			.setDefault({ provider: "faux", modelId: "faux-1", thinkingLevel: "off" }, BACKGROUND_CONTEXT);
-		sessions = await holdIn(owner, Sessions, {}, "owner");
-		settings = await holdIn(owner, SidebarSettings, {}, "owner");
-		projects = await holdIn(owner, Projects, {}, "owner");
+		sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
+		settings = await holdWith(owner, SidebarSettings, {});
+		projects = await holdWith(owner, Projects, {});
 		browser = await Browser.start();
 		await browser.signIn(fixture.owner);
 	});
@@ -312,7 +313,7 @@ describe("sidebar rollups", { skip: !browserTests }, () => {
 		const item = itemTitled("Runs");
 		const group = groupOf("work");
 		await browser.wait(`Boolean(${item})`);
-		const chat = await holdIn(fixture.browser(), Chat, { session: runs.id, conversation: 1 }, "participant");
+		const chat = await holdWith(fixture.browser(), Chat, { session: runs.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await chat.send({ text: "slow-tool", requestId: "working" }, BACKGROUND_CONTEXT);
 		// Working: pi's dots in the status column, named "Working".
 		await browser.wait(`Boolean(${item}.querySelector('.nav-marker .pi-dots'))`);

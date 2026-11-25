@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { BACKGROUND_CONTEXT, whenLive } from "@p2/app/v1";
 import { WebSocket } from "ws";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Terminals } from "../../plugins/terminals/contract.ts";
 import { localSystem, terminalDaemon } from "../../plugins/terminals/daemon.ts";
 import { connectTerminalHost } from "../../plugins/terminals/detached.ts";
@@ -14,7 +14,7 @@ import { encodeFrame, type TerminalEvent } from "../../plugins/terminals/protoco
 import terminalsServer from "../../plugins/terminals/server.ts";
 import { startServer } from "../../src/hosts/server.ts";
 import { Server } from "../../src/runtime/server.ts";
-import { APP, clientHost, expectChord, holdIn, type LocalOwner, localOwner, poll, testHost } from "./helpers.ts";
+import { APP, clientHost, expectChord, holdWith, type LocalOwner, localOwner, poll, testHost } from "./helpers.ts";
 
 let noDaemon: string | undefined;
 try {
@@ -97,7 +97,7 @@ test("terminal byte channels need an owner and a live one-use chord2 grant", { t
 	const owner = await localOwner(server);
 	const client = clientHost(owner);
 	try {
-		const sessions = await holdIn(client, Sessions, {}, "owner");
+		const sessions = await holdWith(client, Sessions, {}, ...SESSIONS_OWNER);
 		const session = await sessions.create({ cwd: directory }, BACKGROUND_CONTEXT);
 		const view = client.hold(Terminals, { session: session.id, view: randomUUID() }, BACKGROUND_CONTEXT);
 		await whenLive(view);
@@ -146,7 +146,7 @@ test(
 		let client = clientHost(owner);
 		let bytes: Awaited<ReturnType<typeof byteChannel>> | undefined;
 		try {
-			const sessions = await holdIn(client, Sessions, {}, "owner");
+			const sessions = await holdWith(client, Sessions, {}, ...SESSIONS_OWNER);
 			const session = await sessions.create({ cwd: directory }, BACKGROUND_CONTEXT);
 			const other = await sessions.create({ cwd: directory }, BACKGROUND_CONTEXT);
 			let view = client.hold(Terminals, { session: session.id, view: randomUUID() }, BACKGROUND_CONTEXT);

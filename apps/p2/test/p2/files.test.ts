@@ -10,13 +10,12 @@ import { crc32, deflateSync } from "node:zlib";
 import type { UserMessage } from "@earendil-works/pi-ai";
 import type { ConversationView } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat, type ChatParticipant } from "../../plugins/chat/contract.ts";
 import { DownloadStore, type Uploaded } from "../../plugins/files/contract.ts";
-import { type Session, Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, type Session, Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
-import type { RefIn } from "../../src/runtime/chord.ts";
 import { shownImage } from "../../src/runtime/entry-images.ts";
-import { type Fixture, holdIn, http, poll, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, http, poll, startFixture, until } from "./helpers.ts";
 
 const PNG = Buffer.from(
 	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
@@ -55,7 +54,7 @@ describe("files (fake provider)", () => {
 	let fixture: Fixture;
 	let session: Session;
 	let other: Session;
-	let chat: RefIn<typeof Chat, "participant">;
+	let chat: ChatParticipant;
 	let local: string;
 
 	const upload = (
@@ -92,10 +91,10 @@ describe("files (fake provider)", () => {
 		fixture = await startFixture({ allowedHosts: ["share.test"] });
 		local = `http://127.0.0.1:${fixture.server.port}`;
 		const owner = fixture.browser();
-		const sessions = await holdIn(owner, Sessions, {}, "owner");
+		const sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		session = await sessions.create({ cwd: fixture.workspace, title: "Files" }, BACKGROUND_CONTEXT);
 		other = await sessions.create({ cwd: fixture.workspace, title: "Other" }, BACKGROUND_CONTEXT);
-		chat = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+		chat = await holdWith(owner, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 	});
 
 	after(async () => {
@@ -324,13 +323,13 @@ describe("files (fake provider)", () => {
 	});
 
 	it("answers at once for an archived or unknown session, never waiting for its worker", async () => {
-		const sessions = await holdIn(fixture.browser(), Sessions, {}, "owner");
+		const sessions = await holdWith(fixture.browser(), Sessions, {}, ...SESSIONS_OWNER);
 		const archived = await sessions.create({ cwd: fixture.workspace, title: "Archived" }, BACKGROUND_CONTEXT);
-		const archivedChat = await holdIn(
+		const archivedChat = await holdWith(
 			fixture.browser(),
 			Chat,
 			{ session: archived.id, conversation: 1 },
-			"participant",
+			...CHAT_PARTICIPANT,
 		);
 		await archivedChat.send({ text: "artifact", requestId: "archived-artifact" }, BACKGROUND_CONTEXT);
 		const artifact = `/artifact-frame?${new URLSearchParams({ session: archived.id, id: "demo", version: "1" })}`;

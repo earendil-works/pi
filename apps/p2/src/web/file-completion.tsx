@@ -66,7 +66,7 @@ export function useFileCompletion(
 	const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
 	// Re-renders when the index becomes live (or goes), so the arrival below can ask again.
 	const status = useStatus(index);
-	const live = status === "live" && index?.variant === "reader" ? index : undefined;
+	const live = status === "live" ? index : undefined;
 
 	const close = () => {
 		request.current++;

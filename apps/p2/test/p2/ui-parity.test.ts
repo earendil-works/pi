@@ -8,11 +8,11 @@ import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { WebSocket } from "ws";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { Devices } from "../../plugins/devices/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { browserTests, COMPOSER, setComposer } from "./browser.ts";
-import { type Fixture, holdIn, http, poll, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, http, poll, startFixture, until } from "./helpers.ts";
 
 const termux = process.env.PREFIX !== undefined;
 const chromium =
@@ -250,14 +250,14 @@ describe("Pi Mobile UI regressions", { skip: !browserTests }, () => {
 
 	it("scrolls a long transcript and keeps its last answer above the floating composer", async () => {
 		const owner = fixture.browser();
-		const session = await (await holdIn(owner, Sessions, {}, "owner")).create(
+		const session = await (await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)).create(
 			{
 				cwd: fixture.workspace,
 				title: "Long transcript",
 			},
 			BACKGROUND_CONTEXT,
 		);
-		const chat = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await chat.send(
 			{
 				text: Array.from({ length: 180 }, (_, i) => `Paragraph ${i}: scroll regression`).join("\n\n"),
@@ -380,7 +380,7 @@ describe("Pi Mobile UI regressions", { skip: !browserTests }, () => {
 
 	it("loads workspace files when opened immediately after the chat attaches, including after reload", async () => {
 		const owner = fixture.browser();
-		const sessions = await holdIn(owner, Sessions, {}, "owner");
+		const sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		const session = await sessions.create(
 			{ cwd: fixture.workspace, title: "Workspace regression" },
 			BACKGROUND_CONTEXT,

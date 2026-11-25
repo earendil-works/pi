@@ -1,4 +1,4 @@
-import { contribute, defineFacet, expectVariant } from "@p2/app/v1";
+import { contribute, defineFacet, expectGranted } from "@p2/app/v1";
 import { Extensions, workerOf } from "@p2/app/v1/worker";
 import { Ports } from "./contract.ts";
 import { createPortsExtension } from "./tool.ts";
@@ -9,7 +9,7 @@ export default defineFacet((host) => {
 		const extension = createPortsExtension(
 			(query, context) =>
 				worker().root(
-					async (ctx) => expectVariant(await ctx.get(Ports, {}), "worker").query({ conversation: 1, query }, ctx),
+					async (ctx) => expectGranted(await ctx.get(Ports, {}), "query").query({ conversation: 1, query }, ctx),
 					context,
 				),
 			() => worker().init.values.session.id,

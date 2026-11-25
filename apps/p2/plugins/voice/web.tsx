@@ -6,7 +6,7 @@
 // A read/write guest talks (its transcripts are its own messages) but hears nothing yet: the answers are read aloud only
 // in the owner's browser. View-only guests have no voice mode. Only when the server has a speech service (voice.json).
 
-import { BACKGROUND_CONTEXT, contribute, defineFacet, type HeldIn, liveIn } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, contribute, defineFacet, live, liveWith } from "@p2/app/v1";
 import {
 	CheckIcon,
 	closeLayers,
@@ -26,7 +26,7 @@ import {
 	useSheet,
 } from "@p2/app/v1/web";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { Chat } from "../chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat, type ChatParticipant } from "../chat/contract.ts";
 import { ChatMode, DEFAULT_AGENT_NAME } from "../chat-mode/contract.ts";
 import { engineLabel, languagesOf, resolved, resolveVoice } from "./choice.ts";
 import { VoiceMode, VoiceService } from "./contract.ts";
@@ -181,20 +181,15 @@ function useTalker(): { owner: boolean; talker: boolean } {
 	return { owner: useOwner(), talker: useCanWrite(useRoute().session) };
 }
 
-/** The voice mode switch of a conversation (the owner's variant or a guest's) and its shared voice. */
+/** The voice mode switch of a conversation (the owner's, or a guest's own) and its shared voice. */
 function useVoiceMode(input: { session: string; conversation: number } | undefined) {
 	const mode = useObject(VoiceMode, input);
-	const ownerMode = liveIn(mode, "owner");
-	const guestMode = liveIn(mode, "participant");
-	const voice = useReadable(ownerMode?.voice ?? guestMode?.voice) ?? undefined;
+	const talking = live(mode);
+	const ownerMode = liveWith(mode, "choose");
+	const voice = useReadable(talking?.voice) ?? undefined;
 	const set = useMemo(
-		() =>
-			ownerMode
-				? (enabled: boolean) => ownerMode.set({ enabled }, BACKGROUND_CONTEXT)
-				: guestMode
-					? (enabled: boolean) => guestMode.set({ enabled }, BACKGROUND_CONTEXT)
-					: undefined,
-		[ownerMode, guestMode],
+		() => (talking ? (enabled: boolean) => talking.set({ enabled }, BACKGROUND_CONTEXT) : undefined),
+		[talking],
 	);
 	return { ownerMode, voice: voice ?? undefined, set };
 }
@@ -212,7 +207,7 @@ function VoiceChip() {
 	configRef.current = config;
 	const ownerRef = useRef(owner);
 	ownerRef.current = owner;
-	const chatRef = useRef<HeldIn<typeof Chat, "participant">>(undefined);
+	const chatRef = useRef<ChatParticipant>(undefined);
 	const chatModeRef = useRef({ enabled: false, name: DEFAULT_AGENT_NAME });
 	const orb = useRef<HTMLSpanElement>(null);
 	const settingsRef = useRef<VoiceSettings>(stored.value);
@@ -255,7 +250,7 @@ function VoiceChip() {
 			if (engine?.running) engine.stop();
 		};
 	}, [engine, key]);
-	const chat = useObject(Chat, input, { variant: "participant" });
+	const chat = liveWith(useObject(Chat, input), ...CHAT_PARTICIPANT);
 	const { voice: shared, set: setMode } = useVoiceMode(input);
 	const chatMode = useObject(ChatMode, input);
 	chatModeRef.current = {

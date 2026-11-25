@@ -3,22 +3,22 @@
 
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
-import { BACKGROUND_CONTEXT, type Held, isChordError, whenLive } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { BACKGROUND_CONTEXT, isChordError, type Ref, whenLive } from "@p2/app/v1";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { DiscordIngress } from "../../plugins/discord/contract.ts";
 import { Search, SearchFeed, SearchIndex } from "../../plugins/search/contract.ts";
-import { type Session, Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, type Session, Sessions, type SessionsOwner } from "../../plugins/sessions/contract.ts";
 import { Subagents } from "../../plugins/subagents/contract.ts";
 import { type P2Server, startServer } from "../../src/hosts/server.ts";
-import type { Host, RefIn } from "../../src/runtime/chord.ts";
+import type { Host } from "../../src/runtime/chord.ts";
 import { Hosts } from "../../src/runtime/server.ts";
-import { type Fixture, holdIn, poll, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, poll, startFixture, until } from "./helpers.ts";
 
 describe("search (fake provider)", () => {
 	let fixture: Fixture;
 	let owner: Host;
-	let sessions: RefIn<typeof Sessions, "owner">;
-	let search: Held<typeof Search>;
+	let sessions: SessionsOwner;
+	let search: Ref<typeof Search>;
 	let session: Session;
 	let other: Session;
 
@@ -45,12 +45,12 @@ describe("search (fake provider)", () => {
 			async (ctx) => (await ctx.get(SearchIndex, {})).cursor({ session: id }, ctx),
 			BACKGROUND_CONTEXT,
 		);
-	const chatOf = (id: string) => holdIn(owner, Chat, { session: id, conversation: 1 }, "participant");
+	const chatOf = (id: string) => holdWith(owner, Chat, { session: id, conversation: 1 }, ...CHAT_PARTICIPANT);
 
 	before(async () => {
 		fixture = await startFixture();
 		owner = fixture.browser();
-		sessions = await holdIn(owner, Sessions, {}, "owner");
+		sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		search = owner.hold(Search, {}, BACKGROUND_CONTEXT);
 		session = await sessions.create({ cwd: fixture.workspace, title: "Zebra migration" }, BACKGROUND_CONTEXT);
 		other = await sessions.create({ cwd: fixture.workspace, title: "Unrelated" }, BACKGROUND_CONTEXT);
@@ -163,11 +163,11 @@ describe("search (fake provider)", () => {
 	it("indexes subagent messages with independent cursors", async () => {
 		const chat = await chatOf(other.id);
 		await chat.send({ text: "subagent", requestId: "child" }, BACKGROUND_CONTEXT);
-		const children = await holdIn(owner, Subagents, {}, "reader");
+		const children = await holdWith(owner, Subagents, {}, "children");
 		const listed = await until(children.children, (value) => Boolean(value?.[other.id]?.length));
 		const id = listed![other.id]![0]!.conversationId;
 		await found("hello helper", (value) => value.messages.some((hit) => hit.conversationId === id));
-		const sub = await holdIn(owner, Chat, { session: other.id, conversation: id }, "participant");
+		const sub = await holdWith(owner, Chat, { session: other.id, conversation: id }, ...CHAT_PARTICIPANT);
 		await sub.send({ text: "child axolotl", requestId: "ax" }, BACKGROUND_CONTEXT);
 		const results = await found("axolotl", (value) => value.messages.length === 2);
 		assert.ok(results.messages.every((hit) => hit.session === other.id && hit.conversationId === id));
@@ -189,7 +189,7 @@ describe("search (fake provider)", () => {
 		const ingress = fixture.server.host.hold(DiscordIngress, { session: forked.id }, BACKGROUND_CONTEXT);
 		const { conversation } = await ingress.thread({ name: "fork", before: Date.now() }, BACKGROUND_CONTEXT);
 		ingress.release();
-		const sub = await holdIn(owner, Chat, { session: forked.id, conversation }, "participant");
+		const sub = await holdWith(owner, Chat, { session: forked.id, conversation }, ...CHAT_PARTICIPANT);
 		await sub.send({ text: "own okapi", requestId: "okapi" }, BACKGROUND_CONTEXT);
 		const own = await found("okapi", (value) => value.messages.length === 2);
 		assert.ok(own.messages.every((hit) => hit.session === forked.id && hit.conversationId === conversation));
@@ -244,11 +244,11 @@ describe("search across restarts", () => {
 		let restarted: P2Server | undefined;
 		try {
 			const owner = fixture.browser();
-			const session = await (await holdIn(owner, Sessions, {}, "owner")).create(
+			const session = await (await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)).create(
 				{ cwd: fixture.workspace },
 				BACKGROUND_CONTEXT,
 			);
-			const chat = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+			const chat = await holdWith(owner, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 			await chat.send({ text: "persistent narwhal", requestId: "n" }, BACKGROUND_CONTEXT);
 			const search = owner.hold(Search, {}, BACKGROUND_CONTEXT);
 			await poll(

@@ -4,7 +4,7 @@
 // the transcript. It only moves through the tree: choosing a turn shows it in the transcript, switching the session to
 // the branch storing it first when that is not the current one. Editing and branching happen in the transcript. A
 // branch's label is the command menu's target for it (hovered or focused, or a long press on touch): "Rename branch…".
-import { BACKGROUND_CONTEXT, type HeldIn, liveIn } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, live, liveWith, type Ref } from "@p2/app/v1";
 import {
 	closePanel,
 	conversationRoute,
@@ -34,8 +34,8 @@ type Loaded = { readonly kind: "tree"; readonly tree: Tree } | { readonly kind: 
 
 /** The panel for the session `session`: its tree, read again whenever the session row says it changed. */
 export function TreePanel({ session }: { session: string }) {
-	const tree = useObject(SessionTree, { session }, { variant: "owner" });
-	const rows = useReadable(liveIn(useObject(Sessions, {}), "owner", "guest")?.sessions);
+	const tree = live(useObject(SessionTree, { session }));
+	const rows = useReadable(liveWith(useObject(Sessions, {}), "sessions")?.sessions);
 	const row = rows?.find((each) => each.id === session);
 	// What changes the tree: a new message (the row's activity time), a switch, a new or renamed branch. Reading the tree
 	// scans the session's history, so it runs on these changes only, not per streamed part.
@@ -92,7 +92,7 @@ function TreeContents({
 	tree,
 	toc,
 }: {
-	held: HeldIn<typeof SessionTree, "owner"> | undefined;
+	held: Ref<typeof SessionTree> | undefined;
 	session: string;
 	title: string;
 	tree: Tree;

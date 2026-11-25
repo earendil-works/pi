@@ -6,9 +6,9 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, startFixture } from "./helpers.ts";
+import { type Fixture, holdWith, startFixture } from "./helpers.ts";
 
 const input = (selector: string, value: string) =>
 	`(()=>{const e=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`;
@@ -26,7 +26,7 @@ describe("workspace and terminal structural parity", { skip: !browserTests }, ()
 		writeFileSync(join(fixture.workspace, "src/hello.ts"), "export const answer = 42;\n");
 		id = (
 			await (
-				await holdIn(fixture.browser(), Sessions, {}, "owner")
+				await holdWith(fixture.browser(), Sessions, {}, ...SESSIONS_OWNER)
 			).create({ cwd: fixture.workspace, title: "Workspace parity" }, BACKGROUND_CONTEXT)
 		).id;
 		browser = await Browser.start();

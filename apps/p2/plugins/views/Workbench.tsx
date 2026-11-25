@@ -2,7 +2,7 @@
 // wide screens areas sit side by side with tabs; a tab drags to another area's tabs or edge, splitters resize. On phones
 // one pane shows at a time, picked from a strip of tabs. Panes are rendered as siblings in a fixed order and only
 // positioned, so rearranging never remounts them (a moved frame would reload, the chat would lose its place).
-import { BACKGROUND_CONTEXT, liveIn } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, liveWith } from "@p2/app/v1";
 import {
 	CloseIcon,
 	reportClientError,
@@ -25,7 +25,7 @@ import {
 	useState,
 } from "react";
 import { AnnotationLayer, InkLayer, useNoteHighlights } from "./annotate.tsx";
-import { type Annotation, type View, Views } from "./contract.ts";
+import { type Annotation, VIEWS_EDITING, type View, Views } from "./contract.ts";
 import { ViewKinds } from "./kinds.ts";
 import { activate, adopt, arrange, CHAT, move, type Rect, reconcile, resize, viewsIn, type Zone } from "./layout.ts";
 import { hide, setLayout, useAnnotateMode, useLayout } from "./layout-store.ts";
@@ -42,7 +42,7 @@ export function Workbench({ children }: { children?: ReactNode }) {
 	const session = useRoute().session;
 	const views = useObject(Views, session ? { session } : undefined);
 	useStatus(views);
-	const editor = liveIn(views, "editor");
+	const editor = liveWith(views, ...VIEWS_EDITING);
 	const list = useReadable(views?.views);
 	const annotations = useReadable(views?.annotations) ?? [];
 	const layout = useLayout(session ?? "");

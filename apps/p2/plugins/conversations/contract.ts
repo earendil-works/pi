@@ -85,49 +85,45 @@ export const Conversations = remote("p2.conversations", {
 	 * sending turn's: `"owner"` or absent. 4: `create`, `stop`, `archive` and `restore`;
 	 * `list` gives each session's location and project, and the projects. 5: no `origin` (p2 has no per-turn
 	 * authority). Only workers hold it, and they reload with the server: no `accepts`.
+	 * 6: a new base (grantable members replaced variants; older versions are refused).
 	 */
-	version: 5,
+	version: 6,
 	params: {},
 	hostAddress: serverHost,
-	variants: {
-		worker: {
-			methods: {
-				query: method(
-					obj({
-						conversation: literal(1),
-						requestId: str({ minLength: 1, maxLength: 500 }),
-						query: QuerySchema,
-					}),
-					ReplySchema,
-				),
-			},
-		},
+	methods: {
+		query: method(
+			obj({
+				conversation: literal(1),
+				requestId: str({ minLength: 1, maxLength: 500 }),
+				query: QuerySchema,
+			}),
+			ReplySchema,
+		),
 	},
 });
 
 /** Server-to-worker ingress; the server has already authorized and attributed the sender. */
 export const PeerConversation = remote("p2.peer-conversation", {
-	/** 2: `stop`. 3: no `origin`. Only the server holds it, and workers reload with it: no `accepts`. */
-	version: 3,
+	/**
+	 * 2: `stop`. 3: no `origin`. Only the server holds it, and workers reload with it: no `accepts`. 4: a new base
+	 * (grantable members replaced variants; older versions are refused).
+	 */
+	version: 4,
 	params: { session: param.str() },
 	hostAddress: sessionHost,
-	variants: {
-		broker: {
-			methods: {
-				send: method(
-					obj({
-						source: str(),
-						title: str(),
-						requestId: str(),
-						message: str(),
-						followUp: opt(bool()),
-					}),
-					obj({ submissionId: num() }),
-				),
-				answer: method(undefined, AnswerSchema),
-				/** Stops the main conversation's run (as Stop in the chat); `stopped`: one was in progress. */
-				stop: method(undefined, obj({ stopped: bool() })),
-			},
-		},
+	methods: {
+		send: method(
+			obj({
+				source: str(),
+				title: str(),
+				requestId: str(),
+				message: str(),
+				followUp: opt(bool()),
+			}),
+			obj({ submissionId: num() }),
+		),
+		answer: method(undefined, AnswerSchema),
+		/** Stops the main conversation's run (as Stop in the chat); `stopped`: one was in progress. */
+		stop: method(undefined, obj({ stopped: bool() })),
 	},
 });

@@ -5,10 +5,10 @@ import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Browser, browserTests, COMPOSER, setComposer } from "./browser.ts";
-import { type Fixture, holdIn, poll, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, poll, startFixture, until } from "./helpers.ts";
 
 const input = (selector: string, value: string) =>
 	`(()=>{const e=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`;
@@ -20,7 +20,7 @@ describe("chat control parity", { skip: !browserTests }, () => {
 		fixture = await startFixture({ web: true });
 		id = (
 			await (
-				await holdIn(fixture.browser(), Sessions, {}, "owner")
+				await holdWith(fixture.browser(), Sessions, {}, ...SESSIONS_OWNER)
 			).create({ cwd: fixture.workspace, title: "Control parity" }, BACKGROUND_CONTEXT)
 		).id;
 		browser = await Browser.start();
@@ -137,9 +137,9 @@ describe("chat control parity", { skip: !browserTests }, () => {
 				`document.querySelector('.messages .assistant')?.textContent.includes('Echo: hello controls')`,
 			);
 		}
-		const session = await holdIn(fixture.browser(), Sessions, {}, "owner");
+		const session = await holdWith(fixture.browser(), Sessions, {}, ...SESSIONS_OWNER);
 		await until(session.sessions, (list) => list?.find((row) => row.id === id)?.cwd === fixture.workspace);
-		const chat = await holdIn(fixture.browser(), Chat, { session: id, conversation: 1 }, "participant");
+		const chat = await holdWith(fixture.browser(), Chat, { session: id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await chat.send({ text: "slow controls", requestId: "slow-controls" }, BACKGROUND_CONTEXT);
 		await browser.wait(`document.querySelector('button[aria-label=Stop]')`);
 		await browser.click(".title-cwd");
@@ -157,7 +157,7 @@ describe("chat control parity", { skip: !browserTests }, () => {
 	it("places pasted images as pills like picked files and leaves text pastes to the editor", async () => {
 		const pasted = (
 			await (
-				await holdIn(fixture.browser(), Sessions, {}, "owner")
+				await holdWith(fixture.browser(), Sessions, {}, ...SESSIONS_OWNER)
 			).create({ cwd: fixture.workspace, title: "Paste" }, BACKGROUND_CONTEXT)
 		).id;
 		await browser.metrics(1280, 900);

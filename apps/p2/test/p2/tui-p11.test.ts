@@ -11,7 +11,7 @@ import {
 import type { JsonValue } from "@p2/app/v1";
 import { Artifacts } from "../../plugins/artifacts/contract.ts";
 import artifactsTui from "../../plugins/artifacts/tui.ts";
-import { Chat, type ModelMeta } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat, type ModelMeta } from "../../plugins/chat/contract.ts";
 import chatTui from "../../plugins/chat/tui.ts";
 import { ChatMode } from "../../plugins/chat-mode/contract.ts";
 import chatModeTui from "../../plugins/chat-mode/tui.ts";
@@ -22,7 +22,7 @@ import { Envs } from "../../plugins/envs/contract.ts";
 import envsTui from "../../plugins/envs/tui.ts";
 import { LogNotices, Logs } from "../../plugins/logs/contract.ts";
 import logsTui from "../../plugins/logs/tui.ts";
-import { Ports } from "../../plugins/ports/contract.ts";
+import { PORTS_OWNER, Ports } from "../../plugins/ports/contract.ts";
 import portsTui from "../../plugins/ports/tui.ts";
 import { SentFiles } from "../../plugins/send-file/contract.ts";
 import sendFileTui from "../../plugins/send-file/tui.ts";
@@ -98,23 +98,22 @@ function fixture(
 		[
 			Sessions,
 			(_input, _principal, self) => ({
-				variant: "guest",
 				sessions: self.state([SESSION]),
 			}),
+			["sessions"],
 		],
 		[
 			Subagents,
 			(_input, _principal, self) => ({
-				variant: "reader",
 				children: self.state({
 					s: options.children ?? [],
 				}),
 			}),
+			["children"],
 		],
 		[
 			SessionMetrics,
 			(_input, _principal, self) => ({
-				variant: "reader",
 				clients: self.state(1),
 				usage: self.state(null),
 			}),
@@ -127,7 +126,6 @@ function fixture(
 				const input = raw as { conversation: number };
 				if (options.viewer)
 					return {
-						variant: "viewer",
 						view: self.state(options.views?.(input.conversation) ?? viewOf()),
 						model: self.state(META),
 						liveShell: self.state(null),
@@ -135,7 +133,6 @@ function fixture(
 						entries: () => ({ items: [], more: false }),
 					};
 				return {
-					variant: "participant",
 					view: self.state(options.views?.(input.conversation) ?? viewOf()),
 					model: self.state(META),
 					liveShell: self.state(null),
@@ -156,11 +153,11 @@ function fixture(
 					dequeueOwn: () => ({ restored: [], skipped: 0 }),
 				};
 			},
+			() => (options.viewer ? [] : CHAT_PARTICIPANT),
 		],
 		[
 			Drafts,
 			(_input, _principal, self) => ({
-				variant: "author",
 				drafts: self.state([]),
 				claim: () => ({ texts: [] }),
 			}),
@@ -168,7 +165,6 @@ function fixture(
 		[
 			SubagentControl,
 			() => ({
-				variant: "participant",
 				archive: (args: unknown) => {
 					record("archive", args);
 				},
@@ -182,7 +178,6 @@ function fixture(
 				const name = self.state("Pi");
 				mode = enabledState;
 				return {
-					variant: "owner",
 					enabled: enabledState,
 					waiting,
 					name,
@@ -196,6 +191,7 @@ function fixture(
 					},
 				};
 			},
+			["set", "rename"],
 		],
 	];
 	return {
@@ -382,7 +378,6 @@ function ownerStubs(calls: Calls) {
 				const notices = self.state([{ id: 1, time: 1, source: "server", message: "old trouble" }]);
 				cells.notices = notices;
 				return {
-					variant: "owner",
 					notices,
 					dismiss: ({ id }: { id: number }, ctx: Ctx) => {
 						record("dismiss", id);
@@ -400,7 +395,6 @@ function ownerStubs(calls: Calls) {
 				const { source } = raw as { source: string };
 				record("logs", source);
 				return {
-					variant: "owner",
 					sources: self.state([{ id: "session:s", lines: 1, updatedAt: 1 }]),
 					lines: self.state([
 						{ id: 1, time: 1, level: "stdout", text: `first line of ${source}` },
@@ -412,16 +406,15 @@ function ownerStubs(calls: Calls) {
 		[
 			SessionStatus,
 			(_input, _principal, self) => ({
-				variant: "reader",
 				statuses: self.state({
 					s: { running: false, error: "worker exited with code 1", tasks: 0, busy: [] },
 				}),
 			}),
+			["statuses"],
 		],
 		[
 			WorkerControl,
 			(raw) => ({
-				variant: "owner",
 				restart: () => {
 					record("retry", (raw as { session: string }).session);
 				},
@@ -430,7 +423,6 @@ function ownerStubs(calls: Calls) {
 		[
 			Envs,
 			(_input, _principal, self) => ({
-				variant: "owner",
 				envs: self.state([
 					{ name: "box", config: { type: "ssh", host: "box.example", user: "me" }, sessions: 2 },
 					{
@@ -480,7 +472,6 @@ function ownerStubs(calls: Calls) {
 		[
 			Ports,
 			(_input, _principal, self) => ({
-				variant: "owner",
 				forwards: self.state([
 					{
 						id: "f1",
@@ -501,8 +492,9 @@ function ownerStubs(calls: Calls) {
 					record("setPublic", args);
 				},
 			}),
+			PORTS_OWNER,
 		],
-		[GuestPresence, () => ({ variant: "owner" })],
+		[GuestPresence, () => ({})],
 		[
 			Sharing,
 			(_input, _principal, self) => {
@@ -514,7 +506,6 @@ function ownerStubs(calls: Calls) {
 				const peopleUrl = self.state(null);
 				let tokens = 0;
 				return {
-					variant: "owner",
 					env,
 					links,
 					guests,
@@ -540,7 +531,6 @@ function ownerStubs(calls: Calls) {
 		[
 			Devices,
 			(_input, _principal, self) => ({
-				variant: "owner",
 				canMint: self.state(true),
 				token: () => {
 					record("token", true);
@@ -724,7 +714,6 @@ test("/files, /changes and /grep read the workspace (participants); guests and r
 			const counter = self.state(0);
 			changes.push(counter);
 			return {
-				variant: "reader",
 				changes: counter,
 				query: (query: WorkspaceQuery): WorkspaceResult => {
 					record("query", query);
@@ -1001,7 +990,6 @@ function contentStubs(calls: Calls): Stub[] {
 		[
 			SentFiles,
 			() => ({
-				variant: "reader",
 				preview: ({ id }: { id: string }) => {
 					record("preview", id);
 					return { name: "report.csv", size: 12, text: "a,b\n1,2", truncated: false };
@@ -1027,7 +1015,6 @@ function artifactStubs(
 				const list = self.state(summaries);
 				onList?.(list);
 				return {
-					variant: "reader",
 					artifacts: list,
 					read: ({ id, version }: { id: string; version: number }) => {
 						calls.readArtifact = [...(calls.readArtifact ?? []), { id, version }];
@@ -1036,6 +1023,7 @@ function artifactStubs(
 					},
 				};
 			},
+			["artifacts"],
 		],
 	];
 }

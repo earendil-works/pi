@@ -15,13 +15,9 @@ export const NoticesSchema = arr(
 );
 
 export const LogNotices = remote("p2.log-notices", {
-	version: 1,
+	version: 2,
 	params: {},
 	hostAddress: serverHost,
-	variants: {
-		owner: {
-			state: { notices: NoticesSchema },
-			methods: { dismiss: method(obj({ id: num() })) },
-		},
-	},
+	state: { notices: NoticesSchema },
+	methods: { dismiss: method(obj({ id: num() })) },
 });

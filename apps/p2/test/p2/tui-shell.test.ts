@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { type ConversationView, type EntryId, ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
-import { Chat, type ModelMeta, SHELL_BUSY, type ShellState } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat, type ModelMeta, SHELL_BUSY, type ShellState } from "../../plugins/chat/contract.ts";
 import chatTui, { ChatSurface } from "../../plugins/chat/tui.ts";
 import statusTui from "../../plugins/status/tui.ts";
 import type { Ctx } from "../../src/runtime/chord.ts";
@@ -66,7 +66,6 @@ test("`!` and `!!` run commands; the live one shows at the end; Escape cancels; 
 					const liveShell = self.state<ShellState>(null);
 					let live: ShellState = null;
 					return {
-						variant: "participant",
 						view: viewState,
 						model,
 						liveShell,
@@ -104,6 +103,7 @@ test("`!` and `!!` run commands; the live one shows at the end; Escape cancels; 
 						},
 					};
 				},
+				CHAT_PARTICIPANT,
 			],
 		],
 		facets: [tuiCoreFacet, chatTui, statusTui],

@@ -2,7 +2,7 @@
 // second chip shows how the agent is mentioned (`@pi`); the owner taps it to rename the agent for this conversation
 // (what people type after `@`, and what voice mode listens for).
 
-import { BACKGROUND_CONTEXT, contribute, defineFacet } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, contribute, defineFacet, liveWith } from "@p2/app/v1";
 import {
 	Sheet,
 	Slots,
@@ -111,7 +111,8 @@ function ChatModeChip() {
 	}, [name, setMentionName]);
 	if (!mode || !live) return null;
 	const title = hint(name);
-	if (mode.variant !== "owner")
+	const owner = liveWith(mode, "set", "rename");
+	if (!owner)
 		return enabled ? (
 			<>
 				<span className="chip on chat-mode" title={title}>
@@ -129,7 +130,7 @@ function ChatModeChip() {
 				className={`chip toggle chat-mode ${enabled ? "on" : ""}`}
 				aria-pressed={enabled}
 				title={title}
-				onClick={() => guess({ enabled: !enabled }, () => mode.set({ enabled: !enabled }, BACKGROUND_CONTEXT))}
+				onClick={() => guess({ enabled: !enabled }, () => owner.set({ enabled: !enabled }, BACKGROUND_CONTEXT))}
 			>
 				{label}
 			</button>
@@ -147,7 +148,7 @@ function ChatModeChip() {
 			{renaming && (
 				<NameSheet
 					name={name}
-					onSave={(next) => guess({ name: next }, () => mode.rename({ name: next }, BACKGROUND_CONTEXT))}
+					onSave={(next) => guess({ name: next }, () => owner.rename({ name: next }, BACKGROUND_CONTEXT))}
 					onClose={() => setRenaming(false)}
 				/>
 			)}

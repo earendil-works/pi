@@ -2,7 +2,7 @@
 // bar's button counting every kind's items and the side panel listing them (opening one opens a view of its kind, or
 // for a reader shows it in the panel), the artifact tools' activities (`artifact_show` in place), the artifact
 // commands (commands.tsx), and the viewer of sent files over the chat (viewer.ts).
-import { BACKGROUND_CONTEXT, contribute, defineFacet, serveKeyed } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, contribute, defineFacet, liveWith, serveKeyed } from "@p2/app/v1";
 import {
 	ArtifactIcon,
 	type ArtifactItem,
@@ -33,7 +33,7 @@ import {
 	ViewKinds,
 } from "@p2/app/v1/web";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
-import { Views } from "../views/contract.ts";
+import { VIEWS_EDITING, Views } from "../views/contract.ts";
 import { ViewsPages } from "../views/contract.web.ts";
 import { ARTIFACT_ACTIVITIES } from "./activity.tsx";
 import { ARTIFACT_COMMANDS, ARTIFACT_PAGES, ARTIFACT_SEARCH } from "./commands.tsx";
@@ -174,7 +174,7 @@ function KindSection({
 }) {
 	const items = kind.useItems(session);
 	const remove = kind.useRemove?.(session);
-	const views = useObject(Views, { session }, { variant: "editor" });
+	const views = liveWith(useObject(Views, { session }), ...VIEWS_EDITING);
 	const viewsPage = useRegistry(ViewsPages).get("views");
 	const { fail } = useComposerState();
 	const count = items?.length ?? 0;

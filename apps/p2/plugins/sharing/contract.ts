@@ -90,10 +90,9 @@ export const Presence = local("p2.share-presence", {
 
 /** Held by a guest's browser for its page's lifetime: marks the guest connected. Nothing for the owner. */
 export const GuestPresence = remote("p2.guest-presence", {
-	version: 1,
+	version: 2,
 	params: {},
 	hostAddress: serverHost,
-	variants: { owner: {}, guest: {} },
 });
 
 /**
@@ -102,36 +101,32 @@ export const GuestPresence = remote("p2.guest-presence", {
  * is unavailable: the brain is not connected to Radius, or does not know its address there yet.
  */
 export const Sharing = remote("p2.sharing", {
-	version: 1,
+	version: 2,
 	params: { session: param.str() },
 	hostAddress: serverHost,
-	variants: {
-		owner: {
-			state: {
-				/** The remote environments (comma-separated) the session's conversations work on, or null: this host. */
-				env: union([str(), nul()]),
-				links: arr(obj({ mode: ModeSchema, token: str(), url: str() })),
-				guests: arr(obj({ id: str(), name: str(), mode: ModeSchema })),
-				people: arr(obj({ id: str(), name: str(), mode: ModeSchema })),
-				peopleUrl: union([str(), nul()]),
-			},
-			methods: {
-				/** Creates the link of `mode`, or with `reset` replaces it (new token) and ends its guests' access. */
-				link: method(
-					obj({
-						mode: ModeSchema,
-						reset: opt(bool()),
-						remoteConfirmed: opt(bool()),
-					}),
-				),
-				/**
-				 * Shares the session with the person of `email`, or changes their mode. They open it through Radius, signed in
-				 * with that email.
-				 */
-				share: method(obj({ email: str(), mode: ModeSchema, remoteConfirmed: opt(bool()) })),
-				/** Ends one guest's or person's access to the session; a link keeps working for others. */
-				remove: method(obj({ guestId: str() })),
-			},
-		},
+	state: {
+		/** The remote environments (comma-separated) the session's conversations work on, or null: this host. */
+		env: union([str(), nul()]),
+		links: arr(obj({ mode: ModeSchema, token: str(), url: str() })),
+		guests: arr(obj({ id: str(), name: str(), mode: ModeSchema })),
+		people: arr(obj({ id: str(), name: str(), mode: ModeSchema })),
+		peopleUrl: union([str(), nul()]),
+	},
+	methods: {
+		/** Creates the link of `mode`, or with `reset` replaces it (new token) and ends its guests' access. */
+		link: method(
+			obj({
+				mode: ModeSchema,
+				reset: opt(bool()),
+				remoteConfirmed: opt(bool()),
+			}),
+		),
+		/**
+		 * Shares the session with the person of `email`, or changes their mode. They open it through Radius, signed in
+		 * with that email.
+		 */
+		share: method(obj({ email: str(), mode: ModeSchema, remoteConfirmed: opt(bool()) })),
+		/** Ends one guest's or person's access to the session; a link keeps working for others. */
+		remove: method(obj({ guestId: str() })),
 	},
 });

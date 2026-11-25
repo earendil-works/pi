@@ -7,14 +7,14 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import type { ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
 import type { ConversationView } from "@earendil-works/pi-durable";
-import { BACKGROUND_CONTEXT, Session } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, type RefWith, Session } from "@p2/app/v1";
 import { ArtifactPage, Artifacts } from "../../plugins/artifacts/contract.ts";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { CHAT_PARTICIPANT, Chat, type ChatParticipant } from "../../plugins/chat/contract.ts";
+import { SESSIONS_OWNER, Sessions, type SessionsOwner } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
-import { Views } from "../../plugins/views/contract.ts";
-import type { Host, RefIn } from "../../src/runtime/chord.ts";
-import { type Fixture, holdIn, http, startFixture, until } from "./helpers.ts";
+import { VIEWS_EDITING, Views } from "../../plugins/views/contract.ts";
+import type { Host } from "../../src/runtime/chord.ts";
+import { type Fixture, holdWith, http, startFixture, until } from "./helpers.ts";
 
 const PAGE = "<!doctype html><html><head><title>Glyph</title></head><body><p id=p>glyph one</p></body></html>";
 
@@ -39,10 +39,10 @@ const output = (message: ToolResultMessage | undefined): string =>
 describe("artifacts (fake provider)", () => {
 	let fixture: Fixture;
 	let owner: Host;
-	let sessions: RefIn<typeof Sessions, "owner">;
+	let sessions: SessionsOwner;
 	let session: string;
-	let chat: RefIn<typeof Chat, "participant">;
-	let artifacts: RefIn<typeof Artifacts, "editor">;
+	let chat: ChatParticipant;
+	let artifacts: RefWith<typeof Artifacts, "artifacts" | "remove">;
 	let sent = 0;
 
 	/** Has the agent run `code` in code mode; its result. */
@@ -67,10 +67,10 @@ describe("artifacts (fake provider)", () => {
 	before(async () => {
 		fixture = await startFixture({ allowedHosts: ["share.test"] });
 		owner = fixture.browser();
-		sessions = await holdIn(owner, Sessions, {}, "owner");
+		sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		session = (await sessions.create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT)).id;
-		chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
-		artifacts = await holdIn(owner, Artifacts, { session }, "editor");
+		chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
+		artifacts = await holdWith(owner, Artifacts, { session }, "artifacts", "remove");
 	});
 	after(async () => {
 		await fixture?.close();
@@ -149,7 +149,7 @@ describe("artifacts (fake provider)", () => {
 		assert.deepEqual(await run('return await tools.artifact_open({ id: "glyph-editor" });'), {
 			view: "glyph-editor",
 		});
-		const views = await holdIn(owner, Views, { session }, "editor");
+		const views = await holdWith(owner, Views, { session }, ...VIEWS_EDITING);
 		const [view] = await until(views.views, (value) => value.length === 1);
 		assert.deepEqual([view?.kind, view?.item, view?.title], ["html", "glyph-editor", "Glyph editor"]);
 		// Opening it again shows the same view.
@@ -183,7 +183,7 @@ describe("artifacts (fake provider)", () => {
 	});
 
 	it("keeps a page's state, whole, for the page and the agent", async () => {
-		const page = await holdIn(owner, ArtifactPage, { session, id: "glyph-editor" }, "editor");
+		const page = await holdWith(owner, ArtifactPage, { session, id: "glyph-editor" }, "setState");
 		assert.equal(await until(page.value, (value) => value !== undefined), null);
 		// Larger than any text cut: the agent gets it whole, as an object.
 		const points = Array.from({ length: 3000 }, (_, index) => [index, index * 2]);
@@ -208,7 +208,7 @@ describe("artifacts (fake provider)", () => {
 			/open/i,
 			"no page is open",
 		);
-		const page = await holdIn(owner, ArtifactPage, { session, id: "glyph-editor" }, "editor");
+		const page = await holdWith(owner, ArtifactPage, { session, id: "glyph-editor" }, "setState");
 		const subscription = await page.request.on(({ value }) => {
 			void page.answer(
 				{ request: value.request, result: { ok: true, value: { ran: value.code } } },
@@ -266,10 +266,10 @@ describe("artifacts (fake provider)", () => {
 		});
 		const cookie = String(joined.headers["set-cookie"]).split(";")[0]!;
 		const guest = fixture.client({ ...headers, Cookie: cookie }).host;
-		const list = await holdIn(guest, Artifacts, { session }, "reader");
+		const list = await holdWith(guest, Artifacts, { session }, "artifacts");
 		await until(list.artifacts, (value) => value?.length === 2);
 		assert.match((await list.read({ id: "glyph-editor" }, BACKGROUND_CONTEXT)).content, /glyph two/);
-		await holdIn(guest, ArtifactPage, { session, id: "glyph-editor" }, "viewer");
+		await holdWith(guest, ArtifactPage, { session, id: "glyph-editor" });
 		const frame = `/artifact-frame?${new URLSearchParams({ session, id: "glyph-editor", version: "2" })}`;
 		assert.equal(
 			(await http(fixture.server.port, frame, { headers: { Host: "share.test", Cookie: cookie } })).status,

@@ -320,8 +320,9 @@ Node 26 (`~/.local/bin/node26`).
 
 - **Unit:** `testHost` in `test/p2/helpers.ts` loads facets into a bare host: the server by default, or
   `{ address: Session({ id }), kind: "worker" }`. It serves the base registries of its kind (and, for a server, the
-  `ServerNatives`, with no workers unless `server` gives some). Stubs are `[Contract, membersOrFactory]`; a factory
-  returns a flat shape (`{ variant, ...members }`), gets `self.state(initial)` for an in-memory state member (a
+  `ServerNatives`, with no workers unless `server` gives some). Stubs are `[Contract, membersOrFactory, grants?]`
+  (`grants`: what a contract with grantable members grants, a list or a function of the principal); a factory
+  returns the members, flat, gets `self.state(initial)` for an in-memory state member (a
   `Cell` with `replace`/`change` the test drives) and may return nothing from a method (`null` is sent). Natives a
   facet reads (`harnessOf`, `workerOf`, a plugin's single-native registry) come from `workerFacet({ harness, worker,
   host })` and `nativeFacet(R, value)`. `root(fn)` runs as `principal`; `client(principal)` is a memory-linked client
@@ -341,7 +342,7 @@ Node 26 (`~/.local/bin/node26`).
   Generated test plugins need a `package.json` and may not use top-level await (a facet declares synchronously).
 - **Chord in tests:** tests import Chord only through `test/p2/helpers.ts` and the plugin API (`@p2/app/v1`).
   References are held (`host.hold(T, params, TEST)`; `TEST` is the background context) and awaited with
-  `whenLive(ref)`; `holdIn(host, T, params, variant)` returns one live in `variant`; `failureOf(ref)` waits for a
+  `whenLive(ref)`; `holdWith(host, T, params, ...members)` returns one live with those grantable members; `failureOf(ref)` waits for a
   failure or end (a type nobody serves leaves a hold waiting). Every method call takes a context.
 - **Live state:** `until(watchable, predicate)` follows a state member, derive or registry value until the predicate
   holds; `settled(watchable)` returns a defined value after 25 ms without changes. `expectChord(promise, code)`
@@ -438,8 +439,9 @@ p2 runs on Chord v2 (`packages/chord`, `docs/design.md` there); the port's notes
   of what it indexed, not session data).
 - **References:** `host.hold(T, params, ctx)` gives a reference at once (loading, live, failed, ended);
   `ctx.get`/`host.get` one once live. UIs use `src/runtime/refs.ts`: `follow` (a value with its current one first),
-  `followRegistry`, `whenLive`, `statusOf`, `liveIn(ref, ...variants)` (`HeldIn`), `UI_LINGER`. A held reference's
-  variant may be `undefined` until it binds, so `inVariant`/`expectVariant` do not narrow it: use `liveIn`.
+  `followRegistry`, `whenLive`, `statusOf`, `live(ref)`, `liveWith(ref, ...members)` and `kept`/`keptWith` (types
+  `RefWith`, `With`), `withHeld`/`withGranted`, `UI_LINGER`. A reference's grantable members are `undefined` until
+  its binding granted them: `liveWith` narrows to them; a worker that knows its grant uses `expectGranted`.
 - **Objects and state:** factories declare state with `defineState` (`defineTypedState` where pi-schema's optional
   fields are not JSON to TypeScript) and change it with `change(fn, ctx)`; derived members are `self.derive`; a
   `self.writable` is exposed through a derive. Natives (a Durable Harness, a database, a socket) are `self.open`
@@ -1323,9 +1325,10 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
 - **References**: an awaited `ctx.get`/`host.get` is live with its state; UI runtimes hold synchronously
   (`host.hold` in `useObject` and `TuiScope.watch`) and read state through `useReadable` (undefined until hydrated).
   Chord rebinds a held reference by itself (a dropped link, a restarted worker, a reload); the UI never holds one
-  again. Multi-variant references narrow with `liveIn(ref, ...variants)` or `useObject(type, params, { variant })`;
-  a TUI `watch` binds once the reference is live, so its callback narrows on `ref.variant`. Tests use
-  `holdIn(host, type, params, variant)`.
+  again. Grantable members are narrowed with `liveWith(ref, ...members)`; a TUI `watch` binds once the reference is
+  live, so its callback narrows with `liveWith(ref, ...)`. A contract with grantable members is served with
+  `admit: grantBy(principal => [...])`; a factory branch returns `notGranted` (or `...ungranted(names)`) for the
+  grantable members its principal never gets. Tests use `holdWith(host, type, params, ...members)`.
 - **Optimistic UI** (`docs/optimistic-ui.md`): actions show their effect at once (`useOptimisticCall` on the web,
   `scope.optimistic(read, reduce?)` in the terminal, Chord's `TuiScope.optimistic`), long work shows a pending state,
   refusals roll back with the error.

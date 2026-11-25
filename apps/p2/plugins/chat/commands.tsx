@@ -1,7 +1,7 @@
 // The chat's model commands for the command menu: Change model…, Thinking level… and Set current model as default on
 // a session, a subagent's conversation or the new-session screen, and Set default model…, with their pages. The
 // footer's model and thinking links open the same pages (web.tsx).
-import { BACKGROUND_CONTEXT, type Host, keptIn, withHeld } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, type Host, keptWith, withGranted, withHeld } from "@p2/app/v1";
 import {
 	type Command,
 	CommandMenu,
@@ -24,7 +24,7 @@ import {
 } from "@p2/app/v1/web";
 import { type ReactNode, useCallback, useMemo } from "react";
 import { Models, type ResourceSnapshot } from "../models/contract.ts";
-import { type Session, Sessions } from "../sessions/contract.ts";
+import { SESSIONS_OWNER, type Session, Sessions } from "../sessions/contract.ts";
 import { type Child, modelRefOf, Subagents } from "../subagents/contract.ts";
 import { Chat, conversationOf } from "./contract.ts";
 import { newSessionChoice, thinkingLevelOf } from "./model-choice.ts";
@@ -107,7 +107,7 @@ async function makeCurrentDefault(host: Host, target: CommandTarget | undefined)
 	const screen = target && modelScreen(target);
 	if (screen) return screen.makeDefault();
 	if (target?.type !== "session") return;
-	const session = await withHeld(host.hold(Sessions, {}, BACKGROUND_CONTEXT), "owner", async (catalog) =>
+	const session = await withGranted(host.hold(Sessions, {}, BACKGROUND_CONTEXT), SESSIONS_OWNER, async (catalog) =>
 		catalog.sessions.value.find((each) => each.id === target.id),
 	);
 	if (session) await setDefault(host, { model: session.model, thinkingLevel: thinkingLevelOf(session.thinkingLevel) });
@@ -115,7 +115,7 @@ async function makeCurrentDefault(host: Host, target: CommandTarget | undefined)
 
 /** The owner's catalog rows (kept while reconnecting). */
 const useCatalog = (): readonly Session[] | undefined =>
-	useReadable(keptIn(useObject(Sessions, {}), "owner")?.sessions);
+	useReadable(keptWith(useObject(Sessions, {}), ...SESSIONS_OWNER)?.sessions);
 
 /** The target's model; picking another applies it with the thinking level kept where the model has it, else off. */
 function ModelsPage() {
@@ -187,7 +187,7 @@ function DefaultModelPage() {
 
 /** Saves `choice` as the default for new sessions. */
 async function setDefault(host: Host, choice: ModelChoice): Promise<void> {
-	await withHeld(host.hold(Models, {}, BACKGROUND_CONTEXT), "owner", (models) =>
+	await withHeld(host.hold(Models, {}, BACKGROUND_CONTEXT), (models) =>
 		models.setDefault({ ...choice.model, thinkingLevel: choice.thinkingLevel }, BACKGROUND_CONTEXT),
 	);
 }
@@ -264,7 +264,7 @@ function useModelTarget(resources: ResourceSnapshot | undefined): ModelTarget | 
 	const host = useHost();
 	const screen = useShownModelScreen(target);
 	const sessions = useCatalog();
-	const children = useReadable(keptIn(useObject(Subagents, {}), "reader")?.children);
+	const children = useReadable(keptWith(useObject(Subagents, {}), "children")?.children);
 	const { choice: selected, setChoice } = useNewSessionState();
 	if (screen) return { choice: screen.choice, apply: async (choice) => screen.choose(choice) };
 	switch (target?.type) {
@@ -303,5 +303,5 @@ function childChoice(child: Child): ModelChoice | undefined {
 /** Sets the model of a conversation (its worker starts if it is not running). */
 export async function configure(host: Host, session: string, conversation: number, choice: ModelChoice): Promise<void> {
 	const chat = host.hold(Chat, { session, conversation }, BACKGROUND_CONTEXT);
-	await withHeld(chat, "participant", (live) => live.configure(choice, BACKGROUND_CONTEXT));
+	await withGranted(chat, ["configure"], (live) => live.configure(choice, BACKGROUND_CONTEXT));
 }

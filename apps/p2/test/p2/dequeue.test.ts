@@ -5,11 +5,11 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ConversationView, LiveState } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT, follow } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { Drafts } from "../../plugins/drafts/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
-import { holdIn, http, settled, startFixture, until } from "./helpers.ts";
+import { holdWith, http, settled, startFixture, until } from "./helpers.ts";
 
 const live = (view: ConversationView | null | undefined) => view?.docs["pi.live"] as LiveState | undefined;
 const queued = (view: ConversationView | null | undefined) =>
@@ -20,7 +20,9 @@ test("× discards another author's queued input; Move back returns it to its aut
 	t.after(() => fixture.close());
 	const owner = fixture.browser();
 	const session = (
-		await (await holdIn(owner, Sessions, {}, "owner")).create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT)
+		await (
+			await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)
+		).create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT)
 	).id;
 	const sharing = owner.hold(Sharing, { session }, BACKGROUND_CONTEXT);
 	await sharing.link({ mode: "full" }, BACKGROUND_CONTEXT);
@@ -32,8 +34,8 @@ test("× discards another author's queued input; Move back returns it to its aut
 		body: JSON.stringify({ token: links?.[0]?.token, name: "Guest" }),
 	});
 	const guest = fixture.client({ ...headers, Cookie: String(joined.headers["set-cookie"]).split(";")[0]! }).host;
-	const ownerChat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
-	const guestChat = await holdIn(guest, Chat, { session, conversation: 1 }, "participant");
+	const ownerChat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
+	const guestChat = await holdWith(guest, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
 	const drafts = guest.hold(Drafts, { session, conversation: 1 }, BACKGROUND_CONTEXT);
 	t.after(follow(ownerChat.view, () => {}));
 	t.after(follow(drafts.drafts, () => {}));

@@ -1,6 +1,6 @@
 // The Familiar in the owner's page, named "Ask Pi": home (`/`) opens its session, as its row above the sidebar's "New
 // session" does; either makes it on first use. The sidebar lists its session there only, not in any rollup.
-import { BACKGROUND_CONTEXT, contribute, defineFacet, keptIn, liveIn } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, contribute, defineFacet, kept, live, liveWith } from "@p2/app/v1";
 import {
 	conversationRoute,
 	NEW_SESSION,
@@ -16,7 +16,7 @@ import {
 	useRoute,
 } from "@p2/app/v1/web";
 import { useContext, useEffect, useRef, useState } from "react";
-import { Sessions } from "../sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../sessions/contract.ts";
 import { DrawerRowsContext, IconMarker, NavRow, UnreadMark } from "../sessions/contract.web.tsx";
 import { FAMILIAR_TITLE, Familiar } from "./contract.ts";
 import "./style.css";
@@ -32,10 +32,10 @@ function FamiliarRow() {
  */
 function OwnerRow() {
 	const held = useObject(Familiar, {});
-	const familiar = liveIn(held, "owner");
+	const familiar = live(held);
 	// As the server last said: while the connection is down or coming back, its row stays out of the rollups, as the
 	// sidebar's rows stay.
-	const session = useReadable(keptIn(held, "owner")?.session) ?? null;
+	const session = useReadable(kept(held)?.session) ?? null;
 	const { sessions, listApart } = useContext(DrawerRowsContext);
 	const row = sessions.find((each) => each.id === session);
 	const route = useRoute();
@@ -90,9 +90,9 @@ function FamiliarHome() {
 function OwnerHome() {
 	const nav = useNavigation();
 	const held = useObject(Familiar, {});
-	const familiar = liveIn(held, "owner");
-	const session = useReadable(keptIn(held, "owner")?.session);
-	const rows = useReadable(liveIn(useObject(Sessions, {}), "owner")?.sessions);
+	const familiar = live(held);
+	const session = useReadable(kept(held)?.session);
+	const rows = useReadable(liveWith(useObject(Sessions, {}), ...SESSIONS_OWNER)?.sessions);
 	const { fail } = useComposerState();
 	const opening = useRef(false);
 	useEffect(() => {

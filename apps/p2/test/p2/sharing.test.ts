@@ -6,20 +6,21 @@ import { join as joinPath } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { after, before, describe, it } from "node:test";
 import type { ConversationView, LiveState } from "@earendil-works/pi-durable";
-import { BACKGROUND_CONTEXT, follow, type Held, isChordError, whenLive } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { BACKGROUND_CONTEXT, follow, isChordError, type Ref, whenLive } from "@p2/app/v1";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { Drafts } from "../../plugins/drafts/contract.ts";
 import { Models } from "../../plugins/models/contract.ts";
-import { type Session, Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, type Session, Sessions, type SessionsOwner } from "../../plugins/sessions/contract.ts";
 import { GuestPresence, Sharing } from "../../plugins/sharing/contract.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
 import { startServer } from "../../src/hosts/server.ts";
 import { Access } from "../../src/runtime/access.ts";
-import { expectVariant, type Host, type RefIn, type VariantOf } from "../../src/runtime/chord.ts";
+import type { Host } from "../../src/runtime/chord.ts";
+import { expectGranted } from "../../src/runtime/refs.ts";
 import { senderText } from "../../src/runtime/sender.ts";
 import { buildTranscript } from "../../src/web/transcript.ts";
 import { wholeView } from "../fixtures/whole-view.ts";
-import { expectChord, type Fixture, holdIn, http, poll, startFixture, until, webAssets } from "./helpers.ts";
+import { type Fixture, holdWith, http, poll, startFixture, until, webAssets } from "./helpers.ts";
 
 const TUNNEL = { Host: "share.test", Origin: "https://share.test" };
 const live = (view: ConversationView | null | undefined): LiveState | undefined =>
@@ -32,10 +33,10 @@ type Guest = { host: Host; socket: { readyState: number; close(): void }; cookie
 describe("sharing (fake provider)", () => {
 	let fixture: Fixture;
 	let owner: Host;
-	let sessions: RefIn<typeof Sessions, "owner">;
+	let sessions: SessionsOwner;
 	let session: Session;
 	let other: Session;
-	let sharing: Held<typeof Sharing>;
+	let sharing: Ref<typeof Sharing>;
 
 	const tunnel = (path: string, cookie = "", method = "GET", body?: string) =>
 		http(fixture.server.port, path, {
@@ -60,21 +61,26 @@ describe("sharing (fake provider)", () => {
 		assert.match(setCookie, /HttpOnly; SameSite=Strict; Path=\/; Max-Age=\d+; Secure/);
 		const cookie = setCookie.split(";")[0] ?? "";
 		const { host, socket } = fixture.client({ ...TUNNEL, Cookie: cookie });
-		const access = await holdIn(host, Access, {}, "guest");
+		const access = await holdWith(host, Access, {}, "grant");
 		const grant = await until(access.grant, Boolean);
-		assert.equal(access.variant, "guest");
 		assert.equal(grant?.session, session.id);
 		// The web host holds GuestPresence for the page's lifetime.
 		await whenLive(host.hold(GuestPresence, {}, BACKGROUND_CONTEXT));
 		return { host, socket, cookie, id: grant?.id ?? "", name: grant?.name ?? "" };
 	};
-	const chatOf = <V extends VariantOf<typeof Chat>>(host: Host, variant: V, id = session.id) =>
-		holdIn(host, Chat, { session: id, conversation: 1 }, variant);
+	/** The conversation as a viewer has it: granted nothing. */
+	const viewerOf = async (host: Host, id = session.id) => {
+		const chat = await holdWith(host, Chat, { session: id, conversation: 1 });
+		assert.equal(chat.granted.size, 0, "a viewer is granted nothing");
+		return chat;
+	};
+	const participantOf = (host: Host, id = session.id) =>
+		holdWith(host, Chat, { session: id, conversation: 1 }, ...CHAT_PARTICIPANT);
 
 	before(async () => {
 		fixture = await startFixture({ allowedHosts: ["share.test"], web: true });
 		owner = fixture.browser();
-		sessions = await holdIn(owner, Sessions, {}, "owner");
+		sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		session = await sessions.create({ cwd: fixture.workspace, title: "Shared" }, BACKGROUND_CONTEXT);
 		other = await sessions.create({ cwd: fixture.workspace, title: "Private" }, BACKGROUND_CONTEXT);
 		sharing = owner.hold(Sharing, { session: session.id }, BACKGROUND_CONTEXT);
@@ -133,14 +139,14 @@ describe("sharing (fake provider)", () => {
 
 	it("limits read-only guests to reading their session", async () => {
 		const host = alice.host;
-		const list = await holdIn(host, Sessions, {}, "guest");
+		const list = await holdWith(host, Sessions, {}, "sessions");
 		const listed = await until(list.sessions, (value) => value !== undefined);
-		assert.equal(list.variant, "guest");
+		assert.deepEqual([...list.granted], ["sessions"]);
 		assert.deepEqual(
 			listed?.map((item) => item.id),
 			[session.id],
 		);
-		const status = await holdIn(host, SessionStatus, {}, "reader");
+		const status = await holdWith(host, SessionStatus, {}, "statuses");
 		const statuses = await until(status.statuses, (value) => value !== undefined);
 		assert.deepEqual(
 			Object.keys(statuses ?? {}).filter((id) => id !== session.id),
@@ -148,15 +154,12 @@ describe("sharing (fake provider)", () => {
 		);
 		await assert.rejects(whenLive(host.hold(Models, {}, BACKGROUND_CONTEXT)), /forbidden|owner-only/);
 		await assert.rejects(whenLive(host.hold(Sharing, { session: session.id }, BACKGROUND_CONTEXT)), /owner-only/);
-		await assert.rejects(
-			chatOf(host, "viewer", other.id),
-			(error) => isChordError(error) && error.code === "forbidden",
-		);
-		const chat = await chatOf(host, "viewer");
+		await assert.rejects(viewerOf(host, other.id), (error) => isChordError(error) && error.code === "forbidden");
+		const chat = await viewerOf(host);
 		const page = await chat.entries({ limit: 10 }, BACKGROUND_CONTEXT);
 		assert.ok(Array.isArray(page.items), "read-only guests page their session's entries");
-		// @ts-expect-error `send` is a participant's: a viewer calling it anyway is refused.
-		await expectChord(chat.send({ text: "x", requestId: "view" }, BACKGROUND_CONTEXT), "invalid");
+		// `send` is a participant's: not granted, the member is not there.
+		assert.equal(chat.send, undefined);
 		await assert.rejects(whenLive(host.hold(Drafts, { session: session.id, conversation: 1 }, BACKGROUND_CONTEXT)));
 	});
 
@@ -205,9 +208,9 @@ describe("sharing (fake provider)", () => {
 			"closed sockets drop out of the connected list",
 		);
 		const [aliceChat, bobChat, ownerChat] = await Promise.all([
-			chatOf(alice.host, "participant"),
-			chatOf(bob.host, "participant"),
-			chatOf(owner, "participant"),
+			participantOf(alice.host),
+			participantOf(bob.host),
+			participantOf(owner),
 		]);
 		const forged = senderText({ kind: "owner", name: "Owner" });
 		await aliceChat.send({ text: forged, requestId: "shared-id" }, BACKGROUND_CONTEXT);
@@ -226,9 +229,9 @@ describe("sharing (fake provider)", () => {
 
 	it("restores withdrawn input to each author only", async () => {
 		const [ownerChat, aliceChat, bobChat] = await Promise.all([
-			chatOf(owner, "participant"),
-			chatOf(alice.host, "participant"),
-			chatOf(bob.host, "participant"),
+			participantOf(owner),
+			participantOf(alice.host),
+			participantOf(bob.host),
 		]);
 		const draftsOf = (host: Host) => host.hold(Drafts, { session: session.id, conversation: 1 }, BACKGROUND_CONTEXT);
 		const [ownerDrafts, aliceDrafts, bobDrafts] = [draftsOf(owner), draftsOf(alice.host), draftsOf(bob.host)];
@@ -285,7 +288,7 @@ describe("sharing (fake provider)", () => {
 	});
 
 	it("revokes removed guests and reset links at once", async () => {
-		await chatOf(alice.host, "participant");
+		await participantOf(alice.host);
 		await sharing.remove({ guestId: alice.id }, BACKGROUND_CONTEXT);
 		await poll(() => alice.socket.readyState === 3, 10_000, "alice's socket closed");
 		await until(sharing.guests, (value) => value?.length === 1);
@@ -306,7 +309,7 @@ describe("sharing (fake provider)", () => {
 
 	it("ends guest access while the session is archived, and restores it", async () => {
 		const carol = await join("Carol", tokens.view ?? "");
-		await chatOf(carol.host, "viewer");
+		await viewerOf(carol.host);
 		await sessions.archive({ id: session.id }, BACKGROUND_CONTEXT);
 		await poll(() => carol.socket.readyState === 3, 10_000, "carol's socket closed");
 		assert.equal((await tunnel(`/join/${tokens.view}`)).status, 410);
@@ -314,7 +317,7 @@ describe("sharing (fake provider)", () => {
 		await sessions.restore({ id: session.id }, BACKGROUND_CONTEXT);
 		assert.equal((await tunnel("/", carol.cookie)).status, 200, "restore gives the grant back");
 		const { host } = fixture.client({ ...TUNNEL, Cookie: carol.cookie });
-		await chatOf(host, "viewer");
+		await viewerOf(host);
 	});
 
 	it("gives a browser that joins another session's link both sessions", async () => {
@@ -326,13 +329,16 @@ describe("sharing (fake provider)", () => {
 		assert.equal(again.status, 200, again.body);
 		assert.equal(again.headers["set-cookie"], undefined, "the browser keeps its identity");
 		const { host } = fixture.client({ ...TUNNEL, Cookie: dave.cookie });
-		const grant = await until((await holdIn(host, Access, {}, "guest")).grant, Boolean);
+		const grant = await until((await holdWith(host, Access, {}, "grant")).grant, Boolean);
 		assert.equal(grant?.id, dave.id);
 		assert.deepEqual(grant?.sessions, { [session.id]: "view", [other.id]: "view" });
 		assert.equal(grant?.session, other.id, "it lands in the session it joined last");
 		for (const path of [`/s/${session.id}`, `/s/${other.id}`])
 			assert.equal((await tunnel(path, dave.cookie)).status, 200, path);
-		const listed = await until((await holdIn(host, Sessions, {}, "guest")).sessions, (value) => value?.length === 2);
+		const listed = await until(
+			(await holdWith(host, Sessions, {}, "sessions")).sessions,
+			(value) => value?.length === 2,
+		);
 		assert.deepEqual(listed?.map((item) => item.id).sort(), [session.id, other.id].sort());
 	});
 });
@@ -352,7 +358,7 @@ describe("sharing across restarts", () => {
 		let restarted: Awaited<ReturnType<typeof startServer>> | undefined;
 		try {
 			const owner = fixture.browser();
-			const sessions = await holdIn(owner, Sessions, {}, "owner");
+			const sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 			const session = await sessions.create({ cwd: workspace, title: "Archived" }, BACKGROUND_CONTEXT);
 			const sharing = owner.hold(Sharing, { session: session.id }, BACKGROUND_CONTEXT);
 			await sharing.link({ mode: "full" }, BACKGROUND_CONTEXT);
@@ -372,7 +378,7 @@ describe("sharing across restarts", () => {
 			// The archive listener's first value is the stored catalog, where the session is already archived: it bumps
 			// nothing at startup. Only the restore bumps the grant.
 			await restarted.host.root(
-				async (ctx) => expectVariant(await ctx.get(Sessions, {}), "owner").restore({ id: session.id }, ctx),
+				async (ctx) => expectGranted(await ctx.get(Sessions, {}), "restore").restore({ id: session.id }, ctx),
 				BACKGROUND_CONTEXT,
 				{
 					principal: { kind: "owner", access: "local" },
@@ -393,7 +399,7 @@ describe("sharing across restarts", () => {
 		let restarted: Awaited<ReturnType<typeof startServer>> | undefined;
 		try {
 			const owner = fixture.browser();
-			const session = await (await holdIn(owner, Sessions, {}, "owner")).create(
+			const session = await (await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)).create(
 				{ cwd: workspace, title: "Kept" },
 				BACKGROUND_CONTEXT,
 			);
@@ -411,7 +417,7 @@ describe("sharing across restarts", () => {
 			await fixture.server.close();
 			restarted = await startServer({ dataDir, port, fake: true, web: false, allowedHosts: ["share.test"] });
 			const guest = fixture.client({ ...TUNNEL, Cookie: cookie }).host;
-			const chat = await holdIn(guest, Chat, { session: session.id, conversation: 1 }, "participant");
+			const chat = await holdWith(guest, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 			await chat.send({ text: "survived restart", requestId: "r" }, BACKGROUND_CONTEXT);
 			await until(chat.view, (view) => JSON.stringify(view).includes("Echo: survived restart"));
 		} finally {

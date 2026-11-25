@@ -6,11 +6,11 @@ import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import type { ConversationView, LiveState } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { Models } from "../../plugins/models/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 const live = (view: ConversationView | null | undefined) => view?.docs["pi.live"] as LiveState | undefined;
 /** The kinds of the transcript's rows after the first message: "user", "text", "activity", "thought", "answer". */
@@ -28,10 +28,10 @@ describe("detail in the browser", { skip: !browserTests }, () => {
 			.setDefault({ provider: "faux", modelId: "faux-1", thinkingLevel: "off" }, BACKGROUND_CONTEXT);
 		session = (
 			await (
-				await holdIn(owner, Sessions, {}, "owner")
+				await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)
 			).create({ cwd: fixture.workspace, title: "Detail" }, BACKGROUND_CONTEXT)
 		).id;
-		const chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await chat.send({ text: "codemode return 1;", requestId: "script" }, BACKGROUND_CONTEXT);
 		await until(chat.view, (view) => !live(view)?.run && JSON.stringify(view).includes("Echo: codemode"), 30_000);
 		chat.release();
@@ -90,7 +90,7 @@ describe("detail in the browser", { skip: !browserTests }, () => {
 		writeFileSync(settings, JSON.stringify({ ...base, detail: 1 }));
 		const other = (
 			await (
-				await holdIn(fixture.browser(), Sessions, {}, "owner")
+				await holdWith(fixture.browser(), Sessions, {}, ...SESSIONS_OWNER)
 			).create({ cwd: fixture.workspace, title: "Other" }, BACKGROUND_CONTEXT)
 		).id;
 		await browser.metrics(1280, 900);
@@ -120,7 +120,7 @@ describe("detail in the browser", { skip: !browserTests }, () => {
 	it("a tap on the wheel opens the step in front, the running one too; on the summary the list", async () => {
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${session}`);
 		await browser.wait("document.querySelector('[data-testid=activity]')");
-		const chat = await holdIn(fixture.browser(), Chat, { session, conversation: 1 }, "participant");
+		const chat = await holdWith(fixture.browser(), Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
 		// A command that runs a few seconds: the wheel's newest face is the running step.
 		await chat.send({ text: "slow-tool", requestId: "slow-tool" }, BACKGROUND_CONTEXT);
 		const working = "[...document.querySelectorAll('[data-testid=activity][data-state=working]')].at(-1)";
@@ -160,7 +160,7 @@ describe("detail in the browser", { skip: !browserTests }, () => {
 							window.__added.push({ answer: node.textContent.includes('Echo: slow answer'), arriving: node.classList.contains("arriving"), complete: Boolean(node.querySelector('.message-actions')) });
 			}).observe(document.querySelector('.rows'), { childList: true });
 		})()`);
-		const chat = await holdIn(fixture.browser(), Chat, { session, conversation: 1 }, "participant");
+		const chat = await holdWith(fixture.browser(), Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
 		// A long streamed answer (the fake model's `slow…`): seen while it streams if anything shows it early.
 		await chat.send({ text: "slow answer", requestId: "second" }, BACKGROUND_CONTEXT);
 		await until(chat.view, (view) => !live(view)?.run && JSON.stringify(view).includes("Echo: slow answer"), 30_000);

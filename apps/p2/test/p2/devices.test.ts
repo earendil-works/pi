@@ -11,7 +11,7 @@ import { WebSocket } from "ws";
 import { DeviceAccesses, Devices } from "../../plugins/devices/contract.ts";
 import { OwnerAccess } from "../../plugins/devices/owner-access.ts";
 import { ProviderLogin } from "../../plugins/login/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import { startServer } from "../../src/hosts/server.ts";
 import { Access } from "../../src/runtime/access.ts";
@@ -21,7 +21,7 @@ import {
 	localOwnerProof,
 	localOwnerSignIn,
 } from "../../src/runtime/local-owner.ts";
-import { clientHost, expectChord, holdIn, http, poll, startFixture, until, webAssets } from "./helpers.ts";
+import { clientHost, expectChord, holdWith, http, poll, startFixture, until, webAssets } from "./helpers.ts";
 
 const TUNNEL = { Host: "owner.test", Origin: "https://owner.test" };
 const requestWith = (cookie: string) => ({ headers: { cookie } }) as IncomingMessage;
@@ -145,20 +145,20 @@ test("Devices plugin signs in a remote owner over HTTP/WS, never grants remote o
 		assert.equal((await http(port, "/owner-key", { headers })).status, 404);
 		assert.notEqual((await http(port, `/@fs${join(fixture.dataDir, "owner-token.txt")}`, { headers })).status, 200);
 		const remote = fixture.client(headers).host;
-		await holdIn(remote, Access, {}, "owner");
+		await holdWith(remote, Access, {});
 		const remoteDevices = remote.hold(Devices, {}, BACKGROUND_CONTEXT);
 		assert.equal(await until(remoteDevices.canMint, (value) => value === false), false);
 		await expectChord(remoteDevices.token(BACKGROUND_CONTEXT), "forbidden");
 		const login = remote.hold(ProviderLogin, {}, BACKGROUND_CONTEXT);
 		await whenLive(login);
-		assert.equal(login.variant, "owner", "associated devices retain remote owner provider access");
+		assert.equal(login.state.value.kind, "live", "associated devices retain remote owner provider access");
 		const internal = (await fixture.server.host.registry(DeviceAccesses, BACKGROUND_CONTEXT)).value!.access;
 		assert.equal(internal.session(requestWith(cookie), port)?.kind, "device");
 		const outstanding = (await devices.token(BACKGROUND_CONTEXT)).token;
 		await fixture.server.reload(["devices"]);
 		const afterReload = await claim(JSON.stringify({ token: outstanding }));
 		assert.equal(afterReload.status, 200, "compatible reloads retain invitations and the owner key");
-		const session = await (await holdIn(local, Sessions, {}, "owner")).create(
+		const session = await (await holdWith(local, Sessions, {}, ...SESSIONS_OWNER)).create(
 			{ cwd: fixture.workspace },
 			BACKGROUND_CONTEXT,
 		);
@@ -176,8 +176,12 @@ test("Devices plugin signs in a remote owner over HTTP/WS, never grants remote o
 		await expectChord(whenLive(guest.hold(Devices, {}, BACKGROUND_CONTEXT)), "forbidden");
 		assert.equal((await http(port, "/owner-token", { headers: { ...TUNNEL, Cookie: guestCookie } })).status, 403);
 		const both = fixture.client({ ...TUNNEL, Cookie: `${guestCookie}; ${cookie}` }).host;
-		const ownerAgain = await holdIn(both, Access, {}, "owner");
-		assert.equal(ownerAgain.variant, "owner", "an owner cookie is not downgraded by an existing guest cookie");
+		const ownerAgain = await holdWith(both, Access, {});
+		assert.equal(
+			ownerAgain.granted.has("grant"),
+			false,
+			"an owner cookie is not downgraded by an existing guest cookie",
+		);
 		const startup = (await readFile(join(fixture.dataDir, "owner-token.txt"), "utf8")).trim();
 		assert.equal((await claim(JSON.stringify({ token: startup }))).status, 200, "headless startup token signs in");
 		await fixture.server.close();

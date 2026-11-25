@@ -10,13 +10,13 @@ import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { Models } from "../../plugins/models/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
 import { type Child, Subagents } from "../../plugins/subagents/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 import { type BaselineOffset, baselineOffsets } from "./sidebar-baselines.ts";
 
 /** What a subagent's item shows: its details' text, its status mark (`dots`, `failed: <label>`, none), its tooltip. */
@@ -54,10 +54,10 @@ describe("subagent rows in the sidebar", { skip: !browserTests }, () => {
 		await owner
 			.hold(Models, {}, BACKGROUND_CONTEXT)
 			.setDefault({ provider: "faux", modelId: "faux-1", thinkingLevel: "off" }, BACKGROUND_CONTEXT);
-		const sessions = await holdIn(owner, Sessions, {}, "owner");
+		const sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		session = (await sessions.create({ cwd: fixture.workspace, title: "Subagent rows" }, BACKGROUND_CONTEXT)).id;
-		const chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
-		const agents = await holdIn(owner, Subagents, {}, "reader");
+		const chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
+		const agents = await holdWith(owner, Subagents, {}, "children");
 		await chat.send({ text: "subagent", requestId: "helper" }, BACKGROUND_CONTEXT);
 		await until(agents.children, (value) => value?.[session]?.length === 1);
 		const spawn = { action: "spawn", name: "failing", model: "local/m1", message: "hello failing", tools: ["read"] };
@@ -123,9 +123,9 @@ describe("subagent rows in the sidebar", { skip: !browserTests }, () => {
 
 	it("shows pi's dots while a subagent works; its Cancel stops its run only", async () => {
 		const owner = fixture.browser();
-		const sub = await holdIn(owner, Chat, { session, conversation: helper().conversationId }, "participant");
-		const main = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
-		const status = await holdIn(owner, SessionStatus, {}, "reader");
+		const sub = await holdWith(owner, Chat, { session, conversation: helper().conversationId }, ...CHAT_PARTICIPANT);
+		const main = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
+		const status = await holdWith(owner, SessionStatus, {}, "statuses");
 		await main.send({ text: "slow main", requestId: "slow-main" }, BACKGROUND_CONTEXT);
 		await sub.send({ text: "slow rows", requestId: "slow" }, BACKGROUND_CONTEXT);
 		await browser.wait(`${row("helper")}.querySelector('.nav-marker > .pi-dots[role=img][aria-label=Working]')`);
@@ -161,7 +161,10 @@ describe("subagent rows in the sidebar", { skip: !browserTests }, () => {
 
 	it("cuts a long name with an ellipsis and keeps each age whole on its name's baseline, on a phone (no action button) and in RTL", async () => {
 		const title = "A session title long enough to be cut at every sidebar width";
-		await (await holdIn(fixture.browser(), Sessions, {}, "owner")).rename({ id: session, title }, BACKGROUND_CONTEXT);
+		await (await holdWith(fixture.browser(), Sessions, {}, ...SESSIONS_OWNER)).rename(
+			{ id: session, title },
+			BACKGROUND_CONTEXT,
+		);
 		const item = `${row("failing")}.closest('.session-row')`;
 		const check = async (where: string) => {
 			await browser.wait(
@@ -236,7 +239,7 @@ describe("subagent rows in the sidebar", { skip: !browserTests }, () => {
 			),
 			["failing"],
 		);
-		const agents = await holdIn(fixture.browser(), Subagents, {}, "reader");
+		const agents = await holdWith(fixture.browser(), Subagents, {}, "children");
 		await until(
 			agents.children,
 			(value) => value?.[session]?.find((child) => child.name === "helper")?.archived === true,

@@ -1,14 +1,15 @@
 import { num, obj } from "@earendil-works/pi-schema";
 import {
-	type AcceptsTable,
 	canView,
 	defineFacet,
 	defineTypedState,
 	deriveTyped,
 	forbidden,
+	grantBy,
 	isGuest,
 	isOwner,
 	isWorker,
+	notGranted,
 	PluginError,
 	record,
 } from "@p2/app/v1";
@@ -21,39 +22,6 @@ const Reports = defineTypedState("p2.status-reports", {
 	version: 3,
 	initial: () => ({ reports: {} }),
 });
-
-/**
- * `SessionStatus` 1: pages read statuses without `work` or `failure`; a worker built then reports neither (its
- * conversations show as busy without a step). 2: pages read statuses without `failure`; a worker built then reports
- * none (its main conversation's failures show as idle).
- */
-const STATUS_ACCEPTS: AcceptsTable<typeof SessionStatus> = {
-	1: {
-		state: {
-			reader: {
-				statuses: (statuses) =>
-					Object.fromEntries(
-						Object.entries(statuses).map(([session, { work: _work, failure: _failure, ...status }]) => [
-							session,
-							status,
-						]),
-					),
-			},
-		},
-		methods: { report: { args: (old) => ({ ...old, work: {} }) } },
-	},
-	2: {
-		state: {
-			reader: {
-				statuses: (statuses) =>
-					Object.fromEntries(
-						Object.entries(statuses).map(([session, { failure: _failure, ...status }]) => [session, status]),
-					),
-			},
-		},
-		methods: { report: { args: (old) => old } },
-	},
-};
 
 export default defineFacet((host) => {
 	// Who looks at a session: one entry per `SessionMetrics` reference (its params name the session and the viewer).
@@ -110,14 +78,11 @@ export default defineFacet((host) => {
 		if (!isOwner(principal)) throw forbidden("Only owners may retry session workers");
 		const server = serverOf(self);
 		return {
-			variant: "owner",
-			members: {
-				// Answers with the start's outcome: the worker runs, or the call fails with why it could not start.
-				restart: async (ctx) => {
-					const outcome = await server().workers.retry(session, ctx);
-					if (outcome.error !== undefined) throw new PluginError("worker_failed", outcome.error);
-					return null;
-				},
+			// Answers with the start's outcome: the worker runs, or the call fails with why it could not start.
+			restart: async (ctx) => {
+				const outcome = await server().workers.retry(session, ctx);
+				if (outcome.error !== undefined) throw new PluginError("worker_failed", outcome.error);
+				return null;
 			},
 		};
 	});
@@ -132,18 +97,18 @@ export default defineFacet((host) => {
 					.size,
 		);
 		const usage = deriveTyped(self, [status.statuses], ([value]) => value[session]?.usage ?? null);
-		return { variant: "reader", members: { clients, usage } };
+		return { clients, usage };
 	});
 
 	host.serve(
 		SessionStatus,
-		(_params, principal, self) => {
+		(_params, principal, _admitted, self) => {
 			const store = self.get(StatusStore, {});
 			if (isWorker(principal)) {
 				const { session, generation } = principal;
 				return {
-					variant: "reporter",
-					members: { report: (report, ctx) => store.report({ ...report, session, generation }, ctx) },
+					report: (report, ctx) => store.report({ ...report, session, generation }, ctx),
+					statuses: notGranted,
 				};
 			}
 			if (isGuest(principal)) {
@@ -171,11 +136,11 @@ export default defineFacet((host) => {
 						}),
 					),
 				);
-				return { variant: "reader", members: { statuses: statusesView } };
+				return { statuses: () => statusesView, report: notGranted };
 			}
 			if (!isOwner(principal)) throw forbidden("owners and guests only");
-			return { variant: "reader", members: { statuses: store.statuses } };
+			return { statuses: () => store.statuses, report: notGranted };
 		},
-		{ accepts: STATUS_ACCEPTS },
+		{ admit: grantBy((principal) => (isWorker(principal) ? ["report"] : ["statuses"])) },
 	);
 });

@@ -5,13 +5,13 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ConversationView, LiveState } from "@earendil-works/pi-durable";
-import { BACKGROUND_CONTEXT, statusOf } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { BACKGROUND_CONTEXT, type RefWith, statusOf } from "@p2/app/v1";
+import { CHAT_PARTICIPANT, Chat, type ChatParticipant } from "../../plugins/chat/contract.ts";
 import { Models } from "../../plugins/models/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions, type SessionsOwner } from "../../plugins/sessions/contract.ts";
 import { SessionStatus, StatusStore } from "../../plugins/status/contract.ts";
-import type { Host, RefIn } from "../../src/runtime/chord.ts";
-import { type Fixture, failureOf, holdIn, poll, startFixture, until } from "./helpers.ts";
+import type { Host } from "../../src/runtime/chord.ts";
+import { type Fixture, failureOf, holdWith, poll, startFixture, until } from "./helpers.ts";
 
 const assistants = (view: ConversationView | null | undefined): AssistantMessage[] =>
 	(view?.entries ?? []).flatMap((entry) => {
@@ -28,16 +28,16 @@ const partial = (view: ConversationView | null | undefined): string =>
 describe("M1: a working chat (fake provider)", () => {
 	let fixture: Fixture;
 	let browser: Host;
-	let sessions: RefIn<typeof Sessions, "owner">;
-	let status: RefIn<typeof SessionStatus, "reader">;
+	let sessions: SessionsOwner;
+	let status: RefWith<typeof SessionStatus, "statuses">;
 	let sessionId: string;
-	let chat: RefIn<typeof Chat, "participant">;
+	let chat: ChatParticipant;
 
 	before(async () => {
 		fixture = await startFixture({ idleMs: 1500 });
 		browser = fixture.browser();
-		sessions = await holdIn(browser, Sessions, {}, "owner");
-		status = await holdIn(browser, SessionStatus, {}, "reader");
+		sessions = await holdWith(browser, Sessions, {}, ...SESSIONS_OWNER);
+		status = await holdWith(browser, SessionStatus, {}, "statuses");
 	});
 
 	after(async () => {
@@ -48,7 +48,6 @@ describe("M1: a working chat (fake provider)", () => {
 		const models = browser.hold(Models, {}, BACKGROUND_CONTEXT);
 		const defaultModel = await until(models.defaultModel, (value) => Boolean(value));
 		assert.equal(defaultModel?.provider, "faux");
-		assert.equal(sessions.variant, "owner");
 		const session = await sessions.create({ cwd: fixture.workspace, title: "  hello\nworld " }, BACKGROUND_CONTEXT);
 		sessionId = session.id;
 		assert.equal(session.title, "hello world");
@@ -60,7 +59,7 @@ describe("M1: a working chat (fake provider)", () => {
 	});
 
 	it("sends a prompt and streams the answer", async () => {
-		chat = await holdIn(browser, Chat, { session: sessionId, conversation: 1 }, "participant");
+		chat = await holdWith(browser, Chat, { session: sessionId, conversation: 1 }, ...CHAT_PARTICIPANT);
 		const { submissionId } = await chat.send({ text: "hello", requestId: "r1" }, BACKGROUND_CONTEXT);
 		// A retried request is admitted once.
 		assert.equal(
@@ -142,7 +141,7 @@ describe("M1: a working chat (fake provider)", () => {
 		chat.release();
 		// The released Chat lingers 30 s on the worker, which keeps it alive (Chord's activity counts lingering objects).
 		await until(status.statuses, (value) => value?.[sessionId]?.running === false, 60_000);
-		chat = await holdIn(browser, Chat, { session: sessionId, conversation: 1 }, "participant");
+		chat = await holdWith(browser, Chat, { session: sessionId, conversation: 1 }, ...CHAT_PARTICIPANT);
 		const view = await until(chat.view, (value) => assistants(value).length >= 6);
 		assert.equal(answerText(assistants(view)[0]), "Echo: hello");
 		// The new worker started on the epoch before the reload and was reconciled; its status reports still arrive.
@@ -165,7 +164,7 @@ describe("M1: a working chat (fake provider)", () => {
 		await failureOf(refused);
 		refused.release();
 		await sessions.restore({ id: sessionId }, BACKGROUND_CONTEXT);
-		chat = await holdIn(browser, Chat, { session: sessionId, conversation: 1 }, "participant");
+		chat = await holdWith(browser, Chat, { session: sessionId, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await until(chat.view, (value) => assistants(value).length >= 7);
 		await poll(() => statusOf(chat) === "live", 5000, "live chat");
 	});

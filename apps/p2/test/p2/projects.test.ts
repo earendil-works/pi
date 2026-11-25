@@ -13,10 +13,10 @@ import { obj, str } from "@earendil-works/pi-schema";
 import { BACKGROUND_CONTEXT, defineFacet, defineState, local, method, record, whenLive } from "@p2/app/v1";
 import { parseProjects } from "../../plugins/projects/config.ts";
 import { below, Projects, placeOn } from "../../plugins/projects/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions, type SessionsOwner } from "../../plugins/sessions/contract.ts";
 import { type P2Server, startServer } from "../../src/hosts/server.ts";
-import type { RefIn } from "../../src/runtime/chord.ts";
-import { clientHost, expectChord, type Fixture, holdIn, localOwner, startFixture, until } from "./helpers.ts";
+import type { Ref } from "../../src/runtime/chord.ts";
+import { clientHost, expectChord, type Fixture, holdWith, localOwner, startFixture, until } from "./helpers.ts";
 
 const PI = { pi: [{ env: "mac", path: "~/projects/pi/pi" }, { path: "~/projects/pi/pi" }] };
 
@@ -151,7 +151,7 @@ describe("the one-time import", () => {
 
 		// p2 before the store: sessions, and memberships in the earlier document.
 		let client = await start(BEFORE);
-		const before = await holdIn(client, Sessions, {}, "owner");
+		const before = await holdWith(client, Sessions, {}, ...SESSIONS_OWNER);
 		const create = async (cwd: string) =>
 			(await before.create({ cwd: join(ws, cwd), title: cwd }, BACKGROUND_CONTEXT)).id;
 		const inPi = await create("pi/src");
@@ -170,7 +170,7 @@ describe("the one-time import", () => {
 		await stop(client);
 
 		client = await start();
-		let projects = await holdIn(client, Projects, {}, "owner");
+		let projects = await holdWith(client, Projects, {});
 		const imported = await until(projects.sessions, (map) => Object.keys(map ?? {}).length > 0);
 		assert.deepEqual(imported, { [inPi]: "pi", [joined]: "pi", [goneInWeb]: "web" });
 		assert.deepEqual(await until(projects.projects, (list) => list !== undefined), [
@@ -180,7 +180,7 @@ describe("the one-time import", () => {
 		assert.deepEqual(await until(projects.archived, (list) => list !== undefined), []);
 		assert.equal(outside in imported, false);
 		// After the import a session joins a project only when the owner puts it there, wherever it works.
-		const sessions = await holdIn(client, Sessions, {}, "owner");
+		const sessions = await holdWith(client, Sessions, {}, ...SESSIONS_OWNER);
 		const later = (await sessions.create({ cwd: join(ws, "pi"), title: "Later" }, BACKGROUND_CONTEXT)).id;
 		await projects.rename({ name: "web", to: "site" }, BACKGROUND_CONTEXT);
 		await until(projects.projects, (list) => list?.[1]?.name === "site");
@@ -190,7 +190,7 @@ describe("the one-time import", () => {
 		// The store is the projects' home now: projects.json is never read again, nor written.
 		writeFileSync(join(dataDir, "projects.json"), JSON.stringify({ other: [{ path: join(ws, "other") }] }));
 		client = await start();
-		projects = await holdIn(client, Projects, {}, "owner");
+		projects = await holdWith(client, Projects, {});
 		assert.deepEqual(
 			(await until(projects.projects, (list) => list !== undefined)).map((project) => project.name),
 			["pi", "site"],
@@ -211,7 +211,7 @@ describe("the one-time import", () => {
 			await server.close();
 			rmSync(root, { recursive: true, force: true });
 		});
-		const projects = await holdIn(client, Projects, {}, "owner");
+		const projects = await holdWith(client, Projects, {});
 		assert.deepEqual(await until(projects.projects, (list) => list !== undefined), []);
 		// The owner starts over from the web: the store takes projects at once.
 		await projects.create({ name: "pi", place: { env: null, path: "/pi" } }, BACKGROUND_CONTEXT);
@@ -221,15 +221,15 @@ describe("the one-time import", () => {
 
 describe("Projects", () => {
 	let fixture: Fixture;
-	let projects: RefIn<typeof Projects, "owner">;
-	let sessions: RefIn<typeof Sessions, "owner">;
+	let projects: Ref<typeof Projects>;
+	let sessions: SessionsOwner;
 	const names = (list: readonly { name: string }[] | undefined) => list?.map((project) => project.name).join();
 
 	before(async () => {
 		fixture = await startFixture();
 		const owner = fixture.browser();
-		projects = await holdIn(owner, Projects, {}, "owner");
-		sessions = await holdIn(owner, Sessions, {}, "owner");
+		projects = await holdWith(owner, Projects, {});
+		sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 	});
 	after(() => fixture?.close());
 

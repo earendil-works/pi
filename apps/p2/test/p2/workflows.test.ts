@@ -8,10 +8,9 @@ import { after, before, describe, it } from "node:test";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type { ConversationView, LiveState } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
-import type { RefIn } from "../../src/runtime/chord.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { CHAT_PARTICIPANT, Chat, type ChatParticipant } from "../../plugins/chat/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 const doc = readFileSync(new URL("../../docs/workflows.md", import.meta.url), "utf8");
 const blocks = [...doc.matchAll(/```js\n([\s\S]*?)```/g)].map((match) => match[1] ?? "");
@@ -27,7 +26,7 @@ const text = (message: ToolResultMessage) =>
 
 describe("workflow patterns (docs/workflows.md)", () => {
 	let fixture: Fixture;
-	let chat: RefIn<typeof Chat, "participant">;
+	let chat: ChatParticipant;
 	let runs = 0;
 	/** Runs `script` as one code mode call; resolves to its result (parsed JSON when it is JSON). */
 	const run = async (script: string): Promise<unknown> => {
@@ -52,9 +51,11 @@ describe("workflow patterns (docs/workflows.md)", () => {
 		fixture = await startFixture();
 		const owner = fixture.browser();
 		const session = (
-			await (await holdIn(owner, Sessions, {}, "owner")).create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT)
+			await (
+				await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)
+			).create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT)
 		).id;
-		chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
+		chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
 	});
 	after(async () => {
 		await fixture?.close();

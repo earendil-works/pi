@@ -60,11 +60,8 @@ export default defineFacet((host) => {
 		if (!isOwner(principal)) throw forbidden("the Familiar is the owner's");
 		const store = self.get(FamiliarStore, {});
 		return {
-			variant: "owner",
-			members: {
-				session: store.session,
-				open: (ctx) => store.open(ctx),
-			},
+			session: store.session,
+			open: (ctx) => store.open(ctx),
 		};
 	});
 });

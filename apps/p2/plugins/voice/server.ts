@@ -226,7 +226,7 @@ export default defineFacet((host) => {
 		self.onLive(async (ctx) => {
 			if (store.failure.value !== null) await store.refresh(ctx);
 		});
-		return { variant: "talker", members: { voices: store.voices, failure: store.failure } };
+		return { voices: store.voices, failure: store.failure };
 	});
 
 	contribute(host, "p2.voice-routes", (self) => {

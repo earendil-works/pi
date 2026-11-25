@@ -10,7 +10,7 @@ import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { WebSocketServer } from "ws";
 import { VirtualTerminal } from "../../../../packages/tui/test/virtual-terminal.ts";
 import { Devices } from "../../plugins/devices/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import { startServer } from "../../src/hosts/server.ts";
 import { startTuiClient } from "../../src/hosts/tui-client.ts";
@@ -18,7 +18,7 @@ import { claimOwner } from "../../src/hosts/tui-config.ts";
 import { TERMINAL_COLOR_QUERY } from "../../src/hosts/tui-terminal-colors.ts";
 import { cookieTransport, type TuiTransport } from "../../src/hosts/tui-transport.ts";
 import { DARK_THEME } from "../../src/tui/theme/builtin-themes.ts";
-import { holdIn, http, poll, startFixture, until } from "./helpers.ts";
+import { holdWith, http, poll, startFixture, until } from "./helpers.ts";
 
 const supported = Number(process.versions.node.split(".")[0]) >= 26;
 type Snapshot = { session?: string; drafts: [string, string][]; screen: string };
@@ -302,7 +302,7 @@ test("TUI admission matches web: strangers refused, associated owners and share 
 	const anonymous = await http(port, "/__p2_tui", { headers: { Host: "tui.test" } });
 	assert.equal(anonymous.status, 401);
 	assert(!anonymous.body.includes("export default"));
-	const session = await (await holdIn(fixture.browser(), Sessions, {}, "owner")).create(
+	const session = await (await holdWith(fixture.browser(), Sessions, {}, ...SESSIONS_OWNER)).create(
 		{ cwd: fixture.workspace },
 		BACKGROUND_CONTEXT,
 	);

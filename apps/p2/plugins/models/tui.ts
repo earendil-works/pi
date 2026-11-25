@@ -4,8 +4,7 @@
 // `Chat.configure` are owner-only, so guests get a read-only line. Without a session, a choice sets the default for
 // new sessions.
 
-import type { Held } from "@p2/app/v1";
-import { BACKGROUND_CONTEXT, contribute, defineFacet, type HeldIn, liveIn } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, contribute, defineFacet, live, liveWith, type Ref } from "@p2/app/v1";
 import type { TuiContext } from "@p2/app/v1/tui";
 import {
 	lineText,
@@ -21,7 +20,7 @@ import {
 	TuiSlots,
 	type TuiSurface,
 } from "@p2/app/v1/tui";
-import { Chat, type ModelMeta } from "../chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat, type ChatParticipant, type ModelMeta } from "../chat/contract.ts";
 import { type ModelChoice, type ModelInfo, Models } from "./contract.ts";
 
 type Scoped = { provider: string; modelId: string; thinkingLevel?: string };
@@ -52,8 +51,8 @@ export class ModelState implements TuiSurface {
 	private owner: TuiScope | undefined;
 	private chat: TuiScope | undefined;
 	private identity: string | undefined;
-	private models: Held<typeof Models> | undefined;
-	private chatRef: Held<typeof Chat> | undefined;
+	private models: Ref<typeof Models> | undefined;
+	private chatRef: Ref<typeof Chat> | undefined;
 	/** The state as shown: the choices in flight over what the server last sent. */
 	private readonly shownState: () => Shown;
 	/** Shows a choice while its call is in flight: the selectors and cycling start from it (Ctrl+P twice moves twice). */
@@ -125,12 +124,12 @@ export class ModelState implements TuiSurface {
 		return this.shown.scoped;
 	}
 	/** The owner's Models reference once live. */
-	service(): Held<typeof Models> | undefined {
-		return liveIn(this.models, "owner");
+	service(): Ref<typeof Models> | undefined {
+		return live(this.models);
 	}
 	/** The viewed conversation's participant reference once live. */
-	participant(): HeldIn<typeof Chat, "participant"> | undefined {
-		return liveIn(this.chatRef, "participant");
+	participant(): ChatParticipant | undefined {
+		return liveWith(this.chatRef, ...CHAT_PARTICIPANT);
 	}
 	selectorModels(): SelectorModel[] {
 		return this.catalog.map(({ provider, modelId, name }) => ({ provider, modelId, name }));

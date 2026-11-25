@@ -9,7 +9,7 @@ import { num } from "@earendil-works/pi-schema";
 import { stripTerminalSequences, TuiAltScreen } from "@earendil-works/pi-tui";
 import { forbidden, remote } from "@p2/app/v1";
 import { VirtualTerminal } from "../../../../packages/tui/test/virtual-terminal.ts";
-import { Chat, type ModelMeta } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat, type ModelMeta } from "../../plugins/chat/contract.ts";
 import chatTui from "../../plugins/chat/tui.ts";
 import { Drafts } from "../../plugins/drafts/contract.ts";
 import { Models } from "../../plugins/models/contract.ts";
@@ -17,7 +17,7 @@ import modelsTui from "../../plugins/models/tui.ts";
 import { portsRenderers } from "../../plugins/ports/tui.ts";
 import { Search, SessionReads } from "../../plugins/search/contract.ts";
 import searchTui from "../../plugins/search/tui.ts";
-import { type Session, Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, type Session, Sessions } from "../../plugins/sessions/contract.ts";
 import sessionsTui from "../../plugins/sessions/tui.ts";
 import { SessionMetrics, SessionStatus } from "../../plugins/status/contract.ts";
 import statusTui from "../../plugins/status/tui.ts";
@@ -97,9 +97,8 @@ function stubs(calls: Calls, sessions: Session[], options: { view?: Conversation
 				const defaultCwd = self.state("/work");
 				const defaultEnv = self.state(null);
 				catalog = sessionsState;
-				if (options.owner === false) return { variant: "guest", sessions: sessionsState };
+				if (options.owner === false) return { sessions: sessionsState };
 				return {
-					variant: "owner",
 					sessions: sessionsState,
 					defaultCwd,
 					defaultEnv,
@@ -141,6 +140,7 @@ function stubs(calls: Calls, sessions: Session[], options: { view?: Conversation
 					},
 				};
 			},
+			() => (options.owner === false ? ["sessions"] : SESSIONS_OWNER),
 		],
 		[
 			Models,
@@ -149,7 +149,6 @@ function stubs(calls: Calls, sessions: Session[], options: { view?: Conversation
 				record("models", null);
 				if (options.owner === false) throw forbidden("models are owner-only");
 				return {
-					variant: "owner",
 					models: self.state([
 						{
 							provider: "faux",
@@ -197,7 +196,6 @@ function stubs(calls: Calls, sessions: Session[], options: { view?: Conversation
 		[
 			Subagents,
 			(_input, _principal, self) => ({
-				variant: "reader",
 				children: self.state({
 					s1: [
 						{
@@ -211,11 +209,11 @@ function stubs(calls: Calls, sessions: Session[], options: { view?: Conversation
 					],
 				}),
 			}),
+			["children"],
 		],
 		[
 			Search,
 			(_input, _principal, self) => ({
-				variant: "owner",
 				rebuilds: self.state([]),
 				search: ({ query }: { query: string }) => ({
 					sessions: [],
@@ -237,17 +235,16 @@ function stubs(calls: Calls, sessions: Session[], options: { view?: Conversation
 			// s1 works in its root and in its subagent's conversation; s3's worker failed; s2 has an unread answer.
 			SessionStatus,
 			(_input, _principal, self) => ({
-				variant: "reader",
 				statuses: self.state({
 					s1: { running: true, tasks: 2, busy: [1, 2] },
 					s3: { running: false, tasks: 0, busy: [], error: "spawn failed" },
 				}),
 			}),
+			["statuses"],
 		],
 		[
 			SessionReads,
 			(_input, _principal, self) => ({
-				variant: "owner",
 				answers: self.state({ s2: 5 }),
 				reads: self.state({ s2: 3 }),
 				markRead: (args: unknown) => {
@@ -258,7 +255,6 @@ function stubs(calls: Calls, sessions: Session[], options: { view?: Conversation
 		[
 			SessionMetrics,
 			(_input, _principal, self) => ({
-				variant: "reader",
 				clients: self.state(2),
 				usage: self.state(null),
 			}),
@@ -268,7 +264,6 @@ function stubs(calls: Calls, sessions: Session[], options: { view?: Conversation
 		[
 			Chat,
 			(_input, _principal, self) => ({
-				variant: "participant",
 				view: self.state(options.view ?? viewOf()),
 				model: self.state(META),
 				liveShell: self.state(null),
@@ -304,11 +299,11 @@ function stubs(calls: Calls, sessions: Session[], options: { view?: Conversation
 					return { restored: ["first queued", "second queued"], skipped: 1 };
 				},
 			}),
+			CHAT_PARTICIPANT,
 		],
 		[
 			Drafts,
 			(_input, _principal, self) => ({
-				variant: "author",
 				drafts: self.state([]),
 				claim: () => ({ texts: [] }),
 			}),
@@ -608,7 +603,7 @@ test("a refused hold is reported once and not retried in a loop", async (t) => {
 		version: 1,
 		params: {},
 		hostAddress: serverHost,
-		variants: { reader: { state: { value: num() } } },
+		state: { value: num() },
 	});
 	let attempts = 0;
 	const calls: Calls = {};

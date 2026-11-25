@@ -1,7 +1,7 @@
 // The views' controls outside the workbench: the top bar's Annotate switch and Views sheet (the session's views, shown
 // or hidden on this device, adding one), and the composer's chip for what the next message carries; opening a view and
 // describing one, shared with the views' commands (commands.tsx).
-import { BACKGROUND_CONTEXT, type HeldIn, liveIn } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, liveWith } from "@p2/app/v1";
 import {
 	closeLayers,
 	openLayer,
@@ -16,7 +16,7 @@ import {
 	useStatus,
 } from "@p2/app/v1/web";
 import { type FormEvent, useState } from "react";
-import { type OpenInput, type View, Views } from "./contract.ts";
+import { type OpenInput, VIEWS_EDITING, type View, Views, type ViewsEditor } from "./contract.ts";
 import { viewsIn } from "./layout.ts";
 import { hide, setAnnotateMode, show, useAnnotateMode, useLayout } from "./layout-store.ts";
 
@@ -63,7 +63,7 @@ export function ViewActions() {
 function ViewsSheet({ session }: { session: string }) {
 	const views = useObject(Views, { session });
 	useStatus(views);
-	const editor = liveIn(views, "editor");
+	const editor = liveWith(views, ...VIEWS_EDITING);
 	const list = useReadable(views?.views) ?? [];
 	const layout = useLayout(session);
 	const { fail } = useComposerState();
@@ -158,11 +158,7 @@ function ViewsSheet({ session }: { session: string }) {
 }
 
 /** Opens a view in the session (for everyone in it) and shows it in front on this device. */
-export async function openView(
-	editor: HeldIn<typeof Views, "editor">,
-	session: string,
-	input: OpenInput,
-): Promise<void> {
+export async function openView(editor: ViewsEditor, session: string, input: OpenInput): Promise<void> {
 	const { id } = await editor.open(input, BACKGROUND_CONTEXT);
 	show(session, id);
 }
@@ -183,7 +179,7 @@ export function ContextChip() {
 	const session = useRoute().session;
 	const views = useObject(Views, session ? { session } : undefined);
 	useStatus(views);
-	const editor = liveIn(views, "editor");
+	const editor = liveWith(views, ...VIEWS_EDITING);
 	const list = useReadable(views?.views) ?? [];
 	const notes = useReadable(views?.annotations) ?? [];
 	const inline = useReadable(views?.inline) ?? [];

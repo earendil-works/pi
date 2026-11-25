@@ -5,11 +5,11 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { SessionTree } from "../../plugins/tree/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 const idle = (view: { docs: Record<string, unknown> } | null | undefined) =>
 	!(view?.docs["pi.live"] as { run?: unknown } | undefined)?.run;
@@ -20,18 +20,18 @@ const TURNS = `[...document.querySelectorAll('[data-testid=tree-panel] .tree-toc
 describe("the tree panel", { skip: !browserTests }, () => {
 	let fixture: Fixture, browser: Browser, id: string, long: string;
 	const send = async (session: string, conversation: number, text: string) => {
-		const chat = await holdIn(fixture.browser(), Chat, { session, conversation }, "participant");
+		const chat = await holdWith(fixture.browser(), Chat, { session, conversation }, ...CHAT_PARTICIPANT);
 		await chat.send({ text, requestId: `${conversation}:${text}` }, BACKGROUND_CONTEXT);
 		await until(chat.view, (view) => JSON.stringify(view?.entries ?? []).includes(`Echo: ${text}`) && idle(view));
 		chat.release();
 	};
 	/** A session with `words` sent in conversation 1, then a branch from the first answer with "other" in it (main). */
 	const graph = async (title: string, words: readonly string[]) => {
-		const sessions = await holdIn(fixture.browser(), Sessions, {}, "owner");
+		const sessions = await holdWith(fixture.browser(), Sessions, {}, ...SESSIONS_OWNER);
 		const session = (await sessions.create({ cwd: fixture.workspace, title }, BACKGROUND_CONTEXT)).id;
 		sessions.release();
 		for (const word of words) await send(session, 1, word);
-		const tree = await holdIn(fixture.browser(), SessionTree, { session }, "owner");
+		const tree = await holdWith(fixture.browser(), SessionTree, { session });
 		const nodes = (await tree.tree(BACKGROUND_CONTEXT)).nodes;
 		const answer = nodes.find((node) => node.text === `Echo: ${words[0]}`);
 		assert(answer);

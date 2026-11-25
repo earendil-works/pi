@@ -16,7 +16,7 @@ import {
 	contribute,
 	defineFacet,
 	defineRegistry,
-	expectVariant,
+	expectGranted,
 	forbidden,
 	signalOf,
 } from "@p2/app/v1";
@@ -304,7 +304,7 @@ export default defineFacet((host, self) => {
 		const reporter = new ChildReporter(async (ctx) => {
 			const children = await childrenOf(harness().durable, seen, endings, ctx);
 			for (const child of children) if (child.kind === "agent") oneShots.add(child.conversationId);
-			await expectVariant(feed, "reporter").report({ children }, ctx);
+			await expectGranted(feed, "report").report({ children }, ctx);
 		});
 		self.contribute(ChildReports, reporter);
 		// A subagent's run can end without an entry (stopped, no model): the subagents whose work ended are counted and
@@ -344,22 +344,19 @@ export default defineFacet((host, self) => {
 		const worker = workerOf(self);
 		const reports = self.registry(ChildReports);
 		return {
-			variant: "participant",
-			members: {
-				archive: ({ conversation, archived }, ctx) =>
-					worker().liveness.call(async () => {
-						const durable = harness().durable;
-						const registry = await durable.snapshot(Registry, ROOT_CONVERSATION_ID, ctx);
-						if (Object.values(registry?.oneShots ?? {}).some((agent) => agent.conversationId === conversation))
-							throw forbidden(READ_ONLY);
-						if (!Object.values(registry?.agents ?? {}).some((agent) => agent.conversationId === conversation))
-							throw new Error("Unknown conversation");
-						await setArchived(durable, ROOT_CONVERSATION_ID, conversation as ConversationId, archived, ctx);
-						// The sidebar's archived flag is the server's: pushed before the answer.
-						await reports.value?.push(ctx);
-						return null;
-					}),
-			},
+			archive: ({ conversation, archived }, ctx) =>
+				worker().liveness.call(async () => {
+					const durable = harness().durable;
+					const registry = await durable.snapshot(Registry, ROOT_CONVERSATION_ID, ctx);
+					if (Object.values(registry?.oneShots ?? {}).some((agent) => agent.conversationId === conversation))
+						throw forbidden(READ_ONLY);
+					if (!Object.values(registry?.agents ?? {}).some((agent) => agent.conversationId === conversation))
+						throw new Error("Unknown conversation");
+					await setArchived(durable, ROOT_CONVERSATION_ID, conversation as ConversationId, archived, ctx);
+					// The sidebar's archived flag is the server's: pushed before the answer.
+					await reports.value?.push(ctx);
+					return null;
+				}),
 		};
 	});
 });

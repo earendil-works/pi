@@ -1,6 +1,6 @@
 // The built-in view kinds' panes: a Markdown file of the workspace rendered, and the working tree's changes (below a
 // path), both items of the view (`PaneProps.item`).
-import { BACKGROUND_CONTEXT, liveIn } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, live } from "@p2/app/v1";
 import {
 	ChevronIcon,
 	errorText,
@@ -166,7 +166,7 @@ function ChangedFile({
 function useWorkspace(session: string) {
 	const workspace = useObject(Workspace, { session, conversation: 1 });
 	useStatus(workspace);
-	return liveIn(workspace, "reader");
+	return live(workspace);
 }
 
 /** A workspace file's text, loaded again when the working tree changes. */

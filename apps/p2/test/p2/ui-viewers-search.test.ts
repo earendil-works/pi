@@ -7,12 +7,12 @@ import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { Artifacts } from "../../plugins/artifacts/contract.ts";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { Search } from "../../plugins/search/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
-import { Views } from "../../plugins/views/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
+import { VIEWS_EDITING, Views } from "../../plugins/views/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, poll, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, poll, startFixture, until } from "./helpers.ts";
 
 const input = (selector: string, value: string) =>
 	`(()=>{const e=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`;
@@ -23,7 +23,7 @@ describe("search, viewers, artifacts and cost parity", { skip: !browserTests }, 
 		writeFileSync(join(fixture.workspace, "created.txt"), "A private test snapshot, not configuration.\n");
 		id = (
 			await (
-				await holdIn(fixture.browser(), Sessions, {}, "owner")
+				await holdWith(fixture.browser(), Sessions, {}, ...SESSIONS_OWNER)
 			).create({ cwd: fixture.workspace, title: "Viewer fixture" }, BACKGROUND_CONTEXT)
 		).id;
 		browser = await Browser.start();
@@ -35,10 +35,10 @@ describe("search, viewers, artifacts and cost parity", { skip: !browserTests }, 
 	});
 	it("searches titles and messages, switches archive scope, and restores an archived message hit", async () => {
 		const owner = fixture.browser(),
-			sessions = await holdIn(owner, Sessions, {}, "owner"),
+			sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER),
 			search = owner.hold(Search, {}, BACKGROUND_CONTEXT);
 		const session = await sessions.create({ cwd: fixture.workspace, title: "Search fixture" }, BACKGROUND_CONTEXT),
-			chat = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+			chat = await holdWith(owner, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await chat.send({ text: "Unique search needle", requestId: "needle" }, BACKGROUND_CONTEXT);
 		await until(chat.view, (view) => JSON.stringify(view?.entries).includes("Echo: Unique search needle"));
 		await browser.metrics(1280, 900);
@@ -72,8 +72,8 @@ describe("search, viewers, artifacts and cost parity", { skip: !browserTests }, 
 	});
 	it("lists the session's artifacts, opens one as a view only on a click", async () => {
 		const owner = fixture.browser(),
-			chat = await holdIn(owner, Chat, { session: id, conversation: 1 }, "participant"),
-			list = await holdIn(owner, Artifacts, { session: id }, "editor");
+			chat = await holdWith(owner, Chat, { session: id, conversation: 1 }, ...CHAT_PARTICIPANT),
+			list = await holdWith(owner, Artifacts, { session: id }, "artifacts", "remove");
 		for (let version = 1; version <= 2; version++) {
 			await chat.send({ text: "artifact", requestId: `v-${version}` }, BACKGROUND_CONTEXT);
 			await until(list.artifacts, (artifacts) => artifacts?.[0]?.version === version);
@@ -104,7 +104,7 @@ describe("search, viewers, artifacts and cost parity", { skip: !browserTests }, 
 			/id=demo&version=2/,
 		);
 		// The later cases work beside the bare chat.
-		const views = await holdIn(owner, Views, { session: id }, "editor");
+		const views = await holdWith(owner, Views, { session: id }, ...VIEWS_EDITING);
 		for (const view of views.views.value) await views.close({ id: view.id }, BACKGROUND_CONTEXT);
 		await browser.wait(`!document.querySelector('.views-pane.kind-html')`);
 		views.release();
@@ -174,7 +174,7 @@ describe("search, viewers, artifacts and cost parity", { skip: !browserTests }, 
 		await browser.evaluate("localStorage.removeItem('p2-side-panel-width')");
 	});
 	it("opens a sent-file card as a conservative viewer and explicitly downloads the same snapshot", async () => {
-		const chat = await holdIn(fixture.browser(), Chat, { session: id, conversation: 1 }, "participant");
+		const chat = await holdWith(fixture.browser(), Chat, { session: id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await chat.send({ text: "send-file", requestId: "snapshot" }, BACKGROUND_CONTEXT);
 		await until(chat.view, (view) => JSON.stringify(view?.entries).includes("created.txt"));
 		await browser.wait(`document.querySelector('a[aria-label="Open created.txt"]')`);

@@ -6,11 +6,11 @@ import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import type { ConversationView, LiveState } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { Models } from "../../plugins/models/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 const live = (view: ConversationView | null | undefined) => view?.docs["pi.live"] as LiveState | undefined;
 /** The iOS app's bridge as the page sees it, recording the Haptics calls. */
@@ -32,7 +32,7 @@ describe("haptics", { skip: !browserTests }, () => {
 			.setDefault({ provider: "faux", modelId: "faux-1", thinkingLevel: "off" }, BACKGROUND_CONTEXT);
 		session = (
 			await (
-				await holdIn(owner, Sessions, {}, "owner")
+				await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)
 			).create({ cwd: fixture.workspace, title: "Haptics" }, BACKGROUND_CONTEXT)
 		).id;
 		browser = await Browser.start();
@@ -58,7 +58,7 @@ describe("haptics", { skip: !browserTests }, () => {
 			box.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText' }));
 		})()`);
 		await browser.click("button[aria-label=Send]");
-		const chat = await holdIn(fixture.browser(), Chat, { session, conversation: 1 }, "participant");
+		const chat = await holdWith(fixture.browser(), Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await until(chat.view, (view) => !live(view)?.run && JSON.stringify(view).includes("Echo: codemode"), 30_000);
 		chat.release();
 		await browser.wait("document.querySelector('[data-testid=activity][data-state=done]')");

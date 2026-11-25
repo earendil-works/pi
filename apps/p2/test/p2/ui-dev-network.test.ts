@@ -14,10 +14,10 @@ import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { Devices } from "../../plugins/devices/contract.ts";
 import { PROXY_MARKER_HEADER } from "../../plugins/proxy-marker/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import { Browser, browserTests, COMPOSER } from "./browser.ts";
-import { type Fixture, holdIn, http, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, http, startFixture, until } from "./helpers.ts";
 
 function localNetwork(url: string): boolean {
 	const host = new URL(url).hostname
@@ -165,7 +165,7 @@ describe("clients through a public-origin proxy", { skip: !browserTests }, () =>
 		const owner = fixture.browser();
 		session = (
 			await (
-				await holdIn(owner, Sessions, {}, "owner")
+				await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)
 			).create({ cwd: fixture.workspace, title: "Network fixture" }, BACKGROUND_CONTEXT)
 		).id;
 		const sharing = owner.hold(Sharing, { session }, BACKGROUND_CONTEXT);

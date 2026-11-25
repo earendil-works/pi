@@ -4,11 +4,11 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { stripVTControlCharacters } from "node:util";
 import { type ConversationView, ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
-import { Chat, type ModelMeta } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat, type ModelMeta } from "../../plugins/chat/contract.ts";
 import chatTui from "../../plugins/chat/tui.ts";
 import { Envs } from "../../plugins/envs/contract.ts";
 import envsTui from "../../plugins/envs/tui.ts";
-import { type Session, Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, type Session, Sessions } from "../../plugins/sessions/contract.ts";
 import sessionsTui, { SessionsSurface } from "../../plugins/sessions/tui.ts";
 import { joinPath, parseLocation } from "../../plugins/sessions/tui-location.ts";
 import statusTui from "../../plugins/status/tui.ts";
@@ -70,9 +70,8 @@ function stubs(calls: Calls, role: "owner" | "guest" = "owner") {
 				const defaultCwd = self.state("/work");
 				const defaultEnv = self.state(null);
 				catalog = sessions;
-				if (role === "guest") return { variant: "guest", sessions: sessions };
+				if (role === "guest") return { sessions: sessions };
 				return {
-					variant: "owner",
 					sessions,
 					defaultCwd,
 					defaultEnv,
@@ -111,13 +110,13 @@ function stubs(calls: Calls, role: "owner" | "guest" = "owner") {
 					restore: () => {},
 				};
 			},
+			() => (role === "guest" ? ["sessions"] : SESSIONS_OWNER),
 		],
 		[
 			Envs,
 			(_input, _principal, self) => {
 				record("envsAcquired", true);
 				return {
-					variant: "owner",
 					envs: self.state([{ name: "gpu", config: { type: "ssh", host: "gpu.example" }, sessions: 0 }]),
 					failure: self.state(null),
 					warm: () => {
@@ -156,7 +155,6 @@ function stubs(calls: Calls, role: "owner" | "guest" = "owner") {
 		[
 			Chat,
 			(_input, _principal, self) => ({
-				variant: "participant",
 				view: self.state(view),
 				model: self.state(META),
 				liveShell: self.state(null),
@@ -173,6 +171,7 @@ function stubs(calls: Calls, role: "owner" | "guest" = "owner") {
 				abortShell: () => ({ aborted: false }),
 				dequeueOwn: () => ({ restored: [], skipped: 0 }),
 			}),
+			CHAT_PARTICIPANT,
 		],
 	];
 	return { server, worker, catalog: () => catalog };

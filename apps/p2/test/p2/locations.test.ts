@@ -10,15 +10,14 @@ import { test } from "node:test";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type { ConversationView } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT, whenLive } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat, type ChatParticipant } from "../../plugins/chat/contract.ts";
 import { AgentLocations } from "../../plugins/locations/contract.ts";
 import { createLocationExtension } from "../../plugins/locations/tool.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
 import { Subagents } from "../../plugins/subagents/contract.ts";
-import type { RefIn } from "../../src/runtime/chord.ts";
-import { expectChord, holdIn, http, startFixture, until } from "./helpers.ts";
+import { expectChord, holdWith, http, startFixture, until } from "./helpers.ts";
 
 const results = (view: ConversationView | null | undefined, tool?: string): ToolResultMessage[] =>
 	(view?.entries ?? [])
@@ -57,9 +56,9 @@ test(
 		const fixture = await startFixture({ allowedHosts: ["share.test"] });
 		t.after(() => fixture.close());
 		const owner = fixture.browser();
-		const sessions = await holdIn(owner, Sessions, {}, "owner");
-		const status = await holdIn(owner, SessionStatus, {}, "reader");
-		const agents = await holdIn(owner, Subagents, {}, "reader");
+		const sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
+		const status = await holdWith(owner, SessionStatus, {}, "statuses");
+		const agents = await holdWith(owner, Subagents, {}, "children");
 		const start = join(fixture.workspace, "start");
 		const next = join(fixture.workspace, "next");
 		const own = join(fixture.workspace, "own");
@@ -67,10 +66,10 @@ test(
 		for (const directory of [start, join(start, "alpha"), join(start, "beta"), next, own, other])
 			mkdirSync(directory);
 		const session = (await sessions.create({ cwd: start }, BACKGROUND_CONTEXT)).id;
-		const chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
 		let serial = 0;
 		/** Sends `message` to `target` and returns the tool results it added, once the session is idle. */
-		const call = async (message: string, target: RefIn<typeof Chat, "participant"> = chat, tool?: string) => {
+		const call = async (message: string, target: ChatParticipant = chat, tool?: string) => {
 			const before = results(await until(target.view, Boolean), tool).length;
 			await target.send({ text: message, requestId: `locations-${++serial}` }, BACKGROUND_CONTEXT);
 			const view = await until(target.view, (value) => results(value, tool).length > before && idle(value), 30_000);
@@ -123,11 +122,11 @@ test(
 		);
 
 		// A subagent without the location tools cannot move; one given location_move moves only itself, at once.
-		const plain = await holdIn(
+		const plain = await holdWith(
 			owner,
 			Chat,
 			{ session, conversation: (await child("plain"))!.conversationId },
-			"participant",
+			...CHAT_PARTICIPANT,
 		);
 		const sendTo = (name: string, message: string) =>
 			call(`subagent ${JSON.stringify({ action: "send", name, message })}`);
@@ -145,7 +144,7 @@ test(
 		await plain.stop(BACKGROUND_CONTEXT);
 		await until(status.statuses, (value) => value?.[session]?.tasks === 0);
 		assert.equal((await child("plain"))?.location, undefined);
-		const mover = await holdIn(owner, Chat, { session, conversation: placed!.conversationId }, "participant");
+		const mover = await holdWith(owner, Chat, { session, conversation: placed!.conversationId }, ...CHAT_PARTICIPANT);
 		await sendTo("placed", `location_move ${JSON.stringify({ location: other })}`);
 		const moved = await until(mover.view, (value) => results(value, "location_move").length > 0);
 		assert.equal(results(moved, "location_move")[0]?.isError, false, text(results(moved, "location_move")[0]));
@@ -177,7 +176,7 @@ test(
 			body: JSON.stringify({ token: links?.[0]?.token, name: "Guest" }),
 		});
 		const guest = fixture.client({ ...headers, Cookie: String(joined.headers["set-cookie"]).split(";")[0]! }).host;
-		const guestChat = await holdIn(guest, Chat, { session, conversation: 1 }, "participant");
+		const guestChat = await holdWith(guest, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
 		// No per-turn authority: a guest's turn uses the tools; the guest itself cannot hold the server object.
 		const [listed] = await call("location_envs {}", guestChat);
 		assert.equal(listed?.isError, false, text(listed));

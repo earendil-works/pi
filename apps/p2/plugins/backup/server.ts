@@ -126,22 +126,19 @@ export default defineFacet((host) => {
 		};
 		const uploads = (): BackupUploads => open().uploads;
 		return {
-			variant: "worker",
-			members: {
-				device: backup.device,
-				report: ({ status }, ctx) => backup.report({ store, status }, ctx),
-				begin: (slot) => uploads().begin(store, slot),
-				append: async ({ upload, bytes }) => {
-					await uploads().append(store, upload, bytes);
-					return null;
-				},
-				finish: ({ upload }) => uploads().finish(store, upload),
-				abort: async ({ upload }) => {
-					uploads().abort(store, upload);
-					return null;
-				},
-				account: () => open().account(),
+			device: backup.device,
+			report: ({ status }, ctx) => backup.report({ store, status }, ctx),
+			begin: (slot) => uploads().begin(store, slot),
+			append: async ({ upload, bytes }) => {
+				await uploads().append(store, upload, bytes);
+				return null;
 			},
+			finish: ({ upload }) => uploads().finish(store, upload),
+			abort: async ({ upload }) => {
+				uploads().abort(store, upload);
+				return null;
+			},
+			account: () => open().account(),
 		};
 	});
 });

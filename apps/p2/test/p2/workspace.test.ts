@@ -4,13 +4,13 @@ import { mkdirSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, symlink, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { BACKGROUND_CONTEXT, type Held, statusOf, whenLive } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { type Session, Sessions } from "../../plugins/sessions/contract.ts";
+import { BACKGROUND_CONTEXT, type Ref, statusOf, whenLive } from "@p2/app/v1";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
+import { SESSIONS_OWNER, type Session, Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import { Workspace, WorkspaceTransfer } from "../../plugins/workspace/contract.ts";
 import { Hosts } from "../../src/runtime/server.ts";
-import { expectChord, type Fixture, failureOf, holdIn, http, startFixture, until } from "./helpers.ts";
+import { expectChord, type Fixture, failureOf, holdWith, http, startFixture, until } from "./helpers.ts";
 
 const TUNNEL = { Host: "share.test", Origin: "https://share.test" };
 
@@ -18,7 +18,7 @@ describe("workspace plugin (fake provider, temporary git repository)", () => {
 	let fixture: Fixture;
 	let session: Session;
 	let other: Session;
-	let workspace: Held<typeof Workspace>;
+	let workspace: Ref<typeof Workspace>;
 	let origin: string;
 	let hash: string;
 	const url = (path: string, id = session.id) =>
@@ -83,7 +83,7 @@ describe("workspace plugin (fake provider, temporary git repository)", () => {
 		// A link out of the working directory (to p2's data directory, which is no exception otherwise).
 		await symlink(fixture.dataDir, join(fixture.workspace, "outside"));
 		const browser = fixture.browser();
-		const sessions = await holdIn(browser, Sessions, {}, "owner");
+		const sessions = await holdWith(browser, Sessions, {}, ...SESSIONS_OWNER);
 		session = await sessions.create({ cwd: fixture.workspace, title: "Workspace" }, BACKGROUND_CONTEXT);
 		other = await sessions.create({ cwd: fixture.workspace, title: "Other" }, BACKGROUND_CONTEXT);
 		workspace = browser.hold(Workspace, { session: session.id, conversation: 1 }, BACKGROUND_CONTEXT);
@@ -149,16 +149,11 @@ describe("workspace plugin (fake provider, temporary git repository)", () => {
 		unknown.release();
 		// Sessions work in <data>/plugins (agent plugins): the data directory is a workspace like any other.
 		mkdirSync(join(fixture.dataDir, "plugins", "counter"), { recursive: true });
-		const pluginsSession = await (await holdIn(browser, Sessions, {}, "owner")).create(
+		const pluginsSession = await (await holdWith(browser, Sessions, {}, ...SESSIONS_OWNER)).create(
 			{ cwd: join(fixture.dataDir, "plugins"), title: "Plugins" },
 			BACKGROUND_CONTEXT,
 		);
-		const pluginsWorkspace = await holdIn(
-			browser,
-			Workspace,
-			{ session: pluginsSession.id, conversation: 1 },
-			"reader",
-		);
+		const pluginsWorkspace = await holdWith(browser, Workspace, { session: pluginsSession.id, conversation: 1 });
 		const listed = await pluginsWorkspace.query({ kind: "list", path: "" }, BACKGROUND_CONTEXT);
 		assert(
 			listed.kind === "list" && listed.entries.some((entry) => entry.name === "counter"),
@@ -284,7 +279,12 @@ describe("workspace plugin (fake provider, temporary git repository)", () => {
 	});
 
 	it("sends quoted browser review drafts as an ordinary attributed prompt", async () => {
-		const chat = await holdIn(fixture.browser(), Chat, { session: session.id, conversation: 1 }, "participant");
+		const chat = await holdWith(
+			fixture.browser(),
+			Chat,
+			{ session: session.id, conversation: 1 },
+			...CHAT_PARTICIPANT,
+		);
 		const text = `Review comments:\n\nsrc/hello.ts:1 @${hash.slice(0, 8)}\n> const hello = 'after';\nPlease use a clearer name`;
 		await chat.send({ text, requestId: "review" }, BACKGROUND_CONTEXT);
 		const view = await until(chat.view, (value) =>
@@ -304,7 +304,7 @@ it("workspace holds keep an idle worker alive, and releasing the last hold relea
 	const fixture = await startFixture({ idleMs: 100 });
 	try {
 		const browser = fixture.browser();
-		const session = await (await holdIn(browser, Sessions, {}, "owner")).create(
+		const session = await (await holdWith(browser, Sessions, {}, ...SESSIONS_OWNER)).create(
 			{
 				cwd: fixture.workspace,
 				title: "Watch lease",

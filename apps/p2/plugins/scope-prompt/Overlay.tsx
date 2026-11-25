@@ -4,7 +4,7 @@
 // person's message, the scope as message context; what is typed about anything else (the sidebar) goes to the Familiar
 // with the scope after it, to route (message.ts). The composer's "To" switches between the two.
 // Outside the mode the page behaves as before: the overlay draws nothing and takes no events.
-import { BACKGROUND_CONTEXT, type Host, withHeld } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, type Host, withGranted, withHeld } from "@p2/app/v1";
 import {
 	CloseIcon,
 	navigate,
@@ -17,9 +17,9 @@ import {
 	useRoute,
 } from "@p2/app/v1/web";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { Chat } from "../chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../chat/contract.ts";
 import { FAMILIAR_TITLE, Familiar } from "../familiar/contract.ts";
-import { Sessions } from "../sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../sessions/contract.ts";
 import { ScopeStage } from "./contract.ts";
 import { familiarMessage, inOpenSession, type Scope, scopeBlock, scopeNote } from "./message.ts";
 import { setPointing, useModeKeys, usePointing } from "./mode.ts";
@@ -374,11 +374,13 @@ async function sendToChat(host: Host, text: string, scope: Scope, route: Route):
 	const session = route.session;
 	if (session === undefined) throw new Error("No conversation is open");
 	const requestId = crypto.randomUUID();
-	await withHeld(host.hold(ScopeStage, { session }, context), "sender", (stage) =>
+	await withHeld(host.hold(ScopeStage, { session }, context), (stage) =>
 		stage.stage({ requestId, block: scopeBlock(scope), note: scopeNote(scope) }, context),
 	);
-	await withHeld(host.hold(Chat, { session, conversation: route.conversation }, context), "participant", (chat) =>
-		chat.send({ text: text.trim(), requestId }, context),
+	await withGranted(
+		host.hold(Chat, { session, conversation: route.conversation }, context),
+		CHAT_PARTICIPANT,
+		(chat) => chat.send({ text: text.trim(), requestId }, context),
 	);
 	return { kind: "chat" };
 }
@@ -389,11 +391,15 @@ async function sendToChat(host: Host, text: string, scope: Scope, route: Route):
  */
 async function sendToFamiliar(host: Host, text: string, scope: Scope, route: Route): Promise<Sent> {
 	const context = BACKGROUND_CONTEXT;
-	const { id } = await withHeld(host.hold(Familiar, {}, context), "owner", (familiar) => familiar.open(context));
-	const rows = await withHeld(host.hold(Sessions, {}, context), "owner", async (sessions) => sessions.sessions.value);
+	const { id } = await withHeld(host.hold(Familiar, {}, context), (familiar) => familiar.open(context));
+	const rows = await withGranted(
+		host.hold(Sessions, {}, context),
+		SESSIONS_OWNER,
+		async (sessions) => sessions.sessions.value,
+	);
 	const conversation = rows.find((row) => row.id === id)?.main ?? 1;
 	const title = rows.find((row) => row.id === route.session)?.title;
-	await withHeld(host.hold(Chat, { session: id, conversation }, context), "participant", (chat) =>
+	await withGranted(host.hold(Chat, { session: id, conversation }, context), CHAT_PARTICIPANT, (chat) =>
 		chat.send(
 			{
 				text: familiarMessage(text, scope, route, title),

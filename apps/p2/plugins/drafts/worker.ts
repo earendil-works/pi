@@ -51,11 +51,8 @@ export default defineFacet((host) => {
 		const store = self.get(DraftStore, {});
 		const key = draftKey(conversation, authorId);
 		return {
-			variant: "author",
-			members: {
-				drafts: self.derive([store.drafts], ([drafts]) => drafts[key] ?? []),
-				claim: ({ ids }, ctx) => store.claim({ conversation, authorId, ids }, ctx),
-			},
+			drafts: self.derive([store.drafts], ([drafts]) => drafts[key] ?? []),
+			claim: ({ ids }, ctx) => store.claim({ conversation, authorId, ids }, ctx),
 		};
 	});
 });

@@ -12,7 +12,7 @@ import {
 import { Access } from "../runtime/access.ts";
 import { createHost, hostErrorText, newerPeerProtocol } from "../runtime/chord.ts";
 import { type P2Principal, SERVER } from "../runtime/principals.ts";
-import { follow, whenLive } from "../runtime/refs.ts";
+import { follow, liveWith, whenLive } from "../runtime/refs.ts";
 import { TuiRuntime } from "../runtime/tui.ts";
 import type { TuiGrantResult } from "../runtime/tui-context.ts";
 import { TuiPreferences } from "../runtime/tui-preferences.ts";
@@ -241,15 +241,16 @@ export async function setupTui(bridge: Bridge, facets: readonly PluginFacet<P2Pr
 	const access = host.hold(Access, {}, BACKGROUND_CONTEXT);
 	follow(access.state, (state) => {
 		if (state.kind !== "live") return;
-		const role = access.variant === "owner" ? "owner" : "guest";
+		const role = access.granted.has("grant") ? "guest" : "owner";
 		if (role === runtime.role) return;
 		runtime.role = role;
 		runtime.changed();
 	});
 	void whenLive(access).then(
 		() => {
-			if (access.variant === "guest")
-				follow(access.grant, (grant) => {
+			const guest = liveWith(access, "grant");
+			if (guest)
+				follow(guest.grant, (grant) => {
 					runtime.grant = grant
 						? { name: grant.name, sessions: grant.sessions ?? { [grant.session]: grant.mode } }
 						: undefined;

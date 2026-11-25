@@ -17,6 +17,7 @@ import {
 	type Factory,
 	followNative,
 	forbidden,
+	grantBy,
 	type HandleOf,
 	isOwner,
 	isWorker,
@@ -25,6 +26,7 @@ import {
 	literal,
 	locationText,
 	nativeOf,
+	notGranted,
 	PluginError,
 	type Ref,
 	type Self,
@@ -42,7 +44,7 @@ import { EnvManagers, EnvService } from "../envs/contract.ts";
 import { Catalog, type Session, SessionLocks } from "../sessions/contract.ts";
 import { type Child, ChildStore } from "../subagents/contract.ts";
 import { type OwnerConfig, OwnerConfigFile, type OwnerConfigState, type OwnerServer } from "./config.ts";
-import { type Instance, InstanceSchema, MCP_ACCEPTS, Mcp, McpManager, type ProjectFile } from "./contract.ts";
+import { type Instance, InstanceSchema, MCP_OWNER, MCP_WORKER, Mcp, McpManager, type ProjectFile } from "./contract.ts";
 import { McpCredentials } from "./credentials.ts";
 import type { ConnectEnv } from "./environments.ts";
 import { type ClientInfo, Instances, RECONNECT } from "./instances.ts";
@@ -83,7 +85,10 @@ export default mcpServerFacet(VIEW_LINGER_MS, sshEnvironments);
 export function mcpServerFacet(viewLingerMs: number, connector: EnvConnector): Facet {
 	return defineFacet((host) => {
 		host.serve(McpManager, managerFactory(connector));
-		host.serve(Mcp, view, { linger: viewLingerMs, accepts: MCP_ACCEPTS });
+		host.serve(Mcp, view, {
+			linger: viewLingerMs,
+			admit: grantBy((principal) => (isOwner(principal) ? MCP_OWNER : isWorker(principal) ? MCP_WORKER : [])),
+		});
 		contribute(host, "p2.mcp-routes", signInRoutes);
 	});
 }
@@ -391,28 +396,29 @@ function projectAt(location: Location, projects: readonly ProjectFile[]): Projec
 }
 
 /** The view: the owner's, a session worker's, nobody else's. */
-const view: Factory<typeof Mcp> = (_params, principal, self) => {
+const view: Factory<typeof Mcp> = (_params, principal, _admitted, self) => {
 	if (!isOwner(principal) && !isWorker(principal))
 		throw forbidden("MCP servers are for the owner and session workers");
 	const manager = self.get(McpManager, {});
 	if (isOwner(principal))
 		return {
-			variant: "owner",
-			members: {
-				instances: manager.instances,
-				errors: deriveTyped(self, [manager.errors, manager.leases], ([errors, leases]) => [
-					...errors,
-					...leases.flatMap((lease) => lease.errors.map((error) => `session ${lease.session}: ${error}`)),
-				]),
-				signIns: manager.signIns,
-				restart: (args, ctx) => manager.restart(args, ctx),
-				signIn: ({ server }, ctx) => manager.beginSignIn({ server, redirect: { kind: "loopback" } }, ctx),
-				paste: (args, ctx) => manager.pasteSignIn(args, ctx),
-				cancelSignIn: (args, ctx) => manager.cancelSignIn(args, ctx),
-				signOut: (args, ctx) => manager.signOut(args, ctx),
-			},
+			servers: notGranted,
+			leases: notGranted,
+			setLocations: notGranted,
+			call: notGranted,
+			instances: () => manager.instances,
+			errors: deriveTyped(self, [manager.errors, manager.leases], ([errors, leases]) => [
+				...errors,
+				...leases.flatMap((lease) => lease.errors.map((error) => `session ${lease.session}: ${error}`)),
+			]),
+			signIns: () => manager.signIns,
+			restart: (args, ctx) => manager.restart(args, ctx),
+			signIn: ({ server }, ctx) => manager.beginSignIn({ server, redirect: { kind: "loopback" } }, ctx),
+			paste: (args, ctx) => manager.pasteSignIn(args, ctx),
+			cancelSignIn: (args, ctx) => manager.cancelSignIn(args, ctx),
+			signOut: (args, ctx) => manager.signOut(args, ctx),
 		};
-	return { variant: "worker", members: workerView(principal, manager, self) };
+	return workerView(principal, manager, self);
 };
 
 /**
@@ -431,15 +437,21 @@ function workerView(principal: WorkerPrincipal, manager: Ref<typeof McpManager>,
 		},
 	);
 	return {
-		servers: deriveTyped(self, [manager.instances, manager.leases], ([instances, leases]) => {
-			const used = new Set(leases.filter((lease) => lease.session === session).flatMap((lease) => lease.instances));
-			return instances.filter((instance) => used.has(instance.id)).map(({ error: _error, ...instance }) => instance);
-		}),
-		leases: deriveTyped(self, [manager.leases], ([leases]) =>
-			leases
-				.filter((lease) => lease.session === session)
-				.map(({ location, instances }) => ({ location, instances })),
-		),
+		servers: () =>
+			deriveTyped(self, [manager.instances, manager.leases], ([instances, leases]) => {
+				const used = new Set(
+					leases.filter((lease) => lease.session === session).flatMap((lease) => lease.instances),
+				);
+				return instances
+					.filter((instance) => used.has(instance.id))
+					.map(({ error: _error, ...instance }) => instance);
+			}),
+		leases: () =>
+			deriveTyped(self, [manager.leases], ([leases]) =>
+				leases
+					.filter((lease) => lease.session === session)
+					.map(({ location, instances }) => ({ location, instances })),
+			),
 		errors: deriveTyped(self, [manager.leases], ([leases]) =>
 			leases.filter((lease) => lease.session === session).flatMap((lease) => lease.errors),
 		),
@@ -451,6 +463,13 @@ function workerView(principal: WorkerPrincipal, manager: Ref<typeof McpManager>,
 			await current(ctx);
 			return manager.call({ session, generation, incarnation: ctx.incarnation, location, server, tool, args }, ctx);
 		},
+		instances: notGranted,
+		signIns: notGranted,
+		restart: notGranted,
+		signIn: notGranted,
+		paste: notGranted,
+		cancelSignIn: notGranted,
+		signOut: notGranted,
 	};
 }
 

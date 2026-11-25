@@ -10,12 +10,11 @@ import { after, before, describe, it } from "node:test";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { ArtifactPage } from "../../plugins/artifacts/contract.ts";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
-import { Views } from "../../plugins/views/contract.ts";
-import type { RefIn } from "../../src/runtime/chord.ts";
+import { CHAT_PARTICIPANT, Chat, type ChatParticipant } from "../../plugins/chat/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
+import { VIEWS_EDITING, Views, type ViewsEditor } from "../../plugins/views/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, poll, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, poll, startFixture, until } from "./helpers.ts";
 
 /**
  * A small glyph editor: three points; clicking one selects it (`setState` with a function, and `select`), the agent's
@@ -48,8 +47,8 @@ describe("views in Chromium", { skip: !browserTests }, () => {
 	let fixture: Fixture;
 	let browser: Browser;
 	let session: string;
-	let chat: RefIn<typeof Chat, "participant">;
-	let views: RefIn<typeof Views, "editor">;
+	let chat: ChatParticipant;
+	let views: ViewsEditor;
 	let calls = 0;
 
 	/** Runs `script` in code mode as the agent, and waits for its turn to end. */
@@ -86,10 +85,10 @@ describe("views in Chromium", { skip: !browserTests }, () => {
 		fixture = await startFixture({ web: true });
 		writeFileSync(join(fixture.workspace, "notes.md"), "# Plan\n\nWe draw the **letter a** first.\n");
 		const owner = fixture.browser();
-		const sessions = await holdIn(owner, Sessions, {}, "owner");
+		const sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		session = (await sessions.create({ cwd: fixture.workspace, title: "Views" }, BACKGROUND_CONTEXT)).id;
-		chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
-		views = await holdIn(owner, Views, { session }, "editor");
+		chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
+		views = await holdWith(owner, Views, { session }, ...VIEWS_EDITING);
 		await script(`await tools.view_open({ kind: "markdown", title: "Plan", item: "notes.md", id: "plan" });`);
 		await script(
 			[
@@ -141,7 +140,7 @@ describe("views in Chromium", { skip: !browserTests }, () => {
 		);
 		assert.equal(await frame("window.lastFrom"), "init");
 		await browser.evaluateInFrame("/artifact-frame", `document.querySelector('[data-i="1"]').click()`);
-		const page = await holdIn(fixture.browser(), ArtifactPage, { session, id: "glyph" }, "editor");
+		const page = await holdWith(fixture.browser(), ArtifactPage, { session, id: "glyph" }, "setState");
 		await until(page.value, (value) => (value as { selected?: number } | null)?.selected === 1);
 		await browser.wait(`document.querySelector('.views-chip')?.textContent.includes('Selection in Glyph editor')`);
 		const [view] = (await until(views.views, (list) => list.some((each) => each.selection))).filter(

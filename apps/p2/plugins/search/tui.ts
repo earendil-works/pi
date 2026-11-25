@@ -1,7 +1,7 @@
 // The session selector's message search in the TUI (p2-tui-port.md section 1.17): `Search` is literal and bounded, and
 // the owner's; the selector shows its hits as a separate group. `/reindex` rebuilds the viewed session's index.
 
-import { BACKGROUND_CONTEXT, contribute, defineFacet, liveIn, whenLive } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, contribute, defineFacet, live, whenLive } from "@p2/app/v1";
 import {
 	lineText,
 	type TuiCommand,
@@ -16,7 +16,6 @@ const source: TuiSessionSource = {
 	search: (runtime, query, archived) =>
 		runtime.host.root(async (root) => {
 			const search = await root.get(Search, {});
-			if (search.variant !== "owner") return [];
 			return (await search.search({ query, archived }, root)).messages;
 		}, BACKGROUND_CONTEXT),
 };
@@ -31,7 +30,6 @@ function reindex(ctx: TuiContext): void {
 	const scope = ctx.scope();
 	let started = false;
 	const search = scope.watch(Search, {}, (ref, follow) => {
-		if (ref.variant !== "owner") return;
 		follow(ref.rebuilds, (rebuilds) => {
 			const rebuild = rebuilds.find((each) => each.session === session);
 			if (!started || rebuild?.phase === "running") return;
@@ -44,7 +42,7 @@ function reindex(ctx: TuiContext): void {
 	ctx.notify("Rebuilding the search index…");
 	void (async () => {
 		await whenLive(search);
-		const owner = liveIn(search, "owner");
+		const owner = live(search);
 		if (!owner) throw new Error("Only the owner rebuilds the search index");
 		await owner.rebuildIndex({ session }, BACKGROUND_CONTEXT);
 		started = true;

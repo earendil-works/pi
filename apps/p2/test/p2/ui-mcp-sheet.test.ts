@@ -5,11 +5,11 @@ import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { Mcp } from "../../plugins/mcp/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
+import { MCP_OWNER, Mcp } from "../../plugins/mcp/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 const FIXTURE = fileURLToPath(new URL("../fixtures/mcp-server.mjs", import.meta.url));
 
@@ -42,10 +42,10 @@ describe("MCP sheet across a dropped link", { skip: !browserTests, timeout: 120_
 		);
 		// Servers run while sessions use them: a session's worker leases the fixture server.
 		const owner = fixture.browser();
-		const sessions = await holdIn(owner, Sessions, {}, "owner");
+		const sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		const session = await sessions.create({ cwd: fixture.workspace, title: "MCP" }, BACKGROUND_CONTEXT);
-		await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
-		const mcp = await holdIn(owner, Mcp, {}, "owner");
+		await holdWith(owner, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
+		const mcp = await holdWith(owner, Mcp, {}, ...MCP_OWNER);
 		await until(mcp.instances, (instances) => instances.some((instance) => instance.status === "connected"));
 		browser = await Browser.start();
 		await browser.signIn(fixture.owner);

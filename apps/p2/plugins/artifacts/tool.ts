@@ -18,7 +18,7 @@ import {
 	MAX_ARTIFACT_STATE,
 } from "./contract.ts";
 
-/** What the tools reach: the session's `Artifacts` on the server (its worker variant). */
+/** What the tools reach: the session's `Artifacts` on the server (granted what its worker does). */
 export type ArtifactBackend = {
 	list(context: Context): Promise<readonly ArtifactSummary[]>;
 	read(

@@ -418,7 +418,7 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 						name: "chord.telemetry",
 						// Served also while telemetry is off, refusing everyone: a page loaded while it was on (marked to
 						// record) fails `forbidden` at once and stops sending, instead of waiting unbound for a type
-						// nobody serves (`unbound_long`); a worker gets the variant without `ingest`. Nothing is stored.
+						// nobody serves (`unbound_long`); a worker is not granted `ingest`. Nothing is stored.
 						facet: telemetryIngestFacet<P2Principal>({
 							target: telemetry?.telemetry ?? NOTHING_STORED,
 							// Owners' pages only: a guest could open page after page (each its own budget).

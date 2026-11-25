@@ -8,10 +8,10 @@ import {
 	expandComposerText,
 	fileReferences,
 	grantMode,
-	type Held,
 	isChordError,
-	liveIn,
+	liveWith,
 	plainReferences,
+	type Ref,
 	renameReferences,
 	serveKeyed,
 	UI_LINGER,
@@ -137,14 +137,14 @@ import { Envs } from "../envs/contract.ts";
 import { DirectoryPicker, directoryPickerLayer } from "../envs/contract.web.tsx";
 import { Models } from "../models/contract.ts";
 import type { ResourceSnapshot } from "../models/resources.ts";
-import { type Session, Sessions } from "../sessions/contract.ts";
+import { SESSIONS_OWNER, type Session, Sessions } from "../sessions/contract.ts";
 import { PiDots } from "../sessions/contract.web.tsx";
 import { SessionMetrics, SessionStatus, WorkerControl } from "../status/contract.ts";
 import { type Child, conversationLocation, SubagentControl, Subagents } from "../subagents/contract.ts";
 import { openMain } from "../subagents/contract.web.ts";
 import { SessionTree } from "../tree/contract.ts";
 import { configure, MODEL_COMMANDS, MODEL_PAGES } from "./commands.tsx";
-import { Chat, ChatCosts, conversationTargetId, TranscriptEntries } from "./contract.ts";
+import { CHAT_PARTICIPANT, Chat, ChatCosts, conversationTargetId, TranscriptEntries } from "./contract.ts";
 import { DraftEditor } from "./draft-editor.tsx";
 import { isDefaultChoice, newSessionChoice, thinkingLevelOf } from "./model-choice.ts";
 import { useModelScreen } from "./model-screens.ts";
@@ -176,10 +176,7 @@ async function upload(session: string, file: File): Promise<string> {
  */
 function refused(error: unknown): boolean {
 	if (error instanceof UploadError) return error.status >= 400 && error.status < 500;
-	return (
-		isChordError(error) &&
-		["forbidden", "invalid", "not_in_variant", "contract_mismatch", "upgrade_required"].includes(error.code)
-	);
+	return isChordError(error) && ["forbidden", "invalid", "contract_mismatch", "upgrade_required"].includes(error.code);
 }
 
 /** The owner on an outgoing message before the transcript has shown one of theirs (the default owner name). */
@@ -244,14 +241,14 @@ const attachingOf = ({ files, addFiles }: ReturnType<typeof useComposerState>): 
  * holding them in it would hold them anew, and receive their whole state again, at every switch.
  */
 type PageObjects = {
-	readonly sessions: Held<typeof Sessions> | undefined;
-	readonly access: Held<typeof Access> | undefined;
-	readonly subagents: Held<typeof Subagents> | undefined;
-	readonly status: Held<typeof SessionStatus> | undefined;
+	readonly sessions: Ref<typeof Sessions> | undefined;
+	readonly access: Ref<typeof Access> | undefined;
+	readonly subagents: Ref<typeof Subagents> | undefined;
+	readonly status: Ref<typeof SessionStatus> | undefined;
 	/** The owner's only. */
-	readonly models: Held<typeof Models> | undefined;
+	readonly models: Ref<typeof Models> | undefined;
 	/** The owner's only. */
-	readonly envs: Held<typeof Envs> | undefined;
+	readonly envs: Ref<typeof Envs> | undefined;
 };
 
 const PageObjectsContext = createContext<PageObjects | undefined>(undefined);
@@ -798,7 +795,7 @@ function TopBar({
 }
 
 /** The viewed conversation's transcript (see `TranscriptStore`), and its store. */
-function useTranscriptPages(key: string, chat: Held<typeof Chat> | undefined) {
+function useTranscriptPages(key: string, chat: Ref<typeof Chat> | undefined) {
 	const host = useHost();
 	const store = chat
 		? transcriptOf(host, key, { view: chat.view, entries: (query) => chat.entries(query, BACKGROUND_CONTEXT) })
@@ -937,7 +934,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	const host = useHost();
 	const objects = usePageObjects();
 	// The catalog as the owner or a guest sees it (`worker` is a session worker's).
-	const sessions = liveIn(objects.sessions, "owner", "guest");
+	const sessions = liveWith(objects.sessions, "sessions");
 	const listed = useReadable(sessions?.sessions);
 	const session = listed?.find((entry) => entry.id === sessionId);
 	// A session archived or removed elsewhere while viewed: the new-session screen replaces it, and the toast says why
@@ -954,7 +951,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	}, [listed, session, nav, sessionId, toast]);
 	// Who this browser is, as the server last said: kept while reconnecting (`useOwner`), so the composer stays.
 	const { access } = objects;
-	const liveGrant = useReadable(liveIn(access, "guest")?.grant);
+	const liveGrant = useReadable(liveWith(access, "grant")?.grant);
 	const owner = useOwner();
 	const lastGrant = useRef(liveGrant);
 	// Taken while the object is live, a removed grant (null) included.
@@ -962,7 +959,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	const grant = owner ? undefined : lastGrant.current;
 	const { fail } = useComposerState();
 	const [resources, setDefault] = useModelResources(fail);
-	const subagents = liveIn(objects.subagents, "reader");
+	const subagents = liveWith(objects.subagents, "children");
 	const children = useReadable(subagents?.children);
 	const child = children?.[sessionId]?.find((entry) => entry.conversationId === conversationId);
 	// A code mode script's one-shot agent: read-only, opened from the script's tool card.
@@ -996,7 +993,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 		)
 			void nav.replace(conversationRoute(current, sessionId, main), current);
 	}, [children, child, conversationId, main, nav, sessionId]);
-	const workers = liveIn(objects.status, "reader");
+	const workers = liveWith(objects.status, "statuses");
 	const worker = useReadable(workers?.statuses)?.[sessionId];
 	const workerError = worker?.error;
 	// The session's other agents that run while its main conversation shows (the main one's own work is in its transcript).
@@ -1047,9 +1044,9 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	}, [owner, listed]);
 	// The window as the server or this device has it (its newest entries); the transcript holds more (`pages`).
 	const view = liveView ?? kept?.view;
-	const participant = status === "live" && chat?.variant === "participant";
 	// The members only a participant has (send, stop, queue edits, configure).
-	const writer = liveIn(chat, "participant");
+	const writer = liveWith(chat, ...CHAT_PARTICIPANT);
+	const participant = writer !== undefined;
 	// Who may write decides what shows (as Pi Mobile's `canWrite`), not whether the chat object is live yet: during a
 	// load, a cold start or a reconnect the composer stays and only Send waits.
 	const canWrite = owner || grantMode(grant, sessionId) === "full";
@@ -1080,7 +1077,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 			const held = host.hold(SessionTree, { session: sessionId }, BACKGROUND_CONTEXT);
 			whenLive(held)
 				.then(() => {
-					const tree = liveIn(held, "owner");
+					const tree = liveWith(held);
 					if (!tree) throw new Error("Only the owner branches the session");
 					return tree.navigate({ entry }, BACKGROUND_CONTEXT);
 				})
@@ -1277,7 +1274,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 		const held = host.hold(SessionTree, { session: sessionId }, BACKGROUND_CONTEXT);
 		whenLive(held)
 			.then(() => {
-				const tree = liveIn(held, "owner");
+				const tree = liveWith(held);
 				if (!tree) throw new Error("Only the owner branches the session");
 				const label = plainReferences(text);
 				return tree.branch({ conversation: conversationId, label }, BACKGROUND_CONTEXT);
@@ -1453,7 +1450,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	);
 	// A move is long work (a job): the top bar says "Moving…" from the tap until the job is done; a refused move
 	// (a busy session) shows as a failed operation in the sidebar.
-	const operations = useReadable(liveIn(sessions, "owner")?.operations);
+	const operations = useReadable(liveWith(sessions, ...SESSIONS_OWNER)?.operations);
 	const moveRunning =
 		operations?.some(
 			(operation) =>
@@ -1671,7 +1668,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 					sessions={listed}
 					onClose={closeLayers}
 					onChange={(env, cwd) => {
-						const catalog = liveIn(sessions, "owner");
+						const catalog = liveWith(sessions, ...SESSIONS_OWNER);
 						if (catalog) relocate(true, () => catalog.relocate({ id: sessionId, env, cwd }, BACKGROUND_CONTEXT));
 						closeLayers();
 					}}
@@ -1790,9 +1787,9 @@ function NewSession() {
 	const host = useHost();
 	const owner = useOwner();
 	const catalog = usePageObjects().sessions;
-	const listed = useReadable(liveIn(catalog, "owner", "guest")?.sessions);
+	const listed = useReadable(liveWith(catalog, "sessions")?.sessions);
 	// Only the owner creates sessions.
-	const sessions = liveIn(catalog, "owner");
+	const sessions = liveWith(catalog, ...SESSIONS_OWNER);
 	const [resources, setDefault] = useModelResources(useComposerState().fail);
 	const recent = useMemo(() => (listed ?? []).toSorted((a, b) => b.updatedAt - a.updatedAt), [listed]);
 	const {
@@ -2047,7 +2044,7 @@ function Main() {
 		() => ({ sessions, access, subagents, status, models, envs }),
 		[sessions, access, subagents, status, models, envs],
 	);
-	const grant = useReadable(liveIn(access, "guest")?.grant);
+	const grant = useReadable(liveWith(access, "grant")?.grant);
 	// A guest stays within the sessions shared with it; anywhere else it lands in the one shared or joined last.
 	useEffect(() => {
 		if (grant && !grantMode(grant, route.session)) void nav.replace(conversationRoute(route, grant.session), route);

@@ -99,17 +99,14 @@ export function loginServerFacet(awayMs: number): Facet {
 					.map(({ id, name, loginMethods }) => ({ id, name, loginMethods, signedIn: stored.get(id) ?? null }));
 			});
 			return {
-				variant: "owner",
-				members: {
-					providers,
-					login: loginView,
-					start: (args, ctx) => service.start({ ...args, owner, remote: principal.access !== "local" }, ctx),
-					answer: (args, ctx) => service.answer({ ...args, owner }, ctx),
-					cancel: (args, ctx) => service.cancel({ ...args, owner }, ctx),
-					dismiss: (args, ctx) => service.dismiss({ ...args, owner }, ctx),
-					logout: (args, ctx) => service.logout(args, ctx),
-					refresh: (args, ctx) => service.refresh(args, ctx),
-				},
+				providers,
+				login: loginView,
+				start: (args, ctx) => service.start({ ...args, owner, remote: principal.access !== "local" }, ctx),
+				answer: (args, ctx) => service.answer({ ...args, owner }, ctx),
+				cancel: (args, ctx) => service.cancel({ ...args, owner }, ctx),
+				dismiss: (args, ctx) => service.dismiss({ ...args, owner }, ctx),
+				logout: (args, ctx) => service.logout(args, ctx),
+				refresh: (args, ctx) => service.refresh(args, ctx),
 			};
 		});
 	});

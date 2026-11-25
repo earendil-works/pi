@@ -6,11 +6,11 @@ import { test } from "node:test";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ConversationView } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT, whenLive } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
 import { processLogs } from "../../src/runtime/logs.ts";
-import { failureOf, holdIn, settled, startFixture, until } from "./helpers.ts";
+import { failureOf, holdWith, settled, startFixture, until } from "./helpers.ts";
 
 const lastAnswer = (view: ConversationView | null | undefined): string => {
 	const message = view?.entries.at(-1)?.model?.[0] as AssistantMessage | undefined;
@@ -40,13 +40,13 @@ test(
 		});
 		t.after(() => fixture.close());
 		const browser = fixture.browser();
-		const sessions = await holdIn(browser, Sessions, {}, "owner");
-		const status = await holdIn(browser, SessionStatus, {}, "reader");
+		const sessions = await holdWith(browser, Sessions, {}, ...SESSIONS_OWNER);
+		const status = await holdWith(browser, SessionStatus, {}, "statuses");
 		const { id } = await sessions.create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT);
 		const source = `session:${id}`;
 		const starts = () => processLogs.lines(source).filter((line) => line.text.startsWith("Starting worker")).length;
 		// A page's conversation, still held (lingering) when the session is archived.
-		const chat = await holdIn(browser, Chat, { session: id, conversation: 1 }, "participant");
+		const chat = await holdWith(browser, Chat, { session: id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await chat.send({ text: "hello", requestId: "r1" }, BACKGROUND_CONTEXT);
 		await until(chat.view, (view) => lastAnswer(view) === "Echo: hello");
 		assert.equal(starts(), 1);

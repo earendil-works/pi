@@ -102,170 +102,167 @@ export default defineFacet((host) => {
 		const files = self.get(Files, {});
 		const attachments = self.get(Attachments, {});
 		return {
-			variant: "server",
-			members: {
-				deliver: async ({ conversation, requestId, author, text, context, files: downloads, lock }, ctx) => {
-					const durable = harness().durable;
-					await mirrorLock(durable, lock, durableContext(ctx));
-					const target = conversation ?? (await mainConversation(durable, durableContext(ctx)));
-					await durable.commit(async (tx) => {
-						const doc = await tx.doc(DiscordLinkDoc);
-						doc.link = { channel: context.channel, guild: context.guild };
-						if (conversation !== undefined && context.thread !== undefined)
-							doc.threads[String(conversation)] = context.thread;
-					}, durableContext(ctx));
-					const ids: { id: string; name: string }[] = [];
-					for (const file of downloads) {
-						const id = await download(files, file, ctx);
-						if (id) ids.push({ id, name: file.name });
-					}
-					const resolved = ids.length
-						? await attachments.resolve({ ids: ids.map((entry) => entry.id), conversation: target }, ctx)
-						: [];
-					const who = { kind: "guest" as const, id: `discord:${author.id}`, name: `${author.name} · Discord` };
-					const data: MessageData & { discord: typeof context } = {
-						author: who,
+			deliver: async ({ conversation, requestId, author, text, context, files: downloads, lock }, ctx) => {
+				const durable = harness().durable;
+				await mirrorLock(durable, lock, durableContext(ctx));
+				const target = conversation ?? (await mainConversation(durable, durableContext(ctx)));
+				await durable.commit(async (tx) => {
+					const doc = await tx.doc(DiscordLinkDoc);
+					doc.link = { channel: context.channel, guild: context.guild };
+					if (conversation !== undefined && context.thread !== undefined)
+						doc.threads[String(conversation)] = context.thread;
+				}, durableContext(ctx));
+				const ids: { id: string; name: string }[] = [];
+				for (const file of downloads) {
+					const id = await download(files, file, ctx);
+					if (id) ids.push({ id, name: file.name });
+				}
+				const resolved = ids.length
+					? await attachments.resolve({ ids: ids.map((entry) => entry.id), conversation: target }, ctx)
+					: [];
+				const who = { kind: "guest" as const, id: `discord:${author.id}`, name: `${author.name} · Discord` };
+				const data: MessageData & { discord: typeof context } = {
+					author: who,
+					text,
+					attachments: ids,
+					discord: context,
+				};
+				const chat = await ctx.get(Conversation, { conversation: target });
+				const { submissionId } = await chat.submit(
+					{
 						text,
-						attachments: ids,
-						discord: context,
-					};
-					const chat = await ctx.get(Conversation, { conversation: target });
-					const { submissionId } = await chat.submit(
-						{
-							text,
-							requestId,
-							// A batch while a turn runs joins it: its answer replies to the newest mention.
-							whenBusy: "steer",
-							author: who,
-							...(resolved.length ? { files: resolved } : {}),
-							entry: { kind: DISCORD_BATCH, data },
-						},
-						ctx,
-					);
-					return { conversation: target, submissionId };
-				},
-				unlinked: async (ctx) => {
-					await harness().durable.commit(async (tx) => {
-						const doc = await tx.doc(DiscordLinkDoc);
-						doc.link = null;
-						doc.threads = {};
-					}, durableContext(ctx));
-					return null;
-				},
-				turn: async ({ submissionId }, ctx) => {
-					const durable = harness().durable;
-					const context = durableContext(ctx);
-					const submission = await durable.submission(submissionId as SubmissionId, context);
-					// Gone: withdrawn while queued (a stop).
-					if (!submission) return { state: "stopped" as const };
-					const record = await submission.status(context);
-					if (record.type !== "input") return { state: "unanswered" as const, reason: "Not an input.", files: [] };
-					if (record.status === "queued" || record.status === "placed") return { state: "pending" as const };
-					if (record.status === "unanswered" && record.reason === "aborted") return { state: "stopped" as const };
-					// The turn's span: from its input (its message's time) to its answer, or until now without one.
-					const input =
-						record.entry === undefined
-							? undefined
-							: await entryOf(durable, record.conversationId, record.entry, context);
-					const start = input?.model?.[0]?.timestamp ?? 0;
-					if (record.status === "unanswered")
-						return {
-							state: "unanswered" as const,
-							reason: record.reason || "The turn ended without an answer.",
-							files: await offered(files, record.conversationId, start, Date.now(), ctx),
-						};
-					const answer = await entryOf(durable, record.conversationId, record.answer, context);
-					const message = answer?.model?.[0] as AssistantMessage | undefined;
-					if (message?.stopReason === "aborted") return { state: "stopped" as const };
-					const text = (message?.content ?? [])
-						.flatMap((part) => (part.type === "text" ? [part.text] : []))
-						.join("")
-						.trim();
-					const sent = await offered(files, record.conversationId, start, message?.timestamp ?? Date.now(), ctx);
-					return text || sent.length
-						? { state: "answered" as const, text, files: sent, answer: record.answer }
-						: {
-								state: "unanswered" as const,
-								reason:
-									message?.stopReason === "error"
-										? (message.errorMessage ?? "The model failed.")
-										: "The answer has no text.",
-								files: sent,
-							};
-				},
-				read: async ({ id, offset, length }, ctx) => {
-					const found = await findDownload(files, id, ctx);
-					if (!found) throw new Error("No such file");
-					return files.read({ id: found.file.id, offset, length }, ctx);
-				},
-				command: async ({ conversation, command }, ctx) => {
-					const durable = harness().durable;
-					const context = durableContext(ctx);
-					const target = conversation ?? (await mainConversation(durable, context));
-					const chat = await ctx.get(Conversation, { conversation: target });
-					// From Durable itself: the conversation's view may not have caught up with a compaction just started.
-					const live = await durable.snapshot(LiveDoc, target as ConversationId, context);
-					const inbox = await durable.snapshot(InboxDoc, target as ConversationId, context);
-					const queued = (inbox?.items ?? []).filter((item) => item.mode !== "write").length;
-					const working = Boolean(live?.run);
-					const compacting = live?.compactions?.length ?? 0;
-					if (command === "stop") {
-						if (!working && !queued && !compacting) return { text: "Nothing is running." };
-						const replies: string[] = [];
-						if (working || queued) {
-							// The web's Stop: queued inputs withdrawn first, then the run aborted.
-							const withdrawn = (await chat.stop(ctx)).restored.length;
-							replies.push(
-								withdrawn
-									? `Stopped; ${withdrawn} queued message${withdrawn === 1 ? "" : "s"} withdrawn.`
-									: "Stopped.",
-							);
-						}
-						// A compaction is a task of its own, which Stop leaves running: aborted as the web's Escape does.
-						let aborted = 0;
-						for (const { taskId } of live?.compactions ?? [])
-							if ((await durable.abortTask(taskId, context)) === "marked") {
-								await durable.waitForTask(taskId, context);
-								aborted++;
-							}
-						if (aborted) replies.push("Stopped compaction.");
-						return { text: replies.join(" ") || "Nothing is running." };
-					}
-					if (command === "compact") {
-						await chat.compact({}, ctx);
-						return { text: "Compacting the context." };
-					}
-					const model = chat.model.value;
-					const tokens = chat.stats.value?.contextTokens;
-					// The cost sheet's data: each response of the active range with its cost.
-					const costs = await chat.costs(ctx);
-					const total = costs.reduce((sum, entry) => sum + entry.cost, 0);
-					const since = await lastInputTime(durable, target as ConversationId, context);
-					const lastTurn =
-						since === undefined
-							? undefined
-							: costs.filter((entry) => entry.timestamp >= since).reduce((sum, entry) => sum + entry.cost, 0);
-					const usage =
-						tokens === undefined
-							? "unknown"
-							: model?.contextWindow
-								? `${tokens.toLocaleString("en-US")} of ${model.contextWindow.toLocaleString("en-US")} tokens (${Math.round((tokens / model.contextWindow) * 100)}%)`
-								: `${tokens.toLocaleString("en-US")} tokens`;
+						requestId,
+						// A batch while a turn runs joins it: its answer replies to the newest mention.
+						whenBusy: "steer",
+						author: who,
+						...(resolved.length ? { files: resolved } : {}),
+						entry: { kind: DISCORD_BATCH, data },
+					},
+					ctx,
+				);
+				return { conversation: target, submissionId };
+			},
+			unlinked: async (ctx) => {
+				await harness().durable.commit(async (tx) => {
+					const doc = await tx.doc(DiscordLinkDoc);
+					doc.link = null;
+					doc.threads = {};
+				}, durableContext(ctx));
+				return null;
+			},
+			turn: async ({ submissionId }, ctx) => {
+				const durable = harness().durable;
+				const context = durableContext(ctx);
+				const submission = await durable.submission(submissionId as SubmissionId, context);
+				// Gone: withdrawn while queued (a stop).
+				if (!submission) return { state: "stopped" as const };
+				const record = await submission.status(context);
+				if (record.type !== "input") return { state: "unanswered" as const, reason: "Not an input.", files: [] };
+				if (record.status === "queued" || record.status === "placed") return { state: "pending" as const };
+				if (record.status === "unanswered" && record.reason === "aborted") return { state: "stopped" as const };
+				// The turn's span: from its input (its message's time) to its answer, or until now without one.
+				const input =
+					record.entry === undefined
+						? undefined
+						: await entryOf(durable, record.conversationId, record.entry, context);
+				const start = input?.model?.[0]?.timestamp ?? 0;
+				if (record.status === "unanswered")
 					return {
-						text: [
-							`Model: ${model ? `${model.name} (${model.provider}/${model.modelId})` : "none"}`,
-							`Working: ${working ? "yes" : "no"}`,
-							...(compacting ? ["Compacting: yes"] : []),
-							`Queued: ${queued}`,
-							`Context: ${usage}`,
-							`Cost: ${dollars(total)} so far${lastTurn === undefined ? "" : `, last turn ${dollars(lastTurn)}`}`,
-						].join("\n"),
+						state: "unanswered" as const,
+						reason: record.reason || "The turn ended without an answer.",
+						files: await offered(files, record.conversationId, start, Date.now(), ctx),
 					};
-				},
-				thread: async ({ name, before }, ctx) => {
-					const conversation = await forkThread(harness().durable, name, before, durableContext(ctx));
-					return { conversation };
-				},
+				const answer = await entryOf(durable, record.conversationId, record.answer, context);
+				const message = answer?.model?.[0] as AssistantMessage | undefined;
+				if (message?.stopReason === "aborted") return { state: "stopped" as const };
+				const text = (message?.content ?? [])
+					.flatMap((part) => (part.type === "text" ? [part.text] : []))
+					.join("")
+					.trim();
+				const sent = await offered(files, record.conversationId, start, message?.timestamp ?? Date.now(), ctx);
+				return text || sent.length
+					? { state: "answered" as const, text, files: sent, answer: record.answer }
+					: {
+							state: "unanswered" as const,
+							reason:
+								message?.stopReason === "error"
+									? (message.errorMessage ?? "The model failed.")
+									: "The answer has no text.",
+							files: sent,
+						};
+			},
+			read: async ({ id, offset, length }, ctx) => {
+				const found = await findDownload(files, id, ctx);
+				if (!found) throw new Error("No such file");
+				return files.read({ id: found.file.id, offset, length }, ctx);
+			},
+			command: async ({ conversation, command }, ctx) => {
+				const durable = harness().durable;
+				const context = durableContext(ctx);
+				const target = conversation ?? (await mainConversation(durable, context));
+				const chat = await ctx.get(Conversation, { conversation: target });
+				// From Durable itself: the conversation's view may not have caught up with a compaction just started.
+				const live = await durable.snapshot(LiveDoc, target as ConversationId, context);
+				const inbox = await durable.snapshot(InboxDoc, target as ConversationId, context);
+				const queued = (inbox?.items ?? []).filter((item) => item.mode !== "write").length;
+				const working = Boolean(live?.run);
+				const compacting = live?.compactions?.length ?? 0;
+				if (command === "stop") {
+					if (!working && !queued && !compacting) return { text: "Nothing is running." };
+					const replies: string[] = [];
+					if (working || queued) {
+						// The web's Stop: queued inputs withdrawn first, then the run aborted.
+						const withdrawn = (await chat.stop(ctx)).restored.length;
+						replies.push(
+							withdrawn
+								? `Stopped; ${withdrawn} queued message${withdrawn === 1 ? "" : "s"} withdrawn.`
+								: "Stopped.",
+						);
+					}
+					// A compaction is a task of its own, which Stop leaves running: aborted as the web's Escape does.
+					let aborted = 0;
+					for (const { taskId } of live?.compactions ?? [])
+						if ((await durable.abortTask(taskId, context)) === "marked") {
+							await durable.waitForTask(taskId, context);
+							aborted++;
+						}
+					if (aborted) replies.push("Stopped compaction.");
+					return { text: replies.join(" ") || "Nothing is running." };
+				}
+				if (command === "compact") {
+					await chat.compact({}, ctx);
+					return { text: "Compacting the context." };
+				}
+				const model = chat.model.value;
+				const tokens = chat.stats.value?.contextTokens;
+				// The cost sheet's data: each response of the active range with its cost.
+				const costs = await chat.costs(ctx);
+				const total = costs.reduce((sum, entry) => sum + entry.cost, 0);
+				const since = await lastInputTime(durable, target as ConversationId, context);
+				const lastTurn =
+					since === undefined
+						? undefined
+						: costs.filter((entry) => entry.timestamp >= since).reduce((sum, entry) => sum + entry.cost, 0);
+				const usage =
+					tokens === undefined
+						? "unknown"
+						: model?.contextWindow
+							? `${tokens.toLocaleString("en-US")} of ${model.contextWindow.toLocaleString("en-US")} tokens (${Math.round((tokens / model.contextWindow) * 100)}%)`
+							: `${tokens.toLocaleString("en-US")} tokens`;
+				return {
+					text: [
+						`Model: ${model ? `${model.name} (${model.provider}/${model.modelId})` : "none"}`,
+						`Working: ${working ? "yes" : "no"}`,
+						...(compacting ? ["Compacting: yes"] : []),
+						`Queued: ${queued}`,
+						`Context: ${usage}`,
+						`Cost: ${dollars(total)} so far${lastTurn === undefined ? "" : `, last turn ${dollars(lastTurn)}`}`,
+					].join("\n"),
+				};
+			},
+			thread: async ({ name, before }, ctx) => {
+				const conversation = await forkThread(harness().durable, name, before, durableContext(ctx));
+				return { conversation };
 			},
 		};
 	});

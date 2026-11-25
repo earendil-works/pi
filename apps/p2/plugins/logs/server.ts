@@ -140,14 +140,11 @@ export default defineFacet((host) => {
 			() => processLogs.notices(),
 		);
 		return {
-			variant: "owner",
-			members: {
-				// Diffed: the process tells of every log line, and the notices rarely change with one.
-				notices: deriveTyped(self, [notices], ([value]) => value),
-				dismiss: async ({ id }) => {
-					processLogs.dismissNotice(id);
-					return null;
-				},
+			// Diffed: the process tells of every log line, and the notices rarely change with one.
+			notices: deriveTyped(self, [notices], ([value]) => value),
+			dismiss: async ({ id }) => {
+				processLogs.dismissNotice(id);
+				return null;
 			},
 		};
 	});
@@ -170,11 +167,8 @@ export default defineFacet((host) => {
 		);
 		// Diffed: a frame carries the lines and sources that changed, not the whole buffer.
 		return {
-			variant: "owner",
-			members: {
-				sources: deriveTyped(self, [sources], ([value]) => value),
-				lines: deriveTyped(self, [lines], ([value]) => value),
-			},
+			sources: deriveTyped(self, [sources], ([value]) => value),
+			lines: deriveTyped(self, [lines], ([value]) => value),
 		};
 	});
 });

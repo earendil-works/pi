@@ -1,17 +1,17 @@
 // Artifacts (worker): the agent's artifact tools, reaching the session's `Artifacts` on the server in roots of the
 // worker's own (it acts as the session's worker there), and the new errors of open html pages, which ride along with the
 // person's next message (`MessageContexts`).
-import { type Ctx, contribute, defineFacet, expectVariant } from "@p2/app/v1";
+import { type Ctx, contribute, defineFacet, expectGranted } from "@p2/app/v1";
 import { Extensions, workerOf } from "@p2/app/v1/worker";
 import { MessageContexts } from "../views/contract.ts";
-import { Artifacts } from "./contract.ts";
+import { ARTIFACTS_WORKER, Artifacts } from "./contract.ts";
 import { createArtifactExtension } from "./tool.ts";
 
 export default defineFacet((host) => {
 	contribute(host, "p2.artifact-tools", (self) => {
 		const worker = workerOf(self);
 		const artifacts = async (ctx: Ctx) =>
-			expectVariant(await ctx.get(Artifacts, { session: worker().init.values.session.id }), "worker");
+			expectGranted(await ctx.get(Artifacts, { session: worker().init.values.session.id }), ...ARTIFACTS_WORKER);
 		const root: ReturnType<typeof worker>["root"] = (fn, context) => worker().root(fn, context);
 		const extension = createArtifactExtension({
 			list: (context) => root(async (ctx) => (await artifacts(ctx)).list(ctx), context),

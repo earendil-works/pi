@@ -38,12 +38,15 @@ a file of its own plugin.
 
 ## The pieces
 
-- **Contract** (`contract.ts`): `remote(name, { version, params, hostAddress: serverHost, variants })`. Each variant
-  has `state` (JSON schemas from `@earendil-works/pi-schema`), `methods` (`method(args, result)`) and `events`
-  (fire-and-forget values for motion: pointers, drags, game inputs; never kept or replayed). Every change of a
-  contract's shape bumps its `version`.
+- **Contract** (`contract.ts`): `remote(name, { version, params, hostAddress: serverHost, state, methods, events })`:
+  `state` (JSON schemas from `@earendil-works/pi-schema`), `methods` (`method(args, result)`) and `events`
+  (fire-and-forget values for motion: pointers, drags, game inputs; never kept or replayed). One shape for every
+  caller: a member only some callers get is marked `grantable(...)` (`grantable(method(...))`), and the server grants
+  it per caller (below). Every change of a contract's shape bumps its `version`.
 - **Server object** (`server.ts`): `export default defineFacet((host) => { host.serve(Contract, (params, principal,
-  self) => ({ variant, members })) })`. Check the principal: `canView`/`canSend(principal, session)` for people,
+  self) => members) })`. A contract with grantable members is served with `{ admit: grantBy((principal, params) =>
+  [names]) }` (from `@p2/app/v1`), and its factory takes `(params, principal, admitted, self)`; a grantable state member
+  is returned as a builder, `() => watchable`, built only when granted. Check the principal: `canView`/`canSend(principal, session)` for people,
   `isWorker(principal) && principal.session === session` for the session's agent. Persistent data lives in a local
   store served once (`local(name, { version, params: {}, members })` with
   `self.state(defineState(name, { schema, version, initial, keyed?, persist: true, checkpointWhen }))`, changed with
@@ -55,7 +58,8 @@ a file of its own plugin.
 - **Pane** (`web.tsx`): `contribute(host, "<name>.web", (self) => self.contribute(ViewKinds, { <kind>: { Pane } }))`.
   The pane gets `PaneProps` (`session`, `item` (the view's item: what it shows, e.g. a board's ID), `inline` (true
   in the transcript, false beside it), `view` (beside the transcript), `editable`, `select`, `annotations`) and holds
-  objects with `useObject(Contract, params)`, `liveIn(ref, variant)`, `useReadable(member)`.
+  objects with `useObject(Contract, params)`, `live(ref)` (or `liveWith(ref, "member")` for a grantable member),
+  `useReadable(member)`.
 - **One script per plugin:** each plugin's web facet is built into a script of its own, and a file it imports from
   another plugin is copied into it. Never share module state (a `Map`, a `let`, a store, a React context) through such
   a file: the other plugin's copy is another instance. Use a registry the owning plugin serves, or

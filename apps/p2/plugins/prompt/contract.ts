@@ -21,23 +21,19 @@ export type SkillInfo = Static<typeof SkillInfoSchema>;
  * client expands alike. Participants only.
  */
 export const PromptResources = remote("p2.prompt-resources", {
-	// 2: per conversation.
-	version: 2,
+	// 2: per conversation. 3: a new base (grantable members replaced variants; older versions are refused).
+	version: 3,
 	params: { session: param.str(), conversation: param.int({ min: 1 }) },
 	hostAddress: sessionHost,
-	variants: {
-		participant: {
-			state: { templates: arr(TemplateInfoSchema), skills: arr(SkillInfoSchema) },
-			methods: {
-				/**
-				 * pi's expansion: `/skill:name args` becomes the skill block plus the args, `/name args` the template with
-				 * its arguments substituted. Other text, unknown names and unreadable skills come back unchanged.
-				 */
-				expand: method(
-					obj({ text: str({ maxLength: 1_000_000 }) }),
-					obj({ text: str(), skill: opt(obj({ name: str() })) }),
-				),
-			},
-		},
+	state: { templates: arr(TemplateInfoSchema), skills: arr(SkillInfoSchema) },
+	methods: {
+		/**
+		 * pi's expansion: `/skill:name args` becomes the skill block plus the args, `/name args` the template with
+		 * its arguments substituted. Other text, unknown names and unreadable skills come back unchanged.
+		 */
+		expand: method(
+			obj({ text: str({ maxLength: 1_000_000 }) }),
+			obj({ text: str(), skill: opt(obj({ name: str() })) }),
+		),
 	},
 });

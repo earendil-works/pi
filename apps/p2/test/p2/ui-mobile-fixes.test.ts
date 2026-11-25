@@ -10,16 +10,16 @@ import { after, before, describe, it } from "node:test";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
 import type { ConversationView, EntryDraft, LiveState } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT, follow } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { Models } from "../../plugins/models/contract.ts";
 import { ForwardsNative } from "../../plugins/ports/contract.ts";
-import { Sessions, SessionTransfer } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions, SessionTransfer } from "../../plugins/sessions/contract.ts";
 import { Subagents } from "../../plugins/subagents/contract.ts";
 import type { Host } from "../../src/runtime/chord.ts";
 import { Hosts } from "../../src/runtime/server.ts";
 import { bigSessionEntries } from "../fixtures/big-session.ts";
 import { Browser, browserTests, COMPOSER, composerText, setComposer } from "./browser.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 const live = (view: ConversationView | null | undefined) => view?.docs["pi.live"] as LiveState | undefined;
 const answered = (text: string) => (view: ConversationView | null | undefined) =>
@@ -76,7 +76,7 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 	});
 
 	it("autoloads earlier pages on scroll-up and keeps entries that leave the window", async () => {
-		const session = await (await holdIn(owner, Sessions, {}, "owner")).create(
+		const session = await (await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)).create(
 			{
 				cwd: fixture.workspace,
 				title: "Long",
@@ -92,7 +92,7 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 				),
 			BACKGROUND_CONTEXT,
 		);
-		const chat = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		const stop = follow(chat.view, () => {});
 		try {
 			await browser.metrics(390, 844);
@@ -134,7 +134,7 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 	});
 
 	it("loads earlier pages by itself while a turn's many tool calls, one row, leave nothing to scroll", async () => {
-		const session = await (await holdIn(owner, Sessions, {}, "owner")).create(
+		const session = await (await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)).create(
 			{ cwd: fixture.workspace, title: "One long turn" },
 			BACKGROUND_CONTEXT,
 		);
@@ -201,7 +201,7 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 	});
 
 	it("keeps the composer and Send while the chat object restarts; a message sent meanwhile arrives", async () => {
-		const session = await (await holdIn(owner, Sessions, {}, "owner")).create(
+		const session = await (await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)).create(
 			{
 				cwd: fixture.workspace,
 				title: "Cold",
@@ -249,23 +249,23 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 	});
 
 	it("opens a subagent's search hit in its own conversation", async () => {
-		const session = await (await holdIn(owner, Sessions, {}, "owner")).create(
+		const session = await (await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)).create(
 			{
 				cwd: fixture.workspace,
 				title: "With helper",
 			},
 			BACKGROUND_CONTEXT,
 		);
-		const chat = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
-		const list = await holdIn(owner, Subagents, {}, "reader");
+		const chat = await holdWith(owner, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
+		const list = await holdWith(owner, Subagents, {}, "children");
 		await chat.send({ text: "subagent", requestId: "spawn" }, BACKGROUND_CONTEXT);
 		const children = await until(list.children, (value) => Boolean(value?.[session.id]?.length));
 		const helper = children![session.id]![0]!;
-		const child = await holdIn(
+		const child = await holdWith(
 			owner,
 			Chat,
 			{ session: session.id, conversation: helper.conversationId },
-			"participant",
+			...CHAT_PARTICIPANT,
 		);
 		await child.send({ text: "zebrafish unique words", requestId: "direct" }, BACKGROUND_CONTEXT);
 		await until(child.view, answered("Echo: zebrafish unique words"), 30_000);
@@ -288,14 +288,14 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 	it("shows the ports card with its links", async () => {
 		const store = (await fixture.server.host.registry(ForwardsNative, BACKGROUND_CONTEXT)).value!.forwards;
 		store.radiusOrigin = "https://0123456789abcdef0123456789abcdef.rdtun.com";
-		const session = await (await holdIn(owner, Sessions, {}, "owner")).create(
+		const session = await (await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)).create(
 			{
 				cwd: fixture.workspace,
 				title: "Ports",
 			},
 			BACKGROUND_CONTEXT,
 		);
-		const chat = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await chat.send(
 			{ text: 'ports {"action":"open","port":5173,"name":"web"}', requestId: "open" },
 			BACKGROUND_CONTEXT,
@@ -316,10 +316,10 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 	});
 
 	it("clears the Stop notice in another conversation and focuses the composer after a restore", async () => {
-		const sessions = await holdIn(owner, Sessions, {}, "owner");
+		const sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		const first = await sessions.create({ cwd: fixture.workspace, title: "Stopped here" }, BACKGROUND_CONTEXT);
 		const second = await sessions.create({ cwd: fixture.workspace, title: "Elsewhere" }, BACKGROUND_CONTEXT);
-		const chat = await holdIn(owner, Chat, { session: first.id, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session: first.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		const stop = follow(chat.view, () => {});
 		try {
 			await browser.metrics(1280, 900);
@@ -357,7 +357,7 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 	});
 
 	it("focuses the composer of a session opened with a mouse or a key, not by a touch", async () => {
-		const sessions = await holdIn(owner, Sessions, {}, "owner");
+		const sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		const first = await sessions.create({ cwd: fixture.workspace, title: "Focus first" }, BACKGROUND_CONTEXT);
 		const second = await sessions.create({ cwd: fixture.workspace, title: "Focus second" }, BACKGROUND_CONTEXT);
 		const focused = `document.activeElement === document.querySelector('${COMPOSER}')`;
@@ -460,11 +460,11 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 		git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "add", ".");
 		git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "Initial");
 		writeFileSync(join(repo, "hello.ts"), "export const answer = 42;\n");
-		const session = await (await holdIn(owner, Sessions, {}, "owner")).create(
+		const session = await (await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)).create(
 			{ cwd: repo, title: "Review" },
 			BACKGROUND_CONTEXT,
 		);
-		const chat = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		const stop = follow(chat.view, () => {});
 		try {
 			await chat.send({ text: "slow long answer", requestId: "long" }, BACKGROUND_CONTEXT);
@@ -509,14 +509,14 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 	});
 
 	it("keeps the reader's scroll position after Send", async () => {
-		const session = await (await holdIn(owner, Sessions, {}, "owner")).create(
+		const session = await (await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)).create(
 			{
 				cwd: fixture.workspace,
 				title: "Scroll",
 			},
 			BACKGROUND_CONTEXT,
 		);
-		const chat = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		const stop = follow(chat.view, () => {});
 		try {
 			await chat.send({ text: "slow long answer", requestId: "long-send" }, BACKGROUND_CONTEXT);
@@ -552,7 +552,7 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 	});
 
 	it("says why a session archived elsewhere closed, and titles the Environments section", async () => {
-		const sessions = await holdIn(owner, Sessions, {}, "owner");
+		const sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		const session = await sessions.create(
 			{ cwd: fixture.workspace, title: "Archived elsewhere" },
 			BACKGROUND_CONTEXT,
@@ -573,7 +573,7 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 	});
 
 	it("archives the viewed session from its sheet without an error or a notice", async () => {
-		const sessions = await holdIn(owner, Sessions, {}, "owner");
+		const sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		const session = await sessions.create({ cwd: fixture.workspace, title: "Archived here" }, BACKGROUND_CONTEXT);
 		await browser.metrics(390, 844);
 		await browser.open(url(`/s/${session.id}`));
@@ -598,11 +598,11 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 	});
 
 	it("sends with one tap on Send: the press keeps the composer focused, so a phone's keyboard does not close first", async () => {
-		const session = await (await holdIn(owner, Sessions, {}, "owner")).create(
+		const session = await (await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)).create(
 			{ cwd: fixture.workspace, title: "Tap send" },
 			BACKGROUND_CONTEXT,
 		);
-		const chat = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		const stop = follow(chat.view, () => {});
 		try {
 			await browser.metrics(390, 844);
@@ -630,11 +630,11 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 	});
 
 	it("sends with one touch tap beside Send while the keyboard composes a word; no tap in the composer blurs it", async () => {
-		const session = await (await holdIn(owner, Sessions, {}, "owner")).create(
+		const session = await (await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)).create(
 			{ cwd: fixture.workspace, title: "Touch send" },
 			BACKGROUND_CONTEXT,
 		);
-		const chat = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		const stop = follow(chat.view, () => {});
 		const focused = `document.activeElement === document.querySelector('${COMPOSER}')`;
 		const tap = async (x: number, y: number) => {
@@ -669,7 +669,7 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 	});
 
 	it("keeps the caret where the user types inside the draft (the composer renders the draft it was given at once)", async () => {
-		const session = await (await holdIn(owner, Sessions, {}, "owner")).create(
+		const session = await (await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)).create(
 			{ cwd: fixture.workspace, title: "Caret" },
 			BACKGROUND_CONTEXT,
 		);

@@ -30,29 +30,28 @@ export const EnabledModelsSchema = arr(str({ minLength: 1, maxLength: 300 }), { 
 
 /** Provider models for the picker and the default for new sessions (owner only). */
 export const Models = remote("p2.models", {
-	/** 2: `enabledModels`, `scopedModels` and `setEnabledModels` (pi's model scope for cycling). */
-	version: 2,
+	/**
+	 * 2: `enabledModels`, `scopedModels` and `setEnabledModels` (pi's model scope for cycling). 3: a new base (grantable
+	 * members replaced variants; older versions are refused).
+	 */
+	version: 3,
 	params: {},
 	hostAddress: serverHost,
-	variants: {
-		owner: {
-			state: {
-				models: arr(ModelInfoSchema),
-				/** Non-secret resource state for the faithful mobile picker and sign-in hint. */
-				resources: unsafe<ResourceSnapshot>(unknown()),
-				defaultModel: union([ModelChoiceSchema, nul()]),
-				errors: arr(str()),
-				/** settings.json `enabledModels` patterns (empty: no scope, cycling uses every model). */
-				enabledModels: EnabledModelsSchema,
-				/** The patterns resolved against `models`, in pattern order (plugins/models/scope.ts). */
-				scopedModels: arr(ScopedModelSchema),
-			},
-			methods: {
-				setDefault: method(ModelChoiceSchema),
-				/** Saves the patterns to settings.json (an empty list removes the scope). */
-				setEnabledModels: method(obj({ patterns: EnabledModelsSchema })),
-			},
-		},
+	state: {
+		models: arr(ModelInfoSchema),
+		/** Non-secret resource state for the faithful mobile picker and sign-in hint. */
+		resources: unsafe<ResourceSnapshot>(unknown()),
+		defaultModel: union([ModelChoiceSchema, nul()]),
+		errors: arr(str()),
+		/** settings.json `enabledModels` patterns (empty: no scope, cycling uses every model). */
+		enabledModels: EnabledModelsSchema,
+		/** The patterns resolved against `models`, in pattern order (plugins/models/scope.ts). */
+		scopedModels: arr(ScopedModelSchema),
+	},
+	methods: {
+		setDefault: method(ModelChoiceSchema),
+		/** Saves the patterns to settings.json (an empty list removes the scope). */
+		setEnabledModels: method(obj({ patterns: EnabledModelsSchema })),
 	},
 });
 

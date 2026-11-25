@@ -1,7 +1,7 @@
 // The owner's telemetry (web): the Traces view kind (a pane of the session's views), the Traces section of Settings
 // (the same browser, its open trace a layer of the sheet), and the command menu's "Show traces" (a view of the open
 // session, else the Settings section). Owners only: guests get no command or section, and the pane says so.
-import { BACKGROUND_CONTEXT, contribute, defineFacet, withHeld } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, contribute, defineFacet, withGranted } from "@p2/app/v1";
 import {
 	type CommandContext,
 	Commands,
@@ -15,7 +15,7 @@ import {
 	useSheet,
 } from "@p2/app/v1/web";
 import { useState } from "react";
-import { Views } from "../views/contract.ts";
+import { VIEWS_EDITING, Views } from "../views/contract.ts";
 import { ViewsPages } from "../views/contract.web.ts";
 import { ViewKinds } from "../views/kinds.ts";
 import { TracesBrowser } from "./traces.tsx";
@@ -61,7 +61,7 @@ async function showTraces(ctx: CommandContext): Promise<void> {
 		openSettings({ kind: "plugin", layer: { kind: "sheet", name: TRACES } });
 		return;
 	}
-	await withHeld(ctx.host.hold(Views, { session }, BACKGROUND_CONTEXT), "editor", (editor) =>
+	await withGranted(ctx.host.hold(Views, { session }, BACKGROUND_CONTEXT), VIEWS_EDITING, (editor) =>
 		page.open(editor, session, { kind: TRACES, title: "Traces" }),
 	);
 }

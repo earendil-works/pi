@@ -5,9 +5,9 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, startFixture } from "./helpers.ts";
+import { type Fixture, holdWith, startFixture } from "./helpers.ts";
 
 const point = (selector: string) =>
 	`(() => { const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + Math.min(r.height / 2, 12) }; })()`;
@@ -40,7 +40,7 @@ describe("swiping a bottom sheet down", { skip: !browserTests }, () => {
 	};
 
 	it("closes from its top edge or its content at the top, and settles back after a short pull", async () => {
-		const session = await (await holdIn(fixture.browser(), Sessions, {}, "owner")).create(
+		const session = await (await holdWith(fixture.browser(), Sessions, {}, ...SESSIONS_OWNER)).create(
 			{
 				cwd: fixture.workspace,
 				title: "Sheets",

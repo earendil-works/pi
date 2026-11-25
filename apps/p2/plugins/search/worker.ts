@@ -174,12 +174,9 @@ export default defineFacet((host) => {
 		if (principal.kind !== "server") throw forbidden("server only");
 		const indexer = self.get(Indexer, {});
 		return {
-			variant: "server",
-			members: {
-				scanned: async (ctx) => {
-					await until(indexer.scanned, (done) => done, ctx);
-					return null;
-				},
+			scanned: async (ctx) => {
+				await until(indexer.scanned, (done) => done, ctx);
+				return null;
 			},
 		};
 	});

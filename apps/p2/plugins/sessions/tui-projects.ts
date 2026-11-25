@@ -35,7 +35,6 @@ export const placeProblem = (label: string, state: PlaceState): string | undefin
 /** The absolute path of `place` on its machine; throws when the machine or the directory cannot be reached. */
 export async function resolvePlace(ctx: TuiContext, place: ProjectPlace): Promise<string> {
 	const envs = await ownerEnvs(ctx);
-	if (envs.variant !== "owner") throw new Error("Environments are owner-only");
 	const listing = await envs.listDirectory(
 		{ path: place.path, ...(place.env ? { env: place.env } : {}) },
 		BACKGROUND_CONTEXT,

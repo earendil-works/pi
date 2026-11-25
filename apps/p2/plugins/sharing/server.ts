@@ -249,9 +249,8 @@ export default defineFacet((host) => {
 	}));
 
 	host.serve(GuestPresence, (_params, principal) => {
-		if (isOwner(principal)) return { variant: "owner", members: {} };
-		if (!isGuest(principal)) throw forbidden("owners and guests only");
-		return { variant: "guest", members: {} };
+		if (!isOwner(principal) && !isGuest(principal)) throw forbidden("owners and guests only");
+		return {};
 	});
 
 	host.serve(Sharing, ({ session }, principal, self) => {
@@ -296,22 +295,16 @@ export default defineFacet((host) => {
 				.sort((a, b) => a.name.localeCompare(b.name)),
 		);
 		return {
-			variant: "owner",
-			members: {
-				env,
-				links: linksView,
-				guests: guestsView,
-				people: peopleView,
-				peopleUrl,
-				link: ({ mode, reset, remoteConfirmed }, ctx) =>
-					shares.link(
-						{ session, mode, reset: reset ?? false, ...(remoteConfirmed ? { remoteConfirmed } : {}) },
-						ctx,
-					),
-				share: ({ email, mode, remoteConfirmed }, ctx) =>
-					shares.share({ session, email, mode, ...(remoteConfirmed ? { remoteConfirmed } : {}) }, ctx),
-				remove: ({ guestId }, ctx) => shares.remove({ session, guestId }, ctx),
-			},
+			env,
+			links: linksView,
+			guests: guestsView,
+			people: peopleView,
+			peopleUrl,
+			link: ({ mode, reset, remoteConfirmed }, ctx) =>
+				shares.link({ session, mode, reset: reset ?? false, ...(remoteConfirmed ? { remoteConfirmed } : {}) }, ctx),
+			share: ({ email, mode, remoteConfirmed }, ctx) =>
+				shares.share({ session, email, mode, ...(remoteConfirmed ? { remoteConfirmed } : {}) }, ctx),
+			remove: ({ guestId }, ctx) => shares.remove({ session, guestId }, ctx),
 		};
 	});
 

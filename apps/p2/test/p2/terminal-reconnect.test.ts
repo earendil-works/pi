@@ -2,12 +2,12 @@
 
 import { test } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { localSystem, terminalDaemon } from "../../plugins/terminals/daemon.ts";
 import { connectTerminalHost } from "../../plugins/terminals/detached.ts";
 import { encodeFrame } from "../../plugins/terminals/protocol.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { APP, holdIn, startFixture } from "./helpers.ts";
+import { APP, holdWith, startFixture } from "./helpers.ts";
 
 let unavailable: string | undefined;
 try {
@@ -28,7 +28,9 @@ test(
 		try {
 			const owner = fixture.browser();
 			const id = (
-				await (await holdIn(owner, Sessions, {}, "owner")).create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT)
+				await (
+					await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)
+				).create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT)
 			).id;
 			browser = await Browser.start();
 			await browser.signIn(fixture.owner);

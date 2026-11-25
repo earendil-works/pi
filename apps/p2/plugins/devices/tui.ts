@@ -70,7 +70,7 @@ function openDevices(ctx: TuiContext): void {
 			],
 			onSelect: (row) => {
 				if (row.key === "token") {
-					if (statusOf(ref) !== "live" || ref.variant !== "owner") return;
+					if (statusOf(ref) !== "live") return;
 					status = "Generating token…";
 					void ref
 						.token(BACKGROUND_CONTEXT)

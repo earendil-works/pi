@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type { ConversationView } from "@earendil-works/pi-durable";
-import { BACKGROUND_CONTEXT, whenLive } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { BACKGROUND_CONTEXT, type RefWith, whenLive } from "@p2/app/v1";
+import { CHAT_PARTICIPANT, Chat, type ChatParticipant } from "../../plugins/chat/contract.ts";
 import {
 	ConversationBroker,
 	Conversations,
@@ -12,14 +12,14 @@ import {
 } from "../../plugins/conversations/contract.ts";
 import { Drafts } from "../../plugins/drafts/contract.ts";
 import { Projects } from "../../plugins/projects/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions, type SessionsOwner } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
 import { Subagents } from "../../plugins/subagents/contract.ts";
-import type { Host, RefIn } from "../../src/runtime/chord.ts";
+import type { Host } from "../../src/runtime/chord.ts";
 import { PEER_MESSAGE_ENTRY } from "../../src/runtime/entries.ts";
 import { Hosts } from "../../src/runtime/server.ts";
-import { expectChord, type Fixture, holdIn, http, startFixture, until } from "./helpers.ts";
+import { expectChord, type Fixture, holdWith, http, startFixture, until } from "./helpers.ts";
 
 const results = (view: ConversationView | null | undefined): ToolResultMessage[] =>
 	(view?.entries ?? []).flatMap((entry) =>
@@ -36,29 +36,29 @@ const peers = (view: ConversationView | null | undefined) =>
 describe("conversations (fake provider)", () => {
 	let fixture: Fixture;
 	let owner: Host;
-	let sessions: RefIn<typeof Sessions, "owner">;
-	let status: RefIn<typeof SessionStatus, "reader">;
+	let sessions: SessionsOwner;
+	let status: RefWith<typeof SessionStatus, "statuses">;
 	let alpha: string;
 	let beta: string;
 	let archived: string;
-	let a: RefIn<typeof Chat, "participant">;
-	let b: RefIn<typeof Chat, "participant">;
+	let a: ChatParticipant;
+	let b: ChatParticipant;
 	let serial = 0;
 	before(async () => {
 		fixture = await startFixture({ allowedHosts: ["share.test"] });
 		owner = fixture.browser();
-		sessions = await holdIn(owner, Sessions, {}, "owner");
+		sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		alpha = (await sessions.create({ cwd: fixture.workspace, title: "Alpha" }, BACKGROUND_CONTEXT)).id;
 		beta = (await sessions.create({ cwd: fixture.workspace, title: "Beta" }, BACKGROUND_CONTEXT)).id;
 		archived = (await sessions.create({ cwd: fixture.workspace, title: "Archived" }, BACKGROUND_CONTEXT)).id;
 		await sessions.archive({ id: archived }, BACKGROUND_CONTEXT);
-		a = await holdIn(owner, Chat, { session: alpha, conversation: 1 }, "participant");
-		status = await holdIn(owner, SessionStatus, {}, "reader");
+		a = await holdWith(owner, Chat, { session: alpha, conversation: 1 }, ...CHAT_PARTICIPANT);
+		status = await holdWith(owner, SessionStatus, {}, "statuses");
 	});
 	after(async () => {
 		await fixture?.close();
 	});
-	const call = async (chat: RefIn<typeof Chat, "participant">, query: Query): Promise<ToolResultMessage> => {
+	const call = async (chat: ChatParticipant, query: Query): Promise<ToolResultMessage> => {
 		const count = results(await until(chat.view, (view) => Boolean(view))).length;
 		await chat.send(
 			{ text: `conversations ${JSON.stringify(query)}`, requestId: `tool-${++serial}` },
@@ -85,7 +85,7 @@ describe("conversations (fake provider)", () => {
 		const statuses = await until(status.statuses, (value) => value !== undefined);
 		assert.equal(statuses?.[beta]?.running ?? false, false);
 		assert.equal(text(await call(a, { action: "answer", to: beta })), "No completed answer found.");
-		b = await holdIn(owner, Chat, { session: beta, conversation: 1 }, "participant");
+		b = await holdWith(owner, Chat, { session: beta, conversation: 1 }, ...CHAT_PARTICIPANT);
 	});
 
 	it("attributes sends, explicitly replies from authenticated peers, and reads completed answers", async () => {
@@ -122,7 +122,7 @@ describe("conversations (fake provider)", () => {
 		);
 		b.release();
 		assert.deepEqual(await broker(alpha, "same-task", query), once);
-		b = await holdIn(owner, Chat, { session: beta, conversation: 1 }, "participant");
+		b = await holdWith(owner, Chat, { session: beta, conversation: 1 }, ...CHAT_PARTICIPANT);
 		const view = await until(b.view, (view) =>
 			peers(view).some((entry) => JSON.stringify(entry).includes("deduplicated sentinel")),
 		);
@@ -159,7 +159,7 @@ describe("conversations (fake provider)", () => {
 
 	it("Stop keeps queued peer messages queued for the next input and gives people their text back", async () => {
 		const gamma = (await sessions.create({ cwd: fixture.workspace, title: "Gamma" }, BACKGROUND_CONTEXT)).id;
-		const chat = await holdIn(owner, Chat, { session: gamma, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session: gamma, conversation: 1 }, ...CHAT_PARTICIPANT);
 		const inbox = (view: ConversationView | null | undefined) => JSON.stringify(view?.docs["pi.inbox"] ?? {});
 		const running = (view: ConversationView | null | undefined) =>
 			(view?.docs["pi.live"] as { run?: unknown } | undefined)?.run !== undefined;
@@ -191,7 +191,7 @@ describe("conversations (fake provider)", () => {
 		await chat.send({ text: "owner draft", requestId: "draft", whenBusy: "followUp" }, BACKGROUND_CONTEXT);
 		await until(chat.view, (view) => JSON.stringify(view?.docs["pi.inbox"]).includes("owner draft"));
 		await broker(alpha, "stop-gamma", { action: "stop", to: gamma });
-		const drafts = await holdIn(owner, Drafts, { session: gamma, conversation: 1 }, "author");
+		const drafts = await holdWith(owner, Drafts, { session: gamma, conversation: 1 });
 		const pending = await until(drafts.drafts, (value) => Boolean(value?.length));
 		assert.deepEqual(
 			pending?.map((draft) => draft.text),
@@ -202,7 +202,7 @@ describe("conversations (fake provider)", () => {
 	});
 
 	it("creates sessions in a project or a folder, stops, archives and restores them", async () => {
-		const projects = await holdIn(owner, Projects, {}, "owner");
+		const projects = await holdWith(owner, Projects, {});
 		await projects.create({ name: "ws", place: { env: null, path: fixture.workspace } }, BACKGROUND_CONTEXT);
 		await until(projects.projects, (list) => Boolean(list?.some((project) => project.name === "ws")));
 		const query = { action: "create", project: "ws", message: "hello new" } as const;
@@ -216,7 +216,7 @@ describe("conversations (fake provider)", () => {
 		// Its title follows its first message (the catalog's automatic title), so only the place is compared.
 		const row = listed.action === "list" ? listed.peers.find((peer) => peer.id === fresh) : undefined;
 		assert.deepEqual([row?.env, row?.cwd, row?.project], [null, fixture.workspace, "ws"]);
-		const chat = await holdIn(owner, Chat, { session: fresh, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session: fresh, conversation: 1 }, ...CHAT_PARTICIPANT);
 		const first = await until(chat.view, (view) => peers(view).length === 1);
 		assert.deepEqual(peers(first)[0]?.data, { from: { id: alpha, title: "Alpha" }, text: "hello new" });
 		const folder = await broker(alpha, "create-folder", {
@@ -278,7 +278,7 @@ describe("conversations (fake provider)", () => {
 			body: JSON.stringify({ token: links?.[0]?.token, name: "Owner" }),
 		});
 		const guest = fixture.client({ ...headers, Cookie: String(joined.headers["set-cookie"]).split(";")[0]! }).host;
-		const guestChat = await holdIn(guest, Chat, { session: alpha, conversation: 1 }, "participant");
+		const guestChat = await holdWith(guest, Chat, { session: alpha, conversation: 1 }, ...CHAT_PARTICIPANT);
 		const listed = await call(guestChat, { action: "list" });
 		assert.equal(listed.isError, false, text(listed));
 		for (const client of [owner, guest]) {
@@ -292,13 +292,13 @@ describe("conversations (fake provider)", () => {
 		await guest.close(BACKGROUND_CONTEXT);
 		sharing.release();
 		await a.send({ text: "subagent", requestId: "child" }, BACKGROUND_CONTEXT);
-		const childList = await holdIn(owner, Subagents, {}, "reader");
+		const childList = await holdWith(owner, Subagents, {}, "children");
 		const children = await until(childList.children, (value) => Boolean(value?.[alpha]?.length));
-		const child = await holdIn(
+		const child = await holdWith(
 			owner,
 			Chat,
 			{ session: alpha, conversation: children![alpha]![0]!.conversationId },
-			"participant",
+			...CHAT_PARTICIPANT,
 		);
 		const result = await call(child, { action: "list" });
 		assert.equal(result.isError, true);

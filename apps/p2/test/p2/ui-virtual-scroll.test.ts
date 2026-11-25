@@ -8,10 +8,10 @@ import { after, before, describe, it } from "node:test";
 import { deflateSync } from "node:zlib";
 import type { EntryDraft } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Sessions, SessionTransfer } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions, SessionTransfer } from "../../plugins/sessions/contract.ts";
 import { bigSessionEntries } from "../fixtures/big-session.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, startFixture } from "./helpers.ts";
+import { type Fixture, holdWith, startFixture } from "./helpers.ts";
 
 /** A solid-color PNG, as base64. */
 function png(width: number, height: number, shade: number): string {
@@ -110,8 +110,7 @@ describe("virtual transcript", { skip: !browserTests }, () => {
 	let fixture: Fixture, browser: Browser, session: string;
 	before(async () => {
 		fixture = await startFixture({ web: true });
-		const sessions = await holdIn(fixture.browser(), Sessions, {}, "owner");
-		if (sessions.variant !== "owner") throw new Error("owner expected");
+		const sessions = await holdWith(fixture.browser(), Sessions, {}, ...SESSIONS_OWNER);
 		session = (await sessions.create({ cwd: fixture.workspace, title: "Images" }, BACKGROUND_CONTEXT)).id;
 		const entries = entriesWithImages();
 		await fixture.server.host.root(

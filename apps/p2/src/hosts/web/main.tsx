@@ -109,7 +109,7 @@ export function startP2Page(): void {
 			const access = host.hold(Access, {}, BACKGROUND_CONTEXT);
 			void whenLive(access).then(
 				() => {
-					guest = access.variant === "guest";
+					guest = access.granted.has("grant");
 				},
 				() => {},
 			);

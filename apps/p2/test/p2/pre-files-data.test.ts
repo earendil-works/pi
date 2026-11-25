@@ -13,15 +13,15 @@ import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { Artifacts } from "../../plugins/artifacts/contract.ts";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
 import { Subagents } from "../../plugins/subagents/contract.ts";
 import { type DataReport, dataReport } from "../../scripts/data-report.ts";
 import { migrateData } from "../../scripts/migrate-data.ts";
 import { verifySessions } from "../../scripts/verify-sessions.ts";
 import { startServer } from "../../src/hosts/server.ts";
-import { clientHost, holdIn, http, localOwner, until } from "./helpers.ts";
+import { clientHost, holdWith, http, localOwner, until } from "./helpers.ts";
 
 const fixture = new URL("../fixtures/pre-files-data/", import.meta.url);
 const expected = JSON.parse(readFileSync(new URL("report.json", fixture), "utf8")) as DataReport;
@@ -99,16 +99,16 @@ test(
 			assert.equal(sent.body, "before\n");
 
 			// The subagent.
-			const children = await holdIn(owner, Subagents, {}, "reader");
+			const children = await holdWith(owner, Subagents, {}, "children");
 			assert.equal(
 				(await until(children.children, (value) => Boolean(value?.[ids.alpha]?.length)))?.[ids.alpha]?.[0]?.name,
 				"helper",
 			);
 
 			// Old uploads attach by their ids, in the session and in its fork (its own copy of them).
-			const status = await holdIn(owner, SessionStatus, {}, "reader");
+			const status = await holdWith(owner, SessionStatus, {}, "statuses");
 			for (const session of [ids.alpha, ids.fork]) {
-				const chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
+				const chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
 				await chat.send(
 					{ text: "again", requestId: `again-${session}`, attachments: [ids.text, ids.photo] },
 					BACKGROUND_CONTEXT,
@@ -122,8 +122,8 @@ test(
 
 			// A new artifact (the artifacts plugin's own store; the old ones stay in the files unused); a new fork copies
 			// it along with the migrated files.
-			const chat = await holdIn(owner, Chat, { session: ids.alpha, conversation: 1 }, "participant");
-			const list = await holdIn(owner, Artifacts, { session: ids.alpha }, "editor");
+			const chat = await holdWith(owner, Chat, { session: ids.alpha, conversation: 1 }, ...CHAT_PARTICIPANT);
+			const list = await holdWith(owner, Artifacts, { session: ids.alpha }, "artifacts", "remove");
 			await chat.send({ text: "artifact", requestId: "after-migration" }, BACKGROUND_CONTEXT);
 			await until(list.artifacts, (value) => Boolean(value?.some((info) => info.id === "demo")));
 			await until(status.statuses, (value) => value?.[ids.alpha]?.tasks === 0);
@@ -131,11 +131,11 @@ test(
 				Boolean(value?.entries.some((entry) => entry.kind === "p2.input")),
 			);
 			const first = view!.entries.find((entry) => entry.kind === "p2.input")!;
-			const sessions = await holdIn(owner, Sessions, {}, "owner");
+			const sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 			const second = view!.entries.filter((entry) => entry.kind === "p2.input").at(-1)!;
 			const fork = await sessions.fork({ id: ids.alpha, conversation: 1, before: second.id }, BACKGROUND_CONTEXT);
 			await until(sessions.operations, (operations) => !(operations ?? []).some((each) => each.target === fork.id));
-			const forked = await holdIn(owner, Artifacts, { session: fork.id }, "editor");
+			const forked = await holdWith(owner, Artifacts, { session: fork.id }, "artifacts", "remove");
 			await until(forked.artifacts, (value) => Boolean(value?.some((info) => info.id === "demo")));
 			forked.release();
 			assert.ok(first.id < second.id);

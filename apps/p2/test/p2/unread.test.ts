@@ -8,12 +8,12 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT, follow } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { SessionReads } from "../../plugins/search/contract.ts";
 import { SearchDb } from "../../plugins/search/db.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 describe("unread answers", () => {
 	let fixture: Fixture;
@@ -44,13 +44,13 @@ describe("unread answers", () => {
 
 	it("tracks each session's latest root answer and the owner's read marker, persisted and monotonic", async () => {
 		const owner = fixture.browser();
-		const sessions = await holdIn(owner, Sessions, {}, "owner");
+		const sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		const marks = owner.hold(SessionReads, {}, BACKGROUND_CONTEXT);
 		const other = fixture.browser().hold(SessionReads, {}, BACKGROUND_CONTEXT);
 		// Values are current while subscribed.
 		const keep = [follow(marks.answers, () => {}), follow(marks.reads, () => {})];
 		const session = await sessions.create({ cwd: fixture.workspace, title: "Marks" }, BACKGROUND_CONTEXT);
-		const chat = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await chat.send({ text: "first", requestId: "first" }, BACKGROUND_CONTEXT);
 		const first = (await until(marks.answers, (answers) => (answers?.[session.id] ?? 0) > 0))?.[session.id] ?? 0;
 		assert.equal(marks.reads.value?.[session.id], undefined, "unread until an owner reads it");
@@ -83,7 +83,7 @@ describe("unread answers", () => {
 		},
 		async () => {
 			const owner = fixture.browser();
-			const sessions = await holdIn(owner, Sessions, {}, "owner");
+			const sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 			const marks = owner.hold(SessionReads, {}, BACKGROUND_CONTEXT);
 			const keep = [follow(marks.answers, () => {}), follow(marks.reads, () => {})];
 			const target = await sessions.create({ cwd: fixture.workspace, title: "Answers here" }, BACKGROUND_CONTEXT);
@@ -95,7 +95,7 @@ describe("unread answers", () => {
 				await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${elsewhere.id}`);
 				const row = `[...document.querySelectorAll('.session-row')].find(r=>r.querySelector('.session-title')?.textContent.includes('Answers here'))`;
 				await browser.wait(`Boolean(${row})`);
-				const chat = await holdIn(owner, Chat, { session: target.id, conversation: 1 }, "participant");
+				const chat = await holdWith(owner, Chat, { session: target.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 				await chat.send({ text: "slow-tool", requestId: "slow" }, BACKGROUND_CONTEXT);
 				const working = ".nav-marker .pi-dots";
 				await browser.wait(`Boolean(${row}?.querySelector('${working}'))`);

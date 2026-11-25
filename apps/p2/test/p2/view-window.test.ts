@@ -8,12 +8,12 @@ import { after, before, describe, it } from "node:test";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { estimateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
 import { BACKGROUND_CONTEXT, follow, UI_LINGER, whenLive } from "@p2/app/v1";
-import { Chat, ChatCosts } from "../../plugins/chat/contract.ts";
-import { Sessions, SessionTransfer } from "../../plugins/sessions/contract.ts";
+import { CHAT_PARTICIPANT, Chat, ChatCosts } from "../../plugins/chat/contract.ts";
+import { SESSIONS_OWNER, Sessions, SessionTransfer } from "../../plugins/sessions/contract.ts";
 import type { Host } from "../../src/runtime/chord.ts";
 import { transcriptOf } from "../../src/web/history.ts";
 import { bigSessionEntries } from "../fixtures/big-session.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 const SEEDED = 600;
 
@@ -22,14 +22,13 @@ describe("windowed conversation view", () => {
 	let owner: Host;
 	let session: string;
 	let seeded = 0;
-	const chatOf = () => holdIn(owner, Chat, { session, conversation: 1 }, "participant");
+	const chatOf = () => holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
 	const storeOf = (key: string, chat: Awaited<ReturnType<typeof chatOf>>) =>
 		transcriptOf(owner, key, { view: chat.view, entries: (query) => chat.entries(query, BACKGROUND_CONTEXT) });
 	before(async () => {
 		fixture = await startFixture();
 		owner = fixture.browser();
-		const sessions = await holdIn(owner, Sessions, {}, "owner");
-		if (sessions.variant !== "owner") throw new Error("owner expected");
+		const sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		session = (await sessions.create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT)).id;
 		const entries = bigSessionEntries(SEEDED, 4_000);
 		seeded = entries.length;

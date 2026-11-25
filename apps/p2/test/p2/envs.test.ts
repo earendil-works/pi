@@ -10,12 +10,12 @@ import type { ConversationView } from "@earendil-works/pi-durable";
 import { localDaemon } from "@earendil-works/pi-env";
 import { BACKGROUND_CONTEXT, statusOf, whenLive } from "@p2/app/v1";
 import { WebSocket } from "ws";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { envId, envRevision, loadEnvs, parseEnvs, saveEnv, validateEnv } from "../../plugins/envs/config.ts";
 import { Envs, environmentPath } from "../../plugins/envs/contract.ts";
 import { remoteSession, sshOptions } from "../../plugins/envs/remote-env.ts";
 import { EnvStore } from "../../plugins/envs/store.ts";
-import { Catalog, Sessions } from "../../plugins/sessions/contract.ts";
+import { Catalog, SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
 import { Subagents } from "../../plugins/subagents/contract.ts";
@@ -24,7 +24,7 @@ import { terminalDaemon } from "../../plugins/terminals/daemon.ts";
 import type { TerminalEvent } from "../../plugins/terminals/protocol.ts";
 import { Workspace } from "../../plugins/workspace/contract.ts";
 import { Hosts } from "../../src/runtime/server.ts";
-import { expectChord, failureOf, holdIn, poll, startFixture, until } from "./helpers.ts";
+import { expectChord, failureOf, holdWith, poll, startFixture, until } from "./helpers.ts";
 
 const config = { type: "ssh" as const, host: "box" };
 function which(program: string): string | undefined {
@@ -295,7 +295,7 @@ test(
 		assert.equal((await stat(uploadedKey.identityFile)).mode & 0o777, 0o600);
 		await envs.delete({ name: "copy" }, BACKGROUND_CONTEXT);
 		assert(!envs.envs.value.some((entry) => entry.name === "copy"), "the deleted environment is gone at the answer");
-		const sessions = await holdIn(owner, Sessions, {}, "owner");
+		const sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		const session = await sessions.create(
 			{ env: "box", cwd: "~/project", createDirectory: true },
 			BACKGROUND_CONTEXT,
@@ -309,7 +309,7 @@ test(
 			join(home, ".pi", "p2", "skills", "remote", "SKILL.md"),
 			"---\nname: remote\ndescription: Remote skill sentinel.\n---\nRemote instructions.",
 		);
-		const chat = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await chat.send({ text: "write", requestId: "ssh-write" }, BACKGROUND_CONTEXT);
 		await until(chat.view, (view) => results(view, "write").length > 0, 60000);
 		assert.equal(await readFile(join(session.cwd, "created.txt"), "utf8"), "before\n");
@@ -411,7 +411,7 @@ test(
 			await terminals.restartHost({}, BACKGROUND_CONTEXT).catch(() => {});
 			terminals.release();
 		}
-		const status = await holdIn(owner, SessionStatus, {}, "reader");
+		const status = await holdWith(owner, SessionStatus, {}, "statuses");
 		await until(status.statuses, (statuses) => statuses?.[session.id]?.tasks === 0);
 		await chat.send({ text: "slow-tool", requestId: "ssh-busy-edit" }, BACKGROUND_CONTEXT);
 		await until(chat.view, (view) => JSON.stringify(view).includes("tool-running"));
@@ -425,7 +425,7 @@ test(
 		await until(chat.view, (view) => results(view, "bash").some((text) => text.includes("tool-finished")), 60000);
 		await until(status.statuses, (statuses) => statuses?.[session.id]?.running === false);
 		chat.release();
-		const reopened = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+		const reopened = await holdWith(owner, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await reopened.send({ text: "after env revision", requestId: "ssh-restarted" }, BACKGROUND_CONTEXT);
 		await until(reopened.view, (view) => answered(view, "Echo: after env revision"));
 		await until(status.statuses, (statuses) => statuses?.[session.id]?.tasks === 0);
@@ -433,7 +433,7 @@ test(
 
 		// Pi Mobile 78056b34e: a subagent spawned without a cwd works in the session's remote cwd, and follows the
 		// session when it moves (to this machine and back), never resolving a path of the other machine.
-		const agents = await holdIn(owner, Subagents, {}, "reader");
+		const agents = await holdWith(owner, Subagents, {}, "children");
 		let sent = 0;
 		const subagentPwd = async (requestId: string) => {
 			await until(status.statuses, (statuses) => statuses?.[session.id]?.tasks === 0, 60000);
@@ -443,7 +443,7 @@ test(
 			const args = known
 				? { action: "send", name: "follow", message: "bash" }
 				: { action: "spawn", name: "follow", message: "bash", tools: ["bash"] };
-			const root = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+			const root = await holdWith(owner, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 			await root.send({ text: `subagent ${JSON.stringify(args)}`, requestId }, BACKGROUND_CONTEXT);
 			root.release();
 			sent++;
@@ -452,11 +452,11 @@ test(
 			);
 			const child = listed?.[session.id]?.find((entry) => entry.name === "follow");
 			assert(child);
-			const view = await holdIn(
+			const view = await holdWith(
 				owner,
 				Chat,
 				{ session: session.id, conversation: child.conversationId },
-				"participant",
+				...CHAT_PARTICIPANT,
 			);
 			try {
 				const settled = await until(view.view, (value) => results(value, "bash").length >= sent, 60000);
@@ -468,7 +468,7 @@ test(
 		};
 		assert.equal(await subagentPwd("follow-remote"), session.cwd);
 		// Moving to another machine and back happens in place: a viewer's Chat stays live, the worker is not restarted.
-		const viewer = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+		const viewer = await holdWith(owner, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		const generation = () =>
 			fixture.server.host.root(async (ctx) => {
 				const hosts = await ctx.get(Hosts, {});
@@ -491,7 +491,7 @@ test(
 			const args = known
 				? { action: "send", name: "mine", message: "bash" }
 				: { action: "spawn", name: "mine", message: "bash", cwd: own, tools: ["bash"] };
-			const root = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+			const root = await holdWith(owner, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 			await root.send({ text: `subagent ${JSON.stringify(args)}`, requestId }, BACKGROUND_CONTEXT);
 			root.release();
 			ownRuns++;
@@ -501,11 +501,11 @@ test(
 			const child = listed?.[session.id]?.find((entry) => entry.name === "mine");
 			assert(child);
 			assert.deepEqual(child.location, { cwd: own, env: null });
-			const view = await holdIn(
+			const view = await holdWith(
 				owner,
 				Chat,
 				{ session: session.id, conversation: child.conversationId },
-				"participant",
+				...CHAT_PARTICIPANT,
 			);
 			try {
 				const settled = await until(view.view, (value) => results(value, "bash").length >= ownRuns, 60000);

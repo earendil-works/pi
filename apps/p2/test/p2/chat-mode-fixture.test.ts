@@ -8,15 +8,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import type { ConversationView, LiveState } from "@earendil-works/pi-durable";
-import { BACKGROUND_CONTEXT, follow } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { BACKGROUND_CONTEXT, follow, type RefWith } from "@p2/app/v1";
+import { CHAT_PARTICIPANT, Chat, type ChatParticipant } from "../../plugins/chat/contract.ts";
 import { ChatMode } from "../../plugins/chat-mode/contract.ts";
 import { MAX_DIGEST_IMAGES } from "../../plugins/chat-mode/digest.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import { Access } from "../../src/runtime/access.ts";
-import type { Host, RefIn } from "../../src/runtime/chord.ts";
-import { expectChord, type Fixture, holdIn, http, poll, startFixture, until } from "./helpers.ts";
+import type { Host } from "../../src/runtime/chord.ts";
+import { expectChord, type Fixture, holdWith, http, poll, startFixture, until } from "./helpers.ts";
 
 const TUNNEL = { Host: "share.test", Origin: "https://share.test" };
 type Logged = { role: string; content: string | { type: string; text?: string }[] };
@@ -35,8 +35,8 @@ describe("chat mode (server, sharing, fake provider)", () => {
 	let requestLog: string;
 	let owner: Host;
 	let session: string;
-	let chat: RefIn<typeof Chat, "participant">;
-	let mode: RefIn<typeof ChatMode, "owner">;
+	let chat: ChatParticipant;
+	let mode: RefWith<typeof ChatMode, "set" | "rename">;
 
 	/** Every request the fake provider received so far: one list of messages per request. */
 	const requests = (): Logged[][] =>
@@ -69,7 +69,7 @@ describe("chat mode (server, sharing, fake provider)", () => {
 		assert.equal(response.status, 200, response.body);
 		const cookie = String(response.headers["set-cookie"] ?? "").split(";")[0] ?? "";
 		const host = fixture.client({ ...TUNNEL, Cookie: cookie }).host;
-		const grant = await until((await holdIn(host, Access, {}, "guest")).grant, Boolean);
+		const grant = await until((await holdWith(host, Access, {}, "grant")).grant, Boolean);
 		return { host, cookie, id: grant?.id ?? "" };
 	};
 	const idle = () =>
@@ -101,11 +101,11 @@ describe("chat mode (server, sharing, fake provider)", () => {
 		owner = fixture.browser();
 		session = (
 			await (
-				await holdIn(owner, Sessions, {}, "owner")
+				await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)
 			).create({ cwd: fixture.workspace, title: "Chat" }, BACKGROUND_CONTEXT)
 		).id;
-		chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
-		mode = await holdIn(owner, ChatMode, { session, conversation: 1 }, "owner");
+		chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
+		mode = await holdWith(owner, ChatMode, { session, conversation: 1 }, "set", "rename");
 		// Stay subscribed: an unsubscribed remote member restarts from undefined (requests #8).
 		follow(chat.view, () => {});
 	});
@@ -121,7 +121,6 @@ describe("chat mode (server, sharing, fake provider)", () => {
 	});
 
 	it("keeps chat messages out of every model request, idle or during a run", async () => {
-		assert.equal(mode.variant, "owner");
 		await mode.set({ enabled: true }, BACKGROUND_CONTEXT);
 		await until(mode.enabled, (value) => value === true);
 		await chat.send({ text: "hello people", requestId: "c1" }, BACKGROUND_CONTEXT);
@@ -165,11 +164,11 @@ describe("chat mode (server, sharing, fake provider)", () => {
 		);
 		const alice = await joinAs("full", "Alice");
 		const [aliceChat, aliceMode] = await Promise.all([
-			holdIn(alice.host, Chat, { session, conversation: 1 }, "participant"),
-			holdIn(alice.host, ChatMode, { session, conversation: 1 }, "reader"),
+			holdWith(alice.host, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT),
+			holdWith(alice.host, ChatMode, { session, conversation: 1 }),
 		]);
-		// @ts-expect-error `set` is the owner's: a reader calling it anyway is refused.
-		await expectChord(aliceMode.set({ enabled: false }, BACKGROUND_CONTEXT), "invalid");
+		// `set` is the owner's: not granted, the member is not there.
+		assert.equal(aliceMode.set, undefined);
 
 		const guestUpload = (name: string) => upload(name, png, { ...TUNNEL, Cookie: alice.cookie });
 		const images = [await guestUpload("a.png"), await guestUpload("b.png"), await guestUpload("c.png")];
@@ -218,11 +217,11 @@ describe("chat mode (server, sharing, fake provider)", () => {
 	it("lets read-only guests read chat mode but not write", async () => {
 		const bob = await joinAs("view", "Bob");
 		const [bobChat, bobMode] = await Promise.all([
-			holdIn(bob.host, Chat, { session, conversation: 1 }, "viewer"),
-			holdIn(bob.host, ChatMode, { session, conversation: 1 }, "reader"),
+			holdWith(bob.host, Chat, { session, conversation: 1 }),
+			holdWith(bob.host, ChatMode, { session, conversation: 1 }),
 		]);
 		assert.equal(await until(bobMode.enabled, (value) => value === true), true);
-		// @ts-expect-error `send` is a participant's: a viewer calling it anyway is refused.
-		await expectChord(bobChat.send({ text: "hi", requestId: "b1" }, BACKGROUND_CONTEXT), "invalid");
+		// `send` is a participant's: not granted, the member is not there.
+		assert.equal(bobChat.send, undefined);
 	});
 });

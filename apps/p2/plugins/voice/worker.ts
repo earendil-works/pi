@@ -14,8 +14,10 @@ import {
 	defineState,
 	deriveTyped,
 	forbidden,
+	grantBy,
 	invalid,
 	isOwner,
+	notGranted,
 	principalKey,
 } from "@p2/app/v1";
 import { durableContext } from "@p2/app/v1/node";
@@ -109,7 +111,7 @@ export default defineFacet((host) => {
 
 	host.serve(
 		VoiceMode,
-		({ session, conversation }, principal, self) => {
+		({ session, conversation }, principal, _admitted, self) => {
 			if (!canSend(principal, session)) throw forbidden("participants only");
 			const id = conversation as ConversationId;
 			const harness = harnessOf(self);
@@ -146,38 +148,33 @@ export default defineFacet((host) => {
 					() => setGuestVoice(String(id), key, false),
 				);
 				return {
-					variant: "participant",
-					members: {
-						enabled: self.derive([guestSwitch], ([value]) => value.enabled),
-						voice,
-						set: async ({ enabled: on }, ctx) => {
-							if (on && !(await harness().durable.conversation(id, durableContext(ctx))))
-								throw invalid("args", `Unknown conversation ${conversation}`);
-							setGuestVoice(String(id), key, on);
-							await guestSwitch.change((draft) => {
-								draft.enabled = on;
-							}, ctx);
-							return null;
-						},
+					enabled: self.derive([guestSwitch], ([value]) => value.enabled),
+					voice,
+					set: async ({ enabled: on }, ctx) => {
+						if (on && !(await harness().durable.conversation(id, durableContext(ctx))))
+							throw invalid("args", `Unknown conversation ${conversation}`);
+						setGuestVoice(String(id), key, on);
+						await guestSwitch.change((draft) => {
+							draft.enabled = on;
+						}, ctx);
+						return null;
 					},
+					choose: notGranted,
 				};
 			}
 			return {
-				variant: "owner",
-				members: {
-					enabled: self.derive([doc], ([value]) => value.enabled),
-					voice,
-					set: ({ enabled: on }, ctx) =>
-						commit(ctx, (doc) => {
-							doc.enabled = on;
-						}),
-					choose: (choice, ctx) =>
-						commit(ctx, (doc) => {
-							doc.voice = choice;
-						}),
-				},
+				enabled: self.derive([doc], ([value]) => value.enabled),
+				voice,
+				set: ({ enabled: on }, ctx) =>
+					commit(ctx, (doc) => {
+						doc.enabled = on;
+					}),
+				choose: (choice, ctx) =>
+					commit(ctx, (doc) => {
+						doc.voice = choice;
+					}),
 			};
 		},
-		{ linger: 30_000 },
+		{ linger: 30_000, admit: grantBy((principal) => (isOwner(principal) ? ["choose"] : [])) },
 	);
 });

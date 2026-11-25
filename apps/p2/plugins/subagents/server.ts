@@ -1,12 +1,13 @@
 import {
-	type AcceptsTable,
 	contribute,
 	defineFacet,
 	deriveTyped,
 	forbidden,
+	grantBy,
 	isGuest,
 	isOwner,
 	isWorker,
+	notGranted,
 	query,
 	Session,
 } from "@p2/app/v1";
@@ -16,24 +17,6 @@ import { type Child, ChildStore, Subagents } from "./contract.ts";
 
 /** The most sessions whose children stay live (a live query needs a bound): every session, as the catalog's. */
 const WINDOW = 100_000;
-
-/** `Subagents` 2: pages read children without their time and failure; workers report them without. */
-const SUBAGENTS_ACCEPTS: AcceptsTable<typeof Subagents> = {
-	2: {
-		state: {
-			reader: {
-				children: (children) =>
-					Object.fromEntries(
-						Object.entries(children).map(([session, list]) => [
-							session,
-							list.map(({ updatedAt: _updatedAt, failure: _failure, ...child }) => child),
-						]),
-					),
-			},
-		},
-		methods: { report: { args: (old) => old } },
-	},
-};
 
 /** A child as a guest sees it: its failure without the detail. */
 const withoutDetail = (child: Child): Child =>
@@ -73,13 +56,13 @@ export default defineFacet((host) => {
 
 	host.serve(
 		Subagents,
-		(_params, principal, self) => {
+		(_params, principal, _admitted, self) => {
 			const store = self.get(ChildStore, {});
 			if (isWorker(principal)) {
 				const { session, generation } = principal;
 				return {
-					variant: "reporter",
-					members: { report: ({ children }, ctx) => store.report({ session, generation, children }, ctx) },
+					report: ({ children }, ctx) => store.report({ session, generation, children }, ctx),
+					children: notGranted,
 				};
 			}
 			if (isGuest(principal)) {
@@ -92,11 +75,11 @@ export default defineFacet((host) => {
 						]),
 					),
 				);
-				return { variant: "reader", members: { children } };
+				return { children: () => children, report: notGranted };
 			}
 			if (!isOwner(principal)) throw forbidden("owners and guests only");
-			return { variant: "reader", members: { children: store.children } };
+			return { children: () => store.children, report: notGranted };
 		},
-		{ accepts: SUBAGENTS_ACCEPTS },
+		{ admit: grantBy((principal) => (isWorker(principal) ? ["report"] : ["children"])) },
 	);
 });

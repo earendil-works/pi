@@ -9,8 +9,8 @@ import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import { type ConversationView, createSession, defineDoc, ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { Artifacts } from "../../plugins/artifacts/contract.ts";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { type Session, Sessions } from "../../plugins/sessions/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
+import { SESSIONS_OWNER, type Session, Sessions } from "../../plugins/sessions/contract.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
 import { Subagents } from "../../plugins/subagents/contract.ts";
 import { SessionTree, type Tree } from "../../plugins/tree/contract.ts";
@@ -18,7 +18,7 @@ import type { Host } from "../../src/runtime/chord.ts";
 import { durableContext } from "../../src/runtime/durable.ts";
 import { MainDoc } from "../../src/runtime/main-conversation.ts";
 import { openSessionStorage } from "../../src/runtime/session-store.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 /** `p2.main` as version 1 stored it: the top-level conversations' IDs, no labels. */
 const MainDocV1 = defineDoc<{ conversation: number; branches: number[] }>({
@@ -52,16 +52,16 @@ describe("/tree (fake provider)", () => {
 	let fixture: Fixture;
 	let owner: Host;
 	let session: Session;
-	const chatOf = (conversation: number) => holdIn(owner, Chat, { session: session.id, conversation }, "participant");
-	const treeRef = () => holdIn(owner, SessionTree, { session: session.id }, "owner");
+	const chatOf = (conversation: number) =>
+		holdWith(owner, Chat, { session: session.id, conversation }, ...CHAT_PARTICIPANT);
+	const treeRef = () => holdWith(owner, SessionTree, { session: session.id });
 	const idle = async () => {
-		const status = await holdIn(owner, SessionStatus, {}, "reader");
+		const status = await holdWith(owner, SessionStatus, {}, "statuses");
 		await until(status.statuses, (value) => value?.[session.id]?.tasks === 0);
 		status.release();
 	};
 	const sessionsRef = async () => {
-		const ref = await holdIn(owner, Sessions, {}, "owner");
-		if (ref.variant !== "owner") throw new Error("owner expected");
+		const ref = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		return ref;
 	};
 	/** The session row's branches once `ready` accepts them (newest first). */
@@ -160,7 +160,7 @@ describe("/tree (fake provider)", () => {
 		await until(chat.view, (next) => toolResults(next).some((result) => result.toolName === "codemode"));
 		chat.release();
 		await idle();
-		const list = await holdIn(owner, Artifacts, { session: session.id }, "editor");
+		const list = await holdWith(owner, Artifacts, { session: session.id }, "artifacts", "remove");
 		await until(list.artifacts, (value) => value?.some((artifact) => artifact.id === "demo") ?? false);
 		list.release();
 	});
@@ -172,7 +172,7 @@ describe("/tree (fake provider)", () => {
 		await until(chat.view, (next) => text(next).includes('<sender kind="subagent" name="helper"/>'));
 		chat.release();
 		await idle();
-		const feed = await holdIn(owner, Subagents, {}, "reader");
+		const feed = await holdWith(owner, Subagents, {}, "children");
 		await until(
 			feed.children,
 			(children) => children?.[session.id]?.some((child) => child.name === "helper") ?? false,
@@ -190,7 +190,7 @@ describe("/tree (fake provider)", () => {
 		// The subagent's bash call takes 4 seconds: the session switches meanwhile.
 		await ref.select({ conversation: 1 }, BACKGROUND_CONTEXT);
 		await until(chat.view, (next) => text(next).includes('<sender kind="subagent" name="slowpoke"/>'));
-		const feed = await holdIn(owner, Subagents, {}, "reader");
+		const feed = await holdWith(owner, Subagents, {}, "children");
 		const children = await until(
 			feed.children,
 			(value) => value?.[session.id]?.some((child) => child.name === "slowpoke") ?? false,
@@ -329,7 +329,7 @@ describe("/tree (fake provider)", () => {
 		await ref.select({ conversation: 1 }, BACKGROUND_CONTEXT);
 		const sessions = await sessionsRef();
 		await until(sessions.sessions, (list) => list.find((each) => each.id === session.id)?.main === 1);
-		const status = await holdIn(owner, SessionStatus, {}, "reader");
+		const status = await holdWith(owner, SessionStatus, {}, "statuses");
 		await until(status.statuses, (value) => value?.[session.id]?.busy.includes(left) ?? false);
 		status.release();
 		await assert.rejects(

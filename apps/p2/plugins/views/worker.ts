@@ -13,6 +13,7 @@ import {
 	defineFacet,
 	deriveTyped,
 	forbidden,
+	grantBy,
 	invalid,
 	isGuest,
 	isOwner,
@@ -24,7 +25,7 @@ import { Extensions, harnessOf, workerOf } from "@p2/app/v1/worker";
 import { Conversation, SendRouters } from "../chat/contract.ts";
 import { Attachments, MAX_ATTACHMENTS } from "../files/contract.ts";
 import { WorkerModels } from "../models/contract.ts";
-import { liveViews, type MessageContext, MessageContexts, VIEW_INPUT, VIEWS_ACCEPTS, Views } from "./contract.ts";
+import { liveViews, type MessageContext, MessageContexts, VIEW_INPUT, VIEWS_EDITING, Views } from "./contract.ts";
 import {
 	addAnnotation,
 	freeViewId,
@@ -108,7 +109,7 @@ export default defineFacet((host) => {
 
 	host.serve(
 		Views,
-		({ session }, principal, self) => {
+		({ session }, principal, _admitted, self) => {
 			if (!canView(principal, session)) throw forbidden("viewers only");
 			const harness = harnessOf(self);
 			const worker = workerOf(self);
@@ -117,84 +118,87 @@ export default defineFacet((host) => {
 			const annotations = deriveTyped(self, [index], ([value]) => value.annotations);
 			const arrangement = deriveTyped(self, [index], ([value]) => value.arrangement ?? null);
 			const inline = deriveTyped(self, [index], ([value]) => value.inline ?? []);
-			if (!canSend(principal, session) || (!isOwner(principal) && !isGuest(principal)))
-				return { variant: "reader", members: { views, annotations, arrangement, inline } };
-			const person = principal;
 			const settings = self.get(WorkerModels, {});
-			const author = (): Author => authorOf(person, settings.settings.value.ownerName ?? DEFAULT_OWNER_NAME);
+			const author = (): Author => {
+				// Only people are granted the editing methods that call this (the admission).
+				if (!isOwner(principal) && !isGuest(principal)) throw forbidden("people only");
+				return authorOf(principal, settings.settings.value.ownerName ?? DEFAULT_OWNER_NAME);
+			};
 			/** A person's call: refused while the session moves, which waits for running calls (as the chat's). */
 			const call = <T>(fn: () => Promise<T>): Promise<T> => worker().liveness.call(fn);
 			const commit = <T>(change: (draft: Awaited<ReturnType<typeof viewsDraft>>) => T, ctx: Ctx): Promise<T> =>
 				call(() => harness().durable.commit(async (tx) => change(await viewsDraft(tx)), ctx));
 			return {
-				variant: "editor",
-				members: {
-					views,
-					annotations,
-					arrangement,
-					inline,
-					open: ({ kind, item, title: given }, ctx) =>
-						call(async () => {
-							if (kind === "markdown" && !item) throw invalid("args", "A markdown view needs a file");
-							const durable = harness().durable;
-							const title =
-								given ||
-								(kind === "changes" ? (item ? `Changes in ${item}` : "Changes") : (item ?? kind)).slice(0, 120);
-							const id = freeViewId(await readViews(durable, ctx), title, kind);
-							const view = await durable.commit(
-								(tx) => openView(tx, { id, kind, title, ...(item ? { item } : {}) }, Date.now()),
-								ctx,
-							);
-							return { id: view.id };
-						}),
-					close: async ({ id }, ctx) => {
-						await call(() => harness().durable.commit((tx) => removeView(tx, id), ctx));
-						return null;
-					},
-					select: async ({ id, selection }, ctx) => {
-						if (JSON.stringify(selection?.data ?? null).length > MAX_SELECTION_DATA)
-							throw invalid("args", "Selection data is too large");
-						await commit((draft) => {
-							const view = draft.views.find((each) => each.id === id);
-							if (!view) throw invalid("args", `No view "${id}"`);
-							if (selection === null) delete view.selection;
-							else
-								view.selection = {
-									summary: selection.summary,
-									...(selection.data !== undefined ? { data: selection.data } : {}),
-								};
-						}, ctx);
-						return null;
-					},
-					selectInline: async (input, ctx) => {
-						if (JSON.stringify(input.selection?.data ?? null).length > MAX_SELECTION_DATA)
-							throw invalid("args", "Selection data is too large");
-						await commit((draft) => selectInline(draft, input), ctx);
-						return null;
-					},
-					annotate: async (input, ctx) => {
-						const id = await commit((draft) => addAnnotation(draft, input, author().name, Date.now()), ctx);
-						return { id };
-					},
-					unannotate: async ({ ids }, ctx) => {
-						const remove = ids === undefined ? undefined : new Set(ids);
-						await commit((draft) => {
-							draft.annotations = remove ? draft.annotations.filter((each) => !remove.has(each.id)) : [];
-						}, ctx);
-						return null;
-					},
-					discard: async (ctx) => {
-						await commit((draft) => {
-							draft.annotations = draft.annotations.filter((each) => each.sent);
-							for (const view of draft.views) if (view.selection) view.selection.sent = true;
-							for (const each of draft.inline ?? []) each.selection.sent = true;
-						}, ctx);
-						return null;
-					},
+				views,
+				annotations,
+				arrangement,
+				inline,
+				open: ({ kind, item, title: given }, ctx) =>
+					call(async () => {
+						if (kind === "markdown" && !item) throw invalid("args", "A markdown view needs a file");
+						const durable = harness().durable;
+						const title =
+							given ||
+							(kind === "changes" ? (item ? `Changes in ${item}` : "Changes") : (item ?? kind)).slice(0, 120);
+						const id = freeViewId(await readViews(durable, ctx), title, kind);
+						const view = await durable.commit(
+							(tx) => openView(tx, { id, kind, title, ...(item ? { item } : {}) }, Date.now()),
+							ctx,
+						);
+						return { id: view.id };
+					}),
+				close: async ({ id }, ctx) => {
+					await call(() => harness().durable.commit((tx) => removeView(tx, id), ctx));
+					return null;
+				},
+				select: async ({ id, selection }, ctx) => {
+					if (JSON.stringify(selection?.data ?? null).length > MAX_SELECTION_DATA)
+						throw invalid("args", "Selection data is too large");
+					await commit((draft) => {
+						const view = draft.views.find((each) => each.id === id);
+						if (!view) throw invalid("args", `No view "${id}"`);
+						if (selection === null) delete view.selection;
+						else
+							view.selection = {
+								summary: selection.summary,
+								...(selection.data !== undefined ? { data: selection.data } : {}),
+							};
+					}, ctx);
+					return null;
+				},
+				selectInline: async (input, ctx) => {
+					if (JSON.stringify(input.selection?.data ?? null).length > MAX_SELECTION_DATA)
+						throw invalid("args", "Selection data is too large");
+					await commit((draft) => selectInline(draft, input), ctx);
+					return null;
+				},
+				annotate: async (input, ctx) => {
+					const id = await commit((draft) => addAnnotation(draft, input, author().name, Date.now()), ctx);
+					return { id };
+				},
+				unannotate: async ({ ids }, ctx) => {
+					const remove = ids === undefined ? undefined : new Set(ids);
+					await commit((draft) => {
+						draft.annotations = remove ? draft.annotations.filter((each) => !remove.has(each.id)) : [];
+					}, ctx);
+					return null;
+				},
+				discard: async (ctx) => {
+					await commit((draft) => {
+						draft.annotations = draft.annotations.filter((each) => each.sent);
+						for (const view of draft.views) if (view.selection) view.selection.sent = true;
+						for (const each of draft.inline ?? []) each.selection.sent = true;
+					}, ctx);
+					return null;
 				},
 			};
 		},
-		{ accepts: VIEWS_ACCEPTS },
+		{
+			// Everyone who may view reads; people who may send there edit.
+			admit: grantBy((principal, { session }) =>
+				canSend(principal, session) && (isOwner(principal) || isGuest(principal)) ? VIEWS_EDITING : [],
+			),
+		},
 	);
 });
 

@@ -3,7 +3,6 @@
 // its answer goes back as a reply. A thread of a linked channel gets a subagent forked from the main conversation.
 import { arr, bool, bytes, int, nul, num, obj, opt, type Static, str, union } from "@earendil-works/pi-schema";
 import {
-	evolve,
 	literal,
 	local,
 	MAX_ATTACHMENTS,
@@ -148,19 +147,6 @@ export const DiscordStore = local("p2.discord-store", {
 	},
 });
 
-/**
- * The owner's bots and links. 2: several bots, links made from a session (v1 lived a day on the owner's own device
- * only; its pages bind again after a reload, no `accepts` kept).
- */
-export const DiscordV2 = remote("p2.discord", {
-	version: 2,
-	params: {},
-	hostAddress: serverHost,
-	variants: {
-		owner: { state: { bots: arr(BotSchema), bindings: arr(BindingSchema) }, methods: OWNER_METHODS },
-	},
-});
-
 /** Channel commands: a mention of the bot whose remaining text is exactly one of these (an optional leading slash). */
 export const COMMANDS = ["stop", "status", "compact"] as const;
 export type Command = (typeof COMMANDS)[number];
@@ -170,72 +156,74 @@ const CommandSchema = union(COMMANDS.map((command) => literal(command)));
 export const OfferedFileSchema = obj({ id: str(), name: str(), size: num() });
 export type OfferedFile = Static<typeof OfferedFileSchema>;
 
-/** The owner's bots and links. 3: `updateLink`. The provider still serves 2 (its `accepts`). */
-export const Discord = evolve(DiscordV2, (e) => e.addMethod("owner", "updateLink", LinkUpdateSchema, nul()));
+/**
+ * The owner's bots and links. 2: several bots, links made from a session. 3: `updateLink`. 4: a new base (grantable
+ * members replaced variants; older versions are refused, their pages reload).
+ */
+export const Discord = remote("p2.discord", {
+	version: 4,
+	params: {},
+	hostAddress: serverHost,
+	state: { bots: arr(BotSchema), bindings: arr(BindingSchema) },
+	methods: { ...OWNER_METHODS, updateLink: method(LinkUpdateSchema, nul()) },
+});
 
 /** A Discord attachment to download into the session's uploads (at most 25 MiB; larger ones are links). */
 export const DiscordFileSchema = obj({ url: str(), name: str(), size: num(), key: str(), ref: str() });
 
 /** What the server hands a session's worker (server only): batches, finished turns, threads. */
 export const DiscordIngress = remote("p2.discord-ingress", {
-	version: 1,
+	version: 2,
 	params: { session: param.str() },
 	hostAddress: sessionHost,
-	variants: {
-		server: {
-			methods: {
-				/** The session is no longer linked: its agents' Discord prompt section goes. */
-				unlinked: method(),
-				/**
-				 * Places a batch as one input of `conversation` (default: the main conversation), steering the turn under
-				 * way while it is busy (the batch joins it); a retried `requestId` is placed once. `lock`: the session's lock, committed first. Its agent learns that
-				 * it answers Discord (a prompt section).
-				 */
-				deliver: method(
-					obj({
-						conversation: opt(int({ minimum: 1 })),
-						requestId: str({ maxLength: 200 }),
-						author: obj({ id: str(), name: str() }),
-						text: str({ maxLength: 200_000 }),
-						context: obj({ channel: str(), guild: str(), messages: int(), thread: opt(str()) }),
-						files: arr(DiscordFileSchema, { maxItems: MAX_ATTACHMENTS }),
-						lock: union([SessionLockSchema, nul()]),
-					}),
-					obj({ conversation: int(), submissionId: num() }),
-				),
-				/**
-				 * The submission's turn: still pending, answered (the answer's text), stopped (aborted, or withdrawn while
-				 * queued), or ended without an answer; with the files its conversation offered during it.
-				 */
-				turn: method(
-					obj({ submissionId: num() }),
-					union([
-						obj({ state: literal("pending") }),
-						// `answer`: its entry; inputs steered into one turn share it.
-						obj({ state: literal("answered"), text: str(), files: arr(OfferedFileSchema), answer: num() }),
-						obj({ state: literal("stopped") }),
-						obj({ state: literal("unanswered"), reason: str(), files: arr(OfferedFileSchema) }),
-					]),
-				),
-				/** `length` bytes (at most 4 MiB) of offered file `id` from `offset` (fewer at its end). */
-				read: method(
-					obj({ id: str(), offset: int({ minimum: 0 }), length: int({ minimum: 1, maximum: 4 * 1024 * 1024 }) }),
-					bytes(),
-				),
-				/**
-				 * Runs a channel command on `conversation` (default: the main conversation): `stop` as the web's Stop
-				 * (queued inputs withdrawn, the run aborted), `status`, `compact`. The reply's text.
-				 */
-				command: method(
-					obj({ conversation: opt(int({ minimum: 1 })), command: CommandSchema }),
-					obj({ text: str() }),
-				),
-				/**
-				 * A subagent for a Discord thread: forked from the main conversation at its last finished answer before
-				 * `before` (the thread's creation, ms), registered as subagent `name`. Its conversation.
-				 */
-				thread: method(obj({ name: str({ maxLength: 100 }), before: num() }), obj({ conversation: int() })),
-			},
-		},
+	methods: {
+		/** The session is no longer linked: its agents' Discord prompt section goes. */
+		unlinked: method(),
+		/**
+		 * Places a batch as one input of `conversation` (default: the main conversation), steering the turn under
+		 * way while it is busy (the batch joins it); a retried `requestId` is placed once. `lock`: the session's lock, committed first. Its agent learns that
+		 * it answers Discord (a prompt section).
+		 */
+		deliver: method(
+			obj({
+				conversation: opt(int({ minimum: 1 })),
+				requestId: str({ maxLength: 200 }),
+				author: obj({ id: str(), name: str() }),
+				text: str({ maxLength: 200_000 }),
+				context: obj({ channel: str(), guild: str(), messages: int(), thread: opt(str()) }),
+				files: arr(DiscordFileSchema, { maxItems: MAX_ATTACHMENTS }),
+				lock: union([SessionLockSchema, nul()]),
+			}),
+			obj({ conversation: int(), submissionId: num() }),
+		),
+		/**
+		 * The submission's turn: still pending, answered (the answer's text), stopped (aborted, or withdrawn while
+		 * queued), or ended without an answer; with the files its conversation offered during it.
+		 */
+		turn: method(
+			obj({ submissionId: num() }),
+			union([
+				obj({ state: literal("pending") }),
+				// `answer`: its entry; inputs steered into one turn share it.
+				obj({ state: literal("answered"), text: str(), files: arr(OfferedFileSchema), answer: num() }),
+				obj({ state: literal("stopped") }),
+				obj({ state: literal("unanswered"), reason: str(), files: arr(OfferedFileSchema) }),
+			]),
+		),
+		/** `length` bytes (at most 4 MiB) of offered file `id` from `offset` (fewer at its end). */
+		read: method(
+			obj({ id: str(), offset: int({ minimum: 0 }), length: int({ minimum: 1, maximum: 4 * 1024 * 1024 }) }),
+			bytes(),
+		),
+		/**
+		 * Runs a channel command on `conversation` (default: the main conversation): `stop` as the web's Stop
+		 * (queued inputs withdrawn, the run aborted), `status`, `compact`. The reply's text.
+		 */
+		command: method(obj({ conversation: opt(int({ minimum: 1 })), command: CommandSchema }), obj({ text: str() })),
+		/**
+		 * A subagent for a Discord thread: forked from the main conversation at its last finished answer before
+		 * `before` (the thread's creation, ms), registered as subagent `name`. Its conversation.
+		 */
+		thread: method(obj({ name: str({ maxLength: 100 }), before: num() }), obj({ conversation: int() })),
 	},
 });

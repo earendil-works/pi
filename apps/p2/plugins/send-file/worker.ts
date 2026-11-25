@@ -38,22 +38,19 @@ export default defineFacet((host) => {
 		if (!canView(principal, session)) throw forbidden("viewers only");
 		const files = self.get(Files, {});
 		return {
-			variant: "reader",
-			members: {
-				preview: async ({ id }, ctx) => {
-					const found = await findDownload(files, id, ctx);
-					if (found === undefined) throw new DownloadError(404, "File not found");
-					const length = Math.min(found.file.size, MAX_SENT_PREVIEW);
-					const bytes =
-						length === 0 ? new Uint8Array() : await files.read({ id: found.file.id, offset: 0, length }, ctx);
-					const truncated = found.file.size > bytes.length;
-					return {
-						name: found.name,
-						size: found.file.size,
-						text: previewText(Buffer.from(bytes), truncated),
-						truncated,
-					};
-				},
+			preview: async ({ id }, ctx) => {
+				const found = await findDownload(files, id, ctx);
+				if (found === undefined) throw new DownloadError(404, "File not found");
+				const length = Math.min(found.file.size, MAX_SENT_PREVIEW);
+				const bytes =
+					length === 0 ? new Uint8Array() : await files.read({ id: found.file.id, offset: 0, length }, ctx);
+				const truncated = found.file.size > bytes.length;
+				return {
+					name: found.name,
+					size: found.file.size,
+					text: previewText(Buffer.from(bytes), truncated),
+					truncated,
+				};
 			},
 		};
 	});

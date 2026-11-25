@@ -10,14 +10,14 @@ import { openTelemetryStore } from "@earendil-works/chord/telemetry-sqlite/node"
 import type { ConversationView, LiveState } from "@earendil-works/pi-durable";
 import type { StoredSpan } from "@earendil-works/pi-telemetry";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { Models } from "../../plugins/models/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Session } from "../../src/runtime/chord.ts";
 import { telemetryStore } from "../../src/runtime/host-dirs.ts";
 import { type GuestPrincipal, principalAttributes } from "../../src/runtime/principals.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, poll, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, poll, startFixture, until } from "./helpers.ts";
 
 const live = (view: ConversationView | null | undefined) => view?.docs["pi.live"] as LiveState | undefined;
 
@@ -42,10 +42,10 @@ describe("telemetry", () => {
 			.setDefault({ provider: "faux", modelId: "faux-1", thinkingLevel: "off" }, BACKGROUND_CONTEXT);
 		session = (
 			await (
-				await holdIn(owner, Sessions, {}, "owner")
+				await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)
 			).create({ cwd: fixture.workspace, title: "Traced" }, BACKGROUND_CONTEXT)
 		).id;
-		const chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await chat.send({ text: "hello", requestId: "hello" }, BACKGROUND_CONTEXT);
 		await until(chat.view, (view) => !live(view)?.run && JSON.stringify(view).includes("Echo: hello"), 30_000);
 		chat.release();

@@ -1,6 +1,6 @@
 // `reload_plugins` in every session's worker, reaching the server's `PluginReload` in roots of the worker's own.
 import { relative, resolve, sep } from "node:path";
-import { contribute, defineFacet, expectVariant } from "@p2/app/v1";
+import { contribute, defineFacet } from "@p2/app/v1";
 import { Extensions, workerOf } from "@p2/app/v1/worker";
 import { PluginReload } from "./contract.ts";
 import { createReloadExtension } from "./tool.ts";
@@ -16,11 +16,7 @@ export default defineFacet((host) => {
 		const extension = createReloadExtension(
 			(plugins, context) =>
 				worker().root(
-					async (ctx) =>
-						expectVariant(await ctx.get(PluginReload, {}), "worker").reload(
-							plugins ? { plugins: [...plugins] } : {},
-							ctx,
-						),
+					async (ctx) => (await ctx.get(PluginReload, {})).reload(plugins ? { plugins: [...plugins] } : {}, ctx),
 					context,
 				),
 			() => {

@@ -21,7 +21,7 @@ import {
 	substituteArgs,
 } from "../../plugins/prompt/templates.ts";
 import promptTui from "../../plugins/prompt/tui.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import { startTuiClient } from "../../src/hosts/tui-client.ts";
 import { expandComposerText } from "../../src/runtime/composer.ts";
@@ -30,7 +30,7 @@ import { parseSkillBlock } from "../../src/tui/components/skill-invocation.ts";
 import { tuiCoreFacet } from "../../src/tui/core-commands.ts";
 import { ThemeRef } from "../../src/tui/theme/ref.ts";
 import { BUILTIN_THEMES, createTheme } from "../../src/tui/theme/theme.ts";
-import { expectChord, holdIn, poll, startFixture, until } from "./helpers.ts";
+import { expectChord, holdWith, poll, startFixture, until } from "./helpers.ts";
 import { topology } from "./tui-fixture.ts";
 
 test("pi's argument parsing and substitution", () => {
@@ -130,13 +130,13 @@ test("PromptResources on the worker: participants only, live templates, expand w
 		"---\nname: deploy\ndescription: Deploys the app.\n---\nRun the deploy script.",
 	);
 	const owner = fixture.browser();
-	const session = await (await holdIn(owner, Sessions, {}, "owner")).create(
+	const session = await (await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)).create(
 		{ cwd: fixture.workspace },
 		BACKGROUND_CONTEXT,
 	);
 	const resources = owner.hold(PromptResources, { session: session.id, conversation: 1 }, BACKGROUND_CONTEXT);
 	await whenLive(resources);
-	assert.equal(resources.variant, "participant");
+	assert.equal(resources.state.value.kind, "live");
 	const templates = await until(resources.templates, (value) => Boolean(value?.length));
 	assert.deepEqual(templates, [{ name: "greet", description: "Greets", source: "global" }]);
 	// The environment's skill, then the built-in plugins' (agent-plugins' guide: a session on the server's machine).
@@ -211,7 +211,6 @@ test("TUI: templates and skills join slash completion after commands, and expand
 					]);
 					const skills = self.state([{ name: "deploy", description: "Deploys the app." }]);
 					return {
-						variant: "participant",
 						templates,
 						skills,
 						expand: ({ text }: { text: string }) => ({ text: text === "/greet you" ? "Hello you!" : text }),
@@ -254,7 +253,7 @@ test(
 			join(fixture.dataDir, "skills", "deploy", "SKILL.md"),
 			"---\nname: deploy\ndescription: Deploys the app.\n---\nRun the deploy script.",
 		);
-		await (await holdIn(fixture.browser(), Sessions, {}, "owner")).create(
+		await (await holdWith(fixture.browser(), Sessions, {}, ...SESSIONS_OWNER)).create(
 			{ cwd: fixture.workspace },
 			BACKGROUND_CONTEXT,
 		);

@@ -8,13 +8,13 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
+import { SESSIONS_OWNER, Sessions, type SessionsOwner } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
-import { Views } from "../../plugins/views/contract.ts";
-import type { Host, RefIn } from "../../src/runtime/chord.ts";
+import { VIEWS_EDITING, Views } from "../../plugins/views/contract.ts";
+import type { Host } from "../../src/runtime/chord.ts";
 import { Browser, browserTests, COMPOSER } from "./browser.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 const OPEN = `Boolean(document.querySelector('.command-menu'))`;
 const CLOSED = `!document.querySelector('.command-menu')`;
@@ -39,7 +39,7 @@ describe("command menu: app and views commands", { skip: !browserTests }, () => 
 	let fixture: Fixture;
 	let browser: Browser;
 	let owner: Host;
-	let sessions: RefIn<typeof Sessions, "owner">;
+	let sessions: SessionsOwner;
 	let userAgent: string;
 	let base: string;
 
@@ -47,7 +47,7 @@ describe("command menu: app and views commands", { skip: !browserTests }, () => 
 		fixture = await startFixture({ web: true });
 		writeFileSync(join(fixture.workspace, "notes.md"), "# Notes\n\nA line.\n");
 		owner = fixture.browser();
-		sessions = await holdIn(owner, Sessions, {}, "owner");
+		sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		browser = await Browser.start();
 		await browser.signIn(fixture.owner);
 		userAgent = ((await browser.call("Browser.getVersion")) as { userAgent: string }).userAgent;
@@ -129,7 +129,7 @@ describe("command menu: app and views commands", { skip: !browserTests }, () => 
 			await openMenu();
 			assert.ok(!(await browser.evaluate<string[]>(TITLES)).includes("Close side panel"));
 			await closeMenu();
-			const chat = await holdIn(owner, Chat, { session: id, conversation: 1 }, "participant");
+			const chat = await holdWith(owner, Chat, { session: id, conversation: 1 }, ...CHAT_PARTICIPANT);
 			await chat.send({ text: "tool", requestId: "menu-tool" }, BACKGROUND_CONTEXT);
 			chat.release();
 			await browser.click("[data-testid=activity]");
@@ -220,7 +220,7 @@ describe("command menu: app and views commands", { skip: !browserTests }, () => 
 	describe("views", () => {
 		it("hides a view on this device and shows it again", async () => {
 			const id = await create("Views layout");
-			const views = await holdIn(owner, Views, { session: id }, "editor");
+			const views = await holdWith(owner, Views, { session: id }, ...VIEWS_EDITING);
 			await views.open({ kind: "changes" }, BACKGROUND_CONTEXT);
 			await openSession(id, "Views layout");
 			const tab = `[...document.querySelectorAll('.views-tab')].some((e) => e.textContent === 'Changes')`;
@@ -250,7 +250,7 @@ describe("command menu: app and views commands", { skip: !browserTests }, () => 
 
 		it("adds a changes view and a Markdown view", async () => {
 			const id = await create("Views add");
-			const views = await holdIn(owner, Views, { session: id }, "editor");
+			const views = await holdWith(owner, Views, { session: id }, ...VIEWS_EDITING);
 			await openSession(id, "Views add");
 			await openMenu();
 			// Without views: nothing to show or hide.
@@ -311,7 +311,7 @@ describe("command menu: app and views commands", { skip: !browserTests }, () => 
 
 	it("shows a guest the theme and the views it may see, not the owner's settings or edits", async () => {
 		const id = await create("Guest views");
-		const views = await holdIn(owner, Views, { session: id }, "editor");
+		const views = await holdWith(owner, Views, { session: id }, ...VIEWS_EDITING);
 		await views.open({ kind: "changes" }, BACKGROUND_CONTEXT);
 		const sharing = owner.hold(Sharing, { session: id }, BACKGROUND_CONTEXT);
 		await sharing.link({ mode: "view" }, BACKGROUND_CONTEXT);

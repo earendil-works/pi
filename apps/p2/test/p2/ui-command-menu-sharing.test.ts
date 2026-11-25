@@ -11,14 +11,14 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { Artifacts } from "../../plugins/artifacts/contract.ts";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
+import { SESSIONS_OWNER, Sessions, type SessionsOwner } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
 import { Subagents } from "../../plugins/subagents/contract.ts";
-import type { Host, RefIn } from "../../src/runtime/chord.ts";
+import type { Host } from "../../src/runtime/chord.ts";
 import { Browser, browserTests, COMPOSER } from "./browser.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 /** What the open menu shows, or null while it is closed. */
 type MenuState = {
@@ -59,14 +59,14 @@ describe("command menu: sharing and artifacts", { skip: !browserTests }, () => {
 	let fixture: Fixture;
 	let browser: Browser;
 	let owner: Host;
-	let sessions: RefIn<typeof Sessions, "owner">;
+	let sessions: SessionsOwner;
 	let userAgent: string;
 	let base: string;
 
 	before(async () => {
 		fixture = await startFixture({ web: true });
 		owner = fixture.browser();
-		sessions = await holdIn(owner, Sessions, {}, "owner");
+		sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		browser = await Browser.start();
 		await browser.signIn(fixture.owner);
 		userAgent = ((await browser.call("Browser.getVersion")) as { userAgent: string }).userAgent;
@@ -82,8 +82,8 @@ describe("command menu: sharing and artifacts", { skip: !browserTests }, () => {
 
 	/** Writes the fake provider's `artifact` script (id "demo", "Demo artifact") `versions` times in `session`. */
 	const makeArtifacts = async (session: string, versions: number) => {
-		const chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
-		const list = await holdIn(owner, Artifacts, { session }, "editor");
+		const chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
+		const list = await holdWith(owner, Artifacts, { session }, "artifacts", "remove");
 		try {
 			for (let version = 1; version <= versions; version++) {
 				await chat.send({ text: "artifact", requestId: `artifact-${session}-${version}` }, BACKGROUND_CONTEXT);
@@ -216,7 +216,7 @@ describe("command menu: sharing and artifacts", { skip: !browserTests }, () => {
 
 		it("copies the read-only and the read/write link, making them first", async () => {
 			const id = await create("Copy links");
-			const sharing = await holdIn(owner, Sharing, { session: id }, "owner");
+			const sharing = await holdWith(owner, Sharing, { session: id });
 			try {
 				await openSession(id, "Copy links");
 				await browser.evaluate(STUB_CLIPBOARD);
@@ -249,7 +249,7 @@ describe("command menu: sharing and artifacts", { skip: !browserTests }, () => {
 
 		it("resets a link from its page, offered only while the session has one", async () => {
 			const id = await create("Reset link");
-			const sharing = await holdIn(owner, Sharing, { session: id }, "owner");
+			const sharing = await holdWith(owner, Sharing, { session: id });
 			try {
 				await openSession(id, "Reset link");
 				await openMenu();
@@ -387,14 +387,19 @@ describe("command menu: sharing and artifacts", { skip: !browserTests }, () => {
 
 	it("lets a read/write guest stop a subagent's run and archive it from its item's menu, a view guest neither", async () => {
 		const id = await create("Guest agents");
-		const main = await holdIn(owner, Chat, { session: id, conversation: 1 }, "participant");
-		const list = await holdIn(owner, Subagents, {}, "reader");
-		const status = await holdIn(owner, SessionStatus, {}, "reader");
+		const main = await holdWith(owner, Chat, { session: id, conversation: 1 }, ...CHAT_PARTICIPANT);
+		const list = await holdWith(owner, Subagents, {}, "children");
+		const status = await holdWith(owner, SessionStatus, {}, "statuses");
 		await main.send({ text: "subagent", requestId: "guest-spawn" }, BACKGROUND_CONTEXT);
 		const helper = (await until(list.children, (value) => value?.[id]?.length === 1))![id]![0]!;
 		await until(status.statuses, (states) => states?.[id]?.busy.length === 0);
-		const sub = await holdIn(owner, Chat, { session: id, conversation: helper.conversationId }, "participant");
-		const sharing = await holdIn(owner, Sharing, { session: id }, "owner");
+		const sub = await holdWith(
+			owner,
+			Chat,
+			{ session: id, conversation: helper.conversationId },
+			...CHAT_PARTICIPANT,
+		);
+		const sharing = await holdWith(owner, Sharing, { session: id });
 		const guests: Browser[] = [];
 		// Long enough to outlast the test: the fake provider echoes it at 200 tokens a second.
 		const long = `slow ${"run ".repeat(4000)}`;

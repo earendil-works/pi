@@ -7,18 +7,15 @@ import {
 	BACKGROUND_CONTEXT,
 	contribute,
 	defineFacet,
-	type Held,
-	type HeldIn,
-	liveIn,
+	liveWith,
 	locationText,
+	type Ref,
 	until,
 	whenLive,
 } from "@p2/app/v1";
 import type { TuiContext } from "@p2/app/v1/tui";
 import { ListOverlay, type ListRow, lineText, type TuiCommand, TuiCommands } from "@p2/app/v1/tui";
-import { type Instance, Mcp, type SignIn } from "./contract.ts";
-
-type OwnerView = HeldIn<typeof Mcp, "owner">;
+import { type Instance, MCP_OWNER, Mcp, type McpOwnerView, type SignIn } from "./contract.ts";
 
 const STATUS: Record<Instance["status"], string> = {
 	starting: "starting",
@@ -49,7 +46,7 @@ function openMcp(ctx: TuiContext, args: string | undefined): void {
 	let signIns: SignIn[] = [];
 	let status = "";
 	const held = scope.watch(Mcp, {}, (mcp, follow) => {
-		const view = liveIn(mcp, "owner");
+		const view = liveWith(mcp, ...MCP_OWNER);
 		if (!view) return;
 		follow(view.instances, (value) => {
 			received = value;
@@ -65,8 +62,8 @@ function openMcp(ctx: TuiContext, args: string | undefined): void {
 		(list, guess: StatusGuess) =>
 			list.map((instance) => (instance.id === guess.instance ? { ...instance, status: guess.status } : instance)),
 	);
-	const run = (label: string, action: (view: OwnerView) => Promise<unknown>, guess?: StatusGuess) => {
-		const view = liveIn(held, "owner");
+	const run = (label: string, action: (view: McpOwnerView) => Promise<unknown>, guess?: StatusGuess) => {
+		const view = liveWith(held, ...MCP_OWNER);
 		if (view === undefined) return;
 		status = `${label}…`;
 		const call = (async () => {
@@ -83,7 +80,7 @@ function openMcp(ctx: TuiContext, args: string | undefined): void {
 		ctx.requestRender();
 	};
 	const byRow = (row: ListRow | undefined) => instances().find((instance) => instance.id === row?.key);
-	const signIn = (view: OwnerView, server: string) =>
+	const signIn = (view: McpOwnerView, server: string) =>
 		view.signIn({ server }, BACKGROUND_CONTEXT).then(async (start) => {
 			if (start.kind === "authorized") return;
 			const opened = await ctx.grant("openUrl", { kind: "external", url: start.url });
@@ -170,11 +167,11 @@ function openMcp(ctx: TuiContext, args: string | undefined): void {
 }
 
 /** Completes the waiting sign-in whose redirect URL `url` is (each waiting one is tried: the URL's state picks it). */
-async function paste(ctx: TuiContext, ref: Held<typeof Mcp>, url: string | undefined): Promise<void> {
+async function paste(ctx: TuiContext, ref: Ref<typeof Mcp>, url: string | undefined): Promise<void> {
 	if (!url) return ctx.notify("Usage: /mcp paste <final redirect URL>");
 	try {
 		await whenLive(ref);
-		const view = liveIn(ref, "owner");
+		const view = liveWith(ref, ...MCP_OWNER);
 		if (view === undefined) return ctx.notify("MCP servers are for the owner", "error");
 		const signIns = await until(view.signIns, () => true, BACKGROUND_CONTEXT);
 		const waiting = signIns.filter((entry) => entry.status === "waiting");

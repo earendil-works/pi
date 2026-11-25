@@ -15,26 +15,22 @@ const Name = union([str(), nul()]);
 
 /** The server's name as the owner sees and changes it (owner only). */
 export const ServerNameSettings = remote("p2.server-name-settings", {
-	version: 1,
+	version: 2,
 	params: {},
 	hostAddress: serverHost,
-	variants: {
-		owner: {
-			state: {
-				/** What the server calls itself: `chosen`, else `device`; null when neither has one. */
-				name: Name,
-				/** The name the owner gave it; null: none, the device's name stands. */
-				chosen: Name,
-				/** The device's name as of the server's start; null when the device has none. */
-				device: Name,
-			},
-			methods: {
-				/**
-				 * Names the server `name` (normalized to one line of at most MAX_SERVER_NAME_LENGTH characters), or, for null
-				 * or a name that normalizes to nothing, back to the device's name. Answers once saved.
-				 */
-				rename: method(obj({ name: union([str({ maxLength: 1024 }), nul()]) })),
-			},
-		},
+	state: {
+		/** What the server calls itself: `chosen`, else `device`; null when neither has one. */
+		name: Name,
+		/** The name the owner gave it; null: none, the device's name stands. */
+		chosen: Name,
+		/** The device's name as of the server's start; null when the device has none. */
+		device: Name,
+	},
+	methods: {
+		/**
+		 * Names the server `name` (normalized to one line of at most MAX_SERVER_NAME_LENGTH characters), or, for null
+		 * or a name that normalizes to nothing, back to the device's name. Answers once saved.
+		 */
+		rename: method(obj({ name: union([str({ maxLength: 1024 }), nul()]) })),
 	},
 });

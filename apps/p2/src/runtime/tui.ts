@@ -1,4 +1,4 @@
-import type { Contract, Held, ParamsOf } from "@earendil-works/chord";
+import type { Contract, ParamsOf, Reference as Ref } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { TuiScope as ChordTuiScope, type OptimisticAdd } from "@earendil-works/chord/tui";
 import type { NativeWatchable, Watchable } from "@earendil-works/chord/watch";
@@ -81,7 +81,7 @@ export class TuiScope {
 		this.runtime = runtime;
 		this.#optimistic = new ChordTuiScope(runtime.host, () => runtime.changed());
 	}
-	watch<C extends Contract>(type: C, params: ParamsOf<C>, bind: (ref: Held<C>, follow: TuiFollow) => void): Held<C> {
+	watch<C extends Contract>(type: C, params: ParamsOf<C>, bind: (ref: Ref<C>, follow: TuiFollow) => void): Ref<C> {
 		// Synchronous: the scope renders loading from the reference's state.
 		const ref = this.runtime.host.hold(type, params, BACKGROUND_CONTEXT);
 		let bound = false;

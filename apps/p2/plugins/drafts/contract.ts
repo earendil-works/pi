@@ -36,16 +36,12 @@ export const DraftStore = local("p2.draft-store", {
 
 /** The caller's own restored drafts in one conversation (participants only). */
 export const Drafts = remote("p2.drafts", {
-	version: 1,
+	version: 2,
 	params: { session: param.str(), conversation: param.int() },
 	hostAddress: sessionHost,
-	variants: {
-		author: {
-			state: { drafts: arr(DraftSchema) },
-			methods: {
-				/** Removes the drafts and returns the texts of those still there (another tab may have taken some). */
-				claim: method(obj({ ids: arr(num()) }), obj({ texts: arr(str()) })),
-			},
-		},
+	state: { drafts: arr(DraftSchema) },
+	methods: {
+		/** Removes the drafts and returns the texts of those still there (another tab may have taken some). */
+		claim: method(obj({ ids: arr(num()) }), obj({ texts: arr(str()) })),
 	},
 });

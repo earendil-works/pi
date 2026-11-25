@@ -8,13 +8,13 @@ import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { num, str } from "@earendil-works/pi-schema";
 import { BACKGROUND_CONTEXT, follow, method, param, remote, serverHost, sessionHost, statusOf } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
 import type { Host } from "../../src/runtime/chord.ts";
 import type { DevCommand, DevStatus } from "../../src/runtime/dev-protocol.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { clientHost, holdIn, http, type LocalOwner, localOwner, poll, until, webAssets } from "./helpers.ts";
+import { clientHost, holdWith, http, type LocalOwner, localOwner, poll, until, webAssets } from "./helpers.ts";
 
 /** Local owner sessions of a dev server by port (each restart listens on a new one), signed in on first use. */
 function localOwners(dataDir: string): (port: number) => Promise<LocalOwner> {
@@ -30,37 +30,35 @@ function localOwners(dataDir: string): (port: number) => Promise<LocalOwner> {
 
 /** A test plugin's probe on session workers (`name`) and its twin on the server (`name-server`): one type, one place. */
 function probes(name: string) {
-	const variants = {
-		reader: { methods: { label: method(undefined, str()), pid: method(undefined, num()) } },
-	};
+	const methods = { label: method(undefined, str()), pid: method(undefined, num()) };
 	return {
 		worker: remote(name, {
 			version: 1,
 			params: { session: param.str() },
 			hostAddress: sessionHost,
-			variants,
+			methods,
 		}),
 		server: remote(`${name}-server`, {
 			version: 1,
 			params: {},
 			hostAddress: serverHost,
-			variants,
+			methods,
 		}),
 	};
 }
 const { worker: Probe, server: ServerProbe } = probes("test.dev-probe");
 const contractSource = `import { num, obj, str } from "@earendil-works/pi-schema";
 import { method, param, remote, serverHost, sessionHost } from "@p2/app/v1";
-const variants = { reader: { methods: { label: method(undefined, str()), pid: method(undefined, num()) } } };
+const methods = { label: method(undefined, str()), pid: method(undefined, num()) };
 export const Probe = remote("test.dev-probe", { version: 1, params: { session: param.str() },
-hostAddress: sessionHost, variants });
-export const ServerProbe = remote("test.dev-probe-server", { version: 1, params: {}, hostAddress: serverHost, variants });`;
+hostAddress: sessionHost, methods });
+export const ServerProbe = remote("test.dev-probe-server", { version: 1, params: {}, hostAddress: serverHost, methods });`;
 /** A probe facet of `kind` (`server` or `worker`): its probe answers the label and the process id. */
 function facetSource(kind: "server" | "worker"): string {
 	return `import { defineFacet } from "@p2/app/v1";
 import { Probe, ServerProbe } from "./contract.ts";
 import { label } from "./nested/label.ts";
-const probe = () => ({ variant: "reader" as const, members: { label: async () => label, pid: async () => process.pid } });
+const probe = () => ({ label: async () => label, pid: async () => process.pid });
 export default defineFacet((host) => host.serve(${kind === "server" ? "ServerProbe" : "Probe"}, probe));`;
 }
 
@@ -85,7 +83,7 @@ import { Probe, ServerProbe } from "./contract.ts";
 import { label } from "./nested/label.ts";
 const Eager = local(${JSON.stringify(`test.${name}.lifecycle`)}, { version: 1, params: {}, members: {} });
 export default defineFacet((host) => {
- const probe = () => ({ variant: "reader" as const, members: { label: async () => label, pid: async () => process.pid } });
+ const probe = () => ({ label: async () => label, pid: async () => process.pid });
  host.serve(${kind === "server" ? "ServerProbe" : "Probe"}, probe);
  host.serve(Eager, (_params, self) => {
   ${kind === "server" ? `self.contribute(Routes, { ${JSON.stringify(`GET ${route}`)}: (_request, response) => response.end(${JSON.stringify(name)}) });` : ""}
@@ -221,14 +219,14 @@ test(
 			await writeFile(loadedRuntime, loadedContent);
 			await poll(async () => !(await devState()).restartNeeded);
 			browser = clientHost(await ownerOf(port));
-			const sessions = await holdIn(browser, Sessions, {}, "owner");
+			const sessions = await holdWith(browser, Sessions, {}, ...SESSIONS_OWNER);
 			const first = await sessions.create({ cwd: directory }, BACKGROUND_CONTEXT);
 			const second = await sessions.create({ cwd: directory }, BACKGROUND_CONTEXT);
 			const unseen = browser.hold(Probe, { session: second.id }, BACKGROUND_CONTEXT);
 			assert.equal(await unseen.label(BACKGROUND_CONTEXT), "original");
 			const secondPid = await unseen.pid(BACKGROUND_CONTEXT);
 			unseen.release();
-			const chat = await holdIn(browser, Chat, { session: first.id, conversation: 1 }, "participant");
+			const chat = await holdWith(browser, Chat, { session: first.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 			const serverProbe = browser.hold(ServerProbe, {}, BACKGROUND_CONTEXT);
 			const workerProbe = browser.hold(Probe, { session: first.id }, BACKGROUND_CONTEXT);
 			assert.equal(await workerProbe.label(BACKGROUND_CONTEXT), "original");
@@ -240,7 +238,7 @@ test(
 			await poll(async () => (await devState()).restartFiles.includes("src/hosts/worker.ts"));
 			await writeFile(workerEntry, workerContent);
 			await poll(async () => !(await devState()).restartNeeded);
-			const status = await holdIn(browser, SessionStatus, {}, "reader");
+			const status = await holdWith(browser, SessionStatus, {}, "statuses");
 			await until(status.statuses, (value) => Boolean(value?.[first.id]?.running && value?.[second.id]?.running));
 			await chat.send({ text: "slow reload-stream-sentinel", requestId: "reload-stream" }, BACKGROUND_CONTEXT);
 			await until(status.statuses, (value) => value?.[first.id]?.busy.includes(1) === true);
@@ -444,7 +442,12 @@ test(
 				),
 			);
 			const afterRemoval = await sessions.create({ cwd: directory }, BACKGROUND_CONTEXT);
-			const removalChat = await holdIn(browser, Chat, { session: afterRemoval.id, conversation: 1 }, "participant");
+			const removalChat = await holdWith(
+				browser,
+				Chat,
+				{ session: afterRemoval.id, conversation: 1 },
+				...CHAT_PARTICIPANT,
+			);
 			await removalChat.send({ text: "after-removal", requestId: "after-removal" }, BACKGROUND_CONTEXT);
 			await until(removalChat.view, (value) =>
 				Boolean(
@@ -520,7 +523,7 @@ test(
 			assert.equal((await devState()).restartNeeded, false, JSON.stringify((await devState()).restartFiles));
 			await browser.close(BACKGROUND_CONTEXT);
 			browser = clientHost(await ownerOf(ports()[1]!));
-			const restored = await holdIn(browser, SessionStatus, {}, "reader");
+			const restored = await holdWith(browser, SessionStatus, {}, "statuses");
 			// Check running state before making any worker hold: this must not spawn the unseen session on demand.
 			await until(restored.statuses, (value) => Boolean(value?.[first.id]?.running && value?.[second.id]?.running));
 			for (const [session, pid] of [
@@ -531,7 +534,7 @@ test(
 				assert.notEqual(await probe.pid(BACKGROUND_CONTEXT), pid);
 				probe.release();
 			}
-			const resumed = await holdIn(browser, Chat, { session: first.id, conversation: 1 }, "participant");
+			const resumed = await holdWith(browser, Chat, { session: first.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 			const completed = await until(resumed.view, (value) =>
 				Boolean(
 					value?.entries.some(
@@ -654,12 +657,12 @@ test("a forced dev restart reaps locked workers before resuming their stores", {
 		await poll(() => ports().length === 1, 30_000, "initial server");
 		const ownerOf = localOwners(dataDir);
 		browser = clientHost(await ownerOf(ports()[0]!));
-		const sessions = await holdIn(browser, Sessions, {}, "owner");
+		const sessions = await holdWith(browser, Sessions, {}, ...SESSIONS_OWNER);
 		const session = await sessions.create({ cwd: directory }, BACKGROUND_CONTEXT);
 		const probe = browser.hold(Probe, { session: session.id }, BACKGROUND_CONTEXT);
 		const oldPid = await probe.pid(BACKGROUND_CONTEXT);
 		oldWorkerPid = oldPid;
-		const chat = await holdIn(browser, Chat, { session: session.id, conversation: 1 }, "participant");
+		const chat = await holdWith(browser, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await chat.send({ text: "forced-restart-persisted", requestId: "forced-restart" }, BACKGROUND_CONTEXT);
 		await until(chat.view, (value) =>
 			Boolean(value?.entries.some((entry) => JSON.stringify(entry.model).includes("forced-restart-persisted"))),
@@ -701,7 +704,7 @@ test("a forced dev restart reaps locked workers before resuming their stores", {
 			5000,
 			"old worker process exit",
 		);
-		const restored = await holdIn(browser, Chat, { session: session.id, conversation: 1 }, "participant");
+		const restored = await holdWith(browser, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		const view = await until(restored.view, (value) =>
 			Boolean(value?.entries.some((entry) => JSON.stringify(entry.model).includes("forced-restart-persisted"))),
 		);

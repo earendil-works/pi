@@ -4,7 +4,7 @@
 // messages) and sees the owner's choice; it never changes what the owner set.
 
 import { bool, nul, num, obj, opt, str, union } from "@earendil-works/pi-schema";
-import { local, method, param, remote, serverHost, sessionHost } from "@p2/app/v1";
+import { grantable, local, method, param, remote, serverHost, sessionHost } from "@p2/app/v1";
 import { LanguageSchema, VoicesSchema } from "./protocol.ts";
 
 const Id = str({ pattern: "^[A-Za-z0-9_-]{1,64}$" });
@@ -24,33 +24,21 @@ export const VoiceMode = remote("p2.voice-mode", {
 	/**
 	 * 3: the voice carries a language. A state schema change needs a new contract version: objects of the old one keep
 	 * sending the old shape (wire frames follow the schema), so the reload must replace them.
+	 * 4: a new base (grantable members replaced variants; older versions are refused).
 	 */
-	version: 3,
+	version: 4,
 	params: { session: param.str(), conversation: param.int() },
 	hostAddress: sessionHost,
-	variants: {
-		owner: {
-			state: {
-				/** The conversation's voice mode (the prompt section). */
-				enabled: bool(),
-				/** The chosen voice; null until the owner chose one (the service's default then). */
-				voice: union([VoiceChoiceSchema, nul()]),
-			},
-			methods: {
-				set: method(obj({ enabled: bool() })),
-				choose: method(VoiceChoiceSchema),
-			},
-		},
-		/** A read/write guest. */
-		participant: {
-			state: {
-				/** This guest's own microphone switch. */
-				enabled: bool(),
-				/** The owner's choice, read only. */
-				voice: union([VoiceChoiceSchema, nul()]),
-			},
-			methods: { set: method(obj({ enabled: bool() })) },
-		},
+	state: {
+		/** The owner's: the conversation's voice mode (the prompt section). A read/write guest's: its own microphone switch. */
+		enabled: bool(),
+		/** The chosen voice; null until the owner chose one (the service's default then). Read only for a guest. */
+		voice: union([VoiceChoiceSchema, nul()]),
+	},
+	methods: {
+		set: method(obj({ enabled: bool() })),
+		/** The owner's. */
+		choose: grantable(method(VoiceChoiceSchema)),
 	},
 });
 
@@ -74,9 +62,12 @@ export const VoiceServiceStore = local("p2.voice-service-store", {
 
 /** Whether voice mode is available, for those who may talk: the owner and read/write guests. */
 export const VoiceService = remote("p2.voice-service", {
-	/** 2: engines list their languages (see VoiceMode's version). */
-	version: 2,
+	/**
+	 * 2: engines list their languages (see VoiceMode's version). 3: a new base (grantable members replaced variants;
+	 * older versions are refused).
+	 */
+	version: 3,
 	params: {},
 	hostAddress: serverHost,
-	variants: { talker: { state: service } },
+	state: service,
 });

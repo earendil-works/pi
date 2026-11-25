@@ -1,7 +1,7 @@
 // The artifacts plugin's part of the command menu, for the open session: Open artifact… (while it has items) with the
 // page listing every artifact kind's items (ArtifactKinds), and the items the root's query matches by title. Picking
 // one opens it as a view beside the chat, or for a reader in the side panel, as the side panel's rows do.
-import { BACKGROUND_CONTEXT, liveIn, withHeld } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, liveWith, withGranted } from "@p2/app/v1";
 import {
 	ArtifactIcon,
 	type ArtifactItem,
@@ -22,7 +22,7 @@ import {
 	useRoute,
 } from "@p2/app/v1/web";
 import { type ReactNode, useEffect, useState } from "react";
-import { Views } from "../views/contract.ts";
+import { VIEWS_EDITING, Views } from "../views/contract.ts";
 import { ViewsPages } from "../views/contract.web.ts";
 import { PANEL, showLocally } from "./local-item.ts";
 
@@ -137,7 +137,7 @@ function ArtifactResults() {
 /** The matching items of `session`, at most `limit`. */
 function Rows({ session, limit }: { session: string; limit: number | undefined }) {
 	const host = useHost();
-	const editor = liveIn(useObject(Views, { session }), "editor");
+	const editor = liveWith(useObject(Views, { session }), ...VIEWS_EDITING);
 	const viewsPage = useRegistry(ViewsPages).get("views");
 	const { close } = useCommandMenu();
 	const { fail } = useComposerState();
@@ -162,7 +162,7 @@ function Rows({ session, limit }: { session: string; limit: number | undefined }
 									openPanel(PANEL);
 									return;
 								}
-								await withHeld(host.hold(Views, { session }, BACKGROUND_CONTEXT), "editor", (held) =>
+								await withGranted(host.hold(Views, { session }, BACKGROUND_CONTEXT), VIEWS_EDITING, (held) =>
 									viewsPage.open(held, session, {
 										kind: kind.view,
 										item: item.id,

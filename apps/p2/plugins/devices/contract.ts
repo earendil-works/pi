@@ -16,13 +16,9 @@ export const DeviceAccesses = defineRegistry<
 
 /** All owners may open Devices; only the localhost device owner may mint an association token. */
 export const Devices = remote("p2.devices", {
-	version: 1,
+	version: 2,
 	params: {},
 	hostAddress: serverHost,
-	variants: {
-		owner: {
-			state: { canMint: bool() },
-			methods: { token: method(undefined, obj({ token: str() })) },
-		},
-	},
+	state: { canMint: bool() },
+	methods: { token: method(undefined, obj({ token: str() })) },
 });

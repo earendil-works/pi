@@ -1,6 +1,6 @@
 // A session's share links on the page, for the share sheet and the command menu: their labels, copying a link (made
 // first when there is none) and resetting one.
-import { BACKGROUND_CONTEXT, type Held } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, type Ref } from "@p2/app/v1";
 import { readValue } from "@p2/app/v1/web";
 import type { ShareMode, Sharing } from "./contract.ts";
 
@@ -21,7 +21,7 @@ export const confirmsFirst = (
  * environment needs `remoteConfirmed` (the server refuses it otherwise).
  */
 export async function linkUrl(
-	sharing: Held<typeof Sharing>,
+	sharing: Ref<typeof Sharing>,
 	mode: ShareMode,
 	remoteConfirmed = false,
 ): Promise<string | undefined> {
@@ -36,7 +36,7 @@ export async function linkUrl(
  * Replaces the session's link of `mode` (a new token): the guests who joined through the old one lose access. A
  * read/write link on a remote environment was confirmed when it was made.
  */
-export async function resetLink(sharing: Held<typeof Sharing>, mode: ShareMode): Promise<void> {
+export async function resetLink(sharing: Ref<typeof Sharing>, mode: ShareMode): Promise<void> {
 	const remote = mode === "full" && Boolean(readValue(sharing.env));
 	await sharing.link({ mode, reset: true, ...(remote ? { remoteConfirmed: true } : {}) }, BACKGROUND_CONTEXT);
 }

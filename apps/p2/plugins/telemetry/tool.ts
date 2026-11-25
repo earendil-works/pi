@@ -1,5 +1,5 @@
 // The agent's telemetry tools, for code mode only (namespace `telemetry`): find traces, read one (as text and as its
-// spans), find metrics, in the owner's telemetry store on the server (`Traces`, its `agent` variant). Never in a locked
+// spans), find metrics, in the owner's telemetry store on the server (`Traces`, as the session's worker). Never in a locked
 // session (`locked: "never"`); the server refuses them while the session is shared or locked, at every call. Deferred:
 // the code-mode section lists the namespace only, `describeNamespace("telemetry")` gives the declarations.
 import { defineExtension, type ToolNamespace } from "@earendil-works/pi-durable";

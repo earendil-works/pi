@@ -13,10 +13,8 @@ export const StageSchema = obj({
 
 /** Staging a scope block (people who may send in the session); it goes with their next send of that `requestId`. */
 export const ScopeStage = remote("p2.scope-stage", {
-	version: 1,
+	version: 2,
 	params: { session: param.str() },
 	hostAddress: sessionHost,
-	variants: {
-		sender: { methods: { stage: method(StageSchema) } },
-	},
+	methods: { stage: method(StageSchema) },
 });

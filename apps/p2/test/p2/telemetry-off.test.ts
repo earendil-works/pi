@@ -10,14 +10,14 @@ import { PageTelemetry, WorkerTelemetry } from "@earendil-works/chord/telemetry-
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type { ConversationView } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
+import { SESSIONS_OWNER, Sessions, type SessionsOwner } from "../../plugins/sessions/contract.ts";
 import { TELEMETRY_OFF, Traces } from "../../plugins/telemetry/contract.ts";
-import { Views } from "../../plugins/views/contract.ts";
-import type { Host, RefIn } from "../../src/runtime/chord.ts";
+import { VIEWS_EDITING, Views } from "../../plugins/views/contract.ts";
+import type { Host } from "../../src/runtime/chord.ts";
 import { telemetryStore } from "../../src/runtime/host-dirs.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 const idle = (view: ConversationView | null | undefined) => !(view?.docs["pi.live"] as { run?: unknown })?.run;
 const text = (message: ToolResultMessage | undefined) =>
@@ -39,13 +39,13 @@ const scriptAfter = (view: ConversationView | null | undefined, said: string): T
 describe("telemetry off (the default)", () => {
 	let fixture: Fixture;
 	let owner: Host;
-	let sessions: RefIn<typeof Sessions, "owner">;
+	let sessions: SessionsOwner;
 	let session: string;
 	let sent = 0;
 
 	/** Has the agent of `session` run `code` in code mode; its result, after the turn settled. */
 	const script = async (code: string): Promise<ToolResultMessage> => {
-		const chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
 		const said = `codemode ${code}\n// ${++sent}`;
 		await chat.send({ text: said, requestId: `script-${sent}` }, BACKGROUND_CONTEXT);
 		let result: ToolResultMessage | undefined;
@@ -60,7 +60,7 @@ describe("telemetry off (the default)", () => {
 	before(async () => {
 		fixture = await startFixture({ web: browserTests });
 		owner = fixture.browser();
-		sessions = await holdIn(owner, Sessions, {}, "owner");
+		sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		session = (await sessions.create({ cwd: fixture.workspace, title: "Untraced" }, BACKGROUND_CONTEXT)).id;
 	});
 	after(() => fixture?.close());
@@ -86,7 +86,7 @@ describe("telemetry off (the default)", () => {
 			);
 			const worker = fixture.as({ kind: "worker", session, generation: 1 });
 			const ingest = await worker.get(WorkerTelemetry, {}, BACKGROUND_CONTEXT);
-			assert.equal(ingest.variant, "other");
+			assert.equal(ingest.granted.has("ingest"), false);
 			// Past the 5 s after which a request nobody serves is reported.
 			await sleep(5500);
 			const unbound = errors.mock.calls.filter((call) =>
@@ -103,7 +103,7 @@ describe("telemetry off (the default)", () => {
 	});
 
 	it("Traces and the agent's tools say telemetry is off", async () => {
-		const traces = await holdIn(owner, Traces, {}, "owner");
+		const traces = await holdWith(owner, Traces, {});
 		const refused = await traces.findTraces({}, BACKGROUND_CONTEXT).catch((error: unknown) => error);
 		assert.deepEqual(
 			[(refused as { code?: string }).code, (refused as Error).message],
@@ -123,7 +123,7 @@ describe("telemetry off (the default)", () => {
 		after(() => browser?.close());
 
 		it("marks no owner's page to record; the Traces pane says telemetry is off", async () => {
-			const views = await holdIn(owner, Views, { session }, "editor");
+			const views = await holdWith(owner, Views, { session }, ...VIEWS_EDITING);
 			await views.open({ kind: "traces", title: "Traces" }, BACKGROUND_CONTEXT);
 			views.release();
 			await browser.metrics(1280, 900);

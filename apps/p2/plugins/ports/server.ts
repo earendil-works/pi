@@ -3,14 +3,17 @@ import {
 	deriveTyped,
 	followNative,
 	forbidden,
+	grantBy,
 	isOwner,
 	isWorker,
 	nativeOf,
+	notGranted,
 	serveNative,
+	ungranted,
 } from "@p2/app/v1";
 import { Hosts, Server } from "@p2/app/v1/server";
 import { Catalog, SessionArchived } from "../sessions/contract.ts";
-import { ForwardStore, ForwardsNative, Ports } from "./contract.ts";
+import { ForwardStore, ForwardsNative, PORTS_OWNER, Ports } from "./contract.ts";
 import { forwardView } from "./protocol.ts";
 import { Forwards } from "./store.ts";
 
@@ -46,26 +49,27 @@ export default defineFacet((host) => {
 			radiusOrigin: self.derive([listed], ([value]) => value.radiusOrigin),
 		};
 	});
-	host.serve(Ports, (_params, principal, self) => {
-		if (!isOwner(principal) && !isWorker(principal)) throw forbidden("ports are owner-only");
-		const store = self.get(ForwardStore, {});
-		const natives = nativeOf(self, ForwardsNative, "The forwards");
-		const catalog = self.get(Catalog, {});
-		const server = self.get(Server, {});
-		const forwardsView = deriveTyped(
-			self,
-			[store.list, store.radiusOrigin, catalog.sessions],
-			([list, origin, sessions]) =>
-				list.map((forward) =>
-					forwardView(forward, origin, sessions.find((session) => session.id === forward.session)?.title),
-				),
-		);
-		if (isOwner(principal))
-			return {
-				variant: "owner",
-				members: {
-					forwards: forwardsView,
-					radiusOrigin: store.radiusOrigin,
+	host.serve(
+		Ports,
+		(_params, principal, _admitted, self) => {
+			if (!isOwner(principal) && !isWorker(principal)) throw forbidden("ports are owner-only");
+			const store = self.get(ForwardStore, {});
+			const natives = nativeOf(self, ForwardsNative, "The forwards");
+			const catalog = self.get(Catalog, {});
+			const server = self.get(Server, {});
+			const forwardsView = deriveTyped(
+				self,
+				[store.list, store.radiusOrigin, catalog.sessions],
+				([list, origin, sessions]) =>
+					list.map((forward) =>
+						forwardView(forward, origin, sessions.find((session) => session.id === forward.session)?.title),
+					),
+			);
+			if (isOwner(principal))
+				return {
+					query: notGranted,
+					forwards: () => forwardsView,
+					radiusOrigin: () => store.radiusOrigin,
 					add: async ({ port, name, public: open }) => {
 						await natives().forwards.add(port, name, [server.info.value.port], { public: open });
 						return null;
@@ -78,12 +82,10 @@ export default defineFacet((host) => {
 						await natives().forwards.setPublic(id, open);
 						return null;
 					},
-				},
-			};
-		const hosts = self.get(Hosts, {});
-		return {
-			variant: "worker",
-			members: {
+				};
+			const hosts = self.get(Hosts, {});
+			return {
+				...ungranted(PORTS_OWNER),
 				query: async ({ query }, ctx) => {
 					const current = hosts.workers.value[principal.session];
 					if (!current?.running || current.generation !== principal.generation) throw forbidden("stale worker");
@@ -112,7 +114,8 @@ export default defineFacet((host) => {
 						...(closed === undefined ? {} : { closed }),
 					};
 				},
-			},
-		};
-	});
+			};
+		},
+		{ admit: grantBy((principal) => (isOwner(principal) ? PORTS_OWNER : isWorker(principal) ? ["query"] : [])) },
+	);
 });

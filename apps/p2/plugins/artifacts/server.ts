@@ -12,6 +12,7 @@ import {
 	defineRegistry,
 	deriveTyped,
 	forbidden,
+	grantBy,
 	isGuest,
 	isOwner,
 	isWorker,
@@ -20,6 +21,7 @@ import {
 	local,
 	method,
 	nativeOf,
+	type P2Principal,
 	propertiesOf,
 	Session,
 	serveNative,
@@ -31,6 +33,7 @@ import { type RouteHandler, Routes, serverOf } from "@p2/app/v1/server";
 import { Catalog, SessionCopied } from "../sessions/contract.ts";
 import {
 	ARTIFACT_ID,
+	ARTIFACTS_WORKER,
 	ArtifactPage,
 	Artifacts,
 	EditArgsSchema,
@@ -112,98 +115,111 @@ export default defineFacet((host) => {
 		};
 	});
 
-	host.serve(Artifacts, ({ session }, principal, self) => {
-		const worker = isWorker(principal) && principal.session === session;
-		if (!worker && !canView(principal, session)) throw forbidden("the session's viewers and worker only");
-		const store = self.get(ArtifactStoreHost, {});
-		const pages = nativeOf(self, PagesNative, "The artifact pages");
-		const artifacts = deriveTyped(self, [store.artifacts.at(Session({ id: session }))], ([doc]) => summariesOf(doc));
-		const read = ({ id, version }: { id: string; version?: number }, ctx: Ctx) =>
-			store.read({ session, id, ...(version === undefined ? {} : { version }) }, ctx);
-		const remove = async ({ id }: { id: string }, ctx: Ctx) => {
-			await store.remove({ session, id }, ctx);
-			pages().forget(session, id);
-			return null;
-		};
-		if (worker)
+	host.serve(
+		Artifacts,
+		({ session }, principal, _admitted, self) => {
+			if (!worksOn(principal, session) && !canView(principal, session))
+				throw forbidden("the session's viewers and worker only");
+			const store = self.get(ArtifactStoreHost, {});
+			const pages = nativeOf(self, PagesNative, "The artifact pages");
+			const artifacts = deriveTyped(self, [store.artifacts.at(Session({ id: session }))], ([doc]) =>
+				summariesOf(doc),
+			);
+			const read = ({ id, version }: { id: string; version?: number }, ctx: Ctx) =>
+				store.read({ session, id, ...(version === undefined ? {} : { version }) }, ctx);
 			return {
-				variant: "worker",
-				members: {
-					list: async () => [...artifacts.value],
-					read,
-					write: (input, ctx) => store.write({ session, ...input }, ctx),
-					edit: (args, ctx) => store.edit({ session, ...args }, ctx),
-					remove,
-					readState: ({ id }, ctx) => store.readState({ session, id }, ctx),
-					setState: ({ id, state }, ctx) => store.setState({ session, id, state }, ctx),
-					errors: async ({ id }) => pages().errors(session, id),
-					logs: async ({ id, since }) => pages().logs(session, id, since ?? 0),
-					eval: async ({ id, code }, ctx) => {
-						await read({ id }, ctx);
-						return pages().run(session, id, code, signalOf(ctx));
-					},
-					newErrors: async () => {
-						const { errors, marks } = pages().uncarried(session);
-						const titles = new Map(artifacts.value.map((each) => [each.id, each.title]));
-						return {
-							errors: errors.map((error) => ({ ...error, title: titles.get(error.id) ?? error.id })),
-							marks,
-						};
-					},
-					carried: async ({ marks }) => {
-						pages().carried(session, marks);
-						return null;
-					},
+				artifacts: () => artifacts,
+				read,
+				remove: async ({ id }, ctx) => {
+					await store.remove({ session, id }, ctx);
+					pages().forget(session, id);
+					return null;
+				},
+				list: async () => [...artifacts.value],
+				write: (input, ctx) => store.write({ session, ...input }, ctx),
+				edit: (args, ctx) => store.edit({ session, ...args }, ctx),
+				readState: ({ id }, ctx) => store.readState({ session, id }, ctx),
+				setState: ({ id, state }, ctx) => store.setState({ session, id, state }, ctx),
+				errors: async ({ id }) => pages().errors(session, id),
+				logs: async ({ id, since }) => pages().logs(session, id, since ?? 0),
+				eval: async ({ id, code }, ctx) => {
+					await read({ id }, ctx);
+					return pages().run(session, id, code, signalOf(ctx));
+				},
+				newErrors: async () => {
+					const { errors, marks } = pages().uncarried(session);
+					const titles = new Map(artifacts.value.map((each) => [each.id, each.title]));
+					return {
+						errors: errors.map((error) => ({ ...error, title: titles.get(error.id) ?? error.id })),
+						marks,
+					};
+				},
+				carried: async ({ marks }) => {
+					pages().carried(session, marks);
+					return null;
 				},
 			};
-		if (!canSend(principal, session) || (!isOwner(principal) && !isGuest(principal)))
-			return { variant: "reader", members: { artifacts, read } };
-		return { variant: "editor", members: { artifacts, read, remove } };
-	});
+		},
+		{
+			// The session's worker does what its agent's tools do; viewers list and read, people who may send also remove.
+			admit: grantBy((principal, { session }) =>
+				worksOn(principal, session)
+					? ARTIFACTS_WORKER
+					: editsIn(principal, session)
+						? ["artifacts", "remove"]
+						: ["artifacts"],
+			),
+		},
+	);
 
-	host.serve(ArtifactPage, ({ session, id }, principal, self) => {
-		if (!canView(principal, session)) throw forbidden("the session's viewers only");
-		if (!ARTIFACT_ID.test(id)) throw forbidden("no such artifact");
-		const store = self.get(ArtifactStoreHost, {});
-		const pages = nativeOf(self, PagesNative, "The artifact pages");
-		const address = Session({ id: session });
-		const summary = deriveTyped(self, [store.artifacts.at(address)], ([doc]) => {
-			const stored = doc.artifacts[id];
-			return stored ? summaryOf(id, stored) : null;
-		});
-		const value = deriveTyped(self, [store.states.at(address)], ([doc]) => doc.states[id] ?? null);
-		const request = self.events<{ request: string; code: string }>();
-		// Open while some browser holds it live: the agent's requests go to it.
-		self.onLive(async (ctx) => {
-			const close = pages().open(session, id, { run: (asked) => request.emit(asked) });
-			try {
-				await untilAborted(ctx);
-			} finally {
-				close();
-			}
-		});
-		const report = async ({
-			errors,
-			logs,
-		}: {
-			errors: readonly string[];
-			logs: readonly { level: string; text: string }[];
-		}) => {
-			pages().report(session, id, errors, logs);
-			return null;
-		};
-		const answer = async ({ request: asked, result }: { request: string; result: EvalResult }) => {
-			pages().answer(asked, result);
-			return null;
-		};
-		const members = { summary, value, request, report, answer };
-		if (!canSend(principal, session) || (!isOwner(principal) && !isGuest(principal)))
-			return { variant: "viewer", members };
-		return {
-			variant: "editor",
-			members: { ...members, setState: ({ state: next }, ctx) => store.setState({ session, id, state: next }, ctx) },
-		};
-	});
+	host.serve(
+		ArtifactPage,
+		({ session, id }, principal, _admitted, self) => {
+			if (!canView(principal, session)) throw forbidden("the session's viewers only");
+			if (!ARTIFACT_ID.test(id)) throw forbidden("no such artifact");
+			const store = self.get(ArtifactStoreHost, {});
+			const pages = nativeOf(self, PagesNative, "The artifact pages");
+			const address = Session({ id: session });
+			const summary = deriveTyped(self, [store.artifacts.at(address)], ([doc]) => {
+				const stored = doc.artifacts[id];
+				return stored ? summaryOf(id, stored) : null;
+			});
+			const value = deriveTyped(self, [store.states.at(address)], ([doc]) => doc.states[id] ?? null);
+			const request = self.events<{ request: string; code: string }>();
+			// Open while some browser holds it live: the agent's requests go to it.
+			self.onLive(async (ctx) => {
+				const close = pages().open(session, id, { run: (asked) => request.emit(asked) });
+				try {
+					await untilAborted(ctx);
+				} finally {
+					close();
+				}
+			});
+			const report = async ({
+				errors,
+				logs,
+			}: {
+				errors: readonly string[];
+				logs: readonly { level: string; text: string }[];
+			}) => {
+				pages().report(session, id, errors, logs);
+				return null;
+			};
+			const answer = async ({ request: asked, result }: { request: string; result: EvalResult }) => {
+				pages().answer(asked, result);
+				return null;
+			};
+			return {
+				summary,
+				value,
+				request,
+				report,
+				answer,
+				setState: ({ state: next }, ctx) => store.setState({ session, id, state: next }, ctx),
+			};
+		},
+		{ admit: grantBy((principal, { session }) => (editsIn(principal, session) ? ["setState"] : [])) },
+	);
 
 	// A copy of a session (clone, fork) takes its artifacts along: its history's cards show them.
 	contribute(host, "p2.artifacts-copied", (self) => {
@@ -263,3 +279,13 @@ export default defineFacet((host) => {
 		self.contribute(Routes, { "GET /artifact-frame": serve, "HEAD /artifact-frame": serve });
 	});
 });
+
+/** Whether `principal` is the worker of `session`. */
+function worksOn(principal: P2Principal, session: string): boolean {
+	return isWorker(principal) && principal.session === session;
+}
+
+/** Whether `principal` is a person who may send in `session` (and so edit its artifacts). */
+function editsIn(principal: P2Principal, session: string): boolean {
+	return canSend(principal, session) && (isOwner(principal) || isGuest(principal));
+}

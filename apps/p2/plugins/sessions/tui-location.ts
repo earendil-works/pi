@@ -3,7 +3,7 @@
 // DirectoryPicker lists folders. Used by `/cd` (relocate), `/new` and the "+ New session" prompt.
 
 import { type AutocompleteItem, type Component, type Focusable, Input, truncateToWidth } from "@earendil-works/pi-tui";
-import type { Held } from "@p2/app/v1";
+import type { Ref } from "@p2/app/v1";
 import {
 	BACKGROUND_CONTEXT,
 	ENV_PREFIX,
@@ -31,7 +31,7 @@ export const locationLabel = (location: Location): string =>
  * subscribed while held (a state's value arrives only with a subscription).
  */
 type Holding = {
-	ref: Held<typeof Envs>;
+	ref: Ref<typeof Envs>;
 	timer: ReturnType<typeof setTimeout>;
 	names: Promise<string[]>;
 	stop: () => void;
@@ -48,7 +48,7 @@ function hold(ctx: TuiContext): Holding {
 			const fallback = setTimeout(() => resolve([]), 5000);
 			void whenLive(ref).then(
 				() => {
-					if (statusOf(ref) !== "live" || ref.variant !== "owner") return resolve([]);
+					if (statusOf(ref) !== "live") return resolve([]);
 					// The environments' connections start now, as the web's picker does: the first listing need not wait.
 					void ref.warm(BACKGROUND_CONTEXT).catch(() => {});
 					stop = follow(ref.envs, (envs) => {
@@ -76,10 +76,10 @@ function hold(ctx: TuiContext): Holding {
 }
 
 /** The owner's `Envs` (the first use starts the environments' SSH connections, as the web's picker does). */
-export async function ownerEnvs(ctx: TuiContext): Promise<Held<typeof Envs>> {
+export async function ownerEnvs(ctx: TuiContext): Promise<Ref<typeof Envs>> {
 	const { ref } = hold(ctx);
 	await whenLive(ref);
-	if (statusOf(ref) !== "live" || ref.variant !== "owner") throw new Error("Environments are owner-only");
+	if (statusOf(ref) !== "live") throw new Error("Environments are owner-only");
 	return ref;
 }
 
@@ -116,7 +116,6 @@ export async function completeLocation(
 	let directories: string[] = [];
 	try {
 		const envs = await ownerEnvs(ctx);
-		if (envs.variant !== "owner") return null;
 		const listing = await envs.listDirectory(
 			{ path: location.path, ...(location.env ? { env: location.env } : {}) },
 			BACKGROUND_CONTEXT,

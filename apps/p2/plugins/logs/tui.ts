@@ -3,8 +3,7 @@
 // the server (`LogNotices`) become status lines as they arrive, and `/notices` lists and dismisses them. Owner only:
 // guests never acquire these objects.
 
-import type { Held } from "@p2/app/v1";
-import { BACKGROUND_CONTEXT, contribute, defineFacet, follow, liveIn, whenLive } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, contribute, defineFacet, follow, live, type Ref, whenLive } from "@p2/app/v1";
 import type { TuiContext } from "@p2/app/v1/tui";
 import {
 	ListOverlay,
@@ -31,7 +30,7 @@ function sourceLabel(source: string): string {
 export class NoticeWatch implements TuiSurface {
 	readonly runtime: TuiRuntime;
 	private scope: TuiScope | undefined;
-	private service: Held<typeof LogNotices> | undefined;
+	private service: Ref<typeof LogNotices> | undefined;
 	/** The notices as shown (those dismissed while their calls are in flight left out), and how to dismiss one. */
 	private shown: () => Notice[] = () => this.received;
 	private dismissing: OptimisticAdd<number> | undefined;
@@ -62,7 +61,7 @@ export class NoticeWatch implements TuiSurface {
 	}
 	/** Dismisses notice `id`: it leaves the list at once and comes back if the server refuses. */
 	dismiss(id: number): void {
-		const service = liveIn(this.service, "owner");
+		const service = live(this.service);
 		if (service && this.dismissing)
 			this.runtime.perform(this.dismissing(id, service.dismiss({ id }, BACKGROUND_CONTEXT)));
 	}
@@ -129,7 +128,7 @@ function openNotices(ctx: TuiContext): void {
 /** `/logs [source]`: a source's lines, newest at the bottom; Tab picks another source. */
 function openLogs(ctx: TuiContext, initial: string | undefined): void {
 	let source = initial?.trim() || (ctx.identity.session ? `session:${ctx.identity.session}` : "server");
-	let ref: Held<typeof Logs> | undefined;
+	let ref: Ref<typeof Logs> | undefined;
 	let lines: LogLine[] = [];
 	let sources: string[] = [];
 	let stops: (() => void)[] = [];

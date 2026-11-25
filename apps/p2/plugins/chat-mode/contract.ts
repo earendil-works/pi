@@ -2,7 +2,17 @@
 // when someone mentions it. Served by each session worker.
 
 import { arr, bool, compile, int, num, obj, opt, type Static, str, union } from "@earendil-works/pi-schema";
-import { literal, local, MessageDataSchema, method, param, propertiesOf, remote, sessionHost } from "@p2/app/v1";
+import {
+	grantable,
+	literal,
+	local,
+	MessageDataSchema,
+	method,
+	param,
+	propertiesOf,
+	remote,
+	sessionHost,
+} from "@p2/app/v1";
 
 /** Entry kind of a chat message: display-only, it carries no model message. */
 export const CHAT_ENTRY = "chat.message";
@@ -119,18 +129,16 @@ export const ChatModeSetting = local("p2.chat-mode-setting", {
  * it and renames the agent.
  */
 export const ChatMode = remote("p2.chat-mode", {
-	/** 2: the agent's name (a state schema change needs a new contract version). */
-	version: 2,
+	/**
+	 * 2: the agent's name (a state schema change needs a new contract version). 3: a new base (grantable members
+	 * replaced variants; older versions are refused).
+	 */
+	version: 3,
 	params: { session: param.str(), conversation: param.int() },
 	hostAddress: sessionHost,
-	variants: {
-		reader: { state: { enabled: bool(), waiting: num(), name: AgentNameSchema } },
-		owner: {
-			state: { enabled: bool(), waiting: num(), name: AgentNameSchema },
-			methods: {
-				set: method(obj({ enabled: bool() })),
-				rename: method(obj({ name: AgentNameSchema })),
-			},
-		},
+	state: { enabled: bool(), waiting: num(), name: AgentNameSchema },
+	methods: {
+		set: grantable(method(obj({ enabled: bool() }))),
+		rename: grantable(method(obj({ name: AgentNameSchema }))),
 	},
 });

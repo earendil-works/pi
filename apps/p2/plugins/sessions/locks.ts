@@ -6,8 +6,10 @@ import {
 	deriveTyped,
 	type FacetHost,
 	forbidden,
+	grantBy,
 	isOwner,
 	isWorker,
+	notGranted,
 	record,
 	SessionLockSchema,
 } from "@p2/app/v1";
@@ -35,16 +37,21 @@ export function serveLocks(host: FacetHost): void {
 			},
 		};
 	});
-	host.serve(SessionLock, (_params, principal, self) => {
-		const locks = self.get(SessionLocks, {});
-		if (isWorker(principal)) {
-			const session = principal.session;
-			return {
-				variant: "worker",
-				members: { lock: deriveTyped(self, [locks.locks], ([all]) => all[session] ?? null) },
-			};
-		}
-		if (!isOwner(principal)) throw forbidden("session locks are the owner's");
-		return { variant: "owner", members: { locks: locks.locks, set: (args, ctx) => locks.set(args, ctx) } };
-	});
+	host.serve(
+		SessionLock,
+		(_params, principal, _admitted, self) => {
+			const locks = self.get(SessionLocks, {});
+			if (isWorker(principal)) {
+				const session = principal.session;
+				return {
+					lock: () => deriveTyped(self, [locks.locks], ([all]) => all[session] ?? null),
+					locks: notGranted,
+					set: notGranted,
+				};
+			}
+			if (!isOwner(principal)) throw forbidden("session locks are the owner's");
+			return { locks: () => locks.locks, set: (args, ctx) => locks.set(args, ctx), lock: notGranted };
+		},
+		{ admit: grantBy((principal) => (isWorker(principal) ? ["lock"] : isOwner(principal) ? ["locks", "set"] : [])) },
+	);
 }

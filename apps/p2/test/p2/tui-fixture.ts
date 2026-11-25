@@ -30,9 +30,9 @@ export const SESSION: Session = {
 export const sessionsStub = (session: Session): Stub => [
 	Sessions,
 	(_input, _principal, self) => ({
-		variant: "guest",
 		sessions: self.state([session]),
 	}),
+	["sessions"],
 ];
 
 /**

@@ -10,12 +10,19 @@ import { DatabaseSync } from "node:sqlite";
 import { after, before, describe, it } from "node:test";
 import type { ConversationView, LiveState } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { Catalog, type Session, Sessions } from "../../plugins/sessions/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
+import {
+	Catalog,
+	SESSIONS_OWNER,
+	SESSIONS_WORKER,
+	type Session,
+	Sessions,
+	type SessionsOwner,
+} from "../../plugins/sessions/contract.ts";
 import { migrateData } from "../../scripts/migrate-data.ts";
 import { startServer } from "../../src/hosts/server.ts";
-import type { Host, RefIn } from "../../src/runtime/chord.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import type { Host } from "../../src/runtime/chord.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 const answered = (view: ConversationView | null | undefined) =>
 	JSON.stringify(view?.entries ?? []).includes("Echo:") && !(view?.docs["pi.live"] as LiveState | undefined)?.run;
@@ -23,19 +30,19 @@ const answered = (view: ConversationView | null | undefined) =>
 describe("session titles (fake provider)", () => {
 	let fixture: Fixture;
 	let owner: Host;
-	let sessions: RefIn<typeof Sessions, "owner">;
+	let sessions: SessionsOwner;
 	const find = (id: string) => (list: readonly Session[] | undefined) => list?.find((session) => session.id === id);
 	before(async () => {
 		fixture = await startFixture();
 		owner = fixture.browser();
-		sessions = await holdIn(owner, Sessions, {}, "owner");
+		sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 	});
 	after(async () => {
 		await fixture?.close();
 	});
 
 	const send = async (session: Session, text: string) => {
-		const chat = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await chat.send({ text, requestId: crypto.randomUUID() }, BACKGROUND_CONTEXT);
 		await until(chat.view, answered);
 		chat.release();
@@ -164,7 +171,7 @@ it("a worker's view of its own row changes only with that row", async () => {
 		];
 		// Each held as its own worker would hold it (no worker started: only the views are under test).
 		const viewOf = async (id: string) =>
-			holdIn(fixture.as({ kind: "worker", session: id, generation: 1 }), Sessions, {}, "worker");
+			holdWith(fixture.as({ kind: "worker", session: id, generation: 1 }), Sessions, {}, ...SESSIONS_WORKER);
 		const [viewA, viewB] = [await viewOf(a.id), await viewOf(b.id)];
 		const calls = { a: 0, b: 0 };
 		const watchA = await viewA.session.watch(BACKGROUND_CONTEXT);

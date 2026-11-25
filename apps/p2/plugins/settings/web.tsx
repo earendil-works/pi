@@ -8,8 +8,8 @@ import {
 	BACKGROUND_CONTEXT,
 	contribute,
 	defineFacet,
-	type Held,
 	MAX_SERVER_NAME_LENGTH,
+	type Ref,
 	ServerNameSettings,
 } from "@p2/app/v1";
 import {
@@ -73,8 +73,8 @@ const textNumber = (text: string) => (text === "" ? undefined : Number(text));
  * and the others open without a round trip: settings.json's values and the server's name, a few hundred bytes.
  */
 const HeldSettings = createContext<{
-	readonly settings: Held<typeof Settings> | undefined;
-	readonly serverName: Held<typeof ServerNameSettings> | undefined;
+	readonly settings: Ref<typeof Settings> | undefined;
+	readonly serverName: Ref<typeof ServerNameSettings> | undefined;
 }>({ settings: undefined, serverName: undefined });
 
 /** Opens Settings on p2-mac's Pi > Settings… (Cmd+,): its bridge sends "pi-host-menu" (HostBridge.swift). */

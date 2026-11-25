@@ -3,7 +3,7 @@
 // worker pushes; the server never asks.
 import type { Usage } from "@earendil-works/pi-ai";
 import { type ConversationId, type Harness, LiveDoc, type LiveState, type TaskGraph } from "@earendil-works/pi-durable";
-import { type Ctx, defineFacet, expectVariant } from "@p2/app/v1";
+import { type Ctx, defineFacet, expectGranted } from "@p2/app/v1";
 import { harnessOf, mainConversation, workerOf } from "@p2/app/v1/worker";
 import { type RunFailure, SessionStatus, StatusReport, type Work, type WorkStep } from "./contract.ts";
 
@@ -115,7 +115,7 @@ export default defineFacet((host) => {
 				durable.usage(ctx),
 			]);
 			const usage = totalUsage(totals);
-			await expectVariant(status, "reporter").report(
+			await expectGranted(status, "report").report(
 				{
 					tasks,
 					busy: [...busy.keys()].sort((a, b) => a - b),

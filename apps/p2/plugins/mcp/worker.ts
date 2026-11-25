@@ -13,7 +13,7 @@ import {
 	type Ctx,
 	contribute,
 	defineFacet,
-	expectVariant,
+	expectGranted,
 	isChordError,
 	type Location,
 	type Ref,
@@ -37,7 +37,7 @@ import {
 	workerOf,
 } from "@p2/app/v1/worker";
 import { Subagents } from "../subagents/contract.worker.ts";
-import { Mcp, PROJECT_FILE_MAX_CHARS, type ProjectFile } from "./contract.ts";
+import { MCP_WORKER, Mcp, PROJECT_FILE_MAX_CHARS, type ProjectFile } from "./contract.ts";
 import {
 	createMcpExtension,
 	EMPTY_MCP_EXTENSION,
@@ -67,7 +67,7 @@ function mcpWorker(self: StoreSelf): void {
 	const locate: McpLocate = (conversationId, read, context) =>
 		harness().environments.locate(conversationId, context, read);
 	const call: McpCall = (request, context) =>
-		worker().root((ctx) => expectVariant(view, "worker").call(request, ctx), context);
+		worker().root((ctx) => expectGranted(view, ...MCP_WORKER).call(request, ctx), context);
 	// Code mode switched off or not loaded: the tools would be unreachable, so `tool_search` loads them, as pi falls back.
 	const reach = self.derive(
 		[self.registry(ExtensionSwitches)],
@@ -103,7 +103,7 @@ async function offerTools(
 	create: (offer: McpOffer) => Extension,
 	ctx: Ctx,
 ): Promise<void> {
-	const members = expectVariant(view, "worker");
+	const members = expectGranted(view, ...MCP_WORKER);
 	const servers = await members.servers.watch(ctx);
 	try {
 		const leases = await members.leases.watch(ctx);
@@ -188,7 +188,7 @@ function leaseLocations(
 				const { environments, durable } = harness();
 				const locations = await workLocations(durable, environments, durableContext(ctx));
 				const projects = await projectFiles(locations, environments, durableContext(ctx));
-				await expectVariant(view, "worker").setLocations({ locations, projects }, ctx);
+				await expectGranted(view, ...MCP_WORKER).setLocations({ locations, projects }, ctx);
 			} catch (error) {
 				if (signalOf(ctx).aborted) return;
 				if (isChordError(error, "forbidden")) {

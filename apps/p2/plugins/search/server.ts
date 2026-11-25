@@ -157,10 +157,7 @@ export default defineFacet((host) => {
 		// Guests never read for the owner, nor see what the owner has read.
 		if (!isOwner(principal)) throw forbidden("read markers are owner-only");
 		const index = self.get(SearchIndex, {});
-		return {
-			variant: "owner",
-			members: { answers: index.answers, reads: index.reads, markRead: (args, ctx) => index.markRead(args, ctx) },
-		};
+		return { answers: index.answers, reads: index.reads, markRead: (args, ctx) => index.markRead(args, ctx) };
 	});
 
 	host.serve(SearchFeed, (_params, principal, self) => {
@@ -169,60 +166,42 @@ export default defineFacet((host) => {
 		const { session } = principal;
 		const index = self.get(SearchIndex, {});
 		return {
-			variant: "worker",
-			members: {
-				cursor: (args, ctx) => index.cursor({ session, conversation: args?.conversation ?? 1 }, ctx),
-				index: (batch, ctx) => {
-					const conversation = batch.conversation ?? 1;
-					if (batch.messages.some((message) => message.conversationId !== conversation))
-						throw forbidden("index messages must belong to the batch conversation");
-					return index.index({ session, ...batch, conversation }, ctx);
-				},
-				// The session is the worker's own, from its principal: a worker searches only its session.
-				history: (query, ctx) => index.history({ session, ...query }, ctx),
+			cursor: (args, ctx) => index.cursor({ session, conversation: args?.conversation ?? 1 }, ctx),
+			index: (batch, ctx) => {
+				const conversation = batch.conversation ?? 1;
+				if (batch.messages.some((message) => message.conversationId !== conversation))
+					throw forbidden("index messages must belong to the batch conversation");
+				return index.index({ session, ...batch, conversation }, ctx);
 			},
+			// The session is the worker's own, from its principal: a worker searches only its session.
+			history: (query, ctx) => index.history({ session, ...query }, ctx),
 		};
 	});
 
-	host.serve(
-		Search,
-		(_params, principal, self) => {
-			if (!isOwner(principal)) throw forbidden("search is owner-only");
-			const catalog = self.get(Catalog, {});
-			const index = self.get(SearchIndex, {});
-			return {
-				variant: "owner",
-				members: {
-					rebuilds: index.rebuilds,
-					rebuildIndex: (args, ctx) => index.rebuild(args, ctx),
-					search: async ({ query, archived = false, sessions: within }, ctx) => {
-						const listed = within && new Set(within);
-						const scope = catalog.sessions.value.filter(
-							(session) => (session.archivedAt !== null) === archived && (!listed || listed.has(session.id)),
-						);
-						const needle = query.toLowerCase();
-						const sessions = scope
-							.filter((session) => `${session.title}\n${session.cwd}`.toLowerCase().includes(needle))
-							.sort(sidebarOrder)
-							.map((session) => session.id);
-						const titles = new Map(scope.map((session) => [session.id, session.title]));
-						const messages = query.trim()
-							? await index.messages({ query, sessions: [...titles.keys()] }, ctx)
-							: [];
-						return {
-							sessions,
-							messages: messages.map((hit) => ({ ...hit, title: titles.get(hit.session) ?? "" })),
-						};
-					},
-				},
-			};
-		},
-		// Older pages search every session of the scope: their arguments are the same without `sessions`.
-		{
-			accepts: {
-				1: { methods: { search: { args: (old) => old } } },
-				2: { methods: { search: { args: (old) => old } } },
+	host.serve(Search, (_params, principal, self) => {
+		if (!isOwner(principal)) throw forbidden("search is owner-only");
+		const catalog = self.get(Catalog, {});
+		const index = self.get(SearchIndex, {});
+		return {
+			rebuilds: index.rebuilds,
+			rebuildIndex: (args, ctx) => index.rebuild(args, ctx),
+			search: async ({ query, archived = false, sessions: within }, ctx) => {
+				const listed = within && new Set(within);
+				const scope = catalog.sessions.value.filter(
+					(session) => (session.archivedAt !== null) === archived && (!listed || listed.has(session.id)),
+				);
+				const needle = query.toLowerCase();
+				const sessions = scope
+					.filter((session) => `${session.title}\n${session.cwd}`.toLowerCase().includes(needle))
+					.sort(sidebarOrder)
+					.map((session) => session.id);
+				const titles = new Map(scope.map((session) => [session.id, session.title]));
+				const messages = query.trim() ? await index.messages({ query, sessions: [...titles.keys()] }, ctx) : [];
+				return {
+					sessions,
+					messages: messages.map((hit) => ({ ...hit, title: titles.get(hit.session) ?? "" })),
+				};
 			},
-		},
-	);
+		};
+	});
 });

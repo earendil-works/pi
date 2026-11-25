@@ -126,22 +126,18 @@ export const BackupNative = defineRegistry<
  * `BackupUploads`' (declared here alone) and `Backup.report`, with the store filled in.
  */
 export const BackupRemote = remote("p2.backup-remote", {
-	version: 1,
+	version: 2,
 	params: {},
 	hostAddress: serverHost,
-	variants: {
-		worker: {
-			state: { device: union([str(), nul()]) },
-			methods: {
-				report: method(obj({ status: BackupStatusSchema })),
-				begin: method(obj(SlotArgs), BeginSchema),
-				append: method(obj(ChunkArgs)),
-				finish: method(obj(UploadArgs), PutResultSchema),
-				abort: method(obj(UploadArgs)),
-				/** The account the target writes as now; null for a target without accounts (`OpenBackupTarget.account`). */
-				account: method(obj({}), union([str(), nul()])),
-			},
-		},
+	state: { device: union([str(), nul()]) },
+	methods: {
+		report: method(obj({ status: BackupStatusSchema })),
+		begin: method(obj(SlotArgs), BeginSchema),
+		append: method(obj(ChunkArgs)),
+		finish: method(obj(UploadArgs), PutResultSchema),
+		abort: method(obj(UploadArgs)),
+		/** The account the target writes as now; null for a target without accounts (`OpenBackupTarget.account`). */
+		account: method(obj({}), union([str(), nul()])),
 	},
 });
 

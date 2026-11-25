@@ -1,4 +1,4 @@
-import type { Held } from "@p2/app/v1";
+import type { Ref } from "@p2/app/v1";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import {
 	ChevronIcon,
@@ -258,7 +258,7 @@ function KeySection({
 	name,
 	onKey,
 }: {
-	service: Held<typeof Envs>;
+	service: Ref<typeof Envs>;
 	name: string;
 	onKey: (identityFile: string) => void;
 }) {

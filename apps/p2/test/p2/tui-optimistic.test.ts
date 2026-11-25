@@ -5,9 +5,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ConversationView } from "@earendil-works/pi-durable";
 import { ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
-import { Chat, type ModelMeta } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat, type ModelMeta } from "../../plugins/chat/contract.ts";
 import chatTui, { ChatSurface } from "../../plugins/chat/tui.ts";
-import { type Operation, type Session, Sessions } from "../../plugins/sessions/contract.ts";
+import { type Operation, SESSIONS_OWNER, type Session, Sessions } from "../../plugins/sessions/contract.ts";
 import sessionsTui, { SessionsSurface } from "../../plugins/sessions/tui.ts";
 import type { Ctx } from "../../src/runtime/chord.ts";
 import { tuiCoreFacet } from "../../src/tui/core-commands.ts";
@@ -63,7 +63,6 @@ function catalog(held: ReturnType<typeof gate>): Stub {
 					(rows.value ?? []).map((row) => ({ ...row, ...patch })),
 				);
 			return {
-				variant: "owner",
 				sessions: rows,
 				defaultCwd: self.state("/work"),
 				defaultEnv: self.state(null),
@@ -77,7 +76,7 @@ function catalog(held: ReturnType<typeof gate>): Stub {
 					await held.call();
 					update(ctx, { pinned: args.pinned });
 				},
-				// The owner variant's other methods: not used here.
+				// The owner's other methods: not used here.
 				create: () => SESSION,
 				relocate: () => {},
 				archive: () => {},
@@ -86,6 +85,7 @@ function catalog(held: ReturnType<typeof gate>): Stub {
 				fork: () => SESSION,
 			};
 		},
+		SESSIONS_OWNER,
 	];
 }
 
@@ -142,12 +142,11 @@ test("chat: a sent message shows and leaves the editor at once; a refused one co
 	const held = gate();
 	const sent: string[] = [];
 	const { screen, send, runtime } = await topology(t, {
-		server: [[Sessions, (_input, _principal, self) => ({ variant: "guest", sessions: self.state([SESSION]) })]],
+		server: [[Sessions, (_input, _principal, self) => ({ sessions: self.state([SESSION]) }), ["sessions"]]],
 		worker: [
 			[
 				Chat,
 				(_input, _principal, self) => ({
-					variant: "participant",
 					view: self.state(VIEW),
 					model: self.state(META),
 					liveShell: self.state(null),
@@ -168,6 +167,7 @@ test("chat: a sent message shows and leaves the editor at once; a refused one co
 					shell: () => ({ shellId: "x" }),
 					abortShell: () => ({ aborted: false }),
 				}),
+				CHAT_PARTICIPANT,
 			],
 		],
 		facets: [tuiCoreFacet, chatTui],
@@ -205,7 +205,6 @@ test("session selector: lifecycle operations mark their rows; a failure is annou
 						{ phase: "running", id: "op1", kind: "relocate", session: "s", target: null, copying: false },
 					]);
 					return {
-						variant: "owner",
 						sessions: self.state<Session[]>([SESSION]),
 						defaultCwd: self.state("/work"),
 						defaultEnv: self.state(null),
@@ -238,6 +237,7 @@ test("session selector: lifecycle operations mark their rows; a failure is annou
 						fork: () => SESSION,
 					};
 				},
+				SESSIONS_OWNER,
 			],
 		],
 		worker: [],

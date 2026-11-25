@@ -3,7 +3,7 @@
 // scripts while code mode is on, loaded with `tool_search` while it is off.
 
 import type { Extension } from "@earendil-works/pi-durable";
-import { type Context, type Ctx, contribute, defineFacet, expectVariant } from "@p2/app/v1";
+import { type Context, type Ctx, contribute, defineFacet } from "@p2/app/v1";
 import { ExtensionSwitches } from "@p2/app/v1/node";
 import { Extensions, harnessOf, workerOf } from "@p2/app/v1/worker";
 import { AgentTerminals } from "./contract.ts";
@@ -22,7 +22,7 @@ export default defineFacet((host) => {
 	contribute(host, "p2.terminal-tools", (self) => {
 		const harness = harnessOf(self);
 		const worker = workerOf(self);
-		const terminals = async (ctx: Ctx) => expectVariant(await ctx.get(AgentTerminals, {}), "worker");
+		const terminals = (ctx: Ctx) => ctx.get(AgentTerminals, {});
 		/** One call of the server's object, as this worker, cancelled with `context`. */
 		const via = <T>(
 			call: (server: Awaited<ReturnType<typeof terminals>>, ctx: Ctx) => Promise<T>,

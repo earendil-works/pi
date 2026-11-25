@@ -6,7 +6,7 @@ import {
 	ROOT_CONVERSATION_ID,
 } from "@earendil-works/pi-durable";
 import { obj, str } from "@earendil-works/pi-schema";
-import { defineFacet, expectVariant, forbidden, local } from "@p2/app/v1";
+import { defineFacet, expectGranted, forbidden, local } from "@p2/app/v1";
 import {
 	defineP2Tool,
 	Extensions,
@@ -53,7 +53,7 @@ const renameSession = (root: () => WorkerParts["root"]) =>
 						// A Durable tool is not a Chord call: it pushes the title in a short root of the worker's, under its
 						// own context.
 						const { previous } = await root()(
-							async (ctx) => expectVariant(await ctx.get(Sessions, {}), "worker").renameSelf({ title }, ctx),
+							async (ctx) => expectGranted(await ctx.get(Sessions, {}), "renameSelf").renameSelf({ title }, ctx),
 							context,
 						);
 						return reply(
@@ -78,49 +78,45 @@ export default defineFacet((host) => {
 		const harness = harnessOf(self);
 		const worker = workerOf(self);
 		return {
-			variant: "server",
-			members: {
-				history: async ({ conversation, before }, ctx) => {
-					const durable = harness().durable;
-					// A subagent's history as a session of its own needs its cwd and tools: not yet.
-					if (!(await isTopLevel(durable, conversation as ConversationId, ctx)))
-						throw new Error("Forking a subagent conversation is not supported yet");
-					const found = await durable.conversation(conversation as ConversationId, ctx);
-					if (!found) throw new Error(`Unknown conversation ${conversation}`);
-					const [chosen] = (await found.entries({ maxEntryId: before as EntryId }, 1, undefined, ctx)).items;
-					if (chosen?.id !== before) throw new Error("Unknown message");
-					// The fork holds what came before the chosen message, as the context stood at the entry before it.
-					const [previous] = (await found.entries({ maxEntryId: (before - 1) as EntryId }, 1, undefined, ctx))
-						.items;
-					if (!previous) return { entries: [] };
-					const view = await found.context(ctx, { at: previous.id });
-					// Edits are applied in `contributions` (their targets' IDs change); a head marker starts the copy's context.
-					const entries: EntryDraft[] = view.entries.map((entry, index) => {
-						const model = view.contributions[index] ?? [];
-						return {
-							kind: entry.kind,
-							...(entry.data === undefined ? {} : { data: entry.data }),
-							...(model.length ? { model: [...model] } : {}),
-							...(index === 0 && view.head ? { head: "self" as const } : {}),
-						};
-					});
-					return { entries };
-				},
-				copyFiles: async ({ to }, ctx) => {
-					await worker().copyFilesTo(to, ctx);
-					return null;
-				},
-				seed: async ({ entries }, ctx) => {
-					const durable = harness().durable;
-					const root = await durable.conversation(ROOT_CONVERSATION_ID, ctx);
-					if (!root) throw new Error("No main conversation");
-					if ((await root.entries({}, 1, undefined, ctx)).items.length)
-						throw new Error("The session has history already");
-					await durable.commit(async (tx) => {
-						for (const entry of entries) await tx.appendEntry(ROOT_CONVERSATION_ID, entry as EntryDraft);
-					}, ctx);
-					return null;
-				},
+			history: async ({ conversation, before }, ctx) => {
+				const durable = harness().durable;
+				// A subagent's history as a session of its own needs its cwd and tools: not yet.
+				if (!(await isTopLevel(durable, conversation as ConversationId, ctx)))
+					throw new Error("Forking a subagent conversation is not supported yet");
+				const found = await durable.conversation(conversation as ConversationId, ctx);
+				if (!found) throw new Error(`Unknown conversation ${conversation}`);
+				const [chosen] = (await found.entries({ maxEntryId: before as EntryId }, 1, undefined, ctx)).items;
+				if (chosen?.id !== before) throw new Error("Unknown message");
+				// The fork holds what came before the chosen message, as the context stood at the entry before it.
+				const [previous] = (await found.entries({ maxEntryId: (before - 1) as EntryId }, 1, undefined, ctx)).items;
+				if (!previous) return { entries: [] };
+				const view = await found.context(ctx, { at: previous.id });
+				// Edits are applied in `contributions` (their targets' IDs change); a head marker starts the copy's context.
+				const entries: EntryDraft[] = view.entries.map((entry, index) => {
+					const model = view.contributions[index] ?? [];
+					return {
+						kind: entry.kind,
+						...(entry.data === undefined ? {} : { data: entry.data }),
+						...(model.length ? { model: [...model] } : {}),
+						...(index === 0 && view.head ? { head: "self" as const } : {}),
+					};
+				});
+				return { entries };
+			},
+			copyFiles: async ({ to }, ctx) => {
+				await worker().copyFilesTo(to, ctx);
+				return null;
+			},
+			seed: async ({ entries }, ctx) => {
+				const durable = harness().durable;
+				const root = await durable.conversation(ROOT_CONVERSATION_ID, ctx);
+				if (!root) throw new Error("No main conversation");
+				if ((await root.entries({}, 1, undefined, ctx)).items.length)
+					throw new Error("The session has history already");
+				await durable.commit(async (tx) => {
+					for (const entry of entries) await tx.appendEntry(ROOT_CONVERSATION_ID, entry as EntryDraft);
+				}, ctx);
+				return null;
 			},
 		};
 	});

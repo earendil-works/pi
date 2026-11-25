@@ -10,9 +10,9 @@ import { Devices } from "../../plugins/devices/contract.ts";
 import { DownloadStore } from "../../plugins/files/contract.ts";
 import { ProviderLogin } from "../../plugins/login/contract.ts";
 import { PROXY_MARKER_HEADER } from "../../plugins/proxy-marker/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
-import { type Fixture, holdIn, http, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, http, startFixture, until } from "./helpers.ts";
 
 const PROXIED = { Host: "p2.proxy.test", Origin: "https://p2.proxy.test", [PROXY_MARKER_HEADER]: "1" };
 async function refused(port: number, path: string, headers: Record<string, string>): Promise<void> {
@@ -54,7 +54,7 @@ describe("proxy marking is never authentication (including the loopback Unix-soc
 	before(async () => {
 		fixture = await startFixture({ allowedHosts: ["p2.proxy.test"], web: true });
 		const owner = fixture.browser();
-		const created = await (await holdIn(owner, Sessions, {}, "owner")).create(
+		const created = await (await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)).create(
 			{
 				cwd: fixture.workspace,
 				title: "PRIVATE catalogue sentinel",
@@ -145,11 +145,11 @@ describe("proxy marking is never authentication (including the loopback Unix-soc
 	});
 	it("only a cookie grants proxied owner access, including provider controls", async () => {
 		const { host } = fixture.client({ ...PROXIED, Cookie: cookie });
-		const sessions = await holdIn(host, Sessions, {}, "owner");
+		const sessions = await holdWith(host, Sessions, {}, ...SESSIONS_OWNER);
 		assert((await until(sessions.sessions, (value) => Boolean(value?.length)))?.some((item) => item.id === session));
 		const login = host.hold(ProviderLogin, {}, BACKGROUND_CONTEXT);
 		await whenLive(login);
-		assert.equal(login.variant, "owner");
+		assert.equal(login.state.value.kind, "live");
 		assert.equal(
 			(await http(fixture.server.port, "/owner-token", { headers: { ...PROXIED, Cookie: cookie } })).status,
 			403,

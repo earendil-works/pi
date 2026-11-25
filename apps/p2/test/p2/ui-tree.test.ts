@@ -6,11 +6,11 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { SessionTree } from "../../plugins/tree/contract.ts";
 import { Browser, browserTests, COMPOSER, composerText, setComposer } from "./browser.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 const idle = (view: { docs: Record<string, unknown> } | null | undefined) =>
 	!(view?.docs["pi.live"] as { run?: unknown } | undefined)?.run;
@@ -18,20 +18,20 @@ const idle = (view: { docs: Record<string, unknown> } | null | undefined) =>
 describe("branches in the browser", { skip: !browserTests }, () => {
 	let fixture: Fixture, browser: Browser, id: string;
 	const send = async (conversation: number, text: string, session = id) => {
-		const chat = await holdIn(fixture.browser(), Chat, { session, conversation }, "participant");
+		const chat = await holdWith(fixture.browser(), Chat, { session, conversation }, ...CHAT_PARTICIPANT);
 		await chat.send({ text, requestId: `${conversation}:${text}` }, BACKGROUND_CONTEXT);
 		await until(chat.view, (view) => JSON.stringify(view?.entries ?? []).includes(`Echo: ${text}`) && idle(view));
 		chat.release();
 	};
 	const row = async () => {
-		const sessions = await holdIn(fixture.browser(), Sessions, {}, "owner");
+		const sessions = await holdWith(fixture.browser(), Sessions, {}, ...SESSIONS_OWNER);
 		return (await until(sessions.sessions, (list) => Boolean(list?.some((each) => each.id === id)))).find(
 			(each) => each.id === id,
 		)!;
 	};
 	before(async () => {
 		fixture = await startFixture({ web: true });
-		const sessions = await holdIn(fixture.browser(), Sessions, {}, "owner");
+		const sessions = await holdWith(fixture.browser(), Sessions, {}, ...SESSIONS_OWNER);
 		id = (await sessions.create({ cwd: fixture.workspace, title: "Branches" }, BACKGROUND_CONTEXT)).id;
 		await send(1, "first");
 		await send(1, "second");
@@ -51,7 +51,7 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 			`[...document.querySelectorAll('.user')].find(e=>e.textContent.includes('second')).querySelector('[aria-label=Edit]').click()`,
 		);
 		await browser.wait(`${composerText}==='second'`);
-		const main = (await until((await holdIn(fixture.browser(), Sessions, {}, "owner")).sessions, (list) =>
+		const main = (await until((await holdWith(fixture.browser(), Sessions, {}, ...SESSIONS_OWNER)).sessions, (list) =>
 			Boolean(list?.find((each) => each.id === id && each.main !== 1)),
 		))!.find((each) => each.id === id)!.main;
 		await browser.wait(`location.pathname==='/s/${id}/c/${main}'`);
@@ -66,7 +66,7 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 		// A message of its own, where the tree panel shows the branch; then back to conversation 1, where the next cases
 		// start.
 		await send(main, "other");
-		const tree = await holdIn(fixture.browser(), SessionTree, { session: id }, "owner");
+		const tree = await holdWith(fixture.browser(), SessionTree, { session: id });
 		await tree.select({ conversation: 1 }, BACKGROUND_CONTEXT);
 		tree.release();
 		await browser.wait(`location.pathname==='/s/${id}'`);
@@ -114,7 +114,7 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 		await browser.wait(
 			`document.querySelector('.messages')?.textContent.includes('Echo: first') && !document.querySelector('.messages').textContent.includes('Echo: second')`,
 		);
-		const tree = await holdIn(fixture.browser(), SessionTree, { session: id }, "owner");
+		const tree = await holdWith(fixture.browser(), SessionTree, { session: id });
 		await tree.select({ conversation: 1 }, BACKGROUND_CONTEXT);
 		await browser.wait(`location.pathname==='/s/${id}'`);
 		await browser.wait(`document.querySelector('.messages')?.textContent.includes('Echo: second')`);
@@ -149,7 +149,7 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 		assert.equal(branched.branches.length, before + 1);
 		assert.deepEqual(branched.branches[0], { conversation: branched.main, label: "a side question", parent: 1 });
 		// Conversation 1 still ends at its last answer.
-		const tree = await holdIn(fixture.browser(), SessionTree, { session: id }, "owner");
+		const tree = await holdWith(fixture.browser(), SessionTree, { session: id });
 		const nodes = (await tree.tree(BACKGROUND_CONTEXT)).nodes;
 		assert.equal(nodes.findLast((node) => node.conversation === 1)?.text, "Echo: last answer");
 		// One Send button: from the keyboard, ArrowUp on it lists both ways and focuses the first; Escape closes the

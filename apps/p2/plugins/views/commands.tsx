@@ -1,7 +1,7 @@
 // The views' part of the command menu, for the open session: Show view… and Hide view… (this device's layout), Add
 // changes view and Add Markdown view… (as the Views sheet adds them), and Annotate / Stop annotating (the top bar's
 // switch); with their pages.
-import { BACKGROUND_CONTEXT, type Host, liveIn, withHeld } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, type Host, liveWith, withGranted } from "@p2/app/v1";
 import {
 	type Command,
 	type CommandContext,
@@ -24,7 +24,7 @@ import {
 	useRoute,
 } from "@p2/app/v1/web";
 import type { ReactNode } from "react";
-import { type OpenInput, type View, Views } from "./contract.ts";
+import { type OpenInput, VIEWS_EDITING, type View, Views } from "./contract.ts";
 import { viewsIn } from "./layout.ts";
 import { hide, setAnnotateMode, show, useAnnotateMode, useLayout } from "./layout-store.ts";
 import { describe, markdownPath, openView } from "./sheet.tsx";
@@ -117,7 +117,9 @@ async function addChanges(ctx: CommandContext): Promise<void> {
 
 /** Opens a view in `session` for one call, as the Views sheet's Add and Open do. */
 const open = (host: Host, session: string, input: OpenInput): Promise<void> =>
-	withHeld(host.hold(Views, { session }, BACKGROUND_CONTEXT), "editor", (editor) => openView(editor, session, input));
+	withGranted(host.hold(Views, { session }, BACKGROUND_CONTEXT), VIEWS_EDITING, (editor) =>
+		openView(editor, session, input),
+	);
 
 /** Switches annotation mode on (marking text first, as the top bar's switch does) or off. */
 function annotate(ctx: CommandContext, mode: "text" | "off"): void {
@@ -156,7 +158,7 @@ function ShowsViews({ children }: { children: ReactNode }) {
 /** Renders `children` while the reader may change the open session's views (the owner, a full guest). */
 function CanEdit({ children }: { children: ReactNode }) {
 	const session = useSession();
-	const editor = liveIn(useObject(Views, session === undefined ? undefined : { session }), "editor");
+	const editor = liveWith(useObject(Views, session === undefined ? undefined : { session }), ...VIEWS_EDITING);
 	return editor ? children : null;
 }
 

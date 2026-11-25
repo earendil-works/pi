@@ -11,10 +11,10 @@ import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Browser, browserTests, COMPOSER, composerText, setComposer } from "./browser.ts";
-import { clientHost, holdIn, localOwner, poll, until } from "./helpers.ts";
+import { clientHost, holdWith, localOwner, poll, until } from "./helpers.ts";
 
 describe("an open Chromium tab reconnects after backend downtime", { skip: !browserTests, timeout: 150_000 }, () => {
 	let browser: Browser,
@@ -127,7 +127,7 @@ export default defineFacet((host) => host.serve(Delay, (_params, self) => {
 		try {
 			id = (
 				await (
-					await holdIn(client, Sessions, {}, "owner")
+					await holdWith(client, Sessions, {}, ...SESSIONS_OWNER)
 				).create(
 					{
 						cwd: join(root, "workspace"),
@@ -136,7 +136,7 @@ export default defineFacet((host) => host.serve(Delay, (_params, self) => {
 					BACKGROUND_CONTEXT,
 				)
 			).id;
-			const chat = await holdIn(client, Chat, { session: id, conversation: 1 }, "participant");
+			const chat = await holdWith(client, Chat, { session: id, conversation: 1 }, ...CHAT_PARTICIPANT);
 			await chat.send({ text: "restart fixture", requestId: "seed" }, BACKGROUND_CONTEXT);
 			await until(chat.view, (view) => JSON.stringify(view?.entries).includes("Echo: restart fixture"));
 		} finally {

@@ -5,11 +5,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { type ConversationView, ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
-import { Chat, type ModelMeta } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat, type ModelMeta } from "../../plugins/chat/contract.ts";
 import chatTui from "../../plugins/chat/tui.ts";
 import { Envs } from "../../plugins/envs/contract.ts";
 import { type Project, Projects } from "../../plugins/projects/contract.ts";
-import { type Session, Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, type Session, Sessions } from "../../plugins/sessions/contract.ts";
 import sessionsTui, { SessionsSurface } from "../../plugins/sessions/tui.ts";
 import { placeFailure } from "../../plugins/sessions/tui-projects.ts";
 import statusTui from "../../plugins/status/tui.ts";
@@ -98,7 +98,6 @@ function stubs(macGate: Promise<void>, down: Set<string>) {
 			(_input, _principal, self) => {
 				const sessions = self.state([SESSION, ...ROWS]);
 				return {
-					variant: "owner",
 					sessions,
 					defaultCwd: self.state("~"),
 					defaultEnv: self.state(null),
@@ -127,11 +126,11 @@ function stubs(macGate: Promise<void>, down: Set<string>) {
 					fork: unused,
 				};
 			},
+			SESSIONS_OWNER,
 		],
 		[
 			Envs,
 			(_input, _principal, self) => ({
-				variant: "owner",
 				envs: self.state(
 					["mac", "gpu"].map((name) => ({ name, config: { type: "ssh", host: `${name}.example` }, sessions: 0 })),
 				),
@@ -171,7 +170,6 @@ function stubs(macGate: Promise<void>, down: Set<string>) {
 				projects = self.state(PROJECTS);
 				const sessions = members;
 				return {
-					variant: "owner",
 					projects,
 					archived: self.state([]),
 					local: self.state("test-host"),
@@ -195,7 +193,6 @@ function stubs(macGate: Promise<void>, down: Set<string>) {
 		[
 			Chat,
 			(_input, _principal, self) => ({
-				variant: "participant",
 				view: self.state(view),
 				model: self.state(META),
 				liveShell: self.state(null),
@@ -214,6 +211,7 @@ function stubs(macGate: Promise<void>, down: Set<string>) {
 					"dequeueOwn",
 				]),
 			}),
+			CHAT_PARTICIPANT,
 		],
 	];
 	return { server, worker, calls, members: () => members!, projects: () => projects! };

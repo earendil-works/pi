@@ -8,15 +8,15 @@ import { after, before, describe, it } from "node:test";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type { ConversationView } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT, isChordError } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { SessionLock, Sessions } from "../../plugins/sessions/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
+import { SESSIONS_OWNER, SessionLock, Sessions, type SessionsOwner } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import { Traces } from "../../plugins/telemetry/contract.ts";
-import { Views } from "../../plugins/views/contract.ts";
-import type { Host, RefIn } from "../../src/runtime/chord.ts";
+import { VIEWS_EDITING, Views } from "../../plugins/views/contract.ts";
+import type { Host } from "../../src/runtime/chord.ts";
 import type { GuestPrincipal } from "../../src/runtime/principals.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, poll, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, poll, startFixture, until } from "./helpers.ts";
 
 const GUEST: GuestPrincipal = {
 	kind: "guest",
@@ -49,7 +49,7 @@ const scriptAfter = (view: ConversationView | null | undefined, said: string): T
 describe("the owner's telemetry read back", () => {
 	let fixture: Fixture;
 	let owner: Host;
-	let sessions: RefIn<typeof Sessions, "owner">;
+	let sessions: SessionsOwner;
 	let sent = 0;
 
 	/** A new session of the owner. */
@@ -57,7 +57,7 @@ describe("the owner's telemetry read back", () => {
 		(await sessions.create({ cwd: fixture.workspace, title }, BACKGROUND_CONTEXT)).id;
 	/** Has the agent of `id` run `code` in code mode; its result. */
 	const script = async (id: string, code: string): Promise<ToolResultMessage> => {
-		const chat = await holdIn(owner, Chat, { session: id, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session: id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		const said = `codemode ${code}\n// ${++sent}`;
 		await chat.send({ text: said, requestId: `script-${sent}` }, BACKGROUND_CONTEXT);
 		let result: ToolResultMessage | undefined;
@@ -74,11 +74,11 @@ describe("the owner's telemetry read back", () => {
 	before(async () => {
 		fixture = await startFixture({ web: browserTests, settings: { telemetry: true } });
 		owner = fixture.browser();
-		sessions = await holdIn(owner, Sessions, {}, "owner");
+		sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		// Traces to read: a session's turn (the worker's, Durable's and pi-ai's spans), written within a second.
 		const first = await session("First");
 		await script(first, "return 1;");
-		const traces = await holdIn(owner, Traces, {}, "owner");
+		const traces = await holdWith(owner, Traces, {});
 		await poll(
 			async () => (await traces.findTraces({ name: "pi.durable.submit" }, BACKGROUND_CONTEXT)).traces.length > 0,
 		);
@@ -87,7 +87,7 @@ describe("the owner's telemetry read back", () => {
 	after(() => fixture?.close());
 
 	it("serves the owner bounded, paged searches, a trace's spans, and metrics", async () => {
-		const traces = await holdIn(owner, Traces, {}, "owner");
+		const traces = await holdWith(owner, Traces, {});
 		const page = await traces.findTraces({ limit: 1 }, BACKGROUND_CONTEXT);
 		assert.equal(page.traces.length, 1);
 		assert.ok(page.cursor, "more than one trace: a cursor");
@@ -119,9 +119,9 @@ describe("the owner's telemetry read back", () => {
 		assert.ok(isChordError(guest, "forbidden"), String(guest));
 		// A plain session's worker reads; once the session is shared (a view link), the same object refuses.
 		const plain = await session("Plain");
-		const agent = await holdIn(worker(plain), Traces, {}, "agent");
+		const agent = await holdWith(worker(plain), Traces, {});
 		assert.ok((await agent.findTraces({ limit: 1 }, BACKGROUND_CONTEXT)).traces.length === 1);
-		const sharing = await holdIn(owner, Sharing, { session: plain }, "owner");
+		const sharing = await holdWith(owner, Sharing, { session: plain });
 		await sharing.link({ mode: "view" }, BACKGROUND_CONTEXT);
 		await poll(async () => {
 			const error = await agent.findTraces({ limit: 1 }, BACKGROUND_CONTEXT).then(
@@ -132,12 +132,12 @@ describe("the owner's telemetry read back", () => {
 		});
 		// A locked session's worker is refused too.
 		const locked = await session("Locked");
-		const locks = await holdIn(owner, SessionLock, {}, "owner");
+		const locks = await holdWith(owner, SessionLock, {}, "locks", "set");
 		await locks.set(
 			{ session: locked, lock: { mcp: [], projectMcp: false, instructions: false, capabilities: [] } },
 			BACKGROUND_CONTEXT,
 		);
-		const lockedAgent = await holdIn(worker(locked), Traces, {}, "agent");
+		const lockedAgent = await holdWith(worker(locked), Traces, {});
 		const error = await lockedAgent.findTraces({}, BACKGROUND_CONTEXT).catch((failure: unknown) => failure);
 		assert.ok(isChordError(error, "forbidden") && /locked/.test(String(error)), String(error));
 	});
@@ -158,7 +158,7 @@ describe("the owner's telemetry read back", () => {
 		const value = JSON.parse(output(result)) as Record<string, unknown>;
 		assert.ok((value.found as number) >= 1 && (value.spans as number) >= 1, JSON.stringify(value));
 		assert.deepEqual([value.text, value.none, value.metrics], [true, false, true]);
-		await (await holdIn(owner, Sharing, { session: id }, "owner")).link({ mode: "full" }, BACKGROUND_CONTEXT);
+		await (await holdWith(owner, Sharing, { session: id })).link({ mode: "full" }, BACKGROUND_CONTEXT);
 		const shared = await script(id, "return await tools.telemetry_find_traces({ limit: 1 });");
 		assert.match(text(shared), /this session is shared/);
 	});
@@ -168,7 +168,7 @@ describe("the owner's telemetry read back", () => {
 		let id: string;
 		before(async () => {
 			id = await session("Pane");
-			const views = await holdIn(owner, Views, { session: id }, "editor");
+			const views = await holdWith(owner, Views, { session: id }, ...VIEWS_EDITING);
 			await views.open({ kind: "traces", title: "Traces" }, BACKGROUND_CONTEXT);
 			browser = await Browser.start();
 			await browser.signIn(fixture.owner);

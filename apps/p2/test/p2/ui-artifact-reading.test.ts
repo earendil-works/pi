@@ -6,11 +6,10 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
-import type { RefIn } from "../../src/runtime/chord.ts";
+import { CHAT_PARTICIPANT, Chat, type ChatParticipant } from "../../plugins/chat/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 /** A long document: `sections` sections of a few paragraphs each, `before` paragraphs ahead of the first. */
 const doc = (version: number, before: number) =>
@@ -40,7 +39,7 @@ describe("a Markdown artifact beside the transcript", { skip: !browserTests, tim
 	let fixture: Fixture;
 	let browser: Browser;
 	let session: string;
-	let chat: RefIn<typeof Chat, "participant">;
+	let chat: ChatParticipant;
 	let calls = 0;
 
 	/** Runs `code` in code mode as the agent, and waits for its turn to end. */
@@ -74,9 +73,9 @@ describe("a Markdown artifact beside the transcript", { skip: !browserTests, tim
 	before(async () => {
 		fixture = await startFixture({ web: true });
 		const owner = fixture.browser();
-		const sessions = await holdIn(owner, Sessions, {}, "owner");
+		const sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		session = (await sessions.create({ cwd: fixture.workspace, title: "Reading" }, BACKGROUND_CONTEXT)).id;
-		chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
+		chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await write(1, 0);
 		await script(`await tools.view_open({ kind: "md", item: "core-model", title: "Core model", id: "core" });`);
 		browser = await Browser.start();

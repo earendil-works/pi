@@ -48,20 +48,17 @@ export default defineFacet((host) => {
 		if (!isOwner(principal)) throw forbidden("models are owner-only");
 		const config = self.get(ModelConfig, {});
 		return {
-			variant: "owner",
-			members: {
-				models: self.derive([config.summary], ([summary]) => summary.models),
-				defaultModel: self.derive([config.summary], ([summary]) => summary.defaultModel),
-				errors: self.derive([config.summary], ([summary]) => summary.errors),
-				enabledModels: self.derive([config.snapshot], ([snapshot]) => snapshot.settings.enabledModels ?? []),
-				scopedModels: self.derive(
-					[config.summary, config.snapshot],
-					([summary, snapshot]) => resolveModelScope(snapshot.settings.enabledModels ?? [], summary.models).models,
-				),
-				resources: config.snapshot,
-				setDefault: (choice, ctx) => config.setDefault(choice, ctx),
-				setEnabledModels: (input, ctx) => config.setEnabledModels(input, ctx),
-			},
+			models: self.derive([config.summary], ([summary]) => summary.models),
+			defaultModel: self.derive([config.summary], ([summary]) => summary.defaultModel),
+			errors: self.derive([config.summary], ([summary]) => summary.errors),
+			enabledModels: self.derive([config.snapshot], ([snapshot]) => snapshot.settings.enabledModels ?? []),
+			scopedModels: self.derive(
+				[config.summary, config.snapshot],
+				([summary, snapshot]) => resolveModelScope(snapshot.settings.enabledModels ?? [], summary.models).models,
+			),
+			resources: config.snapshot,
+			setDefault: (choice, ctx) => config.setDefault(choice, ctx),
+			setEnabledModels: (input, ctx) => config.setEnabledModels(input, ctx),
 		};
 	});
 });

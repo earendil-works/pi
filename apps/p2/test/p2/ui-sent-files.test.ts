@@ -9,11 +9,10 @@ import { after, before, describe, it } from "node:test";
 import { deflateSync } from "node:zlib";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
-import type { RefIn } from "../../src/runtime/chord.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
+import { SESSIONS_OWNER, Sessions, type SessionsOwner } from "../../plugins/sessions/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 /** A grey RGB PNG of `width` × `height` pixels. */
 function png(width: number, height: number): Buffer {
@@ -58,12 +57,12 @@ type Rect = { x: number; y: number; width: number; height: number };
 describe("sent files in Chromium", { skip: !browserTests }, () => {
 	let fixture: Fixture;
 	let browser: Browser;
-	let sessions: RefIn<typeof Sessions, "owner">;
+	let sessions: SessionsOwner;
 
 	/** A new session whose agent sends each of `paths` (files in the workspace). */
 	const send = async (title: string, paths: string[]): Promise<string> => {
 		const id = (await sessions.create({ cwd: fixture.workspace, title }, BACKGROUND_CONTEXT)).id;
-		const chat = await holdIn(fixture.browser(), Chat, { session: id, conversation: 1 }, "participant");
+		const chat = await holdWith(fixture.browser(), Chat, { session: id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		for (const [index, path] of paths.entries()) {
 			await chat.send(
 				{ text: `send_file ${JSON.stringify({ path })}`, requestId: `send-${index}` },
@@ -88,7 +87,7 @@ describe("sent files in Chromium", { skip: !browserTests }, () => {
 		writeFileSync(join(fixture.workspace, "small.png"), png(40, 80));
 		writeFileSync(join(fixture.workspace, "tall.png"), png(400, 3000));
 		writeFileSync(join(fixture.workspace, "notes.txt"), "plain text\n");
-		sessions = await holdIn(fixture.browser(), Sessions, {}, "owner");
+		sessions = await holdWith(fixture.browser(), Sessions, {}, ...SESSIONS_OWNER);
 		browser = await Browser.start();
 		await browser.signIn(fixture.owner);
 	});

@@ -10,26 +10,23 @@ export default defineFacet((host) => {
 		const config = self.get(ModelConfig, {});
 		const resources = nativeOf(self, ModelResources, "The model configuration");
 		return {
-			variant: "owner",
-			members: {
-				settings: deriveTyped(self, [config.snapshot], ([snapshot]) => snapshot.settings),
-				error: self.derive(
-					[config.snapshot],
-					([snapshot]) => snapshot.errors.find((error) => error.resource === "settings")?.message ?? null,
-				),
-				update: async ({ set, unset }) => {
-					const opened = resources().resources;
-					// Wire input: a partial settings.json under the same closed schema, so no unknown setting gets in.
-					const changes = validateSettings(set);
-					// Merged into the file's settings as they are now, not the page's copy: a default model chosen in the
-					// picker or an edit of the file meanwhile stays. The watcher may not have seen an edit yet: read it first.
-					await opened.reload();
-					const next = Object.fromEntries(
-						Object.entries({ ...opened.settings, ...changes }).filter(([key]) => !unset.includes(key)),
-					);
-					await opened.saveSettings(next);
-					return null;
-				},
+			settings: deriveTyped(self, [config.snapshot], ([snapshot]) => snapshot.settings),
+			error: self.derive(
+				[config.snapshot],
+				([snapshot]) => snapshot.errors.find((error) => error.resource === "settings")?.message ?? null,
+			),
+			update: async ({ set, unset }) => {
+				const opened = resources().resources;
+				// Wire input: a partial settings.json under the same closed schema, so no unknown setting gets in.
+				const changes = validateSettings(set);
+				// Merged into the file's settings as they are now, not the page's copy: a default model chosen in the
+				// picker or an edit of the file meanwhile stays. The watcher may not have seen an edit yet: read it first.
+				await opened.reload();
+				const next = Object.fromEntries(
+					Object.entries({ ...opened.settings, ...changes }).filter(([key]) => !unset.includes(key)),
+				);
+				await opened.saveSettings(next);
+				return null;
 			},
 		};
 	});

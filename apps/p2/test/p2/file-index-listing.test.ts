@@ -10,9 +10,9 @@ import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { Connection, LocalExecutionEnv, localDaemon } from "@earendil-works/pi-env";
 import { BACKGROUND_CONTEXT, whenLive } from "@p2/app/v1";
 import { listIndex } from "../../plugins/file-index/listing.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { FileIndex } from "../../src/runtime/file-index.ts";
-import { holdIn, startFixture } from "./helpers.ts";
+import { holdWith, startFixture } from "./helpers.ts";
 
 const context = BACKGROUND_CONTEXT;
 /** The development build (`npm run build:daemon` in packages/env), which has `listFiles`. */
@@ -106,7 +106,9 @@ test(
 		writeFileSync(join(fixture.workspace, "src", "parser.ts"), "");
 		mkdirSync(join(fixture.workspace, "emptydir"));
 		const owner = fixture.browser();
-		const session = (await (await holdIn(owner, Sessions, {}, "owner")).create({ cwd: root }, BACKGROUND_CONTEXT)).id;
+		const session = (
+			await (await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)).create({ cwd: root }, BACKGROUND_CONTEXT)
+		).id;
 		const index = owner.hold(FileIndex, { session, conversation: 1 }, BACKGROUND_CONTEXT);
 		await whenLive(index);
 		const found = await index.complete({ query: "parser", limit: 10 }, BACKGROUND_CONTEXT);

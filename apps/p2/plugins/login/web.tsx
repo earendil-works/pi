@@ -1,7 +1,7 @@
 // The Providers sheet (any owner): sign in to model providers, refresh their catalogs, sign out.
 
 import type { AuthEvent } from "@earendil-works/pi-ai";
-import { BACKGROUND_CONTEXT, contribute, defineFacet, type Held } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, contribute, defineFacet, type Ref } from "@p2/app/v1";
 import {
 	CheckIcon,
 	ChevronIcon,
@@ -133,7 +133,7 @@ function PromptForm({ state, onAnswer }: { state: LoginState; onAnswer: (promptI
 }
 
 /** The provider list, one provider's actions, or the running login. Closing the sheet cancels an unfinished one. */
-function ProvidersSheet({ login, onClose }: { login: Held<typeof ProviderLogin> | undefined; onClose: () => void }) {
+function ProvidersSheet({ login, onClose }: { login: Ref<typeof ProviderLogin> | undefined; onClose: () => void }) {
 	// Provider errors go to the app's toast, as in Pi Mobile.
 	const { fail } = useComposerState();
 	const known = useReadable(login?.providers);

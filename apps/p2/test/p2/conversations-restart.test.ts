@@ -4,15 +4,15 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import type { ConversationView } from "@earendil-works/pi-durable";
-import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { BACKGROUND_CONTEXT, type RefWith } from "@p2/app/v1";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { ConversationBroker, type Query } from "../../plugins/conversations/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
-import type { Host, RefIn } from "../../src/runtime/chord.ts";
+import type { Host } from "../../src/runtime/chord.ts";
 import { PEER_MESSAGE_ENTRY } from "../../src/runtime/entries.ts";
 import { Hosts, ServerNatives } from "../../src/runtime/server.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 const delivered = (view: ConversationView | null | undefined, message: string): boolean =>
 	(view?.entries ?? []).some(
@@ -25,17 +25,17 @@ const answered = (view: ConversationView | null | undefined, message: string): b
 describe("conversations to a restarted worker (fake provider)", () => {
 	let fixture: Fixture;
 	let owner: Host;
-	let status: RefIn<typeof SessionStatus, "reader">;
+	let status: RefWith<typeof SessionStatus, "statuses">;
 	let alpha: string;
 	let beta: string;
 	let serial = 0;
 	before(async () => {
 		fixture = await startFixture({ idleMs: 400 });
 		owner = fixture.browser();
-		const sessions = await holdIn(owner, Sessions, {}, "owner");
+		const sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		alpha = (await sessions.create({ cwd: fixture.workspace, title: "Alpha" }, BACKGROUND_CONTEXT)).id;
 		beta = (await sessions.create({ cwd: fixture.workspace, title: "Beta" }, BACKGROUND_CONTEXT)).id;
-		status = await holdIn(owner, SessionStatus, {}, "reader");
+		status = await holdWith(owner, SessionStatus, {}, "statuses");
 	});
 	after(async () => {
 		await fixture?.close();
@@ -53,7 +53,7 @@ describe("conversations to a restarted worker (fake provider)", () => {
 	const sendAndRun = async (message: string): Promise<void> => {
 		const result = await broker({ action: "send", to: beta, message });
 		assert.equal(result.action, "send");
-		const chat = await holdIn(owner, Chat, { session: beta, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session: beta, conversation: 1 }, ...CHAT_PARTICIPANT);
 		try {
 			await until(chat.view, (view) => delivered(view, message) && answered(view, message));
 		} finally {
@@ -92,7 +92,7 @@ describe("conversations to a restarted worker (fake provider)", () => {
 
 	it("delivers after beta's worker was paused (relocation)", async () => {
 		// An open view keeps the worker running, so the pause stops and restarts it.
-		const viewer = await holdIn(owner, Chat, { session: beta, conversation: 1 }, "participant");
+		const viewer = await holdWith(owner, Chat, { session: beta, conversation: 1 }, ...CHAT_PARTICIPANT);
 		try {
 			await until(viewer.view, Boolean);
 			const before = await pid();

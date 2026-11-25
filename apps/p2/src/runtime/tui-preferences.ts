@@ -80,8 +80,8 @@ export const TuiPreferencesSchema = obj({
 });
 export type TuiServerPreferences = Static<typeof TuiPreferencesSchema>;
 export const TuiPreferences = remote("p2.tui-preferences", {
-	version: 2,
+	version: 3,
 	params: {},
 	hostAddress: serverHost,
-	variants: { viewer: { methods: { read: method(undefined, TuiPreferencesSchema) } } },
+	methods: { read: method(undefined, TuiPreferencesSchema) },
 });

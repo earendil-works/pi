@@ -8,9 +8,6 @@ export default defineFacet((host) => {
 	host.serve(PluginReload, (_params, principal, self) => {
 		if (principal.kind !== "worker") throw forbidden("session workers only");
 		const server = serverOf(self);
-		return {
-			variant: "worker",
-			members: { reload: ({ plugins }) => server().plugins.reload(plugins) },
-		};
+		return { reload: ({ plugins }) => server().plugins.reload(plugins) };
 	});
 });

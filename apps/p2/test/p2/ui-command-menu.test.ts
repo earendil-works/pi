@@ -13,18 +13,18 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { Models } from "../../plugins/models/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions, type SessionsOwner } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
 import { Subagents } from "../../plugins/subagents/contract.ts";
 import { localSystem, terminalDaemon } from "../../plugins/terminals/daemon.ts";
 import { connectTerminalHost } from "../../plugins/terminals/detached.ts";
 import { encodeFrame } from "../../plugins/terminals/protocol.ts";
-import type { Host, RefIn } from "../../src/runtime/chord.ts";
+import type { Host } from "../../src/runtime/chord.ts";
 import { Browser, browserTests, COMPOSER, composerText } from "./browser.ts";
-import { APP, type Fixture, holdIn, poll, startFixture, until } from "./helpers.ts";
+import { APP, type Fixture, holdWith, poll, startFixture, until } from "./helpers.ts";
 
 type Platform = "mac" | "other";
 
@@ -112,7 +112,7 @@ describe("command menu", { skip: !browserTests }, () => {
 	let fixture: Fixture;
 	let browser: Browser;
 	let owner: Host;
-	let sessions: RefIn<typeof Sessions, "owner">;
+	let sessions: SessionsOwner;
 	let userAgent: string;
 	let base: string;
 
@@ -126,7 +126,7 @@ describe("command menu", { skip: !browserTests }, () => {
 			{ mode: 0o600 },
 		);
 		owner = fixture.browser();
-		const models = await holdIn(owner, Models, {}, "owner");
+		const models = await holdWith(owner, Models, {});
 		await until(models.resources, (resources) =>
 			Boolean(
 				resources?.models.some((model) => model.modelId === "faux-2") &&
@@ -136,7 +136,7 @@ describe("command menu", { skip: !browserTests }, () => {
 			),
 		);
 		await models.setDefault({ provider: "faux", modelId: "faux-1", thinkingLevel: "off" }, BACKGROUND_CONTEXT);
-		sessions = await holdIn(owner, Sessions, {}, "owner");
+		sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		browser = await Browser.start();
 		await browser.signIn(fixture.owner);
 		userAgent = ((await browser.call("Browser.getVersion")) as { userAgent: string }).userAgent;
@@ -682,15 +682,15 @@ describe("command menu", { skip: !browserTests }, () => {
 
 		it("opens a session's and a subagent's menu with a long press on a phone: Stop run stops that target's run, Archive subagent archives it", async () => {
 			const session = await create("Long press");
-			const main = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
-			const list = await holdIn(owner, Subagents, {}, "reader");
-			const status = await holdIn(owner, SessionStatus, {}, "reader");
+			const main = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
+			const list = await holdWith(owner, Subagents, {}, "children");
+			const status = await holdWith(owner, SessionStatus, {}, "statuses");
 			await main.send({ text: "subagent", requestId: "press-spawn" }, BACKGROUND_CONTEXT);
 			const helper = (await until(list.children, (value) => value?.[session]?.length === 1))![session]![0]!;
 			const busy = (conversations: number[]) =>
 				until(status.statuses, (states) => states?.[session]?.busy.toSorted().join() === conversations.join());
 			await busy([]);
-			const sub = await holdIn(owner, Chat, { session, conversation: helper.conversationId }, "participant");
+			const sub = await holdWith(owner, Chat, { session, conversation: helper.conversationId }, ...CHAT_PARTICIPANT);
 			const sessionItem = `document.querySelector(${JSON.stringify(sidebarRow(session))})`;
 			const helperItem = `[...document.querySelectorAll('.session-row[data-session="${session}"] .conversation-row')].find((e) => e.querySelector('.session-title')?.textContent === 'helper')`;
 			/** Long-presses the item `expression` evaluates to and waits for the menu on `chip`, its rows settled. */
@@ -819,14 +819,14 @@ describe("command menu", { skip: !browserTests }, () => {
 			await openSession(id, "Model change");
 			await browser.wait(`${FOOTER}==='Faux Two · high'`);
 			// The default for new sessions is untouched.
-			const models = await holdIn(owner, Models, {}, "owner");
+			const models = await holdWith(owner, Models, {});
 			assert.deepEqual(models.defaultModel.value, { provider: "faux", modelId: "faux-1", thinkingLevel: "off" });
 		});
 
 		it("changes the model and the thinking level of a subagent's conversation only", async () => {
 			const session = await create("With helper");
-			const chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
-			const list = await holdIn(owner, Subagents, {}, "reader");
+			const chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
+			const list = await holdWith(owner, Subagents, {}, "children");
 			await chat.send({ text: "subagent", requestId: "menu-spawn" }, BACKGROUND_CONTEXT);
 			const children = await until(list.children, (value) => value?.[session]?.length === 1);
 			const helper = children![session]![0]!;
@@ -851,7 +851,7 @@ describe("command menu", { skip: !browserTests }, () => {
 		it("sets the default model for new sessions", async () => {
 			const id = await create("Default model");
 			await openSession(id, "Default model");
-			const models = await holdIn(owner, Models, {}, "owner");
+			const models = await holdWith(owner, Models, {});
 			await openMenu();
 			await run("default", "Set default model…");
 			await browser.wait(`document.querySelector('.command-menu input')?.placeholder==='Search models…'`);
@@ -921,7 +921,7 @@ describe("command menu", { skip: !browserTests }, () => {
 		it("saves the current model and thinking level as the default, from the footer's star or the menu", async () => {
 			const id = await create("Make default");
 			await openSession(id, "Make default");
-			const models = await holdIn(owner, Models, {}, "owner");
+			const models = await holdWith(owner, Models, {});
 			const STAR = `document.querySelector('.model-controls .default-control')`;
 			// The session has the default (faux-1, off): no star.
 			await browser.wait(`${FOOTER}==='Faux Model · off'`);

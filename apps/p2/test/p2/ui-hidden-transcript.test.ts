@@ -10,11 +10,10 @@ import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import type { ConversationView } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
-import type { RefIn } from "../../src/runtime/chord.ts";
+import { CHAT_PARTICIPANT, Chat, type ChatParticipant } from "../../plugins/chat/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 /**
  * Turns in the conversation, each a tall message (many short lines: few tokens) and its echo: the rows' estimated
@@ -49,15 +48,15 @@ describe("a transcript in a hidden pane", { skip: !browserTests, timeout: 180_00
 	let fixture: Fixture;
 	let browser: Browser;
 	let session: string;
-	let chat: RefIn<typeof Chat, "participant">;
+	let chat: ChatParticipant;
 
 	before(async () => {
 		fixture = await startFixture({ web: true });
 		writeFileSync(join(fixture.workspace, "notes.md"), "# Plan\n\nThe artifact the agent opened.\n");
 		const owner = fixture.browser();
-		const sessions = await holdIn(owner, Sessions, {}, "owner");
+		const sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		session = (await sessions.create({ cwd: fixture.workspace, title: "Long" }, BACKGROUND_CONTEXT)).id;
-		chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
+		chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
 		for (let turn = 1; turn <= TURNS; turn++) {
 			await chat.send({ text: message(turn), requestId: `turn-${turn}` }, BACKGROUND_CONTEXT);
 			await until(chat.view, (value) => answered(value, `Echo: message ${turn}`));

@@ -1,8 +1,8 @@
 import type { Static } from "@earendil-works/pi-schema";
-import { BACKGROUND_CONTEXT, liveIn } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, liveWith } from "@p2/app/v1";
 import { CopyButton, errorText, Sheet, Switch, useObject, useOptimisticCall, useReadable } from "@p2/app/v1/web";
 import { useState } from "react";
-import { type ForwardSchema, Ports } from "./contract.ts";
+import { type ForwardSchema, PORTS_OWNER, Ports } from "./contract.ts";
 
 type Forward = Static<typeof ForwardSchema>;
 
@@ -33,7 +33,7 @@ function applyPort(forwards: Forward[] | undefined, guess: PortGuess): Forward[]
  * public switch show at once; a refused one rolls back with its error.
  */
 export function PortsPanel({ onClose }: { onClose: () => void }) {
-	const service = liveIn(useObject(Ports, {}), "owner");
+	const service = liveWith(useObject(Ports, {}), ...PORTS_OWNER);
 	const origin = useReadable(service?.radiusOrigin);
 	const [port, setPort] = useState("");
 	const [name, setName] = useState("");

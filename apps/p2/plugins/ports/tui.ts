@@ -3,7 +3,7 @@
 // (p2-tui-port.md section 3.5); OSC 8 hyperlinks stay stripped. `/ports` (P11f) is the web's ports panel.
 
 import { Text } from "@earendil-works/pi-tui";
-import { BACKGROUND_CONTEXT, contribute, defineFacet, type HeldIn, liveIn, whenLive } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, contribute, defineFacet, liveWith, whenLive } from "@p2/app/v1";
 import type { TuiContext } from "@p2/app/v1/tui";
 import {
 	confirm,
@@ -19,7 +19,7 @@ import {
 	TuiCommands,
 	TuiToolRenderers,
 } from "@p2/app/v1/tui";
-import { Ports } from "./contract.ts";
+import { PORTS_OWNER, Ports, type PortsOwner } from "./contract.ts";
 import type { ForwardView } from "./protocol.ts";
 
 /** Only Radius forward addresses (the web card's pattern): never arbitrary server-reported URLs. */
@@ -83,21 +83,22 @@ function openPorts(ctx: TuiContext, args: string | undefined): void {
 	const scope = ctx.scope();
 	let received: ForwardView[] = [];
 	const ref = scope.watch(Ports, {}, (held, follow) => {
-		if (held.variant === "owner")
-			follow(held.forwards, (value) => {
+		const owner = liveWith(held, ...PORTS_OWNER);
+		if (owner)
+			follow(owner.forwards, (value) => {
 				received = value;
 			});
 	});
 	// Adding, closing and the public switch show at once; a refused one rolls back with its error.
 	const [forwards, changing] = scope.optimistic(() => received, applyPort);
-	const change = (guess: PortGuess, call: (service: HeldIn<typeof Ports, "owner">) => Promise<unknown>) =>
+	const change = (guess: PortGuess, call: (service: PortsOwner) => Promise<unknown>) =>
 		ctx.perform(
 			changing(
 				guess,
 				(async () => {
 					// `/ports open` runs before the list arrived: the call waits for the reference.
 					await whenLive(ref);
-					const service = liveIn(ref, "owner");
+					const service = liveWith(ref, ...PORTS_OWNER);
 					if (!service) throw new Error("Ports are the owner's");
 					await call(service);
 				})(),

@@ -1,6 +1,6 @@
 // Browser runtime: the client host in React, slots that plugins fill, object hooks, connection state, navigation.
 
-import type { Contract, Held, ParamsOf } from "@earendil-works/chord";
+import type { Contract, ParamsOf } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { NativeWatchable, Watchable } from "@earendil-works/chord/watch";
 import {
@@ -32,7 +32,7 @@ import {
 import { type SettingsEmbed, useSettingsEmbed } from "../web/settings-embed.ts";
 import { useSheetSwipe } from "../web/sheet-swipe.ts";
 import { SIDEBAR_DOCKS, setSidebarCollapsed } from "../web/sidebar.ts";
-import type { Host, VariantOf } from "./chord.ts";
+import type { Host, Ref } from "./chord.ts";
 
 export {
 	conversationRoute,
@@ -47,7 +47,7 @@ import { Access, grantMode } from "./access.ts";
 import type { KeyedRegistry } from "./chord.ts";
 import { ConnectionStore, showsOffline } from "./connection-state.ts";
 import { canonicalJson } from "./json.ts";
-import { follow, followRegistry, type HeldIn, type HeldRef, knownRegistry, liveIn, UI_LINGER } from "./refs.ts";
+import { follow, followRegistry, type HeldRef, knownRegistry, liveWith, UI_LINGER } from "./refs.ts";
 import { Slots } from "./web-core.ts";
 
 export { shortPath } from "../web/path-label.ts";
@@ -261,23 +261,12 @@ function SettingsPage({ title, onBack, className, testId, children, embed }: She
  * loading, and its state reads as `undefined` in `useReadable` until it is live. Chord rebinds it by itself (a dropped
  * link, a restarted worker, a reload). Different params or another host release it and hold anew; an unmount releases
  * it after its type's linger (`UI_LINGER`: a conversation stays held a while, so switching back is instant).
- * `undefined` when `params` is undefined. With `variant`, `undefined` unless the reference is live in that variant (and
- * typed as it).
+ * `undefined` when `params` is undefined.
  */
-export function useObject<C extends Contract>(type: C, params: ParamsOf<C> | undefined): Held<C> | undefined;
-export function useObject<C extends Contract, const V extends VariantOf<C>>(
-	type: C,
-	params: ParamsOf<C> | undefined,
-	options: { readonly variant: V },
-): HeldIn<C, V & string> | undefined;
-export function useObject<C extends Contract>(
-	type: C,
-	params: ParamsOf<C> | undefined,
-	options: { readonly variant?: string } = {},
-): Held<C> | undefined {
+export function useObject<C extends Contract>(type: C, params: ParamsOf<C> | undefined): Ref<C> | undefined {
 	const host = useHost();
 	const key = params === undefined ? undefined : canonicalJson(params);
-	const [state, setState] = useState<{ key: string | undefined; ref: Held<C> | undefined }>({
+	const [state, setState] = useState<{ key: string | undefined; ref: Ref<C> | undefined }>({
 		key: undefined,
 		ref: undefined,
 	});
@@ -292,10 +281,9 @@ export function useObject<C extends Contract>(
 		return () => UI_LINGER.release(ref, type.name);
 	}, [host, type, key]);
 	const ref = state.key === key ? state.ref : undefined;
-	// Re-renders when the reference goes live, fails or ends: `variant` and `liveIn` read its state.
-	const status = useStatus(ref);
-	if (options.variant !== undefined && (ref === undefined || status !== "live" || ref.variant !== options.variant))
-		return undefined;
+	// Re-renders when the reference goes live, fails or ends (a rebind changes what it was granted): `live` and
+	// `liveWith` read its state.
+	useStatus(ref);
 	return ref;
 }
 
@@ -330,7 +318,7 @@ export function useOptimisticCall<T, G>(
 
 /**
  * The value of a watchable (a reference's state member, a derive), re-rendering on change. `undefined` while it cannot
- * be read (its reference is still loading, the member is outside the variant, the reference ended): nothing throws
+ * be read (its reference is still loading, the member is not granted, the reference ended): nothing throws
  * during render.
  */
 export function useReadable<T>(readable: Watchable<T> | NativeWatchable<T> | undefined): T | undefined {
@@ -342,7 +330,7 @@ export function useReadable<T>(readable: Watchable<T> | NativeWatchable<T> | und
 	return useSyncExternalStore(subscribe, read, read);
 }
 
-/** A watchable's value, or `undefined` while it cannot be read (not bound, outside the variant, ended). */
+/** A watchable's value, or `undefined` while it cannot be read (not bound, not granted, ended). */
 export function readValue<T>(readable: Watchable<T> | NativeWatchable<T> | undefined): T | undefined {
 	if (readable === undefined) return undefined;
 	try {
@@ -544,7 +532,7 @@ export function useOwner(): boolean {
 	const access = useObject(Access, {});
 	const live = useStatus(access) === "live" && access !== undefined;
 	ownerKnown ??= storedOwner();
-	const owner = live ? access.variant === "owner" : ownerKnown;
+	const owner = live ? !access.granted.has("grant") : ownerKnown;
 	useEffect(() => {
 		if (!live || owner === ownerKnown) return;
 		ownerKnown = owner;
@@ -563,7 +551,7 @@ export function useOwner(): boolean {
  */
 export function useCanWrite(session: string | undefined): boolean {
 	const owner = useOwner();
-	const grant = useReadable(liveIn(useObject(Access, {}), "guest")?.grant);
+	const grant = useReadable(liveWith(useObject(Access, {}), "grant")?.grant);
 	return owner || grantMode(grant, session) === "full";
 }
 

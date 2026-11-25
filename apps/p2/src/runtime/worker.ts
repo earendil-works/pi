@@ -435,45 +435,42 @@ export function workerCore(
 			const harness = harnessOf(self);
 			const checks = self.registry(RelocationChecks);
 			return {
-				variant: "server",
-				members: {
-					prepare: async (input, ctx) => {
-						const frozen = liveness.freeze();
-						try {
-							const inspection = await harness().durable.inspect(ctx);
-							const busy = [
-								...new Set(
-									inspection.tasks
-										.filter((task) => !task.record.background)
-										.map((task) => task.record.conversationId),
-								),
-							].sort((a, b) => a - b);
-							const tasks = inspection.tasks.length + inspection.submissions.length;
-							let refusal: string | undefined;
-							// Under the fence: nothing can change what the checks read (no task runs, nothing is admitted).
-							if (frozen && tasks === 0 && input !== null)
-								for (const check of checks.value.values()) {
-									refusal = await check(harness().durable, location.value, input.to, ctx);
-									if (refusal !== undefined) break;
-								}
-							const accepted = frozen && tasks === 0 && refusal === undefined;
-							if (!accepted && frozen) liveness.unfreeze();
-							return { accepted, tasks, busy, ...(refusal === undefined ? {} : { refusal }) };
-						} catch (error) {
-							if (frozen) liveness.unfreeze();
-							throw error;
-						}
-					},
-					cancel: async () => {
-						liveness.unfreeze();
-						return null;
-					},
-					relocate: async (next, ctx) => {
-						if (!liveness.relocating) throw new Error("Relocation was not prepared");
-						await harness().relocate(next, ctx);
-						liveness.unfreeze();
-						return null;
-					},
+				prepare: async (input, ctx) => {
+					const frozen = liveness.freeze();
+					try {
+						const inspection = await harness().durable.inspect(ctx);
+						const busy = [
+							...new Set(
+								inspection.tasks
+									.filter((task) => !task.record.background)
+									.map((task) => task.record.conversationId),
+							),
+						].sort((a, b) => a - b);
+						const tasks = inspection.tasks.length + inspection.submissions.length;
+						let refusal: string | undefined;
+						// Under the fence: nothing can change what the checks read (no task runs, nothing is admitted).
+						if (frozen && tasks === 0 && input !== null)
+							for (const check of checks.value.values()) {
+								refusal = await check(harness().durable, location.value, input.to, ctx);
+								if (refusal !== undefined) break;
+							}
+						const accepted = frozen && tasks === 0 && refusal === undefined;
+						if (!accepted && frozen) liveness.unfreeze();
+						return { accepted, tasks, busy, ...(refusal === undefined ? {} : { refusal }) };
+					} catch (error) {
+						if (frozen) liveness.unfreeze();
+						throw error;
+					}
+				},
+				cancel: async () => {
+					liveness.unfreeze();
+					return null;
+				},
+				relocate: async (next, ctx) => {
+					if (!liveness.relocating) throw new Error("Relocation was not prepared");
+					await harness().relocate(next, ctx);
+					liveness.unfreeze();
+					return null;
 				},
 			};
 		});

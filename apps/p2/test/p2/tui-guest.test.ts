@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { VirtualTerminal } from "../../../../packages/tui/test/virtual-terminal.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import { startTuiClient } from "../../src/hosts/tui-client.ts";
 import {
@@ -20,7 +20,7 @@ import {
 	saveConfig,
 	type TuiConfig,
 } from "../../src/hosts/tui-config.ts";
-import { holdIn, poll, startFixture, until } from "./helpers.ts";
+import { holdWith, poll, startFixture, until } from "./helpers.ts";
 
 const supported = Number(process.versions.node.split(".")[0]) >= 26;
 
@@ -223,7 +223,7 @@ test(
 		});
 		t.after(() => fixture.close());
 		const owner = fixture.browser();
-		const session = await (await holdIn(owner, Sessions, {}, "owner")).create(
+		const session = await (await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)).create(
 			{ cwd: fixture.workspace },
 			BACKGROUND_CONTEXT,
 		);

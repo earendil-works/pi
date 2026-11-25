@@ -2,7 +2,7 @@
 // `/move` goes to another machine's), in the owner's order; which project each session belongs to; and the helpers that
 // find a project's place on a machine and a directory's subpath below a place. Browser-safe: the sessions TUI uses them.
 import { arr, nul, num, obj, type Static, str, union } from "@earendil-works/pi-schema";
-import { evolve, LOCAL, local, method, record, remote, serverHost } from "@p2/app/v1";
+import { LOCAL, local, method, record, remote, serverHost } from "@p2/app/v1";
 
 /** Where a project lives on one machine: `env` null is this device; `path` may start with `~` (that machine's home). */
 export const ProjectPlaceSchema = obj({ env: union([str(), nul()]), path: str() });
@@ -22,9 +22,6 @@ export type ArchivedProject = Static<typeof ArchivedProjectSchema>;
 const Name = str({ minLength: 1, maxLength: 64 });
 const NameOnly = obj({ name: Name });
 const Place = obj({ env: union([str({ maxLength: 32 }), nul()]), path: str({ minLength: 1, maxLength: 4096 }) });
-
-/** Version 1's and 2's assign: session `session` belongs to project `project` from now on. */
-const AssignV1 = obj({ session: str({ maxLength: 64 }), project: str({ maxLength: 64 }) });
 
 /** Session `session` belongs to project `project` from now on, or (null) to none. */
 const Assign = obj({ session: str({ maxLength: 64 }), project: union([str({ maxLength: 64 }), nul()]) });
@@ -68,45 +65,34 @@ export const ProjectService = local("p2.project-service", {
 	},
 });
 
-/** Version 1, as b58642efa released it: without `create`. */
-const ProjectsV1 = remote("p2.projects", {
-	version: 1,
-	params: {},
-	hostAddress: serverHost,
-	variants: {
-		owner: {
-			state: {
-				projects: arr(ProjectSchema),
-				failure: union([str(), nul()]),
-				local: str(),
-				sessions: record(str()),
-			},
-			methods: { assign: method(AssignV1) },
-		},
-	},
-});
-
-/** Version 2: `create` (the web sidebar's New project). */
-const ProjectsV2 = evolve(ProjectsV1, (e) => e.addMethod("owner", "create", Create, nul()));
-
 /**
  * The owner's projects, archived ones, this device's name in place labels (the server's hostname) and the sessions'
  * projects by session ID (`ProjectService`). 2: `create`. 3: projects live in the server's store, managed from the
  * web (rename, default place, order, archive, restore, delete; `assign` with null leaves a project); no projects.json,
- * so no `failure`. The provider still serves 1 and 2 (its `accepts`).
+ * so no `failure`. 4: a new base (grantable members replaced variants; older versions are refused, their pages
+ * reload).
  */
-export const Projects = evolve(ProjectsV2, (e) =>
-	e
-		.removeState("owner", "failure")
-		.addState("owner", "archived", arr(ArchivedProjectSchema))
-		.args("assign", Assign)
-		.addMethod("owner", "rename", obj({ name: Name, to: Name }), nul())
-		.addMethod("owner", "locate", obj({ name: Name, place: Place }), nul())
-		.addMethod("owner", "move", obj({ name: Name, before: union([Name, nul()]) }), nul())
-		.addMethod("owner", "archive", NameOnly, nul())
-		.addMethod("owner", "restore", NameOnly, nul())
-		.addMethod("owner", "remove", NameOnly, nul()),
-);
+export const Projects = remote("p2.projects", {
+	version: 4,
+	params: {},
+	hostAddress: serverHost,
+	state: {
+		projects: arr(ProjectSchema),
+		archived: arr(ArchivedProjectSchema),
+		local: str(),
+		sessions: record(str()),
+	},
+	methods: {
+		assign: method(Assign),
+		create: method(Create, nul()),
+		rename: method(obj({ name: Name, to: Name }), nul()),
+		locate: method(obj({ name: Name, place: Place }), nul()),
+		move: method(obj({ name: Name, before: union([Name, nul()]) }), nul()),
+		archive: method(NameOnly, nul()),
+		restore: method(NameOnly, nul()),
+		remove: method(NameOnly, nul()),
+	},
+});
 
 /** How a place's machine reads: its environment's name, or this device's label. */
 export const placeLabel = (place: ProjectPlace, localLabel: string): string => place.env ?? localLabel;

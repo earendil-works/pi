@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Catalog, Sessions } from "../../plugins/sessions/contract.ts";
+import { Catalog, SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
 import { processLogs } from "../../src/runtime/logs.ts";
 import { ServerNatives } from "../../src/runtime/server.ts";
 import { Browser, browserTests, COMPOSER } from "./browser.ts";
-import { holdIn, startFixture, until } from "./helpers.ts";
+import { holdWith, startFixture, until } from "./helpers.ts";
 
 test(
 	"owner Logs sheet filters worker sources, follows live lines, copies the filtered text and restores its locator",
@@ -73,14 +73,14 @@ test(
 		const fixture = await startFixture({ web: true });
 		t.after(() => fixture.close());
 		const client = fixture.browser();
-		const session = await (await holdIn(client, Sessions, {}, "owner")).create(
+		const session = await (await holdWith(client, Sessions, {}, ...SESSIONS_OWNER)).create(
 			{
 				cwd: fixture.workspace,
 				title: "Broken worker fixture",
 			},
 			BACKGROUND_CONTEXT,
 		);
-		const status = await holdIn(client, SessionStatus, {}, "reader");
+		const status = await holdWith(client, SessionStatus, {}, "statuses");
 		// A start that is refused: the session's environment is not configured (as a stale catalog would leave it).
 		const setEnv = (env: string | null) =>
 			fixture.server.host.root(async (ctx) => {

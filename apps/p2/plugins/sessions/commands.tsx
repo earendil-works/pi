@@ -3,7 +3,7 @@
 // sidebar items' actions, for touch screens without their hover button: Stop run (a session's or a subagent's) and
 // Archive subagent; on a `/tree` branch's target Rename branch…; Open folder…; their pages, and the sessions the root's
 // query matches by title.
-import { BACKGROUND_CONTEXT, withHeld } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, withGranted } from "@p2/app/v1";
 import {
 	ArchiveIcon,
 	type Command,
@@ -44,7 +44,7 @@ import { DIRECTORY_PICKER, directoryPickerLayer } from "../envs/contract.web.tsx
 import { stoppable } from "./agent-actions.ts";
 import { branchSheetLayer } from "./BranchSheet.tsx";
 import { commandSession, NotArchived, useCommandSession, useOpenFromMenu, useSessions } from "./command-session.tsx";
-import { type Session, Sessions } from "./contract.ts";
+import { SESSIONS_OWNER, type Session, Sessions } from "./contract.ts";
 import { FOLDER_ROLLUP, folderKey, type NewTarget } from "./sidebar/model.ts";
 import { type PageData, pageData, usePageData } from "./sidebar/page-data.ts";
 import { ago, folderName } from "./sidebar/Row.tsx";
@@ -187,7 +187,7 @@ function renameBranch(ctx: CommandContext): void {
 async function archive(ctx: CommandContext): Promise<void> {
 	const id = commandSession(ctx.target, ctx.route);
 	if (id === undefined) return;
-	await withHeld(ctx.host.hold(Sessions, {}, BACKGROUND_CONTEXT), "owner", (catalog) => {
+	await withGranted(ctx.host.hold(Sessions, {}, BACKGROUND_CONTEXT), SESSIONS_OWNER, (catalog) => {
 		if (ctx.route.session === id) void getNavigation().replace(NEW_SESSION);
 		return catalog.archive({ id }, BACKGROUND_CONTEXT);
 	});
@@ -197,7 +197,7 @@ async function archive(ctx: CommandContext): Promise<void> {
 async function restore(ctx: CommandContext): Promise<void> {
 	const id = commandSession(ctx.target, ctx.route);
 	if (id === undefined) return;
-	await withHeld(ctx.host.hold(Sessions, {}, BACKGROUND_CONTEXT), "owner", (catalog) =>
+	await withGranted(ctx.host.hold(Sessions, {}, BACKGROUND_CONTEXT), SESSIONS_OWNER, (catalog) =>
 		catalog.restore({ id }, BACKGROUND_CONTEXT),
 	);
 	navigate({ session: id });
@@ -325,7 +325,7 @@ function RenamePage() {
 				icon={PencilIcon}
 				onSelect={async () => {
 					await close();
-					await withHeld(host.hold(Sessions, {}, BACKGROUND_CONTEXT), "owner", (catalog) =>
+					await withGranted(host.hold(Sessions, {}, BACKGROUND_CONTEXT), SESSIONS_OWNER, (catalog) =>
 						catalog.rename({ id: session.id, title }, BACKGROUND_CONTEXT),
 					).catch(fail);
 				}}

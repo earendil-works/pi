@@ -15,11 +15,11 @@ import { BACKGROUND_CONTEXT, type Host } from "@p2/app/v1";
 import { Backup, type BackupStatus } from "../../plugins/backup/contract.ts";
 import { RadiusSyncRemote } from "../../plugins/backup/radius-remote.ts";
 import { backupFiles } from "../../plugins/backup/uploader.ts";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { readRadiusConfig } from "../../plugins/radius/brain.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { type P2Server, startServer } from "../../src/hosts/server.ts";
-import { clientHost, holdIn, localOwner, until } from "./helpers.ts";
+import { clientHost, holdWith, localOwner, until } from "./helpers.ts";
 import { radiusFixture } from "./radius-fixture.ts";
 
 const answered = (view: ConversationView | null | undefined) =>
@@ -52,9 +52,9 @@ test("backs up to the Radius it is signed in to, as its server, and restores a s
 	assert.equal(backup.device.value, config.serverId, "the device is the Radius server's ID");
 
 	const owner = clientHost(await localOwner(server));
-	const sessions = await holdIn(owner, Sessions, {}, "owner");
+	const sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 	const session = await sessions.create({ cwd: directory, title: "On Radius" }, BACKGROUND_CONTEXT);
-	const chat = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+	const chat = await holdWith(owner, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 	await chat.send({ text: "hello radius", requestId: crypto.randomUUID() }, BACKGROUND_CONTEXT);
 	await until(chat.view, answered);
 	chat.release();
@@ -145,7 +145,7 @@ test("keeps a session's backup with the account that made it when another person
 		}
 	};
 	const send = async (owner: Host, session: string, text: string) => {
-		const chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
 		try {
 			await chat.send({ text, requestId: crypto.randomUUID() }, BACKGROUND_CONTEXT);
 			await until(chat.view, answered);
@@ -160,7 +160,7 @@ test("keeps a session's backup with the account that made it when another person
 	let name = "";
 	let head = 0;
 	await as(server, async (owner, statuses) => {
-		const sessions = await holdIn(owner, Sessions, {}, "owner");
+		const sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		session = (await sessions.create({ cwd: directory, title: "Shared machine" }, BACKGROUND_CONTEXT)).id;
 		sessions.release();
 		name = `session-${session}`;

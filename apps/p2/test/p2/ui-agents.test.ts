@@ -6,14 +6,14 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import type { ConversationView, LiveState } from "@earendil-works/pi-durable";
-import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { BACKGROUND_CONTEXT, type RefWith } from "@p2/app/v1";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { Models } from "../../plugins/models/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { type Child, Subagents } from "../../plugins/subagents/contract.ts";
-import type { Host, RefIn } from "../../src/runtime/chord.ts";
+import type { Host } from "../../src/runtime/chord.ts";
 import { Browser, browserTests, COMPOSER } from "./browser.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 const SCRIPT = `return await tools.agent({ prompt: 'json {"ok":true}', label: "Check ok", schema: { type: "object" }, tools: [] });`;
 const live = (view: ConversationView | null | undefined) => view?.docs["pi.live"] as LiveState | undefined;
@@ -24,7 +24,7 @@ describe("one-shot agents and subagent archiving in the browser", { skip: !brows
 	let browser: Browser;
 	let owner: Host;
 	let session: string;
-	let list: RefIn<typeof Subagents, "reader">;
+	let list: RefWith<typeof Subagents, "children">;
 	let helper: Child;
 	let agent: Child;
 
@@ -36,11 +36,11 @@ describe("one-shot agents and subagent archiving in the browser", { skip: !brows
 			.setDefault({ provider: "faux", modelId: "faux-1", thinkingLevel: "off" }, BACKGROUND_CONTEXT);
 		session = (
 			await (
-				await holdIn(owner, Sessions, {}, "owner")
+				await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)
 			).create({ cwd: fixture.workspace, title: "Agents" }, BACKGROUND_CONTEXT)
 		).id;
-		const chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
-		list = await holdIn(owner, Subagents, {}, "reader");
+		const chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
+		list = await holdWith(owner, Subagents, {}, "children");
 		await chat.send({ text: "subagent", requestId: "spawn" }, BACKGROUND_CONTEXT);
 		await until(list.children, (value) => value?.[session]?.length === 1);
 		// The helper's report is a user message too: send the script once it has been answered.
@@ -132,7 +132,7 @@ describe("one-shot agents and subagent archiving in the browser", { skip: !brows
 	});
 
 	it("stops a working one-shot agent from its bar", async () => {
-		const chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await chat.send(
 			{
 				text: `codemode return await tools.agent({ prompt: "slow agent", label: "Slow", schema: { type: "object" } });`,
@@ -231,7 +231,7 @@ describe("one-shot agents and subagent archiving in the browser", { skip: !brows
 		const worktree = join(fixture.workspace, "worktree");
 		mkdirSync(worktree);
 		writeFileSync(join(worktree, "marker.txt"), "inside\n");
-		const chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
 		const spawn = { action: "spawn", name: "wt", message: "hi", cwd: "worktree", tools: [] };
 		await chat.send({ text: `subagent ${JSON.stringify(spawn)}`, requestId: "spawn-wt" }, BACKGROUND_CONTEXT);
 		const children = await until(list.children, (value) => Boolean(value?.[session]?.some((c) => c.name === "wt")));

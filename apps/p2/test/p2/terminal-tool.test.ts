@@ -13,15 +13,15 @@ import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type { ConversationView } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT, whenLive } from "@p2/app/v1";
 import { WebSocket } from "ws";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import { AgentTerminals, TerminalServices, Terminals } from "../../plugins/terminals/contract.ts";
 import { localSystem, terminalDaemon } from "../../plugins/terminals/daemon.ts";
 import { connectTerminalHost } from "../../plugins/terminals/detached.ts";
 import { encodeFrame, type TerminalEvent, type TerminalInfo } from "../../plugins/terminals/protocol.ts";
 import { Hosts } from "../../src/runtime/server.ts";
-import { APP, expectChord, holdIn, http, poll, startFixture, until } from "./helpers.ts";
+import { APP, expectChord, holdWith, http, poll, startFixture, until } from "./helpers.ts";
 
 let unavailable: string | undefined;
 try {
@@ -63,9 +63,9 @@ test(
 		});
 		const workspace = realpathSync(fixture.workspace);
 		const owner = fixture.browser();
-		const sessions = await holdIn(owner, Sessions, {}, "owner");
+		const sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		const session = await sessions.create({ cwd: workspace, title: "Terminals" }, BACKGROUND_CONTEXT);
-		const chat = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		let serial = 0;
 		const call = async (prompt: string, target = chat) => {
 			const count = results(await until(target.view, Boolean)).length;
@@ -83,7 +83,7 @@ test(
 			return returned(result);
 		};
 		// The owner's terminal panel: its byte channel hears the session's terminals change.
-		const view = await holdIn(owner, Terminals, { session: session.id, view: randomUUID() }, "owner");
+		const view = await holdWith(owner, Terminals, { session: session.id, view: randomUUID() });
 		const bytes = await byteChannel(
 			fixture.server.port,
 			fixture.owner.cookie,
@@ -181,7 +181,7 @@ test(
 				body: JSON.stringify({ token: links?.[0]?.token, name: "Guest" }),
 			});
 			const guest = fixture.client({ ...headers, Cookie: String(joined.headers["set-cookie"]).split(";")[0]! }).host;
-			const guestChat = await holdIn(guest, Chat, { session: session.id, conversation: 1 }, "participant");
+			const guestChat = await holdWith(guest, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 			const value = (await script(
 				'return await tools.terminal({ command: "capture-pane", args: ["-p", "-t", "dev"] });',
 				guestChat,
@@ -202,7 +202,7 @@ test(
 			);
 			assert.ok(state?.running);
 			const as = (generation: number) =>
-				holdIn(fixture.as({ kind: "worker", session: session.id, generation }), AgentTerminals, {}, "worker");
+				holdWith(fixture.as({ kind: "worker", session: session.id, generation }), AgentTerminals, {});
 			const stale = await as(state.generation - 1);
 			await expectChord(stale.list({}, BACKGROUND_CONTEXT), "forbidden");
 			const current = await as(state.generation);
@@ -252,7 +252,7 @@ test(
 
 		await t.test("without code mode, tool_search loads the tool for the model", async () => {
 			const other = await sessions.create({ cwd: workspace, title: "No code mode" }, BACKGROUND_CONTEXT);
-			const otherChat = await holdIn(owner, Chat, { session: other.id, conversation: 1 }, "participant");
+			const otherChat = await holdWith(owner, Chat, { session: other.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 			// Code mode on: the model is not offered it.
 			assert.equal((await call(`terminal ${JSON.stringify({ command: "list-windows" })}`, otherChat)).isError, true);
 			writeFileSync(join(fixture.dataDir, "settings.json"), JSON.stringify({ codemode: false }));

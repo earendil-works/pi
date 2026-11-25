@@ -4,7 +4,6 @@
 import { hostname } from "node:os";
 import { bool, obj, str } from "@earendil-works/pi-schema";
 import {
-	type AcceptsTable,
 	type Context,
 	contribute,
 	defineFacet,
@@ -44,12 +43,6 @@ const EarlierMemberships = defineState("p2.project-sessions", {
 	persist: true,
 	checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 20,
 });
-
-/** Versions 1 and 2 had projects.json's last read failure (none any more) and `assign` with a name only. */
-const PROJECTS_ACCEPTS: AcceptsTable<typeof Projects> = {
-	1: { state: { owner: { failure: () => null } }, methods: { assign: { args: (old) => old } } },
-	2: { state: { owner: { failure: () => null } }, methods: { assign: { args: (old) => old } } },
-};
 
 /** The space between neighbouring projects' positions: a move between two takes the middle. */
 const GAP = 1024;
@@ -249,33 +242,26 @@ export default defineFacet((host) => {
 		};
 	});
 
-	host.serve(
-		Projects,
-		(_params, principal, self) => {
-			if (!isOwner(principal)) throw forbidden("projects are owner-only");
-			const service = self.get(ProjectService, {});
-			const label = hostname();
-			return {
-				variant: "owner",
-				members: {
-					projects: service.projects,
-					archived: service.archived,
-					// A constant: a derive of no sources.
-					local: self.derive([], () => label),
-					sessions: service.sessions,
-					assign: (args, ctx) => service.assign(args, ctx),
-					create: (args, ctx) => service.create(args, ctx),
-					rename: (args, ctx) => service.rename(args, ctx),
-					locate: (args, ctx) => service.locate(args, ctx),
-					move: (args, ctx) => service.move(args, ctx),
-					archive: (args, ctx) => service.archive(args, ctx),
-					restore: (args, ctx) => service.restore(args, ctx),
-					remove: (args, ctx) => service.remove(args, ctx),
-				},
-			};
-		},
-		{ accepts: PROJECTS_ACCEPTS },
-	);
+	host.serve(Projects, (_params, principal, self) => {
+		if (!isOwner(principal)) throw forbidden("projects are owner-only");
+		const service = self.get(ProjectService, {});
+		const label = hostname();
+		return {
+			projects: service.projects,
+			archived: service.archived,
+			// A constant: a derive of no sources.
+			local: self.derive([], () => label),
+			sessions: service.sessions,
+			assign: (args, ctx) => service.assign(args, ctx),
+			create: (args, ctx) => service.create(args, ctx),
+			rename: (args, ctx) => service.rename(args, ctx),
+			locate: (args, ctx) => service.locate(args, ctx),
+			move: (args, ctx) => service.move(args, ctx),
+			archive: (args, ctx) => service.archive(args, ctx),
+			restore: (args, ctx) => service.restore(args, ctx),
+			remove: (args, ctx) => service.remove(args, ctx),
+		};
+	});
 
 	// A copy keeps its source's project; the copy goes on if that cannot be recorded.
 	contribute(host, "p2.projects-copied", (self) => {

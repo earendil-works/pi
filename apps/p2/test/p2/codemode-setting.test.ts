@@ -8,11 +8,11 @@ import { test } from "node:test";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type { ConversationView, LiveState } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
-import { expectVariant } from "../../src/runtime/chord.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
+import { expectGranted } from "../../src/runtime/refs.ts";
 import { validateSettings } from "../../src/runtime/settings.ts";
-import { holdIn, startFixture, until } from "./helpers.ts";
+import { holdWith, startFixture, until } from "./helpers.ts";
 
 const live = (view: ConversationView | null | undefined) => view?.docs["pi.live"] as LiveState | undefined;
 const codemodeResults = (view: ConversationView | null | undefined): ToolResultMessage[] =>
@@ -51,11 +51,13 @@ test(
 		t.after(() => fixture.close());
 		const owner = fixture.browser();
 		const session = (
-			await (await holdIn(owner, Sessions, {}, "owner")).create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT)
+			await (
+				await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)
+			).create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT)
 		).id;
-		const chat = expectVariant(
+		const chat = expectGranted(
 			await owner.get(Chat, { session, conversation: 1 }, BACKGROUND_CONTEXT),
-			"participant",
+			...CHAT_PARTICIPANT,
 		);
 		let sent = 0;
 		/** Sends `message` and waits for the run it starts to end. */

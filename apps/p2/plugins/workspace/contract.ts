@@ -82,25 +82,22 @@ export const WorkspaceBackend = local("p2.workspace-backend", {
 
 /** Holding this object leases the filesystem watch; read-only guests cannot get it. */
 export const Workspace = remote("p2.workspace", {
-	version: 1,
+	version: 2,
 	params: Input,
 	hostAddress: sessionHost,
-	variants: { reader: { state: { changes: num() }, methods: { query: method(QuerySchema, Result) } } },
+	state: { changes: num() },
+	methods: { query: method(QuerySchema, Result) },
 });
 
 /** HTTP transport only, reachable from the server host, never browsers. */
 export const WorkspaceTransfer = remote("p2.workspace-transfer", {
-	version: 1,
+	version: 2,
 	params: Input,
 	hostAddress: sessionHost,
-	variants: {
-		server: {
-			state: {},
-			methods: {
-				read: method(Read, unsafe<WorkspaceBytes>(unknown())),
-				write: method(WriteSchema),
-			},
-		},
+	state: {},
+	methods: {
+		read: method(Read, unsafe<WorkspaceBytes>(unknown())),
+		write: method(WriteSchema),
 	},
 });
 

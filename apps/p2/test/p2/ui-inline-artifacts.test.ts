@@ -8,12 +8,11 @@ import { after, before, describe, it } from "node:test";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { ArtifactPage } from "../../plugins/artifacts/contract.ts";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
+import { SESSIONS_OWNER, Sessions, type SessionsOwner } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
-import type { RefIn } from "../../src/runtime/chord.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, poll, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, poll, startFixture, until } from "./helpers.ts";
 
 type Shown = { id: string; title: string; kind: "html" | "md"; content: string };
 
@@ -40,12 +39,12 @@ const frame = (id: string) => `${card(id)}?.querySelector('iframe')`;
 describe("inline artifacts in Chromium", { skip: !browserTests }, () => {
 	let fixture: Fixture;
 	let browser: Browser;
-	let sessions: RefIn<typeof Sessions, "owner">;
+	let sessions: SessionsOwner;
 
 	/** A new session whose agent writes and shows each of `shown`, a script each, and then runs `then` if given. */
 	const publish = async (title: string, shown: Shown[], then?: string): Promise<string> => {
 		const id = (await sessions.create({ cwd: fixture.workspace, title }, BACKGROUND_CONTEXT)).id;
-		const chat = await holdIn(fixture.browser(), Chat, { session: id, conversation: 1 }, "participant");
+		const chat = await holdWith(fixture.browser(), Chat, { session: id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		const scripts = [
 			...shown.map(
 				(each) =>
@@ -71,7 +70,7 @@ describe("inline artifacts in Chromium", { skip: !browserTests }, () => {
 
 	before(async () => {
 		fixture = await startFixture({ web: true });
-		sessions = await holdIn(fixture.browser(), Sessions, {}, "owner");
+		sessions = await holdWith(fixture.browser(), Sessions, {}, ...SESSIONS_OWNER);
 		browser = await Browser.start();
 		await browser.signIn(fixture.owner);
 	});
@@ -144,7 +143,7 @@ describe("inline artifacts in Chromium", { skip: !browserTests }, () => {
 			},
 		]);
 		// Enough transcript below it to scroll it far out of view (beyond the cards' two-viewport margin).
-		const chat = await holdIn(fixture.browser(), Chat, { session: id, conversation: 1 }, "participant");
+		const chat = await holdWith(fixture.browser(), Chat, { session: id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		for (let index = 0; index < 8; index++) {
 			await chat.send(
 				{ text: `filler ${index} ${"words to fill the screen ".repeat(120)}`, requestId: `filler-${index}` },
@@ -213,10 +212,10 @@ describe("inline artifacts in Chromium", { skip: !browserTests }, () => {
 		assert.equal(await inFrame(browser, "String(window.p2view.readOnly)"), "false");
 		await inFrame(browser, "document.getElementById('add').click()");
 		// Saved as beside the chat, and the selection goes with the next message (the composer's chip says so).
-		const page = await holdIn(fixture.browser(), ArtifactPage, { session: id, id: "counter" }, "editor");
+		const page = await holdWith(fixture.browser(), ArtifactPage, { session: id, id: "counter" }, "setState");
 		await until(page.value, (value) => (value as { count?: number } | null)?.count === 42);
 		await browser.wait(`document.querySelector('.views-chip')?.textContent.includes('Selection in Counter')`);
-		const chat = await holdIn(fixture.browser(), Chat, { session: id, conversation: 1 }, "participant");
+		const chat = await holdWith(fixture.browser(), Chat, { session: id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await chat.send({ text: "what did I pick", requestId: "pick" }, BACKGROUND_CONTEXT);
 		await until(chat.view, (view) =>
 			JSON.stringify(view?.entries ?? []).includes(

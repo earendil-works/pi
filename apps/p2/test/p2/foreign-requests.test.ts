@@ -10,10 +10,10 @@ import type { AddressInfo } from "node:net";
 import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { WebSocket } from "ws";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, http, poll, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, http, poll, startFixture, until } from "./helpers.ts";
 
 const NO_CORS = { "Sec-Fetch-Mode": "no-cors", "Sec-Fetch-Dest": "script" };
 const NAVIGATE = { "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document" };
@@ -50,7 +50,7 @@ describe("foreign browser requests", () => {
 		const owner = fixture.browser();
 		session = (
 			await (
-				await holdIn(owner, Sessions, {}, "owner")
+				await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)
 			).create({ cwd: fixture.workspace, title: "Mine" }, BACKGROUND_CONTEXT)
 		).id;
 		device = fixture.owner.cookie;

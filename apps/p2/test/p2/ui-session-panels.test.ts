@@ -6,10 +6,10 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { Artifacts } from "../../plugins/artifacts/contract.ts";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 describe("panels per session", { skip: !browserTests }, () => {
 	let fixture: Fixture, browser: Browser;
@@ -17,12 +17,12 @@ describe("panels per session", { skip: !browserTests }, () => {
 	before(async () => {
 		fixture = await startFixture({ web: true });
 		const owner = fixture.browser();
-		const sessions = await holdIn(owner, Sessions, {}, "owner");
+		const sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		for (const title of ["Files here", "Terminal here", "Artifacts here", "Nothing here"])
 			ids[title] = (await sessions.create({ cwd: fixture.workspace, title }, BACKGROUND_CONTEXT)).id;
 		const session = ids["Artifacts here"] as string;
-		const chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
-		const list = await holdIn(owner, Artifacts, { session }, "editor");
+		const chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
+		const list = await holdWith(owner, Artifacts, { session }, "artifacts", "remove");
 		await chat.send({ text: "artifact", requestId: "artifact" }, BACKGROUND_CONTEXT);
 		await until(list.artifacts, (artifacts) => artifacts?.length === 1);
 		list.release();

@@ -10,11 +10,11 @@ import type { Models } from "@earendil-works/pi-ai/models";
 import type { ConversationView, LiveState } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT, follow } from "@p2/app/v1";
 import { createAgentExtension } from "../../plugins/agent/tool.ts";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { CHAT_PARTICIPANT, Chat, type ChatParticipant } from "../../plugins/chat/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { SubagentControl, Subagents } from "../../plugins/subagents/contract.ts";
-import type { Host, RefIn } from "../../src/runtime/chord.ts";
-import { expectChord, type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import type { Host } from "../../src/runtime/chord.ts";
+import { expectChord, type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 const SCRIPT = `
 const schema = { type: "object", required: ["n"], properties: { n: { type: "number" } } };
@@ -67,15 +67,17 @@ describe("code mode agent (fake provider)", () => {
 	let fixture: Fixture;
 	let owner: Host;
 	let session: string;
-	let chat: RefIn<typeof Chat, "participant">;
+	let chat: ChatParticipant;
 	let callId: string;
 	before(async () => {
 		fixture = await startFixture();
 		owner = fixture.browser();
 		session = (
-			await (await holdIn(owner, Sessions, {}, "owner")).create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT)
+			await (
+				await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)
+			).create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT)
 		).id;
-		chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
+		chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
 	});
 	after(async () => {
 		await fixture?.close();
@@ -101,7 +103,7 @@ describe("code mode agent (fake provider)", () => {
 	});
 
 	it("lists each one-shot agent by its nested call ID and keeps it read-only", async () => {
-		const list = await holdIn(owner, Subagents, {}, "reader");
+		const list = await holdWith(owner, Subagents, {}, "children");
 		const children = await until(list.children, (value) => value?.[session]?.length === 3);
 		const agents = children![session]!;
 		assert.deepEqual(
@@ -115,9 +117,8 @@ describe("code mode agent (fake provider)", () => {
 		assert.ok(agents.every((agent) => agent.lastEntryId === 0 && agent.tools.length === 0));
 		const first = agents.find((agent) => agent.name === 'json {"n":1}')!;
 		// Read-only: it can be opened and read, not prompted, reconfigured or archived.
-		const sub = await holdIn(owner, Chat, { session, conversation: first.conversationId }, "participant");
+		const sub = await holdWith(owner, Chat, { session, conversation: first.conversationId }, ...CHAT_PARTICIPANT);
 		await until(sub.view, (value) => JSON.stringify(value?.entries ?? []).includes('{\\"n\\":1}'));
-		assert.equal(sub.variant, "participant");
 		const refused = await expectChord(
 			sub.send({ text: "hello", requestId: "steer" }, BACKGROUND_CONTEXT),
 			"forbidden",
@@ -159,9 +160,11 @@ describe("code mode off while the agent plugin stays", () => {
 		t.after(() => fixture.close());
 		const owner = fixture.browser();
 		const session = (
-			await (await holdIn(owner, Sessions, {}, "owner")).create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT)
+			await (
+				await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)
+			).create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT)
 		).id;
-		const chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
 		t.after(follow(chat.view, () => {}));
 		const answered = (text: string) =>
 			until(chat.view, (value) => JSON.stringify(value).includes(`Echo: ${text}`) && !live(value)?.run);

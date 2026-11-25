@@ -8,7 +8,7 @@
 import type { Usage } from "@earendil-works/pi-ai";
 import type { AgentState, ConversationView, UsageState } from "@earendil-works/pi-durable";
 import { truncateToWidth } from "@earendil-works/pi-tui";
-import { BACKGROUND_CONTEXT, followRegistry, liveIn } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, followRegistry, liveWith } from "@p2/app/v1";
 import {
 	cacheHitRate,
 	formatTokens,
@@ -81,7 +81,7 @@ export class FooterSurface implements TuiSurface {
 					);
 		});
 		this.scope.watch(Sessions, {}, (ref, follow) => {
-			const viewer = liveIn(ref, "owner", "guest");
+			const viewer = liveWith(ref, "sessions");
 			if (viewer)
 				follow(viewer.sessions, (sessions) => {
 					this.sessions = sessions;
@@ -98,8 +98,9 @@ export class FooterSurface implements TuiSurface {
 				);
 				// A failed session worker (the web's "Session unavailable" with Retry), owner only.
 				this.models.watch(SessionStatus, {}, (ref, follow) => {
-					if (ref.variant === "reader")
-						follow(ref.statuses, (statuses) => {
+					const reader = liveWith(ref, "statuses");
+					if (reader)
+						follow(reader.statuses, (statuses) => {
 							const error = this.session ? statuses[this.session]?.error : undefined;
 							if (error && error !== this.workerError)
 								runtime.notify(`Session worker failed: ${lineText(error)} · /retry-worker`, "error");
@@ -275,7 +276,6 @@ export default tuiFacet("footer", (runtime) => new FooterSurface(runtime), {
 			ctx.notify("Retrying the session worker…");
 			return ctx.host.root(async (root) => {
 				const control = await root.get(WorkerControl, { session });
-				if (control.variant !== "owner") return;
 				await control.restart(root);
 				ctx.notify("Session worker started");
 			}, BACKGROUND_CONTEXT);

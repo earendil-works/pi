@@ -10,14 +10,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { LogNotices, Logs } from "../../plugins/logs/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
-import { Views } from "../../plugins/views/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
+import { VIEWS_EDITING, Views } from "../../plugins/views/contract.ts";
 import { type P2Server, startServer } from "../../src/hosts/server.ts";
 import { LINK_CLIENTS, STALE_PAGE_CODE } from "../../src/runtime/stale-page.ts";
 import { Browser, browserTests, COMPOSER } from "./browser.ts";
-import { clientHost, holdIn, type LocalOwner, localOwner, until, webAssets } from "./helpers.ts";
+import { clientHost, holdWith, type LocalOwner, localOwner, until, webAssets } from "./helpers.ts";
 
 describe("pages on the web surface", { skip: !browserTests }, () => {
 	const root = mkdtempSync(join(tmpdir(), "p2-surface-"));
@@ -50,15 +50,18 @@ describe("pages on the web surface", { skip: !browserTests }, () => {
 		owner = await localOwner(server!);
 		const host = clientHost(owner);
 		try {
-			const sessions = await holdIn(host, Sessions, {}, "owner");
+			const sessions = await holdWith(host, Sessions, {}, ...SESSIONS_OWNER);
 			session = (await sessions.create({ cwd: root, title: "Surface" }, BACKGROUND_CONTEXT)).id;
-			const chat = await holdIn(host, Chat, { session, conversation: 1 }, "participant");
+			const chat = await holdWith(host, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
 			for (let index = 0; index < 6; index++) {
 				const text = `line ${index} ${"to scroll through ".repeat(80)}`;
 				await chat.send({ text, requestId: `fill-${index}` }, BACKGROUND_CONTEXT);
 				await until(chat.view, (view) => JSON.stringify(view?.entries ?? []).includes(`Echo: line ${index}`));
 			}
-			await (await holdIn(host, Views, { session }, "editor")).open({ kind: "changes" }, BACKGROUND_CONTEXT);
+			await (await holdWith(host, Views, { session }, ...VIEWS_EDITING)).open(
+				{ kind: "changes" },
+				BACKGROUND_CONTEXT,
+			);
 		} finally {
 			await host.close(BACKGROUND_CONTEXT);
 		}
@@ -145,8 +148,8 @@ describe("pages on the web surface", { skip: !browserTests }, () => {
 			})`);
 		const host = clientHost(owner);
 		try {
-			const logs = await holdIn(host, Logs, { source: "stale-pages" }, "owner");
-			const notices = await holdIn(host, LogNotices, {}, "owner");
+			const logs = await holdWith(host, Logs, { source: "stale-pages" });
+			const notices = await holdWith(host, LogNotices, {});
 			/** The stale-pages log once a line matches `pattern`. */
 			const told = (pattern: RegExp) => until(logs.lines, (value) => value.some((each) => pattern.test(each.text)));
 			assert.equal(await closeOf("?web=0123abcd"), STALE_PAGE_CODE);

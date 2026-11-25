@@ -280,7 +280,7 @@ function ShareButton() {
 
 export default defineFacet((host) => {
 	contribute(host, "p2.sharing-web", (self) => {
-		// A guest counts as connected while its page holds this (the owner's variant does nothing).
+		// A guest counts as connected while its page holds this (the owner's does nothing).
 		self.get(GuestPresence, {});
 		self.contribute(Slots, { "session-actions": ShareButton });
 		self.contribute(Commands, SHARING_COMMANDS);

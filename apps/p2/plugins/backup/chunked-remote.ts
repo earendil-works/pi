@@ -1,13 +1,13 @@
 // A session's worker uploads its store through the server's `BackupRemote`: a slot's body sent in chunks of at most
 // `CHUNK_BYTES` (Chord carries bytes only as whole method arguments), streamed on to the remote as they arrive. A worker
 // only uploads its own store, which the server names from the worker's principal.
-import { type Context, type Ctx, invalid, type RefIn } from "@p2/app/v1";
+import { type Context, type Ctx, invalid, type Ref } from "@p2/app/v1";
 import type { PutBatchResult, SessionSyncUploader, SyncBody } from "@p2/app/v1/node";
 import { type BackupRemote, CHUNK_BYTES } from "./contract.ts";
 
 /** Runs `fn` with the server's `BackupRemote`, as the worker (a root of the worker's own under `context`). */
 export type WithRemote = <T>(
-	fn: (remote: RefIn<typeof BackupRemote, "worker">, ctx: Ctx) => Promise<T>,
+	fn: (remote: Ref<typeof BackupRemote>, ctx: Ctx) => Promise<T>,
 	context: Context,
 ) => Promise<T>;
 

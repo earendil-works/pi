@@ -5,14 +5,14 @@ import { test } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { WebSocketServer } from "ws";
 import { VirtualTerminal } from "../../../../packages/tui/test/virtual-terminal.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { launcherActions } from "../../src/hosts/tui-actions.ts";
 import { startTuiClient } from "../../src/hosts/tui-client.ts";
 import { defaultMouse } from "../../src/hosts/tui-local-preferences.ts";
 import type { MousePolicy } from "../../src/hosts/tui-modes.ts";
 import { SelectionGesture } from "../../src/hosts/tui-mouse.ts";
 import type { TuiLocalPreferences } from "../../src/tui/preferences.ts";
-import { holdIn, poll, startFixture } from "./helpers.ts";
+import { holdWith, poll, startFixture } from "./helpers.ts";
 
 const supported = Number(process.versions.node.split(".")[0]) >= 26;
 const press = (x: number, y: number) => `\x1b[<0;${x};${y}M`;
@@ -165,7 +165,7 @@ test(
 	async (t) => {
 		const fixture = await startFixture();
 		t.after(() => fixture.close());
-		await (await holdIn(fixture.browser(), Sessions, {}, "owner")).create(
+		await (await holdWith(fixture.browser(), Sessions, {}, ...SESSIONS_OWNER)).create(
 			{ cwd: fixture.workspace },
 			BACKGROUND_CONTEXT,
 		);

@@ -1,5 +1,15 @@
 import { arr, bool, int, nul, obj, opt, str, union } from "@earendil-works/pi-schema";
-import { defineRegistry, literal, local, method, propertiesOf, remote, serverHost } from "@p2/app/v1";
+import {
+	defineRegistry,
+	grantable,
+	literal,
+	local,
+	method,
+	propertiesOf,
+	type RefWith,
+	remote,
+	serverHost,
+} from "@p2/app/v1";
 import type { Forwards } from "./store.ts";
 
 export type { Forwards } from "./store.ts";
@@ -57,29 +67,34 @@ export const ForwardsNative = defineRegistry<
 >("p2.forwards", { version: 1 });
 /** Owner management and worker tool calls share one registry; worker identity fixes its session. */
 export const Ports = remote("p2.ports", {
-	/** 2: the worker's query has no `origin`. */
-	version: 2,
+	/**
+	 * 2: the worker's query has no `origin`. 3: a new base (grantable members replaced variants; older versions are
+	 * refused).
+	 */
+	version: 3,
 	params: {},
 	hostAddress: serverHost,
-	variants: {
-		owner: {
-			state: { forwards: List, radiusOrigin: union([str(), nul()]) },
-			methods: {
-				add: method(
-					obj({
-						port: int({ minimum: 1, maximum: 65535 }),
-						name: opt(str({ maxLength: 40 })),
-						public: opt(bool()),
-					}),
-				),
-				remove: method(obj({ id: str() })),
-				setPublic: method(obj({ id: str(), public: bool() })),
-			},
-		},
-		worker: {
-			methods: {
-				query: method(obj({ conversation: literal(1), query: QuerySchema }), ReplySchema),
-			},
-		},
+	/** The owner's. */
+	state: { forwards: grantable(List), radiusOrigin: grantable(union([str(), nul()])) },
+	methods: {
+		add: grantable(
+			method(
+				obj({
+					port: int({ minimum: 1, maximum: 65535 }),
+					name: opt(str({ maxLength: 40 })),
+					public: opt(bool()),
+				}),
+			),
+		),
+		remove: grantable(method(obj({ id: str() }))),
+		setPublic: grantable(method(obj({ id: str(), public: bool() }))),
+		/** A worker's. */
+		query: grantable(method(obj({ conversation: literal(1), query: QuerySchema }), ReplySchema)),
 	},
 });
+
+/** What the owner is granted on `Ports`. */
+export const PORTS_OWNER = ["forwards", "radiusOrigin", "add", "remove", "setPublic"] as const;
+
+/** The owner's reference to the forwards. */
+export type PortsOwner = RefWith<typeof Ports, (typeof PORTS_OWNER)[number]>;

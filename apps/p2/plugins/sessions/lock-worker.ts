@@ -4,7 +4,7 @@ import type { Harness } from "@earendil-works/pi-durable";
 import {
 	type Context,
 	type Ctx,
-	expectVariant,
+	expectGranted,
 	type FacetHost,
 	type SessionLock as Lock,
 	local,
@@ -31,7 +31,7 @@ export function serveLockMirror(host: FacetHost): void {
 		const harness = harnessOf(self);
 		const view = self.get(SessionLock, {});
 		self.onLive(async (ctx: Ctx) => {
-			const watch = await expectVariant(view, "worker").lock.watch(ctx);
+			const watch = await expectGranted(view, "lock").lock.watch(ctx);
 			// One commit at a time, the newest value last.
 			let chain = mirrorLock(harness().durable, watch.value, durableContext(ctx)).catch(report);
 			watch.start(async (call) => {

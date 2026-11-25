@@ -112,13 +112,13 @@ const READS = {
 };
 
 /**
- * The telemetry store's reads (server). `owner`: the owner's pages. `agent`: a session's worker, for its agent's tools;
- * each call is refused (`forbidden`) while the session is shared (a link, a guest or a person: a guest reading the
+ * The telemetry store's reads (server), for the owner's pages and a session's worker (its agent's tools); a worker's
+ * call is refused (`forbidden`) while the session is shared (a link, a guest or a person: a guest reading the
  * transcript would read what the agent found) or locked. Anyone else is refused.
  */
 export const Traces = remote("p2.traces", {
-	version: 1,
+	version: 2,
 	params: {},
 	hostAddress: serverHost,
-	variants: { owner: { methods: READS }, agent: { methods: READS } },
+	methods: READS,
 });

@@ -11,14 +11,14 @@ import { join } from "node:path";
 import type { Duplex } from "node:stream";
 import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { Models } from "../../plugins/models/contract.ts";
-import { Catalog, Sessions } from "../../plugins/sessions/contract.ts";
+import { Catalog, SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
 import { Subagents } from "../../plugins/subagents/contract.ts";
 import { Browser, browserTests, COMPOSER, composerText, setComposer } from "./browser.ts";
-import { type Fixture, holdIn, poll, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, poll, startFixture, until } from "./helpers.ts";
 
 const setInput = (selector: string, value: string) =>
 	`(() => { const input=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(input.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new Event('input',{bubbles:true})); })()`;
@@ -169,7 +169,7 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 
 	it("orders pinned sessions first, shows and hides subagents behind the session's chevron, and shows a working subagent on its collapsed session", async () => {
 		const owner = fixture.browser();
-		const sessions = await holdIn(owner, Sessions, {}, "owner");
+		const sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		const second = join(fixture.workspace, "second");
 		mkdirSync(second);
 		const pinned = await sessions.create({ cwd: fixture.workspace, title: "Pinned parent" }, BACKGROUND_CONTEXT);
@@ -190,9 +190,9 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 			`[...document.querySelectorAll('.sidebar-section[data-key=other] .session-main .session-title')].map(e=>e.textContent)`,
 		);
 		assert.deepEqual(titles.slice(0, 3), ["Pinned parent", "Other directory", "Recent sibling"]);
-		const chat = await holdIn(owner, Chat, { session: pinned.id, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session: pinned.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await chat.send({ text: "subagent", requestId: "drawer-child" }, BACKGROUND_CONTEXT);
-		const agents = await holdIn(owner, Subagents, {}, "reader");
+		const agents = await holdWith(owner, Subagents, {}, "children");
 		const children = await until(agents.children, (children) => Boolean(children?.[pinned.id]?.length));
 		const child = children?.[pinned.id]?.[0];
 		assert(child);
@@ -215,11 +215,11 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 		await browser.wait(`${conversations}.hidden`);
 		// While only the subagent works, its collapsed session shows pi's dots as its status, as when its main
 		// conversation works; shown, the subagent's item has them as its status too.
-		const childChat = await holdIn(
+		const childChat = await holdWith(
 			owner,
 			Chat,
 			{ session: pinned.id, conversation: child.conversationId },
-			"participant",
+			...CHAT_PARTICIPANT,
 		);
 		await childChat.send({ text: "slow child", requestId: "drawer-busy" }, BACKGROUND_CONTEXT);
 		// The status settles once the main conversation's last answer is read (the session is open).
@@ -245,10 +245,10 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 
 	it("stops a session's run from its item, its queued follow-up waiting as the owner's draft; archives it from its item", async () => {
 		const owner = fixture.browser();
-		const sessions = await holdIn(owner, Sessions, {}, "owner");
+		const sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		const session = await sessions.create({ cwd: fixture.workspace, title: "Item actions" }, BACKGROUND_CONTEXT);
-		const chat = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
-		const status = await holdIn(owner, SessionStatus, {}, "reader");
+		const chat = await holdWith(owner, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
+		const status = await holdWith(owner, SessionStatus, {}, "statuses");
 		await chat.send({ text: "slow item", requestId: "item-run" }, BACKGROUND_CONTEXT);
 		await chat.send({ text: "queued next", requestId: "item-queued", whenBusy: "followUp" }, BACKGROUND_CONTEXT);
 		await until(chat.view, (view) => JSON.stringify(view?.docs["pi.inbox"] ?? null).includes("queued next"));
@@ -279,7 +279,7 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 	});
 
 	it("preserves rename, pin and archive after moving actions out of session rows", async () => {
-		const sessions = await holdIn(fixture.browser(), Sessions, {}, "owner");
+		const sessions = await holdWith(fixture.browser(), Sessions, {}, ...SESSIONS_OWNER);
 		const session = await sessions.create({ cwd: fixture.workspace, title: "Options original" }, BACKGROUND_CONTEXT);
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${session.id}`);
 		await browser.click('.main button[aria-label="Session options"]');
@@ -307,7 +307,7 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 	});
 
 	it("drags the phone drawer open from anywhere on the chat and closed on the drawer, never while scrolling, mirrored in RTL", async () => {
-		const sessions = await holdIn(fixture.browser(), Sessions, {}, "owner");
+		const sessions = await holdWith(fixture.browser(), Sessions, {}, ...SESSIONS_OWNER);
 		const session = await sessions.create({ cwd: fixture.workspace, title: "Swipe target" }, BACKGROUND_CONTEXT);
 		const touch = (type: string, x?: number, y?: number) =>
 			browser.call("Input.dispatchTouchEvent", { type, touchPoints: x === undefined ? [] : [{ x, y }] });
@@ -531,7 +531,7 @@ describe("guest drawer in Chromium", { skip: !browserTests }, () => {
 		try {
 			fixture = await startFixture({ web: true, allowedHosts: [host] });
 			const owner = fixture.browser(),
-				sessions = await holdIn(owner, Sessions, {}, "owner");
+				sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 			const shared = await sessions.create({ cwd: fixture.workspace, title: "Shared visible" }, BACKGROUND_CONTEXT);
 			await sessions.create({ cwd: fixture.workspace, title: "Private hidden" }, BACKGROUND_CONTEXT);
 			const sharing = owner.hold(Sharing, { session: shared.id }, BACKGROUND_CONTEXT);

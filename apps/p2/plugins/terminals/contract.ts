@@ -29,32 +29,29 @@ export const TerminalServices = defineRegistry<
 
 /** One owner-only view, scoped to a session. Control is chord2; terminal input/output is a separate byte channel. */
 export const Terminals = remote("p2.terminals", {
-	// 2: `open` names the conversation whose location the terminal opens at.
-	version: 2,
+	// 2: `open` names the conversation whose location the terminal opens at. 3: a new base (grantable members replaced
+	// variants; older versions are refused).
+	version: 3,
 	params: { session: param.str(), view: param.str() },
 	hostAddress: serverHost,
-	variants: {
-		owner: {
-			state: {},
-			methods: {
-				channel: method(Empty, obj({ token: str() })),
-				list: method(Empty),
-				/** A new terminal where the session's `conversation` works (a subagent's own location, else the session's). */
-				open: method(obj({ ...propertiesOf(Size), conversation: int({ minimum: 1 }) })),
-				attach: method(obj({ terminalId: str({ minLength: 1, maxLength: 64 }) })),
-				close: method(obj({ force: opt(bool()) })),
-				resize: method(Size),
-				theme: method(
-					obj({
-						foreground: Color,
-						background: Color,
-						scheme: union([literal("light"), literal("dark")]),
-					}),
-				),
-				ack: method(obj({ bytes: int({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }) })),
-				restartHost: method(Empty),
-			},
-		},
+	state: {},
+	methods: {
+		channel: method(Empty, obj({ token: str() })),
+		list: method(Empty),
+		/** A new terminal where the session's `conversation` works (a subagent's own location, else the session's). */
+		open: method(obj({ ...propertiesOf(Size), conversation: int({ minimum: 1 }) })),
+		attach: method(obj({ terminalId: str({ minLength: 1, maxLength: 64 }) })),
+		close: method(obj({ force: opt(bool()) })),
+		resize: method(Size),
+		theme: method(
+			obj({
+				foreground: Color,
+				background: Color,
+				scheme: union([literal("light"), literal("dark")]),
+			}),
+		),
+		ack: method(obj({ bytes: int({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }) })),
+		restartHost: method(Empty),
 	},
 });
 
@@ -100,43 +97,39 @@ export const TerminalReadSchema = obj({
  * archived session, and new terminals only on environments the session works on.
  */
 export const AgentTerminals = remote("p2.agent-terminals", {
-	version: 1,
+	version: 2,
 	params: {},
 	hostAddress: serverHost,
-	variants: {
-		worker: {
-			methods: {
-				/** The session's terminals, each with the job in front of its shell while one runs. */
-				list: method(Empty, obj({ windows: arr(obj({ terminal: TerminalInfoSchema, foreground: opt(str()) })) })),
-				/** A new terminal at `location`, a shell; `command` is typed into it. */
-				open: method(
-					obj({
-						key: CallKey,
-						location: LocationSchema,
-						name: opt(str({ minLength: 1, maxLength: 60 })),
-						command: opt(str({ maxLength: 64 * 1024 })),
-					}),
-					TerminalInfoSchema,
-				),
-				/** tmux `send-keys`: key names as keys, other arguments as text; all text when `literal`. */
-				send: method(
-					obj({ key: CallKey, target: Target, keys: arr(str({ maxLength: 64 * 1024 })), literal: bool() }),
-					TerminalInfoSchema,
-				),
-				/** Where the next read without `from` starts. */
-				cursor: method(obj({ target: Target }), obj({ terminal: TerminalInfoSchema, offset: int({ minimum: 0 }) })),
-				/** Output since `from` (default: the read cursor) as plain text, after an optional wait. */
-				read: method(
-					obj({ target: Target, from: opt(int({ minimum: 0 })), wait: opt(TerminalWaitSchema) }),
-					TerminalReadSchema,
-				),
-				/** tmux `capture-pane`: the screen as plain text, up to `scrollback` lines before it; styled with `escapes`. */
-				capture: method(
-					obj({ target: Target, scrollback: int({ minimum: 0, maximum: 100_000 }), escapes: opt(bool()) }),
-					obj({ terminal: TerminalInfoSchema, text: str() }),
-				),
-				close: method(obj({ key: CallKey, target: Target }), obj({ terminalId: str() })),
-			},
-		},
+	methods: {
+		/** The session's terminals, each with the job in front of its shell while one runs. */
+		list: method(Empty, obj({ windows: arr(obj({ terminal: TerminalInfoSchema, foreground: opt(str()) })) })),
+		/** A new terminal at `location`, a shell; `command` is typed into it. */
+		open: method(
+			obj({
+				key: CallKey,
+				location: LocationSchema,
+				name: opt(str({ minLength: 1, maxLength: 60 })),
+				command: opt(str({ maxLength: 64 * 1024 })),
+			}),
+			TerminalInfoSchema,
+		),
+		/** tmux `send-keys`: key names as keys, other arguments as text; all text when `literal`. */
+		send: method(
+			obj({ key: CallKey, target: Target, keys: arr(str({ maxLength: 64 * 1024 })), literal: bool() }),
+			TerminalInfoSchema,
+		),
+		/** Where the next read without `from` starts. */
+		cursor: method(obj({ target: Target }), obj({ terminal: TerminalInfoSchema, offset: int({ minimum: 0 }) })),
+		/** Output since `from` (default: the read cursor) as plain text, after an optional wait. */
+		read: method(
+			obj({ target: Target, from: opt(int({ minimum: 0 })), wait: opt(TerminalWaitSchema) }),
+			TerminalReadSchema,
+		),
+		/** tmux `capture-pane`: the screen as plain text, up to `scrollback` lines before it; styled with `escapes`. */
+		capture: method(
+			obj({ target: Target, scrollback: int({ minimum: 0, maximum: 100_000 }), escapes: opt(bool()) }),
+			obj({ terminal: TerminalInfoSchema, text: str() }),
+		),
+		close: method(obj({ key: CallKey, target: Target }), obj({ terminalId: str() })),
 	},
 });

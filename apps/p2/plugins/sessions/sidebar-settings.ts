@@ -44,15 +44,12 @@ export function serveSidebarSettings(host: FacetHost): void {
 		if (!isOwner(principal)) throw forbidden("sidebar settings are the owner's");
 		const store = self.get(SidebarSettingsStore, {});
 		return {
-			variant: "owner",
-			members: {
-				order: store.order,
-				windows: store.windows,
-				collapsed: store.collapsed,
-				setOrder: (args, ctx) => store.setOrder(args, ctx),
-				setWindow: (args, ctx) => store.setWindow(args, ctx),
-				setCollapsed: (args, ctx) => store.setCollapsed(args, ctx),
-			},
+			order: store.order,
+			windows: store.windows,
+			collapsed: store.collapsed,
+			setOrder: (args, ctx) => store.setOrder(args, ctx),
+			setWindow: (args, ctx) => store.setWindow(args, ctx),
+			setCollapsed: (args, ctx) => store.setCollapsed(args, ctx),
 		};
 	});
 }

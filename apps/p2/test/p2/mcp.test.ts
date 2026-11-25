@@ -17,12 +17,12 @@ import { Hosts, Server, type WorkerState } from "@p2/app/v1/server";
 import type { EnvConfig } from "../../plugins/envs/config.ts";
 import { EnvService } from "../../plugins/envs/contract.ts";
 import { expandHostVariables, parseOwnerConfig } from "../../plugins/mcp/config.ts";
-import { type Instance, Mcp, McpManager } from "../../plugins/mcp/contract.ts";
+import { type Instance, MCP_OWNER, MCP_WORKER, Mcp, McpManager } from "../../plugins/mcp/contract.ts";
 import type { ConnectEnv } from "../../plugins/mcp/environments.ts";
 import { mcpServerFacet } from "../../plugins/mcp/server.ts";
 import { Catalog, type Session, SessionLocks } from "../../plugins/sessions/contract.ts";
 import { type Child, ChildStore } from "../../plugins/subagents/contract.ts";
-import { APP, type Cell, expectChord, failureOf, holdIn, poll, settled, TEST, testHost, until } from "./helpers.ts";
+import { APP, type Cell, expectChord, failureOf, holdWith, poll, settled, TEST, testHost, until } from "./helpers.ts";
 
 const FIXTURE = fileURLToPath(new URL("../fixtures/mcp-server.mjs", import.meta.url));
 /** The pi-env daemon environments start servers through: `PI_ENV_DAEMON`, else the debug build of packages/env. */
@@ -219,7 +219,7 @@ async function mcpHost(
 		},
 		/** Fixture process starts so far. */
 		starts: () => (existsSync(paths.log) ? readFileSync(paths.log, "utf8").trim().split("\n").filter(Boolean) : []),
-		owner: () => holdIn(fixture.client(OWNER), Mcp, {}, "owner"),
+		owner: () => holdWith(fixture.client(OWNER), Mcp, {}, ...MCP_OWNER),
 		/**
 		 * The view of `session`'s worker `generation` (published as the session's running worker unless `stale`), the
 		 * session working on `env` (default this machine) unless the catalog lists it already.
@@ -227,7 +227,7 @@ async function mcpHost(
 		worker: async (session: string, generation = 1, options: { stale?: boolean; env?: string | null } = {}) => {
 			await listed(session, options.env ?? null);
 			if (!options.stale) await running(session, generation);
-			const ref = await holdIn(fixture.client({ kind: "worker", session, generation }), Mcp, {}, "worker");
+			const ref = await holdWith(fixture.client({ kind: "worker", session, generation }), Mcp, {}, ...MCP_WORKER);
 			workers.push(ref);
 			return ref;
 		},
@@ -520,12 +520,12 @@ test("a view outlives its last reference by the linger: a worker re-taking it ke
 	await host.running("s1", 1);
 	// One worker host (one incarnation) whose object lets go of the view and takes it again.
 	const worker = host.fixture.client({ kind: "worker", session: "s1", generation: 1 });
-	const first = await holdIn(worker, Mcp, {}, "worker");
+	const first = await holdWith(worker, Mcp, {}, ...MCP_WORKER);
 	await first.setLocations({ locations: [one] }, TEST);
 	await until(first.servers, isUp("files"));
 	const pid = (await whoami(first, one, "files")).pid;
 	first.release();
-	const again = await holdIn(worker, Mcp, {}, "worker");
+	const again = await holdWith(worker, Mcp, {}, ...MCP_WORKER);
 	assert.equal((await whoami(again, one, "files")).pid, pid);
 	assert.equal(host.starts().length, 1);
 	again.release();

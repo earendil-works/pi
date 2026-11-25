@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { BACKGROUND_CONTEXT, whenLive } from "@p2/app/v1";
 import { SidebarSettings } from "../../plugins/sessions/contract.ts";
 import { startServer } from "../../src/hosts/server.ts";
-import { expectChord, holdIn, startFixture, until } from "./helpers.ts";
+import { expectChord, holdWith, startFixture, until } from "./helpers.ts";
 
 test("sidebar settings are the owner's, start empty, and are kept across a restart", async (t) => {
 	const fixture = await startFixture();
@@ -14,7 +14,7 @@ test("sidebar settings are the owner's, start empty, and are kept across a resta
 		await restarted?.close();
 		await fixture.close();
 	});
-	const settings = await holdIn(fixture.browser(), SidebarSettings, {}, "owner");
+	const settings = await holdWith(fixture.browser(), SidebarSettings, {});
 	assert.deepEqual(await until(settings.order, (order) => order !== undefined), []);
 	assert.deepEqual(settings.windows.value, {});
 	assert.deepEqual(settings.collapsed.value, {});
@@ -32,7 +32,7 @@ test("sidebar settings are the owner's, start empty, and are kept across a resta
 
 	await fixture.server.close();
 	restarted = await startServer({ dataDir: fixture.dataDir, port: fixture.server.port, fake: true, web: false });
-	const after = await holdIn(fixture.browser(), SidebarSettings, {}, "owner");
+	const after = await holdWith(fixture.browser(), SidebarSettings, {});
 	assert.deepEqual(await until(after.order, (order) => order?.length === 2), ["folders", "recent"]);
 	assert.deepEqual(after.windows.value, { recent: "1w" });
 	assert.deepEqual(after.collapsed.value, { projects: true });

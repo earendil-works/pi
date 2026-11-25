@@ -88,28 +88,24 @@ export const LoginService = local("p2.login-service", {
  * while one runs, and cannot start, answer or cancel it.
  */
 export const ProviderLogin = remote("p2.provider-login", {
-	version: 1,
+	version: 2,
 	params: {},
 	hostAddress: serverHost,
-	variants: {
-		owner: {
-			state: { providers: arr(ProviderSchema), login: union([LoginStateSchema, nul()]) },
-			methods: {
-				start: method(obj({ providerId: str(), authType: AuthTypeSchema }), AttemptSchema),
-				answer: method(
-					obj({
-						attemptId: str(),
-						promptId: str(),
-						value: str({ maxLength: 100_000 }),
-					}),
-				),
-				cancel: method(AttemptSchema),
-				/** Clears a finished login. */
-				dismiss: method(AttemptSchema),
-				logout: method(ProviderIdSchema),
-				/** Fetches the provider's current model list; returns how many models it has. */
-				refresh: method(ProviderIdSchema, obj({ models: num() })),
-			},
-		},
+	state: { providers: arr(ProviderSchema), login: union([LoginStateSchema, nul()]) },
+	methods: {
+		start: method(obj({ providerId: str(), authType: AuthTypeSchema }), AttemptSchema),
+		answer: method(
+			obj({
+				attemptId: str(),
+				promptId: str(),
+				value: str({ maxLength: 100_000 }),
+			}),
+		),
+		cancel: method(AttemptSchema),
+		/** Clears a finished login. */
+		dismiss: method(AttemptSchema),
+		logout: method(ProviderIdSchema),
+		/** Fetches the provider's current model list; returns how many models it has. */
+		refresh: method(ProviderIdSchema, obj({ models: num() })),
 	},
 });

@@ -7,11 +7,11 @@ import { after, before, describe, it } from "node:test";
 import type { ConversationView } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { Artifacts } from "../../plugins/artifacts/contract.ts";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { type Session, Sessions } from "../../plugins/sessions/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
+import { SESSIONS_OWNER, type Session, Sessions } from "../../plugins/sessions/contract.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
 import type { Host } from "../../src/runtime/chord.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 const text = (view: ConversationView | null | undefined) =>
 	(view?.entries ?? [])
@@ -29,12 +29,11 @@ describe("clone and fork (fake provider)", () => {
 	let fixture: Fixture;
 	let owner: Host;
 	let source: Session;
-	const chatOf = (id: string) => holdIn(owner, Chat, { session: id, conversation: 1 }, "participant");
+	const chatOf = (id: string) => holdWith(owner, Chat, { session: id, conversation: 1 }, ...CHAT_PARTICIPANT);
 	before(async () => {
 		fixture = await startFixture();
 		owner = fixture.browser();
-		const ref = await holdIn(owner, Sessions, {}, "owner");
-		if (ref.variant !== "owner") throw new Error("owner expected");
+		const ref = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		source = await ref.create({ cwd: fixture.workspace, title: "Parser work" }, BACKGROUND_CONTEXT);
 		const chat = await chatOf(source.id);
 		await chat.send({ text: "first", requestId: "1" }, BACKGROUND_CONTEXT);
@@ -43,7 +42,7 @@ describe("clone and fork (fake provider)", () => {
 		await until(chat.view, (view) => (view?.entries ?? []).some((entry) => entry.kind === "pi.tool-result"));
 		await chat.send({ text: "second", requestId: "3" }, BACKGROUND_CONTEXT);
 		await until(chat.view, (view) => text(view).includes("Echo: second"));
-		const status = await holdIn(owner, SessionStatus, {}, "reader");
+		const status = await holdWith(owner, SessionStatus, {}, "statuses");
 		await until(status.statuses, (value) => value?.[source.id]?.tasks === 0);
 		chat.release();
 	});
@@ -51,8 +50,7 @@ describe("clone and fork (fake provider)", () => {
 		await fixture?.close();
 	});
 	const ownerSessions = async () => {
-		const ref = await holdIn(owner, Sessions, {}, "owner");
-		if (ref.variant !== "owner") throw new Error("owner expected");
+		const ref = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		return ref;
 	};
 
@@ -60,7 +58,7 @@ describe("clone and fork (fake provider)", () => {
 		const ref = await ownerSessions();
 		const chosen = randomUUID();
 		// The page navigates to the copy before the answer: its worker waits until the copy is done.
-		const early = holdIn(owner, Chat, { session: chosen, conversation: 1 }, "participant");
+		const early = holdWith(owner, Chat, { session: chosen, conversation: 1 }, ...CHAT_PARTICIPANT);
 		const copy = await ref.clone({ id: source.id, copy: chosen }, BACKGROUND_CONTEXT);
 		assert.equal(copy.id, chosen);
 		assert.deepEqual(
@@ -78,7 +76,7 @@ describe("clone and fork (fake provider)", () => {
 		const view = await until(cloned.view, (next) => text(next).includes("Echo: second"));
 		assert.match(text(view), /Echo: first/);
 		// Artifacts come along (`SessionCopied`): listed and served under the new ID.
-		const list = await holdIn(owner, Artifacts, { session: copy.id }, "editor");
+		const list = await holdWith(owner, Artifacts, { session: copy.id }, "artifacts", "remove");
 		const artifacts = await until(list.artifacts, (value) => (value?.length ?? 0) === 1);
 		const query = new URLSearchParams({ session: copy.id, id: artifacts![0]!.id, version: "1" });
 		assert.equal((await fixture.http(`/artifact-frame?${query}`)).status, 200);
@@ -89,7 +87,7 @@ describe("clone and fork (fake provider)", () => {
 		await original.send({ text: "only in the original", requestId: "o1" }, BACKGROUND_CONTEXT);
 		const originalView = await until(original.view, (next) => text(next).includes("Echo: only in the original"));
 		assert.doesNotMatch(text(originalView), /only in the copy/);
-		const status = await holdIn(owner, SessionStatus, {}, "reader");
+		const status = await holdWith(owner, SessionStatus, {}, "statuses");
 		await until(status.statuses, (value) => value?.[source.id]?.tasks === 0);
 		cloned.release();
 		original.release();
@@ -129,7 +127,6 @@ describe("clone and fork (fake provider)", () => {
 			/Unknown message/,
 		);
 		// A running command keeps the worker busy: cloning waits for it.
-		if (original.variant !== "participant") throw new Error("participant expected");
 		const { shellId } = await original.shell(
 			{ command: "sleep 20", includeInContext: false, requestId: "s1" },
 			BACKGROUND_CONTEXT,

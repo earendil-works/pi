@@ -8,10 +8,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { processLogs } from "../../src/runtime/logs.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { holdIn, poll, startFixture } from "./helpers.ts";
+import { holdWith, poll, startFixture } from "./helpers.ts";
 
 const LEGACY = "MTIzNDU2Nzg5MDEyMzQ1Njc4.legacy-0.discord-token-sentinel";
 const ADDED = "MTIzNDU2Nzg5MDEyMzQ1Njc4.added-0.discord-token-sentinel";
@@ -37,7 +37,7 @@ test(
 		assert.equal(statSync(path).mode & 0o777, 0o600);
 		const session = (
 			await (
-				await holdIn(fixture.browser(), Sessions, {}, "owner")
+				await holdWith(fixture.browser(), Sessions, {}, ...SESSIONS_OWNER)
 			).create({ cwd: fixture.workspace, title: "Listener" }, BACKGROUND_CONTEXT)
 		).id;
 		const browser = await Browser.start();

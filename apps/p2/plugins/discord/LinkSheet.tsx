@@ -2,11 +2,11 @@
 // Pi and what the session may use (editable, saved in place and applied at once), and Unlink. Not linked: the form that
 // links it: the bot, its server, a channel no other session has, who may wake Pi, the sandbox the session moves into,
 // and what it may use there; Link stays disabled, saying what is missing, until every choice is made.
-import { BACKGROUND_CONTEXT, LOCK_CAPABILITIES, type LockCapability, type SessionLock } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, LOCK_CAPABILITIES, type LockCapability, liveWith, type SessionLock } from "@p2/app/v1";
 import { closeLayers, errorText, openLayer, Sheet, useObject, useReadable } from "@p2/app/v1/web";
 import { useEffect, useState } from "react";
 import { Envs } from "../envs/contract.ts";
-import { SessionLock as SessionLockView, Sessions } from "../sessions/contract.ts";
+import { SESSIONS_OWNER, SessionLock as SessionLockView, Sessions } from "../sessions/contract.ts";
 import { back, botName } from "./BotsSheet.tsx";
 import type { Binding, ServerDetails, Wake } from "./contract.ts";
 import { useDiscord } from "./held.ts";
@@ -254,10 +254,10 @@ function ResourceFields({
 function Linked({ binding }: { binding: Binding }) {
 	const discord = useDiscord();
 	const bot = useReadable(discord?.bots)?.find((each) => each.id === binding.botId);
-	const row = useReadable(useObject(Sessions, {}, { variant: "owner" })?.sessions)?.find(
+	const row = useReadable(liveWith(useObject(Sessions, {}), ...SESSIONS_OWNER)?.sessions)?.find(
 		(each) => each.id === binding.session,
 	);
-	const locks = useReadable(useObject(SessionLockView, {}, { variant: "owner" })?.locks);
+	const locks = useReadable(liveWith(useObject(SessionLockView, {}), "locks", "set")?.locks);
 	const connected = bot?.status.state === "connected";
 	const { server } = useServer(connected ? bot.id : undefined, binding.guildId);
 	const servers = useMcpServers();
@@ -400,7 +400,7 @@ type Choice = { bot: string; guild: string; channel: string; sandbox: string };
 function LinkForm({ session, bindings }: { session: string; bindings: readonly Binding[] }) {
 	const discord = useDiscord();
 	const bots = (useReadable(discord?.bots) ?? []).filter((bot) => bot.status.state === "connected");
-	const sessions = useReadable(useObject(Sessions, {}, { variant: "owner" })?.sessions) ?? [];
+	const sessions = useReadable(liveWith(useObject(Sessions, {}), ...SESSIONS_OWNER)?.sessions) ?? [];
 	const sandboxes = (useReadable(useObject(Envs, {})?.envs) ?? []).filter((env) => env.config.type === "gondolin");
 	const [choice, setChoice] = useState<Choice>({ bot: "", guild: "", channel: "", sandbox: "" });
 	const [access, setAccess] = useState<Access>(NO_ACCESS);

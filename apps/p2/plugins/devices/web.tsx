@@ -1,4 +1,4 @@
-import { BACKGROUND_CONTEXT, contribute, defineFacet, type Held } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, contribute, defineFacet, type Ref } from "@p2/app/v1";
 import {
 	CopyButton,
 	closeLayers,
@@ -13,7 +13,7 @@ import {
 import { useEffect, useState } from "react";
 import { Devices } from "./contract.ts";
 
-function DevicesSheet({ service }: { service: Held<typeof Devices> | undefined }) {
+function DevicesSheet({ service }: { service: Ref<typeof Devices> | undefined }) {
 	const canMint = useReadable(service?.canMint);
 	const [token, setToken] = useState<string>();
 	const [error, setError] = useState<string>();

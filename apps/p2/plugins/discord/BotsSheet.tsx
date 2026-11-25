@@ -1,7 +1,7 @@
 // The owner's Discord bots (Settings › Discord): the list with each bot's status, adding one by its token, and a bot's own
 // sheet (identity, its servers, the invite link, its linked sessions read-only, a new token, removing it). Linking a
 // session to a channel happens from the session (LinkSheet.tsx), not here.
-import { BACKGROUND_CONTEXT } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, liveWith } from "@p2/app/v1";
 import {
 	ChevronIcon,
 	CopyButton,
@@ -15,7 +15,7 @@ import {
 	useReadable,
 } from "@p2/app/v1/web";
 import { useState } from "react";
-import { Sessions } from "../sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../sessions/contract.ts";
 import type { BotStatus, BotView } from "./contract.ts";
 import { useDiscord } from "./held.ts";
 
@@ -154,7 +154,7 @@ export function BotSheet({ id }: { id: string }) {
 	const discord = useDiscord();
 	const bots = useReadable(discord?.bots);
 	const bindings = useReadable(discord?.bindings) ?? [];
-	const sessions = useReadable(useObject(Sessions, {}, { variant: "owner" })?.sessions) ?? [];
+	const sessions = useReadable(liveWith(useObject(Sessions, {}), ...SESSIONS_OWNER)?.sessions) ?? [];
 	const [token, setToken] = useState("");
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string>();

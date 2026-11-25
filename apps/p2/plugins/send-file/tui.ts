@@ -77,7 +77,7 @@ function preview(ctx: TuiContext, session: string, file: SentFile): void {
 	const ref = ctx.host.hold(SentFiles, { session }, BACKGROUND_CONTEXT);
 	void whenLive(ref)
 		.then(async () => {
-			if (statusOf(ref) !== "live" || ref.variant !== "reader") throw new Error("Sent files are not available");
+			if (statusOf(ref) !== "live") throw new Error("Sent files are not available");
 			const result = await ref.preview({ id: file.id }, BACKGROUND_CONTEXT);
 			const theme = ctx.theme.current;
 			lines =

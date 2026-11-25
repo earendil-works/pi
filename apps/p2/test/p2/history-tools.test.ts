@@ -9,13 +9,13 @@ import { after, before, describe, it } from "node:test";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type { ConversationView, EntryRecord, Tx } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT, follow } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { readEntries, renderEntry, withinBudget } from "../../plugins/history/tools.ts";
 import { SearchDb } from "../../plugins/search/db.ts";
 import { ftsQuery } from "../../plugins/search/query.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 const entry = (id: number, fields: Record<string, unknown> = {}) =>
 	({ id, conversationId: 1, kind: "p2.input", ...fields }) as unknown as EntryRecord;
@@ -192,10 +192,10 @@ describe("history tools end to end (fake provider)", () => {
 
 	it("finds and reads an entry from before a compaction, and the entries before a handoff", async () => {
 		const owner = fixture.browser();
-		const sessions = await holdIn(owner, Sessions, {}, "owner");
-		const status = await holdIn(owner, SessionStatus, {}, "reader");
+		const sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
+		const status = await holdWith(owner, SessionStatus, {}, "statuses");
 		const session = await sessions.create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT);
-		const chat = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		const keep = follow(chat.view, () => {});
 		const idle = () => until(status.statuses, (value) => value?.[session.id]?.tasks === 0, 30_000);
 		const say = async (text: string, requestId: string) => {

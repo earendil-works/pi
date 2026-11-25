@@ -20,18 +20,14 @@ export type PluginReloadResult = Static<typeof PluginReloadResultSchema>;
 
 /** The server's plugin reload, for session workers (the `reload_plugins` tool). */
 export const PluginReload = remote("p2.plugin-reload", {
-	version: 1,
+	version: 2,
 	params: {},
 	hostAddress: serverHost,
-	variants: {
-		worker: {
-			methods: {
-				/** Reloads `plugins` (default: every dirty plugin and the user root's). */
-				reload: method(
-					obj({ plugins: opt(arr(str({ minLength: 1, maxLength: 100 }), { maxItems: 100 })) }),
-					PluginReloadResultSchema,
-				),
-			},
-		},
+	methods: {
+		/** Reloads `plugins` (default: every dirty plugin and the user root's). */
+		reload: method(
+			obj({ plugins: opt(arr(str({ minLength: 1, maxLength: 100 }), { maxItems: 100 })) }),
+			PluginReloadResultSchema,
+		),
 	},
 });

@@ -10,13 +10,13 @@ import { after, before, describe, it } from "node:test";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
 import type { ConversationView, EntryDraft, LiveState } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT, follow } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { Models } from "../../plugins/models/contract.ts";
-import { Sessions, SessionTransfer } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions, SessionTransfer } from "../../plugins/sessions/contract.ts";
 import type { Host } from "../../src/runtime/chord.ts";
 import { bigSessionEntries } from "../fixtures/big-session.ts";
 import { Browser, browserTests, COMPOSER } from "./browser.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 import { type ProbeReport, RENDER_PROBE } from "./render-probe.ts";
 
 const live = (view: ConversationView | null | undefined) => view?.docs["pi.live"] as LiveState | undefined;
@@ -126,7 +126,7 @@ describe("transcript stability", { skip: !browserTests }, () => {
 	let owner: Host;
 	const url = (path: string) => `http://127.0.0.1:${fixture.server.port}${path}`;
 	const seeded = async (title: string, entries: EntryDraft[]) => {
-		const session = await (await holdIn(owner, Sessions, {}, "owner")).create(
+		const session = await (await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)).create(
 			{ cwd: fixture.workspace, title },
 			BACKGROUND_CONTEXT,
 		);
@@ -163,7 +163,7 @@ describe("transcript stability", { skip: !browserTests }, () => {
 		// Long, yet well below the faux model's compaction threshold (128k less the reserve): a blocking compaction
 		// would hold the streamed answer back. 800 entries came within 450 tokens of it.
 		const session = await seeded("Long", bigSessionEntries(760, 400));
-		const chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
 		const stop = follow(chat.view, () => {});
 		try {
 			await browser.open(url(`/s/${session}`));
@@ -220,7 +220,7 @@ describe("transcript stability", { skip: !browserTests }, () => {
 
 	it("a run going Working… → wheel → words → wheel → answer shifts nothing", async () => {
 		const session = await seeded("Steps", bigSessionEntries(40, 400));
-		const chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
 		const stop = follow(chat.view, () => {});
 		try {
 			await browser.open(url(`/s/${session}`));

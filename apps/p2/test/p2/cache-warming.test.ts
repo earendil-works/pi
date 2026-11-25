@@ -21,9 +21,9 @@ import type { ConversationId, ConversationView, LiveState, UsageState } from "@e
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import type { ModelRequest } from "@p2/app/v1/worker";
 import { type CacheWarmingMode, ConversationWarmers } from "../../plugins/cache-warming/warmer.ts";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
-import { holdIn, startFixture, until } from "./helpers.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
+import { holdWith, startFixture, until } from "./helpers.ts";
 
 const MODEL: Model<"pi-messages"> = {
 	id: "claude-opus-5-5",
@@ -219,9 +219,11 @@ test(
 		);
 		const owner = fixture.browser();
 		const session = (
-			await (await holdIn(owner, Sessions, {}, "owner")).create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT)
+			await (
+				await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)
+			).create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT)
 		).id;
-		const chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await chat.send({ text: "hello", requestId: "m1" }, BACKGROUND_CONTEXT);
 		const live = (view: ConversationView | null | undefined) => view?.docs["pi.live"] as LiveState | undefined;
 		const tokens = (view: ConversationView | null | undefined) =>

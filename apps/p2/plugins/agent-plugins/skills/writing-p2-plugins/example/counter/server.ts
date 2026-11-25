@@ -92,21 +92,18 @@ export default defineFacet((host) => {
 			if (!agent && !canSend(principal, session)) throw forbidden("only people who may send here");
 		};
 		return {
-			variant: "player",
-			members: {
-				count,
-				present,
-				waved,
-				add: async ({ by }, ctx) => {
-					mayAdd();
-					await store.add({ session, by }, ctx);
-					return null;
-				},
-				wave: async (ctx) => {
-					mayAdd();
-					await store.wave({ session, from: name }, ctx);
-					return null;
-				},
+			count,
+			present,
+			waved,
+			add: async ({ by }, ctx) => {
+				mayAdd();
+				await store.add({ session, by }, ctx);
+				return null;
+			},
+			wave: async (ctx) => {
+				mayAdd();
+				await store.wave({ session, from: name }, ctx);
+				return null;
 			},
 		};
 	});

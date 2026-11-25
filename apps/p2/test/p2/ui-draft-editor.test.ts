@@ -6,11 +6,11 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import type { UserMessage } from "@earendil-works/pi-ai";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { fileReferences } from "../../src/runtime/references.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 const EDITOR = ".composer .draft-editor";
 /** The draft as the composer keeps it (it persists it for the tab). */
@@ -24,7 +24,7 @@ describe("draft editor", { skip: !browserTests }, () => {
 		fixture = await startFixture({ web: true });
 		id = (
 			await (
-				await holdIn(fixture.browser(), Sessions, {}, "owner")
+				await holdWith(fixture.browser(), Sessions, {}, ...SESSIONS_OWNER)
 			).create({ cwd: fixture.workspace, title: "Pills" }, BACKGROUND_CONTEXT)
 		).id;
 		browser = await Browser.start();
@@ -157,7 +157,7 @@ describe("draft editor", { skip: !browserTests }, () => {
 			),
 			["b.png", "a.png"],
 		);
-		const chat = await holdIn(fixture.browser(), Chat, { session: id, conversation: 1 }, "participant");
+		const chat = await holdWith(fixture.browser(), Chat, { session: id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		const view = await until(chat.view, (value) => (value?.entries ?? []).some((entry) => entry.kind === "p2.input"));
 		const message = view?.entries.find((entry) => entry.kind === "p2.input")?.model?.[0] as UserMessage;
 		assert(Array.isArray(message.content));

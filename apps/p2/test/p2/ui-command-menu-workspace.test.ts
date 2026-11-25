@@ -9,15 +9,14 @@ import { mkdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
+import { SESSIONS_OWNER, Sessions, type SessionsOwner } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import { localSystem, terminalDaemon } from "../../plugins/terminals/daemon.ts";
 import { connectTerminalHost } from "../../plugins/terminals/detached.ts";
 import { encodeFrame } from "../../plugins/terminals/protocol.ts";
-import type { RefIn } from "../../src/runtime/chord.ts";
 import { Browser, browserTests, COMPOSER } from "./browser.ts";
-import { APP, type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { APP, type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 /** Whether the menu is open or closed, as expressions. */
 const OPEN = `Boolean(document.querySelector('.command-menu'))`;
@@ -52,13 +51,13 @@ try {
 describe("command menu: workspace, terminal and folders", { skip: !browserTests }, () => {
 	let fixture: Fixture;
 	let browser: Browser;
-	let sessions: RefIn<typeof Sessions, "owner">;
+	let sessions: SessionsOwner;
 	let userAgent: string;
 	let base: string;
 
 	before(async () => {
 		fixture = await startFixture({ web: true });
-		sessions = await holdIn(fixture.browser(), Sessions, {}, "owner");
+		sessions = await holdWith(fixture.browser(), Sessions, {}, ...SESSIONS_OWNER);
 		browser = await Browser.start();
 		await browser.signIn(fixture.owner);
 		userAgent = ((await browser.call("Browser.getVersion")) as { userAgent: string }).userAgent;
@@ -244,7 +243,7 @@ describe("command menu: workspace, terminal and folders", { skip: !browserTests 
 			const id = await create("Change directory");
 			await openSession(id, "Change directory");
 			// A worker still starting refuses a move: one answered message says it runs, and idles.
-			const chat = await holdIn(fixture.browser(), Chat, { session: id, conversation: 1 }, "participant");
+			const chat = await holdWith(fixture.browser(), Chat, { session: id, conversation: 1 }, ...CHAT_PARTICIPANT);
 			await chat.send({ text: "hello", requestId: "change-directory" }, BACKGROUND_CONTEXT);
 			await browser.wait(`document.querySelector('.messages .assistant')?.textContent.includes('Echo: hello')`);
 			await openMenu();

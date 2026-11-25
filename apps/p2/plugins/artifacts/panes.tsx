@@ -2,7 +2,7 @@
 // sandboxed frame with the page's side of the bridge (`bridge.ts`: its state, selection, errors and logs, the agent's
 // code), a Markdown document rendered. Both show the artifact's newest version and follow new ones; a document keeps
 // the reader's place across versions.
-import { BACKGROUND_CONTEXT, type JsonValue, liveIn } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, type JsonValue, liveWith } from "@p2/app/v1";
 import {
 	errorText,
 	Markdown,
@@ -177,8 +177,8 @@ export function HtmlPane({ session, item, inline, view, editable, select, annota
 	useStatus(page);
 	const summary = useReadable(page?.summary);
 	const value = useReadable(page?.value);
-	const writer = liveIn(page, "editor");
-	const live = writer ?? liveIn(page, "viewer");
+	const writer = liveWith(page, "setState");
+	const live = liveWith(page);
 	const { fail } = useComposerState();
 	const inlineSize = useContext(InlineSizeContext);
 	// Inline, the frame starts at the height it last had (the page reports its own once it loads).

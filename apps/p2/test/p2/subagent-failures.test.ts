@@ -12,12 +12,12 @@ import { setTimeout as sleep } from "node:timers/promises";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ConversationView, LiveState } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { CHAT_PARTICIPANT, Chat, type ChatParticipant } from "../../plugins/chat/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { type Child, Subagents } from "../../plugins/subagents/contract.ts";
-import type { Host, RefIn } from "../../src/runtime/chord.ts";
-import { follow } from "../../src/runtime/refs.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import type { Host } from "../../src/runtime/chord.ts";
+import { follow, type RefWith } from "../../src/runtime/refs.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 const texts = (view: ConversationView | null | undefined): string[] =>
 	(view?.entries ?? []).flatMap((entry) =>
@@ -51,8 +51,8 @@ describe("subagent failures (fake provider)", () => {
 	let fixture: Fixture;
 	let owner: Host;
 	let session: string;
-	let chat: RefIn<typeof Chat, "participant">;
-	let children: RefIn<typeof Subagents, "reader">;
+	let chat: ChatParticipant;
+	let children: RefWith<typeof Subagents, "children">;
 	const childOf = (value: Record<string, Child[]> | undefined, name: string) =>
 		value?.[session]?.find((child) => child.name === name);
 	/** Every failure `failing` showed, in order, from the moment it first failed. */
@@ -70,10 +70,10 @@ describe("subagent failures (fake provider)", () => {
 		// Before the session's worker starts, which reads it.
 		await writeFile(join(fixture.dataDir, "models.json"), modelsJson(port));
 		owner = fixture.browser();
-		const sessions = await holdIn(owner, Sessions, {}, "owner");
+		const sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		session = (await sessions.create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT)).id;
-		chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
-		children = await holdIn(owner, Subagents, {}, "reader");
+		chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
+		children = await holdWith(owner, Subagents, {}, "children");
 		follow(children.children, (value) => {
 			const failing = childOf(value, "failing");
 			if (failing?.failure !== undefined || failingSeen.length > 0) failingSeen.push(failing?.failure ?? "absent");
@@ -103,7 +103,7 @@ describe("subagent failures (fake provider)", () => {
 
 	it("reports a stopped run as aborted (the stop keeps the streamed partial as an aborted entry)", async () => {
 		const helper = childOf(children.children.value, "helper")!;
-		const sub = await holdIn(owner, Chat, { session, conversation: helper.conversationId }, "participant");
+		const sub = await holdWith(owner, Chat, { session, conversation: helper.conversationId }, ...CHAT_PARTICIPANT);
 		await sub.send({ text: "slow stopped", requestId: "slow" }, BACKGROUND_CONTEXT);
 		// Stopped while the answer streams: its committed partial is kept.
 		await until(sub.view, (view) => live(view)?.generation?.message !== undefined, 30_000);
@@ -120,7 +120,7 @@ describe("subagent failures (fake provider)", () => {
 
 	it("clears the failure after a later answer", async () => {
 		const helper = childOf(children.children.value, "helper")!;
-		const sub = await holdIn(owner, Chat, { session, conversation: helper.conversationId }, "participant");
+		const sub = await holdWith(owner, Chat, { session, conversation: helper.conversationId }, ...CHAT_PARTICIPANT);
 		await sub.send({ text: "after the stop", requestId: "after" }, BACKGROUND_CONTEXT);
 		await until(sub.view, (view) => texts(view).includes("Echo: after the stop"), 30_000);
 		await until(children.children, (value) => childOf(value, "helper")?.failure === undefined, 30_000);
@@ -136,7 +136,7 @@ describe("subagent failures (fake provider)", () => {
 
 	it("reports a missing model as no_model, though its run ends in a commit without an entry", async () => {
 		const failing = childOf(children.children.value, "failing")!;
-		const sub = await holdIn(owner, Chat, { session, conversation: failing.conversationId }, "participant");
+		const sub = await holdWith(owner, Chat, { session, conversation: failing.conversationId }, ...CHAT_PARTICIPANT);
 		// The local provider leaves the configuration (hot-reloaded); a send until the worker's models follow.
 		await writeFile(join(fixture.dataDir, "models.json"), modelsJson(undefined));
 		for (let attempt = 1; ; attempt++) {

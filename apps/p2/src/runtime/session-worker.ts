@@ -18,32 +18,28 @@ export type SessionInit = {
 	readonly resume?: boolean;
 };
 export const WorkerBoundary = remote("p2.worker-boundary", {
-	version: 2,
+	version: 3,
 	params: { session: param.str() },
 	hostAddress: sessionHost,
-	variants: {
-		server: {
-			methods: {
-				/**
-				 * Fences admissions if nothing runs (`accepted`). With `to` (a relocation), the `RelocationChecks` run under the
-				 * fence too: a `refusal` lifts it again, before anything (the catalog included) moved.
-				 */
-				prepare: method(
-					union([nul(), obj({ to: LocationSchema })]),
-					obj({
-						accepted: bool(),
-						tasks: num(),
-						busy: arr(num()),
-						refusal: opt(str()),
-					}),
-				),
-				cancel: method(),
-				/**
-				 * After an accepted `prepare` and the catalog update: the worker follows the session to `location` in place
-				 * (`Harness.relocate`), then admits again. A failure leaves it fenced; the server restarts it.
-				 */
-				relocate: method(LocationSchema),
-			},
-		},
+	methods: {
+		/**
+		 * Fences admissions if nothing runs (`accepted`). With `to` (a relocation), the `RelocationChecks` run under the
+		 * fence too: a `refusal` lifts it again, before anything (the catalog included) moved.
+		 */
+		prepare: method(
+			union([nul(), obj({ to: LocationSchema })]),
+			obj({
+				accepted: bool(),
+				tasks: num(),
+				busy: arr(num()),
+				refusal: opt(str()),
+			}),
+		),
+		cancel: method(),
+		/**
+		 * After an accepted `prepare` and the catalog update: the worker follows the session to `location` in place
+		 * (`Harness.relocate`), then admits again. A failure leaves it fenced; the server restarts it.
+		 */
+		relocate: method(LocationSchema),
 	},
 });

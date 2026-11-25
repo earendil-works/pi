@@ -20,35 +20,34 @@ export const EnvInfoSchema = obj({
 export type EnvInfo = Static<typeof EnvInfoSchema>;
 
 export const AgentLocations = remote("p2.agent-locations", {
-	/** 2: no `origin` (p2 has no per-turn authority). Only workers hold it, and they reload with the server. */
-	version: 2,
+	/**
+	 * 2: no `origin` (p2 has no per-turn authority). Only workers hold it, and they reload with the server. 3: a new
+	 * base (grantable members replaced variants; older versions are refused).
+	 */
+	version: 3,
 	params: {},
 	hostAddress: serverHost,
-	variants: {
-		worker: {
-			methods: {
-				/** The configured SSH environments and sandboxes (this device is always available besides them). */
-				envs: method(undefined, obj({ envs: arr(EnvInfoSchema) })),
-				/** Folders of `path` (absolute or `~`-relative) on `env` (null: this device), as the directory picker lists them. */
-				directories: method(
-					obj({
-						env: union([str(), nul()]),
-						path: str({ minLength: 1 }),
-					}),
-					DirectoryListingSchema,
-				),
-				/**
-				 * Moves the worker's session (`SessionMoves.relocate`); `refused` is why its busy worker could not be fenced
-				 * (nothing moved). A session working in a sandbox only moves within it (only the owner's Relocate leaves it).
-				 */
-				move: method(
-					obj({
-						env: union([str(), nul()]),
-						cwd: str({ minLength: 1 }),
-					}),
-					obj({ refused: union([str(), nul()]) }),
-				),
-			},
-		},
+	methods: {
+		/** The configured SSH environments and sandboxes (this device is always available besides them). */
+		envs: method(undefined, obj({ envs: arr(EnvInfoSchema) })),
+		/** Folders of `path` (absolute or `~`-relative) on `env` (null: this device), as the directory picker lists them. */
+		directories: method(
+			obj({
+				env: union([str(), nul()]),
+				path: str({ minLength: 1 }),
+			}),
+			DirectoryListingSchema,
+		),
+		/**
+		 * Moves the worker's session (`SessionMoves.relocate`); `refused` is why its busy worker could not be fenced
+		 * (nothing moved). A session working in a sandbox only moves within it (only the owner's Relocate leaves it).
+		 */
+		move: method(
+			obj({
+				env: union([str(), nul()]),
+				cwd: str({ minLength: 1 }),
+			}),
+			obj({ refused: union([str(), nul()]) }),
+		),
 	},
 });

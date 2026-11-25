@@ -45,16 +45,12 @@ export const FileIndexCache = local("p2.file-index-cache", {
  * only (holding it leases the workspace watch). `changes` advances when files change: clients query again.
  */
 export const FileIndex = remote("p2.file-index", {
-	version: 1,
+	version: 2,
 	params: { session: param.str(), conversation: param.int({ min: 1 }) },
 	hostAddress: sessionHost,
-	variants: {
-		reader: {
-			state: { changes: num() },
-			methods: {
-				complete: method(CompleteSchema, CompleteResultSchema),
-				list: method(ListSchema, ListResultSchema),
-			},
-		},
+	state: { changes: num() },
+	methods: {
+		complete: method(CompleteSchema, CompleteResultSchema),
+		list: method(ListSchema, ListResultSchema),
 	},
 });

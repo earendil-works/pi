@@ -16,13 +16,13 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { VirtualTerminal } from "../../../../packages/tui/test/virtual-terminal.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { launcherActions, localPath, openLocalFile, uploadName } from "../../src/hosts/tui-actions.ts";
 import { startTuiClient } from "../../src/hosts/tui-client.ts";
 import { Grants, type LauncherAction, type LauncherActionContext } from "../../src/hosts/tui-grants.ts";
 import { TrustedUi } from "../../src/hosts/tui-trusted-ui.ts";
 import { hostFiles, sessionDirectory } from "../../src/runtime/host-dirs.ts";
-import { holdIn, poll, startFixture } from "./helpers.ts";
+import { holdWith, poll, startFixture } from "./helpers.ts";
 
 const supported = Number(process.versions.node.split(".")[0]) >= 26;
 const C = (action: LauncherAction | undefined) => {
@@ -115,7 +115,7 @@ test("uploads: the bound session, fixed route and Origin, confirmation first, no
 	writeFileSync(file, "hello upload");
 	const fixture = await startFixture();
 	t.after(() => fixture.close());
-	const session = await (await holdIn(fixture.browser(), Sessions, {}, "owner")).create(
+	const session = await (await holdWith(fixture.browser(), Sessions, {}, ...SESSIONS_OWNER)).create(
 		{ cwd: fixture.workspace },
 		BACKGROUND_CONTEXT,
 	);
@@ -174,7 +174,7 @@ test("uploads: the bound session, fixed route and Origin, confirmation first, no
 test("Ctrl+V: an image uploads after confirmation; text is pasted as typed; files go through the facts", async (t) => {
 	const fixture = await startFixture();
 	t.after(() => fixture.close());
-	const session = await (await holdIn(fixture.browser(), Sessions, {}, "owner")).create(
+	const session = await (await holdWith(fixture.browser(), Sessions, {}, ...SESSIONS_OWNER)).create(
 		{ cwd: fixture.workspace },
 		BACKGROUND_CONTEXT,
 	);
@@ -222,7 +222,7 @@ test(
 		writeFileSync(file, "quarterly numbers");
 		const fixture = await startFixture();
 		t.after(() => fixture.close());
-		await (await holdIn(fixture.browser(), Sessions, {}, "owner")).create(
+		await (await holdWith(fixture.browser(), Sessions, {}, ...SESSIONS_OWNER)).create(
 			{ cwd: fixture.workspace },
 			BACKGROUND_CONTEXT,
 		);

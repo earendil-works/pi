@@ -6,8 +6,7 @@
 
 import type { AuthEvent } from "@earendil-works/pi-ai";
 import { type Component, type Focusable, Input, SelectList, truncateToWidth } from "@earendil-works/pi-tui";
-import type { Held } from "@p2/app/v1";
-import { BACKGROUND_CONTEXT, contribute, defineFacet, follow, liveIn, statusOf, whenLive } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, contribute, defineFacet, follow, live, type Ref, statusOf, whenLive } from "@p2/app/v1";
 import type { TuiContext } from "@p2/app/v1/tui";
 import { ListOverlay, lineText, SecretInput, type TuiCommand, TuiCommands } from "@p2/app/v1/tui";
 import { type LoginState, ProviderLogin } from "./contract.ts";
@@ -40,7 +39,7 @@ const opensInBrowser = (event: AuthEvent): boolean =>
 export class LoginDialog implements Component, Focusable {
 	private isFocused = false;
 	private readonly ctx: TuiContext;
-	private readonly ref: Held<typeof ProviderLogin>;
+	private readonly ref: Ref<typeof ProviderLogin>;
 	private readonly provider: Provider;
 	private readonly onDone: () => void;
 	private state: LoginState | null = null;
@@ -51,7 +50,7 @@ export class LoginDialog implements Component, Focusable {
 	private status = "";
 	private stop: () => void;
 	private closed = false;
-	constructor(ctx: TuiContext, ref: Held<typeof ProviderLogin>, provider: Provider, onDone: () => void) {
+	constructor(ctx: TuiContext, ref: Ref<typeof ProviderLogin>, provider: Provider, onDone: () => void) {
 		this.ctx = ctx;
 		this.ref = ref;
 		this.provider = provider;
@@ -60,7 +59,7 @@ export class LoginDialog implements Component, Focusable {
 		this.input.onSubmit = (value) => this.answer(value);
 		this.secret.onSubmit = (value) => this.answer(value);
 		this.stop =
-			statusOf(ref) === "live" && ref.variant === "owner"
+			statusOf(ref) === "live"
 				? follow(ref.login, (state) => {
 						this.state = state ?? null;
 						this.syncPrompt();
@@ -78,7 +77,7 @@ export class LoginDialog implements Component, Focusable {
 	}
 	private owner() {
 		const ref = this.ref;
-		return liveIn(ref, "owner");
+		return live(ref);
 	}
 	private current(): LoginState | null {
 		return this.state && this.state.providerId === this.provider.id ? this.state : null;
@@ -307,7 +306,7 @@ export class LoginDialog implements Component, Focusable {
 }
 
 /** Holds `ProviderLogin` for the whole flow (the server ends an unfinished login once no hold remains for a while). */
-async function providerLogin(ctx: TuiContext): Promise<Held<typeof ProviderLogin> | undefined> {
+async function providerLogin(ctx: TuiContext): Promise<Ref<typeof ProviderLogin> | undefined> {
 	const ref = ctx.host.hold(ProviderLogin, {}, BACKGROUND_CONTEXT);
 	try {
 		await whenLive(ref);
@@ -316,14 +315,9 @@ async function providerLogin(ctx: TuiContext): Promise<Held<typeof ProviderLogin
 		ctx.notify(error instanceof Error ? error.message : String(error), "error");
 		return undefined;
 	}
-	if (ref.variant !== "owner") {
-		ref.release();
-		return undefined;
-	}
 	return ref;
 }
-async function providers(ref: Held<typeof ProviderLogin>): Promise<Provider[]> {
-	if (ref.variant !== "owner") return [];
+async function providers(ref: Ref<typeof ProviderLogin>): Promise<Provider[]> {
 	return new Promise((resolve) => {
 		const stop = follow(ref.providers, (value) => {
 			if (value === undefined) return;
@@ -361,8 +355,7 @@ function choose(
 	);
 }
 
-function start(ctx: TuiContext, ref: Held<typeof ProviderLogin>, provider: Provider, authType: "api_key" | "oauth") {
-	if (ref.variant !== "owner") return;
+function start(ctx: TuiContext, ref: Ref<typeof ProviderLogin>, provider: Provider, authType: "api_key" | "oauth") {
 	const dialog = new LoginDialog(ctx, ref, provider, () => overlay.close());
 	const overlay = ctx.overlay("login", dialog, { width: "100%", anchor: "bottom-center" });
 	void ref.start({ providerId: provider.id, authType }, BACKGROUND_CONTEXT).catch((error: unknown) => {
@@ -415,7 +408,7 @@ async function login(ctx: TuiContext, name: string | undefined): Promise<void> {
 
 async function logout(ctx: TuiContext, name: string | undefined): Promise<void> {
 	const ref = await providerLogin(ctx);
-	if (!ref || ref.variant !== "owner") return;
+	if (!ref) return;
 	const list = (await providers(ref)).filter((entry) => entry.signedIn);
 	const run = (provider: Provider | undefined) => {
 		if (!provider) {

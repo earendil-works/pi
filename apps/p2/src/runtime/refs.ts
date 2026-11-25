@@ -1,13 +1,23 @@
 // References as p2's UIs (the TUI, the web) hold them: following a value with its current one first, waiting until a
 // reference is live, and releasing a held reference a little later so that coming back to it is instant.
 
-import type { Contract, Held, RefState, Registry, RegistryValue } from "@earendil-works/chord";
+import {
+	type Contract,
+	forbidden,
+	type Reference,
+	type RefState,
+	type Registry,
+	type RegistryValue,
+} from "@earendil-works/chord";
 import type { Context } from "@earendil-works/chord/context";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
 import type { NativeWatchable, Watchable } from "@earendil-works/chord/watch";
 
 /** What every held reference has: its state (loading, live, failed, ended) and its release. */
 export type HeldRef = { readonly state: NativeWatchable<RefState>; release(): void };
+
+/** A held reference to a remote object: also the names its binding granted (grantable members and flags). */
+export type GrantedRef = HeldRef & { readonly granted: ReadonlySet<string> };
 
 /**
  * Calls `fn` with `source`'s value (at once when it has one, else once its watch is up), then with each change, until
@@ -81,38 +91,64 @@ export function followRegistry<C, V>(host: RegistryHost, registry: Registry<C, V
 	};
 }
 
-/** A held reference to `C` bound in variant `V`. */
-export type HeldIn<C extends Contract, V extends string> = Extract<Held<C>, { readonly variant: V | undefined }> & {
-	readonly variant: V;
-};
+/** `R` with its grantable members `M` there: what `liveWith`, `keptWith` and `withGranted` hand on. */
+export type With<R, M extends keyof R> = R & { readonly [K in M]-?: NonNullable<R[K]> };
 
-type HeldVariants<R> = R extends { readonly variant: infer V } ? Exclude<V, undefined> : never;
+/** A reference to `C` whose binding granted the members `M`. */
+export type RefWith<C extends Contract, M extends keyof Reference<C>> = With<Reference<C>, M>;
 
-/** `ref` if it is live in one of `variants`, else `undefined` (loading, failed, ended, or another variant). */
-export function liveIn<R extends HeldRef & { readonly variant: unknown }, const V extends HeldVariants<R>>(
+/** Whether `ref`'s binding granted every one of `members` (none: always). */
+function grants<R extends GrantedRef>(ref: R, members: readonly (keyof R)[]): boolean {
+	return members.every((member) => ref.granted.has(member as string));
+}
+
+/** `ref` if it is live, else `undefined` (loading, failed, ended). */
+export function live<R extends HeldRef>(ref: R | undefined): R | undefined {
+	return ref !== undefined && ref.state.value.kind === "live" ? ref : undefined;
+}
+
+/** `ref` if it is live and its binding granted every one of `members`, else `undefined`. */
+export function liveWith<R extends GrantedRef, const M extends keyof R>(
 	ref: R | undefined,
-	...variants: readonly V[]
-): (Extract<R, { readonly variant: V | undefined }> & { readonly variant: V }) | undefined {
-	return ref !== undefined && ref.state.value.kind === "live" && (variants as readonly unknown[]).includes(ref.variant)
-		? (ref as Extract<R, { readonly variant: V | undefined }> & { readonly variant: V })
-		: undefined;
+	...members: readonly M[]
+): With<R, M> | undefined {
+	// The members are there exactly while granted (slice 15 §1.4): TypeScript cannot see the check.
+	return live(ref) !== undefined && grants(ref!, members) ? (ref as With<R, M>) : undefined;
 }
 
 /**
- * `ref` if it was last bound in one of `variants` and can still bind again (loading, live or failed transiently), else
- * `undefined`. For reads that should outlast a dropped connection: a reference held over a link keeps its variant and
- * its members' last values while the link is down. Calls need `liveIn`.
+ * `ref` with `members`, for code that knows its principal is granted them (a worker's `Sessions` has `renameSelf`):
+ * throws `forbidden` when its binding did not grant one.
  */
-export function keptIn<R extends HeldRef & { readonly variant: unknown }, const V extends HeldVariants<R>>(
-	ref: R | undefined,
-	...variants: readonly V[]
-): (Extract<R, { readonly variant: V | undefined }> & { readonly variant: V }) | undefined {
+export function expectGranted<R extends GrantedRef, const M extends keyof R>(
+	ref: R,
+	...members: readonly M[]
+): With<R, M> {
+	const missing = members.find((member) => !ref.granted.has(member as string));
+	if (missing !== undefined) throw forbidden(`not granted ${String(missing)}`);
+	// As in `liveWith`.
+	return ref as With<R, M>;
+}
+
+/**
+ * `ref` if it can still bind again (loading, live or failed transiently), else `undefined`. For reads that should
+ * outlast a dropped connection: a reference held over a link keeps its members' last values (and what it was granted)
+ * while the link is down. Calls need `live`.
+ */
+export function kept<R extends HeldRef>(ref: R | undefined): R | undefined {
 	if (ref === undefined) return undefined;
 	const state = ref.state.value;
 	if (state.kind === "ended" || (state.kind === "failed" && state.cause.kind === "broken")) return undefined;
-	return (variants as readonly unknown[]).includes(ref.variant)
-		? (ref as Extract<R, { readonly variant: V | undefined }> & { readonly variant: V })
-		: undefined;
+	return ref;
+}
+
+/** `kept`, for a reference whose last binding granted every one of `members`. */
+export function keptWith<R extends GrantedRef, const M extends keyof R>(
+	ref: R | undefined,
+	...members: readonly M[]
+): With<R, M> | undefined {
+	// As in `liveWith`.
+	return kept(ref) !== undefined && grants(ref!, members) ? (ref as With<R, M>) : undefined;
 }
 
 /** The reference's state kind now. */
@@ -137,22 +173,31 @@ export function whenLive(ref: HeldRef): Promise<void> {
 
 /**
  * Calls `action` with `ref`, held for this one call (by a command or a menu row: no view of theirs outlives the call),
- * once it is live in `variant`, then releases it. Rejects when the reference ends, fails broken or binds in another
- * variant (the principal may not).
+ * once it is live, then releases it. Rejects when the reference ends or fails broken.
  */
-export async function withHeld<R extends HeldRef & { readonly variant: unknown }, const V extends HeldVariants<R>, T>(
-	ref: R,
-	variant: V,
-	action: (live: Extract<R, { readonly variant: V | undefined }> & { readonly variant: V }) => Promise<T>,
-): Promise<T> {
+export async function withHeld<R extends HeldRef, T>(ref: R, action: (live: R) => Promise<T>): Promise<T> {
 	try {
 		await whenLive(ref);
-		const live = liveIn(ref, variant);
-		if (!live) throw new Error(`Not allowed as ${variant}`);
-		return await action(live);
+		return await action(ref);
 	} finally {
 		ref.release();
 	}
+}
+
+/**
+ * `withHeld` for a reference whose binding must grant `members`: rejects when it binds without one of them (the
+ * principal may not).
+ */
+export async function withGranted<R extends GrantedRef, const M extends keyof R, T>(
+	ref: R,
+	members: readonly M[],
+	action: (live: With<R, M>) => Promise<T>,
+): Promise<T> {
+	return withHeld(ref, async (held) => {
+		const live = liveWith(held, ...members);
+		if (!live) throw new Error(`Not allowed: ${members.join(", ")}`);
+		return action(live);
+	});
 }
 
 /** The error of a failed or ended reference, if any. */

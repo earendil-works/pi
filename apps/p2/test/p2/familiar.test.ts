@@ -9,12 +9,12 @@ import { after, before, describe, it } from "node:test";
 import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
 import type { AgentState, ContextView, ConversationView, EntryRecord } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { coldAt, coldThreshold, lastAnswer } from "../../plugins/familiar/cold.ts";
 import { FAMILIAR_TITLE, Familiar } from "../../plugins/familiar/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
-import type { Host, RefIn } from "../../src/runtime/chord.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { SESSIONS_OWNER, Sessions, type SessionsOwner } from "../../plugins/sessions/contract.ts";
+import type { Host, Ref } from "../../src/runtime/chord.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 const agentOf = (view: ConversationView | null | undefined) => view?.docs["pi.agent"] as AgentState | undefined;
 
@@ -35,13 +35,13 @@ function sections(view: ConversationView | null | undefined): Record<string, str
 describe("the Familiar session", () => {
 	let fixture: Fixture;
 	let owner: Host;
-	let sessions: RefIn<typeof Sessions, "owner">;
-	let familiar: RefIn<typeof Familiar, "owner">;
+	let sessions: SessionsOwner;
+	let familiar: Ref<typeof Familiar>;
 	before(async () => {
 		fixture = await startFixture();
 		owner = fixture.browser();
-		sessions = await holdIn(owner, Sessions, {}, "owner");
-		familiar = await holdIn(owner, Familiar, {}, "owner");
+		sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
+		familiar = await holdWith(owner, Familiar, {});
 	});
 	after(async () => {
 		await fixture?.close();
@@ -62,7 +62,7 @@ describe("the Familiar session", () => {
 
 	it("offers only its tools and has its prompt; other sessions keep theirs", async () => {
 		const { id } = await familiar.open(BACKGROUND_CONTEXT);
-		const chat = await holdIn(owner, Chat, { session: id, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session: id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		const agent = agentOf(await until(chat.view, (view) => Array.isArray(agentOf(view)?.modelTools)));
 		assert.deepEqual(agent?.modelTools, [
 			"conversations",
@@ -90,7 +90,7 @@ describe("the Familiar session", () => {
 		chat.release();
 
 		const other = (await sessions.create({ cwd: fixture.workspace, title: "Other" }, BACKGROUND_CONTEXT)).id;
-		const otherChat = await holdIn(owner, Chat, { session: other, conversation: 1 }, "participant");
+		const otherChat = await holdWith(owner, Chat, { session: other, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await otherChat.send({ text: "hello other", requestId: "other" }, BACKGROUND_CONTEXT);
 		const view = await until(otherChat.view, (value) => JSON.stringify(value).includes("Echo: hello other"));
 		assert.equal(agentOf(view)?.tools, undefined);
@@ -144,18 +144,18 @@ describe("the Familiar once cold", () => {
 			JSON.stringify({ compaction: { reserveTokens: 126_000, keepRecentTokens: 1, backgroundTokens: 0 } }),
 		);
 		const owner = fixture.browser();
-		const sessions = await holdIn(owner, Sessions, {}, "owner");
-		const familiar = await holdIn(owner, Familiar, {}, "owner");
+		const sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
+		const familiar = await holdWith(owner, Familiar, {});
 		const compacted = (view: ConversationView | null | undefined) =>
 			(view?.entries ?? []).some((entry) => entry.kind === "pi.compaction");
 		const { id } = await familiar.open(BACKGROUND_CONTEXT);
-		const chat = await holdIn(owner, Chat, { session: id, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session: id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await chat.send({ text: "a first question", requestId: "first" }, BACKGROUND_CONTEXT);
 		await until(chat.view, compacted, 60_000);
 		chat.release();
 
 		const other = (await sessions.create({ cwd: fixture.workspace, title: "Other" }, BACKGROUND_CONTEXT)).id;
-		const otherChat = await holdIn(owner, Chat, { session: other, conversation: 1 }, "participant");
+		const otherChat = await holdWith(owner, Chat, { session: other, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await otherChat.send({ text: "a first question", requestId: "first" }, BACKGROUND_CONTEXT);
 		await until(otherChat.view, (view) => JSON.stringify(view).includes("Echo: a first question"));
 		await new Promise((resolve) => setTimeout(resolve, 1_000));

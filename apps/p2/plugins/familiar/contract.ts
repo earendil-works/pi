@@ -27,13 +27,9 @@ export const FamiliarStore = local("p2.familiar-store", {
 
 /** The Familiar as the owner sees it: its session (null before the first `open`) and `open`, which makes it once. */
 export const Familiar = remote("p2.familiar", {
-	version: 1,
+	version: 2,
 	params: {},
 	hostAddress: serverHost,
-	variants: {
-		owner: {
-			state: { session: union([str(), nul()]) },
-			methods: { open: method(undefined, Opened) },
-		},
-	},
+	state: { session: union([str(), nul()]) },
+	methods: { open: method(undefined, Opened) },
 });

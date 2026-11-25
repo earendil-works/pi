@@ -6,11 +6,11 @@ import { renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT, follow } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { VoiceMode } from "../../plugins/voice/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, poll, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, poll, startFixture, until } from "./helpers.ts";
 import { fakeSpeechService } from "./voice-service.ts";
 
 describe("voice mode in the browser", { skip: !browserTests }, () => {
@@ -36,14 +36,14 @@ describe("voice mode in the browser", { skip: !browserTests }, () => {
 
 	it("sends what it hears and reads the answer aloud", async () => {
 		const owner = fixture.browser();
-		const session = await (await holdIn(owner, Sessions, {}, "owner")).create(
+		const session = await (await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)).create(
 			{ cwd: fixture.workspace },
 			BACKGROUND_CONTEXT,
 		);
 		const input = { session: session.id, conversation: 1 };
-		const chat = await holdIn(owner, Chat, input, "participant");
+		const chat = await holdWith(owner, Chat, input, ...CHAT_PARTICIPANT);
 		const keep = follow(chat.view, () => {});
-		const mode = await holdIn(owner, VoiceMode, input, "owner");
+		const mode = await holdWith(owner, VoiceMode, input, "choose");
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${session.id}`);
 		await browser.click(".voice-chip");
 		await browser.wait('document.querySelector(".voice-orb")');

@@ -118,7 +118,7 @@ async function setup(t: { after(fn: () => unknown): void }) {
 	const send = (data: string) => terminal.sendInput(data);
 	const watcher = client.hold(ProviderLogin, {}, BACKGROUND_CONTEXT);
 	await whenLive(watcher);
-	assert(watcher.variant === "owner");
+	assert.equal(watcher.state.value.kind, "live");
 	t.after(() => watcher.release());
 	return { runtime, screen, send, writes, grants, pasted, resources, watcher };
 }

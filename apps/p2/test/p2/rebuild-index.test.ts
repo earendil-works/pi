@@ -5,11 +5,11 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ConversationView, LiveState } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { Search, SearchIndex } from "../../plugins/search/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Hosts } from "../../src/runtime/server.ts";
-import { failureOf, holdIn, poll, startFixture, until } from "./helpers.ts";
+import { failureOf, holdWith, poll, startFixture, until } from "./helpers.ts";
 
 const answered = (text: string) => (view: ConversationView | null | undefined) =>
 	JSON.stringify(view?.entries ?? []).includes(text) && !(view?.docs["pi.live"] as LiveState | undefined)?.run;
@@ -18,10 +18,10 @@ test("rebuildIndex re-indexes active and archived sessions", { timeout: 90_000 }
 	const fixture = await startFixture();
 	t.after(() => fixture.close());
 	const owner = fixture.browser();
-	const sessions = await holdIn(owner, Sessions, {}, "owner");
+	const sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 	const search = owner.hold(Search, {}, BACKGROUND_CONTEXT);
 	const session = await sessions.create({ cwd: fixture.workspace, title: "Indexed" }, BACKGROUND_CONTEXT);
-	const chat = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+	const chat = await holdWith(owner, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 	await chat.send({ text: "pangolin rebuild words", requestId: "one" }, BACKGROUND_CONTEXT);
 	await until(chat.view, answered("Echo: pangolin rebuild words"));
 	const hits = async (archived = false) =>

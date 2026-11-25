@@ -51,7 +51,7 @@ state** in its own store, and the worker **follows** it:
 ```ts
 export const PendingEdits = remote("p2.session-pending-edits", {
 	version: 1, params: {}, hostAddress: () => Server(),
-	variants: { worker: { state: { edits: arr(PendingEditSchema) } } },
+	state: { edits: arr(PendingEditSchema) },
 });
 
 // worker

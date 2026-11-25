@@ -9,7 +9,7 @@
 // owner key of the server's data directory (`--data`, P2_DATA_DIR or ~/.pi/p2). Without `--report` that directory is
 // also reported now. Exits 1 on a difference.
 import { readFileSync } from "node:fs";
-import { type Contract, type Held, type WebSocketLike, webSocketLink } from "@earendil-works/chord";
+import { type WebSocketLike, webSocketLink } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { ConversationView } from "@earendil-works/pi-durable";
 import { WebSocket } from "ws";
@@ -19,7 +19,7 @@ import { SessionStatus, WorkerControl } from "../plugins/status/contract.ts";
 import { createHost, type Host } from "../src/runtime/chord.ts";
 import { dataDirectory, localOwnerSignIn } from "../src/runtime/local-owner.ts";
 import { SERVER } from "../src/runtime/principals.ts";
-import { follow, type HeldIn, whenLive } from "../src/runtime/refs.ts";
+import { expectGranted, follow, type GrantedRef, type With, whenLive } from "../src/runtime/refs.ts";
 import { clientLinkPath } from "../src/runtime/stale-page.ts";
 import { type DataReport, dataReport, type SessionReport } from "./data-report.ts";
 
@@ -41,7 +41,7 @@ export async function verifySessions(url: string, report: DataReport, dataDir: s
 	host.connect(webSocketLink(socket as unknown as WebSocketLike), { principal: SERVER }, BACKGROUND_CONTEXT);
 	void host.load([], BACKGROUND_CONTEXT);
 	try {
-		const sessions = await liveRef(host.hold(Sessions, {}, BACKGROUND_CONTEXT), "owner");
+		const sessions = await liveRef(host.hold(Sessions, {}, BACKGROUND_CONTEXT), "sessions");
 		const listed = new Map(sessions.sessions.value.map((session) => [session.id, session]));
 		const problems: string[] = [];
 		for (const [id, session] of Object.entries(report.sessions)) {
@@ -50,7 +50,7 @@ export async function verifySessions(url: string, report: DataReport, dataDir: s
 			else if (live && live.title !== session.title)
 				problems.push(`${id}: title ${JSON.stringify(session.title)} -> ${JSON.stringify(live.title)}`);
 		}
-		const statuses = await liveRef(host.hold(SessionStatus, {}, BACKGROUND_CONTEXT), "reader");
+		const statuses = await liveRef(host.hold(SessionStatus, {}, BACKGROUND_CONTEXT), "statuses");
 		for (const id of chosen(report)) {
 			const wasRunning = statuses.statuses.value[id]?.running === true;
 			problems.push(...(await verifySession(host, id, report.sessions[id]!)));
@@ -67,12 +67,10 @@ export async function verifySessions(url: string, report: DataReport, dataDir: s
 	}
 }
 
-/** A held reference once it is live in `variant`. */
-async function liveRef<C extends Contract, const V extends string>(ref: Held<C>, variant: V): Promise<HeldIn<C, V>> {
+/** A held reference once it is live with `members` granted. */
+async function liveRef<R extends GrantedRef, const M extends keyof R>(ref: R, ...members: M[]): Promise<With<R, M>> {
 	await whenLive(ref);
-	// The variant is checked here: TypeScript cannot narrow a held reference of a generic contract.
-	if (ref.variant !== variant) throw new Error(`expected the ${variant} variant`);
-	return ref as unknown as HeldIn<C, V>;
+	return expectGranted(ref, ...members);
 }
 
 /** The sessions to open: active ones with subagents or shares, and the most recently active others. */

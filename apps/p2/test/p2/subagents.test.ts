@@ -5,17 +5,17 @@ import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type { ConversationView } from "@earendil-works/pi-durable";
-import { BACKGROUND_CONTEXT, whenLive } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { Mcp } from "../../plugins/mcp/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { BACKGROUND_CONTEXT, type RefWith, whenLive } from "@p2/app/v1";
+import { CHAT_PARTICIPANT, Chat, type ChatParticipant } from "../../plugins/chat/contract.ts";
+import { MCP_OWNER, Mcp } from "../../plugins/mcp/contract.ts";
+import { SESSIONS_OWNER, Sessions, type SessionsOwner } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
 import { type Child, ChildStore, SubagentControl, Subagents } from "../../plugins/subagents/contract.ts";
 import { Workspace } from "../../plugins/workspace/contract.ts";
 import { startServer } from "../../src/hosts/server.ts";
-import type { Host, RefIn } from "../../src/runtime/chord.ts";
-import { expectChord, type Fixture, failureOf, holdIn, http, startFixture, until } from "./helpers.ts";
+import type { Host } from "../../src/runtime/chord.ts";
+import { expectChord, type Fixture, failureOf, holdWith, http, startFixture, until } from "./helpers.ts";
 
 const MCP_FIXTURE = fileURLToPath(new URL("../fixtures/mcp-server.mjs", import.meta.url));
 
@@ -40,21 +40,21 @@ const result = (view: ConversationView | null | undefined, action: string): Tool
 describe("subagents (fake provider)", () => {
 	let fixture: Fixture;
 	let owner: Host;
-	let sessions: RefIn<typeof Sessions, "owner">;
-	let chat: RefIn<typeof Chat, "participant">;
-	let children: RefIn<typeof Subagents, "reader">;
-	let status: RefIn<typeof SessionStatus, "reader">;
+	let sessions: SessionsOwner;
+	let chat: ChatParticipant;
+	let children: RefWith<typeof Subagents, "children">;
+	let status: RefWith<typeof SessionStatus, "statuses">;
 	let session: string;
 	let child: Child;
 
 	before(async () => {
 		fixture = await startFixture({ idleMs: 1500, allowedHosts: ["share.test"] });
 		owner = fixture.browser();
-		sessions = await holdIn(owner, Sessions, {}, "owner");
+		sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		session = (await sessions.create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT)).id;
-		chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
-		children = await holdIn(owner, Subagents, {}, "reader");
-		status = await holdIn(owner, SessionStatus, {}, "reader");
+		chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
+		children = await holdWith(owner, Subagents, {}, "children");
+		status = await holdWith(owner, SessionStatus, {}, "statuses");
 	});
 	after(async () => {
 		await fixture?.close();
@@ -99,7 +99,7 @@ describe("subagents (fake provider)", () => {
 	it("configures tools and opens a child's independent transcript", async () => {
 		await chat.send({ text: "subagent-configure", requestId: "configure" }, BACKGROUND_CONTEXT);
 		await until(children.children, (value) => value?.[session]?.[0]?.tools.join() === "bash,read");
-		const sub = await holdIn(owner, Chat, { session, conversation: child.conversationId }, "participant");
+		const sub = await holdWith(owner, Chat, { session, conversation: child.conversationId }, ...CHAT_PARTICIPANT);
 		const view = await until(sub.view, (value) => texts(value).includes("Echo: hello helper"));
 		// The sidebar lists the chosen tools; the agent also has `team` (`scope: "subagent"`), offered from the start.
 		const agent = view?.docs["pi.agent"] as { tools: string[]; modelTools: { add: string[] } };
@@ -139,7 +139,7 @@ describe("subagents (fake provider)", () => {
 			/Unknown conversation/,
 		);
 		// Archiving from the browser stops the child's work first.
-		const sub = await holdIn(owner, Chat, { session, conversation: child.conversationId }, "participant");
+		const sub = await holdWith(owner, Chat, { session, conversation: child.conversationId }, ...CHAT_PARTICIPANT);
 		await sub.send({ text: "slow archived", requestId: "slow-archived" }, BACKGROUND_CONTEXT);
 		await until(status.statuses, (value) => value?.[session]?.busy.includes(child.conversationId) === true);
 		await control.archive({ conversation: child.conversationId, archived: true }, BACKGROUND_CONTEXT);
@@ -154,7 +154,7 @@ describe("subagents (fake provider)", () => {
 	});
 
 	it("keeps child work alive through main Stop and compatible reload", async () => {
-		const sub = await holdIn(owner, Chat, { session, conversation: child.conversationId }, "participant");
+		const sub = await holdWith(owner, Chat, { session, conversation: child.conversationId }, ...CHAT_PARTICIPANT);
 		await sub.send({ text: "slow child", requestId: "slow" }, BACKGROUND_CONTEXT);
 		await until(status.statuses, (value) => value?.[session]?.busy.includes(child.conversationId) === true);
 		await chat.stop(BACKGROUND_CONTEXT);
@@ -169,7 +169,7 @@ describe("subagents (fake provider)", () => {
 		await until(status.statuses, (value) => value?.[session]?.running === false, 60_000);
 		const listed = await until(children.children, (value) => value?.[session]?.[0]?.lastEntryId !== undefined);
 		assert.equal(listed?.[session]?.[0]?.name, "helper");
-		chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
+		chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await until(chat.view, (view) => texts(view).some((text) => text.startsWith("[answered, no reply needed]")));
 		await chat.send({ text: "subagent-answer", requestId: "answer-again" }, BACKGROUND_CONTEXT);
 		await until(chat.view, (view) => texts(view).some((text) => text.startsWith("Echo: slow child")));
@@ -188,12 +188,12 @@ describe("subagents (fake provider)", () => {
 		assert.equal(joined.status, 200);
 		const cookie = String(joined.headers["set-cookie"]).split(";")[0]!;
 		const guest = fixture.client({ Host: "share.test", Origin: "https://share.test", Cookie: cookie }).host;
-		const list = await holdIn(guest, Subagents, {}, "reader");
+		const list = await holdWith(guest, Subagents, {}, "children");
 		const value = await until(list.children, (value) => Boolean(value?.[session]?.length));
 		assert.deepEqual(Object.keys(value!), [session]);
-		// @ts-expect-error `report` is a worker's: a reader calling it anyway is refused.
-		await expectChord(list.report({ children: [] }, BACKGROUND_CONTEXT), "invalid");
-		const sub = await holdIn(guest, Chat, { session, conversation: child.conversationId }, "viewer");
+		// `report` is a worker's: not granted, the member is not there.
+		assert.equal(list.report, undefined);
+		const sub = await holdWith(guest, Chat, { session, conversation: child.conversationId });
 		// Read-only guests cannot archive (read/write guests can, as the owner).
 		await expectChord(whenLive(guest.hold(SubagentControl, { session }, BACKGROUND_CONTEXT)), "forbidden");
 		await until(sub.view, (view) => texts(view).includes("Echo: hello helper"));
@@ -213,11 +213,11 @@ describe("subagents (fake provider)", () => {
 		});
 		try {
 			const client = fixture.browser();
-			const list = await holdIn(client, Subagents, {}, "reader");
+			const list = await holdWith(client, Subagents, {}, "children");
 			const value = await until(list.children, (value) => Boolean(value?.[session]?.length));
 			assert.equal(value?.[session]?.[0]?.name, "helper");
 			const statuses = await until(
-				(await holdIn(client, SessionStatus, {}, "reader")).statuses,
+				(await holdWith(client, SessionStatus, {}, "statuses")).statuses,
 				(value) => value !== undefined,
 			);
 			assert.equal(statuses?.[session]?.running ?? false, false);
@@ -243,10 +243,11 @@ describe("a subagent spawned with its own cwd (fake provider)", () => {
 		await mkdir(join(project, "worktree"));
 		await writeFile(join(project, "worktree", "marker.txt"), "inside\n");
 		const owner = fixture.browser();
-		const session = (await (await holdIn(owner, Sessions, {}, "owner")).create({ cwd: project }, BACKGROUND_CONTEXT))
-			.id;
-		const chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
-		const children = await holdIn(owner, Subagents, {}, "reader");
+		const session = (
+			await (await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)).create({ cwd: project }, BACKGROUND_CONTEXT)
+		).id;
+		const chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
+		const children = await holdWith(owner, Subagents, {}, "children");
 		const spawn = (args: object, requestId: string) =>
 			chat.send({ text: `subagent ${JSON.stringify(args)}`, requestId }, BACKGROUND_CONTEXT);
 
@@ -290,7 +291,7 @@ describe("a subagent spawned with its own cwd (fake provider)", () => {
 		);
 
 		// Its bash ran in the worktree.
-		const sub = await holdIn(owner, Chat, { session, conversation: agent.conversationId }, "participant");
+		const sub = await holdWith(owner, Chat, { session, conversation: agent.conversationId }, ...CHAT_PARTICIPANT);
 		const child = await until(sub.view, (value) =>
 			(value?.entries ?? []).some((entry) => entry.model?.some((message) => message.role === "toolResult")),
 		);
@@ -329,8 +330,8 @@ describe("a subagent spawned with its own cwd (fake provider)", () => {
 describe("subagents with code mode (fake provider)", () => {
 	let fixture: Fixture;
 	let owner: Host;
-	let chat: RefIn<typeof Chat, "participant">;
-	let children: RefIn<typeof Subagents, "reader">;
+	let chat: ChatParticipant;
+	let children: RefWith<typeof Subagents, "children">;
 	let session: string;
 	let sent = 0;
 	/** Sends `subagent <args>` and waits for that call's result. */
@@ -371,10 +372,12 @@ describe("subagents with code mode (fake provider)", () => {
 		await writeFile(join(fixture.workspace, "marker.txt"), "inside\n");
 		owner = fixture.browser();
 		session = (
-			await (await holdIn(owner, Sessions, {}, "owner")).create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT)
+			await (
+				await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)
+			).create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT)
 		).id;
-		chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
-		children = await holdIn(owner, Subagents, {}, "reader");
+		chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
+		children = await holdWith(owner, Subagents, {}, "children");
 	});
 	after(async () => {
 		await fixture?.close();
@@ -417,7 +420,7 @@ describe("subagents with code mode (fake provider)", () => {
 			Boolean(value?.[session]?.some((each) => each.name === "coder")),
 		);
 		const coder = listed![session]!.find((each) => each.name === "coder")!;
-		const sub = await holdIn(owner, Chat, { session, conversation: coder.conversationId }, "participant");
+		const sub = await holdWith(owner, Chat, { session, conversation: coder.conversationId }, ...CHAT_PARTICIPANT);
 		const view = await until(sub.view, (value) =>
 			(value?.entries ?? []).some((entry) =>
 				entry.model?.some((message) => message.role === "toolResult" && message.toolName === "codemode"),
@@ -457,12 +460,12 @@ describe("subagents with code mode (fake provider)", () => {
 			join(fixture.dataDir, "mcp.json"),
 			JSON.stringify({ mcpServers: { files: { command: process.execPath, args: [MCP_FIXTURE] } } }),
 		);
-		const mcp = await holdIn(owner, Mcp, {}, "owner");
+		const mcp = await holdWith(owner, Mcp, {}, ...MCP_OWNER);
 		await until(mcp.instances, (instances) => instances.some((item) => item.status === "connected"));
 		const coder = (await until(children.children, (value) => Boolean(value?.[session]?.length)))![session]!.find(
 			(each) => each.name === "coder",
 		)!;
-		const sub = await holdIn(owner, Chat, { session, conversation: coder.conversationId }, "participant");
+		const sub = await holdWith(owner, Chat, { session, conversation: coder.conversationId }, ...CHAT_PARTICIPANT);
 		const scripts = () =>
 			(sub.view.value?.entries ?? [])
 				.flatMap((entry) => entry.model ?? [])

@@ -34,7 +34,7 @@ export default defineFacet((host) => {
 			if (telemetry === undefined) throw new ChordError({ code: "unavailable", message: TELEMETRY_OFF });
 			return telemetry;
 		};
-		if (isOwner(principal)) return { variant: "owner", members: reads(store, async () => {}) };
+		if (isOwner(principal)) return reads(store, async () => {});
 		if (isWorker(principal)) {
 			const { session } = principal;
 			const shares = self.get(Shares, {});
@@ -48,7 +48,7 @@ export default defineFacet((host) => {
 					shares.people.value.some((person) => person.session === session);
 				if (shared) throw forbidden("Telemetry is the owner's: this session is shared.");
 			};
-			return { variant: "agent", members: reads(store, check) };
+			return reads(store, check);
 		}
 		throw forbidden("Telemetry is the owner's.");
 	});

@@ -3,7 +3,7 @@
 // while a sign-in waits, the final redirect URL can be pasted here, for a browser that cannot reach where it returns.
 // Until the servers load it says so; a view that failed or ended shows why, with Retry.
 
-import { BACKGROUND_CONTEXT, contribute, defineFacet, type HeldIn, keptIn, locationText } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, contribute, defineFacet, keptWith, locationText } from "@p2/app/v1";
 import {
 	ChevronIcon,
 	closeLayers,
@@ -19,9 +19,7 @@ import {
 	useSheet,
 } from "@p2/app/v1/web";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { type Instance, Mcp, type SignIn, signInLink } from "./contract.ts";
-
-type OwnerView = HeldIn<typeof Mcp, "owner">;
+import { type Instance, MCP_OWNER, Mcp, type McpOwnerView, type SignIn, signInLink } from "./contract.ts";
 
 /** A change of the instances while its call is in flight: a restart starts it, a sign-out leaves it signed out. */
 type InstanceGuess =
@@ -77,7 +75,7 @@ function McpSheet({ onClose }: { onClose: () => void }) {
 function McpServers({ holdAgain }: { holdAgain: () => void }) {
 	const ref = useObject(Mcp, {});
 	const state = useReadable(ref?.state);
-	const view = keptIn(ref, "owner");
+	const view = keptWith(ref, ...MCP_OWNER);
 	const retry = useCallback(() => {
 		if (ref?.state.value.kind === "ended") holdAgain();
 		else ref?.retry();
@@ -155,7 +153,7 @@ function ServerEntry({
 	instances,
 	signIn,
 }: {
-	view: OwnerView;
+	view: McpOwnerView;
 	actions: Actions;
 	server: string;
 	instances: readonly Instance[];
@@ -221,7 +219,7 @@ function ServerEntry({
 }
 
 /** A sign-in waiting for the browser: paste the final redirect URL, or cancel. */
-function PendingSignIn({ view, signIn, onCancel }: { view: OwnerView; signIn: SignIn; onCancel: () => void }) {
+function PendingSignIn({ view, signIn, onCancel }: { view: McpOwnerView; signIn: SignIn; onCancel: () => void }) {
 	const [value, setValue] = useState("");
 	const [sending, setSending] = useState(false);
 	const [error, setError] = useState<string>();

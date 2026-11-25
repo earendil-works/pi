@@ -8,11 +8,11 @@ import { after, before, describe, it } from "node:test";
 import type { ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
 import type { ConversationView } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
-import { VIEW_INPUT, Views } from "../../plugins/views/contract.ts";
-import type { Host, RefIn } from "../../src/runtime/chord.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { CHAT_PARTICIPANT, Chat, type ChatParticipant } from "../../plugins/chat/contract.ts";
+import { SESSIONS_OWNER, Sessions, type SessionsOwner } from "../../plugins/sessions/contract.ts";
+import { VIEW_INPUT, VIEWS_EDITING, Views, type ViewsEditor } from "../../plugins/views/contract.ts";
+import type { Host } from "../../src/runtime/chord.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 /** The script result that follows the newest input saying `said` (the view is a window of the newest entries). */
 const scriptAfter = (view: ConversationView | null | undefined, said: string): ToolResultMessage | undefined => {
@@ -36,10 +36,10 @@ const output = (message: ToolResultMessage | undefined): string =>
 describe("views (fake provider)", () => {
 	let fixture: Fixture;
 	let owner: Host;
-	let sessions: RefIn<typeof Sessions, "owner">;
+	let sessions: SessionsOwner;
 	let session: string;
-	let chat: RefIn<typeof Chat, "participant">;
-	let views: RefIn<typeof Views, "editor">;
+	let chat: ChatParticipant;
+	let views: ViewsEditor;
 	let sent = 0;
 
 	/** Has the agent run `code` in code mode; its result (`isError` when the script threw). */
@@ -65,10 +65,10 @@ describe("views (fake provider)", () => {
 		fixture = await startFixture();
 		writeFileSync(join(fixture.workspace, "notes.md"), "# Notes\n\nThe letter a.\n");
 		owner = fixture.browser();
-		sessions = await holdIn(owner, Sessions, {}, "owner");
+		sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		session = (await sessions.create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT)).id;
-		chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
-		views = await holdIn(owner, Views, { session }, "editor");
+		chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
+		views = await holdWith(owner, Views, { session }, ...VIEWS_EDITING);
 	});
 	after(async () => {
 		await fixture?.close();

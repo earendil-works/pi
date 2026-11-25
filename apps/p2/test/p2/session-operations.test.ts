@@ -8,11 +8,11 @@ import { randomUUID } from "node:crypto";
 import { after, before, describe, it } from "node:test";
 import type { ConversationView } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT, whenLive } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { Catalog, Sessions } from "../../plugins/sessions/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
+import { Catalog, SESSIONS_OWNER, Sessions, type SessionsOwner } from "../../plugins/sessions/contract.ts";
 import { SessionTree } from "../../plugins/tree/contract.ts";
-import type { Host, RefIn } from "../../src/runtime/chord.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import type { Host } from "../../src/runtime/chord.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 const answered = (text: string) => (view: ConversationView | null | undefined) =>
 	JSON.stringify(view?.entries ?? []).includes(text);
@@ -20,11 +20,11 @@ const answered = (text: string) => (view: ConversationView | null | undefined) =
 describe("session operations (fake provider)", () => {
 	let fixture: Fixture;
 	let owner: Host;
-	let sessions: RefIn<typeof Sessions, "owner">;
+	let sessions: SessionsOwner;
 	before(async () => {
 		fixture = await startFixture();
 		owner = fixture.browser();
-		sessions = await holdIn(owner, Sessions, {}, "owner");
+		sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 	});
 	after(async () => {
 		await fixture?.close();
@@ -41,7 +41,7 @@ describe("session operations (fake provider)", () => {
 	it("creates a session under the client's ID; the page held it before the answer", async () => {
 		const id = randomUUID();
 		// The page navigates at once: its conversation's worker waits for the row.
-		const early = holdIn(owner, Chat, { session: id, conversation: 1 }, "participant");
+		const early = holdWith(owner, Chat, { session: id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		const created = await sessions.create({ id, cwd: fixture.workspace, title: "Chosen" }, BACKGROUND_CONTEXT);
 		assert.equal(created.id, id);
 		assert.deepEqual(
@@ -57,7 +57,7 @@ describe("session operations (fake provider)", () => {
 
 	it("archives at once and runs the cleanup as an operation; a restore waits for it", async () => {
 		const session = await sessions.create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT);
-		const chat = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await chat.send({ text: "hi", requestId: "one" }, BACKGROUND_CONTEXT);
 		await until(chat.view, answered("Echo: hi"));
 		await sessions.archive({ id: session.id }, BACKGROUND_CONTEXT);
@@ -86,12 +86,12 @@ describe("session operations (fake provider)", () => {
 
 	it("pushes a /tree switch to the catalog before the worker answers", async () => {
 		const session = await sessions.create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT);
-		const chat = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await chat.send({ text: "first", requestId: "one" }, BACKGROUND_CONTEXT);
 		await until(chat.view, answered("Echo: first"));
 		await chat.send({ text: "second", requestId: "two" }, BACKGROUND_CONTEXT);
 		await until(chat.view, answered("Echo: second"));
-		const tree = await holdIn(owner, SessionTree, { session: session.id }, "owner");
+		const tree = await holdWith(owner, SessionTree, { session: session.id });
 		const nodes = (await tree.tree(BACKGROUND_CONTEXT)).nodes;
 		const answer = nodes.find((node) => node.role === "assistant" && node.text === "Echo: first");
 		assert(answer);

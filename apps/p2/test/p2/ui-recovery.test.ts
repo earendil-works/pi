@@ -11,12 +11,12 @@ import { after, before, describe, it } from "node:test";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type { ConversationView } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { LogNotices } from "../../plugins/logs/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
-import type { Host, RefIn } from "../../src/runtime/chord.ts";
+import { SESSIONS_OWNER, Sessions, type SessionsOwner } from "../../plugins/sessions/contract.ts";
+import type { Host } from "../../src/runtime/chord.ts";
 import { Browser, browserTests, COMPOSER } from "./browser.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 /** The owner's artifact of the night it happened (a table, inline code). */
 const NOTES = [
@@ -50,12 +50,12 @@ describe("page recovery and old state", { skip: !browserTests }, () => {
 	let fixture: Fixture;
 	let browser: Browser;
 	let owner: Host;
-	let sessions: RefIn<typeof Sessions, "owner">;
+	let sessions: SessionsOwner;
 	let sent = 0;
 
 	/** Has `session`'s agent run `text` (a fake-provider prompt) to the end of its turn; that turn's result. */
 	const run = async (session: string, text: string): Promise<ToolResultMessage | undefined> => {
-		const chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
 		const before = results(chat.view.value).length;
 		await chat.send({ text, requestId: `run-${++sent}` }, BACKGROUND_CONTEXT);
 		const view = await until(
@@ -92,7 +92,7 @@ describe("page recovery and old state", { skip: !browserTests }, () => {
 			recursive: true,
 		});
 		owner = fixture.browser();
-		sessions = await holdIn(owner, Sessions, {}, "owner");
+		sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		const setup = (await sessions.create({ cwd: fixture.workspace, title: "Setup" }, BACKGROUND_CONTEXT)).id;
 		await run(setup, "reload_plugins {}");
 		browser = await Browser.start();
@@ -156,7 +156,7 @@ describe("page recovery and old state", { skip: !browserTests }, () => {
 			/The test's crash/,
 		);
 		// The owner's notices tell of it.
-		const notices = await holdIn(owner, LogNotices, {}, "owner");
+		const notices = await holdWith(owner, LogNotices, {});
 		await until(notices.notices, (value) =>
 			value.some((notice) => notice.source === "web" && notice.message.includes("The test's crash")),
 		);

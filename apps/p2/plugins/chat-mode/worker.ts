@@ -21,6 +21,7 @@ import {
 	defineState,
 	deriveTyped,
 	forbidden,
+	grantBy,
 	invalid,
 	isOwner,
 } from "@p2/app/v1";
@@ -205,23 +206,20 @@ export default defineFacet((host) => {
 		});
 	});
 
-	host.serve(ChatMode, ({ session, conversation }, principal, self) => {
-		if (!canView(principal, session)) throw forbidden("viewers only");
-		const setting = self.get(ChatModeSetting, { conversation });
-		if (!isOwner(principal))
+	host.serve(
+		ChatMode,
+		({ session, conversation }, principal, _admitted, self) => {
+			if (!canView(principal, session)) throw forbidden("viewers only");
+			const setting = self.get(ChatModeSetting, { conversation });
 			return {
-				variant: "reader",
-				members: { enabled: setting.enabled, waiting: setting.waiting, name: setting.name },
-			};
-		return {
-			variant: "owner",
-			members: {
 				enabled: setting.enabled,
 				waiting: setting.waiting,
 				name: setting.name,
 				set: (change, ctx) => setting.set(change, ctx),
 				rename: (change, ctx) => setting.rename(change, ctx),
-			},
-		};
-	});
+			};
+		},
+		// Everyone who views reads it; only the owner switches it and renames the agent.
+		{ admit: grantBy((principal) => (isOwner(principal) ? ["set", "rename"] : [])) },
+	);
 });

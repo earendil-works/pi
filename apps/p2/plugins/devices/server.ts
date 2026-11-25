@@ -202,13 +202,10 @@ export default defineFacet((host) => {
 		const access = nativeOf(self, DeviceAccesses, "The owner access");
 		const local = principal.access === "local";
 		return {
-			variant: "owner",
-			members: {
-				canMint: constant(local),
-				token: async () => {
-					if (!local) throw forbidden("Generate owner links on the host with npm run owner-link");
-					return { token: access().access.issueToken() };
-				},
+			canMint: constant(local),
+			token: async () => {
+				if (!local) throw forbidden("Generate owner links on the host with npm run owner-link");
+				return { token: access().access.issueToken() };
 			},
 		};
 	});

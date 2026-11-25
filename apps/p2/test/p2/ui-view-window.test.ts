@@ -5,10 +5,10 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Sessions, SessionTransfer } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions, SessionTransfer } from "../../plugins/sessions/contract.ts";
 import { bigSessionEntries } from "../fixtures/big-session.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, startFixture } from "./helpers.ts";
+import { type Fixture, holdWith, startFixture } from "./helpers.ts";
 
 /** Counts what the page's WebSockets receive (`window.__received`, characters). */
 const COUNT_RECEIVED = `(() => {
@@ -26,8 +26,7 @@ describe("long conversation in the browser", { skip: !browserTests }, () => {
 	let fixture: Fixture, browser: Browser, long: string, other: string;
 	before(async () => {
 		fixture = await startFixture({ web: true });
-		const sessions = await holdIn(fixture.browser(), Sessions, {}, "owner");
-		if (sessions.variant !== "owner") throw new Error("owner expected");
+		const sessions = await holdWith(fixture.browser(), Sessions, {}, ...SESSIONS_OWNER);
 		long = (await sessions.create({ cwd: fixture.workspace, title: "Long one" }, BACKGROUND_CONTEXT)).id;
 		other = (await sessions.create({ cwd: fixture.workspace, title: "Other one" }, BACKGROUND_CONTEXT)).id;
 		const entries = bigSessionEntries(600, 4_000);

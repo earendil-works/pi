@@ -10,7 +10,7 @@ import {
 	defineFacet,
 	follow,
 	followRegistry,
-	liveIn,
+	live,
 	statusOf,
 	whenLive,
 } from "@p2/app/v1";
@@ -62,13 +62,13 @@ function openEnvs(ctx: TuiContext): void {
 	void whenLive(ref).then(
 		// The environments' connections start now, as the web's picker does: moving or testing need not wait for ssh.
 		() => {
-			if (statusOf(ref) === "live" && ref.variant === "owner") void ref.warm(BACKGROUND_CONTEXT).catch(() => {});
+			if (statusOf(ref) === "live") void ref.warm(BACKGROUND_CONTEXT).catch(() => {});
 		},
 		(error: unknown) => {
 			status = error instanceof Error ? error.message : String(error);
 		},
 	);
-	const owner = () => liveIn(ref, "owner");
+	const owner = () => live(ref);
 	const run = (label: string, action: () => Promise<unknown>) => {
 		status = `${label}…`;
 		ctx.requestRender();
@@ -91,7 +91,7 @@ function openEnvs(ctx: TuiContext): void {
 	const accept = async (env: EnvSummary) => {
 		const service = owner();
 		const key = env.test && !env.test.ok ? env.test.hostKey : undefined;
-		if (!service || service.variant !== "owner" || !key || env.config.type !== "ssh") return;
+		if (!service || !key || env.config.type !== "ssh") return;
 		const yes = await confirm(ctx, [
 			`Trust ${env.name}'s host key?`,
 			`${lineText(env.config.user ? `${env.config.user}@` : "")}${lineText(env.config.host)}${env.config.port ? `:${env.config.port}` : ""} · ${key.state === "changed" ? "the key CHANGED since it was trusted" : "unknown key"}`,
@@ -166,7 +166,7 @@ function openEnvs(ctx: TuiContext): void {
 					run: (row) => {
 						const env = byRow(row);
 						const service = owner();
-						if (env && service?.variant === "owner")
+						if (env && service)
 							run(`Testing ${env.name}`, () => service.test({ name: env.name }, BACKGROUND_CONTEXT));
 					},
 				},
@@ -176,7 +176,7 @@ function openEnvs(ctx: TuiContext): void {
 					run: (row) => {
 						const env = byRow(row);
 						const service = owner();
-						if (!env || service?.variant !== "owner") return;
+						if (!env || !service) return;
 						void confirm(ctx, [`Forget ${env.name}'s trusted host key?`, "The next connection asks again."]).then(
 							(yes) =>
 								yes &&

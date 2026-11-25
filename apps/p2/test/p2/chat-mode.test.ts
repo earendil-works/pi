@@ -1,11 +1,11 @@
 // Chat mode on a bare session host (real Durable, fake provider): chat entries, mentions, the switch's persistence,
-// and each principal's variant over memory links. Also checks the tutorial's code blocks against the code.
+// and what each principal is granted over memory links. Also checks the tutorial's code blocks against the code.
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ConversationView, EntryRecord, InboxState } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT, whenLive } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import {
 	type ChatMessage,
 	ChatMode,
@@ -23,7 +23,7 @@ import {
 import { ChatModeDoc } from "../../plugins/chat-mode/worker.ts";
 import { durableContext } from "../../src/runtime/durable.ts";
 import { chatModeHost } from "./chat-mode-host.ts";
-import { expectChord, holdIn, until } from "./helpers.ts";
+import { expectChord, holdWith, until } from "./helpers.ts";
 
 const OWNER = { kind: "owner", access: "local" } as const;
 const ALICE = { kind: "guest", id: "alice", name: "Alice", home: "s1", sessions: { s1: "full" }, revision: 1 } as const;
@@ -143,9 +143,9 @@ describe("chat-mode on a bare session host", () => {
 	it("keeps chat as display-only entries and gives a mention the chat with its authors", async (t) => {
 		const fixture = await chatModeHost();
 		t.after(() => fixture.close());
-		const owner = await holdIn(fixture.client(OWNER), Chat, where, "participant");
-		const mode = await holdIn(fixture.client(OWNER), ChatMode, where, "owner");
-		const alice = await holdIn(fixture.client(ALICE), Chat, where, "participant");
+		const owner = await holdWith(fixture.client(OWNER), Chat, where, ...CHAT_PARTICIPANT);
+		const mode = await holdWith(fixture.client(OWNER), ChatMode, where, "set", "rename");
+		const alice = await holdWith(fixture.client(ALICE), Chat, where, ...CHAT_PARTICIPANT);
 		await mode.set({ enabled: true }, BACKGROUND_CONTEXT);
 		await until(mode.enabled, (value) => value === true);
 
@@ -198,9 +198,9 @@ describe("chat-mode on a bare session host", () => {
 	it("places chat at once during a run, and hands chat placed while a mention waited to the next mention", async (t) => {
 		const fixture = await chatModeHost();
 		t.after(() => fixture.close());
-		const owner = await holdIn(fixture.client(OWNER), Chat, where, "participant");
-		const mode = await holdIn(fixture.client(OWNER), ChatMode, where, "owner");
-		const alice = await holdIn(fixture.client(ALICE), Chat, where, "participant");
+		const owner = await holdWith(fixture.client(OWNER), Chat, where, ...CHAT_PARTICIPANT);
+		const mode = await holdWith(fixture.client(OWNER), ChatMode, where, "set", "rename");
+		const alice = await holdWith(fixture.client(ALICE), Chat, where, ...CHAT_PARTICIPANT);
 		const live = (view: ConversationView | null | undefined) => Boolean(view?.docs["pi.live"]?.run);
 		await owner.send({ text: "slow run", requestId: "run" }, BACKGROUND_CONTEXT);
 		await until(owner.view, live);
@@ -224,7 +224,7 @@ describe("chat-mode on a bare session host", () => {
 
 	it("keeps the switch in the conversation across a worker restart", async (t) => {
 		const first = await chatModeHost();
-		const mode = await holdIn(first.client(OWNER), ChatMode, where, "owner");
+		const mode = await holdWith(first.client(OWNER), ChatMode, where, "set", "rename");
 		await mode.set({ enabled: true }, BACKGROUND_CONTEXT);
 		await until(mode.enabled, (value) => value === true);
 		await first.close({ remove: false });
@@ -242,15 +242,15 @@ describe("chat-mode on a bare session host", () => {
 		const owner = await fixture.client(OWNER).get(ChatMode, where, BACKGROUND_CONTEXT);
 		const alice = await fixture.client(ALICE).get(ChatMode, where, BACKGROUND_CONTEXT);
 		const bob = await fixture.client(BOB).get(ChatMode, where, BACKGROUND_CONTEXT);
-		assert.equal(owner.variant, "owner");
-		assert.equal(alice.variant, "reader");
-		assert.equal(bob.variant, "reader");
+		assert.deepEqual([...owner.granted].sort(), ["rename", "set"]);
+		assert.equal(alice.granted.size, 0);
+		assert.equal(bob.granted.size, 0);
 		// A reader has no `set` and a viewer no `send`: TypeScript refuses them; called anyway, so does the provider.
-		// @ts-expect-error `set` is the owner's.
-		await expectChord(alice.set({ enabled: true }, BACKGROUND_CONTEXT), "invalid");
+		// `set` is the owner's: not granted, the member is not there.
+		assert.equal(alice.set, undefined);
 		const viewer = await fixture.client(BOB).get(Chat, where, BACKGROUND_CONTEXT);
-		// @ts-expect-error `send` is a participant's.
-		await expectChord(viewer.send({ text: "hi", requestId: "b" }, BACKGROUND_CONTEXT), "invalid");
+		// `send` is a participant's: not granted, the member is not there.
+		assert.equal(viewer.send, undefined);
 		const stranger = fixture
 			.client({ ...ALICE, id: "carol", home: "s2", sessions: { s2: "full" } })
 			.hold(ChatMode, where, BACKGROUND_CONTEXT);
@@ -261,7 +261,7 @@ describe("chat-mode on a bare session host", () => {
 		const fixture = await chatModeHost();
 		t.after(() => fixture.close());
 		const setting = await fixture.host.get(ChatModeSetting, { conversation: 1 }, BACKGROUND_CONTEXT);
-		const owner = await holdIn(fixture.client(OWNER), ChatMode, where, "owner");
+		const owner = await holdWith(fixture.client(OWNER), ChatMode, where, "set", "rename");
 		assert.equal(setting.enabled.value, false);
 		await owner.set({ enabled: true }, BACKGROUND_CONTEXT);
 		assert.equal(setting.enabled.value, true, "committed and followed before the answer");
@@ -272,12 +272,12 @@ describe("chat-mode on a bare session host", () => {
 	it("lets only the owner rename the agent; mentions then use the new name", async (t) => {
 		const fixture = await chatModeHost();
 		t.after(() => fixture.close());
-		const mode = await holdIn(fixture.client(OWNER), ChatMode, where, "owner");
+		const mode = await holdWith(fixture.client(OWNER), ChatMode, where, "set", "rename");
 		const reader = await fixture.client(ALICE).get(ChatMode, where, BACKGROUND_CONTEXT);
-		const alice = await holdIn(fixture.client(ALICE), Chat, where, "participant");
+		const alice = await holdWith(fixture.client(ALICE), Chat, where, ...CHAT_PARTICIPANT);
 		assert.equal(mode.name.value, "Pi");
-		// @ts-expect-error `rename` is the owner's.
-		await expectChord(reader.rename({ name: "Mallory" }, BACKGROUND_CONTEXT), "invalid");
+		// `rename` is the owner's: not granted, the member is not there.
+		assert.equal(reader.rename, undefined);
 		await expectChord(mode.rename({ name: "two words" }, BACKGROUND_CONTEXT), "invalid");
 		await mode.set({ enabled: true }, BACKGROUND_CONTEXT);
 		await mode.rename({ name: "Claude" }, BACKGROUND_CONTEXT);
@@ -295,9 +295,12 @@ describe("chat-mode on a bare session host", () => {
 	it("checks a reply's target and derives what it quotes from that entry", async (t) => {
 		const fixture = await chatModeHost();
 		t.after(() => fixture.close());
-		const owner = await holdIn(fixture.client(OWNER), Chat, where, "participant");
-		const alice = await holdIn(fixture.client(ALICE), Chat, where, "participant");
-		await (await holdIn(fixture.client(OWNER), ChatMode, where, "owner")).set({ enabled: true }, BACKGROUND_CONTEXT);
+		const owner = await holdWith(fixture.client(OWNER), Chat, where, ...CHAT_PARTICIPANT);
+		const alice = await holdWith(fixture.client(ALICE), Chat, where, ...CHAT_PARTICIPANT);
+		await (await holdWith(fixture.client(OWNER), ChatMode, where, "set", "rename")).set(
+			{ enabled: true },
+			BACKGROUND_CONTEXT,
+		);
 		const long = "should we split the tokenizer work from the parser work, or keep both in one change?";
 		await owner.send({ text: long, requestId: "1" }, BACKGROUND_CONTEXT);
 		const [question] = chatEntries(await until(owner.view, (view) => chatEntries(view).length === 1));
@@ -322,11 +325,11 @@ describe("chat-mode on a bare session host", () => {
 		const context = durableContext(new AbortController().signal);
 		const other = await fixture.durable.createConversation({ ownership: { kind: "ownerless" } }, context);
 		const elsewhere = { session: "s1", conversation: other.id };
-		await (await holdIn(fixture.client(OWNER), ChatMode, elsewhere, "owner")).set(
+		await (await holdWith(fixture.client(OWNER), ChatMode, elsewhere, "set", "rename")).set(
 			{ enabled: true },
 			BACKGROUND_CONTEXT,
 		);
-		const side = await holdIn(fixture.client(OWNER), Chat, elsewhere, "participant");
+		const side = await holdWith(fixture.client(OWNER), Chat, elsewhere, ...CHAT_PARTICIPANT);
 		await side.send({ text: "in another conversation", requestId: "5" }, BACKGROUND_CONTEXT);
 		const [foreign] = chatEntries(await until(side.view, (view) => chatEntries(view).length === 1));
 		await expectChord(

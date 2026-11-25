@@ -6,9 +6,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
 	type Address,
+	allow,
 	type ChordError,
 	type ChordErrorCode,
 	type Contract,
+	constant,
 	isChordError,
 	memoryLinkPair,
 	type ParamsOf,
@@ -28,18 +30,17 @@ import {
 	defineFacet,
 	type Facet,
 	type FacetHost,
-	type Held,
 	type Host,
 	type HostError,
 	hostErrorText,
+	type Ref,
 	type Self,
 	Server,
 	serveNative,
-	type VariantOf,
 } from "../../src/runtime/chord.ts";
 import { localOwnerSignIn } from "../../src/runtime/local-owner.ts";
 import { HOST, type P2Principal, SERVER } from "../../src/runtime/principals.ts";
-import { follow, type HeldIn, type HeldRef, whenLive } from "../../src/runtime/refs.ts";
+import { expectGranted, follow, type HeldRef, type With, whenLive } from "../../src/runtime/refs.ts";
 import {
 	ServerNatives,
 	type ServerParts,
@@ -205,31 +206,31 @@ export async function startFixture(
 }
 
 /**
- * `type(params)` held on `host`, live, and narrowed to `variant`: rejects `invalid/member` when the host's principal
- * gets another variant, and with the error when the reference ends or fails broken.
+ * `type(params)` held on `host`, live, with `members` granted: rejects `forbidden` (releasing it) when the host's
+ * principal is not granted one of them, and with the error when the reference ends or fails broken.
  */
-export async function holdIn<C extends Contract, const V extends VariantOf<C>>(
+export async function holdWith<C extends Contract, const M extends keyof Ref<C>>(
 	host: Pick<Host, "hold">,
 	type: C,
 	params: ParamsOf<C>,
-	variant: V,
-): Promise<HeldIn<C, V & string>> {
+	...members: M[]
+): Promise<With<Ref<C>, M>> {
 	const ref = host.hold(type, params, TEST);
 	await whenLive(ref);
-	return narrowed(ref, variant);
+	return granting(ref, members);
 }
 
 /**
- * `holdIn` for an older contract version: fails, naming the state, when the reference does not bind (a version the
- * provider does not accept is left `failed { waiting }` with `contract_mismatch`, where `holdIn` would wait).
+ * `holdWith` for an older contract version: fails, naming the state, when the reference does not bind (a version the
+ * provider does not accept is left `failed { waiting }` with `contract_mismatch`, where `holdWith` would wait).
  */
-export async function boundIn<C extends Contract, const V extends VariantOf<C>>(
+export async function boundWith<C extends Contract, const M extends keyof Ref<C>>(
 	host: Pick<Host, "hold">,
 	type: C,
 	params: ParamsOf<C>,
-	variant: V,
-): Promise<HeldIn<C, V & string>> {
-	return narrowed(await bound(host.hold(type, params, TEST)), variant);
+	...members: M[]
+): Promise<With<Ref<C>, M>> {
+	return granting(await bound(host.hold(type, params, TEST)), members);
 }
 
 /** `ref` once live; fails, naming the state, when it fails instead (`contract_mismatch`, say). */
@@ -239,16 +240,15 @@ export async function bound<R extends HeldRef>(ref: R): Promise<R> {
 	return ref;
 }
 
-/** A live `ref` narrowed to `variant`; rejects `invalid/member` (releasing it) for another variant. */
-function narrowed<C extends Contract, V extends VariantOf<C>>(ref: Held<C>, variant: V): HeldIn<C, V & string> {
-	if (ref.variant !== variant) {
+/** A live `ref` with `members` granted; rejects `forbidden` (releasing it) without one of them. */
+function granting<C extends Contract, M extends keyof Ref<C>>(ref: Ref<C>, members: readonly M[]): With<Ref<C>, M> {
+	try {
+		// A remote reference has `granted`; the type of a generic contract's reference cannot say so.
+		return expectGranted(ref as Ref<C> & { readonly granted: ReadonlySet<string> }, ...members);
+	} catch (error) {
 		ref.release();
-		throw Object.assign(new Error(`expected variant ${String(variant)}, got ${String(ref.variant)}`), {
-			code: "invalid",
-			reason: "member",
-		});
+		throw error;
 	}
-	return ref as unknown as HeldIn<C, V & string>;
 }
 
 /**
@@ -267,12 +267,19 @@ export type StubSelf = Self & {
 };
 
 /**
- * A stub factory: `(params, principal, self)` returning its members, flat (`variant` among them for remote types), as
- * v1 factories did. Methods may return nothing; cells come from `self.state`.
+ * A stub factory: `(params, principal, self)` returning its members, flat, as v1 factories did. Methods may return
+ * nothing; cells come from `self.state`.
  */
 export type StubFactory = (params: never, principal: P2Principal, self: StubSelf) => Record<string, unknown>;
-/** A stub is a contract plus its members, or a factory of them. */
-export type Stub = readonly [Contract, Record<string, unknown> | StubFactory];
+
+/** What a stub of a contract with grantable members grants: the names, or the names for a principal. */
+export type StubGrants = readonly string[] | ((principal: P2Principal) => readonly string[]);
+
+/**
+ * A stub is a contract plus its members, or a factory of them; for a contract with grantable members, also what its
+ * admission grants (the stub implements those, and its plain members).
+ */
+export type Stub = readonly [Contract, Record<string, unknown> | StubFactory, StubGrants?];
 
 const CELL = Symbol("p2.test-cell");
 
@@ -304,11 +311,17 @@ function stubSelf(self: Self): StubSelf {
 	}) as StubSelf;
 }
 
-/** A stub's members as Chord takes them: cells as their members, methods answering `null` for nothing. */
-function members(flat: Record<string, unknown>): Record<string, unknown> {
+/**
+ * A stub's members as Chord takes them: cells as their members (granted ones as builders), methods answering `null`
+ * for nothing.
+ */
+function members(flat: Record<string, unknown>, granted: ReadonlySet<string> = new Set()): Record<string, unknown> {
 	return Object.fromEntries(
 		Object.entries(flat).map(([name, value]) => {
-			if (value && typeof value === "object" && CELL in value) return [name, (value as { [CELL]: unknown })[CELL]];
+			if (value && typeof value === "object" && CELL in value) {
+				const member = (value as { [CELL]: unknown })[CELL];
+				return [name, granted.has(name) ? () => member : member];
+			}
 			if (typeof value === "function")
 				return [
 					name,
@@ -320,17 +333,28 @@ function members(flat: Record<string, unknown>): Record<string, unknown> {
 }
 
 /** Serves `stub` on `host`: a local type's factory gets `(params, self)`, a remote one's `(params, principal, self)`. */
-function serveStub(host: FacetHost, [type, value]: Stub): void {
+function serveStub(host: FacetHost, [type, value, grants]: Stub): void {
 	const factory: StubFactory = typeof value === "function" ? value : () => value;
 	const remote = (type as { readonly kind?: string }).kind === "remote";
 	// The stub's contract is any contract: its factory is checked by the test's behaviour, not by its types.
-	const serve = host.serve as unknown as (type: Contract, factory: (...args: never[]) => unknown) => void;
-	if (remote)
-		serve(type, (params: never, principal: P2Principal, self: Self) => {
-			const { variant, ...rest } = factory(params, principal, stubSelf(self));
-			return { variant, members: members(rest) };
-		});
-	else serve(type, (params: never, self: Self) => members(factory(params, HOST, stubSelf(self))));
+	const serve = host.serve as unknown as (
+		type: Contract,
+		factory: (...args: never[]) => unknown,
+		options?: { admit: (params: never, principal: P2Principal) => unknown },
+	) => void;
+	const granted = (principal: P2Principal) => (typeof grants === "function" ? grants(principal) : (grants ?? []));
+	if (!remote) serve(type, (params: never, self: Self) => members(factory(params, HOST, stubSelf(self))));
+	else if (grants === undefined)
+		serve(type, (params: never, principal: P2Principal, self: Self) =>
+			members(factory(params, principal, stubSelf(self))),
+		);
+	else
+		serve(
+			type,
+			(params: never, principal: P2Principal, _admitted: unknown, self: Self) =>
+				members(factory(params, principal, stubSelf(self)), new Set(granted(principal))),
+			{ admit: (_params, principal) => constant(allow({ granted: [...granted(principal)] })) },
+		);
 }
 
 /** A facet that serves single-native registry `registry` and contributes `value` (a stub for a plugin's native). */

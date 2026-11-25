@@ -11,9 +11,8 @@ import { after, before, describe, it } from "node:test";
 import type { UserMessage } from "@earendil-works/pi-ai";
 import type { ConversationView } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT, type SessionLock } from "@p2/app/v1";
-import { Chat, ChatCosts } from "../../plugins/chat/contract.ts";
-import type { Binding } from "../../plugins/discord/contract.ts";
-import { DISCORD_BATCH, Discord, DiscordIngress, DiscordV2 } from "../../plugins/discord/contract.ts";
+import { CHAT_PARTICIPANT, Chat, ChatCosts } from "../../plugins/chat/contract.ts";
+import { type Binding, DISCORD_BATCH, Discord, DiscordIngress } from "../../plugins/discord/contract.ts";
 import {
 	batchOf,
 	chunkText,
@@ -26,10 +25,10 @@ import {
 	type SessionPort,
 	type TurnState,
 } from "../../plugins/discord/relay.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Subagents } from "../../plugins/subagents/contract.ts";
-import type { Held } from "../../src/runtime/chord.ts";
-import { type Fixture, holdIn, poll, startFixture, until } from "./helpers.ts";
+import type { Ref } from "../../src/runtime/chord.ts";
+import { type Fixture, holdWith, poll, startFixture, until } from "./helpers.ts";
 
 const BOT = "999";
 const NO_LOCK: SessionLock = { mcp: [], projectMcp: false, instructions: false, capabilities: [] };
@@ -829,7 +828,7 @@ function sections(view: ConversationView | null | undefined): Record<string, str
 }
 
 /** The turn of `submissionId` once it is no longer pending. */
-async function ended(ingress: Held<typeof DiscordIngress>, submissionId: number): Promise<TurnState> {
+async function ended(ingress: Ref<typeof DiscordIngress>, submissionId: number): Promise<TurnState> {
 	let turn: TurnState = { state: "pending" };
 	await poll(async () => {
 		turn = await ingress.turn({ submissionId }, BACKGROUND_CONTEXT);
@@ -851,7 +850,7 @@ describe("discord ingress (fake provider)", () => {
 		await new Promise<void>((resolve) => cdn.listen(0, "127.0.0.1", resolve));
 		cdnUrl = `http://127.0.0.1:${(cdn.address() as AddressInfo).port}`;
 		fixture = await startFixture();
-		const sessions = await holdIn(fixture.browser(), Sessions, {}, "owner");
+		const sessions = await holdWith(fixture.browser(), Sessions, {}, ...SESSIONS_OWNER);
 		session = (await sessions.create({ cwd: fixture.workspace, title: "Discord" }, BACKGROUND_CONTEXT)).id;
 	});
 	after(async () => {
@@ -875,7 +874,7 @@ describe("discord ingress (fake provider)", () => {
 		assert.equal((await ingress.deliver(input, BACKGROUND_CONTEXT)).submissionId, delivered.submissionId);
 		const turn = await ended(ingress, delivered.submissionId);
 		assert(turn.state === "answered" && turn.text.startsWith("Echo:"), JSON.stringify(turn));
-		const chat = await holdIn(fixture.browser(), Chat, { session, conversation: 1 }, "participant");
+		const chat = await holdWith(fixture.browser(), Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
 		const view = await until(chat.view, (value) =>
 			(value?.entries ?? []).some((entry) => entry.kind === DISCORD_BATCH),
 		);
@@ -971,16 +970,14 @@ describe("discord ingress (fake provider)", () => {
 		assert.deepEqual(state.pending, {});
 	});
 
-	it("the owner's Discord view: updateLink needs a linked session; pages of version 2 still bind", async () => {
+	it("the owner's Discord view: updateLink needs a linked session", async () => {
 		const owner = fixture.browser();
-		const discord = await holdIn(owner, Discord, {}, "owner");
+		const discord = await holdWith(owner, Discord, {});
 		const lock = { mcp: [], projectMcp: false, instructions: false, capabilities: [] };
 		await assert.rejects(
 			discord.updateLink({ session, wake: { anyone: true, users: [], roles: [] }, lock }, BACKGROUND_CONTEXT),
 			/not linked/,
 		);
-		const old = await holdIn(owner, DiscordV2, {}, "owner");
-		assert.deepEqual(await until(old.bindings, (value) => Array.isArray(value)), []);
 	});
 
 	it("tells a linked session's agents where their answer goes; unlinking takes it back", async () => {
@@ -996,7 +993,7 @@ describe("discord ingress (fake provider)", () => {
 		});
 		await ended(ingress, (await ingress.deliver(input("discord:1000"), BACKGROUND_CONTEXT)).submissionId);
 		const owner = fixture.browser();
-		const main = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
+		const main = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
 		const said = sections(await until(main.view, (view) => Boolean(sections(view).discord))).discord ?? "";
 		assert.match(said, /^<discord>\nYour input comes from the Discord channel #general \(Guild\)/);
 		assert.match(said, /your final answer of each turn is posted there as the reply/);
@@ -1009,7 +1006,7 @@ describe("discord ingress (fake provider)", () => {
 			ingress,
 			(await ingress.deliver(input("discord:1001", conversation, "Release"), BACKGROUND_CONTEXT)).submissionId,
 		);
-		const sub = await holdIn(owner, Chat, { session, conversation }, "participant");
+		const sub = await holdWith(owner, Chat, { session, conversation }, ...CHAT_PARTICIPANT);
 		const inThread = await until(sub.view, (view) => /the thread "Release"/.test(sections(view).discord ?? ""));
 		assert.match(
 			sections(inThread).discord ?? "",
@@ -1109,7 +1106,7 @@ describe("discord ingress (fake provider)", () => {
 			BACKGROUND_CONTEXT,
 		);
 		await ended(ingress, turn.submissionId);
-		const sheet = await holdIn(fixture.browser(), ChatCosts, { session, conversation: 1 }, "viewer");
+		const sheet = await holdWith(fixture.browser(), ChatCosts, { session, conversation: 1 });
 		const costs = await sheet.costs(BACKGROUND_CONTEXT);
 		assert(costs.length > 0);
 		const total = costs.reduce((sum, entry) => sum + entry.cost, 0);
@@ -1122,11 +1119,11 @@ describe("discord ingress (fake provider)", () => {
 		const ingress = fixture.server.host.hold(DiscordIngress, { session }, BACKGROUND_CONTEXT);
 		const { conversation } = await ingress.thread({ name: "Release Plan!", before: Date.now() }, BACKGROUND_CONTEXT);
 		assert.notEqual(conversation, 1);
-		const children = await holdIn(fixture.browser(), Subagents, {}, "reader");
+		const children = await holdWith(fixture.browser(), Subagents, {}, "children");
 		await until(children.children, (value) =>
 			(value?.[session] ?? []).some((child) => child.name === "discord-release-plan"),
 		);
-		const sub = await holdIn(fixture.browser(), Chat, { session, conversation }, "participant");
+		const sub = await holdWith(fixture.browser(), Chat, { session, conversation }, ...CHAT_PARTICIPANT);
 		const forked = await until(sub.view, (value) => texts(value).some((text) => text.startsWith("Echo:")));
 		assert(texts(forked).length >= 1, "the fork carries the main conversation's answer");
 		const delivered = await ingress.deliver(

@@ -12,9 +12,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { Envs } from "../../plugins/envs/contract.ts";
-import { Ports } from "../../plugins/ports/contract.ts";
+import { PORTS_OWNER, Ports } from "../../plugins/ports/contract.ts";
 import { Search } from "../../plugins/search/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import { Subagents } from "../../plugins/subagents/contract.ts";
@@ -22,7 +22,7 @@ import { type DataReport, dataReport } from "../../scripts/data-report.ts";
 import { migrateData } from "../../scripts/migrate-data.ts";
 import { verifySessions } from "../../scripts/verify-sessions.ts";
 import { startServer } from "../../src/hosts/server.ts";
-import { clientHost, holdIn, http, localOwner, until } from "./helpers.ts";
+import { clientHost, holdWith, http, localOwner, until } from "./helpers.ts";
 
 const fixture = new URL("../fixtures/v1-data/", import.meta.url);
 const expected = JSON.parse(readFileSync(new URL("report.json", fixture), "utf8")) as DataReport;
@@ -89,12 +89,12 @@ test("a v1 data directory opens with everything in it", { timeout: 120_000 }, as
 		const owner = clientHost(local);
 		t.after(() => owner.close(BACKGROUND_CONTEXT));
 
-		const children = await holdIn(owner, Subagents, {}, "reader");
+		const children = await holdWith(owner, Subagents, {}, "children");
 		const worktree = (await until(children.children, (value) => Boolean(value?.[alpha]?.length)))?.[alpha]?.[0];
 		assert.equal(worktree?.name, "worktree");
 		assert.deepEqual(worktree?.location, { env: null, cwd: "/" });
 
-		const sharing = await holdIn(owner, Sharing, { session: beta }, "owner");
+		const sharing = await holdWith(owner, Sharing, { session: beta });
 		assert.deepEqual(
 			(await until(sharing.links, Boolean))?.map((link) => link.mode),
 			["view"],
@@ -109,7 +109,7 @@ test("a v1 data directory opens with everything in it", { timeout: 120_000 }, as
 
 		// The old upload's id still attaches it: materialized where it was, under the data directory's uploads.
 		const [upload] = readdirSync(join(dataDir, "uploads", beta));
-		const chat = await holdIn(owner, Chat, { session: beta, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session: beta, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await chat.send(
 			{ text: "", requestId: "migrated-upload", attachments: [upload!.slice(0, 36)] },
 			BACKGROUND_CONTEXT,
@@ -121,16 +121,16 @@ test("a v1 data directory opens with everything in it", { timeout: 120_000 }, as
 		);
 		chat.release();
 
-		const search = await holdIn(owner, Search, {}, "owner");
+		const search = await holdWith(owner, Search, {});
 		const hits = await search.search({ query: "hello beta" }, BACKGROUND_CONTEXT);
 		assert.ok(hits.messages.some((hit) => hit.session === beta));
 
-		const envs = await holdIn(owner, Envs, {}, "owner");
+		const envs = await holdWith(owner, Envs, {});
 		assert.deepEqual(
 			(await envs.list(BACKGROUND_CONTEXT)).map((env) => env.name),
 			["gpu"],
 		);
-		const ports = await holdIn(owner, Ports, {}, "owner");
+		const ports = await holdWith(owner, Ports, {}, ...PORTS_OWNER);
 		assert.deepEqual(
 			(await until(ports.forwards, Boolean))?.map((forward) => [forward.port, forward.name]),
 			[[5173, "web"]],

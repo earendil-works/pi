@@ -2,7 +2,7 @@
 // an html page as its source) over the chat, or in the side panel when the terminal is wide enough, where it follows
 // new versions; Ctrl+B opens an html page in the browser (launcher `openUrl`; the browser needs its own sign-in).
 import { Markdown } from "@earendil-works/pi-tui";
-import { BACKGROUND_CONTEXT, contribute, defineFacet, follow, liveIn, whenLive } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, contribute, defineFacet, follow, liveWith, whenLive } from "@p2/app/v1";
 import {
 	grantNotice,
 	ListOverlay,
@@ -24,7 +24,7 @@ const message = (error: unknown) => (error instanceof Error ? error.message : St
 function holdArtifacts(ctx: TuiContext, session: string) {
 	const ref = ctx.host.hold(Artifacts, { session }, BACKGROUND_CONTEXT);
 	const reader = whenLive(ref).then(() => {
-		const live = liveIn(ref, "reader", "editor");
+		const live = liveWith(ref, "artifacts");
 		if (!live) throw new Error("Artifacts are not available");
 		return live;
 	});

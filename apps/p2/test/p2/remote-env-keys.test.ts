@@ -3,13 +3,13 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { BACKGROUND_CONTEXT, type Held, whenLive } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, type Ref, whenLive } from "@p2/app/v1";
 import { Devices } from "../../plugins/devices/contract.ts";
 import { Envs } from "../../plugins/envs/contract.ts";
 import { PROXY_MARKER_HEADER } from "../../plugins/proxy-marker/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
-import { expectChord, holdIn, http, startFixture, until, webAssets } from "./helpers.ts";
+import { expectChord, holdWith, http, startFixture, until, webAssets } from "./helpers.ts";
 
 const hasKeygen = !spawnSync("ssh-keygen", ["-?"], { stdio: "ignore" }).error;
 const TUNNEL = { Host: "keys.test", Origin: "https://keys.test" };
@@ -27,7 +27,7 @@ for (const via of ["token", "relay", "proxy"] as const)
 			execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", source], { stdio: "ignore" });
 			const key = await readFile(source, "utf8");
 			const local = fixture.browser();
-			let envs: Held<typeof Envs>;
+			let envs: Ref<typeof Envs>;
 			if (via === "token" || via === "proxy") {
 				const { token } = await local.hold(Devices, {}, BACKGROUND_CONTEXT).token(BACKGROUND_CONTEXT);
 				const signedIn = await http(fixture.server.port, "/owner/claim", {
@@ -72,7 +72,7 @@ for (const via of ["token", "relay", "proxy"] as const)
 			const generated = await envs.generateKey({ name: "generated" }, BACKGROUND_CONTEXT);
 			assert.match(generated.publicKey, /^ssh-ed25519 /);
 			assert.equal(await envs.publicKey({ name: "generated" }, BACKGROUND_CONTEXT), generated.publicKey);
-			const session = await (await holdIn(local, Sessions, {}, "owner")).create(
+			const session = await (await holdWith(local, Sessions, {}, ...SESSIONS_OWNER)).create(
 				{ cwd: fixture.workspace },
 				BACKGROUND_CONTEXT,
 			);

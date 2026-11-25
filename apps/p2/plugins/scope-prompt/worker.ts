@@ -21,13 +21,10 @@ export default defineFacet((host) => {
 	host.serve(ScopeStage, ({ session }, principal) => {
 		if (!canSend(principal, session)) throw forbidden("only people who may send here stage a scope");
 		return {
-			variant: "sender",
-			members: {
-				stage: async ({ requestId, block, note }) => {
-					drop(requestId);
-					staged.set(requestId, { block, note, timer: setTimeout(() => staged.delete(requestId), STAGED_FOR) });
-					return null;
-				},
+			stage: async ({ requestId, block, note }) => {
+				drop(requestId);
+				staged.set(requestId, { block, note, timer: setTimeout(() => staged.delete(requestId), STAGED_FOR) });
+				return null;
 			},
 		};
 	});

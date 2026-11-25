@@ -6,14 +6,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { BACKGROUND_CONTEXT, whenLive } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { ProviderLogin } from "../../plugins/login/contract.ts";
 import { Models } from "../../plugins/models/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Terminals } from "../../plugins/terminals/contract.ts";
 import { Workspace } from "../../plugins/workspace/contract.ts";
 import { listPlugins, selectPlugins } from "../../src/hosts/plugins.ts";
-import { failureOf, holdIn, settled, startFixture, until } from "./helpers.ts";
+import { failureOf, holdWith, settled, startFixture, until } from "./helpers.ts";
 
 /** What a chat session needs; a fixture names every plugin it loads. */
 const CHAT = [
@@ -92,14 +92,14 @@ describe("plugin listing and selection", () => {
 		const fixture = await startFixture({ plugins: CHAT });
 		t.after(() => fixture.close());
 		const browser = fixture.browser();
-		const session = await (await holdIn(browser, Sessions, {}, "owner")).create(
+		const session = await (await holdWith(browser, Sessions, {}, ...SESSIONS_OWNER)).create(
 			{
 				cwd: fixture.workspace,
 				title: "Subset",
 			},
 			BACKGROUND_CONTEXT,
 		);
-		const chat = await holdIn(browser, Chat, { session: session.id, conversation: 1 }, "participant");
+		const chat = await holdWith(browser, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await chat.send({ text: "subset", requestId: "subset" }, BACKGROUND_CONTEXT);
 		await until(chat.view, (value) =>
 			Boolean(

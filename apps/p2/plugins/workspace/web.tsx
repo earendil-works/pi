@@ -1,4 +1,4 @@
-import { BACKGROUND_CONTEXT, contribute, defineFacet, follow, liveIn } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, contribute, defineFacet, follow, liveWith } from "@p2/app/v1";
 import type { Navigation, WorkspaceRoute } from "@p2/app/v1/web";
 import {
 	Commands,
@@ -15,7 +15,7 @@ import {
 	useStatus,
 } from "@p2/app/v1/web";
 import { useEffect, useState } from "react";
-import { Chat } from "../chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../chat/contract.ts";
 import { Sessions } from "../sessions/contract.ts";
 import { conversationLocation, Subagents } from "../subagents/contract.ts";
 import { WORKSPACE_COMMANDS } from "./commands.tsx";
@@ -83,8 +83,8 @@ function NativePanel({
 	const workspace = useObject(Workspace, { session, conversation });
 	// Only to send review comments: a method-only reference (the chat view holds the state when it is open).
 	const chat = useObject(Chat, { session, conversation });
-	const rows = useReadable(liveIn(useObject(Sessions, {}), "owner", "guest")?.sessions);
-	const children = useReadable(liveIn(useObject(Subagents, {}), "reader")?.children);
+	const rows = useReadable(liveWith(useObject(Sessions, {}), "sessions")?.sessions);
+	const children = useReadable(liveWith(useObject(Subagents, {}), "children")?.children);
 	// Where the viewed conversation works: a subagent may have its own location (e.g. a git worktree, another machine).
 	const location = conversationLocation(
 		rows?.find((row) => row.id === session),
@@ -119,7 +119,7 @@ function NativePanel({
 			owner={owner}
 			onSend={async (text) => {
 				try {
-					const writer = liveIn(chat, "participant");
+					const writer = liveWith(chat, ...CHAT_PARTICIPANT);
 					if (!writer) throw new Error("This conversation is read-only");
 					await writer.send({ text, requestId: crypto.randomUUID(), whenBusy: "steer" }, BACKGROUND_CONTEXT);
 				} catch (error) {

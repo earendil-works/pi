@@ -10,9 +10,9 @@ import {
 	type EntryRecord,
 	ROOT_CONVERSATION_ID,
 } from "@earendil-works/pi-durable";
-import { Chat, type ModelMeta } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat, type ModelMeta } from "../../plugins/chat/contract.ts";
 import chatTui, { ChatSurface } from "../../plugins/chat/tui.ts";
-import { type Session, Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, type Session, Sessions } from "../../plugins/sessions/contract.ts";
 import sessionsTui from "../../plugins/sessions/tui.ts";
 import { SessionTree, type TreeNode } from "../../plugins/tree/contract.ts";
 import { tuiCoreFacet } from "../../src/tui/core-commands.ts";
@@ -94,7 +94,6 @@ test("/tree switches branches with the chosen message in the editor; double Esca
 				(_input, _principal, self) => {
 					rows = self.state([SESSION]);
 					return {
-						variant: "owner",
 						sessions: rows,
 						defaultCwd: self.state("/work"),
 						defaultEnv: self.state(null),
@@ -110,13 +109,13 @@ test("/tree switches branches with the chosen message in the editor; double Esca
 						fork: () => SESSION,
 					};
 				},
+				SESSIONS_OWNER,
 			],
 		],
 		worker: [
 			[
 				Chat,
 				(raw, _principal, self) => ({
-					variant: "participant",
 					view: self.state(view((raw as { conversation: number }).conversation)),
 					model: self.state(META),
 					liveShell: self.state(null),
@@ -133,11 +132,11 @@ test("/tree switches branches with the chosen message in the editor; double Esca
 					shell: () => ({ shellId: "x" }),
 					abortShell: () => ({ aborted: false }),
 				}),
+				CHAT_PARTICIPANT,
 			],
 			[
 				SessionTree,
 				() => ({
-					variant: "owner",
 					tree: () => ({ nodes: NODES, branches: BRANCHES, main: 1, current: 4 }),
 					select: () => {},
 					rename: (change: { conversation: number; label: string | null }) => {
@@ -231,7 +230,6 @@ test("Alt+Enter: idle, the message goes to a new branch and is sent there; busy 
 				(_input, _principal, self) => {
 					rows = self.state([SESSION]);
 					return {
-						variant: "owner",
 						sessions: rows,
 						defaultCwd: self.state("/work"),
 						defaultEnv: self.state(null),
@@ -247,6 +245,7 @@ test("Alt+Enter: idle, the message goes to a new branch and is sent there; busy 
 						fork: () => SESSION,
 					};
 				},
+				SESSIONS_OWNER,
 			],
 		],
 		worker: [
@@ -257,7 +256,6 @@ test("Alt+Enter: idle, the message goes to a new branch and is sent there; busy 
 					const view = self.state(answered(conversation));
 					views.set(conversation, view);
 					return {
-						variant: "participant",
 						view,
 						model: self.state(META),
 						liveShell: self.state(null),
@@ -282,11 +280,11 @@ test("Alt+Enter: idle, the message goes to a new branch and is sent there; busy 
 						abortShell: () => ({ aborted: false }),
 					};
 				},
+				CHAT_PARTICIPANT,
 			],
 			[
 				SessionTree,
 				() => ({
-					variant: "owner",
 					tree: () => ({ nodes: [], branches: BRANCHES, main: 1, current: null }),
 					select: () => {},
 					rename: () => {},

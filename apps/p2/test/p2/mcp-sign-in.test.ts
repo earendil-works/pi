@@ -13,11 +13,11 @@ import { test } from "node:test";
 import { constant, type P2Principal } from "@p2/app/v1";
 import { findRoute, Hosts, type RequestAccess, Routes, Server } from "@p2/app/v1/server";
 import { EnvService } from "../../plugins/envs/contract.ts";
-import { type Instance, Mcp, McpManager } from "../../plugins/mcp/contract.ts";
+import { type Instance, MCP_OWNER, MCP_WORKER, Mcp, McpManager } from "../../plugins/mcp/contract.ts";
 import { mcpServerFacet } from "../../plugins/mcp/server.ts";
 import { Catalog, type Session, SessionLocks } from "../../plugins/sessions/contract.ts";
 import { ChildStore } from "../../plugins/subagents/contract.ts";
-import { APP, holdIn, TEST, testHost, until } from "./helpers.ts";
+import { APP, holdWith, TEST, testHost, until } from "./helpers.ts";
 
 const OWNER: P2Principal = { kind: "owner", access: "local" };
 const RELAY_OWNER: P2Principal = { kind: "owner", access: "relay" };
@@ -207,7 +207,12 @@ async function signInHost(
 	});
 	const manager = await fixture.host.get(McpManager, {}, TEST);
 	// Session s1's worker leases the servers (shared ones start with their first lease).
-	const worker = await holdIn(fixture.client({ kind: "worker", session: "s1", generation: 1 }), Mcp, {}, "worker");
+	const worker = await holdWith(
+		fixture.client({ kind: "worker", session: "s1", generation: 1 }),
+		Mcp,
+		{},
+		...MCP_WORKER,
+	);
 	await worker.setLocations({ locations: [{ env: null, cwd: root }] }, TEST);
 	const routes = (await fixture.host.registry(Routes, TEST)).value;
 	let access: RequestAccess = {
@@ -231,7 +236,7 @@ async function signInHost(
 	return {
 		dataDir,
 		worker,
-		owner: () => holdIn(fixture.client(OWNER), Mcp, {}, "owner"),
+		owner: () => holdWith(fixture.client(OWNER), Mcp, {}, ...MCP_OWNER),
 		/** A request to the routes as `principal` reaching p2 through `origin` (loopback by default). */
 		http: (path: string, principal: P2Principal | undefined, origin = "http://127.0.0.1:8788", headers = {}) => {
 			access = {

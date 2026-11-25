@@ -5,14 +5,14 @@ import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { BACKGROUND_CONTEXT, whenLive } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { BACKGROUND_CONTEXT, type RefWith, whenLive } from "@p2/app/v1";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { Familiar } from "../../plugins/familiar/contract.ts";
 import { Models } from "../../plugins/models/contract.ts";
 import { type RollupDefinition, type RollupEntry, SidebarRollups } from "../../plugins/rollups/contract.ts";
 import { fingerprintOf, inputOf, mentionOf, mentionRead, type RollupFacts } from "../../plugins/rollups/runner.ts";
-import { type Session, Sessions } from "../../plugins/sessions/contract.ts";
-import { expectChord, type Fixture, holdIn, settled, startFixture, until } from "./helpers.ts";
+import { SESSIONS_OWNER, type Session, Sessions, type SessionsOwner } from "../../plugins/sessions/contract.ts";
+import { expectChord, type Fixture, holdWith, settled, startFixture, until } from "./helpers.ts";
 
 /** One group per folder of the sessions it reads (`cwd` only), named by the folder's last segment. */
 const BY_FOLDER = `const groups = new Map();
@@ -24,7 +24,7 @@ return { layout: "groups", groups: [...groups].map(([cwd, members]) => ({ key: c
 
 /** Sends `text` in a session's main conversation and waits until its answer is indexed (the fake model echoes). */
 async function say(owner: ReturnType<Fixture["browser"]>, session: string, text: string): Promise<void> {
-	const chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
+	const chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
 	await chat.send({ text, requestId: `say-${text}` }, BACKGROUND_CONTEXT);
 	await until(chat.view, (view) => JSON.stringify(view).includes(`Echo: ${text}`));
 	chat.release();
@@ -32,16 +32,16 @@ async function say(owner: ReturnType<Fixture["browser"]>, session: string, text:
 
 describe("rollups made from code", () => {
 	let fixture: Fixture;
-	let rollups: Awaited<ReturnType<typeof holdIn<typeof SidebarRollups, "owner">>>;
-	let sessions: Awaited<ReturnType<typeof holdIn<typeof Sessions, "owner">>>;
+	let rollups: RefWith<typeof SidebarRollups, "rollups">;
+	let sessions: SessionsOwner;
 	before(async () => {
 		fixture = await startFixture();
 		const owner = fixture.browser();
 		await owner
 			.hold(Models, {}, BACKGROUND_CONTEXT)
 			.setDefault({ provider: "faux", modelId: "faux-1", thinkingLevel: "off" }, BACKGROUND_CONTEXT);
-		rollups = await holdIn(owner, SidebarRollups, {}, "owner");
-		sessions = await holdIn(owner, Sessions, {}, "owner");
+		rollups = await holdWith(owner, SidebarRollups, {}, "rollups");
+		sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 	});
 	after(async () => {
 		await fixture?.close();
@@ -185,19 +185,19 @@ return { layout: "sessions", members: Object.entries(hits).map(([id, at]) => ({ 
 			.hold(SidebarRollups, {}, BACKGROUND_CONTEXT);
 		await expectChord(whenLive(guest), "forbidden");
 		guest.release();
-		const worker = await holdIn(
+		const worker = await holdWith(
 			fixture.as({ kind: "worker", session: "not-the-familiar", generation: 1 }),
 			SidebarRollups,
 			{},
-			"familiar",
+			"list",
 		);
 		await expectChord(worker.list(BACKGROUND_CONTEXT), "forbidden");
 	});
 
 	it("is what the Familiar's sidebar_rollups tool saves and lists", async () => {
 		const owner = fixture.browser();
-		const { id } = await (await holdIn(owner, Familiar, {}, "owner")).open(BACKGROUND_CONTEXT);
-		const chat = await holdIn(owner, Chat, { session: id, conversation: 1 }, "participant");
+		const { id } = await (await holdWith(owner, Familiar, {})).open(BACKGROUND_CONTEXT);
+		const chat = await holdWith(owner, Chat, { session: id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		const definition = {
 			action: "save",
 			key: "working",

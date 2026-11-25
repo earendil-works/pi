@@ -1,6 +1,6 @@
 // The sharing plugin's part of the command menu, on a session target (owner): Share session… (the share sheet), Copy
 // read-only link, Copy read/write link and Reset share link…, with the page that picks the link to reset.
-import { BACKGROUND_CONTEXT, keptIn, withHeld } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, keptWith, withHeld } from "@p2/app/v1";
 import {
 	type Command,
 	type CommandContext,
@@ -21,7 +21,7 @@ import {
 	useReadable,
 } from "@p2/app/v1/web";
 import { type ReactNode, useMemo } from "react";
-import { Sessions } from "../sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../sessions/contract.ts";
 import { type ShareMode, Sharing } from "./contract.ts";
 import { confirmsFirst, LINK_LABEL, linkUrl, resetLink } from "./links.ts";
 
@@ -96,7 +96,7 @@ function openShareSheet(ctx: CommandContext): void {
 async function copyLink(ctx: CommandContext, mode: ShareMode): Promise<void> {
 	const id = targetSession(ctx.target);
 	if (id === undefined) return;
-	const url = await withHeld(ctx.host.hold(Sharing, { session: id }, BACKGROUND_CONTEXT), "owner", (sharing) => {
+	const url = await withHeld(ctx.host.hold(Sharing, { session: id }, BACKGROUND_CONTEXT), (sharing) => {
 		if (confirmsFirst(mode, sharing.links.value, sharing.env.value))
 			throw new Error("This session works on a remote environment: create its read/write link in the Share sheet");
 		return linkUrl(sharing, mode);
@@ -126,7 +126,9 @@ function HasLink({ children }: { children: ReactNode }) {
  */
 function useTargetShares() {
 	const id = targetSession(useCommandTarget());
-	const session = useReadable(keptIn(useObject(Sessions, {}), "owner")?.sessions)?.find((each) => each.id === id);
+	const session = useReadable(keptWith(useObject(Sessions, {}), ...SESSIONS_OWNER)?.sessions)?.find(
+		(each) => each.id === id,
+	);
 	const open = session?.archivedAt === null;
 	const sharing = useObject(Sharing, open ? { session: session.id } : undefined);
 	const links = useReadable(sharing?.links);
@@ -158,10 +160,8 @@ function ResetPage() {
 					suffix="Its guests lose access"
 					onSelect={async () => {
 						await close();
-						await withHeld(
-							host.hold(Sharing, { session: shares.session }, BACKGROUND_CONTEXT),
-							"owner",
-							(sharing) => resetLink(sharing, mode),
+						await withHeld(host.hold(Sharing, { session: shares.session }, BACKGROUND_CONTEXT), (sharing) =>
+							resetLink(sharing, mode),
 						).catch(fail);
 					}}
 				/>

@@ -7,11 +7,11 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT, whenLive } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import chatTui from "../../plugins/chat/tui.ts";
 import { Drafts } from "../../plugins/drafts/contract.ts";
 import { rankFiles, withDirectories } from "../../plugins/file-index/rank.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import {
 	applyFileCompletion,
 	atItems,
@@ -23,7 +23,7 @@ import {
 import { FileIndex } from "../../src/runtime/file-index.ts";
 import { FileCompletionProvider, type FileSource, OUT_OF_SCOPE_HINT } from "../../src/tui/completion.ts";
 import { tuiCoreFacet } from "../../src/tui/core-commands.ts";
-import { holdIn, poll, startFixture } from "./helpers.ts";
+import { holdWith, poll, startFixture } from "./helpers.ts";
 import { SESSION, type Stub, sessionsStub, topology } from "./tui-fixture.ts";
 
 test("prefix extraction, quoting and insertion follow pi-tui", () => {
@@ -121,7 +121,6 @@ test("in the chat editor, @ completes from the session's FileIndex and inserts t
 		[
 			Chat,
 			(_input, _principal, self) => ({
-				variant: "participant",
 				view: self.state(view as never),
 				model: self.state(null),
 				liveShell: self.state(null),
@@ -138,11 +137,11 @@ test("in the chat editor, @ completes from the session's FileIndex and inserts t
 				abortShell: () => ({ aborted: false }),
 				dequeueOwn: () => ({ restored: [], skipped: 0 }),
 			}),
+			CHAT_PARTICIPANT,
 		],
 		[
 			Drafts,
 			(_input, _principal, self) => ({
-				variant: "author",
 				drafts: self.state([]),
 				claim: () => ({ texts: [] }),
 			}),
@@ -150,7 +149,6 @@ test("in the chat editor, @ completes from the session's FileIndex and inserts t
 		[
 			FileIndex,
 			(_input, _principal, self) => ({
-				variant: "reader",
 				changes: self.state(0),
 				complete: ({ query }: { query: string }) => ({
 					items: rankFiles(withDirectories(["src/parser.ts", "docs/guide.md"]), query),
@@ -185,7 +183,9 @@ test("the index stays within its bounds on a large directory and says so", { tim
 	}
 	const owner = fixture.browser();
 	const session = (
-		await (await holdIn(owner, Sessions, {}, "owner")).create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT)
+		await (
+			await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)
+		).create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT)
 	).id;
 	const index = owner.hold(FileIndex, { session, conversation: 1 }, BACKGROUND_CONTEXT);
 	await whenLive(index);

@@ -3,7 +3,7 @@
 // session selector's subagent conversations (threaded sort, p2-tui-port.md section 1.17).
 
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
-import { BACKGROUND_CONTEXT, contribute, defineFacet, liveIn, locationText } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, contribute, defineFacet, live, liveWith, locationText } from "@p2/app/v1";
 import type { TuiContext } from "@p2/app/v1/tui";
 import {
 	getTextOutput,
@@ -86,8 +86,9 @@ const sessionSource: TuiSessionSource = {
 	children(runtime, onChange) {
 		const scope = new TuiScope(runtime);
 		scope.watch(Subagents, {}, (ref, follow) => {
-			if (ref.variant !== "reader") return;
-			follow(ref.children, (children) => {
+			const reader = liveWith(ref, "children");
+			if (!reader) return;
+			follow(reader.children, (children) => {
 				const named: Record<string, { name: string; conversationId: number; model: string }[]> = {};
 				for (const [session, rows] of Object.entries(children))
 					named[session] = rows
@@ -114,8 +115,9 @@ function openAgents(ctx: TuiContext): void {
 	const scope = ctx.scope();
 	let received: Child[] = [];
 	scope.watch(Subagents, {}, (ref, follow) => {
-		if (ref.variant === "reader")
-			follow(ref.children, (value) => {
+		const reader = liveWith(ref, "children");
+		if (reader)
+			follow(reader.children, (value) => {
 				received = value[session] ?? [];
 			});
 	});
@@ -171,7 +173,7 @@ function openAgents(ctx: TuiContext): void {
 					run: (row) => {
 						const child = shown().find((candidate) => String(candidate.conversationId) === row?.key);
 						if (!child || child.kind === "agent") return;
-						const participant = liveIn(control, "participant");
+						const participant = live(control);
 						if (!participant) {
 							ctx.notify("Only participants archive subagents", "warning");
 							return;

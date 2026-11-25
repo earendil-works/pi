@@ -24,8 +24,10 @@ import {
 	type Facet,
 	type FacetHost,
 	forbidden,
+	grantBy,
 	type Host,
 	keyedRegistry,
+	notGranted,
 	type Self,
 	serveKeyed,
 } from "./chord.ts";
@@ -425,13 +427,10 @@ export function serverCore(host: Host, info: ServerInfo, parts: ServerParts): Fa
 			if (!isOwner(principal)) throw forbidden("the server's name is the owner's");
 			const source = self.get(ServerName, {});
 			return {
-				variant: "owner",
-				members: {
-					name: self.derive([source.name], ([value]) => value),
-					chosen: self.derive([source.chosen], ([value]) => value),
-					device: self.derive([source.device], ([value]) => value),
-					rename: (args, ctx) => source.rename(args, ctx),
-				},
+				name: self.derive([source.name], ([value]) => value),
+				chosen: self.derive([source.chosen], ([value]) => value),
+				device: self.derive([source.device], ([value]) => value),
+				rename: (args, ctx) => source.rename(args, ctx),
 			};
 		});
 		facet.serve(Hosts, (_params, self) => {
@@ -445,24 +444,26 @@ export function serverCore(host: Host, info: ServerInfo, parts: ServerParts): Fa
 				},
 			};
 		});
-		facet.serve(Access, (_params, principal) => {
-			if (isOwner(principal)) return { variant: "owner", members: {} };
-			if (!isGuest(principal)) throw forbidden("owners and guests only");
-			// One object per grant revision: the grant never changes within it.
-			const { id, name, email, home, sessions } = principal;
-			return {
-				variant: "guest",
-				members: {
-					grant: constant({
-						id,
-						name,
-						session: home,
-						mode: sessions[home] ?? "view",
-						sessions,
-						...(email === undefined ? {} : { email }),
-					}),
-				},
-			};
-		});
+		facet.serve(
+			Access,
+			(_params, principal) => {
+				if (isOwner(principal)) return { grant: notGranted };
+				if (!isGuest(principal)) throw forbidden("owners and guests only");
+				// One object per grant revision: the grant never changes within it.
+				const { id, name, email, home, sessions } = principal;
+				return {
+					grant: () =>
+						constant({
+							id,
+							name,
+							session: home,
+							mode: sessions[home] ?? "view",
+							sessions,
+							...(email === undefined ? {} : { email }),
+						}),
+				};
+			},
+			{ admit: grantBy((principal) => (isGuest(principal) ? ["grant"] : [])) },
+		);
 	});
 }

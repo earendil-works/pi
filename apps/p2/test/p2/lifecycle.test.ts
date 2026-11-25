@@ -5,29 +5,29 @@
 
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
-import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { BACKGROUND_CONTEXT, type RefWith } from "@p2/app/v1";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { summarize } from "../../plugins/models/config.ts";
 import type { Resources } from "../../plugins/models/resources.ts";
-import { Catalog, Sessions } from "../../plugins/sessions/contract.ts";
+import { Catalog, SESSIONS_OWNER, Sessions, type SessionsOwner } from "../../plugins/sessions/contract.ts";
 import { SessionStatus, WorkerControl } from "../../plugins/status/contract.ts";
 import { startServer } from "../../src/hosts/server.ts";
-import type { Host, RefIn } from "../../src/runtime/chord.ts";
+import type { Host } from "../../src/runtime/chord.ts";
 import { envDefaultModel } from "../../src/runtime/default-model.ts";
 import { processLogs } from "../../src/runtime/logs.ts";
 import { Hosts } from "../../src/runtime/server.ts";
-import { type Fixture, failureOf, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, failureOf, holdWith, startFixture, until } from "./helpers.ts";
 
 describe("worker lifecycle (fake provider)", () => {
 	let fixture: Fixture;
 	let owner: Host;
-	let sessions: RefIn<typeof Sessions, "owner">;
-	let status: RefIn<typeof SessionStatus, "reader">;
+	let sessions: SessionsOwner;
+	let status: RefWith<typeof SessionStatus, "statuses">;
 	before(async () => {
 		fixture = await startFixture();
 		owner = fixture.browser();
-		sessions = await holdIn(owner, Sessions, {}, "owner");
-		status = await holdIn(owner, SessionStatus, {}, "reader");
+		sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
+		status = await holdWith(owner, SessionStatus, {}, "statuses");
 	});
 	after(async () => {
 		await fixture?.close();
@@ -50,7 +50,7 @@ describe("worker lifecycle (fake provider)", () => {
 		assert.match(statuses?.[session.id]?.error ?? "", /Unknown model/);
 		chat.release();
 		// Retry answers with the outcome: the start fails again, so does the call (with why), even with nobody holding.
-		const control = await holdIn(owner, WorkerControl, { session: session.id }, "owner");
+		const control = await holdWith(owner, WorkerControl, { session: session.id });
 		await assert.rejects(control.restart(BACKGROUND_CONTEXT), /Unknown model/);
 		control.release();
 	});
@@ -58,7 +58,7 @@ describe("worker lifecycle (fake provider)", () => {
 	it("records an unrequested exit as a notice and restarts the worker for its holders", async () => {
 		const session = await sessions.create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT);
 		const source = `session:${session.id}`;
-		const chat = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await chat.send({ text: "hello", requestId: "one" }, BACKGROUND_CONTEXT);
 		const hosts = fixture.server.host.hold(Hosts, {}, BACKGROUND_CONTEXT);
 		try {
@@ -85,9 +85,9 @@ describe("worker lifecycle (fake provider)", () => {
 
 	it("restarts a crashed worker for its holders five times a minute; the sixth crash waits for Retry", async () => {
 		const session = await sessions.create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT);
-		const chat = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		const hosts = fixture.server.host.hold(Hosts, {}, BACKGROUND_CONTEXT);
-		const control = await holdIn(owner, WorkerControl, { session: session.id }, "owner");
+		const control = await holdWith(owner, WorkerControl, { session: session.id });
 		const running = async (other?: number) =>
 			(await until(hosts.workers, (value) => {
 				const worker = value?.[session.id];

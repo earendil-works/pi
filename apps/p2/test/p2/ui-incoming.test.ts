@@ -6,12 +6,12 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import type { ConversationView, EntryId, LiveState } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { Models } from "../../plugins/models/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Subagents } from "../../plugins/subagents/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 const live = (view: ConversationView | null | undefined) => view?.docs["pi.live"] as LiveState | undefined;
 const conversation = { id: 1 } as ConversationView["conversation"];
@@ -167,12 +167,12 @@ describe("incoming messages", { skip: !browserTests }, () => {
 		await owner
 			.hold(Models, {}, BACKGROUND_CONTEXT)
 			.setDefault({ provider: "faux", modelId: "faux-1", thinkingLevel: "off" }, BACKGROUND_CONTEXT);
-		const sessions = await holdIn(owner, Sessions, {}, "owner");
+		const sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		const alpha = (await sessions.create({ cwd: fixture.workspace, title: "Alpha" }, BACKGROUND_CONTEXT)).id;
 		const beta = (await sessions.create({ cwd: fixture.workspace, title: "Beta" }, BACKGROUND_CONTEXT)).id;
-		const a = await holdIn(owner, Chat, { session: alpha, conversation: 1 }, "participant");
-		const b = await holdIn(owner, Chat, { session: beta, conversation: 1 }, "participant");
-		const list = await holdIn(owner, Subagents, {}, "reader");
+		const a = await holdWith(owner, Chat, { session: alpha, conversation: 1 }, ...CHAT_PARTICIPANT);
+		const b = await holdWith(owner, Chat, { session: beta, conversation: 1 }, ...CHAT_PARTICIPANT);
+		const list = await holdWith(owner, Subagents, {}, "children");
 		await a.send({ text: "subagent", requestId: "spawn" }, BACKGROUND_CONTEXT);
 		const children = await until(list.children, (value) => value?.[alpha]?.length === 1);
 		const helper = children![alpha]![0]!;

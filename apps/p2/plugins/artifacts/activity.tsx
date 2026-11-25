@@ -2,7 +2,7 @@
 // `artifact_show` the artifact itself in place, right after the call (its pane, inline), mounted only while it is on
 // screen so a long transcript runs no more pages than the person sees.
 
-import { BACKGROUND_CONTEXT, type JsonValue } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, type JsonValue, liveWith } from "@p2/app/v1";
 import {
 	detailsOf,
 	failureOf,
@@ -18,7 +18,7 @@ import {
 	ViewKinds,
 } from "@p2/app/v1/web";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { Views } from "../views/contract.ts";
+import { VIEWS_EDITING, Views } from "../views/contract.ts";
 import { type InlineSize, InlineSizeContext, inlineHeights } from "./inline-size.ts";
 import { useArtifacts } from "./use-artifacts.ts";
 
@@ -73,7 +73,7 @@ export function InlineArtifact({ session, id }: { session: string; id: string })
 	const { list, editor } = useArtifacts(session);
 	const kinds = useRegistry(ViewKinds);
 	// People who may send change it here as beside the chat; their selection goes with their next message.
-	const views = useObject(Views, editor ? { session } : undefined, { variant: "editor" });
+	const views = liveWith(useObject(Views, editor ? { session } : undefined), ...VIEWS_EDITING);
 	const { fail } = useComposerState();
 	useEffect(() => {
 		const element = box.current;

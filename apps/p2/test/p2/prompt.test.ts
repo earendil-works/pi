@@ -6,10 +6,9 @@ import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import type { ConversationView } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { SessionLock, Sessions } from "../../plugins/sessions/contract.ts";
-import type { RefIn } from "../../src/runtime/chord.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { CHAT_PARTICIPANT, Chat, type ChatParticipant } from "../../plugins/chat/contract.ts";
+import { SESSIONS_OWNER, SessionLock, Sessions } from "../../plugins/sessions/contract.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 /** The system sections in effect: the latest value of each, replayed from `pi.system` entries. */
 function sections(view: ConversationView | null | undefined): Record<string, string> {
@@ -30,7 +29,7 @@ function sections(view: ConversationView | null | undefined): Record<string, str
 
 describe("prompt resources (fake provider)", () => {
 	let fixture: Fixture;
-	let chat: RefIn<typeof Chat, "participant">;
+	let chat: ChatParticipant;
 	let session: string;
 
 	before(async () => {
@@ -45,9 +44,11 @@ describe("prompt resources (fake provider)", () => {
 		);
 		const owner = fixture.browser();
 		session = (
-			await (await holdIn(owner, Sessions, {}, "owner")).create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT)
+			await (
+				await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)
+			).create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT)
 		).id;
-		chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
+		chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
 	});
 
 	after(async () => {
@@ -74,7 +75,7 @@ describe("prompt resources (fake provider)", () => {
 	});
 
 	it("leaves the owner's global instructions and skills out of a locked session that did not pick them", async () => {
-		const locks = await holdIn(fixture.browser(), SessionLock, {}, "owner");
+		const locks = await holdWith(fixture.browser(), SessionLock, {}, "locks", "set");
 		await locks.set(
 			{ session, lock: { mcp: [], projectMcp: false, instructions: false, capabilities: [] } },
 			BACKGROUND_CONTEXT,

@@ -1,4 +1,4 @@
-import { BACKGROUND_CONTEXT, contribute, defineFacet, liveIn } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, contribute, defineFacet, liveWith } from "@p2/app/v1";
 import {
 	navigate,
 	OpenPeerConversation,
@@ -10,13 +10,13 @@ import {
 	useReadable,
 } from "@p2/app/v1/web";
 import type { ReactNode } from "react";
-import { Sessions } from "../sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../sessions/contract.ts";
 import { conversationsActivity } from "./activity.tsx";
 
 function Attribution({ children }: { children?: ReactNode }) {
 	const sessions = useObject(Sessions, {});
-	const listed = useReadable(liveIn(sessions, "owner", "guest")?.sessions) ?? [];
-	const owner = liveIn(sessions, "owner");
+	const listed = useReadable(liveWith(sessions, "sessions")?.sessions) ?? [];
+	const owner = liveWith(sessions, ...SESSIONS_OWNER);
 	// As Pi Mobile: peer labels link only while connected; errors go to the app's toast.
 	const connected = useConnected();
 	const { setError, fail } = useComposerState();

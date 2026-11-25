@@ -3,30 +3,16 @@
 // item it shows, and the person's selection in it; annotations (comments, removals, drawings) mark up any view or the
 // transcript. The session's worker owns all of it; the layout of the panes is each device's own (web.tsx).
 
+import { arr, nul, nullable, num, obj, oneOf, opt, type Static, str, union, unknown } from "@earendil-works/pi-schema";
 import {
-	arr,
-	int,
-	nul,
-	nullable,
-	num,
-	obj,
-	oneOf,
-	opt,
-	type Static,
-	str,
-	union,
-	unknown,
-} from "@earendil-works/pi-schema";
-import {
-	type AcceptsTable,
 	type Ctx,
-	evolve,
+	grantable,
 	type JsonValue,
 	keyedRegistry,
 	literal,
 	method,
 	param,
-	propertiesOf,
+	type RefWith,
 	remote,
 	sessionHost,
 	unsafe,
@@ -41,10 +27,6 @@ export const TRANSCRIPT = "transcript";
 export const MAX_ANNOTATIONS = 200;
 
 const Id = str({ pattern: VIEW_ID.source });
-/** The kinds `Views` version 1 knew. */
-const ViewKindSchemaV1 = oneOf(["markdown", "changes", "custom"] as const);
-/** The built-in kinds: a Markdown file of the workspace rendered, the working tree's changes. */
-export const BUILT_IN_KINDS: readonly string[] = ["markdown", "changes"];
 
 /**
  * A view's kind: a built-in one or the name a plugin's web facet registered its pane under (`ViewKinds`: `html` and
@@ -65,24 +47,6 @@ export const SelectionSchema = obj({
 	sent: opt(literal(true)),
 });
 export type Selection = Static<typeof SelectionSchema>;
-
-/** One view of a session, as `Views` version 1 has it. */
-const ViewSchemaV1 = obj({
-	id: Id,
-	kind: ViewKindSchemaV1,
-	title: str({ minLength: 1, maxLength: 120 }),
-	path: opt(str({ maxLength: 4096 })),
-	source: opt(int({ minimum: 1 })),
-	selection: opt(SelectionSchema),
-	errors: opt(arr(str({ maxLength: 1000 }), { maxItems: 10 })),
-	focus: num(),
-	created: num(),
-});
-type ViewV1 = Static<typeof ViewSchemaV1>;
-
-/** One view of a session, as `Views` version 2 has it: a plugin's kind too. */
-const ViewSchemaV2 = obj({ ...propertiesOf(ViewSchemaV1), kind: ViewKindNameSchema });
-type ViewV2 = Static<typeof ViewSchemaV2>;
 
 /** One view of a session: what it is (its kind and the item it shows), its title and the person's selection. */
 export const ViewSchema = obj({
@@ -194,122 +158,44 @@ export const OpenSchema = obj({
 });
 export type OpenInput = Static<typeof OpenSchema>;
 
-/** What version 2's editors opened: a Markdown file, the changes, or a saved view (gone). */
-const OpenSchemaV2 = union([
-	obj({
-		kind: literal("markdown"),
-		path: str({ minLength: 1, maxLength: 4096 }),
-		title: opt(str({ maxLength: 120 })),
-	}),
-	obj({ kind: literal("changes"), path: opt(str({ maxLength: 4096 })), title: opt(str({ maxLength: 120 })) }),
-	obj({ saved: str({ pattern: VIEW_ID.source }) }),
-]);
-
 /**
  * A session's views and annotations as anyone who may view the session sees them; people who may send there also open,
- * close and select in views, annotate, and drop what their next message would carry.
+ * close and select in views, annotate, and drop what their next message would carry (`VIEWS_EDITING`). 2: a view's
+ * kind may be a plugin's. 3: a view shows an `item` (`path` before); the custom kind, its source and errors, saved
+ * views and `report` are gone. 4: selections in items shown in the transcript (`inline`, `selectInline`). 5: a new
+ * base (grantable members replaced variants; older versions are refused, their pages reload).
  */
-export const ViewsV1 = remote("p2.views", {
-	version: 1,
+export const Views = remote("p2.views", {
+	version: 5,
 	params: { session: param.str() },
 	hostAddress: sessionHost,
-	variants: {
-		reader: {
-			state: {
-				views: arr(ViewSchemaV1),
-				annotations: arr(AnnotationSchema),
-				arrangement: nullable(ArrangementSchema),
-			},
-		},
-		editor: {
-			state: {
-				views: arr(ViewSchemaV1),
-				annotations: arr(AnnotationSchema),
-				arrangement: nullable(ArrangementSchema),
-			},
-			methods: {
-				open: method(OpenSchemaV2, obj({ id: Id })),
-				/** Removes the view, its state and its annotations. */
-				close: method(obj({ id: Id })),
-				/** Sets (or with `null` clears) the person's selection in a view. */
-				select: method(obj({ id: Id, selection: nullable(SelectionSchema) })),
-				annotate: method(AnnotationInputSchema, obj({ id: str() })),
-				/** Removes annotations: these, or every one without `ids`. */
-				unannotate: method(obj({ ids: opt(arr(str(), { maxItems: MAX_ANNOTATIONS })) })),
-				/** Drops what the next message would carry: unsent annotations go, selections count as sent. */
-				discard: method(),
-				/** The custom view's script errors the browser saw (an empty list: none). */
-				report: method(obj({ id: Id, errors: arr(str({ maxLength: 1000 }), { maxItems: 10 }) })),
-			},
-		},
+	state: {
+		views: arr(ViewSchema),
+		annotations: arr(AnnotationSchema),
+		arrangement: nullable(ArrangementSchema),
+		inline: arr(InlineSelectionSchema),
+	},
+	methods: {
+		open: grantable(method(OpenSchema, obj({ id: Id }))),
+		/** Removes the view, its state and its annotations. */
+		close: grantable(method(obj({ id: Id }))),
+		/** Sets (or with `null` clears) the person's selection in a view. */
+		select: grantable(method(obj({ id: Id, selection: nullable(SelectionSchema) }))),
+		/** Sets (or with `null` clears) the person's selection in an item shown in the transcript. */
+		selectInline: grantable(method(SelectInlineSchema, nul())),
+		annotate: grantable(method(AnnotationInputSchema, obj({ id: str() }))),
+		/** Removes annotations: these, or every one without `ids`. */
+		unannotate: grantable(method(obj({ ids: opt(arr(str(), { maxItems: MAX_ANNOTATIONS })) }))),
+		/** Drops what the next message would carry: unsent annotations go, selections count as sent. */
+		discard: grantable(method()),
 	},
 });
 
-/** Version 2: a view's kind may be a plugin's. */
-const ViewsV2 = evolve(ViewsV1, (e) =>
-	e.state("reader", "views", arr(ViewSchemaV2)).state("editor", "views", arr(ViewSchemaV2)),
-);
+/** The editing methods of `Views`, granted together to people who may send in the session. */
+export const VIEWS_EDITING = ["open", "close", "select", "selectInline", "annotate", "unannotate", "discard"] as const;
 
-/** Version 3: a view shows an `item` (`path` before); the custom kind, its source and errors, saved views and `report` are gone. */
-const ViewsV3 = evolve(ViewsV2, (e) =>
-	e
-		.state("reader", "views", arr(ViewSchema))
-		.state("editor", "views", arr(ViewSchema))
-		.args("open", OpenSchema)
-		.removeMethod("report"),
-);
-
-/**
- * The session's views and annotations (see `ViewsV1`). 2: a view's kind may be a plugin's. 3: a view shows an `item`
- * (`path` before); the custom kind, its source and errors, saved views and `report` are gone. 4: selections in items
- * shown in the transcript (`inline`, `selectInline`). Pages built with 1 to 3 get what they can show (`VIEWS_ACCEPTS`).
- */
-export const Views = evolve(ViewsV3, (e) =>
-	e
-		.addState("reader", "inline", arr(InlineSelectionSchema))
-		.addState("editor", "inline", arr(InlineSelectionSchema))
-		/** Sets (or with `null` clears) the person's selection in an item shown in the transcript. */
-		.addMethod("editor", "selectInline", SelectInlineSchema, nul()),
-);
-
-/** A view as versions 1 and 2 have it: its item as `path` (only the built-in kinds had one). */
-const asV2 = (view: View): ViewV2 => {
-	const { item, ...rest } = view;
-	return { ...rest, ...(item !== undefined && BUILT_IN_KINDS.includes(view.kind) ? { path: item } : {}) };
-};
-
-/** What pages built with older versions of `Views` see and send. */
-export const VIEWS_ACCEPTS: AcceptsTable<typeof Views> = {
-	1: {
-		state: {
-			reader: {
-				views: (views) => views.map(asV2).filter((view): view is ViewV1 => BUILT_IN_KINDS.includes(view.kind)),
-			},
-			editor: {
-				views: (views) => views.map(asV2).filter((view): view is ViewV1 => BUILT_IN_KINDS.includes(view.kind)),
-			},
-		},
-		// Custom views and their errors are gone: what an older page reports changes nothing.
-		methods: { open: { args: openOfV2 }, report: { call: async () => null } },
-	},
-	2: {
-		state: { reader: { views: (views) => views.map(asV2) }, editor: { views: (views) => views.map(asV2) } },
-		// Custom views and their errors are gone: what an older page reports changes nothing.
-		methods: { open: { args: openOfV2 }, report: { call: async () => null } },
-	},
-	3: {},
-};
-
-/** An older page's open: a Markdown file or the changes (saved views are gone). */
-function openOfV2(old: Static<typeof OpenSchemaV2>): OpenInput {
-	// Version 2's wire schema is frozen: its saved-view form has no `kind` to tell it apart by.
-	if ("saved" in old) throw new Error("Saved views are gone");
-	return {
-		kind: old.kind,
-		...(old.path ? { item: old.path } : {}),
-		...(old.title ? { title: old.title } : {}),
-	};
-}
+/** A reference to a session's views that may edit them. */
+export type ViewsEditor = RefWith<typeof Views, (typeof VIEWS_EDITING)[number]>;
 
 /** The entry kind of a person's message that carried view context (selections, annotations) to the agent. */
 export const VIEW_INPUT = "p2.view-input";

@@ -1,4 +1,4 @@
-import type { Held } from "@p2/app/v1";
+import type { Ref } from "@p2/app/v1";
 import { BACKGROUND_CONTEXT, whenLive } from "@p2/app/v1";
 import {
 	APPLE,
@@ -307,7 +307,7 @@ type ViewState = {
 
 /** One connection to /terminal and the terminal it shows. */
 class TerminalSession {
-	readonly #control: Held<typeof Terminals>;
+	readonly #control: Ref<typeof Terminals>;
 	#commands: Promise<unknown> = Promise.resolve();
 	readonly #screen: HTMLElement;
 	readonly #input: HTMLTextAreaElement;
@@ -388,7 +388,7 @@ class TerminalSession {
 	};
 
 	constructor(options: {
-		control: Held<typeof Terminals>;
+		control: Ref<typeof Terminals>;
 		/** The viewed conversation: new terminals open where it works. */
 		conversation: () => number;
 		terminalId?: string;
@@ -911,7 +911,7 @@ class TerminalSession {
 	}
 
 	/** Runs a call on the terminal control, in order; `attaching` first settles what this viewer owes for output. */
-	#request(call: (control: Held<typeof Terminals>) => Promise<unknown>, attaching = false): void {
+	#request(call: (control: Ref<typeof Terminals>) => Promise<unknown>, attaching = false): void {
 		// Attaching resets the host's counters: settle what this viewer owes for the previous terminal first.
 		if (attaching) this.#flushAck();
 		if (this.#socket?.readyState !== WebSocket.OPEN) return;
@@ -1293,7 +1293,7 @@ export function TerminalView({
 	onMove,
 	onHide,
 }: {
-	control?: Held<typeof Terminals>;
+	control?: Ref<typeof Terminals>;
 	/** The viewed conversation: new terminals open where it works (a subagent's own location, else the session's). */
 	conversation?: number;
 	/** The terminal the route names; it may be gone. */

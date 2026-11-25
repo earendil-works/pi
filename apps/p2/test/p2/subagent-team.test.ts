@@ -6,11 +6,11 @@ import { after, before, describe, it } from "node:test";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type { ConversationView, EntryRecord } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT, follow } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
 import { AGENT_MESSAGE_ENTRY, type AgentMessage, Subagents } from "../../plugins/subagents/contract.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 const agentMessages = (view: ConversationView | null | undefined) =>
 	(view?.entries ?? [])
@@ -36,11 +36,12 @@ describe("subagent team messaging (fake provider)", () => {
 
 	it("a subagent asks the main agent, notes a sibling and reads its answer; reports are entries", async () => {
 		const owner = fixture.browser();
-		const sessions = await holdIn(owner, Sessions, {}, "owner");
-		const status = await holdIn(owner, SessionStatus, {}, "reader");
-		const agents = await holdIn(owner, Subagents, {}, "reader");
+		const sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
+		const status = await holdWith(owner, SessionStatus, {}, "statuses");
+		const agents = await holdWith(owner, Subagents, {}, "children");
 		const session = await sessions.create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT);
-		const chat = (conversation: number) => holdIn(owner, Chat, { session: session.id, conversation }, "participant");
+		const chat = (conversation: number) =>
+			holdWith(owner, Chat, { session: session.id, conversation }, ...CHAT_PARTICIPANT);
 		const root = await chat(1);
 		const keep = follow(root.view, () => {});
 		const idle = () => until(status.statuses, (value) => value?.[session.id]?.tasks === 0, 30_000);

@@ -418,12 +418,9 @@ export default defineFacet((host) => {
 			return { value: listedOf(loads.current()), detach: stop };
 		});
 		return {
-			variant: "participant",
-			members: {
-				templates: deriveTyped(self, [listed], ([value]) => value.templates),
-				skills: deriveTyped(self, [listed], ([value]) => value.skills),
-				expand: ({ text }, ctx) => prompt.expand({ text, conversation }, ctx),
-			},
+			templates: deriveTyped(self, [listed], ([value]) => value.templates),
+			skills: deriveTyped(self, [listed], ([value]) => value.skills),
+			expand: ({ text }, ctx) => prompt.expand({ text, conversation }, ctx),
 		};
 	});
 });

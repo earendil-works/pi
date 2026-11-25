@@ -1,4 +1,4 @@
-import type { Held, Location } from "@p2/app/v1";
+import type { Location, Ref } from "@p2/app/v1";
 import { BACKGROUND_CONTEXT, filePreview, follow } from "@p2/app/v1";
 import {
 	ChevronIcon,
@@ -176,7 +176,7 @@ export function WorkspacePanel({
 	owner,
 	onSend,
 }: {
-	workspace: Held<typeof Workspace> | undefined;
+	workspace: Ref<typeof Workspace> | undefined;
 	nav: Navigation;
 	route: WorkspaceRoute;
 	sessionId: string;

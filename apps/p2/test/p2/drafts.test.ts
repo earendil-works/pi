@@ -4,13 +4,12 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import type { ConversationView, LiveState } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat, type ChatParticipant } from "../../plugins/chat/contract.ts";
 import { DraftStore } from "../../plugins/drafts/contract.ts";
 import draftsWorker from "../../plugins/drafts/worker.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
-import type { Host, RefIn } from "../../src/runtime/chord.ts";
-import { Session } from "../../src/runtime/chord.ts";
-import { type Fixture, holdIn, settled, startFixture, testHost, until } from "./helpers.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
+import { type Host, Session } from "../../src/runtime/chord.ts";
+import { type Fixture, holdWith, settled, startFixture, testHost, until } from "./helpers.ts";
 
 const live = (view: ConversationView | null | undefined): LiveState | undefined =>
 	view?.docs["pi.live"] as unknown as LiveState | undefined;
@@ -73,14 +72,14 @@ describe("drafts store", () => {
 describe("drafts (owner, fake provider)", () => {
 	let fixture: Fixture;
 	let browser: Host;
-	let chat: RefIn<typeof Chat, "participant">;
+	let chat: ChatParticipant;
 
 	before(async () => {
 		fixture = await startFixture();
 		browser = fixture.browser();
-		const sessions = await holdIn(browser, Sessions, {}, "owner");
+		const sessions = await holdWith(browser, Sessions, {}, ...SESSIONS_OWNER);
 		const session = await sessions.create({ cwd: fixture.workspace, title: "drafts" }, BACKGROUND_CONTEXT);
-		chat = await holdIn(browser, Chat, { session: session.id, conversation: 1 }, "participant");
+		chat = await holdWith(browser, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 	});
 
 	after(async () => {

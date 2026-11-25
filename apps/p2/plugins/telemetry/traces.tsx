@@ -1,7 +1,7 @@
 // The owner's traces in the page: a search (the earliest span's name, attributes, errors, a time window), the traces
 // found (newest first, more by cursor), and one trace as a tree of spans with their lengths on the trace's timeline,
 // attributes, events and links (a link opens its trace). The Traces view's pane and the Settings section show it.
-import { BACKGROUND_CONTEXT } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, live } from "@p2/app/v1";
 import { errorText, useObject } from "@p2/app/v1/web";
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { MAX_FILTERS, type Span, type Trace, type TraceQuery, type TraceSummary, Traces } from "./contract.ts";
@@ -39,7 +39,7 @@ export function TracesBrowser({
 
 /** The search form and the traces found. */
 function TraceSearch({ open, onOpen }: { open: string | undefined; onOpen: (traceId: string) => void }) {
-	const traces = useObject(Traces, {}, { variant: "owner" });
+	const traces = live(useObject(Traces, {}));
 	const [name, setName] = useState("");
 	const [attributes, setAttributes] = useState("");
 	const [errors, setErrors] = useState(false);
@@ -176,7 +176,7 @@ function TraceDetail({
 	onOpen: (traceId: string) => void;
 	onBack: () => void;
 }) {
-	const traces = useObject(Traces, {}, { variant: "owner" });
+	const traces = live(useObject(Traces, {}));
 	const [trace, setTrace] = useState<{ id: string; value?: Trace | null; error?: string }>();
 	useEffect(() => {
 		if (!traces) return;

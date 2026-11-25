@@ -6,12 +6,12 @@ import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { BACKGROUND_CONTEXT } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, type RefWith } from "@p2/app/v1";
 import { Models } from "../../plugins/models/contract.ts";
 import { SidebarRollups } from "../../plugins/rollups/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions, type SessionsOwner } from "../../plugins/sessions/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, startFixture } from "./helpers.ts";
+import { type Fixture, holdWith, startFixture } from "./helpers.ts";
 
 /** Each rollup's key, then its sessions' titles, or its groups' names with their sessions' titles. */
 const SECTIONS = `[...document.querySelectorAll('.sidebar-section')].map(s=>[s.dataset.key,s.querySelector('.sidebar-group')?[...s.querySelectorAll('.sidebar-group')].map(g=>[g.querySelector('.group-link').textContent,[...g.querySelectorAll('.session-main .session-title')].map(e=>e.textContent)]):[...s.querySelectorAll('.session-main .session-title')].map(e=>e.textContent)])`;
@@ -28,16 +28,16 @@ return { layout: "groups", groups: [...groups].sort().map(([word, members]) => (
 describe("rollups made from code in the sidebar", { skip: !browserTests }, () => {
 	let fixture: Fixture;
 	let browser: Browser;
-	let sessions: Awaited<ReturnType<typeof holdIn<typeof Sessions, "owner">>>;
-	let rollups: Awaited<ReturnType<typeof holdIn<typeof SidebarRollups, "owner">>>;
+	let sessions: SessionsOwner;
+	let rollups: RefWith<typeof SidebarRollups, "rollups">;
 	before(async () => {
 		fixture = await startFixture({ web: true });
 		const owner = fixture.browser();
 		await owner
 			.hold(Models, {}, BACKGROUND_CONTEXT)
 			.setDefault({ provider: "faux", modelId: "faux-1", thinkingLevel: "off" }, BACKGROUND_CONTEXT);
-		sessions = await holdIn(owner, Sessions, {}, "owner");
-		rollups = await holdIn(owner, SidebarRollups, {}, "owner");
+		sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
+		rollups = await holdWith(owner, SidebarRollups, {}, "rollups");
 		browser = await Browser.start();
 		await browser.signIn(fixture.owner);
 		await browser.metrics(1280, 900);

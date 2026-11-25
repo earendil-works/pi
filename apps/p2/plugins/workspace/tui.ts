@@ -3,8 +3,7 @@
 // `/grep` searches text and opens a match at its line. Participants only: holding `Workspace` leases the worker's
 // filesystem watch, which read-only guests cannot get. Comments, commits and uploads stay on the web for now.
 
-import type { Held } from "@p2/app/v1";
-import { BACKGROUND_CONTEXT, contribute, defineFacet, liveIn, statusOf, whenLive } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, contribute, defineFacet, live, type Ref, statusOf, whenLive } from "@p2/app/v1";
 import type { TuiContext } from "@p2/app/v1/tui";
 import {
 	ListOverlay,
@@ -25,19 +24,19 @@ import type { WorkspaceQuery, WorkspaceResult } from "./protocol.ts";
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /** The viewed conversation's workspace, released when the panel closes. */
-function workspace(ctx: TuiContext): Held<typeof Workspace> | undefined {
+function workspace(ctx: TuiContext): Ref<typeof Workspace> | undefined {
 	const session = ctx.identity.session;
 	if (!session) return undefined;
 	return ctx.host.hold(Workspace, { session, conversation: ctx.identity.conversation }, BACKGROUND_CONTEXT);
 }
 
 async function query<K extends WorkspaceResult["kind"]>(
-	ref: Held<typeof Workspace>,
+	ref: Ref<typeof Workspace>,
 	request: WorkspaceQuery,
 	kind: K,
 ): Promise<Extract<WorkspaceResult, { kind: K }>> {
 	await whenLive(ref);
-	if (statusOf(ref) !== "live" || ref.variant !== "reader") throw new Error("The workspace is not available");
+	if (statusOf(ref) !== "live") throw new Error("The workspace is not available");
 	const result = await ref.query(request, BACKGROUND_CONTEXT);
 	if (result.kind !== kind) throw new Error(`Unexpected workspace result: ${result.kind}`);
 	return result as Extract<WorkspaceResult, { kind: K }>;
@@ -82,7 +81,7 @@ export function piDiff(patch: string): string {
 }
 
 /** Shows a file (optionally at a line) above the list it came from. */
-function showFile(ctx: TuiContext, ref: Held<typeof Workspace>, path: string, line?: number): void {
+function showFile(ctx: TuiContext, ref: Ref<typeof Workspace>, path: string, line?: number): void {
 	let lines: string[] = ["Loading…"];
 	const viewer = ctx.overlay(
 		"workspace-file",
@@ -113,7 +112,7 @@ function showFile(ctx: TuiContext, ref: Held<typeof Workspace>, path: string, li
 		.finally(() => ctx.requestRender());
 }
 
-function showDiff(ctx: TuiContext, ref: Held<typeof Workspace>, path: string): void {
+function showDiff(ctx: TuiContext, ref: Ref<typeof Workspace>, path: string): void {
 	let lines: string[] = ["Loading…"];
 	const viewer = ctx.overlay(
 		"workspace-diff",
@@ -136,7 +135,7 @@ function showDiff(ctx: TuiContext, ref: Held<typeof Workspace>, path: string): v
 function panel(
 	ctx: TuiContext,
 	id: string,
-	build: (ref: Held<typeof Workspace>, close: () => void) => ConstructorParameters<typeof ListOverlay>[1],
+	build: (ref: Ref<typeof Workspace>, close: () => void) => ConstructorParameters<typeof ListOverlay>[1],
 ): void {
 	const ref = workspace(ctx);
 	if (!ref) return;
@@ -342,8 +341,8 @@ export class GitBranch implements TuiSurface {
 			}),
 		);
 	}
-	private ask(workspace: Held<typeof Workspace>, key: string | undefined): void {
-		const ref = liveIn(workspace, "reader");
+	private ask(workspace: Ref<typeof Workspace>, key: string | undefined): void {
+		const ref = live(workspace);
 		if (ref === undefined || key !== this.key) return;
 		if (this.asking) {
 			this.again = true;

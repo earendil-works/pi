@@ -116,12 +116,9 @@ export default defineFacet((host) => {
 		if (!canSend(principal, session)) throw forbidden("participants only");
 		const cache = self.get(FileIndexCache, { conversation });
 		return {
-			variant: "reader",
-			members: {
-				changes: cache.changes,
-				complete: (args, ctx) => cache.complete(args, ctx),
-				list: (args, ctx) => cache.list(args, ctx),
-			},
+			changes: cache.changes,
+			complete: (args, ctx) => cache.complete(args, ctx),
+			list: (args, ctx) => cache.list(args, ctx),
 		};
 	});
 });

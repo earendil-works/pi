@@ -11,7 +11,7 @@ import { Devices } from "../../plugins/devices/contract.ts";
 import { Models } from "../../plugins/models/contract.ts";
 import modelsTui from "../../plugins/models/tui.ts";
 import { PROXY_MARKER_HEADER } from "../../plugins/proxy-marker/contract.ts";
-import { type Session, Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, type Session, Sessions } from "../../plugins/sessions/contract.ts";
 import sessionsTui from "../../plugins/sessions/tui.ts";
 import {
 	authenticateTui,
@@ -216,7 +216,6 @@ test("bare-host TUI facets register, render session/model pickers and reload wit
 					const defaultCwd = self.state("/fixture");
 					const defaultEnv = self.state(null);
 					return {
-						variant: "owner",
 						sessions,
 						defaultCwd,
 						defaultEnv,
@@ -236,6 +235,7 @@ test("bare-host TUI facets register, render session/model pickers and reload wit
 						restore: () => {},
 					};
 				},
+				SESSIONS_OWNER,
 			],
 			[
 				Models,
@@ -262,7 +262,6 @@ test("bare-host TUI facets register, render session/model pickers and reload wit
 					const enabledModels = self.state([]);
 					const scopedModels = self.state([]);
 					return {
-						variant: "owner",
 						models,
 						resources,
 						defaultModel,

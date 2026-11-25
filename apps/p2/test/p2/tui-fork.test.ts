@@ -3,9 +3,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { type ConversationView, type EntryId, ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
-import { Chat, type ModelMeta } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat, type ModelMeta } from "../../plugins/chat/contract.ts";
 import chatTui, { ChatSurface } from "../../plugins/chat/tui.ts";
-import { type Session, Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, type Session, Sessions } from "../../plugins/sessions/contract.ts";
 import type { Ctx } from "../../src/runtime/chord.ts";
 import { tuiCoreFacet } from "../../src/tui/core-commands.ts";
 import { poll } from "./helpers.ts";
@@ -58,7 +58,6 @@ test("/fork picks a message and opens the fork with it in the editor; /clone; do
 						return created;
 					};
 					return {
-						variant: "owner",
 						sessions,
 						defaultCwd,
 						defaultEnv,
@@ -81,13 +80,13 @@ test("/fork picks a message and opens the fork with it in the editor; /clone; do
 						},
 					};
 				},
+				SESSIONS_OWNER,
 			],
 		],
 		worker: [
 			[
 				Chat,
 				(raw, _principal, self) => ({
-					variant: "participant",
 					view: self.state(view((raw as { conversation: number }).conversation)),
 					model: self.state(META),
 					liveShell: self.state(null),
@@ -107,6 +106,7 @@ test("/fork picks a message and opens the fork with it in the editor; /clone; do
 					shell: () => ({ shellId: "x" }),
 					abortShell: () => ({ aborted: false }),
 				}),
+				CHAT_PARTICIPANT,
 			],
 		],
 		facets: [tuiCoreFacet, chatTui],

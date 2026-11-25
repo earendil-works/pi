@@ -83,27 +83,23 @@ export default defineFacet((host) => {
 			return null;
 		};
 		return {
-			variant: "owner",
-			members: {
-				channel: async () => service().channel(viewResource.value),
-				list: () => command({ type: "list", sessionId: id }),
-				open: async ({ cols, rows, conversation }, ctx) => {
-					const session = await catalog.get({ id }, ctx);
-					if (session.archivedAt !== null) throw new Error("Session is archived");
-					// Where the conversation works: a subagent's own location stays where it is when the session moves.
-					const child = children.children.value[id]?.find((each) => each.conversationId === conversation);
-					if (conversation !== 1 && conversation !== session.main && !child)
-						throw new Error("Unknown conversation");
-					const { cwd, env } = conversationLocation(session, child)!;
-					return command({ type: "open", sessionId: id, cwd, env, cols, rows });
-				},
-				attach: ({ terminalId }) => command({ type: "attach", terminalId }),
-				close: ({ force }) => command({ type: "close", force }),
-				resize: ({ cols, rows }) => command({ type: "resize", cols, rows }),
-				theme: (theme) => command({ type: "theme", ...theme }),
-				ack: ({ bytes }) => command({ type: "ack", bytes }),
-				restartHost: () => command({ type: "shutdown" }),
+			channel: async () => service().channel(viewResource.value),
+			list: () => command({ type: "list", sessionId: id }),
+			open: async ({ cols, rows, conversation }, ctx) => {
+				const session = await catalog.get({ id }, ctx);
+				if (session.archivedAt !== null) throw new Error("Session is archived");
+				// Where the conversation works: a subagent's own location stays where it is when the session moves.
+				const child = children.children.value[id]?.find((each) => each.conversationId === conversation);
+				if (conversation !== 1 && conversation !== session.main && !child) throw new Error("Unknown conversation");
+				const { cwd, env } = conversationLocation(session, child)!;
+				return command({ type: "open", sessionId: id, cwd, env, cols, rows });
 			},
+			attach: ({ terminalId }) => command({ type: "attach", terminalId }),
+			close: ({ force }) => command({ type: "close", force }),
+			resize: ({ cols, rows }) => command({ type: "resize", cols, rows }),
+			theme: (theme) => command({ type: "theme", ...theme }),
+			ack: ({ bytes }) => command({ type: "ack", bytes }),
+			restartHost: () => command({ type: "shutdown" }),
 		};
 	});
 
@@ -134,57 +130,52 @@ export default defineFacet((host) => {
 			return rest;
 		};
 		return {
-			variant: "worker",
-			members: {
-				list: (_args, ctx) => call("list", { op: "list", sessionId }, ctx),
-				open: async ({ key, location, name, command }, ctx) => {
-					const session = await admitted(ctx);
-					// Only where the session's conversations work: the session's environment or a subagent's own.
-					const own = children.children.value[sessionId] ?? [];
-					const envs = new Set([
-						session.env ?? null,
-						...own.map((child) => conversationLocation(session, child)?.env),
-					]);
-					if (!envs.has(location.env))
-						throw forbidden(
-							`This session does not work on ${location.env ? `"${location.env}"` : "this device"}`,
-						);
-					const opened = await call(
-						"terminal",
-						{
-							op: "open",
-							sessionId,
-							key,
-							cwd: location.cwd,
-							env: location.env,
-							...(name ? { name } : {}),
-							...(command ? { command } : {}),
-							cols: AGENT_COLS,
-							rows: AGENT_ROWS,
-						},
-						ctx,
-					);
-					return opened.terminal;
-				},
-				send: async ({ key, target, keys, literal }, ctx) =>
-					(await call("terminal", { op: "send", sessionId, key, target, keys, literal }, ctx)).terminal,
-				cursor: ({ target }, ctx) => call("cursor", { op: "cursor", sessionId, target }, ctx),
-				read: ({ target, from, wait }, ctx) =>
-					call(
-						"read",
-						{
-							op: "read",
-							sessionId,
-							target,
-							...(from === undefined ? {} : { from }),
-							...(wait === undefined ? {} : { wait }),
-						},
-						ctx,
-					),
-				capture: ({ target, scrollback, escapes }, ctx) =>
-					call("capture", { op: "capture", sessionId, target, scrollback, ...(escapes ? { escapes } : {}) }, ctx),
-				close: ({ key, target }, ctx) => call("closed", { op: "close", sessionId, key, target }, ctx),
+			list: (_args, ctx) => call("list", { op: "list", sessionId }, ctx),
+			open: async ({ key, location, name, command }, ctx) => {
+				const session = await admitted(ctx);
+				// Only where the session's conversations work: the session's environment or a subagent's own.
+				const own = children.children.value[sessionId] ?? [];
+				const envs = new Set([
+					session.env ?? null,
+					...own.map((child) => conversationLocation(session, child)?.env),
+				]);
+				if (!envs.has(location.env))
+					throw forbidden(`This session does not work on ${location.env ? `"${location.env}"` : "this device"}`);
+				const opened = await call(
+					"terminal",
+					{
+						op: "open",
+						sessionId,
+						key,
+						cwd: location.cwd,
+						env: location.env,
+						...(name ? { name } : {}),
+						...(command ? { command } : {}),
+						cols: AGENT_COLS,
+						rows: AGENT_ROWS,
+					},
+					ctx,
+				);
+				return opened.terminal;
 			},
+			send: async ({ key, target, keys, literal }, ctx) =>
+				(await call("terminal", { op: "send", sessionId, key, target, keys, literal }, ctx)).terminal,
+			cursor: ({ target }, ctx) => call("cursor", { op: "cursor", sessionId, target }, ctx),
+			read: ({ target, from, wait }, ctx) =>
+				call(
+					"read",
+					{
+						op: "read",
+						sessionId,
+						target,
+						...(from === undefined ? {} : { from }),
+						...(wait === undefined ? {} : { wait }),
+					},
+					ctx,
+				),
+			capture: ({ target, scrollback, escapes }, ctx) =>
+				call("capture", { op: "capture", sessionId, target, scrollback, ...(escapes ? { escapes } : {}) }, ctx),
+			close: ({ key, target }, ctx) => call("closed", { op: "close", sessionId, key, target }, ctx),
 		};
 	});
 });

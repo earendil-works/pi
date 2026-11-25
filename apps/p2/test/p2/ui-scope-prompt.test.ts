@@ -5,12 +5,12 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { Familiar } from "../../plugins/familiar/contract.ts";
 import { Models } from "../../plugins/models/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 describe("the scope prompt", { skip: !browserTests }, () => {
 	let fixture: Fixture;
@@ -31,10 +31,10 @@ describe("the scope prompt", { skip: !browserTests }, () => {
 
 	it("outlines what the pointer is on and sends a prompt about it to the Familiar", async () => {
 		const owner = fixture.browser();
-		const sessions = await holdIn(owner, Sessions, {}, "owner");
+		const sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		const shown = (await sessions.create({ cwd: fixture.workspace, title: "Ordinary" }, BACKGROUND_CONTEXT)).id;
 		const other = (await sessions.create({ cwd: fixture.workspace, title: "Other" }, BACKGROUND_CONTEXT)).id;
-		const chat = await holdIn(owner, Chat, { session: shown, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session: shown, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await chat.send({ text: "hello there", requestId: "scope-1" }, BACKGROUND_CONTEXT);
 		await browser.metrics(1280, 900);
 		// macOS keys (Cmd), whatever the host is.
@@ -111,9 +111,9 @@ describe("the scope prompt", { skip: !browserTests }, () => {
 		await browser.call("Input.insertText", { text: "summarize this" });
 		await key("rawKeyDown", "Enter", "Enter", 13);
 		await browser.wait(`document.querySelector('.scope-sent') && !document.querySelector('.scope-composer')`);
-		const familiar = await holdIn(owner, Familiar, {}, "owner");
+		const familiar = await holdWith(owner, Familiar, {});
 		const id = await until(familiar.session, (value) => typeof value === "string");
-		const familiarChat = await holdIn(owner, Chat, { session: String(id), conversation: 1 }, "participant");
+		const familiarChat = await holdWith(owner, Chat, { session: String(id), conversation: 1 }, ...CHAT_PARTICIPANT);
 		const view = await until(familiarChat.view, (value) => JSON.stringify(value).includes("summarize this"));
 		const text = JSON.stringify(view);
 		assert.ok(text.includes("<scope>"));
@@ -168,9 +168,9 @@ describe("the scope prompt", { skip: !browserTests }, () => {
 	/** A session with one message of the person's, open on this page; its ID. */
 	const openWithMessage = async (title: string) => {
 		const owner = fixture.browser();
-		const sessions = await holdIn(owner, Sessions, {}, "owner");
+		const sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		const id = (await sessions.create({ cwd: fixture.workspace, title }, BACKGROUND_CONTEXT)).id;
-		const chat = await holdIn(owner, Chat, { session: id, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session: id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await chat.send({ text: "hello there", requestId: `scope-${title}` }, BACKGROUND_CONTEXT);
 		chat.release();
 		sessions.release();

@@ -8,11 +8,11 @@ import type { AssistantMessage, ToolCall, ToolResultMessage } from "@earendil-wo
 import { fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
 import type { ConversationView, EntryId, LiveState } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { Models } from "../../plugins/models/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 const live = (view: ConversationView | null | undefined) => view?.docs["pi.live"] as LiveState | undefined;
 const panel = "document.querySelector('[data-testid=activity-sheet]')";
@@ -32,10 +32,10 @@ describe("activity panel in the app", { skip: !browserTests }, () => {
 		writeFileSync(settings, JSON.stringify({ ...base, detail: 3 }));
 		session = (
 			await (
-				await holdIn(owner, Sessions, {}, "owner")
+				await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)
 			).create({ cwd: fixture.workspace, title: "Activity" }, BACKGROUND_CONTEXT)
 		).id;
-		const chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await chat.send({ text: "bash", requestId: "bash" }, BACKGROUND_CONTEXT);
 		await until(chat.view, (view) => !live(view)?.run && JSON.stringify(view).includes("Echo: bash"), 30_000);
 		chat.release();

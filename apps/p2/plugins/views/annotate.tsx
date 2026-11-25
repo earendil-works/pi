@@ -1,14 +1,14 @@
 // The annotation layer over the workbench: a toolbar to comment on selected text, mark text for removal or draw over
 // any pane (the transcript included); drawings shown over their panes; and the quoted text of comments and removals
 // highlighted where the panes show it (CSS custom highlights: the page's DOM stays as React made it).
-import { BACKGROUND_CONTEXT, type RefIn } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { CloseIcon, CommentIcon, PencilIcon, useComposerState } from "@p2/app/v1/web";
 import { type FormEvent, type RefObject, useEffect, useRef, useState } from "react";
-import { type Annotation, type AnnotationInput, TRANSCRIPT, type View, type Views } from "./contract.ts";
+import { type Annotation, type AnnotationInput, TRANSCRIPT, type View, type ViewsEditor } from "./contract.ts";
 import { frameHandles, noteSelection, takeSelection } from "./kinds.ts";
 import { setAnnotateMode, useAnnotateMode } from "./layout-store.ts";
 
-type Editor = RefIn<typeof Views, "editor">;
+type Editor = ViewsEditor;
 type Point = { x: number; y: number };
 
 /** How long after the last stroke a drawing is saved. */

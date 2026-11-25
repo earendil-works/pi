@@ -1,5 +1,5 @@
 // Sharing in the TUI (p2-tui-port.md P11a), after the web's share sheet. A TUI guest counts as connected while its
-// worker holds GuestPresence, as a guest's web page does (section 4.1; the owner's variant does nothing), held from a
+// worker holds GuestPresence, as a guest's web page does (section 4.1; the owner's does nothing), held from a
 // slot surface (after the link is live), not during facet load. The guest's name and access show in the header and,
 // read-only, in place of the editor (the chat surface).
 //
@@ -10,7 +10,7 @@
 // While the brain is connected to Radius, `/share <email> [full]` shares the session with a person, who opens it in
 // Radius signed in with that email. The overlay lists them; Enter copies the session's Radius address to send them.
 
-import { BACKGROUND_CONTEXT, follow, liveIn, whenLive } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, follow, live, whenLive } from "@p2/app/v1";
 import type { TuiCommand, TuiContext } from "@p2/app/v1/tui";
 import { confirm, grantNotice, ListOverlay, type ListRow, lineText, TuiScope, tuiFacet } from "@p2/app/v1/tui";
 import { GuestPresence, type ShareMode, Sharing } from "./contract.ts";
@@ -26,7 +26,7 @@ function openShare(ctx: TuiContext): void {
 	const session = ctx.identity.session;
 	if (!session) return;
 	const sharing = ctx.host.hold(Sharing, { session }, BACKGROUND_CONTEXT);
-	const owner = () => liveIn(sharing, "owner");
+	const owner = () => live(sharing);
 	let links: Link[] | undefined;
 	let guests: Guest[] = [];
 	let people: Guest[] = [];
@@ -66,7 +66,7 @@ function openShare(ctx: TuiContext): void {
 	/** The link of `mode`, created first when missing (and confirmed for read/write on a remote environment). */
 	const linkOf = async (mode: ShareMode): Promise<string | undefined> => {
 		const service = owner();
-		if (service?.variant !== "owner") return undefined;
+		if (!service) return undefined;
 		const existing = links?.find((link) => link.mode === mode)?.url;
 		if (existing) return existing;
 		const remote = mode === "full" && env !== null;
@@ -91,7 +91,7 @@ function openShare(ctx: TuiContext): void {
 	};
 	const reset = async (mode: ShareMode) => {
 		const service = owner();
-		if (service?.variant !== "owner" || !links?.some((link) => link.mode === mode)) return;
+		if (!service || !links?.some((link) => link.mode === mode)) return;
 		if (
 			!(await confirm(ctx, [
 				`New ${LABEL[mode].toLowerCase()} link?`,
@@ -112,7 +112,7 @@ function openShare(ctx: TuiContext): void {
 	};
 	const remove = async (guest: Guest, person: boolean) => {
 		const service = owner();
-		if (service?.variant !== "owner") return;
+		if (!service) return;
 		if (
 			!(await confirm(ctx, [
 				`Remove ${lineText(guest.name)}?`,
@@ -218,7 +218,6 @@ async function shareWith(ctx: TuiContext, args: string): Promise<void> {
 	const sharing = ctx.host.hold(Sharing, { session }, BACKGROUND_CONTEXT);
 	try {
 		await whenLive(sharing);
-		if (sharing.variant !== "owner") return;
 		if (!sharing.peopleUrl.value) {
 			ctx.notify("Connect this brain to Radius and open it there once to share with people by email");
 			return;

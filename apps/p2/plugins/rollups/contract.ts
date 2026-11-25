@@ -2,7 +2,7 @@
 // groups of sessions, or only a link to its list), refreshed automatically, on an interval or by hand. The sidebar
 // applies the rollup's window to what the script returned, as it does for the built-in rollups.
 import { arr, bool, int, nul, num, obj, opt, type Static, str, union } from "@earendil-works/pi-schema";
-import { literal, local, method, remote, serverHost } from "@p2/app/v1";
+import { grantable, literal, local, method, remote, serverHost } from "@p2/app/v1";
 
 /**
  * A session a rollup collected: its ID, or its ID with `at`, the time its window compares and its list sorts by
@@ -145,11 +145,11 @@ export const ROLLUPS_TOOL = "sidebar_rollups";
 
 /** The rollups for the owner's sidebar, and for the Familiar's `sidebar_rollups` tool (its worker only). */
 export const SidebarRollups = remote("p2.sidebar-rollups", {
-	version: 1,
+	version: 2,
 	params: {},
 	hostAddress: serverHost,
-	variants: {
-		owner: { state: { rollups: arr(RollupEntrySchema) }, methods: ROLLUP_METHODS },
-		familiar: { methods: { list: method(undefined, arr(RollupEntrySchema)), ...ROLLUP_METHODS } },
-	},
+	/** The owner's. */
+	state: { rollups: grantable(arr(RollupEntrySchema)) },
+	/** The Familiar's: `list`. */
+	methods: { list: grantable(method(undefined, arr(RollupEntrySchema))), ...ROLLUP_METHODS },
 });

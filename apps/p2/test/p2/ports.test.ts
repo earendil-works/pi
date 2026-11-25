@@ -6,13 +6,13 @@ import { test } from "node:test";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type { ConversationView } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT, whenLive } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { ForwardsNative, Ports } from "../../plugins/ports/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
+import { ForwardsNative, PORTS_OWNER, Ports } from "../../plugins/ports/contract.ts";
 import { forwardOrigin, type PortsRequest } from "../../plugins/ports/protocol.ts";
 import { Forwards } from "../../plugins/ports/store.ts";
-import { Catalog, Sessions } from "../../plugins/sessions/contract.ts";
+import { Catalog, SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
-import { expectChord, holdIn, http, startFixture, until } from "./helpers.ts";
+import { expectChord, holdWith, http, startFixture, until } from "./helpers.ts";
 
 const ORIGIN = "https://0123456789abcdef0123456789abcdef.rdtun.com";
 const results = (view: ConversationView | null | undefined): ToolResultMessage[] =>
@@ -87,10 +87,10 @@ test(
 		const fixture = await startFixture({ allowedHosts: ["share.test"] });
 		t.after(() => fixture.close());
 		const owner = fixture.browser();
-		const sessions = await holdIn(owner, Sessions, {}, "owner");
+		const sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		const session = await sessions.create({ cwd: fixture.workspace, title: "Web app" }, BACKGROUND_CONTEXT);
-		const chat = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
-		const ports = await holdIn(owner, Ports, {}, "owner");
+		const chat = await holdWith(owner, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
+		const ports = await holdWith(owner, Ports, {}, ...PORTS_OWNER);
 		const store = (await fixture.server.host.registry(ForwardsNative, BACKGROUND_CONTEXT)).value!.forwards;
 		store.radiusOrigin = ORIGIN;
 		await ports.add({ port: 3000, name: "docs", public: true }, BACKGROUND_CONTEXT);
@@ -158,18 +158,12 @@ test(
 			body: JSON.stringify({ token: links?.[0]?.token, name: "Owner" }),
 		});
 		const guest = fixture.client({ ...headers, Cookie: String(joined.headers["set-cookie"]).split(";")[0]! }).host;
-		const guestChat = await holdIn(guest, Chat, { session: session.id, conversation: 1 }, "participant");
+		const guestChat = await holdWith(guest, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		// No per-turn authority: a guest's turn uses the tool; the guest itself cannot hold the registry.
 		assert.doesNotMatch(text(await call({ action: "list" }, guestChat)), /owner started/);
 		await expectChord(whenLive(guest.hold(Ports, {}, BACKGROUND_CONTEXT)), "forbidden");
-		// `query` is the worker's: the owner calling it anyway is refused.
-		await expectChord(
-			(ports as unknown as { query: (...args: unknown[]) => Promise<unknown> }).query(
-				{ conversation: 1, query: { action: "list" } },
-				BACKGROUND_CONTEXT,
-			),
-			"invalid",
-		);
+		// `query` is the worker's: not granted to the owner, the member is not there.
+		assert.equal(ports.query, undefined);
 		assert.equal(
 			store.list().some((item) => item.port === 8080),
 			false,
@@ -181,7 +175,7 @@ test(
 		);
 		// The agent may close any forward, also the owner's.
 		const other = await sessions.create({ cwd: fixture.workspace, title: "Other" }, BACKGROUND_CONTEXT);
-		const otherChat = await holdIn(owner, Chat, { session: other.id, conversation: 1 }, "participant");
+		const otherChat = await holdWith(owner, Chat, { session: other.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		// A remote-environment session cannot open (Pi Mobile's message); it can still close.
 		assert.equal((await call({ action: "list" }, otherChat)).isError, false);
 		await fixture.server.host.root(

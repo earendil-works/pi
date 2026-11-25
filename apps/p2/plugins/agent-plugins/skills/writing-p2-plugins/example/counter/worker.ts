@@ -3,7 +3,7 @@
 // namespace with its description, `describeNamespace("counter")` gives its instructions and tools.
 import { defineExtension } from "@earendil-works/pi-durable";
 import { int, obj } from "@earendil-works/pi-schema";
-import { contribute, defineFacet, expectVariant } from "@p2/app/v1";
+import { contribute, defineFacet } from "@p2/app/v1";
 import { defineP2Tool, Extensions, type P2Tool, workerOf } from "@p2/app/v1/worker";
 import { Counter } from "./contract.ts";
 
@@ -28,7 +28,7 @@ export default defineFacet((host) => {
 					execute: async ({ by }, _api, context) => {
 						const count = await worker().root(async (ctx) => {
 							const session = worker().init.values.session.id;
-							const board = expectVariant(await ctx.get(Counter, { session }), "player");
+							const board = await ctx.get(Counter, { session });
 							await board.add({ by }, ctx);
 							return board.count.value;
 						}, context);

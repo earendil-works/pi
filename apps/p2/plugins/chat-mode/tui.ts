@@ -2,8 +2,8 @@
 // and note (the shared `TranscriptEntries` display), a composer chip shows the mode (the owner toggles it with
 // `/chat-mode`), and while it is on `/reply` picks the message the next send answers and `@pi` completes first.
 
-import type { Held, HeldIn } from "@p2/app/v1";
-import { BACKGROUND_CONTEXT, contribute, defineFacet, liveIn, statusOf } from "@p2/app/v1";
+import type { Ref, RefWith } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, contribute, defineFacet, liveWith, statusOf } from "@p2/app/v1";
 import type { TuiContext } from "@p2/app/v1/tui";
 import {
 	chatSurface,
@@ -27,7 +27,7 @@ export class ChatModeChip implements TuiSurface {
 	readonly runtime: TuiRuntime;
 	private scope: TuiScope | undefined;
 	private identity: string | undefined;
-	private mode: Held<typeof ChatMode> | undefined;
+	private mode: Ref<typeof ChatMode> | undefined;
 	/** The switch the owner flipped while its call is in flight (`/chat-mode`). */
 	/** The switch as shown (the owner's flip while its call is in flight) and how to flip it. */
 	private shownEnabled: () => boolean = () => false;
@@ -76,8 +76,8 @@ export class ChatModeChip implements TuiSurface {
 		return this.shownEnabled();
 	}
 	/** The owner's live reference (to switch the mode). */
-	owner(): HeldIn<typeof ChatMode, "owner"> | undefined {
-		return liveIn(this.mode, "owner");
+	owner(): RefWith<typeof ChatMode, "set" | "rename"> | undefined {
+		return liveWith(this.mode, "set", "rename");
 	}
 	/** Flips the mode: the chip shows it at once; a refused call flips it back and says why. */
 	toggle(): void {

@@ -7,17 +7,17 @@ import { join } from "node:path";
 import { test } from "node:test";
 import type { ConversationView, LiveState } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT, follow, whenLive } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { rankFiles, withDirectories } from "../../plugins/file-index/rank.ts";
 import { Models } from "../../plugins/models/contract.ts";
 import { resolveModelScope } from "../../plugins/models/scope.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
-import type { Host, VariantOf } from "../../src/runtime/chord.ts";
+import type { Host } from "../../src/runtime/chord.ts";
 import { FileIndex } from "../../src/runtime/file-index.ts";
 import { buildTranscript } from "../../src/web/transcript.ts";
 import { wholeView } from "../fixtures/whole-view.ts";
-import { expectChord, holdIn, http, startFixture, until } from "./helpers.ts";
+import { expectChord, holdWith, http, startFixture, until } from "./helpers.ts";
 
 type Fixture = Awaited<ReturnType<typeof startFixture>>;
 const live = (view: ConversationView | null | undefined) => view?.docs["pi.live"] as LiveState | undefined;
@@ -45,33 +45,33 @@ async function sessionFixture(t: { after(fn: () => unknown): void }) {
 	writeFileSync(join(fixture.dataDir, "settings.json"), JSON.stringify({ compaction: { keepRecentTokens: 1 } }));
 	const owner = fixture.browser();
 	const session = (
-		await (await holdIn(owner, Sessions, {}, "owner")).create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT)
+		await (
+			await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)
+		).create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT)
 	).id;
-	const chat = <V extends VariantOf<typeof Chat>>(host: Host, variant: V) =>
-		holdIn(host, Chat, { session, conversation: 1 }, variant);
-	return { fixture, owner, session, chat };
+	const chat = (host: Host) => holdWith(host, Chat, { session, conversation: 1 });
+	const participant = (host: Host) => holdWith(host, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
+	return { fixture, owner, session, chat, participant };
 }
 
 test("compact, reset and model metadata: owner, full guest and view guest", { timeout: 90_000 }, async (t) => {
-	const { fixture, owner, session, chat } = await sessionFixture(t);
-	const ownerChat = await chat(owner, "participant");
+	const { fixture, owner, session, chat, participant } = await sessionFixture(t);
+	const ownerChat = await participant(owner);
 	t.after(follow(ownerChat.view, () => {}));
 	await ownerChat.send({ text: "first", requestId: "a" }, BACKGROUND_CONTEXT);
 	await until(ownerChat.view, (view) => Boolean(view?.entries.some((entry) => entry.kind === "pi.assistant")));
 	// Guest-safe model metadata: the conversation's model from the catalog, also for a view-only guest.
-	const viewer = await chat(await guestOf(fixture, owner, session, "view", "Viewer"), "viewer");
-	assert.equal(viewer.variant, "viewer");
+	const viewer = await chat(await guestOf(fixture, owner, session, "view", "Viewer"));
+	assert.equal(viewer.granted.size, 0);
 	const meta = await until(viewer.model, (value) => value != null);
 	assert.equal(meta?.provider, "faux");
 	assert.equal(meta?.modelId, "faux-1");
 	assert(typeof meta?.contextWindow === "number" && meta.contextWindow > 0);
 	assert(Array.isArray(meta?.thinkingLevels));
-	// A reference carries every variant's members; the viewer's binding refuses the participant's (cast: the type has
-	// only the viewer's).
-	const asParticipant = viewer as unknown as Awaited<ReturnType<typeof chat<"participant">>>;
-	await expectChord(asParticipant.compact({}, BACKGROUND_CONTEXT), "invalid");
-	await expectChord(asParticipant.reset({}, BACKGROUND_CONTEXT), "invalid");
-	await expectChord(asParticipant.dequeueOwn(BACKGROUND_CONTEXT), "invalid");
+	// The participant's members are grantable: the viewer's reference has none of them.
+	assert.equal(viewer.compact, undefined);
+	assert.equal(viewer.reset, undefined);
+	assert.equal(viewer.dequeueOwn, undefined);
 
 	// Compaction: a task, then a pi.compaction entry in the view; nothing to abort when idle.
 	const { taskId } = await ownerChat.compact({ instructions: "keep it short" }, BACKGROUND_CONTEXT);
@@ -80,8 +80,7 @@ test("compact, reset and model metadata: owner, full guest and view guest", { ti
 	assert.deepEqual(await ownerChat.abortCompaction(BACKGROUND_CONTEXT), { aborted: 0 });
 
 	// A full guest may compact and abort compaction, but not start a new context.
-	const guestChat = await chat(await guestOf(fixture, owner, session, "full", "Guest"), "participant");
-	assert.equal(guestChat.variant, "participant");
+	const guestChat = await participant(await guestOf(fixture, owner, session, "full", "Guest"));
 	assert.deepEqual(await guestChat.abortCompaction(BACKGROUND_CONTEXT), { aborted: 0 });
 	await expectChord(guestChat.reset({ handoff: "x" }, BACKGROUND_CONTEXT), "forbidden");
 
@@ -99,8 +98,8 @@ test("compact, reset and model metadata: owner, full guest and view guest", { ti
 });
 
 test("abortCompaction aborts a running compaction", { timeout: 90_000 }, async (t) => {
-	const { owner, chat } = await sessionFixture(t);
-	const ownerChat = await chat(owner, "participant");
+	const { owner, participant } = await sessionFixture(t);
+	const ownerChat = await participant(owner);
 	t.after(follow(ownerChat.view, () => {}));
 	await ownerChat.send({ text: "first", requestId: "a" }, BACKGROUND_CONTEXT);
 	await until(ownerChat.view, (view) => Boolean(view?.entries.some((entry) => entry.kind === "pi.assistant")));
@@ -112,9 +111,9 @@ test("abortCompaction aborts a running compaction", { timeout: 90_000 }, async (
 });
 
 test("dequeueOwn restores only the caller's queued inputs, in order", { timeout: 90_000 }, async (t) => {
-	const { fixture, owner, session, chat } = await sessionFixture(t);
-	const ownerChat = await chat(owner, "participant");
-	const guestChat = await chat(await guestOf(fixture, owner, session, "full", "Guest"), "participant");
+	const { fixture, owner, session, participant } = await sessionFixture(t);
+	const ownerChat = await participant(owner);
+	const guestChat = await participant(await guestOf(fixture, owner, session, "full", "Guest"));
 	t.after(follow(ownerChat.view, () => {}));
 	await ownerChat.send({ text: "slow run", requestId: "run" }, BACKGROUND_CONTEXT);
 	await until(ownerChat.view, (view) => Boolean(live(view)?.run));
@@ -253,8 +252,8 @@ test(
 );
 
 test("ownerName: the owner's next entries carry the configured name; earlier ones keep theirs", async (t) => {
-	const { fixture, owner, chat } = await sessionFixture(t);
-	const ownerChat = await chat(owner, "participant");
+	const { fixture, owner, participant } = await sessionFixture(t);
+	const ownerChat = await participant(owner);
 	t.after(follow(ownerChat.view, () => {}));
 	const authors = (view: ConversationView | null | undefined) =>
 		view

@@ -1,8 +1,7 @@
 // Prompt templates and skills in the TUI (p2-tui-port.md 10.8): slash completion for `/name` and `/skill:name` from
 // the viewed conversation's `PromptResources`, and their expansion on the session worker when the editor submits.
 
-import type { Held } from "@p2/app/v1";
-import { BACKGROUND_CONTEXT, contribute, defineFacet, liveIn } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, contribute, defineFacet, live, type Ref } from "@p2/app/v1";
 import type { TuiContext } from "@p2/app/v1/tui";
 import {
 	lineText,
@@ -21,7 +20,7 @@ export class PromptSurface implements TuiSurface {
 	readonly runtime: TuiRuntime;
 	private scope: TuiScope | undefined;
 	private viewed: string | undefined;
-	private ref: Held<typeof PromptResources> | undefined;
+	private ref: Ref<typeof PromptResources> | undefined;
 	templates: readonly TemplateInfo[] = [];
 	skills: readonly SkillInfo[] = [];
 	private stop: () => void;
@@ -66,7 +65,7 @@ export class PromptSurface implements TuiSurface {
 		];
 	}
 	async expand(text: string): Promise<string | undefined> {
-		const ref = liveIn(this.ref, "participant");
+		const ref = live(this.ref);
 		return ref && (await ref.expand({ text }, BACKGROUND_CONTEXT)).text;
 	}
 	render(): string[] {

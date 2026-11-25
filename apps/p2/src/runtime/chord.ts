@@ -1,9 +1,10 @@
 // Chord v2's API with p2's principals (browser-safe): hosts, facets and handlers see a `P2Principal` and narrow on its
 // `kind`. Plugins import these through `@p2/app/v1` instead of Chord's generic forms.
 import {
+	type Admit,
+	allow,
 	bool,
 	type Ctx as ChordCtx,
-	ChordError,
 	type Facet as ChordFacet,
 	type FacetHost as ChordFacetHost,
 	type Factory as ChordFactory,
@@ -14,18 +15,20 @@ import {
 	type Contract,
 	createHost as chordCreateHost,
 	defineFacet as chordDefineFacet,
+	constant,
 	defineRegistry,
 	defineState,
 	type FacetSelf,
-	type Held,
+	forbidden,
+	type GrantableName,
 	type HostError,
 	hostKind,
 	int,
 	type JsonObject,
 	keyedEntries,
 	oneOf,
+	type ParamsOf,
 	type Reference,
-	type RefIn,
 	type Registry,
 	type Schema,
 	type StateDefinition,
@@ -49,8 +52,7 @@ export type StoreSelf = ChordStoreSelf<P2Principal>;
 export type { FacetSelf };
 /** A reference to an object of `C` (v1's name). */
 export type Ref<C extends Contract> = Reference<C>;
-export type { Held, HostError };
-export type { RefIn };
+export type { HostError };
 
 /** A p2 host: principals keyed and revoked the same way on every host. */
 export const createHost = (options: HostOptions): Host =>
@@ -76,38 +78,30 @@ export const param = { str, int, bool, oneOf };
 // for a refused principal.
 export { forbidden, invalid } from "@earendil-works/chord";
 
-type Variants<R> = R extends { readonly variant: infer V } ? Exclude<V, undefined> : never;
-/** The variants of a reference to `C` (remote types), or `never`. */
-export type VariantOf<C extends Contract> = Variants<Reference<C>>;
-
 /**
- * `ref` narrowed to `variant`, for code that knows which variant its principal gets (a worker's `Sessions` is `worker`):
- * throws `invalid/member` when the live reference is in another one.
+ * `admit` for a contract whose audiences its principal alone decides (p2's owner, guests, workers): grants what
+ * `grants` names for the principal and params, for the object's whole life.
  */
-export function expectVariant<R extends { readonly variant: unknown }, const V extends Variants<R>>(
-	ref: R,
-	variant: V,
-): Extract<R, { readonly variant: V }> {
-	if (ref.variant !== variant)
-		throw new ChordError({
-			code: "invalid",
-			reason: "member",
-			message: `expected variant ${String(variant)}, got ${String(ref.variant)}`,
-		});
-	return ref as Extract<R, { readonly variant: V }>;
+export function grantBy<C extends Contract>(
+	grants: (principal: P2Principal, params: ParamsOf<C>) => readonly GrantableName<C>[],
+): Admit<C, P2Principal> {
+	// p2's contracts declare no admission data: `AllowedOf<C>` is `{ granted?: GrantableName<C>[] }`, which TypeScript
+	// cannot resolve for a generic `C`.
+	return (params, principal) => constant(allow({ granted: [...grants(principal, params)] as string[] })) as never;
 }
 
 /**
- * `ref` if it is in one of `variants`, else `undefined` (a reference still loading has no variant yet). A runtime check
- * of `ref.variant`: code that depends on a variant narrows with it instead of casting.
+ * A grantable member's implementation for a principal whose admission never grants it: never called (Chord builds a
+ * grantable state or event member, and exposes a grantable method, only when granted).
  */
-export function inVariant<R extends { readonly variant: unknown }, const V extends Variants<R>>(
-	ref: R | undefined,
-	...variants: readonly V[]
-): Extract<R, { readonly variant: V }> | undefined {
-	return ref !== undefined && (variants as readonly unknown[]).includes(ref.variant)
-		? (ref as Extract<R, { readonly variant: V }>)
-		: undefined;
+export const notGranted = (): never => {
+	throw forbidden("not granted");
+};
+
+/** `notGranted` for each of `members`: what a factory returns for the grantable members its principal never gets. */
+export function ungranted<const M extends string>(members: readonly M[]): { readonly [K in M]: () => never } {
+	// `Object.fromEntries` types its result as a string record: it holds exactly `members`.
+	return Object.fromEntries(members.map((member) => [member, notGranted])) as { readonly [K in M]: () => never };
 }
 
 /**

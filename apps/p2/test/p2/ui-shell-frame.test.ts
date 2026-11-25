@@ -9,11 +9,11 @@ import type { AddressInfo } from "node:net";
 import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { Models } from "../../plugins/models/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { defineFacet } from "../../src/runtime/chord.ts";
 import { RequestResolvers } from "../../src/runtime/server.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, poll, startFixture } from "./helpers.ts";
+import { type Fixture, holdWith, poll, startFixture } from "./helpers.ts";
 
 const BRAIN = "/pi/acme/11111111-0000-4000-8000-000000000000";
 
@@ -120,7 +120,7 @@ describe("framed by the Radius shell", { skip: !browserTests }, () => {
 	const inApp = <T>(expression: string) => browser.evaluateInFrame<T>(appOrigin, expression);
 
 	it("mirrors the app's address into the shell's URL, links open the shell, Back moves the app", async () => {
-		const sessions = await holdIn(fixture.browser(), Sessions, {}, "owner");
+		const sessions = await holdWith(fixture.browser(), Sessions, {}, ...SESSIONS_OWNER);
 		const session = await sessions.create({ cwd: fixture.workspace, title: "Framed" }, BACKGROUND_CONTEXT);
 		await browser.open(`${shellOrigin}/`);
 		await browser.wait(`shellLog.some((message) => message.type === "ready")`);

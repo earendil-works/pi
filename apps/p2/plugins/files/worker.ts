@@ -73,45 +73,42 @@ export default defineFacet((host) => {
 		if (principal.kind !== "server") throw forbidden("server only");
 		const files = self.get(Files, {});
 		return {
-			variant: "server",
-			members: {
-				begin: async ({ space, name, source }, ctx) => {
-					const id = crypto.randomUUID();
-					const path = uploadPath(id, name);
-					const mime = imageType(path) ?? "application/octet-stream";
-					const write = { space, path, mime, source, key: id, meta: { name: path.slice(id.length + 1) } };
-					const begun = await files.begin(write, ctx);
-					// A fresh key: always a new upload.
-					if (begun.kind !== "upload") throw new Error("File exists already");
-					return { id, upload: begun.upload };
-				},
-				append: async ({ upload, offset, bytes }, ctx) => {
-					if (offset + bytes.length > MAX_UPLOAD_BYTES) throw new Error("File too large");
-					await files.append({ upload, offset, bytes }, ctx);
-					return null;
-				},
-				finish: async (upload, ctx) => {
-					const file = await files.finish(upload, ctx);
-					// Begun as `<id>-<name>` with its ID as the key.
-					const id = file.key!;
-					const name = displayName(file);
-					const mimeType = imageType(name);
-					return { id, name, size: file.size, ...(mimeType ? { mimeType } : {}) };
-				},
-				cancel: async (upload, ctx) => {
-					await files.cancel(upload, ctx);
-					return null;
-				},
-				download: async (id, ctx) => {
-					const found = await findDownload(files, id, ctx);
-					return found === undefined ? null : { file: found.file.id, name: found.name, size: found.file.size };
-				},
-				read: async ({ file, offset, length }, ctx) => {
-					const info = await files.file(file, ctx);
-					// Only what the routes serve: download snapshots.
-					if (info === null || info.space !== DOWNLOADS) throw new Error("File not found");
-					return files.read({ id: file, offset, length }, ctx);
-				},
+			begin: async ({ space, name, source }, ctx) => {
+				const id = crypto.randomUUID();
+				const path = uploadPath(id, name);
+				const mime = imageType(path) ?? "application/octet-stream";
+				const write = { space, path, mime, source, key: id, meta: { name: path.slice(id.length + 1) } };
+				const begun = await files.begin(write, ctx);
+				// A fresh key: always a new upload.
+				if (begun.kind !== "upload") throw new Error("File exists already");
+				return { id, upload: begun.upload };
+			},
+			append: async ({ upload, offset, bytes }, ctx) => {
+				if (offset + bytes.length > MAX_UPLOAD_BYTES) throw new Error("File too large");
+				await files.append({ upload, offset, bytes }, ctx);
+				return null;
+			},
+			finish: async (upload, ctx) => {
+				const file = await files.finish(upload, ctx);
+				// Begun as `<id>-<name>` with its ID as the key.
+				const id = file.key!;
+				const name = displayName(file);
+				const mimeType = imageType(name);
+				return { id, name, size: file.size, ...(mimeType ? { mimeType } : {}) };
+			},
+			cancel: async (upload, ctx) => {
+				await files.cancel(upload, ctx);
+				return null;
+			},
+			download: async (id, ctx) => {
+				const found = await findDownload(files, id, ctx);
+				return found === undefined ? null : { file: found.file.id, name: found.name, size: found.file.size };
+			},
+			read: async ({ file, offset, length }, ctx) => {
+				const info = await files.file(file, ctx);
+				// Only what the routes serve: download snapshots.
+				if (info === null || info.space !== DOWNLOADS) throw new Error("File not found");
+				return files.read({ id: file, offset, length }, ctx);
 			},
 		};
 	});

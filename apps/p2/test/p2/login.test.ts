@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxProvider } from "@earendil-works/pi-ai/providers/faux";
-import { BACKGROUND_CONTEXT, follow, type Held, whenLive } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, follow, type Ref, whenLive } from "@p2/app/v1";
 import { LoginService, type LoginState, ProviderLogin } from "../../plugins/login/contract.ts";
 import { Models } from "../../plugins/models/contract.ts";
 import type { Host } from "../../src/runtime/chord.ts";
@@ -81,7 +81,7 @@ const createFixtureModels: NonNullable<ServerResourceOptions["createModels"]> = 
 describe("provider login (fixture provider)", () => {
 	let fixture: Fixture;
 	let owner: Host;
-	let login: Held<typeof ProviderLogin>;
+	let login: Ref<typeof ProviderLogin>;
 	const seen: LoginState[] = [];
 
 	const answer = async (type: string, value: string) => {

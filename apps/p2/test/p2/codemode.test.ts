@@ -9,15 +9,15 @@ import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type { ConversationView, LiveState } from "@earendil-works/pi-durable";
 import type { CodemodeToolDetails } from "@earendil-works/pi-durable/codemode";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat, type ChatParticipant } from "../../plugins/chat/contract.ts";
 import { scriptCalls } from "../../plugins/codemode/nested.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { startServer } from "../../src/hosts/server.ts";
-import type { Host, RefIn } from "../../src/runtime/chord.ts";
+import type { Host } from "../../src/runtime/chord.ts";
 import { Hosts } from "../../src/runtime/server.ts";
 import { buildTranscript } from "../../src/web/transcript.ts";
 import { wholeView } from "../fixtures/whole-view.ts";
-import { clientHost, type Fixture, holdIn, localOwner, startFixture, until } from "./helpers.ts";
+import { clientHost, type Fixture, holdWith, localOwner, startFixture, until } from "./helpers.ts";
 
 const codemodeResults = (view: ConversationView | null | undefined): ToolResultMessage[] =>
 	(view?.entries ?? []).flatMap((entry) =>
@@ -49,14 +49,16 @@ describe("code mode (fake provider)", () => {
 	let fixture: Fixture;
 	let owner: Host;
 	let session: string;
-	let chat: RefIn<typeof Chat, "participant">;
+	let chat: ChatParticipant;
 	before(async () => {
 		fixture = await startFixture();
 		owner = fixture.browser();
 		session = (
-			await (await holdIn(owner, Sessions, {}, "owner")).create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT)
+			await (
+				await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)
+			).create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT)
 		).id;
-		chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
+		chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
 	});
 	after(async () => {
 		await fixture?.close();
@@ -131,7 +133,7 @@ describe("code mode (fake provider)", () => {
 		await until(hosts.workers, (value) => value?.[session]?.running === false);
 		chat.release();
 		// Opening the session again starts a worker; Durable resumes the replay-safe codemode call from its journal.
-		chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
+		chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
 		const view = await until(chat.view, (value) => codemodeResults(value).length === 2 && !live(value)?.run, 30_000);
 		const result = codemodeResults(view)[1]!;
 		assert.equal(result.isError, false, text(result));
@@ -172,7 +174,7 @@ describe("code mode (fake provider)", () => {
 		});
 		const client = clientHost(await localOwner(restarted));
 		try {
-			const again = await holdIn(client, Chat, { session, conversation: 1 }, "participant");
+			const again = await holdWith(client, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
 			const view = await until(
 				again.view,
 				(value) => codemodeResults(value).length === 3 && !live(value)?.run,

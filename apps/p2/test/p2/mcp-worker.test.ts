@@ -13,10 +13,10 @@ import { fileURLToPath } from "node:url";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type { ConversationView } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { Mcp } from "../../plugins/mcp/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
-import { holdIn, startFixture, until } from "./helpers.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
+import { MCP_OWNER, Mcp } from "../../plugins/mcp/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
+import { holdWith, startFixture, until } from "./helpers.ts";
 
 const FIXTURE = fileURLToPath(new URL("../fixtures/mcp-server.mjs", import.meta.url));
 
@@ -70,10 +70,10 @@ test(
 			}),
 		);
 		const owner = fixture.browser();
-		const mcp = await holdIn(owner, Mcp, {}, "owner");
-		const sessions = await holdIn(owner, Sessions, {}, "owner");
+		const mcp = await holdWith(owner, Mcp, {}, ...MCP_OWNER);
+		const sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		const session = await sessions.create({ cwd: fixture.workspace, title: "MCP" }, BACKGROUND_CONTEXT);
-		const chat = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		// The worker leases the session's location; the owner's and the project's servers connect there.
 		const started = await until(
 			mcp.instances,

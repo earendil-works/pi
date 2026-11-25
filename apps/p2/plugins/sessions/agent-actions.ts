@@ -9,7 +9,7 @@ import { type Child, SubagentControl } from "../subagents/contract.ts";
 export async function stopRuns(host: Host, session: string, conversations: readonly number[]): Promise<void> {
 	await Promise.all(
 		conversations.map((conversation) =>
-			withHeld(host.hold(RunControl, { session, conversation }, BACKGROUND_CONTEXT), "participant", (control) =>
+			withHeld(host.hold(RunControl, { session, conversation }, BACKGROUND_CONTEXT), (control) =>
 				control.stop(BACKGROUND_CONTEXT),
 			),
 		),
@@ -18,7 +18,7 @@ export async function stopRuns(host: Host, session: string, conversations: reado
 
 /** Archives subagent `conversation` of `session` (stopping its work first). */
 export async function archiveSubagent(host: Host, session: string, conversation: number): Promise<void> {
-	await withHeld(host.hold(SubagentControl, { session }, BACKGROUND_CONTEXT), "participant", (control) =>
+	await withHeld(host.hold(SubagentControl, { session }, BACKGROUND_CONTEXT), (control) =>
 		control.archive({ conversation, archived: true }, BACKGROUND_CONTEXT),
 	);
 }

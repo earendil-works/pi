@@ -1,6 +1,6 @@
 // Who the browser is (browser-safe contract): the owner, or a guest sessions were shared with. Served by the server host.
 
-import { remote } from "@earendil-works/chord";
+import { grantable, remote } from "@earendil-works/chord";
 import { obj, opt, type Static, str, union } from "@earendil-works/pi-schema";
 import { serverHost } from "./chord.ts";
 import { literal, record } from "./schema.ts";
@@ -31,11 +31,9 @@ export function grantMode(grant: Grant | null | undefined, session: string | und
 }
 
 export const Access = remote("p2.access", {
-	version: 1,
+	version: 2,
 	params: {},
 	hostAddress: serverHost,
-	variants: {
-		owner: { state: {} },
-		guest: { state: { grant: GrantSchema } },
-	},
+	/** A guest's grant; the owner is granted nothing. */
+	state: { grant: grantable(GrantSchema) },
 });

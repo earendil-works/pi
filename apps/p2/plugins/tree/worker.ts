@@ -15,13 +15,12 @@ import {
 	ROOT_CONVERSATION_ID,
 } from "@earendil-works/pi-durable";
 import {
-	type AcceptsTable,
 	agentMessage,
 	type Context,
 	type Ctx,
 	contribute,
 	defineFacet,
-	expectVariant,
+	expectGranted,
 	forbidden,
 	isOwner,
 	messageData,
@@ -39,25 +38,6 @@ import {
 } from "@p2/app/v1/worker";
 import { type Branch, Sessions } from "../sessions/contract.ts";
 import { PREVIEW_LENGTH, SessionTree, type Tree, type TreeNode } from "./contract.ts";
-
-/**
- * Consumers loaded before a deploy: `SessionTree` v1 (the tree without branch labels) and v2 (no `branch`, nothing to
- * map).
- */
-const TREE_ACCEPTS: AcceptsTable<typeof SessionTree> = {
-	2: {},
-	1: {
-		methods: {
-			tree: {
-				result: ({ nodes, main, current }) => ({
-					nodes: nodes.map(({ entry, parent, role, text }) => ({ entry, parent, role, text })),
-					main,
-					current,
-				}),
-			},
-		},
-	},
-};
 
 const NOT_CURRENT = "This is an earlier branch of the session: switch to it with /tree to continue it";
 
@@ -85,49 +65,42 @@ export default defineFacet((host) => {
 		});
 	});
 
-	host.serve(
-		SessionTree,
-		(_params, principal, self) => {
-			if (!isOwner(principal)) throw forbidden("the tree is the owner's");
-			const harness = harnessOf(self);
-			const worker = workerOf(self);
-			return {
-				variant: "owner",
-				members: {
-					tree: (ctx) => worker().liveness.call(() => readTree(harness().durable, ctx)),
-					navigate: ({ entry }, ctx) =>
-						worker().liveness.call(async () => {
-							const durable = harness().durable;
-							const switched = await navigate(durable, entry as EntryId, ctx);
-							await reportTree(durable, ctx);
-							return switched;
-						}),
-					select: ({ conversation }, ctx) =>
-						worker().liveness.call(async () => {
-							const durable = harness().durable;
-							await select(durable, conversation as ConversationId, ctx);
-							await reportTree(durable, ctx);
-							return null;
-						}),
-					branch: ({ conversation, label }, ctx) =>
-						worker().liveness.call(async () => {
-							const durable = harness().durable;
-							const fork = await branch(durable, conversation as ConversationId, label, ctx);
-							await reportTree(durable, ctx);
-							return { conversation: fork };
-						}),
-					rename: ({ conversation, label }, ctx) =>
-						worker().liveness.call(async () => {
-							const durable = harness().durable;
-							await rename(durable, conversation, label, ctx);
-							await reportTree(durable, ctx);
-							return null;
-						}),
-				},
-			};
-		},
-		{ accepts: TREE_ACCEPTS },
-	);
+	host.serve(SessionTree, (_params, principal, self) => {
+		if (!isOwner(principal)) throw forbidden("the tree is the owner's");
+		const harness = harnessOf(self);
+		const worker = workerOf(self);
+		return {
+			tree: (ctx) => worker().liveness.call(() => readTree(harness().durable, ctx)),
+			navigate: ({ entry }, ctx) =>
+				worker().liveness.call(async () => {
+					const durable = harness().durable;
+					const switched = await navigate(durable, entry as EntryId, ctx);
+					await reportTree(durable, ctx);
+					return switched;
+				}),
+			select: ({ conversation }, ctx) =>
+				worker().liveness.call(async () => {
+					const durable = harness().durable;
+					await select(durable, conversation as ConversationId, ctx);
+					await reportTree(durable, ctx);
+					return null;
+				}),
+			branch: ({ conversation, label }, ctx) =>
+				worker().liveness.call(async () => {
+					const durable = harness().durable;
+					const fork = await branch(durable, conversation as ConversationId, label, ctx);
+					await reportTree(durable, ctx);
+					return { conversation: fork };
+				}),
+			rename: ({ conversation, label }, ctx) =>
+				worker().liveness.call(async () => {
+					const durable = harness().durable;
+					await rename(durable, conversation, label, ctx);
+					await reportTree(durable, ctx);
+					return null;
+				}),
+		};
+	});
 });
 
 /**
@@ -149,7 +122,7 @@ async function reportTree(durable: Harness, ctx: Ctx): Promise<void> {
 			return parent === undefined ? { conversation, label } : { conversation, label, parent };
 		})
 		.toReversed();
-	await expectVariant(await ctx.get(Sessions, {}), "worker").treeSelf({ main, branches }, ctx);
+	await expectGranted(await ctx.get(Sessions, {}), "treeSelf").treeSelf({ main, branches }, ctx);
 }
 
 /**

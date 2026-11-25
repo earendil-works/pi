@@ -5,11 +5,11 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, http, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, http, startFixture, until } from "./helpers.ts";
 
 const setInput = (selector: string, value: string) =>
 	`(() => { const input=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(input.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new Event('input',{bubbles:true})); })()`;
@@ -31,7 +31,7 @@ describe("share links on loopback", () => {
 		const owner = fixture.browser();
 		session = (
 			await (
-				await holdIn(owner, Sessions, {}, "owner")
+				await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)
 			).create({ cwd: fixture.workspace, title: "Shared" }, BACKGROUND_CONTEXT)
 		).id;
 		const sharing = owner.hold(Sharing, { session }, BACKGROUND_CONTEXT);
@@ -156,7 +156,7 @@ describe("share links on loopback", () => {
 				);
 				await writer.evaluate(setInput(".composer textarea", "hello from the writer"));
 				await writer.click("button[aria-label=Send]");
-				const chat = await holdIn(fixture.browser(), Chat, { session, conversation: 1 }, "participant");
+				const chat = await holdWith(fixture.browser(), Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
 				await until(chat.view, (value) => JSON.stringify(value?.entries ?? []).includes("hello from the writer"));
 
 				// The owner's browser is unaffected.

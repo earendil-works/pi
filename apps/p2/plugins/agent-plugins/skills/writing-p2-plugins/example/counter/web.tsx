@@ -1,5 +1,5 @@
 // The counter's pane: view kind "counter", beside the transcript (a view) or in it (`inline`, a tool card's).
-import { BACKGROUND_CONTEXT, contribute, defineFacet, liveIn } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, contribute, defineFacet, live } from "@p2/app/v1";
 import { type PaneProps, useObject, useReadable, useStatus, ViewKinds } from "@p2/app/v1/web";
 import { useEffect, useState } from "react";
 import { Counter } from "./contract.ts";
@@ -7,7 +7,7 @@ import { Counter } from "./contract.ts";
 function CounterPane({ session, editable, inline }: PaneProps) {
 	const ref = useObject(Counter, { session });
 	useStatus(ref);
-	const board = liveIn(ref, "player");
+	const board = live(ref);
 	const count = useReadable(board?.count);
 	const present = useReadable(board?.present) ?? [];
 	const [wave, setWave] = useState("");

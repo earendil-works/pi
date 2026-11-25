@@ -1,6 +1,6 @@
 // The command menu's conversation commands (the TUI's `/agents` and `/main`): Switch conversation…, Back to main
 // conversation, and a root search over the subagents' names.
-import { keptIn } from "@p2/app/v1";
+import { keptWith } from "@p2/app/v1";
 import {
 	type Command,
 	type CommandContext,
@@ -101,7 +101,7 @@ const NONE: Listed = { all: [], subagents: [] };
 
 /** The main conversation, then the subagents: archived last, otherwise as the sidebar orders them. */
 function useConversations(session: Session | undefined): Listed {
-	const children = useReadable(keptIn(useObject(Subagents, {}), "reader")?.children);
+	const children = useReadable(keptWith(useObject(Subagents, {}), "children")?.children);
 	const own = session === undefined ? undefined : children?.[session.id];
 	return useMemo(() => {
 		if (session === undefined || session.archivedAt !== null) return NONE;
@@ -138,7 +138,7 @@ function ConversationRows({ session, conversations }: { session: string; convers
 	const { close } = useCommandMenu();
 	const open = useOpenFromMenu();
 	const route = useRoute();
-	const busy = useReadable(keptIn(useObject(SessionStatus, {}), "reader")?.statuses)?.[session]?.busy;
+	const busy = useReadable(keptWith(useObject(SessionStatus, {}), "statuses")?.statuses)?.[session]?.busy;
 	return conversations.map((conversation) => (
 		<CommandMenu.Row
 			key={conversation.id}

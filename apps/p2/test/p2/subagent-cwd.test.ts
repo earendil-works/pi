@@ -14,14 +14,14 @@ import {
 	Harness,
 } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
 import { Subagents } from "../../plugins/subagents/contract.ts";
 import { startServer } from "../../src/hosts/server.ts";
 import type { Host } from "../../src/runtime/chord.ts";
 import { openSessionStorage } from "../../src/runtime/session-store.ts";
-import { holdIn, startFixture, until } from "./helpers.ts";
+import { holdWith, startFixture, until } from "./helpers.ts";
 
 const context = BACKGROUND_CONTEXT;
 const text = (view: ConversationView | null | undefined) =>
@@ -57,8 +57,8 @@ test(
 		mkdirSync(project);
 		mkdirSync(own);
 		const subagent = async (owner: Host, session: string, args: object, requestId: string) => {
-			const chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
-			const status = await holdIn(owner, SessionStatus, {}, "reader");
+			const chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
+			const status = await holdWith(owner, SessionStatus, {}, "statuses");
 			try {
 				await chat.send({ text: `subagent ${JSON.stringify(args)}`, requestId }, BACKGROUND_CONTEXT);
 				await until(chat.view, (view) => text(view).includes(`Echo: subagent ${JSON.stringify(args)}`), 30_000);
@@ -70,12 +70,13 @@ test(
 		};
 
 		let owner = fixture.browser();
-		const session = (await (await holdIn(owner, Sessions, {}, "owner")).create({ cwd: project }, BACKGROUND_CONTEXT))
-			.id;
+		const session = (
+			await (await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)).create({ cwd: project }, BACKGROUND_CONTEXT)
+		).id;
 		await subagent(owner, session, { action: "spawn", name: "old", message: "hi", tools: ["bash"] }, "old");
 		await subagent(owner, session, { action: "spawn", name: "own", message: "hi", cwd: own, tools: ["bash"] }, "own");
 		const listed = await until(
-			(await holdIn(owner, Subagents, {}, "reader")).children,
+			(await holdWith(owner, Subagents, {}, "children")).children,
 			(value) => value?.[session]?.length === 2,
 		);
 		const children = new Map(listed?.[session]?.map((child) => [child.name, child.conversationId]));
@@ -103,7 +104,7 @@ test(
 		await subagent(owner, session, { action: "send", name: "old", message: "bash" }, "old-bash");
 		await subagent(owner, session, { action: "send", name: "own", message: "bash" }, "own-bash");
 		const pwd = async (name: string) => {
-			const chat = await holdIn(owner, Chat, { session, conversation: children.get(name)! }, "participant");
+			const chat = await holdWith(owner, Chat, { session, conversation: children.get(name)! }, ...CHAT_PARTICIPANT);
 			try {
 				const view = await until(chat.view, (value) => bash(value).length > 0, 30_000);
 				return { pwd: bash(view).join("\n"), cwd: (view?.docs["pi.agent"] as { cwd?: string }).cwd };

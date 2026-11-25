@@ -5,15 +5,15 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import type { ConversationView, LiveState } from "@earendil-works/pi-durable";
-import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { BACKGROUND_CONTEXT, type RefWith } from "@p2/app/v1";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { Models } from "../../plugins/models/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions, type SessionsOwner } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import { type Child, SubagentControl, Subagents } from "../../plugins/subagents/contract.ts";
-import type { Host, RefIn } from "../../src/runtime/chord.ts";
+import type { Host } from "../../src/runtime/chord.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 const TITLES = `[...document.querySelectorAll('.command-menu [role=option] .command-title')].map((e) => e.textContent)`;
 const SELECTED = `document.querySelector('.command-menu [role=option][aria-selected=true] .command-title')?.textContent`;
@@ -35,8 +35,8 @@ describe("command menu conversations", { skip: !browserTests }, () => {
 	let fixture: Fixture;
 	let browser: Browser;
 	let owner: Host;
-	let sessions: RefIn<typeof Sessions, "owner">;
-	let subagents: RefIn<typeof Subagents, "reader">;
+	let sessions: SessionsOwner;
+	let subagents: RefWith<typeof Subagents, "children">;
 	let base: string;
 	let userAgent: string;
 	let team: string;
@@ -45,7 +45,7 @@ describe("command menu conversations", { skip: !browserTests }, () => {
 
 	/** Sends `text` to `session`'s main conversation and waits until it is idle after `reported` more reports. */
 	const converse = async (session: string, text: string, reported: number) => {
-		const chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
 		try {
 			const before = reports(chat.view.value);
 			await chat.send({ text, requestId: `turn-${++turns}` }, BACKGROUND_CONTEXT);
@@ -80,8 +80,8 @@ describe("command menu conversations", { skip: !browserTests }, () => {
 		await owner
 			.hold(Models, {}, BACKGROUND_CONTEXT)
 			.setDefault({ provider: "faux", modelId: "faux-1", thinkingLevel: "off" }, BACKGROUND_CONTEXT);
-		sessions = await holdIn(owner, Sessions, {}, "owner");
-		subagents = await holdIn(owner, Subagents, {}, "reader");
+		sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
+		subagents = await holdWith(owner, Subagents, {}, "children");
 		team = (await sessions.create({ cwd: fixture.workspace, title: "Team" }, BACKGROUND_CONTEXT)).id;
 		worktree = join(fixture.workspace, "wt");
 		mkdirSync(worktree);
@@ -95,7 +95,7 @@ describe("command menu conversations", { skip: !browserTests }, () => {
 		);
 		// The most recent subagent, archived: listed last all the same.
 		await spawn(team, "old");
-		const control = await holdIn(owner, SubagentControl, { session: team }, "participant");
+		const control = await holdWith(owner, SubagentControl, { session: team });
 		await control.archive({ conversation: child("old").conversationId, archived: true }, BACKGROUND_CONTEXT);
 		control.release();
 		await until(subagents.children, (value) => value?.[team]?.find((each) => each.name === "old")?.archived === true);

@@ -14,7 +14,7 @@ import {
 	readChosenServerName,
 	writeChosenServerName,
 } from "../../src/runtime/server-name-file.ts";
-import { clientHost, holdIn, localOwner, until } from "./helpers.ts";
+import { clientHost, holdWith, localOwner, until } from "./helpers.ts";
 
 async function dataDir(t: TestContext): Promise<string> {
 	const directory = await mkdtemp(join(tmpdir(), "p2-server-name-"));
@@ -60,7 +60,7 @@ test("The owner renames the server and back to the device's name, saved across r
 	const start = () => startServer({ dataDir: directory, port: 0, fake: true, web: false });
 	let server = await start();
 	t.after(() => server.close());
-	const settings = async () => holdIn(clientHost(await localOwner(server)), ServerNameSettings, {}, "owner");
+	const settings = async () => holdWith(clientHost(await localOwner(server)), ServerNameSettings, {});
 	let names = await settings();
 	await until(names.name, (name) => name === device);
 	assert.equal(names.chosen.value, null);
@@ -92,7 +92,7 @@ test("A broken identity.json does not keep the server from starting: it goes by 
 	await writeFile(join(directory, "identity.json"), "{ not json");
 	const server = await startServer({ dataDir: directory, port: 0, fake: true, web: false });
 	t.after(() => server.close());
-	const names = await holdIn(clientHost(await localOwner(server)), ServerNameSettings, {}, "owner");
+	const names = await holdWith(clientHost(await localOwner(server)), ServerNameSettings, {});
 	const device = (await deviceName()) ?? null;
 	await until(names.name, (name) => name === device);
 	assert.ok(processLogs.notices().some((notice) => /identity\.json is not usable/.test(notice.message)));

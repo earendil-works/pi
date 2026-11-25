@@ -11,8 +11,10 @@ import {
 	defineState,
 	deriveTyped,
 	forbidden,
+	grantBy,
 	isOwner,
 	isWorker,
+	notGranted,
 	record,
 	sleep,
 } from "@p2/app/v1";
@@ -218,31 +220,30 @@ export default defineFacet((host) => {
 		};
 	});
 
-	host.serve(SidebarRollups, (_params, principal, self) => {
-		const store = self.get(RollupStore, {});
-		if (isOwner(principal))
-			return {
-				variant: "owner",
-				members: {
-					rollups: store.rollups,
+	host.serve(
+		SidebarRollups,
+		(_params, principal, _admitted, self) => {
+			const store = self.get(RollupStore, {});
+			if (isOwner(principal))
+				return {
+					rollups: () => store.rollups,
+					list: notGranted,
 					save: (definition, ctx) => store.save(definition, ctx),
 					remove: (args, ctx) => store.remove(args, ctx),
 					refresh: (args, ctx) => store.refresh(args, ctx),
 					preview: (args, ctx) => store.preview(args, ctx),
-				},
+				};
+			if (!isWorker(principal)) throw forbidden("rollups are the owner's and the Familiar's");
+			const familiar = self.get(FamiliarStore, {});
+			const hosts = self.get(Hosts, {});
+			/** Admits a call of the Familiar's current worker only. */
+			const admit = () => {
+				const current = hosts.workers.value[principal.session];
+				if (!current?.running || current.generation !== principal.generation) throw forbidden("stale worker");
+				if (familiar.session.value !== principal.session) throw forbidden("only the Familiar manages rollups");
 			};
-		if (!isWorker(principal)) throw forbidden("rollups are the owner's and the Familiar's");
-		const familiar = self.get(FamiliarStore, {});
-		const hosts = self.get(Hosts, {});
-		/** Admits a call of the Familiar's current worker only. */
-		const admit = () => {
-			const current = hosts.workers.value[principal.session];
-			if (!current?.running || current.generation !== principal.generation) throw forbidden("stale worker");
-			if (familiar.session.value !== principal.session) throw forbidden("only the Familiar manages rollups");
-		};
-		return {
-			variant: "familiar",
-			members: {
+			return {
+				rollups: notGranted,
 				list: async () => {
 					admit();
 					return store.rollups.value;
@@ -263,9 +264,10 @@ export default defineFacet((host) => {
 					admit();
 					return store.preview(args, ctx);
 				},
-			},
-		};
-	});
+			};
+		},
+		{ admit: grantBy((principal) => (isOwner(principal) ? ["rollups"] : isWorker(principal) ? ["list"] : [])) },
+	);
 });
 
 /** What a failed run counts as having read. */

@@ -6,18 +6,25 @@ import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type { ConversationView } from "@earendil-works/pi-durable";
-import type { Held } from "@p2/app/v1";
-import { BACKGROUND_CONTEXT, follow, liveIn, statusOf, whenLive, withAbortSignal } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import {
+	BACKGROUND_CONTEXT,
+	expectGranted,
+	follow,
+	liveWith,
+	type Ref,
+	statusOf,
+	whenLive,
+	withAbortSignal,
+} from "@p2/app/v1";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { PromptResources } from "../../plugins/prompt/contract.ts";
-import { Catalog, Sessions } from "../../plugins/sessions/contract.ts";
+import { Catalog, SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
 import { Subagents } from "../../plugins/subagents/contract.ts";
 import { Workspace } from "../../plugins/workspace/contract.ts";
-import { expectVariant } from "../../src/runtime/chord.ts";
 import { Hosts, type RelocationSteps, ServerNatives } from "../../src/runtime/server.ts";
 import { WorkerBoundary } from "../../src/runtime/worker.ts";
-import { type Fixture, holdIn, poll, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, poll, startFixture, until } from "./helpers.ts";
 
 const text = (view: ConversationView | null | undefined) =>
 	(view?.entries ?? [])
@@ -55,7 +62,7 @@ describe("session relocation (fake provider)", () => {
 		}, BACKGROUND_CONTEXT);
 	it("relocates a cold session without starting a worker and validates directories", async () => {
 		const owner = fixture.browser(),
-			sessions = await holdIn(owner, Sessions, {}, "owner");
+			sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER);
 		const session = await sessions.create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT);
 		await sessions.relocate({ id: session.id, cwd: target, env: null }, BACKGROUND_CONTEXT);
 		const rows = await until(sessions.sessions, (rows) => rows?.find((row) => row.id === session.id)?.cwd === target);
@@ -77,14 +84,14 @@ describe("session relocation (fake provider)", () => {
 	});
 	it("moves a viewed idle worker in place: references stay live, tools, prompt and workspace follow", async () => {
 		const owner = fixture.browser(),
-			sessions = await holdIn(owner, Sessions, {}, "owner"),
-			status = await holdIn(owner, SessionStatus, {}, "reader");
+			sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER),
+			status = await holdWith(owner, SessionStatus, {}, "statuses");
 		const session = await sessions.create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT);
 		// A project template that exists only at the destination: the prompt resources load from the new cwd.
 		mkdirSync(join(target, ".pi", "prompts"), { recursive: true });
 		writeFileSync(join(target, ".pi", "prompts", "moved.md"), "Moved here: $@");
 		writeFileSync(join(target, "only-at-destination.txt"), "x");
-		const chat = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		const prompts = owner.hold(PromptResources, { session: session.id, conversation: 1 }, BACKGROUND_CONTEXT);
 		const workspace = owner.hold(Workspace, { session: session.id, conversation: 1 }, BACKGROUND_CONTEXT);
 		await chat.send({ text: "before move", requestId: "before" }, BACKGROUND_CONTEXT);
@@ -119,9 +126,9 @@ describe("session relocation (fake provider)", () => {
 	// with its prompt resources.
 	it("moves following subagents with the session, not one with its own location", async () => {
 		const owner = fixture.browser(),
-			sessions = await holdIn(owner, Sessions, {}, "owner"),
-			status = await holdIn(owner, SessionStatus, {}, "reader"),
-			agents = await holdIn(owner, Subagents, {}, "reader");
+			sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER),
+			status = await holdWith(owner, SessionStatus, {}, "statuses"),
+			agents = await holdWith(owner, Subagents, {}, "children");
 		const start = join(fixture.workspace, "start");
 		const own = join(fixture.workspace, "own");
 		const next = join(fixture.workspace, "next");
@@ -135,7 +142,7 @@ describe("session relocation (fake provider)", () => {
 			writeFileSync(join(directory, ".pi", "prompts", `${name}.md`), `${name}: $@`);
 		}
 		const session = await sessions.create({ cwd: start }, BACKGROUND_CONTEXT);
-		const root = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+		const root = await holdWith(owner, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		const subagent = async (args: object, requestId: string) => {
 			await root.send({ text: `subagent ${JSON.stringify(args)}`, requestId }, BACKGROUND_CONTEXT);
 			await until(root.view, (view) => text(view).includes(`Echo: subagent ${JSON.stringify(args)}`));
@@ -145,7 +152,7 @@ describe("session relocation (fake provider)", () => {
 		await subagent({ action: "spawn", name: "own", message: "hi", cwd: own, tools: ["bash"] }, "own");
 		await sessions.relocate({ id: session.id, cwd: next, env: null }, BACKGROUND_CONTEXT);
 		root.release();
-		const current = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+		const current = await holdWith(owner, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await until(current.view, (view) => (view?.docs["pi.agent"] as { cwd?: string })?.cwd === next);
 		const children = await until(agents.children, (value) => value?.[session.id]?.length === 2);
 		const pwd = async (name: string, requestId: string) => {
@@ -158,11 +165,11 @@ describe("session relocation (fake provider)", () => {
 				},
 				BACKGROUND_CONTEXT,
 			);
-			const view = await holdIn(
+			const view = await holdWith(
 				owner,
 				Chat,
 				{ session: session.id, conversation: child.conversationId },
-				"participant",
+				...CHAT_PARTICIPANT,
 			);
 			try {
 				const settled = await until(
@@ -225,13 +232,13 @@ describe("session relocation (fake provider)", () => {
 	/** A session in a directory of its own whose worker runs and is idle, with an open Chat. */
 	const idleSession = async (name: string) => {
 		const owner = fixture.browser(),
-			sessions = await holdIn(owner, Sessions, {}, "owner"),
-			status = await holdIn(owner, SessionStatus, {}, "reader");
+			sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER),
+			status = await holdWith(owner, SessionStatus, {}, "statuses");
 		const start = join(fixture.workspace, `${name}-start`);
 		const next = join(fixture.workspace, `${name}-next`);
 		for (const directory of [start, next]) mkdirSync(directory);
 		const session = await sessions.create({ cwd: start }, BACKGROUND_CONTEXT);
-		const chat = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		let sent = 0;
 		/** Sends a message to `handle` and waits for its answer and an idle worker. */
 		const answers = async (ref = chat) => {
@@ -324,7 +331,7 @@ describe("session relocation (fake provider)", () => {
 		assert((after.generation ?? 0) > (s.before.generation ?? 0), "a new worker");
 		await gone; // a restart: the old worker's objects end
 		s.chat.release();
-		const current = await holdIn(s.owner, Chat, { session: s.session.id, conversation: 1 }, "participant");
+		const current = await holdWith(s.owner, Chat, { session: s.session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await until(current.view, (view) => s.cwdOf(view) === s.next);
 		await current.send({ text: "bash", requestId: "fallback-bash" }, BACKGROUND_CONTEXT);
 		const settled = await until(current.view, (view) => bashResults(view).length === 1);
@@ -385,7 +392,7 @@ describe("session relocation (fake provider)", () => {
 		await gone;
 		s.chat.release();
 		// The next use starts a worker that admits again (at the old location: the catalog did not move).
-		const chat = await holdIn(s.owner, Chat, { session: s.session.id, conversation: 1 }, "participant");
+		const chat = await holdWith(s.owner, Chat, { session: s.session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await until(chat.view, (view) => s.cwdOf(view) === s.start);
 		await s.answers(chat);
 		gone = s.gone(chat);
@@ -413,7 +420,7 @@ describe("session relocation (fake provider)", () => {
 		}));
 		assert.equal(await catalogCwd(s.session.id), s.next);
 		s.chat.release();
-		const chat = await holdIn(s.owner, Chat, { session: s.session.id, conversation: 1 }, "participant");
+		const chat = await holdWith(s.owner, Chat, { session: s.session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await until(chat.view, (view) => s.cwdOf(view) === s.next);
 		chat.release();
 	});
@@ -450,7 +457,7 @@ describe("session relocation (fake provider)", () => {
 	// gets a worker, instead of failing as if it had called the dying one.
 	it("lets a client arriving while the catalog moves for an exited worker wait for it", async () => {
 		const s = await idleSession("arrival");
-		let arriving: Held<typeof Chat> | undefined;
+		let arriving: Ref<typeof Chat> | undefined;
 		await relocateWith(s.session.id, s.next, (real) => ({
 			prepare: async () => {
 				await s.kill();
@@ -465,7 +472,7 @@ describe("session relocation (fake provider)", () => {
 		}));
 		assert(arriving);
 		await whenLive(arriving);
-		const arrival = liveIn(arriving, "participant")!;
+		const arrival = liveWith(arriving, ...CHAT_PARTICIPANT)!;
 		await until(arrival.view, (view) => s.cwdOf(view) === s.next);
 		await s.answers(arrival);
 		arrival.release();
@@ -489,7 +496,7 @@ describe("session relocation (fake provider)", () => {
 		]).finally(() => clearTimeout(timer));
 		assert.equal(await catalogCwd(s.session.id), s.next);
 		s.chat.release();
-		const chat = await holdIn(s.owner, Chat, { session: s.session.id, conversation: 1 }, "participant");
+		const chat = await holdWith(s.owner, Chat, { session: s.session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await until(chat.view, (view) => s.cwdOf(view) === s.next);
 		await s.answers(chat);
 		chat.release();
@@ -503,7 +510,7 @@ describe("session relocation (fake provider)", () => {
 			const controller = new AbortController();
 			const call = fixture.server.host.root(
 				async (ctx) => {
-					const sessions = expectVariant(await ctx.get(Sessions, {}), "owner");
+					const sessions = expectGranted(await ctx.get(Sessions, {}), ...SESSIONS_OWNER);
 					await sessions.relocate({ id: s.session.id, cwd, env: null }, ctx);
 				},
 				withAbortSignal(controller.signal, BACKGROUND_CONTEXT),
@@ -533,10 +540,10 @@ describe("session relocation (fake provider)", () => {
 	});
 	it("rejects foreground and named child work, and prevents new admission after an idle fence", async () => {
 		const owner = fixture.browser(),
-			sessions = await holdIn(owner, Sessions, {}, "owner"),
-			status = await holdIn(owner, SessionStatus, {}, "reader");
+			sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER),
+			status = await holdWith(owner, SessionStatus, {}, "statuses");
 		const session = await sessions.create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT);
-		const root = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+		const root = await holdWith(owner, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await root.send({ text: "slow run", requestId: "slow" }, BACKGROUND_CONTEXT);
 		// A refused move is a failed operation the owner sees (the call answered when the move started).
 		const refused = async (pattern: RegExp) => {
@@ -556,16 +563,16 @@ describe("session relocation (fake provider)", () => {
 		await root.stop(BACKGROUND_CONTEXT);
 		await until(status.statuses, (value) => value?.[session.id]?.tasks === 0);
 		await root.send({ text: "subagent", requestId: "helper" }, BACKGROUND_CONTEXT);
-		const agents = await holdIn(owner, Subagents, {}, "reader");
+		const agents = await holdWith(owner, Subagents, {}, "children");
 		const children = await until(agents.children, (value) => Boolean(value?.[session.id]?.length));
 		const child = children?.[session.id]?.[0];
 		assert(child);
 		await until(status.statuses, (value) => value?.[session.id]?.tasks === 0);
-		const helper = await holdIn(
+		const helper = await holdWith(
 			owner,
 			Chat,
 			{ session: session.id, conversation: child.conversationId },
-			"participant",
+			...CHAT_PARTICIPANT,
 		);
 		await helper.send({ text: "slow helper", requestId: "slow-child" }, BACKGROUND_CONTEXT);
 		await refused(/Subagent helper is still running/);
@@ -603,12 +610,12 @@ describe("session relocation: a move that hangs", () => {
 	});
 	it("restarts the worker once the move takes longer than the bound", async () => {
 		const owner = fixture.browser(),
-			sessions = await holdIn(owner, Sessions, {}, "owner"),
-			status = await holdIn(owner, SessionStatus, {}, "reader");
+			sessions = await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER),
+			status = await holdWith(owner, SessionStatus, {}, "statuses");
 		const next = join(fixture.workspace, "next");
 		mkdirSync(next);
 		const session = await sessions.create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT);
-		const chat = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await chat.send({ text: "before", requestId: "before" }, BACKGROUND_CONTEXT);
 		await until(chat.view, (view) => text(view).includes("Echo: before"));
 		await until(status.statuses, (value) => value?.[session.id]?.tasks === 0);
@@ -640,7 +647,7 @@ describe("session relocation: a move that hangs", () => {
 		assert(Date.now() - started >= 500, "waited for the bound");
 		assert((await generation()) > before, "a new worker");
 		chat.release();
-		const current = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+		const current = await holdWith(owner, Chat, { session: session.id, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await until(current.view, (view) => (view?.docs["pi.agent"] as { cwd?: string })?.cwd === next);
 		current.release();
 	});

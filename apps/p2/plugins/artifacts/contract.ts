@@ -3,7 +3,7 @@
 // address: a session's export, import and delete carry them). People list, open and remove them; the
 // session's worker writes them for its agent; an open html page reports its errors and logs, and runs the agent's code.
 import { arr, int, nullable, num, obj, oneOf, opt, type Static, str, union, unknown } from "@earendil-works/pi-schema";
-import { type JsonValue, literal, method, param, remote, serverHost, unsafe } from "@p2/app/v1";
+import { grantable, type JsonValue, literal, method, param, remote, serverHost, unsafe } from "@p2/app/v1";
 
 /** An artifact's ID: a lowercase slug, unique in its session. */
 export const ARTIFACT_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
@@ -63,51 +63,57 @@ export type EvalResult = Static<typeof EvalResultSchema>;
  * remove them, and the session's worker does what its agent's tools do.
  */
 export const Artifacts = remote("p2.artifacts", {
-	version: 1,
+	version: 2,
 	params: { session: param.str() },
 	hostAddress: serverHost,
-	variants: {
-		reader: {
-			state: { artifacts: arr(ArtifactSummarySchema) },
-			methods: { read: method(ReadArgsSchema, ReadSchema) },
-		},
-		editor: {
-			state: { artifacts: arr(ArtifactSummarySchema) },
-			methods: {
-				read: method(ReadArgsSchema, ReadSchema),
-				remove: method(obj({ id: Id })),
-			},
-		},
-		worker: {
-			methods: {
-				list: method(undefined, arr(ArtifactSummarySchema)),
-				read: method(obj({ id: Id, version: opt(int({ minimum: 1 })) }), ReadSchema),
-				/** A new artifact (its ID made from the title when not given) or the next version of one. */
-				write: method(WriteSchema, obj({ id: Id, version: int() })),
-				edit: method(EditArgsSchema, obj({ version: int() })),
-				remove: method(obj({ id: Id })),
-				/** An html page's state as stored (null until something set it). */
-				readState: method(obj({ id: Id }), obj({ state: unsafe<JsonValue>(unknown()) })),
-				setState: method(obj({ id: Id, state: unsafe<JsonValue>(unknown()) })),
-				/** The errors the open pages of an html artifact reported, oldest first. */
-				errors: method(obj({ id: Id }), arr(LogEntrySchema)),
-				/** What the open pages logged after `since` (a `seq`), and the newest `seq`. */
-				logs: method(obj({ id: Id, since: opt(int()) }), obj({ logs: arr(LogEntrySchema), next: int() })),
-				/** Runs `code` in a page of the artifact open on some device; fails when none is open. */
-				eval: method(obj({ id: Id, code: str({ maxLength: 100_000 }) }), EvalResultSchema),
-				/** Errors no message carried yet, with the marks `carried` takes once one did. */
-				newErrors: method(
-					undefined,
-					obj({
-						errors: arr(obj({ id: Id, title: str(), text: str() })),
-						marks: arr(obj({ id: Id, seq: int() })),
-					}),
-				),
-				carried: method(obj({ marks: arr(obj({ id: Id, seq: int() })) })),
-			},
-		},
+	/** People who may view the session: the list. */
+	state: { artifacts: grantable(arr(ArtifactSummarySchema)) },
+	methods: {
+		read: method(ReadArgsSchema, ReadSchema),
+		/** People who may send there, and the worker. */
+		remove: grantable(method(obj({ id: Id }))),
+		// The worker's: what its agent's tools do.
+		list: grantable(method(undefined, arr(ArtifactSummarySchema))),
+		/** A new artifact (its ID made from the title when not given) or the next version of one. */
+		write: grantable(method(WriteSchema, obj({ id: Id, version: int() }))),
+		edit: grantable(method(EditArgsSchema, obj({ version: int() }))),
+		/** An html page's state as stored (null until something set it). */
+		readState: grantable(method(obj({ id: Id }), obj({ state: unsafe<JsonValue>(unknown()) }))),
+		setState: grantable(method(obj({ id: Id, state: unsafe<JsonValue>(unknown()) }))),
+		/** The errors the open pages of an html artifact reported, oldest first. */
+		errors: grantable(method(obj({ id: Id }), arr(LogEntrySchema))),
+		/** What the open pages logged after `since` (a `seq`), and the newest `seq`. */
+		logs: grantable(method(obj({ id: Id, since: opt(int()) }), obj({ logs: arr(LogEntrySchema), next: int() }))),
+		/** Runs `code` in a page of the artifact open on some device; fails when none is open. */
+		eval: grantable(method(obj({ id: Id, code: str({ maxLength: 100_000 }) }), EvalResultSchema)),
+		/** Errors no message carried yet, with the marks `carried` takes once one did. */
+		newErrors: grantable(
+			method(
+				undefined,
+				obj({
+					errors: arr(obj({ id: Id, title: str(), text: str() })),
+					marks: arr(obj({ id: Id, seq: int() })),
+				}),
+			),
+		),
+		carried: grantable(method(obj({ marks: arr(obj({ id: Id, seq: int() })) }))),
 	},
 });
+
+/** What the session's worker is granted on `Artifacts`: its agent's tools. */
+export const ARTIFACTS_WORKER = [
+	"list",
+	"write",
+	"edit",
+	"remove",
+	"readState",
+	"setState",
+	"errors",
+	"logs",
+	"eval",
+	"newErrors",
+	"carried",
+] as const;
 
 /**
  * One html artifact as a page showing it holds it: its summary (null once it is removed) and state (`value`), its side of the
@@ -115,36 +121,20 @@ export const Artifacts = remote("p2.artifacts", {
  * save the state.
  */
 export const ArtifactPage = remote("p2.artifact-page", {
-	version: 1,
+	version: 2,
 	params: { session: param.str(), id: param.str() },
 	hostAddress: serverHost,
-	variants: {
-		viewer: {
-			state: { summary: nullable(ArtifactSummarySchema), value: unsafe<JsonValue>(unknown()) },
-			events: { request: obj({ request: str(), code: str() }) },
-			methods: {
-				report: method(
-					obj({
-						errors: arr(str({ maxLength: 4000 }), { maxItems: 100 }),
-						logs: arr(obj({ level: str({ maxLength: 16 }), text: str({ maxLength: 4000 }) }), { maxItems: 500 }),
-					}),
-				),
-				answer: method(obj({ request: str(), result: EvalResultSchema })),
-			},
-		},
-		editor: {
-			state: { summary: nullable(ArtifactSummarySchema), value: unsafe<JsonValue>(unknown()) },
-			events: { request: obj({ request: str(), code: str() }) },
-			methods: {
-				report: method(
-					obj({
-						errors: arr(str({ maxLength: 4000 }), { maxItems: 100 }),
-						logs: arr(obj({ level: str({ maxLength: 16 }), text: str({ maxLength: 4000 }) }), { maxItems: 500 }),
-					}),
-				),
-				answer: method(obj({ request: str(), result: EvalResultSchema })),
-				setState: method(obj({ state: unsafe<JsonValue>(unknown()) })),
-			},
-		},
+	state: { summary: nullable(ArtifactSummarySchema), value: unsafe<JsonValue>(unknown()) },
+	events: { request: obj({ request: str(), code: str() }) },
+	methods: {
+		report: method(
+			obj({
+				errors: arr(str({ maxLength: 4000 }), { maxItems: 100 }),
+				logs: arr(obj({ level: str({ maxLength: 16 }), text: str({ maxLength: 4000 }) }), { maxItems: 500 }),
+			}),
+		),
+		answer: method(obj({ request: str(), result: EvalResultSchema })),
+		/** People who may send in the session. */
+		setState: grantable(method(obj({ state: unsafe<JsonValue>(unknown()) }))),
 	},
 });

@@ -10,23 +10,19 @@ export const MAX_SENT_PREVIEW = 256 * 1024;
  * UTF-8 in the first `MAX_SENT_PREVIEW` bytes).
  */
 export const SentFiles = remote("p2.sent-files", {
-	version: 1,
+	version: 2,
 	params: { session: param.str() },
 	hostAddress: sessionHost,
-	variants: {
-		reader: {
-			methods: {
-				preview: method(
-					obj({ id: str({ maxLength: 64 }) }),
-					obj({
-						name: str(),
-						size: num(),
-						text: union([str(), nul()]),
-						truncated: bool(),
-					}),
-				),
-			},
-		},
+	methods: {
+		preview: method(
+			obj({ id: str({ maxLength: 64 }) }),
+			obj({
+				name: str(),
+				size: num(),
+				text: union([str(), nul()]),
+				truncated: bool(),
+			}),
+		),
 	},
 });
 

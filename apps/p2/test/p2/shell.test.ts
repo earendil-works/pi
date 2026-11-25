@@ -15,7 +15,7 @@ import {
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { BACKGROUND_CONTEXT, follow } from "@p2/app/v1";
-import { Chat, SHELL_BUSY } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat, SHELL_BUSY } from "../../plugins/chat/contract.ts";
 import chatWorker from "../../plugins/chat/worker.ts";
 import { WorkerModels } from "../../plugins/models/contract.ts";
 import { createP2Models } from "../../plugins/models/models.ts";
@@ -26,7 +26,7 @@ import { SHELL_ENTRY, type ShellData, shellTail } from "../../src/runtime/shell.
 import { type HarnessParts, type Liveness, SessionLocation } from "../../src/runtime/worker.ts";
 import { buildTranscript } from "../../src/web/transcript.ts";
 import { wholeView } from "../fixtures/whole-view.ts";
-import { expectChord, holdIn, testHost, until, workerFacet } from "./helpers.ts";
+import { expectChord, holdWith, testHost, until, workerFacet } from "./helpers.ts";
 
 const OWNER = { kind: "owner", access: "local" } as const;
 const ALICE = { kind: "guest", id: "alice", name: "Alice", home: "s1", sessions: { s1: "full" }, revision: 1 } as const;
@@ -113,8 +113,7 @@ describe("user shell commands", () => {
 	it("`!` places the output in the context without a run; `!!` keeps it out", async (t) => {
 		const fixture = await shellHost();
 		t.after(() => fixture.close());
-		const owner = await holdIn(fixture.client(OWNER), Chat, where, "participant");
-		if (owner.variant !== "participant") return;
+		const owner = await holdWith(fixture.client(OWNER), Chat, where, ...CHAT_PARTICIPANT);
 		// A state's value is current while subscribed.
 		t.after(follow(owner.view, () => {}));
 		await owner.shell(
@@ -167,10 +166,10 @@ describe("user shell commands", () => {
 		const fixture = await shellHost();
 		t.after(() => fixture.close());
 		const [alice, owner, bob] = await Promise.all([
-			holdIn(fixture.client(ALICE), Chat, where, "participant"),
-			holdIn(fixture.client(OWNER), Chat, where, "participant"),
+			holdWith(fixture.client(ALICE), Chat, where, ...CHAT_PARTICIPANT),
+			holdWith(fixture.client(OWNER), Chat, where, ...CHAT_PARTICIPANT),
 			// View-only guests cannot run commands.
-			holdIn(fixture.client(BOB), Chat, where, "viewer"),
+			holdWith(fixture.client(BOB), Chat, where),
 		]);
 		const { shellId } = await alice.shell(
 			{
