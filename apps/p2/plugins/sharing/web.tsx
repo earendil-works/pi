@@ -19,6 +19,7 @@ import {
 import { useEffect, useState } from "react";
 import { SHARING_COMMANDS, SHARING_PAGES } from "./commands.tsx";
 import { GuestPresence, ShareInvite, type ShareMode, Sharing } from "./contract.ts";
+import { DEFAULT_INVITE_SECONDS, INVITE_DURATIONS, validUntil } from "./durations.ts";
 import { confirmsFirst, LINK_LABEL, linkToShare, resetLink } from "./links.ts";
 
 /**
@@ -34,9 +35,12 @@ function ShareSheet({ session, onClose }: { session: string; onClose: () => void
 	const people = useReadable(sharing?.people);
 	const peopleUrl = useReadable(sharing?.peopleUrl);
 	const remoteEnv = useReadable(sharing?.env);
+	/** Copying makes an invite (through Radius): the owner picks how long it opens. */
+	const invitesOn = useReadable(invites?.invites);
 	const [copied, setCopied] = useState<ShareMode | "address">();
-	/** A copied link was an invite (through Radius): it opens for 15 minutes. */
-	const [invited, setInvited] = useState(false);
+	const [validFor, setValidFor] = useState(DEFAULT_INVITE_SECONDS);
+	/** When the invite last copied for each link stops opening. */
+	const [until, setUntil] = useState<Partial<Record<ShareMode, number>>>({});
 	const [email, setEmail] = useState("");
 	const [personMode, setPersonMode] = useState<ShareMode>("view");
 	const [confirming, setConfirming] = useState<
@@ -59,9 +63,10 @@ function ShareSheet({ session, onClose }: { session: string; onClose: () => void
 			return;
 		}
 		try {
-			const link = await linkToShare(invites, mode, remoteConfirmed);
+			const link = await linkToShare(invites, mode, validFor, remoteConfirmed);
 			if (await copyText(link.url)) setCopied(mode);
-			setInvited(link.expiresAt !== null);
+			const expiresAt = link.expiresAt;
+			if (expiresAt !== null) setUntil((previous) => ({ ...previous, [mode]: expiresAt }));
 		} catch (reason) {
 			setError(errorText(reason));
 		}
@@ -100,7 +105,13 @@ function ShareSheet({ session, onClose }: { session: string; onClose: () => void
 		}
 		const action =
 			confirming.kind === "reset"
-				? resetLink(sharing, confirming.reset)
+				? resetLink(sharing, confirming.reset).then(() => {
+						const reset = confirming.reset;
+						// The link's invites were withdrawn with it.
+						setUntil((previous) =>
+							Object.fromEntries(Object.entries(previous).filter(([mode]) => mode !== reset)),
+						);
+					})
 				: sharing.remove({ guestId: confirming.remove }, BACKGROUND_CONTEXT);
 		action.catch((reason: unknown) => setError(errorText(reason)));
 	};
@@ -130,12 +141,41 @@ function ShareSheet({ session, onClose }: { session: string; onClose: () => void
 				make the agent run commands and change files on{" "}
 				{remoteEnv ? `the remote environment "${remoteEnv}"` : "this host"}.
 			</p>
+			{invitesOn && (
+				<p className="muted small">
+					Through Radius every copied link is a new invite: anyone with it can join until it expires. Guests stay
+					while their page is open; Reset ends the link and all its invites.
+				</p>
+			)}
 			<div className="list">
+				{invitesOn && (
+					<div className="share-row">
+						<span>Valid for</span>
+						<select
+							className="input"
+							aria-label="Valid for"
+							value={validFor}
+							onChange={(event) => setValidFor(Number(event.target.value))}
+						>
+							{INVITE_DURATIONS.map(({ seconds, label }) => (
+								<option key={seconds} value={seconds}>
+									{label}
+								</option>
+							))}
+						</select>
+					</div>
+				)}
 				{(["view", "full"] as const).map((mode) => {
 					const exists = links?.some((link) => link.mode === mode) ?? false;
+					const expiresAt = until[mode];
 					return (
 						<div className="share-row" key={mode}>
-							<span>{LINK_LABEL[mode]}</span>
+							<span>
+								{LINK_LABEL[mode]}
+								{expiresAt !== undefined && (
+									<small className="muted"> · copied, valid until {validUntil(expiresAt)}</small>
+								)}
+							</span>
 							{mode === "full" && confirming?.kind === "remote" ? (
 								<>
 									<span className="muted small">
@@ -179,12 +219,6 @@ function ShareSheet({ session, onClose }: { session: string; onClose: () => void
 					);
 				})}
 			</div>
-			{invited && (
-				<p className="muted small">
-					Through Radius every copied link is a new invite: it opens for 15 minutes. Its guests stay while their
-					page is open.
-				</p>
-			)}
 			{peopleUrl && (
 				<div className="list">
 					<span className="label">People</span>

@@ -3,7 +3,7 @@ import { RequestResolvers, Server, ServerName, ShareUrls } from "@p2/app/v1/serv
 import { BackupTargets } from "../backup/contract.ts";
 import { isTerminalSyncError, RadiusSyncRemote } from "../backup/radius-remote.ts";
 import { ForwardStore, ForwardsNative } from "../ports/contract.ts";
-import { ShareInviters, Shares } from "../sharing/contract.ts";
+import { type ShareInviter, ShareInviters, Shares } from "../sharing/contract.ts";
 import { RadiusBrain, type RadiusStatus } from "./brain.ts";
 import { RadiusConnections, RadiusService } from "./contract.ts";
 import { RelayAccess } from "./relay-access.ts";
@@ -26,6 +26,12 @@ export default defineFacet((host) => {
 		const serverName = self.get(ServerName, {});
 		self.get(ForwardStore, {});
 		const forwards = nativeOf(self, ForwardsNative, "The forwards");
+		/** Sharing's inviter, offered once the brain knows its own Radius origin (invites point there). */
+		const inviters = self.writable<Readonly<Record<string, ShareInviter>>>({});
+		const inviter: ShareInviter = {
+			invite: (link, path, validFor) => connection.value.brain.invite(link, path, validFor),
+			withdraw: (link) => connection.value.brain.withdrawInvites(link),
+		};
 		const connection = self.open(
 			async () => {
 				const relay = new RelayAccess();
@@ -36,6 +42,9 @@ export default defineFacet((host) => {
 					relay,
 					name: serverName.name.value ?? undefined,
 					forwards: forwards().forwards,
+					onOrigin: () => {
+						if (!inviters.value.radius) inviters.set({ radius: inviter });
+					},
 					// As Pi Mobile: each new status once, retries with their error.
 					onStatus: (status) => {
 						const text = radiusStatusText(status);
@@ -79,13 +88,8 @@ export default defineFacet((host) => {
 		self.on(shares.admissions, async ({ value: admissions }) => {
 			connection.value.brain.reportGuests(admissions);
 		});
-		// Through Radius, a link holder needs an invite: once the brain knows its Radius origin.
-		self.contribute(ShareInviters, {
-			radius: (link, path, uses) => {
-				const brain = connection.value.brain;
-				return brain.publicOrigin === undefined ? undefined : brain.invite(link, path, uses);
-			},
-		});
+		// Through Radius, a link holder needs an invite.
+		self.contribute(ShareInviters, inviters);
 		self.contribute(ShareUrls, {
 			radius: (session) => {
 				const page = connection.value.brain.shellPage;

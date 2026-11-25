@@ -324,17 +324,19 @@ test(
 		const session = await sessions.create({ cwd: f.directory, title: "Shared" }, BACKGROUND_CONTEXT);
 		const invites = owner.hold(ShareInvite, { session: session.id }, BACKGROUND_CONTEXT);
 		await whenLive(invites);
-		const before = await invites.invite({ mode: "view" }, BACKGROUND_CONTEXT);
+		assert.equal(await until(invites.invites, (value) => value !== undefined), false);
+		const before = await invites.invite({ mode: "view", validFor: 3600 }, BACKGROUND_CONTEXT);
 		assert.equal(before.expiresAt, null, "before the brain knows its Radius origin, the link itself");
 		assert.match(before.url, /^http:\/\/127\.0\.0\.1:\d+\/join\//);
 		// Once the brain knows its Radius origin (the owner opened it there), a copied link is an invite.
 		assert.equal((await f.radius.response(f.open("/probe"))).status, 200);
 		await poll(async () => (await readRadiusConfig(f.directory))?.publicOrigin === PUBLIC_ORIGIN);
-		const link = await invites.invite({ mode: "view" }, BACKGROUND_CONTEXT);
+		assert.equal(await until(invites.invites, Boolean), true, "the owner now picks how long it is valid");
+		const link = await invites.invite({ mode: "view", validFor: 86_400 }, BACKGROUND_CONTEXT);
 		assert.equal(link.url, `${PUBLIC_ORIGIN}/__join#token-${f.radius.invites.length}`);
 		assert.equal(link.expiresAt, Date.parse("2030-01-01T00:15:00.000Z"));
 		const linkId = f.radius.invites.at(-1)?.ref ?? "";
-		assert.deepEqual(f.radius.invites.at(-1), { ref: linkId, path: "/join/radius", uses: 1 });
+		assert.deepEqual(f.radius.invites.at(-1), { ref: linkId, path: "/join/radius", ttl_seconds: 86_400 });
 		const sharing = owner.hold(Sharing, { session: session.id }, BACKGROUND_CONTEXT);
 		assert.equal((await until(sharing.links, (links) => links?.length === 1))?.[0]?.mode, "view");
 
@@ -410,8 +412,9 @@ test(
 			[{ id: admission, name: "Gus" }],
 		);
 
-		// Resetting the link ends the guest's access at once, whatever Radius still admits.
+		// Resetting the link ends the guest's access at once, whatever Radius still admits, and withdraws its invites.
 		await sharing.link({ mode: "view", reset: true }, BACKGROUND_CONTEXT);
+		assert.deepEqual(f.radius.withdrawals, [linkId]);
 		await poll(() => socket.readyState === WebSocket.CLOSED, 10_000, "the guest's old principal ended");
 		assert.equal((await http(f.server.port, "/join/radius", { headers })).status, 410);
 	},

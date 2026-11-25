@@ -165,6 +165,7 @@ const sharesFacet = (use: (owned: Owned<ShareTables>) => void) =>
 				emails: constant([]),
 				people: constant([]),
 				admissions: constant([]),
+				invites: constant(false),
 				authenticate: refused,
 				authenticateEmail: refused,
 				authenticateAdmission: refused,

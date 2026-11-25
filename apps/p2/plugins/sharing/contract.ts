@@ -1,8 +1,12 @@
-import { arr, bool, nul, num, obj, opt, type Static, str, union } from "@earendil-works/pi-schema";
+import { arr, bool, int, nul, num, obj, opt, type Static, str, union } from "@earendil-works/pi-schema";
 import { keyedRegistry, literal, local, method, param, record, remote, serverHost } from "@p2/app/v1";
+import { MAX_INVITE_SECONDS } from "./durations.ts";
 
 export const ModeSchema = union([literal("view"), literal("full")]);
 export type ShareMode = Static<typeof ModeSchema>;
+
+/** How long an invite opens, in seconds (see `Shares`): at most what Radius allows. */
+const ValidForSchema = int({ minimum: 60, maximum: MAX_INVITE_SECONDS });
 
 export const LinkSchema = obj({
 	id: str(),
@@ -44,7 +48,8 @@ export const ConnectedSchema = obj({
  *   verifies the email of whoever opens the brain, and admits only emails the brain reported (`emails`).
  *
  * Through Radius without a tunnel host a link's own URL reaches nobody, so copying it makes an invite instead (`invite`,
- * `ShareInviters`): a URL that opens for 15 minutes and admits `shareInviteUses` people (settings.json, default 1).
+ * `ShareInviters`): a URL that anyone may open for as long as the owner picked (`validFor`, at most 7 days). Resetting
+ * the link withdraws its invites.
  * Radius admits whoever redeems it as a guest with an admission ID and a lease that the brain renews while that guest's
  * page is open (`admissions`); joining makes the admission ID the guest's ID (no cookie). A guest whose lease lapsed
  * needs a new invite; lasting access is sharing by email.
@@ -96,34 +101,41 @@ export const Shares = local("p2.shares", {
 		 * the only way in (`expiresAt` when it stops opening), else the link's own URL (`expiresAt` null).
 		 */
 		invite: method(
-			obj({ session: str(), mode: ModeSchema, remoteConfirmed: opt(bool()) }),
+			obj({ session: str(), mode: ModeSchema, validFor: ValidForSchema, remoteConfirmed: opt(bool()) }),
 			obj({ url: str(), expiresAt: union([num(), nul()]) }),
 		),
+		/** Whether copying a link makes an invite now: no tunnel host, and an inviter that can make one. */
+		invites: bool(),
 	},
 });
 
 /**
- * Makes invites for a link (its ID), landing on `path` and admitting `uses` people, where a transport admits link
- * holders itself (Radius); undefined while it cannot (not connected).
+ * Makes invites for sharing's links where a transport admits link holders itself (Radius), contributed while it can
+ * (it knows its address): `invite` for a link (its ID) landing on `path` and opening for `validFor` seconds, `withdraw`
+ * every invite of a link (it was reset).
  */
-export type ShareInviter = (
-	link: string,
-	path: string,
-	uses: number,
-) => Promise<{ url: string; expiresAt: number }> | undefined;
+export type ShareInviter = {
+	readonly invite: (link: string, path: string, validFor: number) => Promise<{ url: string; expiresAt: number }>;
+	readonly withdraw: (link: string) => Promise<void>;
+};
 export const ShareInviters = keyedRegistry<ShareInviter>("p2.share-inviters");
 
 /**
  * The URL to hand out for a session's link (owner only): see `Shares.invite`. 2: a new base (grantable members
- * replaced variants; older versions are refused).
+ * replaced variants; older versions are refused). 3: how long an invite is valid (`validFor`, `invites`); older
+ * versions are refused, as nothing served them through a released Radius.
  */
 export const ShareInvite = remote("p2.share-invite", {
-	version: 2,
+	version: 3,
 	params: { session: param.str() },
 	hostAddress: serverHost,
+	state: {
+		/** Copying makes an invite (see `Shares.invites`): the owner picks how long it is valid. */
+		invites: bool(),
+	},
 	methods: {
 		invite: method(
-			obj({ mode: ModeSchema, remoteConfirmed: opt(bool()) }),
+			obj({ mode: ModeSchema, validFor: ValidForSchema, remoteConfirmed: opt(bool()) }),
 			obj({ url: str(), expiresAt: union([num(), nul()]) }),
 		),
 	},

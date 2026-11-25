@@ -30,7 +30,6 @@ import {
 	ShareUrls,
 	sendJson,
 } from "@p2/app/v1/server";
-import { ModelConfig } from "../models/contract.ts";
 import { Catalog } from "../sessions/contract.ts";
 import { ChildStore, remoteEnvironments } from "../subagents/contract.ts";
 import {
@@ -135,8 +134,9 @@ export default defineFacet((host) => {
 		const children = self.get(ChildStore, {});
 		const server = self.get(Server, {});
 		const presence = self.get(Presence, {});
-		const models = self.get(ModelConfig, {});
 		const inviters = self.registry(ShareInviters);
+		/** The inviter to make invites with now: none while a tunnel host reaches links themselves. */
+		const inviter = () => (server.info.value.allowedHosts.length === 0 ? [...inviters.value.values()][0] : undefined);
 		const archived = self.state(Archived);
 		// Links, guests and grants: tables of the server's store, their live queries the source of the lists below.
 		const linkTable = self.table(LinkRows);
@@ -210,6 +210,8 @@ export default defineFacet((host) => {
 				return openEmails(emailGrantsOf(rows, guestMap(guestRows)), (session) => !archivedNow.has(session));
 			}),
 			people: deriveTyped(self, [grants, guests], ([rows, guestRows]) => peopleOf(rows, guestMap(guestRows))),
+			// Radius contributes its inviter once it knows its address.
+			invites: deriveTyped(self, [inviters, server.info], () => inviter() !== undefined),
 			// Guests with neither cookie nor email are Radius admissions (their IDs); connected ones are renewed.
 			admissions: deriveTyped(self, [guests, presence.guests], ([rows, connected]) =>
 				rows
@@ -245,7 +247,10 @@ export default defineFacet((host) => {
 			},
 			link: async ({ session, mode, reset, remoteConfirmed }, ctx) => {
 				await confirmRemote(session, mode, remoteConfirmed, ctx);
+				const previous = reset ? await db.linkOf(session, mode, ctx) : undefined;
 				await revoke(await db.link(session, mode, reset, ctx), ctx);
+				// Its invites end too, so they fail at once rather than on the join page; the link itself ended above.
+				if (previous) for (const each of inviters.value.values()) await each.withdraw(previous.id);
 				return null;
 			},
 			share: async ({ session, email, mode, remoteConfirmed }, ctx) => {
@@ -277,21 +282,16 @@ export default defineFacet((host) => {
 				if (joined.changed) await revoke([joined.guest], ctx);
 				return { session: link.session };
 			},
-			invite: async ({ session, mode, remoteConfirmed }, ctx) => {
+			invite: async ({ session, mode, validFor, remoteConfirmed }, ctx) => {
 				// Only a new read/write link on a remote environment is confirmed; copying an existing one is not.
 				const exists = (await db.linkOf(session, mode, ctx)) !== undefined;
 				await confirmRemote(session, mode, remoteConfirmed || exists, ctx);
 				const link = await db.ensureLink(session, mode, ctx);
-				const info = server.info.value;
 				// A tunnel host reaches the link itself; without one, a transport that admits link holders makes an invite.
-				if (info.allowedHosts.length === 0) {
-					const uses = models.snapshot.value.settings.shareInviteUses ?? 1;
-					for (const inviter of inviters.value.values()) {
-						const made = inviter(link.id, INVITE_PATH, uses);
-						if (made !== undefined) return await made;
-					}
-				}
-				return { url: shareUrl(link.token, info), expiresAt: null };
+				const made = inviter();
+				return made
+					? made.invite(link.id, INVITE_PATH, validFor)
+					: { url: shareUrl(link.token, server.info.value), expiresAt: null };
 			},
 		};
 	});
@@ -300,8 +300,9 @@ export default defineFacet((host) => {
 		if (!isOwner(principal)) throw forbidden("sharing is owner-only");
 		const shares = self.get(Shares, {});
 		return {
-			invite: ({ mode, remoteConfirmed }, ctx) =>
-				shares.invite({ session, mode, ...(remoteConfirmed ? { remoteConfirmed } : {}) }, ctx),
+			invites: shares.invites,
+			invite: ({ mode, validFor, remoteConfirmed }, ctx) =>
+				shares.invite({ session, mode, validFor, ...(remoteConfirmed ? { remoteConfirmed } : {}) }, ctx),
 		};
 	});
 

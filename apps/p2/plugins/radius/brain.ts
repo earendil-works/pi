@@ -118,8 +118,9 @@ import {
  * Guests. People without a Radius account join through invites (Radius
  * gateway `servers/guests.ts`). `invite` asks Radius for one, for one of
  * sharing's links (`ref`), and makes it a link to `/__join` on the brain's
- * origin with the token in the fragment; it opens for 15 minutes and as many
- * times as asked. Whoever redeems it gets an admission, and their channels
+ * origin with the token in the fragment; anyone may open it for as long as
+ * the owner picked (at most 7 days), until `withdrawInvites` ends every invite
+ * of that link (it was reset). Whoever redeems it gets an admission, and their channels
  * arrive with the principal `{ kind: "guest", id, invite }`, which the brain
  * passes on with the guest header for sharing to decide, on the brain's UI
  * only. Radius refuses an admission once its lease (10 minutes) lapses, and
@@ -344,6 +345,7 @@ export class RadiusBrain {
 	readonly #relay: RelayAccess;
 	readonly #forwards: Forwards | undefined;
 	readonly #onStatus: (status: RadiusStatus) => void;
+	readonly #onOrigin: (origin: string) => void;
 	readonly #channels = new Map<string, Channel>();
 	#socket: WebSocket | undefined;
 	/** The relay accepted `pi-server.host.v3`. */
@@ -392,6 +394,8 @@ export class RadiusBrain {
 		/** Port forwards; without them, forward channels answer as unknown forwards. */
 		forwards?: Forwards;
 		onStatus?: (status: RadiusStatus) => void;
+		/** Learns the brain's own Radius origin: from radius.json when connecting, then from relayed requests. */
+		onOrigin?: (origin: string) => void;
 		/** Overrides for tests. */
 		timing?: { heartbeatIdleMs?: number; heartbeatTimeoutMs?: number; handshakeTimeoutMs?: number };
 	}) {
@@ -401,6 +405,7 @@ export class RadiusBrain {
 		this.#forwards = options.forwards;
 		this.#name = options.name;
 		this.#onStatus = options.onStatus ?? (() => {});
+		this.#onOrigin = options.onOrigin ?? (() => {});
 		this.#heartbeatIdleMs = options.timing?.heartbeatIdleMs ?? HEARTBEAT_IDLE_MS;
 		this.#heartbeatTimeoutMs = options.timing?.heartbeatTimeoutMs ?? HEARTBEAT_TIMEOUT_MS;
 		this.#handshakeTimeoutMs = options.timing?.handshakeTimeoutMs ?? HANDSHAKE_TIMEOUT_MS;
@@ -412,16 +417,21 @@ export class RadiusBrain {
 	}
 
 	/**
-	 * An invite to the link `ref` of sharing (see "Guests"), landing on `path` and admitting `uses` people: its URL and
-	 * when it stops opening. Rejects while not connected, or before the brain knows its Radius origin.
+	 * An invite to the link `ref` of sharing (see "Guests"), landing on `path` and opening for `validFor` seconds: its
+	 * URL and when it stops opening. Rejects while not connected, or before the brain knows its Radius origin.
 	 */
-	async invite(ref: string, path: string, uses: number): Promise<{ url: string; expiresAt: number }> {
+	async invite(ref: string, path: string, validFor: number): Promise<{ url: string; expiresAt: number }> {
 		const origin = this.#publicOrigin;
 		if (this.#socket?.readyState !== WebSocket.OPEN || origin === undefined)
 			throw new Error("Radius is not connected; open Pi through Radius first");
-		const response = await this.#post("invites", { ref, path, uses });
+		const response = await this.#post("invites", { ref, path, ttl_seconds: validFor });
 		const { token, expires_at } = (await response.json()) as { token: string; expires_at: string };
 		return { url: `${origin}/__join#${token}`, expiresAt: Date.parse(expires_at) };
+	}
+
+	/** Withdraws every invite to the link `ref` (see "Guests"); rejects unless Radius confirms. */
+	async withdrawInvites(ref: string): Promise<void> {
+		await this.#post("invites/withdraw", { ref });
 	}
 
 	/** Keeps renewing the admissions of `ids` (and no others), starting now (see "Guests"). */
@@ -441,11 +451,6 @@ export class RadiusBrain {
 	rename(name: string | undefined): void {
 		this.#name = name;
 		this.#sendName();
-	}
-
-	/** The brain's own Radius origin, once known (see `RadiusBrainConfig.publicOrigin`). */
-	get publicOrigin(): string | undefined {
-		return this.#publicOrigin;
 	}
 
 	/** This brain's page in the Radius shell, once known (see `RadiusBrainConfig.shellPage`). */
@@ -511,7 +516,8 @@ export class RadiusBrain {
 			if (this.#forwards && !this.#forwards.radiusOrigin && config.publicOrigin)
 				this.#forwards.radiusOrigin = config.publicOrigin;
 			this.#shellPage ??= config.shellPage && currentShellPage(config.shellPage);
-			this.#publicOrigin ??= config.publicOrigin;
+			if (this.#publicOrigin === undefined && config.publicOrigin !== undefined)
+				this.#learnOrigin(config.publicOrigin);
 		} catch (error) {
 			this.#retry(error);
 			return;
@@ -856,7 +862,7 @@ export class RadiusBrain {
 	 * shell that framed the request for share links.
 	 */
 	#remember(origin: string, shellOrigin: string, owner: Owner): void {
-		this.#publicOrigin = origin;
+		if (this.#publicOrigin !== origin) this.#learnOrigin(origin);
 		const shellPage =
 			SHELL_ORIGIN.test(shellOrigin) && this.#config
 				? `${shellOrigin}/pi/${encodeURIComponent(owner.organization_id)}/${encodeURIComponent(this.#config.serverId)}`
@@ -874,6 +880,11 @@ export class RadiusBrain {
 					...(shellPage ? { shellPage } : {}),
 				});
 		})().catch(() => {});
+	}
+
+	#learnOrigin(origin: string): void {
+		this.#publicOrigin = origin;
+		this.#onOrigin(origin);
 	}
 
 	/** A short plain-text response the brain makes up itself; well within any flow-control window. */

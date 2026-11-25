@@ -72,11 +72,6 @@ const schema = obj({
 		}),
 	),
 	/**
-	 * p2 addition: how many people one share link copied through Radius admits (default 1). Such a link is an invite
-	 * that works for 15 minutes; Radius counts its uses.
-	 */
-	shareInviteUses: opt(int({ minimum: 1, maximum: 100 })),
-	/**
 	 * p2 addition: record telemetry (Chord's §29: the server's `<data>/telemetry.sqlite`, session workers' and owners'
 	 * pages' spans sent to it, the Traces pane and the `telemetry_*` tools). Default off. Read once at the server's start
 	 * (`readTelemetrySetting`): a change needs a restart.

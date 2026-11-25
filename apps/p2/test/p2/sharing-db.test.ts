@@ -69,6 +69,7 @@ async function shareStore() {
 							emails: constant([]),
 							people: constant([]),
 							admissions: constant([]),
+							invites: constant(false),
 							authenticate: refused,
 							authenticateEmail: refused,
 							authenticateAdmission: refused,

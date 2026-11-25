@@ -1,5 +1,6 @@
 // The sharing plugin's part of the command menu, on a session target (owner): Share session… (the share sheet), Copy
-// read-only link, Copy read/write link and Reset share link…, with the page that picks the link to reset.
+// read-only link, Copy read/write link and Reset share link…, with the page that picks the link to reset. Through Radius
+// the copy commands open a page that asks how long the invite is valid.
 import { BACKGROUND_CONTEXT, keptWith, withHeld } from "@p2/app/v1";
 import {
 	type Command,
@@ -23,6 +24,7 @@ import {
 import { type ReactNode, useMemo } from "react";
 import { SESSIONS_OWNER, Sessions } from "../sessions/contract.ts";
 import { ShareInvite, type ShareMode, Sharing } from "./contract.ts";
+import { DEFAULT_INVITE_SECONDS, INVITE_DURATIONS } from "./durations.ts";
 import { confirmsFirst, LINK_LABEL, linkToShare, resetLink } from "./links.ts";
 
 /** The commands, by id. */
@@ -46,8 +48,19 @@ export const SHARING_COMMANDS: Readonly<Record<string, Command>> = {
 		keywords: ["share link", "invite link"],
 		target: ["session"],
 		owner: true,
-		Shown: Shareable,
+		Shown: copyShown("view", "link"),
 		action: { kind: "run", run: (ctx) => copyLink(ctx, "view") },
+	},
+	"sharing.copy-view-invite": {
+		title: "Copy read-only link…",
+		group: "Sharing",
+		order: 40,
+		icon: CopyIcon,
+		keywords: ["share link", "invite link"],
+		target: ["session"],
+		owner: true,
+		Shown: copyShown("view", "invite"),
+		action: { kind: "page", page: "copy-view-invite" },
 	},
 	"sharing.copy-full-link": {
 		title: "Copy read/write link",
@@ -57,8 +70,19 @@ export const SHARING_COMMANDS: Readonly<Record<string, Command>> = {
 		keywords: ["share link", "invite link", "write access"],
 		target: ["session"],
 		owner: true,
-		Shown: FullLinkCopyable,
+		Shown: copyShown("full", "link"),
 		action: { kind: "run", run: (ctx) => copyLink(ctx, "full") },
+	},
+	"sharing.copy-full-invite": {
+		title: "Copy read/write link…",
+		group: "Sharing",
+		order: 40,
+		icon: CopyIcon,
+		keywords: ["share link", "invite link", "write access"],
+		target: ["session"],
+		owner: true,
+		Shown: copyShown("full", "invite"),
+		action: { kind: "page", page: "copy-full-invite" },
 	},
 	"sharing.reset-link": {
 		title: "Reset share link…",
@@ -76,6 +100,8 @@ export const SHARING_COMMANDS: Readonly<Record<string, Command>> = {
 /** The pages, by name. */
 export const SHARING_PAGES: Readonly<Record<string, CommandPage>> = {
 	"reset-share-link": { label: "Reset link", placeholder: "Search links…", Body: ResetPage },
+	"copy-view-invite": { label: "Valid for", placeholder: "How long…", Body: () => <InvitePage mode="view" /> },
+	"copy-full-invite": { label: "Valid for", placeholder: "How long…", Body: () => <InvitePage mode="full" /> },
 };
 
 /** The session a command acts on: the target's, when it is a session (a shortcut may run a command without one). */
@@ -95,13 +121,22 @@ function openShareSheet(ctx: CommandContext): void {
  */
 async function copyLink(ctx: CommandContext, mode: ShareMode): Promise<void> {
 	const id = targetSession(ctx.target);
-	if (id === undefined) return;
-	await withHeld(ctx.host.hold(Sharing, { session: id }, BACKGROUND_CONTEXT), async (sharing) => {
+	if (id !== undefined) await copyFor(ctx.host, id, mode, DEFAULT_INVITE_SECONDS);
+}
+
+/** Copies the link of `mode` of `session`, an invite valid for `validFor` seconds when it is one. */
+async function copyFor(
+	host: CommandContext["host"],
+	session: string,
+	mode: ShareMode,
+	validFor: number,
+): Promise<void> {
+	await withHeld(host.hold(Sharing, { session }, BACKGROUND_CONTEXT), async (sharing) => {
 		if (confirmsFirst(mode, sharing.links.value, sharing.env.value))
 			throw new Error("This session works on a remote environment: create its read/write link in the Share sheet");
 	});
-	const link = await withHeld(ctx.host.hold(ShareInvite, { session: id }, BACKGROUND_CONTEXT), (invites) =>
-		linkToShare(invites, mode),
+	const link = await withHeld(host.hold(ShareInvite, { session }, BACKGROUND_CONTEXT), (invites) =>
+		linkToShare(invites, mode, validFor),
 	);
 	if (!(await copyText(link.url))) throw new Error("Could not copy the link");
 }
@@ -111,10 +146,44 @@ function Shareable({ children }: { children: ReactNode }) {
 	return useTargetShares() === undefined ? null : children;
 }
 
-/** Renders `children` while the read/write link can be copied without a confirmation (see `confirmsFirst`). */
-function FullLinkCopyable({ children }: { children: ReactNode }) {
+/**
+ * Shows a copy command for the link of `mode`: the plain one (`link`) while copying hands out the link itself, the one
+ * that asks how long (`invite`) while it makes an invite. A read/write link that needs a confirmation (see
+ * `confirmsFirst`) is copied in the share sheet only.
+ */
+function copyShown(mode: ShareMode, kind: "link" | "invite") {
+	return function CopyShown({ children }: { children: ReactNode }) {
+		const shares = useTargetShares();
+		if (shares?.links === undefined || shares.invites === undefined) return null;
+		if (shares.invites !== (kind === "invite")) return null;
+		return mode === "full" && confirmsFirst("full", shares.links, shares.env) ? null : children;
+	};
+}
+
+/** How long the invite copied for the target session's link of `mode` is valid; picking one copies it. */
+function InvitePage({ mode }: { mode: ShareMode }) {
+	const host = useHost();
+	const { close } = useCommandMenu();
+	const { fail } = useComposerState();
 	const shares = useTargetShares();
-	return shares?.links === undefined || confirmsFirst("full", shares.links, shares.env) ? null : children;
+	const matches = useCommandMatches(INVITE_DURATIONS, (duration) => duration.label);
+	if (!shares) return null;
+	return (
+		<CommandMenu.Group heading={`${LINK_LABEL[mode]} link valid for`}>
+			{matches.map(({ seconds, label }) => (
+				<CommandMenu.Row
+					key={seconds}
+					title={label}
+					icon={CopyIcon}
+					{...(seconds === DEFAULT_INVITE_SECONDS ? { suffix: "Default" } : {})}
+					onSelect={async () => {
+						await close();
+						await copyFor(host, shares.session, mode, seconds).catch(fail);
+					}}
+				/>
+			))}
+		</CommandMenu.Group>
+	);
 }
 
 /** Renders `children` while the target session has a link to reset. */
@@ -133,9 +202,11 @@ function useTargetShares() {
 	);
 	const open = session?.archivedAt === null;
 	const sharing = useObject(Sharing, open ? { session: session.id } : undefined);
+	const invites = useObject(ShareInvite, open ? { session: session.id } : undefined);
 	const links = useReadable(sharing?.links);
 	const env = useReadable(sharing?.env);
-	return open ? { session: session.id, links, env } : undefined;
+	const inviting = useReadable(invites?.invites);
+	return open ? { session: session.id, links, env, invites: inviting } : undefined;
 }
 
 const MODES: readonly ShareMode[] = ["view", "full"];
