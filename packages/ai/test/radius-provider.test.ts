@@ -164,7 +164,7 @@ describe("Radius provider catalogs", () => {
 		const classifier = models.getModelOfType("classifier", "radius", "jev-latest");
 		expect(classifier).toMatchObject({
 			type: "classifier",
-			api: "pi-classifier",
+			api: "pi-decision",
 			provider: "radius",
 			baseUrl: "https://radius.example/v1",
 			contextWindow: 262144,

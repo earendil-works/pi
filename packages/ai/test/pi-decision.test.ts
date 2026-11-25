@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-import { classify } from "../src/api/pi-classifier.ts";
+import { classify } from "../src/api/pi-decision.ts";
 import type { ClassifierContext, ClassifierModel } from "../src/types.ts";
 
-const model: ClassifierModel<"pi-classifier"> = {
+const model: ClassifierModel<"pi-decision"> = {
 	type: "classifier",
 	id: "jev-latest",
 	name: "Jev Latest",
-	api: "pi-classifier",
+	api: "pi-decision",
 	provider: "radius",
 	baseUrl: "https://radius.example/v1",
 	input: ["text"],
@@ -35,7 +35,7 @@ const context: ClassifierContext = {
 	},
 };
 
-describe("Pi Classifier", () => {
+describe("Pi Decision", () => {
 	it("posts canonical context and options to /classify and returns typed answers with authoritative cost", async () => {
 		const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
 			new Response(
@@ -86,7 +86,7 @@ describe("Pi Classifier", () => {
 		});
 
 		expect(result).toMatchObject({
-			api: "pi-classifier",
+			api: "pi-decision",
 			provider: "radius",
 			model: "jev-latest",
 			stopReason: "stop",
@@ -238,7 +238,7 @@ describe("Pi Classifier", () => {
 	});
 
 	it("forwards images when the model supports image input and rejects them on text-only models", async () => {
-		const imageModel: ClassifierModel<"pi-classifier"> = { ...model, input: ["text", "image"] };
+		const imageModel: ClassifierModel<"pi-decision"> = { ...model, input: ["text", "image"] };
 		const images = [{ type: "image" as const, data: "AAAA", mimeType: "image/png" }];
 		const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
 			new Response(

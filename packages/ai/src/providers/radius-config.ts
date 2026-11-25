@@ -19,7 +19,7 @@ export type RadiusGatewayClassifierModel = {
 	id: string;
 	name: string;
 	input: ("text" | "image")[];
-	cost: ClassifierModel<"pi-classifier">["cost"];
+	cost: ClassifierModel<"pi-decision">["cost"];
 	contextWindow: number;
 };
 
@@ -87,14 +87,14 @@ export function getRadiusModelsFromConfig(providerId: string, config: RadiusGate
 export function getRadiusAllModelsFromConfig(
 	providerId: string,
 	config: RadiusGatewayConfig,
-): (Model<"pi-messages"> | ClassifierModel<"pi-classifier">)[] {
+): (Model<"pi-messages"> | ClassifierModel<"pi-decision">)[] {
 	return [
 		...getRadiusModelsFromConfig(providerId, config),
 		...(config.classifiers ?? []).map(
-			(model): ClassifierModel<"pi-classifier"> => ({
+			(model): ClassifierModel<"pi-decision"> => ({
 				...model,
 				type: "classifier",
-				api: "pi-classifier",
+				api: "pi-decision",
 				provider: providerId,
 				baseUrl: config.baseUrl,
 			}),

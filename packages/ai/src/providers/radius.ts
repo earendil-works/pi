@@ -1,4 +1,4 @@
-import { piClassifierApi } from "../api/pi-classifier.lazy.ts";
+import { piDecisionApi } from "../api/pi-decision.lazy.ts";
 import { piMessagesApi } from "../api/pi-messages.lazy.ts";
 import { envApiKeyAuth, lazyOAuth } from "../auth/helpers.ts";
 import { loadRadiusOAuth } from "../auth/oauth/load.ts";
@@ -20,7 +20,7 @@ export interface RadiusProviderOptions {
 	gateway?: string;
 }
 
-type RadiusModel = Model<"pi-messages"> | ClassifierModel<"pi-classifier">;
+type RadiusModel = Model<"pi-messages"> | ClassifierModel<"pi-decision">;
 
 /** Radius gateway provider with a persisted, dynamically refreshed catalog. */
 export function radiusProvider(options: RadiusProviderOptions = {}): Provider<"pi-messages"> {
@@ -35,7 +35,7 @@ export function radiusProvider(options: RadiusProviderOptions = {}): Provider<"p
 	// the shipped baseline instead of overlaying it. The baseline only covers the time before any catalog exists.
 	let dynamicModels: RadiusModel[] | undefined;
 	const streams = piMessagesApi();
-	const classifiers = piClassifierApi();
+	const classifiers = piDecisionApi();
 
 	return {
 		id,

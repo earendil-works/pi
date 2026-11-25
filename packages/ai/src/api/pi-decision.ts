@@ -14,24 +14,24 @@ import { formatProviderError, normalizeProviderError } from "../utils/error-body
 import { isRecord, postClassifierRequest, requiredNumber } from "./classifier-shared.ts";
 
 /**
- * pi-classifier API implementation.
+ * pi-decision API implementation.
  *
- * Sends pi's own classifier protocol directly to a backend: the request is a
+ * Sends pi's own decision protocol directly to a backend: the request is a
  * single POST of `{ model, context, options }` to `<baseUrl>/classify`, and
  * a `200 OK` response is a completed `{ answers, usage?, responseId? }` JSON object. Errors
  * use non-2xx HTTP statuses with the `{ error: { message, code?, details? } }`
  * envelope, matching `pi-messages`.
  */
 
-const LABEL = "Pi Classifier";
+const LABEL = "Pi Decision";
 
-export interface PiClassifierOptions extends ClassifierOptions {
+export interface PiDecisionOptions extends ClassifierOptions {
 	/** Optional session identifier for gateway correlation/analytics. */
 	sessionId?: string;
 }
 
-/** Wire request body sent by `pi-classifier` to `POST <baseUrl>/classify`. */
-export type PiClassifierRequest = {
+/** Wire request body sent by `pi-decision` to `POST <baseUrl>/classify`. */
+export type PiDecisionRequest = {
 	model: string;
 	context: ClassifierContext;
 	options?: {
@@ -39,8 +39,8 @@ export type PiClassifierRequest = {
 	};
 };
 
-/** Wire response body returned by a `pi-classifier` backend on `200 OK`. */
-export type PiClassifierResponse = {
+/** Wire response body returned by a `pi-decision` backend on `200 OK`. */
+export type PiDecisionResponse = {
 	answers: Record<string, ClassifierAnswer>;
 	usage?: Usage;
 	responseId?: string;
@@ -149,7 +149,7 @@ function parseAnswers(value: unknown, context: ClassifierContext): Record<string
 }
 
 /** Classification through pi's canonical `POST <baseUrl>/classify` protocol. */
-export const classify: ClassifierFunction<PiClassifierOptions> = async (model, context, options) => {
+export const classify: ClassifierFunction<PiDecisionOptions> = async (model, context, options) => {
 	const output: ClassifierResult = {
 		api: model.api,
 		provider: model.provider,
@@ -160,13 +160,13 @@ export const classify: ClassifierFunction<PiClassifierOptions> = async (model, c
 	};
 
 	try {
-		if (model.api !== "pi-classifier") throw new Error(`Unsupported classifier API: ${model.api}`);
+		if (model.api !== "pi-decision") throw new Error(`Unsupported classifier API: ${model.api}`);
 		const images = context.images ?? [];
 		if (images.length > 0 && !model.input.includes("image")) {
 			throw new Error(`${LABEL} model ${model.id} does not support image input`);
 		}
 		const url = new URL("classify", `${model.baseUrl.replace(/\/+$/u, "")}/`);
-		const requestBody: PiClassifierRequest = {
+		const requestBody: PiDecisionRequest = {
 			model: model.id,
 			context: {
 				state: context.state,
