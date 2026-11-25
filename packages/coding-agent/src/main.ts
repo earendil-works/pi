@@ -860,10 +860,13 @@ export async function main(args: string[], options?: MainOptions) {
 			},
 		});
 		const { settingsManager, modelRuntime, resourceLoader } = services;
+		// A warning, like invalid settings: pi keeps running without the file's models, and an error would exit.
+		const modelsJsonError = modelRuntime.getError();
 		const diagnostics: AgentSessionRuntimeDiagnostic[] = [
 			...projectTrustDiagnostics,
 			...services.diagnostics,
 			...collectSettingsDiagnostics(settingsManager),
+			...(modelsJsonError ? [{ type: "warning" as const, message: `models.json error: ${modelsJsonError}` }] : []),
 			...resourceLoader.getExtensions().errors.map(({ path, error }) => ({
 				type: "error" as const,
 				message: `Failed to load extension "${path}": ${error}`,
