@@ -1,5 +1,6 @@
 import { convertImageBytesToPng } from "./image-convert.ts";
 import { formatDimensionNote, type ImageResizeOptions, resizeImage } from "./image-resize.ts";
+import { detectSupportedImageMimeType } from "./mime.ts";
 
 export interface ProcessImageOptions {
 	/** Whether to resize images to inline provider limits. Default: true */
@@ -47,9 +48,19 @@ function normalizeSupportedImageMimeType(mimeType: string): string | null {
 }
 
 async function normalizeImage(bytes: Uint8Array, mimeType: string): Promise<NormalizedImage | null> {
-	const normalizedMimeType = normalizeSupportedImageMimeType(mimeType);
-	if (normalizedMimeType) {
-		return { bytes, mimeType: normalizedMimeType };
+	const detectedMimeType = detectSupportedImageMimeType(bytes);
+	const detectedInlineMimeType = detectedMimeType ? normalizeSupportedImageMimeType(detectedMimeType) : null;
+
+	// A wrong supported label survives into later turns, where providers reject the replayed image.
+	if (detectedInlineMimeType) {
+		return { bytes, mimeType: detectedInlineMimeType };
+	}
+
+	if (!detectedMimeType) {
+		const normalizedMimeType = normalizeSupportedImageMimeType(mimeType);
+		if (normalizedMimeType) {
+			return { bytes, mimeType: normalizedMimeType };
+		}
 	}
 
 	const pngBytes = await convertImageBytesToPng(bytes);
@@ -60,7 +71,7 @@ async function normalizeImage(bytes: Uint8Array, mimeType: string): Promise<Norm
 	return {
 		bytes: pngBytes,
 		mimeType: "image/png",
-		convertedFrom: baseMimeType(mimeType),
+		convertedFrom: detectedMimeType ?? baseMimeType(mimeType),
 	};
 }
 
