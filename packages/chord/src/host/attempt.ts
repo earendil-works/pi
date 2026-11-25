@@ -18,7 +18,7 @@ import type {
 	ParamsOf,
 	Schema,
 } from "../contracts/index.ts";
-import { contractData, currentVersion, NO_GRANTS, type ShapeOf } from "../contracts/internal.ts";
+import { contractData, currentVersion, NO_GRANTS, type ShapeOf, versionAt } from "../contracts/internal.ts";
 import { ChordError, type FailureCause, type Principal } from "../data/index.ts";
 import { asChordError, checkArgs, checkParams, invalid, openFailure, type Value } from "../data/internal.ts";
 import type { HandleOf, JsonObject, KeyedBy, StateDefinition, Tx } from "../documents/index.ts";
@@ -1179,14 +1179,15 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 			// Its own served type: an old attempt answers old work by the contract it was made with.
 			const served = this.#served;
 			const own = this.#members!.methods.get(method);
-			// A grantable method not granted is refused at every version, before any mapping or replacement runs.
-			const current = version === served.contract.version;
-			if (own === undefined && (current || currentVersion(served.contract).grantable.has(method)))
-				throw this.#noMethod(method);
+			// A method its caller's version marks grantable and it was not granted is refused before any mapping or
+			// replacement runs, also one removed since.
+			const at = own === undefined ? versionAt(served.contract, version) : undefined;
+			const refused = at?.grantable.has(method) ? !this.granted.has(method) : version === served.contract.version;
+			if (at !== undefined && refused) throw lacking(this.#object.label, served.contract, method, "method", at);
 			checked = checkArgs(served.provider, method, args, version, context);
 			const call = checked.kind === "call" ? checked.call : undefined;
 			handler = call !== undefined ? (callArgs, ctx) => call(callArgs as Value, ctx) : own;
-			if (handler === undefined) throw this.#noMethod(method);
+			if (handler === undefined) throw lacking(this.#object.label, served.contract, method, "method");
 		} catch (error) {
 			return Promise.reject(error);
 		}
@@ -1238,11 +1239,6 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 			"principal.kind": capped(acting.principal?.kind ?? "none"),
 			...host.principalAttributes(acting.principal, context),
 		});
-	}
-
-	/** The error of a call of a method it lacks: `forbidden` for a grantable one not granted, else `invalid/member`. */
-	#noMethod(method: string): ChordError {
-		return lacking(this.#object.label, this.#served.contract, method, "method");
 	}
 
 	/**

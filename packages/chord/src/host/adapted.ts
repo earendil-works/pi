@@ -218,6 +218,11 @@ export class AdaptedMembers {
 		this.#assertAccepted();
 		const instance = this.#instance;
 		const { granted, batch } = instance;
+		// A member its version marks grantable and its caller was not granted is refused before any mapping sees
+		// anything, also one removed since.
+		const at = versionAt(this.#contract, this.version);
+		if (at.grantable.has(member) && !granted.has(member))
+			throw lacking(instance.label, this.#contract, member, "state member", at);
 		const mapping = this.#mappings?.state?.[member];
 		if (mapping === undefined) return instance.member(member);
 		if (mapping === "refuse") throw refused(this.#contract, this.version, member);
@@ -226,13 +231,9 @@ export class AdaptedMembers {
 			// The provider's mapping, typed by its contract; its result is the old member's shape (not validated).
 			return mapping(value as never) as JsonValue;
 		};
-		const version = currentVersion(this.#contract);
-		const current = grantedMembers(version, granted);
-		// The member when the current version has it, else the whole current state granted (a removed member); a
-		// grantable one not granted is refused, never mapped as removed.
+		const current = grantedMembers(currentVersion(this.#contract), granted);
+		// The member when the current version has it, else the whole current state granted (a removed member).
 		const kept = current.state.has(member);
-		if (!kept && version.grantable.has(member))
-			throw lacking(this.#instance.label, this.#contract, member, "state member");
 		const names = kept ? [member] : [...current.state.keys()];
 		const sources = names.map((name) => instance.member(name));
 		const derive = kept

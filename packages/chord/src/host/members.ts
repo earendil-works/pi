@@ -117,15 +117,17 @@ type Implementation = { readonly [member: string]: unknown };
 
 /**
  * The error of a use of `member` (`what`: a method, a state member) that the object `label` lacks: `forbidden` for a
- * grantable member it was not granted (slice 15 §1.3: the member exists), else `invalid/member`.
+ * member grantable at `version` (the caller's; the current one by default) it was not granted (slice 15 §1.3: the
+ * member exists), else `invalid/member`.
  */
 export function lacking(
 	label: string,
 	contract: Contract,
 	member: string,
 	what: "method" | "state member",
+	version = currentVersion(contract),
 ): ChordError {
-	if (currentVersion(contract).grantable.has(member)) return forbidden(`${label} has not granted "${member}"`);
+	if (version.grantable.has(member)) return forbidden(`${label} has not granted "${member}"`);
 	return invalid("member", `${label} has no ${what} "${member}"`);
 }
 

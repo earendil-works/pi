@@ -1648,16 +1648,23 @@ describe('events of an older consumer (decision "Events: fire-and-forget members
 const clearedNodes = instancesOf(EventNode, "clear");
 
 describe("an older consumer of grantable members not granted (review round 1, Astra 3)", () => {
-	/** v1: a plain title, a grantable history and a grantable `add`; v2 changes both grantable members. */
+	/**
+	 * v1: a plain title, grantable `history`, `notes`, `add` and `clear`; v2 changes `history` and `add` and removes
+	 * `notes` and `clear` (round 2: a removal drops the mark from the current version, not from v1).
+	 */
 	const BoardV1 = remote("app.board", {
 		version: 1,
 		params: {},
 		hostAddress: () => Server(),
-		state: { title: str(), history: grantable(arr(str())) },
-		methods: { add: grantable(method(str(), int())) },
+		state: { title: str(), history: grantable(arr(str())), notes: grantable(arr(str())) },
+		methods: { add: grantable(method(str(), int())), clear: grantable(method()) },
 	});
 	const BoardV2 = evolve(BoardV1, (e) =>
-		e.state("history", arr(obj({ text: str() }))).args("add", obj({ text: str() })),
+		e
+			.state("history", arr(obj({ text: str() })))
+			.args("add", obj({ text: str() }))
+			.removeState("notes")
+			.removeMethod("clear"),
 	);
 
 	/** A host serving v2 to v1 consumers, granting nothing; what the v1 mapping and replacement were asked. */
@@ -1681,12 +1688,22 @@ describe("an older consumer of grantable members not granted (review round 1, As
 									asked.push("history");
 									return current.map(({ text }) => text);
 								},
+								notes: () => {
+									asked.push("notes");
+									return [];
+								},
 							},
 							methods: {
 								add: {
 									call: async () => {
 										asked.push("add");
 										return 0;
+									},
+								},
+								clear: {
+									call: async () => {
+										asked.push("clear");
+										return null;
 									},
 								},
 							},
@@ -1699,24 +1716,26 @@ describe("an older consumer of grantable members not granted (review round 1, As
 		return { host, asked };
 	}
 
-	it("a call of a method not granted is refused forbidden before the provider's replacement runs", async () => {
+	it("a call of a method not granted, changed or removed since, is refused before the provider's replacement runs", async () => {
 		const { host, asked } = await board();
 		// Taken before the reference was live: every grantable member is there until then.
 		const old = host.hold(BoardV1, {}, context);
-		const add = old.add!;
+		const [add, clear] = [old.add!, old.clear!];
 		await waitLive(old);
 		expect(old.granted).toEqual(new Set());
 		expect(await rejection(add("x", context))).toMatchObject({ code: "forbidden" });
+		expect(await rejection(clear(context))).toMatchObject({ code: "forbidden" });
 		expect(asked).toEqual([]);
 		await host.close(context);
 	});
 
-	it("a state member not granted is refused, not mapped as a removed one", async () => {
+	it("a state member not granted, changed or removed since, is refused, never mapped", async () => {
 		const { host, asked } = await board();
 		const old = host.hold(BoardV1, {}, context);
-		const history = old.history!;
+		const [history, notes] = [old.history!, old.notes!];
 		await waitLive(old);
 		expect(() => history.value).toThrow(expect.objectContaining({ code: "forbidden" }));
+		expect(() => notes.value).toThrow(expect.objectContaining({ code: "forbidden" }));
 		expect(old.title.value).toBe("board");
 		expect(asked).toEqual([]);
 		await host.close(context);
