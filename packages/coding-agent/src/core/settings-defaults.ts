@@ -54,10 +54,10 @@ export const SETTINGS_DEFAULTS = {
 		anthropicExtraUsage: true,
 	},
 	notices: {
-		cacheMisses: true,
-		cacheWarming: true,
-		compactionCosts: true,
-		reasoningDrops: true,
+		cacheMisses: false,
+		cacheWarming: false,
+		compactionCosts: false,
+		reasoningDrops: false,
 	},
 	codemode: {
 		mode: "on",
