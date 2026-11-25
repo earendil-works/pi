@@ -26,6 +26,7 @@ import {
 	HarnessHost,
 	HarnessNative,
 	Liveness,
+	PluginLoad,
 	SessionLocation,
 	spawnLocation,
 	type WorkerInit,
@@ -84,7 +85,8 @@ workerMain(
 		host.connect(parent, { principal: SERVER, trusted: true }, context);
 		// Where the session works: the spawn location, then each in-place relocation (the Harness's `relocate`).
 		const location = new SessionLocation(spawnLocation(init.values.session));
-		await plugins.load(
+		const load = new PluginLoad();
+		const report = await plugins.load(
 			host,
 			{
 				kind: "worker",
@@ -98,6 +100,7 @@ workerMain(
 							store,
 							(fn, rootContext) => host.root(fn, rootContext),
 							await createNodePhotonImages(),
+							load,
 							recorder,
 						),
 					},
@@ -107,6 +110,13 @@ workerMain(
 			},
 			context,
 		);
+		// A plugin left out (its build or evaluation failed, its setup threw) is named in the session's log: what it
+		// contributes is missing in this worker (its tools, sections, or the model configuration).
+		for (const { plugin, error } of report.failed)
+			console.error(
+				`p2 plugins: ${plugin} failed to load in this worker: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		load.loaded(report.failed.map(({ plugin }) => plugin));
 		// Held after the load (a host holds nothing before). Closers run in reverse: this one before the host closes, the
 		// last spans and partial metrics sent while the link is up, for at most a second.
 		if (recorder !== undefined) {

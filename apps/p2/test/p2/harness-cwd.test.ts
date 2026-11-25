@@ -30,6 +30,7 @@ import {
 	HarnessHost,
 	HarnessNative,
 	Liveness,
+	PluginLoad,
 	SessionLocation,
 	type WorkerInit,
 	workerCore,
@@ -143,6 +144,7 @@ async function start(dataDir: string, project: string, facets: { followers?: Ret
 		store,
 		(fn) => host.root(fn, BACKGROUND_CONTEXT),
 		NO_IMAGES,
+		new PluginLoad(),
 		undefined,
 	);
 	await host.load(

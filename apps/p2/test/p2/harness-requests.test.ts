@@ -21,6 +21,7 @@ import {
 	type HarnessParts,
 	Liveness,
 	type ModelRequest,
+	PluginLoad,
 	SessionLocation,
 	type WorkerInit,
 	workerCore,
@@ -70,6 +71,7 @@ test("afterResponse hooks find the request that produced their message, once", a
 		store,
 		(fn) => host.root(fn, BACKGROUND_CONTEXT),
 		NO_IMAGES,
+		new PluginLoad(),
 		undefined,
 	);
 	await host.load(

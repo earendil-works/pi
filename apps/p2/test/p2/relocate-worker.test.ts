@@ -35,6 +35,7 @@ import {
 	HarnessNative,
 	Liveness,
 	type Location,
+	PluginLoad,
 	SessionLocation,
 	type WorkerInit,
 	workerCore,
@@ -130,6 +131,7 @@ async function worker(t: test.TestContext, start: Location, machines: Record<str
 		store,
 		(fn) => host.root(fn, BACKGROUND_CONTEXT),
 		NO_IMAGES,
+		new PluginLoad(),
 		undefined,
 	);
 	await host.load(

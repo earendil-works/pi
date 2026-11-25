@@ -33,6 +33,7 @@ import {
 	serveKeyed,
 } from "./chord.ts";
 import { durableContext, durableRegistry, ExtensionSwitches, Extensions } from "./durable.ts";
+import { harnessModels } from "./harness-models.ts";
 import { hostFiles, sessionDirectory } from "./host-dirs.ts";
 import { isRooted, type Location, type LocationInput, sameLocation } from "./location.ts";
 import { topLevelConversations } from "./main-conversation.ts";
@@ -311,6 +312,31 @@ export type WorkerParts = {
 	readonly store?: Store;
 };
 
+/** The worker's plugin load as diagnostics describe it: still loading, or loaded with the plugins that failed. */
+export class PluginLoad {
+	#state:
+		| { readonly kind: "loading"; readonly since: number }
+		| { readonly kind: "loaded"; readonly at: number; readonly failed: readonly string[] } = {
+		kind: "loading",
+		since: Date.now(),
+	};
+
+	/** The load finished; `failed` names the plugins left out. */
+	loaded(failed: readonly string[]): void {
+		this.#state = { kind: "loaded", at: Date.now(), failed };
+	}
+
+	/** One phrase for a log line: `plugins loading for 3 s`, or `plugins loaded 2 s ago (failed: mail)`. */
+	describe(): string {
+		const state = this.#state;
+		if (state.kind === "loading") return `plugins loading for ${seconds(Date.now() - state.since)}`;
+		const failed = state.failed.length === 0 ? "none failed" : `failed: ${state.failed.join(", ")}`;
+		return `plugins loaded ${seconds(Date.now() - state.at)} ago (${failed})`;
+	}
+}
+
+const seconds = (ms: number): string => `${Math.round(ms / 100) / 10} s`;
+
 /**
  * The worker process's natives, contributed by the core facet from the start: `self.registry(WorkerProcess).value`
  * (`.init.dataDir`, `.liveness.call(…)`, `.location.value`). Read `location`, not `init.values.session`, for the cwd.
@@ -415,6 +441,8 @@ export function workerCore(
 	store: Store,
 	root: WorkerParts["root"],
 	images: ImageProcessor,
+	/** The worker's plugin load, which the worker entry marks loaded (diagnostics name its state). */
+	load: PluginLoad,
 	/** The worker host's telemetry adapter, the Harness's too (its `pi.durable.*` and pi-ai's spans); none in tests. */
 	telemetry: HarnessOptions["telemetry"],
 ): Facet {
@@ -427,7 +455,7 @@ export function workerCore(
 		self.contribute(WorkerProcess, { init, liveness, location, root, copyFilesTo, images, store });
 		host.serve(HarnessNative, { compose: (table) => table[0]?.value });
 		host.serve(HarnessHost, (_params, self) => {
-			self.contribute(HarnessNative, openHarness(self, init, location, store, telemetry));
+			self.contribute(HarnessNative, openHarness(self, init, location, store, load, telemetry));
 			return {};
 		});
 		host.serve(WorkerBoundary, (_params, principal, self) => {
@@ -686,6 +714,7 @@ function openHarness(
 	init: WorkerInit,
 	location: SessionLocation,
 	store: Store,
+	load: PluginLoad,
 	telemetry: HarnessOptions["telemetry"],
 ): HarnessParts {
 	const { values } = init;
@@ -695,21 +724,18 @@ function openHarness(
 	const placements = self.registry(ConversationLocations);
 	const extensions = self.registry(Extensions);
 	const switches = self.registry(ExtensionSwitches);
-	const configured = (): HarnessConfigEntry => {
-		const entry = config.value.get("default");
-		if (entry === undefined) throw new Error("No model configuration installed (models plugin)");
-		return entry;
-	};
-	// Model access is looked up at each use: the models plugin may reload or replace its configuration. Every generation
-	// request passes through `streamSimple` here, after Durable and the Harness's identity wrapper completed it.
+	// Model access is looked up at each use: the models plugin may reload or replace its configuration, and while it
+	// restarts its configuration is withdrawn: model calls wait for it (`harnessModels`). Every generation request
+	// passes through `streamSimple` here, after Durable and the Harness's identity wrapper completed it.
+	const access = harnessModels({
+		current: () => config.value.get("default")?.models(),
+		present: async (signal) => (await whenPresent(config, "default", signal)).models(),
+		diagnose: () =>
+			`HarnessConfig has ${config.value.size === 0 ? "no entries" : `only ${[...config.value.keys()].join(", ")}`}; ${load.describe()}`,
+	});
 	const requests = new WeakMap<AssistantMessage, ModelRequest>();
 	const models = new Proxy({} as Models, {
-		get: (_target, key) => {
-			const current = configured().models();
-			if (key === "streamSimple") return remembering(current, requests);
-			const value: unknown = Reflect.get(current, key, current);
-			return typeof value === "function" ? value.bind(current) : value;
-		},
+		get: (_target, key) => (key === "streamSimple" ? remembering(access, requests) : Reflect.get(access, key)),
 	});
 	const settings = new Proxy({} as HarnessSettings, {
 		get: (_target, key) => {
