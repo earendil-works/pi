@@ -56,6 +56,7 @@ vi.mock("@aws-sdk/client-bedrock-runtime", () => {
 });
 
 import { stream as streamBedrock } from "../src/api/bedrock-converse-stream.ts";
+import { getModel } from "../src/compat.ts";
 import type { Context, Message, Model } from "../src/types.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
 
@@ -499,5 +500,69 @@ describe("bedrock convertMessages skips unknown content types", () => {
 			],
 		});
 		expect(toolArguments.edits[1]).toEqual({ oldText: "second", newText: "updated second", "": "" });
+	});
+});
+
+describe("Bedrock reasoning replay", () => {
+	function toolTurn(model: Model<"bedrock-converse-stream">): Message[] {
+		return [
+			{ role: "user", content: "Read the file", timestamp: Date.now() },
+			{
+				role: "assistant",
+				content: [
+					{ type: "thinking", thinking: "I should read it." },
+					{ type: "toolCall", id: "tool-1", name: "read", arguments: { path: "a.txt" } },
+				],
+				api: "bedrock-converse-stream",
+				provider: "amazon-bedrock",
+				model: model.id,
+				usage: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 0,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				stopReason: "toolUse",
+				timestamp: Date.now(),
+			},
+			{
+				role: "toolResult",
+				toolCallId: "tool-1",
+				toolName: "read",
+				content: [{ type: "text", text: "hello" }],
+				isError: false,
+				timestamp: Date.now(),
+			},
+		];
+	}
+
+	function assistantContent(payload: unknown): unknown[] {
+		return (payload as { messages: Array<{ content: unknown[] }> }).messages[1].content;
+	}
+
+	it("sends earlier reasoning back by default", async () => {
+		const model: Model<"bedrock-converse-stream"> = { ...novaModel, reasoning: true };
+
+		const payload = await capturePayload({ messages: toolTurn(model) }, model);
+
+		expect(assistantContent(payload)).toEqual([
+			{ reasoningContent: { reasoningText: { text: "I should read it." } } },
+			{ toolUse: { toolUseId: "tool-1", name: "read", input: { path: "a.txt" } } },
+		]);
+	});
+
+	it("drops earlier reasoning for Kimi K3 models", async () => {
+		for (const id of ["global.moonshotai.kimi-k3", "us.moonshotai.kimi-k3.1"] as const) {
+			const model = getModel("amazon-bedrock", id);
+			expect(model.compat?.supportsReasoningReplay, id).toBe(false);
+
+			const payload = await capturePayload({ messages: toolTurn(model) }, model);
+
+			expect(assistantContent(payload), id).toEqual([
+				{ toolUse: { toolUseId: "tool-1", name: "read", input: { path: "a.txt" } } },
+			]);
+		}
 	});
 });

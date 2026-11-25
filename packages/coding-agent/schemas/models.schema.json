@@ -1133,6 +1133,11 @@
           "maxItems": 3,
           "description": "Models Anthropic accepts for server-side refusal fallback, with local pricing metadata for returned fallback responses. When absent or empty, callers must omit fallbacks; Anthropic rejects the field for models with no permitted fallback targets."
         },
+        "supportsReasoningReplay": {
+          "type": "boolean",
+          "description": "Whether the model accepts reasoning blocks from earlier assistant messages. When false, earlier reasoning is not sent back. The generated catalog disables this for Kimi K3 models, which fail on Converse when it is sent.",
+          "default": true
+        },
         "imageInput": {
           "anyOf": [
             {

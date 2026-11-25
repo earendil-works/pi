@@ -538,6 +538,11 @@ const BedrockCompatProperties = {
 		description: "Whether the model supports Bedrock strict tool schemas.",
 		default: false,
 	}),
+	supportsReasoningReplay: optionalCompatBoolean({
+		description:
+			"Whether the model accepts reasoning blocks from earlier assistant messages. When false, earlier reasoning is not sent back. The generated catalog disables this for Kimi K3 models, which fail on Converse when it is sent.",
+		default: true,
+	}),
 };
 
 export const BedrockCompatSchema = openObject(BedrockCompatProperties, {
