@@ -3798,6 +3798,12 @@ From `research/chord-on-durable-objects.md`, adopted for the Chord v2 kernel bec
   is reported once (`link_closed`). Decided by the builder: a stall is sure to close nothing only when shorter than
   `close − ping` (the quiet time before it counts); `close` keeps its meaning.
 
+- **Refusals are static per provider and version (review of slice 15, 2026-11-26; spec `slice-15.md` §8, (B)):** a
+  provider refuses an older version if that version has any refused member, whatever its caller was granted, as main
+  had it; a consumer refused for a grantable member waits for a publication even if not granted it. Letting refusals
+  follow the grant needed holders kept per object and placed again at each decision; two designs of that kept
+  producing defects in review and were removed. For Mario's review.
+
 - **A reference makes its named queries on first use (spec `slice-15.md` §5, built 2026-11-25):** bench round 2: a
   reference to a store of 23 named queries cost 8.6 KiB, all of it handles nobody read. A `queries` member is an
   object whose handles are made by their first read and kept; labels are built when asked (6.35 to 1.30 KiB).

@@ -592,7 +592,6 @@ export class Binding implements Holder, UnboundRequest {
 		if (state.kind !== "waiting") return;
 		const { batch, dependent } = state;
 		this.#state = { kind: "unbound", batch, dependent };
-		state.leave();
 		state.place();
 	}
 

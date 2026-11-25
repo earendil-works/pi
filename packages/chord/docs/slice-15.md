@@ -258,13 +258,15 @@ and `78-denial-messages.ts`.
   keeps it as an own property. Before any read the object has no own property: `Object.keys` lists nothing (`in` and
   `for…in` see the names). Heap per reference to a store of 23 named queries, none read: 6.35 KiB before, 1.30 KiB
   after (`test/bench/reference-heap.ts`).
-- **Review round 2 (granttest's model, Astra, Sol, Opus, Fable):** a holder refused a member waits unbound as before
-  slice 15 (reported, no holder), and its object keeps a set of such refused waiters: they keep it from idling, so its
-  admission is still watched, and it places them again at every decision (a live attempt: another grant may fit; a
-  denial: they show it). An intermediate design (3dd0e9f9a, 864a0e253) kept refused holders bound with the refusal
-  in their state; it broke calls at the reload gate, keyed watches, state identity and idling, and was replaced. The
-  refusal is the instance's the holder would see (live, a restart's open old one, else the last shown); waiting again
-  for the same cause shows the same state (no frame), and a hold over a link placed again quietly sends nothing
-  unless something changed. A denial unbinds the holders of versions the provider no longer binds.
+- **Refusals are static per provider and version (B, review rounds 2 and 3):** a provider refuses an older version if
+  that version has any refused member, whatever the caller was granted (main's rule); a consumer refused for a
+  grantable member waits for a publication even if not granted it. Two designs that let refusals follow the grant
+  (3dd0e9f9a: refused holders kept bound with the refusal in their state; 243615789: refused holders waiting unbound,
+  kept by their object and placed again at each decision) each needed fix after fix (calls through the reload gate,
+  keyed watches, state identity, idling, lingering, GC, waking unrelated waiters, stale wire states) and were removed.
+  Kept: a refused holder waits unbound as on main (reported `unbound_long`, no holder, not in presence); a restart's old
+  attempt that refuses a version does not serve it meanwhile (`oldServes`); a call that waited at the reload gate is
+  refused when the new provider refuses its version; a refused hold leaves its object to idle; waiting again for the
+  same cause shows the same state; a denial unbinds the holders of versions the provider no longer binds (F3).
 - **§2:** a denial's message travels as the `forbidden` error's `details.message` (no new field in a failure or on the
   wire); `sameCause` compares details, so a changed message reaches the holders.

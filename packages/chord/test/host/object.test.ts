@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { type Context, BACKGROUND_CONTEXT as context, withoutAbortSignal } from "../../src/context/index.ts";
-import { arr, evolve, grantable, int, local, method, obj, remote, str } from "../../src/contracts/index.ts";
+import { arr, bool, evolve, grantable, int, local, method, obj, remote, str } from "../../src/contracts/index.ts";
 import { broken, ChordError } from "../../src/data/index.ts";
 import { defineState, type SingletonHandle } from "../../src/documents/index.ts";
 import { Attempt } from "../../src/host/attempt.ts";
@@ -2495,14 +2495,20 @@ describe("versions and grants together (review round 2, granttest F3 and F5)", (
 			await server.close(context);
 		});
 
-		it(`a holder refused for a member it was granted binds once the grant goes (F5, ${where})`, async () => {
+		it(`a holder refused a grantable member waits for a publication, granted it or not (F5, static: (B), ${where})`, async () => {
 			const { server, client } = await linked(() => {});
 			await server.reload(plugins(2), context);
 			const holder = where === "on its host" ? server : client;
 			const ref = holder.hold(V1, {}, context);
 			await vi.waitFor(() => expect(shown(ref)).toBe("failed waiting contract_mismatch"));
+			// Refusals are static per provider and version: the grant going changes nothing for it.
 			await (await server.get(Gate, {}, context)).set("none", context);
+			await delivered();
+			expect(shown(ref)).toBe("failed waiting contract_mismatch");
+			// A publication whose provider takes v1 as it is binds it.
+			await server.reload(plugins(1), context);
 			await vi.waitFor(() => expect(shown(ref)).toBe("live"));
+			// Bound, granted nothing: the gate says none.
 			expect([[...ref.granted], ref.e0]).toEqual([[], undefined]);
 			await client.close(context);
 			await server.close(context);
@@ -2618,9 +2624,9 @@ const identityPlugins = (text: string) => [
 	},
 ];
 
-describe("a holder refused at its version: one state, no frame when refused again (review round 2, Fable)", () => {
+describe("a holder refused at its version: one state, refused once per reload (review round 2, Fable)", () => {
 	for (const where of ["on its host", "over a link"] as const) {
-		it(`reads one state object, and is told nothing when the next instance refuses it the same (${where})`, async () => {
+		it(`reads one state object, and is refused at most once more when the next instance refuses it the same (${where})`, async () => {
 			const { server, client } = await linked(() => {});
 			await server.reload(identityPlugins("a"), context);
 			const older = (where === "on its host" ? server : client).hold(IdentityV1, {}, context);
@@ -2633,8 +2639,9 @@ describe("a holder refused at its version: one state, no frame when refused agai
 			await server.reload(identityPlugins("b"), context);
 			await flushed();
 			await flushed();
-			// It waits unbound; placed again by the reload and refused for the same member, nothing changed for it.
-			expect(states.slice(before)).toEqual([]);
+			// It waits unbound and is placed again by the reload: on its host refused at once, the same state (no frame);
+			// over a link its hold is placed again as main had it (`loading`, then the same refusal).
+			expect(states.slice(before)).toEqual(where === "on its host" ? [] : ["loading", IDENTITY_REFUSED]);
 			expect(older.state.value).toMatchObject({ cause: { error: { message: IDENTITY_REFUSED.slice(8) } } });
 			await client.close(context);
 			await server.close(context);
@@ -2924,6 +2931,351 @@ describe("a refused older consumer waits unbound as before slice 15 (review roun
 			await server.close(context);
 		} finally {
 			vi.useRealTimers();
+		}
+	});
+});
+
+describe("refusals are static per provider and version (final review, Astra and Sol)", () => {
+	const held = instancesOf(ChordObject, "hold");
+	const FinalGate = local("test.finalgate", {
+		version: 1,
+		params: { id: str() },
+		members: { mode: str(), set: method(str()) },
+	});
+	const V1 = remote("test.final4", {
+			version: 1,
+			params: { id: str() },
+			hostAddress: () => Server(),
+			events: { e: grantable(str()) },
+		}),
+		V2 = evolve(V1, (e) => e.event("e", obj({ v: str() }))),
+		V3 = evolve(V2, (e) => e.addState("n", int()));
+	const setup = (h: FacetHost<TestPrincipal>) => {
+		h.serve(FinalGate, (_, self) => {
+			const mode = self.writable("e");
+			return {
+				mode: self.derive([mode], ([v]) => v),
+				set: async (v: string) => {
+					mode.set(v);
+					return null;
+				},
+			};
+		});
+		h.serve(V2, (_p, _who, _data, self) => ({ e: () => self.events() }), {
+			accepts: { 1: { events: { e: "refuse" } } },
+			linger: 60_000,
+			admit: (params, _who, self) =>
+				self.derive([self.get(FinalGate, { id: params.id }).mode], ([v]) =>
+					allow({ granted: v === "none" ? [] : (["e"] as const) }),
+				),
+		});
+	};
+	it("a refused hold arriving during linger waits for a publication, whatever the gate says (static refusals)", async () => {
+		const { server, client } = await linked(setup);
+		try {
+			const params = { id: "A" },
+				gate = await server.get(FinalGate, params, context),
+				curr = await server.get(V2, params, context);
+			curr.release();
+			expect(server.activity.value.lingering).toBe(1);
+			const old = server.hold(V1, params, context);
+			await vi.waitFor(() => expect(old.state.value).toMatchObject({ kind: "failed", cause: { kind: "waiting" } }));
+			// Refused, it holds nothing: the object lingers on, its timer running.
+			expect(server.activity.value.lingering).toBe(1);
+			await gate.set("none", context);
+			await delivered();
+			await delivered();
+			// Refusals are static ((B)): the grant going changes nothing for it.
+			expect(old.state.value).toMatchObject({ kind: "failed", cause: { kind: "waiting" } });
+		} finally {
+			await client.close(context);
+			await server.close(context);
+		}
+	});
+	it("a decision on A does not make an unrelated unsupported wire version of B flap", async () => {
+		const { server, client } = await linked(setup);
+		try {
+			const wrong = client.hold(V3, { id: "B" }, context);
+			await vi.waitFor(() => expect(wrong.state.value.kind).toBe("failed"));
+			const frames = statesOf(await wrong.state.watch(context));
+			await delivered();
+			const at = frames.length;
+			const p = { id: "A" },
+				gate = await server.get(FinalGate, p, context),
+				a = server.hold(V1, p, context);
+			await vi.waitFor(() => expect(a.state.value.kind).toBe("failed"));
+			await gate.set("none", context);
+			await delivered();
+			await delivered();
+			expect(frames.slice(at)).toEqual([]);
+		} finally {
+			await client.close(context);
+			await server.close(context);
+		}
+	});
+
+	it("a link closing on the presence departure cannot leave a released hold in the refused set", async () => {
+		const V1 = remote("test.closer", { version: 1, params: {}, hostAddress: Server, state: { x: str() } }),
+			V2 = evolve(V1, (e) => e.removeState("x")),
+			Watcher = remote("test.watcher4", { version: 1, params: {}, hostAddress: Server, state: { count: int() } });
+		const server = createHost({ address: Server(), principal: { kind: "server" }, onError: () => {} });
+		const watcher = {
+			name: "watch",
+			facet: defineFacet((h) =>
+				h.serve(Watcher, (_, _p, self) => ({ count: self.derive([h.references(V1)], ([refs]) => refs.length) })),
+			),
+		};
+		const one = { name: "test", facet: defineFacet((h) => h.serve(V1, () => ({ x: constant("old") }))) };
+		const two = {
+			name: "test",
+			facet: defineFacet((h) => h.serve(V2, () => ({}), { accepts: { 1: { state: { x: "refuse" } } } })),
+		};
+		let armed = false;
+		try {
+			await server.load([watcher, one], context);
+			const [a, b] = memoryLinkPair();
+			const codec = testCodec();
+			server.accept(
+				{
+					send(bytes) {
+						const m = codec.decode(bytes);
+						if (armed && m.kind === "state" && m.holds.some((h) => h.hold === 0)) a.close();
+						else a.send(bytes);
+					},
+					close: () => a.close(),
+					onClose: (fn) => a.onClose(fn),
+					onMessage: (fn) => a.onMessage(fn),
+				},
+				{ principal: { kind: "owner" }, codec },
+				context,
+			);
+			const peer = new RawPeer(b);
+			for (const [id, type] of [Watcher, V1].entries()) {
+				peer.send({
+					kind: "hold",
+					hold: id,
+					type: type.name,
+					version: type.version,
+					fingerprint: type.fingerprint,
+					address: SERVER_ADDRESS,
+					params: "{}",
+				});
+				await peer.next("bound");
+				await transported();
+			}
+			const obj = held.at(-1)!.deref()!;
+			expect(obj.served.contract.name).toBe(V1.name);
+			armed = true;
+			await server.reload([watcher, two], context);
+			await transported();
+			expect(peer.closed).toBe(true);
+			expect(obj.state.kind).toBe("ended");
+		} finally {
+			await server.close(context);
+		}
+	});
+
+	it("an unbound waiter does not keep a removed provider object", async () => {
+		const V1 = local("test.gcrefused", { version: 1, params: { id: str() }, members: { x: str() } });
+		const V2 = evolve(V1, (e) => e.removeState("x"));
+		const host = createHost({ onError: () => {} });
+		let waiting: Reference<typeof V1> | undefined;
+		try {
+			await host.load(
+				[
+					{
+						name: "test",
+						facet: defineFacet((h) => h.serve(V2, () => ({}), { accepts: { 1: { state: { x: "refuse" } } } })),
+					},
+				],
+				context,
+			);
+			const ref = host.hold(V1, { id: "a" }, context);
+			waiting = ref;
+			await vi.waitFor(() => expect(ref.state.value.kind).toBe("failed"));
+			// The object its hold was refused by, made for it.
+			const object = held.at(-1)!;
+			await host.reload([], context);
+			await delivered();
+			await flushed();
+			// Collected while its refused waiter still waits: the waiter keeps nothing of it.
+			let retained = false;
+			try {
+				await expectCollected(object);
+			} catch {
+				retained = true;
+			}
+			ref.release();
+			await flushed();
+			await expectCollected(object);
+			expect(retained).toBe(false);
+		} finally {
+			waiting?.release();
+			await host.close(context);
+		}
+	});
+	it("a quiet placement into a new loading object announces loading to the wire", async () => {
+		const one = remote("test.quiet4", { version: 1, params: {}, hostAddress: Server, state: { x: str() } }),
+			two = evolve(one, (e) => e.removeState("x"));
+		const { server, client } = await linked((h) =>
+			h.serve(two, () => ({}), { accepts: { 1: { state: { x: "refuse" } } } }),
+		);
+		const opening = Promise.withResolvers<void>();
+		try {
+			const local = server.hold(one, {}, context),
+				peer = client.hold(one, {}, context);
+			await vi.waitFor(() => expect([local.state.value.kind, peer.state.value.kind]).toEqual(["failed", "failed"]));
+			await server.reload([], context);
+			const p = server.reload(
+				[
+					{
+						name: "test",
+						facet: defineFacet((h) =>
+							h.serve(one, (_, _p, self) => {
+								self.open(
+									async () => {
+										await opening.promise;
+										return 0;
+									},
+									() => {},
+								);
+								return { x: constant("now") };
+							}),
+						),
+					},
+				],
+				context,
+			);
+			await delivered();
+			await delivered();
+			const states = [local.state.value.kind, peer.state.value.kind];
+			opening.resolve();
+			await p;
+			await vi.waitFor(() => expect([local.state.value.kind, peer.state.value.kind]).toEqual(["live", "live"]));
+			expect(states).toEqual(["loading", "loading"]);
+		} finally {
+			opening.resolve();
+			await client.close(context);
+			await server.close(context);
+		}
+	});
+	// Refused waiters are placed only at their own object's next decision or at publication.
+
+	it("an object's new grant does not reset another request's unbound_long deadline", async () => {
+		const Change = local("test.reconsider.change", {
+			version: 1,
+			params: {},
+			members: { value: bool(), change: method() },
+		});
+		const V1 = remote("test.reconsider", {
+			version: 1,
+			params: { id: str() },
+			hostAddress: () => Server(),
+			events: { e: str() },
+			flags: { select: "Select" },
+		});
+		const V2 = evolve(V1, (e) => e.event("e", obj({ x: str() })));
+		const V3 = evolve(V2, (e) => e.addState("title", str()));
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"], now: 0 });
+		const errors: HostError[] = [];
+		const host = createHost({
+			address: Server(),
+			principal: { kind: "server" },
+			onError: (error) => errors.push(error),
+		});
+		try {
+			await host.load(
+				[
+					{
+						name: "test",
+						facet: defineFacet((h) => {
+							h.serve(Change, (_, self) => {
+								const value = self.writable(false);
+								return {
+									value: self.derive([value], ([v]) => v),
+									change: async () => {
+										value.set(true);
+										return null;
+									},
+								};
+							});
+							h.serve(V2, (_, _principal, _admitted, self) => ({ e: self.events() }), {
+								admit: ({ id }, _principal, self) =>
+									self.derive([self.get(Change, {}).value], ([v]) =>
+										allow({ granted: id === "a" && v ? (["select"] as const) : [] }),
+									),
+								accepts: { 1: { events: { e: "refuse" } } },
+							});
+						}),
+					},
+				],
+				context,
+			);
+			const a = host.hold(V1, { id: "a" }, context);
+			const b = host.hold(V3, { id: "b" }, context);
+			await flushed();
+			expect([a.state.value.kind, b.state.value.kind]).toEqual(["failed", "failed"]);
+			await vi.advanceTimersByTimeAsync(4000);
+			await (await host.get(Change, {}, context)).change(context);
+			await vi.advanceTimersByTimeAsync(1001);
+			expect(errors).toContainEqual(
+				expect.objectContaining({
+					kind: "unbound_long",
+					since: 0,
+					error: expect.objectContaining({ message: expect.stringMatching(/v3/) }),
+				}),
+			);
+		} finally {
+			await host.close(context);
+			vi.useRealTimers();
+		}
+	});
+
+	it("a wire waiter placed quietly on a newly served object gets the loading transition", async () => {
+		const V1 = remote("test.quiet-replacement", {
+			version: 1,
+			params: {},
+			hostAddress: Server,
+			events: { e: str() },
+		});
+		const V2 = evolve(V1, (e) => e.event("e", obj({ x: str() })));
+		const { client, server } = await linked((h) =>
+			h.serve(V2, (_, _p, self) => ({ e: self.events() }), { accepts: { 1: { events: { e: "refuse" } } } }),
+		);
+		const gate = Promise.withResolvers<void>();
+		const opened = Promise.withResolvers<void>();
+		try {
+			const local = server.hold(V1, {}, context);
+			const peer = client.hold(V1, {}, context);
+			await expect.poll(() => [local.state.value.kind, peer.state.value.kind]).toEqual(["failed", "failed"]);
+			await server.reload([], context);
+			await server.reload(
+				[
+					{
+						name: "@test/notes",
+						facet: defineFacet((h) =>
+							h.serve(V1, (_, _p, self) => {
+								self.open(
+									async () => {
+										opened.resolve();
+										await gate.promise;
+									},
+									() => {},
+								);
+								return { e: self.events() };
+							}),
+						),
+					},
+				],
+				context,
+			);
+			await opened.promise;
+			await flushed();
+			expect([local.state.value.kind, peer.state.value.kind]).toEqual(["loading", "loading"]);
+		} finally {
+			gate.resolve();
+			await client.close(context);
+			await server.close(context);
 		}
 	});
 });

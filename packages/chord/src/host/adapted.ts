@@ -54,16 +54,18 @@ export type AdaptedInstance = {
 type MappedKey = { readonly derive: Derive; holders: number };
 
 /**
- * Why consumers of the older `version` cannot bind to an instance of `served` granted `granted`: a version it does not
- * accept, or a member of it the provider refuses (`contract_mismatch`); `undefined` when they can.
+ * Why consumers of an older `version` (none for the current one) cannot bind to an instance of `served`: a version it does not accept, or a member
+ * of it the provider refuses (`contract_mismatch`); `undefined` when they can. Static per provider and version, whatever
+ * a caller was granted (slice 15 §8, (B)): a refused consumer waits for a publication.
  */
-export function refusal(served: Served, version: number, granted: ReadonlySet<string>): ChordError | undefined {
+export function refusal(served: Served, version: number): ChordError | undefined {
 	const { contract, provider } = served;
+	if (version === contract.version) return undefined;
 	if (!provider.accepted.some((accepted) => accepted.version === version)) {
 		return new ChordError({ code: "contract_mismatch", message: `${contract.name} v${version} is not served here` });
 	}
 	const mappings = mappingsOf(served, version);
-	const old = grantedMembers(versionAt(contract, version), granted);
+	const old = versionAt(contract, version).members;
 	for (const member of old.state.keys()) {
 		if (mappings?.state?.[member] === "refuse") return refused(contract, version, member);
 	}
