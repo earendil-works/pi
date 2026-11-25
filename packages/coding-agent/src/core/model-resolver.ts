@@ -18,7 +18,7 @@ import type { ModelRuntime } from "./model-runtime.ts";
 /** Default chat model IDs for providers with built-in chat models. */
 export const defaultModelPerProvider: Partial<Record<KnownProvider, string>> = {
 	"amazon-bedrock": "us.anthropic.claude-opus-5-5",
-	"ant-ling": "Ring-2.6-1T",
+	"ant-ling": "Ling-3.1-flash",
 	anthropic: "claude-opus-5-5",
 	openai: "gpt-6.2-sol",
 	azure: "gpt-6.2-sol",
@@ -49,8 +49,8 @@ export const defaultModelPerProvider: Partial<Record<KnownProvider, string>> = {
 	"opencode-go": "kimi-k3.1-pro",
 	"kimi-coding": "kimi-for-coding",
 	meta: "muse-spark-1.3",
-	"cloudflare-workers-ai": "@cf/moonshotai/kimi-k2.7-code",
-	"cloudflare-ai-gateway": "workers-ai/@cf/moonshotai/kimi-k2.7-code",
+	"cloudflare-workers-ai": "@cf/zai-org/glm-5.3",
+	"cloudflare-ai-gateway": "workers-ai/@cf/zai-org/glm-5.3",
 	"qwen-token-plan": "qwen3.8-max",
 	"qwen-token-plan-cn": "qwen3.8-max",
 	"qwen-token-plan-individual": "qwen3.8-max",
