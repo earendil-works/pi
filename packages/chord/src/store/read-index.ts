@@ -70,11 +70,12 @@ export class ReadIndex implements KeptKeysWatcher {
 		if (index.isEmpty()) this.#tables.delete(read.plan.table);
 	}
 
-	/** Re-files `read` by the keys it keeps now. */
+	/** Re-files `read` by the keys it keeps now, unless they are the same sets (a run adopted after its group's step). */
 	kept(read: Read): void {
 		const filing = this.#filings.get(read)!;
 		const kept = read.kept();
-		if (sameKept(kept, filing.kept)) return;
+		if (kept?.length === filing.kept?.length && (kept ?? NO_KEYS).every((keys, at) => keys === filing.kept![at]))
+			return;
 		this.#unkeep(read, filing);
 		filing.kept = kept;
 		const { index } = filing;
@@ -102,7 +103,7 @@ export class ReadIndex implements KeptKeysWatcher {
 		const { key } = index;
 		// No read was ever filed by a bucket here: every read of the table is unindexed.
 		if (key === undefined) return index.unindexed;
-		const lookup = index.lookup();
+		const lookup = index.lookup(table);
 		const after = new Map<unknown, RowValues | undefined>();
 		for (const change of changes) {
 			const id = identityOf(key.map((name) => change.key[name]!));
@@ -131,12 +132,7 @@ export class ReadIndex implements KeptKeysWatcher {
 	}
 
 	#index(table: string): TableIndex {
-		let index = this.#tables.get(table);
-		if (index === undefined) {
-			index = new TableIndex(table);
-			this.#tables.set(table, index);
-		}
-		return index;
+		return this.#tables.get(table) ?? this.#tables.set(table, new TableIndex()).get(table)!;
 	}
 }
 
@@ -148,7 +144,6 @@ const NO_KEYS: readonly ReadonlySet<unknown>[] = [];
 
 /** The index of one table: its unindexed reads, its buckets by shape, and the reads by the keys they keep. */
 class TableIndex {
-	readonly table: string;
 	/** The table's key columns, known once a read is filed by its bucket (every plan of the table has the same). */
 	key: readonly string[] | undefined;
 	/** The candidates of every write: reads without a bucket here, and filed reads without a result. */
@@ -159,19 +154,10 @@ class TableIndex {
 	/** The statement reading the buckets' columns back by key, for the groups it was rendered for. */
 	#lookup: { readonly groups: string; readonly sql: string | undefined } | undefined;
 
-	constructor(table: string) {
-		this.table = table;
-	}
-
 	/** The group of reads whose buckets fix `columns` (sorted). */
 	group(columns: readonly string[]): Group {
 		const name = columns.join(",");
-		let group = this.groups.get(name);
-		if (group === undefined) {
-			group = { columns, byValues: new Map() };
-			this.groups.set(name, group);
-		}
-		return group;
+		return this.groups.get(name) ?? this.groups.set(name, { columns, byValues: new Map() }).get(name)!;
 	}
 
 	isEmpty(): boolean {
@@ -179,10 +165,10 @@ class TableIndex {
 	}
 
 	/**
-	 * The statement reading back, by key, the row a step wrote in every column a bucket fixes; `undefined` when the
-	 * key holds them all (the written key is the row's values then). Rendered again only when the groups changed.
+	 * The statement reading back, by key, the row a step wrote to `table` in every column a bucket fixes; `undefined`
+	 * when the key holds them all (the written key is the row's values then). Rendered again when the groups changed.
 	 */
-	lookup(): string | undefined {
+	lookup(table: string): string | undefined {
 		const groups = [...this.groups.keys()].join("|");
 		if (this.#lookup?.groups === groups) return this.#lookup.sql;
 		const key = this.key!;
@@ -190,7 +176,7 @@ class TableIndex {
 		const where = key.map((column) => `${quote(column)} = ?`).join(" AND ");
 		const sql = columns.every((column) => key.includes(column))
 			? undefined
-			: `SELECT ${columns.map(quote).join(", ")} FROM ${quote(this.table)} WHERE ${where}`;
+			: `SELECT ${columns.map(quote).join(", ")} FROM ${quote(table)} WHERE ${where}`;
 		this.#lookup = { groups, sql };
 		return sql;
 	}
@@ -213,21 +199,13 @@ function bucketOf(read: Read): { readonly columns: string[]; readonly identities
 	const columns: string[] = [];
 	let combinations: SqliteValue[][] = [[]];
 	for (const [column, values] of [...plan.equalities()].sort(([a], [b]) => (a < b ? -1 : 1))) {
-		if (combinations.length * values.length > COMBINATIONS) continue;
+		// An empty `in` matches no row: no bucket of it (a bucket without values would be dropped by its first leaver).
+		if (values.length === 0 || combinations.length * values.length > COMBINATIONS) continue;
 		columns.push(column);
 		combinations = combinations.flatMap((prefix) => values.map((value) => [...prefix, value]));
 	}
 	if (columns.length === 0) return undefined;
 	return { columns, identities: [...new Set(combinations.map(identityOf))] };
-}
-
-/** Whether two filings by kept keys are the same sets. */
-function sameKept(
-	a: readonly ReadonlySet<unknown>[] | undefined,
-	b: readonly ReadonlySet<unknown>[] | undefined,
-): boolean {
-	if (a === undefined || b === undefined) return a === b;
-	return a.length === b.length && a.every((keys, at) => keys === b[at]);
 }
 
 function addChange(into: Map<Read, KeyedChange[]>, read: Read, change: KeyedChange): void {

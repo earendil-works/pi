@@ -430,7 +430,11 @@ function collectEqualities(node: WhereNode, sides: Sides, into: Map<string, read
 				? { name: node.inArray[0], values: node.inArray[1] }
 				: undefined;
 	if (term === undefined || sides.isPartner(term.name) || into.has(term.name)) return;
-	into.set(term.name, term.values.map(toSqlite));
+	// As SQLite binds them: a node's strings are checked, not normalized (a lone surrogate binds as U+FFFD).
+	into.set(
+		term.name,
+		term.values.map((each) => toSqlite(typeof each === "string" ? each.toWellFormed() : each)),
+	);
 }
 
 /** The own columns a condition fixes with `eq` or `inArray` in its top-level `and` terms. */

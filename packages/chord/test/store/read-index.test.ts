@@ -29,6 +29,7 @@ import {
 	PERSONS,
 	random,
 	randomWrite,
+	SessionColumns,
 	Sessions,
 	staleReads,
 	type World,
@@ -163,6 +164,33 @@ describe("candidates", () => {
 		expect(await costOf(entries, batch, meter, put("s9"))).toMatchObject({ runs: 0, probes: 1, skips: 1 });
 	});
 
+	it("an empty `in` is filed under no bucket: closing one leaves another read's bucket alone (review round 1, Astra 1)", async () => {
+		store = await memoryStore();
+		const entries = await tableIn(store, Entries);
+		const of = (sessions: string[]) => () => query(Entries).where((e) => inArray(e.session, sessions));
+		const [a, b] = [await openReads(entries, 1, of([])), await openReads(entries, 1, of([]))];
+		a.queries[0]!.close();
+		const c = await openReads(entries, 1, of(["s1"]));
+		b.queries[0]!.close();
+		await costOf(entries, c.batch, await metered(), (changes) =>
+			changes.put({ session: "s1", id: 1, kind: "note", text: "" }),
+		);
+		expect(c.runs[0]!.at(-1)).toMatchObject({ kind: "rows", result: { rows: [{ id: 1 }] } });
+	});
+
+	it("files a data condition's strings as SQLite binds them (review round 1, Astra 2)", async () => {
+		// A node's operands are checked, not normalized: a lone surrogate is U+FFFD once bound, and so in the row.
+		const meter = await metered();
+		const w = await opened(meter.context, []);
+		const node = { eq: ["creator", "\uD800"] } as const;
+		const shape = { name: "lone", query: query(Sessions).whereNode(SessionColumns, node), table: Sessions };
+		await openRead(w, { ...shape, what: { kind: "rows", range: { limit: 5 } } }, meter.context);
+		const row = { id: "s1", app: "club", creator: "\uD800", private: false, state: "idle", lastTouch: 1, title: "" };
+		await commit(w, meter.context, (changes) => changes(Sessions).put(row));
+		expect(await staleReads(w, meter.context)).toEqual([]);
+		expect(w.reads[0]!.latest).toMatchObject({ kind: "rows", result: { rows: [{ id: "s1" }] } });
+	});
+
 	it("a count, a read without an equality, and a bulk write: candidates of every write", async () => {
 		store = await memoryStore();
 		const entries = await tableIn(store, Entries);
@@ -244,6 +272,20 @@ async function differential(w: World, seed: number, steps: number, context: Cont
 	const r = random(seed);
 	let clock = 6000;
 	const stale: string[] = [];
+	// Reads opened and closed in turn over one bucket shape, an empty `in` among them (review round 1, Astra 1).
+	let turned: World["reads"][number][] = [];
+	const close = (read: World["reads"][number]): void => {
+		read.query.close();
+		w.reads.splice(w.reads.indexOf(read), 1);
+	};
+	const idle = (name: string, creators: string[], step: number) => ({
+		name: `${name} (${step})`,
+		query: query(Sessions)
+			.where((s) => and(eq(s.state, "idle"), inArray(s.creator, creators)))
+			.orderBy((s) => s.lastTouch, "desc"),
+		table: Sessions,
+		what: { kind: "rows", range: { limit: 3 } } as const,
+	});
 	for (let step = 0; step < steps; step++) {
 		const size = r.pick(SIZES);
 		await commit(w, context, (changes) => {
@@ -264,6 +306,12 @@ async function differential(w: World, seed: number, steps: number, context: Cont
 				},
 				context,
 			);
+			const empty = await openRead(w, idle("idle of nobody", [], step), context);
+			const [previous, previousEmpty] = turned;
+			if (previous !== undefined) close(previous);
+			const some = await openRead(w, idle("idle", [r.pick(PERSONS)], step), context);
+			if (previousEmpty !== undefined) close(previousEmpty);
+			turned = [some, empty];
 		}
 		for (const name of await staleReads(w, context)) stale.push(`step ${step}: ${name}`);
 	}
