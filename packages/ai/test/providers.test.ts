@@ -200,6 +200,9 @@ describe("builtin providers", () => {
 			["github-copilot", "claude-opus-5.5"],
 			["github-copilot", "claude-opus-4.8"],
 			["github-copilot", "kimi-k3"],
+			// #12316
+			["github-copilot", "gpt-5.3-codex"],
+			["github-copilot", "mai-code-2-flash"],
 			["deepseek", "deepseek-v4-pro"],
 			["openrouter", "openai/gpt-5.6-terra"],
 		] as const;
@@ -212,6 +215,7 @@ describe("builtin providers", () => {
 			["opencode", "gpt-5.2"],
 			["opencode", "claude-sonnet-4-5"],
 			["github-copilot", "claude-sonnet-4.6"],
+			["github-copilot", "grok-4.7"],
 			["deepseek", "deepseek-flash"],
 			["openrouter", "anthropic/claude-opus-5"],
 			["openrouter", "moonshotai/kimi-k3"],
