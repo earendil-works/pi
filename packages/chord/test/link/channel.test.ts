@@ -1,12 +1,19 @@
-// Tests of a host's end of a link: the handshake, checks, the heartbeat, trusted links, and in-order handling while a
-// message waits for an asynchronous inflate.
+// Tests of a host's end of a link: the handshake, checks, the heartbeat (and why a link closed), trusted links,
+// in-order handling while a message waits for an asynchronous inflate, and a stall of a server in another process
+// (slice 15 §4).
 
+import { fork } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { connect } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
 import { int, remote } from "../../src/contracts/index.ts";
 import { PROTOCOL_VERSION } from "../../src/data/internal.ts";
-import { createHost, type HostError } from "../../src/host/index.ts";
-import { memoryLinkPair } from "../../src/link/index.ts";
+import { createHost, type Host, type HostError, type Reference } from "../../src/host/index.ts";
+import { type Link, memoryLinkPair } from "../../src/link/index.ts";
 import { binaryCodec, Channel, type Message, textCodec } from "../../src/link/internal.ts";
 import { chordMetrics } from "../../src/telemetry.ts";
 import {
@@ -26,6 +33,8 @@ import {
 	testCodec,
 	transported,
 } from "../support.ts";
+import { socketLink } from "./fixtures/socket-link.ts";
+import { Counter } from "./fixtures/stall.ts";
 
 const Thing = remote("app.thing", {
 	version: 1,
@@ -150,7 +159,8 @@ describe("the heartbeat", () => {
 	});
 
 	it("pings a silent link after 15 s and closes it after 30 s without an answer: references go loading", async () => {
-		const { client, peer } = await rawProvider();
+		const meter = await metered();
+		const { client, peer, errors } = await rawProvider({ telemetry: meter.context.telemetry });
 		const got = client.get(Notes, { session: "S1" }, context);
 		await bindNext(peer);
 		const notes = await got;
@@ -161,6 +171,25 @@ describe("the heartbeat", () => {
 		await elapse(15_000);
 		expect(peer.closed).toBe(true);
 		expect(notes.state.value).toEqual({ kind: "loading" });
+		// Reported once, and counted with its reason (slice 15 §4): nothing else would tell that holders wait.
+		expect(errors).toEqual([{ kind: "link_closed", reason: "heartbeat", role: "parent" }]);
+		expect(closedReasons(meter)).toEqual(["heartbeat"]);
+	});
+
+	it("counts every closed link by its reason, and reports only the heartbeat's", async () => {
+		const meter = await metered();
+		const { server, peer, errors } = await rawLinked(() => {}, { telemetry: meter.context.telemetry });
+		// The peer closes: `peer`. A protocol error: `protocol` (reported as such). This host closes: `local`.
+		peer.close();
+		await transported();
+		const broken = new RawPeer(acceptOn(server));
+		broken.sendBytes(new Uint8Array([0xff]));
+		await transported();
+		acceptOn(server);
+		await transported();
+		await server.close(context);
+		expect(closedReasons(meter)).toEqual(["peer", "protocol", "local"]);
+		expect(errors.map((error) => error.kind)).toEqual(["protocol_error"]);
 	});
 
 	it("counts no pause of this process as silence (a sleeping laptop): pings at once, closes 15 s later unanswered", async () => {
@@ -241,6 +270,21 @@ describe("the heartbeat", () => {
 		expect(peer.closed).toBe(true);
 	});
 });
+
+/** The reasons of the `chord.links.closed` counts, in order. */
+function closedReasons(meter: Awaited<ReturnType<typeof metered>>): unknown[] {
+	return meter.telemetry
+		.getMetrics()
+		.filter(({ name }) => name === "chord.links.closed")
+		.map(({ attributes }) => attributes.reason);
+}
+
+/** A new link `host` accepts from an owner; returns the other end. */
+function acceptOn(host: { accept: Host["accept"] }): Link {
+	const [a, b] = memoryLinkPair();
+	host.accept(a, { principal: { kind: "owner" }, codec: testCodec() }, context);
+	return b;
+}
 
 describe("trusted links", () => {
 	it("skip the message schema check: no chord.link.checks, the codec and the owners' checks still run", async () => {
@@ -437,3 +481,113 @@ describe("in-order handling", () => {
 		});
 	});
 });
+
+describe("a stall of the server (slice 15 §4)", () => {
+	/** The forked server, its socket and its answers, and `clients` hosts of `holds` counters each over socket links. */
+	async function stalled(
+		heartbeat: { readonly ping: number; readonly close: number },
+		clients: number,
+		holds: number,
+	) {
+		const directory = mkdtempSync(join(tmpdir(), "chord-stall-"));
+		const path = join(directory, "server.sock");
+		const server = fork(
+			fileURLToPath(new URL("./fixtures/stall.ts", import.meta.url)),
+			["serve", path, String(heartbeat.ping), String(heartbeat.close)],
+			{ execArgv: ["--conditions=source", "--experimental-strip-types", "--no-warnings"] },
+		);
+		const answer = <T>(): Promise<T> =>
+			new Promise((resolve) => server.once("message", resolve as (value: unknown) => void));
+		await answer();
+		const meter = await metered();
+		const errors: HostError[] = [];
+		const hosts: Host[] = [];
+		const references: Reference<typeof Counter>[] = [];
+		for (let client = 0; client < clients; client++) {
+			const host = createHost({
+				heartbeat,
+				telemetry: meter.context.telemetry,
+				onError: (error) => errors.push(error),
+			});
+			await host.load([], context);
+			host.connect(socketLink(connect(path)), { principal: { kind: "server" } }, context);
+			hosts.push(host);
+			for (let hold = 0; hold < holds; hold++)
+				references.push(host.hold(Counter, { id: `${client}.${hold}` }, context));
+		}
+		const command = (message: object): void => void server.send(message);
+		/** How many references are live with each value, and how many are not live, by state. */
+		const shown = (): Record<string, number> => {
+			const counts: Record<string, number> = {};
+			for (const reference of references) {
+				const { kind } = reference.state.value;
+				const key = kind === "live" ? `live ${reference.value.value}` : kind;
+				counts[key] = (counts[key] ?? 0) + 1;
+			}
+			return counts;
+		};
+		const close = async (): Promise<void> => {
+			for (const host of hosts) await host.close(context);
+			server.kill();
+			rmSync(directory, { recursive: true, force: true });
+		};
+		return { hosts, path, answer, command, shown, errors, meter, close };
+	}
+
+	const settle = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+	it("past `close`: no holder stays live with an old value; each closed link is reported once; a new link brings the value", async () => {
+		// The reproduction of bench round 1's stale holders: the server blocked past its clients' `close`. Its own
+		// heartbeat counts the stall as no silence and closes nothing; each client's finds the server silent and closes
+		// its link: the holders wait `loading` (never live and old), and the close is reported and counted.
+		const world = await stalled({ ping: 50, close: 100 }, 5, 10);
+		try {
+			await until(() => world.shown()["live 0"] === 50);
+			world.command({ kind: "stall", stall: 300, value: 1 });
+			await world.answer();
+			await settle(400);
+			const shown = world.shown();
+			expect(shown["live 0"]).toBeUndefined();
+			expect(shown).toEqual({ loading: 50 });
+			expect(world.errors).toEqual(Array(5).fill({ kind: "link_closed", reason: "heartbeat", role: "parent" }));
+			expect(closedReasons(world.meter)).toEqual(Array(5).fill("heartbeat"));
+			world.command({ kind: "report" });
+			expect(await world.answer()).toEqual({ closed: 0 });
+			// A page's connection makes a new link: every holder is live with the current value again.
+			for (const host of world.hosts)
+				host.connect(socketLink(connect(world.path)), { principal: { kind: "server" } }, context);
+			await until(() => world.shown()["live 1"] === 50);
+			world.command({ kind: "set", set: 2 });
+			await until(() => world.shown()["live 2"] === 50);
+		} finally {
+			await world.close();
+		}
+	}, 20_000);
+
+	it("shorter than `close` − `ping`: no link closes, every holder gets the change", async () => {
+		// A link may have been quiet for up to `ping` before the stall began: only a stall shorter than `close − ping`
+		// is sure to keep it.
+		const world = await stalled({ ping: 50, close: 600 }, 5, 10);
+		try {
+			await until(() => world.shown()["live 0"] === 50);
+			world.command({ kind: "stall", stall: 300, value: 1 });
+			await world.answer();
+			await until(() => world.shown()["live 1"] === 50);
+			await settle(200);
+			expect(world.shown()).toEqual({ "live 1": 50 });
+			expect(world.errors).toEqual([]);
+			world.command({ kind: "report" });
+			expect(await world.answer()).toEqual({ closed: 0 });
+		} finally {
+			await world.close();
+		}
+	}, 20_000);
+});
+
+/** Resolves once `done` holds, polling; throws after 5 s. */
+async function until(done: () => boolean): Promise<void> {
+	for (const end = Date.now() + 5_000; !done(); ) {
+		if (Date.now() > end) throw new Error("timed out");
+		await new Promise((resolve) => setTimeout(resolve, 10));
+	}
+}

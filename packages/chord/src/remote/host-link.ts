@@ -16,6 +16,7 @@ import {
 	inflateAsync,
 	type Limits,
 	type Link,
+	type LinkCloseReason,
 	type Message,
 	openPart,
 	originOf,
@@ -228,13 +229,18 @@ export class HostLink implements ChannelHandler {
 		for (const provider of this.#providers.values()) provider.revokeUnbound(revoked, error);
 	}
 
-	closed(): void {
-		this.host.metrics.upDownCounter("chord.links.open").add(-1);
+	closed(reason: LinkCloseReason): void {
+		const { metrics } = this.host;
+		metrics.upDownCounter("chord.links.open").add(-1);
+		metrics.counter("chord.links.closed").add(1, { reason });
 		this.#closing.abort();
 		for (const provider of this.#providers.values()) provider.closed();
 		this.#providers.clear();
 		this.consumer.closed();
 		this.host.unlink(this);
+		// A peer silent past `close` is often one whose process stalled: its holders here are not live any more and
+		// wait for another link, which nothing else would tell (slice 15 §4).
+		if (reason === "heartbeat") this.host.report({ kind: "link_closed", reason, role: this.role });
 	}
 
 	/** A `hold` goes to its origin's provider side, made for the origin's first. */

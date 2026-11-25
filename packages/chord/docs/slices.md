@@ -90,6 +90,10 @@ slice spec's section citations are for orientation, not a reading limit (owner, 
   equalities a read's plan fixes, `ReadPlan.equalities`; kept keys, kept current by the read, `Read.kept`), used by
   `Reads.candidates` in a commit's refresh; the oracle's world shared by `test/store/skip.test.ts` and
   `read-index.test.ts` (`test/store/read-world.ts`); `test/bench/commit-index.ts`.
+- **Slice 15, stale holders** (built 2026-11-25, `slice-15.md` §4, §8): reproduced across processes
+  (`test/link/channel.test.ts`, fixtures `stall.ts`, `socket-link.ts`); no holder live and old; why a link closed
+  (`LinkCloseReason` in `link/channel.ts`), `chord.links.closed { reason }` and the `link_closed` report of a heartbeat
+  close (`remote/host-link.ts`).
 - **Chord's shared code** (upstream pi): `src/watch.ts` (`Watch`, `NativeWatch`, `WatchHandle`, `WatchEnd`,
   `NativeWatchable`), Delta (`track`, `diffRevisions`, `applyImmutable`, encoders, `PendingOps`, `appendText`),
   context, JSON, output, SQLite drivers.
@@ -194,6 +198,7 @@ pattern, no code. Decided cuts are noted where they apply.
 | 11 | lists over one named query (`self.list`: pages between bookmarks, `more`, splits and merges, overflow, bookmarks across a reload) | 14 |
 | 11 | lists over several named queries merged into one | 14 (carry-over) |
 | 11 | the commit index: a commit skip-tests only the reads its writes can concern (buckets by equality, kept keys) | 15 |
+| 3 | why a link closed (`chord.links.closed { reason }`), a heartbeat close reported (`link_closed`); a stall leaves no holder live and old | 15 |
 | 6 | admission with a typed value (`admission`, `admit`, the watch table, staging's rehearsal, no jobs in an admitted object) | 14 |
 | 6 | `deny(reason, message?)`: a message as data for the person in the denial's `details.message` | 15 |
 | 3 | a route's admission (`RouteOptions.admit`, one decision per principal and address, the fence after a denial, `createWorkers`' `admit`) | 14 |

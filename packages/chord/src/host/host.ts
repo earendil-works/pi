@@ -202,6 +202,11 @@ export type HostError =
 			readonly error: unknown;
 	  }
 	| { readonly kind: "protocol_error"; readonly error: unknown }
+	/**
+	 * The heartbeat closed a link whose peer stayed silent past `close` (slice 15 §4): a stalled or gone peer. Its
+	 * holders here are `loading` until another link holds them again; once per closed link.
+	 */
+	| { readonly kind: "link_closed"; readonly reason: "heartbeat"; readonly role: LinkRole }
 	| { readonly kind: "resolve_failed"; readonly address: string; readonly error: unknown }
 	/**
 	 * A derive's compute threw (its owner's, once per failure episode: the first failure after a value or after its

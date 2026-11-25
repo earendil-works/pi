@@ -141,7 +141,9 @@ tab.connect(webSocketLink(new WebSocket(url)), { principal: { kind: "server" } }
   process did not run before a tick at least one interval late (a sleep, a blocked event loop): it is no silence, the
   silence stays what it was before, at least `ping`, so an open link pings at once. A `ping` is answered with
   `pong` at once, never queued behind the window; neither reaches the handler. It detects a silent transport, not a
-  peer that answers pings but withholds acks (the window and the pending cap bound that).
+  peer that answers pings but withholds acks (the window and the pending cap bound that). The handler learns why a
+  link closed (`LinkCloseReason`: `local`, `heartbeat`, `protocol`, `peer`); the host counts it (`chord.links.closed`)
+  and reports a heartbeat close (`link_closed`, slice 15 §4).
 - Who checks what (layers 1-3 failing close the link):
   1. the codec's `decode`: lengths and varints fit, the bytes consumed exactly, a known kind and arity, strict UTF-8,
      each JSON value parses, segment references valid and only in payloads marked as carrying bytes;

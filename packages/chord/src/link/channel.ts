@@ -18,9 +18,15 @@ export interface ChannelHandler {
 	 * protocol error too.
 	 */
 	message(message: Message): void | Promise<void>;
-	/** The link closed, from either end; called once. */
-	closed(): void;
+	/** The link closed, from either end, for `reason`; called once. */
+	closed(reason: LinkCloseReason): void;
 }
+
+/**
+ * Why a link closed: this host closed it (`local`), its heartbeat found the peer silent (`heartbeat`), a message broke
+ * the protocol (`protocol`), or the other end or the transport closed it (`peer`).
+ */
+export type LinkCloseReason = "local" | "heartbeat" | "protocol" | "peer";
 
 /** What a channel is made with besides its link and handler. */
 type ChannelOptions = {
@@ -85,6 +91,8 @@ export class Channel {
 	#held: { queue: Uint8Array[]; next: number } | undefined;
 	/** Whether a message is being handled asynchronously: the held ones wait. */
 	#waiting = false;
+	/** Why this end closes the link, set before it does (the transport may call back at once); else the peer did. */
+	#closing: LinkCloseReason | undefined;
 	readonly #hello: Uint8Array;
 	/** Counts the bytes of the encoded messages (sizes the channel has). */
 	readonly #bytes: ChordCounter<"chord.link.bytes">;
@@ -148,8 +156,9 @@ export class Channel {
 		else this.#link.send(bytes);
 	}
 
+	/** Closes the link from this end (`local`). */
 	close(): void {
-		this.#link.close();
+		this.#close("local");
 	}
 
 	/**
@@ -161,7 +170,7 @@ export class Channel {
 	tick(now: number, paused: number, ping: number, close: number): void {
 		if (paused > 0) this.#lastReceived = Math.min(this.#lastReceived + paused, now - ping);
 		const silent = now - this.#lastReceived;
-		if (silent >= close) this.close();
+		if (silent >= close) this.#close("heartbeat");
 		else if (silent >= ping && !this.#pinged && this.#state.kind === "open") {
 			this.#pinged = true;
 			this.#pings++;
@@ -260,7 +269,7 @@ export class Channel {
 	#failed(error: unknown): void {
 		if (this.#state.kind === "closed") return;
 		this.#report(error);
-		this.close();
+		this.#close("protocol");
 	}
 
 	/** A message from its bytes, checked against the message schema unless the link is trusted. */
@@ -286,11 +295,17 @@ export class Channel {
 		this.#handler.opened();
 	}
 
+	#close(reason: LinkCloseReason): void {
+		if (this.#state.kind === "closed") return;
+		this.#closing ??= reason;
+		this.#link.close();
+	}
+
 	#closed(): void {
 		if (this.#state.kind === "closed") return;
 		this.#state = { kind: "closed" };
 		this.#held = undefined;
 		this.#fences = undefined;
-		this.#handler.closed();
+		this.#handler.closed(this.#closing ?? "peer");
 	}
 }

@@ -388,6 +388,17 @@ export const CHORD_TELEMETRY_SCHEMA = defineTelemetrySchema({
 			attributes: {},
 		},
 		"chord.links.open": { kind: "upDownCounter", description: "Open links of this host.", attributes: {} },
+		"chord.links.closed": {
+			kind: "counter",
+			description: "Links of this host that closed.",
+			attributes: {
+				reason: {
+					type: "string",
+					required: true,
+					description: "`local` (this host), `heartbeat`, `protocol` or `peer` (the other end or the transport).",
+				},
+			},
+		},
 		"chord.park.duration": {
 			kind: "histogram",
 			unit: "ms",

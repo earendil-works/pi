@@ -13,6 +13,7 @@
 - `grantable(member)`, `GrantableName<C>`, `AllowedOf<C>` and flags in remote contracts (slice 15).
 - `deny(reason, message?)`: an admission's denial carries a message as data for the person (`MessageData`), in the `forbidden` error's `details.message` (the denied reference's failure, a call's `forbidden`, a cut call's `forbidden/revoked`). A changed message is a new decision without a rebuild.
 - `MessageData`, `MessageParam` and `MessageSchema` are exported from the package root's data layer as well (still from `/surfaces`).
+- A link the heartbeat closes is reported once through `onError` as `link_closed { reason: "heartbeat", role }` (its holders wait `loading` until another link holds them), and every closed link is counted in `chord.links.closed { reason }` (`local`, `heartbeat`, `protocol`, `peer`).
 
 ### Changed
 

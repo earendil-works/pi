@@ -280,7 +280,8 @@ and origin, 32; below, "Flow control"); later `revokedBy`
 and closed by the app with `store.close(ctx)` after `host.close`; the host never closes it). **`onError`** receives everything that fails in the
 background, as a tagged `HostError`: `listener_error` (a watch listener threw), `delivery_failed` (a frame delivery
 threw), `activation_failed { object, failure }`, `close_failed { object, native, error }`, `close_timeout { object,
-native }`, `drain_timeout { object }`, `protocol_error { error }`, `resolve_failed { address, error }`; later routine
+native }`, `drain_timeout { object }`, `protocol_error { error }`, `link_closed { reason: "heartbeat", role }` (slice 15
+§4), `resolve_failed { address, error }`; later routine
 errors (slice 5), `derive_failed { object, member?, error }` (a derive's compute threw, once per failure episode, slice 6a), the registries' `registry_conflict { registry, message, plugins }`, `registry_failed { registry, error }`, `contribution_failed { registry, plugin, type?, error }` and `contribution_refused { registry, plugin, type?, version }` (each once per episode, slice 8), `object_failed { object, failure }` (a live object failing, slice 6a, `broken`; `transient` when a `self.follow` source failed, slice 6b R4; `failure` where the value is a `FailureCause`, `error` otherwise, 2026-10-27), `job_interrupted { object, job, id, restarts }` (a persisted run ended at the restart limit, slice 6b D6), `parked_long { object, waitingFor, state, since }` (an attempt parked longer than its `readyTimeout`, whatever its blocker, once per parking episode: a diagnostic of a ring across hosts started at the same moment or a long wait, slice 7a, audit A11, §6), the reports of mistakes that would otherwise look like slowness (decision "Mistakes that wait are reported at once", 2026-11-03): `registry_undeclared { registry, plugins }` (at a publication, or when a host-lifetime object's contributions enter, a registry with contributions and no provider here, naming its contributing plugins; again only once they change), `unbound_long { waitingFor, error, since }` (a request waiting unbound after the publication, below) and `transaction_cancelled { object, error }` (§8), and `storage_failed { error }`
 (slice 6a), which every app must handle: Chord never ends the process,
 the app exits with its own code for its supervisor or reopens.
@@ -417,7 +418,12 @@ host.route(Session, {
   handler that blocks the event loop longer than 30 s gets its links closed (documented). Time this process did not
   run (a tick at least one interval late: a sleep, a blocked event loop) is no silence: each link's silence stays
   what it was before, at least `ping`, so an open link pings at once (decision "A pause of the process is no
-  silence").
+  silence"). **A link the heartbeat closes is reported** (slice 15 §4): once through `onError` (`link_closed {
+  reason: "heartbeat", role }`), and every closed link is counted in `chord.links.closed { reason }` (`local`,
+  `heartbeat`, `protocol`, `peer`). A stalled host keeps its links (its late tick is no silence); its peers, which did
+  run, find it silent and close theirs past `close` (a stall shorter than `close − ping` is sure to close nothing): their
+  holders wait `loading`, never live with an old value, until a new link holds them again (a page's connection
+  reconnects).
 - **Flow control: an ack-clocked window per origin** (owner, 2026-10-23; per origin 2026-10-24). Per (link, origin), at
   most **K = 2** of the provider's own `bound` and `state` messages are unacknowledged; only these two kinds count
   (everything else is control, never queued behind them; `event` messages have a window of their own, below). The consumer sends `ack` (with the message's origin) after
@@ -3597,7 +3603,7 @@ Chord reports traces, events and metrics through `@earendil-works/pi-telemetry`;
   statement changed; nothing is measured for it); the host-wide
   metrics go to the host's adapter (`host.metrics`), not to a context: `chord.link.bytes { direction }` (every encoded
   message of the host's links), `chord.link.state_messages`, `chord.commit.duration`, `chord.calls.in_flight`,
-  `chord.holds.active`, `chord.links.open`, `chord.park.duration`, `chord.backpressure.wait`, and the events' (decision
+  `chord.holds.active`, `chord.links.open`, `chord.links.closed { reason }`, `chord.park.duration`, `chord.backpressure.wait`, and the events' (decision
   "Events: fire-and-forget members"; an emit takes no context): `chord.events.emitted` (values emitted),
   `chord.events.sent` (entries sent, one per hold), `chord.events.dropped { reason: "window" | "too_large" | "mapping" }`
   (entries dropped; a mapping's one per emit and version) and `chord.events.encodes` (value encodes), nothing measured

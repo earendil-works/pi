@@ -139,7 +139,8 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
   `heartbeat: { ping?, close? }`: a link silent for `ping` ms (15 s)
   sends a `ping`, one silent for `close` ms (30 s), its handshake included, is closed (its references go `loading`);
   one interval timer per host (`min(ping, close) / 10`), running only while it has links. A handler that blocks the
-  event loop longer than `close` gets its links closed by its peers; its own late tick counts the time it did not run
+  event loop longer than `close` gets its links closed by its peers (each closing host reports it once, `link_closed
+  { reason: "heartbeat", role }`, and counts it in `chord.links.closed { reason }`); its own late tick counts the time it did not run
   (a block, a sleeping laptop) as no silence, so its links ping at once instead of closing.
 - `revokedBy(principal) => R[]`: what revokes a principal; its revocation keys are the canonical JSON of each value,
   computed once per principal object (cached weakly). `host.revoke(r, ctx)`, synchronously: every remote object whose
@@ -204,7 +205,8 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
   `listener_error` (a throwing watch listener or event listener: its subscription ends), `event_mapping_failed`
   (`object`, `member`, `version`, `error`: an event mapping for an older consumer threw; that emit is dropped for that
   version only; once per failure episode), `delivery_failed` (a frame delivery or a link's flush that threw) and
-  `protocol_error` (`error`: what closed a link, see `link/`) and `resolve_failed` (`address`: its key, `error`: a
+  `protocol_error` (`error`: what closed a link, see `link/`), `link_closed` (`reason: "heartbeat"`, `role`: the
+  heartbeat closed a link whose peer stayed silent past `close`; its holders here wait `loading`; slice 15 §4) and `resolve_failed` (`address`: its key, `error`: a
   route's `resolve` rejected; the address's holders fail `waiting` with it), `routine_failed` (`object`, `routine`: its position,
   `error`: a routine call threw, or its watch could not be taken; a source's failure calls never reach a routine), `job_failed` (`object`, `job`,
   `id`, `error`: a run threw, not after an abort), `job_finish_failed` (the same: a `finish` threw; it is retried) and

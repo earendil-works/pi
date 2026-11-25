@@ -219,7 +219,9 @@ store reference (§5).
 12. The commit index: the differential test with its mutation check; the store suite unchanged; a write to one
     session's row with 10,000 open reads of other sessions tests none of them; a closed read leaves no entry.
 13. The stall: the reproduction fails before the fix and passes after (0 holders live with an old value); a stall
-    shorter than `close` closes nothing; the metric and `onError` per closed link.
+    shorter than `close` closes nothing; the metric and `onError` per closed link. **(B, the build):** the
+    reproduction passed before any change (§8), and "shorter than `close`" is "shorter than `close − ping`": a link
+    may have been quiet for up to `ping` when the stall began.
 14. Lazy queries: the heap test of §5; a named query read through a reference after first use works as before.
 
 Examples: `77-grantable.ts` (the canvas: plain, grantable state, event, method, a flag, a rebind on a role change)
@@ -227,4 +229,26 @@ and `78-denial-messages.ts`.
 
 ## 8. What the build found
 
-Filled by the build.
+- **§4, the stale holders: no holder was live with an old value.** The reproduction (`test/link/channel.test.ts`, "a
+  stall of the server": a forked server with `heartbeat { ping: 50, close: 100 }`, 5 client hosts with 10 holders each
+  over socket links, the server's loop blocked 300 ms, a change in the same turn) passed before any change: the
+  server's own late tick already counted the stall as no silence and closed nothing (decision "A pause of the process
+  is no silence"); each client, which did run, found the server silent past `close` and closed its link, and its
+  holders went `loading` and stayed there. A new link brings every holder back with the current value. Bench round 1's
+  "stale" holders are this: two commits of about 24.7 s ran back to back with no I/O between them, so the server was
+  silent 49 s, past the clients' 30 s `close`; the bench's load process connects with `host.connect` and never
+  reconnects, and its holders watched values, not `ref.state`, so they kept their last values while `loading`; and
+  nothing was reported. **The fix is the report:** the channel knows why a link closed (`LinkCloseReason`), the host
+  counts every close in `chord.links.closed { reason }` and reports a heartbeat close once through `onError`
+  (`link_closed { reason: "heartbeat", role }`). Reconnecting is the app's (a page's connection does; p2's does).
+- **§4, a stall shorter than `close` can close a link:** the peer's silence includes the quiet time before the stall
+  (up to `ping`, when the last ping was answered), so only a stall shorter than `close − ping` is sure to close
+  nothing (tested with `close` 600 and a stall of 300 ms). Not changed: `close` keeps its meaning (silence, the
+  handshake included).
+- **§3, no `everyRead` switch:** the differential check is the skip test's oracle (every read equal to a fresh run
+  after every commit), shared with `skip.test.ts` (`test/store/read-world.ts`), over commits of 1 to 5,000 writes, with
+  a mutation check (an index without its bucket lookups leaves reads stale). The old path also ran reads whose probe
+  limit ran out on rows that could not concern them; the index does not (`skip.test.ts`' cost case now writes rows of
+  the read's bucket).
+- **§2:** a denial's message travels as the `forbidden` error's `details.message` (no new field in a failure or on the
+  wire); `sameCause` compares details, so a changed message reaches the holders.
