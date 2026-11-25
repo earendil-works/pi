@@ -1297,14 +1297,12 @@ const STEPS = env("GRANTABLE_STEPS", 30);
  * the default seeds that fail only because of them (skipped until then).
  */
 const OPEN: Readonly<Record<string, string>> = {
-	"a denied reference waits once its version is not served (same host)": "F3",
-	"a denied reference waits once its version is not served (over a link)": "F3",
-	"a reference refused a granted member binds once it is not granted (same host)": "F5",
-	"a reference refused a granted member binds once it is not granted (over a link)": "F5",
-	"a reference refused a member shows a later denial": "F5b",
-	"a reference refused a member takes no value at a restart": "F7",
+	"a reload never throws when a refused reference's provider stops accepting its version": "N1",
+	"a reference refused a member has no grant after a reload that stops accepting it (same host)": "N2",
+	"a reference refused a member has no grant after a reload that stops accepting it (over a link)": "N2",
+	"a reference refused a member takes no value at a reload that stops accepting it": "N3",
 };
-const OPEN_SEEDS: Readonly<Record<number, string>> = { 2: "F3", 7: "F3", 13: "F3", 14: "F3", 21: "F3", 24: "F3" };
+const OPEN_SEEDS: Readonly<Record<number, string>> = {};
 
 describe("grantable members across versions and lifecycles, against the model", () => {
 	it(`hold for seeds ${FIRST} to ${FIRST + SEEDS - 1} (${STEPS} steps each)`, async () => {
@@ -1486,6 +1484,32 @@ const REGRESSIONS: Readonly<Record<string, Case>> = {
 			serve(2, [1], { "1:e0": "refuse" }),
 			serve(2, [1], { "1:e0": "refuse" }),
 		],
+	),
+	// A reload never throws: the provider's reload that stops accepting a refused reference's version.
+	"a reload never throws when a refused reference's provider stops accepting its version": scenario(
+		"s0",
+		[[add("s0")], [remove("s0")]],
+		[hold(1, 1, "link"), serve(2, [1], { "1:s0": "refuse" }), serve(1)],
+	),
+	// A reference that never bound has no grant, also after a reload that stops accepting its version.
+	"a reference refused a member has no grant after a reload that stops accepting it (same host)": scenario(
+		"e0",
+		[[add("e0")], [change("e0")]],
+		[serve(2, [1], { "1:e0": "refuse" }), decide("server", allowing("f0")), hold(1, 1, "local"), serve(2)],
+	),
+	"a reference refused a member has no grant after a reload that stops accepting it (over a link)": scenario(
+		"e0",
+		[[add("e0")], [change("e0")]],
+		[serve(2, [1], { "1:e0": "refuse" }), decide("owner", allowing("f0")), hold(1, 1, "link"), serve(2)],
+	),
+	// A reference that was never live keeps no value, also after a reload that stops accepting its version.
+	"a reference refused a member takes no value at a reload that stops accepting it": scenario(
+		"s0 s1",
+		[
+			[add("s0"), add("s1")],
+			[remove("s0"), remove("s1")],
+		],
+		[serve(2, [1], { "1:s1": "refuse" }), hold(1, 1, "local"), serve(2)],
 	),
 };
 
