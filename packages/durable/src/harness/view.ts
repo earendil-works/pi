@@ -167,7 +167,7 @@ export class ConversationViews {
 		});
 	}
 
-	/** End the observers of a deleted conversation's view, after the commit's last frame (its documents retired). */
+	/** End the observers of a deleted conversation's view. */
 	#end(id: ConversationId): void {
 		const mount = this.#mounts.get(id);
 		if (mount === undefined) return;

@@ -427,13 +427,7 @@ export class Transaction implements Tx {
 		return record;
 	}
 
-	/**
-	 * Internal: delete conversations `ids` and, transitively, the conversations their tasks own, with everything in them
-	 * (`conversation.delete`). Unknown IDs are skipped. It reads tables, so it comes before the commit's first table write.
-	 * Refuses the root conversation, a conversation with a live task (`ConversationBusy`), one whose owner task outside
-	 * the deleted set is live, and one with a fork outside it. Settles the queued and placed submissions `unanswered`
-	 * (reason `deleted`) and retires the current documents, so waiters, watches, and the cache follow the deletion.
-	 */
+	/** Internal: delete conversations and the ones their tasks own; reads tables, so before the first table write. */
 	deleteConversations(ids: readonly ConversationId[]): Promise<void> {
 		try {
 			this.#assertOpen();
@@ -453,7 +447,7 @@ export class Transaction implements Tx {
 			const record = await storage.conversation(id, context);
 			if (record !== undefined) deleted.set(id, record);
 		}
-		// A Map iterates the entries added while it iterates: the owned conversations of owned conversations too.
+		// Also visits the entries added while it iterates: owned conversations of owned conversations.
 		for (const id of deleted.keys()) {
 			const owned = await scanAll((cursor) =>
 				storage.scanConversations({ ownerConversationId: id }, INTERNAL_SCAN_PAGE_SIZE, cursor, context),
@@ -469,7 +463,7 @@ export class Transaction implements Tx {
 				throw new Error(`Conversation ${record.id} is owned by live task ${owner.taskId}`);
 			}
 		}
-		// Forks read their parent's entries; nothing indexes them, and deletion is rare, so every conversation is scanned.
+		// Nothing indexes forks.
 		const all = await scanAll((cursor) => storage.scanConversations({}, INTERNAL_SCAN_PAGE_SIZE, cursor, context));
 		for (const record of all) {
 			const parent = record.parent?.conversationId;

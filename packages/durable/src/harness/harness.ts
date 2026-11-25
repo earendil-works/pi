@@ -84,7 +84,6 @@ import { type ConversationView, ConversationViews, type ConversationWindow } fro
 
 const SCAN_PAGE_SIZE = 256;
 
-/** Deletion attempts: work can start in a conversation between its abort and the deleting commit. */
 const DELETE_ATTEMPTS = 3;
 
 type CreateTarget =
@@ -432,9 +431,9 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 		return this.#create({ kind: "independent", ownership: options.ownership }, options, context);
 	}
 
-	/** Try the deleting commit first, so a refusal aborts nothing; abort the work it finds live, then try again. */
 	async deleteConversations(ids: readonly ConversationId[], context: Context): Promise<void> {
 		this.assertUsable();
+		// The commit first, so a refusal aborts nothing; work can start again between an abort and the commit.
 		for (let attempt = 1; ; attempt++) {
 			try {
 				await this.commitWith((tx) => tx.deleteConversations(ids), context);

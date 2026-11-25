@@ -1011,16 +1011,6 @@ export interface Harness extends Session {
 	): Promise<Conversation>;
 	conversation(id: ConversationId, context: Context): Promise<Conversation | undefined>;
 	createConversation(options: ConversationCreateOptions, context: Context): Promise<Conversation>;
-	/**
-	 * Delete conversations for good, with the conversations their tasks own, transitively. Work still live there is
-	 * aborted first, background work included (`Conversation.abort()` with `background: true`); then one commit settles
-	 * their queued and placed submissions `unanswered` (reason `deleted`), retires their documents, ends their views
-	 * (`ended`), and removes their records, entries, tasks, submissions, and documents from Storage. Unknown IDs are
-	 * skipped, so a repeated call is harmless. Rejects, deleting and aborting nothing, for the root conversation, a
-	 * conversation whose owner task outside the deleted set is live, and a conversation with a fork outside it; rejects
-	 * with `ConversationBusy` when new work keeps starting there. How thoroughly the backend erases is its own (spec
-	 * §11).
-	 */
 	deleteConversations(ids: readonly ConversationId[], context: Context): Promise<void>;
 
 	getTask<R>(id: TaskId<R>, context: Context): Promise<TaskRecord<JsonValue, JsonValue, R> | undefined>;

@@ -300,10 +300,7 @@ export class CachedStorage implements Storage {
 		}
 	}
 
-	/**
-	 * Drop a deleted conversation and its records: a cached record would let a later commit write to it. Its tasks are
-	 * terminal (the Session deletes no conversation with live work), so only the bounded tables hold them.
-	 */
+	/** Drop a deleted conversation and its records: a cached record would let a later commit write to it. */
 	#forget(id: ConversationId): void {
 		this.#wrote(id);
 		this.#conversations.delete(id);

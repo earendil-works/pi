@@ -960,11 +960,6 @@ export type StorageWrite =
 			readonly content: DocumentContent;
 	  }
 	| { readonly type: "document.retire"; readonly id: DocumentId }
-	/**
-	 * Remove the conversation for good, after every other write of its batch: its record, entries, tasks, submissions, and
-	 * every document incarnation scoped to it or to one of its tasks, with all their content. Its IDs stay claimed and
-	 * are never reused. An unknown conversation is no error.
-	 */
 	| { readonly type: "conversation.delete"; readonly id: ConversationId };
 
 /**
@@ -1000,7 +995,7 @@ export type DocumentCommitChange =
 			readonly source: DocumentCopySource;
 	  };
 
-/** Complete table record committed without another publication copy, or a conversation's deletion. */
+/** Complete table record committed without another publication copy. */
 export type TableCommitChange = Extract<
 	StorageWrite,
 	{ readonly type: "conversation" | "entry" | "task" | "submission" | "conversation.delete" }

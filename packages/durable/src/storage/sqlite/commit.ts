@@ -487,10 +487,7 @@ export class PendingWrites {
 	}
 }
 
-/**
- * Removes conversations `ids` with their entries, tasks, submissions, and every document scoped to them or their tasks,
- * revisions included; `record_ids` keeps their IDs claimed. Runs after the batch's other writes are flushed.
- */
+/** Removes conversations with everything scoped to them or their tasks; `record_ids` keeps their IDs claimed. */
 export async function deleteConversations(
 	executor: SqliteExecutor,
 	tables: Tables,

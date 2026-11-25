@@ -1193,10 +1193,6 @@ export class IndexedDbStorage implements Storage {
 		}
 	}
 
-	/**
-	 * Remove a conversation with its entries, tasks, submissions, and every document scoped to it or its tasks,
-	 * revisions included; `record_ids` keeps its IDs claimed.
-	 */
 	private async deleteConversation(transaction: IDBTransaction, id: ConversationId): Promise<void> {
 		const byConversation = compoundIdRange([id], 0, MAX_KEY);
 		const tasks = transaction.objectStore(STORES.tasks);
@@ -1220,7 +1216,6 @@ export class IndexedDbStorage implements Storage {
 		await requestResult(transaction.objectStore(STORES.conversations).delete(id));
 	}
 
-	/** Remove every incarnation in one scope, retired ones included, with all its revisions. */
 	private async deleteDocuments(transaction: IDBTransaction, scope: ScopeColumns): Promise<void> {
 		const documents = transaction.objectStore(STORES.documents);
 		const revisions = transaction.objectStore(STORES.documentRevisions);

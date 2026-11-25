@@ -465,10 +465,6 @@ export class MemoryStorage implements Storage {
 		return seq;
 	}
 
-	/**
-	 * Remove a conversation with its entries, tasks, submissions, and the documents scoped to it or its tasks. Its IDs
-	 * stay in `recordTypes`, so none is claimed again.
-	 */
 	private deleteConversation(id: ConversationId): void {
 		const state = this.state;
 		const conversation = state.conversations.get(id);
@@ -504,7 +500,6 @@ export class MemoryStorage implements Storage {
 		state.submissionIdsByRequest.delete(id);
 	}
 
-	/** Remove every incarnation in `scope`, retired ones included, with all its revisions. */
 	private deleteDocuments(scope: DocumentRecord["scope"]): void {
 		const state = this.state;
 		const key = scopeKey(scope);
