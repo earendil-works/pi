@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { type BedrockOptions, stream as streamBedrock } from "../src/api/bedrock-converse-stream.ts";
 import { getModel, normalizeContext } from "../src/compat.ts";
+import { getSupportedThinkingLevels } from "../src/models.ts";
 import type { Context, Model } from "../src/types.ts";
 import { hasBedrockCredentials } from "./bedrock-utils.ts";
 
@@ -256,6 +257,67 @@ describe("Bedrock OpenAI reasoning payload", () => {
 
 		expect(captured).toBeDefined();
 		expect(captured?.additionalModelRequestFields).toBeUndefined();
+	});
+});
+
+describe("Bedrock flat reasoning_effort payload", () => {
+	async function captureOffPayload(model: Model<"bedrock-converse-stream">): Promise<BedrockThinkingPayload> {
+		let captured: BedrockThinkingPayload | undefined;
+		const s = streamBedrock(model, normalizeContext(makeContext()), {
+			onPayload: (payload) => {
+				captured = payload as BedrockThinkingPayload;
+				throw new PayloadCaptured();
+			},
+		});
+		for await (const event of s) {
+			if (event.type === "error") break;
+		}
+		if (!captured) throw new Error("Expected Bedrock payload to be captured before request abort");
+		return captured;
+	}
+
+	// Regression for #12462: levels came from the generic default and no effort was sent.
+	it.each([
+		["global.moonshotai.kimi-k3.1", ["off", "low", "medium", "high", "xhigh", "max"]],
+		["us.moonshotai.kimi-k3.1", ["off", "low", "medium", "high", "xhigh", "max"]],
+		// GLM 5.3 always reasons and rejects none.
+		["global.zai.glm-5.3", ["low", "medium", "high", "xhigh", "max"]],
+	] as const)("offers the models.dev effort levels for %s", (id, levels) => {
+		expect(getSupportedThinkingLevels(getModel("amazon-bedrock", id))).toEqual(levels);
+	});
+
+	it.each(["low", "medium", "high", "xhigh", "max"] as const)(
+		"sends reasoning=%s as flat reasoning_effort",
+		async (reasoning) => {
+			for (const id of ["global.moonshotai.kimi-k3.1", "global.zai.glm-5.3"] as const) {
+				const payload = await capturePayload(getModel("amazon-bedrock", id), { reasoning });
+
+				expect(payload.additionalModelRequestFields, id).toEqual({ reasoning_effort: reasoning });
+			}
+		},
+	);
+
+	it("sends reasoning_effort=none when reasoning is off and the model maps off", async () => {
+		const payload = await captureOffPayload(getModel("amazon-bedrock", "us.moonshotai.kimi-k3.1"));
+
+		expect(payload.additionalModelRequestFields).toEqual({ reasoning_effort: "none" });
+	});
+
+	it("sends no reasoning_effort when reasoning is off and the model hides off", async () => {
+		const payload = await captureOffPayload(getModel("amazon-bedrock", "us.zai.glm-5.3"));
+
+		expect(payload.additionalModelRequestFields).toBeUndefined();
+	});
+
+	it("sends no reasoning_effort when the model lists no effort values", async () => {
+		const model: Model<"bedrock-converse-stream"> = {
+			...getModel("amazon-bedrock", "global.moonshotai.kimi-k3.1"),
+			thinkingLevelMap: undefined,
+		};
+
+		const payload = await capturePayload(model, { reasoning: "medium" });
+
+		expect(payload.additionalModelRequestFields).toBeUndefined();
 	});
 });
 

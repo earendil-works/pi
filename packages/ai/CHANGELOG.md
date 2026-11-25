@@ -11,6 +11,10 @@
 - Qwen Token Plan Individual now lists `qwen4-max` instead of the retired `qwen4-max-preview`
 - Changed the `ant-ling` provider to load its models from models.dev (`bailing`), replacing the retired Ling 2.6 and Ring 2.6 models with Ling 3.0 Tiny, Ling 3.0 Flash, Ling 3.0 Flash VL, Ling 3.1 Flash, and Ling 3.2 Flash. Thinking is either off or high ([#11800](https://github.com/earendil-works/pi/pull/11800) by [@lvisei](https://github.com/lvisei))
 
+### Fixed
+
+- Fixed Amazon Bedrock Kimi K3.1 and GLM 5.3 ignoring the selected thinking level: they always reasoned at `max`, offered `minimal`, and hid `xhigh` and `max`. Pi now offers the effort levels models.dev lists and sends them as `reasoning_effort`, with `none` for `off` on Kimi K3.1 (GLM 5.3 cannot turn thinking off). Bedrock models outside the Claude and GPT families now send `reasoning_effort` whenever their `thinkingLevelMap` maps the selected level ([#12462](https://github.com/earendil-works/pi/issues/12462))
+
 ## [1.6.1] - 2026-11-25
 
 ### Added
