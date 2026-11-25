@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed `RemoteExecutionEnv` text line readers rescanning an incomplete line after every read, which made long lines take time quadratic in their length ([#12224](https://github.com/earendil-works/pi/issues/12224))
+
 ## [1.6.0] - 2026-11-20
 
 ### Fixed

@@ -109,11 +109,16 @@ function parseGitHubCopilotModelCatalog(raw: unknown, allowPolicyFallback: boole
 		return [
 			{
 				id,
+				type: capabilities?.type,
 				pickerEnabled: item.model_picker_enabled === true,
 				policyState: asRecord(item.policy)?.state,
 			},
 		];
 	});
+	// Decision models are never picker-enabled; the catalog lists only those the account can call.
+	const classifierModelIds = accountModels
+		.filter((model) => model.type === "decisions" && model.policyState !== "disabled")
+		.map((model) => model.id);
 	const pickerModelIds = accountModels
 		.filter((model) => model.pickerEnabled && model.policyState !== "disabled")
 		.map((model) => model.id);
@@ -130,7 +135,7 @@ function parseGitHubCopilotModelCatalog(raw: unknown, allowPolicyFallback: boole
 				(model.pickerEnabled || usePolicyFallback),
 		)
 		.map((model) => model.id);
-	return { availableModelIds, policyModelIds };
+	return { availableModelIds, classifierModelIds, policyModelIds };
 }
 
 async function fetchWithRateLimitRetry(
@@ -358,13 +363,13 @@ async function refreshGitHubCopilotModelAccess(
 	credential: OAuthCredential,
 	signal: AbortSignal,
 ): Promise<OAuthCredential> {
-	const { availableModelIds } = await fetchGitHubCopilotModels(
+	const { availableModelIds, classifierModelIds } = await fetchGitHubCopilotModels(
 		credential.access,
 		copilotEnterpriseDomain(credential),
 		signal,
 		{ maxRetries: 0, maxElapsedMs: 0 },
 	);
-	return { ...credential, availableModelIds };
+	return { ...credential, availableModelIds, availableClassifierModelIds: classifierModelIds };
 }
 
 /**
@@ -482,6 +487,7 @@ async function loginGitHubCopilot(interaction: ProviderAuthInteraction): Promise
 	return {
 		...credentials,
 		availableModelIds: [...new Set([...models.availableModelIds, ...enabledModelIds])],
+		availableClassifierModelIds: models.classifierModelIds,
 	};
 }
 

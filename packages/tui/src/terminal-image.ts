@@ -792,6 +792,9 @@ export function renderImage(
 	return null;
 }
 
+/** Longest URL that {@link hyperlink} wraps in an OSC 8 sequence. Real links are far shorter. */
+const MAX_HYPERLINK_URL_LENGTH = 8192;
+
 /**
  * Wrap text in an OSC 8 hyperlink sequence.
  * The text is rendered as a clickable hyperlink in terminals that support OSC 8
@@ -799,10 +802,16 @@ export function renderImage(
  * In terminals that do not support OSC 8, the escape sequences are ignored
  * and only the plain text is displayed.
  *
+ * URLs longer than {@link MAX_HYPERLINK_URL_LENGTH} are not linked: wrapping re-opens the link on
+ * every line with the full URL, so a multi-megabyte URL would grow memory quadratically.
+ *
  * @param text - The visible text to display
  * @param url - The URL to link to
  */
 export function hyperlink(text: string, url: string): string {
+	if (url.length > MAX_HYPERLINK_URL_LENGTH) {
+		return text;
+	}
 	return `\x1b]8;;${url}\x1b\\${text}\x1b]8;;\x1b\\`;
 }
 

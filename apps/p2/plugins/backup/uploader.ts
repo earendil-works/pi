@@ -32,6 +32,56 @@ export function backupTargetKey(target: BackupTarget): string {
 /** The file system a store's uploader keeps its state with (`BackupUploaderOptions.files`). */
 export const backupFiles = (dataDir: string): SyncFileSystem => new NodeExecutionEnv({ cwd: dataDir });
 
+/**
+ * The status of a store while backup is off: `paused` (`off`) when it was backed up before, with the highest sequence
+ * any target's bookmark beside it says the backup holds (`backup/<target>/*.json`); undefined for a store never backed
+ * up. Resuming (backup on again) uploads one full copy: the outbox was dropped while backup was off.
+ */
+export async function pausedWhileOff(
+	files: SyncFileSystem,
+	directory: string,
+	context: Context,
+): Promise<BackupStatus | undefined> {
+	const root = join(directory, "backup");
+	const targets = await files.listDir(root, context);
+	if (!targets.ok) {
+		if (isMissing(targets.error)) return undefined;
+		throw targets.error;
+	}
+	let found = false;
+	let syncedHead: number | undefined;
+	for (const target of targets.value) {
+		if (target.kind !== "directory") continue;
+		const bookmarks = await files.listDir(join(root, target.name), context);
+		if (!bookmarks.ok) throw bookmarks.error;
+		for (const bookmark of bookmarks.value) {
+			if (bookmark.kind !== "file" || !bookmark.name.endsWith(".json")) continue;
+			found = true;
+			const read = await files.readTextFile(join(root, target.name, bookmark.name), context);
+			if (!read.ok) throw read.error;
+			const head = bookmarkHead(read.value);
+			if (head !== undefined) syncedHead = Math.max(syncedHead ?? 0, head);
+		}
+	}
+	if (!found) return undefined;
+	return { state: "paused", reason: "off", ...(syncedHead === undefined ? {} : { syncedHead }), at: Date.now() };
+}
+
+/** A bookmark's `syncedHead` (a file on disk: a trust boundary), undefined when it holds none. */
+function bookmarkHead(text: string): number | undefined {
+	try {
+		const value: unknown = JSON.parse(text);
+		if (typeof value !== "object" || value === null || !("syncedHead" in value)) return undefined;
+		return Number.isSafeInteger(value.syncedHead) ? (value.syncedHead as number) : undefined;
+	} catch {
+		// Not JSON: a file nobody can resume from.
+		return undefined;
+	}
+}
+
+/** Whether a file system error is a missing file or folder (the file system's answer: a trust boundary). */
+const isMissing = (error: Error): boolean => (error as { readonly code?: unknown }).code === "not_found";
+
 /** A failure's message, for statuses and the log. */
 export const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
@@ -93,10 +143,10 @@ export class BackupUploader {
 				const message = errorText(error);
 				if (options.terminal?.(error) === true) {
 					this.#stopped = true;
-					options.report({ state: "error", error: `${message} (stopped until a restart)`, at: Date.now() });
+					options.report({ state: "stopped", reason: "refused", error: message, at: Date.now() });
 					return;
 				}
-				options.report({ state: "error", error: message, at: Date.now() });
+				options.report({ state: "retrying", error: message, at: Date.now() });
 			},
 			...(options.intervalMs === undefined ? {} : { intervalMs: options.intervalMs }),
 			...(options.urgentMs === undefined ? {} : { urgentMs: options.urgentMs }),
@@ -125,7 +175,12 @@ export class BackupUploader {
 			if (owner !== undefined && owner !== account) {
 				// Another person signed in on this machine: their account never gets this store's backup, which stays with
 				// its owner, its commits waiting in the outbox for the owner's next sign-in.
-				report({ state: "other_account", ...this.#head(await this.#synced(context)), at: Date.now() });
+				report({
+					state: "paused",
+					reason: "other_account",
+					...this.#head(await this.#synced(context)),
+					at: Date.now(),
+				});
 				return;
 			}
 			if (owner === undefined) await this.#bind(account, context);
@@ -164,17 +219,17 @@ export class BackupUploader {
 	 * Stops uploads until a restart: retrying cannot fix the history (another machine wrote it, the remote refused a body
 	 * for good, the store lost what it uploaded). The commits stay in the outbox.
 	 */
-	#stop(state: "diverged" | "behind", why: string, head: { syncedHead?: number }): void {
+	#stop(reason: "diverged" | "behind", why: string, head: { syncedHead?: number }): void {
 		this.#stopped = true;
-		this.#options.report({ state, ...head, error: `${why} (stopped until a restart)`, at: Date.now() });
+		this.#options.report({ state: "stopped", reason, error: why, ...head, at: Date.now() });
 	}
 
 	/** The account this store's backup belongs to: `<name>.account` beside its bookmark; undefined before its first upload. */
 	async #owner(context: Context): Promise<string | undefined> {
 		const read = await this.#options.files.readTextFile(this.#accountFile, context);
 		if (read.ok) return read.value;
-		// The file system's answer (a trust boundary): a missing file is a store never uploaded, anything else fails.
-		if ((read.error as { readonly code?: unknown }).code === "not_found") return undefined;
+		// A missing file is a store never uploaded; anything else fails.
+		if (isMissing(read.error)) return undefined;
 		throw read.error;
 	}
 

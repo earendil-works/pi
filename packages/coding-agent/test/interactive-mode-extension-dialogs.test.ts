@@ -22,6 +22,11 @@ type DialogContext = {
 };
 
 type DialogMethods = {
+	showExtensionSelector(
+		title: string,
+		options: string[],
+		opts?: { blockedKind?: "permission" | "question" | "auth" },
+	): Promise<string | undefined>;
 	showExtensionConfirm(title: string, message: string, opts?: { signal?: AbortSignal }): Promise<boolean>;
 	showExtensionCustom<T>(
 		factory: (tui: unknown, theme: unknown, keybindings: unknown, done: (result: T) => void) => Component,
@@ -113,6 +118,33 @@ describe("InteractiveMode extension dialogs", () => {
 		await expect(first).resolves.toBe(true);
 		expect(context.focused).toBe(context.editor);
 		expect(context.programStatus.setBlocked).toHaveBeenLastCalledWith("extension-dialog", undefined);
+	});
+
+	// Regression for #12439: the project trust prompt reported its folder and explanation lines as the message.
+	it("reports the first line of a multi-line selector title as the blocked message", async () => {
+		const context = createContext();
+		const choice = context.showExtensionSelector("Trust project folder?\n/work/project\n\nDetails", ["Trust"]);
+		expect(context.programStatus.setBlocked).toHaveBeenLastCalledWith("extension-dialog", {
+			kind: "question",
+			message: "Trust project folder?",
+		});
+
+		context.focused?.handleInput?.("\r");
+		await expect(choice).resolves.toBe("Trust");
+	});
+
+	it("reports the kind passed with blockedKind", async () => {
+		const context = createContext();
+		const choice = context.showExtensionSelector("Deploy to production?", ["Deploy", "Cancel"], {
+			blockedKind: "permission",
+		});
+		expect(context.programStatus.setBlocked).toHaveBeenLastCalledWith("extension-dialog", {
+			kind: "permission",
+			message: "Deploy to production?",
+		});
+
+		context.focused?.handleInput?.("\r");
+		await expect(choice).resolves.toBe("Deploy");
 	});
 
 	it("removes a hidden dialog when its signal aborts", async () => {

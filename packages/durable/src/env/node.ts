@@ -189,14 +189,28 @@ async function runCommand(
 	});
 }
 
-async function findBashOnPath(): Promise<string | null> {
-	const result =
-		process.platform === "win32"
-			? await runCommand("where", ["bash.exe"], 5000)
-			: await runCommand("which", ["bash"], 5000);
+async function findExecutableOnPath(executable: string): Promise<string | null> {
+	const result = await runCommand(process.platform === "win32" ? "where" : "which", [executable], 5000);
 	if (result.status !== 0 || !result.stdout) return null;
 	const firstMatch = result.stdout.trim().split(/\r?\n/)[0];
 	return firstMatch && (await pathExists(firstMatch)) ? firstMatch : null;
+}
+
+// Keep in sync with packages/coding-agent/src/utils/shell.ts.
+// Git for Windows reports its POSIX shell as `<root>/usr/bin/sh.exe`.
+const GIT_FOR_WINDOWS_SHELL_SUFFIX = win32.join("usr", "bin", "sh.exe");
+
+// Git Bash of the Git for Windows installation whose git.exe is on PATH, wherever it is installed.
+// Returns the `<root>\bin\bash.exe` launcher, which sets up MSYSTEM and PATH for `usr\bin\bash.exe`.
+async function findGitBashOfGitOnPath(): Promise<string | null> {
+	const git = await findExecutableOnPath("git.exe");
+	if (!git) return null;
+	const result = await runCommand(git, ["var", "GIT_SHELL_PATH"], 5000);
+	if (result.status !== 0) return null;
+	const gitShell = win32.normalize(result.stdout.trim());
+	if (!gitShell.toLowerCase().endsWith(`\\${GIT_FOR_WINDOWS_SHELL_SUFFIX}`)) return null;
+	const bash = win32.join(gitShell.slice(0, -GIT_FOR_WINDOWS_SHELL_SUFFIX.length), "bin", "bash.exe");
+	return (await pathExists(bash)) ? bash : null;
 }
 
 interface ShellConfig {
@@ -241,7 +255,12 @@ async function getShellConfig(customShellPath?: string): Promise<Result<ShellCon
 				return ok(getBashShellConfig(candidate));
 			}
 		}
-		const bashOnPath = await findBashOnPath();
+		// Must precede the generic bash.exe lookup, which usually finds the WSL launcher in System32 first.
+		const gitBash = await findGitBashOfGitOnPath();
+		if (gitBash) {
+			return ok(getBashShellConfig(gitBash));
+		}
+		const bashOnPath = await findExecutableOnPath("bash.exe");
 		if (bashOnPath) {
 			return ok(getBashShellConfig(bashOnPath));
 		}
@@ -252,7 +271,8 @@ async function getShellConfig(customShellPath?: string): Promise<Result<ShellCon
 					`  1. Install Git for Windows: https://git-scm.com/download/win\n` +
 					`  2. Add your bash to PATH (Cygwin, MSYS2, etc.)\n` +
 					"  3. Configure an explicit shellPath\n\n" +
-					`Searched Git Bash in:\n${candidates.map((path) => `  ${path}`).join("\n")}`,
+					`Searched Git Bash in:\n${candidates.map((path) => `  ${path}`).join("\n")}\n` +
+					"  the Git for Windows installation of git.exe on PATH",
 			),
 		);
 	}
@@ -260,7 +280,7 @@ async function getShellConfig(customShellPath?: string): Promise<Result<ShellCon
 	if (await pathExists("/bin/bash")) {
 		return ok(getBashShellConfig("/bin/bash"));
 	}
-	const bashOnPath = await findBashOnPath();
+	const bashOnPath = await findExecutableOnPath("bash");
 	if (bashOnPath) {
 		return ok(getBashShellConfig(bashOnPath));
 	}
@@ -414,32 +434,29 @@ class NodeTextLineReader implements TextLineReader {
 		if (this.closed) return err(new FileError("invalid", "Text line reader is closed", this.path));
 
 		try {
-			while (true) {
-				const newline = this.buffered.indexOf("\n");
-				if (newline !== -1) {
-					const text = this.buffered.slice(0, newline);
-					this.buffered = this.buffered.slice(newline + 1);
-					return ok({ text, terminated: true });
-				}
-				if (this.ended) {
-					if (this.buffered.length === 0) return ok(undefined);
-					const text = this.buffered;
-					this.buffered = "";
-					return ok({ text, terminated: false });
-				}
-
+			let newline = this.buffered.indexOf("\n");
+			while (newline === -1 && !this.ended) {
 				// Explicit positions allow an aborted read to be retried without skipping bytes.
 				const { bytesRead } = await this.file.read(this.chunk, 0, this.chunk.length, this.byteOffset);
 				const afterReadAbort = abortResult<TextLine | undefined>(context.abortSignal, this.path);
 				if (afterReadAbort) return afterReadAbort;
 				this.byteOffset += bytesRead;
-				if (bytesRead === 0) {
-					this.buffered += this.decoder.decode();
-					this.ended = true;
-				} else {
-					this.buffered += this.decoder.decode(this.chunk.subarray(0, bytesRead));
-				}
+				this.ended = bytesRead === 0;
+				const text = this.ended ? this.decoder.decode() : this.decoder.decode(this.chunk.subarray(0, bytesRead));
+				// Only the new text is scanned, so a line longer than one read is not rescanned per read.
+				const found = text.indexOf("\n");
+				if (found !== -1) newline = this.buffered.length + found;
+				this.buffered += text;
 			}
+			if (newline !== -1) {
+				const text = this.buffered.slice(0, newline);
+				this.buffered = this.buffered.slice(newline + 1);
+				return ok({ text, terminated: true });
+			}
+			if (this.buffered.length === 0) return ok(undefined);
+			const text = this.buffered;
+			this.buffered = "";
+			return ok({ text, terminated: false });
 		} catch (error) {
 			return err(toFileError(error, this.path));
 		}

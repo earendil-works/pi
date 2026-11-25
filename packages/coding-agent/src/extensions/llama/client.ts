@@ -1,3 +1,5 @@
+import { SseDecoder } from "@earendil-works/pi-ai/utils/sse";
+
 export type LlamaModelStatus = "unloaded" | "loading" | "loaded" | "downloading" | "sleeping";
 
 export interface LlamaModelInfo {
@@ -251,21 +253,11 @@ export class LlamaClient {
 		const response = await this.fetchServer("/models/sse", { headers, signal });
 		if (!response.ok || !response.body) throw new Error(`llama.cpp SSE returned HTTP ${response.status}`);
 		const reader = response.body.getReader();
-		const decoder = new TextDecoder();
-		let buffer = "";
+		const sse = new SseDecoder();
 		while (true) {
 			const chunk = await reader.read();
 			if (chunk.done) break;
-			buffer += decoder.decode(chunk.value, { stream: true }).replaceAll("\r\n", "\n");
-			let boundary = buffer.indexOf("\n\n");
-			while (boundary >= 0) {
-				const frame = buffer.slice(0, boundary);
-				buffer = buffer.slice(boundary + 2);
-				const data = frame
-					.split("\n")
-					.filter((line) => line.startsWith("data:"))
-					.map((line) => line.slice(5).trimStart())
-					.join("\n");
+			for (const { data } of sse.push(chunk.value)) {
 				if (data) {
 					try {
 						const event = JSON.parse(data) as LlamaModelEvent;
@@ -274,7 +266,6 @@ export class LlamaClient {
 						// Ignore malformed events; catalog polling remains authoritative.
 					}
 				}
-				boundary = buffer.indexOf("\n\n");
 			}
 		}
 	}

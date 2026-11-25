@@ -234,7 +234,20 @@ describe("backup across restarts (fake provider)", () => {
 		});
 
 		// Off: the stores open without an outbox (its commits dropped), and the session commits a turn the backup misses.
-		await withServer(false, (_server, owner) => send(owner, session, "while off", 2));
+		await withServer(false, async (server, owner) => {
+			await send(owner, session, "while off", 2);
+			// Backed up before, off now: paused, not nothing; its last backed-up sequence is still known.
+			const backup = await server.host.get(Backup, {}, BACKGROUND_CONTEXT);
+			try {
+				const paused = await until(backup.statuses, (value) => {
+					const status = value?.[name];
+					return status?.state === "paused" && status.reason === "off" && (status.syncedHead ?? 0) >= first;
+				});
+				assert.equal(paused?.server?.state, "paused", "the server's store too");
+			} finally {
+				backup.release();
+			}
+		});
 
 		// On again: the outbox starts at the store's head, past what the backup holds, so the next slot is a full copy
 		// after it (before, uploads failed here and were retried forever).
@@ -295,8 +308,14 @@ describe("backup across restarts (fake provider)", () => {
 			const backup = await server.host.get(Backup, {}, BACKGROUND_CONTEXT);
 			try {
 				await send(owner, session, "after the other machine", 2);
-				const stopped = await until(backup.statuses, (value) => value?.[name]?.state === "diverged", 20_000);
-				assert.match(stopped?.[name]?.error ?? "", /stopped until a restart/);
+				const stopped = await until(
+					backup.statuses,
+					(value) => {
+						const status = value?.[name];
+						return status?.state === "stopped" && status.reason === "diverged";
+					},
+					20_000,
+				);
 				// Later commits upload nothing and report nothing.
 				const at = stopped?.[name]?.at;
 				await send(owner, session, "again", 3);

@@ -118,6 +118,11 @@ export interface ExtensionUIDialogOptions {
 	signal?: AbortSignal;
 	/** Timeout in milliseconds. Dialog auto-dismisses with live countdown display. */
 	timeout?: number;
+	/**
+	 * What the dialog waits for, reported as blocked program status (OSC 7501) with the first line of the title.
+	 * Defaults to `"permission"` for `confirm()` and `"question"` for `select()` and `input()`.
+	 */
+	blockedKind?: NonNullable<ProgramStatus["kind"]>;
 }
 
 /** Placement for extension widgets. */
@@ -934,7 +939,10 @@ export interface BeforeProviderHeadersEvent {
 	headers: ProviderHeaders;
 }
 
-/** Fired after a provider response is received and before the response stream is consumed. */
+/**
+ * Fired for each provider HTTP response, including error responses and retried attempts. Successful responses fire
+ * before the response stream is consumed. Coverage depends on provider and transport.
+ */
 export interface AfterProviderResponseEvent {
 	type: "after_provider_response";
 	status: number;

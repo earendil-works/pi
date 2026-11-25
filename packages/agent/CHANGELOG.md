@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed `streamProxy()` rescanning an incomplete line on every chunk, which made large proxy events take time quadratic in their size ([#12224](https://github.com/earendil-works/pi/issues/12224))
+
 ## [1.6.0] - 2026-11-20
 
 ### Fixed

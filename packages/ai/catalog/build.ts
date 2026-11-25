@@ -141,7 +141,7 @@ export function buildCatalog(
 			applyDeepSeekCompatRules(model);
 			applyModelsDevEffort(model, ctx.modelsDevSource(model));
 			applyOpenAiFamilyRules(model);
-			applyClaudeFamilyRules(model);
+			applyClaudeFamilyRules(model, ctx);
 			applyDeepSeekFamilyRules(model);
 		}
 		for (const model of chat) definition.finalize?.(model, ctx);
