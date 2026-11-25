@@ -10,6 +10,7 @@
 
 - Qwen Token Plan Individual now lists `qwen4-max` instead of the retired `qwen4-max-preview`
 - Changed the `ant-ling` provider to load its models from models.dev (`bailing`), replacing the retired Ling 2.6 and Ring 2.6 models with Ling 3.0 Tiny, Ling 3.0 Flash, Ling 3.0 Flash VL, Ling 3.1 Flash, and Ling 3.2 Flash. Thinking is either off or high ([#11800](https://github.com/earendil-works/pi/pull/11800) by [@lvisei](https://github.com/lvisei))
+- Changed GitHub Copilot Claude and GPT-6 models to keep the prompt cache across thinking level and tool changes: Claude 5.x models that support it send effort changes and tool changes as messages in the conversation (`supportsMidConvoEffort`, `supportsMidConvoToolChanges`), GPT-6 models send effort changes as `configuration_update` items, and Claude models declare Anthropic's 5-minute and 1-hour cache lifetimes (`promptCache`), which enables cache warming for them ([#12316](https://github.com/earendil-works/pi/issues/12316))
 
 ### Fixed
 
