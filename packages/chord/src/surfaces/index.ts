@@ -8,6 +8,7 @@ export {
 	type Client,
 	type ClientError,
 	type ClientOptions,
+	type ClientStyles,
 	startClient,
 } from "./client.ts";
 export {

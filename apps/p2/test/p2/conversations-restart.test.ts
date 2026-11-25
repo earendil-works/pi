@@ -6,19 +6,17 @@ import { after, before, describe, it } from "node:test";
 import type { ConversationView } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { Chat } from "../../plugins/chat/contract.ts";
-import { CONVERSATION_PREFIX, ConversationBroker, type Query } from "../../plugins/conversations/contract.ts";
+import { ConversationBroker, type Query } from "../../plugins/conversations/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
 import type { Host, RefIn } from "../../src/runtime/chord.ts";
+import { PEER_MESSAGE_ENTRY } from "../../src/runtime/entries.ts";
 import { Hosts, ServerNatives } from "../../src/runtime/server.ts";
 import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
 
 const delivered = (view: ConversationView | null | undefined, message: string): boolean =>
 	(view?.entries ?? []).some(
-		(entry) =>
-			entry.model?.[0]?.role === "user" &&
-			JSON.stringify(entry.model[0].content).includes(CONVERSATION_PREFIX) &&
-			JSON.stringify(entry.model[0].content).includes(message),
+		(entry) => entry.kind === PEER_MESSAGE_ENTRY && JSON.stringify(entry.model?.[0]?.content).includes(message),
 	);
 const answered = (view: ConversationView | null | undefined, message: string): boolean =>
 	JSON.stringify(view?.entries ?? []).includes(`Echo: ${message}`) &&

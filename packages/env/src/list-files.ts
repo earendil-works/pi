@@ -36,7 +36,7 @@ export async function listFilesOver(
 	const aborted = abortResult<FileListing>(context.abortSignal, path);
 	if (aborted) return aborted;
 	try {
-		if (!(await connection.info()).features?.includes("listFiles")) {
+		if (!(await connection.info(context.abortSignal)).features?.includes("listFiles")) {
 			return err(new FileError("not_supported", "The pi-env daemon does not list files; update it", path));
 		}
 		const { json, payload } = await connection.request(

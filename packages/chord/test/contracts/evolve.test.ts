@@ -5,6 +5,9 @@ import type { CurrentStep } from "../../src/contracts/history.ts";
 import {
 	arr,
 	bool,
+	bytes,
+	type EventMember,
+	event,
 	evolve,
 	hostKind,
 	type Implementation,
@@ -253,5 +256,59 @@ describe("long histories", () => {
 			["editor", "count", "state"] | ["reader", "clear", "args" | "result"]
 		>();
 		expectTypeOf<Static<History[0]["variants"]["editor"]["state"]["count"]>>().toEqualTypeOf<number>();
+	});
+});
+
+describe('event edits (decision "Events: fire-and-forget members")', () => {
+	const Sample = obj({ y: int() });
+	const Match = remote("match", {
+		version: 1,
+		params: {},
+		hostAddress: () => Server(),
+		variants: { player: { events: { paddle: Sample } }, watcher: { state: { score: int() } } },
+	});
+
+	it("change, add and remove an event member of a variant, each a change of its own kind, typed", () => {
+		const V2 = evolve(Match, (e) =>
+			e.event("player", "paddle", obj({ y: int(), t: int() })).addEvent("watcher", "ball", Sample),
+		);
+		const V3 = evolve(V2, (e) => e.removeEvent("player", "paddle"));
+		const versions = contractData(V3).versions;
+		expect(versions.map(({ variants }) => [...variants.get("player")!.events.keys()])).toEqual([
+			["paddle"],
+			["paddle"],
+			[],
+		]);
+		expect(versions[1]!.changes).toEqual([
+			["player", "paddle", "event"],
+			["watcher", "ball", "event"],
+		]);
+		expect(new Set(versions.map(({ fingerprint }) => fingerprint)).size).toBe(3);
+		expectTypeOf<Members<typeof V2, "player">["paddle"]>().toEqualTypeOf<EventMember<{ y: number; t: number }>>();
+		expectTypeOf<Members<typeof V2, "watcher">["ball"]>().toEqualTypeOf<EventMember<{ y: number }>>();
+	});
+
+	it("take no variant in a local contract", () => {
+		const Store = local("store", { version: 1, params: {}, members: { paddle: event(Sample) } });
+		const V2 = evolve(Store, (e) => e.event("paddle", obj({ y: int(), t: int() })).addEvent("ball", Sample));
+		const V3 = evolve(V2, (e) => e.removeEvent("ball"));
+		expect(contractData(V3).versions.map(({ variants }) => [...variants.get("members")!.events.keys()])).toEqual([
+			["paddle"],
+			["paddle", "ball"],
+			["paddle"],
+		]);
+	});
+
+	it("refuse an unknown event member, one declared already, and bytes", () => {
+		expect(() => evolve(Match, (e) => e.event("player", "missing" as "paddle", Sample))).toThrow(
+			"no such event member",
+		);
+		expect(() => evolve(Match, (e) => e.addEvent("watcher", "score", Sample))).toThrow("already declared");
+		expect(() => evolve(Match, (e) => e.removeEvent("player", "missing" as "paddle"))).toThrow(
+			"no such event member",
+		);
+		expect(() => evolve(Match, (e) => e.addEvent("player", "frame", obj({ data: bytes() })))).toThrow(
+			"an event's values are JSON only",
+		);
 	});
 });

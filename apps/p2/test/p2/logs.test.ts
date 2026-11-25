@@ -330,7 +330,8 @@ test("owner-only Logs exposes live per-source state without starting workers, an
 	const notice = seen!.find((entry) => entry.source === source)!;
 	assert.equal(notice.message, "Failed facet [redacted]");
 	await notices.dismiss({ id: notice.id }, BACKGROUND_CONTEXT);
-	await until(notices.notices, (value) => value !== undefined && !value.some((entry) => entry.id === notice.id));
+	// The answer follows its state: the notice is gone on the page when the call resolves.
+	assert(!notices.notices.value.some((entry) => entry.id === notice.id));
 	const terminals = owner.hold(Logs, { source: "terminals" }, BACKGROUND_CONTEXT);
 	const store = new LogStore();
 	store.redactor.addSecret("fixture-detached-secret");

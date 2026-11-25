@@ -18,6 +18,7 @@ import { join } from "node:path";
 import type { Duplex } from "node:stream";
 import { compile, nul, obj, type Static, str, union } from "@earendil-works/pi-schema";
 import {
+	BACKGROUND_CONTEXT,
 	type Ctx,
 	canSend,
 	contribute,
@@ -265,8 +266,9 @@ export default defineFacet((host) => {
 			open.set(key, count + 1);
 			const recheck = isGuest(principal)
 				? setInterval(() => {
+						// A timer of the socket, nothing at hand: the background context.
 						void natives()
-							.root((ctx) => mayTalk(principal, ctx, session))
+							.root((ctx) => mayTalk(principal, ctx, session), BACKGROUND_CONTEXT)
 							.catch(() => false)
 							.then((allowed) => {
 								if (!allowed) browser.close(1008, "Access ended");

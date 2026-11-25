@@ -1,0 +1,529 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>p3: resources in code</title>
+<style>
+
+:root{--paper:#fbf8f2;--ink:#2a2723;--muted:#7b7468;--rule:#e3dbcc;--accent:#b4472f;--blue:#2e6a8a;--sand:#c2b18c;--soft:#f4eee2}
+*{box-sizing:border-box}
+html{background:#efe9dd}
+body{margin:0;color:var(--ink);font:19px/1.68 'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,serif;
+ -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+.book{max-width:860px;margin:0 auto;background:var(--paper);box-shadow:0 0 0 1px #e1d9c8,0 30px 80px -40px rgba(60,40,10,.35);padding:0 0 4rem}
+.inner{padding:0 90px}
+h1,h2,h3{font-weight:400;line-height:1.15}
+h2{font-size:2.1rem;margin:.2em 0 .3em;letter-spacing:-.01em}
+h3{font-size:1.05rem;text-transform:uppercase;letter-spacing:.14em;margin:2.4em 0 .6em;color:var(--ink);font-weight:600;
+ font-family:'Avenir Next','Helvetica Neue',sans-serif}
+p{margin:0 0 1.05em;hyphens:auto;text-align:left}
+code{font:.8em/1 'SF Mono',Menlo,Consolas,monospace;background:#f1ebde;padding:.1em .35em;border-radius:3px}
+pre{font:.74rem/1.55 'SF Mono',Menlo,Consolas,monospace;background:#f4eee2;border-left:3px solid var(--sand);padding:1rem 1.2rem;margin:1.4rem 0 1.8rem;
+ overflow-x:auto;border-radius:0 4px 4px 0;white-space:pre;tab-size:2}
+pre code{background:none;padding:0;font-size:1em}
+em{font-style:italic}
+a{color:var(--blue)}
+.cover{min-height:92vh;display:flex;flex-direction:column;justify-content:center;padding:90px;background:
+ radial-gradient(circle at 85% 15%,rgba(180,71,47,.13),transparent 40%),radial-gradient(circle at 10% 90%,rgba(46,106,138,.12),transparent 45%),var(--paper);
+ border-bottom:1px solid var(--rule)}
+.kicker{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.22em;text-transform:uppercase;color:var(--accent)}
+.cover h1{font-size:5.2rem;line-height:.98;margin:.35em 0 .25em;letter-spacing:-.025em}
+.subtitle{font-size:1.45rem;font-style:italic;color:#4a453e;max-width:30em;text-align:left}
+.cover-stats,.stats{display:flex;flex-wrap:wrap;gap:1.2rem 2.4rem;margin:2.2rem 0}
+.stats{margin:1.6rem 0 1.8rem;padding:1.1rem 0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.stat b{display:block;font-size:2.1rem;font-weight:400;line-height:1.1;font-variant-numeric:lining-nums}
+.stat span{font:.78rem/1.3 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);letter-spacing:.03em;display:block;max-width:14em}
+.cover-note{font-size:.9rem;color:var(--muted);max-width:34em;text-align:left;margin-top:2rem}
+.toc{padding:4rem 0 2rem}
+.toc ol{list-style:none;padding:0;margin:1rem 0;columns:2;column-gap:3rem}
+.toc li{padding:.3rem 0;border-bottom:1px dotted var(--rule);break-inside:avoid}
+.toc a{color:var(--ink);text-decoration:none}
+.toc a:hover{color:var(--accent)}
+.preface{padding-top:2rem}
+.findings{padding-left:1.4em}
+.findings li{margin:.55em 0;padding-left:.3em}
+.findings li::marker{color:var(--accent);font-weight:600}
+.chapter{padding-top:4.5rem;margin-top:3rem;border-top:1px solid var(--rule)}
+.opener{text-align:center;margin-bottom:2.6rem}
+.numeral{font-size:4.2rem;color:var(--accent);line-height:1;font-variant:small-caps;letter-spacing:.05em}
+.opener h2{font-size:2.5rem;margin:.25em 0}
+.lede{font-style:italic;color:#5a544a;font-size:1.12rem;max-width:30em;margin:0 auto;text-align:center}
+.dropcap::first-letter{float:left;font-size:4.1em;line-height:.82;padding:.06em .09em 0 0;color:var(--accent)}
+.fig{margin:2rem 0 2.2rem}
+.fig.wide{margin-left:-50px;margin-right:-50px}
+.fig svg{display:block;margin:0 auto}
+figcaption{font:.8rem/1.45 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:.7rem;padding-left:.8rem;border-left:2px solid var(--rule)}
+.fignum{color:var(--ink);font-weight:600}
+.note{font:.86rem/1.55 'Avenir Next','Helvetica Neue',sans-serif;color:#5b5549;background:#f4eee2;border-left:3px solid var(--sand);
+ padding:.9rem 1.1rem;margin:1.8rem 0;border-radius:0 4px 4px 0}
+.note.review{border-left-color:var(--accent)}
+.note b.tag{font-weight:600;letter-spacing:.12em;text-transform:uppercase;font-size:.72rem;color:var(--accent);display:block;margin-bottom:.3rem}
+.note code{font-size:.85em}
+table{width:100%;border-collapse:collapse;margin:1.4rem 0 1.8rem;font:.8rem/1.4 'Avenir Next','Helvetica Neue',sans-serif}
+th{text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:.68rem;border-bottom:1.5px solid var(--ink);padding:.45rem .5rem}
+td{padding:.42rem .5rem;border-bottom:1px solid var(--rule);vertical-align:top}
+td code{font-size:.92em}
+table.num td:not(:first-child),table.num th:not(:first-child){text-align:right}
+.epilogue p{font-size:1.04em}
+.appendix{font-size:.92em}
+.appendix ul,.chapter ul{padding-left:1.2em}
+.appendix li,.chapter li{margin:.4em 0}
+.colophon{text-align:center;font:.78rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:4rem;letter-spacing:.05em}
+@media (max-width:760px){.inner{padding:0 22px}.cover{padding:40px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}
+ .toc ol{columns:1}p{text-align:left}body{font-size:17px}}
+@media print{html{background:#fff}.book{box-shadow:none}.chapter{break-before:page}.fig{break-inside:avoid}}
+.transcript p b{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-right:.3em}
+pre .tk-c{color:#8d8576;font-style:italic}pre .tk-s{color:#5f7a3d}pre .tk-n{color:#a0662a}pre .tk-k{color:#b4472f}pre .tk-t{color:#2e6a8a}pre .tk-f{color:#7a3f6a}
+h4{font:600 .82rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.06em;margin:1.8em 0 .5em;color:var(--muted)}
+.inner ul,.inner ol:not(.findings){padding-left:1.2em}
+.inner li{margin:.35em 0}
+blockquote{margin:1.4rem 0;padding:.2rem 0 .2rem 1.2rem;border-left:3px solid var(--rule);color:#5a544a;font-style:italic}
+.fig svg text{dominant-baseline:auto}
+.fig .replay{font:600 .7rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);
+ background:none;border:1px solid var(--rule);border-radius:3px;padding:.2rem .55rem;margin:0 0 0 1rem;cursor:pointer;float:right}
+.fig .replay:hover{border-color:var(--accent)}
+.anim.armed .step{opacity:0}
+.anim.armed.play .step{animation:stepIn .45s ease-out both;animation-delay:calc(var(--i) * var(--pace, .45s))}
+.anim.armed.play .step.edge{animation-name:edgeIn}
+@keyframes stepIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes edgeIn{from{opacity:0}to{opacity:1}}
+.steps{margin:2rem 0 2.2rem;border:1px solid var(--rule);border-radius:6px;background:#fffdf8}
+.steps-head{display:flex;align-items:center;gap:.8rem;padding:.6rem 1rem;border-bottom:1px solid var(--rule);
+ font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.steps-head .title{flex:1}
+.steps-head .count{color:var(--muted);letter-spacing:.06em}
+.steps-head button{font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--ink);background:var(--soft);border:1px solid var(--rule);
+ border-radius:3px;padding:.25rem .65rem;cursor:pointer}
+.steps-head button:disabled{opacity:.35;cursor:default}
+.step-panel{padding:1rem 1.2rem .4rem}
+.step-panel>h4:first-child{margin-top:.2rem;color:var(--ink)}
+.steps.js .step-panel{display:none}
+.steps.js .step-panel.on{display:block}
+.steps:not(.js) .steps-head button,.steps:not(.js) .steps-head .count{display:none}
+.steps:not(.js) .step-panel+.step-panel{border-top:1px dashed var(--rule)}
+.fig figcaption{display:flow-root}
+.fig svg{max-width:100%;height:auto}
+table{max-width:100%}
+@media (max-width:760px){.inner{padding:0 20px}.cover{padding:48px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}table{display:block;overflow-x:auto}.toc ol{columns:1}}
+</style>
+
+
+</head>
+<body><div class="book">
+<section class="cover">
+  <div class="kicker">A design sketch in code · p3 · 2026-11-08</div>
+  <h1>Resources<br>In Code</h1>
+  <p class="subtitle">How model providers, MCP servers, machines, search and mail are defined on the server, selected for a session, and used by its worker, in about as much code as it takes</p>
+  <div class="cover-stats"><div class="stat"><b>5</b><span>example resource kinds, each a plugin</span></div><div class="stat"><b>3</b><span>core pieces: the vault, selectors, the selection</span></div><div class="stat"><b>1</b><span>server view per kind per session (params {}, the worker&#39;s principal names the session)</span></div><div class="stat"><b>0</b><span>credentials a worker can refresh</span></div></div>
+  <div class="cover-note"><p>A design sketch for the owner (2026-11-08), after the model stress test (<code>model-stress/report.md</code>) and the decision
+&quot;no per-run authority; what is brought into a session is the control&quot;. It shows the shape in code; names are
+proposals, Chord and pi-ai APIs are real (<code>remote</code>, <code>local</code>, <code>defineTable</code>, <code>self.query</code>, keyed <code>at</code>, <code>self.on</code>,
+<code>self.writable</code>, <code>self.contribute</code>; pi-ai&#39;s <code>createProvider</code>, <code>AuthResult</code>). Single user first; what multi-user adds is
+marked. Not decided, not built.</p>
+</div>
+</section><div class="inner">
+<nav class="toc"><h2>Contents</h2><ol>
+<li><a href="#before-we-begin">Before we begin</a></li>
+<li><a href="#core">I. Core</a></li>
+<li><a href="#models">II. Model Providers</a></li>
+<li><a href="#mcp">III. MCP Servers</a></li>
+<li><a href="#machines">IV. Machines</a></li>
+<li><a href="#proxy">V. Search and Mail</a></li>
+<li><a href="#selectors">VI. Selectors</a></li>
+<li><a href="#what-multi-user-adds">What Multi-User Adds</a></li>
+</ol></nav>
+
+<section class="preface" id="before-we-begin">
+<h2>Before we begin</h2>
+<p class="dropcap">A resource is something a session can use: a model provider, an MCP server, a machine, a search API, a mailbox. Every
+kind is a plugin, and every plugin has the same three parts:</p>
+<ol>
+<li><strong>On the server, its definitions:</strong> a table of the resources of its kind, their secrets in the vault.</li>
+<li><strong>On the server, one view per session:</strong> a remote object with empty params whose worker variant knows its session
+from the worker&#39;s principal (the link stamped it), reads that session&#39;s selection, and gives the worker exactly what
+it may use: data, pushed credentials, or methods the server runs.</li>
+<li><strong>On the worker, its use:</strong> a host-lifetime object that holds that view and contributes to a registry (the
+harness&#39;s model providers, Durable extensions with tools, environments).</li>
+</ol>
+<p>Core adds only what every kind needs: the <strong>vault</strong> (secrets, refreshed once, on the server), <strong>selectors</strong> (plugins say
+which resources a session gets), and the <strong>selection</strong> (core composes the selectors per session, failing closed).</p>
+<h3 id="six-things-to-know">Six things to know</h3>
+<ol class="findings">
+<li><strong>A resource reference is a kind plus an id</strong>: <code>{ kind: &quot;p3.models&quot;, id: &quot;anthropic&quot; }</code>. Kinds are constants their
+plugins export; ids are the plugin&#39;s.</li>
+<li><strong>A binding is a resource in one session&#39;s selection</strong>, with the login it uses: none, lent (an account of its
+bringer), or the session owner&#39;s own.</li>
+<li><strong>Selectors decide bindings.</strong> Include selectors add, restrict selectors keep only what they allow. Core composes them
+per session on the server, live; until every selector has answered, a session&#39;s selection is empty (fail closed).</li>
+<li><strong>Each kind serves one per-session view with params <code>{}</code>.</strong> The worker holds <code>SessionModels {}</code>; the server&#39;s factory
+reads <code>principal.session</code> and that session&#39;s bindings. No dynamic params, no extra lookups on the worker.</li>
+<li><strong>Two delivery patterns.</strong> Pushed credentials when the worker does the work itself (model streams: pi-ai&#39;s
+<code>AuthResult</code> with an expiry, refreshed by the server). Server-run methods when the secret must not leave the server
+(search, mail, MCP): the worker calls, the server checks the selection and does it.</li>
+<li><strong>Removing a resource from a session is a state change.</strong> The view&#39;s state drops it, the worker&#39;s contribution
+follows; a call through a removed binding is refused by the server.</li>
+</ol>
+</section>
+
+<section class="chapter" id="core"><header class="opener"><div class="numeral">I</div><h2>Core</h2><p class="lede">The vault, the selection, and the selectors: everything the kinds share.</p></header>
+<pre><code><span class="tk-c">// @p3/app/v1: what every host sees</span>
+
+<span class="tk-c">/** A resource: its kind (a constant of the plugin that owns it) and the plugin's id for it. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">ResourceRef</span> = <span class="tk-f">obj</span>({ kind: <span class="tk-f">str</span>(), id: <span class="tk-f">str</span>() });
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">ResourceRef</span> = <span class="tk-t">Static</span>&lt;<span class="tk-k">typeof</span> <span class="tk-t">ResourceRef</span>&gt;;
+
+<span class="tk-c">/** Which login a binding uses. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Login</span> = <span class="tk-f">union</span>([
+	<span class="tk-f">obj</span>({ kind: <span class="tk-f">lit</span>(<span class="tk-s">"none"</span>) }),                                   <span class="tk-c">// a local stdio server, a machine without a key</span>
+	<span class="tk-f">obj</span>({ kind: <span class="tk-f">lit</span>(<span class="tk-s">"lent"</span>), account: <span class="tk-f">str</span>() }),                   <span class="tk-c">// an account of whoever brought the resource in</span>
+	<span class="tk-f">obj</span>({ kind: <span class="tk-f">lit</span>(<span class="tk-s">"own"</span>) }),                                    <span class="tk-c">// the session owner's own account for this service</span>
+]);
+
+<span class="tk-c">/** One resource in one session's selection. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Binding</span> = <span class="tk-f">obj</span>({ resource: <span class="tk-t">ResourceRef</span>, login: <span class="tk-t">Login</span>, by: <span class="tk-f">str</span>() });   <span class="tk-c">// `by`: the selector's plugin</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">Binding</span> = <span class="tk-t">Static</span>&lt;<span class="tk-k">typeof</span> <span class="tk-t">Binding</span>&gt;;</code></pre>
+<pre><code><span class="tk-c">// @p3/app/v1/server: what server facets use</span>
+
+<span class="tk-c">/** Secrets, per plugin, key and owner; one write at a time per entry (pi-ai's `CredentialStore.modify` semantics). */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Vault</span> = <span class="tk-f">local</span>(<span class="tk-s">"p3.vault"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: {},
+	members: {
+		read: <span class="tk-f">method</span>(<span class="tk-t">VaultKey</span>, <span class="tk-k">unknown</span>()),
+		<span class="tk-c">/** Read, change and write one entry under its lock; the function runs on the server (a refresh happens once). */</span>
+		modify: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ key: <span class="tk-t">VaultKey</span>, change: <span class="tk-f">str</span>() }), <span class="tk-k">unknown</span>()),  <span class="tk-c">// `change`: a registered changer, see below</span>
+	},
+});
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">VaultKey</span> = <span class="tk-f">obj</span>({ plugin: <span class="tk-f">str</span>(), key: <span class="tk-f">str</span>(), owner: <span class="tk-f">union</span>([<span class="tk-f">obj</span>({ user: <span class="tk-f">str</span>() }), <span class="tk-f">obj</span>({ instance: <span class="tk-f">lit</span>(<span class="tk-k">true</span>) })]) });
+
+<span class="tk-c">/**
+ * A selector: for a session, its bindings (include) or the resources it allows (restrict), live. Contributed by
+ * plugins; composed by core.
+ */</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">Selector</span> =
+	| { <span class="tk-k">readonly</span> mode: <span class="tk-s">"include"</span>; <span class="tk-f">select</span>(session: <span class="tk-t">SessionRef</span>, self: <span class="tk-t">Self</span>): <span class="tk-t">Watchable</span>&lt;<span class="tk-k">readonly</span> <span class="tk-t">Binding</span>[]&gt; }
+	| { <span class="tk-k">readonly</span> mode: <span class="tk-s">"restrict"</span>; <span class="tk-f">select</span>(session: <span class="tk-t">SessionRef</span>, self: <span class="tk-t">Self</span>): <span class="tk-t">Watchable</span>&lt;<span class="tk-k">readonly</span> <span class="tk-t">ResourceRef</span>[]&gt; };
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Selectors</span> = <span class="tk-f">defineRegistry</span>&lt;<span class="tk-t">Selector</span>, <span class="tk-k">readonly</span> <span class="tk-t">Selector</span>[]&gt;(<span class="tk-s">"p3.selectors"</span>, { version: <span class="tk-n">1</span> });
+
+<span class="tk-c">/** The composed selection of every session: a keyed member, one entry per session (pinned with `at(session)`). */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Selection</span> = <span class="tk-f">local</span>(<span class="tk-s">"p3.selection"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: {},
+	members: { bindings: <span class="tk-f">keyed</span>(<span class="tk-f">arr</span>(<span class="tk-t">Binding</span>)) },
+});</code></pre>
+<p>Core&#39;s selection object, on the server:</p>
+<pre><code><span class="tk-c">// plugins/selection/server.ts (built-in)</span>
+host.<span class="tk-f">serve</span>(<span class="tk-t">Selection</span>, (_params, self) =&gt; {
+	<span class="tk-k">const</span> selectors = self.<span class="tk-f">registry</span>(<span class="tk-t">Selectors</span>);
+	<span class="tk-k">const</span> sessions = self.<span class="tk-f">get</span>(<span class="tk-t">SessionCatalog</span>, {});
+	<span class="tk-k">const</span> bindings = self.<span class="tk-f">state</span>(<span class="tk-t">SelectionDoc</span>);           <span class="tk-c">// keyed by session id, in memory: recomputed at start</span>
+	self.<span class="tk-f">on</span>(sessions.ids, <span class="tk-k">async</span> ({ value: ids }, ctx) =&gt; {
+		<span class="tk-k">for</span> (<span class="tk-k">const</span> id <span class="tk-k">of</span> ids) <span class="tk-k">await</span> <span class="tk-f">recompute</span>(id, selectors.value, bindings, ctx);
+	});
+	<span class="tk-c">// …and again whenever any selector's watchable for a session changes (one routine per session, elided)</span>
+	<span class="tk-k">return</span> { bindings };
+});
+
+<span class="tk-c">/** Union of the includes, minus what any restrict leaves out; nothing until every selector answered (fail closed). */</span>
+<span class="tk-k">function</span> <span class="tk-f">compose</span>(includes: <span class="tk-k">readonly</span> (<span class="tk-k">readonly</span> <span class="tk-t">Binding</span>[])[], restricts: <span class="tk-k">readonly</span> (<span class="tk-k">readonly</span> <span class="tk-t">ResourceRef</span>[])[]): <span class="tk-t">Binding</span>[] {
+	<span class="tk-k">const</span> allowed = (ref: <span class="tk-t">ResourceRef</span>) =&gt; restricts.<span class="tk-f">every</span>((list) =&gt; list.<span class="tk-f">some</span>((each) =&gt; <span class="tk-f">same</span>(each, ref)));
+	<span class="tk-k">return</span> <span class="tk-f">dedupe</span>(includes.<span class="tk-f">flat</span>()).<span class="tk-f">filter</span>((binding) =&gt; <span class="tk-f">allowed</span>(binding.resource));
+}</code></pre>
+<p>How a kind&#39;s server view uses it: the worker&#39;s principal names the session, the factory pins that session&#39;s
+bindings and keeps those of its own kind.</p>
+<pre><code><span class="tk-c">// @p3/app/v1/server: a helper every kind uses</span>
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">bindingsOf</span>(self: <span class="tk-t">Self</span>, principal: <span class="tk-t">P3Principal</span>, kind: string): <span class="tk-t">Watchable</span>&lt;<span class="tk-k">readonly</span> <span class="tk-t">Binding</span>[]&gt; {
+	<span class="tk-k">if</span> (principal.kind !== <span class="tk-s">"worker"</span>) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"session workers only"</span>);
+	<span class="tk-k">const</span> selection = self.<span class="tk-f">get</span>(<span class="tk-t">Selection</span>, {});
+	<span class="tk-k">const</span> mine = selection.bindings.<span class="tk-f">at</span>(principal.session);
+	<span class="tk-k">return</span> self.<span class="tk-f">derive</span>([mine], ([all]) =&gt; all.<span class="tk-f">filter</span>((binding) =&gt; binding.resource.kind === kind));
+}</code></pre>
+</section>
+
+<section class="chapter" id="models"><header class="opener"><div class="numeral">II</div><h2>Model Providers</h2><p class="lede">Pushed credentials: the worker streams from the provider itself.</p></header>
+<pre><code><span class="tk-c">// plugins/models/contract.ts</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> MODELS = <span class="tk-s">"p3.models"</span>;
+
+<span class="tk-c">/** One provider as a session's worker may use it: its models and the request auth, refreshed by the server. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">ProviderForSession</span> = <span class="tk-f">obj</span>({
+	id: <span class="tk-f">str</span>(), label: <span class="tk-f">str</span>(), api: <span class="tk-f">str</span>(),                         <span class="tk-c">// pi-ai api id: "anthropic", "openai-responses"</span>
+	models: <span class="tk-f">arr</span>(<span class="tk-k">unknown</span>()),                                       <span class="tk-c">// pi-ai ProviderModel[] from the catalog</span>
+	auth: <span class="tk-f">obj</span>({ apiKey: <span class="tk-f">opt</span>(<span class="tk-f">str</span>()), headers: <span class="tk-f">opt</span>(<span class="tk-f">map</span>(<span class="tk-f">str</span>())), baseUrl: <span class="tk-f">opt</span>(<span class="tk-f">str</span>()), env: <span class="tk-f">opt</span>(<span class="tk-f">map</span>(<span class="tk-f">str</span>())), expires: <span class="tk-f">opt</span>(<span class="tk-f">num</span>()) }),
+});
+
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">SessionModels</span> = <span class="tk-f">remote</span>(<span class="tk-s">"p3.models.session"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: {},
+	hostAddress: () =&gt; <span class="tk-t">Server</span>(),
+	variants: { worker: { state: { providers: <span class="tk-f">arr</span>(<span class="tk-t">ProviderForSession</span>) }, methods: {} } },
+});</code></pre>
+<pre><code><span class="tk-c">// plugins/models/server.ts</span>
+<span class="tk-k">const</span> <span class="tk-t">Providers</span> = <span class="tk-f">defineTable</span>(<span class="tk-s">"p3.models.providers"</span>, {
+	version: <span class="tk-n">1</span>,
+	columns: { id: <span class="tk-f">str</span>(), label: <span class="tk-f">str</span>(), api: <span class="tk-f">str</span>(), owner: <span class="tk-f">json</span>(<span class="tk-t">Owner</span>, { version: <span class="tk-n">1</span> }) },
+	key: [<span class="tk-s">"id"</span>],
+});
+
+host.<span class="tk-f">serve</span>(<span class="tk-t">ModelStore</span>, (_params, self) =&gt; {            <span class="tk-c">// host-lifetime: definitions, catalogs, auth refresh</span>
+	<span class="tk-k">const</span> providers = self.<span class="tk-f">table</span>(<span class="tk-t">Providers</span>);
+	<span class="tk-k">const</span> vault = self.<span class="tk-f">get</span>(<span class="tk-t">Vault</span>, {});
+	<span class="tk-k">return</span> {
+		<span class="tk-c">/** pi-ai request auth for one binding: the right login's credential, refreshed once if it expires soon. */</span>
+		authFor: <span class="tk-k">async</span> ({ binding, session }, ctx) =&gt; <span class="tk-f">resolveAuth</span>(binding, session, vault, ctx),   <span class="tk-c">// pi-ai OAuthAuth.refresh / ApiKeyAuth.resolve</span>
+		catalog: <span class="tk-k">async</span> ({ id }, ctx) =&gt; <span class="tk-f">catalogOf</span>(id, ctx),
+		<span class="tk-c">// add, remove, … (the sheet's methods)</span>
+	};
+});
+
+host.<span class="tk-f">serve</span>(<span class="tk-t">SessionModels</span>, (_params, principal, self) =&gt; {
+	<span class="tk-k">const</span> mine = <span class="tk-f">bindingsOf</span>(self, principal, MODELS);
+	<span class="tk-k">const</span> store = self.<span class="tk-f">get</span>(<span class="tk-t">ModelStore</span>, {});
+	<span class="tk-k">const</span> providers = self.<span class="tk-f">state</span>(<span class="tk-t">Pushed</span>);                        <span class="tk-c">// in memory: what the worker gets</span>
+	self.<span class="tk-f">on</span>(mine, <span class="tk-k">async</span> ({ value: bindings }, ctx) =&gt; {
+		<span class="tk-k">for</span> (;;) {
+			<span class="tk-k">const</span> pushed = <span class="tk-k">await</span> <span class="tk-t">Promise</span>.<span class="tk-f">all</span>(bindings.<span class="tk-f">map</span>(<span class="tk-k">async</span> (binding) =&gt; ({
+				...(<span class="tk-k">await</span> store.<span class="tk-f">describe</span>({ id: binding.resource.id }, ctx)),
+				auth: <span class="tk-k">await</span> store.<span class="tk-f">authFor</span>({ binding, session: <span class="tk-f">sessionOf</span>(principal) }, ctx),
+			})));
+			<span class="tk-k">await</span> providers.<span class="tk-f">change</span>((draft) =&gt; { draft.list = pushed; }, ctx);
+			<span class="tk-k">await</span> <span class="tk-f">sleep</span>(<span class="tk-f">untilFirstExpiry</span>(pushed) - <span class="tk-n">60_000</span>, ctx);   <span class="tk-c">// refresh a minute before the first expiry</span>
+		}
+	});
+	<span class="tk-k">return</span> { variant: <span class="tk-s">"worker"</span>, members: { providers: self.<span class="tk-f">derive</span>([providers], ([p]) =&gt; p.list) } };
+});</code></pre>
+<pre><code><span class="tk-c">// plugins/models/worker.ts</span>
+host.<span class="tk-f">serve</span>(<span class="tk-t">ModelsInSession</span>, (_params, self) =&gt; {
+	<span class="tk-k">const</span> session = self.<span class="tk-f">get</span>(<span class="tk-t">SessionModels</span>, {});
+	<span class="tk-k">const</span> contributed = self.<span class="tk-f">writable</span>&lt;<span class="tk-k">readonly</span> <span class="tk-t">Provider</span>[]&gt;([]);
+	self.<span class="tk-f">contribute</span>(<span class="tk-t">ModelProviders</span>, contributed);                <span class="tk-c">// the harness composes pi-ai Models from these</span>
+	self.<span class="tk-f">on</span>(session.providers, ({ value }) =&gt; {
+		contributed.<span class="tk-f">set</span>(value.<span class="tk-f">map</span>((pushed) =&gt; <span class="tk-f">createProvider</span>({
+			id: pushed.id, name: pushed.label, models: pushed.models,
+			api: <span class="tk-f">streamsFor</span>(pushed.api),                         <span class="tk-c">// pi-ai's implementation for that API</span>
+			auth: { apiKey: { name: pushed.label, resolve: <span class="tk-k">async</span> () =&gt; {
+				<span class="tk-k">const</span> current = session.providers.value.<span class="tk-f">find</span>((p) =&gt; p.id === pushed.id)?.auth;
+				<span class="tk-k">return</span> current &amp;&amp; { auth: current, source: <span class="tk-s">"p3"</span> };       <span class="tk-c">// always the latest push</span>
+			} } },
+		})));
+	});
+	<span class="tk-k">return</span> {};
+});</code></pre>
+</section>
+
+<section class="chapter" id="mcp"><header class="opener"><div class="numeral">III</div><h2>MCP Servers</h2><p class="lede">Server-run methods: processes and logins stay on the server; the worker sees tools and calls them.</p></header>
+<pre><code><span class="tk-c">// plugins/mcp/contract.ts</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> MCP = <span class="tk-s">"p3.mcp"</span>;
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Tool</span> = <span class="tk-f">obj</span>({ server: <span class="tk-f">str</span>(), name: <span class="tk-f">str</span>(), description: <span class="tk-f">str</span>(), schema: <span class="tk-k">unknown</span>() });
+
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">SessionMcp</span> = <span class="tk-f">remote</span>(<span class="tk-s">"p3.mcp.session"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: {},
+	hostAddress: () =&gt; <span class="tk-t">Server</span>(),
+	variants: {
+		worker: {
+			state: { tools: <span class="tk-f">arr</span>(<span class="tk-t">Tool</span>) },
+			methods: { call: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ server: <span class="tk-f">str</span>(), tool: <span class="tk-f">str</span>(), args: <span class="tk-k">unknown</span>() }), <span class="tk-k">unknown</span>()) },
+		},
+	},
+});</code></pre>
+<pre><code><span class="tk-c">// plugins/mcp/server.ts</span>
+<span class="tk-k">const</span> <span class="tk-t">Servers</span> = <span class="tk-f">defineTable</span>(<span class="tk-s">"p3.mcp.servers"</span>, {              <span class="tk-c">// definitions: one row per server resource</span>
+	version: <span class="tk-n">1</span>,
+	columns: {
+		id: <span class="tk-f">str</span>(), label: <span class="tk-f">str</span>(), owner: <span class="tk-f">json</span>(<span class="tk-t">Owner</span>, { version: <span class="tk-n">1</span> }),
+		<span class="tk-c">// http: an address and a login; stdio: a program on the server machine (admin only)</span>
+		transport: <span class="tk-f">json</span>(<span class="tk-f">union</span>([<span class="tk-f">obj</span>({ kind: <span class="tk-f">lit</span>(<span class="tk-s">"http"</span>), url: <span class="tk-f">str</span>() }), <span class="tk-f">obj</span>({ kind: <span class="tk-f">lit</span>(<span class="tk-s">"stdio"</span>), command: <span class="tk-f">str</span>(), args: <span class="tk-f">arr</span>(<span class="tk-f">str</span>()) })]), { version: <span class="tk-n">1</span> }),
+	},
+	key: [<span class="tk-s">"id"</span>],
+});
+<span class="tk-k">const</span> <span class="tk-t">Checkouts</span> = <span class="tk-f">defineTable</span>(<span class="tk-s">"p3.mcp.checkouts"</span>, {          <span class="tk-c">// a checkout's .pi/mcp.json on an env: enabled per checkout</span>
+	version: <span class="tk-n">1</span>,
+	columns: { env: <span class="tk-f">str</span>(), dir: <span class="tk-f">str</span>(), server: <span class="tk-f">str</span>(), enabled: <span class="tk-f">bool</span>(), config: <span class="tk-f">json</span>(<span class="tk-k">unknown</span>(), { version: <span class="tk-n">1</span> }) },
+	key: [<span class="tk-s">"env"</span>, <span class="tk-s">"dir"</span>, <span class="tk-s">"server"</span>],
+});
+
+host.<span class="tk-f">serve</span>(<span class="tk-t">SessionMcp</span>, (_params, principal, self) =&gt; {
+	<span class="tk-k">const</span> mine = <span class="tk-f">bindingsOf</span>(self, principal, MCP);
+	<span class="tk-k">const</span> clients = self.<span class="tk-f">get</span>(<span class="tk-t">McpClients</span>, {});                  <span class="tk-c">// the supervisor: one client per (server, login), on the server</span>
+	<span class="tk-k">const</span> tools = self.<span class="tk-f">derive</span>([mine, clients.tools], ([bindings, all]) =&gt; <span class="tk-f">toolsOf</span>(bindings, all));
+	<span class="tk-k">return</span> {
+		variant: <span class="tk-s">"worker"</span>,
+		members: {
+			tools,
+			call: <span class="tk-k">async</span> ({ server, tool, args }, ctx) =&gt; {
+				<span class="tk-c">// The selection is the authority: a binding removed a moment ago is refused here.</span>
+				<span class="tk-k">const</span> binding = mine.value.<span class="tk-f">find</span>((b) =&gt; b.resource.id === server);
+				<span class="tk-k">if</span> (binding === <span class="tk-k">undefined</span>) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">`${server} is not in this session`</span>);
+				<span class="tk-k">return</span> clients.<span class="tk-f">call</span>({ binding, session: <span class="tk-f">sessionOf</span>(principal), tool, args }, ctx);
+			},
+		},
+	};
+});</code></pre>
+<pre><code><span class="tk-c">// plugins/mcp/worker.ts</span>
+host.<span class="tk-f">serve</span>(<span class="tk-t">McpInSession</span>, (_params, self) =&gt; {
+	<span class="tk-k">const</span> session = self.<span class="tk-f">get</span>(<span class="tk-t">SessionMcp</span>, {});
+	<span class="tk-k">const</span> extension = self.<span class="tk-f">writable</span>(<span class="tk-f">mcpExtension</span>([], session));
+	self.<span class="tk-f">contribute</span>(<span class="tk-t">Extensions</span>, extension);                      <span class="tk-c">// one Durable extension with every MCP tool of the session</span>
+	self.<span class="tk-f">on</span>(session.tools, ({ value }) =&gt; extension.<span class="tk-f">set</span>(<span class="tk-f">mcpExtension</span>(value, session)));
+	<span class="tk-k">return</span> {};
+});
+
+<span class="tk-c">/** Durable tools that call the server: `execute` is `session.call`, under the tool's Durable context. */</span>
+<span class="tk-k">function</span> <span class="tk-f">mcpExtension</span>(tools: <span class="tk-k">readonly</span> <span class="tk-t">Tool</span>[], session: <span class="tk-t">Held</span>&lt;<span class="tk-k">typeof</span> <span class="tk-t">SessionMcp</span>&gt;): <span class="tk-t">Extension</span> {
+	<span class="tk-k">return</span> <span class="tk-f">defineExtension</span>({
+		name: <span class="tk-s">"mcp"</span>,
+		tools: tools.<span class="tk-f">map</span>((tool) =&gt; <span class="tk-f">defineTool</span>({
+			name: <span class="tk-s">`${tool.server}_${tool.name}`</span>, description: tool.description, parameters: tool.schema,
+			execute: (args, api) =&gt; <span class="tk-f">chord</span>((ctx) =&gt; session.<span class="tk-f">call</span>({ server: tool.server, tool: tool.name, args }, ctx), api.context),
+		})),
+	});
+}</code></pre>
+<p>A checkout&#39;s MCP servers run in its env: their client in the supervisor connects through that env&#39;s machine (the
+machines kind below), and they are bindings only when the checkout&#39;s row is <code>enabled</code> and the env is in the session.</p>
+</section>
+
+<section class="chapter" id="machines"><header class="opener"><div class="numeral">IV</div><h2>Machines</h2><p class="lede">Where tools run: the local machine, an SSH host, a sandbox.</p></header>
+<pre><code><span class="tk-c">// plugins/machines/contract.ts</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> MACHINES = <span class="tk-s">"p3.machines"</span>;
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">MachineForSession</span> = <span class="tk-f">obj</span>({ id: <span class="tk-f">str</span>(), label: <span class="tk-f">str</span>(), kind: <span class="tk-f">oneOf</span>(<span class="tk-s">"local"</span>, <span class="tk-s">"ssh"</span>, <span class="tk-s">"sandbox"</span>), home: <span class="tk-f">str</span>() });
+
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">SessionMachines</span> = <span class="tk-f">remote</span>(<span class="tk-s">"p3.machines.session"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: {},
+	hostAddress: () =&gt; <span class="tk-t">Server</span>(),
+	variants: {
+		worker: {
+			state: { machines: <span class="tk-f">arr</span>(<span class="tk-t">MachineForSession</span>) },
+			methods: {
+				<span class="tk-c">/** Opens a channel to a machine for this session's tools: an exec/file stream the server relays (keys stay here). */</span>
+				open: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ machine: <span class="tk-f">str</span>() }), <span class="tk-f">obj</span>({ channel: <span class="tk-f">str</span>() })),
+			},
+		},
+	},
+});</code></pre>
+<pre><code><span class="tk-c">// plugins/machines/worker.ts</span>
+host.<span class="tk-f">serve</span>(<span class="tk-t">MachinesInSession</span>, (_params, self) =&gt; {
+	<span class="tk-k">const</span> session = self.<span class="tk-f">get</span>(<span class="tk-t">SessionMachines</span>, {});
+	<span class="tk-k">const</span> environments = self.writable&lt;<span class="tk-t">ReadonlyMap</span>&lt;string, <span class="tk-t">ExecutionEnv</span>&gt;&gt;(<span class="tk-k">new</span> <span class="tk-t">Map</span>());
+	self.<span class="tk-f">contribute</span>(<span class="tk-t">Environments</span>, environments);                <span class="tk-c">// the harness's env lookup: a conversation's cwd names a machine</span>
+	self.<span class="tk-f">on</span>(session.machines, ({ value }) =&gt; environments.<span class="tk-f">set</span>(<span class="tk-k">new</span> <span class="tk-t">Map</span>(value.<span class="tk-f">map</span>((m) =&gt; [m.id, <span class="tk-f">remoteEnv</span>(m, session)]))));
+	<span class="tk-k">return</span> {};
+});</code></pre>
+<p>The local machine (the laptop p3 runs on, single user) is a machine with login <code>none</code>. An SSH machine&#39;s key stays in the
+vault: the server holds the connection and relays the channel; the worker never sees the key. (Whether tool output
+should stream directly from the env to the worker for speed is a measurement for later; the contract does not change.)</p>
+</section>
+
+<section class="chapter" id="proxy"><header class="opener"><div class="numeral">V</div><h2>Search and Mail</h2><p class="lede">Two more server-run kinds, to show how small a kind is.</p></header>
+<pre><code><span class="tk-c">// plugins/web-search/server.ts: an instance key in the vault, a tool for sessions that have it</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> SEARCH = <span class="tk-s">"p3.search"</span>;
+host.<span class="tk-f">serve</span>(<span class="tk-t">SessionSearch</span>, (_params, principal, self) =&gt; {
+	<span class="tk-k">const</span> mine = <span class="tk-f">bindingsOf</span>(self, principal, SEARCH);
+	<span class="tk-k">const</span> vault = self.<span class="tk-f">get</span>(<span class="tk-t">Vault</span>, {});
+	<span class="tk-k">return</span> { variant: <span class="tk-s">"worker"</span>, members: {
+		available: self.<span class="tk-f">derive</span>([mine], ([b]) =&gt; b.length &gt; <span class="tk-n">0</span>),
+		search: <span class="tk-k">async</span> ({ query }, ctx) =&gt; {
+			<span class="tk-k">if</span> (mine.value.length === <span class="tk-n">0</span>) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"search is not in this session"</span>);
+			<span class="tk-k">const</span> key = <span class="tk-k">await</span> vault.<span class="tk-f">read</span>({ plugin: SEARCH, key: <span class="tk-s">"brave"</span>, owner: { instance: <span class="tk-k">true</span> } }, ctx);
+			<span class="tk-k">return</span> <span class="tk-f">brave</span>(query, key <span class="tk-k">as</span> string, ctx);
+		},
+	} };
+});
+<span class="tk-c">// plugins/web-search/worker.ts: one tool, present while `available`</span></code></pre>
+<pre><code><span class="tk-c">// plugins/gmail/server.ts: a user's Google login, server-run reads and drafts</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> GMAIL = <span class="tk-s">"p3.gmail"</span>;
+host.<span class="tk-f">serve</span>(<span class="tk-t">SessionMail</span>, (_params, principal, self) =&gt; {
+	<span class="tk-k">const</span> mine = <span class="tk-f">bindingsOf</span>(self, principal, GMAIL);
+	<span class="tk-k">const</span> accounts = self.<span class="tk-f">get</span>(<span class="tk-t">GoogleAccounts</span>, {});              <span class="tk-c">// the Google login plugin's refresh, behind the vault</span>
+	<span class="tk-k">return</span> { variant: <span class="tk-s">"worker"</span>, members: {
+		boxes: self.<span class="tk-f">derive</span>([mine], ([b]) =&gt; b.<span class="tk-f">map</span>((x) =&gt; x.resource.id)),
+		list: <span class="tk-k">async</span> ({ box, query }, ctx) =&gt; <span class="tk-f">gmail</span>(<span class="tk-k">await</span> accounts.<span class="tk-f">tokenFor</span>(<span class="tk-f">bindingFor</span>(mine, box), ctx)).<span class="tk-f">list</span>(query, ctx),
+		draft: <span class="tk-k">async</span> ({ box, to, subject, body }, ctx) =&gt; <span class="tk-f">gmail</span>(<span class="tk-k">await</span> accounts.<span class="tk-f">tokenFor</span>(<span class="tk-f">bindingFor</span>(mine, box), ctx)).<span class="tk-f">draft</span>({ to, subject, body }, ctx),
+	} };
+});</code></pre>
+</section>
+
+<section class="chapter" id="selectors"><header class="opener"><div class="numeral">VI</div><h2>Selectors</h2><p class="lede">Who decides what a session gets: three small plugins.</p></header>
+<pre><code><span class="tk-c">// plugins/defaults/server.ts: single user, no projects: my resources marked "default" go into every session of mine</span>
+self.<span class="tk-f">contribute</span>(<span class="tk-t">Selectors</span>, {
+	mode: <span class="tk-s">"include"</span>,
+	select: (session, self) =&gt; {
+		<span class="tk-k">const</span> defaults = self.<span class="tk-f">get</span>(<span class="tk-t">MyDefaults</span>, {});              <span class="tk-c">// a table: resources the user marked default</span>
+		<span class="tk-k">return</span> self.<span class="tk-f">derive</span>([defaults.byUser], ([all]) =&gt; (all[session.owner] ?? []).<span class="tk-f">map</span>((resource) =&gt; ({
+			resource, login: { kind: <span class="tk-s">"own"</span> }, by: <span class="tk-s">"defaults"</span>,
+		})));
+	},
+});
+
+<span class="tk-c">// plugins/projects/server.ts: a session in a project gets the project's resources, and only those</span>
+self.<span class="tk-f">contribute</span>(<span class="tk-t">Selectors</span>, { mode: <span class="tk-s">"include"</span>, select: (session, self) =&gt; <span class="tk-f">projectBindings</span>(session, self) });
+self.<span class="tk-f">contribute</span>(<span class="tk-t">Selectors</span>, { mode: <span class="tk-s">"restrict"</span>, select: (session, self) =&gt; <span class="tk-f">projectResourcesOrEverything</span>(session, self) });
+
+<span class="tk-c">// plugins/lock-down/server.ts: a session can be narrowed to a chosen subset</span>
+self.<span class="tk-f">contribute</span>(<span class="tk-t">Selectors</span>, { mode: <span class="tk-s">"restrict"</span>, select: (session, self) =&gt; <span class="tk-f">chosenOrEverything</span>(session, self) });</code></pre>
+<p>(A restrict for a session it does not concern allows everything: <code>projectResourcesOrEverything</code> returns every resource
+for a session outside any project. A contributor contributes one value per registry, so a plugin with both an include
+and a restrict contributes one entry holding both; shown as two for clarity.)</p>
+<figure class="fig anim"><svg viewBox="0 0 720 390" width="100%" role="img" aria-label="Colin removes his MCP server from the project while a session uses it." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f1m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f1a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f1b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="84.8" y1="52" x2="84.8" y2="382" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="23" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="84.8" y="27" font-size="11" fill="#2a2723" text-anchor="middle">page</text><text x="84.8" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">Colin</text><line x1="222.4" y1="52" x2="222.4" y2="382" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="160.6" y="10" width="123.6" height="42" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="222.4" y="27" font-size="11" fill="#2a2723" text-anchor="middle">projects plugin</text><text x="222.4" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">server, facts</text><line x1="360" y1="52" x2="360" y2="382" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="298.2" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="360" y="27" font-size="11" fill="#2a2723" text-anchor="middle">Selection</text><text x="360" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">server, core</text><line x1="497.6" y1="52" x2="497.6" y2="382" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="435.8" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="497.6" y="27" font-size="11" fill="#2a2723" text-anchor="middle">SessionMcp</text><text x="497.6" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">server, per session</text><line x1="635.2" y1="52" x2="635.2" y2="382" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="573.4" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="635.2" y="27" font-size="11" fill="#2a2723" text-anchor="middle">session worker</text><text x="635.2" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">Durable</text><g class="step edge" style="--i:1"><line x1="84.8" y1="78" x2="219.4" y2="78" stroke="#7b7468" marker-end="url(#f1m)"/><text x="153.6" y="72" font-size="10" fill="#2a2723" text-anchor="middle">remove { project pi, resource mcp:radius }</text></g><g class="step edge" style="--i:2"><path d="M222.4 104 h34 v14 h-32" fill="none" stroke="#b4472f" marker-end="url(#f1a)"/><text x="264.4" y="114" font-size="10" fill="#b4472f" text-anchor="start">commit the fact</text></g><g class="step edge" style="--i:3"><line x1="222.4" y1="150" x2="357" y2="150" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f1m)"/><text x="291.2" y="144" font-size="10" fill="#2a2723" text-anchor="middle">its include selector's watchable changes</text></g><g class="step edge" style="--i:4"><path d="M360 176 h34 v14 h-32" fill="none" stroke="#b4472f" marker-end="url(#f1a)"/><text x="402" y="186" font-size="10" fill="#b4472f" text-anchor="start">recompute S1: mcp:radius gone</text></g><g class="step edge" style="--i:5"><line x1="360" y1="222" x2="494.6" y2="222" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f1m)"/><text x="428.8" y="216" font-size="10" fill="#2a2723" text-anchor="middle">bindings.at(S1) changes</text></g><g class="step edge" style="--i:6"><line x1="497.6" y1="254" x2="632.2" y2="254" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f1m)"/><text x="566.4" y="248" font-size="10" fill="#2a2723" text-anchor="middle">state: tools without radius_*</text></g><g class="step edge" style="--i:7"><path d="M635.2 280 h-34 v14 h32" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><text x="593.2" y="290" font-size="10" fill="#2a2723" text-anchor="end">extension.set: the next phase has no radius tools</text></g><g class="step edge" style="--i:8"><line x1="635.2" y1="326" x2="500.6" y2="326" stroke="#7b7468" marker-end="url(#f1m)"/><text x="566.4" y="320" font-size="10" fill="#2a2723" text-anchor="middle">(a call already sent) call radius_search</text></g><g class="step edge" style="--i:9"><line x1="497.6" y1="358" x2="632.2" y2="358" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f1m)"/><text x="566.4" y="352" font-size="10" fill="#2a2723" text-anchor="middle">refused: radius is not in this session</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 1.</span> Colin removes his MCP server from the project while a session uses it.</figcaption></figure>
+</section>
+
+<section class="chapter epilogue" id="what-multi-user-adds"><header class="opener"><div class="numeral">∴</div><h2>What Multi-User Adds</h2><p class="lede">Single user needs everything above and nothing more.</p></header>
+<p class="dropcap">Single user: one user, the <code>defaults</code> selector, logins <code>none</code> or <code>own</code>, every resource the user&#39;s. Everything above
+works as written.</p>
+<p>Multi-user adds, without changing the shapes: lent logins (<code>login: { kind: &quot;lent&quot;, account }</code>, resolved by <code>authFor</code> to
+the bringer&#39;s account); global resources (owner <code>{ instance: true }</code>, their secrets the instance&#39;s); a policy plugin
+that restricts (a selector in restrict mode: what the session&#39;s people may use) and decides who may bring what (the
+projects plugin&#39;s methods ask it). The stress test&#39;s other multi-user findings stay their own design track: execution on
+the server machine (server-run stdio servers, credential commands, checkout plugins), cloud credentials read from disk
+(Bedrock, Vertex), SSH delegation, revocation (a reference keeps its last values: pushed credentials must expire or be
+withdrawn by the server, never kept by a failed view).</p>
+</section>
+
+<p class="colophon">p3 resources in code · sketch, first edition · 2026-11-08</p>
+</div></div>
+<script>(function activate(root) {
+	const replay = (f) => {
+		f.classList.remove("play");
+		void f.getBoundingClientRect();
+		f.classList.add("play");
+	};
+	const io = new IntersectionObserver(
+		(es) => {
+			for (const e of es)
+				if (e.isIntersecting) {
+					e.target.classList.add("play");
+					io.unobserve(e.target);
+				}
+		},
+		{ threshold: 0.3 },
+	);
+	root.querySelectorAll(".anim:not(.armed)").forEach((f) => {
+		f.classList.add("armed");
+		io.observe(f);
+		const b = f.querySelector(".replay");
+		if (b) b.onclick = () => replay(f);
+	});
+	root.querySelectorAll(".steps:not(.js)").forEach((s) => {
+		s.classList.add("js");
+		const ps = [...s.querySelectorAll(":scope>.step-panel")];
+		let i = 0;
+		const c = s.querySelector(".count"),
+			p = s.querySelector(".prev"),
+			n = s.querySelector(".next");
+		const show = () => {
+			ps.forEach((x, j) => x.classList.toggle("on", j === i));
+			c.textContent = `${i + 1} / ${ps.length}`;
+			p.disabled = i === 0;
+			n.disabled = i === ps.length - 1;
+			ps[i].querySelectorAll(".anim").forEach(replay);
+		};
+		p.onclick = () => {
+			i--;
+			show();
+		};
+		n.onclick = () => {
+			i++;
+			show();
+		};
+		show();
+	});
+})(document)</script>
+</body></html>

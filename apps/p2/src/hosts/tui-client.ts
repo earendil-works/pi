@@ -1,9 +1,9 @@
 // Trusted launcher transport. Downloaded code sees opaque chord frames, not the socket, URL or sign-in cookie.
 import { createHash } from "node:crypto";
 import type { ProgramStatus, Terminal } from "@earendil-works/pi-tui";
-import { WebSocket } from "ws";
+import { clientLinkPath } from "../runtime/stale-page.ts";
 import type { TuiLocalPreferences } from "../tui/preferences.ts";
-import { connectionHeaders, type TuiCredentials } from "./tui-config.ts";
+import type { TuiCredentials } from "./tui-config.ts";
 import { MAX_TERMINAL_FRAME } from "./tui-filter.ts";
 import {
 	type Grant,
@@ -19,9 +19,9 @@ import { type MousePolicy, TerminalModes } from "./tui-modes.ts";
 import { SelectionGesture } from "./tui-mouse.ts";
 import { MAX_TUI_BUNDLE, requireTuiNode, TuiSandbox } from "./tui-sandbox.ts";
 import { colorFgBgScheme, TerminalColorProbe } from "./tui-terminal-colors.ts";
+import { cookieTransport, MAX_LINK_FRAME, type TuiSocket, type TuiTransport } from "./tui-transport.ts";
 import { TrustedUi, visibleText } from "./tui-trusted-ui.ts";
 
-const MAX_LINK_FRAME = 4 * 1024 * 1024;
 /** How long after the launcher saw a selection gesture pi-tui's copy request is accepted. */
 const GESTURE_WINDOW_MS = 2000;
 /** The server no longer admits this sign-in (401/403): a revoked or reset share, an archived session, a logout. */
@@ -67,6 +67,8 @@ export async function startTuiClient(options: {
 	actions?: Readonly<Record<string, LauncherAction>>;
 	/** The visitor's mouse policy (launcher-only preference): which mouse modes worker output may enable. */
 	mouse?: MousePolicy;
+	/** Who the launcher was admitted as: the TUI starts with that role, so owner views hold before `Access` answers. */
+	role?: "owner" | "guest";
 	url: URL;
 	/** The visitor's validated local preferences (section 4.2) and their change feed; sent to every worker as data. */
 	preferences?: {
@@ -76,6 +78,8 @@ export async function startTuiClient(options: {
 	capabilities?: ReturnType<typeof launcherCapabilities>;
 	colorQueryMs?: number;
 	credentials?: TuiCredentials;
+	/** How requests reach the server; default: directly to `url` with `credentials`. */
+	transport?: TuiTransport;
 	reconnectMs?: number;
 	pollMs?: number;
 	onExit?: () => void;
@@ -84,11 +88,11 @@ export async function startTuiClient(options: {
 	onAccessEnded?: () => void;
 }): Promise<TuiClient> {
 	requireTuiNode();
-	const headers = connectionHeaders(options.url, options.credentials ?? {});
+	const transport = options.transport ?? cookieTransport(options.url, options.credentials ?? {});
 	let sandbox: TuiSandbox | undefined;
 	let preparing: TuiSandbox | undefined;
 	let closing: Promise<void> | undefined;
-	let socket: WebSocket | undefined;
+	let socket: TuiSocket | undefined;
 	let version = "";
 	let connected = false;
 	let closed = false;
@@ -128,7 +132,7 @@ export async function startTuiClient(options: {
 	let busy = false;
 	// After launcher-drawn UI: the worker's output was discarded, so restore its modes and ask for a full redraw.
 	ui.onClose = () => {
-		options.terminal.write(modes.restore());
+		options.terminal.write(modes.restore() + modes.keyboard(options.terminal.kittyProtocolActive === true));
 		sandbox?.post({ kind: "redraw" });
 	};
 	let kitty = options.terminal.kittyProtocolActive === true;
@@ -248,13 +252,15 @@ export async function startTuiClient(options: {
 		busy = true;
 		const grant = grants.create(name, "C", worker, target);
 		try {
-			const confirmed = await ui.confirm({
-				...consent,
-				facts: [
-					...(target ? [["Session", `${target.session} #${target.conversation}`] as const] : []),
-					...(consent.facts ?? []),
-				],
-			});
+			const confirmed =
+				consent.ask === false ||
+				(await ui.confirm({
+					...consent,
+					facts: [
+						...(target ? [["Session", `${target.session} #${target.conversation}`] as const] : []),
+						...(consent.facts ?? []),
+					],
+				}));
 			if (!confirmed || !grants.valid(grant.id, worker))
 				return respond({ ok: false, error: confirmed ? "cancelled" : "denied" });
 			const value = await action.run(message.payload, actionContext(grant, worker));
@@ -300,12 +306,8 @@ export async function startTuiClient(options: {
 	};
 	/** Confirms a refusal with the launcher's own fixed-origin request; a lying server can only end its own session. */
 	const verifyAccess = (): void => {
-		void fetch(new URL("/__p2_tui", options.url), {
-			method: "HEAD",
-			headers,
-			redirect: "error",
-			signal: AbortSignal.timeout(10_000),
-		})
+		void transport
+			.request("/__p2_tui", { method: "HEAD", signal: AbortSignal.timeout(10_000) })
 			.then((response) => {
 				if (response.status === 401 || response.status === 403) accessEnded();
 			})
@@ -316,7 +318,7 @@ export async function startTuiClient(options: {
 			fail("TUI link frame exceeds 4 MiB");
 			return;
 		}
-		if (socket?.readyState === WebSocket.OPEN) socket.send(data);
+		if (socket?.open) socket.send(data);
 		else {
 			pendingBytes += data.byteLength;
 			if (pendingBytes > MAX_LINK_FRAME) {
@@ -328,63 +330,51 @@ export async function startTuiClient(options: {
 	};
 	const connect = (attempt = 0): void => {
 		if (closed) return;
-		const url = new URL("/chord", options.url);
-		url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-		const current = new WebSocket(url, {
-			headers,
-			maxPayload: MAX_LINK_FRAME,
-			handshakeTimeout: 10_000,
-			followRedirects: false,
+		let opened = false;
+		const current: TuiSocket = transport.socket(clientLinkPath("tui"), {
+			open: () => {
+				if (closed || socket !== current) {
+					current.terminate();
+					return;
+				}
+				opened = true;
+				connected = true;
+				for (const data of pending.splice(0)) current.send(data);
+				pendingBytes = 0;
+				sandbox?.post({ kind: "connection", open: true });
+			},
+			message: (data, binary) => {
+				if (socket !== current || closed) return;
+				// Chord's links carry binary messages only.
+				if (!binary) {
+					current.terminate();
+					return;
+				}
+				sandbox?.post({ kind: "link", data: new Uint8Array(data.buffer, data.byteOffset, data.byteLength) });
+			},
+			refused: (status) => {
+				if (status === 401 || status === 403) verifyAccess();
+			},
+			close: () => {
+				if (closed || socket !== current) return;
+				connected = false;
+				sandbox?.post({ kind: "connection", open: false });
+				// The replacement link emits fresh hello/holds. Never replay stale connection frames.
+				pending = [];
+				pendingBytes = 0;
+				retry = setTimeout(
+					() => connect(opened ? 0 : attempt + 1),
+					Math.min(5000, (options.reconnectMs ?? 250) * 2 ** Math.min(attempt, 5)),
+				);
+			},
 		});
 		socket = current;
-		let opened = false;
-		current.on("open", () => {
-			if (closed || socket !== current) {
-				current.terminate();
-				return;
-			}
-			opened = true;
-			connected = true;
-			for (const data of pending.splice(0)) current.send(data);
-			pendingBytes = 0;
-			sandbox?.post({ kind: "connection", open: true });
-		});
-		current.on("message", (data, binary) => {
-			if (socket !== current || closed) return;
-			// Chord's links carry binary messages only.
-			if (!binary) {
-				current.terminate();
-				return;
-			}
-			const bytes = Buffer.isBuffer(data) ? data : Buffer.concat(data as Buffer[]);
-			sandbox?.post({ kind: "link", data: new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) });
-		});
-		current.on("error", () => {});
-		current.on("unexpected-response", (_request, response) => {
-			const status = response.statusCode;
-			response.resume();
-			current.terminate();
-			if (status === 401 || status === 403) verifyAccess();
-		});
-		current.on("close", () => {
-			if (closed || socket !== current) return;
-			connected = false;
-			sandbox?.post({ kind: "connection", open: false });
-			// The replacement link emits fresh hello/holds. Never replay stale connection frames.
-			pending = [];
-			pendingBytes = 0;
-			retry = setTimeout(
-				() => connect(opened ? 0 : attempt + 1),
-				Math.min(5000, (options.reconnectMs ?? 250) * 2 ** Math.min(attempt, 5)),
-			);
-		});
 	};
 	const load = (force: boolean): Promise<void> => {
 		if (closed) return Promise.resolve();
 		if (loading) return loading;
 		loading = (async () => {
-			const request = (path: string) =>
-				fetch(new URL(path, options.url), { headers, redirect: "error", signal: AbortSignal.timeout(10_000) });
+			const request = (path: string) => transport.request(path, { signal: AbortSignal.timeout(10_000) });
 			const manifest: unknown = JSON.parse(await readBounded(await request("/__p2_tui"), 8192));
 			if (
 				!manifest ||
@@ -409,6 +399,7 @@ export async function startTuiClient(options: {
 					origin: options.url.origin,
 					// The visitor's mouse policy decides whether pi-tui captures the mouse (wheel, app-owned selection).
 					mouse: (options.mouse ?? "off") !== "off",
+					...(options.role ? { role: options.role } : {}),
 				},
 				onFailure: (message) => {
 					if (sandbox === candidate) fail(message);
@@ -420,7 +411,8 @@ export async function startTuiClient(options: {
 						if (message.kind === "output" && "data" in message && typeof message.data === "string") {
 							// Launcher UI is up: worker IO is suspended; a full redraw replaces what is dropped here.
 							const output = modes.filter(message.data);
-							if (!ui.active && !paused) options.terminal.write(output);
+							if (!ui.active && !paused)
+								options.terminal.write(output + modes.keyboard(options.terminal.kittyProtocolActive === true));
 						} else if (message.kind === "keyContext" && "suspendPrivileged" in message)
 							// Rule 3: the worker may only suspend interception (e.g. Ctrl+G is search-next while searching).
 							suspendPrivileged = message.suspendPrivileged === true;
@@ -435,6 +427,9 @@ export async function startTuiClient(options: {
 							statusMessage(message as Record<string, unknown>);
 						else if (message.kind === "link" && "data" in message && message.data instanceof Uint8Array)
 							send(message.data);
+						// The worker's link closed on its own (e.g. Chord's heartbeat found the socket silent): drop the socket,
+						// so its close reconnects. No new authority: malformed frames already make the server end the link.
+						else if (message.kind === "linkClosed") socket?.terminate();
 						else if (message.kind === "exit") {
 							void close();
 							options.onExit?.();
@@ -523,6 +518,8 @@ export async function startTuiClient(options: {
 			kitty = !kitty;
 			postCapabilities(sandbox);
 		}
+		const keyboard = modes.keyboard(kitty);
+		if (keyboard) options.terminal.write(keyboard);
 		const key = suspendPrivileged ? undefined : privileged.match(data);
 		if (key) {
 			if (!key.release) void keyAction(key.id);

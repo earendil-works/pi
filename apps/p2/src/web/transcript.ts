@@ -1,5 +1,5 @@
 import type { JsonValue } from "@earendil-works/chord/json";
-import type { AssistantMessage, ImageContent, ToolResultMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, ImageContent, TextContent, ToolResultMessage } from "@earendil-works/pi-ai";
 import type {
 	AgentState,
 	CompactionFailure,
@@ -13,22 +13,26 @@ import type {
 	TranscriptView,
 } from "@earendil-works/pi-durable";
 
-type ArtifactState = { artifacts: ArtifactInfo[] };
-
-import { AGENT_MESSAGE_ENTRY, type AgentMessage, AgentMessageSchema, CONVERSATION_PREFIX } from "../runtime/entries.ts";
-import type { ArtifactInfo } from "../runtime/schemas.ts";
+import { type AgentMessage, agentMessage, peerMessage } from "../runtime/entries.ts";
+import { type ShownImage, shownImage } from "../runtime/entry-images.ts";
 
 type ConversationPeer = { id: string; title: string };
 
-import { compile } from "@earendil-works/pi-schema";
 import { type AssistantCost, cacheHitRate } from "../runtime/conversation-stats.ts";
-import { type LegacyMessage, legacyMessage, messageData, messageOf } from "../runtime/input.ts";
+import { type MessageData, messageData } from "../runtime/input.ts";
+import { fileReferences } from "../runtime/references.ts";
+import type { Author } from "../runtime/sender.ts";
 import { SHELL_ENTRY, shellData } from "../runtime/shell.ts";
-import type { Author } from "../runtime/speaker.ts";
+import { isInterruptedError } from "../runtime/tool-calls.ts";
 
 // Pure display model of a Durable view: tool calls are joined with their live
 // slot and result entry, so one card follows a call from request to result.
 export type ToolStatus = "pending" | "running" | "done" | "error" | "interrupted";
+
+/** A live slot's status as shown: a parked call (`sleeping`, `waiting`) is still busy, shown as running. */
+function shownStatus(status: "pending" | "running" | "sleeping" | "waiting"): ToolStatus {
+	return status === "sleeping" || status === "waiting" ? "running" : status;
+}
 export type ToolView = {
 	id: string;
 	name: string;
@@ -36,11 +40,16 @@ export type ToolView = {
 	status: ToolStatus;
 	output: string;
 	details?: JsonValue;
-	images: ImageContent[];
-	/** Calls this call made to other tools (code mode's `tools.<name>()`), in creation order; see `nestedCalls`. */
+	images: ShownImage[];
+	/**
+	 * Calls this call made to other tools, in creation order: Durable's live nested slots, or the last ones this browser
+	 * saw (see `nestedCalls`). The tool's contribution may give its own list from the result (`ToolActivity.nestedCalls`).
+	 */
 	calls?: readonly NestedCall[];
 	/** The result's recorded execution time. */
 	durationMs?: number;
+	/** When the call started, in ms: its result's time less its duration; absent until it has a result. */
+	at?: number;
 };
 /** One call a running tool made to another tool, as a status row. */
 export type NestedCall = {
@@ -65,10 +74,12 @@ export type Item =
 			peer?: Pick<ConversationPeer, "id" | "title">;
 			/** A subagent's message (its report, a question or a note), from the entry's data. */
 			agent?: Pick<AgentMessage, "from" | "intent">;
-			images: ImageContent[];
+			images: ShownImage[];
 			files: string[];
 			/** The entry this item shows; absent for queued items. */
 			entryId?: number;
+			/** When it was sent (its model message's time), in ms; absent for display-only entries. */
+			at?: number;
 			/** A display-only entry shown as a person's message (it never reached the model). */
 			chat?: boolean;
 			/** The message this one answers: shown as a quoted line that leads to it. */
@@ -98,7 +109,6 @@ export type Transcript = {
 	items: Item[];
 	/** More entries exist before the first item (`TranscriptStore.loadEarlier`). */
 	earlier: boolean;
-	artifacts: ArtifactInfo[];
 	busy: boolean;
 	working: boolean;
 	retry?: { at: number; error: string };
@@ -114,6 +124,12 @@ export type Transcript = {
 	agent: AgentState;
 };
 
+/** A queued subagent message as its queue row reads: who sent it and its text, without the model's sender block. */
+function queuedAgentText(kind: string, data: unknown): string | undefined {
+	const message = agentMessage(kind, data);
+	return message && `${message.from.name}: ${message.text}`;
+}
+
 function text(content: string | readonly { type: string; text?: string }[]): string {
 	return typeof content === "string"
 		? content
@@ -121,6 +137,11 @@ function text(content: string | readonly { type: string; text?: string }[]): str
 				.filter((part) => part.type === "text")
 				.map((part) => part.text ?? "")
 				.join("\n");
+}
+
+/** The images of a message's content as shown (references from the chat view, src/runtime/entry-images.ts). */
+function imagesOf(content: readonly (TextContent | ImageContent)[]): ShownImage[] {
+	return content.flatMap((part) => (part.type === "image" ? [shownImage(part)] : []));
 }
 
 function resultTool(result: ToolResultMessage, name = result.toolName): ToolView {
@@ -131,58 +152,11 @@ function resultTool(result: ToolResultMessage, name = result.toolName): ToolView
 		status: result.isError ? "error" : "done",
 		output: text(result.content),
 		details: result.details as JsonValue | undefined,
-		images: result.content.filter((part) => part.type === "image"),
+		images: imagesOf(result.content),
 		...(typeof result.durationMs === "number" ? { durationMs: result.durationMs } : {}),
+		at: result.timestamp - (result.durationMs ?? 0),
 	};
 }
-
-function artifactInfo(value: unknown): ArtifactInfo | undefined {
-	if (!value || typeof value !== "object" || Array.isArray(value)) return;
-	const details = value as Record<string, unknown>;
-	if (
-		typeof details.name !== "string" ||
-		!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(details.name) ||
-		typeof details.title !== "string" ||
-		!["html", "svg", "markdown", "text"].includes(String(details.type)) ||
-		typeof details.version !== "number" ||
-		!Number.isSafeInteger(details.version) ||
-		details.version <= 0
-	)
-		return;
-	return details as ArtifactInfo;
-}
-
-/** Tool-originated input: a peer conversation's message starts with a server-written sender block. */
-export function peerInput(content: string | readonly { type: string; text?: string }[]): {
-	text: string;
-	peer?: Pick<ConversationPeer, "id" | "title">;
-} {
-	if (
-		typeof content !== "string" &&
-		content[0]?.type === "text" &&
-		content[0].text?.startsWith(CONVERSATION_PREFIX) &&
-		content[0].text.endsWith("</mobile-conversation>")
-	) {
-		try {
-			const peer: unknown = JSON.parse(
-				content[0].text.slice(CONVERSATION_PREFIX.length, -"</mobile-conversation>".length),
-			);
-			if (
-				peer &&
-				typeof peer === "object" &&
-				"id" in peer &&
-				typeof peer.id === "string" &&
-				/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(peer.id) &&
-				"title" in peer &&
-				typeof peer.title === "string"
-			)
-				return { text: text(content.slice(1)), peer: { id: peer.id, title: peer.title } };
-		} catch {}
-	}
-	return { text: text(content) };
-}
-
-const isAgentMessage = compile(AgentMessageSchema).check;
 
 /**
  * Display items of each entry, with what they were built from. Chord keeps unchanged entries (and documents' unchanged
@@ -195,65 +169,21 @@ const itemCache = new WeakMap<EntryRecord, { inputs: readonly unknown[]; items: 
 
 const liveItems = new WeakMap<AssistantMessage, Item>();
 
-/** The last nested calls this browser saw for each model-issued call, by call ID. */
+/** The last nested calls this browser saw for each model-issued call, by call ID (the newest `SEEN_CALLS`). */
 const seenCalls = new Map<string, readonly NestedCall[]>();
-
-const settledStatus = { ok: "done", error: "error", cancelled: "interrupted", running: "interrupted" } as const;
-/** Durable's error for a call a restart cut short (an unsafe tool is not run again): interrupted, not failed. */
-const INTERRUPTED_ERROR = /^Tool \S+ was interrupted and may have partially run/;
-const interrupted = (error: unknown): boolean => typeof error === "string" && INTERRUPTED_ERROR.test(error);
+const SEEN_CALLS = 1_000;
 
 /**
- * The settled list of a result's details, code mode's `CodemodeToolDetails`:
- * `{ calls: [{ id, name, args (cut JSON), status: "ok" | "error" | "cancelled", durationMs?, error? }] }`.
- * Only the script's own calls are listed, so every row is at depth 0.
- */
-function detailCalls(callId: string, details: unknown): readonly NestedCall[] | undefined {
-	if (!details || typeof details !== "object" || !("calls" in details) || !Array.isArray(details.calls)) return;
-	const calls: NestedCall[] = [];
-	for (const call of details.calls as unknown[]) {
-		if (!call || typeof call !== "object") return;
-		const row = call as Record<string, unknown>;
-		if (typeof row.id !== "number" || typeof row.name !== "string" || typeof row.args !== "string") return;
-		if (!Object.hasOwn(settledStatus, String(row.status))) return;
-		let args: Record<string, unknown> | string = row.args;
-		try {
-			const parsed: unknown = JSON.parse(row.args);
-			if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) args = parsed as Record<string, unknown>;
-		} catch {}
-		calls.push({
-			id: `${callId}/c${row.id}`,
-			name: row.name,
-			args,
-			status:
-				row.status === "error" && interrupted(row.error)
-					? "interrupted"
-					: settledStatus[row.status as keyof typeof settledStatus],
-			depth: 0,
-			...(typeof row.durationMs === "number" ? { durationMs: row.durationMs } : {}),
-			...(typeof row.error === "string" ? { error: row.error } : {}),
-		});
-	}
-	return calls;
-}
-
-/**
- * The nested calls of model-issued call `callId`, the one source of every nested-call row. While the call runs that is
+ * The nested calls of model-issued call `callId`, as Durable shows them. While the call runs that is
  * `pi.live.nestedTools` (`slots`: this call's slots, parents before children); the commit appending its result removes
- * them. A settled call shows the final list of its result `details` (code mode's `calls`), else the last live list this
- * browser saw (lost on reload).
+ * them. A settled call shows the last live list this browser saw (lost on reload); the tool's contribution may read a
+ * final list from its result instead (`ToolActivity.nestedCalls`).
  */
 function nestedCalls(
 	callId: string,
 	slots: readonly NestedToolSlot[] | undefined,
 	settled: boolean,
-	details?: unknown,
 ): readonly NestedCall[] | undefined {
-	const final = detailCalls(callId, details);
-	if (final) {
-		seenCalls.delete(callId);
-		return final;
-	}
 	if (slots?.length) {
 		const depths = new Map<string, number>();
 		const calls = slots.map((slot): NestedCall => {
@@ -262,18 +192,17 @@ function nestedCalls(
 			const summary = slot.summary;
 			return {
 				id: slot.callId,
-				// Code mode's internal tools (`pi.codemode.models.classify`) by their script name, as the settled list has them.
-				name: slot.name.replace(/^pi\.codemode\./, ""),
+				name: slot.name,
 				args: slot.arguments,
 				// Done without a summary: the scheduler faulted or orphaned the call.
 				status:
 					slot.status === "done"
 						? summary && !summary.isError
 							? "done"
-							: interrupted(summary?.error)
+							: isInterruptedError(summary?.error)
 								? "interrupted"
 								: "error"
-						: slot.status,
+						: shownStatus(slot.status),
 				depth,
 				...(slot.status === "running" && slot.output ? { output: slot.output } : {}),
 				...(summary?.durationMs === undefined ? {} : { durationMs: summary.durationMs }),
@@ -284,7 +213,9 @@ function nestedCalls(
 						: {}),
 			};
 		});
+		seenCalls.delete(callId);
 		seenCalls.set(callId, calls);
+		if (seenCalls.size > SEEN_CALLS) seenCalls.delete(seenCalls.keys().next().value ?? "");
 		return calls;
 	}
 	const seen = seenCalls.get(callId);
@@ -382,7 +313,6 @@ export function buildTranscript(
 	const compactionFailure = live?.compactionFailure;
 	const compactionError = compactionFailure ? `Compaction failed: ${compactionFailure.error}` : undefined;
 	const inbox = view.docs["pi.inbox"] as unknown as InboxState | undefined;
-	const artifactState = view.docs["p2.artifacts"] as unknown as ArtifactState | undefined;
 	const busy = Boolean(live?.run);
 	const results = new Map<string, ToolResultMessage>();
 	let latest: EntryRecord | undefined;
@@ -408,14 +338,22 @@ export function buildTranscript(
 	const responseKeys = new Set<string>();
 	const items: Item[] = [];
 	/** A person's message: who wrote it and what, from its data; a plugin may add a reply quote or a note. */
-	const personItem = (entry: EntryRecord, person: LegacyMessage, images: ImageContent[], chat: boolean): Item => ({
+	const personItem = (
+		entry: EntryRecord,
+		person: MessageData,
+		images: ShownImage[],
+		chat: boolean,
+		at?: number,
+	): Item => ({
 		type: "user",
 		key: String(entry.id),
 		entryId: entry.id,
+		...(at === undefined ? {} : { at }),
 		images,
 		author: person.author,
 		text: person.text,
-		files: person.attachments.map((file) => file.name),
+		// Files the text references show in it; the others (clients without references) below it.
+		files: unreferenced(person),
 		...(chat ? { chat } : {}),
 		...display?.(entry.kind, entry.data),
 	});
@@ -473,18 +411,25 @@ export function buildTranscript(
 		} else if (message?.role === "user") {
 			items.push(
 				...cachedItems(entry, [display], () => {
-					const images =
-						typeof message.content === "string" ? [] : message.content.filter((part) => part.type === "image");
-					// A person's input from its data; old sessions' pi.user entries through the legacy reader.
-					const person = entry.kind === "pi.user" ? legacyMessage(message.content) : messageData(entry.data);
-					if (person) return [personItem(entry, person, images, false)];
-					if (entry.kind === AGENT_MESSAGE_ENTRY && isAgentMessage(entry.data)) {
-						const { from, intent, text } = entry.data;
-						return [{ type: "user", key, entryId: entry.id, images, agent: { from, intent }, text, files: [] }];
+					const images = typeof message.content === "string" ? [] : imagesOf(message.content);
+					// A person's input from its data.
+					const at = message.timestamp;
+					const person = messageData(entry.data);
+					if (person) return [personItem(entry, person, images, false, at)];
+					const fromAgent = agentMessage(entry.kind, entry.data);
+					if (fromAgent) {
+						const { from, intent, text } = fromAgent;
+						return [
+							{ type: "user", key, entryId: entry.id, at, images, agent: { from, intent }, text, files: [] },
+						];
 					}
-					// Tool-originated input: a peer conversation's message (sender block), or a plain text.
-					const input = peerInput(message.content);
-					return [{ type: "user", key, entryId: entry.id, images, peer: input.peer, text: input.text, files: [] }];
+					// A peer session's message from its data, or a tool's plain input.
+					const peer = peerMessage(entry.kind, entry.data);
+					if (peer)
+						return [
+							{ type: "user", key, entryId: entry.id, at, images, peer: peer.from, text: peer.text, files: [] },
+						];
+					return [{ type: "user", key, entryId: entry.id, at, images, text: text(message.content), files: [] }];
 				}),
 			);
 		} else if (message?.role === "assistant") {
@@ -495,8 +440,10 @@ export function buildTranscript(
 			for (const call of calls) called.add(call.id);
 			// What this entry's card shows besides the entry: each call's result and live slot, and whether a call with
 			// neither is pending or interrupted. Ending a run thus rebuilds only cards with unfinished calls.
+			// Whether it is the newest response matters only to a call without its result: a new response leaves an
+			// answered one as it is.
 			const inputs = [
-				current,
+				calls.every((call) => results.has(call.id)) || current,
 				...calls.flatMap((call) => {
 					const result = results.get(call.id);
 					const slot = slots.get(call.id);
@@ -531,7 +478,7 @@ export function buildTranscript(
 			const result = results.get(part.id);
 			// Live slots belong to the current tool round; an unfinished older call is interrupted.
 			const slot = slots.get(part.id);
-			const calls = nestedCalls(part.id, nested.get(part.id), Boolean(result) || !current || !busy, result?.details);
+			const calls = nestedCalls(part.id, nested.get(part.id), Boolean(result) || !current || !busy);
 			if (result)
 				return {
 					...resultTool(result, part.name),
@@ -542,7 +489,7 @@ export function buildTranscript(
 			const status: ToolStatus = slot
 				? slot.status === "done"
 					? "error"
-					: slot.status
+					: shownStatus(slot.status)
 				: busy && current
 					? "pending"
 					: "interrupted";
@@ -596,9 +543,6 @@ export function buildTranscript(
 	return {
 		items,
 		earlier: view.items[0]?.kind === "earlier",
-		artifacts: Array.isArray(artifactState?.artifacts)
-			? artifactState.artifacts.flatMap((artifact) => artifactInfo(artifact) ?? []).toReversed()
-			: [],
 		busy,
 		// Keep one stable activity signal through thinking, text, tools and compaction.
 		// It disappears only when the viewed conversation is actually idle.
@@ -619,11 +563,19 @@ export function buildTranscript(
 							id: item.id,
 							mode: item.mode,
 							text:
-								messageOf(item.entry?.data, item.entry ? undefined : (item.content as string))?.text ??
-								peerInput(item.content as string).text,
+								messageData(item.entry?.data)?.text ??
+								(item.entry && peerMessage(item.entry.kind, item.entry.data)?.text) ??
+								(item.entry && queuedAgentText(item.entry.kind, item.entry.data)) ??
+								text(item.content),
 						},
 					],
 		),
 		agent: (view.docs["pi.agent"] ?? {}) as AgentState,
 	};
+}
+
+/** The names of a message's files its text does not reference. */
+function unreferenced(person: MessageData): string[] {
+	const referenced = new Set(fileReferences(person.text).map((reference) => reference.id));
+	return person.attachments.filter((file) => !referenced.has(file.id)).map((file) => file.name);
 }

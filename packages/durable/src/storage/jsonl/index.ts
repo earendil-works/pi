@@ -3,4 +3,5 @@ export {
 	JsonlStorage,
 	type JsonlStorageOptions,
 	JsonlStoragePoisonedError,
+	JsonlStorageReadOnlyError,
 } from "./storage.ts";

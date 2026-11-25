@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Chord: measuring startup and apply</title>
+<style>
+
+:root{--paper:#fbf8f2;--ink:#2a2723;--muted:#7b7468;--rule:#e3dbcc;--accent:#b4472f;--blue:#2e6a8a;--sand:#c2b18c;--soft:#f4eee2}
+*{box-sizing:border-box}
+html{background:#efe9dd}
+body{margin:0;color:var(--ink);font:19px/1.68 'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,serif;
+ -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+.book{max-width:860px;margin:0 auto;background:var(--paper);box-shadow:0 0 0 1px #e1d9c8,0 30px 80px -40px rgba(60,40,10,.35);padding:0 0 4rem}
+.inner{padding:0 90px}
+h1,h2,h3{font-weight:400;line-height:1.15}
+h2{font-size:2.1rem;margin:.2em 0 .3em;letter-spacing:-.01em}
+h3{font-size:1.05rem;text-transform:uppercase;letter-spacing:.14em;margin:2.4em 0 .6em;color:var(--ink);font-weight:600;
+ font-family:'Avenir Next','Helvetica Neue',sans-serif}
+p{margin:0 0 1.05em;hyphens:auto;text-align:left}
+code{font:.8em/1 'SF Mono',Menlo,Consolas,monospace;background:#f1ebde;padding:.1em .35em;border-radius:3px}
+pre{font:.74rem/1.55 'SF Mono',Menlo,Consolas,monospace;background:#f4eee2;border-left:3px solid var(--sand);padding:1rem 1.2rem;margin:1.4rem 0 1.8rem;
+ overflow-x:auto;border-radius:0 4px 4px 0;white-space:pre;tab-size:2}
+pre code{background:none;padding:0;font-size:1em}
+em{font-style:italic}
+a{color:var(--blue)}
+.cover{min-height:92vh;display:flex;flex-direction:column;justify-content:center;padding:90px;background:
+ radial-gradient(circle at 85% 15%,rgba(180,71,47,.13),transparent 40%),radial-gradient(circle at 10% 90%,rgba(46,106,138,.12),transparent 45%),var(--paper);
+ border-bottom:1px solid var(--rule)}
+.kicker{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.22em;text-transform:uppercase;color:var(--accent)}
+.cover h1{font-size:5.2rem;line-height:.98;margin:.35em 0 .25em;letter-spacing:-.025em}
+.subtitle{font-size:1.45rem;font-style:italic;color:#4a453e;max-width:30em;text-align:left}
+.cover-stats,.stats{display:flex;flex-wrap:wrap;gap:1.2rem 2.4rem;margin:2.2rem 0}
+.stats{margin:1.6rem 0 1.8rem;padding:1.1rem 0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.stat b{display:block;font-size:2.1rem;font-weight:400;line-height:1.1;font-variant-numeric:lining-nums}
+.stat span{font:.78rem/1.3 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);letter-spacing:.03em;display:block;max-width:14em}
+.cover-note{font-size:.9rem;color:var(--muted);max-width:34em;text-align:left;margin-top:2rem}
+.toc{padding:4rem 0 2rem}
+.toc ol{list-style:none;padding:0;margin:1rem 0;columns:2;column-gap:3rem}
+.toc li{padding:.3rem 0;border-bottom:1px dotted var(--rule);break-inside:avoid}
+.toc a{color:var(--ink);text-decoration:none}
+.toc a:hover{color:var(--accent)}
+.preface{padding-top:2rem}
+.findings{padding-left:1.4em}
+.findings li{margin:.55em 0;padding-left:.3em}
+.findings li::marker{color:var(--accent);font-weight:600}
+.chapter{padding-top:4.5rem;margin-top:3rem;border-top:1px solid var(--rule)}
+.opener{text-align:center;margin-bottom:2.6rem}
+.numeral{font-size:4.2rem;color:var(--accent);line-height:1;font-variant:small-caps;letter-spacing:.05em}
+.opener h2{font-size:2.5rem;margin:.25em 0}
+.lede{font-style:italic;color:#5a544a;font-size:1.12rem;max-width:30em;margin:0 auto;text-align:center}
+.dropcap::first-letter{float:left;font-size:4.1em;line-height:.82;padding:.06em .09em 0 0;color:var(--accent)}
+.fig{margin:2rem 0 2.2rem}
+.fig.wide{margin-left:-50px;margin-right:-50px}
+.fig svg{display:block;margin:0 auto}
+figcaption{font:.8rem/1.45 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:.7rem;padding-left:.8rem;border-left:2px solid var(--rule)}
+.fignum{color:var(--ink);font-weight:600}
+.note{font:.86rem/1.55 'Avenir Next','Helvetica Neue',sans-serif;color:#5b5549;background:#f4eee2;border-left:3px solid var(--sand);
+ padding:.9rem 1.1rem;margin:1.8rem 0;border-radius:0 4px 4px 0}
+.note.review{border-left-color:var(--accent)}
+.note b.tag{font-weight:600;letter-spacing:.12em;text-transform:uppercase;font-size:.72rem;color:var(--accent);display:block;margin-bottom:.3rem}
+.note code{font-size:.85em}
+table{width:100%;border-collapse:collapse;margin:1.4rem 0 1.8rem;font:.8rem/1.4 'Avenir Next','Helvetica Neue',sans-serif}
+th{text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:.68rem;border-bottom:1.5px solid var(--ink);padding:.45rem .5rem}
+td{padding:.42rem .5rem;border-bottom:1px solid var(--rule);vertical-align:top}
+td code{font-size:.92em}
+table.num td:not(:first-child),table.num th:not(:first-child){text-align:right}
+.epilogue p{font-size:1.04em}
+.appendix{font-size:.92em}
+.appendix ul,.chapter ul{padding-left:1.2em}
+.appendix li,.chapter li{margin:.4em 0}
+.colophon{text-align:center;font:.78rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:4rem;letter-spacing:.05em}
+@media (max-width:760px){.inner{padding:0 22px}.cover{padding:40px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}
+ .toc ol{columns:1}p{text-align:left}body{font-size:17px}}
+@media print{html{background:#fff}.book{box-shadow:none}.chapter{break-before:page}.fig{break-inside:avoid}}
+.transcript p b{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-right:.3em}
+pre .tk-c{color:#8d8576;font-style:italic}pre .tk-s{color:#5f7a3d}pre .tk-n{color:#a0662a}pre .tk-k{color:#b4472f}pre .tk-t{color:#2e6a8a}pre .tk-f{color:#7a3f6a}
+h4{font:600 .82rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.06em;margin:1.8em 0 .5em;color:var(--muted)}
+.inner ul,.inner ol:not(.findings){padding-left:1.2em}
+.inner li{margin:.35em 0}
+blockquote{margin:1.4rem 0;padding:.2rem 0 .2rem 1.2rem;border-left:3px solid var(--rule);color:#5a544a;font-style:italic}
+.fig svg text{dominant-baseline:auto}
+.fig .replay{font:600 .7rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);
+ background:none;border:1px solid var(--rule);border-radius:3px;padding:.2rem .55rem;margin:0 0 0 1rem;cursor:pointer;float:right}
+.fig .replay:hover{border-color:var(--accent)}
+.anim.armed .step{opacity:0}
+.anim.armed.play .step{animation:stepIn .45s ease-out both;animation-delay:calc(var(--i) * var(--pace, .45s))}
+.anim.armed.play .step.edge{animation-name:edgeIn}
+@keyframes stepIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes edgeIn{from{opacity:0}to{opacity:1}}
+.steps{margin:2rem 0 2.2rem;border:1px solid var(--rule);border-radius:6px;background:#fffdf8}
+.steps-head{display:flex;align-items:center;gap:.8rem;padding:.6rem 1rem;border-bottom:1px solid var(--rule);
+ font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.steps-head .title{flex:1}
+.steps-head .count{color:var(--muted);letter-spacing:.06em}
+.steps-head button{font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--ink);background:var(--soft);border:1px solid var(--rule);
+ border-radius:3px;padding:.25rem .65rem;cursor:pointer}
+.steps-head button:disabled{opacity:.35;cursor:default}
+.step-panel{padding:1rem 1.2rem .4rem}
+.step-panel>h4:first-child{margin-top:.2rem;color:var(--ink)}
+.steps.js .step-panel{display:none}
+.steps.js .step-panel.on{display:block}
+.steps:not(.js) .steps-head button,.steps:not(.js) .steps-head .count{display:none}
+.steps:not(.js) .step-panel+.step-panel{border-top:1px dashed var(--rule)}
+.fig figcaption{display:flow-root}
+.fig svg{max-width:100%;height:auto}
+table{max-width:100%}
+@media (max-width:760px){.inner{padding:0 20px}.cover{padding:48px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}table{display:block;overflow-x:auto}.toc ol{columns:1}}
+</style>
+
+
+</head>
+<body><div class="book">
+<section class="cover">
+  <div class="kicker">A spec · Chord (for p3) · 2026-11-06</div>
+  <h1>Measuring<br>Startup</h1>
+  <p class="subtitle">Spans for every step of a server start, a worker start, a page load and an Apply, so we know where the time goes, on slayer and on the phone</p>
+  <div class="cover-stats"><div class="stat"><b>0</b><span>spans today for building or starting anything</span></div><div class="stat"><b>4</b><span>new root spans (server start, worker start, page start, apply)</span></div><div class="stat"><b>1</b><span>summary line a start script can print</span></div><div class="stat"><b>0</b><span>cost without a telemetry store</span></div></div>
+  <div class="cover-note"><p>The owner asked for every build at startup to be measured, through telemetry (2026-11-06). Chord&#39;s telemetry (design
+§29) records calls, methods, holds, activations, loads, reloads and worker resolves, but nothing of the builds and
+steps around them. This spec adds those spans to <code>CHORD_TELEMETRY_SCHEMA</code> and records them in the kit, the plugins
+component, the surfaces and the workers. A Chord change; p3 uses it from step 0b on.</p>
+</div>
+</section><div class="inner">
+<nav class="toc"><h2>Contents</h2><ol>
+<li><a href="#before-we-begin">Before we begin</a></li>
+<li><a href="#spans">I. The Spans</a></li>
+<li><a href="#summary">II. The Summary</a></li>
+<li><a href="#done">III. Tests and Done</a></li>
+</ol></nav>
+
+<section class="preface" id="before-we-begin">
+<h2>Before we begin</h2>
+<p class="dropcap">p3 starts on the phone in some number of seconds; a session&#39;s worker in some other number; an Apply takes a while.
+Nobody knows how those split: the worker base build, the page&#39;s base bundle, twenty plugin builds, discovery, the
+load, the fork, evaluating scripts. Design §29 has spans for the work objects do, recorded into the kit&#39;s telemetry
+store, and a renderer that draws a trace as a tree. Starting and building happen outside objects and record nothing.</p>
+<p>This spec gives each such step a span, under one root per start, so a trace of a server start reads like this:</p>
+<pre class="plain"><code>chord.app.start  p3                                                  1,840 ms
+├─ chord.app.layout                                                     12 ms
+├─ chord.store.open  server                                             38 ms
+├─ chord.base.build  worker:session   files=301  bytes=4.2 MB          240 ms
+├─ chord.base.build  web              files=412  bytes=1.9 MB          610 ms
+├─ chord.base.build  server           files=265                         64 ms
+├─ chord.plugins.discover             plugins=7  problems=0              4 ms
+├─ chord.plugins.build  @p3/hello server                                31 ms
+├─ chord.plugins.build  @p3/hello web                                   48 ms
+├─ …
+├─ chord.load  server                 plugins=7                        180 ms
+└─ chord.app.listen   127.0.0.1:8789                                     2 ms</code></pre>
+<p>(The numbers are made up; finding the real ones is the point.)</p>
+<h3 id="five-things-to-know">Five things to know</h3>
+<ol class="findings">
+<li><strong>Four roots.</strong> <code>chord.app.start</code> (a server start), <code>chord.worker.start</code> (a worker process, from fork to loaded),
+<code>chord.page.start</code> (a page, from its first script to its plugins loaded), <code>chord.app.apply</code> (an Apply: build and
+rollout). Each is a trace of its own; a worker start links to the server&#39;s resolve that forked it.</li>
+<li><strong>One span per step, with sizes.</strong> Base bundles carry their artifact, file count and bytes; plugin builds their
+plugin, kind and outcome; discovery the plugins found; loads the plugins loaded and failed.</li>
+<li><strong>Recorded where the work happens.</strong> The kit, the plugins component, the surfaces and the workers component record
+their own steps under the context they are given; nothing measures from outside.</li>
+<li><strong>A summary for the start script.</strong> <code>app.startup</code> gives the start&#39;s steps and their durations, recorded even without
+a telemetry store, so p3&#39;s <code>server.ts</code> prints one line.</li>
+<li><strong>Free without a store.</strong> Without an adapter the spans are the NOOP span (design §30): no allocation beyond
+today&#39;s, no clock reads in hot paths (these are not hot paths: each runs once per start or per Apply).</li>
+</ol>
+</section>
+
+<section class="chapter" id="spans"><header class="opener"><div class="numeral">I</div><h2>The Spans</h2><p class="lede">Names, parents and attributes, as the telemetry schema declares them.</p></header>
+<table>
+<thead>
+<tr>
+<th>Span</th>
+<th>Parent</th>
+<th>Start attributes</th>
+<th>End attributes</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>chord.app.start</code></td>
+<td>root</td>
+<td><code>app</code> (name)</td>
+<td><code>outcome</code> (<code>started</code>, <code>failed</code>)</td>
+</tr>
+<tr>
+<td><code>chord.app.layout</code></td>
+<td><code>chord.app.start</code></td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td><code>chord.store.open</code></td>
+<td>the step that opens a store (<code>chord.app.start</code>, <code>chord.worker.start</code>)</td>
+<td><code>store</code> (<code>server</code>, <code>worker</code>)</td>
+<td><code>tables</code>, <code>bytes</code> (file size)</td>
+</tr>
+<tr>
+<td><code>chord.base.build</code></td>
+<td><code>chord.app.start</code></td>
+<td><code>artifact</code> (<code>web</code>, <code>tui</code>, <code>worker:&lt;kind&gt;</code>, <code>server</code>)</td>
+<td><code>files</code>, <code>bytes</code> (output), <code>outcome</code></td>
+</tr>
+<tr>
+<td><code>chord.plugins.discover</code></td>
+<td><code>chord.app.start</code>, <code>chord.app.apply</code></td>
+<td></td>
+<td><code>plugins</code>, <code>problems</code></td>
+</tr>
+<tr>
+<td><code>chord.plugins.build</code></td>
+<td><code>chord.app.start</code>, <code>chord.app.apply</code></td>
+<td><code>plugin</code>, <code>kind</code></td>
+<td><code>outcome</code> (<code>built</code>, <code>failed</code>), <code>inputs</code></td>
+</tr>
+<tr>
+<td><code>chord.load</code> (exists)</td>
+<td><code>chord.app.start</code>, <code>chord.worker.start</code>, <code>chord.page.start</code></td>
+<td>as today</td>
+<td>as today</td>
+</tr>
+<tr>
+<td><code>chord.app.listen</code></td>
+<td><code>chord.app.start</code></td>
+<td><code>address</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>chord.worker.start</code></td>
+<td>root, linked to the server&#39;s <code>chord.resolve</code></td>
+<td><code>kind</code>, <code>address</code></td>
+<td><code>outcome</code></td>
+</tr>
+<tr>
+<td><code>chord.worker.fork</code></td>
+<td><code>chord.worker.start</code></td>
+<td></td>
+<td><code>ms_to_main</code> (process start to the entry&#39;s first line)</td>
+</tr>
+<tr>
+<td><code>chord.worker.lock</code>, <code>chord.worker.connect</code></td>
+<td><code>chord.worker.start</code></td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td><code>chord.plugins.evaluate</code></td>
+<td><code>chord.worker.start</code>, <code>chord.page.start</code>, <code>chord.app.start</code></td>
+<td><code>plugin</code>, <code>kind</code></td>
+<td><code>outcome</code></td>
+</tr>
+<tr>
+<td><code>chord.page.start</code></td>
+<td>root (the page&#39;s own recorder)</td>
+<td></td>
+<td><code>outcome</code></td>
+</tr>
+<tr>
+<td><code>chord.page.connect</code></td>
+<td><code>chord.page.start</code></td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td><code>chord.app.apply</code></td>
+<td>root</td>
+<td></td>
+<td><code>built</code>, <code>failed</code>, <code>stopped</code></td>
+</tr>
+<tr>
+<td><code>chord.rollout.step</code></td>
+<td><code>chord.app.apply</code></td>
+<td><code>step</code> (<code>server</code>, a worker kind, <code>web</code>, <code>tui</code>)</td>
+<td><code>hosts</code>, <code>failed</code></td>
+</tr>
+<tr>
+<td><code>chord.reload</code> (exists)</td>
+<td><code>chord.rollout.step</code> (server), the worker&#39;s own (workers)</td>
+<td>as today</td>
+<td>as today</td>
+</tr>
+</tbody></table>
+<p>Where each is recorded:</p>
+<ul>
+<li><strong>Server start</strong> (<code>src/node/app/app.ts</code>): <code>startServer</code> opens <code>chord.app.start</code> with the app&#39;s telemetry context
+(the <code>telemetry</code> option) and passes the span&#39;s context to each step: the layout, the store, the workers components
+(each builds its worker base: <code>chord.base.build worker:&lt;kind&gt;</code>), the surfaces (<code>web</code>, <code>tui</code>), the server scan
+(<code>server</code>), the plugins component (discovery, builds, evaluation), <code>host.load</code> (its existing <code>chord.load</code> gets this
+parent), the listener.</li>
+<li><strong>Worker start</strong> (<code>src/node/workers/</code>, <code>src/node/app/worker.ts</code>): the server&#39;s <code>chord.resolve</code> puts its carrier into
+the start message; the worker&#39;s recorder opens <code>chord.worker.start</code> linked to it and records the fork (the time from
+the process&#39;s own start, <code>performance.timeOrigin</code>, to the entry&#39;s first line), the lock, its store, the connect, each
+script&#39;s evaluation and the load; the worker sends them to the server as it sends all its spans.</li>
+<li><strong>Page start</strong> (<code>src/web/page.ts</code>): a page that records (<code>startPage({ telemetry: true })</code>) opens <code>chord.page.start</code>
+when its base bundle runs, with the time from navigation start (<code>performance.timeOrigin</code>) as an attribute, then the
+connect, each plugin script&#39;s evaluation and the load.</li>
+<li><strong>Apply</strong> (<code>app.applyChanges</code>): <code>chord.app.apply</code> with discovery (when the set changed), each build, and each rollout
+step; each host&#39;s <code>chord.reload</code> as today under its step (workers&#39; under their own trace, linked).</li>
+</ul>
+</section>
+
+<section class="chapter" id="summary"><header class="opener"><div class="numeral">II</div><h2>The Summary</h2><p class="lede">One line a start script can print, with or without a telemetry store.</p></header>
+<pre><code><span class="tk-k">const</span> app = <span class="tk-k">await</span> <span class="tk-f">startServer</span>(options, context);
+console.<span class="tk-f">log</span>(app.startup.line);   <span class="tk-c">// "started in 1,840 ms: bases 914 (web 610, worker:session 240, server 64), plugins 410, load 180"</span>
+app.startup.steps;               <span class="tk-c">// [{ name: "chord.base.build", attributes: { artifact: "web" }, ms: 610 }, …]</span></code></pre>
+<p><code>app.startup</code> is recorded by the same code that opens the spans, from one clock read at each step&#39;s start and end;
+without a telemetry store the steps are still timed (a start is one call; the cost is a few <code>performance.now()</code>
+reads). The worker and the page have no summary: their spans are in the store, read with the kit&#39;s trace tools
+(<code>trace.ts</code> as in the tutorial; later a viewer plugin).</p>
+</section>
+
+<section class="chapter" id="done"><header class="opener"><div class="numeral">III</div><h2>Tests and Done</h2><p class="lede">What the build delivers.</p></header>
+<ul>
+<li>The schema entries in <code>CHORD_TELEMETRY_SCHEMA</code> (version bumped), each span recorded where listed, its parent and
+attributes checked with the in-memory telemetry adapter: a server start with workers and both surfaces; a worker
+start linked to its resolve; a page start in the browser; an Apply with a failed plugin and a stopped rollout.</li>
+<li><code>app.startup</code> with and without a telemetry store; its <code>line</code>.</li>
+<li>Without an adapter: no new spans, the existing cost guards unchanged.</li>
+<li>Design §29 (the tiers and the new roots), the kit README (<code>startup</code>), the plugins, surfaces and workers READMEs; the
+tutorial&#39;s trace chapter shows a start&#39;s trace.</li>
+<li><code>npm run check</code>, the touched suites.</li>
+</ul>
+</section>
+
+<p class="colophon">Chord startup telemetry · spec, first edition · 2026-11-06 · sources: src/telemetry.ts, src/node/app/, src/node/plugins/, src/node/surfaces/, src/node/workers/, src/web/page.ts, design §29</p>
+</div></div>
+
+</body></html>

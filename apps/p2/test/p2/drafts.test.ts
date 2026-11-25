@@ -50,6 +50,17 @@ describe("drafts store", () => {
 			assert.deepEqual(await store.claim({ conversation: 1, authorId: "alice", ids }, ctx), { texts: ["a1", "a2"] });
 			// A second tab claiming the same drafts gets nothing.
 			assert.deepEqual(await store.claim({ conversation: 1, authorId: "alice", ids }, ctx), { texts: [] });
+			// Two tabs claiming at once: each draft goes to one of them.
+			await store.add({ conversation: 3, items: [{ author: alice, text: "once" }] }, ctx);
+			const raced = (await settled(store.drafts))["3:alice"]?.map((item) => item.id) ?? [];
+			const claims = await Promise.all([
+				store.claim({ conversation: 3, authorId: "alice", ids: raced }, ctx),
+				store.claim({ conversation: 3, authorId: "alice", ids: raced }, ctx),
+			]);
+			assert.deepEqual(
+				claims.flatMap((claim) => claim.texts),
+				["once"],
+			);
 			assert.equal(store.drafts.value?.["1:alice"], undefined);
 			assert.deepEqual(
 				store.drafts.value?.["2:alice"]?.map((item) => item.text),

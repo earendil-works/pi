@@ -1,0 +1,34 @@
+/* A history tool's entries (activity.tsx): each a row that opens its message in the transcript. */
+.history-entries {
+	display: flex;
+	flex-direction: column;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.history-entry {
+	display: flex;
+	flex-direction: column;
+	gap: var(--semantic-dimension-space-gap-xx-small);
+	inline-size: 100%;
+	padding: var(--semantic-dimension-space-padding-small) 0;
+	border-block-end: var(--semantic-dimension-border-width-small) solid var(--semantic-color-border-secondary);
+	text-align: start;
+}
+.history-entry-head {
+	font: var(--semantic-typography-ui-secondary);
+	font-weight: var(--semantic-font-weight-ui-selected);
+}
+.history-entry:hover .history-entry-head {
+	text-decoration: underline;
+}
+.history-entry-id {
+	color: var(--semantic-color-text-secondary);
+	font-family: var(--semantic-font-family-code);
+	font-weight: normal;
+}
+.history-entry-text {
+	color: var(--semantic-color-text-secondary);
+	font: var(--semantic-typography-ui-tertiary);
+	overflow-wrap: anywhere;
+}

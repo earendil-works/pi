@@ -1,5 +1,10 @@
-// Tests of the schema helpers: the JSON Schema they build over pi-schema's builders, their types, `bytes()`, `method`.
+// Tests of the schema helpers: the JSON Schema they build over pi-schema's builders, their types, `bytes()`, `method`,
+// and that a contract's declaration can name every type of its members.
 
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { compile } from "@earendil-works/pi-schema";
 import { describe, expect, expectTypeOf, it } from "vitest";
 import {
@@ -104,3 +109,75 @@ describe("method", () => {
 		expectTypeOf(method(undefined, int())).toEqualTypeOf<Method<ReturnType<typeof nul>, ReturnType<typeof int>>>();
 	});
 });
+
+describe("the types of a contract's members", () => {
+	// A package that exports a contract emits its declaration, which holds the contract's inferred type. A type in it
+	// that Chord's entry point does not export is written as a path into `node_modules/@earendil-works/chord/` (or
+	// refused, TS2883): a declaration no consumer of that package can resolve.
+	it("are all exported, so a contract's emitted declaration names them through Chord's entry point", () => {
+		const directory = mkdtempSync(join(tmpdir(), "chord-declarations-"));
+		try {
+			mkdirSync(join(directory, "node_modules", "@earendil-works"), { recursive: true });
+			symlinkSync(
+				resolve(import.meta.dirname, "../.."),
+				join(directory, "node_modules", "@earendil-works", "chord"),
+			);
+			writeFileSync(join(directory, "contract.ts"), EVERY_MEMBER_KIND);
+			writeFileSync(join(directory, "tsconfig.json"), JSON.stringify(DECLARATIONS));
+			const tsc = resolve(import.meta.dirname, "../../../../node_modules/typescript/bin/tsc");
+			const emitted = spawnSync(process.execPath, [tsc, "-p", directory], { encoding: "utf8" });
+			expect([emitted.stdout, emitted.status]).toEqual(["", 0]);
+			const declaration = readFileSync(join(directory, "out", "contract.d.ts"), "utf8");
+			expect(declaration).toContain("Method<");
+			expect(declaration.match(/import\("[^"]*node_modules[^"]*"[^)]*\)\.\w+/g)).toBeNull();
+		} finally {
+			rmSync(directory, { recursive: true, force: true });
+		}
+	});
+});
+
+// The workspace's sources (`customConditions`), so the test needs no build.
+const DECLARATIONS = {
+	compilerOptions: {
+		strict: true,
+		module: "NodeNext",
+		moduleResolution: "NodeNext",
+		customConditions: ["source"],
+		allowImportingTsExtensions: true,
+		declaration: true,
+		emitDeclarationOnly: true,
+		outDir: "out",
+		skipLibCheck: true,
+		types: [],
+	},
+	include: ["contract.ts"],
+};
+
+const EVERY_MEMBER_KIND = `
+import * as chord from "@earendil-works/chord";
+const { arr, bool, bytes, event, hostKind, int, keyed, lit, local, map, method, nul, num, obj, oneOf, opt, queries, remote, str, union, unknown } = chord;
+
+export const Home = hostKind("home", { id: str() });
+const item = obj({ id: str(), kind: oneOf("a", "b"), size: opt(int()), tags: arr(str()), blob: bytes() });
+const state = { text: str({ default: "" }), mode: oneOf("on", "off", 1), any: unknown(), flag: bool(), nothing: nul() };
+const methods = { plain: method(), put: method(obj({ at: num(), what: union([lit("x"), map(int())]) }), item) };
+export const Stored = local("fixture.stored", {
+	version: 1,
+	params: { part: oneOf("left", "right") },
+	members: {
+		...state,
+		...methods,
+		items: keyed(item),
+		homes: keyed(item, Home),
+		changed: event(item),
+		list: queries(item, { all: nul(), some: obj({ kind: oneOf("a", "b") }) }),
+	},
+});
+export const Served = remote("fixture.served", {
+	version: 1,
+	params: { id: str() },
+	hostAddress: (params) => Home(params),
+	admission: obj({ role: oneOf("editor", "reader") }),
+	variants: { editor: { state, methods, events: { changed: item } }, reader: { state } },
+});
+`;

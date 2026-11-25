@@ -252,8 +252,8 @@ describe("Models with classifier models", () => {
 			access: "tid=test;exp=9999999999;proxy-ep=proxy.enterprise.githubcopilot.com;",
 			refresh: "refresh",
 			expires: Date.now() + 3_600_000,
-			// The login records only picker models; classifiers stay listed.
 			availableModelIds: ["gpt-6-luna"],
+			availableClassifierModelIds: ["microsoft-decision-1"],
 		}));
 		const models = builtinModels({ credentials });
 		const decision = models.getModelOfType("classifier", "github-copilot", "microsoft-decision-1");
@@ -284,6 +284,62 @@ describe("Models with classifier models", () => {
 		expect(requests[0].headers.get("copilot-integration-id")).toBe("vscode-chat");
 		expect(result.stopReason).toBe("stop");
 		expect(result.answers.approved).toEqual({ type: "bool", probability: 0.8 });
+	});
+
+	// #12395
+	it("routes GitHub Copilot GPT-6 Luna Decisions to the account's /v1/decisions endpoint with images", async () => {
+		const credentials = new InMemoryCredentialStore();
+		await credentials.modify("github-copilot", async () => ({
+			type: "oauth",
+			access: "tid=test;exp=9999999999;proxy-ep=proxy.business.githubcopilot.com;",
+			refresh: "refresh",
+			expires: Date.now() + 3_600_000,
+			availableModelIds: ["gpt-6-luna"],
+			availableClassifierModelIds: ["gpt-6-luna-decisions"],
+		}));
+		const models = builtinModels({ credentials });
+		const luna = models.getModelOfType("classifier", "github-copilot", "gpt-6-luna-decisions");
+		if (!luna) throw new Error("missing GitHub Copilot GPT-6 Luna Decisions model");
+		expect(luna).toMatchObject({ api: "openai-decisions", input: ["text", "image"], contextWindow: 872000 });
+		// Microsoft-Decision-1 is not in this account's catalog.
+		expect(await models.getAvailableOfType("classifier", "github-copilot")).toEqual([luna]);
+		expect((await models.getAvailable("github-copilot")).map((model) => model.id)).toEqual(["gpt-6-luna"]);
+
+		const requests: Array<{ url: string; headers: Headers }> = [];
+		const result = await models.classify(
+			luna,
+			{ ...context, images: [{ type: "image", data: "aW1hZ2U=", mimeType: "image/png" }] },
+			{
+				fetch: async (input, init) => {
+					requests.push({ url: String(input), headers: new Headers(init?.headers) });
+					return Response.json({ answers: [{ type: "predicate", name: "approved", probability: 0.8 }] });
+				},
+			},
+		);
+
+		expect(requests.map((request) => request.url)).toEqual(["https://api.business.githubcopilot.com/v1/decisions"]);
+		expect(requests[0].headers.get("authorization")).toBe(
+			"Bearer tid=test;exp=9999999999;proxy-ep=proxy.business.githubcopilot.com;",
+		);
+		expect(requests[0].headers.get("copilot-integration-id")).toBe("vscode-chat");
+		expect(result.stopReason).toBe("stop");
+		expect(result.answers.approved).toEqual({ type: "bool", probability: 0.8 });
+	});
+
+	it("lists every GitHub Copilot classifier for credentials without a recorded classifier catalog", async () => {
+		const credentials = new InMemoryCredentialStore();
+		await credentials.modify("github-copilot", async () => ({
+			type: "oauth",
+			access: "tid=test;exp=9999999999;proxy-ep=proxy.individual.githubcopilot.com;",
+			refresh: "refresh",
+			expires: Date.now() + 3_600_000,
+			availableModelIds: ["gpt-6-luna"],
+		}));
+		const models = builtinModels({ credentials });
+		expect((await models.getAvailableOfType("classifier", "github-copilot")).map((model) => model.id).sort()).toEqual(
+			["gpt-6-luna-decisions", "microsoft-decision-1"],
+		);
+		expect((await models.getAvailable("github-copilot")).map((model) => model.id)).toEqual(["gpt-6-luna"]);
 	});
 
 	it("adds the System One version prefix to the GitHub Copilot catalog base URL", async () => {

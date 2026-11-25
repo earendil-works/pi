@@ -1,19 +1,16 @@
 // The location tools: an agent lists the environments it may work on and their directories, and moves itself. Every main
-// agent has them; a subagent only when its main agent chose them (`subagent spawn/configure tools`). Only turns the owner
-// started may use them (`originOf`: the owner's input, or a main agent's message from such a turn): guests can neither
-// discover environments nor move agents.
+// agent has them, and the subagents and one-shot agents it gives them to. A session in a sandbox stays in it.
 
 import {
 	type ConversationId,
 	type DocumentReader,
 	defineExtension,
-	defineTool,
 	ROOT_CONVERSATION_ID,
 } from "@earendil-works/pi-durable";
 import { nul, obj, opt, str, union } from "@earendil-works/pi-schema";
 import type { Context, DirectoryListing } from "@p2/app/v1";
 import { type Location, locationText, parseLocation, sameLocation } from "@p2/app/v1";
-import { originOf } from "@p2/app/v1/worker";
+import { defineP2Tool, isTopLevel, type P2Tool } from "@p2/app/v1/worker";
 import { placeSubagent } from "../subagents/contract.worker.ts";
 import type { EnvInfo } from "./contract.ts";
 import { LocationMoveDoc } from "./contract.worker.ts";
@@ -31,18 +28,25 @@ export type LocationTools = {
 	readonly locate: (id: ConversationId, read: DocumentReader, context: Context) => Promise<Location>;
 };
 
-const DENIED =
-	"The location tools need a turn the owner started: guest, peer and unattributed input cannot list environments or move agents.";
+/**
+ * The sandbox a conversation working at `here` is confined to, decided by its environment's configured type: it may
+ * move within the sandbox, never out of it (only the owner's Relocate leaves it).
+ */
+export const sandboxAt = (here: Location, envs: readonly EnvInfo[]): string | undefined =>
+	here.env !== null && envs.some((env) => env.name === here.env && env.type === "gondolin") ? here.env : undefined;
 
 const describeEnv = (env: EnvInfo, here: Location): string => {
-	const target = `${env.user ? `${env.user}@` : ""}${env.host}${env.port ? `:${env.port}` : ""}`;
+	const target =
+		env.type === "gondolin"
+			? `sandbox (a VM on ${env.host})`
+			: `ssh ${env.user ? `${env.user}@` : ""}${env.host}${env.port ? `:${env.port}` : ""}`;
 	const tested =
 		env.tested === undefined
 			? "not tested"
 			: env.tested.ok
 				? `tested ok (${env.tested.platform} ${env.tested.arch})`
 				: `last test failed: ${env.tested.error}`;
-	return `- ${env.name}: ssh ${target} · ${tested}${here.env === env.name ? " · you are here" : ""}`;
+	return `- ${env.name}: ${target} · ${tested}${here.env === env.name ? " · you are here" : ""}`;
 };
 
 export function createLocationExtension({ server, locate }: LocationTools) {
@@ -52,15 +56,20 @@ export function createLocationExtension({ server, locate }: LocationTools) {
 		here: Location,
 		context: Context,
 	): Promise<{ listing: DirectoryListing; env: string | null } | string> => {
-		const names = (await server.envs(context)).map((env) => env.name);
-		const parsed =
+		const envs = await server.envs(context);
+		const names = envs.map((env) => env.name);
+		const sandbox = sandboxAt(here, envs);
+		const result =
 			args.location !== undefined
 				? parseLocation(args.location, names, here)
 				: parseLocation(args.cwd ?? "", names, {
 						env: args.env === undefined ? here.env : args.env,
 						...(args.env === undefined || args.env === here.env ? { cwd: here.cwd } : {}),
 					});
-		if ("error" in parsed) return parsed.error;
+		if (result.kind === "invalid") return result.error;
+		const parsed = result.location;
+		if (sandbox !== undefined && parsed.env !== sandbox)
+			return `You work in sandbox ${sandbox} and cannot leave it; use paths inside ${sandbox}.`;
 		if (parsed.env !== null && !names.includes(parsed.env))
 			return `Unknown environment "${parsed.env}" (location_envs lists them).`;
 		try {
@@ -85,13 +94,13 @@ export function createLocationExtension({ server, locate }: LocationTools) {
 		),
 		cwd: opt(str({ description: "Instead of location: a path on env (default your environment)" })),
 	};
-	return defineExtension({
+	return defineExtension<P2Tool>({
 		name: "p2-locations",
 		tools: [
-			defineTool({
+			defineP2Tool({
 				name: "location_envs",
 				description:
-					"List the environments you can work on: this device and the configured SSH environments (host, last test). Shows where you work now.",
+					"List the environments you can work on: this device, the configured SSH environments (host, last test) and sandboxes. Shows where you work now.",
 				parameters: obj({}, { open: true }),
 				replay: "safe",
 				execute: async (_args, api, context) => {
@@ -100,13 +109,21 @@ export function createLocationExtension({ server, locate }: LocationTools) {
 						details: {},
 						isError,
 					});
-					if ((await originOf(api, context)) !== "owner") return reply(DENIED, true);
 					const here = await locate(api.conversationId, api, context);
 					const envs = await server.envs(context);
-					const move =
-						api.conversationId === ROOT_CONVERSATION_ID
-							? await api.snapshot(LocationMoveDoc, ROOT_CONVERSATION_ID, context)
-							: undefined;
+					const sandbox = sandboxAt(here, envs);
+					if (sandbox !== undefined)
+						return reply(
+							[
+								`You work at ${locationText(here)}, in sandbox ${sandbox}: a VM whose tools reach only its own files and allowed hosts.`,
+								"You cannot leave it; location_dirs and location_move take paths inside it.",
+								...envs.filter((env) => env.name === sandbox).map((env) => describeEnv(env, here)),
+							].join("\n"),
+						);
+					// The session's move is kept on conversation 1 whichever top-level conversation asked for it.
+					const move = (await isTopLevel(api, api.conversationId, context))
+						? await api.snapshot(LocationMoveDoc, ROOT_CONVERSATION_ID, context)
+						: undefined;
 					return reply(
 						[
 							`You work at ${locationText(here)}.`,
@@ -123,7 +140,7 @@ export function createLocationExtension({ server, locate }: LocationTools) {
 					);
 				},
 			}),
-			defineTool({
+			defineP2Tool({
 				name: "location_dirs",
 				description:
 					"List the folders of a directory on an environment (default: your cwd), to find where to work. Shows at most 200.",
@@ -135,7 +152,6 @@ export function createLocationExtension({ server, locate }: LocationTools) {
 						details: {},
 						isError,
 					});
-					if ((await originOf(api, context)) !== "owner") return reply(DENIED, true);
 					const here = await locate(api.conversationId, api, context);
 					const found = await target(
 						args.location === undefined && args.cwd === undefined && args.env === undefined
@@ -160,7 +176,7 @@ export function createLocationExtension({ server, locate }: LocationTools) {
 					);
 				},
 			}),
-			defineTool({
+			defineP2Tool({
 				name: "location_move",
 				description: [
 					"Move yourself to another directory or environment.",
@@ -180,13 +196,12 @@ export function createLocationExtension({ server, locate }: LocationTools) {
 					});
 					if (args.location === undefined && args.cwd === undefined && args.env === undefined)
 						return reply("location_move needs location, or env and cwd.", {}, true);
-					if ((await originOf(api, context)) !== "owner") return reply(DENIED, {}, true);
 					const here = await locate(api.conversationId, api, context);
 					const found = await target(args, here, context);
 					if (typeof found === "string") return reply(found, {}, true);
 					const to: Location = { env: found.env, cwd: found.listing.path };
 					const details = { env: to.env, cwd: to.cwd };
-					if (api.conversationId === ROOT_CONVERSATION_ID) {
+					if (await isTopLevel(api, api.conversationId, context)) {
 						const pending = (await api.snapshot(LocationMoveDoc, ROOT_CONVERSATION_ID, context))?.pending;
 						if (sameLocation(to, here) && !pending)
 							return reply(`You already work at ${locationText(to)}.`, details);

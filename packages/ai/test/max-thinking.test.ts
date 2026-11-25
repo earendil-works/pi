@@ -11,6 +11,24 @@ function mockToken(): string {
 	return `aaa.${payload}.bbb`;
 }
 
+/** Builds the Codex request for the max thinking level without sending it. */
+async function captureCodexMaxRequest(model: Model<"openai-codex-responses">): Promise<unknown> {
+	const context = normalizeContext({
+		systemPrompt: "You are a helpful assistant.",
+		messages: [{ role: "user", content: "Hello", timestamp: Date.now() }],
+	});
+	let payload: unknown;
+	await streamSimpleOpenAICodexResponses(model, context, {
+		apiKey: mockToken(),
+		reasoning: "max",
+		onPayload: (request) => {
+			payload = request;
+			throw new Error("payload captured");
+		},
+	}).result();
+	return payload;
+}
+
 describe("max thinking level", () => {
 	it("is opt-in for ordinary reasoning models", () => {
 		const model: Model<"openai-completions"> = {
@@ -67,26 +85,19 @@ describe("max thinking level", () => {
 		expect(clampThinkingLevel(model, "xhigh")).toBe("max");
 	});
 
-	it.each(["gpt-5.6-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol", "gpt-6.1-terra"] as const)(
-		"sends max to the Codex Responses API for %s",
-		async (modelId) => {
-			const model = getModel("openai-codex", modelId)!;
-			const context = normalizeContext({
-				systemPrompt: "You are a helpful assistant.",
-				messages: [{ role: "user", content: "Hello", timestamp: Date.now() }],
-			});
-			let payload: unknown;
-
-			await streamSimpleOpenAICodexResponses(model, context, {
-				apiKey: mockToken(),
-				reasoning: "max",
-				onPayload: (request) => {
-					payload = request;
-					throw new Error("payload captured");
-				},
-			}).result();
-
-			expect(payload).toMatchObject({ reasoning: { effort: "max", summary: "auto" } });
-		},
-	);
+	it.each([
+		"gpt-5.6-sol",
+		"gpt-6-astra",
+		"gpt-6-sol",
+		"gpt-6-luna",
+		"gpt-6.1-sol",
+		"gpt-6.1-terra",
+		"gpt-6.2-astra",
+		"gpt-6.2-sol",
+	] as const)("sends max as the initial reasoning.effort for openai-codex/%s", async (modelId) => {
+		expect(await captureCodexMaxRequest(getModel("openai-codex", modelId))).toMatchObject({
+			reasoning: { effort: "max", summary: "auto" },
+			input: expect.not.arrayContaining([expect.objectContaining({ type: "configuration_update" })]),
+		});
+	});
 });

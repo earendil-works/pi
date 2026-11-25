@@ -16,7 +16,6 @@ const ANTHROPIC_COMPAT: AnthropicMessagesCompat = {
 };
 const OPENAI_COMPAT: OpenAICompletionsCompat = {
 	supportsStore: false,
-	supportsDeveloperRole: false,
 	sendSessionAffinityHeaders: true,
 	supportsLongCacheRetention: false,
 };

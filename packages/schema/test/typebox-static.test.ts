@@ -52,16 +52,34 @@ describe("Static of TypeBox schemas", () => {
 		expectTypeOf<Static<typeof schema>>().toEqualTypeOf<TypeBoxOwn<typeof schema>>();
 	});
 
+	it("maps enums and tuples as TypeBox does", () => {
+		const enumeration = Type.Enum(["a", "b", 3]);
+		expectTypeOf<Static<typeof enumeration>>().toEqualTypeOf<"a" | "b" | 3>();
+		expectTypeOf<Static<typeof enumeration>>().toEqualTypeOf<TypeBoxOwn<typeof enumeration>>();
+		const tuple = Type.Tuple([Type.Number(), Type.Union([Type.Number(), Type.Null()])]);
+		expectTypeOf<Static<typeof tuple>>().toEqualTypeOf<[number, number | null]>();
+		expectTypeOf<Static<typeof tuple>>().toEqualTypeOf<TypeBoxOwn<typeof tuple>>();
+		const nested = Type.Object({ points: Type.Array(Type.Tuple([Type.String(), Type.Enum(["x", "y"])])) });
+		expectTypeOf<Static<typeof nested>>().toEqualTypeOf<{ points: [string, "x" | "y"][] }>();
+	});
+
+	it("maps BigInt and Undefined as TypeBox does", () => {
+		const big = Type.BigInt({ minimum: 0n });
+		expectTypeOf<Static<typeof big>>().toEqualTypeOf<bigint>();
+		expectTypeOf<Static<typeof big>>().toEqualTypeOf<TypeBoxOwn<typeof big>>();
+		const metric = Type.Union([Type.BigInt(), Type.Null()]);
+		expectTypeOf<Static<typeof metric>>().toEqualTypeOf<bigint | null>();
+		const none = Type.Undefined();
+		expectTypeOf<Static<typeof none>>().toEqualTypeOf<undefined>();
+		expectTypeOf<Static<typeof none>>().toEqualTypeOf<TypeBoxOwn<typeof none>>();
+	});
+
 	it("gives unknown for kinds it does not map", () => {
-		const enumeration = Type.Enum(["a", "b"]);
-		const tuple = Type.Tuple([Type.String()]);
 		const intersect = Type.Intersect([Type.Object({ a: Type.String() }), Type.Object({ b: Type.String() })]);
-		expectTypeOf<Static<typeof enumeration>>().toEqualTypeOf<unknown>();
-		expectTypeOf<Static<typeof tuple>>().toEqualTypeOf<unknown>();
 		expectTypeOf<Static<typeof intersect>>().toEqualTypeOf<unknown>();
 		// Inside a mapped kind, an unmapped kind is unknown only where it stands.
-		const object = Type.Object({ pair: Type.Tuple([Type.String()]), name: Type.String() });
-		expectTypeOf<Static<typeof object>>().toEqualTypeOf<{ pair: unknown; name: string }>();
+		const object = Type.Object({ both: intersect, name: Type.String() });
+		expectTypeOf<Static<typeof object>>().toEqualTypeOf<{ both: unknown; name: string }>();
 	});
 
 	it("types compile() and parse() for TypeBox schemas", () => {

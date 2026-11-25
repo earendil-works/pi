@@ -9,12 +9,27 @@ peer), non-React apps never load it. No components, no styling.
 - `useWatch(watchable)`: its current value (`undefined` while it has none), re-rendering on change
   (`useSyncExternalStore` over `watchStore`).
 - `useRegistry(R)`: the registry's composed value; `useRefState(ref)`: the reference's state.
+- `useVariant(ref, variant)` (decision "C15 stands; the UI bindings follow the variant"): `ref` narrowed to
+  `variant` while it is live in it, `undefined` otherwise (no reference, loading, failed or denied, ended, another
+  variant), re-rendering when that changes. Use it instead of `ref.variant === "editor"`: a held reference's variant
+  is `undefined` until it binds, changes while the component is mounted (an admission's other allowed value), and
+  stays the last one while it loads. `useRefState(ref)` says why there is none. True of the render that read it,
+  not across an `await`.
+- `useEvents(member, listener)`: an event member (a reference's, decision "Events: fire-and-forget members")
+  subscribed while the component is mounted (and while `member` stays the same object): each event calls the latest
+  `listener` (a new function per render subscribes nothing again); nothing without a member; events re-render nothing
+  by themselves.
 - `useMessages(t)`: `{ t, locale }`, a plugin's messages bound to the host's language (followed by `startPage`),
   re-rendering when the locale or a translation changes; before a language is followed, the first catalog.
 - `usePageState(key, initial)`: `useState`'s pair, the value kept by the page (its host's life) under `key`
   (`surfaces/page-state.ts`, shared with `TuiScope.pageState`), so a component remounted by a plugin reload keeps it.
+- Optimistic UI needs no hook of Chord's: React's `useOptimistic` and `startTransition` over a call. A call settles in
+  the page after every change its answering host (and a host relaying its answer) committed before answering, so the
+  optimistic value is replaced by the real one, never by the old (design §3, decision "A call's answer follows its
+  state"; changes committed after the answer or on a host that does not relay it are not covered). The guide's
+  "Optimistic UI" (`docs/guide-plugins-hosts/book.md`) shows it.
 - A component unmounted by a reload has not left (design §21): its releases are plain releases. A component of a
   reloaded plugin is a new function and remounts, its `useState` starting over: what must survive is page state.
 
 Tests: `test/node/react/` (`stores.test.ts` in Node, `hooks.test.ts` in a real browser); the page state alone in
-`test/surfaces/page-state.test.ts`.
+`test/surfaces/page-state.test.ts`, the narrowing alone in `test/surfaces/variant.test.ts`.

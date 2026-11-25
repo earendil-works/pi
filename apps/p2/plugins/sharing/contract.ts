@@ -32,7 +32,7 @@ export const ConnectedSchema = obj({
 });
 
 /**
- * Share links, guests and their grants (server, SQLite `shares.sqlite`). Host-internal. A guest holds one grant per
+ * Share links, guests and their grants (server, tables of the server's store; links and grants keyed by their session). Host-internal. A guest holds one grant per
  * session shared with it; every change of its grants (share, join, removal, link reset, archive, restore) bumps its
  * revision and invalidates the objects of the older principal.
  *
@@ -82,13 +82,10 @@ export const Shares = local("p2.shares", {
 
 /** Guests whose browsers are connected now (server, in memory). */
 export const Presence = local("p2.share-presence", {
-	version: 1,
+	/** 2: derived from the references to `GuestPresence` (no enter and leave). */
+	version: 2,
 	params: {},
-	members: {
-		guests: record(ConnectedSchema),
-		enter: method(ConnectedSchema),
-		leave: method(obj({ id: str() })),
-	},
+	members: { guests: record(ConnectedSchema) },
 });
 
 /** Held by a guest's browser for its page's lifetime: marks the guest connected. Nothing for the owner. */

@@ -9,7 +9,7 @@ import {
 	ROOT_CONVERSATION_ID,
 } from "@earendil-works/pi-durable";
 import type { JsonValue } from "@p2/app/v1";
-import { ArtifactContent, ArtifactList } from "../../plugins/artifacts/contract.ts";
+import { Artifacts } from "../../plugins/artifacts/contract.ts";
 import artifactsTui from "../../plugins/artifacts/tui.ts";
 import { Chat, type ModelMeta } from "../../plugins/chat/contract.ts";
 import chatTui from "../../plugins/chat/tui.ts";
@@ -63,6 +63,8 @@ const SESSION: Session = {
 	pinned: false,
 	model: { provider: "faux", modelId: "faux-1" },
 	thinkingLevel: "off",
+	main: 1,
+	branches: [],
 };
 type Calls = Record<string, unknown[]>;
 const entry = (id: number, record: Omit<EntryRecord, "id" | "conversationId">): EntryRecord =>
@@ -358,6 +360,8 @@ test("chat mode: chip, quoted replies and notes, /chat-mode (owner), /reply, @pi
 });
 
 const ESC = "\x1b";
+const F2 = "\x1bOQ";
+const PAGE_DOWN = "\x1b[6~";
 const TAB = "\t";
 const CTRL_T = "\x14";
 const CTRL_P = "\x10";
@@ -467,6 +471,10 @@ function ownerStubs(calls: Calls) {
 				uploadKey: () => ({ publicKey: "", identityFile: "" }),
 				publicKey: () => null,
 				listDirectory: () => ({ path: "/", parent: null, directories: [], truncated: false }),
+				sandboxStatus: () => ({ state: "stopped" as const }),
+				sandboxStart: () => ({ state: "stopped" as const }),
+				sandboxStop: () => ({ state: "stopped" as const }),
+				sandboxResetDisk: () => ({ state: "stopped" as const }),
 			}),
 		],
 		[
@@ -591,6 +599,9 @@ test("owner diagnostics: notices once, /notices dismisses, /logs follows sources
 	await poll(() => grants.length === 1);
 	assert.deepEqual(grants[0], ["devCommand", { action: "reload" }]);
 	await poll(() => runtime.notices.some((notice) => notice.text === "Reloaded chat, status"));
+	runtime.ctx.commands.run("p2.dev.restart");
+	await poll(() => grants.length === 2);
+	assert.deepEqual(grants[1], ["devCommand", { action: "restart" }]);
 });
 
 test("guests never acquire owner objects and cannot open owner panels", async (t) => {
@@ -602,6 +613,7 @@ test("guests never acquire owner objects and cannot open owner panels", async (t
 		"p2.notices",
 		"p2.worker.retry",
 		"p2.dev.reload",
+		"p2.dev.restart",
 		"p2.envs",
 		"p2.ports",
 		"p2.devices",
@@ -987,32 +999,6 @@ function contentStubs(calls: Calls): Stub[] {
 	};
 	return [
 		[
-			ArtifactList,
-			(_input, _principal, self) => ({
-				variant: "reader",
-				artifacts: self.state([
-					{ name: "notes", title: "Notes", type: "markdown", version: 2 },
-					{ name: "page", title: "Page", type: "html", version: 1 },
-				]),
-			}),
-		],
-		[
-			ArtifactContent,
-			() => ({
-				variant: "reader",
-				read: ({ name, version }: { name: string; version: number }) => {
-					record("readArtifact", { name, version });
-					return name === "notes"
-						? {
-								info: { name, title: "Notes", type: "markdown", version },
-								content: "# Heading\n\nSome **bold** text\x1b]52;c;evil\x07",
-								truncated: false,
-							}
-						: { info: { name, title: "Page", type: "html", version }, content: "<h1>Page</h1>", truncated: true };
-				},
-			}),
-		],
-		[
 			SentFiles,
 			() => ({
 				variant: "reader",
@@ -1025,54 +1011,138 @@ function contentStubs(calls: Calls): Stub[] {
 	];
 }
 
-test("artifacts: the card previews text, /artifacts shows Markdown inline, opens in the browser and downloads", async (t) => {
+type Summary = { id: string; kind: "html" | "md"; title: string; version: number; updated: number };
+
+/** The session's artifacts on the server, with what `read` gives for each (and records it). */
+function artifactStubs(
+	calls: Calls,
+	summaries: Summary[],
+	content: (id: string, version: number) => string,
+	onList?: (list: Cell<Summary[]>) => void,
+): Stub[] {
+	return [
+		[
+			Artifacts,
+			(_input, _principal, self) => {
+				const list = self.state(summaries);
+				onList?.(list);
+				return {
+					variant: "reader",
+					artifacts: list,
+					read: ({ id, version }: { id: string; version: number }) => {
+						calls.readArtifact = [...(calls.readArtifact ?? []), { id, version }];
+						const summary = list.value.find((each) => each.id === id)!;
+						return { summary, version, content: content(id, version) };
+					},
+				};
+			},
+		],
+	];
+}
+
+test("artifacts: /artifacts shows Markdown over the chat when narrow, a page as source, and opens a page in the browser", async (t) => {
 	const calls: Calls = {};
-	const lines = Array.from({ length: 12 }, (_, index) => `line ${index + 1}`).join("\n");
-	const { screen, send, runtime } = await setup(t, {
+	const { screen, send, runtime, terminal } = await setup(t, {
 		calls,
-		worker: contentStubs(calls),
+		server: artifactStubs(
+			calls,
+			[
+				{ id: "notes", kind: "md", title: "Notes", version: 2, updated: 2 },
+				{ id: "page", kind: "html", title: "Page", version: 1, updated: 1 },
+			],
+			(id) => (id === "notes" ? "# Heading\n\nSome **bold** text\x1b]52;c;evil\x07" : "<h1>Page</h1>"),
+		),
 		facets: [tuiCoreFacet, chatTui, statusTui, artifactsTui],
-		views: () =>
-			viewOf([
-				callEntry(1, "a1", "artifact", { name: "notes", title: "Notes", type: "markdown", content: lines }),
-				resultEntry(2, "a1", "artifact", { name: "notes", title: "Notes", type: "markdown", version: 2 }, "Saved"),
-			]),
 	});
 	const grants: [string, unknown][] = [];
 	runtime.onGrant = async (action, payload) => {
 		grants.push([action, payload]);
-		return { ok: true, value: action === "download" ? { saved: true } : null };
+		return { ok: true, value: null };
 	};
-	await poll(async () => (await screen()).includes("Notes · MARKDOWN · version 2 · /artifacts opens"));
-	assert.match(await screen(), /line 8\s*\n\s*\.\.\. \(4 more lines/);
-	assert(!(await screen()).includes("line 9"));
 	runtime.ctx.commands.run("p2.artifacts");
 	await poll(async () => (await screen()).includes("Artifacts (2)"));
 	assert.match(await screen(), /the browser needs its own sign-in/);
+	// Too narrow for the side panel: Enter shows an artifact over the chat.
+	terminal.resize(80, 24);
 	send(ENTER);
-	await poll(
-		async () => (await screen()).includes("Notes · MARKDOWN · version 2") && (await screen()).includes("Heading"),
-	);
+	await poll(async () => (await screen()).includes("Notes · MD · v2") && (await screen()).includes("Heading"));
 	const shown = await screen();
 	assert(!shown.includes("# Heading"), "Markdown is rendered");
 	assert(!shown.includes("**bold**"));
 	assert(!shown.includes("52;c;evil"), "control sequences are stripped");
-	assert.deepEqual(calls.readArtifact, [{ name: "notes", version: 2 }]);
+	assert.deepEqual(calls.readArtifact, [{ id: "notes", version: 2 }]);
 	send(ESC);
 	await poll(async () => (await screen()).includes("Artifacts (2)"));
 	send(DOWN);
 	send(ENTER);
 	await poll(async () => (await screen()).includes("Source only"));
-	assert.match(await screen(), /<h1>Page<\/h1>[\s\S]*truncated/);
+	assert.match(await screen(), /<h1>Page<\/h1>/);
 	send(ESC);
 	await poll(async () => (await screen()).includes("Artifacts (2)"));
 	send("\x02"); // Ctrl+B
 	await poll(() => grants.length === 1);
-	assert.deepEqual(grants[0], ["openUrl", { kind: "origin", path: "/artifact?session=s&name=page&version=1" }]);
-	send("\x13"); // Ctrl+S
-	await poll(() => grants.length === 2);
-	assert.deepEqual(grants[1], ["download", { kind: "artifact", session: "s", name: "page", version: 1 }]);
-	await poll(() => runtime.notices.some((notice) => notice.text === "Downloaded Page"));
+	assert.deepEqual(grants[0], ["openUrl", { kind: "origin", path: "/artifact-frame?session=s&id=page&version=1" }]);
+});
+
+test("artifacts: Enter shows one in the side panel, which follows new versions, scrolls when focused and hides when narrow", async (t) => {
+	const calls: Calls = {};
+	let list: Cell<Summary[]> | undefined;
+	const rows = Array.from({ length: 60 }, (_, index) => `row ${index + 1}`).join("\n\n");
+	const { screen, send, runtime, terminal } = await setup(t, {
+		calls,
+		server: artifactStubs(
+			calls,
+			[{ id: "notes", kind: "md", title: "Notes", version: 2, updated: 2 }],
+			(_id, version) => `# ${version === 2 ? "Version two" : "Version three"}\n\n${rows}`,
+			(cell) => {
+				list = cell;
+			},
+		),
+		facets: [tuiCoreFacet, chatTui, statusTui, artifactsTui],
+	});
+	runtime.ctx.commands.run("p2.artifacts");
+	await poll(async () => (await screen()).includes("Artifacts (1)"));
+	send(ENTER);
+	await poll(async () => (await screen()).includes("Notes · MD · v2") && (await screen()).includes("Version two"));
+	assert.equal(runtime.ctx.panel.current, "artifact:notes");
+	assert(runtime.contexts().has("panel"));
+	// Beside the chat, behind its bar; the editor keeps the focus.
+	assert.match(await screen(), /│ +Version two/);
+	assert.equal(runtime.ctx.panel.focused, false);
+	assert(runtime.capturesViewportInput === false);
+
+	send(F2);
+	assert.equal(runtime.ctx.panel.focused, true);
+	assert(runtime.capturesViewportInput);
+	assert(runtime.contexts().has("panelFocused"));
+	send("x"); // typing stays out of the editor
+	send(PAGE_DOWN);
+	send(PAGE_DOWN);
+	await poll(async () => !(await screen()).includes("Version two"));
+	send(ESC);
+	assert.equal(runtime.ctx.panel.focused, false);
+	assert.equal(runtime.ctx.panel.current, "artifact:notes", "Escape only gives the focus back");
+
+	// A new version replaces the shown one.
+	list!.replace(null, [{ id: "notes", kind: "md", title: "Notes", version: 3, updated: 3 }]);
+	await poll(async () => (await screen()).includes("Notes · MD · v3"));
+	assert.deepEqual(calls.readArtifact, [
+		{ id: "notes", version: 2 },
+		{ id: "notes", version: 3 },
+	]);
+
+	// Too narrow for a split: hidden, and it cannot take the focus.
+	terminal.resize(80, 24);
+	await poll(async () => !(await screen()).includes("Notes · MD · v3"));
+	assert(!runtime.contexts().has("panel"));
+	send(F2);
+	assert.equal(runtime.ctx.panel.focused, false);
+	terminal.resize(100, 24);
+	await poll(async () => (await screen()).includes("Notes · MD · v3"));
+
+	runtime.ctx.commands.run("p2.panel.close");
+	await poll(async () => !(await screen()).includes("Notes · MD · v3"));
+	assert.equal(runtime.ctx.panel.current, undefined);
 });
 
 test("sent files: the card, /downloads previews text, saves and opens through the launcher", async (t) => {

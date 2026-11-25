@@ -112,6 +112,33 @@ describe("execCommand", () => {
 		10_000,
 	);
 
+	// Regression tests for https://github.com/earendil-works/pi/issues/12088
+	describe.skipIf(process.platform === "win32")("signal-terminated commands", () => {
+		const idle = ["-e", "setInterval(() => {}, 1000)"];
+
+		it("reports 128 + SIGTERM for a timeout", async () => {
+			const result = await execCommand(process.execPath, idle, process.cwd(), { timeout: 100 });
+
+			expect(result).toMatchObject({ code: 143, killed: true, truncated: false });
+		});
+
+		it("reports 128 + SIGTERM for an abort", async () => {
+			const controller = new AbortController();
+			setTimeout(() => controller.abort(), 100);
+			const result = await execCommand(process.execPath, idle, process.cwd(), { signal: controller.signal });
+
+			expect(result).toMatchObject({ code: 143, killed: true, truncated: false });
+		});
+
+		it("reports 128 + the signal number for a command killed by someone else", async () => {
+			// Not killed by pi, so `killed` is false and only the code tells this apart from success.
+			const script = 'process.kill(process.pid, "SIGKILL")';
+			const result = await execCommand(process.execPath, ["-e", script], process.cwd());
+
+			expect(result).toMatchObject({ code: 137, killed: false, truncated: false });
+		});
+	});
+
 	it.skipIf(process.platform === "win32")(
 		"force-kills a command that ignores SIGTERM",
 		async () => {

@@ -8,19 +8,22 @@ import {
 	FileIcon,
 	FolderIcon,
 	type Navigation,
+	pressVerb,
 	QueryCache,
 	RefreshIcon,
 	routeKey,
 	SearchIcon,
 	Slot,
 	TerminalIcon,
+	upperFirst,
+	useDragSize,
+	usePointerKind,
 	useScrollMemory,
 	type WorkspaceFileRoute,
 	type WorkspaceRoute,
 	type WorkspaceTab,
 } from "@p2/app/v1/web";
 import {
-	type CSSProperties,
 	type Dispatch,
 	type ReactNode,
 	type SetStateAction,
@@ -36,6 +39,7 @@ import type { Workspace } from "./contract.ts";
 import { type CommentEditor, type FileView, type ReviewComment, reviewMessage, WorkspaceFile } from "./file.tsx";
 import { type FuzzyMatch, rankFiles } from "./fuzzy.ts";
 import type { WorkspaceChange, WorkspaceCommit, WorkspaceQuery, WorkspaceResult } from "./protocol.ts";
+import { showWorkspaceTab } from "./tabs.ts";
 
 const LOG_PAGE = 30;
 /** Name filter results shown, best first. */
@@ -192,6 +196,7 @@ export function WorkspacePanel({
 	/** Deliver review comments as the user's next message; absent for viewers who cannot send. */
 	onSend?: (text: string) => Promise<void>;
 }) {
+	const pointer = usePointerKind();
 	const { tab, directory, file: selection, commit: openCommit, search: submitted } = route;
 	// Docked with room for a file beside the list (measured below): Files, Changes and Search then show the open file
 	// to the left of their list instead of in its place. Phones and narrow windows keep one column.
@@ -247,23 +252,7 @@ export function WorkspacePanel({
 			: void nav.close(update((current) => ({ ...current, commit: undefined, file: undefined })));
 	const setSubmitted = (search: WorkspaceRoute["search"]) =>
 		void nav.replace(update((current) => ({ ...current, search }))(nav.route));
-	// Tabs are lateral: switching returns to where the panel opened, keeping each tab's
-	// folder and search but dropping files and commits visited meanwhile.
-	const setTab = (next: WorkspaceTab) => {
-		const current = nav.route.workspace;
-		if (!current) return;
-		const target: WorkspaceRoute = {
-			tab: next,
-			directory: current.directory,
-			...(current.search ? { search: current.search } : {}),
-			...(current.terminal ? { terminal: current.terminal } : {}),
-			...(next === "terminal" ? { startTerminal: true } : {}),
-		};
-		void nav.reset(
-			(entry) => entry.workspace !== undefined && entry.layers.length === 0,
-			(landed) => ({ ...landed, workspace: target }),
-		);
-	};
+	const setTab = (next: WorkspaceTab) => showWorkspaceTab(nav, next);
 	const [contextLines, setContextLines] = useState(3);
 	// Inputs start from the submitted search a restored entry carries.
 	const [searchText, setSearchText] = useState(submitted?.text ?? "");
@@ -610,7 +599,6 @@ export function WorkspacePanel({
 		);
 	}, [load, query, submitted, searchKey, version, showsSearch]);
 
-	// Docked width, dragged from the left edge and remembered; phones ignore it (full screen).
 	const panel = useRef<HTMLElement>(null);
 	// Each list, file and commit keeps its scroll position for Back. Keyed by the panel's
 	// location only: a sheet opened beside the docked panel leaves it where it was.
@@ -631,7 +619,8 @@ export function WorkspacePanel({
 		shownFilter.current = filterText;
 		scroller.current?.scrollTo({ top: 0 });
 	}, [filterText]);
-	const [width, setWidth] = useState(() => Number(localStorage.getItem("pi-workspace-width")) || undefined);
+	// Its width, dragged from the left edge and remembered; phones ignore it (full screen).
+	const width = useDragSize("pi-workspace-width", "--workspace-width");
 	// Room to split: the chat and the panel share what the sidebar leaves; the list keeps its width, and the chat and
 	// the file column split the rest equally (flex in style.css). Their sum doesn't change when the split toggles.
 	const column = useRef<HTMLDivElement>(null);
@@ -652,34 +641,11 @@ export function WorkspacePanel({
 			docked.removeEventListener("change", measure);
 		};
 	}, []);
-	// The handle captures its pointer, so a finger or mouse keeps resizing off the handle.
-	// During the drag only the CSS variable changes; React renders the panel once at the end.
 	const startResize = (event: React.PointerEvent<HTMLButtonElement>) => {
 		const element = panel.current;
-		if (!element || (event.pointerType === "mouse" && event.button !== 0)) return;
-		event.preventDefault();
-		const handle = event.currentTarget;
-		const pointer = event.pointerId;
-		handle.setPointerCapture(pointer);
+		if (!element) return;
 		const right = element.getBoundingClientRect().right;
-		let last = width;
-		const move = (moved: PointerEvent) => {
-			if (moved.pointerId !== pointer) return;
-			last = Math.round(Math.min(Math.max(right - moved.clientX, 320), window.innerWidth * 0.7));
-			element.style.setProperty("--workspace-width", `${last}px`);
-		};
-		const end = (ended: PointerEvent) => {
-			if (ended.pointerId !== pointer) return;
-			handle.removeEventListener("pointermove", move);
-			handle.removeEventListener("pointerup", end);
-			handle.removeEventListener("pointercancel", end);
-			if (!last) return;
-			setWidth(last);
-			localStorage.setItem("pi-workspace-width", String(last));
-		};
-		handle.addEventListener("pointermove", move);
-		handle.addEventListener("pointerup", end);
-		handle.addEventListener("pointercancel", end);
+		width.drag(event, element, (moved) => Math.min(Math.max(right - moved.clientX, 320), window.innerWidth * 0.7));
 	};
 
 	const rootName = cwd.replace(/\/+$/, "").split("/").pop() || "/";
@@ -974,7 +940,9 @@ export function WorkspacePanel({
 				))}
 			</div>
 		) : (
-			<p className="notice workspace-note">No unsent comments. Tap a line number in a file or diff to comment.</p>
+			<p className="notice workspace-note">
+				No unsent comments. {upperFirst(pressVerb(pointer))} a line number in a file or diff to comment.
+			</p>
 		);
 	} else if (tab === "search") {
 		const value = search.value;
@@ -1223,12 +1191,7 @@ export function WorkspacePanel({
 	}
 
 	return (
-		<aside
-			className={`workspace ${split ? "split" : ""}`}
-			aria-label="Workspace"
-			ref={panel}
-			style={width ? ({ "--workspace-width": `${width}px` } as CSSProperties) : undefined}
-		>
+		<aside className={`workspace ${split ? "split" : ""}`} aria-label="Workspace" ref={panel} style={width.style}>
 			{/* The column stays the second child either way, so toggling the split never remounts the list. */}
 			{split && (
 				<section className="workspace-preview" aria-label="Open file">

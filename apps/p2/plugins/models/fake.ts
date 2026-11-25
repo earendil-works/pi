@@ -10,8 +10,7 @@ import {
 	fauxThinking,
 	fauxToolCall,
 } from "@earendil-works/pi-ai/providers/faux";
-import { SPEAKER_PREFIX } from "@p2/app/v1";
-import { CONVERSATION_PREFIX } from "../conversations/contract.ts";
+import { SENDER_PREFIX } from "@p2/app/v1";
 
 // Fake-mode prompts that make the faux model call one tool; anything else is echoed.
 const SCRIPTED: Record<string, () => ReturnType<typeof fauxToolCall>> = {
@@ -21,11 +20,12 @@ const SCRIPTED: Record<string, () => ReturnType<typeof fauxToolCall>> = {
 	bash: () => fauxToolCall("bash", { command: "pwd" }),
 	"send-file": () => fauxToolCall("send_file", { path: "created.txt" }),
 	artifact: () =>
-		fauxToolCall("artifact", {
-			name: "demo",
-			title: "Demo artifact",
-			type: "html",
-			content: "<!doctype html><title>Demo</title><h1>Artifact demo</h1>",
+		fauxToolCall("codemode", {
+			code: [
+				'const { id } = await tools.artifact_write({ id: "demo", kind: "html", title: "Demo artifact", content: "<!doctype html><title>Demo</title><h1>Artifact demo</h1>" });',
+				"await tools.artifact_show({ id });",
+				"return id;",
+			].join("\n"),
 		}),
 	subagent: () =>
 		fauxToolCall("subagent", {
@@ -41,7 +41,7 @@ const SCRIPTED: Record<string, () => ReturnType<typeof fauxToolCall>> = {
 			name: "helper",
 			model: "faux/faux-1",
 			thinkingLevel: "high",
-			tools: ["bash", "artifact"],
+			tools: ["bash", "read"],
 		}),
 	"subagent-second": () =>
 		fauxToolCall("subagent", { action: "spawn", name: "second", message: "hello second", tools: ["read"] }),
@@ -79,15 +79,13 @@ const SCRIPTED: Record<string, () => ReturnType<typeof fauxToolCall>> = {
 /** The system prompt of a one-shot agent (plugins/agent) ends its instructions with its schema on this line's end. */
 const ONE_SHOT_SCHEMA = "matching this JSON Schema, without prose or code fences:\n";
 
-/** The person's text of a user message, without the speaker or peer block in front. */
+/** The text of a user message, without the sender block in front. */
 function userText(message: Message | undefined): string {
 	if (message?.role !== "user") return "";
 	if (typeof message.content === "string") return message.content;
 	const first = message.content[0];
 	const parts =
-		first?.type === "text" && (first.text.startsWith(SPEAKER_PREFIX) || first.text.startsWith(CONVERSATION_PREFIX))
-			? message.content.slice(1)
-			: message.content;
+		first?.type === "text" && first.text.startsWith(SENDER_PREFIX) ? message.content.slice(1) : message.content;
 	return parts.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n");
 }
 
@@ -169,6 +167,56 @@ export function createFakeModels(options: CreateModelsOptions = {}) {
 					const task = userText(transcript.messages.find((message) => message.role === "user"));
 					if (schema !== undefined && !task.startsWith("json ") && !task.startsWith("slow"))
 						return fauxAssistantMessage([fauxText(JSON.stringify(sampleOf(schema)))]);
+					// `steps`: a turn as real models make them: thinking and a call, words and another call, thinking and the
+					// answer (the transcript's stability tests).
+					if (text === "steps") {
+						const asked = transcript.messages.findLastIndex((message) => message.role === "user");
+						const results = transcript.messages
+							.slice(asked + 1)
+							.filter((message) => message.role === "toolResult").length;
+						if (results === 0)
+							return fauxAssistantMessage(
+								[
+									fauxThinking(`Planning the steps. ${"Looking at the files first. ".repeat(12)}`),
+									fauxToolCall("read", { path: "fixture.txt" }),
+								],
+								{ stopReason: "toolUse" },
+							);
+						if (results === 1)
+							return fauxAssistantMessage(
+								[
+									fauxText(`The first read is done. ${"Reading it once more to be sure. ".repeat(6)}`),
+									fauxToolCall("read", { path: "fixture.txt" }),
+								],
+								{ stopReason: "toolUse" },
+							);
+						return fauxAssistantMessage([
+							fauxThinking(`Wrapping up. ${"Both reads agree. ".repeat(12)}`),
+							fauxText(`Echo: steps. ${"Both reads show the same text, so the file is stable. ".repeat(8)}`),
+						]);
+					}
+					// `inline-steps`: a call, an inline artifact, another call, the answer (the artifact shows in place, between
+					// two wheels).
+					if (text === "inline-steps") {
+						const asked = transcript.messages.findLastIndex((message) => message.role === "user");
+						const results = transcript.messages
+							.slice(asked + 1)
+							.filter((message) => message.role === "toolResult").length;
+						const steps = [
+							() => fauxToolCall("read", { path: "fixture.txt" }),
+							() =>
+								fauxToolCall("codemode", {
+									code: [
+										'await tools.artifact_write({ id: "steps", kind: "md", title: "Steps", content: "# Between the calls\\n\\nShown where it was made." });',
+										'await tools.artifact_show({ id: "steps" });',
+									].join("\n"),
+								}),
+							() => fauxToolCall("read", { path: "fixture.txt" }),
+						];
+						const next = steps[results];
+						if (next) return fauxAssistantMessage([next()], { stopReason: "toolUse" });
+						return fauxAssistantMessage([fauxText("Echo: inline-steps. The artifact is above.")]);
+					}
 					// A section that changed during the run (tools loaded by `tool_search`) adds a system message after the result.
 					const last = transcript.messages.findLast((message) => message.role !== "system");
 					if (last?.role !== "toolResult") {
@@ -187,7 +235,7 @@ export function createFakeModels(options: CreateModelsOptions = {}) {
 												? fauxToolCall("subagent", JSON.parse(text.slice("subagent ".length)))
 												: text.startsWith("team ")
 													? fauxToolCall("team", JSON.parse(text.slice("team ".length)))
-													: /^(history_(search|read|handoff)|location_(envs|dirs|move)|tool_search|mcp__\w+) /.test(
+													: /^(view_\w+|artifact_\w+|bash|read|write|edit|send_file|reload_plugins|history_(search|read|handoff)|location_(envs|dirs|move)|tool_search|terminal|sidebar_rollups|mcp__\w+) /.test(
 																text,
 															)
 														? fauxToolCall(

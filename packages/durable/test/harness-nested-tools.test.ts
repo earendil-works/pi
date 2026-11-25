@@ -73,11 +73,15 @@ function results(entries: readonly EntryRecord[]): ToolResultMessage[] {
 	return entries.filter((entry) => ToolResultEntry.is(entry)).map((entry) => entry.model![0] as ToolResultMessage);
 }
 
-/** The text of a result message, or the value a schema-less nested call gives programs. */
-function text(result: NestedToolExecutionResult | ToolResultMessage | undefined): string {
+/** The text of a result message. */
+function text(result: ToolResultMessage | undefined): string {
 	if (result === undefined) return "";
-	if (!("role" in result)) return typeof result.structuredOutput === "string" ? result.structuredOutput : "";
 	return result.content.map((item) => (item.type === "text" ? item.text : "")).join("|");
+}
+
+/** The value a schema-less nested call gives programs, when it is text. */
+function nestedText(result: NestedToolExecutionResult | undefined): string {
+	return typeof result?.structuredOutput === "string" ? result.structuredOutput : "";
 }
 
 async function toolTasks(harness: Harness) {
@@ -181,7 +185,7 @@ describe("nested tool calls", () => {
 			setup.registry,
 			tool("batch", async (_args, api, callContext) => {
 				nested = await api.executeTool("echo", { text: "a" }, callContext);
-				return { output: [{ type: "text", text: `got ${text(nested)}` }] };
+				return { output: [{ type: "text", text: `got ${nestedText(nested)}` }] };
 			}),
 		);
 		const { harness, root, status, entries } = await runOnce(setup, [call("batch"), DONE]);
@@ -273,7 +277,7 @@ describe("nested tool calls", () => {
 			isError: true,
 			diagnostics: [{ severity: "error", code: "blocked", message: "Tool call blocked: no secrets" }],
 		});
-		expect(text(nested[1])).toBe("rewritten");
+		expect(nestedText(nested[1])).toBe("rewritten");
 		expect(echo.state.runs).toBe(1);
 		await harness.close(context);
 	});
@@ -314,7 +318,7 @@ describe("nested tool calls", () => {
 		);
 		const { harness, entries } = await runOnce(setup, [call("batch"), DONE]);
 		expect(echo.state.runs).toBe(1);
-		expect(text(reused)).toBe("echo a");
+		expect(nestedText(reused)).toBe("echo a");
 		expect(text(results(entries)[0])).toContain(
 			"Nested call c1/k was already made with another tool or other arguments",
 		);
@@ -347,7 +351,7 @@ describe("nested tool calls", () => {
 		);
 		const { harness } = await runOnce(setup, [call("batch"), DONE]);
 		expect(runs).toBe(1);
-		expect(nested.map((result) => text(result))).toEqual(["xy", "xy"]);
+		expect(nested.map((result) => nestedText(result))).toEqual(["xy", "xy"]);
 		await harness.close(context);
 	});
 
@@ -444,7 +448,7 @@ describe("nested tool calls", () => {
 			setup.registry,
 			tool("batch", async (_args, api, callContext) => {
 				const result = await api.executeTool("slow", {}, callContext);
-				return { output: [{ type: "text", text: text(result) }] };
+				return { output: [{ type: "text", text: nestedText(result) }] };
 			}),
 		);
 		setup.faux.setResponses([call("batch"), DONE]);
@@ -570,7 +574,7 @@ describe("nested tool calls", () => {
 					}
 					// A call new to the rerun: its slot, after the reattached one's, is found and finishes.
 					const second = await api.executeTool("echo", { text: "b" }, callContext);
-					return { output: [{ type: "text", text: `run ${runs}: ${text(first)}, ${text(second)}` }] };
+					return { output: [{ type: "text", text: `run ${runs}: ${nestedText(first)}, ${nestedText(second)}` }] };
 				},
 				{ replay: "safe" },
 			),
@@ -645,7 +649,7 @@ describe("nested tool calls", () => {
 		);
 		const { harness } = await runOnce(setup, [call("batch"), DONE]);
 		expect(echo.state.runs).toBe(1);
-		expect(both.map((result) => text(result))).toEqual(["echo a", "echo a"]);
+		expect(both.map((result) => nestedText(result))).toEqual(["echo a", "echo a"]);
 		expect(await toolTasks(harness)).toHaveLength(2);
 		await harness.close(context);
 	});
@@ -802,14 +806,14 @@ describe("nested tool calls", () => {
 			setup.registry,
 			tool("inner", async (_args, api, callContext) => {
 				const result = await api.executeTool("echo", { text: "deep" }, callContext, { key: "x" });
-				return { output: [{ type: "text", text: text(result) }] };
+				return { output: [{ type: "text", text: nestedText(result) }] };
 			}),
 		);
 		addTool(
 			setup.registry,
 			tool("outer", async (_args, api, callContext) => {
 				const result = await api.executeTool("inner", {}, callContext);
-				return { output: [{ type: "text", text: text(result) }] };
+				return { output: [{ type: "text", text: nestedText(result) }] };
 			}),
 		);
 		setup.faux.setResponses([call("outer"), DONE]);
@@ -1207,7 +1211,7 @@ describe("nested tool calls", () => {
 			{
 				callId: "c1/2",
 				status: "done",
-				summary: { isError: true, error: "Tool missing is not available" },
+				summary: { isError: true, durationMs: expect.any(Number), error: "Tool missing is not available" },
 			},
 			{ callId: "c1/3", status: "done", summary: { isError: false, durationMs: expect.any(Number), usage } },
 			{
@@ -1299,7 +1303,7 @@ describe("tool task version 1 and 2 records", () => {
 		expect((await harness.getTask(id, context))?.version).toBe(1);
 		harness.resume();
 		const settled = await harness.waitForTask(id, context);
-		expect(settled.version).toBe(3);
+		expect(settled.version).toBe(4);
 		expect(settled.input).toMatchObject({ kind: "model", callId: "c1" });
 		expect(settled.state.outcome).toMatchObject({ status: "completed", result: { kind: "model" } });
 		expect(echo.state.runs).toBe(1);
@@ -1317,7 +1321,7 @@ describe("tool task version 1 and 2 records", () => {
 		const { harness, root } = await openChat(await openNodeSqliteStorage(path), setup);
 		harness.resume();
 		const settled = await harness.waitForTask(id, context);
-		expect(settled.version).toBe(3);
+		expect(settled.version).toBe(4);
 		expect(settled.state.outcome).toMatchObject({ status: "failed", result: { kind: "model" } });
 		expect(echo.state.runs).toBe(0);
 		const [result] = results(await allEntries(root));
@@ -1327,7 +1331,7 @@ describe("tool task version 1 and 2 records", () => {
 	});
 
 	// #11043
-	it("reserves a stored version 2 task under version 3 and runs it as a model-issued call", async () => {
+	it("reserves a stored version 2 task under version 4 and runs it as a model-issued call", async () => {
 		const setup = chatSetup();
 		const echo = echoTool();
 		addTool(setup.registry, echo.registration);
@@ -1336,7 +1340,7 @@ describe("tool task version 1 and 2 records", () => {
 		expect((await harness.getTask(id, context))?.version).toBe(2);
 		harness.resume();
 		const settled = await harness.waitForTask(id, context);
-		expect(settled.version).toBe(3);
+		expect(settled.version).toBe(4);
 		expect(settled.input).toEqual({ kind: "model", assistant: expect.any(Number), callId: "c1" });
 		expect(settled.state.outcome).toMatchObject({ status: "completed", result: { kind: "model" } });
 		expect(echo.state.runs).toBe(1);

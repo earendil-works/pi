@@ -290,7 +290,9 @@ export class MemoryStorage implements Storage {
 			// Also when a batch's apply throws: the batches applied before it are stored, and their receipts stand.
 			for (const [index, seq] of seqs.entries()) receive(index, seq);
 		}
-		return refused === undefined ? { stored: seqs.length } : { stored: seqs.length, refused: refused.error };
+		return refused === undefined
+			? { kind: "stored", stored: seqs.length }
+			: { kind: "refused", stored: seqs.length, refused: refused.error };
 	}
 
 	/** Validate and detach one commit without changing observable state. */

@@ -1,12 +1,13 @@
-// Swipe down to close a bottom sheet (phones; wide screens show sheets as dialogs), after native sheets: a drag that
-// starts on the sheet's top edge (its grip and header) and goes down moves the sheet with the finger and fades its
-// scrim; on release it closes on a downward fling or past CLOSE_AT of its height, else it settles back, with a duration
-// that continues the finger's speed. The sheet closes (its route) when the slide out ends, so it is seen leaving.
-// Following the touch, deciding its axis, owning it and measuring the release are shared with the drawer's swipe
-// (drag-gesture.ts).
+// Swipe down to close a bottom sheet (phones; wide screens show sheets as dialogs), after native sheets: a drag down
+// moves the sheet with the finger and fades its scrim; on release it closes on a downward fling or past CLOSE_AT of its
+// height, else it settles back, with a duration that continues the finger's speed. The sheet closes (its route) when
+// the slide out ends, so it is seen leaving. Following the touch, deciding its axis, owning it and measuring the
+// release are shared with the drawer's swipe (drag-gesture.ts).
 //
-// Only the top edge: the sheet's content scrolls vertically, and a drag there stays a scroll. The grip and header take
-// no browser gestures (`touch-action: none` in style.css), so their moves are always cancelable.
+// Anywhere on the sheet, as iOS's sheets: the top edge (grip and header) always; the content when it is scrolled to its
+// top, else the drag scrolls it, and once it reaches its top the same finger goes on pulling the sheet down. The grip
+// and header take no browser gestures (`touch-action: none` in style.css), so their moves are always cancelable. Text
+// fields and elements that take touches themselves (`touch-action: none`: a terminal, a wheel) keep theirs.
 import { type RefObject, useEffect, useRef } from "react";
 import { FLING, SETTLE_EASING, settleDuration, trackDrags } from "./drag-gesture.ts";
 
@@ -15,11 +16,28 @@ const CLOSE_AT = 0.3;
 /** Upward drags (past where the sheet rests) move this share of the finger's distance: a little give, no more. */
 const RESIST = 0.2;
 
-/** Where a downward drag may start: the grip and the header (the content scrolls). */
+/** The sheet's top edge: a drag down there is always the sheet's (the content's only when it is at its top). */
 const EDGE = ".sheet-grip, .sheet-head";
+/** Elements whose touches are their own. */
+const OWN = "input, textarea, select, [contenteditable=''], [contenteditable='true']";
 const bottomSheet = () => !window.matchMedia("(min-width: 700px)").matches;
 
-type Pull = { height: number; offset: number };
+type Pull = { height: number; offset: number; edge: boolean; target: Element };
+
+/** Whether `target`, or an element between it and the sheet, takes touches itself (a field, `touch-action: none`). */
+function ownsTouches(target: Element, sheet: Element): boolean {
+	if (target.closest(OWN)) return true;
+	for (let element: Element | null = target; element && element !== sheet; element = element.parentElement)
+		if (getComputedStyle(element).touchAction === "none") return true;
+	return false;
+}
+
+/** Whether every element that scrolls between `target` and the sheet is at its top. */
+function atTop(target: Element, sheet: Element): boolean {
+	for (let element: Element | null = target; element && element !== sheet; element = element.parentElement)
+		if (element.scrollTop > 0) return false;
+	return true;
+}
 
 export function useSheetSwipe(
 	sheet: RefObject<HTMLElement | null>,
@@ -56,20 +74,32 @@ export function useSheetSwipe(
 			} else timer = setTimeout(clear, duration + 20);
 		};
 
+		/** The sheet follows the finger from now on. */
+		const grab = (pull: Pull) => {
+			if (!sheet.current) return false;
+			clearTimeout(timer);
+			for (const element of elements()) element.style.transition = "none";
+			sheet.current.style.willChange = "transform";
+			pull.height = sheet.current.getBoundingClientRect().height;
+			return true;
+		};
 		const drags = trackDrags<Pull>({
 			axis: "y",
-			begin: (target) =>
-				!closing && bottomSheet() && sheet.current?.contains(target) && target.closest(EDGE)
-					? { height: 0, offset: 0 }
-					: undefined,
-			take: (pull, along) => {
-				if (along <= 0 || !sheet.current) return false;
-				clearTimeout(timer);
-				for (const element of elements()) element.style.transition = "none";
-				sheet.current.style.willChange = "transform";
-				pull.height = sheet.current.getBoundingClientRect().height;
-				return true;
+			begin: (target) => {
+				const element = sheet.current;
+				if (closing || !bottomSheet() || !element?.contains(target)) return undefined;
+				const edge = Boolean(target.closest(EDGE));
+				return edge || !ownsTouches(target, element) ? { height: 0, offset: 0, edge, target } : undefined;
 			},
+			// Down from the edge, or from content at its top while the browser has not started scrolling it.
+			take: (pull, along, cancelable) =>
+				along > 0 &&
+				Boolean(sheet.current) &&
+				(pull.edge || (cancelable && atTop(pull.target, sheet.current!))) &&
+				grab(pull),
+			// Content scrolled up to its top by a finger that goes on down: the sheet takes over.
+			resume: (pull, delta) =>
+				delta > 0 && !closing && Boolean(sheet.current) && atTop(pull.target, sheet.current!) && grab(pull),
 			move: (pull, along) => {
 				pull.offset = along > 0 ? along : along * RESIST;
 				paint(pull);

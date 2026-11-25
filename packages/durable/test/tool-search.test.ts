@@ -193,6 +193,37 @@ describe("deferred tools and tool_search", () => {
 		await harness.close(context);
 	});
 
+	// #11803
+	it("finds a tool by a parameter description behind a local reference, and not by unreferenced definitions", async () => {
+		const chat = setup();
+		addTool(
+			chat.registry,
+			tool("ledger_inspect", "Inspect records", {
+				deferred: true,
+				parameters: {
+					type: "object",
+					properties: { options: { $ref: "#/$defs/options" } },
+					$defs: {
+						options: { type: "object", properties: { mode: { type: "string", description: "reconciliation" } } },
+						unused: { description: "forecast" },
+					},
+				},
+			}),
+		);
+		chat.faux.setResponses([
+			call("tool_search", { query: "forecast" }),
+			call("tool_search", { query: "reconciliation" }, "c2"),
+			DONE,
+		]);
+		const { harness, root } = await openChat(new MemoryStorage(), chat);
+		await (await root.submit({ type: "input", content: "go" }, context)).wait(context);
+		expect(toolResultTexts(await allEntries(root))).toEqual([
+			"No matching tools found.",
+			"Loaded 1 tool. They are available from your next call:\n- ledger_inspect: Inspect records",
+		]);
+		await harness.close(context);
+	});
+
 	it("finds nothing for an unrelated query and loads nothing", async () => {
 		const chat = setup();
 		chat.faux.setResponses([call("tool_search", { query: "weather forecast" }), DONE]);

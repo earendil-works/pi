@@ -7,11 +7,10 @@ export default defineFacet((host) => {
 	contribute(host, "p2.port-tools", (self) => {
 		const worker = workerOf(self);
 		const extension = createPortsExtension(
-			(query, origin, context) =>
+			(query, context) =>
 				worker().root(
-					async (ctx) =>
-						expectVariant(await ctx.get(Ports, {}), "worker").query({ conversation: 1, origin, query }, ctx),
-					context.abortSignal,
+					async (ctx) => expectVariant(await ctx.get(Ports, {}), "worker").query({ conversation: 1, query }, ctx),
+					context,
 				),
 			() => worker().init.values.session.id,
 		);

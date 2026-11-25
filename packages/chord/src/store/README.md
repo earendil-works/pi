@@ -2,7 +2,8 @@
 
 The store (slice 6a): one per host, opened by the app over a backend (SQLite: `chord/sqlite/node`, Durable Objects'
 storage), holding the host's tables, persisted documents and outbox; one commit queue serializing only the commit
-step; eager table migrations; export and import.
+step, writing the commits queued behind a running step in one backend transaction (group commit, S18); eager table
+migrations; export and import.
 
 ## For apps (`index.ts`)
 
@@ -44,8 +45,23 @@ const copy = await importStore(sqliteBackend(db), decodeJsonl(bytes), ctx);
 - Queries: `query(Table).where((t) => cond).orderBy((t) => col, dir)` with `eq ne lt lte gt gte inArray isNull prefix
   and or not` (SQL's `NULL` rules); pages `{ items, next? }` with opaque cursors, `rows()` paging by 100, `count`.
 - Live queries: `self.query(table, q, limit)` in the owning object's factory, a watchable of up to `limit` rows, run
-  at activation and again in the commit step of each commit of the object that writes the table (`live-query.ts`;
-  `host/` describes the rules). One query per such commit: not for tables written hundreds of times a second.
+  at activation and again in the commit step of each commit that can change it (`live-query.ts`; `host/` describes
+  the rules). Not for tables written hundreds of times a second with many reads no commit can rule out.
+- Column sets (slice 14, `column-set.ts`): `defineColumns(name, { columns, key, indexes? })` names the columns of
+  a table other plugins may read; the table spreads `...Set.columns` in and declares `exposes: Set`. A query may
+  then test `exists(Set, { setColumn: column }, (t) => cond)` (`existsNode` with the condition as data) or join one
+  row by its key, `query(T).join(Set, (row) => ({ key: row.column }))`, an inner join driven from its own table.
+  Tables are matched only by equality to the set's key or a declared index. `compile(Set, cond)` gives a condition
+  as data, `query(T).whereNode(Set, node)` takes one after checking the whole node.
+- The store's reads (slice 14): `store.reads` (`reads.ts`) indexes every registered read (`read.ts`) by the tables
+  it uses, whoever owns it, and keeps the bindings of column sets and the tables that are not ready. A transaction
+  that wrote tables stages `ReadRefresh`: inside its commit step it takes the reads over those tables, runs the
+  skip test (`skip.ts`: the columns an `update` assigns, the keys a read kept, then one keyed probe, the read's own
+  statement limited to the rows the written row pairs with) and runs the others again. `read-plan.ts` compiles a
+  query against the bindings, checks every column and match, and renders the statements; `open-query.ts` keeps a
+  query compiled while bindings change, with one read per range; `page.ts` reads one page with a cursor (a table
+  handle's `page` and a named query's). Counters: `chord.query.runs`, `chord.query.probes`, `chord.query.skips`,
+  `chord.query.rows`.
 - Writes in `self.tx`: `put` (an upsert), `update(key, set)`, `delete(key)`, `updateWhere(where, set)`,
   `deleteWhere(where)`; a `set` is values or expressions (`add sub max min concat replacePrefix coalesce when`); key
   columns never change. `tx.get` sees the transaction's own single-key writes, not after a bulk one (W10).
@@ -72,7 +88,8 @@ call and at its turn while an owner holds a claim or once the store diverged, an
 ## For Chord's layers
 
 `ChordStore` (`store.ts`: `commit(staged, fence, ctx)`, `read(fn, ctx)` guarded as Durable's `GuardedStorage`,
-`take()` for an export, the catalog), the commit `Step` and `StagedWrite`s in their `WriteOrder` (`step.ts`), the documents engine
+`take()` for an export, `settled()` (every commit queued before the call settled: the workers component waits for it
+before it publishes a worker's exit), the catalog), the commit `Step` and `StagedWrite`s in their `WriteOrder` (`step.ts`), the documents engine
 (`engine.ts`), the catalog (`catalog.ts`), the write vocabulary (`writes.ts`, `table-writes.ts`), rows and columns
 (`rows.ts`, `columns.ts`, `json-column.ts`), the compiled where/set vocabulary (`expression.ts`) and its JS evaluator (`evaluate.ts`),
 SQL (`sql.ts`), the table handle and a transaction's table changes (`table-handle.ts`, `table-changes.ts`), live

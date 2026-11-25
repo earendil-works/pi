@@ -1,0 +1,5 @@
+{
+	"name": "agent-plugins",
+	"private": true,
+	"type": "module"
+}

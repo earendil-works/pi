@@ -3,22 +3,33 @@
 // data), logs and owner notices, restarts after a crash (as v1), and the lifecycle steps of relocation and cloning,
 // serialized per session.
 import { realpathSync } from "node:fs";
+import type { FollowAttachment, FollowObserver, Store } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord/json";
-import type { Plugins } from "@earendil-works/chord/plugins";
+import type { BaseInputs, Plugins } from "@earendil-works/chord/plugins";
 import { createWorkers, type WorkerState, type Workers, type WorkersError } from "@earendil-works/chord/workers";
 import { type Host, Session } from "../runtime/chord.ts";
 import { logWriter, processLogs } from "../runtime/logs.ts";
 import { canView, type P2Principal } from "../runtime/principals.ts";
-import type { HostEvent, RelocationSteps, SessionWorkerControl } from "../runtime/server.ts";
+import type {
+	HostEvent,
+	RelocationSteps,
+	SessionWorkerControl,
+	WorkerState as SessionWorkerState,
+} from "../runtime/server.ts";
+import { WorkerBoundary } from "../runtime/session-worker.ts";
 import type { WorkerInit } from "../runtime/worker.ts";
 
 export type SessionWorkersOptions = {
 	readonly host: Host;
+	/** The server host's store: a worker's exit is published after the commits its calls queued there. */
+	readonly store: Store;
 	readonly plugins: Plugins;
 	readonly app: string;
 	readonly dataDir: string;
 	readonly fake: boolean;
+	/** Whether workers record and send telemetry (`WorkerInit.telemetry`; settings.json's `telemetry`). */
+	readonly telemetry: boolean;
 	readonly entry: string;
 	readonly execArgv: readonly string[];
 	readonly env?: Readonly<Record<string, string>>;
@@ -37,11 +48,16 @@ const CRASH_RESTARTS = 5;
 const CRASH_WINDOW_MS = 60_000;
 
 export class SessionWorkers implements SessionWorkerControl {
-	readonly workers: Workers<typeof Session>;
+	/** Chord's workers component, made by `create` (its worker base bundled first). */
+	#workers: Workers<typeof Session> | undefined;
+	#baseInputs: BaseInputs | undefined;
 	readonly #options: SessionWorkersOptions;
 	readonly #generations = new Map<string, number>();
 	readonly #operations = new Map<string, Promise<unknown>>();
 	readonly #listeners = new Set<(event: HostEvent) => void>();
+	/** The followers of every worker's state (`observe`), and the state they were given last. */
+	readonly #observers = new Set<FollowObserver<unknown>>();
+	#workerStates: Readonly<Record<string, SessionWorkerState>> = {};
 	readonly #writers = new Map<string, ReturnType<typeof logWriter>>();
 	/** The redacted reason of each session's last failed start or crash (Chord's public error is a fixed message). */
 	readonly #reasons = new Map<string, string>();
@@ -53,19 +69,54 @@ export class SessionWorkers implements SessionWorkerControl {
 	#states: Readonly<Record<string, WorkerState>> = {};
 	#generation = 0;
 
-	constructor(options: SessionWorkersOptions, context: Context) {
+	private constructor(options: SessionWorkersOptions) {
 		this.#options = options;
 		processLogs.redactor.addDirectory(options.dataDir);
 		for (const [key, value] of Object.entries(options.env ?? {})) {
 			if (/(?:key|token|secret|password|cookie|auth)/i.test(key)) processLogs.redactor.addSecret(value);
 		}
+	}
+
+	/**
+	 * The session workers: Chord's workers component created and its worker base built now (the worker entry bundled
+	 * once, so every worker runs the code the server booted with; a broken entry rejects), then followed.
+	 */
+	static async create(options: SessionWorkersOptions, context: Context): Promise<SessionWorkers> {
+		const made = new SessionWorkers(options);
+		const workers = made.#createWorkers(context);
+		made.#workers = workers;
+		const built = await workers.build();
+		if (built.kind === "failed") {
+			await workers.close(context);
+			throw built.error;
+		}
+		made.#baseInputs = built.inputs;
+		await made.#follow();
+		return made;
+	}
+
+	/** The files the worker base was built from, with their bytes' hashes. */
+	get baseInputs(): BaseInputs {
+		// Set by `create` before the instance is handed out.
+		return this.#baseInputs!;
+	}
+
+	/** Chord's workers component for the sessions. */
+	get workers(): Workers<typeof Session> {
+		// Set by `create` before the instance is handed out.
+		return this.#workers!;
+	}
+
+	#createWorkers(context: Context): Workers<typeof Session> {
+		const options = this.#options;
 		const dataDir = realpathSync(options.dataDir);
-		this.workers = createWorkers(
+		return createWorkers(
 			options.host,
 			Session,
 			{
 				kind: "worker",
 				entry: options.entry,
+				store: options.store,
 				execArgv: options.execArgv,
 				...(options.env === undefined ? {} : { env: options.env }),
 				// Owners reach every session, the server's own code too (`SERVER`); guests only the sessions their grant names.
@@ -86,6 +137,7 @@ export class SessionWorkers implements SessionWorkerControl {
 						app: options.app,
 						dataDir: options.dataDir,
 						fake: options.fake,
+						telemetry: options.telemetry,
 						generation,
 						values,
 					};
@@ -99,7 +151,6 @@ export class SessionWorkers implements SessionWorkerControl {
 			},
 			context,
 		);
-		void this.#follow();
 	}
 
 	/** Generation of the session's latest worker (0: never started). */
@@ -117,6 +168,11 @@ export class SessionWorkers implements SessionWorkerControl {
 	subscribe(listener: (event: HostEvent) => void): () => void {
 		this.#listeners.add(listener);
 		return () => this.#listeners.delete(listener);
+	}
+
+	observe(observer: FollowObserver<unknown>): FollowAttachment<Readonly<Record<string, SessionWorkerState>>> {
+		this.#observers.add(observer);
+		return { value: this.#workerStates, detach: () => this.#observers.delete(observer) };
 	}
 
 	async relocate(session: string, steps: RelocationSteps): Promise<void> {
@@ -211,7 +267,19 @@ export class SessionWorkers implements SessionWorkerControl {
 		});
 	}
 
-	async retry(session: string): Promise<void> {
+	async retry(session: string, context: Context): Promise<SessionWorkerState> {
+		await this.resume(session);
+		// A hold of the server's own starts the worker when nothing else holds it; its outcome is the answer.
+		const boundary = this.#options.host.hold(WorkerBoundary, { session }, context);
+		try {
+			await this.#settled(session, context);
+		} finally {
+			boundary.release();
+		}
+		return this.#workerStates[session] ?? { running: false, generation: this.generation(session) };
+	}
+
+	async resume(session: string): Promise<void> {
 		this.#crashRestarts.delete(session);
 		await this.#serially(session, async () => {
 			await this.#suspended(session, async () => {
@@ -223,6 +291,27 @@ export class SessionWorkers implements SessionWorkerControl {
 		});
 	}
 
+	/** Resolves once the session's worker runs or failed (not while it starts or is stopped); `context` ends the wait. */
+	async #settled(session: string, context: Context): Promise<void> {
+		const settled = () => {
+			const status = this.#status(session);
+			return status === "running" || status === "failed";
+		};
+		if (settled()) return;
+		const watch = await this.workers.state.watch(context);
+		try {
+			await new Promise<void>((resolve, reject) => {
+				context.abortSignal?.addEventListener("abort", () => reject(context.abortSignal?.reason), { once: true });
+				if (settled()) return resolve();
+				watch.start(async () => {
+					if (settled()) resolve();
+				});
+			});
+		} finally {
+			await watch.stop();
+		}
+	}
+
 	/** Stops the session's worker and clears its failure: the next hold (one waiting now too) starts it again. */
 	async stop(session: string): Promise<void> {
 		await this.#serially(session, () =>
@@ -231,6 +320,20 @@ export class SessionWorkers implements SessionWorkerControl {
 					if (notice.source === `${SESSION_PREFIX}${session}`) processLogs.dismissNotice(notice.id);
 			}),
 		);
+	}
+
+	/**
+	 * Stops an archived session's worker for good: its holders (a page's lingering conversation, say) wait suspended
+	 * instead of starting a worker the archived session refuses, which failed with an owner notice. `retry` (restore)
+	 * ends the suspension; so does the release of its last holder (a later hold is refused as archived).
+	 */
+	async suspend(session: string): Promise<void> {
+		this.#crashRestarts.delete(session);
+		await this.#serially(session, async () => {
+			await this.workers.stop(Session({ id: session }), BACKGROUND_CONTEXT);
+			for (const notice of processLogs.notices())
+				if (notice.source === `${SESSION_PREFIX}${session}`) processLogs.dismissNotice(notice.id);
+		});
 	}
 
 	/** Stops every worker; their exits are no news to subscribers (the server's objects close next). */
@@ -399,6 +502,7 @@ export class SessionWorkers implements SessionWorkerControl {
 	async #follow(): Promise<void> {
 		const watch = await this.workers.state.watch(BACKGROUND_CONTEXT);
 		const publish = (states: typeof watch.value): void => {
+			const changed: Record<string, SessionWorkerState> = {};
 			for (const key of new Set([...Object.keys(this.#states), ...Object.keys(states)])) {
 				const state = states[key];
 				if (JSON.stringify(state) === JSON.stringify(this.#states[key])) continue;
@@ -416,8 +520,15 @@ export class SessionWorkers implements SessionWorkerControl {
 								}
 							: { session, running: state.status === "running", generation, pid: state.pid };
 				for (const listener of [...this.#listeners]) listener(event);
+				const { session: _session, ...worker } = event;
+				changed[session] = worker;
 			}
 			this.#states = states;
+			if (Object.keys(changed).length === 0) return;
+			this.#workerStates = { ...this.#workerStates, ...changed };
+			const value = this.#workerStates;
+			for (const observer of [...this.#observers])
+				observer.advance({ kind: "value", value, ops: [["r", value]], retired: false }, BACKGROUND_CONTEXT);
 		};
 		publish(watch.value);
 		watch.start(async (call) => {

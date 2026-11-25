@@ -100,7 +100,7 @@ describe("proxy marking is never authentication (including the loopback Unix-soc
 		const response = await viaBridge("/");
 		assert.equal(response.status, 401);
 		assert(response.body.includes("Sign in to Pi"));
-		assert(!response.body.includes("PRIVATE") && !response.body.includes("/__p2_web/"));
+		assert(!response.body.includes("PRIVATE") && !response.body.includes("/_chord/web/"));
 		assert.equal((await viaBridge("/owner-token")).status, 403);
 	});
 	it("a forged marker can only remove localhost/device trust", async () => {
@@ -120,8 +120,8 @@ describe("proxy marking is never authentication (including the loopback Unix-soc
 		for (const path of [
 			"/",
 			`/s/${session}`,
-			"/__p2_web",
-			"/__p2_web/app-ANY.js",
+			"/_chord/web/plugins.0.js",
+			"/_chord/web/base.0.js",
 			`/download?session=${session}&id=${file}`,
 			`/workspace-file?session=${session}&path=private.txt`,
 			`/artifact?session=${session}&name=private&version=1`,

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { renderDeclarations, renderToolSample, renderToolSignature, schemaToType } from "../src/index.ts";
+import {
+	renderDeclarations,
+	renderToolSample,
+	renderToolSignature,
+	resolveSchemaRef,
+	schemaToType,
+} from "../src/index.ts";
 
 const execute = () => undefined;
 
@@ -219,6 +225,25 @@ describe("schemaToType", () => {
 		const schema = { type: "object", properties };
 		expect(schemaToType(schema, { maxChars: 100 })).toBe("unknown");
 		expect(schemaToType(schema)).toContain("field49?: string;");
+	});
+});
+
+describe("resolveSchemaRef", () => {
+	const item = { type: "string" };
+	const root = { $defs: { item, "a/b": item, "c~d": item, "e f": item } };
+
+	it("resolves local references with escaped segments", () => {
+		expect(resolveSchemaRef("#", root)).toBe(root);
+		expect(resolveSchemaRef("#/$defs/item", root)).toBe(item);
+		expect(resolveSchemaRef("#/$defs/a~1b", root)).toBe(item);
+		expect(resolveSchemaRef("#/$defs/c~0d", root)).toBe(item);
+		expect(resolveSchemaRef("#/$defs/e%20f", root)).toBe(item);
+	});
+
+	it("returns undefined for remote, missing, and malformed references", () => {
+		expect(resolveSchemaRef("other.json#/$defs/item", root)).toBeUndefined();
+		expect(resolveSchemaRef("#/$defs/missing", root)).toBeUndefined();
+		expect(resolveSchemaRef("#/$defs/%E0%A4%A", root)).toBeUndefined();
 	});
 });
 

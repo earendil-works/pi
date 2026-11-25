@@ -1,9 +1,10 @@
 // Reload in the kernel (slice 7b): `host.reload(facets, ctx)` switches a running host to a new plugin set. Staging
 // runs every setup and every affected object's new factory against a recording `self` (nothing activates; a throw
-// rejects the reload and nothing changes), the commit swaps the served types, registries and contributions at once,
-// then every object of a changed or removed plugin takes its fate. Here: a pure notes store is swapped in place while
-// a call runs on its old code, a search index with a native restarts after its running call drained, and a removed
-// plugin's object ends while its holder waits for it to come back.
+// rejects the reload and nothing changes), the commit replaces the served types, registries and contributions at
+// once, then every object of a changed or removed plugin takes its fate: a live one restarts (its running calls finish
+// on the old code, new calls wait for the new code), a removed plugin's one ends. Here: a pure notes store restarts
+// while a call runs on its old code, a search index with a native restarts after its running call drained, and a
+// removed plugin's object ends while its holder waits for it to come back.
 // Run from packages/chord:
 //   node --conditions=source --experimental-strip-types test/examples/33-reload.ts
 import { BACKGROUND_CONTEXT, type Context } from "../../src/context/index.ts";
@@ -14,7 +15,7 @@ import { constant } from "../../src/state/index.ts";
 
 const context = BACKGROUND_CONTEXT;
 
-/** The notes store: a list, its count, and `add` (which can be told to wait, to show a call across a swap). */
+/** The notes store: a list, its count, and `add` (which can be told to wait, to show a call across a restart). */
 const Notes = local("example.notes", {
 	version: 1,
 	params: {},
@@ -104,10 +105,11 @@ const notes = await host.get(Notes, {}, context);
 await notes.add({ text: "first" }, context);
 console.log("1. loaded:", notes.list.value, "banner", notes.banner.value);
 
-// 2. A pure swap while a call runs: the running `add` finishes on the old code, the next call runs on the new one.
+// 2. A restart of pure code while a call runs: the running `add` finishes on the old code; the next call waits at the
+// gate until the old attempt drained, then runs on the new code. Documents stay.
 slowAdd = Promise.withResolvers();
 const running = notes.add({ text: "second" }, context);
-const swap = await host.reload(
+const restarted = await host.reload(
 	[
 		{ name: "@example/notes", facet: notesV2 },
 		{ name: "@example/search", facet: search },
@@ -115,15 +117,11 @@ const swap = await host.reload(
 	],
 	context,
 );
-console.log("2. reload:", JSON.stringify(swap));
+console.log("2. reload:", JSON.stringify(restarted));
+const next = notes.add({ text: "third" }, context);
 slowAdd.resolve();
 slowAdd = undefined;
-console.log(
-	"   the old call returned",
-	await running,
-	"; the new code adds",
-	await notes.add({ text: "third" }, context),
-);
+console.log("   the old call returned", await running, "; the waiting call, on the new code,", await next);
 console.log("   list:", notes.list.value, "banner", notes.banner.value, "(same documents, new code)");
 
 // 3. A restart: the search object holds a native. Its running call drains first, then the native closes (reload).
@@ -170,16 +168,25 @@ await host.reload(
 await new Promise((resolve) => setTimeout(resolve, 0));
 console.log("5. served again: clock holder", shown(clock.state.value), clock.zone.value);
 
-// 6. A staging error rejects the reload and changes nothing.
+// 6. A staging error fails that plugin only: it keeps its old code, reported; nothing else changes.
 const broken = defineFacet((h) =>
 	h.serve(Notes, () => {
 		throw new Error("a typo in the new factory");
 	}),
 );
-try {
-	await host.reload([{ name: "@example/notes", facet: broken }], context);
-} catch (error) {
-	console.log("6. rejected:", (error as Error).message, "- banner still", notes.banner.value);
-}
+const failed = await host.reload(
+	[
+		{ name: "@example/notes", facet: broken },
+		{ name: "@example/search", facet: searchV2 },
+		{ name: "@example/clock", facet: clockPlugin },
+	],
+	context,
+);
+console.log(
+	"6. failed:",
+	failed.failed.map(({ plugin, error }) => `${plugin}: ${(error as Error).message}`),
+	"- banner still",
+	notes.banner.value,
+);
 
 await host.close(context);

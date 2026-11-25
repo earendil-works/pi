@@ -153,7 +153,10 @@ async function edited(edit: (parts: ArchivePart[]) => unknown[]): Promise<unknow
 /** The index of the first part of `kind` (and table suffix). */
 function first(parts: readonly ArchivePart[], kind: ArchivePart["kind"], table?: string): number {
 	return parts.findIndex(
-		(part) => part.kind === kind && (table === undefined || ("table" in part && part.table.endsWith(table))),
+		(part) =>
+			part.kind === kind &&
+			(table === undefined ||
+				((part.kind === "table" || part.kind === "put" || part.kind === "index") && part.table.endsWith(table))),
 	);
 }
 
@@ -184,6 +187,14 @@ describe("refusals", () => {
 			"not an archive part",
 		],
 		["no manifest first", (parts) => parts.slice(1), "the manifest comes first"],
+		[
+			"a host's data archive",
+			(parts) => {
+				(at(parts, 0) as { host?: string }).host = "session|S1";
+				return parts;
+			},
+			"a host's data archive (session|S1); import it with importHostData",
+		],
 		["a second manifest", (parts) => [parts[0], ...parts], "the manifest comes first, once"],
 		[
 			"another format",

@@ -27,8 +27,9 @@ function currentContract<const N extends string>(name: N) {
 }
 
 /**
- * The surface's facet serving its published set (starting at `published.set`, the set taken before the load) and its
- * scripts object for every principal that may hold it.
+ * The surface's facet serving its published set (starting at `published.set` when first held: the surface's first set,
+ * or an empty one before its build, which publishes the first) and its scripts object for every principal that may hold
+ * it.
  */
 export function scriptsFacet<P extends Principal>(
 	surface: SurfaceName,

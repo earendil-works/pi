@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { OAuthCredential } from "@earendil-works/pi-ai";
 import { radiusProvider } from "@earendil-works/pi-ai/providers/radius";
 import { DEFAULT_RADIUS_GATEWAY, normalizeRadiusGatewayUrl } from "@earendil-works/pi-ai/providers/radius-config";
+import { SERVER_PART_LIMITS } from "@p2/app/v1";
 import { WebSocket } from "ws";
 import type { Forwards } from "../ports/contract.ts";
 import {
@@ -94,6 +95,17 @@ import {
  * socket at once. Relays that predate the parameter ignore it and answer 409,
  * which the backoff retries until the old host expires.
  *
+ * Name. The server owns its name (`ServerName`, src/runtime/server-name-file.ts);
+ * Radius keeps a copy for its shell and never changes it. Every host connect
+ * carries the current name (`?name=`), which Radius records when it claims the
+ * server, and a rename while connected is sent with `PUT /v1/servers/<id>/name`
+ * at once, without a reconnect: a reconnect would drop every channel, the
+ * browser's that made the rename among them. A rename that fails or happens
+ * while offline goes with the next connect. A server without any name connects
+ * without `name`, which keeps the name Radius has (else Radius shows the server
+ * ID). Relays that predate names ignore the parameter; relays without the
+ * endpoint answer 404 and get the name with the next connect.
+ *
  * Two p2 processes with the same `radius.json` share one server ID, so they
  * would replace each other in turn. The relay closes a replaced host with 1012
  * "Server host replaced", and that is always another process: this one gives up
@@ -105,6 +117,25 @@ import {
  * (`pub--<label>--<forward>`) without a principal: nobody signed in. Such a
  * channel reaches only a forward the owner marked public; for any other
  * forward, and for the brain's own UI, it is refused like an unknown forward.
+ *
+ * Client channels. A Pi client of the owner, the TUI launcher with `--radius`
+ * (src/hosts/tui-radius.ts), connects to Radius with its own bearer credential
+ * (`pi-server.client.v2`). Radius then opens a `ws` channel with the principal
+ * but without a request or public origin: there is no browser request to
+ * describe. The client's first message is its request instead, JSON
+ * `{ type: "http" | "websocket", method, path, headers }`, and the brain makes
+ * it a loopback request marked like the owner's browser requests, except
+ * without a shell origin: no page frames a client. HTTP request bodies follow
+ * as binary messages and a text end marker. The brain answers with one text
+ * message `{ status, headers, origin }` (`origin`: what the server sees as this
+ * client's origin), then for HTTP the response body as binary messages and a
+ * close with 1000; for `websocket`, status 101 turns the channel into the piped
+ * loopback socket. Only relays with channel sockets (v5) carry them.
+ *
+ * Temporary: one channel per request. Radius limits new connections (120 a
+ * minute per user, shared with this brain's reconnects), so the launcher polls
+ * rarely. The proper form carries all of a client's requests and its chord link
+ * over one channel (docs/p2-notes.md "TUI through Radius").
  */
 
 /** Offered newest first; v3 adds credit flow control for HTTP channels, v4 port forwards, v5 channel sockets. */
@@ -115,7 +146,11 @@ const CHANNEL_SUBPROTOCOL = "pi-server.channel.v1";
 /** A channel socket's direction pauses its source above this many unsent bytes, and resumes below the low mark. */
 const PIPE_HIGH_BYTES = 256 * 1024;
 const PIPE_LOW_BYTES = 64 * 1024;
-const MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
+/**
+ * A WebSocket message the brain carries: the largest part the server sends a page. The relay has its own limit per data
+ * message (32 MiB by default since Radius ee560a41, `SERVER_MAX_DATA_MESSAGE_BYTES`), which a larger part fails at.
+ */
+const MAX_MESSAGE_BYTES = SERVER_PART_LIMITS.part;
 /** The relay's default window, for relays that do not state it in `connection_open`. */
 const DEFAULT_HTTP_WINDOW = 256 * 1024;
 const CONGESTION_HIGH_BYTES = 1024 * 1024;
@@ -134,6 +169,8 @@ const HEARTBEAT_IDLE_MS = 20_000;
 /** Silence from the relay after which the connection counts as lost and is replaced. */
 const HEARTBEAT_TIMEOUT_MS = 60_000;
 const HANDSHAKE_TIMEOUT_MS = 30_000;
+/** A client channel's origin while the brain's Radius origin is unknown (nobody opened it in a browser yet). */
+const CLIENT_ORIGIN = "https://radius.invalid";
 /** The relay's close of a host socket another brain with this server ID replaced (relay protocol). */
 const REPLACED_CODE = 1012;
 const REPLACED_REASON = "Server host replaced";
@@ -160,8 +197,10 @@ export type RadiusBrainConfig = {
 	 */
 	publicOrigin?: string;
 	/**
-	 * This brain's page in the Radius shell (`<shell>/pi/brains/<organization>/<server>`), as last seen on a relayed
-	 * request for its UI. People sessions are shared with by email open them there, signed in to Radius.
+	 * This brain's page in the Radius shell (`<shell>/pi/<organization ID>/<server>`), as last seen on a relayed request
+	 * for its UI; a page of the brain's UI is below it (`…/s/<session>`). People sessions are shared with by email open
+	 * them there, signed in to Radius. The shell names organizations by slug when they have one and replaces this ID
+	 * form, but a link people keep names the organization by ID, which a slug change leaves valid.
 	 */
 	shellPage?: string;
 	credential: OAuthCredential;
@@ -171,7 +210,7 @@ export type RadiusStatus =
 	/** No radius.json: this p2 is local only. Checked again periodically, so a later login connects. */
 	| { status: "signed_out" }
 	| { status: "connecting" }
-	| { status: "connected"; serverId: string; organizationId: string }
+	| { status: "connected"; serverId: string; organizationId: string; name?: string }
 	| { status: "retrying"; error: string };
 
 /** Who opened a channel; `email` (normalized, verified) is set for people other than the owner. */
@@ -240,6 +279,14 @@ export async function writeRadiusConfig(directory: string, config: RadiusBrainCo
 	await rename(`${path}.tmp`, path);
 }
 
+/**
+ * A saved shell page in the shell's current URL form: pages saved before its URLs dropped `/brains`
+ * (`<shell>/pi/brains/<organization>/<server>`) no longer resolve. The next relayed request saves the current form.
+ */
+export function currentShellPage(saved: string): string {
+	return saved.replace(/^(https?:\/\/[^/]+)\/pi\/brains\//, "$1/pi/");
+}
+
 /** Gateway for new logins: `PI_RADIUS_GATEWAY`, as in the coding agent, else production. */
 export function radiusGatewayFromEnv(): string {
 	return normalizeRadiusGatewayUrl(process.env.PI_RADIUS_GATEWAY ?? DEFAULT_RADIUS_GATEWAY);
@@ -281,6 +328,8 @@ export class RadiusBrain {
 	/** The configuration the host socket connected with; channel sockets authenticate with its credential. */
 	#config: RadiusBrainConfig | undefined;
 	#refreshing: Promise<RadiusBrainConfig> | undefined;
+	/** The account the current credential signs in as (`account()`), asked of Radius once per credential. */
+	#account: { readonly token: string; readonly account: Promise<string> } | undefined;
 	#congestion: NodeJS.Timeout | undefined;
 	#closed = false;
 	readonly #abort = new AbortController();
@@ -294,6 +343,11 @@ export class RadiusBrain {
 	#reported = false;
 	/** Reports run one at a time, so an older set never lands after a newer one. */
 	#reporting: Promise<void> = Promise.resolve();
+	/** The server's name (see "Name"), and the one Radius has as far as this brain knows (undefined: unknown). */
+	#name: string | undefined;
+	#radiusName: string | undefined;
+	/** Renames are sent one at a time, so an older name never lands after a newer one. */
+	#naming: Promise<void> = Promise.resolve();
 	readonly #heartbeatIdleMs: number;
 	readonly #heartbeatTimeoutMs: number;
 	readonly #handshakeTimeoutMs: number;
@@ -302,6 +356,8 @@ export class RadiusBrain {
 		directory: string;
 		port: () => number;
 		relay: RelayAccess;
+		/** The server's name at the start; `rename` follows it. */
+		name?: string;
 		/** Port forwards; without them, forward channels answer as unknown forwards. */
 		forwards?: Forwards;
 		onStatus?: (status: RadiusStatus) => void;
@@ -312,6 +368,7 @@ export class RadiusBrain {
 		this.#port = options.port;
 		this.#relay = options.relay;
 		this.#forwards = options.forwards;
+		this.#name = options.name;
 		this.#onStatus = options.onStatus ?? (() => {});
 		this.#heartbeatIdleMs = options.timing?.heartbeatIdleMs ?? HEARTBEAT_IDLE_MS;
 		this.#heartbeatTimeoutMs = options.timing?.heartbeatTimeoutMs ?? HEARTBEAT_TIMEOUT_MS;
@@ -329,9 +386,44 @@ export class RadiusBrain {
 		this.#report();
 	}
 
+	/** Follows a rename of the server: sent to Radius now if connected, else with the next connect (see "Name"). */
+	rename(name: string | undefined): void {
+		this.#name = name;
+		this.#sendName();
+	}
+
 	/** This brain's page in the Radius shell, once known (see `RadiusBrainConfig.shellPage`). */
 	get shellPage(): string | undefined {
 		return this.#shellPage;
+	}
+
+	/**
+	 * What a request to this brain's gateway on its own behalf needs (backup, `plugins/backup/radius-remote.ts`): the gateway, this
+	 * brain's server ID and a current access token, refreshed as the connection refreshes it. Rejects while not signed in.
+	 */
+	async syncAccess(): Promise<{ readonly gateway: string; readonly serverId: string; readonly token: string }> {
+		const config = await this.#currentConfig();
+		return { gateway: config.gateway, serverId: config.serverId, token: config.credential.access };
+	}
+
+	/**
+	 * The Radius account this brain is signed in as, `<organization ID>/<principal ID>` (Radius's context for the current
+	 * credential): a backup belongs to the account that made it (`plugins/backup`). Rejects while not signed in.
+	 */
+	async account(): Promise<string> {
+		const config = await this.#currentConfig();
+		const token = config.credential.access;
+		let cached = this.#account;
+		if (cached?.token !== token) {
+			const account = this.#owner(config).then((owner) => `${owner.organization_id}/${owner.id}`);
+			cached = { token, account };
+			this.#account = cached;
+			// A failed ask is asked again next time, not remembered.
+			account.catch(() => {
+				if (this.#account?.account === account) this.#account = undefined;
+			});
+		}
+		return cached.account;
 	}
 
 	close(): void {
@@ -348,6 +440,7 @@ export class RadiusBrain {
 		if (this.#closed) return;
 		let config: RadiusBrainConfig;
 		let owner: Principal;
+		let name: string | undefined;
 		try {
 			if (!(await readRadiusConfig(this.#directory))) {
 				this.#onStatus({ status: "signed_out" });
@@ -357,9 +450,10 @@ export class RadiusBrain {
 			this.#onStatus({ status: "connecting" });
 			config = await this.#freshConfig();
 			owner = await this.#owner(config);
+			name = this.#name;
 			if (this.#forwards && !this.#forwards.radiusOrigin && config.publicOrigin)
 				this.#forwards.radiusOrigin = config.publicOrigin;
-			this.#shellPage ??= config.shellPage;
+			this.#shellPage ??= config.shellPage && currentShellPage(config.shellPage);
 		} catch (error) {
 			this.#retry(error);
 			return;
@@ -369,9 +463,10 @@ export class RadiusBrain {
 		const url = new URL(`/v1/servers/${config.serverId}/connect`, config.gateway);
 		url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
 		if (this.#replace) url.searchParams.set("replace", "1");
+		if (name !== undefined) url.searchParams.set("name", name);
 		const socket = new WebSocket(url, HOST_SUBPROTOCOLS, {
 			headers: { authorization: `Bearer ${config.credential.access}` },
-			maxPayload: 16 * 1024 * 1024 + DATA_HEADER_BYTES,
+			maxPayload: MAX_MESSAGE_BYTES + DATA_HEADER_BYTES,
 			handshakeTimeout: this.#handshakeTimeoutMs,
 		});
 		socket.binaryType = "nodebuffer";
@@ -402,9 +497,17 @@ export class RadiusBrain {
 				},
 				Math.max(10, Math.min(this.#heartbeatIdleMs, this.#heartbeatTimeoutMs) / 4),
 			);
-			this.#onStatus({ status: "connected", serverId: config.serverId, organizationId: owner.organization_id });
+			this.#onStatus({
+				status: "connected",
+				serverId: config.serverId,
+				organizationId: owner.organization_id,
+				...(name === undefined ? {} : { name }),
+			});
 			this.#reported = false;
 			this.#report();
+			// Radius has the name this connect carried; a rename during the handshake is sent now.
+			this.#radiusName = name;
+			this.#sendName();
 		});
 		// With this listener `ws` leaves a rejected handshake open; record why and abort it, which closes the socket.
 		socket.on("unexpected-response", (_request, response) => {
@@ -471,6 +574,28 @@ export class RadiusBrain {
 			.catch((error: unknown) => {
 				if (!this.#closed)
 					console.warn(`Radius: reporting shares failed (${error instanceof Error ? error.message : error})`);
+			});
+	}
+
+	#sendName(): void {
+		this.#naming = this.#naming
+			.then(async () => {
+				const name = this.#name;
+				if (name === undefined || name === this.#radiusName || this.#socket?.readyState !== WebSocket.OPEN) return;
+				const config = await this.#currentConfig();
+				const response = await fetch(new URL(`/v1/servers/${config.serverId}/name`, config.gateway), {
+					method: "PUT",
+					headers: { authorization: `Bearer ${config.credential.access}`, "content-type": "application/json" },
+					body: JSON.stringify({ name }),
+					signal: AbortSignal.any([this.#abort.signal, AbortSignal.timeout(30_000)]),
+				});
+				if (!response.ok) throw new Error(`${response.status}: ${(await response.text()).slice(0, 200)}`);
+				this.#radiusName = name;
+			})
+			// The next connect carries the name.
+			.catch((error: unknown) => {
+				if (!this.#closed)
+					console.warn(`Radius: sending the name failed (${error instanceof Error ? error.message : error})`);
 			});
 	}
 
@@ -542,6 +667,10 @@ export class RadiusBrain {
 			principal?.kind === owner.kind &&
 			principal.id === owner.id &&
 			principal.organization_id === owner.organization_id;
+		if (isOwner && message.kind === "ws" && message.request === undefined && message.forward === undefined) {
+			this.#openClientChannel(id);
+			return;
+		}
 		// Someone a session is shared with, on the brain's UI only: sharing decides what they reach.
 		const member = !isOwner && principal?.kind === "user" && !!principal.email && message.forward === undefined;
 		// Only a public forward's origin connects without a principal; #openForward checks the forward is public.
@@ -637,7 +766,7 @@ export class RadiusBrain {
 	#remember(origin: string, shellOrigin: string, owner: Principal): void {
 		const shellPage =
 			SHELL_ORIGIN.test(shellOrigin) && this.#config
-				? `${shellOrigin}/pi/brains/${encodeURIComponent(owner.organization_id)}/${encodeURIComponent(this.#config.serverId)}`
+				? `${shellOrigin}/pi/${encodeURIComponent(owner.organization_id)}/${encodeURIComponent(this.#config.serverId)}`
 				: this.#shellPage;
 		const newOrigin = this.#forwards !== undefined && this.#forwards.radiusOrigin !== origin;
 		if (!newOrigin && shellPage === this.#shellPage) return;
@@ -822,13 +951,7 @@ export class RadiusBrain {
 		void this.#currentConfig().then(
 			(config) => {
 				if (ended) return;
-				const url = new URL(`/v1/servers/${config.serverId}/channels/${id}`, config.gateway);
-				url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-				const channel = new WebSocket(url, CHANNEL_SUBPROTOCOL, {
-					headers: { authorization: `Bearer ${config.credential.access}` },
-					maxPayload: MAX_MESSAGE_BYTES,
-					handshakeTimeout: this.#handshakeTimeoutMs,
-				});
+				const channel = this.#relayChannel(config, id);
 				const upstream = this.#loopback(head, headers, target);
 				sockets.push(channel, upstream);
 				channel.on("open", () => {
@@ -843,6 +966,147 @@ export class RadiusBrain {
 			},
 			() => end(1011),
 		);
+	}
+
+	/** A channel's own socket to Radius (relay protocol v5), authenticated like the host socket. */
+	#relayChannel(config: RadiusBrainConfig, id: string): WebSocket {
+		const url = new URL(`/v1/servers/${config.serverId}/channels/${id}`, config.gateway);
+		url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+		return new WebSocket(url, CHANNEL_SUBPROTOCOL, {
+			headers: { authorization: `Bearer ${config.credential.access}` },
+			maxPayload: MAX_MESSAGE_BYTES,
+			handshakeTimeout: this.#handshakeTimeoutMs,
+		});
+	}
+
+	/**
+	 * A client channel of the owner (see "Client channels"): its own socket to Radius, whose first message is the
+	 * request. Ends like `#openChannelSocket`: refused on the host socket until the channel socket is connected.
+	 */
+	#openClientChannel(id: string): void {
+		if (!this.#channelSockets) {
+			this.#sendControl({ version: PROTOCOL_VERSION, type: "connection_close", connection_id: id, code: 1008 });
+			return;
+		}
+		let ended = false;
+		let paired = false;
+		let channel: WebSocket | undefined;
+		let stop = (): void => {};
+		const end = (code: number, tellRelay = !paired) => {
+			if (ended) return;
+			ended = true;
+			this.#channels.delete(id);
+			if (tellRelay)
+				this.#sendControl({ version: PROTOCOL_VERSION, type: "connection_close", connection_id: id, code: 1011 });
+			stop();
+			// A request body may have left it paused (a full loopback request); the close handshake must read.
+			channel?.resume();
+			channel?.close(sendableCode(code));
+		};
+		this.#channels.set(id, { data: () => {}, close: () => end(1001, false), credit: () => {}, congested: () => {} });
+		void this.#currentConfig().then(
+			(config) => {
+				if (ended) return;
+				const socket = this.#relayChannel(config, id);
+				channel = socket;
+				socket.on("open", () => {
+					paired = true;
+				});
+				socket.on("error", () => {});
+				socket.on("close", (code) => end(code));
+				socket.once("message", (data: Buffer, binary) => {
+					const request = binary ? undefined : clientRequest(data);
+					if (!request) return end(1008);
+					const origin = this.#forwards?.radiusOrigin ?? this.#config?.publicOrigin ?? CLIENT_ORIGIN;
+					const headers: Record<string, string> = {};
+					for (const [rawName, value] of Object.entries(request.headers)) {
+						const name = rawName.toLowerCase();
+						if (!DROPPED_HEADERS.has(name) && name !== "cookie" && name !== "origin") headers[name] = value;
+					}
+					// The owner by Radius alone, as on the brain's UI, at the origin it reports back to the client.
+					headers[RELAY_SECRET_HEADER] = this.#relay.secret;
+					headers[RELAY_ORIGIN_HEADER] = origin;
+					headers.origin = origin;
+					const target = { host: "127.0.0.1", port: this.#port() };
+					const answer = (status: number, pairs: [string, string][] = []) =>
+						socket.send(JSON.stringify({ status, headers: pairs, origin }));
+					stop =
+						request.type === "websocket"
+							? this.#clientSocket(socket, request.path, headers, target, answer, end)
+							: this.#clientHttp(socket, request, headers, target, answer, end);
+				});
+			},
+			() => end(1011),
+		);
+	}
+
+	/** A client channel's HTTP request; returns how to abandon it. */
+	#clientHttp(
+		channel: WebSocket,
+		request: ClientChannelRequest,
+		headers: Record<string, string>,
+		target: Target,
+		answer: (status: number, headers: [string, string][]) => void,
+		end: (code: number, tellRelay?: boolean) => void,
+	): () => void {
+		const upstream = httpRequest(
+			{
+				host: target.host,
+				port: target.port,
+				method: request.method,
+				path: request.path,
+				headers: { ...headers, host: `${target.host}:${target.port}` },
+			},
+			(response) => {
+				const pairs: [string, string][] = [];
+				for (let index = 0; index + 1 < response.rawHeaders.length; index += 2)
+					pairs.push([response.rawHeaders[index]!, response.rawHeaders[index + 1]!]);
+				answer(response.statusCode ?? 502, pairs);
+				response.on("data", (chunk: Buffer) => {
+					channel.send(chunk);
+					if (!response.isPaused() && channel.bufferedAmount > PIPE_HIGH_BYTES) {
+						response.pause();
+						drained(channel, () => response.resume());
+					}
+				});
+				response.on("end", () => end(1000, false));
+				response.on("error", () => end(1011, false));
+			},
+		);
+		upstream.on("error", () => end(1011, false));
+		// The request body, then the client's text end marker.
+		channel.on("message", (data: Buffer, binary) => {
+			if (!binary) upstream.end();
+			else if (!upstream.write(data)) {
+				channel.pause();
+				upstream.once("drain", () => channel.resume());
+			}
+		});
+		return () => upstream.destroy();
+	}
+
+	/** A client channel's WebSocket: answered 101 once the loopback socket is open, then piped both ways. */
+	#clientSocket(
+		channel: WebSocket,
+		path: string,
+		headers: Record<string, string>,
+		target: Target,
+		answer: (status: number) => void,
+		end: (code: number, tellRelay?: boolean) => void,
+	): () => void {
+		const upstream = this.#loopback({ method: "GET", path, headers: [] }, headers, target);
+		upstream.on("open", () => answer(101));
+		// With this listener `ws` leaves a refused upgrade open; `end` closes it.
+		upstream.on("unexpected-response", (_request, response) => {
+			response.resume();
+			answer(response.statusCode ?? 502);
+			end(1000, false);
+		});
+		upstream.on("error", () => {});
+		upstream.on("close", (code) => end(code, false));
+		pipe(channel, upstream);
+		pipe(upstream, channel);
+		return () => upstream.terminate();
 	}
 
 	#openWebSocket(id: string, head: RequestHead, headers: Record<string, string>, target: Target): void {
@@ -913,17 +1177,16 @@ export class RadiusBrain {
  */
 function pipe(from: WebSocket, to: WebSocket): void {
 	const waiting: { data: Buffer; binary: boolean }[] = [];
-	let drain: NodeJS.Timeout | undefined;
+	let draining = false;
 	const send = (data: Buffer, binary: boolean) => {
 		to.send(data, { binary });
-		if (drain || to.bufferedAmount <= PIPE_HIGH_BYTES) return;
+		if (draining || to.bufferedAmount <= PIPE_HIGH_BYTES) return;
+		draining = true;
 		from.pause();
-		drain = setInterval(() => {
-			if (to.readyState === WebSocket.OPEN && to.bufferedAmount > PIPE_LOW_BYTES) return;
-			clearInterval(drain);
-			drain = undefined;
+		drained(to, () => {
+			draining = false;
 			if (from.readyState === WebSocket.OPEN) from.resume();
-		}, CONGESTION_POLL_MS);
+		});
 	};
 	to.on("open", () => {
 		for (const item of waiting.splice(0)) send(item.data, item.binary);
@@ -932,9 +1195,47 @@ function pipe(from: WebSocket, to: WebSocket): void {
 		if (to.readyState === WebSocket.OPEN) send(data, binary);
 		else if (to.readyState === WebSocket.CONNECTING) waiting.push({ data, binary });
 	});
-	const stop = () => clearInterval(drain);
-	from.on("close", stop);
-	to.on("close", stop);
+}
+
+/** Calls `then` once `socket` has at most PIPE_LOW_BYTES unsent, or is no longer open. */
+function drained(socket: WebSocket, then: () => void): void {
+	const poll = setInterval(() => {
+		if (socket.readyState === WebSocket.OPEN && socket.bufferedAmount > PIPE_LOW_BYTES) return;
+		clearInterval(poll);
+		then();
+	}, CONGESTION_POLL_MS);
+}
+
+/** A client channel's request (see "Client channels"). */
+type ClientChannelRequest = {
+	type: "http" | "websocket";
+	method: string;
+	path: string;
+	headers: Record<string, string>;
+};
+
+/** A client channel's first message, from the wire: undefined unless it is a request for a path on this server. */
+function clientRequest(data: Buffer): ClientChannelRequest | undefined {
+	let value: Partial<ClientChannelRequest>;
+	try {
+		value = JSON.parse(data.toString("utf8")) as Partial<ClientChannelRequest>;
+	} catch {
+		return undefined;
+	}
+	const headers = value.headers;
+	if (
+		(value.type !== "http" && value.type !== "websocket") ||
+		(value.type === "http" && (typeof value.method !== "string" || !/^[A-Z]{1,16}$/.test(value.method))) ||
+		typeof value.path !== "string" ||
+		!value.path.startsWith("/") ||
+		value.path.startsWith("//") ||
+		!headers ||
+		typeof headers !== "object" ||
+		Array.isArray(headers) ||
+		!Object.values(headers).every((header) => typeof header === "string")
+	)
+		return undefined;
+	return { type: value.type, method: value.method ?? "GET", path: value.path, headers };
 }
 
 /** A close code one side reported, as one the other side may send (1005 and 1006 are never sent). */

@@ -5,6 +5,7 @@
 import type { AssistantMessage, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import type { Models } from "@earendil-works/pi-ai/models";
 import {
+	AgentDoc,
 	AssistantEntry,
 	type ConversationHandle,
 	type ConversationId,
@@ -13,7 +14,7 @@ import {
 	type DocumentReader,
 	defineExtension,
 	defineTask,
-	defineTool,
+	type Extension,
 	type Harness,
 	LiveDoc,
 	type ModelRef,
@@ -21,15 +22,24 @@ import {
 	type SettledSubmissionRecord,
 	type Submission,
 	type ToolExecutionApi,
-	type ToolRegistration,
 	type Tx,
 } from "@earendil-works/pi-durable";
 import { arr, bool, compile, nul, obj, opt, str, union } from "@earendil-works/pi-schema";
 import type { Context, JsonValue } from "@p2/app/v1";
-import { type Location, type LocationInput, literal, locationText } from "@p2/app/v1";
-import { originOf } from "@p2/app/v1/worker";
+import { type Location, type LocationInput, literal, locationText, senderText } from "@p2/app/v1";
+import { defineP2Tool, mainConversation, type P2Tool } from "@p2/app/v1/worker";
 import { AGENT_MESSAGE_ENTRY, type AgentMessage, SUBAGENT_TASK_ENTRY, SubagentLocationsSchema } from "./contract.ts";
-import { HISTORY_TOOLS, resolveChoice, Subagents, TEAM_TOOL } from "./contract.worker.ts";
+import {
+	CODEMODE_TOOL,
+	InheritedLocation,
+	resolveChoice,
+	resolveTools,
+	Subagents,
+	stillGiven,
+	TEAM_TOOL,
+	type ToolChoice,
+} from "./contract.worker.ts";
+import { listModels } from "./model-list.ts";
 
 const SUBAGENT_EXTENSION = "subagent-tools";
 
@@ -95,8 +105,9 @@ function textOf(message: AssistantMessage | undefined): string {
 }
 
 /**
- * A subagent's message as an input: the structural entry readers use, and the line the model reads. `replyWith` is the
- * tool call that answers a question (the main agent's `subagent send`, a sibling's `team send`).
+ * A subagent's message as an input: the structural entry readers use, and what the model reads: the sender block, then
+ * the intent and the text. `replyWith` is the tool call that answers a question (the main agent's `subagent send`, a
+ * sibling's `team send`). A Stop keeps it queued for the next input: the subagent cannot send it again.
  */
 function agentMessageInput(message: AgentMessage, replyWith: string) {
 	const label = {
@@ -106,8 +117,12 @@ function agentMessageInput(message: AgentMessage, replyWith: string) {
 		note: "notes, no reply needed",
 	}[message.intent];
 	return {
-		content: `[subagent ${message.from.name} ${label}] ${message.text}`,
+		content: [
+			{ type: "text" as const, text: senderText({ kind: "subagent", name: message.from.name }) },
+			{ type: "text" as const, text: `[${label}] ${message.text}` },
+		],
 		entry: { kind: AGENT_MESSAGE_ENTRY, data: message as unknown as JsonValue },
+		onAbort: "keep" as const,
 	};
 }
 
@@ -129,34 +144,36 @@ async function latestAnswer(api: ToolExecutionApi, conversationId: ConversationI
 	}, context);
 }
 
-// Delivers one message, waits for the answer, then reports it to the main agent
+// Delivers one message, waits for the answer, then reports it to the conversation that sent the message
 // as a follow-up input. Request IDs make both submissions exactly-once across restarts.
 type ReporterInput = {
 	name: string;
 	conversationId: ConversationId;
+	/**
+	 * The conversation that sent the message, which the report goes to: a `/tree` branch left while the subagent works
+	 * still gets its answer. Absent (checkpointed before it was recorded): the current main conversation.
+	 */
+	parent?: ConversationId;
 	message: string;
 	followUp: boolean;
-	/** The owner started the main agent's turn: the subagent's turn inherits it (`SUBAGENT_TASK_ENTRY`). */
-	origin?: "owner";
 };
-/** `report`: what to tell the main agent (a plain string: a report checkpointed before reports were entries). */
-type ReporterState =
-	| { phase: "deliver" }
-	| { phase: "report"; report?: string | { intent: "answered" | "failed"; text: string } };
+/** `report`: what to tell the main agent. */
+type Report = { intent: "answered" | "failed"; text: string };
+type ReporterState = { phase: "deliver" } | { phase: "report"; report?: Report };
 const Reporter = defineTask<ReporterInput, ReporterState, null>({
 	name: "p2.subagent-reporter",
 	version: 1,
 	initial: () => ({ phase: "deliver" }),
 	phases: {
 		deliver: async (reporter, runtime, context) => {
-			const { name, conversationId, message, followUp, origin } = reporter.input;
+			const { name, conversationId, message, followUp } = reporter.input;
 			const subagent = await runtime.conversation(conversationId, context);
 			if (!subagent) throw new Error(`Subagent ${name} has no conversation`);
 			const submission = await subagent.submit(
 				{
 					type: "input",
 					content: message,
-					...(origin ? { entry: { kind: SUBAGENT_TASK_ENTRY, data: { origin } } } : {}),
+					entry: { kind: SUBAGENT_TASK_ENTRY, data: {} },
 					whenBusy: followUp ? "followUp" : "steer",
 					requestId: `subagent:${reporter.id}`,
 				},
@@ -164,14 +181,14 @@ const Reporter = defineTask<ReporterInput, ReporterState, null>({
 			);
 			const settled = await settledOrWithdrawn(submission, subagent, () => pause(runtime, 1000, context), context);
 			await runtime.commit(async (tx) => {
-				const next = (report?: { intent: "answered" | "failed"; text: string }) =>
-					({ status: "running", checkpoint: { phase: "report", report } }) as const;
-				if (settled === undefined) return next({ intent: "failed", text: undelivered });
+				const next = (report?: Report) => ({ status: "running", checkpoint: { phase: "report", report } }) as const;
+				const failed = (text: string): Report => ({ intent: "failed", text });
+				if (settled === undefined) return next(failed(undelivered));
 				if (settled.status === "unanswered")
-					return next(settled.reason === "aborted" ? undefined : { intent: "failed", text: settled.reason });
+					return next(settled.reason === "aborted" ? undefined : failed(settled.reason));
 				// A continue settles like an input (it has no placed entry): its run's answer is reported the same way.
 				if (settled.type !== "input" && settled.type !== "continue") return next();
-				const agent = (await tx.doc(Subagents, runtime.conversationId)).agents[name];
+				const agent = (await tx.doc(Subagents, ROOT_CONVERSATION_ID)).agents[name];
 				if (!agent || agent.reported.includes(settled.answer)) return next();
 				agent.reported.push(settled.answer);
 				const answer = (await tx.entry(AssistantEntry, settled.answer))?.model?.[0] as AssistantMessage | undefined;
@@ -181,17 +198,12 @@ const Reporter = defineTask<ReporterInput, ReporterState, null>({
 		report: async (reporter, runtime, context) => {
 			const report = reporter.state.checkpoint.report;
 			if (report !== undefined) {
-				const { name, conversationId } = reporter.input;
-				const main = await runtime.conversation(runtime.conversationId, context);
-				await main?.submit(
+				const { name, conversationId, parent } = reporter.input;
+				const target = await runtime.conversation(parent ?? (await mainConversation(runtime, context)), context);
+				await target?.submit(
 					{
 						type: "input",
-						...(typeof report === "string"
-							? { content: report }
-							: agentMessageInput(
-									{ from: { name, conversationId }, intent: report.intent, text: report.text },
-									`subagent send to ${name}`,
-								)),
+						...agentMessageInput({ from: { name, conversationId }, ...report }, `subagent send to ${name}`),
 						whenBusy: "followUp",
 						requestId: `subagent-report:${reporter.id}`,
 					},
@@ -270,7 +282,10 @@ export function spawnEnvironments(
 	};
 }
 
-/** A conversation's own location (a subagent spawned with a cwd), or undefined: it follows the session. */
+/**
+ * A conversation's own location (a subagent spawned with a cwd, or a one-shot agent started by a conversation with
+ * one), or undefined: it follows the session.
+ */
 export async function ownLocation(
 	read: DocumentReader,
 	conversationId: ConversationId,
@@ -278,7 +293,8 @@ export async function ownLocation(
 ): Promise<Location | undefined> {
 	if (conversationId === ROOT_CONVERSATION_ID) return undefined;
 	const registry = await read.snapshot(Subagents, ROOT_CONVERSATION_ID, context);
-	return Object.values(registry?.agents ?? {}).find((agent) => agent.conversationId === conversationId)?.location;
+	const own = Object.values(registry?.agents ?? {}).find((agent) => agent.conversationId === conversationId)?.location;
+	return own ?? (await read.snapshot(InheritedLocation, conversationId, context))?.location;
 }
 
 /** Where the conversation calling a tool works (the session's, or its own), for a spawned subagent's own location. */
@@ -287,12 +303,16 @@ export type Locate = (conversationId: ConversationId, read: DocumentReader, cont
 /** What the subagent tool needs to place subagents: locating conversations and resolving directories. */
 export type SubagentLocator = {
 	readonly locate: Locate;
+	/** The sandbox a conversation working at `location` is confined to (its environment's configured type), if any. */
+	readonly sandbox: (location: Location) => Promise<string | undefined>;
 	/** `target` as an existing directory's location, relative to `from` (see `resolveDirectory`), or why not. */
 	readonly directory: (
 		target: LocationInput,
 		from: Location,
 		context: Context,
-	) => Promise<Location | { error: string }>;
+	) => Promise<
+		{ readonly kind: "directory"; readonly location: Location } | { readonly kind: "invalid"; readonly error: string }
+	>;
 };
 
 /**
@@ -306,8 +326,12 @@ export async function placeTarget(
 	context: Context,
 ): Promise<Location | string> {
 	const env = args.env === undefined ? caller.env : args.env;
+	// A caller in a sandbox places its subagents in the same sandbox only.
+	const sandbox = await locator.sandbox(caller);
+	if (sandbox !== undefined && env !== sandbox)
+		return `You work in sandbox ${sandbox}; your subagents can only work inside it.`;
 	const resolved = await locator.directory({ env, path: args.cwd ?? "" }, caller, context);
-	if (!("error" in resolved)) return resolved;
+	if (resolved.kind === "directory") return resolved.location;
 	const where = `${env === caller.env ? "" : `${env ?? "local"}:`}${args.cwd ?? "~"}`;
 	return resolved.error === "not an existing directory"
 		? `cwd ${where} is not an existing directory.`
@@ -342,9 +366,14 @@ export async function setArchived(
 }
 
 // TODO: use the tool API's models once pi-durable exposes them
-// (earendil-works/pi#10395). Until then the host passes its Models instance.
-export function createSubagentExtension(models: Models, locator: SubagentLocator) {
-	const tool = defineTool({
+// (earendil-works/pi#10395). Until then the host passes its Models instance. `access` gives the worker's tools by name,
+// with what they declare (`P2Tool`).
+export function createSubagentExtension(
+	models: Models,
+	locator: SubagentLocator,
+	access: () => ReadonlyMap<string, P2Tool>,
+): Extension<P2Tool> {
+	const tool = defineP2Tool({
 		name: "subagent",
 		description: [
 			"Manage persistent subagents that work in the background while you keep talking to the user.",
@@ -354,12 +383,12 @@ export function createSubagentExtension(models: Models, locator: SubagentLocator
 			"  Without env and cwd it works where you work and follows the session when it moves. With them it gets its own",
 			"  location, which stays when the session moves: cwd is an existing directory its tools run in and the user's workspace",
 			"  view shows, e.g. a git worktree you created first (relative to your cwd on your environment, to the home on another);",
-			"  env is an environment name from location_envs, or null for this device (default: yours; another environment needs",
-			"  the owner's request).",
+			"  env is an environment name from location_envs, or null for this device (default: yours).",
 			"  model is 'provider/modelId' (default: yours); thinkingLevel is off|minimal|low|medium|high|xhigh|max",
-			"  (clamped to the model); tools is a subset of read, write, edit, bash, send_file, artifact (default: all of these;",
-			"  [] for none) and the location tools location_envs, location_dirs, location_move (never by default; with",
-			"  location_move it can move itself).",
+			"  (clamped to the model); tools names tools of yours it gets (default: all you can give; [] for none). Tools that",
+			"  work only in your conversation (subagent, rename_session, …) cannot be given. With codemode its scripts call",
+			"  its tools and the tools behind code mode (MCP tools, terminal, one-shot agents). With location_move it can",
+			"  move itself.",
 			"- send (name, message; followUp: true queues after the current answer instead of steering).",
 			"- configure (name; optional model, thinkingLevel, tools, env, cwd, followSession): replace its model/thinking/tool",
 			"  selection for later work; env/cwd give it its own location, followSession: true makes it follow the session",
@@ -368,10 +397,11 @@ export function createSubagentExtension(models: Models, locator: SubagentLocator
 			"- archive (name): stop it and hide it from the user's sidebar and from status; restore (name) or send brings it back.",
 			"- answer (name): return its latest completed answer, e.g. when a report did not reach you or you need it again.",
 			"- status (optional name): list subagents and whether they are working; archived ones only by name.",
-			"- models: list models that have credentials configured.",
+			"- models (optional model: a provider or parts of a model id, e.g. 'anthropic' or 'sonnet 4'): list models that have",
+			"  credentials configured, or only those matching model.",
 			"Answers are reported back to you as messages when they arrive; do not wait or poll for them.",
-			"Subagents can also message you while they work: a [subagent <name> asks; …] message needs your answer (send to that",
-			"subagent); a note needs none.",
+			'Subagents can also message you while they work: a <sender kind="subagent"> message marked [asks; …] needs your',
+			"answer (send to that subagent); a note needs none.",
 		].join("\n"),
 		parameters: obj(
 			{
@@ -400,6 +430,7 @@ export function createSubagentExtension(models: Models, locator: SubagentLocator
 		),
 		// A crash-interrupted stop must not be repeated against newer work.
 		replay: "unsafe",
+		scope: "main",
 		execute: async (args, api, context) => {
 			const { action, name, message, followUp } = args;
 			const reply = (text: string, extra: Partial<SubagentDetails> = {}, isError = false) => ({
@@ -407,13 +438,14 @@ export function createSubagentExtension(models: Models, locator: SubagentLocator
 				details: { action, ...(name === undefined ? {} : { name }), ...extra } satisfies SubagentDetails,
 				isError,
 			});
-			const registry = (await api.snapshot(Subagents, api.conversationId, context)) ?? { agents: {}, reporters: {} };
-			const installed = () => api.registry.tools().map((entry) => entry.tool);
+			const registry = (await api.snapshot(Subagents, ROOT_CONVERSATION_ID, context)) ?? {
+				agents: {},
+				reporters: {},
+			};
 
 			if (action === "models") {
 				const available = await models.getAvailable(undefined, { signal: AbortSignal.timeout(10_000) });
-				const lines = available.slice(0, 200).map((model) => `${model.provider}/${model.id} (${model.name})`);
-				return reply(lines.length ? lines.join("\n") : "No models with configured credentials.");
+				return reply(listModels(available, args.model));
 			}
 			if (action === "status") {
 				const all = Object.entries(registry.agents);
@@ -438,7 +470,7 @@ export function createSubagentExtension(models: Models, locator: SubagentLocator
 				return reply(`Stopped ${name}.`, { conversationId: agent.conversationId });
 			}
 			if ((action === "archive" || action === "restore") && agent) {
-				await setArchived(api, api.conversationId, agent.conversationId, action === "archive", context);
+				await setArchived(api, ROOT_CONVERSATION_ID, agent.conversationId, action === "archive", context);
 				return reply(action === "archive" ? `Stopped and archived ${name}.` : `Restored ${name}.`, {
 					conversationId: agent.conversationId,
 				});
@@ -468,22 +500,24 @@ export function createSubagentExtension(models: Models, locator: SubagentLocator
 
 			// Validate spawn/configure choices before a commit, so a typo changes nothing.
 			let change: { model?: ModelRef; thinkingLevel?: ModelThinkingLevel } = {};
-			let tools: ToolRegistration[] = [];
+			let tools: ToolChoice = { chosen: [], tools: [], loaded: [] };
 			/** Its own location; `null`: it follows the session (again). */
 			let location: Location | null | undefined;
+			/** On a send, the tools it keeps when its caller can no longer give all it was given. */
+			let narrowed: ToolChoice | undefined;
 			if (placing && action !== "spawn" && action !== "configure")
 				return reply("Only spawn and configure take a location.", {}, true);
 			if (args.followSession && (action !== "configure" || placing))
 				return reply("followSession is for configure, without env or cwd.", {}, true);
-			// Who started this turn: the owner may choose another environment, and the subagent's turn inherits it.
-			const origin = action === "spawn" || action === "send" || placing ? await originOf(api, context) : undefined;
 			if (action === "spawn" || action === "configure") {
 				if (action === "spawn" && agent)
 					return reply(`${name} already exists${agent.archived ? " (archived)" : ""}; use send.`, {}, true);
-				const choice = await resolveChoice(models, api, args, action === "spawn" ? undefined : agent, context);
+				const existing = action === "spawn" ? undefined : agent;
+				const choice = await resolveChoice(models, api, access(), args, existing, "subagent", context);
 				if (typeof choice === "string") return reply(choice, {}, true);
-				change = { model: choice.model, thinkingLevel: choice.thinkingLevel };
-				tools = choice.tools;
+				const { model, thinkingLevel, ...chosen } = choice;
+				change = { model, thinkingLevel };
+				tools = chosen;
 				// A location changes between runs, never under one: its tools would switch machines mid-task.
 				if (
 					agent &&
@@ -495,34 +529,49 @@ export function createSubagentExtension(models: Models, locator: SubagentLocator
 				else if (placing) {
 					// From the caller's location (the session's: subagents spawn none).
 					const caller = await locator.locate(api.conversationId, api, context);
-					if (args.env !== undefined && args.env !== caller.env && origin !== "owner")
-						return reply("Another environment needs a turn the owner started.", {}, true);
-					const placed = await placeTarget(locator, caller, args, context);
+					// A subagent in a sandbox: a cwd alone means a path in that sandbox (it cannot be placed elsewhere).
+					const kept =
+						agent?.location && args.env === undefined ? await locator.sandbox(agent.location) : undefined;
+					const target = kept === undefined ? args : { ...args, env: kept };
+					const placed = await placeTarget(locator, caller, target, context);
 					if (typeof placed === "string") return reply(placed, {}, true);
 					location = placed;
+				}
+				// A subagent working in a sandbox stays there, whoever configures it (only the owner's Relocate leaves one).
+				const sandbox = agent?.location === undefined ? undefined : await locator.sandbox(agent.location);
+				if (sandbox !== undefined && location !== undefined) {
+					const next = location ?? (await locator.locate(ROOT_CONVERSATION_ID, api, context));
+					if (next.env !== sandbox)
+						return reply(`${name} works in sandbox ${sandbox} and cannot leave it.`, {}, true);
+				}
+			} else if (agent) {
+				// A send: what it was given that its caller can no longer give is taken away (the caller's tools changed).
+				const own = await api.agent(context);
+				const kept = stillGiven(own, access(), agent);
+				if (kept && kept.length !== agent.tools.length) {
+					const resolved = resolveTools(own, access(), kept, [], "subagent");
+					if (typeof resolved !== "string") narrowed = resolved;
 				}
 			}
 			// A subagent following the session works at its cwd.
 			const session = location === null ? await locator.locate(ROOT_CONVERSATION_ID, api, context) : undefined;
 
 			const result = await api.commit(async (tx) => {
-				const state = await tx.doc(Subagents, api.conversationId);
+				const state = await tx.doc(Subagents, ROOT_CONVERSATION_ID);
 				const background = { ownership: { kind: "conversation" }, background: true } as const;
 				if (action === "configure") {
 					const target = state.agents[name];
 					if (!target) return `No subagent named ${name}.`;
 					await configure(tx, target.conversationId, {
 						...change,
-						...withExtras(tools, installed()),
+						...agentTools(tools),
 						...(location ? { cwd: location.cwd } : session ? { cwd: session.cwd } : {}),
 					});
 					if (location) target.location = location;
 					else if (location === null) delete target.location;
-					target.team = true;
-					target.history = true;
 					target.model = `${change.model?.provider}/${change.model?.modelId}`;
 					target.thinkingLevel = change.thinkingLevel ?? "off";
-					target.tools = tools.map((tool) => tool.name);
+					target.tools = tools.chosen;
 					return `Configured ${name}.`;
 				}
 				if (action === "spawn") {
@@ -531,8 +580,7 @@ export function createSubagentExtension(models: Models, locator: SubagentLocator
 					const child = await tx.createConversation({ ownership: { kind: "task", taskId: anchor } });
 					await configure(tx, child.id, {
 						...change,
-						extensions: { remove: [extension] }, // Subagents cannot start subagents.
-						...withExtras(tools, installed()),
+						...agentTools(tools),
 						...(location ? { cwd: location.cwd } : {}),
 						instructions: `You are the subagent "${name}", working for a main agent. Do the requested work and answer concisely; your final answer is reported back to it. With the team tool you can ask the main agent a question or tell it something while you keep working, and message the other subagents.`,
 					});
@@ -540,36 +588,31 @@ export function createSubagentExtension(models: Models, locator: SubagentLocator
 						conversationId: child.id,
 						model: `${change.model?.provider}/${change.model?.modelId}`,
 						thinkingLevel: change.thinkingLevel ?? "off",
-						tools: tools.map((tool) => tool.name),
+						tools: tools.chosen,
 						...(location ? { location } : {}),
 						reported: [],
-						team: true,
-						history: true,
 					};
 				}
 				const target = state.agents[name];
 				if (!target) return `No subagent named ${name}.`;
 				// Working with an archived subagent again brings it back.
 				delete target.archived;
-				// Subagents spawned before the team or history tools existed get them now.
-				if (!target.team || !target.history) {
-					const all = installed();
-					const kept = target.tools.flatMap((tool) => all.filter((entry) => entry.name === tool).slice(0, 1));
-					await configure(tx, target.conversationId, withExtras(kept, all));
-					target.team = true;
-					target.history = true;
+				target.parent = api.conversationId;
+				if (narrowed) {
+					await configure(tx, target.conversationId, agentTools(narrowed));
+					target.tools = narrowed.chosen;
 				}
 				const input = {
 					name,
 					conversationId: target.conversationId,
+					parent: api.conversationId,
 					message: message ?? "",
 					followUp: action === "send" && followUp === true,
-					...(origin === "owner" ? { origin } : {}),
 				};
 				state.reporters[api.taskId] = await tx.createTask(Reporter, input, background);
 				return action === "send" ? `Sent to ${name}.` : `Started ${name}.`;
 			}, context);
-			const current = (await api.snapshot(Subagents, api.conversationId, context))?.agents[name];
+			const current = (await api.snapshot(Subagents, ROOT_CONVERSATION_ID, context))?.agents[name];
 			return reply(
 				result,
 				current
@@ -584,17 +627,41 @@ export function createSubagentExtension(models: Models, locator: SubagentLocator
 			);
 		},
 	});
-	const extension = defineExtension({ name: SUBAGENT_EXTENSION, tasks: [Anchor, Reporter], tools: [tool] });
-	return extension;
+	return defineExtension<P2Tool>({ name: SUBAGENT_EXTENSION, tasks: [Anchor, Reporter], tools: [tool] });
 }
 
 /**
- * A subagent's tools plus the ones every subagent has: `team`, which is deferred (only conversations whose `modelTools`
- * adds it are offered it), and the history tools among `installed`.
+ * An agent's tools as its Durable agent state takes them: exactly these enabled (nested calls resolve among them, so the
+ * script-only ones are named too; the worker adds ones installed later, see `enableScriptTools`), and the deferred ones
+ * it is offered from the start.
  */
-function withExtras(tools: readonly ToolRegistration[], installed: readonly ToolRegistration[]) {
-	const history = HISTORY_TOOLS.flatMap((name) => installed.filter((tool) => tool.name === name).slice(0, 1));
-	return { tools: [...tools, teamTool, ...history], modelTools: { add: [teamTool] } };
+export const agentTools = (choice: ToolChoice) => ({ tools: choice.tools, modelTools: { add: choice.loaded } });
+
+/**
+ * Adds the tools behind code mode installed now (`names`) to every subagent with code mode, by name: MCP tools come and
+ * go with their servers, so the names written at spawn go stale. It runs between scripts, not inside one: a script's
+ * call resolves the agent once, at its start. A name whose tool goes away is ignored by Durable and works again when it
+ * returns, so none is removed.
+ */
+export async function enableScriptTools(
+	harness: Pick<Harness, "snapshot" | "commit">,
+	names: readonly string[],
+	context: Context,
+): Promise<void> {
+	const registry = await harness.snapshot(Subagents, ROOT_CONVERSATION_ID, context);
+	const lacking: ConversationId[] = [];
+	for (const agent of Object.values(registry?.agents ?? {})) {
+		if (!agent.tools.includes(CODEMODE_TOOL)) continue;
+		const enabled = (await harness.snapshot(AgentDoc, agent.conversationId, context))?.tools;
+		if (Array.isArray(enabled) && names.some((name) => !enabled.includes(name))) lacking.push(agent.conversationId);
+	}
+	if (lacking.length === 0) return;
+	await harness.commit(async (tx) => {
+		for (const conversationId of lacking) {
+			const state = await tx.doc(AgentDoc, conversationId);
+			if (Array.isArray(state.tools)) state.tools = [...new Set([...state.tools, ...names])];
+		}
+	}, context);
 }
 
 /**
@@ -602,7 +669,7 @@ function withExtras(tools: readonly ToolRegistration[], installed: readonly Tool
  * `p2.agent-message` inputs that start a turn like any input. Within one session, so no cross-session rule applies. No
  * automatic replies: loops are left to the prompt.
  */
-const teamTool: ToolRegistration = defineTool({
+const teamTool: P2Tool = defineP2Tool({
 	name: TEAM_TOOL,
 	description: [
 		"Message the main agent or the other subagents while you work, without ending your turn.",
@@ -627,6 +694,7 @@ const teamTool: ToolRegistration = defineTool({
 	// A send is admitted once per call (its request ID); list and answer only read.
 	replay: "safe",
 	deferred: true,
+	scope: "subagent",
 	execute: async (args, api, context) => {
 		const reply = (text: string, isError = false) => ({
 			output: [{ type: "text" as const, text }],
@@ -656,7 +724,11 @@ const teamTool: ToolRegistration = defineTool({
 		if (!args.message?.trim()) return reply("send needs a message.", true);
 		const sibling = args.to === "parent" ? undefined : siblings.find(([name]) => name === args.to)?.[1];
 		if (args.to !== "parent" && !sibling) return reply(`No other subagent named ${args.to}.`, true);
-		const target = await api.conversation(sibling?.conversationId ?? ROOT_CONVERSATION_ID, context);
+		const parent = registry?.agents[self]?.parent;
+		const target = await api.conversation(
+			sibling?.conversationId ?? parent ?? (await mainConversation(api, context)),
+			context,
+		);
 		if (!target) return reply(`${args.to} has no conversation.`, true);
 		await target.submit(
 			{
@@ -678,5 +750,5 @@ const teamTool: ToolRegistration = defineTool({
 	},
 });
 
-/** The `team` tool's extension: installed for every conversation, offered only to subagents (see `withTeam`). */
-export const teamExtension = defineExtension({ name: "p2-subagent-team", tools: [teamTool] });
+/** The `team` tool's extension: installed for every conversation, given to subagents only (its `scope: "subagent"`). */
+export const teamExtension = defineExtension<P2Tool>({ name: "p2-subagent-team", tools: [teamTool] });

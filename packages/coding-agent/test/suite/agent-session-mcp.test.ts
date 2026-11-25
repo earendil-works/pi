@@ -1245,6 +1245,39 @@ describe("AgentSession MCP tools after resume and reload", () => {
 		},
 	);
 
+	// Like extensions that register a loader tool and hide it at session_start: the restore or reload
+	// activates the loader as a tool the branch never recorded, and the extension deactivates it again.
+	const dropLoader: ExtensionFactory = (pi) => {
+		pi.registerTool({
+			name: "loader",
+			label: "loader",
+			description: "Loads the extension's tools.",
+			parameters: Type.Object({}),
+			execute: async () => ({ content: [], details: undefined }),
+		});
+		pi.on("session_start", () => pi.setActiveTools(pi.getActiveTools().filter((name) => name !== "loader")));
+	};
+
+	it("keeps restored tools when an extension deactivates only its own tool before they register", async () => {
+		const first = await setup(undefined, [dropLoader]);
+		await loadDocsSearch(first.harness);
+		const second = await setup(first.harness.sessionManager, [dropLoader]);
+		await vi.waitFor(() =>
+			expect(second.harness.session.getAllTools().some((tool) => tool.name === "mcp__docs__search")).toBe(true),
+		);
+		expect(second.harness.session.getActiveToolNames()).toContain("mcp__docs__search");
+		expect(second.harness.session.getActiveToolNames()).not.toContain("loader");
+	});
+
+	it("keeps tools tool_search loaded after /reload when an extension deactivates only its own tool", async () => {
+		const { harness, connected } = await setup(undefined, [dropLoader]);
+		await loadDocsSearch(harness);
+		await harness.session.reload();
+		await vi.waitFor(() => expect(connected).toEqual(["docs", "docs"]));
+		await vi.waitFor(() => expect(harness.session.getActiveToolNames()).toContain("mcp__docs__search"));
+		expect(harness.session.getActiveToolNames()).not.toContain("loader");
+	});
+
 	it("does not activate restored tools that register after the next prompt starts", async () => {
 		const first = await setup();
 		await loadDocsSearch(first.harness);

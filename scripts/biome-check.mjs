@@ -65,10 +65,20 @@ function withFile(path, content, run) {
 	}
 }
 
+/**
+ * Whether Biome handles `path` at all. The CLI skips files it does not know (a Dockerfile, a shell script); the WASM
+ * workspace instead throws "The file does not exist in the workspace" when asked for their diagnostics.
+ */
+function supported(path) {
+	const { featuresSupported } = workspace.fileFeatures({ projectKey, path, features: ["lint", "format"] });
+	return featuresSupported.lint === "supported" || featuresSupported.format === "supported";
+}
+
 let failures = 0;
 let checked = 0;
 try {
 	for (const path of files) {
+		if (!supported(path)) continue;
 		const original = readFileSync(path, "utf8");
 		const fixed = write
 			? withFile(

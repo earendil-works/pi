@@ -5,7 +5,7 @@ import { Catalog, Sessions } from "../../plugins/sessions/contract.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
 import { processLogs } from "../../src/runtime/logs.ts";
 import { ServerNatives } from "../../src/runtime/server.ts";
-import { Browser, browserTests } from "./browser.ts";
+import { Browser, browserTests, COMPOSER } from "./browser.ts";
 import { holdIn, startFixture, until } from "./helpers.ts";
 
 test(
@@ -15,6 +15,7 @@ test(
 		const fixture = await startFixture({ web: true });
 		t.after(() => fixture.close());
 		const browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 		t.after(() => browser.close());
 		await browser.metrics(1280, 900);
 		const worker = `session:logs-worker-${Date.now()}`;
@@ -29,15 +30,14 @@ test(
 			if (event.method === "Runtime.exceptionThrown") errors.push(JSON.stringify(event.params));
 		});
 		await browser.call("Runtime.enable");
-		await browser.open(`http://127.0.0.1:${fixture.server.port}/`);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
 		try {
-			await browser.wait(`[...document.querySelectorAll('.foot-button')].some(e=>e.textContent==='Logs')`);
+			await browser.openSettings("Logs");
 		} catch (error) {
 			console.error(await browser.evaluate("document.body.innerText"), errors);
 			throw error;
 		}
-		await browser.evaluate(`[...document.querySelectorAll('.foot-button')].find(e=>e.textContent==='Logs').click()`);
-		await browser.wait(`document.querySelector('[role=dialog][aria-label=Logs] #logs-source')`);
+		await browser.wait(`document.querySelector('[role=dialog] [aria-label=Logs] #logs-source')`);
 		await browser.evaluate(
 			`(()=>{const e=document.querySelector('#logs-source');Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(e,${JSON.stringify(worker)});e.dispatchEvent(new Event('change',{bubbles:true}));})()`,
 		);
@@ -58,11 +58,11 @@ test(
 		);
 		await browser.wait("window.logsCopied?.includes('second-failure live-marker')");
 		assert(!(await browser.evaluate<string>("window.logsCopied")).includes("worker-ready-marker"));
-		await browser.open(`http://127.0.0.1:${fixture.server.port}/`);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
 		await browser.wait(`document.querySelector('#logs-source')?.value===${JSON.stringify(worker)}`);
 		await browser.wait(`document.querySelector('.logs-output')?.textContent.includes('worker-start-failure')`);
 		await browser.click("[role=dialog] button[aria-label=Close]");
-		await browser.wait("!document.querySelector('[role=dialog][aria-label=Logs]')");
+		await browser.wait("!document.querySelector('[role=dialog]')");
 	},
 );
 
@@ -88,12 +88,15 @@ test(
 			}, BACKGROUND_CONTEXT);
 		await setEnv("missing");
 		const browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 		t.after(() => browser.close());
 		await browser.metrics(1280, 900);
 		processLogs.append("session:another-worker", "event", "other-worker-only-marker");
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${session.id}`);
 		await browser.wait("document.querySelector('.worker-start-error')?.textContent.includes('not configured')");
-		await browser.wait("document.querySelector('.session-worker-error')?.textContent==='Worker failed'");
+		// The session's item shows the failure as its status, the reason as the dot's name.
+		const failedDot = `document.querySelector('.session-row[data-session="${session.id}"] .session-header .failed-dot')`;
+		await browser.wait(`${failedDot}?.getAttribute('aria-label').startsWith('Worker failed:')`);
 		await browser.wait("document.querySelector('.owner-notice')?.textContent.includes('not configured')");
 		const failed = await until(status.statuses, (value) => Boolean(value?.[session.id]?.error));
 		assert.equal(failed?.[session.id]?.running, false);
@@ -116,14 +119,12 @@ test(
 		await browser.evaluate(
 			"[...document.querySelectorAll('.worker-start-error button')].find(e=>e.textContent==='Retry').click()",
 		);
-		await browser.wait(
-			"!document.querySelector('.worker-start-error') && document.querySelector('.composer textarea')",
-		);
+		await browser.wait(`!document.querySelector('.worker-start-error') && document.querySelector('${COMPOSER}')`);
 		await until(
 			status.statuses,
 			(value) => value?.[session.id]?.running === true && value[session.id].error === undefined,
 		);
-		await browser.wait("!document.querySelector('.session-worker-error')");
+		await browser.wait(`!${failedDot}`);
 		assert(workers.generation(session.id) > generation);
 	},
 );

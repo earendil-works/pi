@@ -3,6 +3,9 @@ name: CI
 on:
   push:
     branches: [main]
+    # The release commit is pushed together with the next commit, so a push to main never builds it; the tag run does,
+    # and preview-packages.yml releases its packages on pkg.earendil.com.
+    tags: ['v*.*.*']
   pull_request:
     branches: [main]
 
@@ -29,7 +32,7 @@ jobs:
       - name: Build
         run: npm run build
 
-      # Previews are published for main and PRs from branches of this repo only (see preview-packages.yml).
+      # Previews are published for main, release tags and PRs from branches of this repo only (see preview-packages.yml).
       - name: Pack preview packages
         if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
         env:
@@ -49,6 +52,15 @@ jobs:
       - name: Check
         run: npm run check
 
+      # The checkout has no tags; the released changelog sections are compared with the newest release tag.
+      - name: Fetch the newest release tag
+        run: |
+          tag=$(git ls-remote --tags --sort=-v:refname origin 'v*.*.*' | grep -v '\^{}' | head -1 | sed 's#.*refs/tags/##')
+          git fetch --depth=1 origin "refs/tags/$tag:refs/tags/$tag"
+
+      - name: Check released changelog sections
+        run: npm run check:released-changelogs
+
   # Tests are split across parallel jobs so the slowest suites do not run back to back.
   test:
     name: test (${{ matrix.name }})
@@ -59,6 +71,7 @@ jobs:
         include:
           - name: coding-agent
           - name: durable
+          - name: chord
           - name: other
     steps:
       - name: Checkout
@@ -72,7 +85,7 @@ jobs:
 
       # fd and ripgrep are used by coding-agent tools tests and tui autocomplete tests.
       - name: Install system dependencies
-        if: matrix.name != 'durable'
+        if: matrix.name != 'durable' && matrix.name != 'chord'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends fd-find ripgrep
@@ -99,7 +112,7 @@ jobs:
           # Every other workspace, so new packages are tested without editing this workflow.
           args=()
           for dir in packages/*/; do
-            case "$dir" in packages/coding-agent/ | packages/durable/) continue ;; esac
+            case "$dir" in packages/coding-agent/ | packages/durable/ | packages/chord/) continue ;; esac
             args+=(--workspace "${dir%/}")
           done
           npm run test:scripts

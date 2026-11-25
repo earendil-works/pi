@@ -39,9 +39,12 @@ function rebuildBashResultRenderComponent(
 	let output = getTextOutput(result as any, showImages).trim();
 	const truncation = result.details?.truncation;
 	const fullOutputPath = result.details?.fullOutputPath;
-	if (!options.isPartial && truncation?.truncated && fullOutputPath && output.endsWith("]")) {
+	const fullOutputError = result.details?.fullOutputError;
+	// The model's footer names the file or why it could not be saved; the warning below says the same.
+	const footerMarker = fullOutputPath ?? fullOutputError;
+	if (!options.isPartial && truncation?.truncated && footerMarker && output.endsWith("]")) {
 		const footerStart = output.lastIndexOf("\n\n[");
-		if (footerStart !== -1 && output.slice(footerStart).includes(fullOutputPath)) {
+		if (footerStart !== -1 && output.slice(footerStart).includes(footerMarker)) {
 			output = output.slice(0, footerStart).trimEnd();
 		}
 	}
@@ -69,10 +72,12 @@ function rebuildBashResultRenderComponent(
 		}
 	}
 
-	if (truncation?.truncated || fullOutputPath) {
+	if (truncation?.truncated || fullOutputPath || fullOutputError) {
 		const warnings: string[] = [];
 		if (fullOutputPath) {
 			warnings.push(`Full output: ${fullOutputPath}`);
+		} else if (fullOutputError) {
+			warnings.push(`Could not save the full output: ${fullOutputError}`);
 		}
 		if (truncation?.truncated) {
 			if (truncation.truncatedBy === "lines") {

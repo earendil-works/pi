@@ -1,26 +1,18 @@
 import { contribute, defineFacet } from "@p2/app/v1";
-import { closeLayers, openLayer, Slots, useOwner, useSheet } from "@p2/app/v1/web";
+import { closeLayers, SettingsSections, useOwner, useSheet } from "@p2/app/v1/web";
 import { EnvsPanel } from "./EnvsPanel.tsx";
+import "./style.css";
 
-function EnvsButton() {
+/** The Environments sheet while it is open (the owner): on its own, or as a page of Settings. */
+function EnvsSheet() {
 	const sheet = useSheet("envs");
-	if (!useOwner()) return null;
-	return (
-		<>
-			<button
-				className="foot-button"
-				type="button"
-				onClick={() => openLayer({ kind: "sheet", name: "envs" }, { fromDrawer: true })}
-				title="Remote environments"
-			>
-				Envs
-			</button>
-			{sheet && <EnvsPanel env={sheet.locator} onClose={closeLayers} />}
-		</>
-	);
+	return useOwner() && sheet ? <EnvsPanel env={sheet.locator} onClose={closeLayers} /> : null;
 }
+
 export default defineFacet((host) => {
 	contribute(host, "p2.web-envs", (self) => {
-		self.contribute(Slots, { "sidebar-foot:envs": EnvsButton });
+		self.contribute(SettingsSections, {
+			envs: { label: "Environments", title: "Remote environments", order: 30, Sheet: EnvsSheet },
+		});
 	});
 });

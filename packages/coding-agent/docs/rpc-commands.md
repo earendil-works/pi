@@ -474,7 +474,7 @@ Response:
 }
 ```
 
-If output was truncated, includes `fullOutputPath`:
+If output was truncated, includes `fullOutputPath`, or `fullOutputError` with the reason when the full output could not be saved (for example a full temp directory):
 ```json
 {
   "type": "response",
@@ -746,7 +746,7 @@ Response:
 
 ### get_last_assistant_text
 
-Get the text content of the last assistant message.
+Get the text content of the last assistant message. Messages without text from an aborted or failed turn, or that only call tools, are skipped.
 
 ```json
 {"type": "get_last_assistant_text"}

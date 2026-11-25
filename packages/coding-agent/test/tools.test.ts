@@ -1,5 +1,7 @@
+import { stripVTControlCharacters } from "node:util";
+import type { TUI } from "@earendil-works/pi-tui";
 import { applyPatch } from "diff";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,7 +14,12 @@ import {
 	createLocalBashOperations,
 } from "../src/core/tools/bash.ts";
 import { createEditToolDefinition } from "../src/core/tools/edit.ts";
-import { computeEditsDiff } from "../src/core/tools/edit-diff.ts";
+import {
+	applyEditsToNormalizedContent,
+	applyReplacementsToOriginal,
+	computeEditsDiff,
+	normalizeToLF,
+} from "../src/core/tools/edit-diff.ts";
 import { createFindToolDefinition, type FindOperations } from "../src/core/tools/find.ts";
 import { createGrepToolDefinition } from "../src/core/tools/grep.ts";
 import { createLsToolDefinition } from "../src/core/tools/ls.ts";
@@ -27,6 +34,8 @@ import {
 	createReadTool,
 	createWriteTool,
 } from "../src/index.ts";
+import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
+import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import * as shellModule from "../src/utils/shell.ts";
 
 const readTool = createReadTool(process.cwd());
@@ -226,6 +235,45 @@ describe("Coding Agent Tools", () => {
 				mimeType: "image/png",
 				note: getTextOutput(result),
 			});
+		});
+
+		it("should keep a text-only model's image warning out of what the model gets", async () => {
+			const png1x1Base64 =
+				"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAX+XDSwAAAABJRU5ErkJggg==";
+			const testFile = join(testDir, "text-model.png");
+			writeFileSync(testFile, Buffer.from(png1x1Base64, "base64"));
+			const ctx = { cwd: testDir, model: { id: "text-only", input: ["text"] } } as unknown as ExtensionToolContext;
+
+			const result = await createReadToolDefinition(testDir).execute(
+				"test-call-img-text-model",
+				{ path: testFile },
+				undefined,
+				undefined,
+				ctx,
+			);
+
+			// The result is replayed after a switch to a vision model, so it keeps the image and no
+			// note saying the model cannot see it; pi-ai replaces the image per request instead.
+			expect(getTextOutput(result)).toBe("Read image file [image/png]");
+			expect(result.content.some((c) => c.type === "image")).toBe(true);
+
+			// The user still sees the warning, collapsed and expanded.
+			initTheme("dark");
+			const component = new ToolExecutionComponent(
+				"read",
+				"test-call-img-text-model",
+				{ path: testFile },
+				{},
+				createReadToolDefinition(testDir),
+				// SAFETY: ToolExecutionComponent only calls ui.requestRender(), which this stub implements.
+				{ requestRender() {} } as TUI,
+				testDir,
+			);
+			component.updateResult({ ...result, isError: false });
+			const warning = "[text-only does not support images; it saw a placeholder instead]";
+			expect(stripVTControlCharacters(component.render(120).join("\n"))).toContain(warning);
+			component.setExpanded(true);
+			expect(stripVTControlCharacters(component.render(120).join("\n"))).toContain(warning);
 		});
 
 		it("should read BMP files from disk as PNG image attachments", async () => {
@@ -792,6 +840,50 @@ describe("Coding Agent Tools", () => {
 			expect(output).not.toContain("4001");
 		});
 
+		// #12062: a short line followed by one line far past the limit returned no output at all.
+		it("should show the end of an over-long last line after a short line", async () => {
+			const longLine = `${"y".repeat(219_000)}END`;
+			const operations: BashOperations = {
+				exec: async (_command, _cwd, { onData }) => {
+					const data = Buffer.from(`first line\n${longLine}\n`, "utf-8");
+					for (let i = 0; i < data.length; i += 8192) onData(data.subarray(i, i + 8192));
+					return { exitCode: 0 };
+				},
+			};
+			const bash = createBashTool(testDir, { operations });
+
+			const result = await bash.execute("test-call-long-last-line", { command: "grep -n x bundle.min.js" });
+			const output = getTextOutput(result);
+
+			expect(result.details?.truncation?.lastLinePartial).toBe(true);
+			expect(output).toContain("yyyyEND");
+			expect(output).toMatch(/\[Showing last 50\.0KB of line 2 /);
+		});
+
+		// #12350: an over-long line followed by a blank line returned "(no output)".
+		it.each([
+			[60_000, "\n"],
+			[219_000, "\n"],
+			[219_000, "\r\n"],
+		])("should show the end of an over-long line followed by a blank line (%i bytes, %j)", async (length, eol) => {
+			const longLine = `${"y".repeat(length)}END`;
+			const operations: BashOperations = {
+				exec: async (_command, _cwd, { onData }) => {
+					const data = Buffer.from(`first line${eol}${longLine}${eol}${eol}`, "utf-8");
+					for (let i = 0; i < data.length; i += 8192) onData(data.subarray(i, i + 8192));
+					return { exitCode: 0 };
+				},
+			};
+			const bash = createBashTool(testDir, { operations });
+
+			const result = await bash.execute("test-call-long-line-blank-line", { command: "long-line" });
+			const output = getTextOutput(result);
+
+			expect(result.details?.truncation?.lastLinePartial).toBe(true);
+			expect(output).toMatch(/^y+END\r?\n/);
+			expect(output).toMatch(/\[Showing last 50\.0KB of line 2 /);
+		});
+
 		it("should decode UTF-8 characters split across output chunks", async () => {
 			const euro = Buffer.from("€\n", "utf-8");
 			const operations: BashOperations = {
@@ -1093,6 +1185,53 @@ describe("Coding Agent Tools", () => {
 			}
 		});
 
+		// https://github.com/earendil-works/pi/issues/11807
+		it("should resolve folder globs relative to path", async () => {
+			const repo = join(testDir, "repo");
+			mkdirSync(join(repo, "migrations", "main"), { recursive: true });
+			mkdirSync(join(repo, "nested", "migrations", "main"), { recursive: true });
+			writeFileSync(join(repo, "migrations", "main", "a.js"), "hello\n");
+			writeFileSync(join(repo, "nested", "migrations", "main", "b.js"), "hello\n");
+			// rg canonicalizes its cwd, so a symlinked path must still anchor the glob.
+			const link = join(testDir, "repo-link");
+			symlinkSync(repo, link);
+
+			for (const searchPath of [repo, link]) {
+				const anchored = await grepTool.execute("test-call-glob-anchored", {
+					pattern: "hello",
+					path: searchPath,
+					glob: "migrations/main/*.js",
+				});
+				// The decoy under nested/ stays out: the glob is anchored at path.
+				expect(getTextOutput(anchored)).toBe("migrations/main/a.js:1: hello");
+
+				const anyDepth = await grepTool.execute("test-call-glob-any-depth", {
+					pattern: "hello",
+					path: searchPath,
+					glob: "**/migrations/main/*.js",
+				});
+				expect(getTextOutput(anyDepth).split("\n").sort()).toEqual([
+					"migrations/main/a.js:1: hello",
+					"nested/migrations/main/b.js:1: hello",
+				]);
+
+				// rg matches nothing for a leading "./", so the tool drops it.
+				const dotSlash = await grepTool.execute("test-call-glob-dot-slash", {
+					pattern: "hello",
+					path: searchPath,
+					glob: "./migrations/main/*.js",
+				});
+				expect(getTextOutput(dotSlash)).toBe("migrations/main/a.js:1: hello");
+
+				const negated = await grepTool.execute("test-call-glob-negated-dot-slash", {
+					pattern: "hello",
+					path: searchPath,
+					glob: "!./migrations/**",
+				});
+				expect(getTextOutput(negated)).toBe("nested/migrations/main/b.js:1: hello");
+			}
+		});
+
 		it("should treat flag-like patterns as search text", async () => {
 			const marker = join(testDir, "grep-injection-marker");
 			const payload = join(testDir, "payload.sh");
@@ -1163,6 +1302,22 @@ describe("Coding Agent Tools", () => {
 			});
 
 			expect(getTextOutput(result)).toContain("No files found matching pattern");
+		});
+
+		// #12020: fd matches nothing for a leading "./", so the tool drops it.
+		it("should ignore a leading ./ in the pattern", async () => {
+			mkdirSync(join(testDir, "src"));
+			writeFileSync(join(testDir, "src", "a.ts"), "a");
+			writeFileSync(join(testDir, "package.json"), "{}");
+
+			for (const pattern of ["./src/*.ts", "./src/**/*.ts", "././src/*.ts"]) {
+				const result = await findTool.execute("test-call-find-dot-slash", { pattern, path: testDir });
+				expect(getTextOutput(result)).toBe("src/a.ts");
+			}
+			// Without a "/" left, "./*.json" matches basenames at any depth, like "*.json".
+			writeFileSync(join(testDir, "src", "b.json"), "{}");
+			const json = await findTool.execute("test-call-find-dot-slash-json", { pattern: "./*.json", path: testDir });
+			expect(getTextOutput(json).split("\n").sort()).toEqual(["package.json", "src/b.json"]);
 		});
 
 		// #7121: exactly `limit` matches must not report that the limit was reached.
@@ -1713,5 +1868,142 @@ describe("edit tool CRLF handling", () => {
 
 		const content = readFileSync(testFile, "utf-8");
 		expect(content).toBe("\uFEFFfirst\r\nSECOND\r\nthird\r\nFOURTH\r\n");
+	});
+
+	it("should write CRLF for inserted lines in CRLF files", async () => {
+		const testFile = join(testDir, "crlf-bytes.txt");
+		writeFileSync(testFile, "first\r\nsecond\r\nthird");
+
+		await editTool.execute("test-crlf-bytes", {
+			path: testFile,
+			edits: [{ oldText: "second\nthird", newText: "2a\r\n2b\nthird!" }],
+		});
+
+		expect(readFileSync(testFile).equals(Buffer.from("first\r\n2a\r\n2b\r\nthird!"))).toBe(true);
+	});
+
+	it("should write LF for inserted lines in LF files", async () => {
+		const testFile = join(testDir, "lf-bytes.txt");
+		writeFileSync(testFile, "first\nsecond\nthird");
+
+		await editTool.execute("test-lf-bytes", {
+			path: testFile,
+			edits: [{ oldText: "second\nthird", newText: "2a\r\n2b\nthird!" }],
+		});
+
+		expect(readFileSync(testFile).equals(Buffer.from("first\n2a\n2b\nthird!"))).toBe(true);
+	});
+
+	// #8544
+	it("should keep CRLF lines when the first line ends with LF", async () => {
+		const testFile = join(testDir, "mixed-lf-first.txt");
+		writeFileSync(testFile, "a\nb\r\nX = 1\r\n");
+
+		await editTool.execute("test-mixed-lf-first", {
+			path: testFile,
+			edits: [{ oldText: "X = 1", newText: "X = 2" }],
+		});
+
+		expect(readFileSync(testFile).equals(Buffer.from("a\nb\r\nX = 2\r\n"))).toBe(true);
+	});
+
+	// #8544
+	it("should keep LF lines when the first line ends with CRLF", async () => {
+		const testFile = join(testDir, "mixed-crlf-first.txt");
+		writeFileSync(testFile, "a\r\nb\nc");
+
+		await editTool.execute("test-mixed-crlf-first", { path: testFile, edits: [{ oldText: "c", newText: "C" }] });
+
+		expect(readFileSync(testFile).equals(Buffer.from("a\r\nb\nC"))).toBe(true);
+	});
+
+	// #8544
+	it("should keep a lone CR in an untouched line", async () => {
+		const testFile = join(testDir, "lone-cr.txt");
+		writeFileSync(testFile, "a\rb\nX = 1\n");
+
+		await editTool.execute("test-lone-cr", { path: testFile, edits: [{ oldText: "X = 1", newText: "X = 2" }] });
+
+		expect(readFileSync(testFile).equals(Buffer.from("a\rb\nX = 2\n"))).toBe(true);
+	});
+
+	// #8544
+	it("should give inserted lines the line ending of the line they replace in multi-edit mode", async () => {
+		const testFile = join(testDir, "mixed-multi.txt");
+		writeFileSync(testFile, "lf1\nlf2\ncr1\r\ncr2\r\n");
+
+		await editTool.execute("test-mixed-multi", {
+			path: testFile,
+			edits: [
+				{ oldText: "lf1\n", newText: "A\nB\n" },
+				{ oldText: "cr1\n", newText: "C\nD\n" },
+			],
+		});
+
+		expect(readFileSync(testFile).equals(Buffer.from("A\nB\nlf2\nC\r\nD\r\ncr2\r\n"))).toBe(true);
+	});
+
+	// #8544
+	it("should keep untouched line endings when fuzzy matching widens the edit to whole lines", async () => {
+		const testFile = join(testDir, "mixed-fuzzy.txt");
+		writeFileSync(testFile, "a\r\nfoo   \r\nb\n");
+
+		await editTool.execute("test-mixed-fuzzy", { path: testFile, edits: [{ oldText: "foo\n", newText: "FOO\n" }] });
+
+		expect(readFileSync(testFile).equals(Buffer.from("a\r\nFOO\r\nb\n"))).toBe(true);
+	});
+
+	// A kept CR and an LF meeting at a splice seam must not merge into one CRLF line break.
+	it("should not merge a kept lone CR with a line feed after it", async () => {
+		const cases = [
+			// Inserted text starting with LF after a kept lone CR.
+			{ edit: { oldText: "b", newText: "\nB" }, written: "a\r\n\nB\nc", diffed: "a\n\nB\nc" },
+			// Deleted text between a kept lone CR and a kept LF.
+			{ edit: { oldText: "b", newText: "" }, written: "a\r\n\nc", diffed: "a\n\nc" },
+		];
+		for (const [index, { edit, written, diffed }] of cases.entries()) {
+			const testFile = join(testDir, `cr-seam-${index}.txt`);
+			writeFileSync(testFile, "a\rb\nc");
+
+			const result = await editTool.execute("test-cr-seam", { path: testFile, edits: [edit] });
+
+			expect(readFileSync(testFile).equals(Buffer.from(written))).toBe(true);
+			expect(applyPatch("a\nb\nc", result.details?.patch ?? "")).toBe(diffed);
+		}
+	});
+
+	it("should not merge an inserted CR line ending with a kept line feed after it", () => {
+		// Only files without LF give inserted text CR line endings, so check the seam directly.
+		const written = applyReplacementsToOriginal("a\rb\nc", [{ matchIndex: 2, matchLength: 1, newText: "\r" }]);
+
+		expect(normalizeToLF(written)).toBe("a\n\n\nc");
+	});
+
+	it("should write content that normalizes to the diffed content for random mixed line endings", () => {
+		let seed = 1;
+		const random = (n: number): number => {
+			seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+			// The high bits: the low bits of this generator repeat with a short period.
+			return Math.floor((seed / 0x80000000) * n);
+		};
+		const endings = ["\n", "\r\n", "\r", ""];
+		for (let run = 0; run < 3000; run++) {
+			let original = "";
+			for (let line = random(12) + 1; line > 0; line--) {
+				original += `w${random(100)}${random(5) === 0 ? "  " : ""}${endings[random(4)]}`;
+			}
+			const normalized = normalizeToLF(original);
+			const start = random(normalized.length);
+			const oldText = normalized.slice(start, start + 1 + random(12));
+			const newText = ["", "\n", "X\n", "\nY", "\r", "Z"][random(6)];
+			let applied: ReturnType<typeof applyEditsToNormalizedContent>;
+			try {
+				applied = applyEditsToNormalizedContent(normalized, [{ oldText, newText }], "f.txt");
+			} catch {
+				continue; // duplicate, not found or no change
+			}
+
+			expect(normalizeToLF(applyReplacementsToOriginal(original, applied.replacements))).toBe(applied.newContent);
+		}
 	});
 });

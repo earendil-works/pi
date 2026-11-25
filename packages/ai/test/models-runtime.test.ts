@@ -420,6 +420,32 @@ describe("Models runtime", () => {
 		expect(offline.getModel("dynamic", "fetched")).toBeDefined();
 	});
 
+	// #12311: the merged catalog is built once per publish, not on every read.
+	it("merges fetched models over the baseline once per publish", async () => {
+		const baseline = [testModel("dynamic", "a"), testModel("dynamic", "b")];
+		const fetchedB = { ...testModel("dynamic", "b"), name: "fetched b" };
+		const fetchedC = testModel("dynamic", "c");
+		const provider = createProvider({
+			id: "dynamic",
+			auth: { apiKey: envKeyAuth("key") },
+			models: baseline,
+			fetchModels: async () => [fetchedC, fetchedB],
+			api: {
+				stream: () => new AssistantMessageEventStream(),
+				streamSimple: () => new AssistantMessageEventStream(),
+			},
+		});
+		const models = createModels();
+		models.setProvider(provider);
+		expect(provider.getModels()).toBe(provider.getModels());
+
+		expect((await models.refresh()).errors.size).toBe(0);
+
+		expect(provider.getModels()).toEqual([baseline[0], fetchedB, fetchedC]);
+		expect(provider.getModels()).toBe(provider.getModels());
+		expect(provider.getAllModels?.()).toBe(provider.getAllModels?.());
+	});
+
 	it("passes effective API-key credentials and refresh options while skipping unconfigured providers", async () => {
 		let effectiveCredential: unknown;
 		let forceRefresh: boolean | undefined;
@@ -504,6 +530,48 @@ describe("Models runtime", () => {
 		expect((await models.refresh()).errors.size).toBe(0);
 		expect(modelRefreshCredential).toMatchObject({ type: "oauth", access: "fresh", refresh: "rotated" });
 		expect(await credentials.read("oauth-dynamic")).toMatchObject({ access: "fresh", refresh: "rotated" });
+	});
+
+	it("refreshes catalogs that need only configured auth without refreshing OAuth", async () => {
+		const credentials = new InMemoryCredentialStore();
+		await credentials.modify("catalog-oauth", async () => ({
+			type: "oauth",
+			access: "expired",
+			refresh: "revoked",
+			expires: 0,
+		}));
+		const oauthRefresh = vi.fn(async (): Promise<never> => {
+			throw new Error("invalid_grant");
+		});
+		const networkCredentials: unknown[] = [];
+		let unconfiguredRefreshes = 0;
+		const models = createModels({ credentials });
+		models.setProvider({
+			...testProvider({
+				id: "catalog-oauth",
+				auth: { oauth: testOAuth({ refresh: oauthRefresh }) },
+				refreshModels: async (context) => {
+					if (context.allowNetwork) networkCredentials.push(context.credential);
+				},
+			}),
+			refreshModelsAuth: "configured",
+		});
+		models.setProvider({
+			...testProvider({
+				id: "catalog-unconfigured",
+				auth: { apiKey: envKeyAuth(undefined) },
+				refreshModels: async ({ allowNetwork }) => {
+					if (allowNetwork) unconfiguredRefreshes++;
+				},
+			}),
+			refreshModelsAuth: "configured",
+		});
+
+		expect((await models.refresh()).errors.size).toBe(0);
+		expect(oauthRefresh).not.toHaveBeenCalled();
+		expect(networkCredentials).toEqual([undefined]);
+		expect(unconfiguredRefreshes).toBe(0);
+		expect(await credentials.read("catalog-oauth")).toMatchObject({ access: "expired", refresh: "revoked" });
 	});
 
 	it("persists an OAuth refresh that started before the model refresh was cancelled", async () => {

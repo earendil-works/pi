@@ -1,5 +1,5 @@
 // Pi Mobile's rebuildIndex: an owner re-indexes one session from the start, an archived one too (its worker scans
-// without resuming work and stops again).
+// without resuming work and stops again). The rebuild is a job, shown in `Search.rebuilds` while it runs.
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -29,6 +29,7 @@ test("rebuildIndex re-indexes active and archived sessions", { timeout: 90_000 }
 			(hit) => hit.session === session.id,
 		).length;
 	await poll(async () => (await hits()) === 2, 20_000, "indexed");
+	const rebuilt = () => until(search.rebuilds, (list) => list?.length === 0);
 	chat.release();
 
 	// Emptied directly, the index stays empty until rebuilt.
@@ -37,8 +38,11 @@ test("rebuildIndex re-indexes active and archived sessions", { timeout: 90_000 }
 		BACKGROUND_CONTEXT,
 	);
 	assert.equal(await hits(), 0);
+	// The rebuild is a job: the call answers once it started, `rebuilds` shows it running until the scan committed.
 	await search.rebuildIndex({ session: session.id }, BACKGROUND_CONTEXT);
-	assert.equal(await hits(), 2, "rebuilt before the call returned");
+	await until(search.rebuilds, (list) => list?.some((each) => each.session === session.id) === true);
+	await rebuilt();
+	assert.equal(await hits(), 2, "rebuilt once the job is gone");
 
 	// An archived session: its worker starts only to scan (no resumed work) and stops again.
 	await sessions.archive({ id: session.id }, BACKGROUND_CONTEXT);
@@ -48,6 +52,7 @@ test("rebuildIndex re-indexes active and archived sessions", { timeout: 90_000 }
 	);
 	assert.equal(await hits(true), 0);
 	await search.rebuildIndex({ session: session.id }, BACKGROUND_CONTEXT);
+	await rebuilt();
 	assert.equal(await hits(true), 2);
 	const hosts = fixture.server.host.hold(Hosts, {}, BACKGROUND_CONTEXT);
 	t.after(() => hosts.release());

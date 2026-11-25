@@ -38,14 +38,8 @@ export type OwnerServer =
 /** The owner's servers and why entries were skipped. */
 export type OwnerConfig = { readonly servers: readonly OwnerServer[]; readonly errors: readonly string[] };
 
-/**
- * The file as last read: not yet, a valid configuration, or why it is not one (its readers keep the last valid servers,
- * also from before this reader existed: a reload's new reader may first see a save caught half-way).
- */
-type OwnerConfigRead =
-	| { readonly kind: "unread" }
-	| { readonly kind: "valid"; readonly config: OwnerConfig }
-	| { readonly kind: "invalid"; readonly failure: string };
+/** The file as last read: the last valid servers and their errors, and why the last read failed (null: it did not). */
+export type OwnerConfigState = OwnerConfig & { readonly failure: string | null };
 
 /**
  * The owner's configuration in `text` (`{ "mcpServers": { name: entry } }`, comments allowed): invalid entries are
@@ -158,32 +152,40 @@ export function expandHostVariables(value: string): string {
 export class OwnerConfigFile {
 	/** Watches the file and reads it at each change; `start()` reads it the first time, `close()` stops. */
 	readonly observer: Observer;
-	#read: OwnerConfigRead = { kind: "unread" };
-	readonly #listeners = new Set<(read: OwnerConfigRead) => void>();
+	#state: OwnerConfigState;
+	readonly #listeners = new Set<() => void>();
 
-	constructor(dataDir: string) {
+	/**
+	 * `last`: the servers last read validly before this reader existed (a restarted manager's: its new reader may first
+	 * see a save caught half-way, and keeps them then).
+	 */
+	constructor(dataDir: string, last: OwnerConfig) {
 		const path = join(dataDir, "mcp.json");
+		this.#state = { ...last, failure: null };
 		this.observer = new Observer(
 			[{ env: new NodeExecutionEnv({ cwd: dataDir }), targets: () => [{ path }] }],
 			async (retrying) => {
 				try {
-					this.#read = { kind: "valid", config: parseOwnerConfig((await optionalText(path)) ?? "{}") };
+					this.#state = { ...parseOwnerConfig((await optionalText(path)) ?? "{}"), failure: null };
 				} catch (error) {
-					// A save caught half-way is read once more before it counts.
+					// A save caught half-way is read once more before it counts; an invalid read keeps the last valid servers.
 					if (!retrying) return true;
-					this.#read = { kind: "invalid", failure: error instanceof Error ? error.message : String(error) };
+					this.#state = { ...this.#state, failure: error instanceof Error ? error.message : String(error) };
 				}
-				for (const listener of this.#listeners) listener(this.#read);
+				for (const listener of this.#listeners) listener();
 				return false;
 			},
 			2000,
 		);
 	}
 
-	/** `listener` gets the last read at once (once there is one), then every read's. */
-	subscribe(listener: (read: OwnerConfigRead) => void): () => void {
+	get state(): OwnerConfigState {
+		return this.#state;
+	}
+
+	/** `listener` hears of every read from now on; the result stops it. */
+	subscribe(listener: () => void): () => void {
 		this.#listeners.add(listener);
-		if (this.#read.kind !== "unread") listener(this.#read);
 		return () => this.#listeners.delete(listener);
 	}
 }

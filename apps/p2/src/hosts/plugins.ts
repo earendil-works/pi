@@ -1,41 +1,22 @@
-// p2's plugins on Chord v2's plugin component: plugin directories under plugins/, each facet of kind `server` or
-// `worker` built on its own against p2's plugin API (`@p2/app/v1`) and the packages a facet shares with its host,
-// and evaluated with this process's instances of them. TUI and web facets stay in p2's own bundles (bundles.ts).
+// p2's plugins on Chord v2's plugin component: plugin directories under plugins/, each facet of kind `server`,
+// `worker` or `web` built on its own against p2's plugin API (`@p2/app/v1`) and the packages a facet shares with its
+// host: server and worker facets evaluated with this process's instances of them (host-packages.ts), web facets served
+// to pages by Chord's web surface (server.ts) and evaluated there with the page's (src/hosts/web/main.tsx). TUI facets
+// stay in p2's own bundle (bundles.ts).
+
 import { cpSync, existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/chord/context";
 import { createPlugins, type Plugins, type PluginsError } from "@earendil-works/chord/plugins";
-import * as piAi from "@earendil-works/pi-ai";
-import * as anthropicMessages from "@earendil-works/pi-ai/api/anthropic-messages.lazy";
-import * as googleGenerativeAi from "@earendil-works/pi-ai/api/google-generative-ai.lazy";
-import * as openaiCompletions from "@earendil-works/pi-ai/api/openai-completions.lazy";
-import * as openaiResponses from "@earendil-works/pi-ai/api/openai-responses.lazy";
-import * as piAiModels from "@earendil-works/pi-ai/models";
-import * as allProviders from "@earendil-works/pi-ai/providers/all";
-import * as fauxProvider from "@earendil-works/pi-ai/providers/faux";
-import * as radiusProvider from "@earendil-works/pi-ai/providers/radius";
-import * as radiusConfig from "@earendil-works/pi-ai/providers/radius-config";
-import * as piCodemode from "@earendil-works/pi-codemode";
-import * as piDurable from "@earendil-works/pi-durable";
-import * as durableCodemode from "@earendil-works/pi-durable/codemode";
-import * as durableEnv from "@earendil-works/pi-durable/env";
-import * as durableEnvNode from "@earendil-works/pi-durable/env/node";
-import * as durableToolSearch from "@earendil-works/pi-durable/tool-search";
-import * as durableTools from "@earendil-works/pi-durable/tools";
-import * as piEnv from "@earendil-works/pi-env";
-import * as piMcp from "@earendil-works/pi-mcp";
-import * as piMcpOauth from "@earendil-works/pi-mcp/oauth";
-import * as piSchema from "@earendil-works/pi-schema";
-import * as schemaFormats from "@earendil-works/pi-schema/formats";
-import * as piTui from "@earendil-works/pi-tui";
-import * as ws from "ws";
-import * as yaml from "yaml";
+import { WEB_PREFIX } from "@earendil-works/chord/surfaces";
+import * as discordJs from "discord.js";
 import * as api from "../api/v1/index.ts";
 import * as apiNode from "../api/v1/node.ts";
 import * as apiServer from "../api/v1/server.ts";
-import * as apiWorker from "../api/v1/worker.ts";
+import { SHARED_PACKAGES, WORKER_PACKAGES } from "./host-packages.ts";
+import { WEB_PACKAGES } from "./web/packages.ts";
 
 export type PluginName = string;
 export type FacetKind = "server" | "worker" | "web" | "tui";
@@ -48,56 +29,36 @@ export const PLUGINS_DIRECTORY = fileURLToPath(new URL("../../plugins/", import.
 export const BASE_DIRECTORY = fileURLToPath(new URL("../", import.meta.url));
 const FACET_KINDS = ["server", "worker", "web", "tui"] as const;
 
+/** Where pages load web facets' assets from (the web surface's). */
+export const WEB_ASSETS = `${WEB_PREFIX}assets/`;
+
 /** p2's plugin API: one version so far. */
 export const API = { name: "@p2/app", versions: ["v1"] } as const;
 
-/** The packages a facet shares with its host as instances (never bundled into a plugin's script), by specifier. */
-const SHARED = {
-	"@earendil-works/pi-ai": piAi,
-	"@earendil-works/pi-ai/api/anthropic-messages.lazy": anthropicMessages,
-	"@earendil-works/pi-ai/api/google-generative-ai.lazy": googleGenerativeAi,
-	"@earendil-works/pi-ai/api/openai-completions.lazy": openaiCompletions,
-	"@earendil-works/pi-ai/api/openai-responses.lazy": openaiResponses,
-	"@earendil-works/pi-ai/models": piAiModels,
-	"@earendil-works/pi-ai/providers/all": allProviders,
-	"@earendil-works/pi-ai/providers/faux": fauxProvider,
-	"@earendil-works/pi-ai/providers/radius": radiusProvider,
-	"@earendil-works/pi-ai/providers/radius-config": radiusConfig,
-	"@earendil-works/pi-codemode": piCodemode,
-	"@earendil-works/pi-durable": piDurable,
-	"@earendil-works/pi-durable/codemode": durableCodemode,
-	"@earendil-works/pi-durable/env": durableEnv,
-	"@earendil-works/pi-durable/env/node": durableEnvNode,
-	"@earendil-works/pi-durable/tool-search": durableToolSearch,
-	"@earendil-works/pi-durable/tools": durableTools,
-	"@earendil-works/pi-env": piEnv,
-	"@earendil-works/pi-mcp": piMcp,
-	"@earendil-works/pi-mcp/oauth": piMcpOauth,
-	"@earendil-works/pi-schema": piSchema,
-	"@earendil-works/pi-schema/formats": schemaFormats,
-	ws,
-	yaml,
-};
-
-/** The host packages of server facets: the API's kind-neutral, Node and server modules, and the shared packages. */
+/**
+ * The host packages of server facets: the API's kind-neutral, Node and server modules, the shared packages, and
+ * discord.js (the discord plugin's bot; a plugin cannot bundle a package from the app's hoisted node_modules).
+ */
 export const SERVER_PACKAGES = {
 	"@p2/app/v1": api,
 	"@p2/app/v1/node": apiNode,
 	"@p2/app/v1/server": apiServer,
-	...SHARED,
-};
-/** The host packages of worker facets (pi-tui too: file completion ranks as pi-tui's autocomplete does). */
-export const WORKER_PACKAGES = {
-	"@p2/app/v1": api,
-	"@p2/app/v1/node": apiNode,
-	"@p2/app/v1/worker": apiWorker,
-	"@earendil-works/pi-tui": piTui,
-	...SHARED,
+	"discord.js": discordJs,
+	...SHARED_PACKAGES,
 };
 
-/** A directory listing, alphabetical: every subdirectory with at least one facet file is a plugin. */
+/** The plugins of `roots`, alphabetical; the first root that has a name wins it. */
+export function listRoots(roots: readonly string[]): PluginListing {
+	const plugins = new Map<PluginName, PluginFacets>();
+	for (const root of roots)
+		for (const [name, facets] of listPlugins(root)) if (!plugins.has(name)) plugins.set(name, facets);
+	return new Map([...plugins].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+}
+
+/** A directory listing, alphabetical: every subdirectory with at least one facet file is a plugin (none: no directory). */
 export function listPlugins(directory: string = PLUGINS_DIRECTORY): PluginListing {
 	const plugins = new Map<PluginName, PluginFacets>();
+	if (!existsSync(directory)) return plugins;
 	for (const entry of readdirSync(directory, { withFileTypes: true })) {
 		if (!entry.isDirectory()) continue;
 		const facets: Partial<Record<FacetKind, string>> = {};
@@ -123,24 +84,29 @@ export function selectPlugins(listing: PluginListing, requested?: readonly strin
 export type P2Plugins = { readonly plugins: Plugins; readonly directory: string; close(): void };
 
 /**
- * p2's plugins: every plugin of plugins/, or exactly `selection` (tests). A selection is a copy of plugins/ in which the
- * other plugins keep only their non-facet files: their contracts stay importable, their facets are gone.
+ * p2's plugins: every plugin of plugins/, or exactly `selection` (tests), and every plugin of the user root `user`
+ * (after them: a built-in wins a name, the clash reported). A selection is a copy of plugins/ in which the other
+ * plugins keep only their non-facet files: their contracts stay importable, their facets are gone.
  */
 export function createP2Plugins(
 	selection: readonly string[] | undefined,
 	onError: (error: PluginsError) => void,
 	context: Context = BACKGROUND_CONTEXT,
+	user?: string,
+	publicPath: string = WEB_ASSETS,
 ): P2Plugins {
 	const directory = selection === undefined ? PLUGINS_DIRECTORY : selectedCopy(selection);
 	const plugins = createPlugins(
 		{
-			roots: [{ path: directory, required: true }],
+			roots: [{ path: directory, required: true }, ...(user === undefined ? [] : [user])],
 			api: API,
 			base: [BASE_DIRECTORY],
 			kinds: {
 				server: { platform: "node", hostPackages: Object.keys(SERVER_PACKAGES) },
 				worker: { platform: "node", hostPackages: Object.keys(WORKER_PACKAGES) },
+				web: { platform: "browser", hostPackages: WEB_PACKAGES },
 			},
+			publicPath,
 			onError,
 		},
 		context,

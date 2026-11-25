@@ -94,6 +94,37 @@ function carrierId(carrier: Readonly<TelemetryCarrier>): string {
 	return `${carrier["pi-memory-scope"]}:${carrier["pi-memory-span"]}`;
 }
 
+// The clock of span times: wall-clock milliseconds at microsecond resolution, from the monotonic high-resolution
+// clock anchored to the wall clock (`telemetryNow`, also Chord's SQLite store's).
+
+/**
+ * How far the anchored clock may part from `Date.now()` before it is anchored anew: more than `Date.now()`'s own
+ * truncation to whole milliseconds, less than any step worth following (a wall clock set, a sleep the monotonic clock
+ * did not count).
+ */
+const TOLERANCE_MS = 10;
+
+/** The wall-clock time of `performance.now()`'s zero; `performance.timeOrigin` until the first step is followed. */
+let anchor = performance.timeOrigin;
+
+/**
+ * Now as milliseconds since the epoch, rounded to the microsecond: `performance.now()` (monotonic, sub-millisecond)
+ * plus an anchor to the wall clock. While the two agree within 10 ms, times in one process keep their order and
+ * spacing to the microsecond; past that the clock follows `Date.now()` again, at whole milliseconds. Every adapter
+ * of this package and Chord's SQLite store stamp span starts with it, so their times agree.
+ */
+export function telemetryNow(): number {
+	const clock = performance.now();
+	const wall = Date.now();
+	if (Math.abs(anchor + clock - wall) > TOLERANCE_MS) anchor = wall - clock;
+	return microseconds(anchor + clock);
+}
+
+/** `ms` rounded to the microsecond, as span times are. */
+function microseconds(ms: number): number {
+	return Math.round(ms * 1000) / 1000;
+}
+
 // Identity survives settlement without exposing backend IDs on the generic context contract.
 const contextCarriers = new WeakMap<TelemetryContext, TelemetryCarrier>();
 
@@ -141,7 +172,7 @@ function createSpan(
 	}
 	const id = state.nextSpanId++;
 	return {
-		startedMs: Date.now(),
+		startedMs: telemetryNow(),
 		clock: performance.now(),
 		id,
 		parentId: parent?.localId ?? null,
@@ -212,7 +243,7 @@ async function startInMemorySpan<T>(
 			if (recordedSpan.settled) return;
 			recordedSpan.events.push({
 				name,
-				timeMs: performance.now() - recordedSpan.clock,
+				timeMs: microseconds(performance.now() - recordedSpan.clock),
 				attributes: copyAttributes(attributes),
 			});
 		},
@@ -240,7 +271,7 @@ async function startInMemorySpan<T>(
 		throw error;
 	} finally {
 		recordedSpan.settled = true;
-		recordedSpan.endedMs = recordedSpan.startedMs + performance.now() - recordedSpan.clock;
+		recordedSpan.endedMs = microseconds(recordedSpan.startedMs + performance.now() - recordedSpan.clock);
 		recordedSpan.endSequence = state.nextEndSequence++;
 	}
 }

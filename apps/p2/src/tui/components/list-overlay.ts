@@ -79,6 +79,15 @@ export class ListOverlay implements Component, Focusable {
 		this.footer = options.footer;
 		this.selectedKey = options.selected;
 	}
+	/** The selected row's key (the preselected one until rows are listed). */
+	get selection(): string | undefined {
+		return this.selectedKey;
+	}
+	/** Selects the row of `key` (a caller moving the cursor as rows settle, e.g. to the first usable one). */
+	select(key: string): void {
+		this.selectedKey = key;
+		this.ctx.requestRender();
+	}
 	private filtered(): readonly ListRow[] {
 		const query = this.input.getValue();
 		const rows = this.rows();

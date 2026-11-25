@@ -1,0 +1,13 @@
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"outDir": "./dist",
+		"rootDir": ".",
+		"module": "NodeNext",
+		"moduleResolution": "NodeNext",
+		"customConditions": ["source"],
+		"sourceMap": false,
+		"inlineSources": false
+	},
+	"include": ["src/api/v1/*.ts"]
+}

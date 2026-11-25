@@ -1,11 +1,12 @@
 // The store (slice 6a §2, §3, slice 6b §1): opening, the commit step, refusals and unknown outcomes (D4), the id
-// allocator (D3), one host per store (rule 7), close.
+// allocator (D3), one host per store (rule 7), close, a commit series, group commit.
 
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { NOOP_TELEMETRY_CONTEXT, NOOP_TELEMETRY_METRICS } from "@earendil-works/pi-telemetry";
 import { afterEach, describe, expect, it } from "vitest";
-import { BACKGROUND_CONTEXT as context, withCancel } from "../../src/context/index.ts";
+import { BACKGROUND_CONTEXT as context, withCancel, withTelemetry } from "../../src/context/index.ts";
 import { int, str } from "../../src/contracts/index.ts";
 import { isChordError } from "../../src/data/index.ts";
 import { openNodeSqliteDatabase } from "../../src/sqlite/node.ts";
@@ -74,6 +75,29 @@ describe("opening", () => {
 		await reopened.commit([createDocument({ ...ADDRESS, key: "b" }, BASE, "{}")], fence, context);
 		expect(adopted).toEqual([[2, [3]]]);
 		await reopened.close(context);
+	});
+
+	it("migrates a store of schema 2 to 3: its records kept, a host column and its index added", async () => {
+		directory = await mkdtemp(join(tmpdir(), "chord-store-"));
+		const path = join(directory, "store.sqlite");
+		const store = (await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context)) as ChordStore;
+		await created(store);
+		await store.close(context);
+		// The store as schema 2 left it.
+		const db = await openNodeSqliteDatabase(path);
+		await db.exec("DROP INDEX chord_documents_host");
+		await db.exec("ALTER TABLE chord_documents DROP COLUMN host");
+		await db.exec("UPDATE chord_store_schema SET version = 2");
+		await db.close();
+		const migrated = (await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context)) as ChordStore;
+		const record = await migrated.read((executor) => findDocument(executor, ADDRESS), context);
+		expect(record).toMatchObject({ id: 2, owner: "app.store" });
+		expect(record?.host).toBeUndefined();
+		const { fence } = recording();
+		await migrated.commit([createDocument({ ...ADDRESS, key: "s", host: "session|S1" }, BASE, "{}")], fence, context);
+		const hosted = await migrated.read((executor) => findDocument(executor, { ...ADDRESS, key: "s" }), context);
+		expect(hosted?.host).toBe("session|S1");
+		await migrated.close(context);
 	});
 
 	it("refuses a database that is not UTF-8, closing the backend (rule 12)", async () => {
@@ -343,6 +367,121 @@ describe("close", () => {
 	});
 });
 
+describe("settled", () => {
+	const create = (key: string) => createDocument({ ...ADDRESS, key }, BASE, "{}");
+
+	it("resolves once the commits queued before it were adopted or rejected", async () => {
+		const store = await memoryStore();
+		const events: string[] = [];
+		const fence = (name: string, admit = true) => ({
+			admit: () => admit,
+			adopt: () => void events.push(`adopt ${name}`),
+		});
+		const held = holdNextCommit(store);
+		const running = store.commit([create("a")], fence("a"), context);
+		await held.entered;
+		const queued = store.commit([create("b")], fence("b"), context);
+		const refused = rejection(store.commit([create("c")], fence("c", false), context));
+		const settled = store.settled().then(() => events.push("settled"));
+		await Promise.resolve();
+		expect(events).toEqual([]);
+		held.release();
+		await settled;
+		expect(events).toEqual(["adopt a", "adopt b", "settled"]);
+		expect(await Promise.all([running, queued])).toEqual([1, 2]);
+		expect(await refused).toMatchObject({ code: "released" });
+	});
+
+	it("does not wait for a commit queued after the call; resolves on a closed store", async () => {
+		const store = await memoryStore();
+		const before = store.settled();
+		const held = holdNextCommit(store);
+		const running = store.commit([create("a")], recording().fence, context);
+		await held.entered;
+		await before;
+		held.release();
+		await running;
+		await (store as Store).close(context);
+		await store.settled();
+	});
+});
+
+describe("onCommitted", () => {
+	it("announces the new lastSeq after commits are durable, once per microtask, never inside a commit", async () => {
+		const store = await memoryStore();
+		const seen: number[] = [];
+		let inside = false;
+		const remove = store.onCommitted(
+			(seq) => {
+				expect(inside).toBe(false);
+				seen.push(seq);
+			},
+			(error) => {
+				throw error;
+			},
+		);
+		const { fence } = recording();
+		inside = true;
+		const first = store.commit([createDocument(ADDRESS, BASE, "{}")], fence, context);
+		inside = false;
+		await first;
+		await Promise.resolve();
+		expect(seen).toEqual([store.lastSeq]);
+		// Several commits before the announcement runs: one call, with the last seq.
+		await store.commit([createDocument({ ...ADDRESS, key: "b" }, BASE, "{}")], fence, context);
+		await store.commit([createDocument({ ...ADDRESS, key: "c" }, BASE, "{}")], fence, context);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(seen.at(-1)).toBe(store.lastSeq);
+		remove();
+		await store.commit([createDocument({ ...ADDRESS, key: "d" }, BASE, "{}")], fence, context);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(seen.at(-1)).toBe(store.lastSeq - 1);
+	});
+
+	it("announces a series and a refused commit not at all", async () => {
+		const store = await memoryStore();
+		const seen: number[] = [];
+		store.onCommitted(
+			(seq) => void seen.push(seq),
+			(error) => {
+				throw error;
+			},
+		);
+		await store.commitSeries(
+			[{ check: async () => {}, writes: [createDocument(ADDRESS, BASE, "{}")] }],
+			() => {},
+			context,
+		);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(seen).toEqual([store.lastSeq]);
+		const before = seen.length;
+		await expect(store.commit([BROKEN], recording().fence, context)).rejects.toThrow();
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(seen.length).toBe(before);
+	});
+
+	it("removes a listener that throws and hands its error to onError; the commit stands", async () => {
+		const store = await memoryStore();
+		const errors: unknown[] = [];
+		let calls = 0;
+		store.onCommitted(
+			() => {
+				calls++;
+				throw new Error("listener");
+			},
+			(error) => void errors.push(error),
+		);
+		const { fence } = recording();
+		await store.commit([createDocument(ADDRESS, BASE, "{}")], fence, context);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		await store.commit([createDocument({ ...ADDRESS, key: "b" }, BASE, "{}")], fence, context);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(calls).toBe(1);
+		expect(errors).toHaveLength(1);
+		expect(store.lastSeq).toBe(2);
+	});
+});
+
 describe("a commit series", () => {
 	/** A series commit with no check of its own. */
 	const unchecked = (writes: readonly StagedWrite[]) => ({ check: async () => {}, writes });
@@ -366,7 +505,7 @@ describe("a commit series", () => {
 			(index, seq, ids) => receipts.push([index, seq, ids]),
 			telemetry.context,
 		);
-		expect(result).toEqual({ stored: 3 });
+		expect(result).toEqual({ kind: "stored", stored: 3 });
 		expect(seen).toEqual([2]);
 		expect(receipts).toEqual([
 			[0, 1, [2]],
@@ -398,7 +537,7 @@ describe("a commit series", () => {
 			(index) => receipts.push(index),
 			context,
 		);
-		expect(result).toEqual({ stored: 1, refused: refusal });
+		expect(result).toEqual({ kind: "refused", stored: 1, refused: refusal });
 		expect(receipts).toEqual([0]);
 		expect(store.lastSeq).toBe(1);
 		const keys = await store.read(
@@ -508,7 +647,10 @@ describe("a commit series", () => {
 			},
 		};
 		const later = { check: async (step: Step) => void seen.push(step.table(TABLE)?.version), writes: [sees] };
-		expect(await store.commitSeries([unchecked([table]), later], () => {}, context)).toEqual({ stored: 2 });
+		expect(await store.commitSeries([unchecked([table]), later], () => {}, context)).toEqual({
+			kind: "stored",
+			stored: 2,
+		});
 		expect(seen).toEqual([1, 1]);
 		expect(store.table(TABLE)?.version).toBe(1);
 	});
@@ -551,7 +693,7 @@ describe("a commit series", () => {
 			(index, seq) => receipts.push([index, seq]),
 			context,
 		);
-		expect(empty).toEqual({ stored: 2 });
+		expect(empty).toEqual({ kind: "stored", stored: 2 });
 		expect(receipts).toEqual([
 			[0, Number.MAX_SAFE_INTEGER],
 			[1, Number.MAX_SAFE_INTEGER],
@@ -574,6 +716,519 @@ describe("a commit series", () => {
 			context,
 		);
 		expect(await rejection(series)).toMatchObject({ reason: "storage_failed" });
+		expect(await rejection(store.read(async () => 1, context))).toMatchObject({ reason: "storage_failed" });
+	});
+});
+
+describe("group commit", () => {
+	/** A store on `:memory:` counting its backend transactions. */
+	async function countingStore(options?: { readonly outbox?: boolean }) {
+		const db = await openNodeSqliteDatabase(":memory:");
+		const transaction = db.transaction.bind(db);
+		let transactions = 0;
+		db.transaction = (callback) => {
+			transactions++;
+			return transaction(callback);
+		};
+		const store = (await openStore(sqliteBackend(db), context, options)) as ChordStore;
+		// Opening's own transactions (the schema) do not count.
+		const opened = transactions;
+		return { store, transactions: () => transactions - opened };
+	}
+
+	/** A fence recording `name`'s admission and adoption into `events`. */
+	const traced = (events: string[], name: string, admit = true) => ({
+		admit: () => {
+			events.push(`admit ${name}`);
+			return admit;
+		},
+		adopt: (seq: number, ids: readonly number[]) => void events.push(`adopt ${name} ${seq} ${ids}`),
+	});
+
+	const create = (key: string) => createDocument({ ...ADDRESS, key }, BASE, "{}");
+
+	it("writes the commits queued behind a running step in one transaction, one seq, outbox commit and adoption each", async () => {
+		const { store, transactions } = await countingStore({ outbox: true });
+		const events: string[] = [];
+		const held = holdNextCommit(store);
+		const running = store.commit([create("a")], traced(events, "a"), context);
+		await held.entered;
+		const queued = ["b", "c", "d"].map((key) => store.commit([create(key)], traced(events, key), context));
+		// Admitted at the group's turn, not when queued.
+		expect(events).toEqual(["admit a"]);
+		held.release();
+		expect(await Promise.all([running, ...queued])).toEqual([1, 2, 3, 4]);
+		expect(events).toEqual([
+			"admit a",
+			"adopt a 1 2",
+			"admit b",
+			"admit c",
+			"admit d",
+			"adopt b 2 3",
+			"adopt c 3 4",
+			"adopt d 4 5",
+		]);
+		expect(transactions()).toBe(2);
+		expect([store.lastSeq, store.nextId]).toEqual([4, 6]);
+		const outbox = await store.outbox!.read(0, 10, context);
+		expect(outbox.map((commit) => [commit.seq, commit.nextId])).toEqual([
+			[1, 3],
+			[2, 4],
+			[3, 5],
+			[4, 6],
+		]);
+		const meta = await store.read(
+			(executor) => executor.get<{ last_seq: number; next_id: number }>("SELECT last_seq, next_id FROM chord_meta"),
+			context,
+		);
+		expect(meta).toEqual({ last_seq: 4, next_id: 6 });
+	});
+
+	it("writes the metadata once per group: three statements per delta with its outbox commit, plus one (cost guard)", async () => {
+		const store = await memoryStore({ outbox: true });
+		const id = await created(store);
+		const held = holdNextCommit(store);
+		const running = store.commit([create("held")], recording().fence, context);
+		await held.entered;
+		const telemetry = await metered();
+		const deltas = [1, 2, 3].map((n) => {
+			const ops = [["s", ["n"], n]] as const;
+			return store.commit(
+				[changeDocument(id, n, { kind: "delta", version: 1, ops }, JSON.stringify(ops))],
+				recording().fence,
+				telemetry.context,
+			);
+		});
+		held.release();
+		await Promise.all([running, ...deltas]);
+		expect(telemetry.counts()).toEqual({ "chord.store.commits": 3, "chord.store.statements": 3 * 3 + 1 });
+	});
+
+	it("rolls a group back when one commit's writes throw, then runs each alone: only that one is refused", async () => {
+		const { store, transactions } = await countingStore();
+		const told: unknown[] = [];
+		store.attach({ failed: (error) => told.push(error), batch: new Batch(() => {}, undefined) });
+		const events: string[] = [];
+		const held = holdNextCommit(store);
+		const running = store.commit([create("a")], traced(events, "a"), context);
+		await held.entered;
+		const before = store.commit([create("b")], traced(events, "b"), context);
+		const broken = store.commit([create("x"), BROKEN], traced(events, "x"), context);
+		const after = store.commit([create("c")], traced(events, "c"), context);
+		held.release();
+		expect(await running).toBe(1);
+		expect(await before).toBe(2);
+		expect(String(await rejection(broken))).toContain("no such table");
+		expect(await after).toBe(3);
+		// Admitted once, at the group's entry; the solo runs do not admit again. The rolled back ids stay unused (D3).
+		expect(events).toEqual(["admit a", "adopt a 1 2", "admit b", "admit x", "admit c", "adopt b 2 5", "adopt c 3 7"]);
+		// The held step, the rolled back group, then b, x (refused) and c alone.
+		expect([transactions(), told, store.lastSeq]).toEqual([5, [], 3]);
+		const keys = await store.read(
+			(executor) => executor.all<{ key: string }>("SELECT key FROM chord_documents ORDER BY id"),
+			context,
+		);
+		expect(keys.map((row) => row.key)).toEqual(["a", "b", "c"]);
+	});
+
+	it("rejects a commit its fence refuses at the group's entry released, writing nothing; the others commit", async () => {
+		const store = await memoryStore();
+		const events: string[] = [];
+		const held = holdNextCommit(store);
+		const running = store.commit([create("a")], traced(events, "a"), context);
+		await held.entered;
+		const first = store.commit([create("b")], traced(events, "b"), context);
+		const cut = store.commit([create("x")], traced(events, "x", false), context);
+		const last = store.commit([create("c")], traced(events, "c"), context);
+		held.release();
+		expect(await Promise.all([running, first, last])).toEqual([1, 2, 3]);
+		expect(await rejection(cut)).toMatchObject({ code: "released", reason: "discarded" });
+		expect(events.slice(2)).toEqual(["admit b", "admit x", "admit c", "adopt b 2 3", "adopt c 3 4"]);
+	});
+
+	it("keeps queue order: a series, an export or an empty commit queued after a group ends it", async () => {
+		const store = await memoryStore();
+		const events: string[] = [];
+		const held = holdNextCommit(store);
+		const running = store.commit([create("a")], traced(events, "a"), context);
+		await held.entered;
+		const grouped = store.commit([create("b")], traced(events, "b"), context);
+		const series = store.commitSeries(
+			[{ check: async () => {}, writes: [create("s")] }],
+			(_index, seq) => events.push(`receive s ${seq}`),
+			context,
+		);
+		const afterSeries = store.commit([create("c")], traced(events, "c"), context);
+		const empty = store.commit([], traced(events, "empty"), context);
+		const afterEmpty = store.commit([create("d")], traced(events, "d"), context);
+		held.release();
+		await Promise.all([running, grouped, series, afterSeries, empty, afterEmpty]);
+		expect(events).toEqual([
+			"admit a",
+			"adopt a 1 2",
+			"admit b",
+			"adopt b 2 3",
+			"receive s 3",
+			"admit c",
+			"adopt c 4 5",
+			"admit empty",
+			"adopt empty 4 ",
+			"admit d",
+			"adopt d 5 6",
+		]);
+	});
+
+	it("runs a commit issued while a group runs at the next turn: a running group takes no more commits", async () => {
+		const store = await memoryStore();
+		const events: string[] = [];
+		const held = holdNextCommit(store);
+		const running = store.commit([create("a")], traced(events, "a"), context);
+		await held.entered;
+		let late: Promise<number> | undefined;
+		const issuing = {
+			admit: () => true,
+			adopt: (seq: number) => {
+				events.push(`adopt b ${seq}`);
+				late = store.commit([create("late")], traced(events, "late"), context);
+			},
+		};
+		const grouped = [
+			store.commit([create("b")], issuing, context),
+			store.commit([create("c")], traced(events, "c"), context),
+		];
+		held.release();
+		await Promise.all([running, ...grouped]);
+		expect(await late).toBe(4);
+		expect(events).toEqual([
+			"admit a",
+			"adopt a 1 2",
+			"admit c",
+			"adopt b 2",
+			"adopt c 3 4",
+			"admit late",
+			"adopt late 4 5",
+		]);
+	});
+
+	it("lets a later commit of a group see the table records an earlier one changed", async () => {
+		const store = await memoryStore();
+		const { version, record: columns, key, fingerprint } = Edits;
+		const table = stageTable({ kind: "table", table: TABLE, version, state: "ready", columns, key, fingerprint });
+		const seen: (number | undefined)[] = [];
+		const sees: StagedWrite = {
+			order: "write",
+			apply: async (step) => {
+				seen.push(step.table(TABLE)?.version);
+				return [];
+			},
+		};
+		const held = holdNextCommit(store);
+		const running = store.commit([create("a")], recording().fence, context);
+		await held.entered;
+		const commits = [
+			store.commit([table], recording().fence, context),
+			store.commit([sees], recording().fence, context),
+		];
+		held.release();
+		await Promise.all([running, ...commits]);
+		expect(seen).toEqual([1]);
+		expect(store.table(TABLE)?.version).toBe(1);
+	});
+
+	it.each([
+		["BEGIN IMMEDIATE", undefined],
+		["COMMIT", undefined],
+		["ROLLBACK", BROKEN],
+	] as const)(
+		"a failed %s of a group is an unknown outcome: every commit rejects storage_failed, the host told once",
+		async (at, write) => {
+			const { store, fail } = await faultyStore();
+			const told: unknown[] = [];
+			store.attach({ failed: (error) => told.push(error), batch: new Batch(() => {}, undefined) });
+			const held = holdNextCommit(store);
+			// Armed after the held step's `COMMIT`, before the group's turn: the group's statement fails.
+			const running = store.commit([create("a")], { admit: () => true, adopt: () => fail(at) }, context);
+			await held.entered;
+			const group = [
+				store.commit([create("b")], recording().fence, context),
+				store.commit([write ?? create("c")], recording().fence, context),
+			];
+			held.release();
+			expect(await running).toBe(1);
+			for (const commit of group) {
+				expect(await rejection(commit)).toMatchObject({ code: "unavailable", reason: "storage_failed" });
+			}
+			expect([told.length, store.lastSeq]).toEqual([1, 1]);
+		},
+	);
+
+	it("stops the store when an adoption in a group throws: it and the ones after it reject, the ones before stand", async () => {
+		const store = await memoryStore();
+		const held = holdNextCommit(store);
+		const running = store.commit([create("a")], recording().fence, context);
+		await held.entered;
+		const throwing = {
+			admit: () => true,
+			adopt: () => {
+				throw new Error("adopt threw");
+			},
+		};
+		const first = store.commit([create("b")], recording().fence, context);
+		const second = store.commit([create("c")], throwing, context);
+		const third = store.commit([create("d")], recording().fence, context);
+		held.release();
+		expect(await Promise.all([running, first])).toEqual([1, 2]);
+		expect(await rejection(second)).toMatchObject({ reason: "storage_failed" });
+		expect(await rejection(third)).toMatchObject({ reason: "storage_failed" });
+		expect(await rejection(store.read(async () => 1, context))).toMatchObject({ reason: "storage_failed" });
+	});
+
+	it("finishes the admitted commits of a group when the store closes during their solo runs; queued ones are released", async () => {
+		const store = await memoryStore();
+		const held = holdNextCommit(store);
+		const running = store.commit([create("a")], recording().fence, context);
+		await held.entered;
+		// Its second application (the solo run after the group's rollback) waits for the close to begin.
+		const gate = Promise.withResolvers<void>();
+		const solo = Promise.withResolvers<void>();
+		let applications = 0;
+		const slow: StagedWrite = {
+			order: "write",
+			apply: async () => {
+				if (++applications === 2) {
+					solo.resolve();
+					await gate.promise;
+				}
+				return [];
+			},
+		};
+		const admitted = store.commit([create("b"), slow], recording().fence, context);
+		const broken = store.commit([BROKEN], recording().fence, context);
+		const later = store.commit([create("c")], recording().fence, context);
+		held.release();
+		await solo.promise;
+		const queued = store.commit([create("q")], recording().fence, context);
+		const closed = store.close(context);
+		gate.resolve();
+		expect(await running).toBe(1);
+		expect(await admitted).toBe(2);
+		expect(String(await rejection(broken))).toContain("no such table");
+		expect(await later).toBe(3);
+		expect(await rejection(queued)).toMatchObject({ code: "released" });
+		await closed;
+	});
+
+	it("refuses the admitted commits after a backend failure while the store closes", async () => {
+		const { store, fail } = await faultyStore();
+		const held = holdNextCommit(store);
+		const running = store.commit([create("a")], recording().fence, context);
+		await held.entered;
+		// Its second application is its solo run after the group's rollback: the close and the failure land there.
+		const gate = Promise.withResolvers<void>();
+		const solo = Promise.withResolvers<void>();
+		let applications = 0;
+		const slow: StagedWrite = {
+			order: "write",
+			apply: async () => {
+				if (++applications === 2) {
+					solo.resolve();
+					await gate.promise;
+				}
+				return [];
+			},
+		};
+		const first = store.commit([create("b"), slow], recording().fence, context);
+		const broken = store.commit([BROKEN], recording().fence, context);
+		const last = store.commit([create("c")], recording().fence, context);
+		held.release();
+		expect(await running).toBe(1);
+		await solo.promise;
+		fail("COMMIT");
+		const closed = store.close(context);
+		gate.resolve();
+		for (const commit of [first, broken, last]) {
+			expect(await rejection(commit)).toMatchObject({ code: "unavailable", reason: "storage_failed" });
+		}
+		await closed;
+		expect(store.lastSeq).toBe(1);
+	});
+
+	it("runs a group that would pass the end of the seq range alone: the commits that fit are stored", async () => {
+		const [manifest, ...rest] = await exported(await memoryStore());
+		const parts = [{ ...manifest!, lastSeq: Number.MAX_SAFE_INTEGER - 2 }, ...rest];
+		const store = (await importStore(
+			sqliteBackend(await openNodeSqliteDatabase(":memory:")),
+			parts,
+			context,
+		)) as ChordStore;
+		const held = holdNextCommit(store);
+		const running = store.commit([create("a")], recording().fence, context);
+		await held.entered;
+		const fits = store.commit([create("b")], recording().fence, context);
+		const past = store.commit([create("c")], recording().fence, context);
+		held.release();
+		expect(await Promise.all([running, fits])).toEqual([Number.MAX_SAFE_INTEGER - 1, Number.MAX_SAFE_INTEGER]);
+		expect(await rejection(past)).toMatchObject({ code: "unavailable", reason: "storage_failed" });
+	});
+
+	it("rejects a grouped commit whose admission throws with that error; the others commit, the queue goes on", async () => {
+		const store = await memoryStore();
+		const held = holdNextCommit(store);
+		const running = store.commit([create("a")], recording().fence, context);
+		await held.entered;
+		const thrown = new Error("admit threw");
+		const throwing = {
+			admit: () => {
+				throw thrown;
+			},
+			adopt: () => {},
+		};
+		const refused = store.commit([create("x")], throwing, context);
+		const admitted = store.commit([create("b")], recording().fence, context);
+		held.release();
+		expect(await rejection(refused)).toBe(thrown);
+		expect(await Promise.all([running, admitted])).toEqual([1, 2]);
+		expect(await store.commit([create("c")], recording().fence, context)).toBe(3);
+	});
+
+	it("refuses the admitted commits after a maintenance write fails while the store closes", async () => {
+		const { store, fail } = await faultyStore();
+		const held = holdNextCommit(store);
+		const running = store.commit([create("a")], recording().fence, context);
+		await held.entered;
+		const gate = Promise.withResolvers<void>();
+		const solo = Promise.withResolvers<void>();
+		let applications = 0;
+		const slow: StagedWrite = {
+			order: "write",
+			apply: async () => {
+				if (++applications === 2) {
+					solo.resolve();
+					await gate.promise;
+				}
+				return [];
+			},
+		};
+		const first = store.commit([create("b"), slow], recording().fence, context);
+		const broken = store.commit([BROKEN], recording().fence, context);
+		const last = store.commit([create("c")], recording().fence, context);
+		held.release();
+		expect(await running).toBe(1);
+		await solo.promise;
+		// Queued behind the solo run's transaction; its COMMIT fails once the store is closing.
+		const maintenance = store.maintain(async (executor) => {
+			await executor.run("SELECT 1");
+			fail("COMMIT");
+		});
+		const closed = store.close(context);
+		gate.resolve();
+		expect(await first).toBe(2);
+		expect(await rejection(maintenance)).toMatchObject({ code: "released" });
+		await rejection(broken);
+		expect(await rejection(last)).toMatchObject({ code: "unavailable", reason: "storage_failed" });
+		await closed;
+		expect(store.lastSeq).toBe(2);
+	});
+
+	it("rejects a group's commits with what its turn throws after COMMIT, and the queue goes on", async () => {
+		const store = await memoryStore();
+		const thrown = new Error("listener threw");
+		store.attach({
+			failed: () => {
+				throw thrown;
+			},
+			batch: new Batch(() => {}, undefined),
+		});
+		const throwing = {
+			admit: () => true,
+			adopt: () => {
+				throw new Error("adopt threw");
+			},
+		};
+		const held = holdNextCommit(store);
+		const running = store.commit([create("a")], recording().fence, context);
+		await held.entered;
+		const group = [
+			store.commit([create("b")], throwing, context),
+			store.commit([create("c")], recording().fence, context),
+		];
+		held.release();
+		expect(await running).toBe(1);
+		for (const commit of group) expect(await rejection(commit)).toBe(thrown);
+		expect(await rejection(store.commit([create("d")], recording().fence, context))).toMatchObject({
+			reason: "storage_failed",
+		});
+	});
+
+	it("advances memory commit by commit while a group adopts, as lone steps do", async () => {
+		const store = await memoryStore();
+		const seen: [number, number, number][] = [];
+		const fence = {
+			admit: () => true,
+			adopt: (seq: number) => void seen.push([seq, store.lastSeq, store.nextId]),
+		};
+		const held = holdNextCommit(store);
+		const running = store.commit([create("a")], recording().fence, context);
+		await held.entered;
+		const group = [store.commit([create("b")], fence, context), store.commit([create("c")], fence, context)];
+		held.release();
+		await Promise.all([running, ...group]);
+		expect(seen).toEqual([
+			[2, 2, 4],
+			[3, 3, 5],
+		]);
+	});
+	it("stops the store when a metrics adapter throws after a group's COMMIT: memory takes the whole group, no seq repeats", async () => {
+		const store = await memoryStore();
+		const throwing = withTelemetry(
+			{
+				...NOOP_TELEMETRY_CONTEXT,
+				metrics: {
+					...NOOP_TELEMETRY_METRICS,
+					counter: () => ({
+						add: () => {
+							throw new Error("metrics threw");
+						},
+					}),
+				},
+			},
+			context,
+		);
+		const held = holdNextCommit(store);
+		const running = store.commit([create("a")], recording().fence, context);
+		await held.entered;
+		const group = [
+			store.commit([create("b")], recording().fence, throwing),
+			store.commit([create("c")], recording().fence, context),
+		];
+		held.release();
+		expect(await running).toBe(1);
+		for (const commit of group) expect(await rejection(commit)).toMatchObject({ reason: "storage_failed" });
+		expect(store.lastSeq).toBe(3);
+		expect(await rejection(store.commit([create("d")], recording().fence, context))).toMatchObject({
+			reason: "storage_failed",
+		});
+	});
+
+	it("stops the store when a metrics adapter throws after a lone commit's COMMIT too", async () => {
+		const store = await memoryStore();
+		const throwing = withTelemetry(
+			{
+				...NOOP_TELEMETRY_CONTEXT,
+				metrics: {
+					...NOOP_TELEMETRY_METRICS,
+					counter: () => ({
+						add: () => {
+							throw new Error("metrics threw");
+						},
+					}),
+				},
+			},
+			context,
+		);
+		const { adopted, fence } = recording();
+		expect(await rejection(store.commit([create("a")], fence, throwing))).toMatchObject({ reason: "storage_failed" });
+		expect([adopted, store.lastSeq]).toEqual([[], 1]);
 		expect(await rejection(store.read(async () => 1, context))).toMatchObject({ reason: "storage_failed" });
 	});
 });

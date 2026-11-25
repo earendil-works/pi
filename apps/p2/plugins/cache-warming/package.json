@@ -1,0 +1,5 @@
+{
+	"name": "cache-warming",
+	"private": true,
+	"type": "module"
+}

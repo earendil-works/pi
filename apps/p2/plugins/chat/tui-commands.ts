@@ -23,11 +23,12 @@ export const CHAT_COMMANDS: Record<string, TuiCommand> = {
 		when: "chat && editorFocused && !autocomplete && !overlay",
 		run: (ctx) => chat(ctx)?.clear(),
 	},
+	// While a run is busy a follow-up; idle, the owner's message in a new branch (ChatSurface.sendAlternate).
 	"app.message.followUp": {
-		title: "Queue follow-up message",
+		title: "Queue follow-up message, or send in a new branch when idle",
 		category: "Chat",
 		when: "chat && participant && !overlay",
-		run: (ctx) => chat(ctx)?.send("followUp"),
+		run: (ctx) => chat(ctx)?.sendAlternate(),
 	},
 	"app.message.dequeue": {
 		title: "Restore your queued messages",
@@ -41,6 +42,14 @@ export const CHAT_COMMANDS: Record<string, TuiCommand> = {
 		when: "chat && participant && !overlay",
 		slash: { name: "compact", argumentHint: "[instructions]" },
 		run: (ctx, args) => chat(ctx)?.compact(args),
+	},
+	// pi's /tree: the session's branches (docs/tree.md).
+	"app.session.tree": {
+		title: "Continue the session from an earlier message",
+		category: "Session",
+		when: "chat && owner && !overlay",
+		slash: { name: "tree" },
+		run: (ctx) => chat(ctx)?.openTree(),
 	},
 	// pi's /fork and /clone as new sessions (Sessions.fork/clone; the server copies the store).
 	"app.session.fork": {

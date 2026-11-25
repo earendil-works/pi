@@ -4,7 +4,9 @@
 // segments of a payload marked as carrying bytes follow the tuple after a newline (JSON text never contains a raw
 // one), their lengths the tuple's last field. A message with an origin is wrapped: `["@", origin, tuple]`. Every part
 // is tagged with its codec, so no JSON value is reserved: `[0, json]`, or `[1, base64]` for a part its origin deflated
-// (the text codec itself never compresses).
+// (the text codec itself never compresses). A `hold`'s or `call`'s trace carrier is an optional element after its
+// other fields (slice 9); a `call`'s old-work flag (`old`) follows it as `true` (the carrier then `null` when absent).
+// An `event` message is `["E", [[hold, member, at, value]…]]`, an event ack `["a", events]`.
 
 import {
 	type BoundEntry,
@@ -63,7 +65,8 @@ function segmentsOf(message: Message): readonly Uint8Array[] | undefined {
 
 /** The tuple's JSON text, parts spliced in; wrapped with its origin when it has one. */
 function tuple(message: Message): string {
-	const origin = "origin" in message ? message.origin : undefined;
+	// Encoded on any kind: the message schema, after decoding, refuses an origin on a kind that has none.
+	const origin = (message as { readonly origin?: number }).origin;
 	return origin === undefined ? ownTuple(message) : `["@",${origin},${ownTuple(message)}]`;
 }
 
@@ -71,20 +74,34 @@ function tuple(message: Message): string {
 function ownTuple(message: Message): string {
 	switch (message.kind) {
 		case "hello":
-			return json(["h", message.protocol, message.incarnation, message.calls]);
+			return json([
+				"h",
+				message.protocol,
+				message.incarnation,
+				...(message.calls === undefined ? [] : [message.calls]),
+			]);
 		case "hold": {
-			const { address, principal, incarnation, chain, limit } = message;
+			const { address, principal, incarnation, chain, limit, trace } = message;
 			const head = json(["H", message.hold, message.type, message.version, message.fingerprint]).slice(0, -1);
 			// Optional trailing fields: an absent one in the middle is null, absent ones at the end are left out.
-			const optional = [principal ?? null, incarnation ?? null, chain ?? null, limit ?? null];
+			const optional = [principal ?? null, incarnation ?? null, chain ?? null, limit ?? null, trace ?? null];
 			while (optional.length > 0 && optional.at(-1) === null) optional.pop();
 			const rest = optional.map((field) => `,${json(field)}`).join("");
 			return `${head},${partText(message.params)},${json([address.kind, address.params])}${rest}]`;
 		}
 		case "release":
 			return json(["R", message.hold]);
-		case "call":
-			return withPayload(json(["c", message.call, message.hold, message.method]), message.args, message.segments);
+		case "call": {
+			const head = json(["c", message.call, message.hold, message.method]);
+			const { args, segments, trace, old } = message;
+			if (trace === undefined && old !== true) return withPayload(head, args, segments);
+			// With a trace or the old-work flag the payload's fields are positional (null when absent), the carrier next
+			// (null when absent before the flag), the flag last.
+			const lengths = segments === undefined ? "null" : json(segments.map((segment) => segment.byteLength));
+			const part = args === undefined ? "null" : partText(args);
+			const tail = old === true ? `${json(trace ?? null)},true` : json(trace);
+			return `${head.slice(0, -1)},${part},${lengths},${tail}]`;
+		}
 		case "abort":
 			return json(["x", message.call]);
 		case "bound":
@@ -109,7 +126,13 @@ function ownTuple(message: Message): string {
 		case "loading":
 			return json(["l", message.hold]);
 		case "ack":
-			return json(["a"]);
+			return json(message.events === undefined ? ["a"] : ["a", message.events]);
+		case "event": {
+			const entries = message.events.map(
+				({ hold, member, at, value }) => `[${hold},${member},${at},${partText(value)}]`,
+			);
+			return `["E",[${entries.join(",")}]]`;
+		}
 		case "closed":
 			return json(["C"]);
 		case "ping":
@@ -180,13 +203,18 @@ function fromFields(fields: unknown[], rest: Uint8Array): Message {
 	const field = <T>(index: number): T => f[index] as T;
 	switch (tag) {
 		case "h":
-			arity(3);
-			return { kind: "hello", protocol: field(0), incarnation: field(1), calls: field(2) };
+			arity(2, 3);
+			return {
+				kind: "hello",
+				protocol: field(0),
+				incarnation: field(1),
+				...(f.length === 3 ? { calls: field(2) } : {}),
+			};
 		case "H": {
-			arity(6, 7, 8, 9, 10);
+			arity(6, 7, 8, 9, 10, 11);
 			const address = list(f[5]);
 			if (address.length !== 2) throw new Error("text: an address is a pair");
-			const [principal, incarnation, chain, limit] = [6, 7, 8, 9].map((index) => f[index] ?? null);
+			const [principal, incarnation, chain, limit, trace] = [6, 7, 8, 9, 10].map((index) => f[index] ?? null);
 			return {
 				kind: "hold",
 				hold: field(0),
@@ -199,20 +227,28 @@ function fromFields(fields: unknown[], rest: Uint8Array): Message {
 				...(incarnation === null ? {} : { incarnation: incarnation as string }),
 				...(chain === null ? {} : { chain: chain as string[] }),
 				...(limit === null ? {} : { limit: limit as number }),
+				...(trace === null ? {} : { trace: trace as Record<string, string> }),
 			};
 		}
 		case "R":
 			arity(1);
 			return { kind: "release", hold: field(0) };
-		case "c":
-			arity(3, 4, 5);
-			return {
+		case "c": {
+			arity(3, 4, 5, 6, 7);
+			const call = {
 				kind: "call",
-				call: field(0),
-				hold: field(1),
-				method: field(2),
-				...payload("args", f.slice(3), rest),
-			};
+				call: field<number>(0),
+				hold: field<number>(1),
+				method: field<number>(2),
+			} as const;
+			if (f.length < 6) return { ...call, ...payload("args", f.slice(3), rest) };
+			// With a trace or the old-work flag: the payload's fields positional, null when absent.
+			const fields = f[3] === null ? [] : f[4] === null ? [f[3]] : [f[3], f[4]];
+			// The message schema checks the carrier and the flag (`true` only).
+			const trace = f[5] === null ? {} : { trace: f[5] as Record<string, string> };
+			const old = f.length === 7 ? { old: f[6] as true } : {};
+			return { ...call, ...payload("args", fields, rest), ...trace, ...old };
+		}
 		case "x":
 			arity(1);
 			return { kind: "abort", call: field(0) };
@@ -284,8 +320,19 @@ function fromFields(fields: unknown[], rest: Uint8Array): Message {
 			arity(1);
 			return { kind: "loading", hold: field(0) };
 		case "a":
-			arity(0);
-			return { kind: "ack" };
+			arity(0, 1);
+			return f.length === 0 ? { kind: "ack" } : { kind: "ack", events: field(0) };
+		case "E":
+			arity(1);
+			return {
+				kind: "event",
+				events: list(f[0]).map((entry) => {
+					const fields = list(entry);
+					if (fields.length !== 4) throw new Error(`text: an event entry with ${fields.length} fields`);
+					const [hold, member, at, value] = fields;
+					return { hold: hold as number, member: member as number, at: at as number, value: textPart(value) };
+				}),
+			};
 		case "C":
 			arity(0);
 			// Its origin is the wrapper's; 0 without one, which the message schema refuses.

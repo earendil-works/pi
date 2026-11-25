@@ -31,6 +31,8 @@ export async function terminalHostVersion(app: string): Promise<string> {
 		"detached.ts",
 		"envs.ts",
 		"ghostty.ts",
+		"keys.ts",
+		"plain.ts",
 		"vendor/ghostty/ghostty-vt.wasm",
 	]) {
 		hash.update(file);
@@ -48,6 +50,15 @@ function connectOnce(address: string): Promise<Socket> {
 			resolve(socket);
 		});
 	});
+}
+
+/** Connects to the data directory's terminal host when one runs; undefined when none does (none is started). */
+export async function connectRunningTerminalHost(directory: string): Promise<Socket | undefined> {
+	try {
+		return await connectOnce(await terminalHostAddress(directory));
+	} catch {
+		return undefined;
+	}
 }
 
 /** Connects to the data directory's terminal host, starting it from the p2 app directory `app` when none runs. */

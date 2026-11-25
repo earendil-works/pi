@@ -49,14 +49,19 @@ export function sanitizeSettings(raw: unknown): { settings: TuiSettings; invalid
 	return { settings: settings as TuiSettings, invalid };
 }
 
-/** Later sources override earlier ones; nested `terminal`/`markdown` objects merge per key. */
+/** Later sources override earlier ones; nested `terminal`/`markdown` objects merge per key, `plugins` per setting. */
 export function mergeSettings(...layers: TuiSettings[]): TuiSettings {
 	const merged: TuiSettings = {};
 	for (const layer of layers) {
-		const { terminal, markdown, ...rest } = layer;
+		const { terminal, markdown, plugins, ...rest } = layer;
 		Object.assign(merged, rest);
 		if (terminal) merged.terminal = { ...merged.terminal, ...terminal };
 		if (markdown) merged.markdown = { ...merged.markdown, ...markdown };
+		if (plugins) {
+			const all = { ...merged.plugins };
+			for (const [name, values] of Object.entries(plugins)) all[name] = { ...all[name], ...values };
+			merged.plugins = all;
+		}
 	}
 	return merged;
 }

@@ -1,0 +1,972 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>p3 apps: trusted plugins, confined people</title>
+<style>
+
+:root{--paper:#fbf8f2;--ink:#2a2723;--muted:#7b7468;--rule:#e3dbcc;--accent:#b4472f;--blue:#2e6a8a;--sand:#c2b18c;--soft:#f4eee2}
+*{box-sizing:border-box}
+html{background:#efe9dd}
+body{margin:0;color:var(--ink);font:19px/1.68 'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,serif;
+ -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+.book{max-width:860px;margin:0 auto;background:var(--paper);box-shadow:0 0 0 1px #e1d9c8,0 30px 80px -40px rgba(60,40,10,.35);padding:0 0 4rem}
+.inner{padding:0 90px}
+h1,h2,h3{font-weight:400;line-height:1.15}
+h2{font-size:2.1rem;margin:.2em 0 .3em;letter-spacing:-.01em}
+h3{font-size:1.05rem;text-transform:uppercase;letter-spacing:.14em;margin:2.4em 0 .6em;color:var(--ink);font-weight:600;
+ font-family:'Avenir Next','Helvetica Neue',sans-serif}
+p{margin:0 0 1.05em;hyphens:auto;text-align:left}
+code{font:.8em/1 'SF Mono',Menlo,Consolas,monospace;background:#f1ebde;padding:.1em .35em;border-radius:3px}
+pre{font:.74rem/1.55 'SF Mono',Menlo,Consolas,monospace;background:#f4eee2;border-left:3px solid var(--sand);padding:1rem 1.2rem;margin:1.4rem 0 1.8rem;
+ overflow-x:auto;border-radius:0 4px 4px 0;white-space:pre;tab-size:2}
+pre code{background:none;padding:0;font-size:1em}
+em{font-style:italic}
+a{color:var(--blue)}
+.cover{min-height:92vh;display:flex;flex-direction:column;justify-content:center;padding:90px;background:
+ radial-gradient(circle at 85% 15%,rgba(180,71,47,.13),transparent 40%),radial-gradient(circle at 10% 90%,rgba(46,106,138,.12),transparent 45%),var(--paper);
+ border-bottom:1px solid var(--rule)}
+.kicker{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.22em;text-transform:uppercase;color:var(--accent)}
+.cover h1{font-size:5.2rem;line-height:.98;margin:.35em 0 .25em;letter-spacing:-.025em}
+.subtitle{font-size:1.45rem;font-style:italic;color:#4a453e;max-width:30em;text-align:left}
+.cover-stats,.stats{display:flex;flex-wrap:wrap;gap:1.2rem 2.4rem;margin:2.2rem 0}
+.stats{margin:1.6rem 0 1.8rem;padding:1.1rem 0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.stat b{display:block;font-size:2.1rem;font-weight:400;line-height:1.1;font-variant-numeric:lining-nums}
+.stat span{font:.78rem/1.3 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);letter-spacing:.03em;display:block;max-width:14em}
+.cover-note{font-size:.9rem;color:var(--muted);max-width:34em;text-align:left;margin-top:2rem}
+.toc{padding:4rem 0 2rem}
+.toc ol{list-style:none;padding:0;margin:1rem 0;columns:2;column-gap:3rem}
+.toc li{padding:.3rem 0;border-bottom:1px dotted var(--rule);break-inside:avoid}
+.toc a{color:var(--ink);text-decoration:none}
+.toc a:hover{color:var(--accent)}
+.preface{padding-top:2rem}
+.findings{padding-left:1.4em}
+.findings li{margin:.55em 0;padding-left:.3em}
+.findings li::marker{color:var(--accent);font-weight:600}
+.chapter{padding-top:4.5rem;margin-top:3rem;border-top:1px solid var(--rule)}
+.opener{text-align:center;margin-bottom:2.6rem}
+.numeral{font-size:4.2rem;color:var(--accent);line-height:1;font-variant:small-caps;letter-spacing:.05em}
+.opener h2{font-size:2.5rem;margin:.25em 0}
+.lede{font-style:italic;color:#5a544a;font-size:1.12rem;max-width:30em;margin:0 auto;text-align:center}
+.dropcap::first-letter{float:left;font-size:4.1em;line-height:.82;padding:.06em .09em 0 0;color:var(--accent)}
+.fig{margin:2rem 0 2.2rem}
+.fig.wide{margin-left:-50px;margin-right:-50px}
+.fig svg{display:block;margin:0 auto}
+figcaption{font:.8rem/1.45 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:.7rem;padding-left:.8rem;border-left:2px solid var(--rule)}
+.fignum{color:var(--ink);font-weight:600}
+.note{font:.86rem/1.55 'Avenir Next','Helvetica Neue',sans-serif;color:#5b5549;background:#f4eee2;border-left:3px solid var(--sand);
+ padding:.9rem 1.1rem;margin:1.8rem 0;border-radius:0 4px 4px 0}
+.note.review{border-left-color:var(--accent)}
+.note b.tag{font-weight:600;letter-spacing:.12em;text-transform:uppercase;font-size:.72rem;color:var(--accent);display:block;margin-bottom:.3rem}
+.note code{font-size:.85em}
+table{width:100%;border-collapse:collapse;margin:1.4rem 0 1.8rem;font:.8rem/1.4 'Avenir Next','Helvetica Neue',sans-serif}
+th{text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:.68rem;border-bottom:1.5px solid var(--ink);padding:.45rem .5rem}
+td{padding:.42rem .5rem;border-bottom:1px solid var(--rule);vertical-align:top}
+td code{font-size:.92em}
+table.num td:not(:first-child),table.num th:not(:first-child){text-align:right}
+.epilogue p{font-size:1.04em}
+.appendix{font-size:.92em}
+.appendix ul,.chapter ul{padding-left:1.2em}
+.appendix li,.chapter li{margin:.4em 0}
+.colophon{text-align:center;font:.78rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:4rem;letter-spacing:.05em}
+@media (max-width:760px){.inner{padding:0 22px}.cover{padding:40px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}
+ .toc ol{columns:1}p{text-align:left}body{font-size:17px}}
+@media print{html{background:#fff}.book{box-shadow:none}.chapter{break-before:page}.fig{break-inside:avoid}}
+.transcript p b{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-right:.3em}
+pre .tk-c{color:#8d8576;font-style:italic}pre .tk-s{color:#5f7a3d}pre .tk-n{color:#a0662a}pre .tk-k{color:#b4472f}pre .tk-t{color:#2e6a8a}pre .tk-f{color:#7a3f6a}
+h4{font:600 .82rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.06em;margin:1.8em 0 .5em;color:var(--muted)}
+.inner ul,.inner ol:not(.findings){padding-left:1.2em}
+.inner li{margin:.35em 0}
+blockquote{margin:1.4rem 0;padding:.2rem 0 .2rem 1.2rem;border-left:3px solid var(--rule);color:#5a544a;font-style:italic}
+.fig svg text{dominant-baseline:auto}
+.fig .replay{font:600 .7rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);
+ background:none;border:1px solid var(--rule);border-radius:3px;padding:.2rem .55rem;margin:0 0 0 1rem;cursor:pointer;float:right}
+.fig .replay:hover{border-color:var(--accent)}
+.anim.armed .step{opacity:0}
+.anim.armed.play .step{animation:stepIn .45s ease-out both;animation-delay:calc(var(--i) * var(--pace, .45s))}
+.anim.armed.play .step.edge{animation-name:edgeIn}
+@keyframes stepIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes edgeIn{from{opacity:0}to{opacity:1}}
+.steps{margin:2rem 0 2.2rem;border:1px solid var(--rule);border-radius:6px;background:#fffdf8}
+.steps-head{display:flex;align-items:center;gap:.8rem;padding:.6rem 1rem;border-bottom:1px solid var(--rule);
+ font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.steps-head .title{flex:1}
+.steps-head .count{color:var(--muted);letter-spacing:.06em}
+.steps-head button{font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--ink);background:var(--soft);border:1px solid var(--rule);
+ border-radius:3px;padding:.25rem .65rem;cursor:pointer}
+.steps-head button:disabled{opacity:.35;cursor:default}
+.step-panel{padding:1rem 1.2rem .4rem}
+.step-panel>h4:first-child{margin-top:.2rem;color:var(--ink)}
+.steps.js .step-panel{display:none}
+.steps.js .step-panel.on{display:block}
+.steps:not(.js) .steps-head button,.steps:not(.js) .steps-head .count{display:none}
+.steps:not(.js) .step-panel+.step-panel{border-top:1px dashed var(--rule)}
+.fig figcaption{display:flow-root}
+.fig svg{max-width:100%;height:auto}
+table{max-width:100%}
+@media (max-width:760px){.inner{padding:0 20px}.cover{padding:48px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}table{display:block;overflow-x:auto}.toc ol{columns:1}}
+</style>
+
+
+</head>
+<body><div class="book">
+<section class="cover">
+  <div class="kicker">A design note · p3 · 2026-11-13 · third edition</div>
+  <h1>Apps<br>Users<br>Guests</h1>
+  <p class="subtitle">The owner builds apps for his family, his club and his team; each person reaches only what an app gives them</p>
+  <div class="cover-stats"><div class="stat"><b>1</b><span>owner per Pi, who installs every plugin</span></div><div class="stat"><b>3</b><span>kinds of people: owner, users of an app, guests of a session</span></div><div class="stat"><b>1</b><span>login per app, side by side in one browser</span></div><div class="stat"><b>0</b><span>permission engines, settings layers or rule tables</span></div></div>
+  <div class="cover-note"><p>The owner&#39;s direction of 2026-11-13, worked out with three reviewers (Opus: product, Astra: adversarial, Sol:
+Chord&#39;s API). The second edition took in their review; this third edition takes in the owner&#39;s decisions since:
+objects choose their variant from followed state (<code>self.choose</code>, a Chord change under review), one login per app,
+apps may admit other apps&#39; users, the family app in full, mocks of what people see, and an app&#39;s own sign-in.
+Replaces the decision &quot;Org-managed Pis through managed settings&quot; of the same day. Every code block is PROPOSED: p3
+has no code. Chord calls in the code exist in <code>packages/chord/src</code> (<code>defineFacet</code>, <code>host.serve</code>, <code>local</code>, <code>remote</code>,
+<code>self.get</code>, <code>self.state</code>, <code>self.derive</code>, <code>self.on</code>, <code>self.onLive</code>, <code>self.writable</code>, <code>self.contribute</code>, <code>self.registry</code>,
+<code>constant</code>, <code>defineRegistry</code>, <code>keyedEntries</code>, <code>defineState</code>, keyed members&#39; <code>.at</code>, <code>forbidden</code>, the kit&#39;s <code>SignIns</code>,
+<code>cookie</code>, <code>readCookie</code>, <code>Http</code> routes), except <code>self.choose</code> (spec under review). p3 names (<code>Apps</code>, <code>Sessions</code>,
+<code>SessionAccess</code>, <code>sessionAccess</code>, <code>defineAppUsers</code>, <code>HarnessFilters</code>, <code>WebViews</code>, the view components) are proposals.</p>
+</div>
+</section><div class="inner">
+<nav class="toc"><h2>Contents</h2><ol>
+<li><a href="#the-goal">The Goal</a></li>
+<li><a href="#people">I. People</a></li>
+<li><a href="#choose">II. Choosing from State</a></li>
+<li><a href="#access">III. The Session Check</a></li>
+<li><a href="#app">IV. An App Is a Plugin</a></li>
+<li><a href="#family">V. The Family App</a></li>
+<li><a href="#robot">VI. The Robot</a></li>
+<li><a href="#users">VII. Users and Invites</a></li>
+<li><a href="#signin">VIII. Your Own Sign-in</a></li>
+<li><a href="#guests">IX. Guests</a></li>
+<li><a href="#gaps">X. What the Base Must Add</a></li>
+<li><a href="#not-covered-here">Not Covered Here</a></li>
+</ol></nav>
+
+<section class="preface" id="the-goal">
+<h2>The Goal</h2>
+<p class="dropcap">One Pi, one owner. The owner, or his agent, builds <strong>apps</strong> and shares them:</p>
+<ul>
+<li><strong>The robot</strong> for his son Leo, who cannot read yet: a friendly face, hold to talk, one long-running session in a
+fixed folder with its own instructions and skills, no tools.</li>
+<li><strong>Family</strong> for his wife: her calendars and mail, a voice chat of her own, the family files, her journal, and a pane
+with Leo&#39;s adventures with the robot.</li>
+<li><strong>The football club:</strong> shared match sessions, a roster only coaches change.</li>
+<li><strong>Coding:</strong> the app Pi ships with, for himself and his team.</li>
+<li><strong>Guests:</strong> a friend watches one session, or joins it, through a link.</li>
+</ul>
+<p>An app decides what you see (its layout and views), what its sessions get (machine and folder, instructions and
+skills, tools, models, accounts) and who may use it. People reach only what the app gives them.</p>
+<h3 id="eight-things-to-know">Eight things to know</h3>
+<ol class="findings">
+<li><strong>An app is a plugin.</strong> It creates the layouts, views and objects it needs and reuses any other plugin&#39;s. The owner
+installs it; the agent writes one when asked (&quot;make a robot app for my son&quot;).</li>
+<li><strong>Plugins are trusted, people are confined.</strong> Apps call each other and every plugin freely. Only users and guests
+are limited, by their principal.</li>
+<li><strong>Every object serves only the principals it knows.</strong> Owner-only objects (terminals, mail, settings) admit the owner
+and the host&#39;s own code (<code>server</code>, <code>worker</code>); a user or guest who holds one directly gets <code>forbidden</code>.</li>
+<li><strong>Objects choose their variant from followed state.</strong> With <code>self.choose</code>, an object follows what decides access
+(her user record, the session&#39;s answer for her) and picks a variant, or refuses; when that state changes, it
+chooses again. No checks in every method, no pushed grants.</li>
+<li><strong>One session check:</strong> the owner always passes; a guest from its principal; a user, of any app, if the session&#39;s
+app says so. The robot lets family users watch Leo&#39;s session.</li>
+<li><strong>One login per app.</strong> Each app&#39;s users sign in on the app&#39;s own path (<code>/apps/family/…</code>) with their own cookie, so
+one browser holds the owner and several apps&#39; users side by side.</li>
+<li><strong>An app owns its sign-in.</strong> The join page is the app&#39;s own route and view: a name, GitHub, anything it verifies,
+then the kit&#39;s <code>SignIns</code> issues the sign-in.</li>
+<li><strong>What an app&#39;s sessions get is the app&#39;s worker facet:</strong> filters on the harness, for the agent, its subagents and
+code mode alike.</li>
+</ol>
+<h3 id="words-used-throughout">Words used throughout</h3>
+<p>A <strong>principal</strong> is who a call comes from, stamped by the link. A <strong>user</strong> is a member of one app&#39;s user pool, signed
+in as <code>{ kind: &quot;user&quot;, app, id }</code>. A <strong>guest</strong> is someone a session was shared with (p2&#39;s guest). An app&#39;s <strong>store</strong>
+is its <code>local</code> object on the server, which acts as the host and reaches any plugin. A <strong>variant</strong> is the shape of an
+object one principal gets; <strong>choosing</strong> it from followed state is <code>self.choose</code>. The <strong>session check</strong> answers &quot;may
+this principal see, or send, in this session&quot;.</p>
+</section>
+
+<section class="chapter" id="people"><header class="opener"><div class="numeral">I</div><h2>People</h2><p class="lede">Three kinds of people, each a principal the link stamps; each app has its own login.</p></header>
+<pre><code><span class="tk-c">// PROPOSED · @p3/v1: p3's principal kinds</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">P3Principal</span> =
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"server"</span> }
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"worker"</span>; <span class="tk-k">readonly</span> session: string }
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"owner"</span> }
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"user"</span>; <span class="tk-k">readonly</span> app: string; <span class="tk-k">readonly</span> id: string }      <span class="tk-c">// a member of one app's user pool</span>
+	| {                                                                         <span class="tk-c">// a guest of shared sessions (p2's)</span>
+			<span class="tk-k">readonly</span> kind: <span class="tk-s">"guest"</span>;
+			<span class="tk-k">readonly</span> id: string;
+			<span class="tk-k">readonly</span> name: string;                                                <span class="tk-c">// as typed when joining, unverified</span>
+			<span class="tk-k">readonly</span> sessions: <span class="tk-t">Readonly</span>&lt;<span class="tk-t">Record</span>&lt;string, <span class="tk-s">"read"</span> | <span class="tk-s">"write"</span>&gt;&gt;;
+			<span class="tk-k">readonly</span> revision: number;
+	  };</code></pre>
+<ul>
+<li><strong>The owner</strong> signs in with the kit&#39;s owner link, token file or pairing, on <code>/</code>.</li>
+<li><strong>A user</strong> belongs to one app&#39;s pool. The owner invites them; they sign up on the app&#39;s page; the server issues a
+sign-in for <code>{ kind: &quot;user&quot;, app, id }</code>. What they may do is the app&#39;s data (her calendars, a coach&#39;s role), and
+objects choose their variant from it.</li>
+<li><strong>A guest</strong> gets one or more sessions, each read or write, in the principal itself. A change bumps the revision: the
+old objects end and the guest reconnects as the new principal, as in p2.</li>
+<li><strong>The owner is not protected against.</strong> He passes every session check, shares any session, and can read the stores
+and run code on the machine. An app may still refuse him in its own objects (her journal), as a courtesy of its UI.</li>
+</ul>
+<h3 id="one-login-per-app">One login per app</h3>
+<p>Leo&#39;s tablet is signed in to the robot; his mother&#39;s phone is signed in to the family app and, later, to the club.
+With one sign-in cookie per browser, every new sign-up would sign her out of the last app. So each app&#39;s users sign in
+on the app&#39;s path, with a cookie of their own:</p>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th>Cookie</th>
+<th>Who</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>/</code></td>
+<td><code>chord-sign-in</code> (<code>Path=/</code>)</td>
+<td>the owner, and guests</td>
+</tr>
+<tr>
+<td><code>/apps/family/</code></td>
+<td><code>chord-sign-in.family</code> (<code>Path=/apps/family</code>)</td>
+<td>users of the family app</td>
+</tr>
+<tr>
+<td><code>/apps/club/</code></td>
+<td><code>chord-sign-in.club</code> (<code>Path=/apps/club</code>)</td>
+<td>users of the club</td>
+</tr>
+</tbody></table>
+<p>A browser sends every cookie whose path covers the request, so a request to <code>/apps/family/</code> may carry both the
+owner&#39;s cookie and the family one; the authenticator takes the app&#39;s cookie first. The owner opening <code>/apps/family/</code>
+without a family sign-in sees the family app as the owner. Each app&#39;s page opens its Chord link on its own path
+(<code>/apps/family/chord</code>), so the link carries the app&#39;s cookie. The kit today writes every cookie with <code>Path=/</code> and has
+one links endpoint; &quot;What the Base Must Add&quot; lists the change.</p>
+</section>
+
+<section class="chapter" id="choose"><header class="opener"><div class="numeral">II</div><h2>Choosing from State</h2><p class="lede">An object follows what decides access and picks its variant, again whenever that changes.</p></header>
+<p class="dropcap">A Chord factory runs synchronously and decides from params and principal. Access often depends on data the object
+must first load: whether she is still a family member, whether a club member is a coach, whether the robot lets
+family users watch. The second edition worked around that with checks in every method and access state pushed to the
+page. <code>self.choose</code> replaces all of it (a Chord change whose spec is under review):</p>
+<ol>
+<li><strong>Step one:</strong> the factory declares the sources (her pinned user record, the session&#39;s answer for her) and returns
+<code>self.choose(sources, decide)</code>.</li>
+<li><strong>Choice:</strong> once the sources have values, <code>decide</code> returns a branch, or throws <code>forbidden</code>. A source still loading
+keeps the object waiting; it never denies.</li>
+<li><strong>Step two:</strong> the branch declares the chosen variant&#39;s members and the object goes live.</li>
+<li><strong>Changes:</strong> when a source changes, <code>decide</code> runs again. The same variant: nothing happens. Another variant or a
+refusal: the object restarts, and its holders re-bind to the new variant or get <code>forbidden</code>.</li>
+</ol>
+<p>Her journal, in full:</p>
+<pre><code><span class="tk-c">// PROPOSED · plugins/family/server.ts (excerpt): present in the family's pool → her journal; absent → forbidden</span>
+host.<span class="tk-f">serve</span>(<span class="tk-t">Journal</span>, (_params, principal, self) =&gt; {
+	<span class="tk-k">if</span> (principal.kind !== <span class="tk-s">"user"</span> || principal.app !== APP) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"Your own journal only."</span>);   <span class="tk-c">// the owner too</span>
+	<span class="tk-k">const</span> me = self.<span class="tk-f">get</span>(<span class="tk-t">FamilyUsers</span>.<span class="tk-t">Store</span>, {}).user.<span class="tk-f">at</span>(principal.id);         <span class="tk-c">// keyed pin; absent once removed</span>
+	<span class="tk-k">const</span> present = self.<span class="tk-f">derive</span>([me], ([u]) =&gt; u.kind === <span class="tk-s">"present"</span>);          <span class="tk-c">// narrow: decide runs only when this flips</span>
+	<span class="tk-k">return</span> self.<span class="tk-f">choose</span>([present], ([here]) =&gt; {
+		<span class="tk-k">if</span> (!here) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"No longer a family member."</span>);
+		<span class="tk-k">return</span> (self) =&gt; {
+			<span class="tk-k">const</span> store = self.<span class="tk-f">get</span>(<span class="tk-t">FamilyStore</span>, {});
+			<span class="tk-k">return</span> { variant: <span class="tk-s">"mine"</span>, members: {
+				text: self.<span class="tk-f">derive</span>([store.journals.<span class="tk-f">at</span>(principal.id)], ([j]) =&gt; j.text),
+				write: (text, ctx) =&gt; store.<span class="tk-f">write</span>({ user: principal.id, text }, ctx),
+			} };
+		};
+	});
+});</code></pre>
+<p>When the owner removes her, her record goes absent, <code>decide</code> throws, and her open journal pane ends <code>forbidden</code> in
+the same push. Revoking her sign-in (&quot;Users and Invites&quot;) stops her coming back.</p>
+</section>
+
+<section class="chapter" id="access"><header class="opener"><div class="numeral">III</div><h2>The Session Check</h2><p class="lede">May this principal see or send in this session? The session&#39;s app answers for users.</p></header>
+<p class="dropcap"><code>Sessions</code> (a core plugin on the server) creates sessions and records each one&#39;s facts: its app and its creator,
+fixed for its life. The answer:</p>
+<pre><code><span class="tk-c">// PROPOSED · plugins/sessions/access.ts (server)</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">Access</span> = { <span class="tk-k">readonly</span> see: boolean; <span class="tk-k">readonly</span> send: boolean };
+<span class="tk-k">export</span> <span class="tk-k">const</span> ALL: <span class="tk-t">Access</span> = { see: <span class="tk-k">true</span>, send: <span class="tk-k">true</span> };
+<span class="tk-k">export</span> <span class="tk-k">const</span> SEE: <span class="tk-t">Access</span> = { see: <span class="tk-k">true</span>, send: <span class="tk-k">false</span> };
+<span class="tk-k">export</span> <span class="tk-k">const</span> NONE: <span class="tk-t">Access</span> = { see: <span class="tk-k">false</span>, send: <span class="tk-k">false</span> };
+
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">access</span>(principal: <span class="tk-t">P3Principal</span>, session: <span class="tk-t">SessionFacts</span>, own: <span class="tk-t">SessionFacts</span> | <span class="tk-k">undefined</span>, apps: <span class="tk-t">AppTable</span>): <span class="tk-t">Access</span> {
+	<span class="tk-k">switch</span> (principal.kind) {
+		<span class="tk-k">case</span> <span class="tk-s">"owner"</span>:
+		<span class="tk-k">case</span> <span class="tk-s">"server"</span>:
+			<span class="tk-k">return</span> ALL;
+		<span class="tk-k">case</span> <span class="tk-s">"worker"</span>:
+			<span class="tk-c">// A session's agent reaching another session asks as its own session's creator: the owner's agent passes.</span>
+			<span class="tk-k">if</span> (principal.session === session.id) <span class="tk-k">return</span> ALL;
+			<span class="tk-k">return</span> own === <span class="tk-k">undefined</span> ? NONE : <span class="tk-f">access</span>(own.creator, session, <span class="tk-k">undefined</span>, apps);
+		<span class="tk-k">case</span> <span class="tk-s">"user"</span>:
+			<span class="tk-c">// The session's app decides, for users of any app: the robot lets family users watch.</span>
+			<span class="tk-k">return</span> apps.<span class="tk-f">get</span>(session.app)?.<span class="tk-f">access</span>(principal, session) ?? NONE;
+		<span class="tk-k">case</span> <span class="tk-s">"guest"</span>:
+			<span class="tk-k">if</span> (!<span class="tk-t">Object</span>.<span class="tk-f">hasOwn</span>(principal.sessions, session.id)) <span class="tk-k">return</span> NONE;
+			<span class="tk-k">return</span> { see: <span class="tk-k">true</span>, send: principal.sessions[session.id] === <span class="tk-s">"write"</span> };
+	}
+}</code></pre>
+<p>Every object of a session follows this answer and chooses from it. For the owner, a guest and the session&#39;s own
+worker the answer is known from the principal; for everyone else the server computes it, because the <code>Apps</code> table
+and the session index live there. One helper hides the difference:</p>
+<pre><code><span class="tk-c">// PROPOSED · @p3/v1: what a session object follows to choose its variant (worker and server alike)</span>
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">sessionAccess</span>(self: <span class="tk-t">Self</span>, session: string, principal: <span class="tk-t">P3Principal</span>): <span class="tk-t">Readable</span>&lt;<span class="tk-t">Access</span>&gt; {
+	<span class="tk-k">switch</span> (principal.kind) {
+		<span class="tk-k">case</span> <span class="tk-s">"owner"</span>:
+		<span class="tk-k">case</span> <span class="tk-s">"server"</span>:
+			<span class="tk-k">return</span> <span class="tk-f">constant</span>(ALL);
+		<span class="tk-k">case</span> <span class="tk-s">"guest"</span>:
+			<span class="tk-k">return</span> <span class="tk-f">constant</span>(<span class="tk-t">Object</span>.<span class="tk-f">hasOwn</span>(principal.sessions, session) ? (principal.sessions[session] === <span class="tk-s">"write"</span> ? ALL : SEE) : NONE);
+		<span class="tk-k">case</span> <span class="tk-s">"worker"</span>:
+			<span class="tk-k">if</span> (principal.session === session) <span class="tk-k">return</span> <span class="tk-f">constant</span>(ALL);
+	}
+	<span class="tk-c">// Users, and another session's agent: the server's answer for this caller, followed.</span>
+	<span class="tk-k">return</span> self.<span class="tk-f">get</span>(<span class="tk-t">SessionAccess</span>, { session, caller: <span class="tk-f">canonicalJson</span>(principal) }).access;
+}
+
+<span class="tk-c">// PROPOSED · plugins/sessions/contract.ts</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">SessionAccess</span> = <span class="tk-f">remote</span>(<span class="tk-s">"sessions.access"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: { session: <span class="tk-f">str</span>(), caller: <span class="tk-f">str</span>() },                    <span class="tk-c">// the caller as canonical JSON</span>
+	hostAddress: () =&gt; <span class="tk-t">Server</span>(),
+	variants: { answer: { state: { access: <span class="tk-t">AccessSchema</span> } } },
+});
+
+<span class="tk-c">// PROPOSED · plugins/sessions/server.ts</span>
+host.<span class="tk-f">serve</span>(<span class="tk-t">SessionAccess</span>, ({ session, caller }, principal, self) =&gt; {
+	<span class="tk-c">// Asked by code about the caller it serves (the session's worker, the server), or by a person about itself.</span>
+	<span class="tk-k">const</span> asker = <span class="tk-f">canonicalJson</span>(principal);
+	<span class="tk-k">if</span> (!(principal.kind === <span class="tk-s">"server"</span> || (principal.kind === <span class="tk-s">"worker"</span> &amp;&amp; principal.session === session) || asker === caller)) {
+		<span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"Only about yourself."</span>);
+	}
+	<span class="tk-k">const</span> who = JSON.<span class="tk-f">parse</span>(caller) <span class="tk-k">as</span> <span class="tk-t">P3Principal</span>;                <span class="tk-c">// written by `sessionAccess`, or the asker itself</span>
+	<span class="tk-k">const</span> index = self.<span class="tk-f">get</span>(<span class="tk-t">SessionIndex</span>, {});
+	<span class="tk-k">const</span> facts = index.facts.<span class="tk-f">at</span>(<span class="tk-t">Session</span>({ id: session }));
+	<span class="tk-k">const</span> own = who.kind === <span class="tk-s">"worker"</span> ? index.facts.<span class="tk-f">at</span>(<span class="tk-t">Session</span>({ id: who.session })) : facts;
+	<span class="tk-k">const</span> apps = self.<span class="tk-f">registry</span>(<span class="tk-t">Apps</span>);
+	<span class="tk-k">return</span> { variant: <span class="tk-s">"answer"</span>, members: {
+		access: self.<span class="tk-f">derive</span>([facts, own, apps], ([f, o, table]) =&gt; (f.kind === <span class="tk-s">"absent"</span> ? NONE : <span class="tk-f">access</span>(who, f, o.kind === <span class="tk-s">"absent"</span> ? <span class="tk-k">undefined</span> : o, table))),
+	} };
+});</code></pre>
+<p>A worker&#39;s own call to the server arrives as the worker (Chord §4, &quot;upward is a boundary&quot;), so it names the caller in
+the params; on the server, a person&#39;s object asks about its own principal. Every session object, from any plugin,
+then reads like this:</p>
+<pre><code><span class="tk-c">// PROPOSED · plugins/chat/worker.ts: the transcript, in the session's worker</span>
+host.<span class="tk-f">serve</span>(<span class="tk-t">Transcript</span>, ({ session, conversation }, principal, self) =&gt;
+	self.<span class="tk-f">choose</span>([<span class="tk-f">sessionAccess</span>(self, session, principal)], ([a]) =&gt; {
+		<span class="tk-k">if</span> (!a.see) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"Not in this session."</span>);
+		<span class="tk-k">return</span> a.send ? <span class="tk-f">participant</span>(session, conversation, principal) : <span class="tk-f">viewer</span>(session, conversation);
+	}),
+);</code></pre>
+<h3 id="where-else-it-runs">Where else it runs</h3>
+<ul>
+<li><strong>The worker&#39;s route</strong> keeps a coarse, synchronous <code>authorize</code>: the owner and the server pass; a guest passes when
+the session is in its principal; users and other sessions&#39; workers pass, and the objects decide. A user can make a
+session&#39;s worker start and then be refused by every object in it; the route may refuse sessions the server&#39;s index
+does not know.</li>
+<li><strong>HTTP handlers</strong> (downloads, exports) compute <code>access</code> at the request.</li>
+<li><strong>A guest&#39;s page</strong> shows the layout of the session&#39;s app with every pane dropped whose session fails <code>see</code>, and
+every global pane dropped.</li>
+</ul>
+</section>
+
+<section class="chapter" id="app"><header class="opener"><div class="numeral">IV</div><h2>An App Is a Plugin</h2><p class="lede">What an app contributes: one registry entry, rebuilt from the state it reads.</p></header>
+<p class="dropcap">An app contributes one entry to the <code>Apps</code> registry: its id, title, layout per person, access rule and user pool. The
+entry is a <code>self.writable</code> its store sets again whenever the state the functions read changes (her record, the
+robot&#39;s session id), so the composed table changes and every <code>SessionAccess</code> answer that depends on it is computed
+again.</p>
+<pre><code><span class="tk-c">// PROPOSED · plugins/apps/contract.server.ts (the apps core plugin defines and serves the registry)</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">Pane</span> = { <span class="tk-k">readonly</span> kind: string; <span class="tk-k">readonly</span> session?: string; <span class="tk-k">readonly</span> item?: <span class="tk-t">JsonValue</span> };
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">AppContribution</span> = {
+	<span class="tk-k">readonly</span> id: string;                                                  <span class="tk-c">// also the `app` of its users and sessions</span>
+	<span class="tk-k">readonly</span> title: string;
+	<span class="tk-k">readonly</span> layout: (principal: <span class="tk-t">P3Principal</span>) =&gt; <span class="tk-k">readonly</span> <span class="tk-t">Pane</span>[];
+	<span class="tk-k">readonly</span> access: (principal: <span class="tk-t">P3Principal</span>, session: <span class="tk-t">SessionFacts</span>) =&gt; <span class="tk-t">Access</span>;
+	<span class="tk-k">readonly</span> users?: <span class="tk-t">AppUsersAdmin</span>;                                       <span class="tk-c">// its user pool's admin object</span>
+};
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Apps</span> = defineRegistry&lt;<span class="tk-t">AppContribution</span> | <span class="tk-t">NativeWatchable</span>&lt;<span class="tk-t">AppContribution</span>&gt;, <span class="tk-t">AppTable</span>&gt;(<span class="tk-s">"p3.apps"</span>, { version: <span class="tk-n">1</span> });
+
+<span class="tk-c">// plugins/apps/server.ts: one app per id; a second plugin claiming an id is reported, the first by plugin name wins</span>
+host.<span class="tk-f">serve</span>(<span class="tk-t">Apps</span>, { compose: (table, { report }) =&gt; <span class="tk-f">keyedEntries</span>(table, (app) =&gt; ({ [app.id]: app }), report) });
+
+<span class="tk-c">// plugins/apps/contract.ts: the page gets its layout from the server</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">AppLayout</span> = <span class="tk-f">remote</span>(<span class="tk-s">"apps.layout"</span>, { version: <span class="tk-n">1</span>, params: { app: <span class="tk-f">str</span>() }, hostAddress: () =&gt; <span class="tk-t">Server</span>(),
+	variants: { person: { state: { panes: <span class="tk-f">arr</span>(<span class="tk-t">PaneSchema</span>) } } } });</code></pre>
+<p>A user&#39;s page opens their own app (no switcher); the owner&#39;s page has the switcher.</p>
+</section>
+
+<section class="chapter" id="family"><header class="opener"><div class="numeral">V</div><h2>The Family App</h2><p class="lede">The whole app: her calendars, her journal, her own voice chat, Leo&#39;s adventures and the owner&#39;s admin view.</p></header>
+<p class="dropcap">The family app is four files. Her record in the family&#39;s user pool says which calendars and which mail account are
+hers; the owner sets that in the Users view. Each family member gets one voice chat session of their own, private to
+its creator. The owner passes every check, as always.</p>
+<figure class="fig wide"><div class="ap" style="display:flex;gap:28px;justify-content:center;flex-wrap:wrap;font:14px/1.4 'Avenir Next','Helvetica Neue',sans-serif;color:#2a2723">
+<div style="width:260px;border:9px solid #2a2723;border-radius:32px;background:#fff;overflow:hidden">
+<div style="display:flex;justify-content:space-between;padding:10px 16px 6px;font-size:11px;color:#7b7468"><span>9:41</span><span>pi.example</span></div>
+<div style="padding:4px 16px 10px;border-bottom:1px solid #e3dbcc"><div style="font-size:19px">Family</div><div style="font-size:12px;color:#7b7468">Signed in as Cristina</div></div>
+<div style="display:flex;font-size:12px;border-bottom:1px solid #e3dbcc"><span style="flex:1;text-align:center;padding:7px 0;border-bottom:2px solid #b4472f">Chat</span><span style="flex:1;text-align:center;padding:7px 0;color:#7b7468">Calendar</span><span style="flex:1;text-align:center;padding:7px 0;color:#7b7468">Journal</span><span style="flex:1;text-align:center;padding:7px 0;color:#7b7468">Leo</span></div>
+<div style="padding:12px 14px;height:250px;background:#fbf8f2">
+<div style="background:#efe7d6;border-radius:12px;padding:7px 10px;margin:0 0 8px 40px;font-size:13px">Move the dentist to next week?</div>
+<div style="background:#fff;border:1px solid #e3dbcc;border-radius:12px;padding:7px 10px;margin:0 30px 8px 0;font-size:13px">Done: Monday 15:30. I wrote to the practice from your mail.</div>
+<div style="font-size:11px;color:#7b7468;margin:10px 0 4px">Today</div>
+<div style="border-left:3px solid #2e6a8a;padding:3px 8px;font-size:12px;margin-bottom:4px">15:00 Swimming, Leo</div>
+<div style="border-left:3px solid #b4472f;padding:3px 8px;font-size:12px">19:00 Parents' evening</div>
+</div>
+<div style="display:flex;justify-content:center;padding:12px 0 16px;border-top:1px solid #e3dbcc"><div style="width:58px;height:58px;border-radius:50%;background:#b4472f;color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px">Hold</div></div>
+</div>
+<div style="width:260px;border:9px solid #2a2723;border-radius:32px;background:#fff;overflow:hidden">
+<div style="display:flex;justify-content:space-between;padding:10px 16px 6px;font-size:11px;color:#7b7468"><span>9:42</span><span>pi.example</span></div>
+<div style="padding:4px 16px 10px;border-bottom:1px solid #e3dbcc"><div style="font-size:19px">Leo's adventures</div><div style="font-size:12px;color:#7b7468">The robot's session · watching</div></div>
+<div style="padding:12px 14px;height:316px;background:#fbf8f2;font-size:13px">
+<div style="color:#7b7468;font-size:11px;margin-bottom:4px">Leo, 16:10</div><div style="margin-bottom:10px">Why do dinosaurs not live anymore?</div>
+<div style="color:#7b7468;font-size:11px;margin-bottom:4px">Robot</div><div style="margin-bottom:10px">A giant rock fell from space, a very long time ago. Some dinosaurs became birds. The bird outside your window is a tiny dinosaur.</div>
+<div style="color:#7b7468;font-size:11px;margin-bottom:4px">Leo, 16:12</div><div>Wow. Can I tell it hello?</div>
+</div>
+<div style="padding:10px 14px 16px;border-top:1px solid #e3dbcc;font-size:12px;color:#7b7468;text-align:center">Read-only: the robot lets family watch</div>
+</div>
+</div><figcaption><span class="fignum">Figure 1.</span> Her family app on her phone, right after signing in: her own voice chat, her calendars, her journal, and Leo&#39;s adventures with the robot, read-only.</figcaption></figure>
+<h3 id="the-contract">The contract</h3>
+<pre><code><span class="tk-c">// PROPOSED · plugins/family/contract.ts</span>
+<span class="tk-k">import</span> { arr, defineAppUsers, keyed, local, map, method, nullable, obj, remote, <span class="tk-t">Server</span>, str } <span class="tk-k">from</span> <span class="tk-s">"@p3/v1"</span>;
+<span class="tk-k">import</span> { defineViewKind } <span class="tk-k">from</span> <span class="tk-s">"views/contract"</span>;
+
+<span class="tk-k">export</span> <span class="tk-k">const</span> APP = <span class="tk-s">"family"</span>;
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Place</span> = { environment: <span class="tk-s">"slayer"</span>, cwd: <span class="tk-s">"/home/badlogic/family"</span> };   <span class="tk-c">// the family files, AGENTS.md, skills</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Model</span> = { provider: <span class="tk-s">"anthropic"</span>, id: <span class="tk-s">"claude-sonnet-5-5"</span> };
+
+<span class="tk-c">/** What the owner sets for each family member: which calendars and which mail account are hers. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">MemberConfig</span> = <span class="tk-f">obj</span>({ calendars: <span class="tk-f">arr</span>(<span class="tk-f">str</span>()), mail: <span class="tk-f">str</span>() });
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">FamilyUsers</span> = <span class="tk-f">defineAppUsers</span>(APP, {
+	config: <span class="tk-t">MemberConfig</span>,
+	initialConfig: () =&gt; ({ calendars: [], mail: <span class="tk-s">""</span> }),
+	ownJoinPage: <span class="tk-k">true</span>,                                                   <span class="tk-c">// the family brings its own (GitHub or a name)</span>
+});
+
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Event</span> = <span class="tk-f">obj</span>({ id: <span class="tk-f">str</span>(), calendar: <span class="tk-f">str</span>(), title: <span class="tk-f">str</span>(), start: <span class="tk-f">str</span>(), end: <span class="tk-f">str</span>() });
+
+<span class="tk-c">/** Her calendars' events. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">MyCalendars</span> = <span class="tk-f">remote</span>(<span class="tk-s">"family.my-calendars"</span>, { version: <span class="tk-n">1</span>, params: {}, hostAddress: () =&gt; <span class="tk-t">Server</span>(),
+	variants: { mine: { state: { events: <span class="tk-f">arr</span>(<span class="tk-t">Event</span>) } } } });
+<span class="tk-c">/** Her journal: only she reaches it. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Journal</span> = <span class="tk-f">remote</span>(<span class="tk-s">"family.journal"</span>, { version: <span class="tk-n">1</span>, params: {}, hostAddress: () =&gt; <span class="tk-t">Server</span>(),
+	variants: { mine: { state: { text: <span class="tk-f">str</span>() }, methods: { write: <span class="tk-f">method</span>(<span class="tk-f">str</span>()) } } } });
+<span class="tk-c">/** Her own voice chat session, made the first time she opens it. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">MyChat</span> = <span class="tk-f">remote</span>(<span class="tk-s">"family.my-chat"</span>, { version: <span class="tk-n">1</span>, params: {}, hostAddress: () =&gt; <span class="tk-t">Server</span>(),
+	variants: { mine: { state: { session: <span class="tk-f">nullable</span>(<span class="tk-f">str</span>()) } } } });
+
+<span class="tk-c">/** The family's store on the server: the owner's calendar events, the journals, each member's chat session. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">FamilyStore</span> = <span class="tk-f">local</span>(<span class="tk-s">"family.store"</span>, { version: <span class="tk-n">1</span>, params: {}, members: {
+	events: <span class="tk-f">arr</span>(<span class="tk-t">Event</span>),
+	journals: <span class="tk-f">keyed</span>(<span class="tk-f">obj</span>({ text: <span class="tk-f">str</span>() })),
+	chats: <span class="tk-f">map</span>(<span class="tk-f">str</span>()),                                                   <span class="tk-c">// user id → session id</span>
+	write: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ user: <span class="tk-f">str</span>(), text: <span class="tk-f">str</span>() })),
+	ensureChat: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ user: <span class="tk-f">str</span>() }), <span class="tk-f">str</span>()),
+} });
+
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">ChatPane</span> = <span class="tk-f">defineViewKind</span>(<span class="tk-s">"family.chat"</span>, {});
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">CalendarPane</span> = <span class="tk-f">defineViewKind</span>(<span class="tk-s">"family.calendars"</span>, {});
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">JournalPane</span> = <span class="tk-f">defineViewKind</span>(<span class="tk-s">"family.journal"</span>, {});
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">UsersPane</span> = <span class="tk-f">defineViewKind</span>(<span class="tk-s">"family.users"</span>, {});</code></pre>
+<h3 id="the-server">The server</h3>
+<pre><code><span class="tk-c">// PROPOSED · plugins/family/server.ts</span>
+<span class="tk-k">import</span> { ALL, <span class="tk-t">Apps</span>, <span class="tk-k">type</span> <span class="tk-t">AppContribution</span>, <span class="tk-k">type</span> <span class="tk-t">AppUserRecord</span>, defineFacet, defineState, forbidden, <span class="tk-t">Http</span>, map, NONE, obj,
+	<span class="tk-k">type</span> <span class="tk-t">P3Principal</span>, <span class="tk-k">type</span> <span class="tk-t">Readable</span>, <span class="tk-k">type</span> <span class="tk-t">Self</span>, <span class="tk-t">Sessions</span>, <span class="tk-k">type</span> <span class="tk-t">SessionFacts</span>, <span class="tk-t">SignIns</span>, <span class="tk-k">type</span> <span class="tk-t">Static</span>, str } <span class="tk-k">from</span> <span class="tk-s">"@p3/v1/server"</span>;
+<span class="tk-k">import</span> { <span class="tk-t">CalendarService</span> } <span class="tk-k">from</span> <span class="tk-s">"calendar/contract"</span>;       <span class="tk-c">// the calendar plugin's local service (the owner's accounts)</span>
+<span class="tk-k">import</span> { <span class="tk-t">RobotApp</span> } <span class="tk-k">from</span> <span class="tk-s">"robot/contract"</span>;                 <span class="tk-c">// the robot's store: its one session</span>
+<span class="tk-k">import</span> { APP, <span class="tk-t">FamilyStore</span>, <span class="tk-t">FamilyUsers</span>, <span class="tk-t">Journal</span>, <span class="tk-t">MemberConfig</span>, <span class="tk-t">Model</span>, <span class="tk-t">MyCalendars</span>, <span class="tk-t">MyChat</span>, <span class="tk-t">Place</span> } <span class="tk-k">from</span> <span class="tk-s">"./contract.ts"</span>;
+<span class="tk-k">import</span> { familyJoinRoutes, <span class="tk-t">JoinSettings</span> } <span class="tk-k">from</span> <span class="tk-s">"./join.ts"</span>;
+
+<span class="tk-k">const</span> <span class="tk-t">Journals</span> = <span class="tk-f">defineState</span>(<span class="tk-s">"family.journals"</span>, { schema: <span class="tk-f">obj</span>({ text: <span class="tk-f">str</span>() }), version: <span class="tk-n">1</span>, keyed: <span class="tk-k">true</span>, persist: <span class="tk-k">true</span>,
+	initial: () =&gt; ({ text: <span class="tk-s">""</span> }), checkpointWhen: (_v, _o, { deltasSinceBase }) =&gt; deltasSinceBase &gt;= <span class="tk-n">50</span> });
+<span class="tk-k">const</span> <span class="tk-t">Chats</span> = <span class="tk-f">defineState</span>(<span class="tk-s">"family.chats"</span>, { schema: <span class="tk-f">obj</span>({ chats: <span class="tk-f">map</span>(<span class="tk-f">str</span>()) }), version: <span class="tk-n">1</span>, persist: <span class="tk-k">true</span>,
+	initial: () =&gt; ({ chats: {} }), checkpointWhen: (_v, _o, { deltasSinceBase }) =&gt; deltasSinceBase &gt;= <span class="tk-n">50</span> });
+
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((host) =&gt; {
+	<span class="tk-t">FamilyUsers</span>.<span class="tk-f">serve</span>(host);                                  <span class="tk-c">// Admin (owner), Store, the join page /apps/family/join</span>
+
+	host.<span class="tk-f">serve</span>(<span class="tk-t">FamilyStore</span>, (_params, self) =&gt; {
+		<span class="tk-k">const</span> users = self.<span class="tk-f">get</span>(<span class="tk-t">FamilyUsers</span>.<span class="tk-t">Store</span>, {});
+		<span class="tk-k">const</span> calendar = self.<span class="tk-f">get</span>(<span class="tk-t">CalendarService</span>, {});        <span class="tk-c">// a local object: it reaches the calendar plugin as the host</span>
+		<span class="tk-k">const</span> robot = self.<span class="tk-f">get</span>(<span class="tk-t">RobotApp</span>, {});
+		<span class="tk-k">const</span> sessions = self.<span class="tk-f">get</span>(<span class="tk-t">Sessions</span>, {});
+		<span class="tk-k">const</span> journals = self.<span class="tk-f">state</span>(<span class="tk-t">Journals</span>);
+		<span class="tk-k">const</span> chats = self.<span class="tk-f">state</span>(<span class="tk-t">Chats</span>);
+
+		<span class="tk-k">const</span> entry = self.<span class="tk-f">writable</span>(<span class="tk-f">familyApp</span>(<span class="tk-k">null</span>));
+		self.<span class="tk-f">on</span>(robot.session, ({ value }) =&gt; entry.<span class="tk-f">set</span>(<span class="tk-f">familyApp</span>(value)));
+		self.<span class="tk-f">contribute</span>(<span class="tk-t">Apps</span>, entry);
+		<span class="tk-c">// Her own sign-in page with GitHub (chapter "Your Own Sign-in").</span>
+		self.<span class="tk-f">contribute</span>(<span class="tk-t">Http</span>, <span class="tk-f">familyJoinRoutes</span>({ users, signIns: self.<span class="tk-f">get</span>(<span class="tk-t">SignIns</span>, {}), settings: self.<span class="tk-f">state</span>(<span class="tk-t">JoinSettings</span>) }));
+
+		<span class="tk-k">return</span> {
+			events: calendar.events,
+			journals,
+			chats: self.<span class="tk-f">derive</span>([chats], ([c]) =&gt; c.chats),
+			write: <span class="tk-k">async</span> ({ user, text }, ctx) =&gt; {
+				<span class="tk-k">await</span> journals.<span class="tk-f">change</span>(user, (draft) =&gt; { draft.text = text; }, ctx);
+				<span class="tk-k">return</span> <span class="tk-k">null</span>;
+			},
+			ensureChat: <span class="tk-k">async</span> ({ user }, ctx) =&gt; {
+				<span class="tk-k">if</span> (<span class="tk-t">Object</span>.<span class="tk-f">hasOwn</span>(chats.value.chats, user)) <span class="tk-k">return</span> chats.value.chats[user]!;
+				<span class="tk-k">const</span> me = <span class="tk-k">await</span> users.user.<span class="tk-f">get</span>(user, ctx);
+				<span class="tk-k">if</span> (me.kind === <span class="tk-s">"absent"</span>) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"Not a family member."</span>);
+				<span class="tk-k">const</span> { id } = <span class="tk-k">await</span> sessions.<span class="tk-f">ensure</span>({
+					app: APP, key: <span class="tk-s">`chat:${user}`</span>, creator: { kind: <span class="tk-s">"user"</span>, app: APP, id: user }, title: <span class="tk-s">`${me.name}'s chat`</span>,
+					...<span class="tk-t">Place</span>, model: <span class="tk-t">Model</span>, accounts: [me.config.mail, ...me.config.calendars],
+				}, ctx);
+				<span class="tk-k">await</span> chats.<span class="tk-f">change</span>((draft) =&gt; { draft.chats[user] = id; }, ctx);
+				<span class="tk-k">return</span> id;
+			},
+		};
+	});
+
+	host.<span class="tk-f">serve</span>(<span class="tk-t">MyCalendars</span>, (_params, principal, self) =&gt; {
+		<span class="tk-k">if</span> (principal.kind !== <span class="tk-s">"user"</span> || principal.app !== APP) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"Family members only."</span>);
+		<span class="tk-k">const</span> me = self.<span class="tk-f">get</span>(<span class="tk-t">FamilyUsers</span>.<span class="tk-t">Store</span>, {}).user.<span class="tk-f">at</span>(principal.id);
+		<span class="tk-k">const</span> store = self.<span class="tk-f">get</span>(<span class="tk-t">FamilyStore</span>, {});
+		<span class="tk-k">return</span> self.<span class="tk-f">choose</span>([<span class="tk-f">present</span>(self, me)], ([here]) =&gt; {
+			<span class="tk-k">if</span> (!here) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"No longer a family member."</span>);
+			<span class="tk-k">return</span> (self) =&gt; ({ variant: <span class="tk-s">"mine"</span>, members: {
+				events: self.<span class="tk-f">derive</span>([me, store.events], ([u, all]) =&gt;
+					u.kind === <span class="tk-s">"present"</span> ? all.<span class="tk-f">filter</span>((e) =&gt; u.config.calendars.<span class="tk-f">includes</span>(e.calendar)) : []),
+			} });
+		});
+	});
+
+	<span class="tk-c">// Her journal: the owner is refused too, as a courtesy.</span>
+	host.<span class="tk-f">serve</span>(<span class="tk-t">Journal</span>, (_params, principal, self) =&gt; {
+		<span class="tk-k">if</span> (principal.kind !== <span class="tk-s">"user"</span> || principal.app !== APP) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"Your own journal only."</span>);
+		<span class="tk-k">const</span> me = self.<span class="tk-f">get</span>(<span class="tk-t">FamilyUsers</span>.<span class="tk-t">Store</span>, {}).user.<span class="tk-f">at</span>(principal.id);
+		<span class="tk-k">return</span> self.<span class="tk-f">choose</span>([<span class="tk-f">present</span>(self, me)], ([here]) =&gt; {
+			<span class="tk-k">if</span> (!here) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"No longer a family member."</span>);
+			<span class="tk-k">return</span> (self) =&gt; {
+				<span class="tk-k">const</span> store = self.<span class="tk-f">get</span>(<span class="tk-t">FamilyStore</span>, {});
+				<span class="tk-k">return</span> { variant: <span class="tk-s">"mine"</span>, members: {
+					text: self.<span class="tk-f">derive</span>([store.journals.<span class="tk-f">at</span>(principal.id)], ([j]) =&gt; j.text),
+					write: (text, ctx) =&gt; store.<span class="tk-f">write</span>({ user: principal.id, text }, ctx),
+				} };
+			};
+		});
+	});
+
+	host.<span class="tk-f">serve</span>(<span class="tk-t">MyChat</span>, (_params, principal, self) =&gt; {
+		<span class="tk-k">if</span> (principal.kind !== <span class="tk-s">"user"</span> || principal.app !== APP) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"Family members only."</span>);
+		<span class="tk-k">const</span> me = self.<span class="tk-f">get</span>(<span class="tk-t">FamilyUsers</span>.<span class="tk-t">Store</span>, {}).user.<span class="tk-f">at</span>(principal.id);
+		<span class="tk-k">return</span> self.<span class="tk-f">choose</span>([<span class="tk-f">present</span>(self, me)], ([here]) =&gt; {
+			<span class="tk-k">if</span> (!here) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"No longer a family member."</span>);
+			<span class="tk-k">return</span> (self) =&gt; {
+				<span class="tk-k">const</span> store = self.<span class="tk-f">get</span>(<span class="tk-t">FamilyStore</span>, {});
+				self.<span class="tk-f">onLive</span>(<span class="tk-k">async</span> (ctx) =&gt; { <span class="tk-k">await</span> store.<span class="tk-f">ensureChat</span>({ user: principal.id }, ctx); });
+				<span class="tk-k">return</span> { variant: <span class="tk-s">"mine"</span>, members: { session: self.<span class="tk-f">derive</span>([store.chats], ([c]) =&gt; c[principal.id] ?? <span class="tk-k">null</span>) } };
+			};
+		});
+	});
+});
+
+<span class="tk-c">/** Whether her record is in the pool: the narrow source a choice follows. */</span>
+<span class="tk-k">const</span> present = (self: <span class="tk-t">Self</span>, me: <span class="tk-t">Readable</span>&lt;<span class="tk-t">AppUserRecord</span>&lt;<span class="tk-t">Static</span>&lt;<span class="tk-k">typeof</span> <span class="tk-t">MemberConfig</span>&gt;&gt;&gt;) =&gt;
+	self.<span class="tk-f">derive</span>([me], ([u]) =&gt; u.kind === <span class="tk-s">"present"</span>);
+
+<span class="tk-c">/** The family's entry: the owner gets the Users view, a member her panes; Leo's adventures once the robot has a session. */</span>
+<span class="tk-k">function</span> <span class="tk-f">familyApp</span>(robotSession: string | <span class="tk-k">null</span>): <span class="tk-t">AppContribution</span> {
+	<span class="tk-k">const</span> leo = robotSession === <span class="tk-k">null</span> ? [] : [{ kind: <span class="tk-s">"chat.transcript"</span>, session: robotSession, item: { title: <span class="tk-s">"Leo's adventures"</span> } }];
+	<span class="tk-k">return</span> {
+		id: APP,
+		title: <span class="tk-s">"Family"</span>,
+		users: <span class="tk-t">FamilyUsers</span>.<span class="tk-t">Admin</span>,
+		layout: (p) =&gt; (p.kind === <span class="tk-s">"owner"</span>
+			? [{ kind: <span class="tk-s">"family.users"</span> }, ...leo]
+			: [{ kind: <span class="tk-s">"family.chat"</span> }, { kind: <span class="tk-s">"family.calendars"</span> }, { kind: <span class="tk-s">"family.journal"</span> }, ...leo]),
+		<span class="tk-c">// Chats are private: only their creator (the owner passed before this rule is asked).</span>
+		access: (p: <span class="tk-t">P3Principal</span>, session: <span class="tk-t">SessionFacts</span>) =&gt;
+			p.kind === <span class="tk-s">"user"</span> &amp;&amp; session.creator.kind === <span class="tk-s">"user"</span> &amp;&amp; p.app === session.creator.app &amp;&amp; p.id === session.creator.id ? ALL : NONE,
+	};
+}</code></pre>
+<h3 id="the-worker">The worker</h3>
+<pre><code><span class="tk-c">// PROPOSED · plugins/family/worker.ts: what a family chat session gets</span>
+<span class="tk-k">import</span> { defineFacet, <span class="tk-k">type</span> <span class="tk-t">FilterScope</span>, <span class="tk-t">HarnessFilters</span> } <span class="tk-k">from</span> <span class="tk-s">"@p3/v1/worker"</span>;
+<span class="tk-k">import</span> { APP, <span class="tk-t">Model</span>, <span class="tk-t">Place</span> } <span class="tk-k">from</span> <span class="tk-s">"./contract.ts"</span>;
+
+<span class="tk-k">const</span> mine = (scope: <span class="tk-t">FilterScope</span>) =&gt; scope.app === APP;
+<span class="tk-k">const</span> TOOLS = <span class="tk-k">new</span> <span class="tk-t">Set</span>([<span class="tk-s">"mail"</span>, <span class="tk-s">"calendar"</span>, <span class="tk-s">"read"</span>, <span class="tk-s">"write"</span>, <span class="tk-s">"edit"</span>]);   <span class="tk-c">// her mail and calendars, the family files; no shell</span>
+
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((_host, self) =&gt; {
+	self.<span class="tk-f">contribute</span>(<span class="tk-t">HarnessFilters</span>, {
+		tools: (tools, scope) =&gt; (<span class="tk-f">mine</span>(scope) ? tools.<span class="tk-f">filter</span>((t) =&gt; TOOLS.<span class="tk-f">has</span>(t.namespace ?? t.name)) : tools),
+		sections: (sections, scope) =&gt; (<span class="tk-f">mine</span>(scope) ? sections.<span class="tk-f">filter</span>((s) =&gt; s.source !== <span class="tk-s">"instance"</span>) : sections),
+		models: (models, scope) =&gt; (<span class="tk-f">mine</span>(scope) ? models.<span class="tk-f">filter</span>((m) =&gt; m.provider === <span class="tk-t">Model</span>.provider &amp;&amp; m.id === <span class="tk-t">Model</span>.id) : models),
+		environments: (envs, scope) =&gt; (<span class="tk-f">mine</span>(scope) ? envs.<span class="tk-f">filter</span>((e) =&gt; e.id === <span class="tk-t">Place</span>.environment) : envs),
+		location: (chosen, scope) =&gt; !<span class="tk-f">mine</span>(scope) || (chosen.environment === <span class="tk-t">Place</span>.environment &amp;&amp; chosen.cwd === <span class="tk-t">Place</span>.cwd),
+		<span class="tk-c">// Only her accounts, set when her session was made from her record.</span>
+		accounts: (accounts, scope) =&gt; (<span class="tk-f">mine</span>(scope) ? accounts.<span class="tk-f">filter</span>((a) =&gt; scope.accounts.<span class="tk-f">includes</span>(a.id)) : accounts),
+	});
+});</code></pre>
+<h3 id="the-web">The web</h3>
+<pre><code><span class="tk-c">// PROPOSED · plugins/family/web.tsx</span>
+<span class="tk-k">import</span> { useHold, useWatch } <span class="tk-k">from</span> <span class="tk-s">"@p3/v1/web"</span>;
+<span class="tk-k">import</span> { <span class="tk-t">CheckList</span>, <span class="tk-t">Select</span>, <span class="tk-t">TextEditor</span> } <span class="tk-k">from</span> <span class="tk-s">"@p3/v1/web/components"</span>;
+<span class="tk-k">import</span> { <span class="tk-k">type</span> <span class="tk-t">ConfigEditorProps</span>, <span class="tk-t">UsersAdmin</span> } <span class="tk-k">from</span> <span class="tk-s">"apps/contract.web"</span>;
+<span class="tk-k">import</span> { <span class="tk-t">VoiceChat</span> } <span class="tk-k">from</span> <span class="tk-s">"chat/contract.web"</span>;
+<span class="tk-k">import</span> { <span class="tk-t">Agenda</span> } <span class="tk-k">from</span> <span class="tk-s">"calendar/contract.web"</span>;
+<span class="tk-k">import</span> { <span class="tk-t">Accounts</span> } <span class="tk-k">from</span> <span class="tk-s">"accounts/contract"</span>;
+<span class="tk-k">import</span> { <span class="tk-t">FamilyUsers</span>, <span class="tk-t">Journal</span>, <span class="tk-t">MyCalendars</span>, <span class="tk-t">MyChat</span>, <span class="tk-t">MemberConfig</span> } <span class="tk-k">from</span> <span class="tk-s">"./contract.ts"</span>;
+
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((_host, self) =&gt; {
+	self.<span class="tk-f">contribute</span>(<span class="tk-t">WebViews</span>, {
+		<span class="tk-s">"family.chat"</span>: () =&gt; &lt;<span class="tk-t">ChatView</span> /&gt;,
+		<span class="tk-s">"family.calendars"</span>: () =&gt; &lt;<span class="tk-t">CalendarView</span> /&gt;,
+		<span class="tk-s">"family.journal"</span>: () =&gt; &lt;<span class="tk-t">JournalView</span> /&gt;,
+		<span class="tk-s">"family.users"</span>: () =&gt; &lt;<span class="tk-t">UsersAdmin</span> admin={<span class="tk-t">FamilyUsers</span>.<span class="tk-t">Admin</span>} config={<span class="tk-t">MemberEditor</span>} /&gt;,
+	});
+});
+
+<span class="tk-k">function</span> <span class="tk-t">ChatView</span>() {
+	<span class="tk-k">const</span> session = <span class="tk-f">useWatch</span>(<span class="tk-f">useHold</span>(<span class="tk-t">MyChat</span>, {}).session);
+	<span class="tk-k">return</span> session ? &lt;<span class="tk-t">VoiceChat</span> session={session} transcript=<span class="tk-s">"compact"</span> /&gt; : <span class="tk-k">null</span>;
+}
+
+<span class="tk-k">function</span> <span class="tk-t">CalendarView</span>() {
+	<span class="tk-k">return</span> &lt;<span class="tk-t">Agenda</span> events={<span class="tk-f">useWatch</span>(<span class="tk-f">useHold</span>(<span class="tk-t">MyCalendars</span>, {}).events) ?? []} /&gt;;
+}
+
+<span class="tk-k">function</span> <span class="tk-t">JournalView</span>() {
+	<span class="tk-k">const</span> journal = <span class="tk-f">useHold</span>(<span class="tk-t">Journal</span>, {});
+	<span class="tk-k">return</span> &lt;<span class="tk-t">TextEditor</span> value={<span class="tk-f">useWatch</span>(journal.text) ?? <span class="tk-s">""</span>} onSave={(text, ctx) =&gt; journal.<span class="tk-f">write</span>(text, ctx)} /&gt;;
+}
+
+<span class="tk-c">/** The owner's per-member settings in the Users view: which calendars and which mail account are hers. */</span>
+<span class="tk-k">function</span> <span class="tk-t">MemberEditor</span>({ value, onChange }: <span class="tk-t">ConfigEditorProps</span>&lt;<span class="tk-k">typeof</span> <span class="tk-t">MemberConfig</span>&gt;) {
+	<span class="tk-k">const</span> accounts = <span class="tk-f">useWatch</span>(<span class="tk-f">useHold</span>(<span class="tk-t">Accounts</span>, {}).list) ?? [];            <span class="tk-c">// the owner's accounts: an owner-only object</span>
+	<span class="tk-k">return</span> &lt;&gt;
+		&lt;<span class="tk-t">CheckList</span> label=<span class="tk-s">"Calendars"</span> items={accounts.<span class="tk-f">filter</span>((a) =&gt; a.kind === <span class="tk-s">"calendar"</span>)}
+			checked={value.calendars} onChange={(calendars) =&gt; <span class="tk-f">onChange</span>({ ...value, calendars })} /&gt;
+		&lt;<span class="tk-t">Select</span> label=<span class="tk-s">"Mail account"</span> items={accounts.<span class="tk-f">filter</span>((a) =&gt; a.kind === <span class="tk-s">"mail"</span>)}
+			value={value.mail} onChange={(mail) =&gt; <span class="tk-f">onChange</span>({ ...value, mail })} /&gt;
+	&lt;/&gt;;
+}</code></pre>
+<p>&quot;Leo&#39;s adventures&quot; is the chat plugin&#39;s own <code>chat.transcript</code> view on the robot&#39;s session. The family app writes no
+code for it: the transcript object follows <code>sessionAccess</code>, the robot&#39;s rule answers <code>SEE</code> for family users, and the
+transcript chooses its viewer variant, without a composer.</p>
+</section>
+
+<section class="chapter" id="robot"><header class="opener"><div class="numeral">VI</div><h2>The Robot</h2><p class="lede">One session for Leo, watched by the family.</p></header>
+<figure class="fig"><div class="ap" style="display:flex;justify-content:center;font:14px/1.4 'Avenir Next','Helvetica Neue',sans-serif">
+<div style="width:420px;height:300px;border:12px solid #2a2723;border-radius:26px;background:#fbf3e4;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px">
+<svg width="190" height="150" viewBox="0 0 190 150"><rect x="15" y="20" width="160" height="115" rx="38" fill="#2e6a8a"/><rect x="88" y="2" width="14" height="22" rx="7" fill="#2e6a8a"/><circle cx="95" cy="4" r="7" fill="#b4472f"/><circle cx="65" cy="68" r="15" fill="#fff"/><circle cx="125" cy="68" r="15" fill="#fff"/><circle cx="69" cy="70" r="7" fill="#2a2723"/><circle cx="129" cy="70" r="7" fill="#2a2723"/><path d="M62 103 Q95 125 128 103" stroke="#fff" stroke-width="7" fill="none" stroke-linecap="round"/></svg>
+<div style="width:120px;height:52px;border-radius:26px;background:#b4472f;box-shadow:0 4px 0 #8a3322"></div>
+</div>
+</div><figcaption><span class="fignum">Figure 2.</span> Leo&#39;s robot face on his tablet: no text to read, one big button to hold while he talks.</figcaption></figure>
+<pre><code><span class="tk-c">// PROPOSED · plugins/robot/contract.ts</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> APP = <span class="tk-s">"robot"</span>;
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Users</span> = <span class="tk-f">defineAppUsers</span>(APP, { config: <span class="tk-f">obj</span>({ voice: <span class="tk-f">str</span>() }), initialConfig: () =&gt; ({ voice: <span class="tk-s">"friendly"</span> }) });
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Place</span> = { environment: <span class="tk-s">"kidbox"</span>, cwd: <span class="tk-s">"/srv/son"</span> };       <span class="tk-c">// its AGENTS.md and skills live there</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Model</span> = { provider: <span class="tk-s">"anthropic"</span>, id: <span class="tk-s">"claude-haiku-5-5"</span> };
+<span class="tk-c">/** The robot's store; other apps read its session id. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">RobotApp</span> = <span class="tk-f">local</span>(<span class="tk-s">"robot.app"</span>, { version: <span class="tk-n">1</span>, params: {}, members: { session: <span class="tk-f">nullable</span>(<span class="tk-f">str</span>()) } });</code></pre>
+<pre><code><span class="tk-c">// PROPOSED · plugins/robot/server.ts</span>
+<span class="tk-k">const</span> <span class="tk-t">Home</span> = <span class="tk-f">defineState</span>(<span class="tk-s">"robot.home"</span>, { schema: <span class="tk-f">obj</span>({ session: <span class="tk-f">nullable</span>(<span class="tk-f">str</span>()) }), version: <span class="tk-n">1</span>,
+	initial: () =&gt; ({ session: <span class="tk-k">null</span> }), persist: <span class="tk-k">true</span>, checkpointWhen: () =&gt; <span class="tk-k">true</span> });
+
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((host) =&gt; {
+	<span class="tk-t">Users</span>.<span class="tk-f">serve</span>(host);
+	host.<span class="tk-f">serve</span>(<span class="tk-t">RobotApp</span>, (_params, self) =&gt; {
+		<span class="tk-k">const</span> users = self.<span class="tk-f">get</span>(<span class="tk-t">Users</span>.<span class="tk-t">Store</span>, {});
+		<span class="tk-k">const</span> sessions = self.<span class="tk-f">get</span>(<span class="tk-t">Sessions</span>, {});
+		<span class="tk-k">const</span> home = self.<span class="tk-f">state</span>(<span class="tk-t">Home</span>);
+		<span class="tk-k">const</span> state = self.<span class="tk-f">derive</span>([users.list, home], ([list, h]) =&gt; ({ users: list, session: h.session }));
+		<span class="tk-k">const</span> entry = self.<span class="tk-f">writable</span>(<span class="tk-f">robotApp</span>({ users: [], session: <span class="tk-k">null</span> }));
+		self.<span class="tk-f">on</span>(state, ({ value }) =&gt; entry.<span class="tk-f">set</span>(<span class="tk-f">robotApp</span>(value)));
+		self.<span class="tk-f">contribute</span>(<span class="tk-t">Apps</span>, entry);
+		self.<span class="tk-f">onLive</span>(<span class="tk-k">async</span> (ctx) =&gt; {
+			<span class="tk-k">const</span> { id } = <span class="tk-k">await</span> sessions.<span class="tk-f">ensure</span>({ app: APP, key: <span class="tk-s">"main"</span>, ...<span class="tk-t">Place</span>, model: <span class="tk-t">Model</span> }, ctx);
+			<span class="tk-k">await</span> home.<span class="tk-f">change</span>((draft) =&gt; { draft.session = id; }, ctx);
+		});
+		<span class="tk-k">return</span> { session: self.<span class="tk-f">derive</span>([home], ([h]) =&gt; h.session) };
+	});
+});
+
+<span class="tk-k">function</span> <span class="tk-f">robotApp</span>({ users, session }: { users: <span class="tk-k">readonly</span> <span class="tk-t">AppUser</span>[]; session: string | <span class="tk-k">null</span> }): <span class="tk-t">AppContribution</span> {
+	<span class="tk-k">return</span> {
+		id: APP,
+		title: <span class="tk-s">"Robot"</span>,
+		users: <span class="tk-t">Users</span>.<span class="tk-t">Admin</span>,
+		layout: (p) =&gt; {
+			<span class="tk-k">const</span> voice = p.kind === <span class="tk-s">"user"</span> ? users.<span class="tk-f">find</span>((u) =&gt; u.id === p.id)?.config.voice : <span class="tk-k">undefined</span>;
+			<span class="tk-k">return</span> session === <span class="tk-k">null</span> ? [] : [{ kind: <span class="tk-s">"robot.face"</span>, session, item: { voice: voice ?? <span class="tk-s">"friendly"</span> } }];
+		},
+		<span class="tk-c">// Leo talks; family users watch; nobody else.</span>
+		access: (p, facts) =&gt; {
+			<span class="tk-k">if</span> (facts.id !== session || p.kind !== <span class="tk-s">"user"</span>) <span class="tk-k">return</span> NONE;
+			<span class="tk-k">if</span> (p.app === APP) <span class="tk-k">return</span> users.<span class="tk-f">some</span>((u) =&gt; u.id === p.id) ? ALL : NONE;
+			<span class="tk-k">return</span> p.app === <span class="tk-s">"family"</span> ? SEE : NONE;
+		},
+	};
+}</code></pre>
+<pre><code><span class="tk-c">// PROPOSED · plugins/robot/worker.ts: what the robot's session gets</span>
+<span class="tk-k">const</span> mine = (scope: <span class="tk-t">FilterScope</span>) =&gt; scope.app === APP;
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((_host, self) =&gt; {
+	self.<span class="tk-f">contribute</span>(<span class="tk-t">HarnessFilters</span>, {
+		tools: (tools, scope) =&gt; (<span class="tk-f">mine</span>(scope) ? [] : tools),
+		<span class="tk-c">// Only the AGENTS.md and skills found at its place (loaded as sections, skills inline), never the owner's own.</span>
+		sections: (sections, scope) =&gt; (<span class="tk-f">mine</span>(scope) ? sections.<span class="tk-f">filter</span>((s) =&gt; s.source !== <span class="tk-s">"instance"</span>) : sections),
+		models: (models, scope) =&gt; (<span class="tk-f">mine</span>(scope) ? models.<span class="tk-f">filter</span>((m) =&gt; m.provider === <span class="tk-t">Model</span>.provider &amp;&amp; m.id === <span class="tk-t">Model</span>.id) : models),
+		environments: (envs, scope) =&gt; (<span class="tk-f">mine</span>(scope) ? envs.<span class="tk-f">filter</span>((e) =&gt; e.id === <span class="tk-t">Place</span>.environment) : envs),
+		location: (chosen, scope) =&gt; !<span class="tk-f">mine</span>(scope) || (chosen.environment === <span class="tk-t">Place</span>.environment &amp;&amp; chosen.cwd === <span class="tk-t">Place</span>.cwd),
+	});
+});
+
+<span class="tk-c">// PROPOSED · plugins/robot/web.tsx: the face, around the chat plugin's voice chat</span>
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((_host, self) =&gt; {
+	self.<span class="tk-f">contribute</span>(<span class="tk-t">WebViews</span>, {
+		<span class="tk-s">"robot.face"</span>: ({ session, item }) =&gt; (
+			&lt;<span class="tk-t">VoiceChat</span> session={session} voice={item.voice} transcript=<span class="tk-s">"hidden"</span>&gt;
+				&lt;<span class="tk-t">RobotFace</span> /&gt;
+			&lt;/<span class="tk-t">VoiceChat</span>&gt;
+		),
+	});
+});</code></pre>
+<p><strong>Coding</strong> is the plugin Pi ships. Sessions from before apps belong to it (<code>app: &quot;coding&quot;</code>). Its rule gives its
+sessions to the owner and to users of a team it invites; team users create sessions through coding&#39;s own object. Its
+layout is the sidebar, transcript and changes; no filters.</p>
+</section>
+
+<section class="chapter" id="users"><header class="opener"><div class="numeral">VII</div><h2>Users and Invites</h2><p class="lede">Each app has its own user pool; the owner invites, configures and removes in one view.</p></header>
+<pre><code><span class="tk-c">// PROPOSED · @p3/v1 (contracts) and @p3/v1/server (serve): an app's user pool. Schematic: the real types keep `C`.</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">AppUser</span>&lt;C&gt; = { <span class="tk-k">readonly</span> id: string; <span class="tk-k">readonly</span> name: string; <span class="tk-k">readonly</span> config: C };
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">AppUserRecord</span>&lt;C&gt; = { <span class="tk-k">readonly</span> kind: <span class="tk-s">"absent"</span> } | ({ <span class="tk-k">readonly</span> kind: <span class="tk-s">"present"</span> } &amp; <span class="tk-t">AppUser</span>&lt;C&gt;);
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">defineAppUsers</span>&lt;C <span class="tk-k">extends</span> <span class="tk-t">JsonValue</span>&gt;(app: string, shape: {
+	config: <span class="tk-t">Schema</span>&lt;C&gt;;
+	initialConfig: () =&gt; C;
+	ownJoinPage?: <span class="tk-k">true</span>;                                <span class="tk-c">// the app contributes its own join routes; the pool contributes none</span>
+}): {
+	<span class="tk-c">/** Owner only: invite (the join URL), list, setConfig (schema-checked), remove. */</span>
+	<span class="tk-k">readonly</span> <span class="tk-t">Admin</span>: <span class="tk-t">AppUsersAdmin</span>;                     <span class="tk-c">// remote `${app}.users.admin` on the server</span>
+	<span class="tk-c">/** For the app's own objects: `list`, `user` (keyed: `user.at(id)`, absent once removed), and `join` (an invite or a
+	 *  known identity → a user id, or null), which join routes call. */</span>
+	<span class="tk-k">readonly</span> <span class="tk-t">Store</span>: <span class="tk-t">AppUsersStore</span>;                     <span class="tk-c">// local `${app}.users.store`; contributes the default join routes</span>
+	<span class="tk-c">/** Serves both (server facet only). */</span>
+	<span class="tk-f">serve</span>(host: <span class="tk-t">FacetHost</span>): <span class="tk-k">void</span>;
+};</code></pre>
+<ol>
+<li><strong>Invite:</strong> the owner presses Invite in the app&#39;s Users view (<code>Admin.invite({ label, config? })</code>) and sends the
+link.</li>
+<li><strong>Join:</strong> the link opens the app&#39;s own join page, <code>/apps/&lt;app&gt;/join#&lt;token&gt;</code>. The default page asks for a name; an
+app may bring its own (&quot;Your Own Sign-in&quot;). The page&#39;s route checks the token, stores the user and issues a sign-in for
+<code>{ kind: &quot;user&quot;, app, id }</code> with the app&#39;s cookie. The browser never chooses the app, the id or the config.</li>
+<li><strong>Configure:</strong> the owner sets what is hers in this app (<code>setConfig</code>: her calendars, her mail account).</li>
+<li><strong>Use:</strong> the app&#39;s objects pin her record (<code>user.at(principal.id)</code>) and choose from it.</li>
+<li><strong>Remove:</strong> her record goes absent (her open objects end at once, as they chose from it), her pending invites are
+invalidated, her sign-ins revoked.</li>
+</ol>
+<figure class="fig wide"><div class="ap" style="font:14px/1.45 'Avenir Next','Helvetica Neue',sans-serif;color:#2a2723;max-width:720px;margin:0 auto;border:1px solid #e3dbcc;border-radius:10px;background:#fff;overflow:hidden">
+<div style="display:flex;align-items:center;gap:10px;padding:10px 16px;background:#f4eee2;border-bottom:1px solid #e3dbcc"><span style="font-weight:600">Family</span><span style="color:#7b7468">/</span><span>Users</span><span style="margin-left:auto;font-size:12px;color:#7b7468">owner</span></div>
+<div style="padding:14px 16px;border-bottom:1px solid #e3dbcc;display:flex;gap:10px;align-items:center"><span style="font-weight:600">Invite</span><span style="flex:1;border:1px solid #e3dbcc;border-radius:6px;padding:6px 10px;font:12px 'SF Mono',Menlo,monospace;color:#5a544a">https://pi.example/apps/family/join#k7Qw…3fZ</span><span style="background:#2a2723;color:#fff;border-radius:6px;padding:6px 12px;font-size:13px">Copy link</span></div>
+<div style="padding:12px 16px;border-bottom:1px solid #e3dbcc"><div style="display:flex;align-items:center;gap:10px"><span style="width:30px;height:30px;border-radius:50%;background:#2e6a8a;color:#fff;display:flex;align-items:center;justify-content:center">C</span><div><div>Cristina</div><div style="font-size:12px;color:#7b7468">joined 2 days ago · GitHub cristina-z · signed in on 2 devices</div></div><span style="margin-left:auto;font-size:13px;color:#b4472f">Remove</span></div>
+<div style="display:flex;gap:24px;margin:10px 0 0 40px;font-size:13px"><div><div style="color:#7b7468;font-size:11px;text-transform:uppercase;letter-spacing:.06em">Calendars</div><div>&#9745; Family &nbsp; &#9745; Cristina &nbsp; &#9744; Mario work</div></div><div><div style="color:#7b7468;font-size:11px;text-transform:uppercase;letter-spacing:.06em">Mail account</div><div style="border:1px solid #e3dbcc;border-radius:5px;padding:2px 8px">cristina@family.example &#9662;</div></div></div></div>
+<div style="padding:12px 16px;display:flex;align-items:center;gap:10px"><span style="width:30px;height:30px;border-radius:50%;background:#c2b18c;color:#fff;display:flex;align-items:center;justify-content:center">O</span><div><div>Oma</div><div style="font-size:12px;color:#7b7468">invited 1 hour ago · not joined yet</div></div><span style="margin-left:auto;font-size:13px;color:#7b7468">Cancel invite</span></div>
+</div><figcaption><span class="fignum">Figure 3.</span> The owner&#39;s Users view of the family app: invite with a link, each member&#39;s own settings, remove.</figcaption></figure>
+<figure class="fig wide"><div class="ap" style="display:flex;gap:30px;align-items:center;justify-content:center;flex-wrap:wrap;font:14px/1.45 'Avenir Next','Helvetica Neue',sans-serif;color:#2a2723">
+<div style="width:250px;background:#fff;border:1px solid #e3dbcc;border-radius:12px;padding:12px"><div style="font-size:11px;color:#7b7468;margin-bottom:6px">Message from Mario</div><div style="background:#efe7d6;border-radius:10px;padding:8px 10px;font-size:13px">Here is our family Pi: <span style="color:#2e6a8a;text-decoration:underline">pi.example/apps/family/join#k7Qw…</span></div></div>
+<div style="font-size:26px;color:#c2b18c">&#8594;</div>
+<div style="width:300px;background:#fff;border:1px solid #e3dbcc;border-radius:12px;padding:22px 22px 18px;box-shadow:0 10px 30px -18px rgba(60,40,10,.4)"><div style="font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#b4472f">Family</div><div style="font-size:21px;margin:4px 0 4px">Join Mario's family Pi</div><div style="font-size:13px;color:#7b7468;margin-bottom:16px">Your calendars, your mail, your journal.</div>
+<div style="background:#24292f;color:#fff;border-radius:7px;padding:9px 0;text-align:center;font-size:14px;margin-bottom:12px">Sign in with GitHub</div>
+<div style="display:flex;align-items:center;gap:8px;color:#7b7468;font-size:12px;margin-bottom:12px"><span style="flex:1;border-top:1px solid #e3dbcc"></span>or<span style="flex:1;border-top:1px solid #e3dbcc"></span></div>
+<div style="font-size:12px;color:#7b7468;margin-bottom:4px">Just your name</div><div style="display:flex;gap:8px"><span style="flex:1;border:1px solid #e3dbcc;border-radius:7px;padding:7px 10px;color:#2a2723">Cristina</span><span style="background:#b4472f;color:#fff;border-radius:7px;padding:7px 14px">Join</span></div>
+<div style="font-size:11px;color:#7b7468;margin-top:12px">This link works once and expires in 7 days.</div></div>
+</div><figcaption><span class="fignum">Figure 4.</span> The link goes out by any channel; it opens the family app&#39;s own join page, where she picks how to sign in.</figcaption></figure>
+</section>
+
+<section class="chapter" id="signin"><header class="opener"><div class="numeral">VIII</div><h2>Your Own Sign-in</h2><p class="lede">Can an app define its own sign-in dialog? Yes: the join page is the app&#39;s own route and view.</p></header>
+<p class="dropcap">The join page is not the kit&#39;s: it is an <code>Http</code> route and a page the app contributes, on the app&#39;s path. The app may
+verify whatever it wants (a name with an invite, GitHub, a family password, a code sent by mail) and then call the
+kit&#39;s <code>SignIns.issue</code> for <code>{ kind: &quot;user&quot;, app, id }</code>. The kit keeps the sign-in (its cookie, expiry and revocation);
+the app keeps who its users are and how they prove it.</p>
+<figure class="fig anim"><svg viewBox="0 0 720 502" width="100%" role="img" aria-label="Sign in with GitHub on the family app's own join page." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f5m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f5a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f5b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="102" y1="52" x2="102" y2="494" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="23" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="102" y="30" font-size="11" fill="#2a2723" text-anchor="middle">her browser</text><line x1="274" y1="52" x2="274" y2="494" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="195" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="274" y="27" font-size="11" fill="#2a2723" text-anchor="middle">family routes</text><text x="274" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">on the Pi server</text><line x1="446" y1="52" x2="446" y2="494" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="367" y="10" width="158" height="42" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="446" y="30" font-size="11" fill="#2a2723" text-anchor="middle">GitHub</text><line x1="618" y1="52" x2="618" y2="494" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="539" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="618" y="27" font-size="11" fill="#2a2723" text-anchor="middle">SignIns</text><text x="618" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">the kit</text><g class="step edge" style="--i:1"><line x1="102" y1="78" x2="271" y2="78" stroke="#7b7468" marker-end="url(#f5m)"/><text x="188" y="72" font-size="10" fill="#2a2723" text-anchor="middle">GET /apps/family/join#invite</text></g><g class="step edge" style="--i:2"><line x1="274" y1="110" x2="105" y2="110" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f5m)"/><text x="188" y="104" font-size="10" fill="#2a2723" text-anchor="middle">the family's join page</text></g><g class="step edge" style="--i:3"><line x1="102" y1="142" x2="271" y2="142" stroke="#7b7468" marker-end="url(#f5m)"/><text x="188" y="136" font-size="10" fill="#2a2723" text-anchor="middle">GET /join/github?invite=…</text></g><g class="step edge" style="--i:4"><line x1="274" y1="174" x2="105" y2="174" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f5m)"/><text x="188" y="168" font-size="10" fill="#2a2723" text-anchor="middle">redirect to GitHub, state cookie (Lax)</text></g><g class="step edge" style="--i:5"><line x1="102" y1="206" x2="443" y2="206" stroke="#7b7468" marker-end="url(#f5m)"/><text x="274" y="200" font-size="10" fill="#2a2723" text-anchor="middle">authorize the Pi Family app</text></g><g class="step edge" style="--i:6"><line x1="446" y1="238" x2="105" y2="238" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f5m)"/><text x="274" y="232" font-size="10" fill="#2a2723" text-anchor="middle">redirect …/github/back?code&amp;state</text></g><g class="step edge" style="--i:7"><line x1="102" y1="270" x2="271" y2="270" stroke="#7b7468" marker-end="url(#f5m)"/><text x="188" y="264" font-size="10" fill="#2a2723" text-anchor="middle">GET …/github/back (state cookie)</text></g><g class="step edge" style="--i:8"><line x1="274" y1="302" x2="443" y2="302" stroke="#7b7468" marker-end="url(#f5m)"/><text x="360" y="296" font-size="10" fill="#2a2723" text-anchor="middle">exchange code, read her GitHub user</text></g><g class="step edge" style="--i:9"><path d="M274 328 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f5m)"/><text x="316" y="338" font-size="10" fill="#2a2723" text-anchor="start">invite + github:4711 → user id</text></g><g class="step edge" style="--i:10"><line x1="274" y1="374" x2="615" y2="374" stroke="#b4472f" marker-end="url(#f5a)"/><text x="446" y="368" font-size="10" fill="#b4472f" text-anchor="middle">issue { kind: user, app: family, id }</text></g><g class="step edge" style="--i:11"><line x1="618" y1="406" x2="277" y2="406" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f5m)"/><text x="446" y="400" font-size="10" fill="#2a2723" text-anchor="middle">cookie for /apps/family</text></g><g class="step edge" style="--i:12"><line x1="274" y1="438" x2="105" y2="438" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f5m)"/><text x="188" y="432" font-size="10" fill="#2a2723" text-anchor="middle">page that opens /apps/family/</text></g><g class="step edge" style="--i:13"><line x1="102" y1="470" x2="271" y2="470" stroke="#b4472f" marker-end="url(#f5a)"/><text x="188" y="464" font-size="10" fill="#b4472f" text-anchor="middle">page and link, signed in as her</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 5.</span> Sign in with GitHub on the family app&#39;s own join page.</figcaption></figure>
+<pre><code><span class="tk-c">// PROPOSED · plugins/family/join.ts: the family's own sign-in routes, contributed by its join object (a local store)</span>
+<span class="tk-k">import</span> { cookie, defineState, <span class="tk-k">type</span> <span class="tk-t">HttpContribution</span>, obj, readCookie, str } <span class="tk-k">from</span> <span class="tk-s">"@p3/v1/server"</span>;
+
+<span class="tk-c">/** What the owner sets once for the family's sign-in: GitHub's OAuth app, and the key the state cookie is signed with. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">JoinSettings</span> = <span class="tk-f">defineState</span>(<span class="tk-s">"family.join-settings"</span>, {
+	schema: <span class="tk-f">obj</span>({ github: <span class="tk-f">obj</span>({ clientId: <span class="tk-f">str</span>(), clientSecret: <span class="tk-f">str</span>() }), secret: <span class="tk-f">str</span>() }), version: <span class="tk-n">1</span>, persist: <span class="tk-k">true</span>,
+	initial: () =&gt; ({ github: { clientId: <span class="tk-s">""</span>, clientSecret: <span class="tk-s">""</span> }, secret: <span class="tk-f">randomToken</span>() }), checkpointWhen: () =&gt; <span class="tk-k">true</span>,
+});
+
+<span class="tk-k">const</span> STATE = <span class="tk-s">"family-oauth"</span>;                         <span class="tk-c">// binds the GitHub round trip to this browser and this invite</span>
+<span class="tk-k">const</span> BACK = <span class="tk-s">"/apps/family/join/github/back"</span>;
+
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">familyJoinRoutes</span>(deps: <span class="tk-t">JoinDeps</span>): <span class="tk-t">HttpContribution</span> {
+	<span class="tk-k">const</span> { users, signIns, settings } = deps;          <span class="tk-c">// the pool's Store, the kit's SignIns, the settings document</span>
+	<span class="tk-k">return</span> { routes: {
+		<span class="tk-s">"GET /apps/family/join"</span>: { <span class="tk-k">public</span>: <span class="tk-k">true</span>, handler: <span class="tk-k">async</span> (request) =&gt; ({ kind: <span class="tk-s">"html"</span>, body: <span class="tk-f">joinPage</span>(request.nonce) }) },
+
+		<span class="tk-s">"POST /apps/family/join/name"</span>: { <span class="tk-k">public</span>: <span class="tk-k">true</span>, handler: <span class="tk-k">async</span> (request, ctx) =&gt; {
+			<span class="tk-c">// A trust boundary: anyone may post here.</span>
+			<span class="tk-k">const</span> body = (<span class="tk-k">await</span> request.<span class="tk-f">json</span>()) <span class="tk-k">as</span> { <span class="tk-k">readonly</span> invite?: <span class="tk-k">unknown</span>; <span class="tk-k">readonly</span> name?: <span class="tk-k">unknown</span> } | <span class="tk-k">null</span>;
+			<span class="tk-k">if</span> (<span class="tk-k">typeof</span> body?.invite !== <span class="tk-s">"string"</span> || <span class="tk-k">typeof</span> body.name !== <span class="tk-s">"string"</span> || body.name.<span class="tk-f">trim</span>() === <span class="tk-s">""</span>) <span class="tk-k">return</span> { kind: <span class="tk-s">"error"</span>, status: <span class="tk-n">400</span> };
+			<span class="tk-k">const</span> joined = <span class="tk-k">await</span> users.<span class="tk-f">join</span>({ invite: body.invite, identity: <span class="tk-k">null</span>, name: body.name.<span class="tk-f">trim</span>().<span class="tk-f">slice</span>(<span class="tk-n">0</span>, <span class="tk-n">80</span>) }, ctx);
+			<span class="tk-k">return</span> joined === <span class="tk-k">null</span> ? { kind: <span class="tk-s">"error"</span>, status: <span class="tk-n">403</span> } : <span class="tk-f">signIn</span>(joined, request, ctx, { kind: <span class="tk-s">"json"</span>, value: <span class="tk-s">"joined"</span> });
+		} },
+
+		<span class="tk-s">"GET /apps/family/join/github"</span>: { <span class="tk-k">public</span>: <span class="tk-k">true</span>, handler: <span class="tk-k">async</span> (request) =&gt; {
+			<span class="tk-k">const</span> invite = request.query.<span class="tk-f">get</span>(<span class="tk-s">"invite"</span>);    <span class="tk-c">// the page's script read it from the fragment; may be null for a returning user</span>
+			<span class="tk-k">const</span> nonce = <span class="tk-f">randomToken</span>();
+			<span class="tk-k">const</span> { github } = settings.value;              <span class="tk-c">// client id and secret, set by the owner</span>
+			<span class="tk-k">const</span> to = <span class="tk-s">`https://github.com/login/oauth/authorize?${new URLSearchParams({
+				client_id: github.clientId, redirect_uri: `</span>${request.origin}${BACK}<span class="tk-s">`, state: nonce, scope: "read:user" })}`</span>;
+			<span class="tk-c">// Lax: GitHub's redirect back is a navigation from another site, which a Strict cookie would not survive.</span>
+			<span class="tk-k">const</span> state = <span class="tk-f">cookie</span>(STATE, JSON.<span class="tk-f">stringify</span>({ nonce, invite }), { secret: settings.value.secret, request, sameSite: <span class="tk-s">"Lax"</span>, maxAge: <span class="tk-n">600</span> });
+			<span class="tk-k">return</span> { kind: <span class="tk-s">"redirect"</span>, to, headers: { <span class="tk-s">"Set-Cookie"</span>: state } };
+		} },
+
+		[<span class="tk-s">`GET ${BACK}`</span>]: { <span class="tk-k">public</span>: <span class="tk-k">true</span>, handler: <span class="tk-k">async</span> (request, ctx) =&gt; {
+			<span class="tk-k">const</span> saved = <span class="tk-f">readCookie</span>(request, STATE, settings.value.secret);
+			<span class="tk-k">const</span> { nonce, invite } = saved === <span class="tk-k">undefined</span> ? { nonce: <span class="tk-k">undefined</span>, invite: <span class="tk-k">null</span> } : (JSON.<span class="tk-f">parse</span>(saved) <span class="tk-k">as</span> { nonce: string; invite: string | <span class="tk-k">null</span> });
+			<span class="tk-k">if</span> (nonce === <span class="tk-k">undefined</span> || request.query.<span class="tk-f">get</span>(<span class="tk-s">"state"</span>) !== nonce) <span class="tk-k">return</span> { kind: <span class="tk-s">"error"</span>, status: <span class="tk-n">403</span> };
+			<span class="tk-k">const</span> gh = <span class="tk-k">await</span> <span class="tk-f">githubUser</span>(request.query.<span class="tk-f">get</span>(<span class="tk-s">"code"</span>) ?? <span class="tk-s">""</span>, settings.value.github, ctx);   <span class="tk-c">// code exchange, then /user</span>
+			<span class="tk-c">// An invite links this GitHub identity to a new user once; later, the identity alone finds her.</span>
+			<span class="tk-k">const</span> joined = <span class="tk-k">await</span> users.<span class="tk-f">join</span>({ invite, identity: <span class="tk-s">`github:${gh.id}`</span>, name: gh.name ?? gh.login }, ctx);
+			<span class="tk-k">if</span> (joined === <span class="tk-k">null</span>) <span class="tk-k">return</span> { kind: <span class="tk-s">"error"</span>, status: <span class="tk-n">403</span> };
+			<span class="tk-c">// A page, not a redirect: the next navigation is same-site, so the Strict sign-in cookie goes with it.</span>
+			<span class="tk-k">return</span> <span class="tk-f">signIn</span>(joined, request, ctx, { kind: <span class="tk-s">"html"</span>, body: <span class="tk-f">continuePage</span>(<span class="tk-s">"/apps/family/"</span>, request.nonce) });
+		} },
+	} };
+
+	<span class="tk-c">// joinPage, continuePage, githubUser, randomToken and clearCookie: small helpers of this file, omitted.</span>
+	<span class="tk-k">async</span> <span class="tk-k">function</span> <span class="tk-f">signIn</span>(id: string, request: <span class="tk-t">HttpRequest</span>, ctx: <span class="tk-t">Ctx</span>, response: <span class="tk-t">HttpResponse</span>): <span class="tk-t">Promise</span>&lt;<span class="tk-t">HttpResponse</span>&gt; {
+		<span class="tk-k">const</span> issued = <span class="tk-k">await</span> signIns.<span class="tk-f">issue</span>({
+			principal: { kind: <span class="tk-s">"user"</span>, app: <span class="tk-s">"family"</span>, id }, label: <span class="tk-s">"family"</span>, kind: <span class="tk-s">"browser"</span>,
+			secure: request.provenance.kind !== <span class="tk-s">"local"</span>, cookie: { name: <span class="tk-s">"chord-sign-in.family"</span>, path: <span class="tk-s">"/apps/family"</span> },   <span class="tk-c">// kit gap</span>
+		}, ctx);
+		<span class="tk-k">return</span> { ...response, headers: { <span class="tk-s">"Set-Cookie"</span>: [issued.cookie, <span class="tk-f">clearCookie</span>(STATE)] } };
+	}
+}</code></pre>
+<p>What is real today: <code>Http</code> routes with <code>public: true</code>, <code>redirect</code> and <code>html</code> responses, <code>request.query</code> and
+<code>request.origin</code>, signed cookies with <code>sameSite: &quot;Lax&quot;</code> and <code>maxAge</code> (<code>cookie</code>, <code>readCookie</code>), and <code>SignIns.issue</code>
+for any principal. What the kit lacks: the cookie&#39;s name and path per sign-in (<code>cookie</code> writes <code>Path=/</code>, and the
+authenticator reads one cookie name); an OAuth helper (state, PKCE, the code exchange); a place for secrets (here the
+client secret and the cookie key sit in the app&#39;s own settings document, readable by whoever reads the store); and
+<code>users.join</code>, which belongs to the p3 pool (<code>defineAppUsers</code>), not the kit.</p>
+</section>
+
+<section class="chapter" id="guests"><header class="opener"><div class="numeral">IX</div><h2>Guests</h2><p class="lede">Sharing one session, read or write, with the same invite and sign-in path.</p></header>
+<p class="dropcap">The sharing plugin uses the same join path as app users (an invite, or a reusable link; a page for the name; a
+sign-in on <code>/</code>) and issues guest principals. Read or write lives in the principal, so a session object&#39;s
+<code>sessionAccess</code> is a constant and needs no server round trip. A change bumps the revision, revokes the old objects,
+and the guest reconnects as the new principal (admission checks the current revision, as p2 does). A reusable link
+makes one guest per browser, never one shared identity. What the guest sees: the session&#39;s app layout, cut to the
+shared sessions.</p>
+</section>
+
+<section class="chapter" id="gaps"><header class="opener"><div class="numeral">X</div><h2>What the Base Must Add</h2><p class="lede">Chord and the kit are enough with these changes.</p></header>
+<table>
+<thead>
+<tr>
+<th>Where</th>
+<th>Gap</th>
+<th>Smallest fix</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Chord</td>
+<td>a variant cannot depend on followed state</td>
+<td><code>self.choose(sources, decide)</code> (spec under review)</td>
+</tr>
+<tr>
+<td>kit</td>
+<td><code>defineUsers</code> is one pool per server (fixed name <code>chord.app.users</code>); no keyed record to pin; no config</td>
+<td>a namespace per pool; <code>list</code> and keyed <code>user</code> with name and config</td>
+</tr>
+<tr>
+<td>kit</td>
+<td>invites: HTTP only, a principal chosen up front, single use, in memory, no join step, not cancellable</td>
+<td>reusable issue and redeem with a join step, cancellation, reusable share links</td>
+</tr>
+<tr>
+<td>kit</td>
+<td>one sign-in cookie per browser (<code>Path=/</code>), one links endpoint (<code>/chord</code>)</td>
+<td>cookie name and path per sign-in, the authenticator takes the most specific path&#39;s cookie, links and the web surface on <code>/apps/:app/</code></td>
+</tr>
+<tr>
+<td>kit</td>
+<td><code>SignIns.revoke</code> leaves open links; a facet cannot call <code>host.revoke</code></td>
+<td><code>revokedBy</code> for server and workers, a local revocation service (objects that choose from her record end without it)</td>
+</tr>
+<tr>
+<td>kit</td>
+<td>a sign-in keeps its principal forever, so a guest never gets a new revision</td>
+<td>resolve the current principal at use; admission checks the current revision (p2 does)</td>
+</tr>
+<tr>
+<td>kit</td>
+<td>no OAuth helper, no secrets</td>
+<td>an OAuth client helper (state, PKCE, exchange); a secrets object</td>
+</tr>
+<tr>
+<td>p3</td>
+<td>the session check</td>
+<td><code>Sessions</code> (facts, creator, index, <code>ensure</code> by key), <code>SessionAccess</code>, <code>sessionAccess</code>, the coarse route <code>authorize</code>, HTTP; every session object chooses from it</td>
+</tr>
+<tr>
+<td>p3</td>
+<td>harness filters know neither the session&#39;s app nor a fixed place nor accounts</td>
+<td><code>scope.app</code>, <code>scope.accounts</code>; a <code>location</code> check at choice and at resolution; sections carry their source</td>
+</tr>
+</tbody></table>
+</section>
+
+<section class="chapter epilogue" id="not-covered-here"><header class="opener"><div class="numeral">∴</div><h2>Not Covered Here</h2></header>
+<ul>
+<li><strong>Org-managed Pis</strong> (an employer setting up and restricting its members&#39; Pis) are redone on top of apps later; the
+settings layer of this morning&#39;s decision is withdrawn.</li>
+<li><strong>Privacy from the owner</strong> is a courtesy of an app&#39;s UI, never a guarantee.</li>
+<li><strong>Discord</strong> is an app whose session gets narrow filters; its people are authors of input, not principals.</li>
+<li><strong><code>self.choose</code> is under review.</strong> If the review changes it, the session check and the examples change with it; the
+model (follow, then choose) stays.</li>
+</ul>
+</section>
+
+<p class="colophon">p3 apps · design note, third edition · 2026-11-13</p>
+</div></div>
+<script>(function activate(root) {
+	const replay = (f) => {
+		f.classList.remove("play");
+		void f.getBoundingClientRect();
+		f.classList.add("play");
+	};
+	const io = new IntersectionObserver(
+		(es) => {
+			for (const e of es)
+				if (e.isIntersecting) {
+					e.target.classList.add("play");
+					io.unobserve(e.target);
+				}
+		},
+		{ threshold: 0.3 },
+	);
+	root.querySelectorAll(".anim:not(.armed)").forEach((f) => {
+		f.classList.add("armed");
+		io.observe(f);
+		const b = f.querySelector(".replay");
+		if (b) b.onclick = () => replay(f);
+	});
+	root.querySelectorAll(".steps:not(.js)").forEach((s) => {
+		s.classList.add("js");
+		const ps = [...s.querySelectorAll(":scope>.step-panel")];
+		let i = 0;
+		const c = s.querySelector(".count"),
+			p = s.querySelector(".prev"),
+			n = s.querySelector(".next");
+		const show = () => {
+			ps.forEach((x, j) => x.classList.toggle("on", j === i));
+			c.textContent = `${i + 1} / ${ps.length}`;
+			p.disabled = i === 0;
+			n.disabled = i === ps.length - 1;
+			ps[i].querySelectorAll(".anim").forEach(replay);
+		};
+		p.onclick = () => {
+			i--;
+			show();
+		};
+		n.onclick = () => {
+			i++;
+			show();
+		};
+		show();
+	});
+})(document)</script>
+</body></html>

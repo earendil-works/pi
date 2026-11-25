@@ -124,7 +124,10 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
 ```
 
 - `createHost<P, R>({ address?, principal?, principalKey?, telemetry?, onError, closeTimeout?, readyTimeout?,
-  heartbeat?, revokedBy?, compression? })`; `R` is the app's revocation type (JSON). `address` (`Session({ id: "S1" })`, see `contracts/`'s `hostKind`) makes the host addressable: it serves only
+  reloadDrainTimeout?, heartbeat?, revokedBy?, compression?, callWindow?, eventWindow? })`; `R` is the app's revocation
+  type (JSON). `callWindow` (10,000) is the call window it announces on a link it was not given as trusted (none on a
+  trusted one: `remote/`); `eventWindow` (32) how many of its own `event` messages stay unacknowledged per link and
+  origin (a full window drops a flush's events, below). `address` (`Session({ id: "S1" })`, see `contracts/`'s `hostKind`) makes the host addressable: it serves only
   objects placed there; without one it is a client. A host with a `principal` acts as it for its own requests; a host
   without one (a client) has none. A host serves remote types only with both a principal and an address (`serve` of a
   remote type throws at `load` otherwise).
@@ -132,7 +135,9 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
   to its part of an identity (L1's canonical JSON by default; the same function on every host). `closeTimeout` (30 s)
   bounds each native's close and the drain of an ending object's calls; `readyTimeout` (60 s) bounds every activation
   attempt (its wait for the previous instance's teardown included; paused while it is parked on its dependencies) and
-  is the default deadline of a `get` and of `host.registry`. `heartbeat: { ping?, close? }`: a link silent for `ping` ms (15 s)
+  is the default deadline of a `get` and of `host.registry`. `reloadDrainTimeout` (5 s, at most `closeTimeout`) bounds
+  a restart's old attempt at a reload: its old work and its successor's readiness (`host.reload` below).
+  `heartbeat: { ping?, close? }`: a link silent for `ping` ms (15 s)
   sends a `ping`, one silent for `close` ms (30 s), its handshake included, is closed (its references go `loading`);
   one interval timer per host (`min(ping, close) / 10`), running only while it has links. A handler that blocks the
   event loop longer than `close` gets its links closed by its peers; its own late tick counts the time it did not run
@@ -193,10 +198,13 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
   `activation_failed` (`object`, `failure`: every failed attempt), `object_failed` (`object`, `failure`: a live object
   failed, slice 6a), `storage_failed` (`error`: the host's store stopped; the host closes itself), `derive_failed`
   (`object`, `member?`, `error`: a derive's compute threw, once per failure episode, watched or not; `member` when it is
-  an exposed state member), `query_failed` (`object`, `table`, `error`: a live query's run in a commit threw, once per
-  failure episode; the query is a failed member until a good run), `close_failed` (`object`, `native` position,
-  `error`: a close that threw while nobody waited), `close_timeout` (`object`, `native`: a close still running at its `closeTimeout`, a possible leak), `drain_timeout` (`object`: calls still running at `closeTimeout`; their natives close anyway),
-  `listener_error` (a throwing watch listener), `delivery_failed` (a frame delivery or a link's flush that threw) and
+  an exposed state member), `query_failed` (`object`, `query`, `error`: a live read's run failed after its object went live,
+  once per failure episode; the member is failed until a good run; `query` is the table's name for `self.query`, the
+  named query's label otherwise), `close_failed` (`object`, `native` position,
+  `error`: a close that threw while nobody waited), `close_timeout` (`object`, `native`: a close still running at its `closeTimeout`, a possible leak), `drain_timeout` (`object`: calls still running at `closeTimeout`, or at `reloadDrainTimeout` for a reload's restart; their natives close anyway),
+  `listener_error` (a throwing watch listener or event listener: its subscription ends), `event_mapping_failed`
+  (`object`, `member`, `version`, `error`: an event mapping for an older consumer threw; that emit is dropped for that
+  version only; once per failure episode), `delivery_failed` (a frame delivery or a link's flush that threw) and
   `protocol_error` (`error`: what closed a link, see `link/`) and `resolve_failed` (`address`: its key, `error`: a
   route's `resolve` rejected; the address's holders fail `waiting` with it), `routine_failed` (`object`, `routine`: its position,
   `error`: a routine call threw, or its watch could not be taken; a source's failure calls never reach a routine), `job_failed` (`object`, `job`,
@@ -273,7 +281,18 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
   because their new code failed before (a build, an evaluation: the plugins component): the same for the closure rule.
   The report lists them all in `failed`; the rest commits. `ctx`'s abort before the commit rejects `aborted` and
   changes nothing; after it, it ends only the wait for the report: `aborted` with `details.committed`
-  (`CommittedReload`: `added`, `changed`, `removed`, `failed` by plugin name), the commit standing.
+  (`CommittedReload`: `added`, `changed`, `removed`, `failed` by plugin name), the commit standing. The report's
+  `objects` give each affected object's fate: `ended` (its type removed; holders wait `not_served`), `retried` (it was
+  not live), `restarted`, or `parked { cause }` (a restart whose successor's recorded requests found a failure, a
+  retry whose new attempt waits for a dependency). Every live object restarts (decision "Reload restarts every
+  affected object; old work finishes on old code"): **old work** (the calls running at the commit and every call they
+  cause through their `ctx`, on this host or, marked `old`, over a trusted link) runs on the open old attempt; a getter
+  of old work for a version the new code dropped binds that attempt or fails at once; new calls wait at the gate for
+  the new code. The old attempt is sealed once that work drained and its successor's requests (as staging recorded
+  them) are ready, bounded by `reloadDrainTimeout` (a method still running then is cut `released`); then its natives
+  close (`reload`) and the successor runs its factory. Consumers whose version the old attempt binds see the object
+  `live` meanwhile. A wait of old work that its own old attempt blocks fails at once with `unavailable/reload_cycle`.
+  A root opened inside a method takes the method's `ctx` (`withoutAbortSignal(ctx)`), so its calls are old work too.
 - `host.hold(Type, params, ctx, { readyTimeout? })`: a reference at once (`Held<C>`: its `variant` is `undefined` until
   its first binding), which follows its object until released and never rejects: `loading`
   while the object activates, retries or is parked on dependencies under way, while there is no parent link or it is
@@ -339,7 +358,9 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
   hosts of `Kind`.
   `authorize(principal, address)` runs for every hold routed over it with the hold's principal, before anything
   starts (`false`: broken `forbidden`; a throw: broken with that error). `resolve(address, context)` returns `{ link,
-  principal, trusted?, codec? }`, the address's link (role `route`); it runs at most once at a time per address, later
+  principal, trusted?, codec?, opened? }`, the address's link (role `route`; `opened(incarnation)` is called once at
+  its handshake with the incarnation of the host at the other end, before anything else that host sent is handled:
+  the workers component records it); it runs at most once at a time per address, later
   holds wait for it, and `context` is aborted only when the host closes (a link it returns later is closed at once). A
   `resolve` whose holds were all released meanwhile finishes and its link is kept. A route has no timer (slice 10
   R2): a rejection (`resolve_failed`), a link closed already, or a link closing before its handshake fails the
@@ -378,7 +399,44 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
   at declaration (`invalid/args`) without a positive integer `limit`, for a query of another table, or a table this
   factory did not declare. A run that fails (a row its code cannot read) makes it a failed member, as a throwing
   derive: one failure call, `query_failed` once, `[["r", rows]]` at the next good run; the object stays live. It is
-  no native: an object with live queries swaps on reload.
+  no native: a reload's restart runs the successor's live queries again at its activation.
+- Named queries (slice 14; `named-query.ts`, `query-reader.ts`, `read-declarations.ts`): a `local` contract lists them with `queries(Item,
+  { name: argsSchema })`; the table's owner returns `self.queries(table, { map, reads?, partnerReads? }, { name:
+  builder })` for the member (a query not listed is private and given as `[argsSchema, builder]`). Any object on
+  the host reads one in its factory with `self.liveQuery(ref.member.name, args, { first })` (`{ rows, more }`) or
+  `self.count(ref.member.name, args)` (exact, every matching row read on each run), or anywhere with `page(args, n,
+  ctx, { after })`. `args` may be a watchable: the member keeps its rows until the read for the new arguments has
+  run. Readers open during activation, after the member check and before the natives (a waiting attempt holds
+  none); a first run that fails parks the object `failed { waiting }` until a later run succeeds; refused arguments and a throwing builder fail it `broken`. A
+  provider's restart does not restart its readers: they read the successor's query and give one frame, none when
+  the rows are equal. `self.query` given a named query, and `self.liveQuery` given a table, throw naming the other.
+- Lists (slice 14; `list.ts`, `tiling.ts`): `self.list(name, [[namedQuery, args]], { first })` returns `{ value, more }` for a
+  state member of `{ rows, moreAfter }` and a method. Pages tile the query's order between fixed bookmarks, one
+  read of the store each; the last page is open at its end while no row is known behind it. Pages split and merge
+  in the adoption of their runs; a run belongs to the interval it read. The object keeps a list's bookmarks by its
+  name across attempts (`ChordObject.listMemory`), so a reload opens the pages the list had. One source for now.
+- Admission (slice 14; `admission.ts`, `route-admission.ts`): a remote contract may declare `admission: schema`;
+  its type is served with `host.serve(Type, (params, principal, admitted, self) => …, { admit })`. `admit(params,
+  principal, self)` runs first in every attempt, declares what it reads (`self.get` with `at(key)`,
+  `self.registry`, `self.derive`, `self.liveQuery`) and returns a watchable of `allow(value)` or `deny(reason)`.
+  The attempt parks on those requests, and on a denial showing `failed { denied }` (`forbidden(reason)`; getters
+  reject at once, dependents show the denial and heal with it, no `parked_long`). From its allow on it follows the
+  decision in the flush of the batch that changed it: an equal value (canonical JSON) changes nothing, a source that
+  only loads keeps the last decision, another value seals the attempt (calls `unavailable`) and a new one admits, a
+  denial seals it (calls `forbidden/revoked`, no value kept: reads throw `forbidden`, `ref.variant` is
+  `undefined`), a failed source or a decision that throws seals it and the new attempt parks `failed { waiting }`.
+  A rebuild keeps the admission's requests until the next attempt's bound. A failed admitted object still follows
+  a denial (`failed { denied }` in place of its failure, no value, out of presence, its factory not run) and is
+  retried by another allowed value. `self.job` is refused in an admitted factory. Presence lists a holder from its first allow until a denial; a lingering object whose decision changes
+  ends. A reload's staging runs the new `admit` and rehearses the new factory only with a value of an equal
+  admission fingerprint. `host.route(Kind, { authorize, resolve, admit })`: a route asks one decision per principal
+  key and address with holds before it resolves or forwards anything (a verdict is told only when nothing it
+  reads changed while it was settled); a failed source leaves the holds bound on the address's link alone and
+  forwards none on a new link until it recovers; a denial releases the holds upstream, an allow shows them `loading` and
+  forwards them again behind a `ping`/`pong` fence (which relies on `resolve` returning the link to the
+  final provider of the address); its `admit` reads only contracts the app's API owns.
+- `host.deleteHostData(address, ctx, { plugin })` (slice 14) deletes only what that plugin's objects own of the
+  address, in one commit: the documents and tables of the types the plugin serves now.
 - A table or document the code cannot read (a newer version, a history edited in place, a failed `rows` step or
   `migrate`) fails the object `broken`; a live object whose read fails so fails while live (`object_failed`), keeping
   its documents for the next attempt.
@@ -421,7 +479,9 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
   named it; on a local object's handler the host's), `incarnation` (the calling host's over a link, the origin's
   through a relay, this host's otherwise, R20), `get(Type, params, { readyTimeout? })` (a reference as
   `ctx.principal` sees it, with `ctx.incarnation`, also over a route; released when the handler settles; afterwards
-  `get` throws `released`), the abort signal (the caller cancelled or released, or the object ends) and telemetry.
+  `get` throws `released`), the abort signal (the caller cancelled or released, or the object ends), telemetry (the
+  handler's `chord.method` span when the host records) and `trace(name, attributes, fn)` (`fn` in a child span with a
+  child ctx: the same principal, signal and references; slice 9).
 - `self.open(open, close, { closeTimeout? })` returns a `Native<T>`: its `value` is readable from the moment its open
   resolved until its close starts; before, it throws `not_ready`, after, `released`. `open(ctx)` gets a context
   aborted when the attempt is abandoned; `close(value, reason, ctx)` gets `{ kind: "end" | "close" | "reload" }` (end:
@@ -465,6 +525,25 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
 - `ref.retry()`: a failed object (broken too) gets an attempt now, its backoff window skipped; every reference to it
   goes `loading`. One parked `failed { waiting }` passes it on (above). Ignored while an attempt runs otherwise, once
   live and once released; over a link it is a `retry` message carrying its hop budget (`hops`).
+- **Events** (decision "Events: fire-and-forget members"; `events.ts`, `reference-events.ts`): `self.events<T>()`
+  declares an `EventSource<T>` of the attempt (any factory; inert in staging; `emit` after the attempt's seal throws
+  `released`); a factory implements an event member with one of its own or with a reference's event member
+  (re-exposed: value and `at` forwarded unchanged); anything else fails the object `broken`. An `emit(value)` is
+  immediate, no transaction work (`await self.tx(...)`, then emit), stamped `at` with this host's `Date.now()`. A
+  reference's event member has only `on(listener, ctx)`: a subscription installed at once, bound or not, until
+  `stop()`, `ctx`'s abort or the reference's release (a released reference rejects `released`, an aborted `ctx` its
+  reason). One rule: emits wait in the host's list for the event flush, a microtask the first queues; commits flush
+  synchronously, so the state published before the flush is sent first. Each binding takes the host's emit counter when
+  it is made (a hold over a link at its `bound`, a reference when it binds to an instance and shows it live) and gets
+  only later entries while it stays that binding: none while loading, failed or bound to a variant without the member,
+  nothing replayed on a new instance (its subscriptions move there), nothing for a binding made after the emit (also in
+  the same turn). The flush sends one `event` message per link and origin (`remote/`), then calls the listeners outside
+  the reentrancy fence, in entry order, then subscription order; what they emit goes into the next flush; a throwing
+  listener is reported (`listener_error`) and its subscription ends. An event member is no watchable (no derive or `on`
+  source, no state member, no followed contribution) and adds no presence entry. An older consumer gets each event
+  mapped once per emit for its version (`adapted.ts`); a removed event reaches it never. A contract without event
+  members costs nothing per binding: no event record on its references, no event nodes, shared empty name lists. A
+  subscription its holder keeps after `stop()` keeps neither its source nor its reference.
 
 Rules:
 
@@ -540,7 +619,7 @@ alive:
 - **Drain in the background:** `close` detaches the old resource and returns at once; the resource disposes of itself
   when its work has finished, or after the native's `closeTimeout` at most (code mode's sandbox). Chord then opens the
   new one immediately; callers look the current resource up when they start (`watcher.value` at each use).
-- **Swap through a registry** (slice 8): the resource is a registry contribution; readers always find the current one,
+- **Replace through a registry** (slice 8): the resource is a registry contribution; readers always find the current one,
   and a reader that must wait for one waits, cancellably, until one is present.
 
 A native that follows a relocation (design §6) is not restarted at all: the native is a stable manager opened once; a
@@ -570,7 +649,8 @@ hosts on one store file), `22-migrations.ts` (`evolveTable` and an eager migrati
 `23-keyed-watches.ts` (`watch(key)`, `at(key)`, the `retired` flag), `24-keyed-members.ts` (a keyed member pinned per
 key by its consumers) and `25-export-import.ts` (an archive in JSONL and an import), and (slice 7a)
 `31-parked-dependencies.ts` (a missing provider arrives: causes shown, no timers) and `32-startup.ts` (two hosts that
-would have deadlocked at startup).
+would have deadlocked at startup), and (events) `67-events.ts` (a ticking server object, two clients, a slow one's
+events dropped while its state arrives whole).
 
 ## For Chord's layers (`internal.ts`)
 
@@ -612,8 +692,13 @@ included; its state is tagged: starting, idle, calling, backoff with its timer, 
 `sleep`, `NativeHandle` (one
 native: opened once, closed once, a late value closed at once; `within` bounds a close or a drain), `Backoff` (the
 windows per identity and when each ends, holding no object), `Binding` (a reference's link to its object or remote
-object: its state, the object that declared it, its per-reference watches, calls, parked calls and the waits for a
-state; released, it keeps only its name), `ParkedCalls` (a reference's queue of calls made while loading, a timer
+object: its state, the object that declared it, its per-reference watches, event taps, calls, parked calls and the
+waits for a state; released, it keeps only its name), `HostEvents` (`host.events`: the emit counter, the list waiting
+for the event flush, the flush: taps visited, links' messages sent, then listeners called), `EventNode` (a source of
+events with its taps, each a binding's counter value and delivery: an `OwnEventSource`, a `ReexposedEvents`, an older
+version's `MappedEvents`, a remote object's member), `Subscription` (an `on`'s listener until stopped),
+`ReferenceEvents` and `ReferenceEventTaps` (a reference's event members and, per member used, its subscriptions and
+re-exposing nodes tapped on the instance it points at), `ParkedCalls` (a reference's queue of calls made while loading, a timer
 each), `ReferenceState` (`ref.state`, a native source: its native watches, told of each change; derives over it
 marked), `CallContext` (a handler's or a root scope's `ctx`), `withLinkedAbortSignal` (a call's or a get's context aborted by the caller and by a long-lived signal, its
 reference's or its attempt's, linked only until it settles: `AbortSignal.any` keeps cleanup entries per call while its

@@ -91,7 +91,7 @@ function openEnvs(ctx: TuiContext): void {
 	const accept = async (env: EnvSummary) => {
 		const service = owner();
 		const key = env.test && !env.test.ok ? env.test.hostKey : undefined;
-		if (!service || service.variant !== "owner" || !key) return;
+		if (!service || service.variant !== "owner" || !key || env.config.type !== "ssh") return;
 		const yes = await confirm(ctx, [
 			`Trust ${env.name}'s host key?`,
 			`${lineText(env.config.user ? `${env.config.user}@` : "")}${lineText(env.config.host)}${env.config.port ? `:${env.config.port}` : ""} · ${key.state === "changed" ? "the key CHANGED since it was trusted" : "unknown key"}`,
@@ -119,7 +119,11 @@ function openEnvs(ctx: TuiContext): void {
 					},
 					...envs.map((env) => ({
 						key: env.name,
-						label: `${mark(env.name)}${env.name}  ${env.config.user ? `${env.config.user}@` : ""}${env.config.host}`,
+						label: `${mark(env.name)}${env.name}  ${
+							env.config.type === "gondolin"
+								? `sandbox on ${env.config.host}`
+								: `${env.config.user ? `${env.config.user}@` : ""}${env.config.host}`
+						}`,
 						detail: `${current?.env === env.name ? "this session · " : ""}${detail(env)} · ${env.sessions} session${env.sessions === 1 ? "" : "s"}`,
 						...(env.test && !env.test.ok
 							? { description: env.test.error, color: "error" as const }

@@ -1,9 +1,11 @@
+import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { describe, expect, it } from "vitest";
-import { BACKGROUND_CONTEXT as context, withAbortSignal } from "../../src/context/index.ts";
+import { BACKGROUND_CONTEXT as context, withAbortSignal, withTelemetry } from "../../src/context/index.ts";
 import { int, local, method, remote, str } from "../../src/contracts/index.ts";
 import { withLinkedAbortSignal } from "../../src/host/ctx.ts";
 import type { ChordHost } from "../../src/host/host.ts";
 import type { Ctx, Host, Reference } from "../../src/host/index.ts";
+import { CALL_CHAIN } from "../../src/host/old-work.ts";
 import { constant } from "../../src/state/index.ts";
 import {
 	flushed,
@@ -154,6 +156,39 @@ describe("ctx", () => {
 	});
 });
 
+describe('the call chain (decision "Reload restarts every affected object": old work)', () => {
+	it("a method's ctx is its own chain node, above it the chain of the call that made it; a root's has none", async () => {
+		const Inner = local("app.inner", { version: 1, params: {}, members: { run: method() } });
+		const Outer = local("app.outer", { version: 1, params: {}, members: { run: method() } });
+		const seen: { inner?: Ctx; outer?: Ctx; root?: Ctx } = {};
+		const { host } = await loaded((h) => {
+			h.serve(Inner, () => ({
+				run: async (ctx) => {
+					seen.inner = ctx;
+					return null;
+				},
+			}));
+			h.serve(Outer, () => ({
+				run: async (ctx) => {
+					seen.outer = ctx;
+					await (await ctx.get(Inner, {})).run(ctx);
+					return null;
+				},
+			}));
+		});
+		await host.root(async (root) => {
+			seen.root = root;
+			await (await root.get(Outer, {})).run(root);
+		}, context);
+		const inner = seen.inner!.value(CALL_CHAIN);
+		expect(inner).toBe(seen.inner);
+		expect(inner!.up()).toBe(seen.outer);
+		expect(inner!.up()!.up()).toBeUndefined();
+		expect(seen.root!.value(CALL_CHAIN)).toBeUndefined();
+		await host.close(context);
+	});
+});
+
 describe("local handlers act as the host (§4, audit)", () => {
 	it("a local object called from a remote handler's ctx.get runs with this host's principal and incarnation", async () => {
 		const Store = local("app.local-store", { version: 1, params: {}, members: { who: method(undefined, str()) } });
@@ -210,5 +245,105 @@ describe("linked abort signals", () => {
 		const linked = withLinkedAbortSignal(call.signal, context);
 		expect(linked.context.abortSignal).toBe(call.signal);
 		linked.release();
+	});
+});
+
+describe("ctx.trace (C11, slice 9)", () => {
+	const Traced = local("app.traced", {
+		version: 1,
+		params: {},
+		members: { work: method(undefined, int()), failing: method() },
+	});
+
+	/** A host recording to `telemetry`, serving `Traced`, whose `work` runs two child spans and gets an item in one. */
+	async function traced(telemetry: InMemoryTelemetryContext | undefined) {
+		const seen: { inner?: Ctx; outer?: Ctx; item?: Reference<typeof Item> } = {};
+		const { host } = await loaded(
+			(h) => {
+				h.serve(Item, ({ id }) => ({ id: constant(id) }));
+				h.serve(Traced, () => ({
+					work: async (ctx) => {
+						seen.outer = ctx;
+						return ctx.trace("app.step", { n: 1 }, async (inner) => {
+							seen.inner = inner;
+							seen.item = await inner.get(Item, { id: 3 });
+							return inner.trace("app.deeper", {}, async () => seen.item!.id.value);
+						});
+					},
+					failing: async (ctx) => {
+						await ctx.trace("app.fails", {}, async () => {
+							throw new Error("broke");
+						});
+						return null;
+					},
+				}));
+			},
+			{ telemetry },
+		);
+		return { host, seen };
+	}
+
+	it("runs fn in a child span of the handler's, with a child ctx: the same principal, signal and references", async () => {
+		const telemetry = new InMemoryTelemetryContext();
+		const { host, seen } = await traced(telemetry);
+		const ref = await host.get(Traced, {}, context);
+		await telemetry.startSpan({ name: "caller" }, async (span) => {
+			expect(await ref.work(withTelemetry(span, context))).toBe(3);
+		});
+		const spans = telemetry.getSpans();
+		const byName = (name: string) => spans.find((span) => span.name === name)!;
+		expect(byName("app.step").parentId).toBe(byName("chord.method").id);
+		expect(byName("app.step").attributes).toEqual({ "chord.host": "client", n: 1 });
+		expect(byName("app.deeper").parentId).toBe(byName("app.step").id);
+		expect(seen.inner).not.toBe(seen.outer);
+		expect(seen.inner!.principal).toBe(seen.outer!.principal);
+		expect(seen.inner!.incarnation).toBe(seen.outer!.incarnation);
+		// The child's references are the handler's: released when the handler settled.
+		expect(seen.item!.state.value.kind).toBe("ended");
+		await expect(seen.inner!.get(Item, { id: 3 })).rejects.toMatchObject({ code: "released" });
+	});
+
+	it("marks its span failed (`trace_failed`) and rethrows", async () => {
+		const telemetry = new InMemoryTelemetryContext();
+		const { host } = await traced(telemetry);
+		const ref = await host.get(Traced, {}, context);
+		await telemetry.startSpan({ name: "caller" }, async (span) => {
+			await expect(ref.failing(withTelemetry(span, context))).rejects.toThrow("broke");
+		});
+		const failed = telemetry.getSpans().find(({ name }) => name === "app.fails")!;
+		expect(failed.status).toEqual({ status: "error", error: { name: "trace_failed", message: "broke" } });
+	});
+
+	it("rejects, never throws, when fn throws synchronously, recorded or not (review L5)", async () => {
+		for (const telemetry of [new InMemoryTelemetryContext(), undefined]) {
+			const { host } = await loaded(
+				(h) =>
+					h.serve(Traced, () => ({
+						work: async (ctx) => {
+							const traced = ctx.trace("app.sync", {}, (() => {
+								throw new Error("sync");
+							}) as () => Promise<number>);
+							return traced.catch(() => 7);
+						},
+						failing: async () => null,
+					})),
+				{ telemetry },
+			);
+			const ref = await host.get(Traced, {}, context);
+			const work = (caller: typeof context) => ref.work(caller);
+			const result =
+				telemetry === undefined
+					? await work(context)
+					: await telemetry.startSpan({ name: "caller" }, (span) => work(withTelemetry(span, context)));
+			expect(result).toBe(7);
+			if (telemetry !== undefined) expect(telemetry.getSpans().map(({ name }) => name)).toContain("app.sync");
+		}
+	});
+
+	it("gives fn the handler's own ctx when nothing records", async () => {
+		const { host, seen } = await traced(undefined);
+		const ref = await host.get(Traced, {}, context);
+		expect(await ref.work(context)).toBe(3);
+		expect(seen.inner).toBe(seen.outer);
 	});
 });

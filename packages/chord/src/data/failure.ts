@@ -1,6 +1,7 @@
 // Failure causes: transient (the object's own effect failed: retry later), broken (its own code, a cycle or authority:
-// retry by hand) or waiting (not its fault: no provider, no fitting version, a dependency that failed; woken by an
-// event). The failing stage decides, never the error code.
+// retry by hand), waiting (not its fault: no provider, no fitting version, a dependency that failed; woken by an
+// event) or denied (an admission refused the caller: woken by the decision). The failing stage decides, never the
+// error code.
 
 import { asChordError, ChordError } from "./errors.ts";
 
@@ -8,7 +9,9 @@ import { asChordError, ChordError } from "./errors.ts";
 export type FailureCause =
 	| { readonly kind: "transient"; readonly error: ChordError }
 	| { readonly kind: "broken"; readonly error: ChordError }
-	| { readonly kind: "waiting"; readonly error: ChordError };
+	| { readonly kind: "waiting"; readonly error: ChordError }
+	/** Its admission, a dependency's or a route's refused the caller (slice 14): no backoff, woken by the decision. */
+	| { readonly kind: "denied"; readonly error: ChordError };
 
 /** Marks an open's failure as broken (bad configuration): `throw broken(error)`. */
 export function broken(cause: unknown): Error {
@@ -52,7 +55,12 @@ export function waitingFor(blocker: string, error: ChordError): FailureCause {
 		if (label.length + root.length > room) label = clipped(label, room - root.length);
 	}
 	const message = `${PREFIX}${label}${SEPARATOR}${root}`;
-	return { kind: "waiting", error: new ChordError({ code: "unavailable", message }, { cause: error }) };
+	// A version refusal, here or along the chain, keeps its reason: it heals with another host's reload.
+	const version = error.code === "contract_mismatch" || (error.code === "unavailable" && error.reason === "version");
+	const init = version
+		? ({ code: "unavailable", reason: "version", message } as const)
+		: ({ code: "unavailable", message } as const);
+	return { kind: "waiting", error: new ChordError(init, { cause: error }) };
 }
 
 /** `text` within `length` characters, clipped with "…" when longer. */

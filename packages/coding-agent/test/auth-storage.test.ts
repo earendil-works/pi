@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type CredentialStore, createModels, type Provider } from "@earendil-works/pi-ai";
@@ -41,6 +41,24 @@ describe("AuthStorage", () => {
 		writeAuthJson({ anthropic: { type: "api_key", key: "!printf 'command-key'" } });
 		const storage = AuthStorage.create(authJsonPath);
 		expect(await storage.read("anthropic")).toEqual({ type: "api_key", key: "command-key" });
+	});
+
+	// Regression test for #12164: a failed command stays cached until the key is saved again.
+	test("runs a command-backed key again after it is saved", async () => {
+		const name = `PI_TEST_AUTH_STORAGE_COMMAND_${Date.now()}`;
+		const credential = { type: "api_key" as const, key: `!printenv ${name}` };
+		writeAuthJson({ anthropic: credential });
+		const storage = AuthStorage.create(authJsonPath);
+		try {
+			expect(await storage.read("anthropic")).toEqual({ type: "api_key", key: undefined });
+			process.env[name] = "command-key";
+			expect(await storage.read("anthropic")).toEqual({ type: "api_key", key: undefined });
+
+			await storage.modify("anthropic", async () => credential);
+			expect(await storage.read("anthropic")).toEqual({ type: "api_key", key: "command-key" });
+		} finally {
+			delete process.env[name];
+		}
 	});
 
 	test("returns OAuth credentials unchanged", async () => {
@@ -116,7 +134,8 @@ describe("AuthStorage", () => {
 	test("keeps a coalesced reload alive while another credential reader is waiting", async () => {
 		writeAuthJson({ anthropic: { type: "api_key", key: "old" } });
 		const storage = AuthStorage.create(authJsonPath);
-		writeAuthJson({ anthropic: { type: "api_key", key: "new" } });
+		// Change the file size so the revision changes even with coarse file timestamps (#12190).
+		writeAuthJson({ anthropic: { type: "api_key", key: "newer" } });
 		let grantLock: (() => void) | undefined;
 		const lockGranted = new Promise<void>((resolve) => {
 			grantLock = resolve;
@@ -134,7 +153,7 @@ describe("AuthStorage", () => {
 		firstController.abort();
 		await expect(first).rejects.toMatchObject({ name: "AbortError" });
 		grantLock?.();
-		await expect(second).resolves.toEqual({ type: "api_key", key: "new" });
+		await expect(second).resolves.toEqual({ type: "api_key", key: "newer" });
 		expect(lockSpy).toHaveBeenCalledTimes(1);
 		expect(release).toHaveBeenCalledTimes(1);
 	});
@@ -364,6 +383,33 @@ describe("AuthStorage", () => {
 		});
 		expect(update).not.toHaveBeenCalled();
 		expect(existsSync(authJsonPath)).toBe(false);
+	});
+
+	// #11655: aliases of the same auth.json must share one lock.
+	test("a symlinked auth.json path waits for the lock held on the real file", async () => {
+		writeAuthJson({ anthropic: { type: "api_key", key: "stored" } });
+		const aliasPath = join(tempDir, "alias.json");
+		symlinkSync(authJsonPath, aliasPath);
+		const release = await lockfile.lock(authJsonPath, { realpath: false });
+		const backend = new FileAuthStorageBackend(aliasPath);
+		const update = vi.fn(async () => ({ result: undefined, next: JSON.stringify({}) }));
+		const syncUpdate = vi.fn(() => ({ result: undefined, next: JSON.stringify({}) }));
+
+		try {
+			const controller = new AbortController();
+			const pending = backend.withLockAsync(update, { signal: controller.signal });
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			controller.abort();
+			await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+			expect(() => backend.withLock(syncUpdate)).toThrow(expect.objectContaining({ code: "ELOCKED" }));
+		} finally {
+			await release();
+		}
+		expect(update).not.toHaveBeenCalled();
+		expect(syncUpdate).not.toHaveBeenCalled();
+		expect(JSON.parse(readFileSync(authJsonPath, "utf8"))).toEqual({
+			anthropic: { type: "api_key", key: "stored" },
+		});
 	});
 
 	test("aborts while waiting for a held file lock without running the mutation later", async () => {

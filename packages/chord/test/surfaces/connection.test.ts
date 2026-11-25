@@ -1,6 +1,7 @@
 // Tests of the connection loop (slice 11 §2, decision "Slice 11, P6"): reconnect pauses (250 ms doubling to 5 s, reset
-// by a stable connection, the longest while offline), wakes (a pending retry at once; an open socket silent past the
-// server's pings replaced), the connect timeout, `canRetry` stopping it, and the states it reports.
+// by a stable connection, the longest while offline), wakes (a pending retry at once, a drop soon after one retried at
+// once; an open socket silent past the server's pings replaced), the connect timeout, `canRetry` asked beside the next
+// attempt and stopping it, and the states it reports.
 
 import { describe, expect, it } from "vitest";
 import {
@@ -169,10 +170,10 @@ describe("reconnecting", () => {
 		expect(states.at(-1)).toBe("waiting");
 	});
 
-	it("retries at once when woken while canRetry is deciding", async () => {
+	it("does not wait for canRetry: the next attempt goes ahead; a late no after it opened closes it, reported waiting", async () => {
 		const world = new FakeWorld();
 		let answer!: (retry: boolean) => void;
-		loop(
+		const { states } = loop(
 			world,
 			() =>
 				new Promise((resolve) => {
@@ -180,10 +181,52 @@ describe("reconnecting", () => {
 				}),
 		);
 		world.last.close();
+		await world.advance(250);
+		expect(world.sockets).toHaveLength(2);
+		world.last.events.opened();
+		expect(states.at(-1)).toBe("connected");
+		answer(false);
+		await world.advance(60_000);
+		expect([world.sockets.length, world.last.closed, states.at(-1)]).toEqual([2, true, "waiting"]);
+	});
+
+	it("asks canRetry one question at a time: closes while it is open ask nothing more; the next close asks again", async () => {
+		const world = new FakeWorld();
+		const answers: ((retry: boolean) => void)[] = [];
+		loop(
+			world,
+			() =>
+				new Promise((resolve) => {
+					answers.push(resolve);
+				}),
+		);
+		for (let attempt = 0; attempt < 8; attempt++) {
+			world.last.close();
+			await world.advance(5000);
+		}
+		expect([world.sockets.length, answers.length]).toEqual([9, 1]);
+		answers[0]!(true);
+		await settled();
+		world.last.close();
+		await settled();
+		expect(answers).toHaveLength(2);
+	});
+
+	it("retries at once a drop soon after a wake (the socket that was away), once per wake", async () => {
+		const world = new FakeWorld();
+		loop(world);
+		world.last.events.opened();
+		await world.advance(STABLE_MS);
+		// Back from the background: the wake comes first, then the close the frozen page had not handled yet.
 		world.wake();
-		answer(true);
+		world.last.close();
 		await world.advance(0);
 		expect(world.sockets).toHaveLength(2);
+		// The server is down: the next drop waits the growing pause, no tight loop.
+		const closedAt = world.now;
+		world.last.close();
+		await world.advance(5000);
+		expect(world.opens.at(-1)! - closedAt).toBe(500);
 	});
 });
 
@@ -200,6 +243,8 @@ describe("a silent socket", () => {
 		world.wake();
 		await world.advance(STALE_MS + 1000);
 		expect(world.sockets[0]!.closed).toBe(true);
+		// Its replacement goes at once (at the second wake's check, 1 s after it), not after a pause.
+		expect(world.opens[1]).toBe(10_000 + STALE_MS + 1000);
 	});
 
 	it("closes the link at stop and opens no other", async () => {

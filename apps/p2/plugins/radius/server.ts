@@ -1,5 +1,7 @@
 import { defineFacet, nativeOf, serveNative } from "@p2/app/v1";
-import { RequestResolvers, Server, ShareUrls } from "@p2/app/v1/server";
+import { RequestResolvers, Server, ServerName, ShareUrls } from "@p2/app/v1/server";
+import { BackupTargets } from "../backup/contract.ts";
+import { isTerminalSyncError, RadiusSyncRemote } from "../backup/radius-remote.ts";
 import { ForwardStore, ForwardsNative } from "../ports/contract.ts";
 import { Shares } from "../sharing/contract.ts";
 import { RadiusBrain, type RadiusStatus } from "./brain.ts";
@@ -9,7 +11,9 @@ import { RelayAccess } from "./relay-access.ts";
 /** Pi Mobile's status lines: the brain it connected as, or why it is not connected (retrying). */
 export function radiusStatusText(status: RadiusStatus): string {
 	return status.status === "connected"
-		? `connected as brain ${status.serverId}`
+		? status.name === undefined
+			? `connected as brain ${status.serverId}`
+			: `connected as brain "${status.name}" (${status.serverId})`
 		: status.status === "retrying"
 			? `not connected (${status.error})`
 			: "";
@@ -19,6 +23,7 @@ export default defineFacet((host) => {
 	serveNative(host, RadiusConnections);
 	host.serve(RadiusService, (_params, self) => {
 		const server = self.get(Server, {});
+		const serverName = self.get(ServerName, {});
 		self.get(ForwardStore, {});
 		const forwards = nativeOf(self, ForwardsNative, "The forwards");
 		const connection = self.open(
@@ -29,6 +34,7 @@ export default defineFacet((host) => {
 					directory: server.info.value.dataDir,
 					port: () => server.info.value.port,
 					relay,
+					name: serverName.name.value ?? undefined,
 					forwards: forwards().forwards,
 					// As Pi Mobile: each new status once, retries with their error.
 					onStatus: (status) => {
@@ -50,13 +56,17 @@ export default defineFacet((host) => {
 					origin: relayed.publicOrigin,
 					remote: true,
 					port: server.info.value.port,
-					relayShellOrigin: relayed.shellOrigin,
+					...(relayed.shellOrigin === undefined ? {} : { relayShellOrigin: relayed.shellOrigin }),
 				};
 				// Anyone else is whom sharing finds by their email (the sessions shared with them), or nobody.
 				return relayed.user === undefined
 					? { principal: { kind: "owner", access: "relay" }, origin }
 					: { principal: undefined, origin: { ...origin, relayUser: relayed.user } };
 			},
+		});
+		// Radius shows the server under its name: a copy, which follows every rename.
+		self.on(serverName.name, async ({ value: name }) => {
+			connection.value.brain.rename(name ?? undefined);
 		});
 		// Radius admits and lists this brain for the emails sessions are shared with.
 		const shares = self.get(Shares, {});
@@ -66,12 +76,30 @@ export default defineFacet((host) => {
 		self.contribute(ShareUrls, {
 			radius: (session) => {
 				const page = connection.value.brain.shellPage;
-				return page && `${page}?${new URLSearchParams({ path: `/s/${session}` })}`;
+				return page && `${page}/s/${encodeURIComponent(session)}`;
 			},
 		});
 		self.contribute(RadiusConnections, {
 			get connection() {
 				return connection.value;
+			},
+		});
+		// Backup to the Radius this instance is signed in to (`P2_BACKUP=radius`): no sign-in of its own. Radius records
+		// this server's ID as the device of every slot it creates, and holds all of a user's servers in one space, so the
+		// server's store is named by it too.
+		self.contribute(BackupTargets, {
+			radius: {
+				open: async () => {
+					const brain = connection.value.brain;
+					const { serverId } = await brain.syncAccess();
+					return {
+						remote: new RadiusSyncRemote(() => brain.syncAccess()),
+						account: () => brain.account(),
+						device: serverId,
+						server: `server-${serverId}`,
+						terminal: isTerminalSyncError,
+					};
+				},
 			},
 		});
 		return {};

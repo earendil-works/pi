@@ -1,5 +1,6 @@
 import { common, createLowlight } from "lowlight";
 import { type CSSProperties, Fragment, type ReactNode, useEffect, useMemo, useState } from "react";
+import { type HastNode, highlightLines } from "./highlight-lines.ts";
 import { CheckIcon, CopyIcon } from "./icons.tsx";
 
 const lowlight = createLowlight(common);
@@ -13,13 +14,6 @@ function languageOf(hint: string | undefined): string | undefined {
 	const language = ALIASES[key] ?? key;
 	return language && lowlight.registered(language) ? language : undefined;
 }
-
-type HastNode = {
-	type: string;
-	value?: string;
-	properties?: { className?: unknown };
-	children?: HastNode[];
-};
 
 function render(nodes: readonly HastNode[], key: string): ReactNode[] {
 	return nodes.map((node, index) => {
@@ -146,15 +140,18 @@ export function LinesBlock({
 }) {
 	const resolved = languageOf(language);
 	const size = lines.reduce((total, line) => total + line.text.length, 0);
-	const highlighted = useMemo(
-		() =>
-			lines.map((line) =>
-				line.kind === "hunk" || line.kind === "meta"
-					? line.text
-					: highlight(line.text, size > 200_000 ? undefined : resolved),
-			),
-		[lines, resolved, size],
-	);
+	// Each side of the patch as one text: a comment or template literal spanning lines stays one token.
+	const highlighted = useMemo(() => {
+		const language = size > 200_000 ? undefined : resolved;
+		if (!language) return lines.map((line) => line.text);
+		return highlightLines(lines, (text) => {
+			try {
+				return lowlight.highlight(language, text).children as unknown as HastNode[];
+			} catch {
+				return undefined;
+			}
+		}).map((line, index) => (typeof line === "string" ? line : render(line, `h${index}`)));
+	}, [lines, resolved, size]);
 	const digits = String(lines.reduce((widest, line) => Math.max(widest, line.number ?? 0), 1)).length;
 	return (
 		<pre className="diff patch hljs" style={{ "--gutter": `${digits}ch` } as CSSProperties}>
@@ -231,6 +228,11 @@ export function CopyButton({ text, label, primary }: { text: string; label?: str
 			{label && <span>{copied ? "Copied" : label}</span>}
 		</button>
 	);
+}
+
+/** Code highlighted for a fence info string or a file name, as React elements (plain text when not known). */
+export function highlightCode(code: string, hint: string | undefined): ReactNode {
+	return highlight(code, languageOf(hint));
 }
 
 export function CodeBlock({ code, language, tool }: { code: string; language?: string; tool?: boolean }) {

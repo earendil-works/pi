@@ -1,0 +1,5 @@
+/* The Familiar's row in the sidebar: the Pi logo as its icon, in the marker column's size. */
+.nav-marker > .nav-icon > .pi-logo {
+	width: var(--nav-icon);
+	height: var(--nav-icon);
+}

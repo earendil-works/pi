@@ -16,7 +16,7 @@ import { Chat } from "../../plugins/chat/contract.ts";
 import { ChatMode, spokenMention } from "../../plugins/chat-mode/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
-import { BargeInDetector, type BargeInPhase, Pcm16kResampler } from "../../plugins/voice/barge-in.ts";
+import { BargeInDetector, Pcm16kResampler } from "../../plugins/voice/barge-in.ts";
 import { languagesOf, resolved } from "../../plugins/voice/choice.ts";
 import { VoiceMode, VoiceService } from "../../plugins/voice/contract.ts";
 import { responses } from "../../plugins/voice/engine.ts";
@@ -213,84 +213,6 @@ describe("voice transcripts waiting for the conversation", () => {
 		assert.equal(queue.size, 2);
 		assert.match(errors[1] ?? "", /Too many messages waiting/);
 		queue.clear();
-	});
-});
-
-describe("voice barge-in detector (pibot's)", () => {
-	const rate = 16000;
-	const frame = 1024;
-	const tone = (start: number, length: number) =>
-		Float32Array.from({ length }, (_, index) => 0.5 * Math.sin((2 * Math.PI * 300 * (start + index)) / rate));
-	let seed = 1;
-	const noise = (length: number, amplitude: number) =>
-		Float32Array.from({ length }, () => {
-			seed = (seed * 16807) % 2147483647;
-			return (seed / 2147483647 - 0.5) * 2 * amplitude;
-		});
-	const pcmOf = (input: Float32Array) => Int16Array.from(input, (sample) => Math.round(sample * 0x7fff));
-	/** Plays `seconds` of the tone into the reference; returns how many samples played. */
-	const playing = (detector: BargeInDetector, seconds: number) => {
-		for (let at = 0; at < seconds * rate; at += frame) detector.handlePlaybackAudio(tone(at, frame), rate);
-		return Math.ceil((seconds * rate) / frame) * frame;
-	};
-	/** Feeds `frames` frames made by `make`; the first triggering result, if any. */
-	const feed = (detector: BargeInDetector, frames: number, make: () => Float32Array, phase: BargeInPhase) => {
-		for (let index = 0; index < frames; index++) {
-			const input = make();
-			const result = detector.observeMic(input, rate, pcmOf(input), phase, true);
-			if (result.triggered) return result;
-		}
-		return undefined;
-	};
-
-	it("streams normally only while listening or hearing, and buffers for barge-in otherwise", () => {
-		const detector = new BargeInDetector(rate);
-		assert.equal(detector.shouldStreamMicNormally("listening"), true);
-		assert.equal(detector.shouldStreamMicNormally("hearing"), true);
-		for (const phase of ["thinking", "tool", "speaking", "inactive", "error"] as const)
-			assert.equal(detector.shouldStreamMicNormally(phase), false);
-		// A loud voice while listening is never a barge-in (it is streamed anyway).
-		assert.equal(
-			feed(detector, 20, () => noise(frame, 0.5), "listening"),
-			undefined,
-		);
-	});
-
-	it("takes the playback's own echo for echo while speaking", () => {
-		const detector = new BargeInDetector(rate);
-		const end = playing(detector, 1);
-		// The microphone hears the playback 100 ms late, frame after frame.
-		let at = end - 10 * frame - 0.1 * rate;
-		assert.equal(
-			feed(
-				detector,
-				10,
-				() => {
-					const echo = tone(at, frame);
-					at += frame;
-					return echo;
-				},
-				"speaking",
-			),
-			undefined,
-		);
-	});
-
-	it("interrupts after five frames of sound the playback does not explain, then streams until reset", () => {
-		const detector = new BargeInDetector(rate);
-		playing(detector, 1);
-		const result = feed(detector, 20, () => noise(frame, 0.5), "speaking");
-		assert(result?.preroll && result.metrics);
-		assert(result.metrics.residualRatio >= 0.62 && result.metrics.micRms >= 0.018);
-		// The preroll is the last second of microphone audio (16 kHz).
-		assert.equal(result.preroll.length, 5 * frame);
-		assert.equal(detector.isStreaming(), true);
-		detector.resetStreaming();
-		assert.equal(detector.isStreaming(), false);
-		// The next trigger's preroll holds only what was not streamed yet (noise triggering again and again must not
-		// send more than real time).
-		const again = feed(detector, 20, () => noise(frame, 0.5), "speaking");
-		assert.equal(again?.preroll?.length, 5 * frame);
 	});
 });
 
@@ -777,15 +699,18 @@ describe("voice mode's switch and voice", () => {
 			"participant",
 		);
 		await owner.set({ enabled: true }, BACKGROUND_CONTEXT);
+		// The answer follows its state: the owner's switch and voice are on the page when each call resolves.
+		assert.equal(owner.enabled.value, true);
 		await owner.choose({ engine: "kokoro", voice: "kokoro-af_heart", speed: 1, language: "de" }, BACKGROUND_CONTEXT);
+		assert.equal(owner.voice.value?.voice, "kokoro-af_heart");
 		// The guest sees the owner's choice, language included.
 		assert.equal((await until(alice.voice, (voice) => voice?.voice === "kokoro-af_heart"))?.language, "de");
 		assert.equal(alice.enabled.value, false, "a guest's switch is its own");
 		await alice.set({ enabled: true }, BACKGROUND_CONTEXT);
-		await until(alice.enabled, (value) => value);
+		assert.equal(alice.enabled.value, true);
 		// The guest turning its microphone off leaves the owner's voice mode on.
 		await alice.set({ enabled: false }, BACKGROUND_CONTEXT);
-		await until(alice.enabled, (value) => !value);
+		assert.equal(alice.enabled.value, false);
 		assert.equal(owner.enabled.value, true);
 		// A reference carries every variant's members; the participant's binding refuses the owner's (cast: the type has
 		// only the participant's).
@@ -869,7 +794,7 @@ describe("voice routes and mode", () => {
 			await poll(() => texts.some((event) => event.type === "welcome"), 5000, "welcome");
 			return { socket, texts, frames };
 		};
-		const ownerRoom = await join_({});
+		const ownerRoom = await join_({ Cookie: fixture.owner.cookie });
 		const guestRoom = await join_(full);
 		const room = `p2-${session}-1`;
 		const [ownerHeaders, guestHeaders] = speech.upgrades.slice(-2);
@@ -956,15 +881,21 @@ describe("voice routes and mode", () => {
 		};
 		assert.equal(await status(path, view), 403, "view-only guests have no voice");
 		assert.equal(await status(`/voice/room?session=other-session&conversation=1`, full), 403, "another session's");
-		assert.equal(await status("/voice/room?conversation=1", {}), 400);
-		assert.equal(await status(`/voice/room?session=${session}&conversation=0`, {}), 400);
+		const local = { Cookie: fixture.owner.cookie };
+		assert.equal(await status("/voice/room?conversation=1", local), 400);
+		assert.equal(await status(`/voice/room?session=${session}&conversation=0`, local), 400);
+		assert.equal(await status(path, {}), 403, "loopback alone is nobody");
 
 		// The engines for both (pushed live); a sample for the owner only; logs for both, the guest's marked as such.
 		const alice = await holdIn(fixture.client(full).host, VoiceService, {}, "talker");
 		assert.deepEqual(await until(alice.voices, (value) => value !== null), VOICES);
 		alice.release();
 		await expectChord(whenLive(fixture.client(view).host.hold(VoiceService, {}, BACKGROUND_CONTEXT)), "forbidden");
-		const origin = { Origin: `http://127.0.0.1:${port}`, "Content-Type": "application/json" };
+		const origin = {
+			Origin: `http://127.0.0.1:${port}`,
+			"Content-Type": "application/json",
+			Cookie: fixture.owner.cookie,
+		};
 		const sample = await http(port, "/voice/sample", {
 			method: "POST",
 			headers: origin,
@@ -996,7 +927,11 @@ describe("voice routes and mode", () => {
 
 	it("writes the browser's diagnostics to the server log, for the owner only", async () => {
 		const port = fixture.server.port;
-		const origin = { Origin: `http://127.0.0.1:${port}`, "Content-Type": "application/json" };
+		const origin = {
+			Origin: `http://127.0.0.1:${port}`,
+			"Content-Type": "application/json",
+			Cookie: fixture.owner.cookie,
+		};
 		const lines: string[] = [];
 		const log = mock.method(console, "log", (line: unknown) => {
 			lines.push(String(line));

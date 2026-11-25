@@ -1,0 +1,400 @@
+/* Views: the workbench of panes (Workbench.tsx), the built-in panes (panes.tsx), the annotation layer (annotate.tsx)
+   and the Views sheet (sheet.tsx). */
+
+/* `clip`, not `hidden`: no scroll container (scrollIntoView would scroll it; it would reset the phone layout's
+   touch-action, which the drawer's swipe needs). */
+.views-workbench {
+	position: relative;
+	flex: 1;
+	min-width: 0;
+	min-height: 0;
+	overflow: clip;
+}
+.views-pane {
+	position: absolute;
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
+	overflow: clip;
+	background: var(--bg);
+}
+/* The chat's top bar and the owner's notices below it, as in the bare chat (owner-notices.css). */
+.views-pane > .topbar {
+	order: -2;
+	flex: none;
+}
+.views-pane[hidden] {
+	display: none;
+}
+/* On phones the strip of tabs takes the safe area; the panes below it need none. */
+.views-workbench.narrow:not(.alone) {
+	margin-top: var(--safe-top);
+}
+.views-workbench.narrow:not(.alone) .views-pane {
+	--safe-top: 0px;
+}
+
+/* Tabs: an area's views, the selected one underlined on the strip's bottom line. */
+.views-tabs {
+	position: absolute;
+	z-index: 6;
+	display: flex;
+	align-items: stretch;
+	overflow-x: auto;
+	border-bottom: 1px solid var(--line);
+	background: var(--bg);
+}
+.views-tab {
+	display: flex;
+	flex: none;
+	align-items: center;
+	gap: var(--s1);
+	max-width: 240px;
+	padding: 0 var(--s3);
+	border-bottom: 2px solid transparent;
+	color: var(--muted);
+	font-size: var(--fs-sm);
+	cursor: default;
+	touch-action: none;
+	user-select: none;
+	white-space: nowrap;
+}
+.views-tab > span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.views-tab.on {
+	border-bottom-color: var(--text);
+	color: var(--text);
+}
+.views-tab.dragging {
+	opacity: 0.5;
+}
+.views-tab-close {
+	display: grid;
+	flex: none;
+	place-items: center;
+	width: 20px;
+	height: 20px;
+	border-radius: var(--radius);
+	color: var(--faint);
+}
+.views-tab-close svg {
+	width: 12px;
+	height: 12px;
+}
+@media (hover: hover) {
+	.views-tab:hover,
+	.views-tab-close:hover {
+		color: var(--text);
+	}
+}
+.views-tabs.phone .views-tab {
+	touch-action: manipulation;
+}
+
+/* Splitters: a line between areas, with room to grab it. */
+.views-splitter {
+	position: absolute;
+	z-index: 7;
+	touch-action: none;
+}
+.views-splitter.row {
+	cursor: col-resize;
+}
+.views-splitter.column {
+	cursor: row-resize;
+}
+.views-splitter::after {
+	content: "";
+	position: absolute;
+	background: var(--line);
+}
+.views-splitter.row::after {
+	top: 0;
+	bottom: 0;
+	left: 4px;
+	width: 1px;
+}
+.views-splitter.column::after {
+	top: 4px;
+	right: 0;
+	left: 0;
+	height: 1px;
+}
+
+/* A tab or splitter holds the pointer: frames take none of its events (Workbench.tsx, holdPointer). */
+.views-workbench.pointer-held iframe {
+	pointer-events: none;
+}
+/* A tab being dragged: where it lands is shaded. */
+.views-drag-cover {
+	position: absolute;
+	inset: 0;
+	z-index: 30;
+	cursor: grabbing;
+}
+.views-drop {
+	position: absolute;
+	border: 1px solid var(--line);
+	background: color-mix(in srgb, var(--text) 8%, transparent);
+	pointer-events: none;
+}
+.views-drag-label {
+	position: absolute;
+	padding: var(--s1) var(--s2);
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--bg);
+	font-size: var(--fs-sm);
+	pointer-events: none;
+}
+
+/* Panes */
+.views-doc {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+	padding: var(--s3) var(--x) var(--s5);
+}
+/* Documents read at the chat's text width, centred in the pane. */
+.views-doc > * {
+	max-width: var(--chat-width);
+	margin-inline: auto;
+}
+.views-frame {
+	flex: 1;
+	width: 100%;
+	min-height: 0;
+	border: 0;
+	background: white;
+}
+.views-change + .views-change {
+	margin-top: var(--s3);
+}
+.views-change-head {
+	display: flex;
+	align-items: center;
+	gap: var(--s2);
+	width: 100%;
+	min-height: var(--control-sm);
+	font-family: var(--mono);
+	font-size: var(--fs-sm);
+	text-align: left;
+}
+.views-change-path {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.views-chevron {
+	display: inline-flex;
+	color: var(--faint);
+	transition: transform 0.15s;
+}
+.views-chevron.open {
+	transform: rotate(90deg);
+}
+
+/* Annotations */
+::highlight(p2-note) {
+	background-color: color-mix(in srgb, var(--working) 30%, transparent);
+}
+::highlight(p2-note-delete) {
+	background-color: color-mix(in srgb, var(--bad) 22%, transparent);
+	text-decoration: line-through;
+}
+.views-ink,
+.views-ink-input {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+}
+.views-ink {
+	z-index: 4;
+	pointer-events: none;
+}
+.views-ink-input {
+	z-index: 25;
+	cursor: crosshair;
+	touch-action: none;
+}
+.views-ink polyline,
+.views-ink-input polyline {
+	fill: none;
+	stroke: var(--bad);
+	stroke-width: 2.5px;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+.views-ink polyline.sent {
+	opacity: 0.45;
+}
+.views-annotate-bar {
+	position: absolute;
+	/* Below the tab strips; alone, below the chat's top bar. */
+	top: calc(36px + var(--s2));
+	left: 50%;
+	z-index: 26;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--s1);
+	width: max-content;
+	max-width: calc(100% - 2 * var(--s2));
+	padding: var(--s1);
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--bg);
+	transform: translateX(-50%);
+}
+.views-workbench.alone .views-annotate-bar {
+	top: calc(var(--bar) + var(--safe-top) + var(--s2));
+}
+.views-annotate-bar > button {
+	display: flex;
+	align-items: center;
+	gap: var(--s1);
+	min-height: var(--control-sm);
+	padding: 0 var(--s2);
+	border-radius: var(--radius);
+	font-size: var(--fs-sm);
+}
+.views-annotate-bar > button.on {
+	background: var(--hover);
+}
+@media (hover: hover) {
+	.views-annotate-bar > button:hover {
+		background: var(--hover);
+	}
+}
+.views-annotate-bar > button svg {
+	width: 16px;
+	height: 16px;
+}
+.views-strike {
+	color: var(--muted);
+	font-size: var(--fs-xs);
+	text-decoration: line-through;
+}
+.views-annotate-hint,
+.views-comment,
+.views-notes {
+	flex-basis: 100%;
+	padding: var(--s1) var(--s2);
+	font-size: var(--fs-sm);
+}
+.views-comment textarea {
+	width: 100%;
+	margin-top: var(--s1);
+	padding: var(--s2);
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--bg);
+	color: var(--text);
+	font: inherit;
+	resize: vertical;
+}
+.views-comment-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: var(--s3);
+}
+.views-notes ul,
+.views-list {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.views-notes ul {
+	max-height: 40vh;
+	overflow: auto;
+}
+.views-notes li {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--s2);
+	padding: var(--s2) 0;
+	border-top: 1px solid var(--line);
+}
+.views-notes li > div {
+	flex: 1;
+	min-width: 0;
+}
+.views-notes li p {
+	overflow-wrap: anywhere;
+}
+.views-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--s1);
+}
+.views-chip > button {
+	color: var(--muted);
+}
+
+/* The Views sheet */
+.views-sheet-head {
+	margin: var(--s4) 0 var(--s1);
+	color: var(--muted);
+	font-size: var(--fs-sm);
+	font-weight: var(--fw-strong);
+}
+.views-sheet-head:first-child {
+	margin-top: 0;
+}
+.views-list li {
+	display: flex;
+	align-items: center;
+	gap: var(--s3);
+	min-height: var(--row);
+	border-top: 1px solid var(--line);
+}
+.views-list-title {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-width: 0;
+}
+.views-list-title > span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.views-list-title > .muted {
+	font-size: var(--fs-xs);
+}
+.views-add {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: var(--s2);
+}
+.views-add form {
+	display: flex;
+	align-items: center;
+	gap: var(--s3);
+	width: 100%;
+}
+.views-add input {
+	flex: 1;
+	min-width: 0;
+	height: var(--row);
+	padding: 0;
+	border: 0;
+	border-bottom: 1px solid var(--line);
+	background: transparent;
+	color: var(--text);
+	font: inherit;
+}
+@media (pointer: coarse) {
+	.views-annotate-bar > button,
+	.views-tab-close {
+		min-height: var(--row);
+		min-width: var(--row);
+	}
+}

@@ -3,7 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT } from "../../src/context/index.ts";
-import { int, obj, str } from "../../src/contracts/index.ts";
+import { hostKind, int, obj, str } from "../../src/contracts/index.ts";
 import { track } from "../../src/delta/index.ts";
 import { defineState, type JsonObject } from "../../src/documents/index.ts";
 import { Persistence, type Stored, storedAfter } from "../../src/documents/persistence.ts";
@@ -281,5 +281,54 @@ describe("staged writes", () => {
 		const value = { title: "", n: 1n } as unknown as JsonObject;
 		const prepared = { base: value, value, ops: [], baseRevision: 0, abort: () => {} };
 		expect(() => notes.stage("a", Note, undefined, { prepared, retires: false }, [])).toThrow(TypeError);
+	});
+});
+
+describe("host-keyed documents", () => {
+	it("store their key as the record's host; string-keyed ones store none", async () => {
+		const Session = hostKind("session", { id: str() });
+		const hosted = new Persistence(store, "app.store", "chord", "notes.note", Session);
+		const writes: StagedWrite[] = [];
+		const value = { title: "x", n: 1 };
+		const tracker = track(value);
+		const draft = tracker.beginChange();
+		draft.state.n = 2;
+		hosted.stage("session|S1", Note, undefined, { prepared: draft.prepare(), retires: false }, writes);
+		await store.commit(writes, { admit: () => true, adopt: () => {} }, context);
+		await change(
+			"session|S2",
+			undefined,
+			(d) => {
+				d.title = "y";
+			},
+			undefined,
+		);
+		expect((await hosted.read("session|S1", context))?.record.host).toBe("session|S1");
+		expect((await notes.read("session|S2", context))?.record.host).toBeUndefined();
+	});
+});
+
+describe("the host discriminator", () => {
+	it("refuses a record stored with string keys to a host-keyed definition, and the reverse", async () => {
+		const Session = hostKind("session", { id: str() });
+		const hosted = new Persistence(store, "app.store", "chord", "notes.note", Session);
+		await change(
+			"session|S1",
+			undefined,
+			(d) => {
+				d.title = "plain";
+			},
+			undefined,
+		);
+		const stored = await hosted.read("session|S1", context);
+		expect(() => hosted.decode(stored!, Note, context)).toThrow(
+			"notes.note: stored with string keys, declared with addresses of session (convert it explicitly)",
+		);
+		const found = await hosted.find("session|S1", context);
+		expect(() => hosted.checkHost(found!.host, Note)).toThrow("stored with string keys");
+		expect(() => notes.checkHost("session|S1", Note)).toThrow(
+			"stored with addresses of session, declared with string keys",
+		);
+		expect(notes.decode(stored!, Note, context).value).toEqual({ title: "plain", n: 0 });
 	});
 });

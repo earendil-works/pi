@@ -2,7 +2,9 @@
 
 Remote objects over links (§3 hosts, links, routes, flow control and recovery, §4, §7, §22, W1; decision "Relay flow
 control per origin"): both sides of every link of a host, the paths its upstream holds take across links, relayed
-holds, the window of `bound` and `state` messages per origin, the call window, and (slice 4b) parts made and opened
+holds, the window of `bound` and `state` messages per origin, the call window (none on trusted links, relayed calls
+queued per upstream window), events (their window and tickets per origin, decision "Events: fire-and-forget members"),
+and (slice 4b) parts made and opened
 within each link's limits, compression at the origin, activation chains and revocation from the parent. Apps use them through `host.accept`, `host.connect`,
 `host.route` and references; nothing here is exported for apps.
 
@@ -13,10 +15,11 @@ within each link's limits, compression at the origin, activation chains and revo
   **origin** and one consumer side. Message kinds are directional, so each goes to its side: `hold`, `release`,
   `call`, `abort`, `retry` and `ack` to the provider side of their `origin` (0 when absent; a `hold` makes it, other
   messages for an origin without one are ignored), `closed { origin }` ends that provider side; `bound`, `state`,
-  `failed`, `loading`, `result`, `error` and `gone` to the consumer side; `revoke` to the host, from a parent link only
+  `failed`, `loading`, `result`, `error`, `gone` and `event` to the consumer side; `revoke` to the host, from a parent link only
   (`host.revoke` with this host's own `revokedBy`; anywhere else it is ignored). `origin` is honoured only on parent and route links, where a relay's messages arrive; on a child link a message
-  carrying one is a protocol error (decision "Origins only from relays"). A provider side (one per origin) goes once it
-  has no holds, no calls and nothing in flight; its origin's next hold makes a new one (origins are never reused).
+  carrying one is a protocol error (decision "Origins only from relays"). It announces the host's `callWindow` in its
+  `hello` unless it was given as trusted, then none (decision "Call windows only for untrusted links"). A provider side
+  (one per origin) goes once it has no holds, no calls, no `bound`/`state` messages and no event tickets in flight; its origin's next hold makes a new one (origins are never reused).
   Closing it, from either end, ends both sides: the provider sides release the peer's holds and abort their calls, the
   consumer side's calls reject and its path tells the holders. It makes the parts this host originates (`part`:
   deflated above 16 KiB with the host's compressor) and opens the parts it owns (`openPart`: within the limits its
@@ -49,9 +52,13 @@ within each link's limits, compression at the origin, activation chains and revo
   never reused. Messages carry it as `origin` (absent for 0) and answers carry it back.
 - `ProviderSide` (one origin of a link: the holds and calls the peer sent for it, by their ids): a message naming an id
   it does not know is ignored (Q1), one reusing a live id is a protocol error, and so are more running calls than this
-  side announced in `hello` (N = 256 per origin; a call on an unknown hold is ignored before it is counted). Its table
+  side announced in `hello` (N per origin, the host's `callWindow`; none on a trusted link, which no count closes; a
+  call on an unknown hold is ignored before it is counted, a relayed call waiting for its upstream window counts). Its table
   has two kinds of entries: `Hold` (served here) and `RelayedHold` (relayed, never hydrated). A call on a pending hold
-  is answered `not_ready`; an aborted, released or gone call gets no reply. While the host closes, its holds are only
+  is answered `not_ready`, one crossing a `failed` or a removal with the cause its consumer was told; a call sent with
+  the indexes of a binding its consumer has not acknowledged a newer `bound` of yet is decoded by them (another
+  variant's indexes name other methods; one the new variant lacks fails `invalid/member`); an aborted, released or gone
+  call gets no reply. While the host closes, its holds are only
   dropped (the host ends the objects itself). It sends with its origin. A hold's `chain` is kept only from a trusted
   link and its stamped `limit` only from a parent link; its decoded limit is the smaller of the link's and the stamped
   one, which a relayed hold carries upstream as `limit`. A call on a relayed hold whose arguments are past the link's
@@ -75,6 +82,17 @@ within each link's limits, compression at the origin, activation chains and revo
     other.
   - A live object stays live until it ends, so a hold waiting for its slot never goes back to pending; slice 7's
     reload adds that.
+- **Events** (decision "Events: fire-and-forget members"): at the host's event flush each served hold's tap hands its
+  entries to its provider side (`queueEvent`). It admits an entry only while this host's event window has room
+  (`eventWindow` of its own messages unacknowledged; the window cannot change during a flush): else the entry is
+  dropped as it is visited, counted (`chord.events.dropped { reason: "window" }`), nothing encoded, built or queued.
+  An admitted value is encoded once per representation for every hold and link (the part kept on the flush's entry);
+  then `sendEvents` sends the admitted entries as one `event` message of its origin. A hold whose object no longer
+  shows it live untaps its event members at once, while its state still follows the admitted commits. Each message in flight has a ticket, `local` or the upstream link a relay
+  forwarded it from; `ack { events: n }` consumes the first n tickets: a local one frees a slot, a relayed one is
+  returned to its link (`ack { origin, events }`, summed per link; a closed link takes nothing). Event acks never touch
+  the state window or its fence. A relay forwards an upstream `event` message at once with its entries filtered as for
+  state (holds not relayed over the link it came from), also with none left, and never acknowledges one itself.
 - **At a relay** nothing is folded, dropped or reset: each upstream `bound`/`state` for an origin is forwarded at once
   and acknowledged upstream when the downstream acknowledges it. A slow tab fills only its own origin's window at each
   worker, whose pending queues fold its commits; other tabs are other origins. A tab served by W workers may have 2W
@@ -89,15 +107,32 @@ within each link's limits, compression at the origin, activation chains and revo
   (malformed: a protocol error). A type not served here (or as a local type), a mismatch, or params the provider's
   code places on another host leave it refused `failed { waiting }`, indexed under its type until a publication re-runs
   its start (`loading`, then `bound` or `failed`); invalid params or a cycle leave it refused `failed { broken }`; both
-  are kept for a `retry`, which re-runs the start. While pending it follows its object's `state`: each failure is sent
+  are kept for a `retry`, which re-runs the start. An object its admission denies (slice 14) is `failed { denied }`:
+  the hold unbinds, every call made before its consumer learnt of it is answered `forbidden/revoked` (in flight,
+  waiting for a call-window slot at the consumer or at a relay, or crossing the `failed`), and the consumer drops its
+  replicas (no
+  value of it stays readable); the next allow sends `loading`, then `bound`. **Bindings are fenced per
+  acknowledgement:** one fence per unacknowledged `bound`, so a call is decoded by what its consumer had applied when
+  it sent it (A, B, C before the first `ack`: a call sent between B's and C's application by B's names), and a call
+  sent after the consumer was told a failure is refused with it. A path of a route with an admission (`path.ts`)
+  holds on its links only the holders its gate admits (a lost link asks the gate, `unlinked`, which takes back what
+  it cannot forward on the next one: a new link fails closed): a denial releases a holder upstream (`withheld`), an
+  allow
+  tells it `loading` (`admitted`) and holds it again under its id behind a fence (`release`, a `ping`, the hold after that ping's `pong`), which relies
+  on the route's `resolve` returning the link to the final provider of the address. While pending it follows its object's `state`: each failure is sent
   as `failed` (with `retryIn`, the rest of the object's backoff window, for a transient one; absent for broken and
   waiting), each new cause of an object parked on a failed dependency too, the current one at once when the object is
   failed already; the next attempt (or the parked object's next `loading`) is announced with `loading`; the hold stays,
   so a `retry` (from any holder) renews even a broken object for every holder (a parked object passes it on, one walk
-  of this host with one hop less of the message's budget). After a swap in place it gets a fresh `bound` once the new
-  instance is live, answering calls by the names it was bound with until that is sent (the window may hold it). Live,
+  of this host with one hop less of the message's budget). Across a reload's restart it stays bound while the old
+  attempt serves its version; a fresh `bound` follows once the new instance is live, the hold answering calls by the
+  names it was bound with until that is sent (the window may hold it). An object leaving `live` unbinds it with `failed` (its calls in flight rejected) or `loading`: then its calls in flight
+  stay, each answered by the instance it runs on or by the object's gate, and calls by the names it was bound with
+  still arrive and wait at the gate until its fresh `bound` (decision "Calls in flight survive a `loading` unbind"). Live,
   it binds through the window (`boundEntry`: the variant and each member's value as a part, names as indexes into the
-  bound version). Its members' frames arrive as `Subscriber` calls inside the batch; at its
+  bound version); its `bound` also taps its instance's event members from the host's counter value then (an older
+  version's through the instance's mapping), untapped when it unbinds. Its members' frames arrive as `Subscriber` calls
+  inside the batch; at its
   end the hold's entry lists the members that changed with their ops, each encoded with that member's own Delta
   encoder (`entry`), or queues them (`queue`, later `pendingEntry`). Each entry counts one `chord.link.encodes`. A
   call's method is an index into the bound variant's methods; one outside them is a protocol error, its arguments are
@@ -112,8 +147,15 @@ within each link's limits, compression at the origin, activation chains and revo
   counts at its destination instead).
 - `RelayedHold` (a hold this host neither serves nor parses, `host.place` decided it): id `h` of its downstream
   origin, held with the same id on its path's current link under that origin's number, as the arriving hold's caller,
-  from its kept `hold` message (params copied once out of the received message, so no view keeps the buffer). `call`,
-  `abort`, `retry` and `release` go upstream at once; a call with no upstream link is answered `unavailable`. What
+  from its kept `hold` message (params copied once out of the received message, so no view keeps the buffer). `abort`,
+  `retry` and `release` go upstream at once; a call with no upstream link is answered `unavailable`, else it waits in
+  the upstream link's window for its origin (`relayWindow` on that link's consumer side: the upstream's N, none when it
+  announced none) and is forwarded as a slot frees (`RelayedCall`: `sent` once forwarded). A queued call of the hold is
+  rejected `unavailable` before its `loading` is forwarded and before a relayed `bound`'s `ack` goes upstream (it
+  carries the old indexes), with the cause before its `failed` or `gone`; an `abort` takes a queued one out unsent, a
+  release goes upstream first, then drops them and frees its forwarded ones' slots (so a call another hold waits with
+  reaches the upstream after that release, which ended the forwarded ones there), the upstream's drop fails them all
+  `unavailable`. What
   comes back with the origin reaches its downstream `ProviderSide` (`forward`), which sends it whole with its own
   origin, ids and parts untouched. A link answers only for what was relayed over it: an entry, notice or reply whose
   hold (or call) is not relayed over the link it came from is dropped (Q1), a `bound`/`state` left empty is
@@ -131,50 +173,86 @@ within each link's limits, compression at the origin, activation chains and revo
   `attach(holder)` holds a `RemoteObject` with a new id. A message with an origin goes to that origin's provider side
   (`host.relays`; an unknown origin is ignored). A `bound` or `state` message is prepared for every entry first (one
   that does not fit, an index outside the bound version or a member twice included, closes the link before anything
-  changed), then adopted in one batch of this host, then one `ack` is sent. A malformed reply rejects its call
+  changed), then adopted in one batch of this host, then one `ack` is sent (for a `bound`, before its references go
+  live: the calls they parked while rebinding follow the `ack`, decoded by the new binding's indexes). An `event`
+  message hands each entry to its holder and is consumed; a value nothing listens to (an unknown hold, one not live, a
+  member without subscriptions) is dropped before any inflate or parse (on a host without a compressor the rest are
+  inflated asynchronously first); the message is consumed all the same: one event `ack` per inbound turn, queued in a microtask after the
+  first, so after the event flush that delivered it. Per downstream origin it keeps the window of the calls this host
+  relays on this link (`relayWindow`, opened with the peer's `hello`, dropped with the origin's `closed`). Each call
+  record names its owner (the reference's binding, never on the wire): `cancelCalls(hold, owner, label)` cancels one
+  of several references sharing a hold, its waiting calls out of the window unsent first, then an `abort` for each of
+  its sent calls, the last sent first (a relay drops a later call still waiting in its upstream window before an
+  earlier abort frees a slot for it), then their slots freed and the calls rejected `released`; their abort listeners
+  go with them, so the reference's own end finds none. A malformed reply rejects its call
   `unavailable` before the link closes. When it closes, calls in flight and waiting reject `unavailable` (never
   resent) and its tables are dropped: nothing of a closed link reaches the next.
-- `CallWindow` (one per consumer side): at most the peer's N calls (from its `hello`; none before it) in flight; further
-  calls wait in one FIFO queue, sent in order as replies free slots; it does not preempt running calls. A relay
-  forwards its downstream calls at once, so only this host's own calls wait here. A slot is freed once per call: its
+- `CallWindow` (one per consumer side, one per relayed origin on it): at most the peer's N calls (from its `hello`;
+  none before it, every call at once when it announced no window) in flight; further calls wait in one FIFO queue,
+  sent in order as replies free slots; it does not preempt running calls; a waiting call is taken out before a slot it
+  would get is counted free (one, a hold's, or those a predicate matches: one owner's, `removeWhere`). A slot is freed once per call: its
   `result` or `error`, its `abort` (when sent), its hold's `release` or `gone`, or the link's close. A call still
-  waiting when its hold gets `loading` is rejected `unavailable` (it may name a method of the old variant).
+  waiting when its hold gets `loading` is rejected `unavailable` (it may name a method of the old variant); one sent
+  already waits for its reply.
 - `Path` (the parent, or one route address): its current link and its holders (`RemoteObject`s and `RelayedHold`s),
   held on that link and again on every next one; when the link drops, every holder is told (`dropped`). `changed`
   tells its owner (a route) what happened without a link: a holder `attached`, the link `dropped`, the last holder
   `released`. `unreachable(error)` fails every holder `failed { waiting }` (a route's `resolve` failed, a suspension):
   a `RemoteObject` moves there, a `RelayedHold` sends `failed` downstream; the next link binds them again.
-- `RemoteObject` (one per remote reference, owned by its host across the links of its path): its `state` (`loading`
+  `requested(holder)`: a reference joined a holder it has already; without a link that counts as an `attached` (a
+  route whose resolve failed resolves again). `suspended` tells whether its route suspended it (never for the parent's
+  or the unplaced path): a new reference then holds on its own.
+- `RemoteObject` (one per sharing key, owned by its host across the links of its path; decision "References share one
+  wire hold"): the host's table per path (`ChordHost.#shared`, a `WeakMap` from the path) maps the key (type, version,
+  fingerprint, params key, placed address, the caller's principal JSON and incarnation) to it; it is stored and its
+  first binding bound before it attaches (a resolver re-entering finds it, and a reference that resolver releases is
+  not its last), and only it takes its entry out (by identity): at its last release, a broken failure, `gone`,
+  revocation and the host's close, each before anything is told, and never put back. `self.get` references, a private
+  retry's object and one made where the key's object is failed `waiting` over a link are never stored. Its bindings
+  (one per reference, in the order they joined): `hold` adds one (one joining a bound object records, per member it
+  has not seen, the replica's count of values then: every member when the object is not live, else those failed or
+  missing; `Replica.generation`), `unhold` removes one (not the last: `cancelCalls` on the current hold, nothing else
+  sent; the last: `release`). Its `state` (`loading`
   until a link's hold is bound and again on every drop or `loading`, `failed` from `failed` with `retryAt = now +
   retryIn` for a transient cause, `retryAt` undefined for a broken or waiting one, `live` on `bound`, `released`;
-  every change tells its binding, whose parked dependent checks again: no new hold, no backoff), `remote` and
+  every change tells every binding, all retargeted in one batch, then each told (`moved`), whose parked dependent
+  checks again: no new hold, no backoff), `remote` and
   `blocksFirstPass` (never: a wait on another host ends this host's first pass), `lastFailure`, `variant` (set in `bound`'s batch, before derives recompute) and
   `member` (the last binding's, kept while loading or failed; outside the variant `invalid/member`), `call` (only while
-  live; outside the variant `invalid/member`), `retry` (sends `retry` while failed on an open link; after a part past
-  the limits, placed anew with `host.pathOf` and held with a new id, now or on that path's next link). Its holds made
+  live; outside the variant `invalid/member`), `retry` (sends `retry` while failed on an open link, for every
+  binding; after a part past the limits only the retrying binding moves, `Binding.transfer`, to a private
+  `RemoteObject` with copies of the replicas, `Replica.fork`, placed anew with `host.pathOf` and held with a new id,
+  now or on that path's next link; a placement that throws fails only that object broken). Its holds made
   while the object that declared it activates carry that object's chain (`activationChain`). A snapshot or state part
-  past the link's limits fails only its hold (`tooLarge`): released at the provider, the reference broken
+  past the link's limits fails only its hold (`tooLarge`): released at the provider, out of the table, every reference broken
   `too_large/part` and moved to the host's `unplaced` path, so no reconnect holds it and no route resolves for it,
   until `retry`; the message's other entries apply. Its call arguments go up a parent link
   uncompressed (the parent may have accepted it as a child). It keeps its
-  binding's caller: two references with different principals are two remote objects. Its holds carry the params as a
+  first binding's caller: two references with different principals are two remote objects. Its `chord.hold` span is
+  shared work: a root on the host's adapter, linked to its first getter's span when traced; a joining getter links to
+  it while it is open. Its holds carry the params as a
   part and the address its `hostAddress` computed. A `bound` (a first binding, a re-hold; also on a live hold)
   replaces the replicas in the message's batch: members it had get the snapshot as one frame `[["r", value]]` and a
   fresh decoder, members outside a new variant vanish (reads throw `invalid/member`, watches get one `failed` call and
   stay open, derives over them fail; a later binding with the member brings it back as `[["r", value]]`, as on the
-  provider's host), new members are made; then the reference goes live (its parked calls are sent). Its release sends
-  `release` on the current link and rejects its calls `released`; `gone` and the host's close end the reference with
-  their error.
+  provider's host), new members are made, and new event nodes (a new binding's: its reference's subscriptions move
+  there from their counter value); then the reference goes live (its parked calls are sent). An `event` entry for its
+  hold (`event`) goes to its member's node as a host event (the receiving host's next counter value), dropped when it
+  is not live, when nothing taps the node (not even parsed) or past the link's limits (`too_large`, counted, the hold
+  stays bound); an index outside the bound version is a protocol error. Its last release sends
+  `release` on the current link and rejects its calls `released`; `gone`, revocation and the host's close end every
+  reference with their error, each exactly once.
 - `Replica`: a state member on the consumer, a `Source` with its own Delta decoder: built from the snapshot, then
   `decode(wire)` (the new value by Delta's `applyImmutable`, structure shared, nothing validated) and `adopt(value,
   ops)` inside the batch, `fail(error)` (a failure call: the watches stay open; the provider's next value for it is
   `[["r", value]]`, which `decode` alone accepts while failed); inside a re-hold's batch `reset(snapshot)` and
-  `vanish(error)`; `end(error)` outside a batch when its reference ends.
+  `vanish(error)`; `end(error)` outside a batch when its object ends. `generation` counts the values it took (a joining
+  reference's seen members); `fork(batch)` copies its state, last good value and count for a private retry.
 
 Rules:
 
-- One encoder and one decoder per member of a hold: two references from one host are two holds, and so are two
-  downstream holds a relay forwards.
+- One encoder and one decoder per member of a hold: references from one host with the same sharing key are one hold;
+  two downstream holds a relay forwards are two.
 - A host serves over all its links (a server holds a worker's types over a route link and serves the worker's holds of
   server types on the same link) and holds over the parent link and its route links. Who reconnects a parent link is
   the app (its adapter calls `connect` again); route links are resolved again by their route. Chord only re-holds.

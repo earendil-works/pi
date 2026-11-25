@@ -1,5 +1,6 @@
 // A whole transcript as one component outside a runtime (tests, previews): the chat screen's TranscriptView with the
-// built-in dark theme and the current keymap's hints. The chat surface itself keeps one TranscriptView per screen.
+// built-in dark theme and the current keymap's hints, tools drawn by `renderers` (by tool name; plugins register theirs
+// in `TuiToolRenderers`) or pi's generic card. The chat surface itself keeps one TranscriptView per screen.
 import { getKeybindings, type Keybinding } from "@earendil-works/pi-tui";
 import type { Transcript } from "../web/transcript.ts";
 import { TranscriptView } from "./components/transcript.ts";
@@ -7,12 +8,13 @@ import { formatKeyText } from "./render-context.ts";
 import { ThemeRef } from "./theme/ref.ts";
 import { BUILTIN_THEMES, createTheme } from "./theme/theme.ts";
 import { resolveToolRenderers } from "./tools/index.ts";
+import type { ToolRenderers } from "./tools/types.ts";
 
 export function transcriptComponent(
 	transcript: Transcript,
 	showThinking: boolean,
 	expandedTools: boolean,
-	options: { theme?: ThemeRef; cwd?: string } = {},
+	options: { theme?: ThemeRef; cwd?: string; renderers?: ReadonlyMap<string, ToolRenderers> } = {},
 ): TranscriptView {
 	const theme = options.theme ?? new ThemeRef(createTheme(BUILTIN_THEMES.dark!, "truecolor"));
 	const view = new TranscriptView(
@@ -27,7 +29,7 @@ export function transcriptComponent(
 			requestRender: () => {},
 			cwd: options.cwd ?? "",
 			markdownTransformers: [],
-			toolRenderers: (name) => resolveToolRenderers(name, new Map(), new Map()),
+			toolRenderers: (name) => resolveToolRenderers(name, new Map(), options.renderers ?? new Map(), {}),
 			entryRenderers: new Map(),
 		},
 		{ expanded: expandedTools, showThinking },

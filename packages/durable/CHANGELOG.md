@@ -2,6 +2,72 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Tool parks are tagged: `{ kind: "sleep", checkpoint?, until?, signals? }` and `{ kind: "wait", checkpoint?, on, policy }`, flat, in place of `{ sleep: { ... } }` and `{ wait: { ... } }`; a result has no `kind`. An object with another `kind` is an invalid park. Migration: return `{ kind: "sleep", ...sleep }` or `{ kind: "wait", ...wait }`, and tell a park from a result by `returned.kind`.
+- `Wrap` is tagged: `{ kind: "tool", tool, wrap }` or `{ kind: "section", section, wrap }`. Migration: build wraps with `wrapTool()` and `wrapSection()`, or add the `kind`; read the target after checking `wrap.kind`.
+- `onYield` hook results are tagged: `{ kind: "continue", continue }` or `{ kind: "tasks", tasks }`. Migration: add the `kind`. A task's `YieldDecision` (`{ continue? }`) is unchanged.
+- `beforeCompact` hook results are tagged: `{ kind: "decline" }` or `{ kind: "summary", summary }`, in place of `{ decline: true }` and `{ summary }`. Migration: return the tagged forms.
+- `Conversation.submit(tx, draft)` and `ConversationHandle.submit(tx, draft)` are `admit(tx, draft)`; `submit(draft, context)` is unchanged. Migration: rename the transaction form's calls to `admit`.
+- `SignalState` is tagged: `{ kind: "value", value }` or `{ kind: "expired" }`, in place of `{ value }` and `{ expired: true }`. Migration: test `state?.kind === "value"` or `state.kind === "expired"` instead of `"value" in state`. Stored signal memos keep their shape.
+- `CommitResult` (`Storage.commit()`) is tagged: `{ kind: "stored", stored }` or `{ kind: "refused", stored, refused }`. Migration: a custom Storage returns the tagged forms; a caller reads `refused` after checking `result.kind === "refused"`.
+
+### Fixed
+
+- Fixed `NodeExecutionEnv` on Windows not finding Git for Windows installed outside Program Files and running commands through the WSL launcher `System32\bash.exe` instead. It now asks the `git.exe` on `PATH` for its installation (`git var GIT_SHELL_PATH`, Git 2.47+) and uses its Git Bash before other `bash.exe` on `PATH` ([#12408](https://github.com/earendil-works/pi/issues/12408))
+- Fixed the Node environment's text line reader rescanning an incomplete line after every read, which made long lines take time quadratic in their length ([#12224](https://github.com/earendil-works/pi/issues/12224))
+
+## [1.6.0] - 2026-11-20
+
+### Breaking Changes
+
+- `RunEndTask` and `runEndTask` are renamed `HookTask` and `hookTask`, as `afterTools` and `onYield` hooks now ask for tasks too. Migration: rename the import in `afterRun` hooks.
+- A tool's `execute()` returns `Promise<ToolExecutionResult | ToolPark>`: it may park instead of returning a result. Code that calls a tool's `execute()` itself, such as a wrapper or a test, handles parks; reading a result field still compiles, since a park has none. Code that annotates `Promise<ToolExecutionResult>` widens the annotation.
+- `until` is optional on sleeping task states (`TaskState`, `TaskInspection`, `TaskGraphState`): a sleep may wait for signals only. Code that reads `until` of a sleeping task handles its absence.
+- `durationMs` of a tool result (`ToolResultMessage.durationMs`, `NestedToolExecutionResult.durationMs`, nested slot summaries) is the span from the tool task's first run (`startedAt`) to its result on the Harness clock, hooks, parks, crash downtime, and reruns included, and results that never executed have one too. It was the time of the last `execute()` attempt. A record written before `startedAt` existed keeps the old measure.
+- `pi.tool` is version 4 and `pi.generation` version 3; a database written by this version is not meant to be opened by an older Harness, which would block these tasks (`task_too_old`) and treat a sleep without `until` as due.
+- Code-mode namespaces come from extensions, not name prefixes: `Extension.namespace` (`ToolNamespace`: `{ name, description, instructions? }`) groups the tools the extension brings (a tool several extensions name belongs to the first). `CodemodeNamespace`, its `prefix`, `namespaceOf` and `CodemodeToolOptions.namespaces` are removed, with no fallback. The `codemode` section lists every namespace of a selected extension, also one without tools yet (an MCP server waiting for sign-in), as `## <name>` and its one-line `description`, without tool counts, so the prompt stays the same when the extension's deferred tools appear; `instructions` are returned only by `describeNamespace()`, and `searchTools()` searches both. `namespacesOf(extensions)` (`@earendil-works/pi-durable/codemode`) maps tool names to their namespaces. Migration: move `namespaces: [{ name, description, prefix }]` into the extensions that bring those tools, as `namespace: { name, description, instructions? }`.
+
+### Added
+
+- Signals: `defineSignal({ name, version, schema, migrate? })` defines a typed JSON value delivered to a live task from outside with `harness.signal(taskId, token, key, value, context)` or `tx.signal()`, which answer `delivered`, `duplicate`, `invalid`, `closed`, or `not_found`. A value is kept in the task, also one that arrives before the sleep on its key, which then wakes at once; `readSignal(token, key, context)` on `TaskRuntime`, `HookApi`, and `ToolExecutionApi` reads it until the task ends, migrated to the token's version, or that the key expired. A key serves one wait: the wake marks it consumed.
+- A sleep may wait for signals (`{ status: "sleeping", signals, until? }`) and ends at whichever comes first; a wait may use `policy: "any"` to resume once one task in `on` ends. A woken task reads why in `state.wake` (`WakeReason`: `time`, `expired`, `signal`, `tasks`), kept until it commits another checkpoint. Parked work holds no invocation, and `Harness.wake()` reports it inactive; a sleep without `until` adds no `at`.
+- Tools that park: `execute()` may return `{ sleep: { checkpoint?, until?, signals? } }` or `{ wait: { checkpoint?, on, policy } }` and runs again, once woken, with `api.wake` and `api.checkpoint` set. The call holds no invocation meanwhile, its slot shows `sleeping` or `waiting` without output, and an invalid park ends it with an `invalid_park` result. `cancel(args, api, context)` cleans up the external work of a parked call that is aborted. Wrappers never park: a composite's park its base did not return is invalid.
+- `executeTool(name, args, context, { wait: false })` starts or finds a nested call and returns `{ taskId, result(context) }`, so a tool can park on its nested calls; `api.createTask()` with a `key` returns the task the key names on a rerun or a later wake. After a wake, nested calls and tasks need explicit keys. A restart keeps the `abandonOnRestart` children of a call that was parked or not started yet.
+- `SubmissionDraft.notify: { taskId, key }` delivers the built-in `SubmissionSettled` signal, the settled record, to a task when the submission settles, in the settling commit; a subagent tool can park until its child conversation answers.
+- Gates: a `beforeTool` hook may return `{ sleep: { until?, signals? } }` to park a call before it runs; every wake, every registry publication, and every open run the whole `call` phase again, so the gates installed then decide. `HookApi.now()` reads the Harness clock.
+- Hooks that start tasks: `afterTools` and `onYield` hooks may return `{ tasks }`, run as the generation's children. An `afterTools` task ends the run with `{ terminate: true }` (`AfterToolsDecision`) or answers it with a steer; `onYield` tasks decide whether an answer stands while the run's inputs stay open (`pi.live.run.yield`): once all are terminal, the first in creation order that completed with a valid `{ continue }` (`YieldDecision`) continues the run, unless a user message or a reset was queued meanwhile.
+- Examples 38-46: signals, asking a person, a tool that waits for a webhook, a tool that polls, parallel nested calls, a subagent that waits, an approval gate, a review on yield, and an `afterTools` task that ends the run.
+- `@earendil-works/pi-durable/images/fit` fits the images entering a conversation to its model's limits with any `ImageProcessor`, before they are stored, as the coding agent does: `createFitImagesExtension(processor)` is an `afterTool` hook for the results of every tool the model calls (MCP tools, code mode's `image()`), and `fitImage(bytes, mimeType, limits, processor)` and `fitImages(content, limits, processor)` fit a host's input before it is submitted. An image that cannot be prepared is left out with a note. `imageLimits(model)` (`/tools`) resolves a model's limits as `read` does. Example 47 shows both.
+- `onAbort: "keep"` on an input submission keeps it queued through `Conversation.abort()` and abort cascades, as a failed run keeps its queue under `afterFailedRun: "keep"`: the next input places it and that run answers it. For input its sender cannot take back, such as another agent's message; `Submission.abort()` still withdraws it. The default, `"withdraw"`, settles it `unanswered` with reason `aborted` as before.
+
+### Fixed
+
+- `read` no longer adds a diagnostic saying the current model does not support images, which stayed in the tool result after switching to a vision model; the image is still replaced with a placeholder per request for models without image input, and `details.imageUnsupportedByModel` names such a model for UIs ([#12131](https://github.com/earendil-works/pi/issues/12131))
+- `NodeExecutionEnv.listDir()` leaves out an entry removed between enumeration and `lstat` instead of failing, so a read-only JSONL open beside a live writer no longer rejects with `JSONL directory listing failed: ENOENT` when the writer renames a `.reclaim` file over a sidecar during the listing. Names that are not valid UTF-8, which `lstat` also reports as missing, are now left out the same way instead of failing the listing, as the directory readers already did ([#11994](https://github.com/earendil-works/pi/issues/11994))
+- Fixed `Submission.wait()` and `waitForTask()` leaving an unhandled promise rejection when the wait was cancelled or the Harness closed after the wait was checked but before its result reached the caller, as when a host shuts down while earlier commits are still being published. The caller still gets the rejection ([#11963](https://github.com/earendil-works/pi/issues/11963), [#11820](https://github.com/earendil-works/pi/issues/11820))
+- Fixed task changes deep in a long ownership chain costing time proportional to the chain's depth: finding the conversations whose idleness a change can affect walked every owner task up to the conversation, so creating or ending a chain of n tasks cost O(n²). A child task lives in its owner's conversation, so the walk now starts there
+
+## [1.5.2] - 2026-11-10
+
+## [1.5.1] - 2026-11-09
+
+### Added
+
+- `Tx.submission(id)` reads a committed submission record by ID, so a tool can find the entries of its run's inputs (`pi.live.run.inputs`) without scanning the transcript.
+- Per-conversation compaction settings: `configure({ compaction })` stores a `CompactionSettings` (the shape of `HarnessSettings.compaction`, `modelOverrides` included) in `pi.agent`, inherited by children and forks. Each field resolves from the conversation's model override, then the harness's, then the conversation's own fields, then the harness-wide policy; a conversation's `enabled: false` also beats the harness's model overrides, so it turns off threshold, background and overflow compaction before a compaction task is created ([#11771](https://github.com/earendil-works/pi/issues/11771))
+- JSONL storage opens read-only with `{ readOnly: true }` (`JsonlStorage.open()`, `openNodeJsonlStorage()`), for a viewer of a directory another process writes. A writable open repairs files on recovery: it truncates torn lines and unconfirmed sidecar records and reclaims sidecars, which can cut records a running writer just appended. The read-only open creates and writes nothing, skips those records in memory, holds the state committed at open, and `commit()` rejects with `JsonlStorageReadOnlyError`. A recovery that fails because it raced a writer's commit is retried. The README's read-only viewer guidance now says to open JSONL storage this way, since `HarnessOptions.readOnly` does not reach the storage open ([#11939](https://github.com/earendil-works/pi/issues/11939))
+
+### Changed
+
+- `SqliteStorage.commit()` costs a few SQL statements per call instead of about eight per batch: it reads the check state of all batches up front, checks them in memory, and writes the accepted batches per table in multi-row statements (rows as one JSON array parameter; rows with much text bound column by column), so a group commit over a remote SQLite takes a few round trips, not hundreds. A stored document record that cannot be parsed now rejects the call as a storage failure instead of refusing the batch.
+
+### Fixed
+
+- Fixed `tool_search` not finding a deferred tool by property names and descriptions behind a local `$ref` in its parameters, as in MCP input schemas that put their models in `$defs`. Referenced definitions are read once, so recursive schemas do not loop, and definitions nothing references stay out of the search text ([#11803](https://github.com/earendil-works/pi/issues/11803))
+- Fixed a task staying `waiting`, or `completing` with idle waits never resolving, when the last task it waited for or held ended while a scheduler pass was planning, as with a generation waiting on parallel tool calls: the pass's cleanup erased the new notification. A pass now takes its candidates and finalize checks out of the pending sets before it plans, so notifications that arrive meanwhile stay for the next pass ([#11892](https://github.com/earendil-works/pi/issues/11892))
+- Fixed every code mode run failing with `URI malformed` when any callable tool had a `$ref` with a malformed percent escape (`#/$defs/%E0`) in its schema, even scripts that do not call that tool. The parameter now renders as `unknown` in the tool's declaration ([#11803](https://github.com/earendil-works/pi/issues/11803))
+
 ## [1.5.0] - 2026-11-02
 
 ### Breaking Changes

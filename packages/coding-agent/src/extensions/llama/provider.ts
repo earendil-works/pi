@@ -22,7 +22,7 @@ import {
 } from "./client.ts";
 
 export const LLAMA_PROVIDER_ID = "llama.cpp";
-export const DEFAULT_LLAMA_SERVER_URL = "http://127.0.0.1:8080";
+export const DEFAULT_LLAMA_SERVER_URL = "http://127.0.0.1:9931";
 function credentialServerUrl(credential: ApiKeyCredential | undefined): string | undefined {
 	const value = credential?.env?.LLAMA_BASE_URL;
 	return typeof value === "string" && value.trim() ? normalizeLlamaServerUrl(value) : undefined;
@@ -97,7 +97,8 @@ function isChatModel(model: LlamaModelInfo): boolean {
 /**
  * A llama.cpp model used as a classifier. Decision models answer natively through llama.cpp's
  * System One endpoint (`/v1/systemone`). Chat models fall back to `llama-cpp-classify`, which reads
- * answers from next-token label probabilities.
+ * answers from next-token label probabilities and takes no images. llama.cpp reads System One images
+ * from the `images` list of data URLs, not from TypeSafe's `assets`.
  */
 function toPiClassifierModel(
 	model: LlamaModelInfo,
@@ -105,6 +106,7 @@ function toPiClassifierModel(
 	cachedContextWindow?: number,
 ): ClassifierModel<LlamaClassifierApi> {
 	const decision = isDecisionModel(model);
+	const image = decision && model.architecture?.input_modalities?.includes("image") === true;
 	return {
 		type: "classifier",
 		id: model.id,
@@ -112,9 +114,10 @@ function toPiClassifierModel(
 		api: decision ? "typesafe-system-one" : "llama-cpp-classify",
 		provider: LLAMA_PROVIDER_ID,
 		baseUrl: decision ? llamaInferenceUrl(serverUrl) : serverUrl,
-		input: ["text"],
+		input: image ? ["text", "image"] : ["text"],
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow: contextWindowOf(model, cachedContextWindow),
+		...(image && { compat: { imageInput: "images", sendImageOptInHeader: false } }),
 	};
 }
 
@@ -148,7 +151,6 @@ function toPiModel(
 		maxTokens: contextWindow,
 		compat: {
 			supportsStore: false,
-			supportsDeveloperRole: false,
 			supportsReasoningEffort: false,
 			supportsUsageInStreaming: true,
 			supportsStrictMode: false,

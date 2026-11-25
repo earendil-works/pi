@@ -48,6 +48,7 @@ describe("web page and link protocol versions", { skip: !browserTests }, () => {
 		fixture = await startFixture({ web: true });
 		const port = fixture.server.port;
 		browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 		await browser.open(`http://127.0.0.1:${port}/`);
 		await browser.wait(`document.querySelector('.app, .hero') !== null`);
 		await browser.evaluate(`window.__mark = 1`);

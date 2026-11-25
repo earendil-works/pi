@@ -46,6 +46,15 @@ type RegistryHost = { registry<C, V>(registry: Registry<C, V>, context: Context)
 const registryValues = new WeakMap<RegistryHost, Map<Registry<unknown, unknown>, RegistryValue<unknown>>>();
 
 /**
+ * Registry `registry`'s composed value on `host` if it was followed before (`followRegistry`): what a UI's first render
+ * shows, before its follower starts.
+ */
+export function knownRegistry<C, V>(host: RegistryHost, registry: Registry<C, V>): V | undefined {
+	const known = registryValues.get(host)?.get(registry as Registry<unknown, unknown>) as RegistryValue<V> | undefined;
+	return known?.value;
+}
+
+/**
  * `follow` for registry `registry`'s composed value on `host`, once the host published it; at once (synchronously)
  * when this host's value of it was followed before.
  */
@@ -89,6 +98,23 @@ export function liveIn<R extends HeldRef & { readonly variant: unknown }, const 
 		: undefined;
 }
 
+/**
+ * `ref` if it was last bound in one of `variants` and can still bind again (loading, live or failed transiently), else
+ * `undefined`. For reads that should outlast a dropped connection: a reference held over a link keeps its variant and
+ * its members' last values while the link is down. Calls need `liveIn`.
+ */
+export function keptIn<R extends HeldRef & { readonly variant: unknown }, const V extends HeldVariants<R>>(
+	ref: R | undefined,
+	...variants: readonly V[]
+): (Extract<R, { readonly variant: V | undefined }> & { readonly variant: V }) | undefined {
+	if (ref === undefined) return undefined;
+	const state = ref.state.value;
+	if (state.kind === "ended" || (state.kind === "failed" && state.cause.kind === "broken")) return undefined;
+	return (variants as readonly unknown[]).includes(ref.variant)
+		? (ref as Extract<R, { readonly variant: V | undefined }> & { readonly variant: V })
+		: undefined;
+}
+
 /** The reference's state kind now. */
 export const statusOf = (ref: HeldRef): RefState["kind"] => ref.state.value.kind;
 
@@ -109,6 +135,26 @@ export function whenLive(ref: HeldRef): Promise<void> {
 	});
 }
 
+/**
+ * Calls `action` with `ref`, held for this one call (by a command or a menu row: no view of theirs outlives the call),
+ * once it is live in `variant`, then releases it. Rejects when the reference ends, fails broken or binds in another
+ * variant (the principal may not).
+ */
+export async function withHeld<R extends HeldRef & { readonly variant: unknown }, const V extends HeldVariants<R>, T>(
+	ref: R,
+	variant: V,
+	action: (live: Extract<R, { readonly variant: V | undefined }> & { readonly variant: V }) => Promise<T>,
+): Promise<T> {
+	try {
+		await whenLive(ref);
+		const live = liveIn(ref, variant);
+		if (!live) throw new Error(`Not allowed as ${variant}`);
+		return await action(live);
+	} finally {
+		ref.release();
+	}
+}
+
 /** The error of a failed or ended reference, if any. */
 export function errorOf(ref: HeldRef): Error | undefined {
 	const state = ref.state.value;
@@ -117,7 +163,7 @@ export function errorOf(ref: HeldRef): Error | undefined {
 
 /**
  * Releases held references later: a chat stays held for a while after its screen is left, so that switching back is
- * instant (v1's client linger), at most `cap` of them at once (the oldest goes first).
+ * instant, at most `cap` of them at once (the oldest goes first).
  */
 export class Lingering {
 	readonly #delays: Readonly<Record<string, number>>;

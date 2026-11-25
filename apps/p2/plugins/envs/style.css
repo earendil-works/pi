@@ -1,0 +1,337 @@
+/* Sandboxes (Gondolin VMs on an SSH environment): list rows, VM state, folders. */
+.env-sandbox {
+	padding-left: calc(var(--x) + var(--s5));
+}
+.vm-dot {
+	display: inline-block;
+	width: 7px;
+	height: 7px;
+	margin-right: var(--s1);
+	border-radius: 50%;
+	background: var(--faint);
+	vertical-align: middle;
+}
+.vm-dot.running {
+	background: var(--ok);
+}
+.vm-dot.unknown {
+	border: 1px solid var(--faint);
+	background: transparent;
+}
+.sandbox-intro {
+	margin-bottom: var(--s3);
+}
+.sandbox-status {
+	margin-bottom: var(--s3);
+}
+.sandbox-folders {
+	gap: var(--s2);
+}
+.sandbox-folder {
+	display: flex;
+	align-items: center;
+	gap: var(--s3);
+}
+.sandbox-folder > span:first-child {
+	flex: 1;
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+/* The location picker (DirectoryPicker.tsx): the sidebar's type and rhythm (Elanor's UI text, 28px rows a list gap
+   apart, glyphs on the bars' icon line, section labels in small capitals), the machines as a row of choices, then
+   their recent folders, the browser, and the choice pinned at the bottom. As tall as it can be from the start, so
+   loading folders never moves the choice. */
+.location-sheet {
+	--loc-row: calc(
+		var(--semantic-typography-ui-primary-font-size) *
+		var(--semantic-typography-ui-primary-line-height) +
+		2 *
+		var(--semantic-dimension-space-control-padding-block-small)
+	);
+	--loc-gap: var(--semantic-dimension-space-gap-small);
+	--loc-edge: calc((var(--control) - 16px) / 2);
+	/* A trailing control's glyph on the line where the rows' chevrons end. */
+	--loc-control-end: calc(var(--loc-edge) - (var(--loc-row) - 16px) / 2);
+	height: min(88dvh, 720px);
+	font-size: var(--semantic-typography-ui-primary-font-size);
+	line-height: var(--semantic-typography-ui-primary-line-height);
+}
+@media (min-width: 700px) {
+	.location-sheet {
+		height: min(88dvh, 640px);
+	}
+}
+.location-sheet .sheet-body {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	padding: 0 var(--bar-pad);
+}
+
+/* The machines: one choice of them, filled when chosen, as a selected sidebar row is. */
+.location-machines {
+	display: flex;
+	flex: none;
+	gap: var(--s1);
+	padding-block: var(--s3) 0;
+	overflow-x: auto;
+}
+.location-machine {
+	position: relative;
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	gap: var(--s1);
+	block-size: var(--loc-row);
+	padding-inline: var(--loc-edge);
+	border-radius: var(--semantic-dimension-radius-small);
+	color: var(--muted);
+	white-space: nowrap;
+}
+.location-machine[aria-pressed="true"] {
+	background: var(--semantic-color-background-fill-ghost-neutral-active);
+	color: var(--text);
+	font-weight: var(--semantic-font-weight-ui-selected);
+}
+.location-machine > svg {
+	color: var(--semantic-color-icon-secondary);
+}
+
+.location-heading {
+	display: flex;
+	align-items: center;
+	block-size: var(--loc-row);
+	margin: var(--s3) 0 var(--s1);
+	padding-inline: var(--loc-edge);
+	color: var(--muted);
+	font-size: var(--fs-xs);
+	font-weight: var(--fw-strong);
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+}
+.location-browse {
+	flex: 1;
+	padding-block-end: var(--s3);
+}
+
+/* Rows: a folder to use (recent) or to open (the browser), on one line, cut with "…". */
+.location-rows {
+	display: flex;
+	flex-direction: column;
+	gap: var(--loc-gap);
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.location-rows.busy {
+	opacity: 0.5;
+}
+.location-row {
+	display: flex;
+	align-items: center;
+	border-radius: var(--semantic-dimension-radius-small);
+}
+.location-row.current {
+	background: var(--semantic-color-background-fill-ghost-neutral-active);
+}
+.location-link {
+	position: relative;
+	display: flex;
+	flex: 1;
+	align-items: center;
+	gap: var(--s2);
+	min-width: 0;
+	block-size: var(--loc-row);
+	padding-inline: var(--loc-edge);
+	border-radius: var(--semantic-dimension-radius-small);
+	color: var(--text);
+	text-align: left;
+}
+.location-row.current .location-link {
+	font-weight: var(--semantic-font-weight-ui-selected);
+}
+.location-link > svg {
+	flex: none;
+	color: var(--semantic-color-icon-secondary);
+}
+.location-name {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+/* A path cut at its start ("…/pi/apps/p2"): the box runs right to left, so it overflows and shows "…" on the left;
+   the path inside stays left to right. */
+.location-name-tail {
+	direction: rtl;
+	text-align: left;
+}
+.location-name-tail > span {
+	direction: ltr;
+	unicode-bidi: isolate;
+}
+.location-chevron {
+	rotate: -90deg;
+}
+.location-control {
+	position: relative;
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	inline-size: var(--loc-row);
+	block-size: var(--loc-row);
+	margin-inline-end: var(--loc-control-end);
+	border-radius: var(--semantic-dimension-radius-small);
+	color: var(--semantic-color-icon-secondary);
+}
+.location-machine:active,
+.location-link:active,
+.location-control:active,
+.location-crumb:active {
+	background: var(--semantic-color-background-fill-ghost-neutral-active);
+}
+@media (hover: hover) {
+	.location-machine:hover,
+	.location-row:not(.current):has(> .location-link:hover),
+	.location-crumb:is(button):hover {
+		background: var(--semantic-color-background-fill-ghost-neutral-hover);
+	}
+	.location-control:hover {
+		color: var(--text);
+	}
+}
+/* On touch, the hit areas reach half the list gap above and below, as the sidebar's rows do. */
+@media (pointer: coarse) {
+	.location-machine::after,
+	.location-link::after,
+	.location-control::after,
+	.location-crumb:is(button)::after {
+		position: absolute;
+		inset-block: calc(var(--loc-gap) / -2);
+		inset-inline: 0;
+		content: "";
+	}
+}
+
+/* Where the browser is: the path's steps (the parents tappable), or the path as a text field; pinned while its folders
+   scroll. */
+.location-path {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+	display: flex;
+	align-items: center;
+	gap: var(--s1);
+	min-block-size: var(--loc-row);
+	margin-block: var(--s3) var(--s1);
+	padding-block: var(--s1);
+	background: var(--bg);
+}
+.location-crumbs {
+	display: flex;
+	flex: 1;
+	flex-wrap: wrap;
+	align-items: center;
+	min-width: 0;
+	padding-inline-start: calc(var(--loc-edge) - var(--s1));
+}
+.location-crumb-step {
+	display: inline-flex;
+	align-items: center;
+}
+.location-crumb {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	min-block-size: var(--loc-row);
+	padding-inline: var(--s1);
+	border-radius: var(--semantic-dimension-radius-small);
+	color: var(--text);
+	overflow-wrap: anywhere;
+}
+.location-crumb[aria-current] {
+	font-weight: var(--semantic-font-weight-ui-selected);
+}
+.location-crumb-gap {
+	color: var(--muted);
+}
+.location-spinner {
+	flex: none;
+}
+.location-type {
+	display: flex;
+	flex: 1;
+	min-width: 0;
+}
+/* 16px: iOS zooms into smaller fields. */
+.location-input {
+	flex: 1;
+	min-width: 0;
+	block-size: var(--loc-row);
+	padding-inline: var(--loc-edge);
+	border: 0;
+	border-bottom: 1px solid var(--text);
+	border-radius: 0;
+	outline: 0;
+	background: transparent;
+	color: var(--text);
+	font-size: 16px;
+}
+
+.location-note,
+.location-loading,
+.location-error,
+.location-empty {
+	margin: 0;
+	padding: var(--s1) var(--loc-edge);
+	color: var(--muted);
+	font-size: var(--semantic-typography-ui-secondary-font-size);
+	list-style: none;
+}
+.location-loading {
+	display: flex;
+	align-items: center;
+	gap: var(--s2);
+}
+.location-error {
+	color: var(--bad);
+	overflow-wrap: anywhere;
+}
+.location-error .text-action {
+	min-height: 0;
+	font-size: inherit;
+}
+
+/* The choice, pinned at the sheet's bottom: what the browser shows, or the confirmation to leave a sandbox. */
+.location-foot {
+	position: sticky;
+	bottom: 0;
+	z-index: 1;
+	display: flex;
+	flex-direction: column;
+	gap: var(--s2);
+	margin: auto calc(-1 * var(--bar-pad)) 0;
+	padding: var(--s3) var(--x);
+	border-top: 1px solid var(--line);
+	background: var(--bg);
+}
+.location-foot .location-note {
+	padding: 0;
+}
+.location-use {
+	min-width: 0;
+}
+.location-use > .location-name {
+	flex: 0 1 auto;
+}
+.location-leave {
+	display: flex;
+	flex-direction: column;
+	gap: var(--s2);
+}
+.location-leave p {
+	margin: 0;
+}

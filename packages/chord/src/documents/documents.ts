@@ -1,12 +1,14 @@
 // An object's documents (§9, P2, slice 6a §1.2, §10): its slots across attempts, its line (its transactions and line
 // jobs run one at a time), the seal fence over the transaction holding the line, the factory's pins between attempts,
-// the activation's loads and the residency of keyed documents.
+// the activation's loads and the residency of keyed documents; a commit's telemetry (its event, its duration, slice 9).
 
+import type { TelemetryContext } from "@earendil-works/pi-telemetry";
 import type { Context } from "../context/index.ts";
 import { ChordError } from "../data/index.ts";
 import type { Batch } from "../state/internal.ts";
 import type { ChordStore } from "../store/store.ts";
-import type { CommitPersistence, JsonObject, StateDefinition } from "./definition.ts";
+import { chordMetrics, untraced } from "../telemetry.ts";
+import type { CommitPersistence, JsonObject, KeyedBy, StateDefinition } from "./definition.ts";
 import { SealToken } from "./fence.ts";
 import { type HandleOf, type KeyDeclarer, Keyed, Singleton } from "./handles.ts";
 import { KeyedSlot } from "./keyed-slot.ts";
@@ -44,6 +46,8 @@ export type DocumentsOwner = {
 	fail(error: ChordError): void;
 	/** Reports a transaction its context's end cancelled (the host's `onError`). */
 	report(error: TransactionCancelled): void;
+	/** The host's telemetry adapter: commit durations go to its metrics. */
+	readonly telemetry: TelemetryContext;
 };
 
 /**
@@ -86,14 +90,14 @@ export class Documents {
 	 * made by the first declaration of its name, checked against the values for later ones (`SlotDefinition.check`).
 	 * "Declared twice" is the attempt's check.
 	 */
-	declare<D extends StateDefinition<JsonObject, boolean, boolean>>(
+	declare<D extends StateDefinition<JsonObject, KeyedBy, boolean>>(
 		definition: D,
 		token: SealToken,
 		declarer: KeyDeclarer,
 	): HandleOf<D> {
 		const slot = this.#slots.get(definition.name);
 		if (slot !== undefined) slot.definition.check(definition);
-		const persistence = slot === undefined && definition.persist ? this.#persistence(definition.name) : undefined;
+		const persistence = slot === undefined && definition.persist ? this.#persistence(definition) : undefined;
 		// The definition's `keyed` decides the slot's class and the handle's; its documents are the definition's `T`.
 		if (definition.keyed) {
 			const keyed = slot ?? this.#add(new KeyedSlot(this, definition, persistence));
@@ -180,9 +184,13 @@ export class Documents {
 			this.assertAdmitted(token);
 			this.#holder = tx;
 			const result = await fn(tx);
+			// Timed only when something records: the commit's duration metric, its event on the enclosing span.
+			const timed = !untraced(this.#owner.telemetry) || !untraced(context.telemetry);
+			const started = timed ? performance.now() : 0;
 			// In-memory-only commits are synchronous (W12): no await unless the store's step is taken.
 			const step = tx.commit();
 			if (step !== undefined) await step;
+			if (timed) this.#recordCommit(tx, performance.now() - started, context);
 			return result;
 		} catch (error) {
 			tx.discard();
@@ -196,6 +204,18 @@ export class Documents {
 			release();
 			tx.settle();
 		}
+	}
+
+	/**
+	 * A commit of `tx` that took `duration` ms (from its start to its adoption): its event on `context`'s span (the
+	 * method, routine or job it ran in) and the host's commit duration metric; a commit that changed nothing records
+	 * nothing.
+	 */
+	#recordCommit(tx: Transaction, duration: number, context: Context): void {
+		const { documents, ops, writes, rows } = tx.committed();
+		if (documents === 0 && writes === 0) return;
+		if (!untraced(context.telemetry)) context.telemetry.addEvent("chord.commit", { documents, ops, rows, duration });
+		chordMetrics(this.#owner.telemetry.metrics).histogram("chord.commit.duration").record(duration);
 	}
 
 	/**
@@ -239,6 +259,17 @@ export class Documents {
 		release();
 	}
 
+	/** The persisted slots keyed by addresses of host kind `kind`: the documents of this object belonging to such hosts. */
+	hostSlots(kind: string): KeyedSlot[] {
+		const slots: KeyedSlot[] = [];
+		for (const slot of this.#slots.values()) {
+			if (slot instanceof KeyedSlot && slot.persisted !== undefined && slot.definition.current.host?.kind === kind) {
+				slots.push(slot);
+			}
+		}
+		return slots;
+	}
+
 	/** Drops every document and pin; watches end `ended`, and every later use throws `released`. */
 	end(): void {
 		this.#state = "ended";
@@ -265,9 +296,9 @@ export class Documents {
 		return slot;
 	}
 
-	/** The store side of persisted documents named `name`; the attempt checked the store first (P3). */
-	#persistence(name: string): Persistence {
+	/** The store side of persisted `definition`'s documents; the attempt checked the store first (P3). */
+	#persistence(definition: AnyDefinition): Persistence {
 		const { store, owner } = this.#owner.store!;
-		return new Persistence(store, owner, "chord", name);
+		return new Persistence(store, owner, "chord", definition.name, definition.host);
 	}
 }

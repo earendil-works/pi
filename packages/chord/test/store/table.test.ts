@@ -1,9 +1,11 @@
 // `defineTable` (slice 6a §5): what a declaration materializes, the checks it makes, and its fingerprint.
 
 import { describe, expect, it } from "vitest";
-import { int, obj, opt, str } from "../../src/contracts/index.ts";
+import { hostKind, int, obj, opt, str } from "../../src/contracts/index.ts";
+import { host } from "../../src/store/host-column.ts";
 import { json } from "../../src/store/json-column.ts";
 import { defineTable, type KeyOf } from "../../src/store/table.ts";
+import { evolveTable } from "../../src/store/table-evolve.ts";
 
 const columns = { id: str(), path: str(), at: int(), note: opt(str()), meta: json(obj({}), { version: 1 }) };
 
@@ -71,5 +73,58 @@ describe("keys", () => {
 		const key: KeyOf<typeof byNumber, ["id"]> = { id: 7 };
 		const mixed: KeyOf<typeof columns, ["id", "at"]> = { id: "a", at: 1 };
 		expect([key, mixed]).toEqual([{ id: 7 }, { id: "a", at: 1 }]);
+	});
+});
+
+describe("host(...) columns", () => {
+	const Session = hostKind("session", { id: str() });
+	const User = hostKind("user", { id: str() });
+
+	it("get the index `host` unless the key starts with them; a key with them is typed by addresses", () => {
+		const pins = defineTable("pins", { version: 1, columns: { id: str(), session: host(Session) }, key: ["id"] });
+		expect(pins.hostColumn?.name).toBe("session");
+		expect([...pins.indexes]).toEqual([["host", ["session"]]]);
+		const labels = defineTable("labels", {
+			version: 1,
+			columns: { session: host(Session), label: str() },
+			key: ["session", "label"],
+		});
+		expect([...labels.indexes]).toEqual([]);
+		const columns = { session: host(Session), label: str() };
+		const key: KeyOf<typeof columns, ["session", "label"]> = { session: Session({ id: "S1" }), label: "a" };
+		expect(labels.rows.key(key, "get").params).toEqual(["session|S1", "a"]);
+	});
+
+	it("keep their index across evolveTable, follow a rename and lose it with a drop", () => {
+		const pins = defineTable("pins", {
+			version: 1,
+			columns: { id: str(), session: host(Session), note: opt(str()) },
+			key: ["id"],
+		});
+		const renamed = evolveTable(pins, (t) => t.rename("session", "owner"));
+		expect([...renamed.indexes]).toEqual([["host", ["owner"]]]);
+		const dropped = evolveTable(renamed, (t) => t.drop("owner"));
+		expect([...dropped.indexes]).toEqual([]);
+		expect(dropped.hostColumn).toBeUndefined();
+	});
+
+	it("are one per table; the index name `host` is theirs; the kind is in the fingerprint", () => {
+		expect(() =>
+			defineTable("t", { version: 1, columns: { id: str(), a: host(Session), b: host(User) }, key: ["id"] }),
+		).toThrow("more than one host(...) column");
+		expect(() =>
+			defineTable("t", {
+				version: 1,
+				columns: { id: str(), a: host(Session) },
+				key: ["id"],
+				indexes: { host: ["id"] },
+			}),
+		).toThrow(`index "host" is the host(...) column's own`);
+		expect(() =>
+			defineTable("t", { version: 1, columns: { id: str() }, key: ["id"], indexes: { host: ["id"] } }),
+		).toThrow(`index "host" is the host(...) column's own`);
+		const session = defineTable("t", { version: 1, columns: { id: str(), a: host(Session) }, key: ["id"] });
+		const user = defineTable("t", { version: 1, columns: { id: str(), a: host(User) }, key: ["id"] });
+		expect(session.fingerprint).not.toBe(user.fingerprint);
 	});
 });

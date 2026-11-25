@@ -18,7 +18,9 @@ export interface JsonRpcLineReaderOptions {
  */
 export class JsonRpcLineReader {
 	private readonly options: JsonRpcLineReaderOptions;
-	private stdoutBuffer = Buffer.alloc(0);
+	/** The bytes of the incomplete message received so far. */
+	private stdoutChunks: Buffer[] = [];
+	private stdoutPendingBytes = 0;
 	private stderrBuffer = Buffer.alloc(0);
 
 	constructor(options: JsonRpcLineReaderOptions) {
@@ -30,21 +32,38 @@ export class JsonRpcLineReader {
 		return this.stderrBuffer.toString("utf8");
 	}
 
-	/** Takes the next stdout bytes and reports every complete message, or the error parsing it. */
+	/**
+	 * Takes the next stdout bytes and reports every complete message, or the error parsing it. Bytes of an
+	 * incomplete message are kept as chunks and joined once when its newline arrives, so a large message that
+	 * arrives in many chunks is copied and scanned only once.
+	 */
 	readStdout(chunk: Uint8Array): void {
-		this.stdoutBuffer = Buffer.concat([this.stdoutBuffer, chunk]);
+		const data = Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
 		const maxMessageBytes = this.options.maxMessageBytes ?? DEFAULT_MAX_MESSAGE_BYTES;
+		let start = 0;
 		while (true) {
-			const newline = this.stdoutBuffer.indexOf(0x0a);
+			const newline = data.indexOf(0x0a, start);
 			if (newline < 0) {
-				if (this.stdoutBuffer.length > maxMessageBytes) {
-					this.stdoutBuffer = Buffer.alloc(0);
+				if (start < data.length) {
+					// Copied, since the caller may reuse the chunk's memory.
+					this.stdoutChunks.push(Buffer.from(data.subarray(start)));
+					this.stdoutPendingBytes += data.length - start;
+				}
+				if (this.stdoutPendingBytes > maxMessageBytes) {
+					this.stdoutChunks = [];
+					this.stdoutPendingBytes = 0;
 					this.options.onError(new Error(`MCP stdio message exceeds ${maxMessageBytes} bytes`));
 				}
 				return;
 			}
-			const line = this.stdoutBuffer.subarray(0, newline);
-			this.stdoutBuffer = this.stdoutBuffer.subarray(newline + 1);
+			let line = data.subarray(start, newline);
+			if (this.stdoutChunks.length > 0) {
+				this.stdoutChunks.push(line);
+				line = Buffer.concat(this.stdoutChunks, this.stdoutPendingBytes + line.length);
+				this.stdoutChunks = [];
+				this.stdoutPendingBytes = 0;
+			}
+			start = newline + 1;
 			if (line.length > maxMessageBytes) {
 				this.options.onError(new Error(`MCP stdio message exceeds ${maxMessageBytes} bytes`));
 				continue;
@@ -69,9 +88,10 @@ export class JsonRpcLineReader {
 
 	/** Ends stdout: a message without its newline is reported as an error and dropped. */
 	end(): void {
-		if (this.stdoutBuffer.toString("utf8").trim()) {
+		if (Buffer.concat(this.stdoutChunks).toString("utf8").trim()) {
 			this.options.onError(new Error("MCP stdio server closed with an incomplete JSON-RPC message"));
 		}
-		this.stdoutBuffer = Buffer.alloc(0);
+		this.stdoutChunks = [];
+		this.stdoutPendingBytes = 0;
 	}
 }

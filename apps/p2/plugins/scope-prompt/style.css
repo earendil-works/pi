@@ -1,0 +1,165 @@
+/* The scope prompt: the outline around what the pointer is on (a rounded, translucent box that takes no events), the
+   composer at the click, and the note after sending. */
+.scope-outline {
+	position: fixed;
+	z-index: 90;
+	pointer-events: none;
+	border: 1px solid var(--unread);
+	border-radius: calc(var(--radius) * 2);
+	background: color-mix(in srgb, var(--unread) 10%, transparent);
+	transition:
+		left 60ms ease-out,
+		top 60ms ease-out,
+		width 60ms ease-out,
+		height 60ms ease-out;
+}
+.scope-outline-label {
+	position: absolute;
+	top: 0;
+	left: 0;
+	max-width: 100%;
+	transform: translateY(-100%);
+	padding: 0 var(--s1);
+	overflow: hidden;
+	border-radius: var(--radius) var(--radius) 0 0;
+	background: var(--unread);
+	color: var(--bg);
+	font-size: var(--fs-xs);
+	line-height: 18px;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+.scope-composer {
+	position: fixed;
+	z-index: 91;
+	display: flex;
+	flex-direction: column;
+	gap: var(--s2);
+	padding: var(--s2) var(--s3) var(--s3);
+	border: 1px solid var(--line);
+	border-radius: calc(var(--radius) * 3);
+	background: color-mix(in srgb, var(--bg) 88%, transparent);
+	backdrop-filter: blur(12px);
+	-webkit-backdrop-filter: blur(12px);
+}
+.scope-steps {
+	min-width: 0;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--s1);
+}
+.scope-step {
+	max-width: 100%;
+	padding: 0 var(--s2);
+	overflow: hidden;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	color: var(--muted);
+	font-size: var(--fs-xs);
+	line-height: 22px;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+.scope-step.chosen {
+	border-color: var(--unread);
+	color: var(--text);
+}
+.scope-step.outside {
+	color: var(--faint);
+}
+.scope-fill {
+	flex: 1;
+}
+.scope-close {
+	width: var(--control-sm);
+	height: var(--control-sm);
+}
+.scope-selection {
+	margin: 0;
+	font-size: var(--fs-sm);
+}
+.scope-composer textarea {
+	width: 100%;
+	min-height: 48px;
+	resize: vertical;
+	padding: var(--s2);
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--bg);
+	color: var(--text);
+	font: inherit;
+	font-size: var(--fs-md);
+}
+.scope-foot {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	font-size: var(--fs-sm);
+}
+.scope-sent {
+	position: fixed;
+	z-index: 91;
+	bottom: calc(var(--s5) + var(--safe-bottom));
+	left: 50%;
+	display: flex;
+	align-items: center;
+	gap: var(--s3);
+	transform: translateX(-50%);
+	padding: var(--s2) var(--s3);
+	border: 1px solid var(--line);
+	border-radius: calc(var(--radius) * 2);
+	background: var(--bg);
+	font-size: var(--fs-sm);
+}
+@media (hover: hover) {
+	.scope-step:hover {
+		background: var(--hover);
+	}
+}
+/* Pointing mode: frames give their pointer events to the page (they count as their pane). */
+.scope-pointing iframe {
+	pointer-events: none;
+}
+.scope-mode {
+	position: fixed;
+	z-index: 91;
+	top: calc(var(--s3) + var(--safe-top));
+	left: 50%;
+	display: flex;
+	align-items: center;
+	gap: var(--s3);
+	transform: translateX(-50%);
+	padding: var(--s1) var(--s2) var(--s1) var(--s3);
+	border: 1px solid var(--unread);
+	border-radius: calc(var(--radius) * 2);
+	background: color-mix(in srgb, var(--bg) 88%, transparent);
+	backdrop-filter: blur(12px);
+	-webkit-backdrop-filter: blur(12px);
+	font-size: var(--fs-sm);
+}
+.scope-destination {
+	display: flex;
+	align-items: center;
+	gap: var(--s1);
+	min-width: 0;
+	margin: 0;
+	padding: 0;
+	border: 0;
+}
+/* The button: pressed while pointing. In the top bar only while the sidebar is not shown docked beside it (as the
+   menu button). */
+.scope-toggle.on {
+	color: var(--unread);
+}
+.drawer-header-row .scope-toggle {
+	margin-inline-start: auto;
+}
+@media (min-width: 900px) {
+	.app:not(.sidebar-collapsed) .topbar .scope-toggle {
+		display: none;
+	}
+}

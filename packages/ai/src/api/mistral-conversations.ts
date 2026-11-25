@@ -20,6 +20,7 @@ import { shortHash } from "../utils/hash.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { getIdentityHeaders } from "../utils/identity.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { SseDecoder } from "../utils/sse.ts";
 import { ToolCallArgumentsStream } from "../utils/streaming-json.ts";
 import { getSystemMessageText, renderSystemMessageUpdate } from "../utils/text.ts";
 import { getCurrentTools, resolveTranscript } from "../utils/transcript.ts";
@@ -453,8 +454,7 @@ async function* readMistralEvents(
 	signal: AbortSignal | undefined,
 ): AsyncGenerator<MistralCompletionEvent> {
 	const reader = body.getReader();
-	const decoder = new TextDecoder();
-	let buffer = "";
+	const sse = new SseDecoder();
 	const onAbort = () => {
 		void reader.cancel().catch(() => {});
 	};
@@ -465,23 +465,15 @@ async function* readMistralEvents(
 			if (signal?.aborted) throw signal.reason;
 			const { done, value } = await reader.read();
 			if (signal?.aborted) throw signal.reason;
-			buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
+			const events = done ? sse.end() : sse.push(value);
 
-			let boundary = findMistralEventBoundary(buffer);
-			while (boundary) {
-				const event = parseMistralEvent(buffer.slice(0, boundary.index));
-				buffer = buffer.slice(boundary.index + boundary.length);
+			for (const { data } of events) {
+				const event = parseMistralEvent(data.trim());
 				if (event === MISTRAL_STREAM_DONE) return;
 				if (event) yield event;
-				boundary = findMistralEventBoundary(buffer);
 			}
 
 			if (done) break;
-		}
-
-		if (buffer.trim()) {
-			const event = parseMistralEvent(buffer);
-			if (event !== MISTRAL_STREAM_DONE && event) yield event;
 		}
 	} finally {
 		signal?.removeEventListener("abort", onAbort);
@@ -494,18 +486,7 @@ async function* readMistralEvents(
 	}
 }
 
-function findMistralEventBoundary(buffer: string): { index: number; length: number } | undefined {
-	const match = /\r\n\r\n|\r\n\r|\r\n\n|\r\r\n|\n\r\n|\r\r|\n\r|\n\n/u.exec(buffer);
-	return match?.index === undefined ? undefined : { index: match.index, length: match[0].length };
-}
-
-function parseMistralEvent(raw: string): MistralCompletionEvent | typeof MISTRAL_STREAM_DONE | undefined {
-	const data = raw
-		.split(/\r\n|\r|\n/u)
-		.filter((line) => line.startsWith("data:"))
-		.map((line) => line.slice(5).trimStart())
-		.join("\n")
-		.trim();
+function parseMistralEvent(data: string): MistralCompletionEvent | typeof MISTRAL_STREAM_DONE | undefined {
 	if (!data) return undefined;
 	if (data === "[DONE]") return MISTRAL_STREAM_DONE;
 
@@ -529,7 +510,9 @@ function buildChatPayload(
 	};
 
 	const currentTools = getCurrentTools(context.messages);
-	if (currentTools.length > 0) payload.tools = toFunctionTools(currentTools);
+	// Strict tools are opt-in: Mistral Large 4 can go silent for minutes before a strict tool call (#12148).
+	if (currentTools.length > 0)
+		payload.tools = toFunctionTools(currentTools, model.compat?.supportsStrictMode ?? false);
 	if (options?.temperature !== undefined) payload.temperature = options.temperature;
 	if (options?.maxTokens !== undefined) payload.maxTokens = options.maxTokens;
 	if (options?.toolChoice) payload.toolChoice = mapToolChoice(options.toolChoice);
@@ -746,9 +729,9 @@ async function consumeChatStream(
 	}
 }
 
-function toFunctionTools(tools: Tool[]): MistralFunctionTool[] {
+function toFunctionTools(tools: Tool[], supportsStrictMode: boolean): MistralFunctionTool[] {
 	return tools.map((tool) => {
-		const strict = resolveJsonSchemaStrictSampling(tool, true);
+		const strict = resolveJsonSchemaStrictSampling(tool, supportsStrictMode);
 		return {
 			type: "function",
 			function: {
@@ -915,9 +898,6 @@ function mapChatStopReason(reason: string | null): { stopReason: StopReason; err
 			return { stopReason: "length" };
 		case "tool_calls":
 			return { stopReason: "toolUse" };
-		case "error":
-			// Mistral reports transient server failures this way; "server error" makes the message retryable.
-			return { stopReason: "error", errorMessage: "Provider stopped with: error (server error)" };
 		default:
 			return { stopReason: "error", errorMessage: `Provider stopped with: ${reason}` };
 	}

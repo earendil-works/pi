@@ -4,7 +4,7 @@
 // filesystem watch, which read-only guests cannot get. Comments, commits and uploads stay on the web for now.
 
 import type { Held } from "@p2/app/v1";
-import { BACKGROUND_CONTEXT, contribute, defineFacet, statusOf, whenLive } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, contribute, defineFacet, liveIn, statusOf, whenLive } from "@p2/app/v1";
 import type { TuiContext } from "@p2/app/v1/tui";
 import {
 	ListOverlay,
@@ -334,17 +334,17 @@ export class GitBranch implements TuiSurface {
 		if (!allowed || !session) return;
 		const scope = new TuiScope(this.runtime);
 		this.scope = scope;
-		const workspace = scope.watch(Workspace, { session, conversation: this.runtime.conversation }, (_ref, follow) =>
-			follow(_ref.changes, () => {
+		scope.watch(Workspace, { session, conversation: this.runtime.conversation }, (workspace, follow) =>
+			follow(workspace.changes, () => {
 				// The first answer at once; file changes coalesce.
 				clearTimeout(this.timer);
 				this.timer = setTimeout(() => this.ask(workspace, key), this.branch === undefined ? 0 : 500);
 			}),
 		);
 	}
-	private ask(workspace: () => Held<typeof Workspace> | undefined, key: string | undefined): void {
-		const ref = workspace();
-		if (ref === undefined || statusOf(ref) !== "live" || ref.variant !== "reader" || key !== this.key) return;
+	private ask(workspace: Held<typeof Workspace>, key: string | undefined): void {
+		const ref = liveIn(workspace, "reader");
+		if (ref === undefined || key !== this.key) return;
 		if (this.asking) {
 			this.again = true;
 			return;

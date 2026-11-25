@@ -20,7 +20,8 @@ export const TABLES = {
  * history rule (R1), its current base's version and fingerprint and a `revision` counter for the conditional
  * `UPDATE`; the partial unique index refuses two live records at one address. Entry 2 adds the indexes of reads at a
  * point (slice 6b §1.5): an address's incarnations by creation, an owner's namespace by id, a document's bases (a
- * partial index: deltas write no entry).
+ * partial index: deltas write no entry). Entry 3 adds `host`, the address key of the host a record belongs to (Chord's
+ * host-keyed documents; `NULL` for every other record), with a partial index: a host's data is found by it.
  */
 const MIGRATIONS: readonly SqliteMigration[] = [
 	{
@@ -74,6 +75,13 @@ const MIGRATIONS: readonly SqliteMigration[] = [
 			`CREATE INDEX chord_documents_scope ON ${TABLES.documents} (owner, namespace, id)`,
 			// Only bases are looked up by it (a load's newest base at or below a point): deltas write no entry.
 			`CREATE INDEX chord_revisions_bases ON ${TABLES.revisions} (document_id, seq) WHERE kind = 'base'`,
+		],
+	},
+	{
+		version: 3,
+		statements: [
+			`ALTER TABLE ${TABLES.documents} ADD COLUMN host TEXT`,
+			`CREATE INDEX chord_documents_host ON ${TABLES.documents} (host) WHERE host IS NOT NULL`,
 		],
 	},
 ];

@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-mcp",
-	"version": "1.5.0",
+	"version": "1.6.0",
 	"description": "Standalone Model Context Protocol client for pi and other applications",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -27,7 +27,7 @@
 		"dist",
 		"README.md",
 		"CHANGELOG.md",
-		"LICENSES"
+		"THIRD_PARTY_NOTICES"
 	],
 	"scripts": {
 		"clean": "node ../../scripts/package-files.mjs clean dist",

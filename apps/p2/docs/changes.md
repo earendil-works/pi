@@ -160,8 +160,8 @@ without reading or writing it. The workspace route can show one:
 
 - `send` (path, optional name): today's `send_file`.
 - `open` (path, optional line): resolves the path with `env.canonicalPath` through the session's environment, then
-  checks that it is a file or directory inside the conversation's canonical cwd (the workspace shows nothing else; p2's
-  private data directory stays excluded). It copies nothing and returns
+  checks that it is a file or directory inside the conversation's canonical cwd (the workspace shows nothing else).
+  It copies nothing and returns
   `details: { action: "open", path (canonical, cwd-relative), kind, line? }`; the web derives `directory` from `path`.
 
 Replay: Durable's replay policy is per registration, so the whole `files` tool stays `replay: "unsafe"` like

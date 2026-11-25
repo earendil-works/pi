@@ -19,7 +19,9 @@ import {
 	localPreferenceSources,
 	watchLocalPreferences,
 } from "./tui-local-preferences.ts";
+import { RADIUS_POLL_MS, type RadiusTransport, radiusClient, radiusServer, radiusTransport } from "./tui-radius.ts";
 import { requireTuiNode } from "./tui-sandbox.ts";
+import { cookieTransport } from "./tui-transport.ts";
 
 const ask = async (question: string): Promise<string> => {
 	const input = createInterface({ input: stdin, output: stdout });
@@ -30,13 +32,32 @@ const ask = async (question: string): Promise<string> => {
 	}
 };
 
+/**
+ * Through Radius (`--radius`): sign in to Radius, find the server, and check that it admits this user as its owner.
+ * The server's answer names its origin, which the launcher shows and builds browser links from.
+ */
+async function connectRadius(
+	server: string | undefined,
+	signal: AbortSignal,
+): Promise<{ url: URL; transport: RadiusTransport }> {
+	const client = await radiusClient((text) => console.log(text), signal);
+	const transport = radiusTransport(client, await radiusServer(client, server));
+	const response = await transport.request("/owner/check", { signal: AbortSignal.timeout(30_000) });
+	const value: unknown = response.ok ? await response.json() : undefined;
+	if (!value || typeof value !== "object" || !("owner" in value) || value.owner !== true || !transport.origin)
+		throw new Error(`This server does not admit you as its owner through Radius (${response.status})`);
+	return { url: new URL(transport.origin), transport };
+}
+
 let client: TuiClient | undefined;
 let stopping = false;
+const stopped = new AbortController();
 /** Ends the current run's wait; a signal closes the client without its exit callback. */
 let finish: () => void = () => {};
 for (const signal of ["SIGINT", "SIGTERM"] as const)
 	process.once(signal, () => {
 		stopping = true;
+		stopped.abort();
 		void (client?.close() ?? Promise.resolve()).finally(() => finish());
 	});
 try {
@@ -46,15 +67,21 @@ try {
 	// The visitor's own pi keybindings/settings/themes and p2 prefs, read here and sent to the worker as data.
 	const sources = localPreferenceSources({ theme: options.theme, noThemes: options.noThemes });
 	const current = loadLocalPreferences(sources);
+	const radius = options.radius && (await connectRadius(options.radius.server, stopped.signal));
 	while (!stopping) {
-		const admission: TuiAdmission = await authenticateTui(options, config, (kind) =>
-			ask(
-				kind === "name"
-					? "Your name (shown to the owner and other guests; not verified): "
-					: "Owner link (npm run owner-link on the host) or share link: ",
-			),
-		);
-		saveConfig(config);
+		const admission: TuiAdmission = radius
+			? { role: "owner" }
+			: await authenticateTui(options, config, (kind, reason) =>
+					ask(
+						kind === "name"
+							? "Your name (shown to the owner and other guests; not verified): "
+							: `${reason ? `${reason}.\n` : ""}Owner link (npm run owner-link on the host) or share link: `,
+					),
+				);
+		if (!radius) saveConfig(config);
+		const url = radius ? radius.url : options.url;
+		const credentials = { cookie: admission.cookie };
+		const transport = radius ? radius.transport : cookieTransport(url, credentials);
 		const local = launcherPreferences(sources);
 		const failures: string[] = [];
 		let ended = false;
@@ -63,12 +90,15 @@ try {
 			finish = resolve;
 			void startTuiClient({
 				terminal: new ProcessTerminal(),
-				url: options.url,
-				credentials: { cookie: admission.cookie },
+				url,
+				transport,
+				...(radius ? { pollMs: RADIUS_POLL_MS } : {}),
 				mouse: local.mouse,
+				role: admission.role,
 				actions: launcherActions({
-					url: options.url,
-					credentials: { cookie: admission.cookie },
+					url,
+					credentials,
+					transport,
 					role: admission.role,
 					downloads: local.downloads,
 					editor: editorArgv(local.editor),
@@ -96,8 +126,14 @@ try {
 		client = undefined;
 		for (const message of failures) console.error(message);
 		if (!ended || stopping) break;
+		if (radius) {
+			console.error("The server no longer admits you through Radius.");
+			break;
+		}
 		// Launcher-drawn, on the restored terminal: the same words as the web page, then a way back in.
 		console.error(endedNotice(admission.role));
+		// A local sign-in ended (all devices signed out): the data directory's owner key signs in again.
+		if (admission.local) continue;
 		const next = await resumeAfterEnded(admission.role, options.url, config, ask);
 		saveConfig(config);
 		if (!next) break;

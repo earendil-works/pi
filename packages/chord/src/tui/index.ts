@@ -3,6 +3,7 @@
 // `/tui/launcher` and `/surfaces`'s `tuiSurface`.
 
 export type { PageState } from "../surfaces/page-state.ts";
+export type { InVariant, VariantOf, VariantRef } from "../surfaces/variant.ts";
 export type { Bridge, BridgeRequest, BridgeStart, LauncherMessage, SandboxMessage } from "./bridge.ts";
 export {
 	type AttachedFile,
@@ -10,6 +11,6 @@ export {
 	type TerminalRuntime,
 	type TerminalRuntimeOptions,
 } from "./runtime.ts";
-export { TuiScope } from "./scope.ts";
+export { type OptimisticAdd, TuiScope } from "./scope.ts";
 export { BridgeTerminal } from "./terminal.ts";
 export { TerminalTheme } from "./theme.ts";

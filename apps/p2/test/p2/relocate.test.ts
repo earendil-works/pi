@@ -174,7 +174,12 @@ describe("session relocation (fake provider)", () => {
 					20_000,
 				);
 				// The answer's report runs the root once more: idle before the next message, which would steer it.
-				await until(current.view, (value) => text(value).includes(`Echo: [subagent ${name} answered`));
+				await until(
+					current.view,
+					(value) =>
+						text(value).includes(`<sender kind="subagent" name="${name}"/>`) &&
+						!(value?.docs["pi.live"] as { run?: unknown } | undefined)?.run,
+				);
 				await until(status.statuses, (value) => value?.[session.id]?.tasks === 0);
 				return { child, agent: settled?.docs["pi.agent"] as { cwd?: string }, settled };
 			} finally {
@@ -423,7 +428,12 @@ describe("session relocation (fake provider)", () => {
 			{ text: `subagent ${JSON.stringify(spawn)}`, requestId: "own-location-spawn" },
 			BACKGROUND_CONTEXT,
 		);
-		await until(s.chat.view, (view) => text(view).includes("Echo: [subagent mine answered"));
+		await until(
+			s.chat.view,
+			(view) =>
+				text(view).includes('<sender kind="subagent" name="mine"/>') &&
+				!(view?.docs["pi.live"] as { run?: unknown } | undefined)?.run,
+		);
 		await s.answers();
 		await fixture.server.host.root(async (ctx) => {
 			const boundary = await ctx.get(WorkerBoundary, { session: s.session.id });
@@ -528,10 +538,18 @@ describe("session relocation (fake provider)", () => {
 		const session = await sessions.create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT);
 		const root = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
 		await root.send({ text: "slow run", requestId: "slow" }, BACKGROUND_CONTEXT);
-		await assert.rejects(
-			sessions.relocate({ id: session.id, cwd: target, env: null }, BACKGROUND_CONTEXT),
-			/Stop the current run/,
-		);
+		// A refused move is a failed operation the owner sees (the call answered when the move started).
+		const refused = async (pattern: RegExp) => {
+			await sessions.relocate({ id: session.id, cwd: target, env: null }, BACKGROUND_CONTEXT);
+			const list = await until(sessions.operations, (value) =>
+				(value ?? []).some((each) => each.session === session.id && each.phase === "failed"),
+			);
+			const failure = list?.find((each) => each.session === session.id && each.phase === "failed");
+			assert(failure?.phase === "failed");
+			assert.match(failure.error, pattern);
+			await sessions.dismissOperation({ operation: failure.id }, BACKGROUND_CONTEXT);
+		};
+		await refused(/Stop the current run/);
 		// The refusal left no fence: input is admitted, and the session stayed where it was.
 		await root.send({ text: "queued meanwhile", requestId: "queued", whenBusy: "followUp" }, BACKGROUND_CONTEXT);
 		assert.equal(await catalogCwd(session.id), fixture.workspace);
@@ -550,10 +568,7 @@ describe("session relocation (fake provider)", () => {
 			"participant",
 		);
 		await helper.send({ text: "slow helper", requestId: "slow-child" }, BACKGROUND_CONTEXT);
-		await assert.rejects(
-			sessions.relocate({ id: session.id, cwd: target, env: null }, BACKGROUND_CONTEXT),
-			/Subagent helper is still running/,
-		);
+		await refused(/Subagent helper is still running/);
 		await helper.stop(BACKGROUND_CONTEXT);
 		await until(status.statuses, (value) => value?.[session.id]?.tasks === 0);
 		await fixture.server.host.root(async (ctx) => {

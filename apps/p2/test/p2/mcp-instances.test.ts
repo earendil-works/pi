@@ -21,6 +21,10 @@ const SIGNAL = new AbortController().signal;
 const NO_ENVIRONMENTS = (): never => {
 	throw new Error("no environments in this test");
 };
+/** No HTTP servers either. */
+const NO_OAUTH = (): never => {
+	throw new Error("no OAuth servers in this test");
+};
 
 /** A supervisor running the fixture once for session s1 at a temporary directory; `env` added to its environment. */
 function supervisor(t: { after(fn: () => unknown): void }, env: Record<string, string> = {}, seed: Instance[] = []) {
@@ -45,7 +49,7 @@ function supervisor(t: { after(fn: () => unknown): void }, env: Record<string, s
 		{},
 		{ s1: [null] },
 	);
-	const instances = new Instances(CLIENT, BACKOFF, seed, NO_ENVIRONMENTS);
+	const instances = new Instances(CLIENT, BACKOFF, seed, NO_ENVIRONMENTS, NO_OAUTH);
 	t.after(async () => {
 		await instances.close();
 		rmSync(root, { recursive: true, force: true });
@@ -53,6 +57,23 @@ function supervisor(t: { after(fn: () => unknown): void }, env: Record<string, s
 	const pids = () => (existsSync(log) ? readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map(Number) : []);
 	return { instances, placement, pids, id: [...placement.instances.keys()][0]! };
 }
+
+test("a locked session's lease gets only the servers its owner picked", () => {
+	const config = parseOwnerConfig(JSON.stringify({ mcpServers: { a: { command: "a" }, b: { command: "b" } } }));
+	const lease = (session: string) => ({
+		session,
+		location: { env: null, cwd: "/w" },
+		project: { kind: "none" as const },
+		generation: 1,
+		incarnation: "i",
+	});
+	const lock = { mcp: ["b"], projectMcp: false, instructions: false, capabilities: [] };
+	const placement = place(config, [lease("s1"), lease("s2")], {}, { s1: [null], s2: [null] }, { s2: lock });
+	const servers = (session: string) =>
+		[...(placement.leases.find((entry) => entry.lease.session === session)?.servers.keys() ?? [])].sort();
+	assert.deepEqual(servers("s1"), ["a", "b"]);
+	assert.deepEqual(servers("s2"), ["b"]);
+});
 
 /** Resolves with the instances once `predicate` holds for them. */
 function when(instances: Instances, predicate: (list: Instance[]) => boolean): Promise<Instance[]> {
@@ -118,7 +139,7 @@ test("close and restart end a connect under way", async (t) => {
 	assert.deepEqual(instances.list(), []);
 });
 
-test("a new supervisor lists the tools its predecessor listed until the server answers", async (t) => {
+test("a new supervisor lists the tools and instructions its predecessor listed until the server answers", async (t) => {
 	const first = supervisor(t, { MCP_FIXTURE_HANG: "1" });
 	const seed: Instance = {
 		id: first.id,
@@ -128,12 +149,42 @@ test("a new supervisor lists the tools its predecessor listed until the server a
 		runsOn: "host",
 		status: "connected",
 		tools: [{ name: "echo", inputSchema: { type: "object" } }],
+		instructions: "Echoes.",
 	};
-	const instances = new Instances(CLIENT, BACKOFF, [seed], NO_ENVIRONMENTS);
+	const instances = new Instances(CLIENT, BACKOFF, [seed], NO_ENVIRONMENTS, NO_OAUTH);
 	t.after(() => instances.close());
 	instances.reconcile(first.placement);
+	// The prompt shows the summary from the instructions: it does not change while the server starts again.
 	assert.deepEqual(
-		instances.list().map((instance) => [instance.status, instance.tools.map((tool) => tool.name)]),
-		[["starting", ["echo"]]],
+		instances
+			.list()
+			.map((instance) => [instance.status, instance.tools.map((tool) => tool.name), instance.instructions]),
+		[["starting", ["echo"], "Echoes."]],
+	);
+});
+
+test("an instance lists its configuration's description, trimmed", () => {
+	const config = parseOwnerConfig(
+		JSON.stringify({
+			mcpServers: {
+				a: { command: "a", description: "  Searches the docs. " },
+				b: { command: "b", description: " " },
+			},
+		}),
+	);
+	const lease = {
+		session: "s1",
+		location: { env: null, cwd: "/w" },
+		project: { kind: "none" as const },
+		generation: 1,
+		incarnation: "i",
+	};
+	const placement = place(config, [lease], {}, { s1: [null] });
+	assert.deepEqual(
+		[...placement.instances.values()].map((spec) => [spec.server, spec.description]),
+		[
+			["a", "Searches the docs."],
+			["b", undefined],
+		],
 	);
 });

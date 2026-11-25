@@ -99,7 +99,7 @@ export function spokenMention(text: string, name = DEFAULT_AGENT_NAME): string {
 	return spokenName(name).test(text) ? `${mentionToken(name)} ${text.trim()}` : text;
 }
 
-/** One conversation's switch and agent name (worker-local), mirrored from its Durable document. */
+/** One conversation's switch and agent name (worker-local), followed from its Durable document. */
 export const ChatModeSetting = local("p2.chat-mode-setting", {
 	/** 2: the agent's name. 3: `waiting`. */
 	version: 3,

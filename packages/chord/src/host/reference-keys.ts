@@ -1,7 +1,7 @@
 // The keys a reference holds (slice 6a §12; decision "References are the only indirection" (4)): its key watches and
 // its factory's pins (`at(key)`) of its object's keyed members, one source per member and key shared by them, pinned on
 // the object's live instance (loaded, mapped to the reference's version). While the object still follows the instance a
-// key is pinned on (a swap's old instance, a restart's drain, a live failure's admitted commits) the key follows it on,
+// key is pinned on (a restart's open old attempt, a live failure's admitted commits) the key follows it on,
 // as members do. When the reference moves to a new instance or a new object it pins the key there again, keeping the
 // last value until that pin loads, then one frame; while it points at nothing the key keeps its last value (one
 // `failed` call when its target failed, none while it loads).

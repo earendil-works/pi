@@ -1,0 +1,1472 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>p3 layout mocks: beyond sidebar, chat, sidebar</title>
+<style>
+:root{--bg:#141311;--panel:#1c1b18;--panel2:#22211d;--line:#2e2c27;--text:#e8e3d8;--muted:#8f887a;--accent:#e07a4f;--blue:#6b8fd6;--green:#5fae7f;--yellow:#d8b44a;--red:#d65c5c;--violet:#a685d6;--mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font:13px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+a{color:var(--blue);text-decoration:none}
+nav.tabs{position:sticky;top:0;z-index:50;background:rgba(20,19,17,.96);backdrop-filter:blur(6px);border-bottom:1px solid var(--line);display:flex;flex-wrap:wrap;gap:2px;padding:8px 14px;align-items:center}
+nav.tabs .brand{font-weight:700;margin-right:10px;color:var(--accent);letter-spacing:.3px}
+nav.tabs button{background:none;border:1px solid transparent;color:var(--muted);font:inherit;font-size:12px;padding:4px 9px;border-radius:7px;cursor:pointer}
+nav.tabs button:hover{color:var(--text);background:var(--panel)}
+nav.tabs button.on{color:var(--text);background:var(--panel);border-color:var(--line)}
+nav.tabs button b{color:var(--accent);font-weight:600;margin-right:4px}
+main{padding:16px 18px 40px}
+section.tab{display:none}
+section.tab.on{display:block}
+.note{color:var(--muted);font-size:12.5px;max-width:1100px;margin:0 0 14px;padding:8px 12px;border-left:2px solid var(--accent);background:rgba(224,122,79,.05);border-radius:0 8px 8px 0}
+.note b{color:var(--text);font-weight:600}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px}
+.pad{padding:12px 14px}
+.muted{color:var(--muted)}
+.small{font-size:11.5px}
+.tiny{font-size:10.5px}
+.mono{font-family:var(--mono);font-size:12px}
+.row{display:flex;gap:10px;align-items:center}
+.col{display:flex;flex-direction:column;gap:10px}
+.sp{flex:1}
+.h{font-weight:600;font-size:13px}
+.h2{font-weight:650;font-size:15px}
+.sec{font-size:10.5px;letter-spacing:.9px;text-transform:uppercase;color:var(--muted);font-weight:600;margin:0 0 8px}
+.chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:1px 8px;border-radius:999px;border:1px solid var(--line);color:var(--muted);background:var(--panel2);white-space:nowrap}
+.chip.a{color:var(--accent);border-color:rgba(224,122,79,.4);background:rgba(224,122,79,.08)}
+.chip.b{color:var(--blue);border-color:rgba(107,143,214,.4);background:rgba(107,143,214,.08)}
+.chip.g{color:var(--green);border-color:rgba(95,174,127,.4);background:rgba(95,174,127,.08)}
+.chip.y{color:var(--yellow);border-color:rgba(216,180,74,.4);background:rgba(216,180,74,.08)}
+.chip.r{color:var(--red);border-color:rgba(214,92,92,.45);background:rgba(214,92,92,.09)}
+.chip.v{color:var(--violet);border-color:rgba(166,133,214,.4);background:rgba(166,133,214,.08)}
+.btn{display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:12px;padding:4px 11px;border-radius:7px;border:1px solid var(--line);background:var(--panel2);color:var(--text);cursor:pointer;white-space:nowrap}
+.btn.p{background:var(--accent);border-color:var(--accent);color:#1a120d;font-weight:600}
+.btn.g{color:var(--green);border-color:rgba(95,174,127,.5)}
+.btn.r{color:var(--red);border-color:rgba(214,92,92,.5)}
+.btn.q{background:none}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block;background:var(--muted);flex:none}
+.dot.g{background:var(--green)}.dot.y{background:var(--yellow)}.dot.r{background:var(--red)}.dot.b{background:var(--blue)}.dot.a{background:var(--accent)}
+.dot.pulse{box-shadow:0 0 0 0 rgba(224,122,79,.6);animation:pulse 1.6s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(224,122,79,.55)}70%{box-shadow:0 0 0 7px rgba(224,122,79,0)}100%{box-shadow:0 0 0 0 rgba(224,122,79,0)}}
+.av{width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:10.5px;font-weight:700;color:#141311;flex:none}
+.av.m{background:#e07a4f}.av.c{background:#6b8fd6}.av.co{background:#5fae7f}.av.ch{background:#d8b44a}.av.ad{background:#a685d6}.av.bot{background:#3a3833;color:var(--text)}
+.av.lg{width:34px;height:34px;font-size:13px}
+.term{background:#0f0e0c;border:1px solid var(--line);border-radius:10px;font-family:var(--mono);font-size:11.5px;line-height:1.5;padding:10px 12px;color:#cfc9bc;overflow:hidden;white-space:pre}
+.term .g{color:var(--green)}.term .r{color:var(--red)}.term .y{color:var(--yellow)}.term .b{color:var(--blue)}.term .a{color:var(--accent)}.term .m{color:var(--muted)}
+.tool{font-family:var(--mono);font-size:11px;color:var(--text);background:#0f0e0c;border:1px solid var(--line);border-radius:6px;padding:3px 7px;display:inline-flex;gap:6px;align-items:center;max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.tool .n{color:var(--accent)}
+.spin{display:inline-block;width:9px;height:9px;border:2px solid rgba(224,122,79,.25);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;flex:none}
+@keyframes spin{to{transform:rotate(360deg)}}
+.bar{height:6px;border-radius:4px;background:#2a2824;overflow:hidden}
+.bar>i{display:block;height:100%;background:var(--accent);border-radius:4px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;font-size:12px}
+.kv>:nth-child(odd){color:var(--muted)}
+.diff{font-family:var(--mono);font-size:11.5px;line-height:1.55;white-space:pre;overflow:hidden}
+.diff .add{background:rgba(95,174,127,.12);color:#b9e3c7;display:block}
+.diff .del{background:rgba(214,92,92,.12);color:#eab0b0;display:block}
+.diff .ctx{display:block;color:#a9a294}
+.diff .hunk{display:block;color:var(--blue);background:rgba(107,143,214,.07)}
+.sep{height:1px;background:var(--line);margin:8px 0}
+table.t{border-collapse:collapse;width:100%;font-size:12px}
+table.t td,table.t th{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+table.t th{color:var(--muted);font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.7px}
+.search{display:flex;align-items:center;gap:8px;background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:6px 10px;color:var(--muted)}
+.search .q{color:var(--text)}
+.kbd{font-family:var(--mono);font-size:10.5px;border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 5px;color:var(--muted);background:var(--panel2)}
+</style>
+</head>
+<body>
+<nav class="tabs" id="nav"><span class="brand">p3 layouts</span></nav>
+<main>
+<section class="tab" id="v1" data-title="Inbox">
+<style>
+#v1 .wrap{display:grid;grid-template-columns:200px 1fr 320px;gap:14px}
+#v1 .filt a{display:flex;justify-content:space-between;padding:5px 9px;border-radius:7px;color:var(--muted)}
+#v1 .filt a.on{background:var(--panel2);color:var(--text)}
+#v1 .filt a span{font-size:11px}
+#v1 .card{padding:12px 14px;border-radius:12px;background:var(--panel);border:1px solid var(--line);position:relative}
+#v1 .card.urgent{border-color:rgba(214,92,92,.5);box-shadow:inset 3px 0 0 var(--red)}
+#v1 .card.ask{box-shadow:inset 3px 0 0 var(--accent)}
+#v1 .card.ok{box-shadow:inset 3px 0 0 var(--green)}
+#v1 .card.warn{box-shadow:inset 3px 0 0 var(--yellow)}
+#v1 .card.dc{box-shadow:inset 3px 0 0 var(--violet)}
+#v1 .meta{display:flex;gap:8px;align-items:center;font-size:11.5px;color:var(--muted);margin-bottom:6px}
+#v1 .q{font-size:13.5px;margin:4px 0 8px}
+#v1 .opt{display:flex;gap:8px;flex-wrap:wrap}
+#v1 .opt .btn{padding:5px 12px}
+#v1 .agent{display:flex;gap:9px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--line)}
+#v1 .agent:last-child{border-bottom:0}
+#v1 .stat{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+#v1 .stat div{background:var(--panel2);border-radius:9px;padding:8px 10px}
+#v1 .stat b{display:block;font-size:19px;font-weight:650}
+#v1 .spark{display:flex;align-items:flex-end;gap:3px;height:40px}
+#v1 .spark i{flex:1;background:var(--accent);opacity:.75;border-radius:2px 2px 0 0}
+</style>
+<p class="note"><b>Inbox.</b> A cross-session feed of everything that needs a human, ranked by urgency, not by session. A layout plugin over <b>tool calls awaiting approval, runs (failed/finished), artifacts, Discord resources, telemetry (budget)</b>. Acting on a card answers the session in place; the transcript is one click away.</p>
+<div class="wrap">
+ <div class="col">
+  <div class="panel pad filt">
+   <div class="sec">Needs me</div>
+   <a class="on" href="#">All <span>9</span></a>
+   <a href="#">Questions <span class="chip a">3</span></a>
+   <a href="#">Failures <span class="chip r">2</span></a>
+   <a href="#">Discord <span>1</span></a>
+   <a href="#">Finished <span>2</span></a>
+   <a href="#">Budget <span>1</span></a>
+   <div class="sep"></div>
+   <div class="sec">Projects</div>
+   <a href="#">pi <span>7</span></a>
+   <a href="#">journal <span>1</span></a>
+   <a href="#">radius <span>1</span></a>
+   <div class="sep"></div>
+   <div class="sec">Snoozed</div>
+   <a href="#">until 16:00 <span>2</span></a>
+  </div>
+  <div class="panel pad small muted">Rules: Discord asks from <b style="color:var(--text)">Cristina</b> skip the inbox and are auto-granted 1h in #pi.</div>
+ </div>
+ <div class="col">
+  <div class="row"><div class="h2">Needs you</div><span class="chip">9 open</span><span class="sp"></span><span class="muted small">sorted by</span><span class="chip a">urgency</span><span class="chip">time</span><span class="chip">session</span><button class="btn q">Mark all seen</button></div>
+
+  <div class="card ask">
+   <div class="meta"><span class="dot a pulse"></span><b style="color:var(--text)">p3 step 0b</b><span>· slayer:~/pi · claude-opus-4.5 · turn 41</span><span class="sp"></span><span>waiting 6 min</span></div>
+   <div class="q">The reload loop test needs the build cache removed. Drop <span class="mono">.p3/cache/esbuild</span> and rebuild from scratch on every reload (adds ~380 ms), or keep the cache and key it by facet hash?</div>
+   <div class="tool" style="margin-bottom:9px"><span class="n">ask_user</span> options: A drop cache · B key by facet hash · C defer</div>
+   <div class="opt"><button class="btn p">A: drop the build cache</button><button class="btn">B: key by facet hash</button><button class="btn">C: defer</button><span class="sp"></span><button class="btn q">Reply…</button><button class="btn q">Open session ↗</button></div>
+  </div>
+
+  <div class="card urgent">
+   <div class="meta"><span class="dot r"></span><b style="color:var(--text)">kit-owner build</b><span>· slayer:~/pi · run 7 · npm run check</span><span class="sp"></span><span>2 min ago</span></div>
+   <div class="q">3 tests failed in <span class="mono">packages/chord/test/kit-owner.test.ts</span>. Agent stopped after 2 fix attempts.</div>
+   <div class="term" style="max-height:132px"><span class="r">✗</span> kit owner › rejects foreign principal key <span class="m">(14 ms)</span>
+  <span class="r">AssertionError: expected 'ok' to be 'denied'</span>
+   <span class="m">❯ test/kit-owner.test.ts:88:31</span>
+<span class="r">✗</span> kit owner › binding survives reload <span class="m">(203 ms)</span>
+  <span class="r">TypeError: Cannot read properties of undefined (reading 'params')</span>
+   <span class="m">❯ src/kit/owner.ts:142:19</span>
+<span class="r">✗</span> kit owner › GC releases binding <span class="m">(timeout 5000 ms)</span>
+<span class="g">✓</span> 61 passed  <span class="r">✗ 3 failed</span>  <span class="m">Duration 4.81s</span></div>
+   <div class="opt" style="margin-top:9px"><button class="btn p">Let it retry with hint…</button><button class="btn">Open diff (+212 −40)</button><button class="btn">Open terminal</button><span class="sp"></span><button class="btn q">Assign to Colin</button></div>
+  </div>
+
+  <div class="card dc">
+   <div class="meta"><span class="av ch" style="width:18px;height:18px;font-size:9px">CH</span><b style="color:var(--text)">Charlotta</b><span>in Earendil · <span style="color:var(--violet)">#radius</span> · via pi-bot</span><span class="sp"></span><span>11 min ago</span></div>
+   <div class="q">"@pi can you check why the Radius MCP token refresh fails for the staging gateway? need the logs from slayer"</div>
+   <div class="small muted" style="margin-bottom:8px">Charlotta has no grant on <span class="mono">slayer</span>. Granting lets pi-bot run read-only tools in slayer:~/pi for her thread.</div>
+   <div class="opt"><button class="btn p">Grant 1 hour</button><button class="btn">Grant for this thread</button><button class="btn">Answer myself</button><button class="btn q r">Decline</button></div>
+  </div>
+
+  <div class="card warn">
+   <div class="meta"><span class="dot y"></span><b style="color:var(--text)">Budget</b><span>· Radius models gateway · project pi</span><span class="sp"></span><span>14:02</span></div>
+   <div class="row"><div class="q" style="margin:0">Daily spend at <b>$41.20</b> of $50 (82%). <span class="mono">astra review</span> is burning $6.10/h on opus.</div></div>
+   <div class="bar" style="margin:8px 0"><i style="width:82%;background:var(--yellow)"></i></div>
+   <div class="opt"><button class="btn">Raise to $75 today</button><button class="btn">Switch astra review to sonnet</button><button class="btn q">Pause astra review</button></div>
+  </div>
+
+  <div class="card ask">
+   <div class="meta"><span class="dot a"></span><b style="color:var(--text)">sol review</b><span>· laptop:~/pi · gpt-5 · turn 12</span><span class="sp"></span><span>waiting 23 min</span></div>
+   <div class="q">Run <span class="mono">git push origin sol/review-fixes</span>? 4 commits, touches <span class="mono">packages/ai</span>.</div>
+   <div class="opt"><button class="btn g">Approve</button><button class="btn">Show commits</button><button class="btn q r">Deny</button></div>
+  </div>
+
+  <div class="card ok">
+   <div class="meta"><span class="dot g"></span><b style="color:var(--text)">Discord plugin design</b><span>· finished · artifact</span><span class="sp"></span><span>32 min ago</span></div>
+   <div class="row" style="align-items:flex-start;gap:12px">
+    <div style="width:120px;height:74px;border-radius:8px;background:linear-gradient(135deg,#2a2622,#1e1d1a);border:1px solid var(--line);padding:8px;flex:none"><div style="height:6px;width:70%;background:var(--accent);border-radius:3px;opacity:.7"></div><div style="height:4px;width:90%;background:#3a3833;margin-top:6px;border-radius:3px"></div><div style="height:4px;width:80%;background:#3a3833;margin-top:4px;border-radius:3px"></div><div style="height:4px;width:60%;background:#3a3833;margin-top:4px;border-radius:3px"></div></div>
+    <div><div class="h">Discord plugin: design book</div><div class="small muted">explainer · 14 sections · private Radius artifact · 3 open questions inside</div><div class="opt" style="margin-top:8px"><button class="btn">Open</button><button class="btn">Share with Colin</button><button class="btn q">Archive session</button></div></div>
+   </div>
+  </div>
+
+  <div class="card ok">
+   <div class="meta"><span class="dot g"></span><b style="color:var(--text)">slayer CVE check</b><span>· scheduled 06:00 · finished</span><span class="sp"></span><span>08:14</span></div>
+   <div class="q" style="margin:0">No new high CVEs. 2 moderate in <span class="mono">undici 7.10.0</span> (dev only). Report attached.</div>
+  </div>
+ </div>
+ <div class="col">
+  <div class="panel pad">
+   <div class="sec">Agents now</div>
+   <div class="agent"><span class="spin"></span><div><div class="h">astra review</div><div class="tool"><span class="n">read</span> packages/chord/docs/design.md</div><div class="tiny muted">slayer · opus · 18 min · $2.31</div></div></div>
+   <div class="agent"><span class="spin"></span><div><div class="h">Journal</div><div class="tool"><span class="n">bash</span> git -C ~/journal add 2025-06-14.md</div><div class="tiny muted">phone · haiku · 1 min · $0.01</div></div></div>
+   <div class="agent"><span class="dot a pulse" style="margin-top:5px"></span><div><div class="h">p3 step 0b</div><div class="small" style="color:var(--accent)">waiting for you · 6 min</div></div></div>
+   <div class="agent"><span class="dot a" style="margin-top:5px"></span><div><div class="h">sol review</div><div class="small" style="color:var(--accent)">waiting for you · 23 min</div></div></div>
+   <div class="agent"><span class="dot r" style="margin-top:5px"></span><div><div class="h">kit-owner build</div><div class="small" style="color:var(--red)">stopped · 3 tests failing</div></div></div>
+   <div class="agent"><span class="av c" style="width:18px;height:18px;font-size:9px">C</span><div><div class="h">Cristina · radius gateway</div><div class="tool"><span class="n">edit</span> gateway/src/route.ts</div></div></div>
+  </div>
+  <div class="panel pad">
+   <div class="sec">Today</div>
+   <div class="stat">
+    <div><b>$41.20</b><span class="small muted">spend · 82% of cap</span></div>
+    <div><b>214</b><span class="small muted">turns · 9 sessions</span></div>
+    <div><b>1,388</b><span class="small muted">tool calls</span></div>
+    <div><b>7</b><span class="small muted">commits · 3 by agents</span></div>
+    <div><b>41 min</b><span class="small muted">agents waited on you</span></div>
+    <div><b>4</b><span class="small muted">artifacts</span></div>
+   </div>
+   <div class="sec" style="margin-top:12px">Spend per hour</div>
+   <div class="spark"><i style="height:10%"></i><i style="height:15%"></i><i style="height:40%"></i><i style="height:62%"></i><i style="height:55%"></i><i style="height:30%"></i><i style="height:48%"></i><i style="height:90%"></i><i style="height:70%;background:var(--yellow)"></i><i style="height:20%;opacity:.4"></i></div>
+   <div class="row tiny muted" style="justify-content:space-between"><span>06</span><span>09</span><span>12</span><span>14</span></div>
+  </div>
+ </div>
+</div>
+</section>
+<section class="tab" id="v2" data-title="Board of runs">
+<style>
+#v2 .board{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;align-items:start}
+#v2 .lane{background:#181715;border:1px solid var(--line);border-radius:12px;padding:10px;min-height:640px}
+#v2 .lh{display:flex;align-items:center;gap:7px;font-weight:600;margin:2px 2px 10px}
+#v2 .lh .n{color:var(--muted);font-weight:500}
+#v2 .rc{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:9px}
+#v2 .rc .t{font-weight:600;margin-bottom:3px}
+#v2 .rc .m{font-size:11px;color:var(--muted);display:flex;gap:6px;flex-wrap:wrap;margin-bottom:7px}
+#v2 .rc .ft{display:flex;align-items:center;gap:6px;margin-top:8px;font-size:11px;color:var(--muted)}
+#v2 .rc.sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent),0 8px 24px rgba(0,0,0,.35)}
+#v2 .prog{display:flex;gap:2px;margin-top:6px}
+#v2 .prog i{height:4px;flex:1;border-radius:2px;background:#3a3833}
+#v2 .prog i.d{background:var(--green)}#v2 .prog i.c{background:var(--accent)}
+#v2 .ghost{border:1px dashed var(--line);border-radius:10px;padding:10px;color:var(--muted);text-align:center;font-size:12px}
+</style>
+<p class="note"><b>Board of runs.</b> Kanban where a card is one <b>run</b> (an agent working toward a goal across turns). Columns are run state; the card shows the <b>live current tool call</b>. View over runs, turns, tool calls, envs. Dragging a card from "failed" to "queued" retries it with your note.</p>
+<div class="row" style="margin-bottom:12px"><div class="search" style="width:320px">⌕ <span>filter runs…</span></div><span class="chip a">project: pi</span><span class="chip">env: any</span><span class="chip">person: me + Colin</span><span class="sp"></span><span class="muted small">group by</span><span class="chip a">state</span><span class="chip">env</span><span class="chip">person</span><button class="btn p">+ New run</button></div>
+<div class="board">
+ <div class="lane"><div class="lh"><span class="dot"></span>Queued <span class="n">3</span></div>
+  <div class="rc"><div class="t">Regenerate models catalog</div><div class="m"><span>slayer:~/pi</span><span>· sonnet</span></div><div class="small muted">after: <span class="chip b">kit-owner build ✓</span></div><div class="ft"><span class="av m" style="width:16px;height:16px;font-size:8px">M</span>scheduled · waits on dependency</div></div>
+  <div class="rc"><div class="t">slayer CVE check</div><div class="m"><span>slayer</span><span>· haiku</span><span>· cron 06:00</span></div><div class="ft">⏱ tomorrow 06:00</div></div>
+  <div class="rc"><div class="t">Journal: weekly summary</div><div class="m"><span>phone:~/journal</span><span>· haiku</span></div><div class="ft">⏱ Sun 20:00</div></div>
+  <div class="ghost">drop here to queue</div>
+ </div>
+ <div class="lane"><div class="lh"><span class="spin"></span>Working <span class="n">4</span></div>
+  <div class="rc sel"><div class="t">astra review</div><div class="m"><span>slayer:~/pi</span><span>· opus</span><span>· turn 23</span><span style="color:var(--yellow)">$6.10/h</span></div>
+   <div class="tool"><span class="spin"></span><span class="n">read</span> packages/chord/docs/design.md:410-620</div>
+   <div class="small muted" style="margin-top:6px">"Checking §7 principal keys against the slice 3 spec…"</div>
+   <div class="prog"><i class="d"></i><i class="d"></i><i class="d"></i><i class="c"></i><i></i><i></i></div>
+   <div class="ft"><span class="av m" style="width:16px;height:16px;font-size:8px">M</span>18 min · $2.31 · 4 of 6 steps</div></div>
+  <div class="rc"><div class="t">Journal</div><div class="m"><span>phone:~/journal</span><span>· haiku</span></div>
+   <div class="tool"><span class="spin"></span><span class="n">bash</span> git add 2025-06-14.md &amp;&amp; git commit</div><div class="ft">1 min · $0.01</div></div>
+  <div class="rc"><div class="t">radius gateway retries</div><div class="m"><span>laptop:~/radius</span><span>· sonnet</span></div>
+   <div class="tool"><span class="spin"></span><span class="n">edit</span> gateway/src/route.ts</div>
+   <div class="diff" style="margin-top:6px;border-radius:6px;font-size:10.5px"><span class="del">-  const tries = 1</span><span class="add">+  const tries = cfg.retries ?? 3</span></div>
+   <div class="ft"><span class="av c" style="width:16px;height:16px;font-size:8px">C</span>Cristina · 9 min · $0.44</div></div>
+  <div class="rc"><div class="t">Discord bot: thread grants</div><div class="m"><span>slayer:~/pi</span><span>· sonnet</span></div>
+   <div class="tool"><span class="spin"></span><span class="n">bash</span> npx vitest --run test/grants.test.ts</div>
+   <div class="term" style="margin-top:6px;padding:6px 8px;font-size:10.5px"><span class="g">✓</span> grant expires after 1h
+<span class="g">✓</span> thread grant scoped <span class="m">running…</span></div>
+   <div class="ft"><span class="av co" style="width:16px;height:16px;font-size:8px">CO</span>Colin · 31 min · $1.02</div></div>
+ </div>
+ <div class="lane" style="border-color:rgba(224,122,79,.35)"><div class="lh"><span class="dot a pulse"></span>Waiting for me <span class="n">2</span></div>
+  <div class="rc"><div class="t">p3 step 0b</div><div class="m"><span>slayer:~/pi</span><span>· opus</span><span>· turn 41</span></div>
+   <div class="tool"><span class="n">ask_user</span> drop the build cache?</div>
+   <div class="row" style="margin-top:8px;gap:5px"><button class="btn p" style="padding:3px 8px">A</button><button class="btn" style="padding:3px 8px">B</button><button class="btn" style="padding:3px 8px">C</button><span class="sp"></span><span class="tiny" style="color:var(--accent)">6 min</span></div>
+   <div class="prog"><i class="d"></i><i class="d"></i><i class="d"></i><i class="d"></i><i class="c"></i><i></i><i></i></div></div>
+  <div class="rc"><div class="t">sol review</div><div class="m"><span>laptop:~/pi</span><span>· gpt-5</span><span>· turn 12</span></div>
+   <div class="tool"><span class="n">bash</span> git push origin sol/review-fixes</div>
+   <div class="row" style="margin-top:8px;gap:5px"><button class="btn g" style="padding:3px 8px">Approve</button><button class="btn" style="padding:3px 8px">Deny</button><span class="sp"></span><span class="tiny" style="color:var(--accent)">23 min</span></div></div>
+ </div>
+ <div class="lane"><div class="lh"><span class="dot g"></span>Done <span class="n">5</span><span class="sp"></span><span class="tiny muted">today</span></div>
+  <div class="rc"><div class="t">Discord plugin design</div><div class="m"><span>slayer</span><span>· opus</span><span>· 38 turns</span></div><div class="row small"><span class="chip g">artifact</span><span class="chip">design book</span></div><div class="ft">$4.88 · 1h 12m</div></div>
+  <div class="rc"><div class="t">slayer CVE check</div><div class="m"><span>slayer</span><span>· haiku</span></div><div class="small muted">0 high · 2 moderate (dev)</div><div class="ft">$0.06 · 2m</div></div>
+  <div class="rc"><div class="t">fix(tui): wrap emoji width</div><div class="m"><span>laptop</span><span>· sonnet</span></div><div class="row small"><span class="chip b">commit a41c9e2</span></div><div class="ft">$0.71 · 14m</div></div>
+  <div class="rc"><div class="t">Ada: onboarding notes</div><div class="m"><span>laptop</span><span>· sonnet</span></div><div class="ft"><span class="av ad" style="width:16px;height:16px;font-size:8px">A</span>$0.22</div></div>
+ </div>
+ <div class="lane" style="border-color:rgba(214,92,92,.3)"><div class="lh"><span class="dot r"></span>Failed <span class="n">2</span></div>
+  <div class="rc"><div class="t">kit-owner build</div><div class="m"><span>slayer:~/pi</span><span>· sonnet</span><span>· run 7</span></div>
+   <div class="tool" style="border-color:rgba(214,92,92,.4)"><span class="n" style="color:var(--red)">bash</span> npm run check → exit 1</div>
+   <div class="term" style="margin-top:6px;padding:6px 8px;font-size:10.5px"><span class="r">✗ 3 failed</span> 61 passed
+<span class="m">owner.ts:142 reading 'params'</span></div>
+   <div class="row" style="margin-top:8px;gap:5px"><button class="btn" style="padding:3px 8px">Retry with note</button><button class="btn q" style="padding:3px 8px">Diff</button></div></div>
+  <div class="rc"><div class="t">sol review: e2e</div><div class="m"><span>laptop</span><span>· gpt-5</span></div>
+   <div class="small" style="color:var(--red)">env laptop went offline at 12:40</div>
+   <div class="row" style="margin-top:8px;gap:5px"><button class="btn" style="padding:3px 8px">Move to slayer</button></div></div>
+ </div>
+</div>
+</section>
+<section class="tab" id="v3" data-title="Mission control">
+<style>
+#v3 .wall{display:grid;grid-template-columns:repeat(4,1fr);grid-auto-rows:210px;gap:10px}
+#v3 .tile{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 11px;display:flex;flex-direction:column;gap:6px;overflow:hidden;position:relative}
+#v3 .tile.zoom{grid-column:span 2;grid-row:span 2;border-color:var(--accent);box-shadow:0 0 0 1px var(--accent),0 12px 40px rgba(0,0,0,.45)}
+#v3 .tile.wait{border-color:rgba(224,122,79,.5)}
+#v3 .tile.fail{border-color:rgba(214,92,92,.5)}
+#v3 .th{display:flex;align-items:center;gap:7px}
+#v3 .th .name{font-weight:600}
+#v3 .tx{font-size:11.5px;color:#bdb6a8;flex:1;overflow:hidden;display:flex;flex-direction:column;gap:3px;justify-content:flex-end}
+#v3 .tx .u{color:var(--blue)}
+#v3 .tx .a{color:var(--text)}
+#v3 .tf{display:flex;gap:8px;font-size:10.5px;color:var(--muted);align-items:center}
+#v3 .zoom .tx{font-size:12.5px;gap:6px}
+#v3 .mini{height:22px;display:flex;align-items:flex-end;gap:2px}
+#v3 .mini i{flex:1;background:#3a3833;border-radius:1px}
+</style>
+<p class="note"><b>Mission control.</b> A wall of live tiles, one per <b>active session</b>: tail of the transcript, running tool call, cost, env. Built for a second monitor. View over sessions, turns, tool calls, envs, telemetry. Hover zooms a tile in place; the zoomed one below accepts input directly.</p>
+<div class="row" style="margin-bottom:10px"><span class="h2">11 active</span><span class="chip g">4 working</span><span class="chip a">2 waiting</span><span class="chip r">1 failed</span><span class="chip">4 idle</span><span class="sp"></span><span class="mono muted">$41.20 today · 1,388 tool calls · burn $9.40/h</span><span class="kbd">1-9</span><span class="tiny muted">zoom</span><span class="kbd">space</span><span class="tiny muted">pause all</span></div>
+<div class="wall">
+ <div class="tile zoom">
+  <div class="th"><span class="spin"></span><span class="name" style="font-size:15px">astra review</span><span class="chip">slayer:~/pi</span><span class="chip v">opus</span><span class="sp"></span><span class="mono" style="color:var(--yellow)">$2.31 · $6.10/h</span></div>
+  <div class="tx">
+   <div><span class="u">Mario ›</span> review slice 3 against design.md, be strict about cost guards</div>
+   <div class="a">Read the slice spec and §5-§9 of design.md. Two findings so far:</div>
+   <div class="a">1. <span class="mono">bindParams()</span> copies the params object on every call. design.md §6.2 says same-host values are never copied. This is hot-path work nobody asked for.</div>
+   <div class="a">2. The WeakMap cache in <span class="mono">principal-key.ts</span> has no GC test.</div>
+   <div class="a">Now checking §7 principal keys against the slice 3 test list…</div>
+  </div>
+  <div class="term" style="padding:7px 10px"><span class="a">read</span> packages/chord/docs/design.md <span class="m">410-620</span>
+<span class="m">§7 Principal keys. A principal key names who acts. It is derived once per binding and</span>
+<span class="m">cached in a WeakMap keyed by the binding object…</span></div>
+  <div class="row"><div class="search" style="flex:1">› <span>steer astra review…</span></div><button class="btn">Pause</button><button class="btn">Fork</button></div>
+  <div class="tf"><span>turn 23</span><span>· 47 tool calls</span><span>· 18 min</span><span>· ctx 61%</span><span class="sp"></span><span class="mini" style="width:120px"><i style="height:30%"></i><i style="height:50%"></i><i style="height:40%"></i><i style="height:80%;background:var(--accent)"></i><i style="height:60%;background:var(--accent)"></i><i style="height:90%;background:var(--accent)"></i></span></div>
+ </div>
+ <div class="tile wait">
+  <div class="th"><span class="dot a pulse"></span><span class="name">p3 step 0b</span><span class="sp"></span><span class="mono tiny">$3.92</span></div>
+  <div class="tx"><div class="a">Reload loop is green except cache invalidation.</div><div class="a" style="color:var(--accent)">? Drop the build cache, key it by facet hash, or defer?</div></div>
+  <div class="row" style="gap:5px"><button class="btn p" style="padding:2px 8px">A</button><button class="btn" style="padding:2px 8px">B</button><button class="btn" style="padding:2px 8px">C</button></div>
+  <div class="tf"><span>slayer</span><span>· opus</span><span class="sp"></span><span style="color:var(--accent)">waiting 6m</span></div>
+ </div>
+ <div class="tile">
+  <div class="th"><span class="spin"></span><span class="name">Journal</span><span class="sp"></span><span class="mono tiny">$0.01</span></div>
+  <div class="tx"><div><span class="u">Mario ›</span> (voice) rode to Graz, Ada's onboarding went fine, need to book the dentist</div><div class="a">Added to 2025-06-14.md, reminder "dentist" for Mon 09:00.</div></div>
+  <div class="tool"><span class="spin"></span><span class="n">bash</span> git commit -m "journal: 06-14"</div>
+  <div class="tf"><span>phone:~/journal</span><span>· haiku</span></div>
+ </div>
+ <div class="tile fail">
+  <div class="th"><span class="dot r"></span><span class="name">kit-owner build</span><span class="sp"></span><span class="mono tiny">$1.77</span></div>
+  <div class="tx"><div class="a">Second fix attempt did not help. owner.ts:142 reads <span class="mono">binding.params</span> before the reload re-binds. Stopping; need a decision on reload order.</div></div>
+  <div class="tool" style="border-color:rgba(214,92,92,.4)"><span class="n" style="color:var(--red)">bash</span> npm run check · exit 1</div>
+  <div class="tf"><span>slayer</span><span>· sonnet</span><span class="sp"></span><span style="color:var(--red)">3 failing</span></div>
+ </div>
+ <div class="tile wait">
+  <div class="th"><span class="dot a"></span><span class="name">sol review</span><span class="sp"></span><span class="mono tiny">$1.12</span></div>
+  <div class="tx"><div class="a">4 commits ready on sol/review-fixes.</div><div class="a" style="color:var(--accent)">? approve <span class="mono">git push</span></div></div>
+  <div class="row" style="gap:5px"><button class="btn g" style="padding:2px 8px">Approve</button><button class="btn" style="padding:2px 8px">Deny</button></div>
+  <div class="tf"><span>laptop</span><span>· gpt-5</span><span class="sp"></span><span style="color:var(--accent)">23m</span></div>
+ </div>
+ <div class="tile">
+  <div class="th"><span class="spin"></span><span class="name">radius gateway retries</span><span class="av c" style="width:16px;height:16px;font-size:8px">C</span></div>
+  <div class="tx"><div><span class="u">Cristina ›</span> make retries configurable per route</div><div class="a">Editing route.ts, then adding a test for 429 backoff.</div></div>
+  <div class="tool"><span class="spin"></span><span class="n">edit</span> gateway/src/route.ts</div>
+  <div class="tf"><span>laptop:~/radius</span><span>· sonnet</span><span class="sp"></span><span>$0.44</span></div>
+ </div>
+ <div class="tile">
+  <div class="th"><span class="spin"></span><span class="name">Discord bot: grants</span><span class="av co" style="width:16px;height:16px;font-size:8px">CO</span></div>
+  <div class="tx"><div class="a">Thread grants now expire via the scheduler. Running the grants tests.</div></div>
+  <div class="tool"><span class="spin"></span><span class="n">bash</span> vitest --run test/grants.test.ts</div>
+  <div class="tf"><span>slayer</span><span>· sonnet</span><span class="sp"></span><span>$1.02</span></div>
+ </div>
+ <div class="tile" style="opacity:.6">
+  <div class="th"><span class="dot"></span><span class="name">Discord plugin design</span><span class="sp"></span><span class="chip g">done</span></div>
+  <div class="tx"><div class="a">Published "Discord plugin: design book" (private). 3 open questions listed at the end.</div></div>
+  <div class="tf"><span>slayer</span><span>· idle 32m</span><span class="sp"></span><span>$4.88</span></div>
+ </div>
+ <div class="tile" style="opacity:.6">
+  <div class="th"><span class="dot"></span><span class="name">slayer CVE check</span><span class="sp"></span><span class="chip g">done</span></div>
+  <div class="tx"><div class="a">0 high. undici 7.10.0: 2 moderate, dev only.</div></div>
+  <div class="tf"><span>slayer</span><span>· idle 6h</span><span class="sp"></span><span>$0.06</span></div>
+ </div>
+ <div class="tile" style="opacity:.6">
+  <div class="th"><span class="dot"></span><span class="name">Ada onboarding</span><span class="av ad" style="width:16px;height:16px;font-size:8px">A</span></div>
+  <div class="tx"><div><span class="u">Ada ›</span> where do skills live?</div><div class="a">~/.pi/p2/skills on the env; see README §Skills.</div></div>
+  <div class="tf"><span>laptop</span><span>· idle 1h</span><span class="sp"></span><span>$0.22</span></div>
+ </div>
+</div>
+</section>
+<section class="tab" id="v4" data-title="Env">
+<style>
+#v4 .wrap{display:grid;grid-template-columns:250px 1fr;grid-template-rows:auto 520px 250px;gap:10px}
+#v4 .top{grid-column:1/3;display:flex;align-items:center;gap:10px;padding:8px 12px}
+#v4 .tree{grid-row:2/4;padding:10px 6px;font-size:12px;overflow:hidden}
+#v4 .tree div{padding:2px 8px;border-radius:5px;display:flex;align-items:center;gap:6px;white-space:nowrap}
+#v4 .tree .d{color:var(--muted)}
+#v4 .tree .sel{background:var(--panel2);color:var(--text)}
+#v4 .tree .ch{margin-left:auto;font-size:10px;font-family:var(--mono)}
+#v4 .tree .M{color:var(--yellow)}#v4 .tree .A{color:var(--green)}
+#v4 .dpanel{display:flex;flex-direction:column;overflow:visible;position:relative}
+#v4 .dh{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line)}
+#v4 .dbody{display:grid;grid-template-columns:44px 6px 1fr;font-family:var(--mono);font-size:11.8px;line-height:1.65;padding:6px 0;position:relative}
+#v4 .ln{color:#5d584e;text-align:right;padding-right:8px}
+#v4 .gut{border-radius:2px}
+#v4 .code{white-space:pre;padding-left:10px;color:#cfc9bc}
+#v4 .add{background:rgba(95,174,127,.11)}
+#v4 .del{background:rgba(214,92,92,.11);color:#e0a5a5}
+#v4 .hov{outline:1px solid var(--accent);outline-offset:-1px}
+#v4 .tip{position:absolute;left:470px;top:252px;width:360px;background:#26241f;border:1px solid #4a463d;border-radius:10px;padding:10px 12px;box-shadow:0 14px 40px rgba(0,0,0,.6);z-index:5;font-family:system-ui;font-size:12px;white-space:normal}
+#v4 .tip:before{content:"";position:absolute;left:24px;top:-6px;width:10px;height:10px;background:#26241f;border-left:1px solid #4a463d;border-top:1px solid #4a463d;transform:rotate(45deg)}
+#v4 .terms{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+#v4 .terms .term{height:250px}
+#v4 .tabs2{display:flex;gap:4px}
+#v4 .tabs2 span{padding:2px 8px;border-radius:6px;font-size:11.5px;color:var(--muted)}
+#v4 .tabs2 span.on{background:var(--panel2);color:var(--text)}
+#v4 .s1{background:var(--accent)}#v4 .s2{background:var(--blue)}#v4 .s3{background:var(--green)}
+</style>
+<p class="note"><b>Env as the main view.</b> The machine is the page: its checkout, shells and today's changes. Sessions are secondary, shown as authors of lines. View over an <b>env</b>, its <b>files</b>, terminals, and the <b>tool calls</b> (edit/write) that produced each hunk. Gutter colour = session; hovering a line reveals the turn that wrote it.</p>
+<div class="wrap">
+ <div class="panel top"><span class="dot g"></span><b class="mono" style="font-size:13px">slayer:~/pi</b><span class="chip">main ↑3</span><span class="chip">Linux x64 · 32 cores · load 4.1</span><span class="chip">disk 61%</span><span class="sp"></span><span class="small muted">today's agent changes:</span><span class="chip a"><i class="dot s1" style="width:7px;height:7px"></i>p3 step 0b · 9 files</span><span class="chip b"><i class="dot s2" style="width:7px;height:7px"></i>kit-owner build · 4</span><span class="chip g"><i class="dot s3" style="width:7px;height:7px"></i>Discord bot · 3</span><button class="btn">Switch env ▾</button></div>
+ <div class="panel tree">
+  <div class="sec" style="padding:0 8px">Files · changed today</div>
+  <div class="d">▾ apps</div>
+  <div class="d" style="padding-left:18px">▾ p3</div>
+  <div style="padding-left:30px">▾ src/runtime</div>
+  <div class="sel" style="padding-left:42px">reload.ts<span class="ch M">M +38 −11</span></div>
+  <div style="padding-left:42px">facets.ts<span class="ch M">M +12 −4</span></div>
+  <div style="padding-left:42px">build-cache.ts<span class="ch" style="color:var(--red)">D −88</span></div>
+  <div style="padding-left:30px">▾ test</div>
+  <div style="padding-left:42px">reload-loop.test.ts<span class="ch A">A +140</span></div>
+  <div style="padding-left:30px">▸ docs</div>
+  <div class="d">▾ packages</div>
+  <div class="d" style="padding-left:18px">▾ chord/src/kit</div>
+  <div style="padding-left:30px">owner.ts<span class="ch M">M +61 −9</span></div>
+  <div style="padding-left:30px">binding.ts<span class="ch M">M +7 −2</span></div>
+  <div class="d" style="padding-left:18px">▾ discord/src</div>
+  <div style="padding-left:30px">grants.ts<span class="ch A">A +96</span></div>
+  <div style="padding-left:30px">scheduler.ts<span class="ch M">M +14</span></div>
+  <div class="d" style="padding-left:18px">▸ ai</div>
+  <div class="d" style="padding-left:18px">▸ coding-agent</div>
+  <div class="d" style="padding-left:18px">▸ tui</div>
+  <div class="d">▸ scripts</div>
+  <div class="d">AGENTS.md</div>
+  <div class="d">package.json</div>
+  <div class="sep"></div>
+  <div class="sec" style="padding:0 8px">Processes</div>
+  <div><span class="spin"></span><span class="mono tiny">vitest grants.test.ts</span></div>
+  <div><span class="dot g"></span><span class="mono tiny">p3 dev :5173</span></div>
+  <div><span class="dot g"></span><span class="mono tiny">radius-mcp :8787</span></div>
+ </div>
+ <div class="panel dpanel">
+  <div class="dh"><span class="mono">apps/p3/src/runtime/reload.ts</span><span class="chip y">modified</span><span class="small muted">3 hunks · 2 sessions</span><span class="sp"></span><div class="tabs2"><span class="on">today</span><span>since commit</span><span>blame</span></div></div>
+  <div class="dbody">
+<span class="ln">38</span><span class="gut"></span><span class="code"><span style="color:var(--violet)">export async function</span> reload(app: App, ctx: Context): Promise&lt;ReloadResult&gt; {</span>
+<span class="ln">39</span><span class="gut"></span><span class="code">  <span style="color:var(--violet)">const</span> started = performance.now()</span>
+<span class="ln">40</span><span class="gut s1"></span><span class="code del">-  const cached = await readBuildCache(app.root)</span>
+<span class="ln">41</span><span class="gut s1"></span><span class="code del">-  if (cached && cached.hash === app.facetHash) return cached.result</span>
+<span class="ln">40</span><span class="gut s1"></span><span class="code add">+  // Decision A (2025-06-14): no build cache; rebuild every reload.</span>
+<span class="ln">41</span><span class="gut s1"></span><span class="code add hov">+  const facets = await collectFacets(app.root, ctx)</span>
+<span class="ln">42</span><span class="gut s1"></span><span class="code add">+  const bundle = await buildUi(facets, ctx)</span>
+<span class="ln">43</span><span class="gut"></span><span class="code">  ctx.telemetry.span(<span style="color:var(--green)">"p3.reload.build"</span>, started)</span>
+<span class="ln">44</span><span class="gut"></span><span class="code"></span>
+<span class="ln">45</span><span class="gut s2"></span><span class="code add">+  for (const binding of app.bindings) {</span>
+<span class="ln">46</span><span class="gut s2"></span><span class="code add">+    await binding.rebind(ctx) // must run before owner checks read params</span>
+<span class="ln">47</span><span class="gut s2"></span><span class="code add">+  }</span>
+<span class="ln">48</span><span class="gut"></span><span class="code">  <span style="color:var(--violet)">const</span> ui = mountFacets(bundle, app.facets)</span>
+<span class="ln">49</span><span class="gut s1"></span><span class="code del">-  await writeBuildCache(app.root, { hash: app.facetHash, result: ui })</span>
+<span class="ln">49</span><span class="gut"></span><span class="code">  <span style="color:var(--violet)">return</span> { kind: <span style="color:var(--green)">"ok"</span>, ui, ms: performance.now() - started }</span>
+<span class="ln">50</span><span class="gut"></span><span class="code">}</span>
+<span class="ln">51</span><span class="gut"></span><span class="code"></span>
+<span class="ln">52</span><span class="gut"></span><span class="code"><span style="color:var(--muted)">/** Collects UI facets contributed by plugins, in declaration order. */</span></span>
+<span class="ln">53</span><span class="gut s1"></span><span class="code add">+async function collectFacets(root: string, ctx: Context): Promise&lt;Facet[]&gt; {</span>
+<span class="ln">54</span><span class="gut s1"></span><span class="code add">+  const manifests = await ctx.env.glob(root, "plugins/*/facet.json")</span>
+<span class="ln">55</span><span class="gut s1"></span><span class="code add">+  return manifests.map((m) =&gt; parseFacet(m, ctx))</span>
+<span class="ln">56</span><span class="gut s1"></span><span class="code add">+}</span>
+   <div class="tip">
+    <div class="row" style="gap:7px;margin-bottom:6px"><span class="dot s1" style="background:var(--accent)"></span><b>p3 step 0b</b><span class="muted">· turn 38 · 13:41</span><span class="sp"></span><span class="chip v">opus</span></div>
+    <div class="tool" style="margin-bottom:7px"><span class="n">edit</span> apps/p3/src/runtime/reload.ts (hunk 1 of 3)</div>
+    <div style="color:#cfc9bc;margin-bottom:7px">"Mario chose A: drop the build cache. Replacing the cache read with a direct facet collection, so a reload always reflects plugin edits."</div>
+    <div class="row small"><span class="av m" style="width:16px;height:16px;font-size:8px">M</span><span class="muted">approved by Mario at 13:40</span><span class="sp"></span><a href="#">open turn ↗</a><a href="#">revert hunk</a></div>
+   </div>
+  </div>
+ </div>
+ <div class="terms">
+  <div class="col" style="gap:4px"><div class="row small"><span class="dot g"></span><b>shell 1</b><span class="muted">· you</span><span class="sp"></span><span class="muted mono tiny">bash · 132×14</span></div>
+<div class="term">badlogic@slayer <span class="b">~/pi</span> <span class="a">(main ↑3)</span>$ npm run check
+<span class="m">&gt; check</span>
+<span class="m">&gt; biome check --write . &amp;&amp; tsgo --noEmit</span>
+Checked 1,204 files in 812ms. No fixes applied.
+<span class="r">packages/chord/src/kit/owner.ts:142:19</span> - error TS2532:
+  Object is possibly 'undefined'.
+<span class="m">142   const p = binding.current.params</span>
+<span class="m">                      ~~~~~~~~~~~~~~~</span>
+Found 1 error in packages/chord/src/kit/owner.ts
+badlogic@slayer <span class="b">~/pi</span> <span class="a">(main ↑3)</span>$ <span style="background:#cfc9bc"> </span></div></div>
+  <div class="col" style="gap:4px"><div class="row small"><span class="spin"></span><b>shell 2</b><span class="muted">· Discord bot: grants (Colin's agent)</span><span class="sp"></span><span class="chip">read-only for you</span></div>
+<div class="term"><span class="m">$ npx vitest --run test/grants.test.ts</span>
+
+ <span class="b">RUN</span>  v3.2.4 /home/badlogic/pi/packages/discord
+
+ <span class="g">✓</span> grants › grant expires after 1h <span class="m">(3 ms)</span>
+ <span class="g">✓</span> grants › thread grant is scoped to thread <span class="m">(2 ms)</span>
+ <span class="g">✓</span> grants › owner can revoke <span class="m">(1 ms)</span>
+ <span class="y">⠙</span> grants › scheduler fires expiry on restart
+ <span class="m">   ↳ waiting for fake timers…</span>
+
+ <span class="m">Test Files  0 passed (1)</span>
+ <span class="m">     Tests  3 passed | 1 running</span></div></div>
+ </div>
+</div>
+</section>
+<section class="tab" id="v5" data-title="Repo timeline">
+<style>
+#v5 .wrap{display:grid;grid-template-columns:1fr 300px;gap:14px}
+#v5 .tl{padding:0}
+#v5 .rw{display:grid;grid-template-columns:54px 92px 1fr;min-height:44px;border-bottom:1px solid #24221e}
+#v5 .rw .time{font-family:var(--mono);font-size:11px;color:var(--muted);padding:12px 0 0 12px}
+#v5 .rw .lanes{display:grid;grid-template-columns:repeat(4,1fr);padding:0 10px;gap:6px}
+#v5 .rw .lanes i{display:block;width:6px;margin:0 auto;height:100%}
+#v5 .l1{background:var(--accent)}#v5 .l2{background:var(--blue)}#v5 .l3{background:var(--green)}#v5 .l4{background:var(--violet)}
+#v5 .rw .ev{padding:10px 14px 10px 0;display:flex;gap:10px;align-items:flex-start}
+#v5 .ic{width:24px;height:24px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:12px;flex:none;border:1px solid var(--line);background:var(--panel2)}
+#v5 .ic.c{color:var(--text)}#v5 .ic.ci{color:var(--green)}#v5 .ic.cf{color:var(--red)}#v5 .ic.dp{color:var(--blue)}#v5 .ic.s{color:var(--accent)}
+#v5 .sha{font-family:var(--mono);font-size:11px;color:var(--yellow)}
+#v5 .exp{background:#191815;border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-top:8px}
+#v5 .bub{padding:7px 10px;border-radius:9px;margin:6px 0;max-width:640px;font-size:12.5px}
+#v5 .bub.u{background:rgba(107,143,214,.1);border:1px solid rgba(107,143,214,.25)}
+#v5 .bub.a{background:var(--panel2);border:1px solid var(--line)}
+#v5 .lg{display:grid;grid-template-columns:repeat(4,1fr);text-align:center;font-size:9.5px;color:var(--muted);padding:6px 10px 0}
+</style>
+<p class="note"><b>Repo timeline.</b> One time axis for a checkout: <b>git commits, agent sessions (as vertical lanes), CI runs and deploys</b>. View over a repo's commits joined to the sessions and turns that produced them, plus CI/deploy resources. A commit expands into the conversation that led to it.</p>
+<div class="row" style="margin-bottom:10px"><b class="mono">earendil-works/pi · main</b><span class="chip">Today, Jun 14</span><span class="sp"></span><span class="chip a">commits</span><span class="chip a">sessions</span><span class="chip a">CI</span><span class="chip a">deploys</span><span class="chip">PRs</span><span class="chip">issues</span></div>
+<div class="wrap">
+ <div class="panel tl">
+  <div class="rw" style="min-height:0;border-bottom:1px solid var(--line)"><div></div><div class="lg"><span style="color:var(--accent)">0b</span><span style="color:var(--blue)">kit</span><span style="color:var(--green)">dc</span><span style="color:var(--violet)">astra</span></div><div class="small muted" style="padding:6px 0">newest first</div></div>
+  <div class="rw"><div class="time">14:03</div><div class="lanes"><i class="l1" style="opacity:.35"></i><i></i><i class="l3"></i><i class="l4"></i></div><div class="ev"><span class="ic s">◔</span><div><b>astra review</b> <span class="muted">is reading design.md · Discord bot running grants tests · p3 step 0b waiting for Mario</span></div></div></div>
+  <div class="rw"><div class="time">13:58</div><div class="lanes"><i class="l1"></i><i class="l2"></i><i class="l3"></i><i class="l4"></i></div><div class="ev"><span class="ic cf">✗</span><div><b>CI #4412</b> <span class="chip r">failed</span> <span class="muted small">check · 3m 12s · on</span> <span class="sha">7be01fd</span><div class="mono tiny" style="color:var(--red);margin-top:3px">packages/chord/src/kit/owner.ts:142:19 TS2532 Object is possibly 'undefined'</div></div></div></div>
+  <div class="rw"><div class="time">13:55</div><div class="lanes"><i class="l1"></i><i class="l2"></i><i class="l3"></i><i class="l4"></i></div><div class="ev"><span class="ic c">●</span><div><span class="sha">7be01fd</span> <b>feat(chord): kit owner checks principal key</b> <span class="chip b">kit-owner build</span> <span class="muted small">+61 −9 · co-authored by agent</span></div></div></div>
+  <div class="rw"><div class="time">13:44</div><div class="lanes"><i class="l1"></i><i class="l2"></i><i class="l3"></i><i></i></div><div class="ev" style="flex-direction:column;gap:0"><div class="row" style="align-items:flex-start;gap:10px"><span class="ic c" style="border-color:var(--accent)">●</span><div style="flex:1"><span class="sha">c2d9a31</span> <b>feat(p3): drop the build cache, rebuild on reload</b> <span class="chip a">p3 step 0b · turns 36-39</span> <span class="muted small">+190 −99 · 4 files</span>
+   <div class="exp">
+    <div class="row small muted"><span>Conversation that led to this commit</span><span class="sp"></span><a href="#">open session at turn 36 ↗</a></div>
+    <div class="bub a"><b class="small" style="color:var(--accent)">agent · turn 36</b><br>The reload loop test fails 1 in 5 runs: the build cache keys by <span class="mono">app.facetHash</span>, which is computed before plugin edits are flushed. Options: A drop the cache (+380 ms per reload), B key by per-facet content hash, C defer.</div>
+    <div class="bub u"><b class="small" style="color:var(--blue)">Mario · 13:40</b><br>A. 380 ms is fine, a stale UI is not. Put it in decisions.md.</div>
+    <div class="bub a"><b class="small" style="color:var(--accent)">agent · turn 39</b><br>Removed build-cache.ts, reload now collects facets directly. reload-loop.test.ts passes 50/50. Added decision "A: drop the build cache" to apps/p3/docs/decisions.md.</div>
+    <div class="row small" style="margin-top:6px"><span class="tool"><span class="n">edit</span> reload.ts</span><span class="tool"><span class="n">bash</span> rm build-cache.ts</span><span class="tool"><span class="n">bash</span> vitest reload-loop ×50</span><span class="tool"><span class="n">edit</span> decisions.md</span></div>
+   </div></div></div></div></div>
+  <div class="rw"><div class="time">13:31</div><div class="lanes"><i class="l1"></i><i class="l2"></i><i class="l3"></i><i></i></div><div class="ev"><span class="ic dp">▲</span><div><b>Deploy</b> <span class="chip b">radius-gateway staging</span> <span class="muted small">v0.9.3 · by Cristina · healthy</span></div></div></div>
+  <div class="rw"><div class="time">13:02</div><div class="lanes"><i class="l1"></i><i class="l2"></i><i class="l3" style="border-radius:3px 3px 0 0"></i><i></i></div><div class="ev"><span class="ic s">◐</span><div><b>Discord bot: grants</b> started by Colin <span class="muted small">· slayer · "thread grants with expiry"</span></div></div></div>
+  <div class="rw"><div class="time">12:47</div><div class="lanes"><i class="l1"></i><i class="l2"></i><i></i><i></i></div><div class="ev"><span class="ic ci">✓</span><div><b>CI #4409</b> <span class="chip g">passed</span> <span class="muted small">check + test · 6m 40s on</span> <span class="sha">a41c9e2</span></div></div></div>
+  <div class="rw"><div class="time">12:39</div><div class="lanes"><i class="l1"></i><i class="l2"></i><i></i><i></i></div><div class="ev"><span class="ic c">●</span><div><span class="sha">a41c9e2</span> <b>fix(tui): wrap emoji by grapheme width</b> <span class="muted small">by Mario · no session</span></div></div></div>
+  <div class="rw"><div class="time">11:20</div><div class="lanes"><i class="l1"></i><i class="l2" style="border-radius:3px 3px 0 0"></i><i></i><i></i></div><div class="ev"><span class="ic s">◐</span><div><b>kit-owner build</b> started <span class="muted small">· from todo "kit owner checks" · sonnet</span></div></div></div>
+  <div class="rw"><div class="time">10:05</div><div class="lanes"><i class="l1"></i><i></i><i></i><i></i></div><div class="ev"><span class="ic c">●</span><div><span class="sha">5f0e8b4</span> <b>docs(p3): step 0b spec</b> <span class="chip a">p3 step 0b</span></div></div></div>
+  <div class="rw"><div class="time">09:12</div><div class="lanes"><i class="l1" style="border-radius:3px 3px 0 0"></i><i></i><i></i><i></i></div><div class="ev"><span class="ic s">◐</span><div><b>p3 step 0b</b> resumed <span class="muted small">· from handoff of step 0a</span></div></div></div>
+ </div>
+ <div class="col">
+  <div class="panel pad"><div class="sec">This day in numbers</div><div class="kv"><span>commits</span><span>7 (4 from sessions)</span><span>CI runs</span><span>5 · 1 failed</span><span>deploys</span><span>1 staging</span><span>lines</span><span>+812 −340</span><span>agent share</span><span>71% of lines</span></div></div>
+  <div class="panel pad"><div class="sec">Unpushed with sessions</div>
+   <div class="small" style="margin-bottom:6px"><span class="sha">7be01fd</span> kit owner checks <span class="chip r">CI red</span></div>
+   <div class="small" style="margin-bottom:6px"><span class="sha">c2d9a31</span> drop the build cache</div>
+   <div class="small"><span class="sha">3a0f11c</span> discord grants WIP <span class="chip y">uncommitted</span></div></div>
+  <div class="panel pad"><div class="sec">Sessions with no commit yet</div><div class="small">astra review <span class="muted">· review only</span></div><div class="small">Discord bot: grants <span class="muted">· 3 files dirty</span></div></div>
+ </div>
+</div>
+</section>
+<section class="tab" id="v6" data-title="Day timeline">
+<style>
+#v6 .tlw{padding:12px 14px 14px;position:relative}
+#v6 .axis{display:grid;grid-template-columns:190px 1fr;margin-bottom:6px}
+#v6 .axis .hrs{position:relative;height:16px;font-family:var(--mono);font-size:10.5px;color:var(--muted)}
+#v6 .axis .hrs span{position:absolute;transform:translateX(-50%)}
+#v6 .lane{display:grid;grid-template-columns:190px 1fr;align-items:center;height:38px;border-top:1px solid #25231f}
+#v6 .lane .nm{display:flex;align-items:center;gap:7px;font-size:12px;white-space:nowrap;overflow:hidden}
+#v6 .track{position:relative;height:100%;background:repeating-linear-gradient(90deg,transparent 0,transparent calc(10% - 1px),#24221e calc(10% - 1px),#24221e 10%)}
+#v6 .blk{position:absolute;top:9px;height:20px;border-radius:5px;overflow:hidden}
+#v6 .blk.wait{background:repeating-linear-gradient(135deg,rgba(224,122,79,.55) 0 4px,rgba(224,122,79,.18) 4px 8px)!important;border:1px solid rgba(224,122,79,.7)}
+#v6 .blk.fail{box-shadow:inset 0 0 0 1.5px var(--red)}
+#v6 .tick{position:absolute;top:4px;width:1px;height:4px;background:rgba(232,227,216,.75)}
+#v6 .blk .tick{top:auto;bottom:0;height:6px;background:rgba(0,0,0,.45)}
+#v6 .person .blk{top:15px;height:8px;border-radius:4px}
+#v6 .scrub{position:absolute;top:0;bottom:0;width:2px;background:var(--text);z-index:3;pointer-events:none}
+#v6 .scrub b{position:absolute;top:-2px;left:50%;transform:translateX(-50%);background:var(--text);color:#141311;font-family:var(--mono);font-size:10.5px;padding:0 5px;border-radius:4px}
+#v6 .legend{display:flex;gap:12px;font-size:11px;color:var(--muted);flex-wrap:wrap}
+#v6 .legend i{display:inline-block;width:14px;height:8px;border-radius:3px;margin-right:4px;vertical-align:middle}
+#v6 .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:12px}
+#v6 .cards .panel{padding:10px 12px}
+</style>
+<p class="note"><b>Day timeline.</b> One lane per session, agent or person; a block is a <b>turn</b> coloured by model (striped = waiting for a human), ticks are <b>tool calls</b>. View over turns, tool calls, people's presence and telemetry. Drag the scrub line; the cards below show each lane's state at that instant.</p>
+<div class="row" style="margin-bottom:10px"><span class="h2">Saturday, Jun 14</span><span class="chip">‹ Fri</span><span class="sp"></span><div class="legend"><span><i style="background:var(--violet)"></i>opus</span><span><i style="background:var(--blue)"></i>sonnet</span><span><i style="background:var(--green)"></i>gpt-5</span><span><i style="background:var(--yellow)"></i>haiku</span><span><i style="background:repeating-linear-gradient(135deg,rgba(224,122,79,.6) 0 3px,rgba(224,122,79,.2) 3px 6px)"></i>waiting for human</span><span><i style="background:#cfc9bc;width:2px"></i>tool call</span></div></div>
+<div class="panel tlw" id="t6">
+ <div class="axis"><div class="small muted">lane</div><div class="hrs" id="t6hrs"></div></div>
+ <div id="t6lanes" style="position:relative"></div>
+</div>
+<div class="cards">
+ <div class="panel"><div class="row"><span class="dot a pulse"></span><b>p3 step 0b</b><span class="sp"></span><span class="tiny muted">14:03</span></div><div class="small" style="color:var(--accent);margin:4px 0">waiting 6 min on ask_user</div><div class="tool"><span class="n">ask_user</span> drop the build cache?</div><div class="tiny muted" style="margin-top:5px">turn 41 · ctx 54% · $3.92 so far</div></div>
+ <div class="panel"><div class="row"><span class="dot r"></span><b>kit-owner build</b></div><div class="small" style="color:var(--red);margin:4px 0">stopped at 13:58 after CI #4412</div><div class="tool"><span class="n">bash</span> npm run check → exit 1</div><div class="tiny muted" style="margin-top:5px">run 7 · 2 fix attempts · $1.77</div></div>
+ <div class="panel"><div class="row"><span class="spin"></span><b>astra review</b></div><div class="small" style="margin:4px 0">turn 23, 41 s into a read</div><div class="tool"><span class="n">read</span> design.md:410-620</div><div class="tiny muted" style="margin-top:5px">opus · 12k tokens in flight · $2.31</div></div>
+ <div class="panel"><div class="row"><span class="dot a"></span><b>sol review</b></div><div class="small" style="color:var(--accent);margin:4px 0">waiting 23 min on approval</div><div class="tool"><span class="n">bash</span> git push origin sol/review-fixes</div><div class="tiny muted" style="margin-top:5px">laptop · gpt-5 · $1.12</div></div>
+ <div class="panel"><div class="row"><span class="spin"></span><b>Discord bot: grants</b><span class="av co" style="width:16px;height:16px;font-size:8px">CO</span></div><div class="small" style="margin:4px 0">running tests, 3/4 passed</div><div class="tool"><span class="n">bash</span> vitest grants.test.ts</div></div>
+ <div class="panel"><div class="row"><span class="spin"></span><b>Journal</b></div><div class="small" style="margin:4px 0">committing today's entry</div><div class="tool"><span class="n">bash</span> git commit -m "journal: 06-14"</div></div>
+ <div class="panel"><div class="row"><span class="av m" style="width:18px;height:18px;font-size:9px">M</span><b>Mario</b></div><div class="small muted" style="margin:4px 0">away since 13:46 (phone: locked)</div><div class="small">last: answered p3 step 0b turn 36 at 13:40</div></div>
+ <div class="panel"><div class="row"><span class="av c" style="width:18px;height:18px;font-size:9px">C</span><b>Cristina</b></div><div class="small muted" style="margin:4px 0">active on laptop:~/radius</div><div class="small">driving "radius gateway retries"</div></div>
+</div>
+<script>
+(function(){
+ var S=6*60,E=16*60,span=E-S;function p(t){var a=t.split(":");return ((+a[0]*60+ +a[1])-S)/span*100}
+ var hrs=document.getElementById("t6hrs");for(var h=6;h<=16;h++){var s=document.createElement("span");s.style.left=((h*60-S)/span*100)+"%";s.textContent=(h<10?"0":"")+h+":00";hrs.appendChild(s)}
+ var C={o:"var(--violet)",s:"var(--blue)",g:"var(--green)",h:"var(--yellow)"};
+ var lanes=[
+  ["p3 step 0b","dot a",[["09:12","09:40","o",9],["09:40","09:52","w"],["09:52","10:30","o",14],["10:30","11:05","o",11],["11:40","12:20","o",16],["12:20","12:31","w"],["12:31","13:30","o",22],["13:30","13:40","w"],["13:40","13:57","o",9],["13:57","14:10","w"]]],
+  ["kit-owner build","dot b",[["11:20","12:05","s",18],["12:10","12:50","s",15],["13:05","13:58","s",20,1]]],
+  ["astra review","dot",[["13:45","14:10","o",8]]],
+  ["sol review","dot g",[["10:15","10:50","g",9],["11:00","11:30","g",7],["12:50","13:40","g",12],["13:40","14:10","w"]]],
+  ["Discord plugin design","dot",[["08:10","09:05","o",12],["09:05","09:20","w"],["09:20","10:40","o",15],["12:20","13:31","o",10]]],
+  ["Discord bot: grants","dot",[["13:02","13:40","s",14],["13:42","14:10","s",9]]],
+  ["Journal","dot y",[["07:30","07:34","h",2],["12:15","12:18","h",2],["14:01","14:10","h",3]]],
+  ["slayer CVE check","dot",[["06:00","06:02","h",3]]],
+  ["Mario","P",[["08:05","11:10"],["11:35","13:46"]]],
+  ["Cristina","P",[["09:30","12:00"],["12:40","14:10"]]],
+  ["Colin","P",[["12:55","14:10"]]]
+ ];
+ var box=document.getElementById("t6lanes");
+ lanes.forEach(function(l){var row=document.createElement("div");row.className="lane"+(l[1]=="P"?" person":"");
+  var nm=document.createElement("div");nm.className="nm";
+  if(l[1]=="P"){var cls={Mario:"m",Cristina:"c",Colin:"co"}[l[0]];nm.innerHTML='<span class="av '+cls+'" style="width:16px;height:16px;font-size:8px">'+{Mario:"M",Cristina:"C",Colin:"CO"}[l[0]]+'</span><span class="muted">'+l[0]+'</span>'}
+  else nm.innerHTML='<span class="'+l[1]+'"></span>'+l[0];
+  var tr=document.createElement("div");tr.className="track";
+  l[2].forEach(function(b){var d=document.createElement("div");d.className="blk";var a=p(b[0]),z=p(b[1]);d.style.left=a+"%";d.style.width=Math.max(.25,z-a)+"%";
+   if(l[1]=="P"){d.style.background="rgba(232,227,216,.28)"}
+   else if(b[2]=="w"){d.className+=" wait"}
+   else{d.style.background=C[b[2]];d.style.opacity=".85";if(b[4])d.className+=" fail";var n=b[3]||0;for(var i=0;i<n;i++){var t=document.createElement("i");t.className="tick";t.style.left=(4+((i*37)%92))+"%";d.appendChild(t)}}
+   tr.appendChild(d)});
+  row.appendChild(nm);row.appendChild(tr);box.appendChild(row)});
+ var sc=document.createElement("div");sc.className="scrub";sc.innerHTML="<b>14:03</b>";sc.style.left="calc(190px + (100% - 190px) * "+(p("14:03")/100)+")";box.appendChild(sc);
+})();
+</script>
+</section>
+<section class="tab" id="v7" data-title="Replay">
+<style>
+#v7 .stage{display:grid;grid-template-columns:1.1fr 1fr;grid-template-rows:290px 230px;gap:10px;background:#0c0b0a;border:1px solid var(--line);border-radius:14px;padding:12px;position:relative}
+#v7 .pane{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden;display:flex;flex-direction:column}
+#v7 .ph{display:flex;align-items:center;gap:7px;padding:6px 10px;border-bottom:1px solid var(--line);font-size:11.5px;color:var(--muted)}
+#v7 .ph b{color:var(--text);font-weight:600}
+#v7 .browser{grid-row:1/3;grid-column:2}
+#v7 .url{flex:1;background:#0f0e0c;border-radius:6px;padding:2px 8px;font-family:var(--mono);font-size:11px;color:#bdb6a8}
+#v7 .app{flex:1;display:grid;grid-template-columns:120px 1fr;background:#151412}
+#v7 .app .sb{border-right:1px solid var(--line);padding:8px;display:flex;flex-direction:column;gap:5px}
+#v7 .app .sb i{display:block;height:8px;border-radius:3px;background:#2e2c27}
+#v7 .fresh{outline:2px solid var(--green);outline-offset:2px;border-radius:6px;position:relative}
+#v7 .fresh:after{content:"new in turn 27";position:absolute;right:6px;bottom:-18px;font-size:10px;color:var(--green);font-family:var(--mono)}
+#v7 .sub{position:absolute;left:50%;bottom:22px;transform:translateX(-50%);width:min(760px,80%);background:rgba(0,0,0,.82);border-radius:10px;padding:10px 16px;text-align:center;font-size:15px;line-height:1.45;border:1px solid #333}
+#v7 .sub .who{font-size:11px;color:var(--accent);display:block;margin-bottom:2px;letter-spacing:.5px}
+#v7 .scrub{margin-top:12px;padding:12px 14px}
+#v7 .rail{position:relative;height:46px;margin:6px 0 4px}
+#v7 .rail .base{position:absolute;left:0;right:0;top:20px;height:6px;border-radius:3px;background:#2a2824}
+#v7 .rail .done{position:absolute;left:0;top:20px;height:6px;border-radius:3px;background:var(--accent)}
+#v7 .rail .mk{position:absolute;top:14px;width:3px;height:18px;border-radius:2px;background:#5a554b}
+#v7 .rail .mk.u{background:var(--blue);height:24px;top:11px}
+#v7 .rail .mk.e{background:var(--green)}
+#v7 .rail .mk.x{background:var(--red)}
+#v7 .rail .head{position:absolute;top:12px;width:22px;height:22px;margin-left:-11px;border-radius:50%;background:var(--text);box-shadow:0 0 0 4px rgba(224,122,79,.35)}
+#v7 .rail .lab{position:absolute;top:-4px;font-size:10px;color:var(--muted);transform:translateX(-50%);white-space:nowrap}
+#v7 .ctrl{display:flex;gap:8px;align-items:center}
+#v7 .ctrl .btn{padding:4px 10px}
+</style>
+<p class="note"><b>Replay.</b> A finished (or running) session as a timelapse: every pane is reconstructed as it was at <b>turn N</b>: the file being edited, the terminal, the browser the agent drove. Transcript runs as subtitles. View over one session's <b>turns, tool calls, files (snapshots), terminal output and browser screenshots</b>. Good for review, onboarding Ada, or "what did it actually do".</p>
+<div class="row" style="margin-bottom:10px"><span class="h2">p3 step 0b</span><span class="chip">slayer:~/pi</span><span class="chip v">opus</span><span class="muted small">Jun 14, 09:12 → now · 41 turns · 312 tool calls · $3.92</span><span class="sp"></span><button class="btn">Export as video</button><button class="btn">Share replay link</button></div>
+<div class="stage">
+ <div class="pane">
+  <div class="ph"><b>file</b><span class="mono">apps/p3/src/runtime/facets.ts</span><span class="sp"></span><span class="chip g">edit · turn 27</span></div>
+  <div class="diff" style="padding:8px 10px;flex:1"><span class="hunk">@@ -18,9 +18,16 @@ export function mountFacets(bundle, facets)</span><span class="ctx">   const root = document.getElementById("app")</span><span class="ctx">   for (const facet of facets) {</span><span class="del">-    root.append(facet.render())</span><span class="add">+    const slot = root.querySelector(`[data-slot="${facet.slot}"]`)</span><span class="add">+    if (!slot) {</span><span class="add">+      ctx.report({ code: "facet.slot.missing", facet: facet.id })</span><span class="add">+      continue</span><span class="add">+    }</span><span class="add">+    slot.append(facet.render())</span><span class="ctx">   }</span><span class="ctx"> }</span></div>
+ </div>
+ <div class="pane browser">
+  <div class="ph"><b>browser</b><span class="url">http://slayer:5173/?reload=27</span><span class="chip">1280×800</span></div>
+  <div class="app">
+   <div class="sb"><b class="tiny" style="color:var(--accent)">p3</b><i style="width:80%"></i><i style="width:60%"></i><i style="width:70%"></i><i style="width:50%"></i><div style="flex:1"></div><i style="width:40%"></i></div>
+   <div style="padding:12px;display:flex;flex-direction:column;gap:10px">
+    <div class="row"><div style="height:10px;width:140px;background:#3a3833;border-radius:3px"></div><span class="sp"></span><div style="height:16px;width:60px;background:#2e2c27;border-radius:5px"></div></div>
+    <div class="fresh" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;padding:6px">
+     <div style="background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:8px"><div class="tiny muted">facet</div><div class="small">sessions</div></div>
+     <div style="background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:8px"><div class="tiny muted">facet</div><div class="small">envs</div></div>
+     <div style="background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:8px"><div class="tiny muted">facet</div><div class="small">models</div></div>
+    </div>
+    <div style="background:rgba(214,92,92,.1);border:1px solid rgba(214,92,92,.4);border-radius:7px;padding:7px 9px;font-size:11px;color:#eab0b0">facet.slot.missing: discord (slot "sidebar.bottom")</div>
+    <div style="height:8px;width:70%;background:#2a2824;border-radius:3px"></div>
+    <div style="height:8px;width:55%;background:#2a2824;border-radius:3px"></div>
+    <div style="height:8px;width:62%;background:#2a2824;border-radius:3px"></div>
+   </div>
+  </div>
+ </div>
+ <div class="pane">
+  <div class="ph"><b>terminal</b><span class="mono">slayer:~/pi</span><span class="sp"></span><span>output at 11:52:08</span></div>
+  <div class="term" style="border:0;border-radius:0;flex:1">$ npx vitest --run apps/p3/test/reload-loop.test.ts
+ <span class="g">✓</span> reload › rebuilds after plugin edit <span class="m">(412 ms)</span>
+ <span class="g">✓</span> reload › mounts facets into slots <span class="m">(88 ms)</span>
+ <span class="r">✗</span> reload › reports missing slot <span class="m">(9 ms)</span>
+   <span class="r">expected report code 'facet.slot.missing'</span>
+ <span class="m">Tests 2 passed | 1 failed</span></div>
+ </div>
+ <div class="sub"><span class="who">AGENT · TURN 27 · 11:52</span>Facets now mount into named slots. The Discord facet targets a slot that does not exist yet, so I report it instead of appending to root. One test still expects the old code.</div>
+</div>
+<div class="panel scrub">
+ <div class="ctrl"><button class="btn">⏮</button><button class="btn">◀ turn</button><button class="btn p">❚❚</button><button class="btn">turn ▶</button><span class="chip a">turn 27 / 41</span><span class="mono small muted">11:52:08</span><span class="sp"></span><span class="small muted">speed</span><span class="chip">1×</span><span class="chip a">8×</span><span class="chip">skip idle</span><span class="chip">only edits</span></div>
+ <div class="rail" id="t7rail"><div class="base"></div><div class="done" style="width:65.8%"></div></div>
+ <div class="row tiny muted"><span><i class="dot b" style="width:7px;height:7px"></i> Mario spoke</span><span><i class="dot g" style="width:7px;height:7px"></i> edit</span><span><i class="dot r" style="width:7px;height:7px"></i> test failure</span><span class="sp"></span><span>09:12</span><span style="margin-left:40%">12:31</span><span class="sp"></span><span>14:03</span></div>
+</div>
+<script>
+(function(){var r=document.getElementById("t7rail");var types={1:"u",5:"e",6:"e",9:"x",10:"e",12:"u",14:"e",17:"e",18:"x",20:"e",23:"e",27:"e",29:"u",30:"e",33:"x",34:"e",36:"u",37:"e",38:"e",39:"e",41:"u"};
+for(var i=1;i<=41;i++){var m=document.createElement("i");m.className="mk "+(types[i]||"");m.style.left=((i-1)/40*100)+"%";r.appendChild(m)}
+[[1,"start"],[12,"slots idea"],[27,"slot mount"],[36,"cache question"],[41,"now"]].forEach(function(x){var l=document.createElement("span");l.className="lab";l.style.left=((x[0]-1)/40*100)+"%";l.textContent=x[1];r.appendChild(l)});
+var h=document.createElement("i");h.className="head";h.style.left=(26/40*100)+"%";r.appendChild(h)})();
+</script>
+</section>
+<section class="tab" id="v8" data-title="The room">
+<style>
+#v8 .wrap{display:grid;grid-template-columns:260px 1fr 280px;gap:14px}
+#v8 .person{display:flex;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
+#v8 .person:last-child{border:0}
+#v8 .person .av{position:relative}
+#v8 .st{position:absolute;right:-2px;bottom:-2px;width:11px;height:11px;border-radius:50%;border:2px solid var(--panel)}
+#v8 .floor{position:relative;height:640px;background:radial-gradient(circle,#2a2824 1px,transparent 1.5px) 0 0/22px 22px,#181715;border:1px solid var(--line);border-radius:14px;overflow:hidden}
+#v8 .table{position:absolute;border-radius:50%;background:radial-gradient(circle at 40% 35%,#2b2924,#1f1e1a);border:1px solid #3a372f;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:16px}
+#v8 .table .h{font-size:13px}
+#v8 .seat{position:absolute;transform:translate(-50%,-50%)}
+#v8 .seat .av{box-shadow:0 0 0 3px #181715}
+#v8 .seat.bot .av{background:#3a3833;color:var(--accent);font-size:13px}
+#v8 .speech{position:absolute;background:#26241f;border:1px solid #4a463d;border-radius:9px;padding:6px 9px;font-size:11.5px;max-width:200px;box-shadow:0 8px 20px rgba(0,0,0,.4)}
+#v8 .chan{padding:8px 0;border-bottom:1px solid var(--line)}
+#v8 .chan:last-child{border:0}
+#v8 .msg{font-size:11.5px;color:#bdb6a8;margin-top:4px;padding-left:8px;border-left:2px solid var(--line)}
+</style>
+<p class="note"><b>The room.</b> Presence first: who is here, what each person's agents are doing, and shared sessions drawn as <b>tables</b> people sit at (sit down = join the session; agents are seats too). View over <b>people, sessions (membership), runs, Discord resources</b>. Walking up to a table shows its live tail without joining.</p>
+<div class="wrap">
+ <div class="panel pad">
+  <div class="sec">Here now · Earendil</div>
+  <div class="person"><span class="av m lg">M<i class="st" style="background:var(--yellow)"></i></span><div><b>Mario</b> <span class="muted small">away 17m · phone</span><div class="small muted">3 agents: astra review <span style="color:var(--green)">working</span>, p3 step 0b <span style="color:var(--accent)">needs him</span>, Journal</div></div></div>
+  <div class="person"><span class="av c lg">C<i class="st" style="background:var(--green)"></i></span><div><b>Cristina</b> <span class="muted small">laptop:~/radius</span><div class="small muted">at <b style="color:var(--text)">radius gateway retries</b>; agent editing route.ts</div></div></div>
+  <div class="person"><span class="av co lg">CO<i class="st" style="background:var(--green)"></i></span><div><b>Colin</b> <span class="muted small">slayer:~/pi</span><div class="small muted">at <b style="color:var(--text)">Discord bot: grants</b>; also watching kit-owner build</div></div></div>
+  <div class="person"><span class="av ch lg">CH<i class="st" style="background:var(--green)"></i></span><div><b>Charlotta</b> <span class="muted small">Discord only</span><div class="small muted">in #radius, asked pi-bot for gateway logs (pending grant)</div></div></div>
+  <div class="person"><span class="av ad lg">A<i class="st" style="background:#5a554b"></i></span><div><b>Ada</b> <span class="muted small">offline since 12:10</span><div class="small muted">left "Ada onboarding" idle; 1 note for Mario</div></div></div>
+  <div class="sep"></div>
+  <div class="sec">Agents without a person</div>
+  <div class="small"><span class="spin"></span> astra review <span class="muted">· Mario's, unattended</span></div>
+  <div class="small" style="margin-top:4px"><span class="dot"></span> slayer CVE check <span class="muted">· cron</span></div>
+ </div>
+ <div class="floor">
+  <div class="table" style="left:60px;top:60px;width:230px;height:230px"><div class="h">p3 step 0b</div><div class="tiny muted">slayer · opus</div><span class="chip a" style="margin-top:6px">waiting for Mario</span></div>
+  <div class="seat bot" style="left:175px;top:52px"><span class="av lg">π</span></div>
+  <div class="seat" style="left:290px;top:175px"><span class="av m lg" style="opacity:.55">M</span></div>
+  <div class="seat" style="left:175px;top:298px"><span class="av co lg" style="opacity:.55">CO</span></div>
+  <div class="speech" style="left:300px;top:40px">"Drop the build cache, key by facet hash, or defer?"</div>
+
+  <div class="table" style="left:400px;top:240px;width:270px;height:270px;border-color:rgba(95,174,127,.5)"><div class="h">Discord bot: grants</div><div class="tiny muted">slayer · sonnet · 2 people</div><div class="tool" style="margin-top:8px"><span class="spin"></span><span class="n">bash</span> vitest grants</div></div>
+  <div class="seat bot" style="left:535px;top:232px"><span class="av lg">π</span></div>
+  <div class="seat" style="left:398px;top:375px"><span class="av co lg">CO</span></div>
+  <div class="seat" style="left:672px;top:375px"><span class="av c lg">C</span></div>
+  <div class="speech" style="left:320px;top:205px;max-width:180px">Colin: "make the expiry survive a bot restart"</div>
+
+  <div class="table" style="left:60px;top:400px;width:190px;height:190px"><div class="h">radius gateway retries</div><div class="tiny muted">laptop</div><div class="tool" style="margin-top:6px"><span class="n">edit</span> route.ts</div></div>
+  <div class="seat bot" style="left:155px;top:392px"><span class="av lg">π</span></div>
+  <div class="seat" style="left:250px;top:495px"><span class="av c lg" style="box-shadow:0 0 0 3px #181715,0 0 0 5px var(--blue)">C</span></div>
+
+  <div class="table" style="left:600px;top:30px;width:150px;height:150px;opacity:.65"><div class="h">astra review</div><div class="tiny muted">no one seated</div></div>
+  <div class="seat bot" style="left:675px;top:22px"><span class="av lg">π</span></div>
+
+  <div class="table" style="left:330px;top:505px;width:120px;height:120px;opacity:.4"><div class="h" style="font-size:11.5px">Ada onboarding</div><div class="tiny muted">empty</div></div>
+  <div style="position:absolute;right:14px;bottom:12px" class="small muted">click a table to sit · <span class="kbd">S</span> stand up</div>
+ </div>
+ <div class="col">
+  <div class="panel pad">
+   <div class="sec">Discord · Earendil</div>
+   <div class="chan"><div class="row"><b style="color:var(--violet)">#pi</b><span class="chip g">pi-bot</span><span class="sp"></span><span class="tiny muted">14 today</span></div><div class="msg"><b>Colin</b>: @pi is the thread grant PR ready? <br><span class="muted">pi-bot: tests 3/4, ETA ~5 min</span></div></div>
+   <div class="chan"><div class="row"><b style="color:var(--violet)">#radius</b><span class="chip g">pi-bot</span><span class="chip y">1 pending grant</span></div><div class="msg"><b>Charlotta</b>: @pi why does the MCP token refresh fail on staging?<br><span class="muted">pi-bot: waiting for Mario to grant access to slayer</span></div></div>
+   <div class="chan"><div class="row"><b style="color:var(--violet)">#vibes</b><span class="chip">no bot</span></div><div class="msg"><b>Ada</b>: first PR merged!</div></div>
+  </div>
+  <div class="panel pad">
+   <div class="sec">Grants active</div>
+   <div class="small">Cristina · #pi · auto <span class="muted">· standing</span></div>
+   <div class="small" style="margin-top:4px">Colin · slayer · 1 h <span class="muted">· 38 min left</span></div>
+   <div class="bar" style="margin-top:4px"><i style="width:63%;background:var(--blue)"></i></div>
+  </div>
+ </div>
+</div>
+</section>
+<section class="tab" id="v9" data-title="Project dashboard">
+<style>
+#v9 .dg{display:grid;grid-template-columns:repeat(12,1fr);gap:12px}
+#v9 .panel{padding:12px 14px}
+#v9 .res{display:grid;grid-template-columns:18px 1fr auto auto;gap:6px 10px;align-items:center;font-size:12px}
+#v9 .res .sub{grid-column:2/5;font-size:11px;color:var(--muted);margin-top:-4px}
+#v9 .hb{display:flex;gap:1px}
+#v9 .hb i{width:3px;height:14px;border-radius:1px;background:var(--green)}
+#v9 .hb i.r{background:var(--red)}#v9 .hb i.y{background:var(--yellow)}
+#v9 .big{font-size:24px;font-weight:650}
+#v9 .hbar{display:grid;grid-template-columns:90px 1fr 60px;gap:8px;align-items:center;font-size:12px;margin:5px 0}
+#v9 .stack{display:flex;height:10px;border-radius:5px;overflow:hidden}
+#v9 .art{display:flex;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)}
+#v9 .art:last-child{border:0}
+#v9 .thumb{width:46px;height:34px;border-radius:6px;border:1px solid var(--line);background:linear-gradient(135deg,#2a2622,#1c1b18);flex:none}
+</style>
+<p class="note"><b>Project dashboard.</b> One project ("pi") as an operations page: every <b>resource</b> with health (MCP servers, envs, model providers, tokens, bots), <b>spend</b> per person and per model, open questions, recent <b>artifacts</b> and <b>members</b>. View over resources, telemetry, people, artifacts and pending tool calls.</p>
+<div class="row" style="margin-bottom:12px"><span class="h2">pi</span><span class="chip">earendil-works/pi</span><span class="chip g">healthy · 1 degraded</span><span class="sp"></span><span class="chip">last 7 days ▾</span><button class="btn">Settings</button><button class="btn p">Add resource</button></div>
+<div class="dg">
+ <div class="panel" style="grid-column:span 3"><div class="sec">Spend this week</div><div class="big">$212.40</div><div class="small muted">of $350 budget · today $41.20</div><div class="bar" style="margin-top:8px"><i style="width:61%"></i></div></div>
+ <div class="panel" style="grid-column:span 3"><div class="sec">Runs</div><div class="big">143</div><div class="small"><span style="color:var(--green)">121 done</span> · <span style="color:var(--red)">9 failed</span> · <span style="color:var(--accent)">2 waiting</span></div></div>
+ <div class="panel" style="grid-column:span 3"><div class="sec">Human wait time</div><div class="big">3h 41m</div><div class="small muted">agents idle on approvals · median 4 min</div></div>
+ <div class="panel" style="grid-column:span 3"><div class="sec">Open questions</div><div class="big" style="color:var(--accent)">4</div><div class="small muted">oldest 23 min (sol review)</div></div>
+
+ <div class="panel" style="grid-column:span 5;grid-row:span 2"><div class="sec">Resources</div>
+  <div class="res">
+   <span class="dot g"></span><b>Radius MCP</b><span class="hb"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span class="chip g">up</span>
+   <span class="sub">mcp.radius.earendil.dev · 24 tools · p50 84 ms · used by 6 sessions</span>
+   <span class="dot y"></span><b>Radius MCP (staging)</b><span class="hb"><i></i><i></i><i></i><i></i><i></i><i></i><i class="y"></i><i class="r"></i><i class="r"></i><i class="y"></i><i></i><i></i><i class="y"></i><i class="r"></i><i class="r"></i><i class="r"></i><i class="y"></i><i class="r"></i><i class="r"></i><i class="r"></i></span><span class="chip y">degraded</span>
+   <span class="sub" style="color:var(--yellow)">token refresh 401 since 13:12 · Charlotta asked about it in #radius</span>
+   <span class="dot g"></span><b>Radius models gateway</b><span class="hb"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span class="chip g">up</span>
+   <span class="sub">opus, sonnet, haiku, gpt-5 · 0.2% errors · 429s: 3 today</span>
+   <span class="dot g"></span><b class="mono">slayer:~/pi</b><span class="hb"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span class="chip g">reachable</span>
+   <span class="sub">ssh · 32 cores · load 4.1 · 4 sessions · disk 61%</span>
+   <span class="dot r"></span><b class="mono">laptop</b><span class="hb"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class="r"></i><i class="r"></i><i class="r"></i><i class="r"></i><i class="r"></i><i class="r"></i><i class="r"></i><i class="r"></i></span><span class="chip r">offline</span>
+   <span class="sub">last seen 12:40 · sol review e2e failed because of it</span>
+   <span class="dot g"></span><b class="mono">phone:~/journal</b><span class="hb"><i></i><i></i><i></i><i></i><i></i><i class="y"></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span class="chip g">reachable</span>
+   <span class="sub">termux · battery 64%</span>
+   <span class="dot y"></span><b>Google (gog)</b><span></span><span class="chip y">expires in 2 d</span>
+   <span class="sub">consent screen in Testing: tokens expire after 7 days · <a href="#">re-auth</a></span>
+   <span class="dot g"></span><b>GitHub token</b><span></span><span class="chip g">valid</span>
+   <span class="sub">fine-grained · repo + issues · expires Sep 30</span>
+   <span class="dot g"></span><b>Discord: pi-bot</b><span></span><span class="chip g">connected</span>
+   <span class="sub">Earendil · #pi #radius · 2 grants active</span>
+  </div>
+ </div>
+ <div class="panel" style="grid-column:span 4"><div class="sec">Spend per person</div>
+  <div class="hbar"><span>Mario</span><div class="stack"><i style="width:48%;background:var(--violet)"></i><i style="width:10%;background:var(--blue)"></i><i style="width:3%;background:var(--yellow)"></i></div><span class="mono">$128.70</span></div>
+  <div class="hbar"><span>Colin</span><div class="stack"><i style="width:4%;background:var(--violet)"></i><i style="width:18%;background:var(--blue)"></i></div><span class="mono">$41.30</span></div>
+  <div class="hbar"><span>Cristina</span><div class="stack"><i style="width:13%;background:var(--blue)"></i><i style="width:3%;background:var(--green)"></i></div><span class="mono">$29.90</span></div>
+  <div class="hbar"><span>Ada</span><div class="stack"><i style="width:4%;background:var(--blue)"></i></div><span class="mono">$7.10</span></div>
+  <div class="hbar"><span>pi-bot</span><div class="stack"><i style="width:3%;background:var(--blue)"></i></div><span class="mono">$5.40</span></div>
+ </div>
+ <div class="panel" style="grid-column:span 3"><div class="sec">Per model</div>
+  <div class="kv"><span><i class="dot" style="background:var(--violet)"></i> opus</span><span class="mono">$118.20 · 56%</span><span><i class="dot" style="background:var(--blue)"></i> sonnet</span><span class="mono">$79.10 · 37%</span><span><i class="dot" style="background:var(--green)"></i> gpt-5</span><span class="mono">$11.40 · 5%</span><span><i class="dot" style="background:var(--yellow)"></i> haiku</span><span class="mono">$3.70 · 2%</span></div>
+  <div class="small muted" style="margin-top:8px">cache hit rate 71% · 42.1M tokens in</div></div>
+ <div class="panel" style="grid-column:span 4"><div class="sec">Open questions</div>
+  <div class="small" style="margin-bottom:6px"><span class="dot a"></span> <b>p3 step 0b</b>: drop the build cache? <span class="muted">6m</span></div>
+  <div class="small" style="margin-bottom:6px"><span class="dot a"></span> <b>sol review</b>: approve git push <span class="muted">23m</span></div>
+  <div class="small" style="margin-bottom:6px"><span class="dot y"></span> <b>#radius</b>: grant Charlotta 1 h <span class="muted">11m</span></div>
+  <div class="small"><span class="dot"></span> <b>Discord plugin design</b>: 3 questions in artifact <span class="muted">32m</span></div></div>
+ <div class="panel" style="grid-column:span 3"><div class="sec">Members</div>
+  <div class="row" style="flex-wrap:wrap;gap:8px"><span class="row" style="gap:5px"><span class="av m">M</span><span class="small">owner</span></span><span class="row" style="gap:5px"><span class="av c">C</span><span class="small">admin</span></span><span class="row" style="gap:5px"><span class="av co">CO</span><span class="small">member</span></span><span class="row" style="gap:5px"><span class="av ch">CH</span><span class="small">discord</span></span><span class="row" style="gap:5px"><span class="av ad">A</span><span class="small">member</span></span></div>
+  <div class="small muted" style="margin-top:8px">1 invite pending</div></div>
+ <div class="panel" style="grid-column:span 7"><div class="sec">Recent artifacts</div>
+  <div class="art"><span class="thumb"></span><div style="flex:1"><b>Discord plugin: design book</b><div class="tiny muted">Discord plugin design · Mario · 32m ago · private</div></div><span class="chip">explainer</span></div>
+  <div class="art"><span class="thumb" style="background:linear-gradient(#1c1b18 60%,rgba(95,174,127,.3))"></span><div style="flex:1"><b>slayer CVE report Jun 14</b><div class="tiny muted">slayer CVE check · cron · 08:14</div></div><span class="chip">report</span></div>
+  <div class="art"><span class="thumb"></span><div style="flex:1"><b>astra vs sol: review diff</b><div class="tiny muted">sol review · Mario · yesterday</div></div><span class="chip">diff</span></div>
+ </div>
+<div class="panel" style="grid-column:span 5"><div class="sec">Activity</div>
+  <div class="small" style="margin-bottom:6px"><span class="mono muted">14:02</span> budget warning at 82% sent to Mario</div>
+  <div class="small" style="margin-bottom:6px"><span class="mono muted">13:58</span> CI #4412 failed on 7be01fd (kit-owner build)</div>
+  <div class="small" style="margin-bottom:6px"><span class="mono muted">13:31</span> Cristina deployed radius-gateway v0.9.3 to staging</div>
+  <div class="small" style="margin-bottom:6px"><span class="mono muted">13:12</span> Radius MCP (staging) token refresh started failing</div>
+  <div class="small" style="margin-bottom:6px"><span class="mono muted">12:40</span> env laptop went offline</div>
+  <div class="small"><span class="mono muted">12:10</span> Ada left; 1 note for Mario</div></div>
+</div>
+</section>
+<section class="tab" id="v10" data-title="Gallery">
+<style>
+#v10 .wrap{display:grid;grid-template-columns:210px 1fr;gap:14px}
+#v10 .f a{display:flex;justify-content:space-between;padding:4px 8px;border-radius:6px;color:var(--muted);font-size:12px}
+#v10 .f a.on{background:var(--panel2);color:var(--text)}
+#v10 .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+#v10 .it{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+#v10 .it.w{grid-column:span 2}
+#v10 .pv{height:150px;background:#151412;border-bottom:1px solid var(--line);position:relative;overflow:hidden;padding:10px}
+#v10 .it.w .pv{height:150px}
+#v10 .meta{padding:8px 10px}
+#v10 .meta .t{font-weight:600;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#v10 .meta .o{font-size:11px;color:var(--muted);display:flex;gap:6px;align-items:center;margin-top:3px}
+#v10 .badge{position:absolute;top:8px;right:8px}
+#v10 .ln{height:5px;border-radius:3px;background:#2e2c27;margin:5px 0}
+</style>
+<p class="note"><b>Gallery.</b> Everything agents produced, as a visual grid: <b>artifacts</b> (explainers, reports), screenshots from browser tool calls, diffs, PDFs, charts. View over artifacts and file outputs of tool calls; every tile links back to its <b>origin</b> (session + turn) and can be filtered by session, person, kind and time.</p>
+<div class="wrap">
+ <div class="panel pad f">
+  <div class="search" style="margin-bottom:10px">⌕ <span>search outputs</span></div>
+  <div class="sec">Kind</div><a class="on" href="#">All <span>86</span></a><a href="#">Artifacts <span>14</span></a><a href="#">Screenshots <span>41</span></a><a href="#">Reports <span>9</span></a><a href="#">Diffs <span>17</span></a><a href="#">PDFs <span>3</span></a><a href="#">Charts <span>2</span></a>
+  <div class="sep"></div><div class="sec">Person</div><a href="#"><span class="row" style="gap:6px"><span class="av m" style="width:16px;height:16px;font-size:8px">M</span>Mario</span><span>52</span></a><a href="#"><span class="row" style="gap:6px"><span class="av c" style="width:16px;height:16px;font-size:8px">C</span>Cristina</span><span>17</span></a><a href="#"><span class="row" style="gap:6px"><span class="av co" style="width:16px;height:16px;font-size:8px">CO</span>Colin</span><span>11</span></a><a href="#"><span class="row" style="gap:6px"><span class="av ad" style="width:16px;height:16px;font-size:8px">A</span>Ada</span><span>6</span></a>
+  <div class="sep"></div><div class="sec">Time</div><a class="on" href="#">This week</a><a href="#">Today</a><a href="#">All time</a>
+  <div class="sep"></div><div class="sec">Session</div><a href="#">p3 step 0b <span>12</span></a><a href="#">Discord plugin design <span>8</span></a><a href="#">astra review <span>3</span></a><a href="#">slayer CVE check <span>7</span></a>
+ </div>
+ <div>
+ <div class="row" style="margin-bottom:10px"><span class="h2">86 outputs</span><span class="muted small">this week · all people</span><span class="sp"></span><span class="chip a">grid</span><span class="chip">by session</span><span class="chip">timeline</span></div>
+ <div class="grid">
+  <div class="it w"><div class="pv" style="background:linear-gradient(160deg,#211d19,#151412)"><span class="badge chip a">explainer</span><div style="font-size:18px;font-weight:700;margin-top:18px;font-family:Georgia,serif">Discord plugin: design book</div><div class="small muted" style="margin:4px 0 10px">How pi-bot maps Discord threads to sessions, grants and resources.</div><div class="ln" style="width:85%"></div><div class="ln" style="width:70%"></div><div class="ln" style="width:78%"></div></div><div class="meta"><div class="t">Discord plugin: design book</div><div class="o"><span class="av m" style="width:14px;height:14px;font-size:7px">M</span>Discord plugin design · turn 38 · 32m ago<span class="sp"></span><a href="#">origin ↗</a></div></div></div>
+  <div class="it"><div class="pv"><span class="badge chip b">screenshot</span><div style="border:1px solid var(--line);border-radius:6px;height:100%;display:grid;grid-template-columns:30% 1fr"><div style="border-right:1px solid var(--line);background:#1a1917"></div><div style="padding:8px"><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px"><i style="height:24px;background:var(--panel2);border-radius:3px"></i><i style="height:24px;background:var(--panel2);border-radius:3px"></i><i style="height:24px;background:var(--panel2);border-radius:3px"></i></div><div style="margin-top:8px;height:14px;background:rgba(214,92,92,.2);border-radius:3px"></div></div></div></div><div class="meta"><div class="t">p3 reload 27: facet slots</div><div class="o">p3 step 0b · turn 27<span class="sp"></span><a href="#">↗</a></div></div></div>
+  <div class="it"><div class="pv"><span class="badge chip g">report</span><div class="mono tiny" style="color:var(--green);margin-top:16px">CVE scan · slayer</div><div style="font-size:26px;font-weight:700;margin:4px 0">0 high</div><div class="small" style="color:var(--yellow)">2 moderate · undici 7.10.0</div><div class="ln" style="width:60%;margin-top:12px"></div><div class="ln" style="width:40%"></div></div><div class="meta"><div class="t">slayer CVE report Jun 14</div><div class="o">slayer CVE check · cron<span class="sp"></span><a href="#">↗</a></div></div></div>
+  <div class="it"><div class="pv" style="padding:0"><span class="badge chip y">diff</span><div class="diff" style="padding:10px;font-size:10px"><span class="hunk">@@ owner.ts</span><span class="del">-  if (key) return ok()</span><span class="add">+  if (key !== binding.principalKey)</span><span class="add">+    return denied("foreign key")</span><span class="ctx">   return ok()</span><span class="add">+  // GC: binding held weakly</span></div></div><div class="meta"><div class="t">kit owner checks (+61 −9)</div><div class="o"><span class="av co" style="width:14px;height:14px;font-size:7px">CO</span>kit-owner build · run 7<span class="sp"></span><a href="#">↗</a></div></div></div>
+  <div class="it"><div class="pv" style="display:flex;align-items:center;justify-content:center"><span class="badge chip r">pdf</span><div style="width:92px;height:122px;background:#e8e3d8;border-radius:3px;padding:10px;box-shadow:6px 6px 0 #2e2c27"><div style="height:6px;background:#141311;width:70%;border-radius:2px"></div><div style="height:3px;background:#8f887a;margin-top:8px"></div><div style="height:3px;background:#8f887a;margin-top:4px;width:80%"></div><div style="height:3px;background:#8f887a;margin-top:4px"></div><div style="height:30px;background:#cfc9bc;margin-top:8px"></div></div></div><div class="meta"><div class="t">Radius invoice reconciliation May</div><div class="o"><span class="av c" style="width:14px;height:14px;font-size:7px">C</span>mail → session<span class="sp"></span><a href="#">↗</a></div></div></div>
+  <div class="it"><div class="pv"><span class="badge chip v">chart</span><svg viewBox="0 0 200 110" style="width:100%;height:100%"><polyline fill="none" stroke="#e07a4f" stroke-width="2" points="0,90 20,84 40,86 60,70 80,72 100,50 120,56 140,30 160,38 180,22 200,26"/><polyline fill="none" stroke="#6b8fd6" stroke-width="2" points="0,95 20,92 40,90 60,88 80,80 100,82 120,74 140,76 160,66 180,70 200,60"/></svg></div><div class="meta"><div class="t">reload ms: cache vs no cache</div><div class="o">p3 step 0b · turn 35<span class="sp"></span><a href="#">↗</a></div></div></div>
+  <div class="it"><div class="pv"><span class="badge chip b">screenshot</span><div style="background:#36393f;border-radius:6px;height:100%;padding:8px;font-size:10px;color:#dcddde"><b style="color:#a685d6">#radius</b><div style="margin-top:6px"><b style="color:#d8b44a">Charlotta</b> @pi why does token refresh fail?</div><div style="margin-top:4px"><b style="color:#e07a4f">pi-bot</b> I need access to slayer…</div></div></div><div class="meta"><div class="t">Discord thread capture</div><div class="o">pi-bot · #radius<span class="sp"></span><a href="#">↗</a></div></div></div>
+  <div class="it w"><div class="pv" style="background:linear-gradient(160deg,#1a1d22,#151412)"><span class="badge chip a">explainer</span><div style="font-size:18px;font-weight:700;margin-top:18px;font-family:Georgia,serif">Chord slice 3 review</div><div class="small muted" style="margin:4px 0 10px">astra review · findings so far: params copied on the hot path, missing GC test.</div><div class="row"><span class="chip r">2 blocking</span><span class="chip y">5 minor</span><span class="chip">draft</span></div></div><div class="meta"><div class="t">Chord slice 3 review (draft, live)</div><div class="o"><span class="spin"></span>astra review · updating<span class="sp"></span><a href="#">↗</a></div></div></div>
+  <div class="it"><div class="pv"><span class="badge chip">notes</span><div class="small" style="margin-top:18px;line-height:1.6;color:#cfc9bc">— rode to Graz<br>— Ada onboarding fine<br>— book dentist (Mon)</div></div><div class="meta"><div class="t">Journal 2025-06-14</div><div class="o">Journal · phone<span class="sp"></span><a href="#">↗</a></div></div></div>
+  <div class="it"><div class="pv"><span class="badge chip b">screenshot</span><div class="term" style="height:100%;font-size:9.5px;padding:6px"><span class="g">✓</span> 61 passed
+<span class="r">✗</span> 3 failed
+<span class="m">Duration 4.81s</span></div></div><div class="meta"><div class="t">kit-owner test run 7</div><div class="o">kit-owner build<span class="sp"></span><a href="#">↗</a></div></div></div>
+ </div>
+ </div>
+</div>
+</section>
+<section class="tab" id="v11" data-title="Canvas">
+<style>
+#v11 .cv{position:relative;height:690px;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:radial-gradient(circle,#34312b 1px,transparent 1.4px) 0 0/20px 20px,#161513}
+#v11 svg{position:absolute;left:0;top:0;width:1400px;height:690px}
+#v11 .nd{position:absolute;background:var(--panel);border:1px solid #3a372f;border-radius:11px;padding:10px 12px;box-shadow:0 8px 24px rgba(0,0,0,.35);font-size:12px}
+#v11 .nd .k{font-size:10px;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:4px;display:flex;gap:6px;align-items:center}
+#v11 .sticky{background:#3a3220;border-color:#5a4c2a;color:#efe2bf;transform:rotate(-1.5deg)}
+#v11 .sticky2{background:#22303a;border-color:#2f4656;color:#cfe0ee;transform:rotate(1.2deg)}
+#v11 .sel{outline:2px solid var(--accent);outline-offset:3px}
+#v11 .ask{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);width:620px;background:#211f1b;border:1px solid #4a463d;border-radius:14px;padding:10px 12px;box-shadow:0 14px 40px rgba(0,0,0,.6)}
+#v11 .tools{position:absolute;left:14px;top:14px;display:flex;flex-direction:column;gap:4px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:5px}
+#v11 .tools span{width:30px;height:30px;display:flex;align-items:center;justify-content:center;border-radius:7px;color:var(--muted);font-size:14px}
+#v11 .tools span.on{background:var(--panel2);color:var(--text)}
+#v11 .zoom{position:absolute;right:14px;bottom:14px}
+#v11 .wl{font-size:10.5px;fill:#8f887a;font-family:system-ui}
+</style>
+<p class="note"><b>Canvas.</b> An infinite board where any addressable thing can be dropped as a live node: <b>notes, sessions, envs, artifacts, files (decisions.md), people</b>. Wires are typed relations (blocks, writes to, owns, discusses). The board itself is context: "ask the agent about this board" sends the selected nodes and wires to a session.</p>
+<div class="cv">
+ <svg viewBox="0 0 1400 690">
+  <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8f887a"/></marker><marker id="ara" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#e07a4f"/></marker></defs>
+  <path d="M370 170 C 440 170, 440 250, 500 250" stroke="#8f887a" stroke-width="1.5" fill="none" marker-end="url(#ar)"/><text class="wl" x="400" y="200">motivates</text>
+  <path d="M760 250 C 810 250, 810 140, 860 140" stroke="#e07a4f" stroke-width="2" fill="none" marker-end="url(#ara)"/><text class="wl" x="770" y="185" style="fill:#e07a4f">writes to</text>
+  <path d="M630 340 L 630 410" stroke="#8f887a" stroke-width="1.5" fill="none" marker-end="url(#ar)" stroke-dasharray="5 4"/><text class="wl" x="640" y="380">waits on</text>
+  <path d="M760 450 C 800 450, 810 400, 850 395" stroke="#8f887a" stroke-width="1.5" fill="none" marker-end="url(#ar)"/><text class="wl" x="775" y="440">runs in</text>
+  <path d="M560 340 C 520 400, 420 420, 350 430" stroke="#8f887a" stroke-width="1.5" fill="none" marker-end="url(#ar)"/><text class="wl" x="420" y="400">runs in</text>
+  <path d="M1100 520 C 1000 580, 860 560, 765 480" stroke="#6b8fd6" stroke-width="1.5" fill="none" marker-end="url(#ar)"/><text class="wl" x="930" y="565" style="fill:#6b8fd6">reviews</text>
+  <path d="M200 520 C 260 520, 430 300, 500 290" stroke="#6b8fd6" stroke-width="1.5" fill="none" marker-end="url(#ar)"/><text class="wl" x="300" y="470" style="fill:#6b8fd6">answers</text>
+  <path d="M1000 200 C 1060 240, 1120 250, 1180 290" stroke="#8f887a" stroke-width="1.5" fill="none" marker-end="url(#ar)"/><text class="wl" x="1080" y="240">cites</text>
+ </svg>
+ <div class="tools"><span class="on">↖</span><span>✋</span><span>▭</span><span>✎</span><span>⌁</span><span>＋</span></div>
+
+ <div class="nd sticky" style="left:110px;top:110px;width:260px"><div class="k" style="color:#c9b47c">note · Mario</div>Reload must always reflect plugin edits. A stale UI after reload is worse than 400 ms more.</div>
+
+ <div class="nd sel" style="left:500px;top:200px;width:260px"><div class="k"><span class="dot a pulse"></span>session</div><b style="font-size:13.5px">p3 step 0b</b><div class="muted small">slayer · opus · turn 41 · $3.92</div><div class="tool" style="margin-top:6px"><span class="n">ask_user</span> drop the build cache?</div></div>
+
+ <div class="nd" style="left:860px;top:80px;width:250px"><div class="k">file · decisions.md</div><div class="mono tiny" style="line-height:1.6;color:#cfc9bc">## 2025-06-14<br>- A: drop the build cache<br>- UI is contributed from facets<br>- no worktrees; one checkout per env</div></div>
+
+ <div class="nd" style="left:500px;top:410px;width:260px"><div class="k"><span class="dot r"></span>session</div><b>kit-owner build</b><div class="muted small">3 tests failing · owner.ts:142</div><div class="row small" style="margin-top:6px"><span class="chip r">blocks step 0b</span></div></div>
+
+ <div class="nd" style="left:200px;top:400px;width:150px"><div class="k">env</div><b class="mono">slayer:~/pi</b><div class="small" style="color:var(--green)">reachable · load 4.1</div></div>
+
+ <div class="nd" style="left:850px;top:350px;width:180px"><div class="k">env</div><b class="mono">slayer:~/pi</b><div class="tiny muted">(same env, second reference)</div></div>
+
+ <div class="nd" style="left:1100px;top:290px;width:230px"><div class="k">artifact</div><div style="height:46px;border-radius:6px;background:linear-gradient(160deg,#211d19,#151412);border:1px solid var(--line);margin-bottom:6px;padding:6px;font-family:Georgia,serif;font-weight:700">Discord plugin: design book</div><div class="tiny muted">3 open questions</div></div>
+
+ <div class="nd" style="left:1100px;top:470px;width:200px"><div class="k">person</div><div class="row"><span class="av co lg">CO</span><div><b>Colin</b><div class="tiny muted">reviewing kit owner</div></div></div></div>
+
+ <div class="nd" style="left:60px;top:500px;width:140px"><div class="k">person</div><div class="row"><span class="av m">M</span><b>Mario</b></div></div>
+
+ <div class="nd sticky2" style="left:1160px;top:70px;width:190px"><div class="k" style="color:#8fb1cc">note · Cristina</div>Gateway retries need the same "no hidden cache" rule?</div>
+
+ <div class="ask"><div class="row"><span class="chip a">4 nodes · 3 wires selected</span><span class="sp"></span><span class="tiny muted">sends to</span><span class="chip">new session · opus</span></div><div class="row" style="margin-top:8px"><div style="flex:1;font-size:13.5px">Ask the agent about this board: <span class="muted">"What still blocks step 0b, and who has to decide it?"</span></div><button class="btn p">Ask</button></div></div>
+ <div class="zoom row"><span class="chip">72%</span><span class="chip">fit</span><span class="chip">minimap</span></div>
+</div>
+</section>
+<section class="tab" id="v12" data-title="Traces">
+<style>
+#v12 .wrap{display:grid;grid-template-columns:1fr 330px;gap:14px}
+#v12 .wf{padding:10px 0 12px}
+#v12 .wr{display:grid;grid-template-columns:300px 1fr 70px;align-items:center;height:22px;font-size:11.5px}
+#v12 .wr:hover{background:#22201c}
+#v12 .wr .lb{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-left:12px;font-family:var(--mono);font-size:11px}
+#v12 .wr .tr{position:relative;height:100%}
+#v12 .wr .sp2{position:absolute;top:5px;height:12px;border-radius:3px;min-width:2px}
+#v12 .wr .du{font-family:var(--mono);font-size:10.5px;color:var(--muted);text-align:right;padding-right:12px}
+#v12 .wr.sel{background:rgba(224,122,79,.08)}
+#v12 .ax{display:grid;grid-template-columns:300px 1fr 70px;font-family:var(--mono);font-size:10px;color:var(--muted);border-bottom:1px solid var(--line);padding-bottom:4px;margin-bottom:4px}
+#v12 .ax .tk{position:relative;height:12px}
+#v12 .ax .tk span{position:absolute;transform:translateX(-50%)}
+#v12 .gridl{background:repeating-linear-gradient(90deg,transparent 0,transparent calc(10% - 1px),#24221e calc(10% - 1px),#24221e 10%)}
+#v12 .sum{display:flex;height:16px;border-radius:5px;overflow:hidden;margin:6px 0}
+#v12 .hm{display:grid;grid-template-columns:60px repeat(11,1fr);gap:3px;font-size:10px}
+#v12 .hm div{height:26px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:9.5px}
+#v12 .hm .lab{justify-content:flex-start;color:var(--muted);font-family:system-ui;font-size:11px}
+#v12 .lg i{display:inline-block;width:12px;height:8px;border-radius:2px;margin:0 4px 0 10px;vertical-align:middle}
+</style>
+<p class="note"><b>Traces.</b> One run as a waterfall: <b>model latency vs tool time vs waiting for the user</b>, with runtime spans (chord.app.start, esbuild builds) nested under the tool calls that caused them. Below, a cost heatmap per hour × model. View over <b>telemetry spans, turns, tool calls</b> of one run, and spend telemetry of the project.</p>
+<div class="row" style="margin-bottom:10px"><span class="h2">p3 step 0b · turns 36–39</span><span class="chip">trace 7f3a…e21</span><span class="mono small muted">13:31:02 → 13:44:10 · 13m 08s</span><span class="sp"></span><span class="lg small muted"><i style="background:var(--violet)"></i>model<i style="background:var(--blue)"></i>tool<i style="background:var(--yellow)"></i>build<i style="background:var(--green)"></i>runtime<i style="background:repeating-linear-gradient(135deg,rgba(224,122,79,.7) 0 3px,rgba(224,122,79,.25) 3px 6px)"></i>waiting for user</span></div>
+<div class="wrap">
+ <div class="panel wf">
+  <div class="ax"><span style="padding-left:12px">span</span><div class="tk" id="t12ax"></div><span style="text-align:right;padding-right:12px">dur</span></div>
+  <div id="t12rows"></div>
+ </div>
+ <div class="col">
+  <div class="panel pad"><div class="sec">Where the 13m 08s went</div>
+   <div class="sum"><i style="width:9%;background:var(--violet)"></i><i style="width:14%;background:var(--blue)"></i><i style="width:7%;background:var(--yellow)"></i><i style="width:70%;background:repeating-linear-gradient(135deg,rgba(224,122,79,.7) 0 4px,rgba(224,122,79,.25) 4px 8px)"></i></div>
+   <div class="kv"><span>waiting for Mario</span><span class="mono" style="color:var(--accent)">9m 12s · 70%</span><span>tool time</span><span class="mono">1m 50s · 14%</span><span>model latency</span><span class="mono">1m 11s · 9%</span><span>esbuild</span><span class="mono">55s · 7% (50 builds)</span></div></div>
+  <div class="panel pad"><div class="sec">Selected span</div>
+   <div class="mono" style="color:var(--yellow)">esbuild.build ui-bundle</div>
+   <div class="kv" style="margin-top:6px"><span>parent</span><span class="mono">bash vitest reload-loop ×50</span><span>duration</span><span class="mono">1.18 s (p50 1.09)</span><span>entry</span><span class="mono">apps/p3/src/ui/main.ts</span><span>facets</span><span class="mono">7 · 212 kB out</span><span>cache</span><span class="mono" style="color:var(--accent)">disabled (decision A)</span></div>
+   <div class="small muted" style="margin-top:8px">Before decision A the same span was 0.08 s from cache; rebuild costs ~1.1 s per reload in tests, ~380 ms in dev with incremental.</div></div>
+  <div class="panel pad"><div class="sec">Model calls</div>
+   <div class="kv"><span>calls</span><span class="mono">6 · opus</span><span>TTFT p50</span><span class="mono">2.4 s</span><span>tokens</span><span class="mono">188k in (91% cached) · 6.1k out</span><span>cost</span><span class="mono">$0.83</span></div></div>
+ </div>
+</div>
+<div class="panel pad" style="margin-top:14px">
+ <div class="row"><div class="sec" style="margin:0">Cost heatmap · today · hour × model</div><span class="sp"></span><span class="tiny muted">$ per hour · project pi</span></div>
+ <div class="hm" id="t12hm" style="margin-top:10px"></div>
+</div>
+<script>
+(function(){
+ var T=788;var ax=document.getElementById("t12ax");for(var i=0;i<=10;i++){var s=document.createElement("span");s.style.left=(i*10)+"%";var t=Math.round(T*i/10);s.textContent=Math.floor(t/60)+"m"+(t%60<10?"0":"")+(t%60);ax.appendChild(s)}
+ var col={m:"var(--violet)",t:"var(--blue)",b:"var(--yellow)",r:"var(--green)",w:"repeating-linear-gradient(135deg,rgba(224,122,79,.75) 0 4px,rgba(224,122,79,.25) 4px 8px)",x:"#5a554b"};
+ var rows=[
+  ["run p3 step 0b · turns 36-39",0,0,788,"x"],
+  ["turn 36",1,0,596,"x"],
+  ["model opus · plan",2,0,14.2,"m"],
+  ["bash vitest reload-loop ×5",2,14.2,31,"t"],
+  ["chord.app.start",3,15,17.4,"r"],
+  ["esbuild.build ui-bundle (cached)",3,17.4,17.6,"b"],
+  ["model opus · analyse flake",2,31,44,"m"],
+  ["ask_user drop the build cache?",2,44,596,"w"],
+  ["turn 37",1,596,640,"x"],
+  ["model opus · apply A",2,596,606,"m"],
+  ["edit reload.ts",2,606,606.8,"t"],
+  ["bash rm build-cache.ts",2,607,607.4,"t"],
+  ["bash npm run check",2,608,639,"t"],
+  ["turn 38",1,640,760,"x"],
+  ["model opus",2,640,648,"m"],
+  ["bash vitest reload-loop ×50",2,648,752,"t"],
+  ["chord.app.start ×50",3,649,700,"r"],
+  ["esbuild.build ui-bundle ×50",3,650,705,"b",1],
+  ["mcp radius.artifacts_list",3,706,707.2,"t"],
+  ["turn 39",1,760,788,"x"],
+  ["model opus · summarise",2,760,778,"m"],
+  ["edit decisions.md",2,779,780,"t"],
+  ["bash git commit",2,781,787,"t"]
+ ];
+ var box=document.getElementById("t12rows");
+ rows.forEach(function(r){var w=document.createElement("div");w.className="wr"+(r[5]?" sel":"");
+  var d=r[3]-r[2];var ds=d>=60?Math.floor(d/60)+"m "+Math.round(d%60)+"s":d>=1?d.toFixed(1)+" s":Math.round(d*1000)+" ms";
+  w.innerHTML='<span class="lb" style="padding-left:'+(12+r[1]*14)+'px;color:'+(r[4]=="x"?"var(--text)":"#cfc9bc")+'">'+(r[1]?"└ ":"")+r[0]+'</span><div class="tr gridl"><i class="sp2" style="left:'+(r[2]/T*100)+'%;width:'+(d/T*100)+'%;background:'+col[r[4]]+(r[4]=="x"?";height:4px;top:9px":"")+(r[5]?";outline:1px solid #fff":"")+'"></i></div><span class="du">'+ds+'</span>';
+  box.appendChild(w)});
+ var hm=document.getElementById("t12hm");var hrs=["06","07","08","09","10","11","12","13","14","15","16"];
+ var data={opus:[0,0,1.2,3.4,4.1,2.2,3.0,6.1,6.4,0,0],sonnet:[0,0,.2,.4,1.1,2.8,2.4,3.6,2.9,0,0],"gpt-5":[0,0,0,0,1.4,.9,.3,1.6,.2,0,0],haiku:[.06,.02,0,0,0,0,.03,0,.02,0,0]};
+ hm.innerHTML='<div class="lab"></div>'+hrs.map(function(h){return '<div class="lab" style="justify-content:center">'+h+'</div>'}).join("");
+ Object.keys(data).forEach(function(m){hm.innerHTML+='<div class="lab">'+m+'</div>'+data[m].map(function(v,i){var a=Math.min(1,v/6.4);var fut=i>8;return '<div style="background:'+(fut?"#1a1917;border:1px dashed #2e2c27":"rgba(224,122,79,"+(.06+a*.85).toFixed(2)+")")+';color:'+(a>.5?"#1a120d":"#a9a294")+'">'+(fut?"":v?"$"+v.toFixed(v<1?2:1):"·")+'</div>'}).join("")});
+})();
+</script>
+</section>
+<section class="tab" id="v13" data-title="Decisions">
+<style>
+#v13 .wrap{display:grid;grid-template-columns:1fr 420px;gap:14px}
+#v13 .d{display:grid;grid-template-columns:90px 1fr 150px;gap:12px;padding:11px 14px;border-bottom:1px solid var(--line);align-items:start}
+#v13 .d.on{background:rgba(224,122,79,.06);box-shadow:inset 3px 0 0 var(--accent)}
+#v13 .d .when{font-family:var(--mono);font-size:11px;color:var(--muted)}
+#v13 .d .ttl{font-weight:600;font-size:13.5px}
+#v13 .d .why{font-size:12px;color:#bdb6a8;margin-top:2px}
+#v13 .d .src{font-size:11px;color:var(--muted);text-align:right}
+#v13 mark{background:rgba(216,180,74,.25);color:var(--text);border-radius:3px;padding:0 2px}
+#v13 .bub{padding:8px 10px;border-radius:9px;margin:7px 0;font-size:12.5px}
+#v13 .bub.u{background:rgba(107,143,214,.1);border:1px solid rgba(107,143,214,.25)}
+#v13 .bub.a{background:var(--panel2);border:1px solid var(--line)}
+</style>
+<p class="note"><b>Decisions.</b> Every decision made in the project, harvested from <b>decisions.md files and transcripts</b> (an ask_user answer, "let's go with…", a reversed choice). Each links to who decided, when, the alternatives, and the turn where it happened. View over files, turns, people; supersession chains show when a decision was overturned.</p>
+<div class="row" style="margin-bottom:10px"><div class="search" style="flex:1;max-width:560px">⌕ <span class="q">cache</span><span class="sp"></span><span class="tiny">4 of 63</span></div><span class="chip a">all sources</span><span class="chip">decisions.md</span><span class="chip">transcripts only</span><span class="chip">by Mario</span><span class="chip y">superseded</span><span class="sp"></span><button class="btn">Export decisions.md</button></div>
+<div class="wrap">
+ <div class="panel" style="overflow:hidden">
+  <div class="d on"><div><div class="when">Jun 14 13:40</div><span class="chip a" style="margin-top:4px">p3</span></div><div><div class="ttl">A: drop the build <mark>cache</mark></div><div class="why">Rebuild the UI bundle on every reload. Stale UI after a plugin edit is worse than ~380 ms per reload.</div><div class="row small" style="margin-top:6px"><span class="chip">alternatives: B key by facet hash · C defer</span><span class="chip y">supersedes Jun 3 "cache UI bundle by app hash"</span></div></div><div class="src"><div class="row" style="justify-content:flex-end;gap:5px"><span class="av m" style="width:16px;height:16px;font-size:8px">M</span>Mario</div>p3 step 0b · turn 36<br>decisions.md:41</div></div>
+  <div class="d"><div><div class="when">Jun 12 17:05</div><span class="chip a" style="margin-top:4px">p3</span></div><div><div class="ttl">UI is contributed from facets</div><div class="why">Plugins contribute UI through declared facets mounted into named slots; the shell owns no feature UI.</div></div><div class="src"><div class="row" style="justify-content:flex-end;gap:5px"><span class="av m" style="width:16px;height:16px;font-size:8px">M</span>Mario</div>p3 step 0 · turn 12<br>decisions.md:28</div></div>
+  <div class="d"><div><div class="when">Jun 11 10:22</div><span class="chip a" style="margin-top:4px">p3</span></div><div><div class="ttl">No worktrees</div><div class="why">One checkout per env; parallel sessions share it and must touch different files. Worktrees doubled build <mark>cache</mark>s and confused agents about paths.</div></div><div class="src"><div class="row" style="justify-content:flex-end;gap:5px"><span class="av m" style="width:16px;height:16px;font-size:8px">M</span>Mario <span class="av co" style="width:16px;height:16px;font-size:8px">CO</span></div>Discord #pi thread<br>decisions.md:19</div></div>
+  <div class="d"><div><div class="when">Jun 10 15:48</div><span class="chip b" style="margin-top:4px">chord</span></div><div><div class="ttl">Caches are WeakMaps keyed by their owner</div><div class="why">No module-level strong <mark>cache</mark>s; every cache gets a GC test.</div></div><div class="src"><div class="row" style="justify-content:flex-end;gap:5px"><span class="av m" style="width:16px;height:16px;font-size:8px">M</span>Mario</div>chord design.md §3<br>AGENTS.md</div></div>
+  <div class="d" style="opacity:.55"><div><div class="when">Jun 3 11:10</div><span class="chip a" style="margin-top:4px">p3</span></div><div><div class="ttl" style="text-decoration:line-through">Cache UI bundle by app hash</div><div class="why">Superseded Jun 14 by "A: drop the build cache".</div></div><div class="src">p3 step 0a · turn 8</div></div>
+  <div style="padding:10px 14px" class="small muted">Not matching "cache" (59): "Discord grants expire after 1 hour by default" · "Radius MCP is a resource, not a plugin" · "Sessions are addressable, layouts are plugins" · "Owner keys never leave the device" · …</div>
+ </div>
+ <div class="col">
+  <div class="panel pad">
+   <div class="row"><span class="h2">A: drop the build cache</span><span class="sp"></span><span class="chip g">active</span></div>
+   <div class="kv" style="margin-top:8px"><span>decided by</span><span>Mario (answer to ask_user)</span><span>when</span><span>Jun 14, 13:40 · 6 min after asked</span><span>where</span><span><a href="#">p3 step 0b, turn 36 ↗</a></span><span>recorded</span><span class="mono">apps/p3/docs/decisions.md:41</span><span>affects</span><span class="mono">reload.ts, build-cache.ts (deleted)</span><span>commit</span><span class="mono" style="color:var(--yellow)">c2d9a31</span></div>
+  </div>
+  <div class="panel pad"><div class="sec">Conversation</div>
+   <div class="bub a"><b class="small" style="color:var(--accent)">agent · turn 36</b><br>The reload loop test fails 1 in 5: the cache keys by app.facetHash, computed before plugin edits flush. A drop the cache (+380 ms), B key by per-facet content hash, C defer.</div>
+   <div class="bub u"><b class="small" style="color:var(--blue)">Mario</b><br>A. 380 ms is fine, a stale UI is not. Put it in decisions.md.</div>
+   <div class="bub a"><b class="small" style="color:var(--accent)">agent · turn 39</b><br>Added: "A: drop the build cache. Supersedes Jun 3."</div>
+  </div>
+  <div class="panel pad"><div class="sec">Referenced by</div><div class="small">astra review · "decision A means esbuild spans should be budgeted"</div><div class="small" style="margin-top:4px">Cristina's note on canvas · "same rule for gateway?"</div></div>
+ </div>
+</div>
+</section>
+<section class="tab" id="v14" data-title="Plans and todos">
+<style>
+#v14 .wrap{display:grid;grid-template-columns:1fr 520px;gap:14px}
+#v14 .grp{padding:6px 14px 4px;font-size:10.5px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);font-weight:600;background:#191815;border-bottom:1px solid var(--line)}
+#v14 .td{display:grid;grid-template-columns:22px 1fr 160px 90px;gap:10px;padding:8px 14px;border-bottom:1px solid var(--line);align-items:center;font-size:12.5px}
+#v14 .td>.chip{justify-self:start}
+#v14 .cb{width:15px;height:15px;border-radius:4px;border:1.5px solid #5a554b}
+#v14 .cb.d{background:var(--green);border-color:var(--green)}
+#v14 .cb.w{border-color:var(--accent)}
+#v14 .td.done .tt{color:var(--muted);text-decoration:line-through}
+#v14 .dep{font-size:11px;color:var(--muted);margin-top:2px}
+#v14 .dep b{color:var(--accent);font-weight:500}
+#v14 .graph{position:relative;height:470px}
+#v14 .graph svg{position:absolute;inset:0;width:100%;height:100%}
+#v14 .gn{position:absolute;background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:6px 9px;font-size:11.5px;width:150px}
+#v14 .gn .s{font-size:10px;color:var(--muted)}
+#v14 .gn.crit{border-color:var(--red)}
+#v14 .gn.wait{border-color:var(--accent)}
+#v14 .gn.ok{border-color:rgba(95,174,127,.6)}
+</style>
+<p class="note"><b>Plans and todos.</b> One task list across sessions and people, with <b>dependencies between sessions</b> ("step 0b waits for kit review"). Todos come from agent plans (todo tool calls), handoffs and humans. View over runs, todo items in turns, people; the graph on the right shows the critical path.</p>
+<div class="row" style="margin-bottom:10px"><span class="h2">pi · this week</span><span class="chip">23 open</span><span class="chip g">31 done</span><span class="sp"></span><span class="chip a">group by goal</span><span class="chip">by person</span><span class="chip">by session</span><button class="btn p">+ Todo</button></div>
+<div class="wrap">
+ <div class="panel" style="overflow:hidden">
+  <div class="grp">Goal: p3 step 0b · reload loop</div>
+  <div class="td done"><span class="cb d"></span><div><div class="tt">Facets mount into named slots</div></div><span class="small muted">p3 step 0b · t27</span><span class="chip g">done</span></div>
+  <div class="td done"><span class="cb d"></span><div><div class="tt">Drop the build cache (decision A)</div></div><span class="small muted">p3 step 0b · t39</span><span class="chip g">done</span></div>
+  <div class="td"><span class="cb w"></span><div><div class="tt">Reload rebinds before owner checks</div><div class="dep">waits on <b>kit-owner build</b>: "binding.rebind order"</div></div><span class="small muted">p3 step 0b</span><span class="chip a">blocked</span></div>
+  <div class="td"><span class="cb"></span><div><div class="tt">Step 0b handoff + slices.md carry-over</div><div class="dep">after the two above</div></div><span class="small muted">p3 step 0b</span><span class="chip">next</span></div>
+  <div class="grp">Goal: Chord slice 3 · kit owner</div>
+  <div class="td"><span class="cb" style="border-color:var(--red)"></span><div><div class="tt">Fix 3 failing kit owner tests</div><div class="dep">owner.ts:142 reads params before rebind</div></div><span class="small muted">kit-owner build · run 7</span><span class="chip r">failed</span></div>
+  <div class="td"><span class="cb"></span><div><div class="tt">GC test for principal key WeakMap</div><div class="dep">from <b style="color:var(--violet)">astra review</b> finding 2</div></div><span class="small muted">astra review → kit</span><span class="chip">new</span></div>
+  <div class="td"><span class="cb"></span><div><div class="tt">Kit review by Colin</div><div class="dep">waits on <b>tests green</b></div></div><span class="row small" style="gap:5px"><span class="av co" style="width:16px;height:16px;font-size:8px">CO</span>Colin</span><span class="chip a">blocked</span></div>
+  <div class="grp">Goal: Discord plugin</div>
+  <div class="td done"><span class="cb d"></span><div><div class="tt">Design book</div></div><span class="small muted">Discord plugin design</span><span class="chip g">done</span></div>
+  <div class="td"><span class="cb"></span><div><div class="tt">Answer 3 open questions in design book</div></div><span class="row small" style="gap:5px"><span class="av m" style="width:16px;height:16px;font-size:8px">M</span>Mario</span><span class="chip y">you</span></div>
+  <div class="td"><span class="cb"></span><div><div class="tt">Thread grants survive bot restart</div></div><span class="small muted">Discord bot: grants</span><span class="row" style="gap:4px"><span class="spin"></span><span class="tiny">running</span></span></div>
+  <div class="grp">Personal</div>
+  <div class="td"><span class="cb"></span><div><div class="tt">Book dentist</div><div class="dep">from Journal · remind Mon 09:00</div></div><span class="small muted">Journal</span><span class="chip">Mon</span></div>
+  <div class="td"><span class="cb"></span><div><div class="tt">Re-auth gog (tokens expire in 2 d)</div></div><span class="small muted">project resource</span><span class="chip y">Mon</span></div>
+ </div>
+ <div class="panel pad">
+  <div class="row"><div class="sec" style="margin:0">Dependencies</div><span class="sp"></span><span class="chip r">critical path: 4 steps</span></div>
+  <div class="graph">
+   <svg viewBox="0 0 490 470" preserveAspectRatio="none">
+    <defs><marker id="a14" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#8f887a"/></marker><marker id="a14r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#d65c5c"/></marker></defs>
+    <path d="M90 92 L90 150" stroke="#d65c5c" stroke-width="2" fill="none" marker-end="url(#a14r)"/>
+    <path d="M165 185 C 220 185, 220 255, 270 255" stroke="#d65c5c" stroke-width="2" fill="none" marker-end="url(#a14r)"/>
+    <path d="M345 290 L345 345" stroke="#d65c5c" stroke-width="2" fill="none" marker-end="url(#a14r)"/>
+    <path d="M400 92 C 400 130, 380 200, 360 225" stroke="#8f887a" stroke-width="1.5" fill="none" marker-end="url(#a14)" stroke-dasharray="4 3"/>
+    <path d="M165 400 C 220 400, 230 370, 270 370" stroke="#8f887a" stroke-width="1.5" fill="none" marker-end="url(#a14)"/>
+   </svg>
+   <div class="gn crit" style="left:15px;top:40px"><b>Fix kit tests</b><div class="s">kit-owner build · failed</div></div>
+   <div class="gn wait" style="left:15px;top:155px"><b>Kit review</b><div class="s">Colin · blocked</div></div>
+   <div class="gn ok" style="left:325px;top:40px"><b>GC test</b><div class="s">from astra review</div></div>
+   <div class="gn wait" style="left:270px;top:230px"><b>Rebind before owner check</b><div class="s">p3 step 0b · blocked</div></div>
+   <div class="gn" style="left:270px;top:350px"><b>Step 0b handoff</b><div class="s">p3 step 0b · next</div></div>
+   <div class="gn ok" style="left:15px;top:375px;opacity:.6"><b>Drop build cache</b><div class="s">done</div></div>
+  </div>
+  <div class="small muted">Earliest finish for step 0b: <b style="color:var(--text)">today ~17:30</b> if kit tests are fixed in the next hour. Suggested: hand the owner.ts:142 question to p3 step 0b, it already knows the rebind order.</div>
+ </div>
+</div>
+</section>
+<section class="tab" id="v15" data-title="Knowledge graph">
+<style>
+#v15 .wrap{display:grid;grid-template-columns:1fr 330px;gap:14px}
+#v15 .gv{position:relative;height:680px;background:radial-gradient(ellipse at 45% 50%,#1d1b18,#141311 70%);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+#v15 svg{width:100%;height:100%}
+#v15 .lab{font-size:11.5px;fill:#e8e3d8;font-family:system-ui}
+#v15 .dim{opacity:.22}
+#v15 .srch{position:absolute;left:14px;top:14px;width:360px}
+#v15 .lg2{position:absolute;left:14px;bottom:12px;display:flex;gap:12px;font-size:11px;color:var(--muted)}
+</style>
+<p class="note"><b>Knowledge graph.</b> Files, concepts, decisions and the sessions that discussed them, as a node graph <b>built from transcripts</b> (which turns read/edited which files, which concepts co-occur). View over files, sessions, turns, decisions, people. Searching "reload" lights up its cluster; edge weight = number of turns linking two nodes.</p>
+<div class="wrap">
+ <div class="gv">
+  <svg viewBox="0 0 1000 680" id="t15svg"></svg>
+  <div class="srch search">⌕ <span class="q">reload</span><span class="sp"></span><span class="tiny">11 nodes · 3 sessions · 142 turns</span></div>
+  <div class="lg2"><span><i class="dot" style="background:var(--yellow)"></i> concept</span><span><i class="dot b"></i> file</span><span><i class="dot a"></i> session</span><span><i class="dot g"></i> decision</span><span><i class="dot" style="background:var(--violet)"></i> person</span></div>
+ </div>
+ <div class="col">
+  <div class="panel pad"><div class="sec">Cluster: reload</div>
+   <div class="small" style="margin-bottom:8px">Reload rebuilds the UI from plugin facets and rebinds Chord bindings. Discussed in 3 sessions over 142 turns; 1 decision; 2 open threads.</div>
+   <div class="kv"><span>central file</span><span class="mono">runtime/reload.ts</span><span>most talk</span><span>p3 step 0b (96 turns)</span><span>last touched</span><span>13:44 today</span><span>open</span><span style="color:var(--accent)">rebind order vs owner check</span></div></div>
+  <div class="panel pad"><div class="sec">Strongest links</div>
+   <div class="small" style="margin-bottom:5px"><b>reload</b> ↔ <b>build cache</b> <span class="muted">· 41 turns</span></div>
+   <div class="small" style="margin-bottom:5px"><b>reload</b> ↔ <b>bindings</b> <span class="muted">· 23 turns</span></div>
+   <div class="small" style="margin-bottom:5px"><b>reload.ts</b> ↔ <b>owner.ts</b> <span class="muted">· 9 turns, 2 sessions</span></div>
+   <div class="small"><b>facets</b> ↔ <b>Discord plugin</b> <span class="muted">· 6 turns</span></div></div>
+  <div class="panel pad"><div class="sec">Surprising bridge</div><div class="small"><b>kit-owner build</b> and <b>p3 step 0b</b> both edit around <span class="mono">binding.rebind</span> but never referenced each other. <a href="#">Link sessions</a></div></div>
+  <div class="panel pad"><div class="sec">Ask</div><div class="search">› <span>what do we know about reload and auth?</span></div></div>
+ </div>
+</div>
+<script>
+(function(){
+ var N={
+  reload:[470,330,"c",1,22],cache:[330,230,"c",1,14],facets:[610,220,"c",1,14],bind:[600,450,"c",1,13],esb:[300,400,"c",1,10],
+  rts:[440,180,"f",1,0,"runtime/reload.ts"],rtest:[350,520,"f",1,0,"reload-loop.test.ts"],own:[720,540,"f",1,0,"kit/owner.ts"],fts:[760,170,"f",1,0,"runtime/facets.ts"],bct:[190,300,"f",1,0,"build-cache.ts"],
+  s0b:[520,420,"s",1,16,"p3 step 0b"],kit:[820,430,"s",1,12,"kit-owner build"],astra:[860,300,"s",0,10,"astra review"],
+  decA:[220,170,"d",1,0,"A: drop the build cache"],decF:[700,100,"d",0,0,"UI from facets"],
+  dc:[870,100,"s",0,11,"Discord plugin design"],grants:[120,560,"c",0,10],mcp:[110,90,"c",0,11],gw:[90,440,"s",0,10,"radius gateway"],jr:[920,620,"s",0,9,"Journal"],
+  mario:[620,620,"p",0,0,"Mario"],colin:[900,520,"p",0,0,"Colin"],cris:[60,620,"p",0,0,"Cristina"]
+ };
+ var names={reload:"reload",cache:"build cache",facets:"facets",bind:"bindings",esb:"esbuild",grants:"grants",mcp:"Radius MCP"};
+ var E=[["reload","cache",6],["reload","facets",4],["reload","bind",4],["reload","rts",5],["reload","s0b",5],["cache","bct",3],["cache","decA",3],["cache","esb",3],["esb","rtest",2],["rtest","s0b",2],["rts","s0b",3],["facets","fts",3],["facets","decF",2],["bind","own",3],["own","kit",3],["bind","kit",2],["s0b","bind",2],["rts","cache",2],["astra","bind",1],["astra","kit",1],["dc","facets",1],["dc","decF",1],["grants","dc",1],["grants","gw",1],["mcp","gw",1],["mcp","decF",1],["jr","mario",1],["mario","s0b",2],["colin","kit",2],["cris","gw",2],["mario","astra",1],["kit","colin",1]];
+ var col={c:"#d8b44a",f:"#6b8fd6",s:"#e07a4f",d:"#5fae7f",p:"#a685d6"};
+ var s='';
+ E.forEach(function(e){var a=N[e[0]],b=N[e[1]];var hot=a[3]&&b[3];s+='<line x1="'+a[0]+'" y1="'+a[1]+'" x2="'+b[0]+'" y2="'+b[1]+'" stroke="'+(hot?"#e07a4f":"#5a554b")+'" stroke-opacity="'+(hot?.55:.35)+'" stroke-width="'+(e[2]*0.8+.6)+'"/>'});
+ s+='<circle cx="470" cy="360" r="250" fill="none" stroke="#e07a4f" stroke-opacity=".18" stroke-dasharray="4 6"/>';
+ Object.keys(N).forEach(function(k){var n=N[k];var lbl=n[5]||names[k];var c=col[n[2]];var g='<g class="'+(n[3]?"":"dim")+'">';
+  if(n[2]=="f")g+='<rect x="'+(n[0]-7)+'" y="'+(n[1]-7)+'" width="14" height="14" rx="3" fill="'+c+'"/>';
+  else if(n[2]=="d")g+='<path d="M'+n[0]+' '+(n[1]-9)+' L'+(n[0]+9)+' '+n[1]+' L'+n[0]+' '+(n[1]+9)+' L'+(n[0]-9)+' '+n[1]+'z" fill="'+c+'"/>';
+  else g+='<circle cx="'+n[0]+'" cy="'+n[1]+'" r="'+(n[4]||9)+'" fill="'+c+'" fill-opacity="'+(n[2]=="c"?.9:.85)+'"'+(k=="reload"?' stroke="#fff" stroke-width="2.5"':'')+'/>';
+  var r=(n[4]||9)+6;g+='<text class="lab" x="'+n[0]+'" y="'+(n[1]+r+8)+'" text-anchor="middle"'+(n[2]=="f"?' style="font-family:ui-monospace,Menlo,monospace;font-size:10.5px"':'')+(k=="reload"?' style="font-weight:700;font-size:14px"':'')+'>'+lbl+'</text></g>';s+=g});
+ document.getElementById("t15svg").innerHTML=s;
+})();
+</script>
+</section>
+<section class="tab" id="v16" data-title="Calendar and mail">
+<style>
+#v16 .wrap{display:grid;grid-template-columns:1fr 440px;gap:14px}
+#v16 .cal{display:grid;grid-template-columns:46px repeat(7,1fr);position:relative}
+#v16 .dh{padding:8px 6px;border-bottom:1px solid var(--line);font-size:12px;text-align:center}
+#v16 .dh b{display:block;font-size:17px}
+#v16 .dh.today{color:var(--accent)}
+#v16 .hcol div{height:44px;font-family:var(--mono);font-size:10px;color:var(--muted);text-align:right;padding-right:6px;transform:translateY(-6px)}
+#v16 .day{position:relative;border-left:1px solid var(--line);background:repeating-linear-gradient(180deg,transparent 0,transparent 43px,#24221e 43px,#24221e 44px)}
+#v16 .day.today{background:repeating-linear-gradient(180deg,rgba(224,122,79,.03) 0,rgba(224,122,79,.03) 43px,#24221e 43px,#24221e 44px)}
+#v16 .ev{position:absolute;left:3px;right:3px;border-radius:6px;padding:3px 6px;font-size:10.5px;overflow:hidden;line-height:1.3}
+#v16 .ev b{display:block;font-size:11px}
+#v16 .ev.ag{background:rgba(224,122,79,.16);border-left:3px solid var(--accent)}
+#v16 .ev.mt{background:rgba(107,143,214,.16);border-left:3px solid var(--blue)}
+#v16 .ev.rm{background:rgba(216,180,74,.14);border-left:3px dashed var(--yellow)}
+#v16 .ev.dn{background:rgba(95,174,127,.12);border-left:3px solid var(--green);opacity:.8}
+#v16 .now{position:absolute;left:0;right:0;height:2px;background:var(--red);z-index:2}
+#v16 .now:before{content:"";position:absolute;left:-4px;top:-3px;width:8px;height:8px;border-radius:50%;background:var(--red)}
+#v16 .mail{border-bottom:1px solid var(--line);padding:9px 0}
+#v16 .mail:last-child{border:0}
+</style>
+<p class="note"><b>Calendar and mail.</b> Time as the organising axis: a week with <b>scheduled agent runs</b>, reminders agents created, meetings from Google Calendar; and mail threads that become <b>sessions</b>. View over scheduled runs, reminders (from turns), calendar and Gmail resources (via gog). Dragging an agent run moves its schedule.</p>
+<div class="wrap">
+ <div class="panel" style="padding:0 10px 10px 0;overflow:hidden">
+  <div class="row" style="padding:10px 14px"><span class="h2">Jun 9 – 15</span><span class="chip">‹</span><span class="chip">›</span><span class="chip">today</span><span class="sp"></span><span class="tiny muted"><i class="dot a"></i> agent run <i class="dot b" style="margin-left:8px"></i> meeting <i class="dot y" style="margin-left:8px"></i> reminder <i class="dot g" style="margin-left:8px"></i> done</span></div>
+  <div class="cal" style="grid-template-rows:auto">
+   <div></div><div class="dh">Mon<b>9</b></div><div class="dh">Tue<b>10</b></div><div class="dh">Wed<b>11</b></div><div class="dh">Thu<b>12</b></div><div class="dh">Fri<b>13</b></div><div class="dh today">Sat<b>14</b></div><div class="dh">Sun<b>15</b></div>
+  </div>
+  <div class="cal" id="t16cal" style="height:572px"><div class="hcol" id="t16h"></div></div>
+ </div>
+ <div class="col">
+  <div class="panel pad">
+   <div class="row"><span class="sec" style="margin:0">Mail · mario@earendil.com</span><span class="sp"></span><span class="chip">via gog · read-only</span></div>
+   <div class="mail" style="background:rgba(224,122,79,.05);margin:6px -14px 0;padding:9px 14px;box-shadow:inset 3px 0 0 var(--accent)"><div class="row"><b>Radius: May invoice reconciliation</b><span class="sp"></span><span class="tiny muted">3 msgs · 10:12</span></div><div class="small muted">Cristina, billing@radius… "the gateway numbers don't match the provider invoices by $212"</div><div class="row" style="margin-top:6px"><span class="chip a">→ session "invoice reconciliation"</span><span class="chip g">PDF report ready</span></div></div>
+   <div class="mail"><div class="row"><b>Ada: onboarding questions</b><span class="sp"></span><span class="tiny muted">Fri</span></div><div class="small muted">"where do skills live, and can I use my own model key?"</div><div class="row" style="margin-top:6px"><button class="btn">Turn into session</button><button class="btn q">Draft reply</button></div></div>
+   <div class="mail"><div class="row"><b>GitHub: CI failed on main (#4412)</b><span class="sp"></span><span class="tiny muted">13:58</span></div><div class="small muted">already linked to kit-owner build</div></div>
+  </div>
+  <div class="panel pad">
+   <div class="row"><span class="dot a"></span><b>invoice reconciliation</b><span class="muted small">· session from mail · sonnet</span><span class="sp"></span><span class="chip g">done</span></div>
+   <div class="small" style="margin:8px 0;padding:8px 10px;background:var(--panel2);border-radius:8px;border:1px solid var(--line)"><span class="muted">seeded with:</span> 3 emails, 2 PDF attachments, Radius gateway usage export (MCP)</div>
+   <div class="tool" style="margin-bottom:4px"><span class="n">gmail.get</span> thread 18f2a…</div>
+   <div class="tool" style="margin-bottom:4px"><span class="n">radius.usage_export</span> 2025-05</div>
+   <div class="small" style="margin:8px 0">The $212 gap is opus cache writes billed by the provider but counted as input by the gateway. Draft reply to Cristina ready; not sent.</div>
+   <div class="row"><button class="btn p">Review draft reply</button><button class="btn">Open report</button><span class="sp"></span><span class="tiny muted">sending needs your approval</span></div>
+  </div>
+ </div>
+</div>
+<script>
+(function(){
+ var S=7,H=13,ph=44;var hc=document.getElementById("t16h");for(var h=S;h<S+H;h++){var d=document.createElement("div");d.textContent=(h<10?"0":"")+h+":00";hc.appendChild(d)}
+ var cal=document.getElementById("t16cal");
+ var ev=[
+  [0,["ag","06:00","07:20","slayer CVE check","daily · haiku"],["mt","10:00","11:00","Earendil weekly","Meet · 5 people"],["ag","14:00","15:30","Chord slice 2 review","astra · opus"],["rm","17:00","17:30","Reply to Ada",""]],
+  [1,["ag","06:00","07:20","slayer CVE check","daily"],["dn","09:00","12:00","p3 step 0a","done · $5.10"],["mt","15:00","15:45","Radius sync","Cristina"]],
+  [2,["ag","06:00","07:20","slayer CVE check","daily"],["dn","10:00","11:00","No worktrees","decided in #pi"],["mt","13:00","14:00","Ada onboarding","Ada, Mario"]],
+  [3,["ag","06:00","07:20","slayer CVE check","daily"],["dn","15:30","18:00","p3 step 0","done"],["ag","19:00","19:20","Journal digest","phone · haiku"]],
+  [4,["ag","06:00","07:20","slayer CVE check","daily"],["mt","11:00","11:30","1:1 Colin",""],["dn","14:00","16:30","Discord plugin design","opus"]],
+  [5,["dn","06:00","07:20","slayer CVE check","0 high"],["dn","09:12","13:44","p3 step 0b","41 turns"],["ag","13:45","15:15","astra review","running · opus"],["ag","16:00","17:00","Regenerate models","after kit-owner ✓"],["rm","18:00","18:20","Answer design book Qs","from Discord plugin design"]],
+  [6,["ag","06:00","07:20","slayer CVE check","daily"],["rm","10:00","10:20","Re-auth gog","tokens expire Mon"],["ag","19:00","20:00","Journal: weekly summary","phone · haiku"]]
+ ];
+ function y(t){var a=t.split(":");return ((+a[0]-S)+ +a[1]/60)*ph}
+ ev.forEach(function(d){var c=document.createElement("div");c.className="day"+(d[0]==5?" today":"");c.style.height=(H*ph)+"px";
+  d.slice(1).forEach(function(e){var top=Math.max(0,y(e[1]));var bot=y(e[2]);var x=document.createElement("div");x.className="ev "+e[0];x.style.top=top+"px";x.style.height=Math.max(18,bot-top-2)+"px";x.innerHTML="<b>"+e[3]+"</b>"+(bot-top>30?'<span class="muted">'+e[1]+" · "+e[4]+"</span>":"");c.appendChild(x)});
+  if(d[0]==5){var n=document.createElement("div");n.className="now";n.style.top=y("14:03")+"px";c.appendChild(n)}
+  cal.appendChild(c)});
+})();
+</script>
+</section>
+<section class="tab" id="v17" data-title="Voice-first">
+<style>
+#v17 .wrap{display:flex;gap:40px;justify-content:center;align-items:flex-start;padding:10px 0}
+#v17 .phone{width:340px;height:700px;border-radius:46px;background:#0a0a09;border:10px solid #2a2824;box-shadow:0 0 0 1px #3a372f,0 30px 80px rgba(0,0,0,.6);padding:18px 22px;display:flex;flex-direction:column;position:relative;overflow:hidden}
+#v17 .notch{position:absolute;top:8px;left:50%;transform:translateX(-50%);width:96px;height:26px;border-radius:14px;background:#000}
+#v17 .sbar{display:flex;justify-content:space-between;font-size:12px;font-weight:600;padding:0 8px;margin-bottom:24px}
+#v17 .big{font-size:29px;line-height:1.22;font-weight:600;letter-spacing:-.3px}
+#v17 .big .hl{color:var(--accent)}
+#v17 .big .dimw{color:#5d584e}
+#v17 .wave{display:flex;align-items:center;justify-content:center;gap:3px;height:70px;margin:18px 0}
+#v17 .wave i{width:4px;border-radius:2px;background:var(--accent);animation:wv 1.1s ease-in-out infinite}
+@keyframes wv{0%,100%{transform:scaleY(.4)}50%{transform:scaleY(1)}}
+#v17 .chips{display:flex;flex-wrap:wrap;gap:8px}
+#v17 .chips span{padding:9px 14px;border-radius:20px;background:#1f1e1b;border:1px solid var(--line);font-size:14px}
+#v17 .chips span.a{border-color:var(--accent);color:var(--accent)}
+#v17 .mic{width:74px;height:74px;border-radius:50%;background:var(--accent);margin:auto auto 6px;display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 10px rgba(224,122,79,.15),0 0 0 22px rgba(224,122,79,.07)}
+#v17 .mic i{width:18px;height:30px;border-radius:9px;background:#1a120d}
+#v17 .opt{background:#1a1917;border:1px solid var(--line);border-radius:16px;padding:12px 14px;margin-bottom:9px;font-size:15px}
+#v17 .opt b{color:var(--accent);margin-right:6px}
+#v17 .side{width:300px}
+</style>
+<p class="note"><b>Voice-first.</b> The phone as a radio: a spoken digest rendered as large text and a waveform, then drill-down chips you can tap or say. No transcript scrolling; one thing at a time. View over the <b>inbox (pending tool calls, finished runs)</b> and <b>runs</b>, summarised by a small model; answers go back as tool results.</p>
+<div class="wrap">
+ <div class="phone">
+  <div class="notch"></div>
+  <div class="sbar"><span>14:03</span><span>5G 64%</span></div>
+  <div class="tiny muted" style="letter-spacing:1px;text-transform:uppercase">pi · speaking · digest</div>
+  <div class="big" style="margin-top:12px">Three agents are done. <span class="hl">One needs you about the migration</span> <span class="dimw">of the build cache. Kit-owner failed its tests. Spend is at 82%.</span></div>
+  <div class="wave" id="t17w"></div>
+  <div class="chips"><span class="a">The migration</span><span>What failed?</span><span>What's done</span><span>Spend</span><span>Later</span></div>
+  <div class="mic"><i></i></div>
+  <div class="tiny muted" style="text-align:center">hold to talk · "skip" · "stop"</div>
+ </div>
+ <div class="phone">
+  <div class="notch"></div>
+  <div class="sbar"><span>14:04</span><span>5G 64%</span></div>
+  <div class="tiny muted" style="letter-spacing:1px;text-transform:uppercase">p3 step 0b · asks</div>
+  <div class="big" style="font-size:24px;margin:12px 0 18px">Drop the build cache and rebuild on every reload, about <span class="hl">380 ms</span> slower, or key it by facet hash?</div>
+  <div class="opt"><b>A</b>Drop the cache</div>
+  <div class="opt"><b>B</b>Key by facet hash</div>
+  <div class="opt"><b>C</b>Defer</div>
+  <div class="small muted" style="margin:6px 4px 0">You said: <span style="color:var(--text)">"A, and write it down"</span></div>
+  <div class="wave" style="height:40px;margin:10px 0" id="t17w2"></div>
+  <div class="row" style="justify-content:center;gap:10px"><span class="chip g" style="font-size:13px;padding:6px 14px">✓ sent to agent</span><span class="chip" style="font-size:13px;padding:6px 14px">next: what failed?</span></div>
+ </div>
+ <div class="side col">
+  <div class="panel pad"><div class="sec">Spoken flow</div>
+   <div class="small" style="line-height:1.7"><span class="muted">pi:</span> digest (12 s)<br><span class="muted">you:</span> "the migration"<br><span class="muted">pi:</span> reads the question + 3 options<br><span class="muted">you:</span> "A, and write it down"<br><span class="muted">pi:</span> "Sent. It will record decision A." <br><span class="muted">you:</span> "what failed?"<br><span class="muted">pi:</span> "kit-owner: three tests, owner.ts line 142 reads params before rebind. Want Colin to look?"</div></div>
+  <div class="panel pad"><div class="sec">Rules</div><div class="small muted">Max 3 items per digest. Approvals that run code on an env need a confirm word. Diffs are never read aloud, only summarised.</div></div>
+ </div>
+</div>
+<script>
+(function(){[["t17w",44,60],["t17w2",30,32]].forEach(function(w){var e=document.getElementById(w[0]);for(var i=0;i<w[1];i++){var b=document.createElement("i");var h=8+Math.abs(Math.sin(i*.7)*Math.cos(i*.23))*w[2];b.style.height=h+"px";b.style.animationDelay=(i*.05)+"s";if(w[0]=="t17w2"){b.style.background="#5a554b";b.style.animation="none"}e.appendChild(b)}})})();
+</script>
+</section>
+<section class="tab" id="v18" data-title="Terminal tiling">
+<style>
+#v18 .tui{background:#0b0b0a;border:1px solid #2e2c27;border-radius:10px;padding:6px;font-family:var(--mono);font-size:12px;line-height:1.45;color:#cfc9bc}
+#v18 .tb{display:flex;gap:0;margin-bottom:6px;font-size:11.5px}
+#v18 .tb span{padding:1px 10px;color:#8f887a}
+#v18 .tb span.on{background:#e07a4f;color:#0b0b0a;font-weight:700}
+#v18 .tiles{display:grid;grid-template-columns:1.25fr 1fr 1fr;grid-template-rows:330px 250px;gap:4px}
+#v18 .p{border:1px solid #3a372f;position:relative;padding:22px 10px 6px;overflow:hidden;white-space:pre}
+#v18 .p.f{border-color:#e07a4f}
+#v18 .p .tt{position:absolute;top:0;left:0;right:0;background:#1c1b18;padding:1px 8px;font-size:11px;color:#8f887a;border-bottom:1px solid #3a372f}
+#v18 .p.f .tt{color:#0b0b0a;background:#e07a4f;font-weight:700}
+#v18 .p .tr{position:absolute;top:1px;right:8px;padding:0 6px;font-size:11px;z-index:1;background:#0b0b0a;border-radius:3px}
+#v18 .c{color:#e07a4f}#v18 .g{color:#5fae7f}#v18 .r{color:#d65c5c}#v18 .y{color:#d8b44a}#v18 .b{color:#6b8fd6}#v18 .m{color:#6f695d}#v18 .v{color:#a685d6}#v18 .w{color:#e8e3d8}
+#v18 .inv{background:#e8e3d8;color:#0b0b0a}
+#v18 .status{display:flex;margin-top:6px;font-size:11.5px;white-space:pre}
+#v18 .status span{padding:1px 8px}
+#v18 .keys{margin-top:4px;font-size:11px;color:#6f695d;white-space:pre}
+#v18 .keys b{color:#cfc9bc;font-weight:400}
+</style>
+<p class="note"><b>Terminal tiling.</b> A tmux-like TUI where every pane is an addressable thing: a <b>session</b>, an <b>env shell</b>, a log/telemetry stream, the inbox. Keyboard only, splits are saved per project. View over sessions, envs, tool calls and telemetry; runs over SSH on any env.</p>
+<div class="tui">
+ <div class="tb"><span class="on"> 1:pi </span><span> 2:radius </span><span> 3:journal </span><span class="m" style="margin-left:auto">slayer · badlogic · 14:03</span></div>
+ <div class="tiles">
+<div class="p f" style="grid-row:1/3"><span class="tt">[1] p3 step 0b · opus · slayer:~/pi</span><span class="tr c">● waiting</span><span class="m">─ turn 38 ─────────────────────────────</span>
+<span class="v">▸ bash</span> npx vitest --run reload-loop ×50
+  <span class="g">✓ 50/50 passed</span> <span class="m">(1m 44s)</span>
+<span class="v">▸ edit</span> apps/p3/docs/decisions.md <span class="g">+3</span>
+<span class="w">Recorded decision A. Committed c2d9a31.</span>
+
+<span class="m">─ turn 41 ─────────────────────────────</span>
+<span class="w">Reload now rebuilds every time. One</span>
+<span class="w">thing left: owner.ts:142 reads</span>
+<span class="w">binding.params before rebind() runs.</span>
+<span class="w">kit-owner build is stuck on the same</span>
+<span class="w">line. Should step 0b reorder reload so</span>
+<span class="w">rebind() runs first (touches kit code),</span>
+<span class="w">or wait for kit-owner?</span>
+
+  <span class="c">[a]</span> reorder here (I touch owner.ts)
+  <span class="c">[b]</span> wait for kit-owner build
+  <span class="c">[c]</span> hand the hint to kit-owner build
+
+<span class="m">────────────────────────────────────────</span>
+<span class="c">›</span> <span class="w">c, and tell it rebind runs in reload.ts:45</span><span class="inv"> </span>
+<span class="m">  ctx 54% · $3.92 · ⏎ send · ⌥⏎ newline</span></div>
+<div class="p"><span class="tt">[2] astra review · opus</span><span class="tr g">◐ working</span><span class="v">▸ read</span> chord/docs/design.md <span class="m">410-620</span>
+<span class="v">▸ read</span> chord/src/kit/principal-key.ts
+<span class="v">▸ grep</span> "new WeakMap" chord/src <span class="m">→ 4</span>
+<span class="w">Finding 2: principal-key cache has</span>
+<span class="w">no GC test (AGENTS: every cache).</span>
+<span class="v">▸ read</span> chord/test/kit/principal-key...
+<span class="y">⠙</span> <span class="m">reading… 41s</span>
+
+<span class="m">findings: </span><span class="r">2 blocking</span> <span class="y">5 minor</span>
+<span class="m">$2.31 · $6.10/h · 18m</span></div>
+<div class="p"><span class="tt">[3] inbox</span><span class="tr c">4</span><span class="c">●</span> <span class="w">p3 step 0b</span>     ask      <span class="m">6m</span>
+<span class="r">●</span> <span class="w">kit-owner build</span> failed   <span class="m">2m</span>
+<span class="v">●</span> <span class="w">#radius</span>         grant?   <span class="m">11m</span>
+<span class="c">●</span> <span class="w">sol review</span>      push?    <span class="m">23m</span>
+<span class="y">●</span> <span class="m">budget 82%</span>               <span class="m">14:02</span>
+
+<span class="m">j/k move · ⏎ open · a approve</span>
+<span class="m">g grant 1h · d deny · z snooze</span>
+
+<span class="m">─ runs ──────────────────────</span>
+<span class="g">◐</span> astra review      <span class="m">opus  </span>
+<span class="g">◐</span> Journal           <span class="m">haiku </span>
+<span class="g">◐</span> Discord: grants   <span class="m">sonnet</span> <span class="b">CO</span>
+<span class="g">◐</span> gateway retries   <span class="m">sonnet</span> <span class="b">C</span></div>
+<div class="p"><span class="tt">[4] shell · slayer:~/pi</span><span class="b">badlogic@slayer</span> <span class="y">~/pi</span> <span class="c">(main ↑3)</span>$ git log --oneline -4
+<span class="y">c2d9a31</span> feat(p3): drop the build cache
+<span class="y">7be01fd</span> feat(chord): kit owner checks
+<span class="y">a41c9e2</span> fix(tui): wrap emoji width
+<span class="y">5f0e8b4</span> docs(p3): step 0b spec
+<span class="b">badlogic@slayer</span> <span class="y">~/pi</span> <span class="c">(main ↑3)</span>$ git status -s
+ <span class="y">M</span> packages/discord/src/grants.ts
+ <span class="y">M</span> packages/discord/src/scheduler.ts
+<span class="r">??</span> packages/discord/test/grants.test.ts
+<span class="b">badlogic@slayer</span> <span class="y">~/pi</span> <span class="c">(main ↑3)</span>$ <span class="inv"> </span></div>
+<div class="p"><span class="tt">[5] telemetry · tail</span><span class="m">14:02:51</span> <span class="g">tool</span>  bash    1.2s  astra
+<span class="m">14:02:53</span> <span class="v">model</span> opus    2.4s  astra  <span class="m">$0.04</span>
+<span class="m">14:02:58</span> <span class="b">span</span>  chord.app.start 210ms
+<span class="m">14:02:58</span> <span class="y">build</span> esbuild ui  1.09s
+<span class="m">14:03:00</span> <span class="g">tool</span>  vitest  ...   grants
+<span class="m">14:03:01</span> <span class="v">model</span> haiku   0.3s  journal
+<span class="m">14:03:02</span> <span class="r">warn</span>  budget 82% pi
+<span class="m">14:03:02</span> <span class="r">err </span>  radius-mcp staging 401
+<span class="m">14:03:03</span> <span class="g">tool</span>  read    9ms   astra</div>
+ </div>
+ <div class="status"><span style="background:#e07a4f;color:#0b0b0a;font-weight:700"> NORMAL </span><span style="background:#2e2c27"> pane 1: p3 step 0b </span><span class="m"> 4 working · </span><span class="c">4 need you</span><span class="m"> · </span><span class="r">1 failed</span><span style="margin-left:auto;background:#2e2c27"> $41.20 / $50 </span><span style="background:#3a372f"> slayer ● laptop ○ phone ● </span></div>
+ <div class="keys"> <b>^a</b> prefix  <b>|</b> split v  <b>-</b> split h  <b>o</b> open session  <b>e</b> env shell  <b>i</b> inbox  <b>t</b> telemetry  <b>z</b> zoom  <b>1-9</b> focus  <b>/</b> search all  <b>:</b> command</div>
+</div>
+</section>
+<section class="tab" id="v19" data-title="Ambient">
+<style>
+#v19 .wrap{display:grid;grid-template-columns:360px 1fr;gap:30px;align-items:start}
+#v19 .lock{width:340px;height:700px;border-radius:46px;border:10px solid #2a2824;box-shadow:0 0 0 1px #3a372f,0 30px 80px rgba(0,0,0,.6);background:linear-gradient(170deg,#3b2a22 0%,#1d1714 45%,#0d0c0b 100%);position:relative;overflow:hidden;padding:20px 16px;color:#fff}
+#v19 .clock{text-align:center;margin-top:34px}
+#v19 .clock .d{font-size:15px;opacity:.8}
+#v19 .clock .t{font-size:82px;font-weight:600;letter-spacing:-2px;line-height:1}
+#v19 .widg{display:flex;gap:8px;justify-content:center;margin:10px 0 18px}
+#v19 .widg div{background:rgba(255,255,255,.1);border-radius:14px;padding:6px 10px;font-size:11px;text-align:center}
+#v19 .ntf{background:rgba(40,36,32,.82);backdrop-filter:blur(10px);border-radius:18px;padding:11px 13px;margin-bottom:8px;font-size:12.5px}
+#v19 .ntf .h{display:flex;align-items:center;gap:6px;font-size:11px;opacity:.7;margin-bottom:3px}
+#v19 .ntf.red{box-shadow:inset 0 0 0 1.5px rgba(214,92,92,.7)}
+#v19 .ntf .act{display:flex;gap:6px;margin-top:8px}
+#v19 .ntf .act span{flex:1;text-align:center;background:rgba(255,255,255,.1);border-radius:10px;padding:5px;font-size:12px}
+#v19 .desk{border-radius:14px;overflow:hidden;border:1px solid var(--line);background:linear-gradient(135deg,#2a3340,#1b1f26 50%,#2b2320);height:470px;position:relative}
+#v19 .mb{height:28px;background:rgba(20,19,17,.75);backdrop-filter:blur(8px);display:flex;align-items:center;gap:16px;padding:0 14px;font-size:12.5px}
+#v19 .mb .pi{background:var(--red);color:#fff;border-radius:6px;padding:1px 8px;font-weight:700;display:flex;gap:5px;align-items:center}
+#v19 .drop{position:absolute;right:150px;top:34px;width:340px;background:rgba(32,30,27,.96);border:1px solid #4a463d;border-radius:12px;box-shadow:0 20px 50px rgba(0,0,0,.6);padding:8px}
+#v19 .drop .it{display:flex;gap:8px;align-items:flex-start;padding:7px 8px;border-radius:8px;font-size:12px}
+#v19 .drop .it.on{background:rgba(214,92,92,.12)}
+#v19 .watches{display:flex;gap:30px;margin-top:24px;align-items:center}
+#v19 .watch{width:190px;height:230px;border-radius:52px;background:#000;border:8px solid #2a2824;box-shadow:0 0 0 1px #3a372f;position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center}
+#v19 .ring{width:72px;height:72px;border-radius:50%;background:conic-gradient(var(--red) 0 25%,var(--green) 25% 75%,#333 75%);display:flex;align-items:center;justify-content:center}
+#v19 .ring b{width:58px;height:58px;border-radius:50%;background:#000;display:flex;align-items:center;justify-content:center;font-size:22px;color:var(--red)}
+</style>
+<p class="note"><b>Ambient.</b> p3 when you are not looking at p3: a phone lock screen, a desktop menu-bar item, a watch complication. One number that matters ("1 agent needs you", red) and actions that answer without opening the app. View over the <b>inbox</b> (pending tool calls) and run counts; grant/approve actions call back into the session.</p>
+<div class="wrap">
+ <div class="lock">
+  <div class="row" style="justify-content:space-between;font-size:12px;font-weight:600;padding:0 10px"><span>Earendil</span><span>●●●● 64%</span></div>
+  <div class="clock"><div class="d">Saturday, June 14</div><div class="t">14:03</div></div>
+  <div class="widg"><div><b style="color:#ff8a80;font-size:16px">1</b><br>needs you</div><div><b style="font-size:16px">4</b><br>working</div><div><b style="font-size:16px">$41</b><br>of $50</div></div>
+  <div class="ntf red"><div class="h"><span style="width:14px;height:14px;border-radius:4px;background:var(--accent);display:inline-block"></span>pi · p3 step 0b<span class="sp"></span>6m</div><b>1 agent needs you</b><br>Drop the build cache, key by facet hash, or defer?<div class="act"><span>A</span><span>B</span><span>C</span><span>Open</span></div></div>
+  <div class="ntf"><div class="h"><span style="width:14px;height:14px;border-radius:4px;background:var(--accent);display:inline-block"></span>pi · #radius<span class="sp"></span>11m</div>Charlotta asks pi-bot for slayer logs<div class="act"><span>Grant 1 hour</span><span>Decline</span></div></div>
+  <div class="ntf" style="opacity:.75"><div class="h"><span style="width:14px;height:14px;border-radius:4px;background:var(--accent);display:inline-block"></span>pi<span class="sp"></span>32m</div>3 agents finished · 1 failed (kit-owner build)</div>
+  <div style="position:absolute;bottom:14px;left:0;right:0;display:flex;justify-content:space-between;padding:0 34px"><span style="width:44px;height:44px;border-radius:50%;background:rgba(255,255,255,.12)"></span><span style="width:44px;height:44px;border-radius:50%;background:rgba(255,255,255,.12)"></span></div>
+ </div>
+ <div>
+  <div class="desk">
+   <div class="mb"><b>●</b><b>Finder</b><span class="muted">File</span><span class="muted">Edit</span><span class="muted">View</span><span class="sp"></span><span class="pi"><span style="width:7px;height:7px;border-radius:50%;background:#fff"></span>π 1</span><span class="muted">◐ 4</span><span class="muted">100%</span><span>Sat 14:03</span></div>
+   <div class="drop">
+    <div class="row tiny muted" style="padding:4px 8px"><span>pi · 4 working · $41.20 today</span><span class="sp"></span><span>⚙</span></div>
+    <div class="it on"><span class="dot r" style="margin-top:4px"></span><div style="flex:1"><b>p3 step 0b</b> <span class="muted">needs you · 6m</span><div class="muted">Drop the build cache?</div><div class="row" style="margin-top:6px;gap:5px"><button class="btn p" style="padding:2px 9px">A</button><button class="btn" style="padding:2px 9px">B</button><button class="btn" style="padding:2px 9px">C</button></div></div></div>
+    <div class="it"><span class="dot a" style="margin-top:4px"></span><div><b>sol review</b> <span class="muted">approve git push · 23m</span></div></div>
+    <div class="it"><span class="dot" style="background:var(--violet);margin-top:4px"></span><div><b>#radius</b> <span class="muted">Charlotta · grant 1 hour?</span></div></div>
+    <div class="sep"></div>
+    <div class="it"><span class="spin" style="margin-top:3px"></span><div>astra review <span class="muted">· read design.md</span></div></div>
+    <div class="it"><span class="spin" style="margin-top:3px"></span><div>Discord bot: grants <span class="muted">· vitest (Colin)</span></div></div>
+    <div class="it"><span class="dot r" style="margin-top:4px"></span><div>kit-owner build <span class="muted">· 3 tests failing</span></div></div>
+    <div class="sep"></div>
+    <div class="row tiny" style="padding:2px 8px"><span class="muted">Do not disturb until 16:00</span><span class="sp"></span><span style="color:var(--blue)">Open p3</span></div>
+   </div>
+   <div style="position:absolute;left:30px;bottom:30px;width:300px" class="panel pad"><div class="sec">Desktop widget</div><div class="row"><span style="font-size:30px;font-weight:700;color:var(--red)">1</span><div class="small">agent needs you<br><span class="muted">p3 step 0b · 6 min</span></div><span class="sp"></span><div class="small muted" style="text-align:right">4 working<br>3 done</div></div></div>
+  </div>
+  <div class="watches">
+   <div class="watch"><div class="tiny" style="color:#888">SAT 14</div><div style="font-size:40px;font-weight:600;color:#fff">14:03</div><div class="row" style="gap:6px;margin-top:8px"><span style="background:var(--red);color:#fff;border-radius:10px;padding:2px 8px;font-size:12px;font-weight:700">π 1</span><span style="color:#aaa;font-size:12px">◐ 4</span></div></div>
+   <div class="watch"><div class="ring"><b>1</b></div><div style="color:#fff;font-size:12px;margin-top:8px;text-align:center">needs you<br><span style="color:#888">2 done · 1 failed</span></div></div>
+   <div class="watch" style="justify-content:flex-start;padding-top:22px"><div style="color:var(--accent);font-size:11px">p3 step 0b</div><div style="color:#fff;font-size:13px;text-align:center;padding:4px 12px">Drop the build cache?</div><div class="row" style="gap:6px;margin-top:6px"><span style="background:var(--accent);color:#000;border-radius:12px;padding:4px 12px;font-weight:700">A</span><span style="background:#333;color:#fff;border-radius:12px;padding:4px 12px">B</span><span style="background:#333;color:#fff;border-radius:12px;padding:4px 12px">C</span></div><div style="color:#666;font-size:10px;margin-top:8px">or speak</div></div>
+   <div class="small muted" style="max-width:260px">Complication: red badge only when something blocks on you; working count is grey. Tapping opens the oldest question with its options; wrist-raise reads the question aloud if AirPods are connected.</div>
+  </div>
+ </div>
+</div>
+</section>
+</main>
+<script>
+(function(){
+ var nav=document.getElementById("nav");var secs=[].slice.call(document.querySelectorAll("section.tab"));
+ secs.forEach(function(s,i){var b=document.createElement("button");b.innerHTML="<b>"+(i+1)+"</b>"+s.getAttribute("data-title");b.onclick=function(){location.hash="tab"+(i+1)};nav.appendChild(b)});
+ var btns=[].slice.call(nav.querySelectorAll("button"));
+ function show(){var m=/^#tab(\d+)$/.exec(location.hash);var n=m?+m[1]:1;if(n<1||n>secs.length)n=1;secs.forEach(function(s,i){s.classList.toggle("on",i==n-1)});btns.forEach(function(b,i){b.classList.toggle("on",i==n-1)});window.scrollTo(0,0)}
+ window.addEventListener("hashchange",show);show();
+ document.addEventListener("keydown",function(e){if(e.target.tagName=="INPUT")return;var m=/^#tab(\d+)$/.exec(location.hash);var n=m?+m[1]:1;if(e.key=="ArrowRight"&&n<secs.length)location.hash="tab"+(n+1);if(e.key=="ArrowLeft"&&n>1)location.hash="tab"+(n-1)});
+})();
+</script>
+</body>
+</html>

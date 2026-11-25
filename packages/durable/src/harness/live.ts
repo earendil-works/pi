@@ -21,7 +21,8 @@ import type { CompactionReason, CompactionResult, ToolDiagnostic } from "./types
 type SlotProgress = {
 	callId: string;
 	name: string;
-	status: "pending" | "running" | "done";
+	/** `sleeping` or `waiting` while the call is parked (spec suspendable §4.2); a parked slot holds no output. */
+	status: "pending" | "running" | "sleeping" | "waiting" | "done";
 	/** Retained running output and what the bounds dropped. */
 	output?: string;
 	droppedBytes?: number;
@@ -154,6 +155,12 @@ export type LiveRun = {
 	 * created: queued items stay queued until they are terminal, and the run then ends without a failure.
 	 */
 	afterRun?: { tasks?: TaskId[] };
+	/**
+	 * Present while tasks an `onYield` hook asked for decide whether the answer stands (spec suspendable §6): the
+	 * answer's entry, which the tasks read, and the tasks. The inputs stay open; every exit but a continuation settles
+	 * them `done` with this answer.
+	 */
+	yield?: { answer: EntryId; tasks: TaskId[] };
 };
 
 /** Built-in live conversation state: run control and presentation of the current generation and tool round. */
@@ -351,9 +358,26 @@ export function failCompactionStatus(live: Draft<LiveState>, taskId: TaskId, err
  * the commit that creates its task, task IDs ascend in commit order, and removal keeps the order.
  */
 export function toolSlot(live: Draft<LiveState>, taskId: TaskId): Draft<ToolSlot | NestedToolSlot> | undefined {
+	return live.tools?.find((each) => each.taskId === taskId) ?? nestedSlot(live, taskId);
+}
+
+/** A tool task's slot in `pi.live`, told apart by whose call it is: a model-issued call's, or a nested call's. */
+export type FoundSlot =
+	| { readonly kind: "model"; readonly slot: Draft<ToolSlot> }
+	| { readonly kind: "nested"; readonly slot: Draft<NestedToolSlot> };
+
+/** The slot of tool task `taskId` with whose call it is, if `pi.live` still lists it (see `toolSlot`). */
+export function findSlot(live: Draft<LiveState>, taskId: TaskId): FoundSlot | undefined {
 	const slot = live.tools?.find((each) => each.taskId === taskId);
-	if (slot !== undefined || live.nestedTools === undefined) return slot;
+	if (slot !== undefined) return { kind: "model", slot };
+	const nested = nestedSlot(live, taskId);
+	return nested === undefined ? undefined : { kind: "nested", slot: nested };
+}
+
+/** The nested slot of tool task `taskId`, by binary search over the ascending task IDs. */
+function nestedSlot(live: Draft<LiveState>, taskId: TaskId): Draft<NestedToolSlot> | undefined {
 	const nested = live.nestedTools;
+	if (nested === undefined) return undefined;
 	let low = 0;
 	let high = nested.length - 1;
 	while (low <= high) {
@@ -389,11 +413,16 @@ export function removeNestedSlots(live: Draft<LiveState>, taskId: TaskId): void 
 
 /** Remove what a tool published while running; its result entry or a rerun replaces it. */
 export function clearProgress(slot: Draft<SlotProgress>): void {
+	clearOutput(slot);
+	delete slot.details;
+	delete slot.diagnostics;
+}
+
+/** Remove a slot's running output only: a parked call, and its next run, keep its details and diagnostics. */
+export function clearOutput(slot: Draft<SlotProgress>): void {
 	delete slot.output;
 	delete slot.droppedBytes;
 	delete slot.droppedLines;
-	delete slot.details;
-	delete slot.diagnostics;
 }
 
 /**
@@ -424,7 +453,7 @@ export async function settleSchedulerOutcome(
 	// and keeps that meaning. Its run ends `aborted`, with the limit as detail, and an aborted compaction is no failure.
 	const detail = outcome.status === "faulted" ? outcome.error.detail : undefined;
 	const cutOff =
-		typeof detail === "object" && detail !== null && "reason" in detail && detail.reason === "restart_limit";
+		typeof detail === "object" && detail !== null && !Array.isArray(detail) && detail.reason === "restart_limit";
 	if (record.kind === COMPACTION_TASK_KIND) {
 		const live = await tx.doc(LiveDoc, record.conversationId);
 		if (cutOff) removeCompactionStatus(live, record.id);
@@ -434,6 +463,9 @@ export async function settleSchedulerOutcome(
 	if (!RUN_TASK_KINDS.has(record.kind)) return;
 	const live = await tx.doc(LiveDoc, record.conversationId);
 	if (live.run?.taskId !== record.id) return;
+	// The run answered and waited for its `onYield` tasks: it ends with its answer, without a failure.
+	const answered = live.run.yield?.answer;
+	if (answered !== undefined) return endRun(tx, live, record.id, { status: "done", answer: answered });
 	// Cut off, the abort handler may have died converting the partial: the run ends without it.
 	if (!cutOff) await convertPartial(tx, live, record.conversationId);
 	endRun(

@@ -2,6 +2,7 @@
 
 import type { Context } from "../context/index.ts";
 import type { JsonValue } from "../json.ts";
+import { chordMetrics } from "../telemetry.ts";
 
 /** An app's principal: plain JSON with a `kind`. Chord never persists it. */
 export type Principal = { readonly kind: string; readonly [field: string]: JsonValue };
@@ -29,6 +30,23 @@ export function principalKey<P extends Principal>(
 
 const defaultKeys = new WeakMap<Principal, string>();
 
+/**
+ * A principal's own JSON, as the wire carries it (its fields in insertion order): two principals give the same text
+ * only when they serialize equally. Cached per principal object, one walk counted per object (decision "References
+ * share one wire hold": the caller part of the sharing key).
+ */
+export function principalJson(principal: Principal, context: Context): string {
+	let json = wireJson.get(principal);
+	if (json === undefined) {
+		chordMetrics(context.telemetry.metrics).counter("chord.data.walks").add(1);
+		json = JSON.stringify(principal);
+		wireJson.set(principal, json);
+	}
+	return json;
+}
+
+const wireJson = new WeakMap<Principal, string>();
+
 const customKeys = new WeakMap<PrincipalKeyFunction<never>, WeakMap<Principal, string>>();
 
 function customKeyCache(customKey: PrincipalKeyFunction<never>): WeakMap<Principal, string> {
@@ -42,7 +60,7 @@ function customKeyCache(customKey: PrincipalKeyFunction<never>): WeakMap<Princip
 
 /** Canonical JSON: sorted object keys, `-0` written as `0`. Counts one walk. */
 export function canonicalJson(value: JsonValue, context: Context): string {
-	context.telemetry.metrics?.counter("chord.data.walks").add(1);
+	chordMetrics(context.telemetry.metrics).counter("chord.data.walks").add(1);
 	return canonical(value);
 }
 
@@ -54,4 +72,12 @@ function canonical(value: JsonValue): string {
 		.sort()
 		.map((key) => `${JSON.stringify(key)}:${canonical(value[key]!)}`);
 	return `{${fields.join(",")}}`;
+}
+
+/**
+ * Whether `principal` is `other`: the same default key (canonical JSON), each computed once per principal object; no
+ * principal (`undefined`) is none.
+ */
+export function samePrincipal(principal: Principal | undefined, other: Principal, context: Context): boolean {
+	return principal !== undefined && principalKey(principal, context) === principalKey(other, context);
 }

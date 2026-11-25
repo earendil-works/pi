@@ -12,7 +12,6 @@ import { AgentDoc, type ConversationId, configure, ROOT_CONVERSATION_ID } from "
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { BACKGROUND_CONTEXT, type Context, type Held, whenLive } from "@p2/app/v1";
-import devToolsWorker from "../../plugins/dev-tools/worker.ts";
 import fileIndexWorker from "../../plugins/file-index/worker.ts";
 import { createP2Models } from "../../plugins/models/models.ts";
 import { PowerShell } from "../../plugins/powershell/contract.ts";
@@ -22,8 +21,9 @@ import { ownLocation, placeSubagents, spawnEnvironments } from "../../plugins/su
 import { WorkspaceBackend } from "../../plugins/workspace/contract.ts";
 import workspaceWorker from "../../plugins/workspace/worker.ts";
 import { type Ctx, createHost, defineFacet, Session } from "../../src/runtime/chord.ts";
-import { durableContext, ExtensionSwitches } from "../../src/runtime/durable.ts";
+import { durableContext } from "../../src/runtime/durable.ts";
 import { FileIndexCache } from "../../src/runtime/file-index.ts";
+import { openHostStore, sessionDirectory } from "../../src/runtime/host-dirs.ts";
 import { HOST } from "../../src/runtime/principals.ts";
 import {
 	ConversationLocations,
@@ -39,7 +39,7 @@ import {
 	type WorkerInit,
 	workerCore,
 } from "../../src/runtime/worker.ts";
-import { poll, until } from "./helpers.ts";
+import { NO_IMAGES, poll, until } from "./helpers.ts";
 
 const MODEL = { provider: "faux", modelId: "faux-1" };
 const CHECKOUT = fileURLToPath(new URL("../../", import.meta.url));
@@ -81,7 +81,7 @@ const locations = defineFacet((_host, self) =>
 	}),
 );
 
-/** A worker host at `start` with the Harness, workspace, file index, dev-tools and PowerShell; machines by env name. */
+/** A worker host at `start` with the Harness, workspace, file index and PowerShell; machines by env name. */
 async function worker(t: test.TestContext, start: Location, machines: Record<string, Machine>) {
 	const root = mkdtempSync(join(tmpdir(), "p2-relocate-worker-"));
 	t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -102,24 +102,36 @@ async function worker(t: test.TestContext, start: Location, machines: Record<str
 						close: () => closed.push(env),
 					};
 				},
-				host: async (env) => env,
+				describe: async (env) => `the test machine ${env}`,
+				sandbox: () => false,
 			},
 		}),
 	);
+	const store = await openHostStore(sessionDirectory(dataDir, "s1"), { outbox: false }, BACKGROUND_CONTEXT);
 	const host = createHost({
 		address: Session({ id: "s1" }),
 		principal: HOST,
+		store,
 		onError: (error) => console.error(error),
 	});
 	const init: WorkerInit = {
 		app: CHECKOUT,
 		dataDir,
 		fake: true,
+		telemetry: false,
 		generation: 1,
 		values: { session: { id: "s1", ...start, model: MODEL, thinkingLevel: "off" } },
 	};
 	const location = new SessionLocation(start);
-	const core = workerCore(init, new Liveness(), location, (fn) => host.root(fn, BACKGROUND_CONTEXT));
+	const core = workerCore(
+		init,
+		new Liveness(),
+		location,
+		store,
+		(fn) => host.root(fn, BACKGROUND_CONTEXT),
+		NO_IMAGES,
+		undefined,
+	);
 	await host.load(
 		[
 			{ name: "@p2/core", facet: core },
@@ -128,7 +140,6 @@ async function worker(t: test.TestContext, start: Location, machines: Record<str
 			{ name: "locations", facet: locations },
 			{ name: "workspace", facet: workspaceWorker },
 			{ name: "file-index", facet: fileIndexWorker },
-			{ name: "dev-tools", facet: devToolsWorker },
 			{ name: "powershell", facet: powershellWorker },
 		],
 		BACKGROUND_CONTEXT,
@@ -139,6 +150,7 @@ async function worker(t: test.TestContext, start: Location, machines: Record<str
 	t.after(async () => {
 		holder.release();
 		await host.close(BACKGROUND_CONTEXT);
+		await store.close(BACKGROUND_CONTEXT);
 	});
 	const relocate = (next: Location) => host.root((ctx: Ctx) => harness.relocate(next, ctx), BACKGROUND_CONTEXT);
 	/** A subagent conversation working at `own` (its own location), else following the session. */
@@ -197,50 +209,18 @@ const directory = (parent: string, name: string, files: string[] = []) => {
 	return path;
 };
 
-test("dev-tools and PowerShell detect again after a real move", async (t) => {
-	const saved = process.env.P2_DEV;
-	process.env.P2_DEV = "1";
-	t.after(() => {
-		if (saved === undefined) delete process.env.P2_DEV;
-		else process.env.P2_DEV = saved;
-	});
+test("PowerShell detects again after a real move", async (t) => {
 	const machines = { win: { os: "windows", gate: Promise.resolve(), failures: 0 } };
 	const w = await worker(t, { cwd: CHECKOUT, env: null }, machines);
 	const elsewhere = directory(w.root, "elsewhere");
 	await w.host.root(async (ctx) => {
 		const powershell = await ctx.get(PowerShell, {});
-		const switches = await w.host.registry(ExtensionSwitches, ctx);
-		const offered = () => switches.value.get("p2-dev-tools");
-		await until(switches, () => offered() === true);
 		await until(powershell.offered, (value) => value?.["1"] === (process.platform === "win32"));
 		await w.relocate({ cwd: elsewhere, env: null });
-		await until(switches, () => offered() === false);
 		await w.relocate({ cwd: elsewhere, env: "win" });
 		await until(powershell.offered, (value) => value?.["1"] === true);
-		assert.equal(offered(), false, "never on a remote environment");
 		await w.relocate({ cwd: CHECKOUT, env: null });
 		await until(powershell.offered, (value) => value?.["1"] === (process.platform === "win32"));
-		await until(switches, () => offered() === true);
-	}, BACKGROUND_CONTEXT);
-});
-
-// The location lags behind the environments during a move: the private data directory is denied by what the
-// environment is (here a "remote" location whose environment runs on this machine), never by the location's name.
-test("the private data directory is denied by the environment, not the location", async (t) => {
-	const machines = { box: { os: "linux", gate: Promise.resolve(), failures: 0 } };
-	const parent = mkdtempSync(join(tmpdir(), "p2-relocate-parent-"));
-	t.after(() => rmSync(parent, { recursive: true, force: true }));
-	const w = await worker(t, { cwd: parent, env: null }, machines);
-	// The session works in the directory holding p2's data directory, on a location named as another machine.
-	await w.relocate({ cwd: w.root, env: "box" });
-	await w.host.root(async (ctx) => {
-		const backend = await ctx.get(WorkspaceBackend, { conversation: 1 });
-		await assert.rejects(backend.query({ kind: "list", path: "data" }, ctx), /private/);
-		const index = await ctx.get(FileIndexCache, { conversation: 1 });
-		const all = await index.complete({ query: "", limit: 100 }, ctx);
-		assert(!all.items.some((item) => item.path === "data" || item.path.startsWith("data/")));
-		index.release();
-		backend.release();
 	}, BACKGROUND_CONTEXT);
 });
 

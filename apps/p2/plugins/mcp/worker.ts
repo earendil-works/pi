@@ -1,13 +1,13 @@
 // The MCP plugin's worker facet: the worker object holding the server's `Mcp` view. It sets the locations the session's
 // conversations work at (the session's, active subagents' own), with the project `.pi/mcp.json` read at each through
 // its environment, as its leases, again whenever they may have changed and whenever the view (re)activates, and offers
-// the servers' tools as one Durable extension that follows the view's `servers` and the code mode switch: as in pi,
-// tools are for code mode scripts, and only without code mode does `tool_search` load them for the model. No MCP
-// process or credential is ever in a worker.
+// the session's servers as one composing Durable extension (`mcp`, `tools.ts`) that follows the view's `servers`,
+// `leases` and the code mode switch: each conversation sees the servers of its location's lease; as in pi, tools are
+// for code mode scripts, and only without code mode does `tool_search` (installed by the worker's registry) load them
+// for the model. No MCP process or credential is ever in a worker.
 
 import { setTimeout as sleep } from "node:timers/promises";
 import { type ConversationId, type Extension, type Harness, ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
-import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-search";
 import {
 	type Context,
 	type Ctx,
@@ -37,8 +37,17 @@ import {
 	workerOf,
 } from "@p2/app/v1/worker";
 import { Subagents } from "../subagents/contract.worker.ts";
-import { MCP_EXTENSION, Mcp, PROJECT_FILE_MAX_CHARS, type ProjectFile } from "./contract.ts";
-import { createMcpExtension, type McpCall, type McpOffer, type McpReach, serverNames, serverTools } from "./tools.ts";
+import { Mcp, PROJECT_FILE_MAX_CHARS, type ProjectFile } from "./contract.ts";
+import {
+	createMcpExtension,
+	EMPTY_MCP_EXTENSION,
+	MCP_EXTENSION,
+	type McpCall,
+	type McpLocate,
+	type McpOffer,
+	type McpReach,
+	offeredInstances,
+} from "./tools.ts";
 
 /** How long to wait before setting the locations again after a failure. */
 const RETRY_MS = 2000;
@@ -55,76 +64,91 @@ function mcpWorker(self: StoreSelf): void {
 	const harness = harnessOf(self);
 	const worker = workerOf(self);
 	const view = self.get(Mcp, {});
-	const call: McpCall = async ({ conversationId, read, ...request }, context) => {
-		const location = await harness().environments.locate(conversationId, context, read);
-		return worker().root(
-			(ctx) => expectVariant(view, "worker").call({ location, ...request }, ctx),
-			context.abortSignal,
-		);
-	};
+	const locate: McpLocate = (conversationId, read, context) =>
+		harness().environments.locate(conversationId, context, read);
+	const call: McpCall = (request, context) =>
+		worker().root((ctx) => expectVariant(view, "worker").call(request, ctx), context);
 	// Code mode switched off or not loaded: the tools would be unreachable, so `tool_search` loads them, as pi falls back.
 	const reach = self.derive(
 		[self.registry(ExtensionSwitches)],
 		([switches]): McpReach => (switches.get(CODEMODE_EXTENSION) === true ? "codemode" : "tool_search"),
 	);
-	const extension = self.writable(extensionsFor({ servers: [], tools: [], reach: "codemode" }, call));
+	const extension = self.writable<Readonly<Record<string, Extension>>>({ [MCP_EXTENSION]: EMPTY_MCP_EXTENSION });
 	self.contribute(Extensions, extension);
-	self.onLive((ctx) => offerTools(view, reach, extension, call, ctx));
+	self.onLive((ctx) =>
+		offerTools(
+			view,
+			reach,
+			extension,
+			() => harness().environments.session,
+			(offer) => createMcpExtension(offer, call, locate),
+			ctx,
+		),
+	);
 	leaseLocations(self, view, harness, worker);
 }
 
-/** The extensions offering `offer`: the servers' tools and section, and `tool_search` while it reaches the tools. */
-function extensionsFor(offer: McpOffer, call: McpCall): Readonly<Record<string, Extension>> {
-	const extensions: Record<string, Extension> = { [MCP_EXTENSION]: createMcpExtension(offer, call) };
-	if (offer.reach === "tool_search" && offer.servers.length > 0) {
-		const search = createToolSearchExtension();
-		extensions[search.name] = search;
-	}
-	return extensions;
-}
-
 /**
- * Follows the view's `servers` and `reach` until `ctx` ends: a new server or tool list (not a status change) or a new
- * reach makes new extensions.
+ * Follows the view's `servers` and `leases` and `reach` until `ctx` ends: a new instance, tool list, summary or
+ * instructions, a lease's change or a new reach makes a new extension (not a status change). Where the session works
+ * (`session`, whose variants keep the plain names) is read at each change: a move changes the leases too. `tool_search`,
+ * which reaches the tools without code mode, is the worker's registry's (`durableRegistry`), shared with other plugins'
+ * deferred tools.
  */
 async function offerTools(
 	view: Ref<typeof Mcp>,
 	reach: Watchable<McpReach>,
 	extension: Writable<Readonly<Record<string, Extension>>>,
-	call: McpCall,
+	session: () => Location,
+	create: (offer: McpOffer) => Extension,
 	ctx: Ctx,
 ): Promise<void> {
-	const watch = await expectVariant(view, "worker").servers.watch(ctx);
+	const members = expectVariant(view, "worker");
+	const servers = await members.servers.watch(ctx);
 	try {
-		const reaches = await reach.watch(ctx);
+		const leases = await members.leases.watch(ctx);
 		try {
-			let servers = watch.value;
-			let current = reaches.value;
-			let offered = "";
-			const offer = (): void => {
-				const next: McpOffer = { servers: serverNames(servers), tools: serverTools(servers), reach: current };
-				const key = JSON.stringify(next);
-				if (key === offered) return;
-				offered = key;
-				extension.set(extensionsFor(next, call));
-			};
-			offer();
-			watch.start(async (change) => {
-				if (change.kind !== "value") return;
-				servers = change.value;
+			const reaches = await reach.watch(ctx);
+			try {
+				let current = { servers: servers.value, leases: leases.value, reach: reaches.value };
+				let offered = "";
+				const offer = (): void => {
+					const next: McpOffer = {
+						instances: offeredInstances(current.servers),
+						leases: current.leases,
+						session: session(),
+						reach: current.reach,
+					};
+					const key = JSON.stringify(next);
+					if (key === offered) return;
+					offered = key;
+					extension.set({ [MCP_EXTENSION]: create(next) });
+				};
 				offer();
-			});
-			reaches.start(async (change) => {
-				if (change.kind !== "value") return;
-				current = change.value;
-				offer();
-			});
-			await untilAborted(ctx);
+				servers.start(async (change) => {
+					if (change.kind !== "value") return;
+					current = { ...current, servers: change.value };
+					offer();
+				});
+				leases.start(async (change) => {
+					if (change.kind !== "value") return;
+					current = { ...current, leases: change.value };
+					offer();
+				});
+				reaches.start(async (change) => {
+					if (change.kind !== "value") return;
+					current = { ...current, reach: change.value };
+					offer();
+				});
+				await untilAborted(ctx);
+			} finally {
+				await reaches.stop();
+			}
 		} finally {
-			await reaches.stop();
+			await leases.stop();
 		}
 	} finally {
-		await watch.stop();
+		await servers.stop();
 	}
 }
 

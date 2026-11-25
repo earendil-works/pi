@@ -2,7 +2,8 @@
 
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
-import { bool, int, num, obj, opt, str } from "../../src/contracts/index.ts";
+import { bool, hostKind, int, num, obj, opt, str } from "../../src/contracts/index.ts";
+import { host } from "../../src/store/host-column.ts";
 import { json } from "../../src/store/json-column.ts";
 import { defineTable } from "../../src/store/table.ts";
 
@@ -73,5 +74,30 @@ describe("decoding", () => {
 		expect(() => T.rows.decode({ id: "a", n: 1, x: 2, b: 0, note: null, meta: "{}", meta$v: 3 }, context)).toThrow(
 			"newer than 2",
 		);
+	});
+});
+
+describe("host(...) cells", () => {
+	const Session = hostKind("session", { id: str() });
+	const Pins = defineTable("pins", { version: 1, columns: { id: str(), session: host(Session) }, key: ["id"] });
+
+	it("are put and keyed as their address's key, decoded into the address", () => {
+		const encoded = Pins.rows.put({ id: "p", session: Session({ id: "S1" }) }, 1);
+		expect(encoded.params).toEqual(["p", "session|S1", 1]);
+		expect(encoded.row).toEqual({ id: "p", session: "session|S1" });
+		expect(Pins.rows.decode({ id: "p", session: "session|S1" }, context)).toEqual({
+			id: "p",
+			session: Session({ id: "S1" }),
+		});
+		expect(() => Pins.rows.put({ id: "p", session: "session|S1" }, 1)).toThrow("expected an address of session");
+	});
+
+	it("turn between the stored key and the address (`stored`, `addressed`); rows without a host column stay", () => {
+		const read = { id: "p", session: Session({ id: "S1" }) };
+		expect(Pins.rows.stored(read)).toEqual({ id: "p", session: "session|S1" });
+		expect(Pins.rows.addressed(Pins.rows.stored(read))).toEqual(read);
+		const row = { id: "a", x: 1 };
+		expect(T.rows.stored(row)).toBe(row);
+		expect(T.rows.addressed(row)).toBe(row);
 	});
 });

@@ -14,14 +14,14 @@ import {
 	type EntryRecord,
 	type GenerationHooks,
 	GenerationTask,
+	type HookTask,
 	hook,
+	hookTask,
 	InboxDoc,
 	LiveDoc,
 	type LiveState,
 	MemoryStorage,
-	type RunEndTask,
 	type RunSummary,
-	runEndTask,
 	type Storage,
 	type TaskId,
 	type Tx,
@@ -126,7 +126,7 @@ function install(setup: ChatSetup, state: Probe, afterRun?: GenerationHooks["aft
 		(async (run) => {
 			state.asked.push(run);
 			if (state.hookGate !== undefined) await state.hookGate.promise;
-			return { tasks: [runEndTask(Tests, { label: `run ${state.asked.length}` })] };
+			return { tasks: [hookTask(Tests, { label: `run ${state.asked.length}` })] };
 		});
 	setup.registry.install(
 		defineExtension({ name: "after-run", tasks: [Tests], hooks: [hook(GenerationTask, { afterRun: handler })] }),
@@ -290,7 +290,7 @@ describe("afterRun", () => {
 						afterRun: async (run) => {
 							state.asked.push(run);
 							// Only the first run gets a task.
-							return state.asked.length === 1 ? { tasks: [runEndTask(Tests, { label: "run 1" })] } : undefined;
+							return state.asked.length === 1 ? { tasks: [hookTask(Tests, { label: "run 1" })] } : undefined;
 						},
 					}),
 				],
@@ -298,7 +298,7 @@ describe("afterRun", () => {
 		);
 		// The task admits its result for the model in its own commit.
 		state.admit = (handle, tx) =>
-			handle.submit(tx, {
+			handle.admit(tx, {
 				type: "write",
 				entry: { kind: "test.result", model: [{ role: "user", content: "tests passed", timestamp: 1 }] },
 			});
@@ -378,7 +378,11 @@ describe("afterRun", () => {
 		setup.registry.install(
 			defineExtension({
 				name: "again",
-				hooks: [hook(GenerationTask, { onYield: async () => (++yields <= 2 ? { continue: "again" } : undefined) })],
+				hooks: [
+					hook(GenerationTask, {
+						onYield: async () => (++yields <= 2 ? { kind: "continue", continue: "again" } : undefined),
+					}),
+				],
 			}),
 		);
 		setup.faux.setResponses([fauxAssistantMessage("1"), fauxAssistantMessage("2"), fauxAssistantMessage("3")]);
@@ -409,7 +413,7 @@ describe("afterRun", () => {
 						onYield: async () => {
 							if (second.asked.length > 0) return undefined;
 							await root2!.submit({ type: "input", content: "steer", whenBusy: "steer" }, context);
-							return { continue: "again" };
+							return { kind: "continue", continue: "again" };
 						},
 					}),
 				],
@@ -491,7 +495,7 @@ describe("afterRun", () => {
 							afterRun: async (run, _api, ctx) => {
 								state.asked.push(run);
 								if (stage === "finish") await aborted(ctx.abortSignal!);
-								return { tasks: [runEndTask(Tests, { label: "run 1" })] };
+								return { tasks: [hookTask(Tests, { label: "run 1" })] };
 							},
 						}),
 					],
@@ -557,13 +561,13 @@ describe("afterRun", () => {
 			phases: { run: async () => {} },
 			abort: async () => {},
 		});
-		const requests: RunEndTask[] = [
+		const requests: HookTask[] = [
 			{ task: { definition: { ...Tests.definition, name: "test.unknown" } }, input: null },
 			{ task: GenerationTask, input: {} },
 			{ task: Tests, input: { label: () => "not JSON" } as unknown as JsonValue },
-			runEndTask(Throwing, null),
-			runEndTask(BadStart, null),
-			runEndTask(Tests, { label: "ok" }),
+			hookTask(Throwing, null),
+			hookTask(BadStart, null),
+			hookTask(Tests, { label: "ok" }),
 		];
 		setup.registry.install(
 			defineExtension({
@@ -587,7 +591,7 @@ describe("afterRun", () => {
 		setup.registry.install(
 			defineExtension({
 				name: "not-a-list",
-				hooks: [hook(GenerationTask, { afterRun: async () => ({ tasks: "x" as unknown as RunEndTask[] }) })],
+				hooks: [hook(GenerationTask, { afterRun: async () => ({ tasks: "x" as unknown as HookTask[] }) })],
 			}),
 		);
 		setup.faux.setResponses([fauxAssistantMessage("done")]);
@@ -604,7 +608,7 @@ describe("afterRun", () => {
 		const rejected = setup.reports[0] as AggregateError;
 		expect(rejected.errors.map((error: Error) => error.message)).toEqual([
 			"Task test.unknown is not installed",
-			"An afterRun hook cannot start the built-in task pi.generation",
+			"A hook cannot start the built-in task pi.generation",
 			"Value contains a non-JSON function; expected strict JSON",
 			"initial failed",
 			"Task test.bad-start starts at the unknown phase nowhere",
@@ -636,7 +640,7 @@ describe("afterRun", () => {
 		setup.registry.install(
 			defineExtension({
 				name: "asker",
-				hooks: [hook(GenerationTask, { afterRun: async () => ({ tasks: [runEndTask(Stale, null)] }) })],
+				hooks: [hook(GenerationTask, { afterRun: async () => ({ tasks: [hookTask(Stale, null)] }) })],
 			}),
 		);
 		setup.faux.setResponses([fauxAssistantMessage("done")]);
@@ -714,7 +718,7 @@ describe("afterRun", () => {
 					}),
 				],
 				hooks: [
-					hook(CompactionTask, { beforeCompact: async () => ({ summary: "earlier work" }) }),
+					hook(CompactionTask, { beforeCompact: async () => ({ kind: "summary", summary: "earlier work" }) }),
 					hook(GenerationTask, {
 						afterRun: async (run, api, ctx) => {
 							const page = await api.entries(
@@ -828,14 +832,14 @@ describe("afterRun", () => {
 					hook(GenerationTask, {
 						afterRun: async (run) => {
 							state.asked.push(run);
-							return state.asked.length === 1 ? { tasks: [runEndTask(Tests, { label: "run 1" })] } : undefined;
+							return state.asked.length === 1 ? { tasks: [hookTask(Tests, { label: "run 1" })] } : undefined;
 						},
 					}),
 				],
 			}),
 		);
 		state.admit = (handle, tx) =>
-			handle.submit(tx, { type: "input", content: "fix the tests", requestId: "fix-1", whenBusy: "followUp" });
+			handle.admit(tx, { type: "input", content: "fix the tests", requestId: "fix-1", whenBusy: "followUp" });
 		setup.faux.setResponses([fauxAssistantMessage("done"), fauxAssistantMessage("fixed")]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		await (await root.submit({ type: "input", content: "go" }, context)).wait(context);
@@ -872,7 +876,7 @@ describe("afterRun", () => {
 			first: user.id,
 		});
 		expect(state.asked).toEqual([]);
-		await harness.commit((tx) => root.submit(tx, { type: "continue" }), context);
+		await harness.commit((tx) => root.admit(tx, { type: "continue" }), context);
 		await root.waitForIdle(context);
 		const answer = kindOf(await allEntries(root), "pi.assistant").at(-1)!;
 		expect(state.asked).toEqual([{ reason: "answer", first: user.id, answer: answer.id, last: answer.id }]);
@@ -1117,7 +1121,9 @@ describe("afterRun", () => {
 						},
 					}),
 				],
-				hooks: [hook(CompactionTask, { beforeCompact: async () => ({ summary: "earlier work" }) })],
+				hooks: [
+					hook(CompactionTask, { beforeCompact: async () => ({ kind: "summary", summary: "earlier work" }) }),
+				],
 			}),
 		);
 		setup.faux.setResponses([call("handoff", "a")]);
@@ -1154,7 +1160,7 @@ describe("afterRun", () => {
 						afterRun: async (run, _api, ctx) => {
 							state.asked.push(run);
 							if (hookGate !== undefined) await Promise.race([hookGate.promise, aborted(ctx.abortSignal!)]);
-							return { tasks: [runEndTask(Tests, { label: "run" })] };
+							return { tasks: [hookTask(Tests, { label: "run" })] };
 						},
 					}),
 				],

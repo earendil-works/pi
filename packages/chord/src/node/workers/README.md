@@ -1,9 +1,11 @@
 # workers
 
 The workers component (slice 10 §3, §4, design §23, decision "Slice 10's points"): a forked worker process per address
-of one host kind, started on demand by the route it owns, stopped when idle, never restarted by itself; its plugins are
-built by the server and shipped. `workerMain` is the worker's side. Node-only. Exported as
-`@earendil-works/chord/workers`.
+of one host kind, started on demand by the route it owns, stopped when idle, never restarted by itself; forked from the
+kind's worker base, bundled once by `build` (a start waits for it); its plugins are built by the server and shipped.
+`workerMain` is the worker's side. Node-only. Exported as `@earendil-works/chord/workers`; the worker's side alone
+(`workerMain`, `processLock`) as `@earendil-works/chord/workers/child`, which loads no esbuild: a worker entry imports
+that.
 
 ## For apps (`index.ts`)
 
@@ -11,22 +13,25 @@ built by the server and shipped. `workerMain` is the worker's side. Node-only. E
 // server.ts
 const workers = createWorkers(server, Session, {
 	kind: "worker", entry: "./worker.ts", execArgv: ["--import", resolver], env: { … },      // bootstrap
+	baseDir: join(dataDir, "cache", "workers", "session"), compileCache: join(dataDir, "cache", "node"),   // optional
 	authorize: (principal, address) => app.mayReach(principal, address),                   // the route's (synchronous)
 	principal: (address) => ({ kind: "worker", session: address.params.id }),
 	start: (address, ctx) => app.startData(address, ctx),                                  // JSON, before each start
 	lock: (address) => `app:${dataDir}:worker:${address.key}`,                             // one live worker per address
 	idleMs: () => app.idleMs(),                                                            // 5 min by default
+	store,                                                                                 // the server host's (required)
 	plugins,
 	onOutput: (address, stream, chunk) => logs.append(address.key, stream, chunk),
 	onError: (error) => log(error),                                                        // WorkersError
 }, ctx);
 workers.state                                   // { [address key]: WorkerState }, a JSON watchable
+await workers.build()                           // { kind: "built", inputs } | { kind: "failed", error }; never rejects
 await workers.stop(Session({ id }), ctx);       // suspended while held, then stopped
 await workers.retry(Session({ id }), ctx);      // a failed or suspended address starts again (if held)
 await plugins.rollout([plugins.step("server", server), workers.step("workers")], built, ctx);
 await workers.close(ctx);
 
-// worker.ts
+// worker.ts (imports `workerMain` from "@earendil-works/chord/workers/child")
 workerMain(async ({ address, start, parent, plugins, onClose }, ctx) => {
 	const host = createHost({ address, principal: { kind: "worker" }, store, onError });
 	onClose((ctx) => host.close(ctx));                                    // closers run in reverse order
@@ -40,18 +45,69 @@ workerMain(async ({ address, start, parent, plugins, onClose }, ctx) => {
   `resolve` rejects at once with its stored failure (its holders see `failed { waiting }`, nothing forks); the kernel
   reports that rejection (`resolve_failed`) once per new hold, so every tab opening a failed session adds one `onError`
   entry.
+- **The worker base** (decision "Workers start from the base code the server booted with"): `createWorkers` bundles
+  `entry` and the base code it imports once, at `build` (esbuild; the kit calls it right after the server listens, and
+  a start waits for it, starting it when nothing did), and forks every worker from that snapshot, so an edit of the
+  app's source after the build (half done, maybe) reaches no worker until the server restarts. A base that does not
+  build fails every start (`worker_failed` with esbuild's error, holders get `worker failed to start`); `build`
+  resolves `failed`. Inlined: the app's files and workspace packages linked into
+  `node_modules` (by their real paths). External, loaded by Node at each fork from the file the build resolved: Node
+  builtins and every package resolved under `node_modules` (native addons, packages reading their own files). Imports
+  resolve as the child's Node would (`--conditions` from `execArgv`, `main` only, `tsconfig.json` paths); every
+  imported module runs (`sideEffects: false` drops none); `import.meta.url`, `.dirname`, `.filename`, `__dirname` and
+  `__filename` name each module's source file. Split at each dynamic `import()` esbuild can follow (a literal
+  specifier): the entry module and the chunks it imports statically load at each fork; a lazily imported module, with
+  the packages it imports, is a chunk Node loads when the worker first imports it (pi-ai's provider APIs and their
+  SDKs). A module the entry's graph shares with a lazy chunk moves into a shared chunk, which runs before the
+  importing chunk's own modules: a module still runs after its imports, but two modules that do not import each other
+  may run in another order than unbundled (esbuild's splitting; base code must not rely on sibling order). A variable
+  specifier stays an import Node resolves at run time, against the module's source file (its
+  `import.meta.url`): outside the snapshot, so base code that must be in it imports with a literal specifier. ES modules
+  minified (whitespace and syntax; names kept, so `name` is what unbundled code sees: every worker holds the base's
+  text), with inline source maps, forked with `--enable-source-maps` ahead of the app's `execArgv` (stack traces name the
+  source files). The bundle stays in memory until the first fork, which writes its files into one private directory:
+  `baseDir` when given (the component's own while it is open: emptied first; the kit's
+  `<dataDir>/cache/workers/<kind>/`), else a new temporary one; written again when a cleaner removed one of them
+  (checked at each fork, into a new temporary directory or `baseDir` again; a chunk removed while a worker runs fails
+  that worker's import of it); removed by `close` once every worker exited or was killed (a stopping worker's closers
+  may still import a lazy chunk). A build that ends after `close` writes nothing: the kit releases the data
+  directory's lock after the component's close, so a later start's component may own `baseDir` by then. With
+  `compileCache` every fork gets `NODE_COMPILE_CACHE` (unless `env` sets it): Node keeps the compiled code of the bundle and the packages it loads between forks and, with
+  a `baseDir` that stays the same, between starts (about 18 ms of the first fork's start in example 53). A built
+  base's `inputs` maps the files it was built from to the hashes of the bytes esbuild read (the module-location loader
+  is the one reader of the source files it handles): the kit marks `base` while one differs.
+  `nodeBaseInputs(entry, conditions)` records the same for a Node entry's static graph without writing or running
+  anything, best effort (the kit's record of the server's own code): literal imports, lazy ones included; an import
+  that does not resolve is left out; resolved as Node does (no `tsconfig.json` `paths`); other esbuild failures reject.
 - **Per address:** a child's events (`started`, `ready`, `idle`, `fatal`, its exit, its link closed by this side) are
   recorded on that child as they happen (a late event of an old child changes nothing); starts and stops run one after
-  another. A start waits for the previous child's exit and rejects with a crash recorded meanwhile; a stop records its
+  another. A start waits until the previous child's exit was published and rejects with a crash recorded meanwhile; a stop records its
   intent before `shutdown`, so the exit it causes is no crash.
 - **A start:** the app's `start(address, ctx)` (aborted by `close`), then the fork (`serialization: "advanced"`, a
-  detached process group, the server's environment with `env` over it: a worker inherits every variable the server
-  has, secrets included, unless the app starts the server with a trimmed one; stdout and stderr piped: the stderr tail
-  kept, both mirrored to this process's own without `onOutput`), its IPC link made at once, the start message `{
-  address, start, scripts, lock }` (`scripts`: the kind's current set, `plugins.scripts(kind)`). The child takes the
-  lock (waiting for an old holder without polling), makes its parent link and sends `started` when the app's host
-  connects; `resolve` returns the link then. The start timer (60 s) covers fork, lock and connect only. `ready` (after
-  the app's function returned, with the idle state and the load report) makes the worker `running`.
+  detached process group, the worker base's file with `--enable-source-maps` and `execArgv`, the server's environment
+  with `env` over it: a worker inherits every variable the server has, secrets included, unless the app starts the
+  server with a trimmed one; stdout and stderr piped: the stderr tail kept, both mirrored to this process's own
+  without `onOutput`), its IPC link made at once, the start message `{ address, start, scripts, lock }` (`scripts`:
+  the kind's current set, `plugins.scripts(kind)`). The child takes the lock (waiting for an old holder without
+  polling), makes its parent link and sends `started` when the app's host connects; `resolve` returns the link then.
+  The start timer (60 s) covers fork, lock and connect only. `ready` (after the app's function returned, with the idle
+  state and the load report) makes the worker `running`.
+- **An exit is published after its link's work ended** (decision "A worker's exit is published after its link's work
+  ended"). When a worker process exits (a stop, a crash, a kill), in this order: (1) its link is closed
+  (`process.ts`, before the exit is told; the IPC channel closes by itself only on its own event, sometimes later):
+  what the worker sent and was not handled yet is dropped, and the calls it made are aborted, so a transaction
+  under a call's `ctx` that is not yet at its commit is refused; (2) the commits those calls had already queued in
+  the server's store settle (`store`, the one given to the server's `createHost`: a queued commit ignores its
+  caller's abort; a required option so it is not forgotten, `undefined` only for a host without a store); (3) the exit shows in
+  `state` (the entry goes, or turns `failed`), `stop` resolves and the address's next start goes on. So nothing an
+  exited worker reported is handled or lands after `state` says it is gone, and no successor runs before:
+  **plugins and apps need no stale-worker check of their own** (no generation in the principal or in a report's
+  arguments). Not covered: a call the server relayed to another host is cancelled there when the cancel arrives,
+  and work a report started outside its call's `ctx` (a job, a background context) is that work's own.
+- **The incarnation:** a worker's `state` entry carries `incarnation`, its host's (the `ctx.incarnation` of every
+  call it makes), from its link's handshake on (the route's `opened`): before its first call is handled, also one
+  its startup makes long before `ready`; absent before the handshake. For data kept across worker runs: store
+  `ctx.incarnation` with a report and compare with the state's.
 - **Failures stay** (R2): a crash (an exit nobody asked for), a `fatal` or a failed start leaves the address `failed`
   (`worker_failed` once, `worker_exited` for the exit) until `retry` or a rollout reaching workers.
 - **A lost link is recovered from** (decision "A lost worker link is recovered from"): a link closed by this side (the
@@ -64,8 +120,8 @@ workerMain(async ({ address, start, parent, plugins, onClose }, ctx) => {
   The server stops a worker idle since `idleMs()` (checked every second, from `ready`). A stop: `shutdown`; the child
   aborts its context, runs its closers in reverse order and exits (forced after 3 s); the server kills the tree after
   5 s.
-- **`state`:** per address key `{ status: "starting" | "running" | "stopping", pid, startedAt }` or `{ status:
-  "failed", error: { message, code?, reason? }, at }`; no entry when stopped. The error is public (decision "worker
+- **`state`:** per address key `{ status: "starting" | "running" | "stopping", pid, startedAt, incarnation? }` or
+  `{ status: "failed", error: { message, code?, reason? }, at }`; no entry when stopped. The error is public (decision "worker
   errors in public"): a `fatal` as the child's `redact` made it, else a fixed message (`worker failed to start`,
   `worker exited (SIGSEGV)`, `worker exited (code 1)`); holders see the same. The full error and the stderr tail go
   only to `onError` (`worker_failed { address, error, stderrTail }`). Every app hook of a start (`start`, the fork,
@@ -73,12 +129,13 @@ workerMain(async ({ address, start, parent, plugins, onClose }, ctx) => {
   `authorize_failed`, its error private too.
 - **`stop(address, ctx)`:** `RouteHandle.suspend`, then the stop: holders see `failed { waiting }` ("suspended") until
   their last release; a later hold starts it on demand; `retry` lifts it at once.
-- **`close(ctx)`:** starts waiting in `start(address)` are aborted, every child stopped, new starts reject
-  `released/closed`; the host's close (the route's context) closes it too, and no exit after that is a failure.
-- **`step(name)`** (§4): clears the failures from before it and retries the held ones (listed `{ host, report }` with
-  their load report once ready, or `{ host, error }`), then ships the kind's current set to every worker whose last
-  set is older, in parallel, one reload outstanding per child: `{ host, report }`, `{ host, stopped: true }` (stopped
-  cleanly meanwhile) or `{ host, error }` (a crash, a failed reload). The step's context bounds only its wait (an abort
+- **`close(ctx)`:** starts waiting in `start(address)` are aborted, the worker base's file removed, every child
+  stopped, new starts reject `released/closed`; the host's close (the route's context) closes it too, and no exit
+  after that is a failure.
+- **`step(name)`** (§4): clears the failures from before it and retries the held ones (listed `{ kind: "reloaded", host, report }` with
+  their load report once ready, or `{ kind: "failed", host, error }`), then ships the kind's current set to every worker whose last
+  set is older, in parallel, one reload outstanding per child: `{ kind: "reloaded", host, report }`, `{ kind: "stopped", host }` (stopped
+  cleanly meanwhile) or `{ kind: "failed", host, error }` (a crash, a failed reload). The step's context bounds only its wait (an abort
   lists the waiting ones with the abort's error; a late reply still frees the child's slot).
 - **The child** (`workerMain`): reads the start message, takes the lock, makes its parent link (`started` on the app's
   `connect`), gives the app `plugins` (`WorkerPlugins.load(host, { kind, core })` over the shipped scripts, with the
@@ -93,10 +150,13 @@ workerMain(async ({ address, start, parent, plugins, onClose }, ctx) => {
 ## Examples
 
 `test/examples/`: `41-workers` (a worker started on the first hold, stopped when idle), `42-worker-crash` (a crash
-stays failed, Retry brings it back), `43-rollout` (an edit rolled out to the server and its workers).
+stays failed, Retry brings it back), `43-rollout` (an edit rolled out to the server and its workers),
+`76-worker-reports` (a worker that reports and exits: the report never lands after the exit; what is kept across runs
+is tagged with the incarnation).
 
 ## Inside the directory
 
-`control.ts` (control messages and errors as they cross), `lock.ts` (process locks), `process.ts` (one forked worker
-as the server sees it), `workers.ts` (the component: the route, per-address records, idle stops, the rollout step,
-the state), `main.ts` (`workerMain`).
+`base.ts` (the worker base: the entry bundled once), `child.ts` (the worker's side as its own entry point),
+`control.ts` (control messages and errors as they cross),
+`lock.ts` (process locks), `process.ts` (one forked worker as the server sees it), `workers.ts` (the component: the
+route, per-address records, idle stops, the rollout step, the state), `main.ts` (`workerMain`).

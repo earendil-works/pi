@@ -117,6 +117,7 @@ export function stagePut(sql: string, table: string, row: EncodedRow, version: n
 		order: "write",
 		apply: async (step) => {
 			await step.run(sql, ...row.params);
+			step.rows++;
 			return [write];
 		},
 	};
@@ -167,7 +168,11 @@ export function stageDeleteWhere(statement: Statement, table: string, where: Whe
 function counted(statement: Statement, record: (count: number) => TableWrite): StagedWrite {
 	return {
 		order: "write",
-		apply: async (step) => [record(await step.runCounted(statement.sql, ...statement.params))],
+		apply: async (step) => {
+			const count = await step.runCounted(statement.sql, ...statement.params);
+			step.rows += count;
+			return [record(count)];
+		},
 	};
 }
 

@@ -94,6 +94,16 @@ test(
 		const store = (await fixture.server.host.registry(ForwardsNative, BACKGROUND_CONTEXT)).value!.forwards;
 		store.radiusOrigin = ORIGIN;
 		await ports.add({ port: 3000, name: "docs", public: true }, BACKGROUND_CONTEXT);
+		// The answer follows its state: the new forward and its public link are on the page when the call resolves.
+		const docs = ports.forwards.value.find((item) => item.port === 3000);
+		assert.match(docs?.publicUrl ?? "", /^https:\/\/pub--/);
+		await ports.setPublic({ id: docs!.id, public: false }, BACKGROUND_CONTEXT);
+		assert.equal(ports.forwards.value.find((item) => item.port === 3000)?.publicUrl, undefined);
+		await ports.setPublic({ id: docs!.id, public: true }, BACKGROUND_CONTEXT);
+		await ports.add({ port: 3999 }, BACKGROUND_CONTEXT);
+		const temporary = ports.forwards.value.find((item) => item.port === 3999)!;
+		await ports.remove({ id: temporary.id }, BACKGROUND_CONTEXT);
+		assert(!ports.forwards.value.some((item) => item.port === 3999), "the removed forward is gone at the answer");
 		let serial = 0;
 		const call = async (query: PortsRequest, target = chat) => {
 			const count = results(await until(target.view, Boolean)).length;
@@ -149,12 +159,13 @@ test(
 		});
 		const guest = fixture.client({ ...headers, Cookie: String(joined.headers["set-cookie"]).split(";")[0]! }).host;
 		const guestChat = await holdIn(guest, Chat, { session: session.id, conversation: 1 }, "participant");
-		assert.match(text(await call({ action: "open", port: 8080 }, guestChat)), /guest input is not permitted/);
+		// No per-turn authority: a guest's turn uses the tool; the guest itself cannot hold the registry.
+		assert.doesNotMatch(text(await call({ action: "list" }, guestChat)), /owner started/);
 		await expectChord(whenLive(guest.hold(Ports, {}, BACKGROUND_CONTEXT)), "forbidden");
 		// `query` is the worker's: the owner calling it anyway is refused.
 		await expectChord(
 			(ports as unknown as { query: (...args: unknown[]) => Promise<unknown> }).query(
-				{ conversation: 1, origin: "owner", query: { action: "list" } },
+				{ conversation: 1, query: { action: "list" } },
 				BACKGROUND_CONTEXT,
 			),
 			"invalid",

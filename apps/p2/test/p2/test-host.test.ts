@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
-import { BACKGROUND_CONTEXT, follow, whenLive } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, whenLive } from "@p2/app/v1";
 import { DraftStore, Drafts } from "../../plugins/drafts/contract.ts";
 import draftsWorker from "../../plugins/drafts/worker.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
@@ -104,7 +104,8 @@ describe("testHost", () => {
 			{},
 			"reporter",
 		);
-		await worker.report({ tasks: 3, busy: [4, 1] }, BACKGROUND_CONTEXT);
+		const work = { "4": { since: 1, rounds: 2, step: { kind: "tools" as const, names: ["read"] } } };
+		await worker.report({ tasks: 3, busy: [4, 1], work }, BACKGROUND_CONTEXT);
 		await until(owner.statuses, (value) => value?.sample?.tasks === 3);
 		const stale = await holdIn(
 			fixture.client({ kind: "worker", session: "sample", generation: 1 }),
@@ -112,8 +113,8 @@ describe("testHost", () => {
 			{},
 			"reporter",
 		);
-		await stale.report({ tasks: 99, busy: [99] }, BACKGROUND_CONTEXT);
-		assert.deepEqual((await settled(owner.statuses)).sample, { running: true, tasks: 3, busy: [1, 4] });
+		await stale.report({ tasks: 99, busy: [99], work: {} }, BACKGROUND_CONTEXT);
+		assert.deepEqual((await settled(owner.statuses)).sample, { running: true, tasks: 3, busy: [1, 4], work });
 		const guest = await holdIn(
 			fixture.client({ ...ALICE, sessions: { sample: "view" } }),
 			SessionStatus,
@@ -127,19 +128,19 @@ describe("testHost", () => {
 			publish(ctx, { sample: { running: false, generation: 2 }, other: { running: true, generation: 1 } }),
 		);
 		await until(owner.statuses, (value) => value?.sample?.running === false);
-		assert.deepEqual((await settled(guest.statuses)).sample, { running: false, tasks: 0, busy: [] });
+		assert.deepEqual((await settled(guest.statuses)).sample, { running: false, tasks: 0, busy: [], work: {} });
 		await fixture.root((ctx) =>
 			publish(ctx, { sample: { running: false, generation: 2, error: "worker fixture failure" } }),
 		);
 		await until(owner.statuses, (value) => value?.sample?.error === "worker fixture failure");
 		// Guests learn that it stopped, never the worker's error text (paths, stacks), as in Pi Mobile.
-		assert.deepEqual((await settled(guest.statuses)).sample, { running: false, tasks: 0, busy: [] });
+		assert.deepEqual((await settled(guest.statuses)).sample, { running: false, tasks: 0, busy: [], work: {} });
 		await fixture.root((ctx) => publish(ctx, { sample: { running: true, generation: 3 } }));
 		await until(owner.statuses, (value) => value?.sample?.running === true && value.sample.error === undefined);
 	});
 });
 
-it("a workspace hold protects a slow watch activation, and releases its liveness lease", async (t) => {
+it("a workspace hold keeps the worker busy through a slow watch activation, until it is released", async (t) => {
 	const root = await mkdtemp(join(tmpdir(), "p2-watch-unit-"));
 	const project = join(root, "project");
 	const dataDir = join(root, "data");
@@ -159,11 +160,7 @@ it("a workspace hold protects a slow watch activation, and releases its liveness
 		await blocked;
 		return watch(...args);
 	};
-	let viewers = 0;
 	const liveness = new Liveness();
-	follow(liveness, (counts) => {
-		viewers = counts.viewers ?? 0;
-	});
 	const fixture = await testHost({
 		address: Session({ id: "sample" }),
 		kind: "worker",
@@ -210,12 +207,14 @@ it("a workspace hold protects a slow watch activation, and releases its liveness
 		await rm(root, { recursive: true, force: true });
 	});
 	const workspace = fixture.client(OWNER).hold(Workspace, { session: "sample", conversation: 1 }, BACKGROUND_CONTEXT);
+	// Chord's activity counts the hold from its arrival (the worker's keep-alive), bound or not.
+	const references = () => fixture.host.activity.value.references;
 	await Promise.race([watching, whenLive(workspace)]);
-	assert.equal(viewers, 1, "activation is held work even before FileSystem.watch returns");
+	assert.equal(references(), 1, "the hold is counted even before FileSystem.watch returns");
 	unblock();
 	await whenLive(workspace);
 	workspace.release();
-	await poll(() => viewers === 0, 5000, "workspace activation lease released");
+	await poll(() => references() === 0, 5000, "the released hold is no longer counted");
 });
 
 describe("live assertion helpers", () => {

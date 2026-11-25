@@ -21,6 +21,8 @@ These APIs receive Pi’s active theme and keybindings where needed. Do not crea
 
 A component renders an array of terminal lines for an available width. It can optionally handle keyboard and mouse input, and it must invalidate cached output when its state or theme-dependent content changes.
 
+Treat lines returned by `render()` as read-only, including `super.render()` in a subclass. Built-in components such as `Container`, `Box`, `Text`, and `Markdown` return the same cached array while nothing changed, so modifying it in place corrupts later frames. Copy first, for example `const lines = [...super.render(width)]`, and cache the result if it is expensive. Return a new array when your output changes: parents reuse an unchanged array without reading it again.
+
 Every rendered line must fit within the supplied width. Measure visible terminal columns rather than string length because ANSI escapes, wide characters, emoji, and combining characters change display width.
 
 Use `visibleWidth()`, `truncateToWidth()`, `sliceByColumn()`, and `wrapTextWithAnsi()` instead of implementing terminal-width handling yourself. Pi resets styling and hyperlinks after every line, so reapply styles on each rendered line.
@@ -135,7 +137,7 @@ export default function (pi: ExtensionAPI) {
 
 This component does not display a text cursor, so it does not need `Focusable`. A component containing `Input` or `Editor` must implement `Focusable` and propagate its `focused` value to that child.
 
-Custom components do not report pi as waiting for the user, because `ctx.ui.custom()` also hosts loaders and other non-blocking UI. When an inline component waits for an answer, pass `blocked: { kind: "question", message: "Pick a color" }` so terminals that support [program status](terminal-setup.md#program-status) show pi as blocked while the component is visible. `kind` is `"question"`, `"permission"`, or `"auth"`. Overlays ignore this option.
+Custom components do not report pi as waiting for the user, because `ctx.ui.custom()` also hosts loaders and other non-blocking UI. When a component waits for an answer, pass `blocked: { kind: "question", message: "Pick a color" }` so terminals that support [program status](terminal-setup.md#program-status) show pi as blocked. `kind` is `"question"`, `"permission"`, or `"auth"`. An inline component reports blocked while it is visible: a newer dialog or component shown in its place reports its own status instead. An overlay reports blocked from when it is shown until it calls `done()`, also while it is hidden with `setHidden()` or covered by another overlay. When several blocking prompts are open, the most recently shown one supplies `kind` and `message`.
 
 Pass `overlay: true` to draw above existing content. Overlay options control size, anchors, offsets, margins, and responsive visibility. An overlay handle can change focus or temporarily hide and show the overlay with `setHidden()` while the interaction remains active.
 

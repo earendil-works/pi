@@ -7,12 +7,12 @@ import type { RelayUser } from "@p2/app/v1/server";
 export const RELAY_SECRET_HEADER = "x-p2-relay";
 /** The brain's browser-facing origin (its cortex origin), e.g. `https://<label>.rdtun.com`. */
 export const RELAY_ORIGIN_HEADER = "x-p2-relay-origin";
-/** The Radius shell origin that frames the brain UI. */
+/** The Radius shell origin that frames the brain UI; absent for a Pi client of the owner, which no page frames. */
 export const RELAY_SHELL_HEADER = "x-p2-relay-shell";
 /** A Radius user other than the owner: base64url JSON `{ id, email }`. Absent for the owner. */
 export const RELAY_USER_HEADER = "x-p2-relay-user";
 
-export type RelayedRequest = { publicOrigin: string; shellOrigin: string; user?: RelayUser };
+export type RelayedRequest = { publicOrigin: string; shellOrigin?: string; user?: RelayUser };
 
 const ORIGIN = /^https?:\/\/[^/\s]+$/;
 
@@ -31,7 +31,9 @@ const ORIGIN = /^https?:\/\/[^/\s]+$/;
  * owner shared sessions with by email: Radius vouches for their email, and
  * p2's sharing decides what they may reach, as for a guest cookie on a tunnel
  * host. Without the secret the marker headers mean nothing, so neither
- * browsers nor other local processes can claim them.
+ * browsers nor other local processes can claim them. Without the shell header
+ * it is the owner's Pi client, the TUI launcher through Radius (brain.ts,
+ * "Client channels").
  */
 export class RelayAccess {
 	readonly secret = randomBytes(32).toString("hex");
@@ -50,6 +52,10 @@ export class RelayAccess {
 		const publicOrigin = request.headers[RELAY_ORIGIN_HEADER];
 		const shellOrigin = request.headers[RELAY_SHELL_HEADER];
 		if (typeof publicOrigin !== "string" || !ORIGIN.test(publicOrigin)) return undefined;
+		if (shellOrigin === undefined) {
+			// Clients are the owner's only; sharing admits people on the brain's UI.
+			return request.headers[RELAY_USER_HEADER] === undefined ? { publicOrigin } : undefined;
+		}
 		if (typeof shellOrigin !== "string" || !ORIGIN.test(shellOrigin)) return undefined;
 		const user = request.headers[RELAY_USER_HEADER];
 		if (user === undefined) return { publicOrigin, shellOrigin };

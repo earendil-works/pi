@@ -2,7 +2,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
-import { arr, int, obj, str } from "../../src/contracts/index.ts";
+import { arr, hostKind, int, obj, str } from "../../src/contracts/index.ts";
 import { isChordError } from "../../src/data/index.ts";
 import { defineState, type JsonObject, type KeyedHandle, type SingletonHandle } from "../../src/documents/index.ts";
 import type { HostError, StoreSelf } from "../../src/host/index.ts";
@@ -172,7 +172,7 @@ describe("across attempts", () => {
 		expect(inFactory).toEqual([expect.objectContaining({ code: "not_ready" })]);
 	});
 
-	it("fail the attempt broken for a flipped keyed, an older version or a schema changed without a bump", async () => {
+	it("fail the attempt broken for a flipped keyed, another key kind, an older version or a schema changed without a bump", async () => {
 		const KeyedList = defineState("list", {
 			schema: obj({ items: arr(str()) }),
 			version: 1,
@@ -190,8 +190,15 @@ describe("across attempts", () => {
 			initial: () => ({ items: [] }),
 			migrate: (old) => old as { items: string[] },
 		});
+		const ByUser = defineState("list", {
+			schema: obj({ items: arr(str()) }),
+			version: 1,
+			initial: () => ({ items: [] }),
+			keyed: hostKind("user", { id: str() }),
+		});
 		const cases = [
 			[ListV1, KeyedList, "list: declared keyed, its documents are not"],
+			[KeyedList, ByUser, "list: declared with addresses of user, its documents have string keys"],
 			[ListV1, Changed, "list: the schema changed without a version bump (version 1)"],
 			[Newer, ListV1, "list: version 1 is older than its documents' (2)"],
 		] as const;

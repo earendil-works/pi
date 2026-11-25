@@ -458,7 +458,7 @@ describe("tool results", () => {
 	});
 
 	// #10549
-	it("records how long execute() took, excluding hooks, and nothing for calls that did not run", async () => {
+	it("records each result's span from the call's first run, hooks included, also for calls that did not execute", async () => {
 		const setup = chatSetup();
 		const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 		addTool(
@@ -486,12 +486,9 @@ describe("tool results", () => {
 			DONE,
 		]);
 		const byId = new Map(results(entries).map((result) => [result.toolCallId, result]));
-		for (const id of ["slow", "thrower"]) {
-			expect(byId.get(id)?.durationMs).toBeGreaterThanOrEqual(25);
-			expect(byId.get(id)?.durationMs).toBeLessThan(100);
-		}
+		for (const id of ["slow", "thrower"]) expect(byId.get(id)?.durationMs).toBeGreaterThanOrEqual(125);
 		expect(byId.get("thrower")?.isError).toBe(true);
-		expect(byId.get("blocked")).not.toHaveProperty("durationMs");
+		expect(byId.get("blocked")?.durationMs).toBeGreaterThanOrEqual(95);
 		await harness.close(context);
 	});
 
@@ -740,7 +737,8 @@ describe("generation hooks", () => {
 		});
 		let yields = 0;
 		addHooks(setup.registry, GenerationTask, {
-			onYield: () => (yields++ === 0 ? { continue: [{ type: "text", text: "keep going" }] } : undefined),
+			onYield: () =>
+				yields++ === 0 ? { kind: "continue", continue: [{ type: "text", text: "keep going" }] } : undefined,
 		});
 		const { harness, entries, status } = await run(setup, [record, record]);
 		expect(status).toBe("done");
@@ -828,7 +826,7 @@ describe("generation hooks", () => {
 		let input: SubmissionId | undefined;
 		let statusAtSecondRequest: string | undefined;
 		addHooks(setup.registry, GenerationTask, {
-			onYield: () => (yields++ === 0 ? { continue: "again" } : undefined),
+			onYield: () => (yields++ === 0 ? { kind: "continue", continue: "again" } : undefined),
 		});
 		const second: FauxResponseStep = async () => {
 			input = (await harness.snapshot(LiveDoc, 1 as never, context))!.run!.inputs[0];
@@ -873,12 +871,14 @@ describe("generation hooks", () => {
 		addHooks(setup.registry, GenerationTask, { afterResponse: () => void called.push("next observer") });
 		let yields = 0;
 		addHooks(setup.registry, GenerationTask, {
-			onYield: () => (yields++ === 0 ? { continue: "first" } : undefined),
+			onYield: () => (yields++ === 0 ? { kind: "continue", continue: "first" } : undefined),
 		});
 		addHooks(setup.registry, GenerationTask, {
 			onYield: () => {
 				called.push("second onYield");
-				return called.filter((name) => name === "second onYield").length === 1 ? { continue: "second" } : undefined;
+				return called.filter((name) => name === "second onYield").length === 1
+					? { kind: "continue", continue: "second" }
+					: undefined;
 			},
 		});
 		const { harness, entries } = await run(setup, [

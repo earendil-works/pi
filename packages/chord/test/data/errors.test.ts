@@ -26,7 +26,14 @@ describe("ChordError", () => {
 		if (error.code === "invalid") expectTypeOf(error.reason).toEqualTypeOf<ChordErrorReason<"invalid">>();
 		if (error.code === "unavailable")
 			expectTypeOf(error.reason).toEqualTypeOf<
-				"locked" | "park_timeout" | "busy" | "storage_failed" | "undeclared" | undefined
+				| "locked"
+				| "park_timeout"
+				| "busy"
+				| "storage_failed"
+				| "undeclared"
+				| "version"
+				| "reload_cycle"
+				| undefined
 			>();
 		if (error.code === "gone") expectTypeOf(error.reason).toEqualTypeOf<undefined>();
 		expect(error).toBeInstanceOf(Error);
@@ -75,6 +82,7 @@ describe("ChordError", () => {
 
 describe("protocol table", () => {
 	it("is pinned together with PROTOCOL_VERSION", () => {
+		// PROTOCOL_VERSION stays 1 until p3 ships (design §22): the table changes with it unbumped until then.
 		const pinned = {
 			version: 1,
 			reasons: {
@@ -85,7 +93,7 @@ describe("protocol table", () => {
 				not_ready: [],
 				released: ["ended", "closed", "settled", "version", "discarded"],
 				too_large: ["part"],
-				unavailable: ["locked", "park_timeout", "busy", "storage_failed", "undeclared"],
+				unavailable: ["locked", "park_timeout", "busy", "storage_failed", "undeclared", "version", "reload_cycle"],
 				aborted: [],
 			},
 		};

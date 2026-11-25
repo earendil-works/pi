@@ -70,6 +70,11 @@ function makeJsonSchemaNodeStrict(schema: unknown, isUnsupportedKeyword?: Unsupp
 		}
 	}
 
+	// OpenAI strict mode rejects nodes without a type; a bare enum counts as typed, a bare const does not.
+	if (schema.type === undefined && schema.anyOf === undefined && schema.enum === undefined) {
+		throw new UnsupportedStrictJsonSchemaError("schemas without a type are unsupported");
+	}
+
 	if (schema.anyOf !== undefined) {
 		if (!Array.isArray(schema.anyOf) || schema.anyOf.length === 0) {
 			throw new UnsupportedStrictJsonSchemaError("anyOf must contain at least one schema");
@@ -143,21 +148,6 @@ export function makeStrictJsonSchema(
 export function prefersJsonSchemaStrictSampling(tool: Tool): boolean {
 	const config = tool.constrainedSampling;
 	return !!config && config.type === "json_schema" && config.strict === "prefer";
-}
-
-/**
- * Claude rejects (on the Anthropic API and on Bedrock) a request whose strict tools exceed its limits with one of these
- * messages. Observed limits: 20 strict tools, and 16 optional or union-typed parameters across all strict tools.
- */
-const STRICT_TOOL_LIMIT_ERROR_MESSAGES = [
-	"The compiled grammar is too large",
-	"Too many strict tools (",
-	"Schemas contains too many parameters with union types (",
-];
-
-/** Returns true when a provider error message says the request's strict tools exceed the provider's limits. */
-export function isStrictToolLimitErrorMessage(message: string): boolean {
-	return STRICT_TOOL_LIMIT_ERROR_MESSAGES.some((limitMessage) => message.includes(limitMessage));
 }
 
 export function getJsonSchemaToolParameters(tool: Tool, strict: boolean | undefined): Tool["parameters"] {

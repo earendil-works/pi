@@ -1,50 +1,115 @@
-// Files (slice 13 §4, decision "The app kit, point 5: plugins, files and export"): the kit's file storage, one `Files`
-// object per host (`self.get(Files, {})`), its files in the host's directory (`files/`) and its index (id, name, mime,
-// size, created) a watchable member kept in the store. Small files in one call (`put`), large ones in chunks (design
-// §23 "Chunked transfers": `begin`, `append` at the stored offset, `uploaded` to resume after a drop, `finish`;
-// unfinished uploads expire), reads by range, caps per host. Plugins never see a path.
+// Files (slice 13 §4; decision "Files v2"): the kit's file storage, one `Files` object per host (`self.get(Files, {})`),
+// its bytes in the host's `files/` and its index in the host's store (`files-index.ts`). Every file lives in a space
+// (`shared`, `artifacts`, `uploads`, …) at a path (`docs/report.md`); folders are index entries, and a move changes only
+// the index. Bytes never change: writing to a path adds a version (a new blob), `copy` shares a blob, and a blob goes
+// once no version references it. Small files in one call (`put`), large ones in chunks (design §23 "Chunked transfers":
+// `begin`, `append` at the stored offset, `uploaded` to resume after a drop, `finish`; unfinished uploads expire); a
+// `key` makes a write idempotent; reads by range; caps per host; a summary per space for an app's server index;
+// `FilesFolder` lists one folder live. Plugins never see a path on disk.
 
-import { mkdir, open, readdir, rm, writeFile } from "node:fs/promises";
+import { readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { arr, bytes, int, local, map, method, num, obj, str } from "../../contracts/index.ts";
+import type { Context } from "../../context/index.ts";
+import {
+	arr,
+	bool,
+	bytes,
+	int,
+	keyed,
+	lit,
+	local,
+	method,
+	nul,
+	obj,
+	opt,
+	type Schema,
+	str,
+	union,
+} from "../../contracts/index.ts";
 import { ChordError, type Principal } from "../../data/index.ts";
 import { invalid } from "../../data/internal.ts";
-import { defineState } from "../../documents/index.ts";
 import { type Ctx, defineFacet, type Facet } from "../../host/index.ts";
+import { Blobs } from "./blobs.ts";
+import {
+	checkPath,
+	checkSpace,
+	type FileInfo,
+	FileSchema,
+	FilesIndex,
+	type FileWrite,
+	FolderSchema,
+	MAX_PAGE,
+	MetaSchema,
+	SummarySchema,
+} from "./files-index.ts";
+import { type FolderListing, FolderViews } from "./folder-views.ts";
 import { newToken } from "./secrets.ts";
 import { Uploads } from "./uploads.ts";
 
-/** A file as the index lists it. */
-export type FileInfo = {
-	readonly id: string;
-	readonly name: string;
-	readonly mime: string;
-	readonly size: number;
-	readonly created: number;
-};
+export type { FileInfo, FileWrite, FolderEntry, FolderInfo, SpaceSummary } from "./files-index.ts";
+export type { FolderListing } from "./folder-views.ts";
 
 /** The caps of one host's files (bytes). */
 export type FilesCaps = {
 	/** The largest file: 256 MiB by default. */
 	readonly maxFile?: number;
-	/** All files together: 4 GiB by default. */
+	/** All blobs on disk together (a copy shares its blob), uploads under way included: 4 GiB by default. */
 	readonly maxTotal?: number;
 };
 
-/** One file's fields in the index. */
-const Entry = obj({ name: str(), mime: str(), size: int(), created: num() });
+/**
+ * A write's fields: where, its type, who wrote it (a string the writer sets), its producer's reference, key, `meta`, and
+ * an import's original time.
+ */
+const WRITE = {
+	space: str(),
+	path: str(),
+	mime: str(),
+	source: str(),
+	ref: opt(str({ min: 1 })),
+	key: opt(str({ min: 1 })),
+	meta: opt(MetaSchema),
+	/** For imports only: when the file was made where it comes from (ms since the epoch); the write's time otherwise. */
+	created: opt(int({ min: 0 })),
+};
 
-/** The host's files (one per host): the index, small and chunked writes, ranged reads, removal. */
+/** A page's arguments: a cursor of the page before, and how many (100 by default, at most 1,000). */
+const PAGE = { after: opt(str()), limit: opt(int({ min: 1, max: MAX_PAGE })) };
+
+/** A page of `item`s and the cursor of the next one. */
+const pageOf = <T>(item: Schema<T>) => obj({ items: arr(item), next: opt(str()) });
+
+/** A version or nothing. */
+const MAYBE_FILE = union([FileSchema, nul()]);
+
+/** One entry of a folder's listing. */
+const EntrySchema = union([
+	obj({ kind: lit("folder"), folder: FolderSchema }),
+	obj({ kind: lit("file"), file: FileSchema }),
+]);
+
+/** The host's files (one per host): writes, reads, the index's queries, folders, moves, copies, removal, summaries. */
 export const Files = local("chord.app.files", {
-	version: 1,
+	version: 2,
 	params: {},
 	members: {
-		list: arr(obj({ id: str(), name: str(), mime: str(), size: int(), created: num() })),
-		/** Stores a small file (at most 4 MiB) in one call; its id. */
-		put: method(obj({ name: str(), mime: str(), bytes: bytes() }), str()),
-		/** Starts a chunked upload; its upload id. `unavailable` (`busy`) while the host's cap of uploads are under way. */
-		begin: method(obj({ name: str(), mime: str() }), str()),
+		/** Each space's summary (counts, bytes, the newest versions): what an app mirrors to its server's index. */
+		summary: keyed(SummarySchema),
+		/**
+		 * Stores a small file (at most 4 MiB) in one call as a new version at `path`, one past the highest it ever had.
+		 * A `key` the space has already stores nothing and answers the version written with it.
+		 */
+		put: method(obj({ ...WRITE, bytes: bytes() }), FileSchema),
+		/**
+		 * Starts a chunked upload of what `finish` stores as `put` would: its upload id; with a `key` the space has, the
+		 * version written with it (`exists`), or the upload under way with it. `unavailable` (`busy`) while the host's cap
+		 * of uploads are under way.
+		 */
+		begin: method(
+			obj(WRITE),
+			union([obj({ kind: lit("upload"), upload: str() }), obj({ kind: lit("exists"), file: FileSchema })]),
+		),
 		/**
 		 * Appends a chunk (at most 4 MiB; about 1 MiB is the usual size) to upload `upload` at `offset`, which must be
 		 * the bytes stored so far (else `invalid`, its details `{ offset }` the stored one).
@@ -52,26 +117,57 @@ export const Files = local("chord.app.files", {
 		append: method(obj({ upload: str(), offset: int({ min: 0 }), bytes: bytes() })),
 		/** The bytes stored so far of upload `upload`: where a writer resumes after a drop. */
 		uploaded: method(str(), int()),
-		/** Ends upload `upload`: the file it made, its id. */
-		finish: method(str(), str()),
-		/** `length` bytes of file `id` from `offset` (fewer at its end). */
+		/** Ends upload `upload`: the version it made. */
+		finish: method(str(), FileSchema),
+		/** Drops upload `upload` and what it stored (an unknown one: nothing): its writer gave up. */
+		cancel: method(str()),
+		/** `length` bytes (at most 4 MiB) of version `id` from `offset` (fewer at its end). */
 		read: method(obj({ id: str(), offset: int({ min: 0 }), length: int({ min: 0 }) }), bytes()),
-		/** Removes file `id` (an unknown one: nothing). */
+		/** Version `id`, or `null`. */
+		file: method(str(), MAYBE_FILE),
+		/** Version `version` of the file at `path` (its newest without one), or `null`. */
+		get: method(obj({ space: str(), path: str(), version: opt(int({ min: 1 })) }), MAYBE_FILE),
+		/** The version written with `key` in `space`, or `null`. */
+		byKey: method(obj({ space: str(), key: str({ min: 1 }) }), MAYBE_FILE),
+		/** A page of the versions with `ref` in `space`, oldest first. */
+		byRef: method(obj({ space: str(), ref: str({ min: 1 }), ...PAGE }), pageOf(FileSchema)),
+		/** A page of the versions of the file at `path`, newest first. */
+		versions: method(obj({ space: str(), path: str(), ...PAGE }), pageOf(FileSchema)),
+		/** A page of folder `folder`'s entries (`""`: the space's root): its folders, then its files' newest versions. */
+		list: method(obj({ space: str(), folder: str(), ...PAGE }), pageOf(EntrySchema)),
+		/** Makes folder `path` and its missing parents (an existing one: itself); refused where a file is. */
+		mkdir: method(obj({ space: str(), path: str() }), FolderSchema),
+		/**
+		 * Moves (renames) the file or folder `from` to `to`, changing only the index; refused when `to` exists or lies
+		 * inside `from`.
+		 */
+		move: method(obj({ space: str(), from: str(), to: str() })),
+		/** Copies version `id` as a new version at `path` of `space`, sharing its blob (its metadata but its key). */
+		copy: method(obj({ id: str(), space: str(), path: str() }), FileSchema),
+		/** Removes version `id` (an unknown one: nothing); the next older version becomes the path's newest. */
 		remove: method(str()),
+		/** Removes the file at `path` (every version) or the folder at `path` with everything under it. */
+		removePath: method(obj({ space: str(), path: str() })),
+		/** Removes everything in space `space`. */
+		removeSpace: method(str()),
 	},
 });
 
-/** The index document. */
-const FilesIndex = defineState("chord.app.files", {
-	schema: obj({ files: map(Entry) }),
+/** One folder of the host's files, live: its first 500 entries (folders, then files) and whether more follow. */
+export const FilesFolder = local("chord.app.files.folder", {
 	version: 1,
-	initial: () => ({ files: {} }),
-	persist: true,
-	checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 50,
+	params: { space: str(), folder: str() },
+	members: { listing: obj({ entries: arr(EntrySchema), more: bool() }) },
 });
 
 /** The largest piece a call carries (a `put`, an `append`, a `read`): 4 MiB, well under a link's part limit. */
 const MAX_PIECE = 4 * 1024 * 1024;
+
+/** A page's size when the caller names none. */
+const PAGE_SIZE = 100;
+
+/** How many entries a `FilesFolder` shows. */
+const FOLDER_VIEW = 500;
 
 /** How long an upload may go unwritten before it expires: an hour. */
 const UPLOAD_IDLE_MS = 60 * 60_000;
@@ -80,107 +176,245 @@ const UPLOAD_IDLE_MS = 60 * 60_000;
 const SWEEP_MS = 60_000;
 
 /**
- * The kit's facet serving `Files` with the host's files directory `dir` (`<host dir>/files`), `caps` and at most
- * `uploads` uploads under way (64 by default). Uploads under way live in `dir/.uploads/<run>/` (`Uploads`) and end with
- * the object (an unfinished one is dropped when the next one goes live).
+ * The kit's facet serving `Files` and `FilesFolder` with the host's files directory `dir` (`<host dir>/files`),
+ * `caps` and at most `uploads` uploads under way (64 by default). Blobs live in `dir/blobs/`, uploads under way in
+ * `dir/.uploads/<run>/` (`Uploads`), ending with the object (an unfinished one is dropped when the next one goes live).
+ * For apps that host their own hosts; `startServer` and `startWorker` load it on theirs.
  */
 export function filesFacet<P extends Principal>(dir: string, caps: FilesCaps = {}, uploads = 64): Facet<P> {
 	const maxFile = caps.maxFile ?? 256 * 1024 * 1024;
 	const maxTotal = caps.maxTotal ?? 4 * 1024 * 1024 * 1024;
 	const uploadsDir = join(dir, ".uploads");
-	return defineFacet<P>((host) =>
+	const blobs = new Blobs(join(dir, "blobs"));
+	const views = new FolderViews();
+	return defineFacet<P>((host) => {
 		host.serve(Files, (_params, self) => {
-			const index = self.state(FilesIndex);
+			const index = new FilesIndex(self);
 			// This run's uploads in their own directory: an upload left by an earlier run (its process ended) can never
 			// finish and is dropped, while this run's may already have begun.
 			const run = join(uploadsDir, newToken(12));
-			const underway = new Uploads(run, uploads);
+			const underway = new Uploads<FileWrite>(run, uploads);
+			views.bind(async (space, folder, ctx) => {
+				const page = await index.list(space, folder, FOLDER_VIEW, undefined, ctx);
+				return { entries: page.items, more: page.next !== undefined };
+			});
+			// Changes take turns: a version number, a key and a blob's count are decided by the one change running.
+			let last: Promise<unknown> = Promise.resolve();
+			const turn = <R>(fn: () => Promise<R>): Promise<R> => {
+				const result = last.then(fn);
+				last = result.catch(() => {});
+				return result;
+			};
 			// Uploads under way count against the total too: two of them cannot pass it together.
 			const room = (adding: number, fileSize: number): void => {
 				if (fileSize > maxFile)
 					throw tooLarge(`a file of ${fileSize} bytes is larger than this host's cap (${maxFile})`);
-				const stored = Object.values(index.value.files).reduce((sum, file) => sum + file.size, 0);
-				if (stored + underway.size + adding > maxTotal) {
+				if (index.usage.value.bytes + underway.size + adding > maxTotal) {
 					throw tooLarge(`this host's files would exceed their cap (${maxTotal} bytes)`);
 				}
 			};
-			self.onLive((ctx) => sweep(uploadsDir, run, underway, ctx));
-			const fileOf = (id: string): FileInfo | undefined =>
-				// A trust boundary: `id` is the caller's (`Object.hasOwn`: no inherited member is a file).
-				Object.hasOwn(index.value.files, id) ? { id, ...index.value.files[id]! } : undefined;
+			// A new blob's version; the blob goes again when its index commit fails.
+			const store = async (write: FileWrite, blob: string, size: number, ctx: Ctx): Promise<FileInfo> => {
+				try {
+					const file = await index.add(newToken(12), write, { id: blob, size, fresh: true }, ctx);
+					await views.changed(write.space, ctx);
+					return file;
+				} catch (error) {
+					await blobs.remove([blob]);
+					throw error;
+				}
+			};
+			const known = async (write: FileWrite, ctx: Ctx): Promise<FileInfo | undefined> =>
+				write.key === undefined ? undefined : index.byKey(write.space, write.key, ctx);
+			self.onLive((ctx) =>
+				sweep(uploadsDir, run, underway, () => turn(() => blobs.sweep((id) => index.hasBlob(id, ctx))), ctx),
+			);
 			return {
-				list: self.derive([index], ([value]) =>
-					Object.entries(value.files).map(([id, { name, mime, size, created }]) => ({
-						id,
-						name,
-						mime,
-						size,
-						created,
-					})),
-				),
-				put: async ({ name, mime, bytes }, ctx) => {
+				summary: index.summary,
+				put: ({ bytes, ...write }, ctx) => {
+					checkWrite(write);
 					if (bytes.length > MAX_PIECE)
 						throw tooLarge(`put takes at most ${MAX_PIECE} bytes: use begin, append, finish`);
-					room(bytes.length, bytes.length);
-					const id = newToken(12);
-					await mkdir(dir, { recursive: true, mode: 0o700 });
-					await writeFile(join(dir, id), bytes, { mode: 0o600 });
-					await index.change((draft) => {
-						draft.files[id] = { name, mime, size: bytes.length, created: Date.now() };
-					}, ctx);
-					return id;
+					return turn(async () => {
+						const existing = await known(write, ctx);
+						if (existing !== undefined) return existing;
+						room(bytes.length, bytes.length);
+						const blob = newToken(12);
+						await blobs.write(blob, bytes, join(run, `put-${blob}`)).catch(async (error: unknown) => {
+							await rm(join(run, `put-${blob}`), { force: true });
+							throw error;
+						});
+						return store(write, blob, bytes.length, ctx);
+					});
 				},
-				begin: ({ name, mime }) => underway.begin(name, mime),
+				begin: (write, ctx) => {
+					checkWrite(write);
+					return turn(async () => {
+						const existing = await known(write, ctx);
+						if (existing !== undefined) return { kind: "exists" as const, file: existing };
+						const resumed = underway.find(
+							(data) => data.space === write.space && data.key !== undefined && data.key === write.key,
+						);
+						if (resumed !== undefined) return { kind: "upload" as const, upload: resumed };
+						if ((await index.exists(write.space, write.path, ctx)) === "folder")
+							throw invalid("args", `files: ${write.space}:${write.path} is a folder`, { conflict: write.path });
+						return { kind: "upload" as const, upload: await underway.begin(write) };
+					});
+				},
 				append: async ({ upload, offset, bytes }) => {
 					if (bytes.length > MAX_PIECE) throw tooLarge(`append takes at most ${MAX_PIECE} bytes`);
 					await underway.append(upload, offset, bytes, room);
 					return null;
 				},
 				uploaded: (upload) => underway.uploaded(upload),
-				finish: async (upload, ctx) => {
-					const id = newToken(12);
-					await mkdir(dir, { recursive: true, mode: 0o700 });
-					const { name, mime, size } = await underway.finish(upload, join(dir, id));
-					await index.change((draft) => {
-						draft.files[id] = { name, mime, size, created: Date.now() };
-					}, ctx);
-					return id;
-				},
-				read: async ({ id, offset, length }) => {
-					const file = fileOf(id);
-					if (file === undefined) throw invalid("args", `files: no file ${id}`);
-					if (length > MAX_PIECE) throw tooLarge(`read takes at most ${MAX_PIECE} bytes`);
-					const handle = await open(join(dir, id), "r");
-					try {
-						const buffer = new Uint8Array(Math.max(0, Math.min(length, file.size - offset)));
-						const { bytesRead } = await handle.read(buffer, 0, buffer.length, offset);
-						return buffer.subarray(0, bytesRead);
-					} finally {
-						await handle.close();
-					}
-				},
-				remove: async (id, ctx) => {
-					if (fileOf(id) === undefined) return null;
-					await index.change((draft) => {
-						delete draft.files[id];
-					}, ctx);
-					await rm(join(dir, id), { force: true });
+				finish: (upload, ctx) =>
+					turn(async () => {
+						const blob = newToken(12);
+						await blobs.prepare();
+						const { data, size } = await underway.finish(upload, blobs.path(blob));
+						const existing = await known(data, ctx);
+						if (existing === undefined) return store(data, blob, size, ctx);
+						await blobs.remove([blob]);
+						return existing;
+					}),
+				cancel: async (upload) => {
+					await underway.cancel(upload);
 					return null;
 				},
+				read: async ({ id, offset, length }, ctx) => {
+					if (length > MAX_PIECE) throw tooLarge(`read takes at most ${MAX_PIECE} bytes`);
+					const found = await index.blobOf(id, ctx);
+					if (found === undefined) throw invalid("args", `files: no file ${id}`);
+					return blobs.read(found.blob, found.size, offset, length);
+				},
+				file: async (id, ctx) => (await index.file(id, ctx)) ?? null,
+				get: async ({ space, path, version }, ctx) => {
+					checkSpace(space);
+					checkPath(path, "file");
+					return (await index.get(space, path, version, ctx)) ?? null;
+				},
+				byKey: async ({ space, key }, ctx) => {
+					checkSpace(space);
+					return (await index.byKey(space, key, ctx)) ?? null;
+				},
+				byRef: ({ space, ref, after, limit }, ctx) => {
+					checkSpace(space);
+					return index.byRef(space, ref, limit ?? PAGE_SIZE, after, ctx);
+				},
+				versions: ({ space, path, after, limit }, ctx) => {
+					checkSpace(space);
+					checkPath(path, "file");
+					return index.versions(space, path, limit ?? PAGE_SIZE, after, ctx);
+				},
+				list: ({ space, folder, after, limit }, ctx) => {
+					checkSpace(space);
+					checkPath(folder, "folder");
+					return index.list(space, folder, limit ?? PAGE_SIZE, after, ctx);
+				},
+				mkdir: ({ space, path }, ctx) => {
+					checkSpace(space);
+					checkPath(path, "file");
+					return turn(async () => {
+						const folder = await index.mkdir(space, path, ctx);
+						await views.changed(space, ctx);
+						return folder;
+					});
+				},
+				move: ({ space, from, to }, ctx) => {
+					checkSpace(space);
+					checkPath(from, "file");
+					checkPath(to, "file");
+					return turn(async () => {
+						await index.move(space, from, to, ctx);
+						await views.changed(space, ctx);
+						return null;
+					});
+				},
+				copy: ({ id, space, path }, ctx) => {
+					checkSpace(space);
+					checkPath(path, "file");
+					return turn(async () => {
+						const [file, found] = [await index.file(id, ctx), await index.blobOf(id, ctx)];
+						if (file === undefined || found === undefined) throw invalid("args", `files: no file ${id}`);
+						const { mime, source, ref, meta } = file;
+						const write = {
+							space,
+							path,
+							mime,
+							source,
+							...(ref === undefined ? {} : { ref }),
+							...(meta === undefined ? {} : { meta }),
+						};
+						const copied = await index.add(
+							newToken(12),
+							write,
+							{ id: found.blob, size: found.size, fresh: false },
+							ctx,
+						);
+						await views.changed(space, ctx);
+						return copied;
+					});
+				},
+				remove: (id, ctx) =>
+					turn(async () => {
+						const removed = await index.remove(id, ctx);
+						if (removed === undefined) return null;
+						await blobs.remove(removed.gone);
+						await views.changed(removed.space, ctx);
+						return null;
+					}),
+				removePath: ({ space, path }, ctx) => {
+					checkSpace(space);
+					checkPath(path, "file");
+					return turn(async () => {
+						await blobs.remove(await index.removePath(space, path, ctx));
+						await views.changed(space, ctx);
+						return null;
+					});
+				},
+				removeSpace: (space, ctx) => {
+					checkSpace(space);
+					return turn(async () => {
+						await blobs.remove(await index.removeSpace(space, ctx));
+						await views.changed(space, ctx);
+						return null;
+					});
+				},
 			};
-		}),
-	);
+		});
+		host.serve(FilesFolder, ({ space, folder }, self) => {
+			checkSpace(space);
+			checkPath(folder, "folder");
+			// Its listing is read through the host's `Files`, which must be live first.
+			self.get(Files, {});
+			return { listing: self.follow<FolderListing>((observer, ctx) => views.attach(space, folder, observer, ctx)) };
+		});
+	});
+}
+
+/** Refuses a write's space or path outside the rules (a trust boundary: the caller's). */
+function checkWrite(write: FileWrite): void {
+	checkSpace(write.space);
+	checkPath(write.path, "file");
 }
 
 /**
  * The files object's routine once live: drops the uploads earlier runs left (every directory under `uploadsDir` but
- * `run`), then every minute the uploads unwritten for an hour; when the object ends, every upload still under way.
+ * `run`) and the blobs no commit took (`sweepBlobs`), then every minute the uploads unwritten for an hour; when the
+ * object ends, every upload still under way.
  */
-async function sweep(uploadsDir: string, run: string, uploads: Uploads, ctx: Ctx): Promise<void> {
+async function sweep(
+	uploadsDir: string,
+	run: string,
+	uploads: Uploads<FileWrite>,
+	sweepBlobs: () => Promise<void>,
+	ctx: Context,
+): Promise<void> {
 	for (const entry of await readdir(uploadsDir).catch(() => [])) {
 		if (join(uploadsDir, entry) !== run) await rm(join(uploadsDir, entry), { recursive: true, force: true });
 	}
 	try {
+		await sweepBlobs();
 		for (;;) {
 			await sleep(SWEEP_MS, undefined, { signal: ctx.abortSignal });
 			await uploads.expire(UPLOAD_IDLE_MS);

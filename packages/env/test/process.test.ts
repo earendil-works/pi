@@ -176,6 +176,40 @@ describe("input and output", () => {
 		expect(output.every((byte) => byte === 120)).toBe(true);
 	}, 30_000);
 
+	it("delivers output left in the pipe when the program exits while the link is backed up", async () => {
+		const { connection, cwd } = connect();
+		const stdout = collector();
+		// On input, after a pause, writes more than one pipe read and exits: the daemon reads the first part, waits for
+		// the link, and the rest is still in the pipe when the program has exited.
+		const program = await openProcess(connection, {
+			cwd,
+			argv: node(
+				`process.stdin.once("data", () => { process.stdin.destroy(); setTimeout(() => process.stdout.write(Buffer.alloc(96 * 1024, 120)), 300); })`,
+			),
+			onStdout: stdout.onData,
+		});
+		program.write("go");
+		// A second program floods the link while this client stalls for longer than the grace after exit, so the unsent
+		// output stays above the daemon's limit while the first program writes and exits.
+		let stalled = false;
+		const flood = await openProcess(connection, {
+			cwd,
+			argv: node(
+				"const chunk = Buffer.alloc(1024 * 1024); const more = () => process.stdout.write(chunk, more); more();",
+			),
+			onStdout: () => {
+				if (stalled) return;
+				stalled = true;
+				Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1500);
+			},
+		});
+		expect(await program.exited).toBe(0);
+		flood.close();
+		await flood.exited.catch(() => {});
+		expect(stalled).toBe(true);
+		expect(stdout.bytes().length).toBe(96 * 1024);
+	}, 30_000);
+
 	it("refuses input after stdin was closed while the program keeps running", async () => {
 		const { connection, cwd } = connect();
 		const started = Promise.withResolvers<void>();

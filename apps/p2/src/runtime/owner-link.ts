@@ -1,4 +1,34 @@
-// Owner links (`/owner#<token>`) and the origins they are for: checked by the owner-link CLI and the TUI launcher.
+// Owner links (`/owner#<token>`) and the origins they are for: minted by the owner-link CLI and the server's startup
+// line, checked by the TUI launcher.
+import { localOwnerSignIn } from "./local-owner.ts";
+
+/**
+ * A fresh one-time owner link for `base`, minted by the local owner of the p2 at loopback `server` (signed in with the
+ * key of `dataDir`). The link is a credential: print it to the invoking user only.
+ */
+export async function mintOwnerLink(server: URL, dataDir: string, base: URL): Promise<URL> {
+	const signIn = await localOwnerSignIn(server, dataDir);
+	if (signIn.kind === "unavailable") throw new Error(signIn.message);
+	const response = await fetch(new URL("/owner-token", server), {
+		headers: { Cookie: signIn.cookie },
+		redirect: "error",
+		signal: AbortSignal.timeout(10_000),
+	});
+	if (!response.ok) throw new Error(`Cannot mint an owner link (${response.status})`);
+	const value: unknown = await response.json();
+	if (
+		!value ||
+		typeof value !== "object" ||
+		!("token" in value) ||
+		typeof value.token !== "string" ||
+		!/^[a-f0-9]{64}$/.test(value.token)
+	)
+		throw new Error("Invalid owner-token response");
+	const link = new URL("/owner", base);
+	link.hash = value.token;
+	return link;
+}
+
 /** Shared by the shell CLI and TUI; never allow credentials or an invitation in a path/query. */
 export function ownerOrigin(value: string): URL {
 	let url: URL;

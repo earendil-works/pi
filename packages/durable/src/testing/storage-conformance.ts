@@ -168,7 +168,9 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 					context,
 				);
 				expect(refused.stored).toBe(0);
-				expect(String(refused.refused)).toBe(`Error: ID ${rootId} already belongs to conversation`);
+				expect(refused.kind === "refused" && String(refused.refused)).toBe(
+					`Error: ID ${rootId} already belongs to conversation`,
+				);
 				expect(events).toEqual([]);
 
 				const next = await commitWrites(
@@ -773,6 +775,49 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 			await commitWrites(storage, [{ type: "task", value: running }], context);
 			expect(await scan("sleeping")).toEqual([]);
 			expect(await scan("running")).toEqual([running]);
+		}),
+
+		createCase(options, "round-trips sleeps on signals, any waits, and wakes", async (storage) => {
+			const rootId = await createRoot(storage);
+			const ids = [] as TaskId<JsonValue>[];
+			for (let index = 0; index < 5; index++) ids.push(await storage.mintId<TaskId<JsonValue>>());
+			const signals = [{ signal: "app.answer", key: "a" }];
+			const memos = { "pi.signal.app.answer/a": { version: 1, value: { text: "yes" } } };
+			const tasks: StoredTask[] = [
+				// A sleep without `until`, waiting only for a signal.
+				{ ...pendingTask(ids[0]!, rootId), state: { status: "sleeping", checkpoint: { phase: "next" }, signals } },
+				{
+					...pendingTask(ids[1]!, rootId),
+					state: { status: "sleeping", checkpoint: { phase: "next" }, until: 61_000, signals },
+					memos,
+				},
+				{
+					...pendingTask(ids[2]!, rootId),
+					state: { status: "waiting", checkpoint: { phase: "next" }, on: [ids[0]!, ids[1]!], policy: "any" },
+				},
+				{
+					...pendingTask(ids[3]!, rootId),
+					state: { status: "pending", checkpoint: { phase: "next" }, wake: { reason: "tasks", ended: [ids[0]!] } },
+				},
+				{
+					...pendingTask(ids[4]!, rootId),
+					state: {
+						status: "running",
+						checkpoint: { phase: "next" },
+						wake: { reason: "signal", signal: "app.answer", key: "a" },
+					},
+				},
+			];
+			await commitWrites(
+				storage,
+				tasks.map((value) => ({ type: "task", value }) as const),
+				context,
+			);
+			for (const task of tasks) expect(await storage.task(task.id, context)).toEqual(task);
+			const scan = async (status: StoredTask["state"]["status"]) =>
+				(await storage.scanTasks({ status }, 10, undefined, context)).items;
+			expect(await scan("sleeping")).toEqual([tasks[0], tasks[1]]);
+			expect(await scan("waiting")).toEqual([tasks[2]]);
 		}),
 
 		createCase(
@@ -1913,7 +1958,7 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 					},
 					context,
 				);
-				expect(result).toEqual({ stored: 3 });
+				expect(result).toEqual({ kind: "stored", stored: 3 });
 				expect(receipts.map(([index]) => index)).toEqual([0, 1, 2]);
 				const [[, first], [, second], [, last]] = receipts as [[number, Seq], [number, Seq], [number, Seq]];
 				expect(second).toBeGreaterThan(first);
@@ -1949,7 +1994,9 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 				context,
 			);
 			expect(result.stored).toBe(1);
-			expect(String(result.refused)).toBe(`Error: ID ${firstId} already belongs to entry`);
+			expect(result.kind === "refused" && String(result.refused)).toBe(
+				`Error: ID ${firstId} already belongs to entry`,
+			);
 			expect(receipts).toEqual([0]);
 			expect(await storage.entry(firstId, context)).toBeDefined();
 			expect(await storage.entry(afterId, context)).toBeUndefined();
@@ -1962,7 +2009,9 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 				context,
 			);
 			expect(refused.stored).toBe(0);
-			expect(String(refused.refused)).toBe(`Error: ID ${rootId} already belongs to conversation`);
+			expect(refused.kind === "refused" && String(refused.refused)).toBe(
+				`Error: ID ${rootId} already belongs to conversation`,
+			);
 			expect(receipts).toEqual([0]);
 			await commitWrites(storage, [{ type: "entry", value: entry(afterId, rootId) }], context);
 			expect(await storage.entry(afterId, context)).toBeDefined();
@@ -2004,7 +2053,7 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 					context,
 				);
 				expect(result.stored).toBe(1);
-				expect(result.refused).toBeDefined();
+				expect(result.kind).toBe("refused");
 				expect(receipts).toEqual([0]);
 				expect(await storage.entry(firstId, context)).toBeDefined();
 				expect(await storage.entry(secondId, context)).toBeUndefined();
@@ -2054,7 +2103,7 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 				(_index, seq) => seqs.push(seq),
 				context,
 			);
-			expect(result).toEqual({ stored: 3 });
+			expect(result).toEqual({ kind: "stored", stored: 3 });
 			expect((await storage.document(copyId, "current", context))?.value).toEqual({ count: 2 });
 			expect((await storage.document(sourceId, seqs[0]!, context))?.value).toEqual({ count: 1 });
 
@@ -2081,7 +2130,7 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 				context,
 			);
 			expect(refused.stored).toBe(0);
-			expect(refused.refused).toBeDefined();
+			expect(refused.kind).toBe("refused");
 			expect(await storage.conversation(laterId, context)).toBeUndefined();
 			expect((await storage.document(sourceId, "current", context))?.value).toEqual({ count: 2 });
 		}),

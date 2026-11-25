@@ -20,7 +20,7 @@ function model(): ClassifierModel<"llama-cpp-classify"> {
 		name: "qwen",
 		api: "llama-cpp-classify",
 		provider: "llama.cpp",
-		baseUrl: `http://llama-${serverCount}.test:8080/v1`,
+		baseUrl: `http://llama-${serverCount}.test:9931/v1`,
 		input: ["text"],
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow: 32768,
@@ -349,6 +349,30 @@ describe("llama.cpp classifier", () => {
 		expect(server.requests.find((request) => request.url.endsWith("/completion"))?.body.id_slot).toBe(1);
 	});
 
+	// #12376
+	it("reports each failed completion attempt to onResponse", async () => {
+		const server = fakeServer();
+		const statuses: number[] = [];
+		const fetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+			if (String(input).endsWith("/completion")) {
+				return new Response("busy", { status: 503, headers: { "retry-after-ms": "0" } });
+			}
+			return server.fetch(input, init);
+		};
+
+		const result = await classify(model(), context, {
+			maxRetries: 1,
+			fetch,
+			onResponse: (response) => {
+				statuses.push(response.status);
+			},
+		});
+
+		expect(result.stopReason).toBe("error");
+		// Tokenize and template requests stay unobserved, like their payloads.
+		expect(statuses).toEqual([503, 503]);
+	});
+
 	it("reports server errors and cancellation", async () => {
 		const failing = await classify(model(), context, {
 			maxRetries: 0,
@@ -379,9 +403,9 @@ describe("llama.cpp classifier", () => {
 	});
 
 	it("derives the server root from OpenAI-compatible base URLs", () => {
-		expect(llamaServerRoot("http://127.0.0.1:8080/v1/")).toBe("http://127.0.0.1:8080");
+		expect(llamaServerRoot("http://127.0.0.1:9931/v1/")).toBe("http://127.0.0.1:9931");
 		expect(llamaServerRoot("https://example.com/prefix/v1")).toBe("https://example.com/prefix");
-		expect(llamaServerRoot("http://127.0.0.1:8080")).toBe("http://127.0.0.1:8080");
+		expect(llamaServerRoot("http://127.0.0.1:9931")).toBe("http://127.0.0.1:9931");
 	});
 
 	it("computes TypeSafe's confidence and expected scores", () => {

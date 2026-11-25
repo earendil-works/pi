@@ -14,7 +14,19 @@ import { SessionStatus } from "../../plugins/status/contract.ts";
 import type { Host } from "../../src/runtime/chord.ts";
 import type { DevCommand, DevStatus } from "../../src/runtime/dev-protocol.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { clientHost, holdIn, http, poll, until, webBundle } from "./helpers.ts";
+import { clientHost, holdIn, http, type LocalOwner, localOwner, poll, until, webAssets } from "./helpers.ts";
+
+/** Local owner sessions of a dev server by port (each restart listens on a new one), signed in on first use. */
+function localOwners(dataDir: string): (port: number) => Promise<LocalOwner> {
+	const owners = new Map<number, Promise<LocalOwner>>();
+	return (port) => {
+		const known = owners.get(port);
+		if (known) return known;
+		const owner = localOwner({ port, dataDir });
+		owners.set(port, owner);
+		return owner;
+	};
+}
 
 /** A test plugin's probe on session workers (`name`) and its twin on the server (`name-server`): one type, one place. */
 function probes(name: string) {
@@ -50,6 +62,17 @@ import { Probe, ServerProbe } from "./contract.ts";
 import { label } from "./nested/label.ts";
 const probe = () => ({ variant: "reader" as const, members: { label: async () => label, pid: async () => process.pid } });
 export default defineFacet((host) => host.serve(${kind === "server" ? "ServerProbe" : "Probe"}, probe));`;
+}
+
+/**
+ * Asserts that `path` has no route (its plugin's was removed): it answers as a path nobody registered, which a request
+ * without credentials gets as the sign-in page (401), never revealing which paths exist.
+ */
+async function unregistered(port: number, path: string): Promise<void> {
+	const gone = await http(port, path);
+	const never = await http(port, "/__dev_never_registered");
+	assert.deepEqual([gone.status, never.status], [401, 401], `${path}: registration was removed`);
+	for (const answer of [gone, never]) assert.match(answer.body, /<title>Pi · Sign in<\/title>/);
 }
 
 /** A probe facet of `kind` whose eager object serves a route (server) and records its close in `directory`. */
@@ -154,13 +177,20 @@ test(
 		try {
 			await poll(() => ports().length === 1, 30_000, "initial server");
 			const port = ports()[0]!;
-			const devState = async () => JSON.parse((await http(ports().at(-1)!, "/__p2_dev")).body) as DevStatus;
-			const button = (command: DevCommand) =>
-				http(ports().at(-1)!, "/__p2_dev", {
+			const ownerOf = localOwners(join(directory, "data"));
+			const local = async (at: number) => ({ Cookie: (await ownerOf(at)).cookie });
+			const devState = async () => {
+				const at = ports().at(-1)!;
+				return JSON.parse((await http(at, "/__p2_dev", { headers: await local(at) })).body) as DevStatus;
+			};
+			const button = async (command: DevCommand) => {
+				const at = ports().at(-1)!;
+				return http(at, "/__p2_dev", {
 					method: "POST",
-					headers: { Origin: `http://127.0.0.1:${ports().at(-1)!}`, "Content-Type": "application/json" },
+					headers: { ...(await local(at)), Origin: `http://127.0.0.1:${at}`, "Content-Type": "application/json" },
 					body: JSON.stringify(command),
 				});
+			};
 			const cli = (args: string[] = []): Promise<{ code: number; output: string }> =>
 				new Promise((resolve, reject) => {
 					const command = spawn("npm", ["run", "reload", "--", ...args], {
@@ -190,7 +220,7 @@ test(
 			await poll(async () => (await devState()).restartFiles.includes("src/runtime/principals.ts"));
 			await writeFile(loadedRuntime, loadedContent);
 			await poll(async () => !(await devState()).restartNeeded);
-			browser = clientHost(port);
+			browser = clientHost(await ownerOf(port));
 			const sessions = await holdIn(browser, Sessions, {}, "owner");
 			const first = await sessions.create({ cwd: directory }, BACKGROUND_CONTEXT);
 			const second = await sessions.create({ cwd: directory }, BACKGROUND_CONTEXT);
@@ -273,8 +303,8 @@ test(
 			assert.deepEqual((await devState()).dirty, []);
 			assert.equal(await workerProbe.label(BACKGROUND_CONTEXT), "after-refusal");
 			assert.equal(await serverProbe.label(BACKGROUND_CONTEXT), "after-refusal");
-			// A broken web facet refuses the whole reload too: no backend change commits and the old bundle stays served.
-			const servedBundle = await webBundle(port);
+			// A broken web facet refuses the whole reload too: no backend change commits and the pages' code stays.
+			const servedAssets = await webAssets(port, await local(port));
 			await writeFile(join(probeDirectory, "nested/label.ts"), 'export const label = "after-web-refusal";');
 			await writeFile(join(probeDirectory, "web.tsx"), `${webFacet}\nthis is broken TypeScript !!!`);
 			await poll(async () => (await devState()).dirty.includes("dev-probe"));
@@ -283,15 +313,17 @@ test(
 			assert.match(webRefusal.output, /Reload refused/);
 			assert.equal(await serverProbe.label(BACKGROUND_CONTEXT), "after-refusal");
 			assert.equal(await workerProbe.label(BACKGROUND_CONTEXT), "after-refusal");
-			assert.deepEqual(await webBundle(port), servedBundle);
-			assert.equal((await http(port, servedBundle.script)).status, 200);
+			assert.deepEqual(await webAssets(port, await local(port)), servedAssets);
+			assert.equal((await http(port, servedAssets.plugins, { headers: await local(port) })).status, 200);
 			await writeFile(join(probeDirectory, "nested/label.ts"), 'export const label = "after-refusal";');
 			await writeFile(join(probeDirectory, "web.tsx"), webFacet);
 			assert.equal((await cli(["dev-probe"])).code, 0);
 			assert.equal(ports().length, 1, "plugin saves never recycle the server");
 
 			// A remote owner (proxy + cookie).
-			const invitation = JSON.parse((await http(port, "/owner-token")).body) as { token: string };
+			const invitation = JSON.parse((await http(port, "/owner-token", { headers: await local(port) })).body) as {
+				token: string;
+			};
 			const associated = await http(port, "/owner/claim", {
 				method: "POST",
 				headers: {
@@ -305,10 +337,16 @@ test(
 			assert.equal(associated.status, 200);
 			const cookie = String(associated.headers["set-cookie"]).split(";")[0]!;
 			const headers = { Host: "dev.p2.test", "X-P2-Proxy-Secret": "1", Cookie: cookie };
-			const original = (await webBundle(port, headers)).script;
+			const original = (await webAssets(port, headers)).plugins;
 			assert.equal((await http(port, "/__p2_dev", { headers: { Host: "dev.p2.test" } })).status, 403);
 			assert.equal(
-				(await http(port, "/__p2_dev", { method: "POST", body: JSON.stringify({ action: "reload" }) })).status,
+				(
+					await http(port, "/__p2_dev", {
+						method: "POST",
+						headers: await local(port),
+						body: JSON.stringify({ action: "reload" }),
+					})
+				).status,
 				403,
 				"Button API requires same-origin POST",
 			);
@@ -330,38 +368,35 @@ test(
 			await poll(async () => (await devState()).restartFiles.includes("src/web/style.css"));
 			await writeFile(style, styleContent);
 			await poll(async () => !(await devState()).restartNeeded);
-			// A plugin's web edit marks it dirty; its reload makes a new bundle current, retains old files for in-flight
-			// pages, and an open page polls the manifest and reloads onto the new one.
+			// A plugin's web edit marks it dirty; its reload publishes the plugin's new script (the old files stay served
+			// for pages loading them), and an open page applies it in place: no reload.
 			if (browserTests) {
 				page = await Browser.start();
-				await page.open(`http://127.0.0.1:${port}/`);
+				await page.signIn(await ownerOf(port));
+				await page.open(`http://127.0.0.1:${port}/new`);
 				await page.wait(`document.querySelector('.composer textarea') && !document.querySelector('.offline')`);
 				await page.evaluate(`window.beforeReload = true`);
 			}
 			await appendFile(join(probeDirectory, "web.tsx"), "\nconsole.log('web edit');\n");
 			await poll(async () => (await devState()).dirty.includes("dev-probe"));
-			assert.equal((await webBundle(port, headers)).script, original, "Saving does not rebuild");
+			assert.equal((await webAssets(port, headers)).plugins, original, "Saving does not rebuild");
 			assert.equal((await button({ action: "reload" })).status, 200);
-			const updated = (await webBundle(port, headers)).script;
-			assert.notEqual(updated, original);
+			const updated = await webAssets(port, headers);
+			assert.notEqual(updated.plugins, original);
 			assert.equal((await http(port, original, { headers })).status, 200);
 			await page?.wait(
-				`window.beforeReload === undefined && document.querySelector('script[type=module]')?.getAttribute('src') === ${JSON.stringify(updated)}`,
+				`performance.getEntriesByType('resource').some((entry) => entry.name.includes('/_chord/web/plugin/dev-probe.')) && window.beforeReload === true`,
 			);
 
-			// CSS is a separate output: its edit keeps the script name but changes the complete manifest version, which
-			// must still reload an open page.
-			const beforeCss = await webBundle(port, headers);
-			await page?.evaluate(`window.beforeCssReload = true`);
+			// CSS is the plugin's own stylesheet: its edit applies in the open page too, without a reload, the base kept.
 			await writeFile(join(probeDirectory, "style.css"), ":root { --dev-probe: 2; }");
 			await poll(async () => (await devState()).dirty.includes("dev-probe"));
 			assert.equal((await button({ action: "reload" })).status, 200);
-			const afterCss = await webBundle(port, headers);
-			assert.notEqual(afterCss.version, beforeCss.version);
-			assert.equal(afterCss.script, beforeCss.script);
-			assert.notEqual(afterCss.style, beforeCss.style);
+			const afterCss = await webAssets(port, headers);
+			assert.equal(afterCss.base, updated.base);
+			assert.notDeepEqual(afterCss.styles, updated.styles);
 			await page?.wait(
-				`window.beforeCssReload === undefined && document.documentElement.dataset.webVersion === ${JSON.stringify(afterCss.version)}`,
+				`getComputedStyle(document.documentElement).getPropertyValue('--dev-probe').trim() === '2' && window.beforeReload === true`,
 			);
 			await page?.close();
 			page = undefined;
@@ -392,7 +427,7 @@ test(
 			const removedRefs = [removedServer, removedWorker, removedUnseen];
 			await poll(() => removedRefs.every((ref) => statusOf(ref) === "failed"));
 			for (const ref of removedRefs) ref.release();
-			assert.equal((await http(port, "/__dev_removable")).status, 404, "registration was removed");
+			await unregistered(port, "/__dev_removable");
 			for (const pid of [serverPid, removedPid, secondPid])
 				await poll(
 					async () =>
@@ -467,12 +502,12 @@ test(
 			await poll(() => statusOf(addedServer) === "failed" && statusOf(addedWorker) === "failed");
 			addedServer.release();
 			addedWorker.release();
-			assert.equal((await http(port, "/__dev_added")).status, 404);
+			await unregistered(port, "/__dev_added");
 			assert.equal(ports().length, 1, "add/remove never restarts the backend");
 			assert(!log.includes("Unknown p2 plugin: dev-removable"));
 			await chat.send({ text: "slow restart-stream-sentinel", requestId: "restart-stream" }, BACKGROUND_CONTEXT);
 			await until(status.statuses, (value) => value?.[first.id]?.busy.includes(1) === true);
-			await appendFile(join(project, "src/runtime/loopback-cookie.ts"), "\n// restart runtime\n");
+			await appendFile(join(project, "src/runtime/local-owner.ts"), "\n// restart runtime\n");
 			await poll(async () => (await devState()).restartNeeded);
 			await delay(700);
 			assert.equal(ports().length, 1, "Runtime saves never restart automatically");
@@ -484,7 +519,7 @@ test(
 			await poll(async () => (await devState()).message === "Restarted server");
 			assert.equal((await devState()).restartNeeded, false, JSON.stringify((await devState()).restartFiles));
 			await browser.close(BACKGROUND_CONTEXT);
-			browser = clientHost(ports()[1]!);
+			browser = clientHost(await ownerOf(ports()[1]!));
 			const restored = await holdIn(browser, SessionStatus, {}, "reader");
 			// Check running state before making any worker hold: this must not spawn the unseen session on demand.
 			await until(restored.statuses, (value) => Boolean(value?.[first.id]?.running && value?.[second.id]?.running));
@@ -515,16 +550,17 @@ test(
 			await poll(async () => (await devState()).restartNeeded);
 			await delay(500);
 			assert.equal(ports().length, 2);
-			// The button starts the same supervised path; the old HTTP connection closes during shutdown.
-			const fromButton = button({ action: "restart" }).catch(() => undefined);
+			// The button starts the same supervised path; the server answers before the shutdown cancels the request.
+			const fromButton = await button({ action: "restart" });
+			assert.equal(fromButton.status, 202, fromButton.body);
+			assert.deepEqual(JSON.parse(fromButton.body), { ok: true, message: "Restarting server" });
 			await poll(() => ports().length === 3, 30_000);
-			await fromButton;
 			await poll(async () => (await devState()).message === "Restarted server");
 			child.kill("SIGUSR2");
 			await poll(() => ports().length === 4, 30_000);
 			await poll(async () => (await devState()).message === "Restarted server");
 			// Startup refusal reaches the CLI through the supervisor's socket, which survives a failed child.
-			const runtimeFile = join(project, "src/runtime/loopback-cookie.ts");
+			const runtimeFile = join(project, "src/runtime/local-owner.ts");
 			const validRuntime = await readFile(runtimeFile, "utf8");
 			await writeFile(runtimeFile, `${validRuntime}\nthis is broken runtime code !!!\n`);
 			await poll(async () => (await devState()).restartNeeded);
@@ -616,7 +652,8 @@ test("a forced dev restart reaps locked workers before resuming their stores", {
 	let oldWorkerPid: number | undefined;
 	try {
 		await poll(() => ports().length === 1, 30_000, "initial server");
-		browser = clientHost(ports()[0]!);
+		const ownerOf = localOwners(dataDir);
+		browser = clientHost(await ownerOf(ports()[0]!));
 		const sessions = await holdIn(browser, Sessions, {}, "owner");
 		const session = await sessions.create({ cwd: directory }, BACKGROUND_CONTEXT);
 		const probe = browser.hold(Probe, { session: session.id }, BACKGROUND_CONTEXT);
@@ -649,7 +686,7 @@ test("a forced dev restart reaps locked workers before resuming their stores", {
 		child.kill("SIGUSR2");
 		await poll(() => ports().length === 2, 30_000, "replacement server");
 		await browser.close(BACKGROUND_CONTEXT);
-		browser = clientHost(ports()[1]!);
+		browser = clientHost(await ownerOf(ports()[1]!));
 		const replacement = browser.hold(Probe, { session: session.id }, BACKGROUND_CONTEXT);
 		assert.notEqual(await replacement.pid(BACKGROUND_CONTEXT), oldPid);
 		await poll(

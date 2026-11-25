@@ -6,19 +6,21 @@
 import { BACKGROUND_CONTEXT } from "../../context/index.ts";
 import { type Address, method, obj, remote, str } from "../../contracts/index.ts";
 import { forbidden, type Principal } from "../../data/index.ts";
-import { canonicalJson } from "../../data/principal.ts";
+import { samePrincipal } from "../../data/principal.ts";
 import { defineFacet, type Facet } from "../../host/index.ts";
-import type { JsonValue } from "../../json.ts";
 import type { Store } from "../../store/index.ts";
 import { type ArchiveManifest, packStore } from "./archive.ts";
 
-/** The data of the worker at `address` (its JSON, as `addressParam` writes it): `exportTo` packs it at `path`. */
+/**
+ * The data of the worker at `address` (its JSON, as `addressParam` writes it): `exportTo` packs it at `path`, with the
+ * server's part (its records and rows belonging to the address) from the JSONL file `server`.
+ */
 export const HostData = remote("chord.app.data", {
 	version: 1,
 	params: { address: str() },
 	// The address a worker has: the server names it (`addressParam`); only its kind and params place the object.
 	hostAddress: ({ address }) => JSON.parse(address) as Address,
-	variants: { main: { methods: { exportTo: method(obj({ path: str(), manifest: str() })) } } },
+	variants: { main: { methods: { exportTo: method(obj({ path: str(), manifest: str(), server: str() })) } } },
 });
 
 /** `address` as `HostData`'s param. */
@@ -31,18 +33,17 @@ export function addressParam(address: Address): string {
  * (the server's principal) only.
  */
 export function hostDataFacet<P extends Principal>(store: Store, files: string, server: P): Facet<P> {
-	const serverKey = canonicalJson(server as JsonValue, BACKGROUND_CONTEXT);
 	return defineFacet<P>((host) =>
 		host.serve(HostData, (_params, principal) => {
-			if (canonicalJson(principal as JsonValue, BACKGROUND_CONTEXT) !== serverKey) {
+			if (!samePrincipal(principal, server, BACKGROUND_CONTEXT)) {
 				throw forbidden("chord.app.data: the server's only");
 			}
 			return {
 				variant: "main",
 				members: {
-					exportTo: async ({ path, manifest }, ctx) => {
+					exportTo: async ({ path, manifest, server }, ctx) => {
 						// The server's own manifest for this address.
-						await packStore(store, files, JSON.parse(manifest) as ArchiveManifest, path, ctx);
+						await packStore(store, files, JSON.parse(manifest) as ArchiveManifest, server, path, ctx);
 						return null;
 					},
 				},

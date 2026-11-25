@@ -23,7 +23,8 @@ import type { ActiveStats } from "@p2/app/v1/worker";
 /**
  * Durable's conversation view as clients hold it: a window over the transcript (the newest 50 to 100 entries, `before`
  * the entry just before it) and the conversation's documents; null until the watch delivered it. Clients render it
- * through `ConversationTranscript`, which pages in what lies before the window or in a gap (`Chat.entries`).
+ * through `ConversationTranscript`, which pages in what lies before the window or in a gap (`Chat.entries`). Image parts
+ * of its entries' messages are references (`ImageRef`, src/runtime/entry-images.ts), loaded through `ChatImages`.
  */
 export const ViewSchema = unsafe<ConversationView | null>(unknown());
 
@@ -83,25 +84,23 @@ const ConversationConfigureSchema = obj({
 
 const RestoredSchema = arr(obj({ author: AuthorSchema, text: str() }));
 
-/**
- * The conversation's user shell command (`!cmd`/`!!cmd`) while it runs and until its `p2.shell` entry is placed:
- * the tail of its output (src/runtime/shell.ts limits). Null when none.
- */
-export const ShellStateSchema = union([
-	obj({
-		id: str(),
-		command: str(),
-		author: AuthorSchema,
-		includeInContext: bool(),
-		output: str(),
-		truncated: bool(),
-		running: bool(),
-		exitCode: opt(num()),
-		cancelled: bool(),
-		error: opt(str()),
-	}),
-	nul(),
-]);
+/** A user shell command (`!cmd`/`!!cmd`) while it runs and until its `p2.shell` entry is placed. */
+export const LiveShellSchema = obj({
+	id: str(),
+	command: str(),
+	author: AuthorSchema,
+	includeInContext: bool(),
+	/** The tail of its output (src/runtime/shell.ts limits). */
+	output: str(),
+	truncated: bool(),
+	running: bool(),
+	exitCode: opt(num()),
+	cancelled: bool(),
+	error: opt(str()),
+});
+export type LiveShell = Static<typeof LiveShellSchema>;
+/** The conversation's user shell command; null when none. */
+export const ShellStateSchema = union([LiveShellSchema, nul()]);
 export type ShellState = Static<typeof ShellStateSchema>;
 /** pi's text when a second command is started while one runs (interactive-mode `isBashRunning`). */
 export const SHELL_BUSY = "A bash command is already running. Press Esc to cancel it first.";
@@ -109,7 +108,7 @@ export const ShellSchema = obj({
 	command: str({ minLength: 1, maxLength: 100_000 }),
 	/** `!` (true): the output joins the agent's context; `!!` (false): display only. */
 	includeInContext: bool(),
-	/** Client-chosen; a retried call with the same ID runs once (scoped to the author). */
+	/** Client-chosen, the command's `shellId` (`liveShell.id`); a retried call with the same ID runs once (per author). */
 	requestId: str({ minLength: 1, maxLength: 200 }),
 });
 
@@ -146,7 +145,7 @@ export const DequeueOwnResultSchema = obj({
 /**
  * An input as `Conversation.submit` takes it: the text the model reads, who wrote it, and its resolved attachments.
  * It is placed as its own entry: `entry`, or by default a `p2.input` entry whose data is the author, the text and the
- * attachments (see src/runtime/input.ts). The model message also starts with the author's speaker block.
+ * attachments (see src/runtime/input.ts). The model message also starts with the author's sender block.
  */
 export const SubmitSchema = obj({
 	...propertiesOf(SendSchema),
@@ -160,12 +159,23 @@ export const SubmitSchema = obj({
 });
 export type Submit = Static<typeof SubmitSchema>;
 
+/** One image part of an entry: the entry, the message in its `model`, the part in that message's content. */
+export const ImagePlaceSchema = obj({
+	entry: int({ minimum: 1 }),
+	message: int({ minimum: 0 }),
+	part: int({ minimum: 0 }),
+});
+
+/** An image part's bytes as the entry holds them: base64 `data`. */
+export const ImageBytesSchema = obj({ mimeType: str(), data: str() });
+
 /**
  * One Durable conversation of this worker (host-internal, shared by every viewer): its view mirrored from a Durable
  * watch, and the operations that need an author, which callers pass explicitly.
  */
 export const Conversation = local("p2.conversation", {
-	version: 1,
+	/** 2: user shell commands moved to `ShellCommands` (chat/shell.ts). */
+	version: 2,
 	params: { conversation: param.int() },
 	members: {
 		/** The view's window, as every viewer holds it. */
@@ -191,6 +201,8 @@ export const Conversation = local("p2.conversation", {
 		stop: method(undefined, obj({ restored: RestoredSchema })),
 		dequeue: method(obj({ submissionId: num(), restore: bool() }), obj({ restored: RestoredSchema })),
 		entries: method(EntriesQuerySchema, EntriesPageSchema),
+		/** An image part of an entry (`ChatImages`); throws when there is none there. */
+		image: method(ImagePlaceSchema, ImageBytesSchema),
 		configure: method(ConversationConfigureSchema),
 		/** The current model's metadata (see `ModelMetaSchema`), following the view's `pi.agent` and the catalog. */
 		model: ModelStateSchema,
@@ -202,12 +214,6 @@ export const Conversation = local("p2.conversation", {
 		abortCompaction: method(undefined, obj({ aborted: int({ minimum: 0 }) })),
 		/** Withdraws `authorId`'s queued inputs (by the server-stamped author) in submission order. */
 		dequeueOwn: method(obj({ authorId: str() }), obj({ restored: RestoredSchema, skipped: int({ minimum: 0 }) })),
-		/** The running (or just finished, not yet placed) user shell command. */
-		shell: ShellStateSchema,
-		/** Runs a user shell command on the conversation's environment; one at a time per conversation. */
-		runShell: method(obj({ ...propertiesOf(ShellSchema), author: AuthorSchema }), obj({ shellId: str() })),
-		/** Cancels the running command `shellId`; false when it is not the running one. */
-		abortShell: method(obj({ shellId: str() }), obj({ aborted: bool() })),
 	},
 });
 
@@ -236,7 +242,10 @@ export const Chat = remote("p2.chat", {
 			methods: {
 				entries: method(EntriesQuerySchema, EntriesPageSchema),
 				send: method(SendSchema, obj({ submissionId: num() })),
-				/** Aborts the current run; queued inputs are withdrawn and the caller's own come back as text. */
+				/**
+				 * Aborts the current run; queued inputs are withdrawn and the caller's own come back as text. Messages from
+				 * subagents and peer sessions stay queued for the next input.
+				 */
 				stop: method(undefined, obj({ restored: arr(str()) })),
 				/** Withdraws a queued input; with `restore`, returns its text if the caller wrote it. */
 				dequeue: method(obj({ submissionId: num(), restore: opt(bool()) }), obj({ text: union([str(), nul()]) })),
@@ -266,6 +275,18 @@ export const Chat = remote("p2.chat", {
 });
 
 /**
+ * Stopping a conversation's run from outside its chat (the sidebar's Cancel, the command menu's Stop): every input the
+ * stop withdraws, the caller's own too, waits as its author's draft (`DraftStore`), restored to their composer when
+ * they open that conversation. The chat's own Stop (`Chat.stop`) returns the caller's texts to the composer at once.
+ */
+export const RunControl = remote("p2.run-control", {
+	version: 1,
+	params: { session: param.str(), conversation: param.int() },
+	hostAddress: sessionHost,
+	variants: { participant: { methods: { stop: method() } } },
+});
+
+/**
  * Each response of a conversation's active range with its cost, for whoever may view it (the cost sheet: a client's
  * view holds only a window).
  */
@@ -275,6 +296,19 @@ export const ChatCosts = remote("p2.chat-costs", {
 	hostAddress: sessionHost,
 	variants: {
 		viewer: { methods: { costs: method(undefined, arr(AssistantCostSchema)) } },
+	},
+});
+
+/**
+ * The images of a conversation's entries for the server's `/entry-image` route (plugins/chat/server.ts), which checks
+ * who may view the session; the view carries references to them instead of their bytes.
+ */
+export const ChatImages = remote("p2.chat-images", {
+	version: 1,
+	params: { session: param.str(), conversation: param.int() },
+	hostAddress: sessionHost,
+	variants: {
+		server: { methods: { image: method(ImagePlaceSchema, ImageBytesSchema) } },
 	},
 });
 
@@ -306,3 +340,18 @@ export type EntryDisplay = {
  */
 export const TranscriptEntries =
 	keyedRegistry<(data: unknown) => EntryDisplay | undefined>("p2.chat-transcript-entries");
+
+/**
+ * A subagent's conversation as a command target's id, `<session>/<conversation>` (the chat page's "conversation"
+ * target; other plugins' commands act on it too).
+ */
+export const conversationTargetId = (session: string, conversation: number): string => `${session}/${conversation}`;
+
+/** Parses a "conversation" target's id (`conversationTargetId`); it comes back from the menu's locator, so it is checked. */
+export function conversationOf(id: string): { readonly session: string; readonly conversation: number } | undefined {
+	const slash = id.lastIndexOf("/");
+	const conversation = Number(id.slice(slash + 1));
+	return slash > 0 && Number.isInteger(conversation) && conversation > 0
+		? { session: id.slice(0, slash), conversation }
+		: undefined;
+}

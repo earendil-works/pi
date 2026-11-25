@@ -1,5 +1,5 @@
 // The notes app's start: everything the app itself decides, given to `startServer`. The kit does the rest: the data
-// directory, the store, the host, HTTP with sessions and the owner link, a workers component for projects, and the
+// directory, the store, the host, HTTP with sign-ins and the owner link, a workers component for projects, and the
 // plugins (`plugins/` here, the app's required root, and `<dataDir>/plugins/`, the user's).
 // Examples 53 to 55 call `startNotes`; a real app's `start.ts` calls it with `process.argv[2]` and prints the link.
 
@@ -30,7 +30,11 @@ export function startNotes(dataDir: string, context: Context): Promise<App<Notes
 			listen: { host: "127.0.0.1", port: 0 },
 			api: API,
 			kinds: KINDS,
-			principal: { server: { kind: "server" }, worker: (address) => ({ kind: "worker", project: address.key }) },
+			principal: {
+				server: { kind: "server" },
+				worker: (address) => ({ kind: "worker", project: address.key }),
+				owner: { kind: "owner" },
+			},
 			workers: [
 				{
 					kind: v1.Project,

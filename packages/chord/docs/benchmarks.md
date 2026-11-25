@@ -994,3 +994,189 @@ The diff depends on the reuse: with every row decoded anew, `diffRevisions` comp
 previous 100 by content and the watched commit took 885 µs; with unchanged rows the same objects it compares them by
 identity. "There may be dragons": at 100 rows a table written more than a few thousand times a second spends most of
 its time in the query.
+
+## Slice 9: telemetry (2026-11-04)
+
+`test/bench/telemetry.ts`, Node 24.4.1, CPU 10, medians of nine bursts after a warm-up, three runs each; heap
+allocated per operation includes what the collections during a burst freed. "Before" is the same script (`--noop`,
+its imports pointed at a checkout of the commit before slice 9) run alternately with this one.
+
+A call over a memory link (a client host holding a remote counter on a server host; `bump` returns at once, `add`
+commits one document change):
+
+| Call | Before slice 9 | NOOP adapter | In-memory adapter on both hosts |
+| --- | --- | --- | --- |
+| over a link | 10.46-10.64 µs, 13,083 B | 10.24-10.30 µs, 12,766 B | 31.3 µs, 28,886 B |
+| that commits | 32.91-34.06 µs, 28,898 B | 31.44-31.61 µs, 28,598 B | 64.6 µs, 53,902 B |
+
+With the NOOP adapter the span code is within noise (the target): every span site is one identity check of its parent
+against the NOOP context's span starter, and nothing else runs (no span, no attribute object, no carrier). A call
+allocates 317 B less than before slice 9 (300 B less for one that commits), from the review's three code shapes (fix
+round): the call message takes its optional `trace` as a plain key (a key holding `undefined`, which both codecs and the
+schema treat as absent) instead of a conditional spread, `ChordObject.call`'s optional `parent` has no default
+expression (an async function with a non-simple parameter list allocated 48 B more), and `ProviderSide.#run` is a
+`.then` chain instead of an `async` function (its frame, about 85 B, held the extra argument). The first build's 206 B
+more per call were these shapes, not the `trace` field. Recording costs what the adapter does: the in-memory one keeps
+every span and measurement (each call records `chord.call`, `chord.method`, the commit's event, the host metrics,
+`chord.link.bytes` per message and, since the fix round, the links' cost counters on the host's adapter), about 21 µs
+and 16 KB per call here.
+
+Container width (R24, design §12): one item of a flat array changed per commit (a new text each time), alone and
+under a watched `mapShared` derive of the array (one mapper run per change: only the changed item is mapped again;
+the derive still visits every element once by identity and `diffRevisions` compares the arrays):
+
+| Width | One item changed | Under a watched `mapShared` derive |
+| --- | --- | --- |
+| 1,000 | 43.7-45.8 µs, 27.8 KB | 89.0-97.5 µs, 40.8 KB |
+| 10,000 | 84.5-88.7 µs, 131.7 KB | 299.8-310.0 µs, 262.8 KB |
+| 100,000 | 552.5-670.1 µs, 819.7 KB | 3,711-4,197 µs, 1,624.8 KB |
+
+A change costs O(width): the array's slots are copied (about 8 bytes per element) and a derive over it walks them. The
+documented limit: up to about 10,000 elements a list in one document stays below 0.3 ms per change with a derive; past
+that, keyed documents or a bounded window (design §12) keep commits O(change).
+
+## Events (2026-11-11)
+
+`test/bench/events.ts` (decision "Events: fire-and-forget members"), Node 24.4.1, CPU 32, medians of seven bursts of
+2,000 steps after a warm-up, two runs (equal within 0.5 µs). A step is one emit of a paddle sample (`{ peer, t, y }`) on
+the server, its event flush, and every holder's listener called; each holder is a client host over its own memory
+link (binary codec). The time includes the turn the step waits for (`setImmediate`: about 2 µs, the 0-holder row) and
+everything the holders do (decode, parse, listener, their event ack). Heap is allocated per step, including what the
+collections during a burst freed. Encodes are the emitting host's `chord.events.encodes` per emit.
+
+| Holders | Count | Per emit, delivered | Heap per emit | Encodes per emit |
+| --- | --- | --- | --- | --- |
+| current version | 0 | 2.4 µs | 0.5 KB | 0 |
+| current version | 1 | 13.0-13.1 µs | 7.0-7.3 KB | 1 |
+| current version | 10 | 63.7 µs | 15.5-16.6 KB | 1 |
+| current version | 70 | 397.5-398.5 µs | 90.2-90.7 KB | 1 |
+| an older version (one mapping per emit) | 10 | 80.7-82.0 µs | 17.3 KB | 1 |
+| through a relay (the object on a worker, the server relaying) | 10 | 132.0-132.3 µs | 39.3-39.5 KB | 0 at the relay |
+
+One event message of one sample is 67 B (kind byte, count, hold, member, `at` as varints, the value's 56 B of JSON).
+The value is encoded once per representation whatever the number of holds and links (the older version's row: its
+mapped value, encoded once for its ten holds; the current version had no holder there), a relay encodes nothing and
+parses nothing. Per holder about 5.6 µs: one `event` envelope written per link, its decode, the parse of the value at
+the consumer, the listener, and one event ack back (each emit is its own turn here, so every message is acknowledged
+alone; emits in one turn share one message and one ack). No walk, copy or validation per emit (the cost guards in
+`test/remote/provider.test.ts`, "events at the provider"). With the NOOP adapter an emit's metrics are one empty call
+each: the same bench with the provider host on the NOOP adapter (no telemetry) after the review fixes, three runs:
+
+| Holders, NOOP adapter | Per emit, delivered |
+| --- | --- |
+| 0 | 2.0-2.1 µs |
+| 1 | 10.7-11.8 µs |
+| 10 | 64.9-75.2 µs |
+
+The 1-holder row is about 2 µs under the in-memory adapter's (13.0-14.1 µs in the same runs): that is the in-memory
+adapter recording its counters. The 10-holder rows run last, after every earlier row's hosts, and vary with the
+collections of that heap (the in-memory row 61.6-64.2 µs in the same runs); their heap columns are collection noise and
+not reported.
+
+**Contracts without events** (review fix, 2026-11-11): `test/bench/state-binding.ts`, a contract with one state member
+and no event members, bursts of 5,000 steps after a warm-up, medians of seven bursts, over untrusted memory links,
+run with `--max-semi-space-size=256` (so no young collection falls in a burst), three runs each, measured at the commit before events (`8a88d13ba`, a temporary worktree
+with the same bench file) and after the review fixes:
+
+| Step | Before events | After the fixes |
+| --- | --- | --- |
+| same host: get and release | 11.96-12.45 µs, 5,286-5,291 B | 11.77-11.93 µs, 5,310-5,316 B |
+| over a link: get and release | 36.98-38.83 µs, 5,330-5,336 B | 37.11-37.26 µs, 5,429-5,468 B |
+| over a link: rebound (`loading`, then `bound`) | 12.98-13.28 µs, 11,297-11,337 B | 12.30-12.83 µs, 11,338-11,411 B |
+
+Time is unchanged. What remains is about 25 B per same-host binding and about 100-130 B per bind over a link (85 B
+with trusted links): the fields events and call windows added to objects every binding makes anyway (a reference's
+event record slot, a hold's taps slot, a remote binding's event nodes slot, per-message fields of the link's sides),
+not attributed further. Nothing event-specific is allocated: no event record, node, tap or names list per binding (`test/host/events.test.ts`, "a contract without event members costs no event bookkeeping per
+binding, here or over a link").
+
+## Shared holds (2026-11-13)
+
+`test/bench/shared-holds.ts` (decision "References share one wire hold"), Node 24.4.1, CPU 32, medians of seven bursts
+of 2,000 steps after a warm-up, a server and a client host over a memory link (binary codec), two runs each, measured
+on the build and on the commit before it (`275dde410`, a temporary worktree with the same bench file). Time and heap
+per step include everything both hosts do (the getter's wait, the hold's `bound` and its `ack`). Heap is the observed
+heap growth per step (`heapUsed` after a burst minus before it, divided by its steps), not allocated bytes: a collection
+may run inside a burst and free part of what the burst allocated. Bytes are what the server sends per step.
+
+| Step (time, heap growth, server's bytes) | Before | After |
+| --- | --- | --- |
+| first reference over a link: get and release (its own hold) | 101.3-104.2 µs, 17.4 KB, 10 B | 108.1-110.3 µs, 15.4-15.9 KB, 10 B |
+| a reference joining a held object: get and release | 46.6-47.5 µs, 11.2 KB, 10 B | 13.2-13.3 µs, 14.4 KB, 0 B |
+| a commit (with its call) seen by ten references of one object | 56.4-56.6 µs, 25.1 KB, 178 B, 10 encodes | 34.3-35.6 µs, 17.2-18.4 KB, 23 B, 1 encode |
+| heap retained per reference held (1,000 references to one object) | 7,077-7,080 B | 1,384-1,458 B |
+
+A joining reference sends nothing and waits for no round trip: about a quarter of a new hold's time, no bytes, and a
+fifth of the memory per held reference (no replica, decoder or hold record of its own; what remains is its binding,
+reference object and member records). A commit to ten references is one hold entry and one encode in its `state`
+message instead of ten (one message either way: a commit touching several holds on one link travels as one). A first reference pays the sharing key and its table entry: about 5 µs more (the key, its parts escaped and
+joined, measured at about 1.2 µs per key in the profile; the rest in the binding path, not attributed further). The
+release of a non-final reference makes no `released` error unless it has calls to cancel (an error with its stack is
+the largest single cost of a release). `test/bench/state-binding.ts`'s "over a link: get and release" keeps one
+reference alive, so it now measures a join.
+
+## Slice 14: named queries, the skip test and the probe, lists (2026-11-15)
+
+`test/bench/slice-14.ts`, Node 24.4.1 on the development server (slayer), a SQLite `:memory:` store, `slice-14.md`
+§9's data (10,000 session rows: a club of 3,000 in ten teams of 300 and one of 20, a family of 3,000, 4,000 archived
+elsewhere) and its mix of open reads: 10 family members, 10 club members in two teams each, a guest with 2 shares, a
+member of the team of 20, 20 workers (194 reads: 152 lists with their first page loaded, 21 team counts, 20 workers'
+reads of one row, and the rest). Lists over several sources are not built, so each source of such a list is a list
+of its own here. The script exits 1 when a budget is missed.
+
+```
+slice 14, §9: per run (one read of a page of 50 rows through `page`, Chord's decoding and mapping included)
+  ok   a family member's list, the rule's source (dense): 0.086 ms (budget 2)
+  ok   the team page, T = 300, ordered by the sessions' last touch: 0.393 ms (budget 2)
+  ok   a club member's list, the teams' source (two teams, 600 rows): 0.666 ms (budget 2)
+  ok   a club member's list, the source of what they created: 0.120 ms (budget 2)
+  ok   sparse: a guest with 2 shares among 3,000: 0.050 ms (budget 0.2)
+  ok   sparse: a member of one team of 20 in a club of 3,000: 0.112 ms (budget 0.2)
+  ok   a sidebar's active list, a club member: 0.214 ms (budget 2)
+  ok   a sidebar's recent list, a club member: 0.224 ms (budget 2)
+  ok   a sidebar's active list, the guest: 0.104 ms (budget 2)
+
+slice 14, §9: a touch of a club session at the mix
+  194 reads open; a touch with no read open takes 0.044 ms
+  ok   runs a touch causes: 9 (expected 9)
+  ok   keyed probes a touch causes: 101 (expected 101)
+  ok   reads a touch skips: 185 (expected 185)
+  ok   an ordinary commit, every re-run included: 3.496 ms (budget 5)
+  a touch of a session nobody shows: 0 runs and 109 probes per touch
+  ok   a probe: 0.004 ms (budget 0.02)
+  ok   runs a touch of a session nobody shows causes: 0 (expected 0)
+  reported: an archive of a club session: 21 runs, 32 probes, 6.256 ms
+
+slice 14, §9: reported without a budget: the same touch at ten times the mix
+  1940 reads open: 81 runs, 1010 probes, 31.155 ms
+
+slice 14, §9: a session's 5,000 subagents (a list by last touch, 20 pages loaded)
+  ok   the first page of 50 of 5,000 (the object's activation included): 0.641 ms (budget 2)
+  ok   rows loaded by 20 pages: 1000 (expected 1000)
+  ok   runs a message causes (the page the child left, the first page): 2 (expected 2)
+  ok   a message: one child to the top, 20 pages loaded: 0.630 ms (budget 5)
+  after 10,000 touches: 1000 rows loaded in 26 pages
+  ok   pages for the loaded rows after 10,000 touches: 26.000 pages (budget 41)
+
+all of §9's numbers for the built parts are met
+```
+
+- **Per run** (through `page`, which also compiles the plan each time; a live read compiles once): every kind of
+  read is inside its budget. The slowest are the reads driven from a team's rows and ordered by the sessions' last
+  touch: they read and sort all the driver's rows (300 rows 0.40 ms, 600 rows 0.68 ms).
+- **A touch** (`update(S, { lastTouch, state })` of a club session in one team): 9 runs and 101 keyed probes for
+  194 open reads, 3.5 ms, inside the 5 ms budget. About 3 ms of it are the nine runs (two team pages, two club
+  lists' team sources, four sidebar lists, the session's worker); the 101 probes take about 0.4 ms (4 µs each:
+  about 2 µs in SQLite, the rest binding and the call). With the statement texts rendered on every call, and plain
+  live queries in place of lists, the same touch took 5.07 ms and missed the budget; caching the texts per plan
+  brought it to 4.4 ms, a list's bounded first page to 3.6 ms.
+- **Without the skip test** every read over the session table would run: about 150 runs, estimated at 14 ms from
+  the per-run numbers.
+- **Ten times the mix** (1,940 reads, no budget): 81 runs, 1,010 probes, 31 ms. The step is linear in the open reads
+  the assigned columns cannot rule out; a host with thousands of open lists over one hot table is where "maintain a
+  page from the written rows" (carry-over) or more hosts come in.
+- **An archive** of a club session assigns a condition column of the team counts: all 21 run, 6 ms (reported).
+- **A session's 5,000 subagents:** the first page, the list object's activation included, 0.64 ms; a message to a
+  child in the middle of 20 loaded pages runs two pages (the one it left, the first) in 0.6 ms (one compiled plan
+  per list since code review round 1; 0.9 ms with a plan per page); after 10,000 such
+  touches the 1,000 loaded rows are in 26 pages (at most 2 × rows / page size, by the merge rule).

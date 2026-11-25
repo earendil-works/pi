@@ -169,14 +169,11 @@ async function walkGuestFiles(
 	return walkDirectory(root, "");
 }
 
+// Like the built-in find and grep: a pattern with '/' is relative to the search root, one without
+// '/' matches file names at any depth.
 function matchesToolGlob(relativePath: string, pattern: string): boolean {
-	const normalizedPattern = toPosix(pattern);
-	if (normalizedPattern.includes("/")) {
-		return (
-			path.posix.matchesGlob(relativePath, normalizedPattern) ||
-			path.posix.matchesGlob(relativePath, `**/${normalizedPattern}`)
-		);
-	}
+	const normalizedPattern = toPosix(pattern).replace(/^(?:\.\/)+/, "");
+	if (normalizedPattern.includes("/")) return path.posix.matchesGlob(relativePath, normalizedPattern);
 	return path.posix.matchesGlob(path.posix.basename(relativePath), normalizedPattern);
 }
 

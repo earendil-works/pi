@@ -39,8 +39,13 @@ export default defineFacet((host) => {
 				text: self.derive([store.text], ([text]) => text),
 				start: self.derive([info.start], ([start]) => JSON.stringify(start)),
 				write: (next, ctx) => store.write(next, ctx),
-				attach: ({ name, body }, ctx) =>
-					files.put({ name, mime: "text/plain", bytes: new TextEncoder().encode(body) }, ctx),
+				// An attachment is a file of the space `attachments` at its name; writing a name again adds a version.
+				attach: async ({ name, body }, ctx) => {
+					const bytes = new TextEncoder().encode(body);
+					return (
+						await files.put({ space: "attachments", path: name, mime: "text/plain", source: "notes", bytes }, ctx)
+					).id;
+				},
 				attachment: async (id, ctx) =>
 					new TextDecoder().decode(await files.read({ id, offset: 0, length: 65536 }, ctx)),
 			},

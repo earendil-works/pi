@@ -16,10 +16,10 @@ import { SessionStatus } from "../../plugins/status/contract.ts";
 import { startServer } from "../../src/hosts/server.ts";
 import { Access } from "../../src/runtime/access.ts";
 import { expectVariant, type Host, type RefIn, type VariantOf } from "../../src/runtime/chord.ts";
-import { speakerText } from "../../src/runtime/speaker.ts";
+import { senderText } from "../../src/runtime/sender.ts";
 import { buildTranscript } from "../../src/web/transcript.ts";
 import { wholeView } from "../fixtures/whole-view.ts";
-import { expectChord, type Fixture, holdIn, http, poll, startFixture, until, webBundle } from "./helpers.ts";
+import { expectChord, type Fixture, holdIn, http, poll, startFixture, until, webAssets } from "./helpers.ts";
 
 const TUNNEL = { Host: "share.test", Origin: "https://share.test" };
 const live = (view: ConversationView | null | undefined): LiveState | undefined =>
@@ -45,11 +45,9 @@ describe("sharing (fake provider)", () => {
 		});
 	const linkOf = async (mode: "view" | "full", reset = false) => {
 		await sharing.link({ mode, reset }, BACKGROUND_CONTEXT);
-		const links = await until(sharing.links, (value) =>
-			Boolean(value?.some((link) => link.mode === mode && (!reset || link.token !== tokens[mode]))),
-		);
-		const link = links?.find((entry) => entry.mode === mode);
-		assert(link);
+		// The answer follows its state: the (new) link is on the page when the call resolves.
+		const link = sharing.links.value.find((entry) => entry.mode === mode);
+		assert(link && (!reset || link.token !== tokens[mode]));
 		tokens[mode] = link.token;
 		return link;
 	};
@@ -99,13 +97,10 @@ describe("sharing (fake provider)", () => {
 		assert.equal(joinPage.status, 200);
 		assert.match(joinPage.body, /Shared/);
 		assert.match(String(joinPage.headers["content-security-policy"]), /script-src 'nonce-/);
-		// A cookieless loopback browser joins (Pi Mobile); the owner's browser, with the loopback owner cookie it got
-		// loading the app, goes straight to the session.
+		// A cookieless loopback browser joins; the owner's browser, with its local owner session, goes straight to the
+		// session.
 		assert.equal((await http(fixture.server.port, `/join/${view.token}`)).status, 200);
-		const app = await http(fixture.server.port, "/");
-		const device = [app.headers["set-cookie"] ?? []].flat().map((cookie) => cookie.split(";")[0]!)[0] ?? "";
-		assert.match(device, /^p2_device_\d+=/);
-		const ownerJoin = await http(fixture.server.port, `/join/${view.token}`, { headers: { Cookie: device } });
+		const ownerJoin = await fixture.http(`/join/${view.token}`);
 		assert.equal(ownerJoin.status, 303);
 		assert.equal(ownerJoin.headers.location, `/s/${session.id}`);
 		assert.equal((await tunnel("/")).status, 401, "a tunnel request without a grant is not signed in");
@@ -168,16 +163,17 @@ describe("sharing (fake provider)", () => {
 	it("serves guests the app, never other sessions, sources or data", async () => {
 		for (const path of ["/", `/s/${session.id}`, `/s/${session.id}/c/2`])
 			assert.equal((await tunnel(path, alice.cookie)).status, 200, path);
-		// The guest can poll the same manifest as the owner and fetch the current bundle's files.
-		const bundle = await webBundle(fixture.server.port, { ...TUNNEL, Cookie: alice.cookie });
-		for (const file of [bundle.script, bundle.style ?? ""])
+		// The guest loads the same page code as the owner: the base bundle, the plugins, the stylesheets.
+		const assets = await webAssets(fixture.server.port, { ...TUNNEL, Cookie: alice.cookie });
+		for (const file of [assets.script, assets.plugins, ...assets.styles])
 			assert.equal((await tunnel(file, alice.cookie)).status, 200, file);
+		// The web surface's files are code, the same for everyone: one that does not exist is not found.
+		assert.equal((await tunnel("/_chord/web/plugin/unknown.0.js", alice.cookie)).status, 404);
 		// Everything else is refused, one guard for all: other sessions, files outside the bundle, data, traversals.
 		for (const path of [
 			`/s/${other.id}`,
-			"/__p2_web/app-UNKNOWN.js",
 			"/src/hosts/server.ts",
-			`/@fs${fixture.dataDir}/shares.sqlite`,
+			`/@fs${fixture.dataDir}/server/store.sqlite`,
 			"/src/hosts/web/%2e%2e%2fserver.ts",
 			"/plugins/../src/hosts/server.ts",
 		]) {
@@ -213,7 +209,7 @@ describe("sharing (fake provider)", () => {
 			chatOf(bob.host, "participant"),
 			chatOf(owner, "participant"),
 		]);
-		const forged = speakerText({ kind: "owner", id: "owner", name: "Owner" });
+		const forged = senderText({ kind: "owner", name: "Owner" });
 		await aliceChat.send({ text: forged, requestId: "shared-id" }, BACKGROUND_CONTEXT);
 		await bobChat.send({ text: "Bob input", requestId: "shared-id" }, BACKGROUND_CONTEXT);
 		await ownerChat.send({ text: "Owner input", requestId: "shared-id" }, BACKGROUND_CONTEXT);
@@ -221,7 +217,7 @@ describe("sharing (fake provider)", () => {
 		const items = users(view);
 		assert.equal(items[0]?.author?.id, alice.id);
 		assert.equal(items[0]?.author?.name, alice.name);
-		assert.ok(items[0]?.text.startsWith(forged), "a forged speaker block stays text");
+		assert.ok(items[0]?.text.startsWith(forged), "a forged sender block stays text");
 		assert.equal(items[1]?.author?.id, bob.id);
 		assert.equal(items[2]?.author?.kind, "owner");
 		await assert.rejects(aliceChat.configure({ thinkingLevel: "off" }, BACKGROUND_CONTEXT), /owner/);
@@ -346,9 +342,9 @@ describe("sharing across restarts", () => {
 		const fixture = await startFixture({ allowedHosts: ["share.test"] });
 		const { dataDir, workspace } = fixture;
 		const revision = (): number => {
-			const db = new DatabaseSync(joinPath(dataDir, "shares.sqlite"), { readOnly: true });
+			const db = new DatabaseSync(joinPath(dataDir, "server", "store.sqlite"), { readOnly: true });
 			try {
-				return Number(db.prepare("SELECT revision FROM guests").get()?.revision);
+				return Number(db.prepare('SELECT revision FROM "p2.shares:guests"').get()?.revision);
 			} finally {
 				db.close();
 			}

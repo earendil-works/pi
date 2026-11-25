@@ -1,7 +1,8 @@
 // The tutorial's checks (`docs/tutorial/book.md`): every TypeScript, JSON and CSS block of the book is quoted from this
 // example's files (`<!-- quote: path -->` above it) and fails here when the file no longer has those lines; the
-// example's steps run (`main.ts`, and `screenshots.ts` with Chromium), and every console output the book shows
-// (`<!-- output: main -->`, `<!-- output: screenshots -->`) is among the lines they print, in order. The terminal's
+// example's steps run (`main.ts`, which runs `trace.ts` on its data directory, and `screenshots.ts` with Chromium), and
+// every console output the book shows (`<!-- output: main -->`, `<!-- output: screenshots -->`) is among the lines they
+// print, in order: the telemetry chapter's traces, `trace.ts`'s reads and the viewer's screenshot too. The terminal's
 // output (`<!-- output: tui -->`) is checked when a Node for its sandbox is there (`CHORD_TUI_NODE`, else `node26`).
 // The p2 chapter's blocks (`<!-- p2: path -->`) quote p2's sources, which live outside this repository.
 // Run from packages/chord:

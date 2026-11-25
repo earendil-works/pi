@@ -14,6 +14,7 @@ import {
 	McpConnectionClosedError,
 	McpError,
 	McpTimeoutError,
+	normalizeOwnRequestId,
 	toError,
 } from "./protocol/jsonrpc.ts";
 import {
@@ -479,12 +480,13 @@ export class McpClient {
 	}
 
 	private handleResponse(message: JsonRpcResponse): void {
-		const entry = this.pending.get(message.id);
+		const id = normalizeOwnRequestId(message.id);
+		const entry = this.pending.get(id);
 		if (!entry) {
 			this.emitError(new Error(`Received response for unknown MCP request ${String(message.id)}`));
 			return;
 		}
-		this.removePending(message.id, entry);
+		this.removePending(id, entry);
 		if ("error" in message) entry.reject(new McpError(message.error.code, message.error.message, message.error.data));
 		else entry.resolve(message.result);
 	}
@@ -535,7 +537,7 @@ export class McpClient {
 
 	private handleProgress(params: unknown): void {
 		if (!isObject(params) || !isJsonRpcId(params.progressToken) || typeof params.progress !== "number") return;
-		const requestId = this.progressRequests.get(params.progressToken);
+		const requestId = this.progressRequests.get(normalizeOwnRequestId(params.progressToken));
 		const entry = requestId === undefined ? undefined : this.pending.get(requestId);
 		if (requestId === undefined || !entry) return;
 		this.armTimeout(requestId, entry);

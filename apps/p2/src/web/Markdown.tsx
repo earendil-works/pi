@@ -1,11 +1,89 @@
 import { Lexer, type Token, type Tokens } from "marked";
-import { type CSSProperties, createElement, Fragment, memo, type ReactNode, useMemo } from "react";
+import {
+	type ComponentType,
+	type CSSProperties,
+	createContext,
+	createElement,
+	Fragment,
+	memo,
+	type ReactNode,
+	useContext,
+	useMemo,
+} from "react";
 import { CodeBlock } from "./Code.tsx";
+import { ELANOR_MARKDOWN } from "./ElanorMarkdown.tsx";
 
 // Markdown (CommonMark with GitHub's tables, strikethrough, task lists and autolinks) parsed by marked and rendered as
 // React elements: never HTML injection. Raw HTML stays visible as text, except a few attribute-less inline tags.
 // Single newlines inside a paragraph are line breaks, as in chat clients.
 const options = { gfm: true, breaks: true };
+
+/**
+ * The elements Markdown renders as, by tag: a design system's components in place of plain elements (the default).
+ * Each gets the element's props and children. `root` wraps the whole message, `quoteBody` a quote's blocks, `tableWrap`
+ * a table (the scroll container); `codeBlock` gets the code and its language instead of children; `checkbox` a task
+ * item's `checked`.
+ */
+export type MarkdownComponents = Partial<
+	Record<
+		| "root"
+		| "p"
+		| "h3"
+		| "h4"
+		| "h5"
+		| "h6"
+		| "strong"
+		| "em"
+		| "del"
+		| "code"
+		| "a"
+		| "ul"
+		| "ol"
+		| "li"
+		| "blockquote"
+		| "quoteBody"
+		| "hr"
+		| "tableWrap"
+		| "table"
+		| "thead"
+		| "tbody"
+		| "tr"
+		| "th"
+		| "td"
+		| "checkbox",
+		// biome-ignore lint/suspicious/noExplicitAny: each tag's component takes that element's props.
+		ComponentType<any>
+	> & { codeBlock: ComponentType<{ code: string; language?: string }> }
+>;
+
+/** The components Markdown inside renders with: Elanor's (ElanorMarkdown.tsx); `{}` for plain elements. */
+export const MarkdownComponentsContext = createContext<MarkdownComponents>(ELANOR_MARKDOWN);
+
+/**
+ * The map of the block being rendered. Rendering a block is one synchronous pass (MarkdownBlock), which sets it first:
+ * the token functions below stay plain functions.
+ */
+let current: MarkdownComponents = {};
+
+/** A task item's checkbox, read-only: the map's, or a disabled native one. */
+function checkbox(key: string, checked: boolean): ReactNode {
+	return current.checkbox ? (
+		createElement(current.checkbox, { key, checked })
+	) : (
+		<input key={key} type="checkbox" checked={checked} disabled readOnly />
+	);
+}
+
+/** An element by tag: the map's component for it, or the plain element. */
+function el(
+	tag: Exclude<keyof MarkdownComponents, "codeBlock" | "checkbox">,
+	props: Record<string, unknown>,
+	...children: ReactNode[]
+) {
+	const component = current[tag];
+	const plain = tag === "root" || tag === "quoteBody" ? "div" : tag === "tableWrap" ? "div" : tag;
+	return createElement(component ?? plain, props, ...children);
+}
 
 /** Inline tags written as raw HTML that render as themselves; they carry no attributes. */
 const INLINE_TAGS = new Set(["b", "strong", "i", "em", "code", "kbd", "sub", "sup", "s", "del", "u", "mark", "small"]);
@@ -120,17 +198,17 @@ function inlineToken(token: Token, key: string, inLink = false): ReactNode {
 			);
 		case "checkbox":
 			// A loose task item's checkbox arrives inside its first paragraph.
-			return <input key={key} type="checkbox" checked={Boolean(token.checked)} disabled readOnly />;
+			return checkbox(key, Boolean(token.checked));
 		case "escape":
 			return <Fragment key={key}>{token.text}</Fragment>;
 		case "strong":
-			return <strong key={key}>{inline(token.tokens, key, inLink)}</strong>;
+			return el("strong", { key }, inline(token.tokens, key, inLink));
 		case "em":
-			return <em key={key}>{inline(token.tokens, key, inLink)}</em>;
+			return el("em", { key }, inline(token.tokens, key, inLink));
 		case "del":
-			return <del key={key}>{inline(token.tokens, key, inLink)}</del>;
+			return el("del", { key }, inline(token.tokens, key, inLink));
 		case "codespan":
-			return <code key={key}>{token.text}</code>;
+			return el("code", { key }, token.text);
 		case "br":
 			return <br key={key} />;
 		case "link": {
@@ -139,9 +217,7 @@ function inlineToken(token: Token, key: string, inLink = false): ReactNode {
 			const href = inLink ? undefined : safeHref(token.href, token.autolink);
 			const children = inline(token.tokens, key, true);
 			return href ? (
-				<a key={key} href={href} title={token.title ?? undefined} target="_blank" rel="noreferrer">
-					{children}
-				</a>
+				el("a", { key, href, title: token.title ?? undefined, target: "_blank", rel: "noreferrer" }, children)
 			) : (
 				<Fragment key={key}>{children}</Fragment>
 			);
@@ -151,9 +227,7 @@ function inlineToken(token: Token, key: string, inLink = false): ReactNode {
 			const href = inLink ? undefined : safeHref(token.href);
 			const label = token.text || token.href;
 			return href ? (
-				<a key={key} href={href} title={token.title ?? undefined} target="_blank" rel="noreferrer">
-					{label}
-				</a>
+				el("a", { key, href, title: token.title ?? undefined, target: "_blank", rel: "noreferrer" }, label)
 			) : (
 				<Fragment key={key}>{label}</Fragment>
 			);
@@ -214,17 +288,16 @@ function inline(tokens: readonly Token[] | undefined, key: string, inLink = fals
 }
 
 function listItem(item: Tokens.ListItem, key: string): ReactNode {
-	return (
-		<li key={key} className={item.task ? "task" : undefined}>
-			{item.tokens.map((child, index) => {
-				const id = `${key}-${index}`;
-				if (child.type === "checkbox")
-					return <input key={id} type="checkbox" checked={Boolean(child.checked)} disabled readOnly />;
-				// A tight item's text is inline; nested blocks (lists, code, paragraphs of loose items) follow it.
-				if (child.type === "text") return <Fragment key={id}>{inlineToken(child, id)}</Fragment>;
-				return block(child, id);
-			})}
-		</li>
+	return el(
+		"li",
+		{ key, className: item.task ? "task" : undefined },
+		item.tokens.map((child, index) => {
+			const id = `${key}-${index}`;
+			if (child.type === "checkbox") return checkbox(id, Boolean(child.checked));
+			// A tight item's text is inline; nested blocks (lists, code, paragraphs of loose items) follow it.
+			if (child.type === "text") return <Fragment key={id}>{inlineToken(child, id)}</Fragment>;
+			return block(child, id);
+		}),
 	);
 }
 
@@ -234,73 +307,94 @@ function block(token: Token, key: string): ReactNode {
 			return null;
 		case "def":
 			// Definitions are hidden, except footnotes (unsupported), which stay as written.
-			return String(token.tag).startsWith("^") ? <p key={key}>{token.raw.trimEnd()}</p> : null;
+			return String(token.tag).startsWith("^") ? el("p", { key }, token.raw.trimEnd()) : null;
 		case "heading": {
-			const Tag = `h${Math.min(token.depth + 2, 6)}` as "h3" | "h4" | "h5" | "h6";
-			return <Tag key={key}>{inline(token.tokens, key)}</Tag>;
+			const tag = `h${Math.min(token.depth + 2, 6)}` as "h3" | "h4" | "h5" | "h6";
+			return el(tag, { key }, inline(token.tokens, key));
 		}
 		case "paragraph":
 		case "text":
-			return <p key={key}>{token.tokens ? inline(token.tokens, key) : entities(token.text)}</p>;
+			return el("p", { key }, token.tokens ? inline(token.tokens, key) : entities(token.text));
 		case "code":
-			return <CodeBlock key={key} code={token.text} language={token.lang?.split(/\s/)[0] || undefined} />;
+			return createElement(current.codeBlock ?? CodeBlock, {
+				key,
+				code: token.text,
+				language: token.lang?.split(/\s/)[0] || undefined,
+			});
 		case "blockquote":
-			return (
-				<blockquote key={key}>
-					<div className="md">
-						{(token as Tokens.Blockquote).tokens.map((child, index) => block(child, `${key}-${index}`))}
-					</div>
-				</blockquote>
+			return el(
+				"blockquote",
+				{ key },
+				el(
+					"quoteBody",
+					{ className: "md" },
+					(token as Tokens.Blockquote).tokens.map((child, index) => block(child, `${key}-${index}`)),
+				),
 			);
 		case "hr":
-			return <hr key={key} />;
+			return el("hr", { key });
 		case "list": {
 			const items = (token.items as Tokens.ListItem[]).map((item, index) => listItem(item, `${key}-${index}`));
-			if (!token.ordered) return <ul key={key}>{items}</ul>;
+			if (!token.ordered) return el("ul", { key }, items);
 			const start = typeof token.start === "number" ? token.start : 1;
 			// Room for the widest marker: "10." needs more than "9.".
 			const digits = String(start + items.length - 1).length;
-			return (
-				<ol
-					key={key}
-					start={start === 1 ? undefined : start}
-					style={digits > 1 ? ({ "--digits": digits } as CSSProperties) : undefined}
-				>
-					{items}
-				</ol>
+			return el(
+				"ol",
+				{
+					key,
+					start: start === 1 ? undefined : start,
+					style: digits > 1 ? ({ "--digits": digits } as CSSProperties) : undefined,
+				},
+				items,
 			);
 		}
 		case "table": {
 			const table = token as Tokens.Table;
-			const align = (cell: Tokens.TableCell) => `align-${cell.align ?? "left"}`;
-			return (
-				<div className="table-wrap" key={key}>
-					<table>
-						<thead>
-							<tr>
-								{table.header.map((cell, index) => (
-									// biome-ignore lint/suspicious/noArrayIndexKey: a parsed table's cells never move.
-									<th className={align(cell)} key={`${key}-head-${index}`}>
-										{inline(cell.tokens, `${key}-head-${index}`)}
-									</th>
-								))}
-							</tr>
-						</thead>
-						<tbody>
-							{table.rows.map((row, rowIndex) => (
-								// biome-ignore lint/suspicious/noArrayIndexKey: a parsed table's rows never move.
-								<tr key={`${key}-row-${rowIndex}`}>
-									{row.map((cell, cellIndex) => (
-										// biome-ignore lint/suspicious/noArrayIndexKey: a parsed table's cells never move.
-										<td className={align(cell)} key={`${key}-${rowIndex}-${cellIndex}`}>
-											{inline(cell.tokens, `${key}-${rowIndex}-${cellIndex}`)}
-										</td>
-									))}
-								</tr>
-							))}
-						</tbody>
-					</table>
-				</div>
+			// The column's alignment: a class for p2's styles, data-align for a component's own.
+			const align = (cell: Tokens.TableCell) => ({
+				className: `align-${cell.align ?? "left"}`,
+				"data-align": cell.align ?? "left",
+			});
+			return el(
+				"tableWrap",
+				{ key, className: "table-wrap" },
+				el(
+					"table",
+					{},
+					el(
+						"thead",
+						{},
+						el(
+							"tr",
+							{},
+							table.header.map((cell, index) =>
+								el(
+									"th",
+									{ key: `${key}-head-${index}`, ...align(cell) },
+									inline(cell.tokens, `${key}-head-${index}`),
+								),
+							),
+						),
+					),
+					el(
+						"tbody",
+						{},
+						table.rows.map((row, rowIndex) =>
+							el(
+								"tr",
+								{ key: `${key}-row-${rowIndex}` },
+								row.map((cell, cellIndex) =>
+									el(
+										"td",
+										{ key: `${key}-${rowIndex}-${cellIndex}`, ...align(cell) },
+										inline(cell.tokens, `${key}-${rowIndex}-${cellIndex}`),
+									),
+								),
+							),
+						),
+					),
+				),
 			);
 		}
 		case "html": {
@@ -308,20 +402,20 @@ function block(token: Token, key: string): ReactNode {
 			// line that inline HTML supports (<br>, <b>…</b>) renders as it would inside a paragraph.
 			const text = String(token.text).trimEnd();
 			if (/^<!--[\s\S]*-->$/.test(text)) return null;
-			return (
-				<p key={key}>
-					{text.split("\n").map((line, index) => (
-						// biome-ignore lint/suspicious/noArrayIndexKey: lines of one block never move.
-						<Fragment key={`${key}-${index}`}>
-							{index > 0 && <br />}
-							{inline(Lexer.lexInline(line, options), `${key}-${index}`)}
-						</Fragment>
-					))}
-				</p>
+			return el(
+				"p",
+				{ key },
+				text.split("\n").map((line, index) => (
+					// biome-ignore lint/suspicious/noArrayIndexKey: lines of one block never move.
+					<Fragment key={`${key}-${index}`}>
+						{index > 0 && <br />}
+						{inline(Lexer.lexInline(line, options), `${key}-${index}`)}
+					</Fragment>
+				)),
 			);
 		}
 		default:
-			return <p key={key}>{token.raw}</p>;
+			return el("p", { key }, token.raw);
 	}
 }
 
@@ -330,6 +424,7 @@ function block(token: Token, key: string): ReactNode {
  * while a message streams, only its last block does.
  */
 const MarkdownBlock = memo(function MarkdownBlock({ source }: { source: string }) {
+	current = useContext(MarkdownComponentsContext);
 	return Lexer.lex(source, options).map((token, index) => block(token, `b${index}`));
 });
 
@@ -353,12 +448,11 @@ function splitMarkdown(text: string): string[] {
 // Memoized by text: transcript rebuilds during streaming keep unchanged messages unparsed.
 export const Markdown = memo(function Markdown({ text }: { text: string }) {
 	const blocks = useMemo(() => splitMarkdown(text), [text]);
-	return (
-		<div className="md">
-			{blocks.map((source, index) => (
-				// biome-ignore lint/suspicious/noArrayIndexKey: blocks only grow at the end while a message streams.
-				<MarkdownBlock key={index} source={source} />
-			))}
-		</div>
-	);
+	const components = useContext(MarkdownComponentsContext);
+	const Root = components.root;
+	const children = blocks.map((source, index) => (
+		// biome-ignore lint/suspicious/noArrayIndexKey: blocks only grow at the end while a message streams.
+		<MarkdownBlock key={index} source={source} />
+	));
+	return Root ? <Root>{children}</Root> : <div className="md">{children}</div>;
 });

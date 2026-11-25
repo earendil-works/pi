@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Connection } from "@earendil-works/pi-env";
-import type { EnvConfig } from "../../plugins/envs/config.ts";
+import { type EnvConfig, envRevision } from "../../plugins/envs/config.ts";
 import { EnvConnections } from "../../plugins/mcp/environments.ts";
 
 const GPU: EnvConfig = { type: "ssh", host: "gpu.example" };
@@ -24,10 +24,10 @@ test("users of one environment share its connection; the last release closes it"
 		opened.push(name);
 		return new Connection({ command: ["/nonexistent/pi-env"] });
 	});
-	const first = envs.acquire("gpu", GPU);
-	const second = envs.acquire("gpu", GPU);
+	const first = envs.acquire("gpu", GPU, envRevision(GPU));
+	const second = envs.acquire("gpu", GPU, envRevision(GPU));
 	assert.equal(second.connection, first.connection);
-	const other = envs.acquire("box", GPU);
+	const other = envs.acquire("box", GPU, envRevision(GPU));
 	assert.notEqual(other.connection, first.connection);
 	assert.deepEqual(opened, ["gpu", "box"]);
 	first.release();
@@ -37,7 +37,7 @@ test("users of one environment share its connection; the last release closes it"
 	assert.equal(await isClosed(other.connection), false);
 	other.release();
 	// A new user after the last one opens a new connection.
-	const again = envs.acquire("gpu", GPU);
+	const again = envs.acquire("gpu", GPU, envRevision(GPU));
 	assert.notEqual(again.connection, first.connection);
 	assert.deepEqual(opened, ["gpu", "box", "gpu"]);
 	again.release();
@@ -45,8 +45,8 @@ test("users of one environment share its connection; the last release closes it"
 
 test("an edited environment is another connection; the old one stays for its users until they release it", async () => {
 	const envs = new EnvConnections(() => new Connection({ command: ["/nonexistent/pi-env"] }));
-	const before = envs.acquire("gpu", GPU);
-	const after = envs.acquire("gpu", EDITED);
+	const before = envs.acquire("gpu", GPU, envRevision(GPU));
+	const after = envs.acquire("gpu", EDITED, envRevision(EDITED));
 	assert.notEqual(after.connection, before.connection);
 	before.release();
 	assert.equal(await isClosed(before.connection), true);

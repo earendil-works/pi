@@ -2,14 +2,22 @@
 // second chip shows how the agent is mentioned (`@pi`); the owner taps it to rename the agent for this conversation
 // (what people type after `@`, and what voice mode listens for).
 
-import { BACKGROUND_CONTEXT, defineFacet } from "@p2/app/v1";
-import { Sheet, Slots, useComposerState, useObject, useReadable, useRoute, useStatus } from "@p2/app/v1/web";
+import { BACKGROUND_CONTEXT, contribute, defineFacet } from "@p2/app/v1";
+import {
+	Sheet,
+	Slots,
+	useComposerState,
+	useObject,
+	useOptimisticCall,
+	useReadable,
+	useRoute,
+	useStatus,
+} from "@p2/app/v1/web";
 import { useEffect, useState } from "react";
 import { TranscriptEntries } from "../chat/contract.ts";
 import { ChatMode, DEFAULT_AGENT_NAME, mentionToken } from "./contract.ts";
 import { CHAT_ENTRY_DISPLAYS } from "./display.ts";
 import "./style.css";
-import { contribute } from "@p2/app/v1";
 
 const hint = (name: string) =>
 	`Chat mode: messages go to the people in this session, not to ${name}. Mention ${mentionToken(name)} (or say "${name}") to ask ${name}; it then reads the chat since its last answer.`;
@@ -17,25 +25,21 @@ const hint = (name: string) =>
 /** One word, as typed after `@` and spoken: letters, digits, `_` and `-`, starting with a letter (AgentNameSchema). */
 const VALID_NAME = /^[A-Za-z][A-Za-z0-9_-]{0,31}$/;
 
-/** The owner's sheet for the agent's name in this conversation. */
-function NameSheet({
-	name,
-	onSave,
-	onClose,
-}: {
-	name: string;
-	onSave: (name: string) => Promise<unknown>;
-	onClose: () => void;
-}) {
+/** What the chip shows: the mode and the agent's name; a guess changes either. */
+type Shown = { readonly enabled: boolean; readonly name: string };
+
+/**
+ * The owner's sheet for the agent's name in this conversation. Saving closes it at once: the chip shows the new name
+ * while the rename is in flight, and a refused rename puts the old one back with the error in the toast.
+ */
+function NameSheet({ name, onSave, onClose }: { name: string; onSave: (name: string) => void; onClose: () => void }) {
 	const [draft, setDraft] = useState(name);
-	const [error, setError] = useState<string>();
 	const valid = VALID_NAME.test(draft.trim());
 	const save = () => {
 		const next = draft.trim();
 		if (!VALID_NAME.test(next)) return;
-		void onSave(next)
-			.then(onClose)
-			.catch((failure: unknown) => setError(failure instanceof Error ? failure.message : String(failure)));
+		onSave(next);
+		onClose();
 	};
 	return (
 		<Sheet title="Agent name" onClose={onClose}>
@@ -63,7 +67,6 @@ function NameSheet({
 					People mention it as {mentionToken(valid ? draft.trim() : name)}, and in voice mode its name anywhere in
 					what they say counts. One word: letters, digits, - and _.
 				</p>
-				{error && <p className="error small">{error}</p>}
 				<div className="inline-form">
 					<button type="submit" className="button" disabled={!valid || draft.trim() === name}>
 						Save
@@ -85,13 +88,17 @@ function ChatModeChip() {
 	const { session } = route;
 	const mode = useObject(ChatMode, session ? { session, conversation: route.conversation ?? 1 } : undefined);
 	const live = useStatus(mode) === "live";
-	const enabled = useReadable(mode?.enabled) ?? false;
 	const waiting = useReadable(mode?.waiting) ?? 0;
-	const name = useReadable(mode?.name) ?? DEFAULT_AGENT_NAME;
+	const { setCanReply, setReplyTo, setMentionName, fail } = useComposerState();
+	// The switch and the name flip at the tap; the state that arrives with the answer replaces the guess.
+	const [{ enabled, name }, guess] = useOptimisticCall<Shown, Partial<Shown>>(
+		{ enabled: useReadable(mode?.enabled) ?? false, name: useReadable(mode?.name) ?? DEFAULT_AGENT_NAME },
+		(shown, change) => ({ ...shown, ...change }),
+		fail,
+	);
 	const [renaming, setRenaming] = useState(false);
 	const label = enabled && waiting ? `Chat · ${waiting}` : "Chat";
 	// Replies belong to chat mode: the transcript offers them while it is on, and the composer offers the mention.
-	const { setCanReply, setReplyTo, setMentionName } = useComposerState();
 	const replies = live && enabled;
 	useEffect(() => {
 		setCanReply(replies);
@@ -122,9 +129,7 @@ function ChatModeChip() {
 				className={`chip toggle chat-mode ${enabled ? "on" : ""}`}
 				aria-pressed={enabled}
 				title={title}
-				onClick={() =>
-					void mode.set({ enabled: !enabled }, BACKGROUND_CONTEXT).catch((error: unknown) => console.error(error))
-				}
+				onClick={() => guess({ enabled: !enabled }, () => mode.set({ enabled: !enabled }, BACKGROUND_CONTEXT))}
 			>
 				{label}
 			</button>
@@ -142,7 +147,7 @@ function ChatModeChip() {
 			{renaming && (
 				<NameSheet
 					name={name}
-					onSave={(next) => mode.rename({ name: next }, BACKGROUND_CONTEXT)}
+					onSave={(next) => guess({ name: next }, () => mode.rename({ name: next }, BACKGROUND_CONTEXT))}
 					onClose={() => setRenaming(false)}
 				/>
 			)}

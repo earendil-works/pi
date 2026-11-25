@@ -1,15 +1,26 @@
+import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { describe, expect, it, vi } from "vitest";
-import { BACKGROUND_CONTEXT as context, createContextKey, withContextValue } from "../../src/context/index.ts";
+import {
+	BACKGROUND_CONTEXT as context,
+	createContextKey,
+	withContextValue,
+	withTelemetry,
+} from "../../src/context/index.ts";
 import { hostKind, int, method, remote, str } from "../../src/contracts/index.ts";
-import { createHost, defineFacet, type Host } from "../../src/host/index.ts";
+import { createHost, defineFacet, type Held, type Host } from "../../src/host/index.ts";
 import { memoryLinkPair } from "../../src/link/index.ts";
+import { jsonPart } from "../../src/link/internal.ts";
 import {
 	addNote,
+	bindHold,
+	EDITOR,
 	expectCollected,
 	fakeTimers,
 	flushed,
 	forEachCodec,
 	PlacedNotes,
+	type RawPeer,
+	rawWorkers,
 	rejection,
 	relayed,
 	Server,
@@ -426,6 +437,68 @@ forEachCodec(() => {
 		});
 	});
 
+	describe("resolve's `opened`", () => {
+		it("is told the peer's incarnation at the handshake, before the peer's first call is handled; never for a link closed before it", async () => {
+			const Who = remote("app.who", {
+				version: 1,
+				params: {},
+				hostAddress: () => Server(),
+				variants: { v: { methods: { incarnation: method(undefined, str()) } } },
+			});
+			const events: string[] = [];
+			let worker: Host<TestPrincipal> | undefined;
+			const server = createHost<TestPrincipal>({
+				address: Server(),
+				principal: { kind: "server" },
+				onError: () => {},
+			});
+			server.route(
+				Session,
+				{
+					authorize: () => true,
+					resolve: async (address) => {
+						const [a, b] = memoryLinkPair();
+						const principal = { kind: "worker", session: address.params.id } as const;
+						const opened = (incarnation: string) => void events.push(`opened ${incarnation}`);
+						if (address.params.id === "dead") {
+							b.close();
+							return { link: a, principal, opened };
+						}
+						worker = createHost<TestPrincipal>({ address, principal, onError: () => {} });
+						worker.connect(b, { principal: { kind: "server" } }, context);
+						await worker.load([], context);
+						// Its first call, made before the server has the link: it goes out with the handshake.
+						void worker
+							.get(Who, {}, context)
+							.then(async (who) => events.push(`answered ${await who.incarnation(context)}`));
+						return { link: a, principal, opened };
+					},
+				},
+				context,
+			);
+			const facet = defineFacet<TestPrincipal>((h) =>
+				h.serve(Who, () => ({
+					variant: "v",
+					members: {
+						incarnation: async (ctx) => {
+							events.push(`handled ${ctx.incarnation}`);
+							return ctx.incarnation;
+						},
+					},
+				})),
+			);
+			await server.load([{ name: "@test/server", facet }], context);
+			server.hold(PlacedNotes, { session: "S1" }, context);
+			await transported();
+			await transported();
+			const incarnation = worker!.incarnation;
+			expect(events).toEqual([`opened ${incarnation}`, `handled ${incarnation}`, `answered ${incarnation}`]);
+			server.hold(PlacedNotes, { session: "dead" }, context);
+			await transported();
+			expect(events).toHaveLength(3);
+		});
+	});
+
 	describe("GC", () => {
 		it("a failed or suspended address keeps no route state once its holders are released", async () => {
 			const { refs, server } = await (async () => {
@@ -487,5 +560,191 @@ forEachCodec(() => {
 			await expectCollected(...refs);
 			expect(server).toBeDefined();
 		});
+	});
+});
+
+describe("resolve spans (slice 9)", () => {
+	it("marks a resolve that rejected failed (`resolve_failed`), a root linked to the hold that started it", async () => {
+		const telemetry = new InMemoryTelemetryContext();
+		const { tab } = await relayed({
+			telemetry: { tab: telemetry, server: telemetry },
+			resolve: async () => {
+				throw new Error("no worker");
+			},
+		});
+		await telemetry.startSpan({ name: "request" }, async (span) => {
+			await rejection(tab.get(PlacedNotes, { session: "S1" }, withTelemetry(span, context), { readyTimeout: 50 }));
+		});
+		const spans = telemetry.getSpans();
+		const resolve = spans.find(({ name }) => name === "chord.resolve")!;
+		const relay = spans.find(({ name }) => name === "chord.relay")!;
+		expect(resolve.parentId).toBeNull();
+		expect(resolve.attributes).toEqual({
+			"chord.host": "server",
+			kind: "session",
+			address: "session|S1",
+			outcome: "failed",
+		});
+		expect(resolve.status).toEqual({ status: "error", error: { name: "resolve_failed", message: "no worker" } });
+		expect(resolve.links.map(({ context: carrier }) => carrier)).toEqual([relay.context]);
+		expect(relay.links.map(({ context: carrier }) => carrier)).toEqual([resolve.context]);
+		expect(relay.status).toEqual({
+			status: "error",
+			error: { name: "relay_failed", message: "session|S1: no worker" },
+		});
+	});
+});
+
+describe('routes and references sharing one wire hold (decision "References share one wire hold")', () => {
+	const S1 = { session: "S1" };
+
+	it("a reference joining a hold whose resolve failed resolves the address again: both live on one hold", async () => {
+		const fail = { now: true };
+		let resolves = 0;
+		const { server, workers } = await relayed({
+			resolve: async (_address, made) => {
+				resolves++;
+				if (fail.now) throw new Error("no worker");
+				return made();
+			},
+		});
+		const a = server.hold(PlacedNotes, S1, context);
+		await transported();
+		expect(a.state.value).toMatchObject({ kind: "failed", cause: { kind: "waiting" } });
+		fail.now = false;
+		const b = await server.get(PlacedNotes, S1, context);
+		await transported();
+		expect([a.state.value.kind, b.state.value.kind, resolves]).toEqual(["live", "live", 2]);
+		expect(workers.get("session|S1")!.activity.value.references).toBe(1);
+		await server.close(context);
+	});
+
+	it("a suspended address: a held reference stays loading, a new one holds on its own and fails unavailable", async () => {
+		const gate = Promise.withResolvers<void>();
+		const { server, route, workers } = await relayed({
+			resolve: async (_address, made) => {
+				await gate.promise;
+				return made();
+			},
+		});
+		const a = server.hold(PlacedNotes, S1, context);
+		await transported();
+		route.suspend(Session({ id: "S1" }));
+		const b = server.hold(PlacedNotes, S1, context);
+		expect([a.state.value, b.state.value]).toMatchObject([
+			{ kind: "loading" },
+			{
+				kind: "failed",
+				cause: { kind: "waiting", error: { code: "unavailable", message: "session|S1: suspended" } },
+			},
+		]);
+		gate.resolve();
+		await transported();
+		// The running resolve still links the address: both go live, each on its own hold.
+		expect([a.state.value.kind, b.state.value.kind]).toEqual(["live", "live"]);
+		expect(workers.get("session|S1")!.activity.value.references).toBe(2);
+		await server.close(context);
+	});
+
+	it("a resolver re-entering for the same key finds the stored object: one hold; its own reference released there is not the last", async () => {
+		const inner: Held<typeof PlacedNotes>[] = [];
+		const { server, workers } = await relayed({
+			resolve: async (_address, made) => {
+				const joined = server.hold(PlacedNotes, S1, context);
+				inner.push(joined);
+				if (inner.length === 1) joined.release();
+				return made();
+			},
+		});
+		const a = await server.get(PlacedNotes, S1, context);
+		await transported();
+		expect([a.state.value.kind, inner[0]!.state.value.kind]).toEqual(["live", "ended"]);
+		expect(workers.get("session|S1")!.activity.value.references).toBe(1);
+		await server.close(context);
+	});
+
+	it("a resolver that fails after re-entering fails both references waiting; the next request resolves again", async () => {
+		const inner: Held<typeof PlacedNotes>[] = [];
+		const fail = { now: true };
+		const { server, workers } = await relayed({
+			resolve: async (_address, made) => {
+				if (inner.length === 0) inner.push(server.hold(PlacedNotes, S1, context));
+				if (fail.now) throw new Error("no worker");
+				return made();
+			},
+		});
+		const a = server.hold(PlacedNotes, S1, context);
+		await transported();
+		const failed = { kind: "failed", cause: { kind: "waiting", error: { message: "session|S1: no worker" } } };
+		expect([a.state.value, inner[0]!.state.value]).toMatchObject([failed, failed]);
+		fail.now = false;
+		await server.get(PlacedNotes, S1, context);
+		expect([a.state.value.kind, inner[0]!.state.value.kind]).toEqual(["live", "live"]);
+		expect(workers.get("session|S1")!.activity.value.references).toBe(1);
+		await server.close(context);
+	});
+
+	it("too_large/part: A1 retrying alone re-enters the resolver, which finds C's new entry; A2 and C release in any order", async () => {
+		const peers: RawPeer[] = [];
+		const workers = rawWorkers(peers, { limits: { part: 64 } });
+		const reentered: Held<typeof PlacedNotes>[] = [];
+		const step = { reenter: false, fail: false };
+		const { server } = await relayed({
+			resolve: async (address) => {
+				if (step.reenter) reentered.push(server.hold(PlacedNotes, S1, context));
+				if (step.fail) throw new Error("no worker");
+				return workers(address);
+			},
+		});
+		const a1 = server.hold(PlacedNotes, S1, context);
+		const a2 = server.hold(PlacedNotes, S1, context);
+		await transported();
+		const peer = peers[0]!;
+		const { hold } = await peer.next("hold");
+		bindHold(peer, hold);
+		await transported();
+		const ops = jsonPart([["r", "x".repeat(100)]]);
+		peer.send({
+			kind: "state",
+			holds: [{ hold, members: [{ member: EDITOR.state.notes!, ops }], failed: [], retired: [] }],
+		});
+		await transported();
+		expect([a1.state.value, a2.state.value]).toMatchObject([
+			{ kind: "failed", cause: { kind: "broken", error: { code: "too_large" } } },
+			{ kind: "failed", cause: { kind: "broken", error: { code: "too_large" } } },
+		]);
+		const c = server.hold(PlacedNotes, S1, context);
+		const { hold: owned } = await peer.next("hold");
+		bindHold(peer, owned);
+		await transported();
+		// The link drops and the address fails to resolve: C waits unlinked, so A1's placement resolves it again.
+		step.fail = true;
+		peer.close();
+		await transported();
+		expect(c.state.value).toMatchObject({ kind: "failed", cause: { kind: "waiting" } });
+		step.fail = false;
+		step.reenter = true;
+		a1.retry();
+		await transported();
+		const next = peers.at(-1)!;
+		const holds = [await next.next("hold"), await next.next("hold")];
+		for (const { hold: each } of holds) bindHold(next, each);
+		await transported();
+		expect([a1.state.value.kind, a2.state.value.kind, c.state.value.kind, reentered[0]!.state.value.kind]).toEqual([
+			"live",
+			"failed",
+			"live",
+			"live",
+		]);
+		// Two holds on the new link: C's re-hold (the re-entered reference joined it) and A1's private one.
+		a2.release();
+		c.release();
+		await transported();
+		expect(next.kinds().filter((kind) => kind === "release")).toEqual([]);
+		reentered[0]!.release();
+		a1.release();
+		await transported();
+		expect(next.kinds().filter((kind) => kind === "release")).toEqual(["release", "release"]);
+		await server.close(context);
 	});
 });

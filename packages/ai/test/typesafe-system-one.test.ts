@@ -85,10 +85,21 @@ describe("TypeSafe System One", () => {
 			expect(JSON.parse(String(init?.body))).toMatchObject({ model: "typesafe/jev-1.13", state: context.state });
 			// Response shape observed from the live OpenRouter endpoint.
 			return Response.json({
-				id: "gen-dec-1",
-				provider: "TypeSafe",
+				model: "typesafe/jev-1.14-20261014",
 				answers: wireAnswers,
-				usage: { input_tokens: 308, output_tokens: 23, cost: 0.000012936 },
+				usage: {
+					input_tokens: 304,
+					output_tokens: 20,
+					cost: 0.000012768,
+					is_byok: false,
+					cost_details: {
+						upstream_inference_cost: 0.000012768,
+						upstream_inference_prompt_cost: 0.000012768,
+						upstream_inference_completions_cost: 0,
+					},
+				},
+				id: "gen-dec-1795523851-QIfD0w71U1hnQQndirYC",
+				provider: "TypeSafe",
 			});
 		});
 		const openRouterModel = {
@@ -104,8 +115,59 @@ describe("TypeSafe System One", () => {
 		expect(String(fetch.mock.calls[0]?.[0])).toBe("https://openrouter.ai/api/v1/systemone");
 		expect(result.stopReason).toBe("stop");
 		expect(result.answers.approved).toEqual({ type: "bool", probability: 0.95 });
-		// Priced from the catalog like chat usage; matches OpenRouter's reported cost.
-		expect(result.usage?.cost.total).toBeCloseTo(0.000012936, 12);
+		expect(result.responseId).toBe("gen-dec-1795523851-QIfD0w71U1hnQQndirYC");
+		expect(result.usage).toMatchObject({ input: 304, output: 20, totalTokens: 324 });
+		expect(result.usage?.cost).toMatchObject({ total: 0.000012768, totalFromProvider: true });
+	});
+
+	it("trusts OpenRouter's System One cost only with its BYOK accounting, like chat usage", async () => {
+		const openRouterModel = {
+			...model,
+			id: "typesafe/jev-1.13",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			cost: { ...model.cost, input: 0.042 },
+		};
+		const respond = (usage: Record<string, unknown>) => async () =>
+			Response.json({ id: "gen-dec-2", provider: "TypeSafe", answers: wireAnswers, usage });
+
+		const billed = await classify(openRouterModel, context, {
+			apiKey: "secret",
+			fetch: respond({ input_tokens: 308, output_tokens: 23, cost: 0.00002, is_byok: false }),
+		});
+		// Synthetic: without `is_byok`, the cost could be OpenRouter's fee alone.
+		const bareCost = await classify(openRouterModel, context, {
+			apiKey: "secret",
+			fetch: respond({ input_tokens: 308, output_tokens: 23, cost: 0.00002 }),
+		});
+		const byok = await classify(openRouterModel, context, {
+			apiKey: "secret",
+			fetch: respond({
+				input_tokens: 308,
+				output_tokens: 23,
+				cost: 0.000001,
+				is_byok: true,
+				cost_details: {
+					upstream_inference_cost: 0.00002,
+					upstream_inference_prompt_cost: 0.00002,
+					upstream_inference_completions_cost: 0,
+				},
+			}),
+		});
+		const native = await classify(model, context, {
+			apiKey: "secret",
+			fetch: respond({ input_tokens: 308, output_tokens: 23, cost: 0.00002, is_byok: false }),
+		});
+
+		expect(billed.usage?.cost).toMatchObject({ total: 0.00002, totalFromProvider: true });
+		expect(billed.usage?.cost.input).toBeCloseTo(0.000012936, 12);
+		expect(bareCost.usage?.cost.total).toBeCloseTo(0.000012936, 12);
+		expect(bareCost.usage?.cost.totalFromProvider).toBe(false);
+		expect(byok.usage?.cost.total).toBeCloseTo(0.000021, 12);
+		expect(byok.usage?.cost.totalFromProvider).toBe(true);
+		// Only OpenRouter's accounting fields are trusted as a bill.
+		expect(native.usage?.cost.totalFromProvider).toBe(false);
+		expect(native.responseId).toBe("gen-dec-2");
 	});
 
 	it("rejects models for other classifier APIs", async () => {

@@ -8,19 +8,20 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
-import { hostKind, int, method, remote, str, unknown } from "../../../src/contracts/index.ts";
+import { type Address, hostKind, int, method, remote, str, unknown } from "../../../src/contracts/index.ts";
+import type { Principal } from "../../../src/data/index.ts";
 import * as chord from "../../../src/index.ts";
 import {
 	type App,
 	AppInfo,
 	type AppOptions,
 	Files,
-	Sessions,
+	SignIns,
 	startServer,
 	WorkerInfo,
 } from "../../../src/node/app/index.ts";
 import { Http } from "../../../src/node/http/index.ts";
-import { writeFiles, writePlugin } from "../plugins/support.ts";
+import { settleFileEvents, writeFiles, writePlugin } from "../plugins/support.ts";
 
 /** The principals of these tests. */
 export type TestPrincipal =
@@ -29,11 +30,17 @@ export type TestPrincipal =
 	| { readonly kind: "worker"; readonly key: string }
 	| { readonly kind: "user"; readonly id: string; readonly name: string };
 
+/** The principals of an app whose owner is one of its users: no owner kind. */
+export type UserPrincipal =
+	| { readonly kind: "server" }
+	| { readonly kind: "worker"; readonly key: string }
+	| { readonly kind: "user"; readonly id: string; readonly name?: string };
+
 /** The tests' worker kind: a project by id. */
 export const Project = hostKind("project", { id: str() });
 
 /** The tests' API v1: Chord's surface and the kit's objects, as an app's API re-exports them. */
-export const API_V1 = { ...chord, AppInfo, WorkerInfo, Files, Sessions };
+export const API_V1 = { ...chord, AppInfo, WorkerInfo, Files, SignIns };
 
 /** The tests' API, as the server and the fixture worker have it. */
 export const API = {
@@ -58,21 +65,53 @@ export async function tempDir(): Promise<string> {
 	return dir;
 }
 
-/** A started test app and what it reported; `plugins` (directory name to files) written into its root first. */
-export async function testApp(
-	options: Partial<AppOptions<TestPrincipal>> & {
-		readonly plugins?: Readonly<Record<string, Readonly<Record<string, string>>>>;
-		readonly withWorkers?: boolean;
-	} = {},
-): Promise<{ app: App<TestPrincipal>; errors: unknown[]; dataDir: string; root: string; port: number }> {
+/**
+ * What a test app takes: `AppOptions` but its principals (the test app's), and plugins (directory name to files)
+ * written into its root first.
+ */
+type TestAppOptions<P extends Principal> = Partial<Omit<AppOptions<P>, "principal">> & {
+	readonly plugins?: Readonly<Record<string, Readonly<Record<string, string>>>>;
+	readonly withWorkers?: boolean;
+	/** Whether the app is handed out before its bases are built (`basesBuilt`): after by default. */
+	readonly unbuilt?: boolean;
+};
+
+/** The test apps' server principal. */
+const SERVER = { kind: "server" } as const;
+
+/** The test apps' worker principal at `address`. */
+function workerOf(address: Address) {
+	return { kind: "worker", key: address.key } as const;
+}
+
+/** A started test app (owner `{ kind: "owner" }`) and what it reported. */
+export function testApp(options: TestAppOptions<TestPrincipal> = {}) {
+	return startTestApp<TestPrincipal>({ server: SERVER, worker: workerOf, owner: { kind: "owner" } }, options);
+}
+
+/** A started test app whose owner is `owner`, one of its users, and what it reported. */
+export function userOwnerApp(owner: UserPrincipal, options: TestAppOptions<UserPrincipal> = {}) {
+	return startTestApp<UserPrincipal>({ server: SERVER, worker: workerOf, owner }, options);
+}
+
+/**
+ * A test app with the principals `principal` (`worker` only for worker kinds), started in a temporary data directory
+ * and plugins root, its bases built, and what it reported.
+ */
+export async function startTestApp<P extends Principal>(
+	principal: { readonly server: P; readonly worker?: (address: Address) => P; readonly owner: P },
+	options: TestAppOptions<P>,
+): Promise<{ app: App<P>; errors: unknown[]; dataDir: string; root: string; port: number }> {
 	const base = await tempDir();
 	const dataDir = options.dataDir ?? join(base, "data");
 	const root = options.root ?? join(base, "plugins");
 	await writeFiles(root, { ".keep": "" });
 	for (const [dir, files] of Object.entries(options.plugins ?? {}))
 		await writePlugin(root, dir, `@test/${dir}`, files);
+	await settleFileEvents();
 	const errors: unknown[] = [];
-	const app = await startServer<TestPrincipal>(
+	const app = await startServer<P>(
+		// The tests pass worker kinds (`withWorkers`, `workers`) only with `principal.worker`.
 		{
 			name: "chord-test",
 			dataDir,
@@ -80,7 +119,7 @@ export async function testApp(
 			listen: { host: "127.0.0.1", port: 0 },
 			api: API,
 			kinds: { server: { platform: "node" }, worker: { platform: "node" } },
-			principal: { server: { kind: "server" }, worker: (address) => ({ kind: "worker", key: address.key }) },
+			principal,
 			workers:
 				options.withWorkers === true
 					? [
@@ -96,9 +135,15 @@ export async function testApp(
 					: [],
 			onError: (error) => errors.push(error),
 			...options,
-		},
+		} as AppOptions<P>,
 		context,
 	);
+	// The bases built after the listen: most tests get the app as its first requests see it.
+	if (options.unbuilt !== true) {
+		await app.basesBuilt;
+		// Retire startup events before a test makes its first distinct edit.
+		await settleFileEvents();
+	}
 	const port = Number(new URL(app.ownerLink()).port);
 	return { app, errors, dataDir, root, port };
 }
@@ -171,7 +216,7 @@ export const NOTES_PLUGIN: Readonly<Record<string, string>> = {
 		"\t\t\tstart: self.derive([info.start], ([value]) => value),",
 		"\t\t\twrite: (next, ctx) => store.write(next, ctx),",
 		"\t\t\tvisit: (page, ctx) => store.visit(page, ctx),",
-		'\t\t\tattach: (body, ctx) => files.put({ name: "note.txt", mime: "text/plain", bytes: new TextEncoder().encode(body) }, ctx),',
+		'\t\t\tattach: async (body, ctx) => (await files.put({ space: "notes", path: "note.txt", mime: "text/plain", source: "test", bytes: new TextEncoder().encode(body) }, ctx)).id,',
 		"\t\t\tfile: async (id, ctx) => decoder.decode(await files.read({ id, offset: 0, length: 1024 }, ctx)),",
 		"\t\t} };",
 		"\t});",
@@ -185,3 +230,15 @@ export const WHOAMI = [
 	'import { Http } from "@test/app/v1/server";',
 	'export default defineFacet((_host, self) => self.contribute(Http, { routes: { "GET /whoami": async (_request, ctx) => ({ kind: "json", value: ctx.principal ?? null }) } }));',
 ].join("\n");
+
+/** The `Authorization` header of a new device sign-in for `principal` on `app`. */
+export async function bearerFor<P extends Principal>(
+	app: App<P>,
+	principal: P,
+): Promise<{ readonly authorization: string }> {
+	const { token } = await app.host.root(
+		async (ctx) => (await ctx.get(SignIns, {})).issue({ principal, label: "test", kind: "device" }, ctx),
+		context,
+	);
+	return { authorization: `Bearer ${token}` };
+}

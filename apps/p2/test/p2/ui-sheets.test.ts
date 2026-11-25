@@ -15,7 +15,7 @@ import { ProviderLogin } from "../../plugins/login/contract.ts";
 import { Catalog } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import type { ServerResourceOptions } from "../../src/runtime/server.ts";
-import { browserTests } from "./browser.ts";
+import { browserTests, COMPOSER } from "./browser.ts";
 import { type Fixture, poll, startFixture, until } from "./helpers.ts";
 
 const termux = process.env.PREFIX !== undefined;
@@ -69,11 +69,17 @@ describe("sheet parity", { skip: !browserTests }, () => {
 		await wait(selector);
 		await evaluate(`${selector}.click()`);
 	};
+	/** Opens the Settings window from the sidebar's gear, then its section `label`. */
+	const openSettings = async (label: string) => {
+		await wait(`document.querySelector('.drawer-foot .settings-open')`);
+		await evaluate(`document.querySelector('.drawer-foot .settings-open').click()`);
+		const item = `[...document.querySelectorAll('.settings-nav-item')].find((e) => e.textContent === ${JSON.stringify(label)})`;
+		await wait(item);
+		await evaluate(`${item}.click()`);
+	};
 	const openProviders = async () => {
-		await evaluate(`document.querySelector('button[aria-label=Sessions]').click()`);
-		await wait(`[...document.querySelectorAll('button')].some(e=>e.textContent==='Providers')`);
-		await evaluate(`[...document.querySelectorAll('button')].find(e=>e.textContent==='Providers').click()`);
-		await wait(`document.querySelector('[role=dialog][aria-label=Providers] .row-button')`);
+		await openSettings("Providers");
+		await wait(`document.querySelector('[role=dialog] [aria-label=Providers] .row-button')`);
 		await evaluate(`document.querySelector('[role=dialog] .row-button').click()`);
 		await wait(`document.querySelector('.provider-detail')`);
 	};
@@ -98,8 +104,13 @@ describe("sheet parity", { skip: !browserTests }, () => {
 		);
 		await poll(() => existsSync(join(profile, "DevToolsActivePort")), 20_000, "Chromium debugging port");
 		const port = readFileSync(join(profile, "DevToolsActivePort"), "utf8").split("\n")[0];
-		const pages = (await (await fetch(`http://127.0.0.1:${port}/json`)).json()) as { webSocketDebuggerUrl: string }[];
-		socket = new WebSocket(pages[0].webSocketDebuggerUrl);
+		const pages = (await (await fetch(`http://127.0.0.1:${port}/json`)).json()) as {
+			type: string;
+			webSocketDebuggerUrl: string;
+		}[];
+		// Google Chrome also lists its component extensions' background pages; drive the tab.
+		const page = pages.find((target) => target.type === "page") ?? pages[0]!;
+		socket = new WebSocket(page.webSocketDebuggerUrl);
 		await new Promise<void>((resolve, reject) => {
 			socket.once("open", resolve);
 			socket.once("error", reject);
@@ -114,15 +125,24 @@ describe("sheet parity", { skip: !browserTests }, () => {
 		});
 		await call("Page.enable");
 		await call("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+		// The local owner's session, as a sign-in link opened on the host gives it.
+		const [name, value] = fixture.owner.cookie.split("=", 2) as [string, string];
+		await call("Network.setCookie", {
+			name,
+			value,
+			url: `http://127.0.0.1:${fixture.server.port}/`,
+			httpOnly: true,
+			sameSite: "Lax",
+		});
 		await call("Page.navigate", { url: `http://127.0.0.1:${fixture.server.port}/` });
-		await wait(`document.querySelector('textarea') && !document.querySelector('.offline')`);
+		await wait(`document.querySelector('${COMPOSER}') && !document.querySelector('.offline')`);
 	});
 	after(async () => {
 		await call("Browser.close").catch(() => {});
 		socket?.close();
 		process?.kill("SIGTERM");
 		await fixture?.close();
-		if (profile) rmSync(profile, { recursive: true, force: true });
+		if (profile) rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 	});
 
 	it("Done returns to All providers, and Back cancels and dismisses an unfinished provider flow", async () => {
@@ -138,21 +158,21 @@ describe("sheet parity", { skip: !browserTests }, () => {
 			await evaluate(`document.querySelector('#login-value').form.requestSubmit()`);
 			await until(login.login, (state) => state?.status === "success");
 			await click("Done");
-			await wait(`document.querySelector('[role=dialog][aria-label=Providers] .row-button')`);
+			await wait(`document.querySelector('[role=dialog] [aria-label=Providers] .row-button')`);
 			await until(login.login, (state) => state === null);
 			// Done went back onto the list's own history entry (the provider screen replaced the list's layer, as in Pi
-			// Mobile): one more Back closes the sheet instead of showing an identical list.
+			// Mobile): one more Back leaves the list instead of showing an identical list (to Settings' list on phones).
 			await evaluate("history.back()");
-			await wait(`!document.querySelector('[role=dialog][aria-label=Providers]')`);
-			await evaluate(`document.querySelector('button[aria-label=Sessions]').click()`);
-			await wait(`[...document.querySelectorAll('button')].some(e=>e.textContent==='Providers')`);
-			await evaluate(`[...document.querySelectorAll('button')].find(e=>e.textContent==='Providers').click()`);
-			await wait(`document.querySelector('[role=dialog][aria-label=Providers] .row-button')`);
+			await wait(`!document.querySelector('[role=dialog] [aria-label=Providers]')`);
+			await evaluate(`document.querySelector('[role=dialog] button[aria-label=Close]').click()`);
+			await wait(`!document.querySelector('[role=dialog]')`);
+			await openSettings("Providers");
+			await wait(`document.querySelector('[role=dialog] [aria-label=Providers] .row-button')`);
 			await evaluate(`document.querySelector('[role=dialog] .row-button').click()`);
 			await click("Fixture key");
 			await until(login.login, (state) => state?.status === "working" && state.prompt !== null);
 			await evaluate("history.back()");
-			await wait(`document.querySelector('[role=dialog][aria-label=Providers] .row-button')`);
+			await wait(`document.querySelector('[role=dialog] [aria-label=Providers] .row-button')`);
 			await until(login.login, (state) => state === null);
 			await evaluate(`document.querySelector('[role=dialog] .row-button').click()`);
 			await click("Fixture key");
@@ -172,8 +192,8 @@ describe("sheet parity", { skip: !browserTests }, () => {
 			deviceScaleFactor: 1,
 			mobile: false,
 		});
-		await evaluate(`[...document.querySelectorAll('button')].find(e=>e.textContent==='Envs').click()`);
-		await wait(`document.querySelector('[role=dialog][aria-label=Environments] .empty-note')`);
+		await openSettings("Environments");
+		await wait(`document.querySelector('[role=dialog] [aria-label=Environments] .empty-note')`);
 		await click("Add environment");
 		await wait(`document.querySelector('.env-form')`);
 		await wait(
@@ -189,16 +209,16 @@ describe("sheet parity", { skip: !browserTests }, () => {
 			`(() => { for(const [selector,value] of [['input[placeholder=gpu]','editor'],['input[placeholder=gpu-box]','fixture.invalid']]) { const input=document.querySelector(selector);Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,value);input.dispatchEvent(new Event('input',{bubbles:true})); } })()`,
 		);
 		await evaluate(`document.querySelector('.env-form').requestSubmit()`);
-		await wait(`document.querySelector('[role=dialog][aria-label=editor]')`);
+		await wait(`document.querySelector('[role=dialog] [aria-label=editor]')`);
 		await click("← All environments");
-		await wait(`document.querySelector('[role=dialog][aria-label=Environments] .row-button')`);
+		await wait(`document.querySelector('[role=dialog] [aria-label=Environments] .row-button')`);
 		await evaluate(`document.querySelector('[role=dialog] .row-button').click()`);
 		await click("Delete environment");
 		await wait(`document.querySelector('[role=dialog]')?.textContent.includes('Delete "editor"?')`);
 		await click("Cancel");
 		await click("Delete environment");
 		await click("Delete");
-		await wait(`document.querySelector('[role=dialog][aria-label=Environments] .empty-note')`);
+		await wait(`document.querySelector('[role=dialog] [aria-label=Environments] .empty-note')`);
 		await evaluate(`document.querySelector('[role=dialog] button[aria-label=Close]').click()`);
 		await call("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
 	});

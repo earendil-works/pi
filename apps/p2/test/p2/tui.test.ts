@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -48,6 +48,13 @@ test("TUI auth options, private config and owner-claim cookie round trip", async
 	);
 	assert.throws(() => parseTuiArgs(["http://remote.test"], {}), /HTTPS/);
 	assert.throws(() => parseTuiArgs(["https://fixture:secret@example.test"], {}), /without credentials/);
+	// Through Radius: optionally the server's ID; Radius admits the owner, so no URL or link, and no owner link from env.
+	const radiusServer = "0b5a3e8e-6f1d-4c55-9d3a-2a7b1c9e4f10";
+	assert.deepEqual(parseTuiArgs(["--radius"], {}).radius, {});
+	assert.deepEqual(parseTuiArgs(["--radius", radiusServer, "--theme", "dark"], {}).radius, { server: radiusServer });
+	assert.equal(parseTuiArgs(["--radius"], { P2_TUI_OWNER_LINK: link }).ownerLink, undefined);
+	assert.throws(() => parseTuiArgs(["--radius", "https://example.test"], {}), /no URL/);
+	assert.throws(() => parseTuiArgs(["https://example.test", "--radius", "--owner-link", link], {}), /no URL/);
 	saveConfig({ connections: { "https://example.test": { cookie: "owner=fixture" } } }, directory);
 	assert.equal(statSync(join(directory, "config.json")).mode & 0o777, 0o600);
 	assert.equal(statSync(directory).mode & 0o777, 0o700);
@@ -80,23 +87,54 @@ test("TUI auth options, private config and owner-claim cookie round trip", async
 	assert.equal((await claimOwner(new URL(`http://127.0.0.1:${port}`), "fixture-token", {})).cookie, "owner=fixture");
 });
 
-test("TUI loopback automatically signs in as the device owner without a link prompt", async (t) => {
+test("TUI loopback signs in as the local owner with the data directory's owner key, without a link prompt", async (t) => {
 	const fixture = await startFixture();
 	t.after(() => fixture.close());
 	const url = new URL(`http://127.0.0.1:${fixture.server.port}`);
-	const token = (await fixture.browser().hold(Devices, {}, BACKGROUND_CONTEXT).token(BACKGROUND_CONTEXT)).token;
-	const associated = await claimOwner(url, token, {});
-	const config = { connections: { [url.origin]: associated } };
-	const credentials = await authenticateTui({ url }, config, async () => {
+	const config = { connections: {} };
+	const credentials = await authenticateTui({ url, dataDir: fixture.dataDir }, config, async () => {
 		throw new Error("Unexpected owner link prompt");
 	});
-	assert.deepEqual(credentials, { role: "owner" }, "loopback uses the device path, not a cached remote cookie");
+	assert.equal(credentials.role, "owner");
+	assert.equal(credentials.local, true);
+	assert.match(String(credentials.cookie), /^p2_owner_\d+=local\./);
+	assert.deepEqual(config, { connections: {} }, "a local sign-in is never saved");
 	const client = fixture.client(connectionHeaders(url, credentials)).host;
 	const devices = client.hold(Devices, {}, BACKGROUND_CONTEXT);
 	assert.equal(await until(devices.canMint, (value) => value === true), true);
+	// A valid saved owner cookie (an owner link redeemed on loopback, say) comes first.
+	const token = (await devices.token(BACKGROUND_CONTEXT)).token;
+	const associated = await claimOwner(url, token, {});
+	const saved = await authenticateTui(
+		{ url, dataDir: fixture.dataDir },
+		{ connections: { [url.origin]: associated } },
+		async () => {
+			throw new Error("Unexpected owner link prompt");
+		},
+	);
+	assert.deepEqual(saved, { ...associated, role: "owner" });
 });
 
-test("a proxy marker refuses the TUI automatic path and falls back to a link prompt", async (t) => {
+test("TUI loopback without the server's owner key asks for an owner link, saying why", async (t) => {
+	const fixture = await startFixture();
+	t.after(() => fixture.close());
+	const url = new URL(`http://127.0.0.1:${fixture.server.port}`);
+	const other = mkdtempSync(join(tmpdir(), "p2-tui-other-data-"));
+	t.after(() => rmSync(other, { recursive: true, force: true }));
+	const reasons: (string | undefined)[] = [];
+	const refuse = async (_kind: string, reason?: string): Promise<string> => {
+		reasons.push(reason);
+		throw new Error("Link prompt required");
+	};
+	// Another user (no readable key), then another server's data directory.
+	await assert.rejects(authenticateTui({ url, dataDir: other }, { connections: {} }, refuse), /Link prompt required/);
+	writeFileSync(join(other, "owner-key"), "a".repeat(64));
+	await assert.rejects(authenticateTui({ url, dataDir: other }, { connections: {} }, refuse), /Link prompt required/);
+	assert.match(String(reasons[0]), /Cannot read .*owner-key: local sign-in needs the user running the p2 server/);
+	assert.match(String(reasons[1]), /does not use the data directory .*: set P2_DATA_DIR/);
+});
+
+test("a proxy marker refuses the TUI local sign-in and falls back to a link prompt", async (t) => {
 	const fixture = await startFixture();
 	t.after(() => fixture.close());
 	const original = globalThis.fetch;
@@ -107,10 +145,14 @@ test("a proxy marker refuses the TUI automatic path and falls back to a link pro
 	});
 	let prompted = false;
 	await assert.rejects(
-		authenticateTui({ url: new URL(`http://127.0.0.1:${fixture.server.port}`) }, { connections: {} }, async () => {
-			prompted = true;
-			throw new Error("Link prompt required");
-		}),
+		authenticateTui(
+			{ url: new URL(`http://127.0.0.1:${fixture.server.port}`), dataDir: fixture.dataDir },
+			{ connections: {} },
+			async () => {
+				prompted = true;
+				throw new Error("Link prompt required");
+			},
+		),
 		/Link prompt required/,
 	);
 	assert(prompted);
@@ -160,6 +202,8 @@ test("bare-host TUI facets register, render session/model pickers and reload wit
 		pinned: false,
 		model: { provider: "faux", modelId: "faux-1" },
 		thinkingLevel: "off",
+		main: 1,
+		branches: [],
 	};
 	let configured = "";
 	const fixture = await testHost({
@@ -176,6 +220,8 @@ test("bare-host TUI facets register, render session/model pickers and reload wit
 						sessions,
 						defaultCwd,
 						defaultEnv,
+						operations: self.state([]),
+						dismissOperation: () => {},
 						create: () => session,
 						relocate: () => {},
 						rename: () => {},

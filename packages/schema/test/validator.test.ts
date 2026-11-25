@@ -1,6 +1,7 @@
 // compile() and Validator: checks, errors, values, options and schemas from other sources.
 
 import Type from "typebox";
+import { Check } from "typebox/value";
 import { describe, expect, it } from "vitest";
 import { formats } from "../src/formats/index.ts";
 import { compile } from "../src/index.ts";
@@ -107,6 +108,28 @@ describe("values", () => {
 
 	it("does not accept every value for a type named like an Object.prototype member", () => {
 		expect(compile({ type: "constructor" }).check(1)).toBe(false);
+	});
+
+	it("rejects NaN and Infinity as a number or an integer, with or without bounds, as TypeBox does", () => {
+		const schemas = [
+			{ type: "number" },
+			{ type: "integer" },
+			{ type: "number", minimum: 0 },
+			{ type: ["number", "string"] },
+			{ anyOf: [{ type: "number" }, { type: "null" }] },
+			{ type: "object", properties: { a: { type: "number" } } },
+		];
+		for (const schema of schemas) {
+			const { check } = compile(schema);
+			for (const v of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+				const value = schema.type === "object" ? { a: v } : v;
+				expect(check(value), `${JSON.stringify(schema)}: ${v}`).toBe(false);
+				expect(check(value)).toBe(Check(schema, value));
+			}
+		}
+		expect(compile({ type: "number" }).errors(Number.NaN)).toEqual([
+			{ path: "", keyword: "type", message: "expected number, got NaN" },
+		]);
 	});
 
 	it("checks a detached check function", () => {
@@ -292,6 +315,60 @@ describe("unresolved references", () => {
 	});
 });
 
+describe("leaf checks inlined by object and array loops", () => {
+	const leaves: [object, unknown[]][] = [
+		[{ const: "a" }, ["a", "b", 1, null]],
+		[{ const: null }, [null, 0, false, "null"]],
+		[{ enum: ["a", 1, null] }, ["a", 1, null, "b", 2, true]],
+		[{ type: ["string", "null"] }, ["a", null, 1, {}, []]],
+		[{ type: ["integer", "boolean"] }, [1, 1.5, true, "1"]],
+		[{ type: ["number", "array"] }, [1.5, 2, [], {}, new Uint8Array(1)]],
+		[{ type: ["object", "bytes"] }, [{}, new Uint8Array(1), [], null]],
+		[{ anyOf: [{ type: "string" }, { type: "null" }] }, ["a", null, 1]],
+		[{ anyOf: [{ type: "integer" }, { type: "string", minLength: 2 }] }, [1, 1.5, "ab", "a"]],
+		[{ type: "integer", minimum: 1, exclusiveMaximum: 5 }, [1, 4, 5, 0, 2.5, "2"]],
+		[{ type: "number", exclusiveMinimum: 0, maximum: 1 }, [0.5, 1, 0, 1.5, "0.5"]],
+		[{ type: "integer", multipleOf: 2 }, [2, 3, 2.5]],
+		[{ type: "string", minLength: 2, maxLength: 3 }, ["ab", "abc", "a", "abcd", "😀😀", 12]],
+		[{ type: "string", pattern: "^a+$" }, ["aa", "ab", 1]],
+		[{ minimum: 1 }, [1, 0, "x", null]],
+	];
+
+	it("agree with the standalone check as a property, a pattern property and an item", () => {
+		for (const [schema, values] of leaves) {
+			const alone = compile(schema).check;
+			const closed = compile({ type: "object", properties: { p: schema }, additionalProperties: false }).check;
+			const open = compile({ type: "object", properties: { p: schema }, required: ["q"] }).check;
+			const items = compile({ type: "array", items: schema }).check;
+			for (const v of values) {
+				const expected = alone(v);
+				expect([closed({ p: v }), open({ p: v, q: 1 }), items([v])], JSON.stringify({ schema, v })).toEqual([
+					expected,
+					expected,
+					expected,
+				]);
+			}
+		}
+	});
+
+	it("find properties in any order", () => {
+		const { check } = compile({
+			type: "object",
+			properties: { a: { const: 1 }, b: { type: "string" }, c: { type: "integer", minimum: 0 } },
+			required: ["a", "c"],
+			additionalProperties: false,
+		});
+		expect(check({ a: 1, b: "x", c: 0 })).toBe(true);
+		expect(check({ c: 0, b: "x", a: 1 })).toBe(true);
+		expect(check({ b: "x", c: 0, a: 1 })).toBe(true);
+		expect(check({ a: 1, c: 0, a2: 1 })).toBe(false);
+		expect(check({ c: -1, a: 1 })).toBe(false);
+		expect(check({ c: 0, b: 1, a: 1 })).toBe(false);
+		expect(check({ c: 0, b: undefined, a: 1 })).toBe(true);
+		expect(check({ c: 0, b: "x" })).toBe(false);
+	});
+});
+
 describe("string lengths", () => {
 	it("count an unpaired high surrogate as one code point and a pair as one", () => {
 		expect(compile({ type: "string", minLength: 2 }).check("\ud800A")).toBe(true);
@@ -386,5 +463,68 @@ describe("TypeBox's extra formats", () => {
 		expect(fragment.check("#/a/b~1c")).toBe(true);
 		expect(fragment.check("#/a b")).toBe(false);
 		expect(fragment.check("/a")).toBe(false);
+	});
+});
+
+describe("TypeBox's JavaScript types", () => {
+	it("check Type.BigInt with its bounds, as TypeBox does", () => {
+		const schema = Type.Union([Type.BigInt({ minimum: 0n }), Type.Null()]);
+		const validator = compile(schema);
+		for (const value of [5n, 0n, null]) expect(validator.check(value)).toBe(true);
+		for (const value of [-1n, 5, "5", undefined]) expect(validator.check(value)).toBe(false);
+		expect(compile(Type.BigInt({ maximum: 10n, multipleOf: 5n })).check(10n)).toBe(true);
+		expect(compile(Type.BigInt({ multipleOf: 5n })).check(7n)).toBe(false);
+		expect(compile(Type.BigInt({ exclusiveMaximum: 3n })).check(3n)).toBe(false);
+		expect(compile(Type.BigInt({ minimum: 0n })).errors(-2n)).toEqual([
+			{ path: "", keyword: "minimum", message: "expected >= 0" },
+		]);
+		expect(compile(Type.BigInt()).errors(2)).toEqual([
+			{ path: "", keyword: "type", message: "expected bigint, got integer" },
+		]);
+	});
+
+	it("check Type.Undefined: only undefined, and a required property with it must be present", () => {
+		expect(compile(Type.Undefined()).check(undefined)).toBe(true);
+		expect(compile(Type.Undefined()).check(null)).toBe(false);
+		const schema = Type.Object({ selection: Type.Literal("average"), principalId: Type.Undefined() });
+		const validator = compile(schema);
+		expect(validator.check({ selection: "average", principalId: undefined })).toBe(true);
+		expect(validator.check({ selection: "average" })).toBe(false);
+		expect(validator.check({ selection: "average", principalId: "x" })).toBe(false);
+		expect(validator.check({ selection: "average", principalId: null })).toBe(false);
+		expect(validator.errors({ selection: "average" })).toEqual([
+			{ path: "/principalId", keyword: "required", message: "missing" },
+		]);
+		expect(validator.errors({ selection: "average", principalId: "x" })).toEqual([
+			{ path: "/principalId", keyword: "type", message: "expected undefined, got string" },
+		]);
+	});
+
+	it("check a required property set to undefined by its schema, as TypeBox does", () => {
+		// Present and undefined: valid when the schema takes undefined (Undefined in a union, Unknown, Any).
+		for (const property of [Type.Union([Type.String(), Type.Undefined()]), Type.Unknown(), Type.Any()]) {
+			for (const additionalProperties of [undefined, false]) {
+				const validator = compile(
+					Type.Object({ a: property }, additionalProperties === false ? { additionalProperties } : {}),
+				);
+				expect(validator.check({ a: undefined })).toBe(true);
+				expect(validator.check({})).toBe(false);
+			}
+		}
+		// A required property whose schema does not take undefined stays missing when set to undefined.
+		const name = compile(Type.Object({ name: Type.String() }));
+		expect(name.check({ name: undefined })).toBe(false);
+		expect(name.errors({ name: undefined })).toEqual([{ path: "/name", keyword: "required", message: "missing" }]);
+		// An optional property set to undefined still counts as absent.
+		expect(compile(Type.Object({ name: Type.Optional(Type.String()) })).check({ name: undefined })).toBe(true);
+	});
+
+	it("check multipleOf of bigints exactly, however large", () => {
+		const five = compile(Type.BigInt({ multipleOf: 5n }));
+		expect(five.check(10n ** 400n)).toBe(true);
+		expect(five.check(10n ** 400n + 1n)).toBe(false);
+		// A bigint is no multiple of 0 or of a fraction.
+		expect(compile({ multipleOf: 0n }).check(4n)).toBe(false);
+		expect(compile({ multipleOf: 0.5 }).check(3n)).toBe(false);
 	});
 });

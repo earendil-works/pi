@@ -94,7 +94,7 @@
                   },
                   "thinkingLevelMap": {
                     "$ref": "#/$defs/ThinkingLevelMap",
-                    "description": "Provider value sent for each thinking level. null marks a level unsupported. Levels the model does not map use the provider's default value through high; xhigh and max are unsupported."
+                    "description": "Provider value sent for each thinking level. A string is sent to the provider; null hides the level. Levels left out use the provider's default value for off through high; xhigh and max are opt-in and only offered when mapped to a string."
                   },
                   "input": {
                     "type": "array",
@@ -218,7 +218,7 @@
                     },
                     "thinkingLevelMap": {
                       "$ref": "#/$defs/ThinkingLevelMap",
-                      "description": "Provider value sent for each thinking level. null marks a level unsupported. Levels the model does not map use the provider's default value through high; xhigh and max are unsupported."
+                      "description": "Provider value sent for each thinking level. A string is sent to the provider; null hides the level. Levels left out use the provider's default value for off through high; xhigh and max are opt-in and only offered when mapped to a string."
                     },
                     "input": {
                       "type": "array",
@@ -551,6 +551,14 @@
         "requiresAssistantAfterToolResult": {
           "type": "boolean",
           "description": "Whether a user message after tool results requires an assistant message in between. Default: auto-detected from URL."
+        },
+        "requiresNonNullAssistantContent": {
+          "type": "boolean",
+          "description": "Whether replayed assistant messages with no text (e.g. tool-call-only messages) must send \"\" instead of null content. Default: false."
+        },
+        "requiresToolsWithToolHistory": {
+          "type": "boolean",
+          "description": "Whether requests without tools must send \"tools\": [] when the conversation contains tool calls or tool results. Needed by some proxies in front of Anthropic, such as older LiteLLM versions. Default: false, the field is omitted."
         },
         "requiresThinkingAsText": {
           "type": "boolean",
@@ -1009,6 +1017,23 @@
           ],
           "description": "Session-affinity header format. Defaults are API-specific or auto-detected."
         },
+        "promptCacheKeyMode": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "auto"
+            },
+            {
+              "type": "string",
+              "const": "enabled"
+            },
+            {
+              "type": "string",
+              "const": "disabled"
+            }
+          ],
+          "description": "Controls the prompt_cache_key request field for openai-completions and openai-responses: auto keeps each API's default, enabled sends it whenever caching is active, disabled never sends it. Default: auto."
+        },
         "supportsLongCacheRetention": {
           "type": "boolean",
           "description": "Whether the provider supports long prompt cache retention. Defaults are API-specific or auto-detected."
@@ -1034,7 +1059,7 @@
         },
         "supportsMidConvoEffort": {
           "type": "boolean",
-          "description": "Whether thinking level changes are sent inside the conversation instead of changing the request's effort, so a change keeps the prompt cache. Used by the anthropic-messages and openai-responses APIs.",
+          "description": "Whether thinking level changes are sent inside the conversation instead of changing the request's effort, so a change keeps the prompt cache. Used by the anthropic-messages, openai-responses, and openai-codex-responses APIs.",
           "default": false
         },
         "supportsMaxOutputTokens": {
@@ -1079,7 +1104,7 @@
         },
         "supportsMessageThreads": {
           "type": "boolean",
-          "description": "Whether the endpoint supports Anthropic message threads, which let a request with a session id send only the new messages and continue from the previous reply. Default: true for provider anthropic with a baseUrl on api.anthropic.com, false otherwise. Set true for gateways that forward the thread request field."
+          "description": "Whether the endpoint supports Anthropic message threads, which let a request with a session id send only the new messages and continue from the previous reply. Default: true for a baseUrl on api.anthropic.com, false otherwise. Set true for gateways that forward the thread request field."
         },
         "allowedFallbackModels": {
           "type": "array",

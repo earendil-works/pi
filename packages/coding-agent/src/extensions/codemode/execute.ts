@@ -27,7 +27,7 @@ import {
 import { getCodemodeWorkerSpecifier, getQuickJSWasmPath } from "../../config.ts";
 import type { ExtensionToolContext, ToolNamespace } from "../../core/extensions/types.ts";
 import type { SessionEntry } from "../../core/session-manager.ts";
-import { formatSize } from "../../core/tools/truncate.ts";
+import { formatSize, sliceHead, sliceTail } from "../../core/tools/truncate.ts";
 import { combineUsage } from "../../core/usage-totals.ts";
 import { writeOutputFile } from "../../utils/output-files.ts";
 import { Bm25Ranker, createToolSearchDocument, DEFAULT_TOOL_SEARCH_LIMIT } from "../tool-search/tool.ts";
@@ -112,7 +112,7 @@ function releaseCodemodeWorker(): void {
 const MODEL_TYPES: ReadonlySet<string> = new Set<ModelType>(["chat", "image", "classifier"]);
 
 function truncateText(text: string, maxChars: number): string {
-	return text.length > maxChars ? `${text.slice(0, maxChars - 3)}...` : text;
+	return text.length > maxChars ? `${sliceHead(text, maxChars - 3)}...` : text;
 }
 
 function previewArgs(args: unknown): string {
@@ -457,8 +457,8 @@ async function truncateOutput(
 	const headChars = Math.floor(budget / 2);
 	const tailChars = budget - headChars;
 	const removed = combined.length - headChars - tailChars;
-	const head = combined.slice(0, headChars);
-	const tail = tailChars > 0 ? combined.slice(-tailChars) : "";
+	const head = sliceHead(combined, headChars);
+	const tail = sliceTail(combined, tailChars);
 	let text = `Warning: truncated output (original token count: ${Math.ceil(combined.length / CHARS_PER_TOKEN)})\nTotal output lines: ${combined.split("\n").length}\n\n${head}…${Math.ceil(removed / CHARS_PER_TOKEN)} tokens truncated…${tail}`;
 	const spilled = await spillOutput(combined);
 	text +=

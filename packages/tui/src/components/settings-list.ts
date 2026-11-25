@@ -94,7 +94,7 @@ export class SettingsList implements Component {
 		this.submenuComponent?.invalidate?.();
 	}
 
-	render(width: number): string[] {
+	render(width: number): readonly string[] {
 		// If submenu is active, render it instead
 		if (this.submenuComponent) {
 			return this.submenuComponent.render(width);
@@ -249,8 +249,11 @@ export class SettingsList implements Component {
 		} else if (kb.matches(data, "tui.select.cancel")) {
 			this.onCancel();
 		} else if (this.searchEnabled && this.searchInput) {
+			// Cursor keys leave the query as it is and must not move the selection.
+			const previousQuery = this.searchInput.getValue();
 			this.searchInput.handleInput(data);
-			this.applyFilter(this.searchInput.getValue());
+			const query = this.searchInput.getValue();
+			if (query !== previousQuery) this.applyFilter(query);
 		}
 	}
 

@@ -1,21 +1,45 @@
 // Tests of address archives (slice 13 §4) on their own: pack and unpack round-trip a host directory (its store's
-// export and its files, uploads under way left out); unpacking refuses an existing directory, a manifest `accept`
-// refuses, an archive not starting with its manifest and an entry outside the format, each leaving nothing behind.
+// export and its files, uploads under way left out) and the server's part, unpacked into a staging directory for the kit to put in place; unpacking refuses what a manifest `accept` refuses, an archive not starting with
+// its manifest, an entry outside the format and an archive past its limits, each leaving nothing behind.
 // The round trip of a live worker's documents, tables and files is in `app.test.ts`.
 
-import { createWriteStream } from "node:fs";
+import { createReadStream, createWriteStream } from "node:fs";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
-import { type ArchiveManifest, packData, unpackData } from "../../../src/node/app/archive.ts";
+import { type ArchiveManifest, packData, unpackStaging } from "../../../src/node/app/archive.ts";
 import { writeTar } from "../../../src/node/app/tar.ts";
 import { openNodeSqliteDatabase } from "../../../src/sqlite/node.ts";
-import { encodeJsonl, openStore, sqliteBackend } from "../../../src/store/index.ts";
+import { decodeJsonl, encodeJsonl, openStore, sqliteBackend } from "../../../src/store/index.ts";
 import { tempDir } from "./support.ts";
 
-const MANIFEST: ArchiveManifest = { format: 1, app: "acme", api: "v1", address: { kind: "doc", key: "doc|1" } };
+const MANIFEST: ArchiveManifest = { format: 2, app: "acme", api: "v1", address: { kind: "doc", key: "doc|1" } };
+
+/** The server's part of the archives: a host data archive of `doc|1` without data, as JSONL. */
+const SERVER_PARTS = [
+	{ kind: "manifest", format: 1, schema: 3, lastSeq: 0, nextId: 2, host: "doc|1" },
+	{ kind: "end", writes: 0 },
+];
+
+/** Writes the server's part beside the archives; its path. */
+async function serverPart(base: string): Promise<string> {
+	const path = join(base, "server.jsonl");
+	await writeFile(path, SERVER_PARTS.map((part) => `${JSON.stringify(part)}\n`).join(""));
+	return path;
+}
+
+/** A server that takes the parts it is handed: what it got. */
+function server(): { readonly parts: unknown[]; take(parts: AsyncIterable<unknown>): Promise<void> } {
+	const parts: unknown[] = [];
+	return {
+		parts,
+		take: async (each) => {
+			for await (const part of each) parts.push(part);
+		},
+	};
+}
 
 /** A host directory with a fresh store and files `files/a` and `files/sub/b`, plus an upload under way. */
 async function hostDirectory(base: string): Promise<string> {
@@ -61,21 +85,30 @@ describe("pack and unpack", () => {
 	it("round-trips a host directory's store and files, without uploads under way", async () => {
 		const base = await tempDir();
 		const dir = await hostDirectory(base);
-		await packData(dir, MANIFEST, join(base, "out.tar"), context);
+		await packData(dir, MANIFEST, await serverPart(base), join(base, "out.tar"), context);
 		const seen: ArchiveManifest[] = [];
-		await unpackData(join(base, "out.tar"), join(base, "copy"), (manifest) => seen.push(manifest), {}, context);
+		const got = server();
+		const accept = (manifest: ArchiveManifest) => seen.push(manifest);
+		const { staging, server: part } = await unpackStaging(
+			join(base, "out.tar"),
+			join(base, "in"),
+			accept,
+			{},
+			context,
+		);
+		await got.take(decodeJsonl(createReadStream(part)));
 		expect(seen).toEqual([MANIFEST]);
-		expect((await readdir(join(base, "copy"))).sort()).toEqual(["files", "store.sqlite"]);
-		expect((await readdir(join(base, "copy", "files"))).sort()).toEqual(["a", "sub"]);
-		expect(await readFile(join(base, "copy", "files", "sub", "b"), "utf8")).toBe("file b");
-		expect(await exported(join(base, "copy"))).toBe(await exported(dir));
-		// No staging directory left beside either.
-		expect((await readdir(base)).sort()).toEqual(["copy", "host", "out.tar"]);
+		expect(got.parts).toEqual(SERVER_PARTS);
+		expect((await readdir(staging)).sort()).toEqual(["files", "server.archive", "store.sqlite"]);
+		expect((await readdir(join(staging, "files"))).sort()).toEqual(["a", "sub"]);
+		expect(await readFile(join(staging, "files", "sub", "b"), "utf8")).toBe("file b");
+		expect(await exported(staging)).toBe(await exported(dir));
 	});
 
 	it("refuses to pack an address without data", async () => {
 		const base = await tempDir();
-		await expect(packData(join(base, "none"), MANIFEST, join(base, "out.tar"), context)).rejects.toThrow(
+		const part = await serverPart(base);
+		await expect(packData(join(base, "none"), MANIFEST, part, join(base, "out.tar"), context)).rejects.toThrow(
 			"has no data",
 		);
 	});
@@ -88,55 +121,49 @@ describe("refusals when unpacking", () => {
 		const entries: Array<readonly [string, string]> = [
 			["manifest.json", JSON.stringify(MANIFEST)],
 			["store.archive", ""],
+			["server.archive", ""],
 		];
 		await forged(join(base, "big.tar"), [...entries, ["files/a", big], ["files/b", big]]);
 		await expect(
-			unpackData(join(base, "big.tar"), join(base, "a"), () => {}, { bytes: 3000 }, context),
+			unpackStaging(join(base, "big.tar"), join(base, "in"), () => {}, { bytes: 3000 }, context),
 		).rejects.toThrow("unpacks to more than 3000 bytes");
 		await forged(join(base, "many.tar"), [
 			...entries,
 			...Array.from({ length: 5 }, (_, index) => [`files/${index}`, "x"] as const),
 		]);
 		await expect(
-			unpackData(join(base, "many.tar"), join(base, "b"), () => {}, { entries: 4 }, context),
+			unpackStaging(join(base, "many.tar"), join(base, "in"), () => {}, { entries: 4 }, context),
 		).rejects.toThrow("more than 4 entries");
-		expect((await readdir(base)).sort()).toEqual(["big.tar", "many.tar"]);
-	});
-
-	it("refuses an existing directory", async () => {
-		const base = await tempDir();
-		const dir = await hostDirectory(base);
-		await packData(dir, MANIFEST, join(base, "out.tar"), context);
-		await expect(unpackData(join(base, "out.tar"), dir, () => {}, {}, context)).rejects.toThrow("exists already");
+		expect(await readdir(join(base, "in"))).toEqual([]);
 	});
 
 	it("refuses what `accept` refuses, an archive not starting with its manifest, and a foreign entry; leaves nothing", async () => {
 		const base = await tempDir();
-		await packData(await hostDirectory(base), MANIFEST, join(base, "out.tar"), context);
+		await packData(await hostDirectory(base), MANIFEST, await serverPart(base), join(base, "out.tar"), context);
 		const refuse = () => {
 			throw new Error("not this app");
 		};
-		await expect(unpackData(join(base, "out.tar"), join(base, "a"), refuse, {}, context)).rejects.toThrow(
+		await expect(unpackStaging(join(base, "out.tar"), join(base, "in"), refuse, {}, context)).rejects.toThrow(
 			"not this app",
 		);
 		await forged(join(base, "late.tar"), [
 			["files/x", "x"],
 			["manifest.json", JSON.stringify(MANIFEST)],
 		]);
-		await expect(unpackData(join(base, "late.tar"), join(base, "b"), () => {}, {}, context)).rejects.toThrow(
+		await expect(unpackStaging(join(base, "late.tar"), join(base, "in"), () => {}, {}, context)).rejects.toThrow(
 			"start with manifest.json",
 		);
 		await forged(join(base, "extra.tar"), [
 			["manifest.json", JSON.stringify(MANIFEST)],
 			["plugins/evil.ts", "x"],
 		]);
-		await expect(unpackData(join(base, "extra.tar"), join(base, "c"), () => {}, {}, context)).rejects.toThrow(
+		await expect(unpackStaging(join(base, "extra.tar"), join(base, "in"), () => {}, {}, context)).rejects.toThrow(
 			"plugins/evil.ts",
 		);
 		await forged(join(base, "nostore.tar"), [["manifest.json", JSON.stringify(MANIFEST)]]);
-		await expect(unpackData(join(base, "nostore.tar"), join(base, "d"), () => {}, {}, context)).rejects.toThrow(
-			"no manifest.json or store.archive",
+		await expect(unpackStaging(join(base, "nostore.tar"), join(base, "in"), () => {}, {}, context)).rejects.toThrow(
+			"no manifest.json, store.archive or server.archive",
 		);
-		expect((await readdir(base)).sort()).toEqual(["extra.tar", "host", "late.tar", "nostore.tar", "out.tar"]);
+		expect(await readdir(join(base, "in"))).toEqual([]);
 	});
 });

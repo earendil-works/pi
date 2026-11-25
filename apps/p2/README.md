@@ -20,12 +20,35 @@ cd apps/p2
 npm start
 ```
 
-Open http://127.0.0.1:8788. `PORT` changes the port; `P2_DATA_DIR` changes the default data directory `~/.pi/p2`.
+Open http://127.0.0.1:8788 and paste the sign-in token the server prints at startup (`p2: sign-in token (…): <token>`).
+`PORT` changes the port; `P2_DATA_DIR` changes the default data directory `~/.pi/p2`.
 `P2_FAKE=1 npm start` uses a fake provider for demos, but tools still act on real files.
 See [development notes](docs/p2-notes.md) for dev mode, architecture and testing.
 Code mode scripts can orchestrate one-shot agents (`tools.agent`); [docs/workflows.md](docs/workflows.md) has workflow
 patterns with example scripts (fan-out with adversarial verification, drafts plus a judge, fix until a check passes,
 search until nothing new).
+
+## Signing in on this machine
+
+Loopback alone proves nothing: on a machine with several users, any of them reaches `127.0.0.1:8788`. The owner is
+whoever can read the server's private data directory (0700; its `owner-key` is 0600):
+
+- **Browser:** each browser profile signs in once: paste the one-time token the server prints at startup (valid ten
+  minutes) into the sign-in page, or open a fresh link from `npm run owner-link -- http://127.0.0.1:$PORT`. Redeemed
+  on loopback, the token gives a local owner session (`access: "local"`): it may mint owner links and use loopback
+  provider sign-ins. The session
+  cookie lasts 30 days and each app load renews it, so a browser in use stays signed in. A browser without it gets the
+  sign-in page (`/health` stays open).
+- **TUI, `npm run owner-link`, `scripts/verify-sessions.ts`:** they sign in by themselves with the owner key of the data
+  directory (`P2_DATA_DIR`, default `~/.pi/p2`), which must be the running server's: run them as the server's user,
+  with its `P2_DATA_DIR`. Otherwise they say which directory did not match (the TUI then asks for an owner link). The
+  key never leaves the client: the server sends a one-time challenge, and the client answers with an HMAC of it and the
+  server's port, so whatever listens on that port (another user's process while p2 is down) cannot replay the answer.
+- **Radius** authenticates its relayed requests itself and needs none of this.
+
+**Remaining risk:** browser cookies are not port-scoped, so a browser holding the session cookie sends it to any
+`127.0.0.1:<port>` page it opens, including another local user's server. That cookie is a session, not the key: **Sign
+out all devices** ends it (and every other session). Use a separate browser profile for untrusted local servers.
 
 ## Using the owner UI from another device
 
@@ -38,25 +61,26 @@ list its hostname in `P2_ALLOWED_HOSTS` (comma-separated for several hosts).
    npm run owner-link -- https://your-domain
    ```
 
-   The base defaults to `P2_PUBLIC_URL`, or `http://127.0.0.1:$PORT` (8788 when unset). The command uses the server's
-   direct device-only loopback path; it does not need a browser or read the signing key.
+   The base defaults to `P2_PUBLIC_URL`, or `http://127.0.0.1:$PORT` (8788 when unset). The command signs in as the
+   local owner with the data directory's `owner-key` (see above), so only the server's user can run it.
 2. Open the printed `https://your-domain/owner#<token>` link on your other device. The page removes the fragment,
    POSTs its token on the same origin, then redirects to `/`. The fragment never reaches HTTP/proxy logs.
 
 Links work once and expire after ten minutes. Treat their output as a private credential: do not publish it or
-put the token in a query/path. You can also use **Devices → Copy token** on the localhost owner UI, or the private
+put the token in a query/path. You can also use **Devices → Copy token** in a local owner's UI, or the private
 `<P2_DATA_DIR>/owner-token.txt` startup token, and paste it at `/owner`.
 
 Owners get distinct signed, HttpOnly, SameSite=Lax cookies, Secure on a remote HTTPS origin. Cookies last 30 days
-(server-side expiry too), are port-scoped, and survive restarts through the private `owner-key`. Signed-in devices
-are remote owners (`access: "device"`), so provider login and SSH-key upload work but owner-token minting does not.
-Only the trusted localhost device owner can mint invitations. Guest sharing is independent and session-limited.
-Radius remains a separate authenticated owner transport; a proxy marker is never authentication.
+(server-side expiry too), are port-scoped, and survive restarts through the private `owner-key`. Devices signed in
+on a remote origin are remote owners (`access: "device"`), so provider login and SSH-key upload work but owner-token
+minting does not; only local owners can mint invitations. Guest sharing is independent and session-limited. Radius
+remains a separate authenticated owner transport; a proxy marker is never authentication.
 
-**Devices → Sign out on this device** revokes this cookie, including its live connections; other devices stay
-signed in. **Sign out all devices** rotates the signing key, revokes all associated cookies/connections and
-outstanding links. Individual revocations persist in private `owner-revoked.json`. Already-admitted agent work
-continues. The host's inherent localhost/device access cannot be revoked by signing out remote devices.
+**Devices → Sign out on this device** revokes this cookie, including its live connections (a local session's links
+stay: local sessions share one principal); other devices stay signed in. **Sign out all devices** rotates the
+signing key, ends every owner session, remote and local, with their live connections and outstanding links; local
+clients sign in again with the new key. Individual revocations persist in private `owner-revoked.json`.
+Already-admitted agent work continues.
 
 The first deployment of signed cookies rotates the former raw-key cookie secret once (`owner-cookie-version`):
 old raw-key cookies intentionally stop working. Generate fresh owner links after deploying. Outstanding invitations
@@ -74,6 +98,9 @@ registered callback URL is unchanged.
 **Envs → Upload private key** also works for every owner, locally or remotely, never guests. Keys must be passphrase-less
 and at most 16 KiB; they are stored privately under `<data>/ssh/keys/`, never returned to a browser. Key generation
 and fetching an existing public key are available to every owner too, never guests. See [remote environments](docs/remote-envs.md).
+
+**Discord** (sidebar → More) sets up bots; a session's sheet → Discord links it to a channel: people there wake the
+sandboxed, locked session by mentioning the bot, and its answers come back as replies. See [Pi on Discord](docs/discord.md).
 
 API keys, pasted login codes and uploaded SSH keys pass through your tunnel or relay. Use a trusted transport.
 Keep the data directory, owner-key/tokens/revocations, provider credentials and SSH keys private; never commit them.
@@ -110,13 +137,21 @@ The TUI launcher requires **Node >=26.5.1**; the server still supports Node 22.1
 (or invoke `~/.local/bin/node26 --import ./src/source.ts src/hosts/tui.ts`).
 
 ```sh
-npm run tui                          # device owner on http://127.0.0.1:$PORT (8788 when unset)
+npm run tui                          # local owner on http://127.0.0.1:$PORT (8788 when unset)
 npm run tui -- https://your-domain    # prompts for an owner link if no valid cookie is saved
 npm run tui -- https://your-domain --owner-link 'https://your-domain/owner#<token>'
+npm run tui -- --radius               # through Radius: your only online server, or --radius <server-id>
 ```
 
-Direct loopback auto-signs in as the device owner without a link prompt; a proxy marker cannot use that path.
-For remote URLs (HTTPS required), get an owner link on the host, then pass `--owner-link` or paste it at the prompt.
+With `--radius` the TUI reaches a server signed in with `npm run radius:login`, from anywhere and without a tunnel or
+owner link. The first run signs the TUI in to Radius by device code (saved in `~/.pi/p2-tui/radius.json`); Radius
+admits only the server's owner. For now each request is its own Radius connection, so a new server bundle shows up
+within 10 seconds rather than one (see [p2 notes](docs/p2-notes.md#tui-through-radius)).
+
+On loopback the TUI signs in as the local owner with the data directory's owner key (see [Signing in on this
+machine](#signing-in-on-this-machine)), without a link prompt, and saves nothing. Without a readable key, or against
+a server with another data directory, it says why and asks for an owner link; a proxy marker cannot use local
+sign-in. For remote URLs (HTTPS required), get an owner link on the host, then pass `--owner-link` or paste it at the prompt.
 The TUI stores only its cookie per origin in `~/.pi/p2-tui/config.json` (0600, directory 0700;
 `P2_TUI_CONFIG_DIR` overrides it). It never stores the consumed invitation. `P2_TUI_OWNER_LINK` is an optional
 alternative to an argument. Links must match the selected origin and put the token in the fragment only.
@@ -162,11 +197,11 @@ inherited environment and terminal escapes; a connected server retains full auth
 
 ### Owner testing on slayer
 
-From `/home/badlogic/pi-private/apps/p2` (no server restart needed):
+From `/home/badlogic/pi/apps/p2` (no server restart needed):
 
 ```sh
 ~/.local/bin/node26 --import ./src/source.ts src/hosts/tui.ts
-# Loopback http://127.0.0.1:8788: automatic device owner, no prompt.
+# Loopback http://127.0.0.1:8788: local owner by the data directory's owner key, no prompt.
 
 npm run owner-link -- https://p2.mariozechner.at
 ~/.local/bin/node26 --import ./src/source.ts src/hosts/tui.ts https://p2.mariozechner.at
@@ -177,10 +212,130 @@ Do not publish the owner link or paste it into logs. A valid saved remote cookie
 
 ## Configuration
 
-Edit `<P2_DATA_DIR>/settings.json` as a file; there is no Settings editor UI. Valid changes hot-reload without a
+Edit `<P2_DATA_DIR>/settings.json` as a file, or in the Settings window (the gear beside the sidebar's theme switch,
+owner only), which saves each change to the file at once. The window also holds Providers, MCP servers,
+Environments, Ports, Devices, Discord, Voice and Logs. Valid changes hot-reload without a
 restart, and in-flight requests keep their configuration. Set the default model and thinking level with
 **Make default for new sessions** in the model picker. `ownerName` (1 to 40 characters, no control characters, `<`
 or `>`; default "Owner") is the name your messages carry from then on; messages already written keep theirs.
+`detail` (1 to 4, default 2) is how much of a turn the web chat shows: 1 only the answer, with the thinking, the
+agent's texts and its tool calls on one wheel per turn; 2 the texts too, thinking and calls on wheels between them;
+3 thinking too (collapsed), only runs of tool calls on wheels; 4 thinking in full and each tool call as its own row,
+no wheels.
+`telemetry` (boolean, default `false`) records traces and metrics: the server's own, every session worker's and owners'
+pages', in `<P2_DATA_DIR>/telemetry.sqlite` (7 days), read in the Traces pane (Settings, or the command "Show traces")
+and by the agent's `telemetry_*` code-mode tools. It costs CPU and storage on every request, so it is off unless set to
+`true`; off, the Traces pane and the tools say "telemetry is off (settings.json telemetry)". Unlike the other keys it is
+read once when the server starts: a change needs a server restart.
+
+**Server name.** The server goes by the device's name (on macOS the computer name, else the host name), read again at
+every start. Settings, General, **Server name** gives it a name of its own (one line, at most 63 characters), kept in
+`<P2_DATA_DIR>/identity.json` (`{ "name": "Studio" }`); clearing the field removes the file and the device's name
+stands again. Radius shows the server under this name: a copy the server sends on every connect and at once on a
+rename. Radius never changes it.
+
+### Locations
+
+A session works at a location: a machine (this device, an SSH environment or a sandbox) and a folder on it. In the
+web UI one picker chooses it, from the new-session screen's folder, the location in a session's top bar (which moves
+the session) and a project's folder: the machines at its top, the chosen machine's five most recently used folders
+(the sessions' folders, archived ones included; tap one to use it, its arrow to browse it), then a folder browser (tap
+a parent in the path to go up, the pencil to type a path) and **Use** at the bottom. Back steps through the folders.
+Moving a session out of a sandbox asks first.
+
+### Projects
+
+A project is a group of sessions you define, with a default location (a machine and a folder) where its new sessions
+start. Projects are owner-only and live on the server (in its store; an older `<P2_DATA_DIR>/projects.json` is imported
+once, then no longer read). The web sidebar manages them:
+
+- **New project:** the **+** on the Projects heading (also **New project…** in its **⋯**): pick a folder (on this
+  device or an environment), name it.
+- **A project's commands:** its row's **⋯** (shown on hover), or a long press without moving on touch screens: **Rename project…**,
+  **Change default location…**, **Move project up/down**, **Archive project** (the project and its sessions go to
+  the Archive; **Restore project** there brings back both), **Delete project…** (its sessions stay, in no project).
+- **Order:** drag a project's row above or below another one (or Move project up/down). On touch screens a long press
+  picks a row up, then move it; a long press without moving opens its commands.
+- **Membership:** a session belongs to the project you put it in, never by its folder. The new-session screen shows
+  the project above the location: **No project** for a plain New session, the project for its group's **+**; tap it to
+  pick another one (its default location becomes the session's). Afterwards, **Move to project…** in a session's
+  command menu, or drag its row onto a project's group (or onto the sessions without a project). Copies
+  (`/clone`, `/fork`) keep their source's project; `/cd` and `/move` keep it too.
+
+A project keeps a place per machine for `/move` (below): its default location is the first; changing it on a machine
+replaces that machine's place. The TUI's session selector groups sessions by project:
+
+- With an empty search the session selector is grouped: each project's row, then its sessions below it (newest first,
+  subagent conversations nested in the threaded sort), then **Other** with **+ New session** and the sessions of no
+  project. A session of an archived project shows under Other, dimmed, with the project's name in parentheses; it
+  groups again once the project is restored. The grouped list always shows every session (Tab does nothing
+  there). A search is flat: typed in the grouped list it searches every session, and Tab narrows it to the current
+  folder; the archived sessions and a list without projects are flat with Tab's scope (current folder or all) as before.
+- A project's row checks each place in the background when the selector opens (`pi   mac ✓   david-pi …`; this
+  device shows as the server's hostname): `…` checking, `✓` reachable, `?` the machine answered but has no such
+  folder, `✗` the machine is unreachable or no such environment is configured. Under the selected project a line says
+  why for each place that is not usable (`mac: no folder ~/projects/x · gpu: no such environment`). Enter starts a
+  session in the project at the first reachable place; left/right pick another place first.
+- `/move <env>` moves the viewed session to its project's place on another environment (`local` or the hostname for
+  this device), after the same confirmation as `/cd`. `/move` alone opens a picker of all the project's places, the
+  session's own one marked `•` current and the others checked when it opens (same marks and reasons as the project
+  rows); the cursor starts on the first other reachable place. Enter moves to a `✓` place (the others cannot be chosen;
+  the current one just closes the picker), Escape cancels. When the session is below its project's place on its current
+  machine, it keeps the subfolder (`.../pi/apps/p2` to `.../pi/apps/p2`) if the target has it, else it goes to the
+  target place itself with a notice; that is read from the paths alone, so `/move` works while the session's machine is
+  unreachable.
+
+**The web sidebar** (owner) is made of rollups: rules that collect sessions into one section each. First, without a
+heading, the sessions that belong to no project; then **Projects**, a group per project (its folder icon, a lock for a
+sandbox), in your order; then the **Archive**, its name and count (archived projects first in its list). A session
+shows in every rollup and group that has it, and is selected in the place you
+opened it from. The sidebar shows the sessions that matter now: pinned ones, the open one, working ones, ones with an
+unread answer or a failure, and those active within the rollup's window (a heading's **⋯**: **Show sessions active
+within** 24 hours, 3 days by default, 1 week, or Forever; the same menu moves the rollup up or down; the sessions
+without a project keep 3 days and stay first). The sessions it leaves out of the first section are behind its last
+row, **N older**, which opens their list. A project's group always shows, so a new project's **+** is there; a rollup
+without any session says **No activity**.
+
+Every session and subagent is the same item: status, name, detail. The status is pi's working dots (the terminal's
+loader, slowed down) while it runs, a blue dot for an answer you have not read (its name is bold too), a red dot for a
+failure (its worker, an operation, or its main conversation's last run; the dot's tooltip says what failed), nothing
+while idle. A session's status is its main conversation's, and what wants you comes first: a session whose answer you
+have not read shows the blue dot even while its subagents work; their work shows as pi's dots before its age (with a
+count when several run). The name is cut with "…" before the detail, how long ago its last message was. With a mouse, hovering the
+item (or focusing it with the keyboard) puts its one action over the age: **Cancel** (a cross in a circle) while it
+runs, stopping its runs (a session's stops its subagents too, not code mode's one-shot agents, which their script
+owns; the inputs queued behind a stopped run come back as drafts in their authors' composers), **Archive** while it is
+idle. On touch screens a long press on an item opens its command menu, which has **Stop run** and **Archive
+subagent** (a session's **Archive session** was there already). Read/write guests may cancel runs and archive
+subagents. A click on a session opens its main conversation; its subagents and one-shot agents are below it, shown or
+hidden by the arrow after its name (opening a subagent shows them), archived subagents behind their own **N archived**
+row. Its `/tree` branches are in the tree panel, not the sidebar. A click on a group's row shows or hides its sessions;
+a collapsed group or rollup counts the working, failed and unread sessions it hides. The menu button of the top bar
+counts the other sessions with a failure or an unread answer. A rollup's name opens its list in the main area
+(`/list/<key>`), the arrow after it shows or hides its sessions; in a rollup's list, a group's name opens the group's
+own list. A list holds every session, those outside the window after the others in the secondary colour but still
+openable, in groups for a rollup of groups (every project, with or without sessions), with a search within the list's
+sessions; the Archive's list searches the archive and restores a session when you open it. A group's **+** (on the
+sidebar row or the list) starts a session in it, at the project's default location, joining the project once created. **Open folder…** in the command menu lists the
+folders sessions work in. Session rows are links, so Cmd/Ctrl-click and the middle button open a session in another
+tab. The rollups' order, windows and collapsed rollups and groups are stored on the server, the same on every device.
+
+**Rollups made from code.** Ask the Familiar for a section ("a section for sessions with answers I have not read",
+"group my sessions by package"): it writes a short script over every session, previews what it returns, and saves it
+with its `sidebar_rollups` tool. A script sees each session's title, folder, times, state, project and unread
+answer, and can ask the search index which sessions' messages mention something ("sessions where P2 came up in the
+last day"). The section shows before the Archive, with the same window, sticky sessions, list
+page and search as the built-in rollups. A rollup refreshes automatically when what its script reads changes (a
+rollup that groups by folder does not re-run when a session is renamed), every so many minutes when that changed, or
+only by hand; its **⋯** says which, when it was last checked and why its last run failed, with **Refresh now** for the
+ones that do not refresh automatically.
+
+`cacheWarming` (`"idle"` by default, `"streaming"` or `"off"`) keeps prompt caches warm as pi does: before the cache
+entry of a conversation's last request expires (5 minutes for Anthropic and Claude on Radius), p2 sends the request
+again with a one-token answer, while that is cheaper than writing the cache again. `"streaming"` warms while a run
+streams (up to an hour, e.g. during a long tool call); `"idle"` also warms the main conversation for up to 30 minutes
+after its run answered. The refreshes count in the conversation's cost. `stream.cacheRetention: "long"` writes 1-hour
+cache entries instead (at twice the input price).
 
 ### Voice mode
 

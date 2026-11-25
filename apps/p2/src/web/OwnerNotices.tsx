@@ -1,5 +1,5 @@
 // One owner-only notice lane, in normal layout below the top bar. Never an overlay on the composer.
-import { BACKGROUND_CONTEXT } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useDevNotices } from "../hosts/web/DevNotice.tsx";
 import { LogNotices } from "../runtime/notices.ts";

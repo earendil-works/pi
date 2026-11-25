@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { InMemoryTelemetryContext, type TelemetrySpan } from "../src/index.ts";
+import { InMemoryTelemetryContext, type TelemetrySpan, telemetryNow } from "../src/index.ts";
 import { telemetryStoreConformance } from "./store-conformance.ts";
 
 afterEach(() => vi.restoreAllMocks());
@@ -42,6 +42,23 @@ describe("in-memory store snapshots", () => {
 		expect(telemetry.getSpans()[0]).not.toHaveProperty("startedMs");
 	});
 
+	it("stamps starts with telemetryNow: spans of one millisecond apart to the microsecond, in their order", async () => {
+		vi.spyOn(Date, "now").mockReturnValue(1000);
+		const clock = vi.spyOn(performance, "now").mockReturnValue(100);
+		const telemetry = new InMemoryTelemetryContext();
+		await telemetry.startSpan({ name: "first" }, () => {
+			clock.mockReturnValue(100.25);
+		});
+		await telemetry.startSpan({ name: "second" }, () => {
+			clock.mockReturnValue(100.5);
+		});
+		const spans = (await telemetry.findTraces()).traces.flatMap((trace) => trace.spans);
+		expect(spans.map(({ name, startedMs, endedMs }) => [name, startedMs, endedMs])).toEqual([
+			["second", 1000.25, 1000.5],
+			["first", 1000, 1000.25],
+		]);
+	});
+
 	it("maps raw metric measurements to count-one rows without exposing private timing in getMetrics", async () => {
 		vi.spyOn(Date, "now").mockReturnValue(20_001);
 		const telemetry = new InMemoryTelemetryContext();
@@ -78,5 +95,34 @@ describe("in-memory store snapshots", () => {
 		const fresh = (await telemetry.getTrace(trace.traceId))!.spans[0]!;
 		expect(fresh.links[0]?.attributes?.tags).toEqual(["original"]);
 		expect(fresh.status).toEqual({ status: "error", error: { name: "Expected", message: "original" } });
+	});
+});
+
+describe("telemetryNow", () => {
+	it("counts sub-millisecond steps of the monotonic clock while the wall clock stays in its millisecond", () => {
+		vi.spyOn(Date, "now").mockReturnValue(50_000);
+		const clock = vi.spyOn(performance, "now").mockReturnValue(1000.25);
+		const first = telemetryNow();
+		clock.mockReturnValue(1000.2504);
+		expect(telemetryNow() - first).toBeCloseTo(0, 6);
+		clock.mockReturnValue(1000.7512);
+		expect(telemetryNow() - first).toBeCloseTo(0.501, 6);
+		expect(Number.isInteger(telemetryNow() * 1000)).toBe(true);
+	});
+
+	it("follows a step of the wall clock (set, or a sleep the monotonic clock did not count) past 10 ms", () => {
+		// Far from the anchor any earlier call left: anchored anew, at the wall clock's millisecond.
+		const wall = vi.spyOn(Date, "now").mockReturnValue(80_000);
+		const clock = vi.spyOn(performance, "now").mockReturnValue(1000);
+		expect(telemetryNow()).toBe(80_000);
+		clock.mockReturnValue(1003.5);
+		wall.mockReturnValue(80_005);
+		// Within 10 ms the anchored clock keeps its own spacing.
+		expect(telemetryNow()).toBe(80_003.5);
+		clock.mockReturnValue(1004);
+		wall.mockReturnValue(3_650_004);
+		expect(telemetryNow()).toBe(3_650_004);
+		clock.mockReturnValue(1004.125);
+		expect(telemetryNow()).toBe(3_650_004.125);
 	});
 });

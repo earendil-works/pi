@@ -3,7 +3,8 @@
 // (anthropic/claude-opus-4.8), and dated (claude-opus-5-20260723).
 
 import type { Model, ThinkingLevelMap } from "../../src/types.ts";
-import { type ChatModel, mergeCompat, mergeThinking } from "../define.ts";
+import { type ChatModel, mergeCompat, mergeThinking, type ProviderContext } from "../define.ts";
+import { normalizeModelsDevModel } from "../sources/models-dev.ts";
 
 function stripPrefix(modelId: string): string {
 	return modelId.toLowerCase().replace(/^~?anthropic\//, "");
@@ -15,30 +16,22 @@ export function supportsClaudeMidConvoEffort(modelId: string): boolean {
 	return (
 		/^claude-opus-(?:5|5[.-]5)(?:-\d{8})?$/.test(id) ||
 		/^claude-(?:sonnet|haiku)-5[.-]5(?:-\d{8})?$/.test(id) ||
-		/^claude-(?:fable|mythos)-5(?:[.-]1)(?:-\d{8})?$/.test(id)
+		/^claude-(?:fable|mythos)-5[.-][12](?:-\d{8})?$/.test(id)
 	);
 }
-
-// Claude models that accept `thinking: {type: "disabled"}` alongside per-message effort.
-// Opus 5.5, Sonnet 5.5, Fable 5.1, and Mythos 5.1 reject it.
-// https://platform.claude.com/docs/en/build-with-claude/thinking#configuring-thinking
-const DISABLED_THINKING_MODELS = new Set(["claude-opus-5", "claude-haiku-5-5", "claude-haiku-5.5"]);
 
 /** Models that accept system messages and tool changes after the conversation starts. */
 export function supportsClaudeMidConvoSystemMessages(modelId: string): boolean {
 	return (
 		/^claude-opus-(?:4[.-]8|5(?:[.-]5)?)(?:-\d{8})?$/.test(modelId) ||
 		/^claude-(?:sonnet|haiku)-5[.-]5(?:-\d{8})?$/.test(modelId) ||
-		/^claude-(?:fable|mythos)-5(?:[.-]1)?(?:-\d{8})?$/.test(modelId)
+		/^claude-(?:fable|mythos)-5(?:[.-][12])?(?:-\d{8})?$/.test(modelId)
 	);
 }
 
-/** Enable per-message effort changes. Models that cannot disable thinking with it lose "off". */
+/** Enable per-message effort changes. */
 export function enableClaudeMidConvoEffort(model: Model<"anthropic-messages">): void {
 	mergeCompat(model, { supportsMidConvoEffort: true });
-	if (!DISABLED_THINKING_MODELS.has(stripPrefix(model.id).replace(/-\d{8}$/, ""))) {
-		mergeThinking(model, { off: null });
-	}
 }
 
 function idIncludesAny(modelId: string, fragments: readonly string[]): boolean {
@@ -78,8 +71,8 @@ const TEMPERATURE_UNSUPPORTED = [
 	"opus-4.8",
 	"opus-5",
 	"opus.5",
-	"sonnet-5-5",
-	"sonnet-5.5",
+	"sonnet-5",
+	"sonnet.5",
 	"haiku-5-5",
 	"haiku-5.5",
 ];
@@ -102,10 +95,11 @@ const XHIGH_AND_MAX_EFFORT = [
  * "max" is available on all adaptive-thinking Claude models; "xhigh" only on
  * Opus 4.7/4.8/5, Sonnet 5, Haiku 5.5, and Fable 5.
  */
-export function applyClaudeFamilyRules(model: ChatModel): void {
+export function applyClaudeFamilyRules(model: ChatModel, ctx: ProviderContext): void {
 	if (idIncludesAny(model.id, MAX_EFFORT_ONLY)) mergeThinking(model, { max: "max" });
 	if (idIncludesAny(model.id, XHIGH_AND_MAX_EFFORT)) mergeThinking(model, { xhigh: "xhigh", max: "max" });
-	if (model.id.includes("fable-5")) mergeThinking(model, { off: null, xhigh: "xhigh", max: "max" });
+	if (model.id.includes("fable-5")) mergeThinking(model, { xhigh: "xhigh", max: "max" });
+	if (cannotTurnThinkingOff(model, ctx)) mergeThinking(model, { off: null });
 	if (model.api !== "anthropic-messages") return;
 	const messagesModel = model as Model<"anthropic-messages">;
 	if (isClaudeLatestAlias(model.id) || idIncludesAny(model.id, ADAPTIVE_THINKING)) {
@@ -117,18 +111,33 @@ export function applyClaudeFamilyRules(model: ChatModel): void {
 }
 
 /**
- * models.dev may list Opus 5.5, Sonnet 5.5, and Haiku 5.5 before their effort
- * metadata is complete. Haiku 5.5 accepts disabled thinking; Opus 5.5 and
- * Sonnet 5.5 reject it.
+ * Whether Anthropic's own models.dev entry for this Claude model lists no thinking toggle. Such
+ * models reject `thinking: {type: "disabled"}` on every host (Opus 5.5, Sonnet 5.5, Fable 5.x),
+ * but most other hosts' entries list no toggle on any Claude model (#12429). Hosts built from
+ * models.dev name Anthropic's entry in `canonical_id`. Vercel's gateway, which has no thinking
+ * metadata of its own, spells Anthropic's id dotted, `anthropic/`-prefixed, and with `-batch` or
+ * `-fast` variants.
  */
-export function claude55ThinkingLevels(modelId: string): ThinkingLevelMap {
-	return {
-		...(modelId.includes("haiku") ? {} : { off: null }),
-		minimal: null,
-		low: "low",
-		medium: "medium",
-		high: "high",
-		xhigh: "xhigh",
-		max: "max",
-	};
+function cannotTurnThinkingOff(model: ChatModel, ctx: ProviderContext): boolean {
+	const canonicalId = ctx.modelsDevSource(model)?.canonicalId ?? `anthropic/${anthropicModelId(model.id)}`;
+	if (!canonicalId.startsWith("anthropic/")) return false;
+	const entry = ctx.sources.modelsDev.anthropic?.models?.[canonicalId.slice("anthropic/".length)];
+	const options = entry && normalizeModelsDevModel(entry).reasoningOptions;
+	return options !== undefined && !options.some((option) => option.type === "toggle");
 }
+
+function anthropicModelId(modelId: string): string {
+	return stripPrefix(modelId)
+		.replace(/[-:](?:batch|fast)$/, "")
+		.replace(/(\d)\.(\d)/g, "$1-$2");
+}
+
+/** models.dev may list Opus 5.5, Sonnet 5.5, and Haiku 5.5 before their effort metadata is complete. */
+export const CLAUDE_55_THINKING_LEVELS: ThinkingLevelMap = {
+	minimal: null,
+	low: "low",
+	medium: "medium",
+	high: "high",
+	xhigh: "xhigh",
+	max: "max",
+};

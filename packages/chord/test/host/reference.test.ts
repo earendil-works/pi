@@ -14,14 +14,18 @@ import {
 } from "../../src/host/index.ts";
 import { ChordObject } from "../../src/host/object.ts";
 import { Binding } from "../../src/host/reference.ts";
+import { jsonPart } from "../../src/link/internal.ts";
 import { RemoteObject } from "../../src/remote/remote-object.ts";
 import { constant } from "../../src/state/index.ts";
 import type { Store } from "../../src/store/index.ts";
 import type { ChordStore } from "../../src/store/store.ts";
 import type { NativeWatchable, Watchable } from "../../src/watch.ts";
 import {
+	bindHold,
+	bindNext,
 	changesOf,
 	delivered,
+	EDITOR,
 	expectCollected,
 	flushed,
 	framesOf,
@@ -29,9 +33,13 @@ import {
 	loaded,
 	memoryStore,
 	Notes,
+	rawProvider,
 	rejection,
 	Server,
 	settledHeap,
+	statesOf,
+	valuesOf,
+	waitLive,
 } from "../support.ts";
 
 /** Every remote object bound while this file runs, weakly. */
@@ -365,6 +373,35 @@ describe("remote references", () => {
 		);
 		two.release();
 		expect(() => two.variant).toThrow("app.two: released");
+	});
+});
+
+describe('a binding moved by a retry alone (decision "References share one wire hold")', () => {
+	it("keeps its reference, member handles, state watch and member watch; the sibling it leaves stays failed", async () => {
+		const { client, peer } = await rawProvider({ limits: { part: 64 } });
+		const a = client.hold(Notes, { session: "S1" }, context);
+		const b = client.hold(Notes, { session: "S1" }, context);
+		const hold = await bindNext(peer);
+		await waitLive(a);
+		const member = a.count;
+		const states = statesOf(await a.state.watch(context));
+		const counts = changesOf(await a.count.watch(context));
+		const ops = jsonPart([["r", [{ text: "x".repeat(100) }]]]);
+		peer.send({
+			kind: "state",
+			holds: [{ hold, members: [{ member: EDITOR.state.notes!, ops }], failed: [], retired: [] }],
+		});
+		await delivered();
+		a.retry();
+		const { hold: own } = await peer.next("hold");
+		bindHold(peer, own, [{ text: "a" }]);
+		await waitLive(a);
+		await delivered();
+		expect([a.count, a.count.value, b.state.value.kind]).toEqual([member, 1, "failed"]);
+		expect(states.map((state) => state.replace(/:.*/, ""))).toEqual(["failed", "loading", "live"]);
+		expect(valuesOf(counts)).toEqual([{ failed: expect.stringContaining("over the wire limit") }, 1]);
+		a.release();
+		b.release();
 	});
 });
 

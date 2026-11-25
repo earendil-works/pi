@@ -22,7 +22,10 @@ describe("export HTML tool output whitespace", () => {
 	});
 
 	it("trims TUI spacing lines from custom tool result HTML", () => {
-		const component: Component = { render: () => ["", "\u001b[31mone\u001b[0m", "two", ""], invalidate: () => {} };
+		const component: Component = {
+			render: () => ["", "\u001b[31mone\u001b[0m", "two", "\u001b[0m\u001b]8;;\u0007"],
+			invalidate: () => {},
+		};
 		const tool = {
 			name: "custom",
 			label: "custom",

@@ -587,15 +587,16 @@ async function main() {
 	let stdoutBuffer = "";
 
 	agent.stdout!.on("data", (chunk: Buffer) => {
-		stdoutBuffer += stdoutDecoder.write(chunk);
-		while (true) {
-			const newlineIndex = stdoutBuffer.indexOf("\n");
-			if (newlineIndex === -1) break;
-
-			const line = stdoutBuffer.slice(0, newlineIndex);
-			stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1);
+		const text = stdoutDecoder.write(chunk);
+		// Only the new text is scanned, so a long line arriving in many chunks is not rescanned per chunk.
+		let start = 0;
+		for (let newlineIndex = text.indexOf("\n"); newlineIndex !== -1; newlineIndex = text.indexOf("\n", start)) {
+			const line = stdoutBuffer + text.slice(start, newlineIndex);
+			stdoutBuffer = "";
+			start = newlineIndex + 1;
 			handleAgentLine(line.endsWith("\r") ? line.slice(0, -1) : line);
 		}
+		stdoutBuffer += text.slice(start);
 	});
 
 	agent.stdout!.on("end", () => {

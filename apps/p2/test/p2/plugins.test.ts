@@ -19,6 +19,7 @@ import { failureOf, holdIn, settled, startFixture, until } from "./helpers.ts";
 const CHAT = [
 	"chat",
 	"conversations",
+	"devices",
 	"drafts",
 	"envs",
 	"files",
@@ -60,9 +61,10 @@ describe("plugin listing and selection", () => {
 	});
 
 	it("starts exactly login and models and refuses an unloaded plugin's reload", async (t) => {
-		const fixture = await startFixture({ plugins: ["models", "login"] });
+		// Devices too: the local owner signs in through it.
+		const fixture = await startFixture({ plugins: ["devices", "models", "login"] });
 		t.after(() => fixture.close());
-		assert.deepEqual(fixture.server.plugins, ["login", "models"]);
+		assert.deepEqual(fixture.server.plugins, ["devices", "login", "models"]);
 		const login = fixture.browser().hold(ProviderLogin, {}, BACKGROUND_CONTEXT);
 		await whenLive(login);
 		assert.deepEqual(await settled(login.providers), []);
@@ -74,7 +76,8 @@ describe("plugin listing and selection", () => {
 		const models = fixture.browser().hold(Models, {}, BACKGROUND_CONTEXT);
 		const choice = { provider: "faux", modelId: "faux-1", thinkingLevel: "off" };
 		await models.setDefault(choice, BACKGROUND_CONTEXT);
-		assert.deepEqual(await until(models.defaultModel, (value) => value?.thinkingLevel === "off"), choice);
+		// The answer follows its state: the new default is on the page when the call resolves.
+		assert.deepEqual(models.defaultModel.value, choice);
 		const unavailable = fixture
 			.browser()
 			.hold(Terminals, { session: "not-opened", view: crypto.randomUUID() }, BACKGROUND_CONTEXT);

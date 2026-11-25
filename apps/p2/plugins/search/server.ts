@@ -1,10 +1,10 @@
 // The message index, the workers' feed into it, and owner search over sessions and messages.
 
-import { num, obj } from "@earendil-works/pi-schema";
-import { type Ctx, defineFacet, defineState, forbidden, isOwner, isWorker, record } from "@p2/app/v1";
-import { Hosts, Server, serverOf } from "@p2/app/v1/server";
+import { arr, num, obj, str } from "@earendil-works/pi-schema";
+import { defineFacet, defineJob, defineState, deriveTyped, forbidden, isOwner, isWorker, record } from "@p2/app/v1";
+import { Server, serverOf } from "@p2/app/v1/server";
 import { ArchivedStarts, Catalog, type Session } from "../sessions/contract.ts";
-import { IndexScan, Search, SearchFeed, SearchIndex, SessionReads } from "./contract.ts";
+import { IndexScan, type Rebuild, RebuildSchema, Search, SearchFeed, SearchIndex, SessionReads } from "./contract.ts";
 import { SearchDb } from "./db.ts";
 import { ftsQuery } from "./query.ts";
 
@@ -19,11 +19,29 @@ const Markers = defineState("p2.search-index", {
 	initial: () => ({ answers: {}, reads: {} }),
 });
 
+/** Pi Mobile's rebuildIndex as a job: a rebuild interrupted by a restart runs again (it starts over). */
+const RebuildJob = defineJob("p2.search.rebuild", {
+	version: 1,
+	args: obj({ session: str() }),
+	result: obj({}),
+	persist: { resume: "rerun" },
+});
+
+/** The latest failed rebuild per session, until it is rebuilt again. */
+const RebuildFailures = defineState("p2.search.rebuild-failures", {
+	schema: obj({ list: arr(RebuildSchema) }),
+	version: 1,
+	initial: () => ({ list: [] }),
+});
+
 export default defineFacet((host) => {
 	host.serve(SearchIndex, (_params, self) => {
 		const server = self.get(Server, {});
 		const catalog = self.get(Catalog, {});
+		const archivedStarts = self.get(ArchivedStarts, {});
+		const natives = serverOf(self);
 		const markers = self.state(Markers);
+		const failures = self.state(RebuildFailures);
 		const dbResource = self.open(
 			async (ctx) => {
 				const db = new SearchDb(server.info.value.dataDir);
@@ -35,7 +53,48 @@ export default defineFacet((host) => {
 			},
 			(db) => db.close(),
 		);
+		// Stop the worker, reset the index, scan from a fresh worker (an archived one without resuming its work), and stop
+		// an archived session's worker again. This local object's `ctx.get` acts as the server, whom `IndexScan` serves.
+		const rebuilds = self.job(RebuildJob, {
+			run: async ({ session }, ctx) => {
+				const archived = (await catalog.get({ id: session }, ctx)).archivedAt !== null;
+				await natives().workers.stop(session);
+				dbResource.value.reset(session);
+				if (archived) await archivedStarts.allow({ session }, ctx);
+				try {
+					await (await ctx.get(IndexScan, { session })).scanned(ctx);
+				} finally {
+					if (archived) {
+						await archivedStarts.end({ session }, ctx);
+						await natives().workers.suspend(session);
+					}
+				}
+				return {};
+			},
+			finish: async (outcome, tx) => {
+				const draft = await tx.draft(failures);
+				draft.list = draft.list.filter((each) => each.session !== outcome.args.session);
+				if (outcome.kind === "failed")
+					draft.list.push({
+						session: outcome.args.session,
+						phase: "failed",
+						error: outcome.error.kind === "threw" ? outcome.error.error.message : "The rebuild was interrupted",
+					});
+			},
+		});
 		return {
+			rebuilds: deriveTyped(self, [rebuilds.running, failures], ([running, { list }]): Rebuild[] => [
+				...running.flatMap((run) =>
+					run.phase === "blocked" ? [] : [{ session: run.args.session, phase: "running" as const }],
+				),
+				...list,
+			]),
+			rebuild: async ({ session }, ctx) => {
+				// Refused at once for a session the catalog does not know.
+				await catalog.get({ id: session }, ctx);
+				await rebuilds.start({ session }, ctx, { key: session });
+				return null;
+			},
 			answers: self.derive([markers], ([value]) => value.answers),
 			reads: self.derive([markers], ([value]) => value.reads),
 			markRead: async ({ session, through }, ctx) => {
@@ -54,7 +113,14 @@ export default defineFacet((host) => {
 					0,
 					...messages.filter((message) => message.role === "assistant").map((message) => message.entryId),
 				);
-				if (conversation === 1 && answer > (markers.value.answers[session] ?? 0))
+				// Unread answers are the top-level conversations' (the main one and the other `/tree` branches): a branch left
+				// while running answers in the background. `branches` is empty until the worker first reports it.
+				const row =
+					answer > (markers.value.answers[session] ?? 0) ? await catalog.get({ id: session }, ctx) : undefined;
+				if (
+					row &&
+					(conversation === row.main || row.branches.some((branch) => branch.conversation === conversation))
+				)
 					await markers.change((draft) => {
 						draft.answers[session] = answer;
 					}, ctx);
@@ -73,6 +139,10 @@ export default defineFacet((host) => {
 				return null;
 			},
 			messages: async ({ query, sessions }) => dbResource.value.messages(query, sessions),
+			mentions: async ({ query, since = 0 }) => {
+				const match = ftsQuery(query);
+				return match === undefined ? {} : dbResource.value.mentions(match, since);
+			},
 			history: async ({ session, query, conversation, before, limit }) => {
 				const db = dbResource.value;
 				const indexedThrough = db.cursor(session, conversation);
@@ -114,55 +184,45 @@ export default defineFacet((host) => {
 		};
 	});
 
-	host.serve(Search, (_params, principal, self) => {
-		if (!isOwner(principal)) throw forbidden("search is owner-only");
-		const catalog = self.get(Catalog, {});
-		const index = self.get(SearchIndex, {});
-		const hosts = self.get(Hosts, {});
-		const archivedStarts = self.get(ArchivedStarts, {});
-		const server = serverOf(self);
-		// Pi Mobile's rebuildIndex: stop the worker, reset the index, scan from a fresh worker (an archived one without
-		// resuming its work), and stop an archived session's worker again.
-		const rebuild = async (session: string, ctx: Ctx) => {
-			const archived = (await catalog.get({ id: session }, ctx)).archivedAt !== null;
-			await hosts.stop({ session }, ctx);
-			await index.reset({ session }, ctx);
-			if (archived) await archivedStarts.allow({ session }, ctx);
-			try {
-				// As the server: the worker answers only the server's own scan requests.
-				await server().root(async (root) => {
-					const scan = await root.get(IndexScan, { session });
-					await scan.scanned(root);
-				});
-			} finally {
-				if (archived) {
-					await archivedStarts.end({ session }, ctx);
-					await hosts.stop({ session }, ctx);
-				}
-			}
-		};
-		return {
-			variant: "owner",
-			members: {
-				rebuildIndex: async ({ session }, ctx) => {
-					await rebuild(session, ctx);
-					return null;
+	host.serve(
+		Search,
+		(_params, principal, self) => {
+			if (!isOwner(principal)) throw forbidden("search is owner-only");
+			const catalog = self.get(Catalog, {});
+			const index = self.get(SearchIndex, {});
+			return {
+				variant: "owner",
+				members: {
+					rebuilds: index.rebuilds,
+					rebuildIndex: (args, ctx) => index.rebuild(args, ctx),
+					search: async ({ query, archived = false, sessions: within }, ctx) => {
+						const listed = within && new Set(within);
+						const scope = catalog.sessions.value.filter(
+							(session) => (session.archivedAt !== null) === archived && (!listed || listed.has(session.id)),
+						);
+						const needle = query.toLowerCase();
+						const sessions = scope
+							.filter((session) => `${session.title}\n${session.cwd}`.toLowerCase().includes(needle))
+							.sort(sidebarOrder)
+							.map((session) => session.id);
+						const titles = new Map(scope.map((session) => [session.id, session.title]));
+						const messages = query.trim()
+							? await index.messages({ query, sessions: [...titles.keys()] }, ctx)
+							: [];
+						return {
+							sessions,
+							messages: messages.map((hit) => ({ ...hit, title: titles.get(hit.session) ?? "" })),
+						};
+					},
 				},
-				search: async ({ query, archived = false }, ctx) => {
-					const scope = catalog.sessions.value.filter((session) => (session.archivedAt !== null) === archived);
-					const needle = query.toLowerCase();
-					const sessions = scope
-						.filter((session) => `${session.title}\n${session.cwd}`.toLowerCase().includes(needle))
-						.sort(sidebarOrder)
-						.map((session) => session.id);
-					const titles = new Map(scope.map((session) => [session.id, session.title]));
-					const messages = query.trim() ? await index.messages({ query, sessions: [...titles.keys()] }, ctx) : [];
-					return {
-						sessions,
-						messages: messages.map((hit) => ({ ...hit, title: titles.get(hit.session) ?? "" })),
-					};
-				},
+			};
+		},
+		// Older pages search every session of the scope: their arguments are the same without `sessions`.
+		{
+			accepts: {
+				1: { methods: { search: { args: (old) => old } } },
+				2: { methods: { search: { args: (old) => old } } },
 			},
-		};
-	});
+		},
+	);
 });

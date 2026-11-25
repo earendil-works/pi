@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { type AuthOperationOptions, StringEnum } from "@earendil-works/pi-ai";
 import { arr, bool, compile, int, obj, opt, type Static, str } from "@earendil-works/pi-schema";
 import { stripBom, stripJsonComments } from "./config-json.ts";
@@ -48,6 +49,18 @@ const schema = obj({
 	 */
 	codemode: opt(bool()),
 	/**
+	 * pi's `cacheWarming`, kept by the cache-warming plugin: "idle" (default) keeps a conversation's prompt cache entry
+	 * warm while its run streams and for up to 30 minutes after it settled, "streaming" only while it streams, "off"
+	 * never.
+	 */
+	cacheWarming: opt(StringEnum(["off", "streaming", "idle"] as const)),
+	/**
+	 * p2 addition: how much of a turn the web chat shows, from 1 (only the answer; everything else on one wheel per
+	 * turn) to 4 (thinking in full and each tool call as a row; no wheels). Default 2: the agent's texts in the
+	 * transcript, thinking and tool calls on a wheel between them. See `Detail` in src/web/activity/model.ts.
+	 */
+	detail: opt(int({ minimum: 1, maximum: 4 })),
+	/**
 	 * p2 addition: the owner's name on the entries the owner writes from now on (default "Owner"); entries already
 	 * written keep the name they were written with. No control characters, `<` or `>`.
 	 */
@@ -58,6 +71,12 @@ const schema = obj({
 			pattern: "^[^<>\\u0000-\\u001f\\u007f]*\\S[^<>\\u0000-\\u001f\\u007f]*$",
 		}),
 	),
+	/**
+	 * p2 addition: record telemetry (Chord's §29: the server's `<data>/telemetry.sqlite`, session workers' and owners'
+	 * pages' spans sent to it, the Traces pane and the `telemetry_*` tools). Default off. Read once at the server's start
+	 * (`readTelemetrySetting`): a change needs a restart.
+	 */
+	telemetry: opt(bool()),
 });
 const validator = compile(schema);
 export type MobileSettings = Static<typeof schema>;
@@ -84,4 +103,16 @@ export async function saveSettings(path: string, value: unknown, options?: AuthO
 		}),
 		options,
 	);
+}
+
+/**
+ * settings.json's `telemetry` at `path` as the server reads it once at its start: on only when the file says `true` (a
+ * missing or invalid file: off).
+ */
+export function readTelemetrySetting(path: string): boolean {
+	try {
+		return parseSettings(readFileSync(path, "utf8")).telemetry === true;
+	} catch {
+		return false;
+	}
 }

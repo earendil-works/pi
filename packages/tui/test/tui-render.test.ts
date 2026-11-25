@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -165,6 +165,40 @@ describe("TUI debug logging", () => {
 });
 
 describe("TUI bounded render output", () => {
+	it("does not write duplicate cursor markers to the terminal", () => {
+		const terminal = new BoundedWriteTerminal();
+		const tui = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		// Regression for #9257: terminals may render the payload of a leaked APC marker.
+		component.lines = [`\x1b[31m界🙂\x1b[0m${CURSOR_MARKER} world${CURSOR_MARKER}`];
+		tui.addChild(component);
+
+		tui.renderNow();
+
+		const output = terminal.writes.join("");
+		assert.ok(output.includes("\x1b[31m界🙂\x1b[0m world"), "visible styled text should be preserved");
+		assert.ok(!output.includes(CURSOR_MARKER), "internal cursor markers must not reach the terminal");
+		assert.ok(output.includes("\x1b[5G"), "the first marker should keep the cursor at visible column 4");
+	});
+
+	it("does not write cursor markers from other visible or scrollback lines", () => {
+		const terminal = new BoundedWriteTerminal();
+		terminal.rows = 2;
+		const tui = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		// Regression for #9257: cursor extraction must not leave markers on other rendered lines.
+		component.lines = [`offscreen${CURSOR_MARKER}`, `a${CURSOR_MARKER}`, `visible-b${CURSOR_MARKER}`];
+		tui.addChild(component);
+
+		tui.renderNow();
+
+		const output = terminal.writes.join("");
+		assert.ok(output.includes("offscreen"), "full renders should preserve scrollback content");
+		assert.ok(output.includes("a"), "full renders should preserve other visible lines");
+		assert.ok(!output.includes(CURSOR_MARKER), "internal cursor markers must not reach the terminal");
+		assert.ok(output.includes("\x1b[10G"), "the bottom visible marker should determine the cursor column");
+	});
+
 	it("splits a large full render without changing its output", () => {
 		const terminal = new BoundedWriteTerminal();
 		const tui = new TuiMainScreen(terminal);
@@ -272,6 +306,44 @@ describe("TUI crash dump without configured log directory", () => {
 			assert.match(readFileSync(crashLogPath, "utf-8"), /Terminal width: 40/);
 		} finally {
 			restoreTmpdirEnv();
+			rmSync(crashDir, { recursive: true, force: true });
+		}
+	});
+
+	// #10585: a full or unwritable temp dir must not replace the width error.
+	it("reports the width error when the crash dump cannot be written", async () => {
+		const crashDir = mkdtempSync(join(tmpdir(), "pi-tui-crash-"));
+		// A regular file where the log directory should be makes the dump fail to write.
+		const logDirectory = join(crashDir, "not-a-directory");
+		writeFileSync(logDirectory, "");
+		try {
+			const terminal = new VirtualTerminal(40, 10);
+			let terminalStops = 0;
+			const stopTerminal = terminal.stop.bind(terminal);
+			terminal.stop = () => {
+				terminalStops++;
+				stopTerminal();
+			};
+			const tui: TUI = new TuiMainScreen(terminal, false, logDirectory);
+			const component = new TestComponent();
+			tui.addChild(component);
+			component.lines = ["ok"];
+			tui.start();
+			await terminal.waitForRender();
+
+			component.lines = ["ok", "x".repeat(60)];
+			assert.throws(
+				() => tui.renderNow(),
+				(error: unknown) => {
+					assert.ok(error instanceof Error);
+					assert.match(error.message, /exceeds terminal width/);
+					assert.match(error.message, /Could not write debug log to /);
+					return true;
+				},
+			);
+			// The terminal leaves raw mode before the error propagates.
+			assert.equal(terminalStops, 1);
+		} finally {
 			rmSync(crashDir, { recursive: true, force: true });
 		}
 	});

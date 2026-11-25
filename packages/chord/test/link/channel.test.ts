@@ -8,6 +8,7 @@ import { PROTOCOL_VERSION } from "../../src/data/internal.ts";
 import { createHost, type HostError } from "../../src/host/index.ts";
 import { memoryLinkPair } from "../../src/link/index.ts";
 import { binaryCodec, Channel, type Message, textCodec } from "../../src/link/internal.ts";
+import { chordMetrics } from "../../src/telemetry.ts";
 import {
 	bindNext,
 	expectCollected,
@@ -260,6 +261,66 @@ describe("trusted links", () => {
 	});
 });
 
+describe("a fence (slice 14 §2.3)", () => {
+	/** An open channel and the raw peer at its other end, which answers no `ping` by itself. */
+	async function fenced() {
+		const [a, b] = memoryLinkPair();
+		const handler = { opened: () => {}, closed: () => {}, message: () => {} };
+		const options = {
+			codec: testCodec(),
+			incarnation: RAW_PEER,
+			calls: 1,
+			trusted: true,
+			report: () => {},
+			metrics: chordMetrics(undefined),
+		};
+		const channel = new Channel(a, handler, options, context);
+		channel.start();
+		const peer = new RawPeer(b);
+		await peer.next("hello");
+		await transported();
+		return { channel, peer };
+	}
+
+	forEachCodec(() => {
+		it("runs after the pong of its own ping: a liveness pong in transit does not end it", async () => {
+			const { channel, peer } = await fenced();
+			const ran: string[] = [];
+			// A liveness `ping` goes out (the link was silent); its `pong` is still in transit when the fence starts.
+			channel.tick(Date.now() + 20_000, 0, 15_000, 30_000);
+			channel.fence(() => void ran.push("first"));
+			channel.fence(() => void ran.push("second"));
+			await transported();
+			expect(peer.kinds().filter((kind) => kind === "ping").length).toBe(3);
+			peer.send({ kind: "pong" });
+			await transported();
+			expect(ran).toEqual([]);
+			peer.send({ kind: "pong" });
+			await transported();
+			expect(ran).toEqual(["first"]);
+			peer.send({ kind: "pong" });
+			await transported();
+			expect(ran).toEqual(["first", "second"]);
+		});
+
+		it("is cancelled by what it returned, and runs nothing once the link closed", async () => {
+			const { channel, peer } = await fenced();
+			const ran: string[] = [];
+			const cancel = channel.fence(() => void ran.push("cancelled"));
+			channel.fence(() => void ran.push("kept"));
+			cancel();
+			peer.send({ kind: "pong" });
+			peer.send({ kind: "pong" });
+			await transported();
+			expect(ran).toEqual(["kept"]);
+			channel.fence(() => void ran.push("closed"));
+			channel.close();
+			await transported();
+			expect(ran).toEqual(["kept"]);
+		});
+	});
+});
+
 describe("in-order handling", () => {
 	/** A channel whose handler handles `release` of hold 0 asynchronously (until `finish`), every other message at once. */
 	async function holding() {
@@ -290,6 +351,7 @@ describe("in-order handling", () => {
 			calls: 1,
 			trusted: true,
 			report: (e: unknown) => reports.push(e),
+			metrics: chordMetrics(undefined),
 		};
 		new Channel(a, handler, options, context).start();
 		const peer = new RawPeer(b);

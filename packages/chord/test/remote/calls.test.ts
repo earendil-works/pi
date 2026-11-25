@@ -19,6 +19,16 @@ describe("the call window", () => {
 		expect(sent).toEqual(["a", "b", "c"]);
 	});
 
+	it("sends every call at once to a peer that announced no window (a trusted link's), after its hello", () => {
+		const sent: string[] = [];
+		const window = new CallWindow();
+		window.submit(callOf("early", sent));
+		expect(sent).toEqual([]);
+		window.opened(undefined);
+		for (let call = 0; call < 300; call++) window.submit(callOf(`${call}`, sent));
+		expect(sent).toHaveLength(301);
+	});
+
 	it("sends waiting calls in order as slots free", () => {
 		const sent: string[] = [];
 		const window = new CallWindow();
@@ -70,5 +80,18 @@ describe("the call window", () => {
 		})();
 		await expectCollected(...refs);
 		expect(window).toBeDefined();
+	});
+
+	it("takes out the waiting calls a predicate matches, in order, and leaves the rest queued (one reference's calls)", () => {
+		const sent: string[] = [];
+		const window = new CallWindow<QueuedCall & { readonly owner: string }>();
+		window.opened(1);
+		const call = (name: string, owner: string) => ({ ...callOf(name, sent), owner });
+		const calls = [call("A1", "a"), call("A2", "a"), call("B1", "b"), call("A3", "a")];
+		for (const queued of calls) window.submit(queued);
+		expect(window.removeWhere((queued) => queued.owner === "a").map(({ owner }) => owner)).toEqual(["a", "a"]);
+		window.freed();
+		expect(sent).toEqual(["A1", "B1"]);
+		expect(window.removeWhere(() => true)).toEqual([]);
 	});
 });

@@ -1,0 +1,204 @@
+/* The command menu (src/web/command-menu/): a dialog on the sheet layer's scrim, near the top of the screen, with its
+   input where a sheet has its header. One option is highlighted by aria-selected (highlight.ts), by keys and the mouse
+   alike, so rows need no :hover rule. Shared with style.css: the input's reset (`.search input`), the headings
+   (`.workspace-section`), reduced motion and the chip ×'s touch target (its touch-target block). */
+.command-layer {
+	--layer-align: flex-start;
+	/* Wide screens: the dialog's distance from the top. */
+	--command-top: 12vh;
+	padding: calc(var(--safe-top) + var(--s3)) var(--s3) 0;
+}
+@media (min-width: 700px) {
+	.command-layer {
+		padding-top: var(--command-top);
+	}
+}
+.command-menu {
+	--command-width: 640px;
+	--command-height: min(520px, 76dvh);
+	/* A row's suffix (the provider beside a model) leaves the title at least the rest. */
+	--command-suffix-width: 45%;
+
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+	max-width: var(--command-width);
+	max-height: var(--command-height);
+	overflow: hidden;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--bg);
+	animation: pop 0.2s ease-out;
+}
+
+/* The target chip and the open pages' crumbs: one line at one size, the chip a filled tag (no border). Only the chip
+   shrinks, and in it only the label: a long title ellipsizes, the kind and the crumbs stay whole. The bottom padding
+   is the touch-target block's (style.css). */
+.command-context {
+	display: flex;
+	align-items: center;
+	gap: var(--s1);
+	padding-block-start: var(--s3);
+	padding-inline: var(--x);
+	color: var(--muted);
+	font-size: var(--fs-sm);
+}
+.command-chip {
+	display: inline-flex;
+	flex: 0 1 auto;
+	align-items: center;
+	gap: var(--s1);
+	min-width: 0;
+	height: var(--s5);
+	padding: 0 var(--s1) 0 var(--s2);
+	border-radius: var(--radius);
+	background: var(--hover);
+	color: var(--text);
+}
+.command-chip-text {
+	display: flex;
+	gap: var(--s1);
+	min-width: 0;
+	white-space: nowrap;
+}
+/* --text, not --muted: --muted is below 4.5:1 on the chip's fill in the light theme. */
+.command-chip-kind {
+	flex: none;
+}
+.command-chip-label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.command-chip-remove {
+	position: relative;
+	display: grid;
+	place-items: center;
+	flex: none;
+	width: 16px;
+	height: 16px;
+	color: var(--muted);
+}
+.command-chip-remove:active {
+	color: var(--text);
+}
+@media (hover: hover) {
+	.command-chip-remove:hover {
+		color: var(--text);
+	}
+}
+.command-chip-remove svg {
+	width: 12px;
+	height: 12px;
+}
+.command-crumb {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	gap: var(--s1);
+	color: var(--text);
+	white-space: nowrap;
+}
+.command-crumb svg {
+	color: var(--faint);
+}
+
+.command-input {
+	display: flex;
+	flex: none;
+	align-items: center;
+	height: var(--bar);
+	padding: 0 var(--x);
+	border-bottom: 1px solid var(--line);
+}
+.command-input input {
+	font-size: var(--fs-lg);
+}
+
+.command-list {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	padding-bottom: var(--s2);
+}
+.command-list:not(:has([role="option"])) {
+	padding: 0;
+}
+.command-group:not(:has([role="option"])) {
+	display: none;
+}
+.command-row {
+	display: flex;
+	align-items: center;
+	gap: var(--s3);
+	min-height: var(--row);
+	padding: var(--s1) var(--x);
+	color: var(--text);
+	font-size: var(--fs-md);
+	cursor: pointer;
+	user-select: none;
+}
+.command-row[aria-selected="true"],
+.command-row:active {
+	background: var(--hover);
+}
+.command-icon {
+	display: grid;
+	place-items: center;
+	flex: none;
+	width: 16px;
+	color: var(--faint);
+}
+.command-icon svg {
+	width: 16px;
+	height: 16px;
+}
+.command-title {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+/* A long suffix ellipsizes; the check after it stays. */
+.command-suffix {
+	display: flex;
+	flex: none;
+	align-items: center;
+	gap: var(--s1);
+	min-width: 0;
+	max-width: var(--command-suffix-width);
+	color: var(--muted);
+	font-size: var(--fs-sm);
+}
+.command-suffix-text {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.command-suffix svg {
+	flex: none;
+}
+.command-menu .empty-note {
+	padding: var(--s4) var(--x);
+}
+
+/* The announced result count: for screen readers only. */
+.command-count {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip-path: inset(50%);
+	white-space: nowrap;
+}
+
+@media (forced-colors: active) {
+	.command-row[aria-selected="true"] {
+		outline: 1px solid Highlight;
+		outline-offset: -1px;
+	}
+}

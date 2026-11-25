@@ -14,6 +14,11 @@ export const sameLocation = (a: Location, b: Location): boolean => a.env === b.e
 export const locationText = (location: Location): string =>
 	location.env ? `${location.env}:${location.cwd}` : location.cwd;
 
+/** Shows conventional macOS, Linux and Termux home directories as `~`. */
+export function shortPath(path: string): string {
+	return path.replace(/^\/(?:Users\/[^/]+|home\/[^/]+|root|data\/data\/com\.termux\/files\/home)(?=\/|$)/, "~");
+}
+
 /** `envs.ENV_NAME`: the names an environment may have. */
 export const ENV_PREFIX = /^([a-z0-9][a-z0-9_-]{0,31}):(.*)$/s;
 /** `local:` names this device, unless an environment is called "local". */
@@ -59,7 +64,9 @@ export function parseLocation(
 	text: string,
 	envs: readonly string[],
 	fallback: { env: string | null; cwd?: string },
-): LocationInput | { error: string } {
+):
+	| { readonly kind: "parsed"; readonly location: LocationInput }
+	| { readonly kind: "invalid"; readonly error: string } {
 	const input = text.trim();
 	const match = ENV_PREFIX.exec(input);
 	let env = fallback.env;
@@ -67,10 +74,10 @@ export function parseLocation(
 	if (match && (envs.includes(match[1]!) || match[1] === LOCAL || match[1]!.length > 1)) {
 		if (envs.includes(match[1]!)) env = match[1]!;
 		else if (match[1] === LOCAL) env = null;
-		else return { error: `Unknown environment "${match[1]}" (/envs lists them)` };
+		else return { kind: "invalid", error: `Unknown environment "${match[1]}" (/envs lists them)` };
 		path = match[2]!.trim();
 	}
 	if (!path) path = env === fallback.env && fallback.cwd ? fallback.cwd : "~";
 	else if (!isRooted(path)) path = env === fallback.env && fallback.cwd ? joinPath(fallback.cwd, path) : `~/${path}`;
-	return { env, path };
+	return { kind: "parsed", location: { env, path } };
 }

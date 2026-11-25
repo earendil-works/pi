@@ -1,0 +1,56 @@
+{
+	"name": "@earendil-works/p3",
+	"version": "0.0.1",
+	"private": true,
+	"description": "p3: one Pi per person (the server, its command `p3`, and the API plugins import)",
+	"type": "module",
+	"bin": {
+		"p3": "dist/p3.js"
+	},
+	"exports": {
+		"./v1": {
+			"source": "./src/api/v1/index.ts",
+			"types": "./dist/src/api/v1/index.d.ts",
+			"import": "./dist/src/api/v1/index.js"
+		},
+		"./v1/server": {
+			"source": "./src/api/v1/server.ts",
+			"types": "./dist/src/api/v1/server.d.ts",
+			"import": "./dist/src/api/v1/server.js"
+		},
+		"./v1/worker": {
+			"source": "./src/api/v1/worker.ts",
+			"types": "./dist/src/api/v1/worker.d.ts",
+			"import": "./dist/src/api/v1/worker.js"
+		}
+	},
+	"files": [
+		"dist",
+		"plugins",
+		"!plugins/**/*.test.ts",
+		"src/api",
+		"src/principals.ts",
+		"README.md"
+	],
+	"scripts": {
+		"build": "node --disable-warning=ExperimentalWarning scripts/build-release.ts",
+		"check": "node ../../scripts/biome-check.mjs && tsc --noEmit",
+		"format": "node ../../scripts/biome-check.mjs --write",
+		"test": "node --conditions=source --disable-warning=ExperimentalWarning --test --test-timeout=120000 --test-force-exit --test-reporter=dot \"test/*.test.ts\" \"test/kit/*.test.ts\" \"plugins/**/*.test.ts\"",
+		"test:release": "node --conditions=source --disable-warning=ExperimentalWarning --test --test-concurrency=1 --test-timeout=900000 --test-force-exit \"test/release/*.test.ts\""
+	},
+	"engines": {
+		"node": ">=26.3.1"
+	},
+	"dependencies": {
+		"@earendil-works/chord": "1.6.0",
+		"@earendil-works/pi-schema": "1.6.0",
+		"@earendil-works/pi-telemetry": "1.6.0",
+		"esbuild": "0.28.2",
+		"ws": "8.21.0"
+	},
+	"devDependencies": {
+		"@earendil-works/pi-ai": "1.6.0",
+		"@earendil-works/pi-durable": "1.6.0"
+	}
+}

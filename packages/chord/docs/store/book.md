@@ -207,6 +207,11 @@ d -> q: commit
 q => q: seq 43: write, outbox, adopt Durable
 :::
 
+When steps queue up, the queue writes them together (**group commit**, S18): the commits waiting behind a running step
+are admitted at the next turn and written in one backend transaction, each still with its own seq, outbox commit and
+adoption, in queue order. A refusal inside a group rolls the group back and runs its commits one by one, so it stays
+its own commit's.
+
 Durable's seq is the store's seq. Durable sees gaps (other owners' commits in between), and that is harmless: every use
 of a seq in Durable compares (`created_at <= at`, `seq > base`); nothing computes `seq + 1` to find a neighbour (checked
 in the storages and the Session).

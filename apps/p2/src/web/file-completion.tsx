@@ -4,7 +4,7 @@
 // apply, arrows move and Escape closes, ahead of send and stop. Keys during IME composition are ignored and the popover
 // never opens mid-composition. `@pi` (chat mode's agent mention) is never completed as a file; in chat mode a
 // synthetic "@pi — mention Pi" item comes first.
-import { BACKGROUND_CONTEXT } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { type KeyboardEvent, type RefObject, useEffect, useRef, useState } from "react";
 import {
 	applyFileCompletion,
@@ -22,6 +22,7 @@ import {
 } from "../runtime/completion.ts";
 import { FileIndex } from "../runtime/file-index.ts";
 import { useObject, useStatus } from "../runtime/web.tsx";
+import type { DraftInput } from "./composer-state.tsx";
 
 const DEBOUNCE_MS = 80;
 /** The FileIndex reference (it leases the workspace watch) outlives a blur this long. */
@@ -31,7 +32,7 @@ type Popover = { items: CompletionItem[]; prefix: string; selected: number; hint
 export type FileCompletion = {
 	popover: Popover | undefined;
 	/** Handles the key when completion owns it (call first); true means "consumed". */
-	onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): boolean;
+	onKeyDown(event: KeyboardEvent<HTMLElement>): boolean;
 	/** After every edit or caret move. */
 	update(): void;
 	onFocus(): void;
@@ -42,7 +43,7 @@ export type FileCompletion = {
 };
 
 export function useFileCompletion(
-	textarea: RefObject<HTMLTextAreaElement | null>,
+	textarea: RefObject<DraftInput | null>,
 	setDraft: (text: string) => void,
 	scope: { session: string; conversation: number } | undefined,
 	/** `mention`: the agent's name while chat mode is on, offered first as `@name`. */
@@ -77,7 +78,7 @@ export function useFileCompletion(
 	const query = (force: boolean): boolean => {
 		const element = textarea.current;
 		if (!element || composing.current) return false;
-		const before = element.value.slice(0, element.selectionStart ?? element.value.length);
+		const before = element.value.slice(0, element.selectionStart);
 		const at = extractAtPrefix(before);
 		const id = ++request.current;
 		clearTimeout(timer.current);
@@ -146,7 +147,7 @@ export function useFileCompletion(
 	const apply = (item: CompletionItem, prefix: string): void => {
 		const element = textarea.current;
 		if (!element) return;
-		const cursor = element.selectionStart ?? element.value.length;
+		const cursor = element.selectionStart;
 		const lineStart = element.value.lastIndexOf("\n", cursor - 1) + 1;
 		const lineEnd = element.value.indexOf("\n", cursor);
 		const end = lineEnd === -1 ? element.value.length : lineEnd;
@@ -162,7 +163,7 @@ export function useFileCompletion(
 		});
 	};
 
-	const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): boolean => {
+	const onKeyDown = (event: KeyboardEvent<HTMLElement>): boolean => {
 		if (event.nativeEvent.isComposing || composing.current) return false;
 		if (popover) {
 			const count = popover.items.length;
@@ -227,7 +228,7 @@ export function useFileCompletion(
 	};
 }
 
-/** The popover above the textarea; pointer selection works too (mousedown keeps the textarea focused). */
+/** The popover above the input; pointer selection works too (mousedown keeps the input focused). */
 export function FileCompletionPopover({ completion }: { completion: FileCompletion }) {
 	const popover = completion.popover;
 	if (!popover) return null;

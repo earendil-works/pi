@@ -3,15 +3,29 @@
 // never applies it. A changed file dirties every plugin whose facets used it (a copied contract every user), whose
 // directory contains it or which is a single-file plugin of it; a changed `package.json` asks for an install (and for
 // its metadata to be read again); a plugin directory, a facet file or a single-file plugin's file added or removed asks
-// for discovery again; a file of base code asks the app to restart its hosts. The
-// marks are a JSON watchable; each mark records the generation of its latest change (generations only increase), so a
-// change during a build keeps its mark, however late an older build's rollout clears.
+// for discovery again. Base code is compared, not latched: `base` (the app restarts its hosts) is true exactly while a
+// file differs from what a running base artifact read (its bytes' hash: the server's own code hashed at start, each
+// base bundle's record), is gone, or is a source file new in a base directory; checked once when its watch starts and
+// again at each event, the reads of one path in order. The marks are a JSON watchable; each plugin mark records the
+// generation of its latest change (generations only increase), so a change during a build keeps its mark, however
+// late an older build's rollout clears.
 
-import { type Dirent, existsSync, type FSWatcher, lstatSync, readdirSync, realpathSync, watch } from "node:fs";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import {
+	type Dirent,
+	existsSync,
+	type FSWatcher,
+	lstatSync,
+	readdirSync,
+	readFileSync,
+	realpathSync,
+	watch,
+} from "node:fs";
+import { readFile } from "node:fs/promises";
+import { basename, dirname, extname, join, resolve, sep } from "node:path";
 import { BACKGROUND_CONTEXT, type Context } from "../../context/index.ts";
 import type { JsonValue } from "../../json.ts";
 import { type Batch, Source } from "../../state/internal.ts";
+import { type BaseInputs, contentHash } from "./base-inputs.ts";
 import { type BuiltFacet, inside } from "./build.ts";
 import { type Discovery, FACET_EXTENSIONS, type Plugin, sameFiles } from "./discover.ts";
 
@@ -32,6 +46,7 @@ export type DiscoverySnapshot = { readonly set: number; readonly manifest: numbe
 /** What the watcher watches and how it reports: the roots, the base code, the facet kinds, a failure to watch. */
 export type WatcherOptions = {
 	readonly roots: readonly string[];
+	/** The server's own base code, files and directories: hashed when the watcher starts, the first base record. */
 	readonly base: readonly string[];
 	readonly kinds: readonly string[];
 	/** The watcher cannot watch (the system's limit): reported once, after which the app builds on demand. */
@@ -41,6 +56,9 @@ export type WatcherOptions = {
 /** Directories never watched, and changes under them never marked. */
 const IGNORED = new Set(["node_modules", ".git"]);
 
+/** The files of a base directory that are code: one added there marks `base` (a swap file or a note does not). */
+const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".json", ".css"]);
+
 /**
  * The watcher and the marks (`state`), a JSON watchable published at most once per microtask turn with changes. It
  * marks for the plugins of the last discovery (`know`) and the files their last builds read (`used`).
@@ -48,7 +66,34 @@ const IGNORED = new Set(["node_modules", ".git"]);
 export class PluginWatcher extends Source {
 	readonly #options: WatcherOptions;
 	readonly #roots: readonly string[];
+	/** The base directories (watched as trees): a source file new in one marks `base`. */
 	readonly #baseDirs: readonly string[];
+	/** What each running base artifact read: each file's bytes' hash, by real path (the server's own first). */
+	readonly #records: BaseInputs[] = [];
+	/** Every file a record names. */
+	readonly #recorded = new Set<string>();
+	/** The base files that differ now (changed, gone, or new in a base directory): `base` while there is one. */
+	readonly #differing = new Set<string>();
+	/** Each path's comparison under way: the next one runs after it (the latest read decides). */
+	readonly #comparing = new Map<string, Promise<void>>();
+	/** Where base code lives: the base directories and the directories of recorded files outside them. */
+	readonly #locations = new Set<string>();
+	/** The locations and every ancestor of theirs: an entry there created, removed, moved or replaced concerns base code. */
+	readonly #anchored = new Set<string>();
+	/**
+	 * The directories watched alone for base code: the recorded files' directories outside the base directories, and
+	 * every existing ancestor of a location (its replacement or move is an event of its parent's watch).
+	 */
+	readonly #baseWatchers = new Map<string, FSWatcher>();
+	/**
+	 * The identity (inode and birth time) of each directory watched, by path: an event naming one whose identity is the
+	 * same changed its attributes (`fs.watch` reports those as `rename` too), not the directory.
+	 */
+	readonly #identities = new Map<string, string | undefined>();
+	/** Entries on the way to base code replaced since the last renewal: one renewal per burst of events. */
+	readonly #renamed = new Set<string>();
+	#renewing = false;
+	#closed = false;
 	/** The trees it watches: the roots, the base code, and plugin directories linked from outside the roots. */
 	readonly #trees = new Set<string>();
 	/** Its watches, one per directory of its trees. */
@@ -64,7 +109,6 @@ export class PluginWatcher extends Source {
 	#set = 0;
 	/** The latest change of a known plugin's `package.json` since the last discovery (0: none). */
 	#manifest = 0;
-	#baseChanged = false;
 	#discovery: Discovery = { plugins: [], problems: [] };
 	/** The files each built facet read (its inputs and copies), by plugin and kind. */
 	readonly #used = new Map<string, { readonly plugin: string; readonly files: ReadonlySet<string> }>();
@@ -76,8 +120,10 @@ export class PluginWatcher extends Source {
 		this.#options = options;
 		// Events name paths under the directories as watched: by their real paths, as discovery names plugins.
 		this.#roots = options.roots.map(real);
-		this.#baseDirs = options.base.map(real);
+		const base = options.base.map(real);
+		this.#baseDirs = base.filter(isDirectory);
 		for (const dir of [...this.#roots, ...this.#baseDirs]) this.#watchTree(dir);
+		this.#recordOwn(base);
 	}
 
 	get value(): JsonValue {
@@ -85,7 +131,7 @@ export class PluginWatcher extends Source {
 			dirty: [...this.#dirty.keys()].sort(),
 			install: [...this.#install].sort(),
 			set: this.#set > 0,
-			base: this.#baseChanged,
+			base: this.#differing.size > 0,
 		};
 		return this.#value;
 	}
@@ -174,22 +220,122 @@ export class PluginWatcher extends Source {
 		this.#changed();
 	}
 
+	/**
+	 * Adds the record of a running base artifact (a base bundle's `inputs`): `base` is set while one of its files differs
+	 * from it. Each file's directory is watched alone (not its tree), then every file is compared once (an edit since the
+	 * build has no later event); files under ignored directories are skipped. Settles once those first comparisons did:
+	 * `base` then knows the record.
+	 */
+	recordBase(inputs: BaseInputs): Promise<void> {
+		// A record arriving after the close (a scan that ended late) watches nothing.
+		if (this.#closed) return Promise.resolve();
+		const record = new Map<string, string>();
+		for (const [file, hash] of inputs) {
+			const path = real(file);
+			if (!ignored(path)) record.set(path, hash);
+		}
+		for (const path of record.keys()) this.#locate(dirname(path));
+		this.#records.push(record);
+		const compared: Promise<void>[] = [];
+		for (const path of record.keys()) {
+			this.#recorded.add(path);
+			compared.push(this.#compare(path));
+		}
+		return Promise.all(compared).then(() => {});
+	}
+
 	/** Marks what a change of the file or directory at `path` (absolute) asks for. */
 	mark(path: string): void {
-		if (path.split(sep).some((part) => IGNORED.has(part))) return;
-		if (this.#baseDirs.some((dir) => inside(dir, path))) {
-			this.#baseChanged = true;
-		} else {
-			this.#markPlugin(path, this.#generation++);
+		if (ignored(path)) return;
+		if (this.#isBase(path)) {
+			this.#compareAt(path);
+			return;
 		}
+		this.#markPlugin(path, this.#generation++);
 		this.#changed();
 	}
 
 	/** Stops watching. */
 	close(): void {
-		for (const watcher of this.#watchers.values()) watcher.close();
+		this.#closed = true;
+		for (const watcher of [...this.#watchers.values(), ...this.#baseWatchers.values()]) watcher.close();
 		this.#watchers.clear();
+		this.#baseWatchers.clear();
+		this.#identities.clear();
 		this.#trees.clear();
+	}
+
+	/**
+	 * Records the server's own base code `base` (files and the source files of directories), after their watches: the
+	 * bytes Node loaded, as far as a read now can tell (an edit between Node's load and this read is not seen).
+	 */
+	#recordOwn(base: readonly string[]): void {
+		const files = base.flatMap((path) => (this.#baseDirs.includes(path) ? sourceFiles(path) : [path]));
+		for (const dir of this.#baseDirs) this.#locate(dir);
+		for (const file of files) this.#locate(dirname(file));
+		const record = new Map<string, string>();
+		for (const file of files) {
+			const hash = hashNow(file);
+			if (hash !== undefined) record.set(file, hash);
+		}
+		this.#records.push(record);
+		for (const path of record.keys()) this.#recorded.add(path);
+	}
+
+	/** Whether a change at `path` concerns base code: a recorded or differing file, or anything in a base directory. */
+	#isBase(path: string): boolean {
+		if (this.#recorded.has(path) || this.#differing.has(path) || this.#inBaseDir(path)) return true;
+		for (const file of this.#recorded) if (inside(path, file)) return true;
+		return false;
+	}
+
+	/** Whether `path` is a base directory or in one. */
+	#inBaseDir(path: string): boolean {
+		return this.#baseDirs.some((dir) => dir === path || inside(dir, path));
+	}
+
+	/**
+	 * Compares the base files at or under `path` again: the recorded and differing ones, and the source files now in the
+	 * base directories there (a directory added, removed or moved names only itself).
+	 */
+	#compareAt(path: string): void {
+		const paths = new Set<string>();
+		if (this.#recorded.has(path) || this.#differing.has(path)) paths.add(path);
+		else {
+			for (const file of [...this.#recorded, ...this.#differing]) if (inside(path, file)) paths.add(file);
+			for (const dir of this.#baseDirs) {
+				const scanned = dir === path || inside(path, dir) ? dir : inside(dir, path) ? path : undefined;
+				if (scanned !== undefined) for (const file of sourceFiles(scanned)) paths.add(file);
+			}
+		}
+		for (const file of paths) this.#compare(file);
+	}
+
+	/** Compares the base file at `path` once its comparisons under way are done: reads of one path run in order. */
+	#compare(path: string): Promise<void> {
+		const next = (this.#comparing.get(path) ?? Promise.resolve()).then(() => this.#compareNow(path));
+		this.#comparing.set(path, next);
+		void next.then(() => {
+			if (this.#comparing.get(path) === next) this.#comparing.delete(path);
+		});
+		return next;
+	}
+
+	/**
+	 * Reads the file at `path`: it differs while any record has other bytes for it (or it is gone), or, recorded by none,
+	 * while it is a source file in a base directory.
+	 */
+	async #compareNow(path: string): Promise<void> {
+		const hash = await hashOf(path);
+		const recorded = this.#records.flatMap((record) => record.get(path) ?? []);
+		const differs =
+			recorded.length > 0
+				? recorded.some((each) => each !== hash)
+				: hash !== undefined && this.#inBaseDir(path) && SOURCE_EXTENSIONS.has(extname(path));
+		if (differs === this.#differing.has(path)) return;
+		if (differs) this.#differing.add(path);
+		else this.#differing.delete(path);
+		this.#changed();
 	}
 
 	/**
@@ -223,6 +369,100 @@ export class PluginWatcher extends Source {
 		return this.#options.kinds.some((kind) => FACET_EXTENSIONS.some((extension) => file === `${kind}${extension}`));
 	}
 
+	/**
+	 * Adds `dir` to where base code lives (a base directory, or one holding recorded files outside them): it and its
+	 * ancestors are watched. A directory inside a base directory is its tree's.
+	 */
+	#locate(dir: string): void {
+		if (this.#locations.has(dir) || (this.#inBaseDir(dir) && !this.#baseDirs.includes(dir))) return;
+		this.#locations.add(dir);
+		for (let each = dir; ; each = dirname(each)) {
+			this.#anchored.add(each);
+			if (each === dirname(each)) break;
+		}
+		this.#watchLocation(dir);
+	}
+
+	/**
+	 * Watches location `dir`'s existing ancestors alone, then `dir` itself: as a tree for a base directory, alone for
+	 * one holding recorded files. A part that does not exist is skipped: its parent's watch reports its arrival.
+	 */
+	#watchLocation(dir: string): void {
+		const ancestors: string[] = [];
+		for (let each = dirname(dir); ; each = dirname(each)) {
+			ancestors.unshift(each);
+			if (each === dirname(each)) break;
+		}
+		for (const ancestor of ancestors) this.#watchAlone(ancestor);
+		if (this.#baseDirs.includes(dir)) this.#watchDirs(dir);
+		else this.#watchAlone(dir);
+	}
+
+	/**
+	 * Watches directory `dir` alone (once) for base code: a recorded (or differing) file there is compared; an entry on the
+	 * way to a location created, removed, moved or replaced (another identity: not an attribute change) renews the
+	 * watches under it. A directory that does not exist or cannot be watched (an ancestor without access) is skipped.
+	 */
+	#watchAlone(dir: string): void {
+		if (this.#baseWatchers.has(dir) || this.#reported) return;
+		let watcher: FSWatcher;
+		try {
+			watcher = watch(dir, (event, file) => {
+				if (file === null) return;
+				const path = join(dir, file);
+				if (this.#recorded.has(path) || this.#differing.has(path)) this.mark(path);
+				else if (event === "rename" && this.#anchored.has(path) && this.#replaced(path))
+					this.#renamedOnTheWay(path);
+			});
+		} catch (error) {
+			const code = (error as NodeJS.ErrnoException).code;
+			if (code !== "ENOENT" && code !== "EACCES" && code !== "EPERM") this.#failed(error);
+			return;
+		}
+		watcher.on("error", (error) => this.#failed(error));
+		this.#baseWatchers.set(dir, watcher);
+		this.#identities.set(dir, identityOf(dir));
+	}
+
+	/** Whether the directory at `path` is not the one watched there (created, removed, or another one now). */
+	#replaced(path: string): boolean {
+		return identityOf(path) !== this.#identities.get(path);
+	}
+
+	/**
+	 * Renews the watches under `path`, renamed on the way to base code, once the events of this task are in: a burst
+	 * renews each subtree once (the outermost renamed path covers those under it).
+	 */
+	#renamedOnTheWay(path: string): void {
+		this.#renamed.add(path);
+		if (this.#renewing) return;
+		this.#renewing = true;
+		setImmediate(() => {
+			this.#renewing = false;
+			const renamed = [...this.#renamed];
+			this.#renamed.clear();
+			if (this.#closed || this.#reported) return;
+			for (const each of renamed) if (!renamed.some((other) => inside(other, each))) this.#reconcile(each);
+		});
+	}
+
+	/**
+	 * The directory at `path`, on the way to base code, was created, removed, moved or replaced (its watches may be dead,
+	 * its inode reused: renewed whatever they are): every base watch at or under it starts again where the paths now are,
+	 * and the base files there are compared.
+	 */
+	#reconcile(path: string): void {
+		for (const [dir, watcher] of this.#baseWatchers) {
+			if (dir !== path && !inside(path, dir)) continue;
+			watcher.close();
+			this.#baseWatchers.delete(dir);
+			this.#identities.delete(dir);
+		}
+		for (const dir of this.#baseDirs) if (dir === path || inside(path, dir)) this.#unwatchDirs(dir);
+		for (const dir of this.#locations) if (dir === path || inside(path, dir)) this.#watchLocation(dir);
+		this.#compareAt(path);
+	}
+
 	/** Watches the tree at `dir` (once): it and every directory under it but ignored ones; a missing one is skipped. */
 	#watchTree(dir: string): void {
 		if (this.#trees.has(dir)) return;
@@ -250,6 +490,7 @@ export class PluginWatcher extends Source {
 		}
 		watcher.on("error", (error) => this.#failed(error));
 		this.#watchers.set(dir, watcher);
+		this.#identities.set(dir, identityOf(dir));
 		let entries: Dirent[];
 		try {
 			entries = readdirSync(dir, { withFileTypes: true });
@@ -262,12 +503,18 @@ export class PluginWatcher extends Source {
 		}
 	}
 
-	/** An event for `path` in a watched directory: a new directory gets its watches, a removed one loses them; marked. */
+	/**
+	 * An event for `path` in a watched directory: a directory gets its watches (renewed when it is another directory than
+	 * the one watched: removed and made again, its old watches dead, its inode possibly reused), a removed one loses
+	 * them; marked.
+	 */
 	#changedIn(path: string): void {
 		const name = basename(path);
 		if (!IGNORED.has(name)) {
-			if (isDirectory(path)) this.#watchDirs(path);
-			else if (this.#watchers.has(path)) this.#unwatchDirs(path);
+			if (isDirectory(path)) {
+				if (this.#watchers.has(path) && this.#replaced(path)) this.#unwatchDirs(path);
+				this.#watchDirs(path);
+			} else if (this.#watchers.has(path)) this.#unwatchDirs(path);
 		}
 		this.mark(path);
 	}
@@ -278,6 +525,7 @@ export class PluginWatcher extends Source {
 			if (watched !== dir && !inside(dir, watched)) continue;
 			watcher.close();
 			this.#watchers.delete(watched);
+			this.#identities.delete(watched);
 		}
 	}
 
@@ -316,6 +564,54 @@ function isDirectory(path: string): boolean {
 		return lstatSync(path, { throwIfNoEntry: false })?.isDirectory() === true;
 	} catch {
 		return false;
+	}
+}
+
+/** Whether `path` lies under a directory never watched (`node_modules`, `.git`). */
+function ignored(path: string): boolean {
+	return path.split(sep).some((part) => IGNORED.has(part));
+}
+
+/** The source files at `path`: itself when it is one, every one under it (ignored directories skipped) when a directory. */
+function sourceFiles(path: string): string[] {
+	if (!isDirectory(path)) return SOURCE_EXTENSIONS.has(extname(path)) ? [path] : [];
+	let entries: Dirent[];
+	try {
+		entries = readdirSync(path, { withFileTypes: true });
+	} catch {
+		return [];
+	}
+	return entries.flatMap((entry) => (IGNORED.has(entry.name) ? [] : sourceFiles(join(path, entry.name))));
+}
+
+/** The hash of the bytes of the file at `path` now (synchronously), `undefined` when it cannot be read. */
+function hashNow(path: string): string | undefined {
+	try {
+		return contentHash(readFileSync(path));
+	} catch {
+		return undefined;
+	}
+}
+
+/** The hash of the bytes of the file at `path`, `undefined` when it cannot be read (gone, a directory, no access). */
+async function hashOf(path: string): Promise<string | undefined> {
+	try {
+		return contentHash(await readFile(path));
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * The identity of the directory at `path`: its inode and birth time (an inode is reused at once by a directory made
+ * again; its birth time is new), not following a link; `undefined` when there is none.
+ */
+function identityOf(path: string): string | undefined {
+	try {
+		const stats = lstatSync(path, { bigint: true });
+		return `${stats.ino}:${stats.birthtimeNs}`;
+	} catch {
+		return undefined;
 	}
 }
 

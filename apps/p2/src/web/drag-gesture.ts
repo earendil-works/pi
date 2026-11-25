@@ -54,6 +54,12 @@ export type DragGesture<C> = {
 	move(context: C, along: number): void;
 	/** Released at `velocity` px/ms along the axis; undefined: ended otherwise (settle back). */
 	end(context: C, velocity: number | undefined): void;
+	/**
+	 * Optional: a touch along the axis that `take` left to the page is offered again at each later move, `delta` px
+	 * since the one before; true takes it from there (a sheet's content scrolled back to its top while the finger goes
+	 * on down). Its moves may no longer be cancelable: the browser scrolls it, which is nothing at that edge.
+	 */
+	resume?(context: C, delta: number): boolean;
 };
 
 /** Follows touches for `gesture` until `stop`; `cancel` ends a drag in progress without a velocity. */
@@ -61,10 +67,21 @@ export function trackDrags<C>(gesture: DragGesture<C>): { stop: () => void; canc
 	const along = (touch: Touch) => (gesture.axis === "x" ? touch.clientX : touch.clientY);
 	let candidate: { id: number; x: number; y: number; context: C } | undefined;
 	let drag: { id: number; from: number; samples: { at: number; t: number }[]; context: C } | undefined;
+	/** A touch left to the page that the gesture may still take (`resume`): where it was at its last move. */
+	let left: { id: number; last: number; context: C } | undefined;
 
+	/** The gesture owns the touch from `touch` on. */
+	const own = (event: TouchEvent, touch: Touch, context: C) => {
+		if (event.cancelable) event.preventDefault();
+		event.stopPropagation();
+		// Measured from here, so nothing jumps by the decision distance.
+		drag = { id: touch.identifier, from: along(touch), samples: [{ at: along(touch), t: event.timeStamp }], context };
+		gesture.move(context, 0);
+	};
 	const cancel = () => {
 		const current = drag;
 		candidate = undefined;
+		left = undefined;
 		drag = undefined;
 		if (current) gesture.end(current.context, undefined);
 	};
@@ -77,12 +94,22 @@ export function trackDrags<C>(gesture: DragGesture<C>): { stop: () => void; canc
 		const touch = event.changedTouches[0];
 		const target = event.target instanceof Element ? event.target : null;
 		if (!touch || !target) return;
+		left = undefined;
 		const context = gesture.begin(target, touch);
 		if (context !== undefined) candidate = { id: touch.identifier, x: touch.clientX, y: touch.clientY, context };
 	};
 	const move = (event: TouchEvent) => {
-		const touch = [...event.changedTouches].find((each) => each.identifier === (drag ?? candidate)?.id);
+		const touch = [...event.changedTouches].find((each) => each.identifier === (drag ?? candidate ?? left)?.id);
 		if (!touch) return;
+		if (left && !drag && !candidate) {
+			const delta = along(touch) - left.last;
+			left.last = along(touch);
+			if (!gesture.resume?.(left.context, delta)) return;
+			const { context } = left;
+			left = undefined;
+			own(event, touch, context);
+			return;
+		}
 		if (drag) {
 			if (event.cancelable) event.preventDefault();
 			// The move belongs to the gesture, not the page under it (the transcript stops following on touchmove).
@@ -99,23 +126,19 @@ export function trackDrags<C>(gesture: DragGesture<C>): { stop: () => void; canc
 		candidate = undefined;
 		const [primary, cross] = gesture.axis === "x" ? [dx, dy] : [dy, dx];
 		if (Math.abs(cross) > Math.abs(primary) * Math.tan((MAX_ANGLE * Math.PI) / 180)) return;
-		if (!gesture.take(current.context, primary, event.cancelable)) return;
-		if (event.cancelable) event.preventDefault();
-		event.stopPropagation();
-		// Measured from here, so nothing jumps by the decision distance.
-		drag = {
-			id: current.id,
-			from: along(touch),
-			samples: [{ at: along(touch), t: event.timeStamp }],
-			context: current.context,
-		};
-		gesture.move(drag.context, 0);
+		if (!gesture.take(current.context, primary, event.cancelable)) {
+			// Left to the page along the gesture's axis: offered again as it moves on.
+			if (gesture.resume) left = { id: current.id, last: along(touch), context: current.context };
+			return;
+		}
+		own(event, touch, current.context);
 	};
 	const end = (event: TouchEvent) => {
-		const id = (drag ?? candidate)?.id;
+		const id = (drag ?? candidate ?? left)?.id;
 		if (![...event.changedTouches].some((touch) => touch.identifier === id)) return;
 		const current = drag;
 		candidate = undefined;
+		left = undefined;
 		drag = undefined;
 		if (!current) return;
 		if (event.type === "touchcancel") return gesture.end(current.context, undefined);

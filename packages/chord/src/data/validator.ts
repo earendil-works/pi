@@ -2,6 +2,7 @@
 
 import { compile, type JsonSchema, type Validator } from "@earendil-works/pi-schema";
 import type { Context } from "../context/index.ts";
+import { chordMetrics } from "../telemetry.ts";
 import { type ChordError, invalid } from "./errors.ts";
 
 /** A Chord-owned record holding a schema: a snapshot, or a contract's params. */
@@ -11,7 +12,7 @@ type SchemaOwner = { readonly schema: JsonSchema };
 export function validatorFor(owner: SchemaOwner, context: Context): Validator {
 	let validator = validators.get(owner);
 	if (validator === undefined) {
-		context.telemetry.metrics?.counter("chord.data.compilations").add(1);
+		chordMetrics(context.telemetry.metrics).counter("chord.data.compilations").add(1);
 		// `format` is an annotation (decided for the schema switch): no format checks are compiled in.
 		validator = compile(owner.schema);
 		validators.set(owner, validator);
@@ -28,7 +29,7 @@ export function check(
 	reason: "args" | "params" | "host_address",
 	context: Context,
 ): void {
-	context.telemetry.metrics?.counter("chord.data.validations").add(1);
+	chordMetrics(context.telemetry.metrics).counter("chord.data.validations").add(1);
 	if (!validator.check(value)) throw failedCheck(validator, value, reason, context);
 }
 
@@ -43,7 +44,7 @@ function failedCheck(
 	reason: "args" | "params" | "host_address",
 	context: Context,
 ): ChordError {
-	context.telemetry.metrics?.counter("chord.data.walks").add(1);
+	chordMetrics(context.telemetry.metrics).counter("chord.data.walks").add(1);
 	// A value that failed the check has at least one error.
 	const error = validator.errors(value)[0]!;
 	const path = error.path || "/";

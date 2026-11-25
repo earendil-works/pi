@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Connection } from "@earendil-works/pi-env";
-import { constant, follow, type Location, type P2Principal } from "@p2/app/v1";
+import { constant, follow, type Location, type P2Principal, type SessionLock } from "@p2/app/v1";
 import { Hosts, Server, type WorkerState } from "@p2/app/v1/server";
 import type { EnvConfig } from "../../plugins/envs/config.ts";
 import { EnvService } from "../../plugins/envs/contract.ts";
@@ -20,7 +20,7 @@ import { expandHostVariables, parseOwnerConfig } from "../../plugins/mcp/config.
 import { type Instance, Mcp, McpManager } from "../../plugins/mcp/contract.ts";
 import type { ConnectEnv } from "../../plugins/mcp/environments.ts";
 import { mcpServerFacet } from "../../plugins/mcp/server.ts";
-import { Catalog, type Session } from "../../plugins/sessions/contract.ts";
+import { Catalog, type Session, SessionLocks } from "../../plugins/sessions/contract.ts";
 import { type Child, ChildStore } from "../../plugins/subagents/contract.ts";
 import { APP, type Cell, expectChord, failureOf, holdIn, poll, settled, TEST, testHost, until } from "./helpers.ts";
 
@@ -70,6 +70,8 @@ const session = (id: string, env: string | null): Session => ({
 	pinned: false,
 	model: { provider: "faux", modelId: "faux-1" },
 	thinkingLevel: "off",
+	main: 1,
+	branches: [],
 });
 
 /** The fixture server as a stdio entry; every start appends its pid to `log`. */
@@ -100,6 +102,7 @@ async function mcpHost(
 	let workerStates: Cell<Record<string, WorkerState>> | undefined;
 	let sessions: Cell<Session[]> | undefined;
 	let children: Cell<Record<string, Child[]>> | undefined;
+	let locks: Cell<Record<string, SessionLock>> | undefined;
 	const fixture = await testHost({
 		facets: [options.facet ?? mcpServer],
 		stubs: [
@@ -126,6 +129,14 @@ async function mcpHost(
 				(_params, _principal, self) => {
 					children = self.state<Record<string, Child[]>>({});
 					return { children, report: UNUSED };
+				},
+			],
+			// Sessions' locks (a Discord link's picks), changed by `lock` below.
+			[
+				SessionLocks,
+				(_params, _principal, self) => {
+					locks = self.state<Record<string, SessionLock>>({});
+					return { locks, set: UNUSED };
 				},
 			],
 			[
@@ -185,6 +196,12 @@ async function mcpHost(
 		move: (id: string, env: string | null) =>
 			sessions!.change(TEST, (draft) => {
 				for (const entry of draft) if (entry.id === id) entry.env = env;
+			}),
+		/** Locks session `id` to `lock` (null: unlocks it), as linking it to Discord or editing its link does. */
+		lock: (id: string, lock: SessionLock | null) =>
+			locks!.change(TEST, (draft) => {
+				if (lock === null) delete draft[id];
+				else draft[id] = lock;
 			}),
 		/** Records `id`'s subagents (their own locations). */
 		subagents: (id: string, list: Child[]) =>
@@ -342,6 +359,27 @@ test("unshared servers run per session and location, shared ones once; roots and
 	await assert.rejects(s1.call({ location: two, server: "files", tool: "echo", args: {} }, TEST), /No MCP servers/);
 });
 
+test("a session's lock changes its leased servers live: only the picked ones, all again when unlocked", async (t) => {
+	const host = await mcpHost(t, (paths) => ({ files: stdio(paths), notes: stdio(paths) }));
+	const here = host.at("here");
+	const s1 = await host.worker("s1");
+	await s1.setLocations({ locations: [here] }, TEST);
+	await until(s1.servers, (value) => isUp("files")(value) && isUp("notes")(value));
+	const lock = { mcp: ["files"], projectMcp: false, instructions: false, capabilities: [] };
+	await host.lock("s1", lock);
+	await until(s1.servers, (value) => isUp("files")(value) && !value.some((instance) => instance.server === "notes"));
+	await assert.rejects(s1.call({ location: here, server: "notes", tool: "echo", args: {} }, TEST));
+	assert.equal(
+		textOf(await s1.call({ location: here, server: "files", tool: "echo", args: { text: "picked" } }, TEST)),
+		"echo: picked",
+	);
+	// Picking another server (the link edited in place), then unlocking.
+	await host.lock("s1", { ...lock, mcp: ["notes"] });
+	await until(s1.servers, (value) => isUp("notes")(value) && !value.some((instance) => instance.server === "files"));
+	await host.lock("s1", null);
+	await until(s1.servers, (value) => isUp("files")(value) && isUp("notes")(value));
+});
+
 test("processes end with their instances: a location left out, the view's end, the host's shutdown", async (t) => {
 	const host = await mcpHost(t, (paths) => ({ files: stdio(paths), browser: stdio(paths, { shared: true }) }));
 	const one = host.at("one");
@@ -470,7 +508,10 @@ test("an invalid mcp.json keeps the last valid servers, also across a reload", a
 	const [after] = await until(s1.servers, (value) => isUp("files")(value) && host.starts().length === 2);
 	assert.equal(after!.id, instance!.id);
 	assert.equal(alive(pid), false);
-	assert.match(owner.errors.value.join("\n"), /Invalid mcp.json syntax; keeping the last valid servers/);
+	// The restarted reader reads the half-saved file once more before it reports it.
+	await until(owner.errors, (errors) =>
+		/Invalid mcp.json syntax; keeping the last valid servers/.test(errors.join("\n")),
+	);
 });
 
 test("a view outlives its last reference by the linger: a worker re-taking it keeps its processes", async (t) => {
@@ -582,9 +623,16 @@ test("placement: environments not in envs.json fail; HTTP servers connect with h
 	// One shared docs connection for both sessions, one unshared one per session.
 	assert.equal(status(all, "docs").length, 1);
 	assert.equal([...sessions].filter((session) => session.startsWith("/mine:")).length, 2);
-	assert.equal(host.starts().length, 0);
+	// Only s2's own stdio server runs on this machine; s1's are on environments.
+	await until(s2.servers, isUp("here"));
+	assert.equal(host.starts().length, 1);
 	assert.ok(authorizations.includes("Bearer secret-token"));
 	assert.equal(textOf(await s1.call({ location: remote, server: "docs", tool: "lookup", args: {} }, TEST)), "found");
+	// A call of a server waiting for a sign-in tells the model where the user signs in.
+	await assert.rejects(
+		s1.call({ location: remote, server: "locked", tool: "lookup", args: {} }, TEST),
+		/needs a sign-in: ask the user to sign in from the MCP panel in p2's sidebar \(or at \/mcp\/sign-in\/locked on p2\)/,
+	);
 });
 
 test("a project's mcp.json: its servers run at its location for its session, it turns the owner's on and off there, refusals are reported", async (t) => {
@@ -745,6 +793,8 @@ test("a reload of the plugin keeps the leases and the tools: the new supervisor 
 	const stop = follow(s1.servers, (servers) => {
 		fewest = Math.min(fewest, servers[0]?.tools.length ?? 0);
 	});
+	// The manager's memento of the listed tools is written a moment after the list changed: let it catch up.
+	await settled(host.manager.instances);
 	// A new facet value: a reload, not the same code again.
 	await host.fixture.reload([{ ...mcpServer }]);
 	const [after] = await until(s1.servers, (value) => isUp("files")(value) && host.starts().length === 2);

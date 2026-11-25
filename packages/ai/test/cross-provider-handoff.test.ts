@@ -115,7 +115,7 @@ const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 	// Meta
 	{ provider: "meta", model: "muse-spark-1.3", label: "meta-muse-spark-1.3" },
 	// Mistral
-	{ provider: "mistral", model: "devstral-medium-latest", label: "mistral-devstral-medium" },
+	{ provider: "mistral", model: "mistral-medium-latest", label: "mistral-medium" },
 	// MiniMax
 	{ provider: "minimax", model: "MiniMax-M2.7", label: "minimax-m2.7" },
 	{ provider: "minimax-cn", model: "MiniMax-M2.7", label: "minimax-m2.7" },
@@ -151,6 +151,21 @@ const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 		provider: "qwen-token-plan-individual",
 		model: "glm-5.2",
 		label: "qwen-token-plan-individual-glm-5.2",
+	},
+	{
+		provider: "qwen-token-plan-individual-cn",
+		model: "qwen3.8-max",
+		label: "qwen-token-plan-individual-cn-qwen3.8-max",
+	},
+	{
+		provider: "qwen-token-plan-individual-cn",
+		model: "deepseek-v4-flash-0731",
+		label: "qwen-token-plan-individual-cn-deepseek-v4-flash-0731",
+	},
+	{
+		provider: "qwen-token-plan-individual-cn",
+		model: "glm-5.2",
+		label: "qwen-token-plan-individual-cn-glm-5.2",
 	},
 ];
 

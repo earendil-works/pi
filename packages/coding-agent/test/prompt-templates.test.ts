@@ -417,8 +417,36 @@ describe("parseCommandArgs", () => {
 	});
 
 	test("should handle escaped quotes inside quoted strings", () => {
-		// Note: This implementation doesn't handle escaped quotes - backslash is literal
-		expect(parseCommandArgs('"quoted \\"text\\""')).toEqual(["quoted \\text\\"]);
+		// A backslash escapes the enclosing quote character inside a quoted argument (#11861)
+		expect(parseCommandArgs('"quoted \\"text\\""')).toEqual(['quoted "text"']);
+		expect(parseCommandArgs("'it\\'s here' next")).toEqual(["it's here", "next"]);
+		// Other backslashes stay literal, so paths keep them
+		expect(parseCommandArgs("\"C:\\dir\\file\" '\\\\server\\share'")).toEqual(["C:\\dir\\file", "\\\\server\\share"]);
+		expect(parseCommandArgs("\"it's\" 'a\\\"b'")).toEqual(["it's", 'a\\"b']);
+		// Outside quotes a backslash is literal
+		expect(parseCommandArgs('say \\"hi')).toEqual(["say", '\\"hi']);
+	});
+
+	test("should keep apostrophes inside words", () => {
+		// Apostrophes in normal English must not open a quote (#11861)
+		expect(parseCommandArgs("why doesn't the user's cache work")).toEqual([
+			"why",
+			"doesn't",
+			"the",
+			"user's",
+			"cache",
+			"work",
+		]);
+		expect(parseCommandArgs("why doesn't this work")).toEqual(["why", "doesn't", "this", "work"]);
+	});
+
+	test("should treat an unclosed quote as literal text", () => {
+		// A quote without a closing match is kept as text (#11861)
+		expect(parseCommandArgs("'tis the season")).toEqual(["'tis", "the", "season"]);
+		expect(parseCommandArgs('say "hello world')).toEqual(["say", '"hello', "world"]);
+		expect(parseCommandArgs("a '")).toEqual(["a", "'"]);
+		expect(parseCommandArgs('"abc\\"')).toEqual(['"abc\\"']);
+		expect(parseCommandArgs("\"it's\" 'x")).toEqual(["it's", "'x"]);
 	});
 
 	test("should handle trailing spaces", () => {

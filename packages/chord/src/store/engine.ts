@@ -38,6 +38,8 @@ export type DocumentRecord = DocumentAddress & {
 	readonly retiredAt?: number;
 	/** The adapter's details (Durable: its fork policy and history). */
 	readonly meta?: string;
+	/** The address key of the host it belongs to (Chord's host-keyed documents, schema 3); absent for others. */
+	readonly host?: string;
 	/** Counts its changes: a change names the revision it was prepared on. */
 	readonly revision: number;
 	/** The version and schema fingerprint of its current base. */
@@ -90,12 +92,12 @@ export type StoredDocument = {
 export type DocumentPoint = number | "current";
 
 /**
- * Stages the creation of a Chord document at `address` with `base`; its id is taken from the allocator when it
- * applies (a saturated allocator refuses the commit) and handed to `created` (its owner adopts it after `COMMIT`).
- * `text` is the base's value serialized before the queue (rule 8).
+ * Stages the creation of a Chord document at `address` (with `host` when it belongs to a host) with `base`; its id is
+ * taken from the allocator when it applies (a saturated allocator refuses the commit) and handed to `created` (its
+ * owner adopts it after `COMMIT`). `text` is the base's value serialized before the queue (rule 8).
  */
 export function createDocument(
-	address: DocumentAddress,
+	address: DocumentAddress & { readonly host?: string },
 	base: DocumentBase,
 	text: string,
 	created?: (id: number) => void,
@@ -128,12 +130,25 @@ export function createDocument(
  * history keeps.
  */
 export async function insertDocument(step: Step, record: DocumentRecord, text: string | undefined): Promise<void> {
-	const { id, namespace, owner, kind, key, history, createdAt, retiredAt, meta, revision, version, fingerprint } =
-		record;
+	const {
+		id,
+		namespace,
+		owner,
+		kind,
+		key,
+		history,
+		createdAt,
+		retiredAt,
+		meta,
+		host,
+		revision,
+		version,
+		fingerprint,
+	} = record;
 	await step.run(
 		`INSERT INTO ${TABLES.documents}
-			(id, owner, namespace, kind, key, history, created_at, retired_at, meta, revision, version, fingerprint)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			(id, owner, namespace, kind, key, history, created_at, retired_at, meta, host, revision, version, fingerprint)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		id,
 		owner,
 		namespace,
@@ -143,6 +158,7 @@ export async function insertDocument(step: Step, record: DocumentRecord, text: s
 		createdAt,
 		retiredAt ?? null,
 		meta ?? null,
+		host ?? null,
 		revision,
 		version,
 		fingerprint,
@@ -270,13 +286,14 @@ type RecordRow = {
 	readonly created_at: number;
 	readonly retired_at: number | null;
 	readonly meta: string | null;
+	readonly host: string | null;
 	readonly revision: number;
 	readonly version: number;
 	readonly fingerprint: string;
 };
 
 const RECORD_COLUMNS =
-	"id, owner, namespace, kind, key, history, created_at, retired_at, meta, revision, version, fingerprint";
+	"id, owner, namespace, kind, key, history, created_at, retired_at, meta, host, revision, version, fingerprint";
 
 const READ = `SELECT ${RECORD_COLUMNS} FROM ${TABLES.documents} WHERE id = ?`;
 
@@ -498,6 +515,23 @@ export async function listRecords(executor: SqliteExecutor, after: number, limit
 	return rows.map(recordOf);
 }
 
+/** Up to `limit` live records belonging to the host with address key `host`, with ids above `after`, by id. */
+export async function listHostRecords(
+	executor: Pick<SqliteExecutor, "all">,
+	host: string,
+	after: number,
+	limit: number,
+): Promise<DocumentRecord[]> {
+	const rows = await executor.all<RecordRow>(
+		`SELECT ${RECORD_COLUMNS} FROM ${TABLES.documents} WHERE host = ? AND id > ? AND retired_at IS NULL
+			ORDER BY id LIMIT ?`,
+		host,
+		after,
+		limit,
+	);
+	return rows.map(recordOf);
+}
+
 /** Up to `limit` stored revisions of document `id` after seq `after`, in seq order (an export's page). */
 export async function listRevisions(
 	executor: SqliteExecutor,
@@ -526,8 +560,21 @@ export async function listRevisions(
 }
 
 function recordOf(row: RecordRow): DocumentRecord {
-	const { id, namespace, owner, kind, key, history, created_at, retired_at, meta, revision, version, fingerprint } =
-		row;
+	const {
+		id,
+		namespace,
+		owner,
+		kind,
+		key,
+		history,
+		created_at,
+		retired_at,
+		meta,
+		host,
+		revision,
+		version,
+		fingerprint,
+	} = row;
 	return {
 		id,
 		owner,
@@ -538,6 +585,7 @@ function recordOf(row: RecordRow): DocumentRecord {
 		createdAt: created_at,
 		...(retired_at === null ? {} : { retiredAt: retired_at }),
 		...(meta === null ? {} : { meta }),
+		...(host === null ? {} : { host }),
 		revision,
 		version,
 		fingerprint,

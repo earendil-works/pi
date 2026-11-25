@@ -16,6 +16,8 @@ import { boardDirectories, startBoard } from "../56-web/start.ts";
 const { base, dataDir, root } = await boardDirectories();
 const app = await startBoard(dataDir, root, context);
 const url = new URL(app.ownerLink()).origin;
+// The bases are built right after the listen; a launcher's start would wait for the terminal's.
+await app.basesBuilt;
 
 // 1. What a launcher downloads: the base bundle (an ES module for the sandbox) and the terminal plugins' scripts.
 const scripts = await app.host.get(TuiScripts, {}, context);

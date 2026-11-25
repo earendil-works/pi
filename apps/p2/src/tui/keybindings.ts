@@ -34,7 +34,7 @@ export function appKeybindings({ platform, windowsKeys }: KeyPlatform) {
 		"app.message.copy": { defaultKeys: "ctrl+x", description: "Copy selection or last assistant message" },
 		"app.message.followUp": {
 			defaultKeys: windowsKeys ? "ctrl+q" : "alt+enter",
-			description: "Queue follow-up message",
+			description: "Queue follow-up message (idle: send in a new branch)",
 		},
 		"app.message.dequeue": { defaultKeys: windowsKeys ? "alt+q" : "alt+up", description: "Restore queued messages" },
 		"app.clipboard.pasteImage": {

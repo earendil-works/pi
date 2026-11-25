@@ -677,7 +677,7 @@ describe("keys across a restart and a failed re-pin (Astra's coverage note)", ()
 			persistence.read = read;
 			throw new Error("disk");
 		};
-		// A swap in place: the new instance re-exposes the cold provider's notes; the key's pin there fails to load.
+		// A restart: the new instance re-exposes the cold provider's notes; the key's pin there fails to load.
 		await host.reload(
 			[
 				{ name: "@test/providers", facet: providers },

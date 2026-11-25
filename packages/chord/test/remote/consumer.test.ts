@@ -1,15 +1,18 @@
+import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context, withCancel } from "../../src/context/index.ts";
-import { int, local, map, method, remote, str } from "../../src/contracts/index.ts";
-import { PluginError } from "../../src/data/index.ts";
-import { createHost, defineFacet, type HostError } from "../../src/host/index.ts";
+import { type EventMember, evolve, int, local, map, method, remote, str } from "../../src/contracts/index.ts";
+import { type ChordError, PluginError } from "../../src/data/index.ts";
+import { type Ctx, createHost, defineFacet, type FacetHost, type HostError, type RefIn } from "../../src/host/index.ts";
 import { resolveWatchable } from "../../src/host/reference.ts";
-import { memoryLinkPair } from "../../src/link/index.ts";
+import { type Compression, memoryLinkPair, type PartLimits } from "../../src/link/index.ts";
 import { DeflatedPart, jsonPart, type Part, wireError } from "../../src/link/internal.ts";
 import { nodeCompression } from "../../src/node/compression.ts";
 import { RemoteObject } from "../../src/remote/remote-object.ts";
+import { constant } from "../../src/state/index.ts";
 import {
 	addNote,
+	bindHold,
 	bindNext,
 	EDITOR,
 	expectCollected,
@@ -17,17 +20,26 @@ import {
 	framesOf,
 	instancesOf,
 	linked,
+	Match,
 	metered,
 	Notes,
+	PlacedNotes,
+	partValue,
 	RawPeer,
 	rawParent,
 	rawProvider,
 	rejection,
+	relayed,
+	type Sample,
 	SERVER_ADDRESS,
 	Server,
+	Session,
 	serveNotes,
+	type TestPrincipal,
 	testCodec,
 	transported,
+	waitLive,
+	wireNames,
 } from "../support.ts";
 
 /** Every remote object bound while this file runs, weakly. */
@@ -481,6 +493,33 @@ forEachCodec(() => {
 			expect(other).toHaveLength(2);
 		});
 
+		it("sends every call at once to a peer that announced no window (a trusted link's)", async () => {
+			const client = createHost({ onError: () => {} });
+			await client.load([], context);
+			const [a, b] = memoryLinkPair();
+			client.connect(a, { principal: { kind: "server" }, codec: testCodec() }, context);
+			const peer = new RawPeer(b, { calls: null });
+			const got = client.get(Notes, { session: "S1" }, context);
+			const hold = await bindNext(peer);
+			const notes = await got;
+			for (let call = 0; call < 300; call++) void notes.wait(context);
+			await transported();
+			expect(calls(peer)).toEqual(Array.from({ length: 300 }, () => hold));
+		});
+
+		it("sends the calls parked while rebinding after the ack of the new bound: decoded by its indexes", async () => {
+			const { peer, one, holds } = await narrow();
+			peer.send({ kind: "loading", hold: holds[0] });
+			await transported();
+			void one.wait(context);
+			const before = peer.received.length;
+			bindHold(peer, holds[0]);
+			await transported();
+			const after = peer.received.slice(before);
+			expect(after.map(({ kind }) => kind)).toEqual(["ack", "call"]);
+			expect(after[1]).toMatchObject({ hold: holds[0] });
+		});
+
 		it("rejects a call still waiting when its hold rebinds: unavailable (race 26)", async () => {
 			const { peer, one, holds } = await narrow();
 			const sent = one.wait(context);
@@ -718,5 +757,421 @@ forEachCodec(() => {
 			expect(two.count.value).toBe(7);
 			expect(peer.closed).toBe(false);
 		});
+	});
+});
+
+describe('old work across hosts (decision "Reload restarts every affected object", `call.old`)', () => {
+	type Side = "server" | "worker";
+	const at = { server: () => Server(), worker: () => Session({ id: "S1" }) } as const;
+
+	/**
+	 * A provider on `side` whose `work` (after its gate) calls a dependent on the other host, which holds the provider
+	 * and calls its `x` back over the link: both reload at once while `work` runs. `work` runs as the worker's principal:
+	 * the server's link to the worker is trusted, so the dependent's hold of the provider names it either way, and the
+	 * back-call reaches the very object running `work`. When `raised`, the reload raises the provider's version (no
+	 * `accepts`) and the dependent's new code needs it; `dependentFirst` reloads the dependent's host first and the
+	 * provider's 50 ms later.
+	 */
+	async function backCall(side: Side, options: { readonly raised?: boolean; readonly dependentFirst?: boolean } = {}) {
+		const { raised = false, dependentFirst = false } = options;
+		const other: Side = side === "server" ? "worker" : "server";
+		const Provider = remote(`app.provider-${side}`, {
+			version: 1,
+			params: {},
+			hostAddress: at[side],
+			variants: { v: { state: {}, methods: { work: method(undefined, str()), x: method(undefined, str()) } } },
+		});
+		const ProviderV2 = evolve(Provider, (e) => e.addState("v", "more", str()));
+		const Dependent = remote(`app.dependent-${other}`, {
+			version: 1,
+			params: {},
+			hostAddress: at[other],
+			variants: { v: { state: {}, methods: { ping: method(undefined, str()) } } },
+		});
+		const gates: Promise<void>[] = [];
+		const serve = (h: FacetHost<TestPrincipal>, onSide: Side, code: string) => {
+			const P = raised && code === "v2" ? ProviderV2 : Provider;
+			const more = P === ProviderV2 ? { more: constant("m") } : {};
+			if (onSide === side)
+				h.serve(P as typeof Provider, () => ({
+					variant: "v",
+					members: {
+						...more,
+						work: async (ctx: Ctx) => {
+							await gates.shift();
+							return `${code} work -> ${await (await ctx.get(Dependent, {})).ping(ctx)}`;
+						},
+						x: async () => `${code} x`,
+					},
+				}));
+			else
+				h.serve(Dependent, (_, _principal, self) => {
+					const provider = self.get(P as typeof Provider, {});
+					return {
+						variant: "v",
+						members: { ping: async (ctx: Ctx) => `${code} ping -> ${await provider.x(ctx)}` },
+					};
+				});
+		};
+		const workerFacet = (code: string) =>
+			defineFacet<TestPrincipal>((h) => {
+				serveNotes(h, PlacedNotes);
+				serve(h, "worker", code);
+			});
+		const { tab, server, workers } = await relayed({
+			trusted: true,
+			server: (h) => serve(h, "server", "v1"),
+			worker: (h) => serve(h, "worker", "v1"),
+		});
+		// The worker exists once a hold reached it.
+		await tab.get(PlacedNotes, { session: "S1" }, context);
+		const worker = workers.get("session|S1")!;
+		const host = side === "server" ? server : worker;
+		const principal: TestPrincipal = { kind: "worker", session: "S1" };
+		const work = () => host.root(async (ctx) => (await ctx.get(Provider, {})).work(ctx), context, { principal });
+		// A root keeps the dependent referenced (else it ends after each run, and the work would create it afresh).
+		const held = Promise.withResolvers<void>();
+		const kept = host.root(
+			async (ctx) => {
+				await ctx.get(Dependent, {});
+				await held.promise;
+			},
+			context,
+			{ principal },
+		);
+		expect(await work()).toBe("v1 work -> v1 ping -> v1 x");
+		const gate = Promise.withResolvers<void>();
+		gates.push(gate.promise);
+		const running = work();
+		await transported();
+		const reloadServer = () =>
+			server.reload(
+				[{ name: "@test/server", facet: defineFacet<TestPrincipal>((h) => serve(h, "server", "v2")) }],
+				context,
+			);
+		const reloadWorker = () => worker.reload([{ name: "@test/worker", facet: workerFacet("v2") }], context);
+		const [first, second] = side === "server" ? [reloadWorker, reloadServer] : [reloadServer, reloadWorker];
+		const reports = dependentFirst
+			? [await first(), await new Promise((resolve) => setTimeout(resolve, 50)).then(second)]
+			: await Promise.all([first(), second()]);
+		expect(reports.flatMap(({ failed }) => failed)).toEqual([]);
+		const opened = performance.now();
+		gate.resolve();
+		const answer = await running;
+		const took = performance.now() - opened;
+		held.resolve();
+		await kept;
+		await server.close(context);
+		return { answer, took };
+	}
+
+	it("a back-call from the dependent on the worker runs on the server provider's open old attempt", async () => {
+		const { answer, took } = await backCall("server");
+		// Without the flag, `x` would wait for the provider's new attempt, which waits for this very call's drain.
+		expect(answer).toBe("v1 work -> v2 ping -> v1 x");
+		expect(took).toBeLessThan(1_000);
+	});
+
+	it("a back-call from the dependent on the server runs on the worker provider's open old attempt", async () => {
+		const { answer, took } = await backCall("worker");
+		expect(answer).toBe("v1 work -> v2 ping -> v1 x");
+		expect(took).toBeLessThan(1_000);
+	});
+
+	it("the provider's version raised, which the dependent's new code needs: the work runs on the dependent's old attempt", async () => {
+		for (const side of ["server", "worker"] as const) {
+			const { answer, took } = await backCall(side, { raised: true });
+			// The dependent's successor waits for the provider's: its old attempt stays open for the work.
+			expect(answer).toBe("v1 work -> v1 ping -> v1 x");
+			expect(took).toBeLessThan(1_000);
+		}
+	});
+
+	it("the same with the dependent's host reloaded first: its readiness waits out the other host's version refusal", async () => {
+		for (const side of ["server", "worker"] as const) {
+			const { answer, took } = await backCall(side, { raised: true, dependentFirst: true });
+			expect(answer).toBe("v1 work -> v1 ping -> v1 x");
+			expect(took).toBeLessThan(1_000);
+		}
+	});
+});
+
+/** The wire's indexes of `Match`'s variants. */
+const PLAYER = wireNames(Match, "player");
+
+const WATCHER = wireNames(Match, "watcher");
+
+/**
+ * A client connected to a raw provider with `limits` and `compression`, holding `Match` bound (the player variant
+ * unless `variant` says otherwise); its background errors and its telemetry's counters.
+ */
+async function eventClient(
+	options: { readonly limits?: PartLimits; readonly compression?: Compression; readonly variant?: "watcher" } = {},
+) {
+	const errors: HostError[] = [];
+	const telemetry = new InMemoryTelemetryContext();
+	const client = createHost<TestPrincipal>({
+		compression: options.compression,
+		telemetry,
+		onError: (error) => errors.push(error),
+	});
+	await client.load([], context);
+	const [a, b] = memoryLinkPair();
+	client.connect(a, { principal: { kind: "server" }, codec: testCodec(), limits: options.limits }, context);
+	const peer = new RawPeer(b);
+	const got = client.get(Match, { id: 1 }, context);
+	const { hold } = await peer.next("hold");
+	bindMatch(peer, hold, options.variant);
+	const match = await got;
+	// Every variant's members are on a reference; the paddle's subscriptions are dormant while a variant lacks it.
+	const paddle = (match as unknown as { readonly paddle: EventMember<Sample> }).paddle;
+	const counts = (): Record<string, number> => {
+		const result: Record<string, number> = {};
+		for (const { name, value, attributes } of telemetry.getMetrics()) {
+			const key = attributes?.reason === undefined ? name : `${name}.${String(attributes.reason)}`;
+			result[key] = (result[key] ?? 0) + value;
+		}
+		return result;
+	};
+	return { client, peer, match, paddle, hold, errors, counts };
+}
+
+/** Sends `bound` for `hold` with the player (or watcher) variant and a score of 0. */
+function bindMatch(peer: RawPeer, hold: number, variant: "player" | "watcher" = "player"): void {
+	const names = variant === "player" ? PLAYER : WATCHER;
+	const members = [{ member: names.state.score!, value: "0" }];
+	peer.send({ kind: "bound", holds: [{ hold, variant: names.variant, members, failed: [] }] });
+}
+
+/** An event entry of the paddle (or `member`) of `hold` with `y`, stamped `at`. */
+function paddleEvent(hold: number, y: number, at = 1, member = PLAYER.events.paddle!) {
+	return { hold, member, at, value: jsonPart({ y }) };
+}
+
+/** The event acks a raw provider received, by their counts. */
+function eventAcks(peer: RawPeer): number[] {
+	return peer.received.flatMap((message) =>
+		message.kind === "ack" && message.events !== undefined ? [message.events] : [],
+	);
+}
+
+forEachCodec(() => {
+	describe('events at the consumer (decision "Events: fire-and-forget members")', () => {
+		it("deliver the entries in order with their stamps, and acknowledge once per inbound turn, after the flush", async () => {
+			const { peer, paddle, hold } = await eventClient();
+			const seen: { value: Sample; at: number }[] = [];
+			const acksAtDelivery: number[] = [];
+			await paddle.on((e) => {
+				seen.push(e);
+				acksAtDelivery.push(eventAcks(peer).length);
+			}, context);
+			peer.send({ kind: "event", events: [paddleEvent(hold, 1, 10), paddleEvent(hold, 2, 11)] });
+			peer.send({ kind: "event", events: [paddleEvent(hold, 3, 12)] });
+			await transported();
+			expect(seen).toEqual([
+				{ value: { y: 1 }, at: 10 },
+				{ value: { y: 2 }, at: 11 },
+				{ value: { y: 3 }, at: 12 },
+			]);
+			expect(acksAtDelivery).toEqual([0, 0, 0]);
+			expect(eventAcks(peer)).toEqual([2]);
+		});
+
+		it("acknowledge dropped entries too: an unknown hold, a member nobody listens to, a value past the part limit", async () => {
+			const { peer, match, paddle, hold, counts } = await eventClient({ limits: { part: 16 } });
+			const seen: unknown[] = [];
+			await paddle.on(({ value }) => void seen.push(value.y), context);
+			peer.send({ kind: "event", events: [paddleEvent(hold + 7, 1)] });
+			peer.send({ kind: "event", events: [paddleEvent(hold, 2, 1, PLAYER.events.ball!)] });
+			peer.send({
+				kind: "event",
+				events: [{ hold, member: PLAYER.events.paddle!, at: 1, value: jsonPart({ y: 3, pad: "x".repeat(32) }) }],
+			});
+			peer.send({ kind: "event", events: [paddleEvent(hold, 4)] });
+			await transported();
+			expect(seen).toEqual([4]);
+			expect(eventAcks(peer)).toEqual([4]);
+			expect(counts()["chord.events.dropped.too_large"]).toBe(1);
+			// The oversized value failed nothing: the hold stays bound.
+			expect(match.state.value).toEqual({ kind: "live" });
+		});
+
+		it("inflate nothing for a member nobody listens to, nor parse it; acknowledged all the same", async () => {
+			const { peer, paddle, hold, counts } = await eventClient();
+			const seen: unknown[] = [];
+			const delivered = Promise.withResolvers<void>();
+			await paddle.on(({ value }) => {
+				seen.push(value.y);
+				delivered.resolve();
+			}, context);
+			const deflated = (y: number) =>
+				new DeflatedPart(nodeCompression.deflate(new TextEncoder().encode(JSON.stringify({ y }))));
+			peer.send({ kind: "event", events: [{ hold, member: PLAYER.events.ball!, at: 1, value: deflated(1) }] });
+			await transported();
+			expect(counts()["chord.link.inflates"]).toBeUndefined();
+			peer.send({ kind: "event", events: [{ hold, member: PLAYER.events.paddle!, at: 1, value: deflated(2) }] });
+			// The web inflate runs on libuv's thread pool: no number of turns is sure to cover it, so wait for the delivery.
+			await delivered.promise;
+			await transported();
+			expect(seen).toEqual([2]);
+			expect(counts()["chord.link.inflates"]).toBe(1);
+			expect(eventAcks(peer).reduce((sum, events) => sum + events, 0)).toBe(2);
+		});
+
+		it("close the link for a member index outside the bound version (a protocol error)", async () => {
+			const { peer, hold, errors } = await eventClient();
+			peer.send({ kind: "event", events: [paddleEvent(hold, 1, 1, 9)] });
+			await transported();
+			expect(peer.closed).toBe(true);
+			expect(errors).toMatchObject([{ kind: "protocol_error" }]);
+		});
+
+		it("deliver nothing of an earlier binding: an event, a loading and a bound (the same variant, another) in one turn", async () => {
+			const { peer, match, paddle, hold } = await eventClient();
+			const seen: unknown[] = [];
+			await paddle.on(({ value }) => void seen.push(value.y), context);
+			for (const variant of ["player", "watcher"] as const) {
+				peer.send({ kind: "event", events: [paddleEvent(hold, 1)] });
+				peer.send({ kind: "loading", hold });
+				bindMatch(peer, hold, variant);
+				await transported();
+			}
+			expect(seen).toEqual([]);
+			expect(match.variant).toBe("watcher");
+		});
+
+		it("deliver none while bound to a variant without the member, and again once a binding has it", async () => {
+			const { peer, paddle, hold } = await eventClient({ variant: "watcher" });
+			const seen: unknown[] = [];
+			await paddle.on(({ value }) => void seen.push(value.y), context);
+			peer.send({ kind: "loading", hold });
+			bindMatch(peer, hold, "player");
+			await transported();
+			peer.send({ kind: "event", events: [paddleEvent(hold, 5)] });
+			await transported();
+			expect(seen).toEqual([5]);
+		});
+
+		it("keep the event window exhausted while an asynchronous inflate holds the message: acknowledged once consumed", async () => {
+			const gate = Promise.withResolvers<void>();
+			const Real = globalThis.DecompressionStream;
+			class Held {
+				readonly writable: WritableStream<BufferSource>;
+				readonly readable: ReadableStream<Uint8Array>;
+				constructor(format: CompressionFormat) {
+					const real = new Real(format);
+					this.writable = real.writable;
+					this.readable = real.readable.pipeThrough(
+						new TransformStream<Uint8Array, Uint8Array>({
+							async transform(chunk, controller) {
+								await gate.promise;
+								controller.enqueue(chunk);
+							},
+						}),
+					);
+				}
+			}
+			vi.stubGlobal("DecompressionStream", Held);
+			try {
+				const { peer, paddle, hold } = await eventClient();
+				const seen: unknown[] = [];
+				const delivered = Promise.withResolvers<void>();
+				await paddle.on(({ value }) => {
+					seen.push(value.y);
+					delivered.resolve();
+				}, context);
+				const json = new TextEncoder().encode(JSON.stringify({ y: 1 }));
+				const value = new DeflatedPart(nodeCompression.deflate(json));
+				peer.send({ kind: "event", events: [{ hold, member: PLAYER.events.paddle!, at: 1, value }] });
+				for (let turn = 0; turn < 5; turn++) await transported();
+				expect(eventAcks(peer)).toEqual([]);
+				gate.resolve();
+				// The real inflate behind the gate runs on libuv's thread pool: wait for the delivery, not for turns.
+				await delivered.promise;
+				await transported();
+				expect(seen).toEqual([1]);
+				expect(eventAcks(peer)).toEqual([1]);
+			} finally {
+				vi.unstubAllGlobals();
+			}
+		});
+	});
+});
+
+describe('cancelling one reference\'s calls on a shared hold (decision "References share one wire hold")', () => {
+	/** A client on a raw parent announcing a call window of `calls`, and two references sharing one live hold. */
+	const shared = async (calls: number) => {
+		const client = createHost<TestPrincipal>({ onError: () => {} });
+		await client.load([], context);
+		const [near, far] = memoryLinkPair();
+		client.connect(near, { principal: { kind: "server" }, codec: testCodec() }, context);
+		const peer = new RawPeer(far, { calls });
+		await peer.next("hello");
+		const a = client.hold(Notes, { session: "S1" }, context) as unknown as RefIn<typeof Notes, "editor">;
+		const b = client.hold(Notes, { session: "S1" }, context) as unknown as RefIn<typeof Notes, "editor">;
+		const hold = await bindNext(peer);
+		await waitLive(b);
+		return { peer, a, b, hold };
+	};
+
+	/** The calls, aborts and releases on the wire, as `call:<text>`, `abort:<id>`, `release`. */
+	const wire = (peer: RawPeer, texts: Map<number, string>): string[] =>
+		peer.received.flatMap((message) => {
+			if (message.kind === "call") {
+				const text = (partValue(message.args!) as { text: string }).text;
+				texts.set(message.call, text);
+				return [`call:${text}`];
+			}
+			if (message.kind === "abort") return [`abort:${texts.get(message.call)}`];
+			return message.kind === "release" ? ["release"] : [];
+		});
+
+	it("a finite window: the released one's queued call leaves unsent, its sent one is aborted, the other's queued call goes out", async () => {
+		const { peer, a, b } = await shared(1);
+		const results = [rejection(a.add({ text: "A1" }, context)), rejection(a.add({ text: "A2" }, context))];
+		const sibling = b.add({ text: "B1" }, context);
+		await transported();
+		const texts = new Map<number, string>();
+		expect(wire(peer, texts)).toEqual(["call:A1"]);
+		a.release();
+		await transported();
+		expect(wire(peer, texts)).toEqual(["call:A1", "abort:A1", "call:B1"]);
+		expect((await Promise.all(results)).map((error) => (error as ChordError).code)).toEqual(["released", "released"]);
+		const { call } = peer.received.filter((message) => message.kind === "call").at(-1) as { call: number };
+		peer.send({ kind: "result", call, value: jsonPart(3) });
+		expect(await sibling).toBe(3);
+	});
+
+	it("several sent calls are aborted newest first, a reply crossing the release is ignored, the last release sends release", async () => {
+		const { peer, a, b } = await shared(3);
+		const settled: string[] = [];
+		const track = (tag: string, call: Promise<unknown>): Promise<void> =>
+			call.then(
+				() => void settled.push(`${tag}:ok`),
+				(error: ChordError) => void settled.push(`${tag}:${error.code}`),
+			);
+		const tracked = [
+			track("A1", a.add({ text: "A1" }, context)),
+			track("B1", b.add({ text: "B1" }, context)),
+			track("A2", a.add({ text: "A2" }, context)),
+			track("B2", b.add({ text: "B2" }, context)),
+		];
+		await transported();
+		const texts = new Map<number, string>();
+		expect(wire(peer, texts)).toEqual(["call:A1", "call:B1", "call:A2"]);
+		const ids = new Map([...texts].map(([id, text]) => [text, id]));
+		a.release();
+		// The provider answered A1 before it saw the abort: the reply crosses the release and is dropped here.
+		peer.send({ kind: "result", call: ids.get("A1")!, value: jsonPart(1) });
+		await transported();
+		expect(wire(peer, texts)).toEqual(["call:A1", "call:B1", "call:A2", "abort:A2", "abort:A1", "call:B2"]);
+		peer.send({ kind: "result", call: ids.get("B1")!, value: jsonPart(2) });
+		await transported();
+		b.release();
+		await Promise.all(tracked);
+		await transported();
+		expect(wire(peer, texts).slice(6)).toEqual(["release"]);
+		// Each call settled once: the released one's with `released`, B2 by the last release.
+		expect(settled.sort()).toEqual(["A1:released", "A2:released", "B1:ok", "B2:released"]);
 	});
 });

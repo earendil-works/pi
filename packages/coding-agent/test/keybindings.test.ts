@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { KEYBINDINGS, useWindowsKeybindings } from "../src/core/keybindings.ts";
 
 describe("Windows keybinding defaults", () => {
@@ -20,11 +20,26 @@ describe("Windows keybinding defaults", () => {
 		expect(useWindowsKeybindings("darwin", {})).toBe(false);
 	});
 
+	it("keeps ctrl+v as a paste key on WSL", async () => {
+		if (process.platform !== "linux") return;
+		vi.stubEnv("WSL_DISTRO_NAME", "Ubuntu");
+		vi.resetModules();
+		try {
+			const { KEYBINDINGS: wslKeybindings } = await import("../src/core/keybindings.ts");
+			expect(wslKeybindings["app.clipboard.pasteImage"].defaultKeys).toEqual(["alt+v", "ctrl+v"]);
+		} finally {
+			vi.unstubAllEnvs();
+			vi.resetModules();
+		}
+	});
+
 	it("applies the detected defaults consistently", () => {
 		const windowsKeybindings = useWindowsKeybindings();
 		const nativeWindows = process.platform === "win32";
 
-		expect(KEYBINDINGS["app.clipboard.pasteImage"].defaultKeys).toBe(windowsKeybindings ? "alt+v" : "ctrl+v");
+		expect(KEYBINDINGS["app.clipboard.pasteImage"].defaultKeys).toEqual(
+			windowsKeybindings ? ["alt+v", "ctrl+v"] : "ctrl+v",
+		);
 		expect(KEYBINDINGS["tui.altScreen.search"].defaultKeys).toBe(windowsKeybindings ? "ctrl+f" : "ctrl+shift+f");
 		expect(KEYBINDINGS["app.message.followUp"].defaultKeys).toBe(windowsKeybindings ? "ctrl+q" : "alt+enter");
 		expect(KEYBINDINGS["app.model.cycleBackward"].defaultKeys).toBe(windowsKeybindings ? "alt+p" : "shift+ctrl+p");

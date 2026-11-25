@@ -1,0 +1,999 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>p3 step 0: the skeleton</title>
+<style>
+
+:root{--paper:#fbf8f2;--ink:#2a2723;--muted:#7b7468;--rule:#e3dbcc;--accent:#b4472f;--blue:#2e6a8a;--sand:#c2b18c;--soft:#f4eee2}
+*{box-sizing:border-box}
+html{background:#efe9dd}
+body{margin:0;color:var(--ink);font:19px/1.68 'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,serif;
+ -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+.book{max-width:860px;margin:0 auto;background:var(--paper);box-shadow:0 0 0 1px #e1d9c8,0 30px 80px -40px rgba(60,40,10,.35);padding:0 0 4rem}
+.inner{padding:0 90px}
+h1,h2,h3{font-weight:400;line-height:1.15}
+h2{font-size:2.1rem;margin:.2em 0 .3em;letter-spacing:-.01em}
+h3{font-size:1.05rem;text-transform:uppercase;letter-spacing:.14em;margin:2.4em 0 .6em;color:var(--ink);font-weight:600;
+ font-family:'Avenir Next','Helvetica Neue',sans-serif}
+p{margin:0 0 1.05em;hyphens:auto;text-align:left}
+code{font:.8em/1 'SF Mono',Menlo,Consolas,monospace;background:#f1ebde;padding:.1em .35em;border-radius:3px}
+pre{font:.74rem/1.55 'SF Mono',Menlo,Consolas,monospace;background:#f4eee2;border-left:3px solid var(--sand);padding:1rem 1.2rem;margin:1.4rem 0 1.8rem;
+ overflow-x:auto;border-radius:0 4px 4px 0;white-space:pre;tab-size:2}
+pre code{background:none;padding:0;font-size:1em}
+em{font-style:italic}
+a{color:var(--blue)}
+.cover{min-height:92vh;display:flex;flex-direction:column;justify-content:center;padding:90px;background:
+ radial-gradient(circle at 85% 15%,rgba(180,71,47,.13),transparent 40%),radial-gradient(circle at 10% 90%,rgba(46,106,138,.12),transparent 45%),var(--paper);
+ border-bottom:1px solid var(--rule)}
+.kicker{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.22em;text-transform:uppercase;color:var(--accent)}
+.cover h1{font-size:5.2rem;line-height:.98;margin:.35em 0 .25em;letter-spacing:-.025em}
+.subtitle{font-size:1.45rem;font-style:italic;color:#4a453e;max-width:30em;text-align:left}
+.cover-stats,.stats{display:flex;flex-wrap:wrap;gap:1.2rem 2.4rem;margin:2.2rem 0}
+.stats{margin:1.6rem 0 1.8rem;padding:1.1rem 0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.stat b{display:block;font-size:2.1rem;font-weight:400;line-height:1.1;font-variant-numeric:lining-nums}
+.stat span{font:.78rem/1.3 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);letter-spacing:.03em;display:block;max-width:14em}
+.cover-note{font-size:.9rem;color:var(--muted);max-width:34em;text-align:left;margin-top:2rem}
+.toc{padding:4rem 0 2rem}
+.toc ol{list-style:none;padding:0;margin:1rem 0;columns:2;column-gap:3rem}
+.toc li{padding:.3rem 0;border-bottom:1px dotted var(--rule);break-inside:avoid}
+.toc a{color:var(--ink);text-decoration:none}
+.toc a:hover{color:var(--accent)}
+.preface{padding-top:2rem}
+.findings{padding-left:1.4em}
+.findings li{margin:.55em 0;padding-left:.3em}
+.findings li::marker{color:var(--accent);font-weight:600}
+.chapter{padding-top:4.5rem;margin-top:3rem;border-top:1px solid var(--rule)}
+.opener{text-align:center;margin-bottom:2.6rem}
+.numeral{font-size:4.2rem;color:var(--accent);line-height:1;font-variant:small-caps;letter-spacing:.05em}
+.opener h2{font-size:2.5rem;margin:.25em 0}
+.lede{font-style:italic;color:#5a544a;font-size:1.12rem;max-width:30em;margin:0 auto;text-align:center}
+.dropcap::first-letter{float:left;font-size:4.1em;line-height:.82;padding:.06em .09em 0 0;color:var(--accent)}
+.fig{margin:2rem 0 2.2rem}
+.fig.wide{margin-left:-50px;margin-right:-50px}
+.fig svg{display:block;margin:0 auto}
+figcaption{font:.8rem/1.45 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:.7rem;padding-left:.8rem;border-left:2px solid var(--rule)}
+.fignum{color:var(--ink);font-weight:600}
+.note{font:.86rem/1.55 'Avenir Next','Helvetica Neue',sans-serif;color:#5b5549;background:#f4eee2;border-left:3px solid var(--sand);
+ padding:.9rem 1.1rem;margin:1.8rem 0;border-radius:0 4px 4px 0}
+.note.review{border-left-color:var(--accent)}
+.note b.tag{font-weight:600;letter-spacing:.12em;text-transform:uppercase;font-size:.72rem;color:var(--accent);display:block;margin-bottom:.3rem}
+.note code{font-size:.85em}
+table{width:100%;border-collapse:collapse;margin:1.4rem 0 1.8rem;font:.8rem/1.4 'Avenir Next','Helvetica Neue',sans-serif}
+th{text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:.68rem;border-bottom:1.5px solid var(--ink);padding:.45rem .5rem}
+td{padding:.42rem .5rem;border-bottom:1px solid var(--rule);vertical-align:top}
+td code{font-size:.92em}
+table.num td:not(:first-child),table.num th:not(:first-child){text-align:right}
+.epilogue p{font-size:1.04em}
+.appendix{font-size:.92em}
+.appendix ul,.chapter ul{padding-left:1.2em}
+.appendix li,.chapter li{margin:.4em 0}
+.colophon{text-align:center;font:.78rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:4rem;letter-spacing:.05em}
+@media (max-width:760px){.inner{padding:0 22px}.cover{padding:40px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}
+ .toc ol{columns:1}p{text-align:left}body{font-size:17px}}
+@media print{html{background:#fff}.book{box-shadow:none}.chapter{break-before:page}.fig{break-inside:avoid}}
+.transcript p b{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-right:.3em}
+pre .tk-c{color:#8d8576;font-style:italic}pre .tk-s{color:#5f7a3d}pre .tk-n{color:#a0662a}pre .tk-k{color:#b4472f}pre .tk-t{color:#2e6a8a}pre .tk-f{color:#7a3f6a}
+h4{font:600 .82rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.06em;margin:1.8em 0 .5em;color:var(--muted)}
+.inner ul,.inner ol:not(.findings){padding-left:1.2em}
+.inner li{margin:.35em 0}
+blockquote{margin:1.4rem 0;padding:.2rem 0 .2rem 1.2rem;border-left:3px solid var(--rule);color:#5a544a;font-style:italic}
+.fig svg text{dominant-baseline:auto}
+.fig .replay{font:600 .7rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);
+ background:none;border:1px solid var(--rule);border-radius:3px;padding:.2rem .55rem;margin:0 0 0 1rem;cursor:pointer;float:right}
+.fig .replay:hover{border-color:var(--accent)}
+.anim.armed .step{opacity:0}
+.anim.armed.play .step{animation:stepIn .45s ease-out both;animation-delay:calc(var(--i) * var(--pace, .45s))}
+.anim.armed.play .step.edge{animation-name:edgeIn}
+@keyframes stepIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes edgeIn{from{opacity:0}to{opacity:1}}
+.steps{margin:2rem 0 2.2rem;border:1px solid var(--rule);border-radius:6px;background:#fffdf8}
+.steps-head{display:flex;align-items:center;gap:.8rem;padding:.6rem 1rem;border-bottom:1px solid var(--rule);
+ font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.steps-head .title{flex:1}
+.steps-head .count{color:var(--muted);letter-spacing:.06em}
+.steps-head button{font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--ink);background:var(--soft);border:1px solid var(--rule);
+ border-radius:3px;padding:.25rem .65rem;cursor:pointer}
+.steps-head button:disabled{opacity:.35;cursor:default}
+.step-panel{padding:1rem 1.2rem .4rem}
+.step-panel>h4:first-child{margin-top:.2rem;color:var(--ink)}
+.steps.js .step-panel{display:none}
+.steps.js .step-panel.on{display:block}
+.steps:not(.js) .steps-head button,.steps:not(.js) .steps-head .count{display:none}
+.steps:not(.js) .step-panel+.step-panel{border-top:1px dashed var(--rule)}
+.fig figcaption{display:flow-root}
+.fig svg{max-width:100%;height:auto}
+table{max-width:100%}
+@media (max-width:760px){.inner{padding:0 20px}.cover{padding:48px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}table{display:block;overflow-x:auto}.toc ol{columns:1}}
+</style>
+
+
+</head>
+<body><div class="book">
+<section class="cover">
+  <div class="kicker">A spec · p3 step 0 · 2026-11-06</div>
+  <h1>p3<br>Skeleton</h1>
+  <p class="subtitle">The smallest p3 that is already p3: sign in, start a session, send a message, watch the reply stream in, and keep all of it through a page reload, a plugin reload and a server restart</p>
+  <div class="cover-stats"><div class="stat"><b>4</b><span>built-in plugins (harness, fake model, sessions, chat)</span></div><div class="stat"><b>2</b><span>host kinds: the server and one worker per session</span></div><div class="stat"><b>3</b><span>registries the API declares for the worker, 2 for the page</span></div><div class="stat"><b>1</b><span>Chord kit addition needed (decision 1)</span></div></div>
+  <div class="cover-note"><p>The spec of p3&#39;s first step, written for the owner and two reviewers before anything is built. p3 is built tabula
+rasa on the Chord v2 app kit (<code>packages/chord/src/node/app/</code>), on branch <code>p3</code> in <code>apps/p3/</code>. Every Chord name used
+here exists in the code on the branch, except what decision 1 proposes (marked). Decisions the owner has not taken
+are marked <strong>Decision needed</strong> and listed in the last chapter; review notes mark points found while checking the
+sources.</p>
+</div>
+</section><div class="inner">
+<nav class="toc"><h2>Contents</h2><ol>
+<li><a href="#before-we-begin">Before we begin</a></li>
+<li><a href="#where">I. What Runs Where</a></li>
+<li><a href="#starting">II. Starting</a></li>
+<li><a href="#api">III. The API</a></li>
+<li><a href="#harness">IV. The Harness</a></li>
+<li><a href="#fake">V. The Fake Model</a></li>
+<li><a href="#catalog">VI. The Session Catalog</a></li>
+<li><a href="#chat">VII. Chat</a></li>
+<li><a href="#page">VIII. The Page</a></li>
+<li><a href="#survive">IX. Reloads and Restarts</a></li>
+<li><a href="#done">X. Tests and Done</a></li>
+<li><a href="#open-decisions">Open Decisions</a></li>
+<li><a href="#reference">Appendix A: Reference</a></li>
+</ol></nav>
+
+<section class="preface" id="before-we-begin">
+<h2>Before we begin</h2>
+<p class="dropcap">Mario is on the bus with his phone. p2 is running on it as always, on port 8788. Next to it, from the same checkout&#39;s
+<code>p3</code> branch, <code>node apps/p3/start.ts</code> prints an owner link for port 8789. He opens it, the page signs him in and shows an
+empty session list. He taps <strong>New session</strong>: a row appears at once and the chat opens. He types &quot;hello&quot; and sends; the
+message is in the transcript before the worker has even started, and a moment later &quot;You said: hello&quot; streams in, word
+by word, from a fake model. He pulls to reload the page: everything is there. On slayer an agent edits the chat plugin
+and applies the change: the page keeps its scroll and the half-typed message, the transcript stays. Mario restarts the
+server: the list, the session and its transcript come back.</p>
+<p>That is all step 0 does, and it is enough to carry everything after it. Each piece is the shape the later steps fill:
+the harness that will run real models and tools, the registries real providers and tools contribute to, the catalog
+that will hold hundreds of sessions, the page&#39;s slots that every UI plugin uses. Built small and right now, step 1
+(real models) is one plugin and no base code.</p>
+<p>The obvious way to get there is to port p2&#39;s worker: its <code>workerCore</code> opens the harness in base code, threads the
+store and <code>host.root</code> through closures, and keeps its own keep-alive counter. The owner rejected that path: p3 uses
+Chord and its app kit as designed, puts everything but the API and the start scripts into plugins, and carries over no
+p2 internals. The one place where the kit does not reach far enough for that (a plugin cannot get its host&#39;s store) is
+decision 1.</p>
+<h3 id="eight-things-to-know">Eight things to know</h3>
+<ol class="findings">
+<li><strong>Base code is four files.</strong> <code>start.ts</code> calls the kit&#39;s <code>startServer</code>, <code>worker.ts</code> calls <code>startWorker</code>, the API
+package <code>@p3/app</code> declares the vocabulary, and a thin web entry draws two slots. Everything else is a plugin in
+<code>apps/p3/plugins/</code>, reloaded without a restart.</li>
+<li><strong>One worker per session, each with its own store.</strong> The host kind <code>Session({ id })</code> is the kit&#39;s only worker kind;
+its store lives in <code>~/.p3/workers/session/&lt;id&gt;/store.sqlite</code> and holds the session&#39;s Durable records.</li>
+<li><strong>The harness is a plugin.</strong> A host-lifetime object in the <code>harness</code> plugin opens Durable paused on the session&#39;s
+store, serves the <code>Extensions</code> and <code>ModelProviders</code> registries and resumes once every plugin is loaded.</li>
+<li><strong>The kit must hand plugins their host&#39;s store.</strong> Durable&#39;s <code>StoreStorage.open(store, ...)</code> needs the store, and
+tools need <code>host.root</code> for <code>chord(fn, context)</code>; today only base code has both. Decision 1 proposes a kit registry
+<code>HostRuntime</code>, plus <code>KeepAlive</code> so running agent work keeps its worker alive.</li>
+<li><strong>The catalog is a server table.</strong> The <code>sessions</code> plugin keeps one row per session in a table of the server&#39;s store
+and shows the newest 200 live; the owner&#39;s view creates sessions, each worker&#39;s view reports its own title and
+status. Reports from an older worker incarnation are ignored.</li>
+<li><strong>The worker pushes, the server never pulls.</strong> The session&#39;s title is the worker&#39;s data, set from the first message
+inside <code>send</code> and pushed before <code>send</code> answers; the working status is pushed by a routine.</li>
+<li><strong>The page is optimistic.</strong> A new session&#39;s row and a sent message appear at once with React&#39;s <code>useOptimistic</code>;
+Chord&#39;s rule that a call&#39;s answer follows its state swaps in the real values without a flicker.</li>
+<li><strong>A fake model is the first model provider.</strong> The <code>fake-model</code> plugin contributes one pi-ai provider, <code>fake</code>, whose
+model <code>echo</code> streams &quot;You said: ...&quot; back; step 1 adds real providers the same way.</li>
+</ol>
+<h3 id="words-used-throughout">Words used throughout</h3>
+<p>A <strong>session</strong> is one agent workspace: a catalog row on the server and a worker process with its own store. The
+<strong>server</strong> is the one Chord host every client connects to; a <strong>worker</strong> is the host at <code>Session({ id })</code>, started by
+the first reference to it and stopped after five idle minutes. A <strong>plugin</strong> is a directory of facets (<code>server.ts</code>,
+<code>worker.ts</code>, <code>web.tsx</code>); <strong>base code</strong> is what only a restart changes. The <strong>API</strong> is the workspace package <code>@p3/app</code>,
+whose version <code>v1</code> plugins import (<code>@p3/app/v1</code>, <code>/v1/server</code>, <code>/v1/worker</code>, <code>/v1/web</code>). A <strong>registry</strong> is an owner&#39;s
+extension point: one contribution per plugin, composed by the plugin that serves it. The <strong>harness</strong> is Durable&#39;s
+<code>Harness</code> on a session&#39;s store, owned by the Chord object <code>Harness</code>. The <strong>root conversation</strong> is the session&#39;s one
+Durable conversation in step 0 (<code>ROOT_CONVERSATION_ID</code>). The <strong>catalog</strong> is the server&#39;s table of sessions; its
+per-principal view is <code>SessionList</code>. The <strong>view</strong> is Durable&#39;s <code>ConversationView</code>: a window of entries plus the
+built-in documents (<code>pi.live</code> holds the run and the streaming answer).</p>
+</section>
+
+<section class="chapter" id="where"><header class="opener"><div class="numeral">I</div><h2>What Runs Where</h2><p class="lede">Three kinds of host, four plugins, and which object owns what.</p></header>
+<p class="dropcap">A phone browser tab, the server and one worker per session: the shape of every kit app. The tab is a client host (it
+serves nothing remote and reaches workers only through the server). The server owns the catalog. Each worker owns its
+session: the Durable records, the title, the transcript view.</p>
+<figure class="fig wide"><svg viewBox="0 0 720 374" width="100%" role="img" aria-label="Step 0's hosts and objects. Arrows are references (who holds whom); accent marks what step 0 introduces beyond the kit." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f1m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f1a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f1b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><text x="16" y="22" font-size="10" fill="#2e6a8a" text-anchor="start" font-weight="600" letter-spacing="2">PAGE (CLIENT HOST)</text><text x="16" y="144" font-size="10" fill="#b4472f" text-anchor="start" font-weight="600" letter-spacing="2">SERVER</text><text x="16" y="266" font-size="10" fill="#b4472f" text-anchor="start" font-weight="600" letter-spacing="2">WORKER SESSION({ ID })</text><rect x="19" y="36" width="210" height="44" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="124" y="55.3" font-size="11" fill="#2a2723" text-anchor="middle">web base</text><text x="124" y="69.3" font-size="9.5" fill="#7b7468" text-anchor="middle">`Sidebar` + `Screens` slots</text><rect x="255" y="36" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="360" y="55.3" font-size="11" fill="#2a2723" text-anchor="middle">sessions web</text><text x="360" y="69.3" font-size="9.5" fill="#7b7468" text-anchor="middle">list, New session</text><rect x="491" y="36" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="596" y="55.3" font-size="11" fill="#2a2723" text-anchor="middle">chat web</text><text x="596" y="69.3" font-size="9.5" fill="#7b7468" text-anchor="middle">transcript, composer</text><rect x="19" y="158" width="210" height="44" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="124" y="177.3" font-size="11" fill="#2a2723" text-anchor="middle">app kit</text><text x="124" y="191.3" font-size="9.5" fill="#7b7468" text-anchor="middle">sign-in, HTTP, workers, `HostRuntime`</text><rect x="255" y="158" width="210" height="44" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="360" y="177.3" font-size="11" fill="#2a2723" text-anchor="middle">SessionStore</text><text x="360" y="191.3" font-size="9.5" fill="#7b7468" text-anchor="middle">table `p3.sessions:sessions`</text><rect x="491" y="158" width="210" height="44" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="596" y="177.3" font-size="11" fill="#2a2723" text-anchor="middle">SessionList</text><text x="596" y="191.3" font-size="9.5" fill="#7b7468" text-anchor="middle">owner: create; worker: report</text><rect x="16" y="280" width="152.5" height="55" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="92.3" y="298.5" font-size="11" fill="#2a2723" text-anchor="middle">Harness</text><text x="92.3" y="312.5" font-size="9.5" fill="#7b7468" text-anchor="middle">Durable on the session</text><text x="92.3" y="325" font-size="9.5" fill="#7b7468" text-anchor="middle">store</text><rect x="194.5" y="280" width="152.5" height="55" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="270.8" y="304.8" font-size="11" fill="#2a2723" text-anchor="middle">SessionMeta</text><text x="270.8" y="318.8" font-size="9.5" fill="#7b7468" text-anchor="middle">title, status, pushes</text><rect x="373" y="280" width="152.5" height="55" rx="4" fill="#fff" stroke="#c9bfae"/><text x="449.3" y="304.8" font-size="11" fill="#2a2723" text-anchor="middle">ChatStore + Chat</text><text x="449.3" y="318.8" font-size="9.5" fill="#7b7468" text-anchor="middle">follows the view; send</text><rect x="551.5" y="280" width="152.5" height="55" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="627.8" y="304.8" font-size="11" fill="#2a2723" text-anchor="middle">fake-model</text><text x="627.8" y="318.8" font-size="9.5" fill="#7b7468" text-anchor="middle">provider `fake`</text><path d="M360 80 L596 156" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="482" y="112" width="44.9" height="13" fill="#fbf8f2" opacity=".92"/><text x="486" y="122" font-size="9.5" fill="#7b7468" text-anchor="start">useHold</text><path d="M596 80 L449.3 278" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="526.6" y="173" width="123.9" height="13" fill="#fbf8f2" opacity=".92"/><text x="530.6" y="183" font-size="9.5" fill="#7b7468" text-anchor="start">useHold(Chat), relayed</text><path d="M491 180 L467 180" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="452.9" y="163" width="50.1" height="13" fill="#fbf8f2" opacity=".92"/><text x="478" y="173" font-size="9.5" fill="#7b7468" text-anchor="middle">self.get</text><path d="M270.8 280 L596 204" fill="none" stroke="#b4472f" marker-end="url(#f1a)"/><rect x="437.4" y="236" width="123.9" height="13" fill="#fbf8f2" opacity=".92"/><text x="441.4" y="246" font-size="9.5" fill="#b4472f" text-anchor="start">report (as the worker)</text><path d="M449.3 276 Q270.8 232 92.3 276" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="232.5" y="240" width="76.5" height="13" fill="#fbf8f2" opacity=".92"/><text x="270.8" y="250" font-size="9.5" fill="#7b7468" text-anchor="middle">HarnessNative</text><path d="M194.5 307.5 L170.5 307.5" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="143.3" y="290.5" width="76.5" height="13" fill="#fbf8f2" opacity=".92"/><text x="181.5" y="300.5" font-size="9.5" fill="#7b7468" text-anchor="middle">HarnessNative</text><path d="M627.8 276 Q360 232 92.3 276" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="319.1" y="240" width="81.8" height="13" fill="#fbf8f2" opacity=".92"/><text x="360" y="250" font-size="9.5" fill="#7b7468" text-anchor="middle">ModelProviders</text><text x="16" y="359" font-size="10.5" fill="#7b7468" text-anchor="start">A worker reaches the server over its parent link; the page reaches the worker through the server's route.</text></svg><figcaption><span class="fignum">Figure 1.</span> Step 0&#39;s hosts and objects. Arrows are references (who holds whom); accent marks what step 0 introduces beyond the kit.</figcaption></figure>
+<h3 id="the-files">The files</h3>
+<pre class="plain"><code>apps/p3/
+  package.json              "@p3/app": exports ./v1, ./v1/server, ./v1/worker, ./v1/web; private
+  start.ts                  base: startServer, prints the owner link
+  worker.ts                 base: startWorker
+  src/principals.ts         base: P3Principal
+  src/api/v1/index.ts       base: shared API (Chord surface, defineFacet, Session, HostRuntime, KeepAlive)
+  src/api/v1/server.ts      base: server API (Http, AppInfo)
+  src/api/v1/worker.ts      base: worker API (Extensions, ModelProviders, HarnessNative, chord())
+  src/api/v1/web.ts         base: web API (Sidebar, Screens, navigate, useRoute, React hooks)
+  src/web/main.tsx          base: the page's entry: startPage, the two slots, the shell
+  src/web/style.css         base: the shell's layout over the kit's theme variables
+  plugins/harness/          worker.ts
+  plugins/fake-model/       worker.ts
+  plugins/sessions/         contract.ts, server.ts, worker.ts, web.tsx, messages.ts
+  plugins/chat/             contract.ts, worker.ts, web.tsx, messages.ts
+  test/                     the step's tests (chapter X)
+  examples/00-skeleton.ts   a runnable walkthrough of the step</code></pre>
+<p>Every plugin passes the pluggability check: a third party could ship an alternative the same way. A different
+harness serves the same registries (one provider per registry, so it replaces <code>harness</code>, not joins it). Another model
+provider is another contributor to <code>ModelProviders</code>. Another session list or chat UI contributes to <code>Sidebar</code> or
+<code>Screens</code>. The catalog is the one part others build on by contract (<code>SessionList</code>), not replace: a plugin that wants
+other columns keeps its own table keyed by session id.</p>
+</section>
+
+<section class="chapter" id="starting"><header class="opener"><div class="numeral">II</div><h2>Starting</h2><p class="lede">The start script, the worker entry and the principal: what the kit gets from p3.</p></header>
+<p class="dropcap">The start script is the tutorial&#39;s <code>startTodo</code> with p3&#39;s values. It is base code: a change restarts the server.</p>
+<pre><code><span class="tk-c">// apps/p3/start.ts</span>
+<span class="tk-k">import</span> { homedir } <span class="tk-k">from</span> <span class="tk-s">"node:os"</span>;
+<span class="tk-k">import</span> { join } <span class="tk-k">from</span> <span class="tk-s">"node:path"</span>;
+<span class="tk-k">import</span> { fileURLToPath } <span class="tk-k">from</span> <span class="tk-s">"node:url"</span>;
+<span class="tk-k">import</span> { startServer } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/chord/app"</span>;
+<span class="tk-k">import</span> { BACKGROUND_CONTEXT <span class="tk-k">as</span> context } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/chord/context"</span>;
+<span class="tk-k">import</span> { pageScripts } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/chord/surfaces"</span>;
+<span class="tk-k">import</span> * <span class="tk-k">as</span> v1 <span class="tk-k">from</span> <span class="tk-s">"@p3/app/v1"</span>;
+<span class="tk-k">import</span> { API, KINDS } <span class="tk-k">from</span> <span class="tk-s">"./src/kinds.ts"</span>;
+<span class="tk-k">import</span> <span class="tk-k">type</span> { <span class="tk-t">P3Principal</span> } <span class="tk-k">from</span> <span class="tk-s">"./src/principals.ts"</span>;
+
+<span class="tk-k">const</span> app = <span class="tk-k">await</span> <span class="tk-f">startServer</span>&lt;<span class="tk-t">P3Principal</span>&gt;(
+	{
+		name: <span class="tk-s">"p3"</span>,                                            <span class="tk-c">// ~/.p3 unless argv[2] names another directory</span>
+		dataDir: process.argv[<span class="tk-n">2</span>],
+		root: <span class="tk-f">fileURLToPath</span>(<span class="tk-k">new</span> <span class="tk-f">URL</span>(<span class="tk-s">"./plugins/"</span>, <span class="tk-k">import</span>.meta.url)),
+		listen: { host: <span class="tk-s">"127.0.0.1"</span>, port: <span class="tk-n">8789</span> },             <span class="tk-c">// p2 keeps 8788 (decision 3)</span>
+		api: API,
+		kinds: KINDS,
+		principal: { server: { kind: <span class="tk-s">"server"</span> }, worker: (address) =&gt; ({ kind: <span class="tk-s">"worker"</span>, session: address.key }) },
+		workers: [
+			{
+				kind: v1.<span class="tk-t">Session</span>,
+				entry: <span class="tk-f">fileURLToPath</span>(<span class="tk-k">new</span> <span class="tk-f">URL</span>(<span class="tk-s">"./worker.ts"</span>, <span class="tk-k">import</span>.meta.url)),
+				execArgv: [<span class="tk-s">"--experimental-strip-types"</span>, <span class="tk-s">"--no-warnings"</span>],
+				start: () =&gt; ({}),
+				<span class="tk-c">// Step 0 is the owner's alone; guests arrive with sharing (step 3).</span>
+				authorize: (principal) =&gt; principal.kind === <span class="tk-s">"owner"</span> || principal.kind === <span class="tk-s">"server"</span>,
+			},
+		],
+		web: {
+			entry: <span class="tk-f">fileURLToPath</span>(<span class="tk-k">new</span> <span class="tk-f">URL</span>(<span class="tk-s">"./src/web/main.tsx"</span>, <span class="tk-k">import</span>.meta.url)),
+			page: (request, assets) =&gt;
+				<span class="tk-s">`&lt;!doctype html&gt;&lt;html&gt;&lt;head&gt;&lt;meta charset="utf-8"&gt;&lt;meta name="viewport" content="width=device-width"&gt;&lt;title&gt;p3&lt;/title&gt;${pageScripts(assets, request.nonce)}&lt;/head&gt;&lt;body&gt;&lt;div id="root"&gt;&lt;/div&gt;&lt;/body&gt;&lt;/html&gt;`</span>,
+			paths: [<span class="tk-s">"/"</span>, <span class="tk-s">"/s/:id"</span>],
+		},
+		base: [<span class="tk-f">fileURLToPath</span>(<span class="tk-k">new</span> <span class="tk-f">URL</span>(<span class="tk-s">"./src/"</span>, <span class="tk-k">import</span>.meta.url)), <span class="tk-f">fileURLToPath</span>(<span class="tk-k">import</span>.meta.url)],
+		onError: (error) =&gt; console.<span class="tk-f">error</span>(<span class="tk-s">"p3:"</span>, error.kind, error.error),
+	},
+	context,
+);
+console.<span class="tk-f">log</span>(<span class="tk-s">`Open ${app.ownerLink()}`</span>);</code></pre>
+<pre><code><span class="tk-c">// apps/p3/worker.ts</span>
+<span class="tk-k">import</span> { startWorker } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/chord/app"</span>;
+<span class="tk-k">import</span> { API, KINDS } <span class="tk-k">from</span> <span class="tk-s">"./src/kinds.ts"</span>;
+
+<span class="tk-f">startWorker</span>({ api: API, kinds: KINDS, onError: (error) =&gt; console.<span class="tk-f">error</span>(<span class="tk-s">"p3 session:"</span>, error) });</code></pre>
+<p><code>src/kinds.ts</code> holds <code>API</code> (<code>{ name: &quot;@p3/app&quot;, versions: [&quot;v1&quot;], modules: { ... } }</code>) and <code>KINDS</code>: <code>server</code> and
+<code>worker</code> on Node, <code>web</code> in the browser with React. The worker kind also lists <code>@earendil-works/pi-ai</code> and
+<code>@earendil-works/pi-durable</code> as host packages, so plugins import them by name and every plugin shares the process&#39;s one
+instance (decision 2).</p>
+<p>The principal is the kit&#39;s minimum plus the worker:</p>
+<pre><code><span class="tk-c">// apps/p3/src/principals.ts</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">P3Principal</span> =
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"server"</span> }
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"worker"</span>; <span class="tk-k">readonly</span> session: string }       <span class="tk-c">// the worker's address key, session|&lt;id&gt;</span>
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"owner"</span> };</code></pre>
+<p>Multi-user stays possible without changing anything here: a later <code>{ kind: &quot;user&quot;, id }</code> variant is one more case in
+<code>authorize</code> and in the views&#39; factories.</p>
+<h3 id="signing-in">Signing in</h3>
+<p>The kit does it. Each start prints a one-time owner link, <code>http://127.0.0.1:8789/_chord/owner#&lt;token&gt;</code>, valid ten
+minutes; its page posts the fragment&#39;s token and gets the owner&#39;s cookie (400 days, renewed on use). Every other route
+and the <code>/chord</code> links endpoint answer 401 without a principal. Tests and command-line clients send the owner token file
+<code>~/.p3/owner-token</code> as a bearer token. Remote access (Radius) and pairing stay as the kit has them; step 0 adds nothing.</p>
+</section>
+
+<section class="chapter" id="api"><header class="opener"><div class="numeral">III</div><h2>The API</h2><p class="lede">What plugins import, and the three registries a session&#39;s worker is built around.</p></header>
+<p class="dropcap">Plugins import only <code>@p3/app/v1</code> and its per-kind modules (and the host packages of their kind). The shared module
+re-exports the Chord surface p3 supports, the way example 61&#39;s does, plus p3&#39;s own small part:</p>
+<pre><code><span class="tk-c">// apps/p3/src/api/v1/index.ts (p3's own part)</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Session</span> = <span class="tk-f">hostKind</span>(<span class="tk-s">"session"</span>, { id: <span class="tk-f">str</span>({ pattern: <span class="tk-s">"^[0-9a-f-]{36}$"</span> }) });
+
+<span class="tk-c">/** Defines a facet of p3: its factories get p3's principals. */</span>
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">defineFacet</span>(setup: (host: <span class="tk-t">FacetHost</span>&lt;<span class="tk-t">P3Principal</span>&gt;, self: <span class="tk-t">FacetSelf</span>) =&gt; <span class="tk-k">void</span>) {
+	<span class="tk-k">return</span> <span class="tk-f">chordFacet</span>&lt;<span class="tk-t">P3Principal</span>&gt;(setup);
+}
+
+<span class="tk-k">export</span> <span class="tk-k">type</span> { <span class="tk-t">P3Principal</span> } <span class="tk-k">from</span> <span class="tk-s">"../../principals.ts"</span>;
+<span class="tk-k">export</span> { <span class="tk-t">AppInfo</span>, <span class="tk-t">HostRuntime</span>, <span class="tk-t">KeepAlive</span>, <span class="tk-t">WorkerInfo</span> } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/chord/app"</span>;   <span class="tk-c">// HostRuntime, KeepAlive: decision 1</span></code></pre>
+<p>The worker module declares the three registries a session&#39;s worker is built around. It declares them only (their
+tokens); the <code>harness</code> plugin serves them.</p>
+<pre><code><span class="tk-c">// apps/p3/src/api/v1/worker.ts</span>
+<span class="tk-k">import</span> <span class="tk-k">type</span> { <span class="tk-t">Provider</span> } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/pi-ai"</span>;
+<span class="tk-k">import</span> <span class="tk-k">type</span> { <span class="tk-t">Extension</span>, <span class="tk-t">Harness</span> <span class="tk-k">as</span> <span class="tk-t">DurableHarness</span> } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/pi-durable"</span>;
+
+<span class="tk-c">/** Durable extensions: one per contributing plugin (a writable when its tools change at runtime). */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Extensions</span> = <span class="tk-f">defineRegistry</span>&lt;<span class="tk-t">Extension</span>, <span class="tk-k">readonly</span> <span class="tk-t">Extension</span>[]&gt;(<span class="tk-s">"p3.extensions"</span>, { version: <span class="tk-n">1</span> });
+
+<span class="tk-c">/** Model providers: one pi-ai provider per contributing plugin, composed into the session's `Models`. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">ModelProviders</span> = <span class="tk-f">defineRegistry</span>&lt;<span class="tk-t">Provider</span>, <span class="tk-t">Models</span>&gt;(<span class="tk-s">"p3.model-providers"</span>, { version: <span class="tk-n">1</span> });
+
+<span class="tk-c">/** The session's open Durable harness, for objects that follow its views: `undefined` while none is open. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">HarnessNative</span> = defineRegistry&lt;<span class="tk-t">Native</span>&lt;<span class="tk-t">DurableHarness</span>&gt;, <span class="tk-t">DurableHarness</span> | <span class="tk-k">undefined</span>&gt;(<span class="tk-s">"p3.harness"</span>, {
+	version: <span class="tk-n">1</span>,
+});
+
+<span class="tk-c">/** A Chord call scope from any Durable context (design §24 Q6): `host.root(fn, context)` as the host. */</span>
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">chord</span>&lt;R&gt;(fn: (ctx: <span class="tk-t">Ctx</span>) =&gt; <span class="tk-t">Promise</span>&lt;R&gt;, context: <span class="tk-t">Context</span>): <span class="tk-t">Promise</span>&lt;R&gt; {
+	<span class="tk-k">const</span> root = context.<span class="tk-f">get</span>(<span class="tk-t">ChordRoot</span>);
+	<span class="tk-k">if</span> (root === <span class="tk-k">undefined</span>) <span class="tk-k">throw</span> <span class="tk-k">new</span> <span class="tk-t">Error</span>(<span class="tk-s">"chord(): no Chord host in this context (open the harness with one)"</span>);
+	<span class="tk-k">return</span> <span class="tk-f">root</span>(fn, context);
+}</code></pre>
+<p><code>ChordRoot</code> is a context key of the API (<code>createContextKey</code>); the harness opens Durable with a base context holding the
+host&#39;s root under it, so every Durable phase context (a tool&#39;s, a hook&#39;s) inherits it. Step 0 has no tools, so nothing
+calls <code>chord()</code> yet; a test proves a Durable context from the harness reaches a Chord object through it.</p>
+<p>The web module declares the page&#39;s two slots and a minimal router, and re-exports Chord&#39;s React hooks:</p>
+<pre><code><span class="tk-c">// apps/p3/src/api/v1/web.ts</span>
+<span class="tk-c">/** A part of the sidebar: the session list in step 0. Ordered by plugin name. */</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">SidebarPart</span> = { <span class="tk-k">readonly</span> name: string; <span class="tk-k">readonly</span> <span class="tk-t">Component</span>: <span class="tk-t">ComponentType</span> };
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Sidebar</span> = <span class="tk-f">defineRegistry</span>&lt;<span class="tk-t">SidebarPart</span>, <span class="tk-k">readonly</span> <span class="tk-t">SidebarPart</span>[]&gt;(<span class="tk-s">"p3.sidebar"</span>, { version: <span class="tk-n">1</span> });
+
+<span class="tk-c">/** A screen of the main area, by path pattern (`/s/:id`); the most specific match wins. */</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">Screen</span> = { <span class="tk-k">readonly</span> path: string; <span class="tk-k">readonly</span> <span class="tk-t">Component</span>: <span class="tk-t">ComponentType</span>&lt;{ <span class="tk-k">readonly</span> params: <span class="tk-t">Readonly</span>&lt;<span class="tk-t">Record</span>&lt;string, string&gt;&gt; }&gt; };
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Screens</span> = <span class="tk-f">defineRegistry</span>&lt;<span class="tk-t">Screen</span>, <span class="tk-k">readonly</span> <span class="tk-t">Screen</span>[]&gt;(<span class="tk-s">"p3.screens"</span>, { version: <span class="tk-n">1</span> });
+
+<span class="tk-c">/** The page's path, followed (`popstate` and `navigate`). */</span>
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">useRoute</span>(): string;
+<span class="tk-c">/** Moves the page to `path` without a reload (`history.pushState`). */</span>
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">navigate</span>(path: string): <span class="tk-k">void</span>;
+
+<span class="tk-k">export</span> { useHold, useHost, useMessages, usePageState, useRegistry, useWatch } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/chord/react"</span>;</code></pre>
+<p><code>Sidebar</code> and <code>Screens</code> are served by the page&#39;s own core facet in <code>src/web/main.tsx</code> (as example 61&#39;s <code>Panels</code>): the
+slots are base code, what fills them is plugins.</p>
+<div class="note review"><b class="tag">Review: the model providers&#39; shape is step 1&#39;s</b><p>The handoff leaves the providers registry&#39;s shape undecided. Step 0 takes the smallest one that runs: one pi-ai
+<code>Provider</code> per plugin, composed with <code>createModels()</code> and <code>setProvider</code> (a second contribution with the same provider id
+is reported and left out, the first by plugin name wins). Step 1 (real models, credentials as worker view state, the
+server refreshing tokens) may change the contribution; the token&#39;s version moves then.</p>
+</div>
+</section>
+
+<section class="chapter" id="harness"><header class="opener"><div class="numeral">IV</div><h2>The Harness</h2><p class="lede">Durable on the session&#39;s store, opened paused, resumed once every plugin is in.</p></header>
+<p class="dropcap">The <code>harness</code> plugin&#39;s worker facet serves the three registries and one host-lifetime object, <code>Harness</code>, which owns the
+Durable harness as a native.</p>
+<pre><code><span class="tk-c">// apps/p3/plugins/harness/worker.ts</span>
+<span class="tk-k">import</span> { createModels } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/pi-ai"</span>;
+<span class="tk-k">import</span> { <span class="tk-t">Harness</span> <span class="tk-k">as</span> <span class="tk-t">DurableHarness</span> } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/pi-durable"</span>;
+<span class="tk-k">import</span> { <span class="tk-t">StoreStorage</span> } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/pi-durable/storage/store"</span>;
+<span class="tk-k">import</span> { <span class="tk-t">ChordRoot</span>, defineFacet, <span class="tk-t">HostRuntime</span>, <span class="tk-t">KeepAlive</span>, local, withContextValue } <span class="tk-k">from</span> <span class="tk-s">"@p3/app/v1"</span>;
+<span class="tk-k">import</span> { <span class="tk-t">Extensions</span>, <span class="tk-t">HarnessNative</span>, <span class="tk-t">ModelProviders</span> } <span class="tk-k">from</span> <span class="tk-s">"@p3/app/v1/worker"</span>;
+<span class="tk-k">import</span> { durableRegistry } <span class="tk-k">from</span> <span class="tk-s">"./registry.ts"</span>;
+
+<span class="tk-c">/** The session's harness: one per worker, alive as long as the worker. */</span>
+<span class="tk-k">const</span> <span class="tk-t">Harness</span> = <span class="tk-f">local</span>(<span class="tk-s">"p3.harness"</span>, { version: <span class="tk-n">1</span>, params: {}, members: {} });
+
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((host) =&gt; {
+	host.<span class="tk-f">serve</span>(<span class="tk-t">Extensions</span>, { compose: (table) =&gt; table.<span class="tk-f">map</span>(({ value }) =&gt; value) });
+	host.<span class="tk-f">serve</span>(<span class="tk-t">ModelProviders</span>, { compose: (table, { report }) =&gt; <span class="tk-f">modelsOf</span>(table, report) });
+	host.<span class="tk-f">serve</span>(<span class="tk-t">HarnessNative</span>, { compose: (table) =&gt; table[<span class="tk-n">0</span>]?.value.value });
+	host.<span class="tk-f">serve</span>(<span class="tk-t">Harness</span>, (_params, self) =&gt; {
+		<span class="tk-k">const</span> runtime = self.<span class="tk-f">registry</span>(<span class="tk-t">HostRuntime</span>);
+		<span class="tk-k">const</span> extensions = self.<span class="tk-f">registry</span>(<span class="tk-t">Extensions</span>);
+		<span class="tk-k">const</span> models = self.<span class="tk-f">registry</span>(<span class="tk-t">ModelProviders</span>);
+		<span class="tk-c">// Running agent work keeps the worker alive (Durable says when it needs a process: `onWake`).</span>
+		<span class="tk-k">const</span> busy = self.<span class="tk-f">writable</span>(<span class="tk-n">0</span>);
+		self.<span class="tk-f">contribute</span>(<span class="tk-t">KeepAlive</span>, busy);
+		<span class="tk-k">const</span> harness = self.<span class="tk-f">open</span>(
+			<span class="tk-k">async</span> (context) =&gt; {
+				<span class="tk-k">const</span> { store, root } = runtime.value;
+				<span class="tk-k">const</span> storage = <span class="tk-k">await</span> <span class="tk-t">StoreStorage</span>.<span class="tk-f">open</span>(store, <span class="tk-s">"p3.durable"</span>, context);
+				<span class="tk-k">const</span> opened = <span class="tk-k">await</span> <span class="tk-t">DurableHarness</span>.<span class="tk-f">open</span>(
+					storage,
+					{
+						models: () =&gt; models.value,                         <span class="tk-c">// read at each use: a reload swaps it</span>
+						registry: <span class="tk-f">durableRegistry</span>(extensions, context),
+						onWake: (wake) =&gt; busy.<span class="tk-f">set</span>(wake.active ? <span class="tk-n">1</span> : <span class="tk-n">0</span>),
+						onReport: (report) =&gt; <span class="tk-f">reportDurable</span>(report),
+					},
+					<span class="tk-c">// Tools and hooks reach Chord through `chord(fn, context)` (§24 Q6).</span>
+					<span class="tk-f">withContextValue</span>(<span class="tk-t">ChordRoot</span>, root, context),
+				);
+				<span class="tk-c">// The root conversation, created once with the first model offered.</span>
+				<span class="tk-k">await</span> opened.<span class="tk-f">root</span>(context, { agent: { model: <span class="tk-f">defaultModel</span>(models.value) } });
+				<span class="tk-k">return</span> opened;
+			},
+			(opened, _reason, context) =&gt; opened.<span class="tk-f">close</span>(context),
+		);
+		self.<span class="tk-f">contribute</span>(<span class="tk-t">HarnessNative</span>, harness);
+		<span class="tk-c">// Paused until every plugin of the worker is loaded, so recovered work finds its extensions (§24).</span>
+		self.<span class="tk-f">onLive</span>(<span class="tk-k">async</span> (ctx) =&gt; {
+			<span class="tk-k">await</span> runtime.value.<span class="tk-f">whenLoaded</span>(ctx);
+			harness.value.<span class="tk-f">resume</span>();
+		});
+		<span class="tk-k">return</span> {};
+	});
+});</code></pre>
+<p>The pieces, and why each is there:</p>
+<ul>
+<li><strong><code>self.open</code></strong> keeps Durable a native of exactly one object (natives only in objects). It opens after the
+registries are usable (they are declared dependencies), closes when the object ends. A reload of the <code>harness</code>
+plugin restarts the object: the old harness closes at the seal, the new one opens on the same store and recovers
+what was running, as after a crash.</li>
+<li><strong><code>StoreStorage.open(store, &quot;p3.durable&quot;, context)</code></strong> puts Durable&#39;s records in the session&#39;s Chord store, beside the
+kit&#39;s <code>Files</code> (<code>chord.app.files:*</code>), claimed under the owner name <code>p3.durable</code>. One store per session, one commit
+line: a fork or export of the session is one archive.</li>
+<li><strong><code>durableRegistry(extensions, context)</code></strong> is Durable&#39;s <code>RegistryReader</code> over the composed <code>Extensions</code> value: a
+snapshot made once per composed list (<code>createRegistry()</code>, each extension installed), and <code>subscribe</code> observing the
+registry value so the scheduler reconsiders blocked tasks when a contribution arrives. The tool_search fallback
+(install Durable&#39;s <code>tool_search</code> extension when deferred tools exist and code mode does not) belongs here; step 0 has
+no deferred tools, so it arrives with MCP (step 4).</li>
+<li><strong><code>HarnessNative</code></strong> hands the open harness to other objects of the worker (chat, sessions), which follow its views
+with <code>self.follow</code>. Its compose takes the first contribution: there is one harness per worker.</li>
+<li><strong>Paused until loaded.</strong> Durable opens with scheduling paused. Resuming in <code>onLive</code> alone would race other plugins:
+an extension contributed by another host-lifetime object may go live after the harness, and a recovered tool call
+would find no tool. <code>whenLoaded</code> resolves once the kit&#39;s <code>plugins.load</code> of the worker has resolved, the moment p2&#39;s
+base code called <code>resume()</code>.</li>
+<li><strong><code>KeepAlive</code>.</strong> The workers component stops a worker after five idle minutes, counting Chord references, jobs and the
+app&#39;s <code>busy</code>. A run the user walked away from has no references; without this count the worker would stop mid-run.
+Durable&#39;s <code>onWake</code> says whether the session needs a running process; the harness contributes that as a count.</li>
+</ul>
+<h3 id="decision-1-how-a-plugin-gets-what-only-base-code-has-decision-1">Decision 1: how a plugin gets what only base code has {#decision-1}</h3>
+<p><strong>Decision needed (Chord, the app kit).</strong> The harness needs three things the kit keeps to base code: the host&#39;s store
+(Durable&#39;s <code>StoreStorage.open(store, ...)</code> takes it), a root scope (<code>host.root</code>, for <code>chord(fn, context)</code>), and the
+moment the worker&#39;s plugins are loaded (to resume). It also must keep its worker alive while agent work runs, which the
+kit takes only as <code>startWorker({ busy })</code> from base code. The design&#39;s own rule says base code serves &quot;one small
+start-data facet serving process values (start data, the opened store) as core objects&quot; (design §21, decision &quot;The
+plugin model ... (8)&quot;); the kit built <code>AppInfo</code> and <code>WorkerInfo</code> but never the store, because no kit app had an adapter
+owner like Durable&#39;s <code>StoreStorage</code>.</p>
+<figure class="fig"><svg viewBox="0 0 720 283" width="100%" role="img" aria-label="Today: the harness plugin cannot open Durable. Base code has the store and host.root; a plugin has neither." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f2m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f2a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f2b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="130.7" y1="52" x2="130.7" y2="275" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="45.7" y="10" width="170" height="42" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="130.7" y="27" font-size="11" fill="#2a2723" text-anchor="middle">kit startWorker</text><text x="130.7" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">base code</text><line x1="360" y1="52" x2="360" y2="275" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="275" y="10" width="170" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="360" y="27" font-size="11" fill="#2a2723" text-anchor="middle">worker host</text><text x="360" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">Session({ id })</text><line x1="589.3" y1="52" x2="589.3" y2="275" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="504.3" y="10" width="170" height="42" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="589.3" y="27" font-size="11" fill="#2a2723" text-anchor="middle">Harness object</text><text x="589.3" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">plugin harness</text><path d="M130.7 72 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f2m)"/><text x="172.7" y="82" font-size="10" fill="#2a2723" text-anchor="start">openStore(store.sqlite)</text><line x1="130.7" y1="118" x2="357" y2="118" stroke="#7b7468" marker-end="url(#f2m)"/><text x="245.3" y="112" font-size="10" fill="#2a2723" text-anchor="middle">createHost({ store })</text><line x1="130.7" y1="150" x2="357" y2="150" stroke="#7b7468" marker-end="url(#f2m)"/><text x="245.3" y="144" font-size="10" fill="#2a2723" text-anchor="middle">plugins.load(host, core: WorkerInfo, Files, ...)</text><line x1="360" y1="182" x2="586.3" y2="182" stroke="#7b7468" marker-end="url(#f2m)"/><text x="474.7" y="176" font-size="10" fill="#2a2723" text-anchor="middle">factory: self.registry(?)</text><rect x="484.7" y="200" width="209.3" height="23" rx="3" fill="#f4eee2" stroke="#c2b18c"/><text x="589.3" y="214" font-size="10" fill="#5b5549" text-anchor="middle">no store, no host.root, no &quot;loaded&quot;</text><line x1="589.3" y1="251" x2="363" y2="251" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f2m)"/><text x="474.7" y="245" font-size="10" fill="#2a2723" text-anchor="middle">cannot call StoreStorage.open(store, ...)</text></svg><figcaption><span class="fignum">Figure 2.</span> Today: the harness plugin cannot open Durable. Base code has the store and <code>host.root</code>; a plugin has neither.</figcaption></figure>
+<p><strong>Recommended (A): two kit registries on every kit host.</strong> <code>HostRuntime</code> (<code>chord.app.runtime</code>), served by the kit with
+one value: <code>{ store, root(fn, context, options?), whenLoaded(context) }</code>, the host&#39;s store, its <code>host.root</code>, and a
+promise that resolves once the kit&#39;s <code>plugins.load</code> resolved. <code>KeepAlive</code> (<code>chord.app.keep-alive</code>): host-lifetime
+objects contribute a number or a watchable of one; the kit adds their sum to the worker&#39;s <code>busy</code> counts. Both are
+generic (any kit app with an adapter owner or long work outside Chord needs them), small (a facet and a fold in
+<code>startWorker</code>, the same on <code>startServer</code> for <code>HostRuntime</code>), and keep the harness a plugin.</p>
+<figure class="fig anim"><svg viewBox="0 0 720 302" width="100%" role="img" aria-label="With A: the harness opens Durable from a registry value and resumes after the load." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f3m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f3a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f3b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="102" y1="52" x2="102" y2="294" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="23" y="10" width="158" height="42" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="102" y="27" font-size="11" fill="#2a2723" text-anchor="middle">kit startWorker</text><text x="102" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">base code</text><line x1="274" y1="52" x2="274" y2="294" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="195" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="274" y="27" font-size="11" fill="#2a2723" text-anchor="middle">worker host</text><text x="274" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">Session({ id })</text><line x1="446" y1="52" x2="446" y2="294" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="367" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="446" y="27" font-size="11" fill="#2a2723" text-anchor="middle">Harness object</text><text x="446" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">plugin harness</text><line x1="618" y1="52" x2="618" y2="294" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="539" y="10" width="158" height="42" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="618" y="27" font-size="11" fill="#2a2723" text-anchor="middle">Durable</text><text x="618" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">StoreStorage</text><g class="step edge" style="--i:1"><line x1="102" y1="78" x2="271" y2="78" stroke="#7b7468" marker-end="url(#f3m)"/><text x="188" y="72" font-size="10" fill="#2a2723" text-anchor="middle">plugins.load(host, core: HostRuntime { store, root, whenLoaded }, KeepAlive)</text></g><g class="step edge" style="--i:2"><line x1="274" y1="110" x2="443" y2="110" stroke="#7b7468" marker-end="url(#f3m)"/><text x="360" y="104" font-size="10" fill="#2a2723" text-anchor="middle">factory: self.registry(HostRuntime), self.contribute(KeepAlive, busy)</text></g><g class="step edge" style="--i:3"><line x1="446" y1="142" x2="615" y2="142" stroke="#b4472f" marker-end="url(#f3a)"/><text x="532" y="136" font-size="10" fill="#b4472f" text-anchor="middle">open: StoreStorage.open(runtime.store), Harness.open(paused)</text></g><g class="step edge" style="--i:4"><line x1="446" y1="174" x2="277" y2="174" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f3m)"/><text x="360" y="168" font-size="10" fill="#2a2723" text-anchor="middle">live: HarnessNative contributed</text></g><g class="step edge" style="--i:5"><line x1="274" y1="206" x2="105" y2="206" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f3m)"/><text x="188" y="200" font-size="10" fill="#2a2723" text-anchor="middle">load resolved: whenLoaded resolves</text></g><g class="step edge" style="--i:6"><line x1="446" y1="238" x2="615" y2="238" stroke="#b4472f" marker-end="url(#f3a)"/><text x="532" y="232" font-size="10" fill="#b4472f" text-anchor="middle">onLive: resume()</text></g><g class="step edge" style="--i:7"><line x1="618" y1="270" x2="449" y2="270" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f3m)"/><text x="532" y="264" font-size="10" fill="#2a2723" text-anchor="middle">onWake { active }: busy.set(1)</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 3.</span> With A: the harness opens Durable from a registry value and resumes after the load.</figcaption></figure>
+<p><strong>Alternatives.</strong> (B) <code>startWorker</code> takes app core facets (<code>core: (host, store) =&gt; facets</code>) and a <code>ready(host, ctx)</code>
+hook: p3&#39;s base code then opens the harness itself, as p2 does. It works, but the harness becomes base code (a change
+restarts the server) and every app with an adapter owner writes the same wiring again. (C) p3 skips <code>startWorker</code> and
+writes its worker on <code>workerMain</code> like p2: duplicates the kit&#39;s layout, store and telemetry wiring, the opposite of
+&quot;use the kit&quot;.</p>
+<p>Cost of A: about 60 lines in the kit (<code>runtime.ts</code>: the facet, the registries, the fold of <code>KeepAlive</code> into <code>busy</code>),
+its tests, the README and design §23 updated; a Chord decision recorded in <code>packages/chord/docs/decisions.md</code> on main,
+merged into <code>p3</code>.</p>
+<div class="note"><b class="tag">Security</b><p>A plugin with the store can claim any owner name in it (claims refuse a second claimant, not a first). Plugins are
+code in the worker&#39;s process and can already do anything there; <code>HostRuntime</code> adds no authority a server or worker
+plugin does not have. Pages and terminals have no store and are not served it.</p>
+</div>
+</section>
+
+<section class="chapter" id="fake"><header class="opener"><div class="numeral">V</div><h2>The Fake Model</h2><p class="lede">The first model provider: a plugin, a registry contribution, nothing else.</p></header>
+<pre><code><span class="tk-c">// apps/p3/plugins/fake-model/worker.ts</span>
+<span class="tk-k">import</span> { fauxAssistantMessage, <span class="tk-k">type</span> <span class="tk-t">FauxResponseFactory</span>, fauxProvider } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/pi-ai"</span>;
+<span class="tk-k">import</span> { defineFacet } <span class="tk-k">from</span> <span class="tk-s">"@p3/app/v1"</span>;
+<span class="tk-k">import</span> { <span class="tk-t">ModelProviders</span> } <span class="tk-k">from</span> <span class="tk-s">"@p3/app/v1/worker"</span>;
+
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((_host, self) =&gt; {
+	<span class="tk-k">const</span> fake = <span class="tk-f">fauxProvider</span>({ provider: <span class="tk-s">"fake"</span>, models: [{ id: <span class="tk-s">"echo"</span>, name: <span class="tk-s">"Echo"</span> }], tokensPerSecond: <span class="tk-n">40</span> });
+	<span class="tk-c">// One reply per request, queued again each time: the faux provider answers from a queue.</span>
+	<span class="tk-k">const</span> echo: <span class="tk-t">FauxResponseFactory</span> = (context) =&gt; {
+		fake.<span class="tk-f">appendResponses</span>([echo]);
+		<span class="tk-k">return</span> <span class="tk-f">fauxAssistantMessage</span>(<span class="tk-s">`You said: ${lastUserText(context)}`</span>);
+	};
+	fake.<span class="tk-f">setResponses</span>([echo]);
+	self.<span class="tk-f">contribute</span>(<span class="tk-t">ModelProviders</span>, fake.provider);
+});</code></pre>
+<p>A facet&#39;s contribution: no object, no native (the provider is a plain in-process value fixed for the plugin&#39;s life).
+At 40 tokens a second a short reply streams for about a second, long enough to see it stream and to test a restart in
+the middle of it. The harness&#39;s root conversation picks <code>fake/echo</code> because it is the first model offered; with no
+provider at all the root&#39;s agent has no model and Durable records <code>no_model</code> on the first send, which the chat shows.</p>
+</section>
+
+<section class="chapter" id="catalog"><header class="opener"><div class="numeral">VI</div><h2>The Session Catalog</h2><p class="lede">A table on the server, a view per principal, and workers that report their own sessions.</p></header>
+<p class="dropcap">The <code>sessions</code> plugin owns the list of sessions. Its contract is shared (the page and the worker both hold it):</p>
+<pre><code><span class="tk-c">// apps/p3/plugins/sessions/contract.ts</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">SessionRow</span> = <span class="tk-f">obj</span>({
+	id: <span class="tk-f">str</span>(),
+	title: <span class="tk-f">str</span>(),                                     <span class="tk-c">// "" until the first message</span>
+	status: <span class="tk-f">oneOf</span>([<span class="tk-s">"new"</span>, <span class="tk-s">"idle"</span>, <span class="tk-s">"working"</span>]),
+	created: <span class="tk-f">num</span>(),
+	updated: <span class="tk-f">num</span>(),
+});
+
+<span class="tk-c">/** The session catalog as one principal sees it: the owner lists and creates, a worker reports its own session. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">SessionList</span> = <span class="tk-f">remote</span>(<span class="tk-s">"p3.sessions"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: {},
+	hostAddress: () =&gt; <span class="tk-t">Server</span>(),
+	variants: {
+		owner: {
+			state: { sessions: <span class="tk-f">arr</span>(<span class="tk-t">SessionRow</span>) },
+			methods: { create: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ id: <span class="tk-f">str</span>({ pattern: <span class="tk-s">"^[0-9a-f-]{36}$"</span> }) })) },
+		},
+		worker: {
+			state: {},
+			methods: { report: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ title: <span class="tk-f">opt</span>(<span class="tk-f">str</span>()), status: <span class="tk-f">opt</span>(<span class="tk-f">oneOf</span>([<span class="tk-s">"idle"</span>, <span class="tk-s">"working"</span>])) })) },
+		},
+	},
+});</code></pre>
+<p>On the server, one host-lifetime store object holds the table and a live query of the newest 200 by <code>updated</code>; the
+views are what each principal may do with it.</p>
+<pre><code><span class="tk-c">// apps/p3/plugins/sessions/server.ts (abridged)</span>
+<span class="tk-k">const</span> <span class="tk-t">Rows</span> = <span class="tk-f">defineTable</span>(<span class="tk-s">"p3.sessions"</span>, {
+	version: <span class="tk-n">1</span>,
+	columns: { id: <span class="tk-f">str</span>(), title: <span class="tk-f">str</span>(), status: <span class="tk-f">str</span>(), created: <span class="tk-f">num</span>(), updated: <span class="tk-f">num</span>(), incarnation: <span class="tk-f">str</span>() },
+	key: [<span class="tk-s">"id"</span>],
+	indexes: [[<span class="tk-s">"updated"</span>]],
+});
+<span class="tk-k">const</span> NEWEST = <span class="tk-f">query</span>(<span class="tk-t">Rows</span>).<span class="tk-f">orderBy</span>((row) =&gt; row.updated, <span class="tk-s">"desc"</span>);
+
+<span class="tk-k">const</span> <span class="tk-t">SessionStore</span> = <span class="tk-f">local</span>(<span class="tk-s">"p3.sessions.store"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: {},
+	members: {
+		sessions: <span class="tk-f">arr</span>(<span class="tk-t">SessionRow</span>),
+		create: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ id: <span class="tk-f">str</span>() })),
+		report: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ id: <span class="tk-f">str</span>(), incarnation: <span class="tk-f">str</span>(), title: <span class="tk-f">opt</span>(<span class="tk-f">str</span>()), status: <span class="tk-f">opt</span>(<span class="tk-f">str</span>()) })),
+	},
+});
+
+host.<span class="tk-f">serve</span>(<span class="tk-t">SessionStore</span>, (_params, self) =&gt; {
+	<span class="tk-k">const</span> rows = self.<span class="tk-f">table</span>(<span class="tk-t">Rows</span>);
+	<span class="tk-k">const</span> newest = self.<span class="tk-f">query</span>(rows, NEWEST, <span class="tk-n">200</span>);
+	<span class="tk-k">return</span> {
+		sessions: self.<span class="tk-f">derive</span>([newest], ([list]) =&gt; list.<span class="tk-f">map</span>(publicRow)),       <span class="tk-c">// mapShared: rows keep identity</span>
+		create: <span class="tk-k">async</span> ({ id }, ctx) =&gt; {
+			<span class="tk-k">const</span> now = <span class="tk-t">Date</span>.<span class="tk-f">now</span>();
+			<span class="tk-c">// Idempotent: a retried create of the same id changes nothing.</span>
+			<span class="tk-k">await</span> self.<span class="tk-f">tx</span>(<span class="tk-k">async</span> (tx) =&gt; {
+				<span class="tk-k">if</span> ((<span class="tk-k">await</span> tx.<span class="tk-f">get</span>(rows, { id })) === <span class="tk-k">undefined</span>)
+					tx.<span class="tk-f">put</span>(rows, { id, title: <span class="tk-s">""</span>, status: <span class="tk-s">"new"</span>, created: now, updated: now, incarnation: <span class="tk-s">""</span> });
+			}, ctx);
+			<span class="tk-k">return</span> <span class="tk-k">null</span>;
+		},
+		report: <span class="tk-k">async</span> ({ id, incarnation, title, status }, ctx) =&gt; {
+			<span class="tk-k">await</span> self.<span class="tk-f">tx</span>(<span class="tk-k">async</span> (tx) =&gt; {
+				<span class="tk-k">const</span> row = <span class="tk-k">await</span> tx.<span class="tk-f">get</span>(rows, { id });
+				<span class="tk-c">// Unknown sessions are not listed; reports of an older worker incarnation are late and ignored.</span>
+				<span class="tk-k">if</span> (row === <span class="tk-k">undefined</span> || incarnation &lt; row.incarnation) <span class="tk-k">return</span>;
+				tx.<span class="tk-f">update</span>(rows, { id }, { incarnation, updated: <span class="tk-t">Date</span>.<span class="tk-f">now</span>(), ...(title === <span class="tk-k">undefined</span> ? {} : { title }), ...(status === <span class="tk-k">undefined</span> ? {} : { status }) });
+			}, ctx);
+			<span class="tk-k">return</span> <span class="tk-k">null</span>;
+		},
+	};
+});
+
+host.<span class="tk-f">serve</span>(<span class="tk-t">SessionList</span>, (_params, principal, self) =&gt; {
+	<span class="tk-k">const</span> store = self.<span class="tk-f">get</span>(<span class="tk-t">SessionStore</span>, {});
+	<span class="tk-k">if</span> (principal.kind === <span class="tk-s">"worker"</span>) {
+		<span class="tk-k">const</span> id = principal.session.<span class="tk-f">slice</span>(<span class="tk-s">"session|"</span>.length);
+		<span class="tk-k">return</span> {
+			variant: <span class="tk-s">"worker"</span>,
+			<span class="tk-c">// The id comes from the principal the link stamped, the incarnation from Chord: neither is the caller's data.</span>
+			members: { report: (report, ctx) =&gt; store.<span class="tk-f">report</span>({ id, incarnation: ctx.incarnation, ...report }, ctx) },
+		};
+	}
+	<span class="tk-k">if</span> (principal.kind !== <span class="tk-s">"owner"</span>) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"the session list is the owner's"</span>);
+	<span class="tk-k">return</span> { variant: <span class="tk-s">"owner"</span>, members: { sessions: store.sessions, create: store.create } };
+});</code></pre>
+<p>Why each rule:</p>
+<ul>
+<li><strong>A table, not a document.</strong> Anything listed, queried or paged is a table: a thousand sessions are a thousand rows,
+a change rewrites one row, and the live query sends the window&#39;s diff. A document holding the list would rewrite
+and diff the whole list on every status change.</li>
+<li><strong>200 live, the rest by page.</strong> The live query needs a limit. Step 0 shows the newest 200; a <code>page({ after })</code> method
+for older sessions comes with archive and search.</li>
+<li><strong>The incarnation fence.</strong> A worker that is stopping can report after its successor started (the idle stop, then a
+new hold within the drain). <code>ctx.incarnation</code> is the reporting host&#39;s incarnation, stamped by Chord from the link&#39;s
+handshake, never sent as data; incarnations are uuidv7, so a later start compares greater. A late &quot;working&quot; from the
+old process cannot overwrite the new one&#39;s &quot;idle&quot;. (Design §25, &quot;Reading without starting a worker&quot;.)</li>
+<li><strong>The worker&#39;s id from its principal.</strong> The worker variant has no <code>id</code> argument: a worker reports only its own
+session, whatever its code sends.</li>
+</ul>
+<h3 id="the-worker-side-title-and-status">The worker side: title and status</h3>
+<p>The title and the working state are the session&#39;s data, so the worker owns them and pushes what the catalog shows.
+The <code>sessions</code> plugin&#39;s worker facet serves <code>SessionMeta</code>:</p>
+<pre><code><span class="tk-c">// apps/p3/plugins/sessions/worker.ts (abridged)</span>
+<span class="tk-k">const</span> <span class="tk-t">Meta</span> = <span class="tk-f">defineState</span>(<span class="tk-s">"p3.sessions.meta"</span>, {
+	schema: <span class="tk-f">obj</span>({ title: <span class="tk-f">str</span>() }), version: <span class="tk-n">1</span>, initial: () =&gt; ({ title: <span class="tk-s">""</span> }), persist: <span class="tk-k">true</span>, checkpointWhen: () =&gt; <span class="tk-k">true</span>,
+});
+
+host.<span class="tk-f">serve</span>(<span class="tk-t">SessionMeta</span>, (_params, self) =&gt; {
+	<span class="tk-k">const</span> meta = self.<span class="tk-f">state</span>(<span class="tk-t">Meta</span>);
+	<span class="tk-k">const</span> list = self.<span class="tk-f">get</span>(<span class="tk-t">SessionList</span>, {});                  <span class="tk-c">// over the parent link: acts as this worker</span>
+	<span class="tk-k">const</span> harness = self.<span class="tk-f">registry</span>(<span class="tk-t">HarnessNative</span>);
+	self.<span class="tk-f">retryOn</span>(harness);
+	<span class="tk-k">const</span> view = self.<span class="tk-f">follow</span>((observer, context) =&gt; <span class="tk-f">observeRoot</span>(harness.value, observer, context, { min: <span class="tk-n">1</span>, max: <span class="tk-n">1</span> }));
+	<span class="tk-k">const</span> status = self.<span class="tk-f">derive</span>([view], ([v]) =&gt; (v.docs[<span class="tk-s">"pi.live"</span>]?.run === <span class="tk-k">undefined</span> ? <span class="tk-s">"idle"</span> : <span class="tk-s">"working"</span>));
+	<span class="tk-c">// Pushed from where it changes: the first call reports the current status, later calls every change.</span>
+	self.<span class="tk-f">on</span>(status, <span class="tk-k">async</span> ({ value }, ctx) =&gt; {
+		<span class="tk-k">if</span> (list.variant === <span class="tk-s">"worker"</span>) <span class="tk-k">await</span> list.<span class="tk-f">report</span>({ status: value }, ctx);
+	});
+	<span class="tk-k">return</span> {
+		title: meta,
+		rename: <span class="tk-k">async</span> ({ title }, ctx) =&gt; {
+			<span class="tk-k">await</span> meta.<span class="tk-f">change</span>((draft) =&gt; { draft.title = title; }, ctx);
+			<span class="tk-k">if</span> (list.variant === <span class="tk-s">"worker"</span>) <span class="tk-k">await</span> list.<span class="tk-f">report</span>({ title }, ctx);   <span class="tk-c">// before the answer: the list is current</span>
+			<span class="tk-k">return</span> <span class="tk-k">null</span>;
+		},
+	};
+});</code></pre>
+<p><code>observeRoot</code> is a helper of the plugin: <code>harness?.observeConversation(ROOT_CONVERSATION_ID, observer, context, window)</code>, <code>undefined</code> while no harness is open (the follow then fails the attempt <code>transient</code>, and <code>retryOn</code> wakes it
+when the harness&#39;s contribution arrives). A window of one entry keeps this observer cheap: it reads only <code>docs</code>.</p>
+<div class="note review"><b class="tag">Review: a hold before the create</b><p><code>authorize</code> cannot read the catalog (it is synchronous), so a hold of <code>Chat</code> for an id the catalog does not have starts
+a worker and makes an empty store, whose reports the catalog ignores. The page never does this (chapter VIII holds
+<code>Chat</code> only once the row is listed). Cleaning such stores belongs to the session lifecycle step (archive and delete);
+a route-level check would need an asynchronous <code>authorize</code> or the workers component&#39;s <code>start</code> hook to reach the
+catalog, both larger than this case.</p>
+</div>
+</section>
+
+<section class="chapter" id="chat"><header class="opener"><div class="numeral">VII</div><h2>Chat</h2><p class="lede">One store follows the transcript; a view per principal sends and aborts.</p></header>
+<p class="dropcap">The <code>chat</code> plugin&#39;s worker facet follows the root conversation&#39;s view once, in a shared store, and serves the
+per-principal <code>Chat</code> view (the pattern of design §6):</p>
+<pre><code><span class="tk-c">// apps/p3/plugins/chat/contract.ts</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Chat</span> = <span class="tk-f">remote</span>(<span class="tk-s">"p3.chat"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: { session: <span class="tk-f">str</span>() },
+	hostAddress: ({ session }) =&gt; <span class="tk-t">Session</span>({ id: session }),
+	variants: {
+		owner: {
+			state: { view: <span class="tk-k">unknown</span>() },                       <span class="tk-c">// Durable's ConversationView, JSON</span>
+			methods: { send: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ text: <span class="tk-f">str</span>(), requestId: <span class="tk-f">str</span>() })), abort: <span class="tk-f">method</span>() },
+		},
+	},
+});</code></pre>
+<pre><code><span class="tk-c">// apps/p3/plugins/chat/worker.ts (abridged)</span>
+host.<span class="tk-f">serve</span>(<span class="tk-t">ChatStore</span>, (_params, self) =&gt; {
+	<span class="tk-k">const</span> harness = self.<span class="tk-f">registry</span>(<span class="tk-t">HarnessNative</span>);
+	<span class="tk-k">const</span> meta = self.<span class="tk-f">get</span>(<span class="tk-t">SessionMeta</span>, {});
+	self.<span class="tk-f">retryOn</span>(harness);
+	<span class="tk-k">const</span> view = self.<span class="tk-f">follow</span>((observer, context) =&gt; <span class="tk-f">observeRoot</span>(harness.value, observer, context, { min: <span class="tk-n">50</span> }));
+	<span class="tk-k">return</span> {
+		view,
+		send: <span class="tk-k">async</span> ({ text, requestId }, ctx) =&gt; {
+			<span class="tk-k">const</span> root = <span class="tk-k">await</span> harness.value!.<span class="tk-f">root</span>(ctx);
+			<span class="tk-k">if</span> (meta.title.value.title === <span class="tk-s">""</span>) <span class="tk-k">await</span> meta.<span class="tk-f">rename</span>({ title: <span class="tk-f">firstLine</span>(text, <span class="tk-n">80</span>) }, ctx);
+			<span class="tk-c">// Resolves once Durable committed the input: its entry is in `view` before this method answers.</span>
+			<span class="tk-k">await</span> root.<span class="tk-f">submit</span>({ <span class="tk-k">type</span>: <span class="tk-s">"input"</span>, content: text, requestId, whenBusy: <span class="tk-s">"followUp"</span> }, ctx);
+			<span class="tk-k">return</span> <span class="tk-k">null</span>;
+		},
+		abort: <span class="tk-k">async</span> (ctx) =&gt; {
+			<span class="tk-k">await</span> (<span class="tk-k">await</span> harness.value!.<span class="tk-f">root</span>(ctx)).<span class="tk-f">abort</span>(ctx);
+			<span class="tk-k">return</span> <span class="tk-k">null</span>;
+		},
+	};
+});
+host.<span class="tk-f">serve</span>(<span class="tk-t">Chat</span>, (_params, principal, self) =&gt; {
+	<span class="tk-k">if</span> (principal.kind !== <span class="tk-s">"owner"</span> &amp;&amp; principal.kind !== <span class="tk-s">"server"</span>) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"chat is the owner's"</span>);
+	<span class="tk-k">const</span> store = self.<span class="tk-f">get</span>(<span class="tk-t">ChatStore</span>, {});
+	<span class="tk-k">return</span> { variant: <span class="tk-s">"owner"</span>, members: { view: store.view, send: store.send, abort: store.abort } };
+});</code></pre>
+<ul>
+<li><strong>Followed, never copied.</strong> The transcript is Durable&#39;s; <code>self.follow</code> over <code>observeConversation</code> makes its view a
+Chord watchable without a second copy (decision &quot;App authoring rules confirmed by the p2 audit&quot;). Durable keeps one
+mount per conversation; chat&#39;s and sessions&#39; observers share it.</li>
+<li><strong>The streamed answer</strong> is the run&#39;s <code>pi.live</code> document in the view: each delta Durable commits is one view
+revision, one <code>state</code> message to the page. Nothing in p3 assembles a stream.</li>
+<li><strong><code>requestId</code></strong> makes a retried send exactly-once (Durable&#39;s submission dedupe): the page makes one per message, so a
+send whose answer was lost in a reconnect and is sent again is admitted once.</li>
+<li><strong>Answers that follow their state.</strong> <code>send</code> awaits the rename (whose push to the catalog the server commits before it
+answers the worker) and the submission (whose entry the follow publishes before <code>submit</code> resolves). So when the
+page&#39;s call settles, the user entry is in its <code>view</code> and the title is in its <code>SessionList</code>: the optimistic values
+are replaced by real ones, never by old ones.</li>
+</ul>
+<figure class="fig anim"><svg viewBox="0 0 720 518" width="100%" role="img" aria-label="Sending the first message. The page's optimistic entry is replaced by the committed one, which arrives before the answer." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f4m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f4a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f4b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="102" y1="52" x2="102" y2="510" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="23" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="102" y="27" font-size="11" fill="#2a2723" text-anchor="middle">page</text><text x="102" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">chat web</text><line x1="274" y1="52" x2="274" y2="510" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="195" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="274" y="27" font-size="11" fill="#2a2723" text-anchor="middle">server</text><text x="274" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">relay + SessionList</text><line x1="446" y1="52" x2="446" y2="510" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="367" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="446" y="27" font-size="11" fill="#2a2723" text-anchor="middle">worker</text><text x="446" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">Chat, SessionMeta</text><line x1="618" y1="52" x2="618" y2="510" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="539" y="10" width="158" height="42" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="618" y="27" font-size="11" fill="#2a2723" text-anchor="middle">Durable</text><text x="618" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">root conversation</text><g class="step edge" style="--i:1"><path d="M102 72 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f4m)"/><text x="144" y="82" font-size="10" fill="#2a2723" text-anchor="start">useOptimistic: show &quot;hello&quot; at once</text></g><g class="step edge" style="--i:2"><line x1="102" y1="118" x2="271" y2="118" stroke="#7b7468" marker-end="url(#f4m)"/><text x="188" y="112" font-size="10" fill="#2a2723" text-anchor="middle">Chat.send({ text, requestId })</text></g><g class="step edge" style="--i:3"><line x1="274" y1="150" x2="443" y2="150" stroke="#7b7468" marker-end="url(#f4m)"/><text x="360" y="144" font-size="10" fill="#2a2723" text-anchor="middle">relayed (origin of the page)</text></g><g class="step edge" style="--i:4"><line x1="446" y1="182" x2="277" y2="182" stroke="#7b7468" marker-end="url(#f4m)"/><text x="360" y="176" font-size="10" fill="#2a2723" text-anchor="middle">SessionList.report({ title: &quot;hello&quot; })</text></g><g class="step edge" style="--i:5"><path d="M274 208 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f4m)"/><text x="316" y="218" font-size="10" fill="#2a2723" text-anchor="start">commit row; state for the page waits</text></g><g class="step edge" style="--i:6"><line x1="274" y1="254" x2="443" y2="254" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f4m)"/><text x="360" y="248" font-size="10" fill="#2a2723" text-anchor="middle">result</text></g><g class="step edge" style="--i:7"><line x1="446" y1="286" x2="615" y2="286" stroke="#b4472f" marker-end="url(#f4a)"/><text x="532" y="280" font-size="10" fill="#b4472f" text-anchor="middle">root.submit(input)</text></g><g class="step edge" style="--i:8"><line x1="618" y1="318" x2="449" y2="318" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f4m)"/><text x="532" y="312" font-size="10" fill="#2a2723" text-anchor="middle">committed: view gains the user entry</text></g><g class="step edge" style="--i:9"><line x1="446" y1="350" x2="277" y2="350" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f4m)"/><text x="360" y="344" font-size="10" fill="#2a2723" text-anchor="middle">state (view), then result</text></g><g class="step edge" style="--i:10"><line x1="274" y1="382" x2="105" y2="382" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f4m)"/><text x="188" y="376" font-size="10" fill="#2a2723" text-anchor="middle">its own state (title), the worker's state (view), then result</text></g><g class="step edge" style="--i:11"><path d="M102 408 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f4m)"/><text x="144" y="418" font-size="10" fill="#2a2723" text-anchor="start">transition ends: real entry and title shown</text></g><g class="step edge" style="--i:12"><line x1="618" y1="454" x2="449" y2="454" stroke="#7b7468" marker-end="url(#f4m)"/><text x="532" y="448" font-size="10" fill="#2a2723" text-anchor="middle">generation streams into pi.live</text></g><g class="step edge" style="--i:13"><line x1="446" y1="486" x2="105" y2="486" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f4m)"/><text x="274" y="480" font-size="10" fill="#2a2723" text-anchor="middle">one state message per revision (via server)</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 4.</span> Sending the first message. The page&#39;s optimistic entry is replaced by the committed one, which arrives before the answer.</figcaption></figure>
+</section>
+
+<section class="chapter" id="page"><header class="opener"><div class="numeral">VIII</div><h2>The Page</h2><p class="lede">A shell with two slots; the list and the chat are plugins; both feel instant.</p></header>
+<p class="dropcap">The web entry is the tutorial&#39;s with a layout: a sidebar and a main area, each filled from a registry.</p>
+<pre><code><span class="tk-c">// apps/p3/src/web/main.tsx (abridged)</span>
+<span class="tk-k">const</span> core = <span class="tk-f">defineFacet</span>((host) =&gt; {
+	host.<span class="tk-f">serve</span>(v1web.<span class="tk-t">Sidebar</span>, { compose: (table) =&gt; table.<span class="tk-f">map</span>(({ value }) =&gt; value) });
+	host.<span class="tk-f">serve</span>(v1web.<span class="tk-t">Screens</span>, { compose: (table) =&gt; table.<span class="tk-f">map</span>(({ value }) =&gt; value) });
+});
+
+<span class="tk-k">function</span> <span class="tk-t">Shell</span>() {
+	<span class="tk-k">const</span> sidebar = <span class="tk-f">useRegistry</span>(v1web.<span class="tk-t">Sidebar</span>) ?? [];
+	<span class="tk-k">const</span> screens = <span class="tk-f">useRegistry</span>(v1web.<span class="tk-t">Screens</span>) ?? [];
+	<span class="tk-k">const</span> path = v1web.<span class="tk-f">useRoute</span>();
+	<span class="tk-k">const</span> match = <span class="tk-f">bestMatch</span>(screens, path);                       <span class="tk-c">// most specific pattern wins</span>
+	<span class="tk-k">return</span> (
+		&lt;div className=<span class="tk-s">"shell"</span>&gt;
+			&lt;nav&gt;{sidebar.<span class="tk-f">map</span>(({ name, <span class="tk-t">Component</span> }) =&gt; &lt;<span class="tk-t">Component</span> key={name} /&gt;)}&lt;/nav&gt;
+			&lt;main&gt;{match ? &lt;match.<span class="tk-t">Component</span> params={match.params} /&gt; : &lt;<span class="tk-t">Empty</span> /&gt;}&lt;/main&gt;
+		&lt;/div&gt;
+	);
+}
+
+<span class="tk-k">void</span> <span class="tk-f">startPage</span>({
+	connect: () =&gt; <span class="tk-k">new</span> <span class="tk-t">WebSocket</span>(<span class="tk-s">`${location.origin.replace(/^http/, "ws")}/chord`</span>),
+	modules: { <span class="tk-s">"@p3/app/v1"</span>: v1, <span class="tk-s">"@p3/app/v1/web"</span>: v1web, react: <span class="tk-t">React</span>, <span class="tk-s">"react/jsx-runtime"</span>: jsx },
+	core: [{ name: <span class="tk-s">"@p3/web"</span>, facet: core }],
+	render: (host) =&gt; <span class="tk-f">createRoot</span>(document.<span class="tk-f">getElementById</span>(<span class="tk-s">"root"</span>)!).<span class="tk-f">render</span>(&lt;<span class="tk-t">HostProvider</span> host={host}&gt;&lt;<span class="tk-t">Shell</span> /&gt;&lt;/<span class="tk-t">HostProvider</span>&gt;),
+});</code></pre>
+<p>The look comes from the kit&#39;s themes (CSS variables); p3&#39;s own design (p2&#39;s look made great) is a later step&#39;s. The
+shell&#39;s CSS is base code, a plugin&#39;s CSS is the plugin&#39;s.</p>
+<h3 id="creating-a-session">Creating a session</h3>
+<pre><code><span class="tk-c">// apps/p3/plugins/sessions/web.tsx (abridged)</span>
+<span class="tk-k">function</span> <span class="tk-t">SessionsPart</span>() {
+	<span class="tk-k">const</span> list = <span class="tk-f">useHold</span>(<span class="tk-t">SessionList</span>, {});
+	<span class="tk-k">const</span> rows = <span class="tk-f">useWatch</span>(list?.variant === <span class="tk-s">"owner"</span> ? list.sessions : <span class="tk-k">undefined</span>) ?? [];
+	<span class="tk-k">const</span> [shown, addRow] = <span class="tk-f">useOptimistic</span>(rows, (current, row: <span class="tk-t">Row</span>) =&gt; [row, ...current]);
+	<span class="tk-k">const</span> create = () =&gt;
+		<span class="tk-f">startTransition</span>(<span class="tk-k">async</span> () =&gt; {
+			<span class="tk-k">const</span> id = crypto.<span class="tk-f">randomUUID</span>();                       <span class="tk-c">// the page names it: no round trip before showing it</span>
+			<span class="tk-f">addRow</span>({ id, title: <span class="tk-s">""</span>, status: <span class="tk-s">"new"</span>, created: <span class="tk-t">Date</span>.<span class="tk-f">now</span>(), updated: <span class="tk-t">Date</span>.<span class="tk-f">now</span>() });
+			<span class="tk-f">navigate</span>(<span class="tk-s">`/s/${id}`</span>);
+			<span class="tk-k">if</span> (list?.variant === <span class="tk-s">"owner"</span>) <span class="tk-k">await</span> list.<span class="tk-f">create</span>({ id }, BACKGROUND_CONTEXT);
+		});
+	<span class="tk-k">return</span> (<span class="tk-c">/* "New session" button, then shown.map(row =&gt; &lt;SessionLink row={row} /&gt;) */</span>);
+}</code></pre>
+<p>The row and the chat screen appear in the same frame. The chat screen holds <code>Chat</code> only once the catalog lists the id
+(it reads <code>SessionList</code> too), so no worker starts for a session the server has not committed; a message typed meanwhile
+is shown optimistically and its <code>send</code> waits in the reference&#39;s parked calls until the hold binds (design §7).</p>
+<figure class="fig anim"><svg viewBox="0 0 720 382" width="100%" role="img" aria-label="Creating a session: the row and the screen at once; the worker starts on the first hold, after the server committed the row." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f5m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f5a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f5b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="102" y1="52" x2="102" y2="374" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="23" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="102" y="27" font-size="11" fill="#2a2723" text-anchor="middle">page</text><text x="102" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">sessions + chat web</text><line x1="274" y1="52" x2="274" y2="374" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="195" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="274" y="27" font-size="11" fill="#2a2723" text-anchor="middle">server</text><text x="274" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">SessionList</text><line x1="446" y1="52" x2="446" y2="374" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="367" y="10" width="158" height="42" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="446" y="27" font-size="11" fill="#2a2723" text-anchor="middle">workers component</text><text x="446" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">kit</text><line x1="618" y1="52" x2="618" y2="374" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="539" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="618" y="27" font-size="11" fill="#2a2723" text-anchor="middle">worker</text><text x="618" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">Session({ id })</text><g class="step edge" style="--i:1"><path d="M102 72 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f5m)"/><text x="144" y="82" font-size="10" fill="#2a2723" text-anchor="start">addRow (optimistic), navigate(/s/id)</text></g><g class="step edge" style="--i:2"><line x1="102" y1="118" x2="271" y2="118" stroke="#7b7468" marker-end="url(#f5m)"/><text x="188" y="112" font-size="10" fill="#2a2723" text-anchor="middle">SessionList.create({ id })</text></g><g class="step edge" style="--i:3"><path d="M274 144 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f5m)"/><text x="316" y="154" font-size="10" fill="#2a2723" text-anchor="start">commit row (status new)</text></g><g class="step edge" style="--i:4"><line x1="274" y1="190" x2="105" y2="190" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f5m)"/><text x="188" y="184" font-size="10" fill="#2a2723" text-anchor="middle">state (row), then result</text></g><g class="step edge" style="--i:5"><line x1="102" y1="222" x2="271" y2="222" stroke="#7b7468" marker-end="url(#f5m)"/><text x="188" y="216" font-size="10" fill="#2a2723" text-anchor="middle">useHold(Chat, { session: id })</text></g><g class="step edge" style="--i:6"><line x1="274" y1="254" x2="443" y2="254" stroke="#7b7468" marker-end="url(#f5m)"/><text x="360" y="248" font-size="10" fill="#2a2723" text-anchor="middle">route Session({ id }): authorize, fork</text></g><g class="step edge" style="--i:7"><line x1="446" y1="286" x2="615" y2="286" stroke="#7b7468" marker-end="url(#f5m)"/><text x="532" y="280" font-size="10" fill="#2a2723" text-anchor="middle">start: store, HostRuntime, plugins.load</text></g><g class="step edge" style="--i:8"><line x1="618" y1="318" x2="277" y2="318" stroke="#7b7468" marker-end="url(#f5m)"/><text x="446" y="312" font-size="10" fill="#2a2723" text-anchor="middle">SessionMeta: report({ status: idle })</text></g><g class="step edge" style="--i:9"><line x1="618" y1="350" x2="105" y2="350" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f5m)"/><text x="360" y="344" font-size="10" fill="#2a2723" text-anchor="middle">Chat bound: view (empty transcript)</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 5.</span> Creating a session: the row and the screen at once; the worker starts on the first hold, after the server committed the row.</figcaption></figure>
+<h3 id="the-chat-screen">The chat screen</h3>
+<p><code>plugins/chat/web.tsx</code> contributes <code>Screens</code> <code>{ path: &quot;/s/:id&quot;, Component: ChatScreen }</code>: the transcript from <code>view.entries</code>
+(user and assistant text; tool entries render as a placeholder until tools exist), the streaming answer from
+<code>view.docs[&quot;pi.live&quot;]</code>, a composer whose half-typed text is page state (<code>usePageState</code>, kept across a plugin reload),
+Send and Stop. Sending:</p>
+<pre><code><span class="tk-k">const</span> [entries, addPending] = <span class="tk-f">useOptimistic</span>(view?.entries ?? [], (current, text: string) =&gt; [...current, <span class="tk-f">pendingUser</span>(text)]);
+<span class="tk-k">const</span> send = (text: string) =&gt;
+	<span class="tk-f">startTransition</span>(<span class="tk-k">async</span> () =&gt; {
+		<span class="tk-f">addPending</span>(text);
+		<span class="tk-f">setDraft</span>(<span class="tk-s">""</span>);
+		<span class="tk-k">await</span> chat?.<span class="tk-f">send</span>({ text, requestId: crypto.<span class="tk-f">randomUUID</span>() }, BACKGROUND_CONTEXT);
+	});</code></pre>
+<p>A rejected send leaves the draft empty and the pending entry gone; the screen shows the error under the composer with
+the text restored. The transcript shows the window (the newest 50 to 100 entries); scrolling back through older
+entries is a later step (<code>Conversation.entries()</code> pages, as Durable&#39;s <code>ConversationTranscript</code> does).</p>
+</section>
+
+<section class="chapter" id="survive"><header class="opener"><div class="numeral">IX</div><h2>Reloads and Restarts</h2><p class="lede">What the person on the phone sees when each kind of change lands.</p></header>
+<p class="dropcap">Step 0 is done only when the session survives each of these, tested end to end:</p>
+<table>
+<thead>
+<tr>
+<th>Event</th>
+<th>What happens</th>
+<th>What the page shows</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Page reload</td>
+<td>the page&#39;s host reconnects; <code>SessionList</code> and <code>Chat</code> hold again and get snapshots</td>
+<td>the same list and transcript; the composer&#39;s draft is gone (page state lives as long as the page)</td>
+</tr>
+<tr>
+<td>Plugin reload, chat</td>
+<td>the worker&#39;s <code>ChatStore</code> and <code>Chat</code> restart (old work finishes on old code, at most 5 s); the follow attaches to the same harness; the page&#39;s <code>chat</code> script reloads in place</td>
+<td>the transcript stays; <code>loading</code> for a blink; the draft stays (<code>usePageState</code>)</td>
+</tr>
+<tr>
+<td>Plugin reload, harness</td>
+<td>the <code>Harness</code> object restarts: the old Durable harness closes at the seal, the new one opens on the same store and recovers running work (a generation in flight is re-run from its last checkpoint)</td>
+<td>the transcript stays; a reply being streamed restarts or continues from its last commit</td>
+</tr>
+<tr>
+<td>Plugin reload, sessions</td>
+<td><code>SessionStore</code> restarts on the server, its table kept; each running worker&#39;s <code>SessionMeta</code> restarts and reports its status again</td>
+<td>the list stays</td>
+</tr>
+<tr>
+<td>Worker idle stop</td>
+<td>five minutes without references or running agent work (<code>KeepAlive</code> zero): the workers component stops it</td>
+<td>the catalog keeps the last title and status; opening the session starts the worker again</td>
+</tr>
+<tr>
+<td>Server restart</td>
+<td>every worker stops with the server; on the next start the catalog is read from the server&#39;s store; a session&#39;s worker starts on its first hold and Durable recovers its run</td>
+<td>the list at once; the transcript when the worker is up; an interrupted reply resumes</td>
+</tr>
+</tbody></table>
+<div class="note"><b class="tag">A run when the server restarts</b><p>A session that was working when the server stopped has no worker after the restart until someone opens it, so its run
+waits. Starting the workers of sessions that were <code>working</code> at shutdown, and waking sleeping tasks on time, belongs to
+the workers&#39; lifecycle in step 2 (hands), together with Armin&#39;s worker-start proposals.</p>
+</div>
+</section>
+
+<section class="chapter" id="done"><header class="opener"><div class="numeral">X</div><h2>Tests and Done</h2><p class="lede">What the build delivers and how each claim is checked.</p></header>
+<p class="dropcap">The build subagent works in its own worktree off branch <code>p3</code>, in the Chord code style (one concept per file, a doc line
+per export, tagged unions, no defensive checks of typed values), and delivers:</p>
+<ol>
+<li><strong>Decision 1 in the kit</strong> (if approved as A): <code>packages/chord/src/node/app/runtime.ts</code>, tests in
+<code>packages/chord/test/node/app/</code>, the kit README and design §23; on main first, then merged into <code>p3</code>.</li>
+<li><strong>The app</strong>: the files of chapter I, <code>npm run check</code> clean at the root and in <code>apps/p3</code> (p3 gets its own <code>check</code>
+script and tsconfig like p2&#39;s).</li>
+<li><strong>Plugin tests</strong> with <code>testPlugin</code>: <code>sessions</code> on the server (create is idempotent; the owner lists, a worker
+reports only its own row; a report of an older incarnation is ignored; a non-owner is refused); <code>chat</code> on a worker
+with a stub harness (send submits once per <code>requestId</code>; the first send sets the title).</li>
+<li><strong>App tests</strong> (<code>apps/p3/test/</code>, the kit in one process, a client host over the links endpoint with the owner token,
+as example 61&#39;s step 7): create, send, the fake reply streams in at least two revisions; a second client sees the
+same list and transcript (page reload); <code>applyChanges</code> after editing the chat plugin keeps the transcript and a new
+send works; <code>applyChanges</code> after editing the harness plugin during a reply recovers it; <code>app.close</code> and
+<code>startServer</code> on the same data directory keep the list and the transcript and finish an interrupted reply.</li>
+<li><strong>A browser test</strong> (Chromium, <code>CHROMIUM_BIN</code>): the new row and the sent message are on screen in the frame after the
+click, before any answer (the server&#39;s answers delayed by a test hook in the transport).</li>
+<li><strong><code>apps/p3/examples/00-skeleton.ts</code></strong>: the walkthrough of the preface as a script printing each step (start, sign
+in, create, send, the streamed reply, a plugin reload, a restart), in example 61&#39;s format.</li>
+<li><strong>On the phone</strong>: started next to p2 with its own data directory and port; the owner&#39;s link opens it. Deploying it
+there goes through the phone dev session in an owner-started turn.</li>
+</ol>
+<p>Two code reviewers (one adversarial, one against design.md and this spec) check the build; their fixes go in before
+the commit on <code>p3</code>.</p>
+</section>
+
+<section class="chapter epilogue" id="open-decisions"><header class="opener"><div class="numeral">∴</div><h2>Open Decisions</h2><p class="lede">What the owner decides before the build starts, one at a time.</p></header>
+<p class="dropcap">Step 0 is the kit app of the tutorial, shaped as p3: a server with a catalog table, a worker per session owning a
+Durable harness as a plugin, three worker registries and two page slots, a fake model, an optimistic page. Four
+decisions are the owner&#39;s; the first blocks the build.</p>
+<ol>
+<li><strong>How a plugin gets its host&#39;s store, root scope, load signal and keep-alive</strong> (chapter IV): recommended A, two kit
+registries <code>HostRuntime</code> and <code>KeepAlive</code>; alternatives B (app core facets and a ready hook in <code>startWorker</code>) and C
+(p3 on <code>workerMain</code>, without <code>startWorker</code>).</li>
+<li><strong>pi-ai and pi-durable as host packages of the worker kind</strong> (chapter II): plugins import them by name, as web
+plugins import React; recommended, because re-exporting Durable&#39;s whole extension surface through <code>@p3/app/v1/worker</code>
+would copy its API into p3&#39;s and pin it to p3&#39;s versions. The alternative re-exports what p3 supports and nothing
+else (stricter, more upkeep per Durable change).</li>
+<li><strong>Data directory and port</strong>: <code>~/.p3</code> (the kit&#39;s default for the name <code>p3</code>) and 8789, next to p2&#39;s <code>~/.pi/p2</code> and<ol start="8788">
+<li>Recommended as is.</li>
+</ol>
+</li>
+<li><strong>The page names new sessions</strong> (chapter VIII): <code>crypto.randomUUID()</code> on the page, checked by pattern and created
+idempotently on the server, so the row and the screen need no round trip. The alternative (the server names it)
+costs one round trip before navigating.</li>
+</ol>
+<p>Not decided here, by design: the providers registry&#39;s final shape (step 1), the tool_search fallback (step 4),
+paging the list and the transcript, the session lifecycle (archive, delete, cleaning stores of uncreated ids), waking
+workers whose sessions were working at shutdown (step 2).</p>
+</section>
+
+<section class="chapter appendix" id="reference"><header class="opener"><div class="numeral">A</div><h2>Reference</h2></header>
+<h3 id="contracts-and-registries">Contracts and registries</h3>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Kind</th>
+<th>Where</th>
+<th>Members</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>Session({ id })</code></td>
+<td>host kind</td>
+<td>API</td>
+<td>the session&#39;s worker</td>
+</tr>
+<tr>
+<td><code>HostRuntime</code> (<code>chord.app.runtime</code>)</td>
+<td>registry, kit (decision 1)</td>
+<td>every kit host</td>
+<td><code>{ store, root, whenLoaded }</code></td>
+</tr>
+<tr>
+<td><code>KeepAlive</code> (<code>chord.app.keep-alive</code>)</td>
+<td>registry, kit (decision 1)</td>
+<td>every kit worker</td>
+<td>counts summed into <code>busy</code></td>
+</tr>
+<tr>
+<td><code>Extensions</code> (<code>p3.extensions</code>)</td>
+<td>registry</td>
+<td>worker, served by <code>harness</code></td>
+<td>Durable <code>Extension</code> per plugin</td>
+</tr>
+<tr>
+<td><code>ModelProviders</code> (<code>p3.model-providers</code>)</td>
+<td>registry</td>
+<td>worker, served by <code>harness</code></td>
+<td>pi-ai <code>Provider</code> per plugin; value <code>Models</code></td>
+</tr>
+<tr>
+<td><code>HarnessNative</code> (<code>p3.harness</code>)</td>
+<td>registry</td>
+<td>worker, served by <code>harness</code></td>
+<td>the open Durable harness</td>
+</tr>
+<tr>
+<td><code>Harness</code> (<code>p3.harness</code>)</td>
+<td>local, empty params</td>
+<td>worker</td>
+<td>none: owns Durable</td>
+</tr>
+<tr>
+<td><code>SessionStore</code> (<code>p3.sessions.store</code>)</td>
+<td>local, empty params</td>
+<td>server</td>
+<td><code>sessions</code>, <code>create</code>, <code>report</code>; table <code>p3.sessions</code></td>
+</tr>
+<tr>
+<td><code>SessionList</code> (<code>p3.sessions</code>)</td>
+<td>remote</td>
+<td>server</td>
+<td>owner: <code>sessions</code>, <code>create</code>; worker: <code>report</code></td>
+</tr>
+<tr>
+<td><code>SessionMeta</code> (<code>p3.sessions.meta</code>)</td>
+<td>local, empty params</td>
+<td>worker</td>
+<td><code>title</code>, <code>rename</code>; pushes status</td>
+</tr>
+<tr>
+<td><code>ChatStore</code> (<code>p3.chat.store</code>)</td>
+<td>local, empty params</td>
+<td>worker</td>
+<td><code>view</code>, <code>send</code>, <code>abort</code></td>
+</tr>
+<tr>
+<td><code>Chat</code> (<code>p3.chat</code>)</td>
+<td>remote</td>
+<td>worker</td>
+<td>owner: <code>view</code>, <code>send</code>, <code>abort</code></td>
+</tr>
+<tr>
+<td><code>Sidebar</code> (<code>p3.sidebar</code>)</td>
+<td>registry</td>
+<td>page, base</td>
+<td><code>{ name, Component }</code></td>
+</tr>
+<tr>
+<td><code>Screens</code> (<code>p3.screens</code>)</td>
+<td>registry</td>
+<td>page, base</td>
+<td><code>{ path, Component }</code></td>
+</tr>
+</tbody></table>
+<h3 id="words">Words</h3>
+<p><strong>Base code</strong>: the API package, <code>start.ts</code>, <code>worker.ts</code>, the web entry; changed only by a restart. <strong>Catalog</strong>: the
+server&#39;s table of sessions. <strong>Harness</strong>: Durable&#39;s agent runtime on a session&#39;s store, owned by the <code>Harness</code> object.
+<strong>Incarnation</strong>: a host&#39;s run, uuidv7, stamped on calls by Chord. <strong>Optimistic value</strong>: what the page shows while a
+call is pending, replaced by the real state when it settles. <strong>Plugin</strong>: a directory of facets, reloaded in place.
+<strong>Root conversation</strong>: the session&#39;s Durable conversation with id <code>ROOT_CONVERSATION_ID</code>. <strong>View</strong>: Durable&#39;s
+<code>ConversationView</code>, followed into Chord.</p>
+</section>
+
+<p class="colophon">p3 step 0 · spec, first edition · 2026-11-06 · sources: Chord design.md §3-§24, decisions 2026-11-01..06, the app kit and example 61, pi-durable spec §2.2, §7.1, §9.3</p>
+</div></div>
+<script>(function activate(root) {
+	const replay = (f) => {
+		f.classList.remove("play");
+		void f.getBoundingClientRect();
+		f.classList.add("play");
+	};
+	const io = new IntersectionObserver(
+		(es) => {
+			for (const e of es)
+				if (e.isIntersecting) {
+					e.target.classList.add("play");
+					io.unobserve(e.target);
+				}
+		},
+		{ threshold: 0.3 },
+	);
+	root.querySelectorAll(".anim:not(.armed)").forEach((f) => {
+		f.classList.add("armed");
+		io.observe(f);
+		const b = f.querySelector(".replay");
+		if (b) b.onclick = () => replay(f);
+	});
+	root.querySelectorAll(".steps:not(.js)").forEach((s) => {
+		s.classList.add("js");
+		const ps = [...s.querySelectorAll(":scope>.step-panel")];
+		let i = 0;
+		const c = s.querySelector(".count"),
+			p = s.querySelector(".prev"),
+			n = s.querySelector(".next");
+		const show = () => {
+			ps.forEach((x, j) => x.classList.toggle("on", j === i));
+			c.textContent = `${i + 1} / ${ps.length}`;
+			p.disabled = i === 0;
+			n.disabled = i === ps.length - 1;
+			ps[i].querySelectorAll(".anim").forEach(replay);
+		};
+		p.onclick = () => {
+			i--;
+			show();
+		};
+		n.onclick = () => {
+			i++;
+			show();
+		};
+		show();
+	});
+})(document)</script>
+</body></html>

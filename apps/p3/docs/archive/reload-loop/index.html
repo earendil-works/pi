@@ -1,0 +1,458 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>p3: the reload loop</title>
+<style>
+
+:root{--paper:#fbf8f2;--ink:#2a2723;--muted:#7b7468;--rule:#e3dbcc;--accent:#b4472f;--blue:#2e6a8a;--sand:#c2b18c;--soft:#f4eee2}
+*{box-sizing:border-box}
+html{background:#efe9dd}
+body{margin:0;color:var(--ink);font:19px/1.68 'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,serif;
+ -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+.book{max-width:860px;margin:0 auto;background:var(--paper);box-shadow:0 0 0 1px #e1d9c8,0 30px 80px -40px rgba(60,40,10,.35);padding:0 0 4rem}
+.inner{padding:0 90px}
+h1,h2,h3{font-weight:400;line-height:1.15}
+h2{font-size:2.1rem;margin:.2em 0 .3em;letter-spacing:-.01em}
+h3{font-size:1.05rem;text-transform:uppercase;letter-spacing:.14em;margin:2.4em 0 .6em;color:var(--ink);font-weight:600;
+ font-family:'Avenir Next','Helvetica Neue',sans-serif}
+p{margin:0 0 1.05em;hyphens:auto;text-align:left}
+code{font:.8em/1 'SF Mono',Menlo,Consolas,monospace;background:#f1ebde;padding:.1em .35em;border-radius:3px}
+pre{font:.74rem/1.55 'SF Mono',Menlo,Consolas,monospace;background:#f4eee2;border-left:3px solid var(--sand);padding:1rem 1.2rem;margin:1.4rem 0 1.8rem;
+ overflow-x:auto;border-radius:0 4px 4px 0;white-space:pre;tab-size:2}
+pre code{background:none;padding:0;font-size:1em}
+em{font-style:italic}
+a{color:var(--blue)}
+.cover{min-height:92vh;display:flex;flex-direction:column;justify-content:center;padding:90px;background:
+ radial-gradient(circle at 85% 15%,rgba(180,71,47,.13),transparent 40%),radial-gradient(circle at 10% 90%,rgba(46,106,138,.12),transparent 45%),var(--paper);
+ border-bottom:1px solid var(--rule)}
+.kicker{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.22em;text-transform:uppercase;color:var(--accent)}
+.cover h1{font-size:5.2rem;line-height:.98;margin:.35em 0 .25em;letter-spacing:-.025em}
+.subtitle{font-size:1.45rem;font-style:italic;color:#4a453e;max-width:30em;text-align:left}
+.cover-stats,.stats{display:flex;flex-wrap:wrap;gap:1.2rem 2.4rem;margin:2.2rem 0}
+.stats{margin:1.6rem 0 1.8rem;padding:1.1rem 0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.stat b{display:block;font-size:2.1rem;font-weight:400;line-height:1.1;font-variant-numeric:lining-nums}
+.stat span{font:.78rem/1.3 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);letter-spacing:.03em;display:block;max-width:14em}
+.cover-note{font-size:.9rem;color:var(--muted);max-width:34em;text-align:left;margin-top:2rem}
+.toc{padding:4rem 0 2rem}
+.toc ol{list-style:none;padding:0;margin:1rem 0;columns:2;column-gap:3rem}
+.toc li{padding:.3rem 0;border-bottom:1px dotted var(--rule);break-inside:avoid}
+.toc a{color:var(--ink);text-decoration:none}
+.toc a:hover{color:var(--accent)}
+.preface{padding-top:2rem}
+.findings{padding-left:1.4em}
+.findings li{margin:.55em 0;padding-left:.3em}
+.findings li::marker{color:var(--accent);font-weight:600}
+.chapter{padding-top:4.5rem;margin-top:3rem;border-top:1px solid var(--rule)}
+.opener{text-align:center;margin-bottom:2.6rem}
+.numeral{font-size:4.2rem;color:var(--accent);line-height:1;font-variant:small-caps;letter-spacing:.05em}
+.opener h2{font-size:2.5rem;margin:.25em 0}
+.lede{font-style:italic;color:#5a544a;font-size:1.12rem;max-width:30em;margin:0 auto;text-align:center}
+.dropcap::first-letter{float:left;font-size:4.1em;line-height:.82;padding:.06em .09em 0 0;color:var(--accent)}
+.fig{margin:2rem 0 2.2rem}
+.fig.wide{margin-left:-50px;margin-right:-50px}
+.fig svg{display:block;margin:0 auto}
+figcaption{font:.8rem/1.45 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:.7rem;padding-left:.8rem;border-left:2px solid var(--rule)}
+.fignum{color:var(--ink);font-weight:600}
+.note{font:.86rem/1.55 'Avenir Next','Helvetica Neue',sans-serif;color:#5b5549;background:#f4eee2;border-left:3px solid var(--sand);
+ padding:.9rem 1.1rem;margin:1.8rem 0;border-radius:0 4px 4px 0}
+.note.review{border-left-color:var(--accent)}
+.note b.tag{font-weight:600;letter-spacing:.12em;text-transform:uppercase;font-size:.72rem;color:var(--accent);display:block;margin-bottom:.3rem}
+.note code{font-size:.85em}
+table{width:100%;border-collapse:collapse;margin:1.4rem 0 1.8rem;font:.8rem/1.4 'Avenir Next','Helvetica Neue',sans-serif}
+th{text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:.68rem;border-bottom:1.5px solid var(--ink);padding:.45rem .5rem}
+td{padding:.42rem .5rem;border-bottom:1px solid var(--rule);vertical-align:top}
+td code{font-size:.92em}
+table.num td:not(:first-child),table.num th:not(:first-child){text-align:right}
+.epilogue p{font-size:1.04em}
+.appendix{font-size:.92em}
+.appendix ul,.chapter ul{padding-left:1.2em}
+.appendix li,.chapter li{margin:.4em 0}
+.colophon{text-align:center;font:.78rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:4rem;letter-spacing:.05em}
+@media (max-width:760px){.inner{padding:0 22px}.cover{padding:40px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}
+ .toc ol{columns:1}p{text-align:left}body{font-size:17px}}
+@media print{html{background:#fff}.book{box-shadow:none}.chapter{break-before:page}.fig{break-inside:avoid}}
+.transcript p b{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-right:.3em}
+pre .tk-c{color:#8d8576;font-style:italic}pre .tk-s{color:#5f7a3d}pre .tk-n{color:#a0662a}pre .tk-k{color:#b4472f}pre .tk-t{color:#2e6a8a}pre .tk-f{color:#7a3f6a}
+h4{font:600 .82rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.06em;margin:1.8em 0 .5em;color:var(--muted)}
+.inner ul,.inner ol:not(.findings){padding-left:1.2em}
+.inner li{margin:.35em 0}
+blockquote{margin:1.4rem 0;padding:.2rem 0 .2rem 1.2rem;border-left:3px solid var(--rule);color:#5a544a;font-style:italic}
+.fig svg text{dominant-baseline:auto}
+.fig .replay{font:600 .7rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);
+ background:none;border:1px solid var(--rule);border-radius:3px;padding:.2rem .55rem;margin:0 0 0 1rem;cursor:pointer;float:right}
+.fig .replay:hover{border-color:var(--accent)}
+.anim.armed .step{opacity:0}
+.anim.armed.play .step{animation:stepIn .45s ease-out both;animation-delay:calc(var(--i) * var(--pace, .45s))}
+.anim.armed.play .step.edge{animation-name:edgeIn}
+@keyframes stepIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes edgeIn{from{opacity:0}to{opacity:1}}
+.steps{margin:2rem 0 2.2rem;border:1px solid var(--rule);border-radius:6px;background:#fffdf8}
+.steps-head{display:flex;align-items:center;gap:.8rem;padding:.6rem 1rem;border-bottom:1px solid var(--rule);
+ font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.steps-head .title{flex:1}
+.steps-head .count{color:var(--muted);letter-spacing:.06em}
+.steps-head button{font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--ink);background:var(--soft);border:1px solid var(--rule);
+ border-radius:3px;padding:.25rem .65rem;cursor:pointer}
+.steps-head button:disabled{opacity:.35;cursor:default}
+.step-panel{padding:1rem 1.2rem .4rem}
+.step-panel>h4:first-child{margin-top:.2rem;color:var(--ink)}
+.steps.js .step-panel{display:none}
+.steps.js .step-panel.on{display:block}
+.steps:not(.js) .steps-head button,.steps:not(.js) .steps-head .count{display:none}
+.steps:not(.js) .step-panel+.step-panel{border-top:1px dashed var(--rule)}
+.fig figcaption{display:flow-root}
+.fig svg{max-width:100%;height:auto}
+table{max-width:100%}
+@media (max-width:760px){.inner{padding:0 20px}.cover{padding:48px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}table{display:block;overflow-x:auto}.toc ol{columns:1}}
+</style>
+
+
+</head>
+<body><div class="book">
+<section class="cover">
+  <div class="kicker">An explainer · p3 · 2026-11-06</div>
+  <h1>The Reload<br>Loop</h1>
+  <p class="subtitle">What is bundled into what, what only a restart changes, and what happens, step by step, when someone edits a file of a running p3</p>
+  <div class="cover-stats"><div class="stat"><b>4</b><span>bundles built once at start (server code is loaded, not bundled)</span></div><div class="stat"><b>1</b><span>script per plugin and host kind, rebuilt on Apply</span></div><div class="stat"><b>0</b><span>dev modes: the phone runs the same loop</span></div><div class="stat"><b>3</b><span>rough edges fixed in step 0a, 1 accepted</span></div></div>
+  <div class="cover-note"><p>Written for the owner from the Chord code on branch <code>p3</code> (<code>packages/chord/src/node/plugins/</code>, <code>node/surfaces/</code>,
+<code>node/workers/</code>, <code>node/app/</code>, <code>src/web/</code>) and design §21. The p3 file names are step 0&#39;s. The last chapter lists what
+the step-0 reviewers found rough, and what step 0a did about each.</p>
+</div>
+</section><div class="inner">
+<nav class="toc"><h2>Contents</h2><ol>
+<li><a href="#before-we-begin">Before we begin</a></li>
+<li><a href="#bundles">I. What Bundles What</a></li>
+<li><a href="#never">II. Never Reloaded</a></li>
+<li><a href="#how">III. Reloaded, and How</a></li>
+<li><a href="#loop">IV. The Loop: I Edit File X</a></li>
+<li><a href="#what-step-0a-changed">What Step 0a Changed</a></li>
+</ol></nav>
+
+<section class="preface" id="before-we-begin">
+<h2>Before we begin</h2>
+<p class="dropcap">An agent on slayer edits <code>apps/p3/plugins/hello/server.ts</code> while Mario uses p3 on his phone. Nothing happens yet: the
+file is saved, a bar in Mario&#39;s page says &quot;1 plugin changed&quot;. He taps <strong>Apply</strong>. A tenth of a second later the server
+runs the new code for that one plugin; his page did not reload, his scroll and half-typed text are where they were.
+Had the agent edited <code>apps/p3/src/api/v1/index.ts</code> instead, the bar would say &quot;restart needed&quot;, and only a restart of
+the p3 process would bring that change in, reloading every page.</p>
+<p>This is the loop for development and production alike: p3 has no dev mode. The phone, slayer and a test run the same
+code paths. What decides whether an edit is a quiet plugin reload or a restart is only which file it touches.</p>
+<h3 id="seven-things-to-know">Seven things to know</h3>
+<ol class="findings">
+<li><strong>Three kinds of code.</strong> Base code (the start script, the API, the entries, Chord, React) is loaded or bundled once
+at start. Plugin code is built per plugin and replaced while running. Data (stores, files) is never code and
+survives both.</li>
+<li><strong>Four bundles are made at start and never again:</strong> the worker base (every session worker is forked from it), the
+page&#39;s base bundle, the terminal&#39;s base bundle, and Node&#39;s own module graph of the server. Changing what went into
+them needs a restart.</li>
+<li><strong>A plugin is one script per kind of host.</strong> <code>server.ts</code>, <code>worker.ts</code>, <code>web.tsx</code>, <code>tui.ts</code>: each built by esbuild into
+one script with the plugin&#39;s own files, copied contract files of sibling plugins and its npm packages inlined; the
+API, Chord and React stay outside and are passed in.</li>
+<li><strong>Saving marks, Apply applies.</strong> A watcher marks the plugins whose files changed; nothing is built or loaded until
+someone applies (a button, an agent&#39;s tool, a test). An agent half way through an edit never breaks the app.</li>
+<li><strong>Apply builds, then rolls out in order:</strong> the server, every running worker, then every open page and terminal. On
+each, only the changed plugin&#39;s objects restart and only its components remount.</li>
+<li><strong>A failed build changes nothing.</strong> The plugin keeps its old code everywhere and stays marked; the error is shown.</li>
+<li><strong>A restart is the only way base code changes.</strong> It stops the server and every worker; pages reconnect, see a new
+base bundle and reload. Stores keep everything.</li>
+</ol>
+<h3 id="words-used-throughout">Words used throughout</h3>
+<p><strong>Base code</strong>: what a restart changes. <strong>Plugin</strong>: a directory in <code>apps/p3/plugins/</code> (or the user&#39;s
+<code>~/.p3/plugins/</code>) with a <code>package.json</code> and one file per kind of host. <strong>Script</strong>: one built facet, plain data (code,
+digest, inputs). <strong>Mark</strong>: the watcher&#39;s note that a plugin changed (<code>dirty</code>), that plugins appeared or vanished
+(<code>set</code>), that a <code>package.json</code> changed (<code>install</code>), or that base code changed (<code>base</code>). <strong>Apply</strong>: build the marked
+plugins and roll them out. <strong>Rollout step</strong>: one kind of host receiving the new set (the server, a worker kind, the
+pages). <strong>Restart</strong>: the p3 process stops and starts again.</p>
+</section>
+
+<section class="chapter" id="bundles"><header class="opener"><div class="numeral">I</div><h2>What Bundles What</h2><p class="lede">Every piece of code in a running p3, where it is built and when it can change.</p></header>
+<figure class="fig wide"><svg viewBox="0 0 720 385" width="100%" role="img" aria-label="What runs where, and what made it. Accent: rebuilt on Apply; muted: built once at start." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f1m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f1a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f1b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><text x="16" y="22" font-size="10" fill="#7b7468" text-anchor="start" font-weight="600" letter-spacing="2">BUILT ONCE AT START (BASE CODE)</text><text x="16" y="155" font-size="10" fill="#b4472f" text-anchor="start" font-weight="600" letter-spacing="2">BUILT PER PLUGIN, ON APPLY</text><text x="16" y="277" font-size="10" fill="#2e6a8a" text-anchor="start" font-weight="600" letter-spacing="2">NEVER CODE</text><rect x="16" y="36" width="152.5" height="55" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="92.3" y="54.5" font-size="11" fill="#2a2723" text-anchor="middle">server process</text><text x="92.3" y="68.5" font-size="9.5" fill="#7b7468" text-anchor="middle">Node loads start.ts, the</text><text x="92.3" y="81" font-size="9.5" fill="#7b7468" text-anchor="middle">kit, Chord, the API</text><rect x="194.5" y="36" width="152.5" height="55" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="270.8" y="54.5" font-size="11" fill="#2a2723" text-anchor="middle">worker base</text><text x="270.8" y="68.5" font-size="9.5" fill="#7b7468" text-anchor="middle">esbuild: worker.ts + what</text><text x="270.8" y="81" font-size="9.5" fill="#7b7468" text-anchor="middle">it imports</text><rect x="373" y="36" width="152.5" height="55" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="449.3" y="54.5" font-size="11" fill="#2a2723" text-anchor="middle">page base bundle</text><text x="449.3" y="68.5" font-size="9.5" fill="#7b7468" text-anchor="middle">esbuild: src/web/main.tsx,</text><text x="449.3" y="81" font-size="9.5" fill="#7b7468" text-anchor="middle">API, Chord, React</text><rect x="551.5" y="36" width="152.5" height="55" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="627.8" y="60.8" font-size="11" fill="#2a2723" text-anchor="middle">terminal base bundle</text><text x="627.8" y="74.8" font-size="9.5" fill="#7b7468" text-anchor="middle">esbuild: the TUI entry</text><rect x="19" y="169" width="210" height="44" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="124" y="188.3" font-size="11" fill="#2a2723" text-anchor="middle">hello: server script</text><text x="124" y="202.3" font-size="9.5" fill="#7b7468" text-anchor="middle">server.ts + copied contracts</text><rect x="255" y="169" width="210" height="44" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="360" y="188.3" font-size="11" fill="#2a2723" text-anchor="middle">x: worker script</text><text x="360" y="202.3" font-size="9.5" fill="#7b7468" text-anchor="middle">worker.ts + copied contracts</text><rect x="491" y="169" width="210" height="44" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="596" y="188.3" font-size="11" fill="#2a2723" text-anchor="middle">hello: web script</text><text x="596" y="202.3" font-size="9.5" fill="#7b7468" text-anchor="middle">web.tsx + CSS + assets</text><rect x="137" y="291" width="210" height="55" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="242" y="309.5" font-size="11" fill="#2a2723" text-anchor="middle">stores</text><text x="242" y="323.5" font-size="9.5" fill="#7b7468" text-anchor="middle">server/store.sqlite,</text><text x="242" y="336" font-size="9.5" fill="#7b7468" text-anchor="middle">workers/*/store.sqlite</text><rect x="373" y="291" width="210" height="55" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="478" y="315.8" font-size="11" fill="#2a2723" text-anchor="middle">files</text><text x="478" y="329.8" font-size="9.5" fill="#7b7468" text-anchor="middle">server/files, workers/*/files</text><path d="M92.3 91 L124 167" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="112.1" y="123" width="55.4" height="13" fill="#fbf8f2" opacity=".92"/><text x="116.1" y="133" font-size="9.5" fill="#7b7468" text-anchor="start">vm.Script</text><path d="M270.8 91 L360 167" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="319.4" y="123" width="139.7" height="13" fill="#fbf8f2" opacity=".92"/><text x="323.4" y="133" font-size="9.5" fill="#7b7468" text-anchor="start">vm.Script, in each worker</text><path d="M449.3 91 L596 167" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="526.6" y="123" width="145" height="13" fill="#fbf8f2" opacity=".92"/><text x="530.6" y="133" font-size="9.5" fill="#7b7468" text-anchor="start">&lt;script src&gt;, in each page</text><text x="16" y="370" font-size="10.5" fill="#7b7468" text-anchor="start">Plugin scripts are evaluated inside the base code of their host; they reach Chord, the API and React through it.</text></svg><figcaption><span class="fignum">Figure 1.</span> What runs where, and what made it. Accent: rebuilt on Apply; muted: built once at start.</figcaption></figure>
+<table>
+<thead>
+<tr>
+<th>Code</th>
+<th>Built</th>
+<th>By</th>
+<th>Runs in</th>
+<th>Changes by</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>start.ts</code>, the kit, Chord, <code>src/api/v1/*</code>, <code>src/principals.ts</code></td>
+<td>not bundled: Node loads them at start</td>
+<td>Node</td>
+<td>the server process</td>
+<td>restart</td>
+</tr>
+<tr>
+<td><code>worker.ts</code> and everything it imports (API, Chord, pi-ai, pi-durable)</td>
+<td>once, when the server starts</td>
+<td>esbuild (the workers component)</td>
+<td>every session worker</td>
+<td>restart (a worker forked later still gets the start&#39;s snapshot)</td>
+</tr>
+<tr>
+<td><code>src/web/main.tsx</code> and what it imports (API web module, Chord, React)</td>
+<td>once, at start, content-hashed</td>
+<td>esbuild (the web surface)</td>
+<td>every page</td>
+<td>restart, then each page reloads</td>
+</tr>
+<tr>
+<td>the terminal entry</td>
+<td>once, at start</td>
+<td>esbuild (the terminal surface)</td>
+<td>every terminal client&#39;s sandbox</td>
+<td>restart, then the terminal restarts its sandbox</td>
+</tr>
+<tr>
+<td>a plugin&#39;s <code>server.ts</code></td>
+<td>at start, then on each Apply that includes it</td>
+<td>esbuild (the plugins component)</td>
+<td>the server</td>
+<td>Apply</td>
+</tr>
+<tr>
+<td>a plugin&#39;s <code>worker.ts</code></td>
+<td>same</td>
+<td>same; workers never build</td>
+<td>every running worker, and every worker started later</td>
+<td>Apply</td>
+</tr>
+<tr>
+<td>a plugin&#39;s <code>web.tsx</code>, its CSS and assets</td>
+<td>same</td>
+<td>same</td>
+<td>every open page, and every page opened later</td>
+<td>Apply</td>
+</tr>
+<tr>
+<td>a plugin&#39;s npm <code>dependencies</code></td>
+<td>inlined into its scripts</td>
+<td>esbuild</td>
+<td>wherever the script runs</td>
+<td>Apply (after an install)</td>
+</tr>
+<tr>
+<td>a plugin&#39;s <code>chord.external</code> packages, native addons</td>
+<td>not bundled: Node&#39;s module cache</td>
+<td>Node</td>
+<td>server and workers</td>
+<td>restart</td>
+</tr>
+<tr>
+<td>stores and files</td>
+<td>never: data</td>
+<td></td>
+<td>server and workers</td>
+<td>never by code changes</td>
+</tr>
+</tbody></table>
+<p><strong>Why base code is built only once.</strong> The server, its workers and its pages must agree on the vocabulary: the API&#39;s
+registry tokens and contracts, Chord&#39;s wire protocol, the React instance plugins share. If a worker forked after an
+edit loaded the edited API from disk, it would talk to a server running the old one. So the kit bundles the worker
+entry once when the server starts (decision &quot;Workers start from the base code the server booted with&quot;) and builds the
+page&#39;s base bundle once; the watcher only flags (<code>base</code>) that they changed.</p>
+<p><strong>Why plugins are scripts.</strong> A plugin built into one self-contained script (its own files and its npm packages
+inlined, the shared modules passed in) can be evaluated again at any time without touching anything else: the server
+evaluates the new <code>server.ts</code> script with <code>vm.Script</code> beside the old one, and the old one is collected once nothing
+holds its objects. A page loads the new <code>web.tsx</code> script with a <code>&lt;script src&gt;</code> (the page&#39;s security policy allows no
+<code>eval</code>).</p>
+</section>
+
+<section class="chapter" id="never"><header class="opener"><div class="numeral">II</div><h2>Never Reloaded</h2><p class="lede">What only a restart changes, and what that costs.</p></header>
+<p class="dropcap">Everything in the muted row of the figure. Concretely, for p3:</p>
+<ul>
+<li><code>apps/p3/start.ts</code>, <code>apps/p3/worker.ts</code>, everything under <code>apps/p3/src/</code> (the API, the principal type, the web
+entry);</li>
+<li>Chord itself, React, pi-ai, pi-durable, pi-schema: every package base code imports;</li>
+<li>packages a plugin keeps external (<code>&quot;chord&quot;: { &quot;external&quot;: [...] }</code>), which Node caches until the process ends.</li>
+</ul>
+<p>A restart costs: every worker stops (a Durable run in a worker is recovered when the worker starts again, from its last
+commit); every page and terminal drops its connection, reconnects (the page&#39;s loop retries from 250 ms up to 5 s) and,
+because the base bundle&#39;s hash changed, reloads the whole page: scroll, half-typed text and page state are lost.
+Stores and files are untouched.</p>
+<p>That is the price p2 paid for most changes. In p3 base code is about 200 lines of vocabulary and entries; behaviour
+never lives there (decision &quot;Reloads first&quot;), so restarts come with a Chord or package upgrade or an API change, not
+with a feature.</p>
+</section>
+
+<section class="chapter" id="how"><header class="opener"><div class="numeral">III</div><h2>Reloaded, and How</h2><p class="lede">Apply, host by host: the server, the workers, the pages.</p></header>
+<p class="dropcap">Apply is one call, <code>app.applyChanges(ctx)</code>: it builds the marked plugins and rolls the result out in a fixed order. One
+apply runs at a time; a second waits for the first (otherwise an older build could land after a newer one).</p>
+<p><strong>1. Build.</strong> One esbuild call per facet file of each marked plugin, from source, on the server (workers and pages
+never build). The build checks every import: a plugin may import its own files, the app&#39;s API at one version, host
+packages of its kind, and sibling plugins&#39; contract files by relative path (copied in); anything else is a build error
+naming the file and line. A plugin whose build fails is left as it is everywhere: old code, still marked, the error
+reported. A plugin builds in tens of milliseconds (twenty plugins at start take about a quarter of a second).</p>
+<p><strong>2. The server</strong> (<code>host.reload</code> with the complete new set). Staging runs the new facet&#39;s setup against a recording
+host (declarations only); if that throws, the plugin keeps its old code. Then one commit swaps the set, and every live
+object of the changed plugin <strong>restarts</strong>: calls already running finish on the old code, and so does everything those
+calls cause (up to <code>reloadDrainTimeout</code>, 5 s); calls arriving meanwhile wait and run on the new code; then the old
+object seals, its natives close, and the new factory runs with the same documents and tables. Objects of other plugins
+are untouched. A reference held by a page stays <code>live</code> with its last values while the old code drains, shows
+<code>loading</code> for the moment between, then gets the new object&#39;s values in one frame.</p>
+<p><strong>3. The workers.</strong> The new set is sent over IPC to every running worker of every kind, which evaluates the new scripts
+(it never builds) and reloads its host the same way. A worker that is not running gets the current set when it starts.</p>
+<p><strong>4. The pages and terminals.</strong> The web surface publishes the new set (script names, digests, URLs) as the state of a
+small object every page holds; the publication does not wait for pages. Each page gets one frame, fetches only the
+changed scripts (<code>&lt;script src&gt;</code>), and reloads its own host in place: the changed plugin&#39;s contributions are replaced,
+registries recompose, React re-renders. Components of the changed plugin are new functions, so they remount: their
+<code>useState</code> starts over, <code>usePageState</code> keeps what it holds (a draft), the scroll of the page is untouched. Other plugins&#39;
+components keep their state. A page that was offline catches up from the snapshot when it reconnects.</p>
+<p><strong>5. The marks clear</strong> for every plugin that was applied on every host. A plugin that failed anywhere stays marked.</p>
+<figure class="fig anim"><svg viewBox="0 0 720 414" width="100%" role="img" aria-label="Apply after an edit of plugins/hello/server.ts and web.tsx: the order of a rollout." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f2m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f2a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f2b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="84.8" y1="52" x2="84.8" y2="406" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="23" y="10" width="123.6" height="42" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="84.8" y="27" font-size="11" fill="#2a2723" text-anchor="middle">watcher</text><text x="84.8" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">fs.watch</text><line x1="222.4" y1="52" x2="222.4" y2="406" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="160.6" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="222.4" y="27" font-size="11" fill="#2a2723" text-anchor="middle">plugins</text><text x="222.4" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">build, rollout</text><line x1="360" y1="52" x2="360" y2="406" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="298.2" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="360" y="27" font-size="11" fill="#2a2723" text-anchor="middle">server host</text><text x="360" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">Hello, Counter</text><line x1="497.6" y1="52" x2="497.6" y2="406" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="435.8" y="10" width="123.6" height="42" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="497.6" y="27" font-size="11" fill="#2a2723" text-anchor="middle">workers</text><text x="497.6" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">each running one</text><line x1="635.2" y1="52" x2="635.2" y2="406" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="573.4" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="635.2" y="27" font-size="11" fill="#2a2723" text-anchor="middle">page</text><text x="635.2" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">Mario's phone</text><g class="step edge" style="--i:1"><line x1="84.8" y1="78" x2="219.4" y2="78" stroke="#7b7468" marker-end="url(#f2m)"/><text x="153.6" y="72" font-size="10" fill="#2a2723" text-anchor="middle">file changed: mark @p3/hello dirty</text></g><g class="step edge" style="--i:2"><line x1="222.4" y1="110" x2="632.2" y2="110" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f2m)"/><text x="428.8" y="104" font-size="10" fill="#2a2723" text-anchor="middle">marks (the bar: 1 plugin changed)</text></g><g class="step edge" style="--i:3"><line x1="635.2" y1="142" x2="225.4" y2="142" stroke="#7b7468" marker-end="url(#f2m)"/><text x="428.8" y="136" font-size="10" fill="#2a2723" text-anchor="middle">Apply</text></g><g class="step edge" style="--i:4"><path d="M222.4 168 h34 v14 h-32" fill="none" stroke="#b4472f" marker-end="url(#f2a)"/><text x="264.4" y="178" font-size="10" fill="#b4472f" text-anchor="start">build hello: server.ts, web.tsx</text></g><g class="step edge" style="--i:5"><line x1="222.4" y1="214" x2="357" y2="214" stroke="#b4472f" marker-end="url(#f2a)"/><text x="291.2" y="208" font-size="10" fill="#b4472f" text-anchor="middle">host.reload: stage, commit, restart Hello and Counter</text></g><g class="step edge" style="--i:6"><line x1="360" y1="246" x2="632.2" y2="246" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f2m)"/><text x="497.6" y="240" font-size="10" fill="#2a2723" text-anchor="middle">Hello stays live, then the new values</text></g><g class="step edge" style="--i:7"><line x1="222.4" y1="278" x2="494.6" y2="278" stroke="#b4472f" marker-end="url(#f2a)"/><text x="360" y="272" font-size="10" fill="#b4472f" text-anchor="middle">ship the set (hello has no worker facet: nothing restarts)</text></g><g class="step edge" style="--i:8"><line x1="222.4" y1="310" x2="632.2" y2="310" stroke="#b4472f" marker-end="url(#f2a)"/><text x="428.8" y="304" font-size="10" fill="#b4472f" text-anchor="middle">publish the web set</text></g><g class="step edge" style="--i:9"><path d="M635.2 336 h-34 v14 h32" fill="none" stroke="#7b7468" marker-end="url(#f2m)"/><text x="593.2" y="346" font-size="10" fill="#2a2723" text-anchor="end">fetch hello's web script, reload in place, HelloPart remounts</text></g><g class="step edge" style="--i:10"><line x1="222.4" y1="382" x2="632.2" y2="382" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f2m)"/><text x="428.8" y="376" font-size="10" fill="#2a2723" text-anchor="middle">marks clear</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 2.</span> Apply after an edit of <code>plugins/hello/server.ts</code> and <code>web.tsx</code>: the order of a rollout.</figcaption></figure>
+</section>
+
+<section class="chapter" id="loop"><header class="opener"><div class="numeral">IV</div><h2>The Loop: I Edit File X</h2><p class="lede">What happens, exactly, for each kind of file.</p></header>
+<table>
+<thead>
+<tr>
+<th>Edit</th>
+<th>Marks</th>
+<th>Apply does</th>
+<th>Mario sees</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>plugins/hello/server.ts</code></td>
+<td><code>dirty: [@p3/hello]</code></td>
+<td>builds hello&#39;s facets; restarts hello&#39;s objects on the server; ships to workers; publishes the web set (hello&#39;s web script unchanged: pages fetch nothing)</td>
+<td>the counter <code>live</code> throughout, a blink of <code>loading</code>, the new code&#39;s value</td>
+</tr>
+<tr>
+<td><code>plugins/hello/web.tsx</code></td>
+<td><code>dirty: [@p3/hello]</code></td>
+<td>builds; the server and workers get an unchanged server script (same digest: nothing restarts); pages fetch hello&#39;s new web script</td>
+<td>hello&#39;s part remounts in place and shows its loading state for one round trip; nothing else moves</td>
+</tr>
+<tr>
+<td><code>plugins/hello/hello.module.css</code></td>
+<td><code>dirty: [@p3/hello]</code></td>
+<td>the web script and its stylesheet are rebuilt; pages swap hello&#39;s stylesheet</td>
+<td>hello restyles in place</td>
+</tr>
+<tr>
+<td><code>plugins/shell/contract.web.ts</code> (a token others import)</td>
+<td><code>dirty: [shell, hello, reload]</code>: every plugin that copied it</td>
+<td>rebuilds all three; each page reloads the three in place</td>
+<td>the page redraws in place</td>
+</tr>
+<tr>
+<td>a new directory <code>plugins/notes/</code></td>
+<td><code>set</code></td>
+<td>discovers again, builds notes, loads it everywhere</td>
+<td>its parts appear</td>
+</tr>
+<tr>
+<td>deleting <code>plugins/notes/</code></td>
+<td><code>set</code></td>
+<td>notes&#39; objects end, its contributions leave, its references elsewhere wait</td>
+<td>its parts disappear</td>
+</tr>
+<tr>
+<td><code>plugins/hello/package.json</code> (a new dependency)</td>
+<td><code>install</code></td>
+<td>today: nothing installs; the dependency must be installed first (<code>npm install --ignore-scripts</code> in the plugin, or the kit&#39;s <code>installDependencies</code>), then the plugin is marked and builds</td>
+<td>(a gap: see the last chapter)</td>
+</tr>
+<tr>
+<td>half an edit: an agent saved a file that does not compile</td>
+<td><code>dirty</code></td>
+<td>the build fails: hello keeps its old code on every host, stays marked, the error is shown</td>
+<td>nothing changes</td>
+</tr>
+<tr>
+<td><code>src/api/v1/index.ts</code>, <code>start.ts</code>, <code>worker.ts</code>, <code>src/web/main.tsx</code></td>
+<td><code>base</code></td>
+<td>nothing: Apply cannot change base code</td>
+<td>&quot;restart needed&quot;</td>
+</tr>
+<tr>
+<td>Chord, React, pi-ai, pi-durable source (this monorepo)</td>
+<td><code>base</code> (they went into a base bundle)</td>
+<td>nothing</td>
+<td>&quot;restart needed&quot;</td>
+</tr>
+</tbody></table>
+<p><strong>After a restart</strong>, for the last two rows: the server starts, builds the worker base and the page&#39;s base bundle from the
+files as they are now (a new hash), builds every plugin once, loads them. Pages reconnect, ask for the base hash, see
+it changed and reload. Workers start on their first reference with the new worker base. If a base file does not build,
+the server does not start, and p3 is down until it is fixed: base code edits are the risky ones, which is one more
+reason to keep it small.</p>
+<p><strong>Who presses Apply.</strong> In step 0 the reload test calls <code>app.applyChanges</code> itself; step 0c gives the page a bar with an
+Apply button (decision 1 of the step-0 spec: a kit object for the marks and the apply); later an agent gets the same as
+a tool. Nothing applies on save: a save is often half an edit.</p>
+</section>
+
+<section class="chapter epilogue" id="what-step-0a-changed"><header class="opener"><div class="numeral">∴</div><h2>What Step 0a Changed</h2><p class="lede">The four rough edges the step-0 reviewers found, and what became of each.</p></header>
+<ol>
+<li><strong>A reloaded UI part shows its loading state.</strong> After a page or terminal plugin&#39;s reload its components remount and
+make new references, which have no values for one round trip. Sharing references between components to avoid that
+was proposed, reviewed four times and rejected by the owner (decision &quot;A reloaded UI part shows its loading
+state&quot;): a short loading state of the reloaded part is fine; the rest of the page, and every server or worker
+reload, stay live.</li>
+<li><strong>Stylesheets</strong> (fixed): a page fetches a plugin&#39;s new stylesheet inactive before it reloads the plugin, switches it
+on only if the plugin&#39;s new code was adopted, and retires the old one after a drawn frame. Failed stylesheets are
+retried by the next update, also those that failed at the page&#39;s first load. Limitation: UI contributed by an object
+that restarts can show unstyled until its successor is live (accepted, owner: UI is contributed from facets).</li>
+<li><strong>Base bundles</strong> (fixed): the page&#39;s and the terminal&#39;s base resolve packages with the server&#39;s conditions: an app
+installed from npm gets <code>dist/</code> everywhere, a server started with <code>--conditions=source</code> gets source everywhere.</li>
+<li><strong>&quot;Restart needed&quot;</strong> (fixed): each running base records a SHA-256 hash of the bytes it read per file (the worker, page and terminal bundles,
+and a best-effort scan of the server&#39;s start script); the mark is true exactly while a recorded file differs, and
+clears after a revert. Edits before the watcher started are found when it starts; ancestor directories are watched
+by identity.</li>
+</ol>
+<p>And one gap for later: a plugin&#39;s new npm dependency is not installed by Apply (the <code>install</code> mark is shown, the app
+must install); p3 handles it when the first plugin needs a dependency.</p>
+</section>
+
+<p class="colophon">p3 reload loop · first edition · 2026-11-06 · sources: Chord design §21, §23; the plugins, surfaces, workers and app kit code</p>
+</div></div>
+<script>(function activate(root) {
+	const replay = (f) => {
+		f.classList.remove("play");
+		void f.getBoundingClientRect();
+		f.classList.add("play");
+	};
+	const io = new IntersectionObserver(
+		(es) => {
+			for (const e of es)
+				if (e.isIntersecting) {
+					e.target.classList.add("play");
+					io.unobserve(e.target);
+				}
+		},
+		{ threshold: 0.3 },
+	);
+	root.querySelectorAll(".anim:not(.armed)").forEach((f) => {
+		f.classList.add("armed");
+		io.observe(f);
+		const b = f.querySelector(".replay");
+		if (b) b.onclick = () => replay(f);
+	});
+	root.querySelectorAll(".steps:not(.js)").forEach((s) => {
+		s.classList.add("js");
+		const ps = [...s.querySelectorAll(":scope>.step-panel")];
+		let i = 0;
+		const c = s.querySelector(".count"),
+			p = s.querySelector(".prev"),
+			n = s.querySelector(".next");
+		const show = () => {
+			ps.forEach((x, j) => x.classList.toggle("on", j === i));
+			c.textContent = `${i + 1} / ${ps.length}`;
+			p.disabled = i === 0;
+			n.disabled = i === ps.length - 1;
+			ps[i].querySelectorAll(".anim").forEach(replay);
+		};
+		p.onclick = () => {
+			i--;
+			show();
+		};
+		n.onclick = () => {
+			i++;
+			show();
+		};
+		show();
+	});
+})(document)</script>
+</body></html>

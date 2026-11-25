@@ -24,6 +24,7 @@ import {
 	ALWAYS,
 	and,
 	anyCheck,
+	type Bound,
 	bytesCheck,
 	constCheck,
 	containsCheck,
@@ -43,9 +44,10 @@ import {
 	ifCheck,
 	indirect,
 	itemsCheck,
-	LEAF_CODES,
+	leafOf,
 	lengthCheck,
 	listCheck,
+	maskedAnyCheck,
 	NEVER,
 	notCheck,
 	numberCheck,
@@ -59,6 +61,7 @@ import {
 	TYPE_CHECKS,
 	taggedCheck,
 	typeCheck,
+	typeMask,
 	uniqueCheck,
 } from "./checks.ts";
 import { documentOf, isSchemaObject, Resolver, resolveUri } from "./resolver.ts";
@@ -147,8 +150,9 @@ export class Compiler {
 		} else {
 			const string = this.stringGroup(node, single === "string");
 			if (string !== undefined) parts.push(string);
-			const numeric = single === "number" || single === "integer";
-			const number = this.numberGroup(node, single === "number" ? 1 : single === "integer" ? 2 : 0);
+			const numeric = single === "number" || single === "integer" || single === "bigint";
+			const mode = single === "number" ? 1 : single === "integer" ? 2 : single === "bigint" ? 3 : 0;
+			const number = this.numberGroup(node, mode);
 			if (number !== undefined) parts.push(number);
 			const object = this.objectGroup(node, base, single === "object");
 			if (object !== undefined) parts.push(object);
@@ -189,7 +193,7 @@ export class Compiler {
 		return (
 			constUnion(branches, exactlyOne) ??
 			this.tagged(branches, base) ??
-			(exactlyOne ? oneCheck(checks()) : anyCheck(checks()))
+			(exactlyOne ? oneCheck(checks()) : anyOf(checks()))
 		);
 	}
 
@@ -281,12 +285,12 @@ export class Compiler {
 		return stringCheck(strict, min, max, re, format);
 	}
 
-	private numberGroup(node: SchemaObject, mode: 0 | 1 | 2): Check | undefined {
-		const min = number(node.minimum);
-		const max = number(node.maximum);
-		const xmin = number(node.exclusiveMinimum);
-		const xmax = number(node.exclusiveMaximum);
-		const multipleOf = number(node.multipleOf);
+	private numberGroup(node: SchemaObject, mode: 0 | 1 | 2 | 3): Check | undefined {
+		const min = bound(node.minimum);
+		const max = bound(node.maximum);
+		const xmin = bound(node.exclusiveMinimum);
+		const xmax = bound(node.exclusiveMaximum);
+		const multipleOf = bound(node.multipleOf);
 		if ([min, max, xmin, xmax, multipleOf].every((x) => x === undefined)) return undefined;
 		const inf = Number.POSITIVE_INFINITY;
 		return numberCheck(mode, min ?? -inf, max ?? inf, xmin ?? -inf, xmax ?? inf, multipleOf);
@@ -334,15 +338,15 @@ export class Compiler {
 		) {
 			return undefined;
 		}
-		// One array per object: key, check, flags (leaf code, required, key also names an Object.prototype member).
+		// One array per object: key, check (or a leaf's argument), flags (leaf code, required, key also names an
+		// Object.prototype member).
 		const entries: unknown[] = [];
 		for (const k of keys) {
 			const check = this.check(properties[k], base);
+			const leaf = leafOf(check);
 			const flags =
-				(LEAF_CODES.get(check) ?? 0) |
-				(required.includes(k) ? REQUIRED : 0) |
-				(k in Object.prototype ? INHERITED : 0);
-			entries.push(k, check, flags);
+				(leaf?.[0] ?? 0) | (required.includes(k) ? REQUIRED : 0) | (k in Object.prototype ? INHERITED : 0);
+			entries.push(k, leaf === undefined ? check : leaf[1], flags);
 		}
 		const extraRequired = required.filter((k) => !Object.hasOwn(properties, k));
 		const pats = patternKeys.map((p) => [sharedRegex(p), this.check(patterns[p], base)] as const);
@@ -575,6 +579,20 @@ function constUnion(branches: readonly unknown[], exactlyOne: boolean): Check | 
 	return enumCheck(values);
 }
 
+/** `anyOf`: its bare-type branches (`nullable` gives one) run as one type test. */
+function anyOf(checks: readonly Check[]): Check {
+	const types: string[] = [];
+	const rest: Check[] = [];
+	for (const check of checks) {
+		const type = BARE_TYPES.get(check);
+		if (type === undefined) rest.push(check);
+		else types.push(type);
+	}
+	return types.length === 0 ? anyCheck(rest) : maskedAnyCheck(typeMask(types), rest);
+}
+
+const BARE_TYPES: ReadonlyMap<Check, string> = new Map([...TYPE_CHECKS].map(([type, check]) => [check, type]));
+
 // The tag of a tagged-union branch: a primitive const on a required property of an object schema.
 function tagOf(branch: SchemaObject, key: string): unknown {
 	const properties = branch.properties;
@@ -582,6 +600,11 @@ function tagOf(branch: SchemaObject, key: string): unknown {
 	const tag = isSchemaObject(properties) ? properties[key] : undefined;
 	if (!isSchemaObject(tag) || !Object.hasOwn(tag, "const")) return undefined;
 	return typeof tag.const === "object" && tag.const !== null ? undefined : tag.const;
+}
+
+/** A number keyword's value: a number, or a bigint (TypeBox's `Type.BigInt` bounds). */
+function bound(value: unknown): Bound | undefined {
+	return typeof value === "number" || typeof value === "bigint" ? value : undefined;
 }
 
 function number(value: unknown): number | undefined {

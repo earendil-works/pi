@@ -7,11 +7,15 @@
  */
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import type { CodemodeOutputItem, CodemodeResult } from "@earendil-works/pi-codemode/portable";
+import { fromBase64 } from "../tools/image-processor.ts";
 
 type Item = TextContent | ImageContent;
 
 /** Writes a file of the result under a fixed name; its path, or why it could not be written. */
-export type OutputFile = (name: string, data: string | Uint8Array) => Promise<{ path: string } | { error: string }>;
+export type OutputFile = (
+	name: string,
+	data: string | Uint8Array,
+) => Promise<{ readonly kind: "saved"; readonly path: string } | { readonly kind: "failed"; readonly error: string }>;
 
 /** The tool's output limits, which the Harness enforces by cutting without a spill file: results stay inside them. */
 type Limits = { readonly maxBytes: number; readonly maxLines: number };
@@ -116,12 +120,12 @@ async function truncate(
 	let text = `Warning: truncated output (original token count: ${Math.ceil(combined.length / CHARS_PER_TOKEN)})\nTotal output lines: ${combined.split("\n").length}\n\n${head}…${Math.ceil(removed / CHARS_PER_TOKEN)} tokens truncated…${tail}`;
 	const spilled = await write("output.txt", combined);
 	text +=
-		"path" in spilled
+		spilled.kind === "saved"
 			? `\n\n[Full output: ${spilled.path} (read with offset/limit)]`
 			: `\n\n[Could not save the full output: ${spilled.error}]`;
 	return {
 		items: [{ type: "text", text }, ...items.filter((item) => item.type === "image")],
-		...("path" in spilled ? { fullOutputPath: spilled.path } : {}),
+		...(spilled.kind === "saved" ? { fullOutputPath: spilled.path } : {}),
 	};
 }
 
@@ -129,11 +133,11 @@ async function truncate(
 async function saveImages(items: readonly Item[], write: OutputFile): Promise<Item[]> {
 	const labels = new Map<string, Promise<string>>();
 	const label = async ({ data, mimeType }: ImageContent, index: number): Promise<string> => {
-		const bytes = Uint8Array.from(atob(data), (char) => char.charCodeAt(0));
+		const bytes = fromBase64(data);
 		const kind = `${mimeType}, ${bytes.length} bytes`;
 		// A failed write must not discard the result of a script whose calls already ran: it becomes part of the label.
 		const saved = await write(`image-${index}${IMAGE_EXTENSIONS[mimeType] ?? ".bin"}`, bytes);
-		return "path" in saved
+		return saved.kind === "saved"
 			? `[Image saved to ${saved.path} (${kind})]`
 			: `[Image (${kind}) could not be saved: ${saved.error}]`;
 	};

@@ -4,10 +4,12 @@
 // read through `at(key)` or a watch has its own source, which exists while the key is pinned.
 
 import { awaitWithContext, type Context } from "../context/index.ts";
+import { addressOfKey, keyOfAddress } from "../contracts/internal.ts";
 import { ChordError } from "../data/index.ts";
-import { asChordError } from "../data/internal.ts";
+import { asChordError, invalid } from "../data/internal.ts";
 import { type Prepared, type Tracker, track } from "../delta/index.ts";
-import type { StagedWrite } from "../store/step.ts";
+import { findDocument, loadDocument } from "../store/engine.ts";
+import type { StagedWrite, Step } from "../store/step.ts";
 import { compareText, storedText } from "../store/text.ts";
 import type { Watch } from "../watch.ts";
 import { AddressSource } from "./address-source.ts";
@@ -27,6 +29,13 @@ import { type AnyDefinition, type DocumentSlot, type PersistedSlot, SlotDefiniti
 
 /** Whom a read is for: a handle's seal token and the version it was declared with (R15). */
 export type Access = { readonly token: SealToken; readonly version: number };
+
+/** A keyed document as a host data change left it in the store (`readChanged`). */
+export type ChangedDocument =
+	| { readonly kind: "absent" }
+	| { readonly kind: "unchanged" }
+	| { readonly kind: "present"; readonly loaded: Loaded }
+	| { readonly kind: "failed"; readonly error: ChordError };
 
 /**
  * A cold load in flight, shared by its waiters: their handles' tokens, and those already sealed when the load took
@@ -94,6 +103,30 @@ export class KeyedSlot implements DocumentSlot, PersistedSlot {
 		if (this.#persistence === undefined) return undefined;
 		await this.#loadShared(key, access.token, context);
 		return this.#residents.get(key)?.tracker.value;
+	}
+
+	/**
+	 * The stored key of a key a handle was given (a trust boundary for JavaScript callers): a string-keyed slot's string
+	 * as it is (`key` applies the text rules), a host-keyed slot's address of its kind as the address's key; anything
+	 * else is `invalid/args`.
+	 */
+	keyOf(key: unknown): string {
+		const kind = this.definition.current.host;
+		// A string-keyed handle's keys are strings (its type).
+		if (kind === undefined) return key as string;
+		const stored = keyOfAddress(kind, key);
+		if (stored === undefined) throw invalid("args", `${this.#keyWhat}: expected an address of ${kind.kind}`);
+		return stored;
+	}
+
+	/** `keys` as a handle yields them: a host-keyed slot's decoded into addresses of its kind. */
+	handleKeys(access: Access, context: Context): AsyncIterable<unknown> {
+		const kind = this.definition.current.host;
+		const keys = this.keys(access, context);
+		if (kind === undefined) return keys;
+		return (async function* () {
+			for await (const key of keys) yield addressOfKey(kind, key);
+		})();
 	}
 
 	/** The present keys in code point order: in memory, the residents; persisted, the store's, a page per line job. */
@@ -285,6 +318,59 @@ export class KeyedSlot implements DocumentSlot, PersistedSlot {
 		}
 		if (source === undefined) this.#touch(resident);
 		else source.written(before!, prepared);
+	}
+
+	/** Whether the slot holds `key` in memory: a resident document or a pinned key's source (a host data change reads it). */
+	holds(key: string): boolean {
+		return this.#residents.has(key) || this.#sources.has(key);
+	}
+
+	/**
+	 * What the store holds at `key` after a host data change, read through `step` (it sees the change's writes, before
+	 * `COMMIT`): absent, unchanged (the same record and revision as in memory), or present, decoded by the slot's
+	 * definition; a document the code cannot read is `failed` (adopting it fails the owner).
+	 */
+	async readChanged(key: string, step: Step, context: Context): Promise<ChangedDocument> {
+		const persistence = this.persistence;
+		const record = await findDocument(step, persistence.at(key));
+		if (record === undefined) return { kind: "absent" };
+		const stored = this.#residents.get(key)?.stored;
+		if (stored?.id === record.id && stored.revision === record.revision) return { kind: "unchanged" };
+		const document = await loadDocument(step, record);
+		try {
+			return { kind: "present", loaded: persistence.decode(document, this.definition.current, context) };
+		} catch (error) {
+			return { kind: "failed", error: asChordError(error, this.owner.label) };
+		}
+	}
+
+	/**
+	 * Adopts a host data change's `changed` document at `key` (inside the change's batch): a new value replaces the
+	 * resident (its watchers get a root replacement), an absent one retires it (a `retired` frame). An unreadable one
+	 * changes nothing: the caller fails the owner after the batch, and its references keep the value they had until the
+	 * failure detaches them.
+	 */
+	adoptChanged(key: string, changed: ChangedDocument): void {
+		if (changed.kind === "unchanged" || changed.kind === "failed") return;
+		const before = this.#residents.get(key);
+		if (before !== undefined) {
+			this.#residents.delete(key);
+			this.owner.residency.forget(before);
+		}
+		const source = this.#sources.get(key);
+		if (changed.kind === "absent") {
+			if (before !== undefined) source?.retire();
+			return;
+		}
+		const { value, stored } = changed.loaded;
+		const resident = new Resident(this, key, track(value), stored, this.definition.current.version);
+		this.#residents.set(key, resident);
+		if (source === undefined) {
+			this.#touch(resident);
+			return;
+		}
+		source.ready = true;
+		source.replaced();
 	}
 
 	/** Retires the document at `key` (inside the batch): out of memory, its source reads `initial()` with the flag. */

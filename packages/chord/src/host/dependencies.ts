@@ -1,9 +1,12 @@
 // Parked attempts (dependency model §3, §7): the dependency check, what an attempt's declared dependencies (`self.get`
 // references and `self.registry` values) say at one moment: all live, or what the parked attempt shows while one is not
-// (`loading`, `failed { waiting }` naming the nearest blocker and the root cause, or `broken` for a cycle, authority or
-// an ended dependency), whether this host's first pass can count it (no blocker here still without its first outcome,
-// decision (a)), and its first blocker; and the `parked_long` report of a long parking episode.
+// (`loading`, `failed { waiting }` naming the nearest blocker and the root cause, `failed { denied }` for a dependency
+// an admission refused, or `broken` for a cycle, authority or an ended dependency), whether this host's first pass can
+// count it (no blocker here still without its first outcome, decision (a)), and its first blocker; what a parked
+// attempt does after one check (`Parking`); the loading of the keys a factory pinned; and the `parked_long` report of
+// a long parking episode.
 
+import type { Context } from "../context/index.ts";
 import { ChordError, type FailureCause, isChordError } from "../data/index.ts";
 import { asChordError, waitingFor } from "../data/internal.ts";
 import type { RegistryValueSource } from "../registries/internal.ts";
@@ -20,11 +23,19 @@ export type Dependency =
 export type Blocker = { readonly label: string; readonly state: "loading" | "failed" };
 
 /**
+ * What a check names its blocker to: a parking episode's `parked_long` clock (`ParkedLong`), or nothing (a route's
+ * decision is no attempt: it reports no long wait).
+ */
+export type Blocked = { blockedBy(blocker: Blocker | undefined): void };
+
+/**
  * What the dependencies say. `live`: every one is live (hydrated: a reference's members have values). `parked`: what
  * the attempt shows (`loading`, or `failed { waiting }` naming its first failed blocker), whether its first pass is
  * over (`firstPass`: no blocker, loading or failed, is an object here still without its first outcome), and its first
- * blocker in declaration order (`parked_long` names it). `broken`: one failed for a cycle (`invalid/cycle`), for
- * authority (`forbidden`) or ended: it never comes back by itself.
+ * blocker in declaration order (`parked_long` names it; none when only denials block: a denial is no report). `broken`:
+ * one failed for a cycle (`invalid/cycle`), for authority (`forbidden`) or ended: it never comes back by itself. A
+ * dependency an admission denied is no such failure: the attempt shows `denied` with that error and goes on when the
+ * dependency is admitted (slice 14 §2.2).
  */
 export type Check =
 	| { readonly kind: "live" }
@@ -32,9 +43,24 @@ export type Check =
 			readonly kind: "parked";
 			readonly shown: RefState;
 			readonly firstPass: boolean;
-			readonly blocker: Blocker;
+			readonly blocker: Blocker | undefined;
 			/** The first blocker in declaration order that is only loading (a reload's report names it). */
 			readonly loadingOn: string | undefined;
+	  }
+	| { readonly kind: "broken"; readonly error: ChordError };
+
+/**
+ * What a parked attempt does after one check (of its dependencies, or of its admission): it goes on; it stays parked
+ * showing `shown` (`firstPass` as in `Check`; `cause`: why it parked, for a reload's report, none when only a pinned
+ * key failed to load); or it breaks.
+ */
+export type Parking =
+	| { readonly kind: "ready" }
+	| {
+			readonly kind: "parked";
+			readonly shown: RefState;
+			readonly firstPass: boolean;
+			readonly cause: FailureCause | undefined;
 	  }
 	| { readonly kind: "broken"; readonly error: ChordError };
 
@@ -46,6 +72,7 @@ export function checkDependencies(dependencies: readonly Dependency[]): Check {
 	let firstPass = true;
 	let blocker: Blocker | undefined;
 	let loadingOn: string | undefined;
+	let parked = false;
 	for (const dependency of dependencies) {
 		if (dependency.kind === "registry") {
 			const { value } = dependency;
@@ -54,6 +81,7 @@ export function checkDependencies(dependencies: readonly Dependency[]): Check {
 			const label = `registry ${value.name}`;
 			failed ??= waitingOn(label, asChordError(start.error, label));
 			blocker ??= { label, state: "failed" };
+			parked = true;
 			continue;
 		}
 		const { binding } = dependency;
@@ -65,6 +93,12 @@ export function checkDependencies(dependencies: readonly Dependency[]): Check {
 				return { kind: "broken", error: state.error };
 			case "failed": {
 				const { error } = state.cause;
+				parked = true;
+				// Before `healsNever`: a denial's error is `forbidden`, and it heals when the dependency is admitted.
+				if (state.cause.kind === "denied") {
+					failed ??= { kind: "failed", cause: state.cause, retryAt: undefined };
+					continue;
+				}
 				if (healsNever(error)) return { kind: "broken", error };
 				failed ??= waitingOn(binding.label, error);
 				blocker ??= { label: binding.label, state: "failed" };
@@ -73,12 +107,13 @@ export function checkDependencies(dependencies: readonly Dependency[]): Check {
 				continue;
 			}
 			case "loading":
+				parked = true;
 				loadingOn ??= binding.label;
 				blocker ??= { label: binding.label, state: "loading" };
 				if (binding.target?.blocksFirstPass === true) firstPass = false;
 		}
 	}
-	if (blocker === undefined) return LIVE;
+	if (!parked) return LIVE;
 	return { kind: "parked", shown: failed ?? LOADING, firstPass, blocker, loadingOn };
 }
 
@@ -108,13 +143,38 @@ export function waitingOn(label: string, error: ChordError): Failed {
 }
 
 /**
+ * Loads the keys a factory (or an admission) pinned on `bindings`' keyed members (`at(key)`), each reference named
+ * to `long` as the blocker while they load (`failed` when they failed); `undefined` once all are, else what the parked
+ * attempt shows for the first that failed to load (`waiting` on its reference).
+ */
+export async function pinKeys(
+	bindings: Iterable<Binding>,
+	long: Blocked,
+	context: Context,
+): Promise<Failed | undefined> {
+	for (const binding of bindings) {
+		const { label } = binding;
+		try {
+			const pinning = binding.pinKeys(context);
+			if (pinning === undefined) continue;
+			long.blockedBy({ label, state: "loading" });
+			await pinning;
+		} catch (error) {
+			long.blockedBy({ label, state: "failed" });
+			return waitingOn(label, asChordError(error, label));
+		}
+	}
+	return undefined;
+}
+
+/**
  * The `parked_long` report of one parking episode (dependency model §7, audit A11): once, when the attempt has been
  * parked longer than `readyTimeout`, whatever its blocker (a ring across hosts started at the same moment stays parked
  * so, and so does a long wait; nothing fails or retries). The clock and the report's `since` start when the episode
  * does (its pinned keys' loading included); the report names the blocker of the latest check. Its one timer runs until
  * the report or the episode's end (`stop`).
  */
-export class ParkedLong {
+export class ParkedLong implements Blocked {
 	readonly #since = Date.now();
 	readonly #timer: ReturnType<typeof setTimeout>;
 	/** The blocker the latest check found. */
@@ -135,8 +195,8 @@ export class ParkedLong {
 		}, object.host.timeouts.ready);
 	}
 
-	/** What the latest check found blocking. */
-	blockedBy(blocker: Blocker): void {
+	/** What the latest check found blocking; none when it is parked on a denial alone (no report for one). */
+	blockedBy(blocker: Blocker | undefined): void {
 		this.#blocker = blocker;
 	}
 

@@ -22,6 +22,7 @@ describe("chat mode in the browser", { skip: !browserTests }, () => {
 			).create({ cwd: fixture.workspace, title: "Chat" }, BACKGROUND_CONTEXT)
 		).id;
 		browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 	});
 	after(async () => {
 		await browser?.close();

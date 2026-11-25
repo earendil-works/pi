@@ -12,7 +12,7 @@ import type { TuiSettings } from "./tui-preferences.ts";
 
 export type { ToolRenderContext, ToolRendererResolver, ToolRenderers } from "../tui/tools/types.ts";
 
-/** Tool renderers by tool name; they override the built-ins (bash, read, write, edit, grep, find, ls, codemode). */
+/** Tool renderers by tool name, from the plugins that own the tools; a tool without any gets pi's generic card. */
 export const TuiToolRenderers = keyedRegistry<ToolRenderers>("p2.tui-tool-renderers");
 /** `ToolRendererResolver`s with `next()`, run in key order before `TuiToolRenderers`. */
 export const TuiToolRendererResolvers = keyedRegistry<ToolRendererResolver>("p2.tui-tool-renderer-resolvers");

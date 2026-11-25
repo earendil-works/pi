@@ -4,7 +4,14 @@ import { join } from "node:path";
 import type { Context } from "@earendil-works/chord/context";
 import { withAbortSignal } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord/json";
-import { createModels, fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
+import {
+	createModels,
+	type FauxResponseFactory,
+	fauxAssistantMessage,
+	fauxText,
+	fauxToolCall,
+	registerSessionResourceCleanup,
+} from "@earendil-works/pi-ai";
 import {
 	type Conversation,
 	type ConversationId,
@@ -15,6 +22,7 @@ import {
 	GenerationTask,
 	Harness,
 	MemoryStorage,
+	ProviderDoc,
 	type Storage,
 	type TaskId,
 } from "@earendil-works/pi-durable";
@@ -60,6 +68,27 @@ function unloadDocuments(harness: Harness): Promise<void> {
 
 function withSignal(signal: AbortSignal): Context {
 	return withAbortSignal(signal, context);
+}
+
+function providerResources() {
+	const live = new Set<string>();
+	const cleaned: string[] = [];
+	const allocate = (sessionId: string | undefined) => {
+		if (sessionId === undefined) throw new Error("Provider request has no session ID");
+		live.add(sessionId);
+	};
+	const unregister = registerSessionResourceCleanup((sessionId) => {
+		const targets = sessionId === undefined ? [...live] : [sessionId];
+		cleaned.push(...targets);
+		for (const target of targets) live.delete(target);
+	});
+	const answer =
+		(text: string): FauxResponseFactory =>
+		(_request, options) => {
+			allocate(options?.sessionId);
+			return fauxAssistantMessage(text);
+		};
+	return { live, cleaned, answer, unregister };
 }
 
 /** Whether a raw Storage read still succeeds, as code of a joined invocation relies on. */
@@ -198,6 +227,88 @@ describe("Harness close", () => {
 			expect(readAfterRelease).toBe(true);
 			expect(await storageOpen(storage)).toBe(false);
 		}
+	});
+
+	// Regression coverage for #11676.
+	it("cleans up provider session resources after running tasks join", async () => {
+		const resources = providerResources();
+		const setup = chatSetup();
+		setup.faux.setResponses([resources.answer("ok")]);
+		const reached = deferred();
+		const gate = deferred();
+		const Stubborn = oneStep("test.provider-cleanup-order", async () => {
+			reached.resolve();
+			await gate.promise;
+		});
+		addTask(setup.registry, Stubborn);
+		const { harness, root } = await openChat(new MemoryStorage(), setup);
+		const sessionId = (await harness.snapshot(ProviderDoc, root.id, context))!.sessionId;
+		await (await root.submit({ type: "input", content: "allocate" }, context)).wait(context);
+		await start(root, Stubborn);
+		harness.resume();
+		await reached.promise;
+		const closing = harness.close(context);
+		const closedBeforeJoin = await settled(closing);
+		expect(closedBeforeJoin).toBe(false);
+		expect(resources.cleaned).toEqual([]);
+		expect(resources.live).toEqual(new Set([sessionId]));
+		gate.resolve();
+		await closing;
+		resources.unregister();
+		expect(resources.cleaned).toEqual([sessionId]);
+		expect(resources.live).toEqual(new Set());
+	});
+
+	it("cleans up provider session resources when the Harness fails", async () => {
+		const resources = providerResources();
+		const setup = chatSetup();
+		setup.faux.setResponses([resources.answer("ok")]);
+		const storage = new ControlledStorage();
+		const { harness, root } = await openChat(storage, setup);
+		const sessionId = (await harness.snapshot(ProviderDoc, root.id, context))!.sessionId;
+		await (await root.submit({ type: "input", content: "allocate" }, context)).wait(context);
+		const failure = new Error("disk gone");
+		storage.failNextCommit(failure);
+		await expect(root.commit((tx) => tx.appendEntry(root.id, { kind: "note" }), context)).rejects.toBe(failure);
+		const closed = await harness.closed;
+		resources.unregister();
+		expect(closed).toEqual({ kind: "failed", error: failure });
+		expect(resources.cleaned).toEqual([sessionId]);
+		expect(resources.live).toEqual(new Set());
+	});
+
+	it("does not clean up provider session resources owned by another Harness", async () => {
+		const resources = providerResources();
+		const firstSetup = chatSetup();
+		const secondSetup = chatSetup();
+		firstSetup.faux.setResponses([resources.answer("first root"), resources.answer("first child")]);
+		secondSetup.faux.setResponses([resources.answer("second")]);
+		const first = await openChat(new MemoryStorage(), firstSetup);
+		const firstChild = await first.harness.createConversation(
+			{
+				ownership: { kind: "ownerless" },
+				agent: { model: { provider: "faux", modelId: "faux-1" } },
+			},
+			context,
+		);
+		const second = await openChat(new MemoryStorage(), secondSetup);
+		const firstId = (await first.harness.snapshot(ProviderDoc, first.root.id, context))!.sessionId;
+		const firstChildId = (await first.harness.snapshot(ProviderDoc, firstChild.id, context))!.sessionId;
+		const secondId = (await second.harness.snapshot(ProviderDoc, second.root.id, context))!.sessionId;
+		await (await first.root.submit({ type: "input", content: "allocate first root" }, context)).wait(context);
+		await (await firstChild.submit({ type: "input", content: "allocate first child" }, context)).wait(context);
+		await (await second.root.submit({ type: "input", content: "allocate second" }, context)).wait(context);
+		await first.harness.close(context);
+		const cleanedAfterFirst = [...resources.cleaned];
+		const liveAfterFirst = new Set(resources.live);
+		await second.harness.close(context);
+		resources.unregister();
+		expect(new Set(cleanedAfterFirst)).toEqual(new Set([firstId, firstChildId]));
+		expect(cleanedAfterFirst).toHaveLength(2);
+		expect(liveAfterFirst).toEqual(new Set([secondId]));
+		expect(new Set(resources.cleaned)).toEqual(new Set([firstId, firstChildId, secondId]));
+		expect(resources.cleaned).toHaveLength(3);
+		expect(resources.live).toEqual(new Set());
 	});
 
 	it("lets a new Harness open the same Storage once close resolved: no old invocation code runs", async () => {

@@ -42,7 +42,8 @@ interface ItemView {
 
 /** The entry ID an item shows, also for failures and markers keyed by their entry. */
 export function itemEntryId(item: ViewItem): number | undefined {
-	if ("entryId" in item && item.entryId !== undefined) return item.entryId;
+	const shown = item.type === "user" || item.type === "assistant" || item.type === "entry" ? item.entryId : undefined;
+	if (shown !== undefined) return shown;
 	const match = /^(\d+)(?:-|$)/.exec(item.key);
 	return match ? Number(match[1]) : undefined;
 }
@@ -337,7 +338,9 @@ export class TranscriptView implements Component {
 	private state: ViewState;
 	private scroll: ScrollView | undefined;
 	/** Items of the last render with their first line, in order. */
-	private rendered: { key: string; start: number; entryId?: number }[] = [];
+	private rendered: { key: string; start: number; entryId?: number; item: ViewItem }[] = [];
+	/** Line count of the last render. */
+	private renderedHeight = 0;
 	private pendingAnchor: TranscriptAnchor | undefined;
 	/** Called when the reader reached the top: load older history. */
 	onTop: (() => void) | undefined;
@@ -436,18 +439,23 @@ export class TranscriptView implements Component {
 			this.pendingAnchor ?? (scroll && !scroll.isFollowingEnd ? this.anchorAt(scroll.scrollTop) : undefined);
 		const lines: string[] = this.header ? [...this.header.render(width)] : [];
 		const starts = new Map<string, number>();
-		const rendered: { key: string; start: number; entryId?: number }[] = [];
-		this.order.forEach((view, index) => {
-			const key = this.keys[index]!;
+		const rendered: { key: string; start: number; entryId?: number; item: ViewItem }[] = [];
+		// The callbacks below may sync synchronously (store change -> runtime.changed()) and replace `this.order`:
+		// everything after this point works on the views that were actually rendered.
+		const order = this.order;
+		const keys = this.keys;
+		order.forEach((view, index) => {
+			const key = keys[index]!;
 			starts.set(key, lines.length);
-			rendered.push({ key, start: lines.length, entryId: itemEntryId(view.item) });
+			rendered.push({ key, start: lines.length, entryId: itemEntryId(view.item), item: view.item });
 			lines.push(...view.component.render(width));
 		});
-		if (this.order.length === 0 && this.empty && !this.tail) lines.push("", ` ${this.empty}`);
+		if (order.length === 0 && this.empty && !this.tail) lines.push("", ` ${this.empty}`);
 		if (this.tail) lines.push(...this.tail.render(width));
 		// One empty line between the transcript and the dock (DTUI).
 		lines.push("");
 		this.rendered = rendered;
+		this.renderedHeight = lines.length;
 		if (scroll && kept) {
 			const start = starts.get(kept.key);
 			if (start !== undefined) {
@@ -469,16 +477,25 @@ export class TranscriptView implements Component {
 				}
 			}
 		}
-		// At the top of a laid-out viewport (or everything fits): older history may continue above.
-		if (scroll && scroll.viewportHeight > 0 && scroll.scrollTop === 0 && !this.pendingAnchor) this.onTop?.();
-		if (scroll && scroll.viewportHeight > 0 && !this.pendingAnchor)
-			this.order.forEach((view, index) => {
-				const start = rendered[index]!.start;
-				const end = rendered[index + 1]?.start ?? lines.length;
-				const visible = end > scroll.scrollTop && start < scroll.scrollTop + scroll.viewportHeight;
-				if (visible && view.item.type === "gap") this.onVisibleGap?.(view.item);
-			});
+		this.viewportChanged();
 		return lines;
+	}
+
+	/**
+	 * Loads what the viewport shows of the last render: older history at the top, gaps in view. The scroll view calls
+	 * it on every layout too, because pi-tui scrolls without rendering again.
+	 */
+	viewportChanged(): void {
+		const scroll = this.scroll;
+		if (!scroll || scroll.viewportHeight === 0 || this.pendingAnchor) return;
+		// At the top of a laid-out viewport (or everything fits): older history may continue above.
+		if (scroll.scrollTop === 0) this.onTop?.();
+		const rendered = this.rendered;
+		rendered.forEach(({ start, item }, index) => {
+			const end = rendered[index + 1]?.start ?? this.renderedHeight;
+			const visible = end > scroll.scrollTop && start < scroll.scrollTop + scroll.viewportHeight;
+			if (visible && item.type === "gap") this.onVisibleGap?.(item);
+		});
 	}
 
 	dispose(): void {

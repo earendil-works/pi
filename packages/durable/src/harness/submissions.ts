@@ -8,6 +8,7 @@ import {
 } from "@earendil-works/pi-telemetry";
 import { ConversationBusy, ConversationIdle, ReadAfterWrite } from "../errors.ts";
 import type { ObservedCommit, SessionImpl } from "../session/session.ts";
+import { isSettled } from "../signals.ts";
 import type { ConversationId, JsonObject, SubmissionId, SubmissionRecord, Tx } from "../types.ts";
 import { startRun } from "./generation.ts";
 import {
@@ -194,10 +195,6 @@ class SubmissionHandle implements Submission {
 	}
 }
 
-function isSettled(record: SubmissionRecord): record is SettledSubmissionRecord {
-	return record.status === "done" || record.status === "unanswered";
-}
-
 /** Reject an input entry an untyped caller got wrong: its kind must be a non-empty string outside the `pi.` prefix. */
 function checkInputEntry(entry: InputEntry): void {
 	const { kind } = entry;
@@ -238,7 +235,12 @@ export async function admitSubmission(
 			return { id: existing.id, status: existing.status === "unanswered" ? "done" : existing.status };
 		}
 	}
-	const fields = { conversationId, requestId: draft.requestId, trace: span?.propagation?.inject(span) };
+	const fields = {
+		conversationId,
+		requestId: draft.requestId,
+		trace: span?.propagation?.inject(span),
+		notify: draft.notify,
+	};
 	if (
 		draft.type === "write" &&
 		isDisplayOnly(draft.entry) &&
@@ -290,7 +292,7 @@ export async function admitSubmission(
 			const mode = draft.whenBusy === "steer" ? "steer" : "followUp";
 			const content = value as JsonRepresentation<UserInput>;
 			const entry = draft.entry === undefined ? {} : { entry: pickInputEntry(draft.entry) };
-			items.push({ id, mode, content, ...entry });
+			items.push({ id, mode, content, ...entry, ...(draft.onAbort === "keep" ? { onAbort: "keep" as const } : {}) });
 		}
 		if (boundary === undefined) return { id, status: "queued" };
 		const { users, first } = await applyBoundary(tx, boundary, "final", now);

@@ -129,6 +129,18 @@ describe.each(Object.keys(BACKENDS))("%s backend", (name) => {
 			});
 		});
 
+		// #11901
+		it("prints non-finite numbers in console output and thrown values like text()", async () => {
+			const sandbox = createSandbox();
+			const logged = await sandbox.execute('console.log("avg", 0 / 0, 1 / 0, -1 / 0, { a: 1 }); text(0 / 0);');
+			expect(logged.output).toEqual([
+				{ type: "text", text: 'avg NaN Infinity -Infinity {"a":1}', console: true },
+				{ type: "text", text: "NaN" },
+			]);
+			const thrown = await sandbox.execute("throw NaN");
+			expect(thrown).toMatchObject({ ok: false, error: { kind: "script", message: "NaN" } });
+		});
+
 		it("rejects invalid text() and image() arguments", async () => {
 			const sandbox = createSandbox();
 			const result = await sandbox.execute(`

@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import type { ImageContent } from "@earendil-works/pi-ai";
+import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import type { Models } from "@earendil-works/pi-ai/models";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai/models";
 import {
@@ -14,14 +14,17 @@ import {
 	type InboxItem,
 	type SubmissionId,
 	type TaskId,
-	type UserInput,
 } from "@earendil-works/pi-durable";
+import { fitImage } from "@earendil-works/pi-durable/images/fit";
+import { type ImageProcessor, imageLimits } from "@earendil-works/pi-durable/tools";
 import { obj } from "@earendil-works/pi-schema";
 import type { JsonValue } from "@p2/app/v1";
 import {
 	type Author,
 	authorIdOf,
 	authorOf,
+	authorSender,
+	type Context,
 	type Ctx,
 	canSend,
 	canView,
@@ -29,32 +32,27 @@ import {
 	defineFacet,
 	defineTypedState,
 	deriveTyped,
+	entryImageRefs,
 	expectVariant,
 	type Factory,
 	forbidden,
 	INPUT_ENTRY,
+	imageAt,
 	isGuest,
 	isOwner,
 	type MessageData,
-	messageOf,
-	SHELL_ENTRY,
-	SHELL_MAX_BYTES,
-	SHELL_MAX_LINES,
-	type ShellData,
+	messageData,
+	referenceParts,
+	senderText,
 	serveKeyed,
-	shellContextText,
-	shellTail,
-	signalOf,
-	speakerText,
 } from "@p2/app/v1";
-import { durableContext } from "@p2/app/v1/node";
 import {
 	ContextTally,
 	ConversationConfigured,
-	conversationEnvironment,
 	HarnessConfig,
 	harnessOf,
 	InputGates,
+	mainConversation,
 	ReadOnlyConversations,
 	responseCosts,
 	workerOf,
@@ -63,114 +61,129 @@ import { DraftStore } from "../drafts/contract.ts";
 import { type Attachment, Attachments } from "../files/contract.ts";
 import { WorkerModels } from "../models/contract.ts";
 import { Sessions } from "../sessions/contract.ts";
+import { StatusReport } from "../status/contract.ts";
 import {
 	Chat,
 	ChatCosts,
+	ChatImages,
 	Conversation,
 	type EntriesPage,
 	type ModelMeta,
+	RunControl,
 	SendRouters,
-	SHELL_BUSY,
-	type ShellState,
-	ShellStateSchema,
 	StatsSchema,
 } from "./contract.ts";
+import { ShellCommands, serveShellCommands } from "./shell.ts";
 
 /** Who wrote a queued input and what they typed, from its entry data; tool-originated input has none. */
 function restoredInput(item: InboxItem): { author: Author; text: string } | undefined {
 	if (item.mode === "write") return undefined;
-	const message = messageOf(item.entry?.data, item.entry ? undefined : (item.content as UserInput));
+	const message = messageData(item.entry?.data);
 	return message?.text.trim() ? { author: message.author, text: message.text } : undefined;
 }
-
-const MAX_INLINE_IMAGE = 5 * 1024 * 1024;
 
 /** A `Chat.entries` page ends once its entries reach about this many bytes of JSON. */
 const ENTRIES_PAGE_BYTES = 1_000_000;
 
-/** How often the live output is published at most (the bash tool's sampling, 100 KiB/s). */
-const SHELL_SAMPLE_MS = 200;
-
-/** The conversation's live numbers and the running user shell command (in memory). */
-const Live = defineTypedState("p2.conversation", {
-	schema: obj({ stats: StatsSchema, shell: ShellStateSchema }),
+/** The conversation's active context numbers (in memory), computed from its transcript. */
+const Live = defineTypedState("p2.conversation.stats", {
+	schema: obj({ stats: StatsSchema }),
 	version: 1,
-	initial: () => ({ stats: null, shell: null }),
+	initial: () => ({ stats: null }),
 });
 
 /**
- * The message text plus attachments: a path list the agent can read with its tools (uploads stay outside the
- * project), and images inline when the conversation's model accepts them.
+ * The message text with its files in place, marked as Codex marks local images: each `attachment:` reference becomes
+ * `<image name=[Image #N] path="…">`, the image itself (when the conversation's model accepts images, fitted to its
+ * limits as pi fits them), then `</image>`; a file of another type becomes `<file name=[File #N] path="…" />`. The
+ * path is the file's copy where the conversation's tools run; a later reference to the same file is its name alone.
+ * What fitting changed, or why an image is not shown, goes inside its tag. Files the text does not reference (clients
+ * without references) follow the text. With a cap, the newest (last) images are inlined; the others are only marked.
  */
 async function content(
 	text: string,
 	files: readonly Attachment[],
 	conversation: DurableConversation,
 	models: Models | undefined,
+	processor: ImageProcessor,
 	ctx: Ctx,
 	maxImages = Number.POSITIVE_INFINITY,
-): Promise<(ImageContent | { type: "text"; text: string })[]> {
-	{
-		if (!files.length) return [{ type: "text", text }];
-		const { model: ref } = await conversation.agent(ctx);
-		const model = ref ? models?.getModel(ref.provider, ref.modelId) : undefined;
-		const images: ImageContent[] = [];
-		const eligible = files.filter(
-			(file) => file.mimeType && model?.input.includes("image") && file.size <= MAX_INLINE_IMAGE,
-		);
-		// With a cap, the newest images (the last ones) are inlined; the rest are only listed.
-		for (const file of maxImages > 0 ? eligible.slice(-maxImages) : []) {
-			if (!file.mimeType) continue;
-			images.push({
-				type: "image",
-				mimeType: file.mimeType,
-				data: (await readFile(file.localPath ?? file.path)).toString("base64"),
-			});
-		}
-		const list = files.map((file) => `- ${file.path} (${file.name}, ${file.size} bytes)`).join("\n");
-		const note = `<attachments>\nThe user attached these files:\n${list}\n</attachments>`;
-		return [{ type: "text", text: text.trim() ? `${text}\n\n${note}` : note }, ...images];
+): Promise<(ImageContent | TextContent)[]> {
+	if (!files.length) return [{ type: "text", text }];
+	const { model: ref } = await conversation.agent(ctx);
+	const model = ref ? models?.getModel(ref.provider, ref.modelId) : undefined;
+	const accepts = model?.input.includes("image") ?? false;
+	const byId = new Map(files.map((file) => [file.id, file]));
+	const referenced = referenceParts(text, (id) => byId.has(id)).flatMap((part) =>
+		part.kind === "ref" ? [byId.get(part.id)!] : [],
+	);
+	// Placement order: the text's references, then the files it does not reference.
+	const order = [...new Set([...referenced, ...files])];
+	const images = order.filter((file) => file.mimeType);
+	const inline = new Set(accepts && maxImages > 0 ? images.slice(-maxImages) : []);
+	const names = new Map<Attachment, string>();
+	for (const file of order) {
+		const kind = file.mimeType ? "Image" : "File";
+		names.set(file, `[${kind} #${order.filter((other) => !other.mimeType === !file.mimeType).indexOf(file) + 1}]`);
 	}
+	const limits = imageLimits(model);
+	const parts: (ImageContent | TextContent)[] = [];
+	const placed = new Set<Attachment>();
+	let pending = "";
+	const place = async (file: Attachment) => {
+		const name = names.get(file)!;
+		if (placed.has(file)) {
+			pending += name;
+			return;
+		}
+		placed.add(file);
+		if (!file.mimeType) {
+			pending += `<file name=${name} path="${file.path}" />`;
+			return;
+		}
+		pending += `<image name=${name} path="${file.path}">`;
+		if (!inline.has(file)) {
+			pending += accepts ? "(not shown: over this message's image limit)</image>" : "</image>";
+			return;
+		}
+		const fitted = await fitImage(await readFile(file.localPath ?? file.path), file.mimeType, limits, processor);
+		if (fitted.kind === "fitted") {
+			parts.push({ type: "text", text: pending }, fitted.image);
+			pending = "";
+		}
+		const notes = fitted.kind === "fitted" ? fitted.notes : [fitted.note];
+		pending += `${notes.join(" ")}</image>`;
+	};
+	for (const part of referenceParts(text, (id) => byId.has(id))) {
+		if (part.kind === "text") pending += part.text;
+		else await place(byId.get(part.id)!);
+	}
+	const rest = order.filter((file) => !placed.has(file));
+	for (const [index, file] of rest.entries()) {
+		if (index > 0) pending += "\n";
+		else if (pending.trim()) pending += "\n\n";
+		await place(file);
+	}
+	if (pending) parts.push({ type: "text", text: pending });
+	return parts;
 }
 
 export default defineFacet((host) => {
 	serveKeyed(host, SendRouters);
+	serveShellCommands(host);
 	host.serve(
 		Conversation,
 		({ conversation }, self) => {
 			const id = conversation as ConversationId;
 			const harness = harnessOf(self);
-			const worker = workerOf(self);
 			const config = self.registry(HarnessConfig);
 			const gates = self.registry(InputGates);
 			const configured = self.registry(ConversationConfigured);
+			// Methods that start or end work push the worker's status before they answer (the sidebar's working dot).
+			const status = self.get(StatusReport, {});
 			const models = () => config.value.get("default")?.models();
+			const worker = workerOf(self);
 			const live = self.state(Live);
-			const stats = {
-				get value() {
-					return live.value.stats;
-				},
-			};
-			/** The running command as last set: a change reaches the state asynchronously, the checks need it now. */
-			let shellNow: ShellState = null;
-			const shell = {
-				get value() {
-					return shellNow;
-				},
-			};
-			const setStats = (next: Extract<typeof live.value.stats, object>, ctx: Ctx) =>
-				live.change((draft) => {
-					draft.stats = next;
-				}, ctx);
-			/** Awaited where `ctx` (a root's) seals right after: a change still pending then would be dropped. */
-			const setShell = async (next: ShellState, ctx: Ctx): Promise<void> => {
-				shellNow = next;
-				await live
-					.change((draft) => {
-						draft.shell = next;
-					}, ctx)
-					.catch(() => {});
-			};
 			/** The view's model from the catalog: name, window and levels, never provider configuration. */
 			const modelMeta = (view: ConversationView | null): ModelMeta | null => {
 				const ref = (view?.docs["pi.agent"] as AgentState | undefined)?.model;
@@ -196,271 +209,91 @@ export default defineFacet((host) => {
 				() => {},
 			);
 			// Durable's default window (the newest 50, appends, back to 50 past 100), shared by every viewer.
-			const view = deriveTyped(
+			const durableView = deriveTyped(
 				self,
 				[self.follow((observer, ctx) => harness().durable.observeConversation(id, observer, ctx))],
 				([value]) => value as ConversationView | null,
+			);
+			const withRefs = entryImageRefs(worker().init.values.session.id, conversation);
+			/** The window as clients get it: image parts are references, their bytes stay here (`image`). */
+			const view = deriveTyped(self, [durableView], ([value]) =>
+				value === null ? null : { ...value, entries: value.entries.map(withRefs) },
 			);
 			const modelState = deriveTyped(self, [view, config], ([value]) => modelMeta(value));
 			/**
 			 * The active context's numbers follow the entries the window appends (a scan of the new ones). A whole context
 			 * is read only when the active range changes otherwise (`ContextTally.advance`): at the start, after a
-			 * compaction, reset or edit, or when the window skipped entries. Views arriving while it is read are taken from
-			 * the newest view after it.
+			 * compaction, reset or edit, or when the window skipped entries. Views arriving while it is read come folded
+			 * into the routine's next call.
 			 */
 			const tally = new ContextTally();
-			let reading = true;
-			let wake: (() => void) | undefined;
-			const publish = async (ctx: Ctx) => {
+			let counted = false;
+			self.on(durableView, async ({ value }, ctx) => {
+				if (!value) return;
+				if (!counted || !tally.advance(value)) {
+					tally.reset(await conversationResource.value.conversation.context(ctx));
+					counted = true;
+					const newest = durableView.value;
+					if (newest) tally.advance(newest);
+				}
 				const next = tally.stats;
-				const current = stats.value;
+				const current = live.value.stats;
 				if (
 					current?.contextTokens !== next.contextTokens ||
 					current.latestAssistantUsage !== next.latestAssistantUsage
 				)
-					await setStats(next, ctx);
-			};
-			self.on(view, async ({ value }, ctx) => {
-				if (!value || reading) return;
-				if (tally.advance(value)) await publish(ctx);
-				else {
-					reading = true;
-					wake?.();
-				}
-			});
-			self.onLive(async (ctx) => {
-				const signal = signalOf(ctx);
-				while (!signal.aborted) {
-					if (!reading)
-						await new Promise<void>((resolve) => {
-							const abort = () => resolve();
-							wake = () => {
-								signal.removeEventListener("abort", abort);
-								resolve();
-							};
-							signal.addEventListener("abort", abort, { once: true });
-						});
-					wake = undefined;
-					if (signal.aborted) return;
-					tally.reset(await conversationResource.value.conversation.context(ctx));
-					const current = view.value;
-					reading = current !== null && !tally.advance(current);
-					await publish(ctx);
-				}
+					await live.change((draft) => {
+						draft.stats = next;
+					}, ctx);
 			});
 			const target = (): { harness: DurableHarness; conversation: DurableConversation } =>
 				conversationResource.value;
 			/** The queued inputs (not writes) by submission order. */
-			const queued = async (context: ReturnType<typeof durableContext>) => {
+			const queued = async (context: Context) => {
 				const { harness: durable, conversation: current } = target();
 				const inbox = await durable.snapshot(InboxDoc, current.id, context);
 				return (inbox?.items ?? []).filter((item) => item.mode !== "write").toSorted((a, b) => a.id - b.id);
-			};
-			/**
-			 * The running user shell command (one per conversation) and the commands already admitted per author request,
-			 * so a retried call runs once. Closing the object (no viewer for its linger time, a reload) cancels it.
-			 */
-			let running: { id: string; abort: AbortController } | undefined;
-			const admitted = new Map<string, string>();
-			self.open(
-				async () => ({}),
-				() => running?.abort.abort(),
-			);
-			/** Runs `command` and places its entry; the live state follows the output (sampled). */
-			const runShell = async (
-				shellId: string,
-				input: { command: string; includeInContext: boolean; author: Author },
-				abort: AbortController,
-				ctx: Ctx,
-			): Promise<void> => {
-				let live: Extract<ShellState, object> = {
-					id: shellId,
-					command: input.command,
-					author: input.author,
-					includeInContext: input.includeInContext,
-					output: "",
-					truncated: false,
-					running: true,
-					cancelled: false,
-				};
-				await setShell(live, ctx);
-				let output = "";
-				let truncated = false;
-				let timer: ReturnType<typeof setTimeout> | undefined;
-				const publish = () => {
-					timer = undefined;
-					if (shell.value?.id !== shellId) return;
-					live = { ...live, output, truncated };
-					void setShell(live, ctx);
-				};
-				let ended: Pick<ShellData, "exitCode" | "fullOutputPath" | "error"> = {};
-				try {
-					// Where the conversation works: a subagent's own location may be on another machine than the session.
-					const { location, env } = await conversationEnvironment(harness().environments, id, durableContext(ctx));
-					const result = await env.exec(
-						input.command,
-						{
-							cwd: location.cwd,
-							inheritEnv: true,
-							spill: { afterBytes: SHELL_MAX_BYTES, afterLines: SHELL_MAX_LINES },
-							window: {
-								maxBytes: SHELL_MAX_BYTES,
-								maxLines: SHELL_MAX_LINES,
-								minIntervalMs: SHELL_SAMPLE_MS,
-								bytesPerSecond: 100 * 1024,
-							},
-							onOutput: (text, _context, info) => {
-								// The environment omitted output outside the kept tail: what follows replaces it.
-								if (info.skipped) {
-									output = "";
-									truncated = true;
-								}
-								const tail = shellTail(output + text);
-								output = tail.text;
-								truncated ||= tail.truncated;
-								timer ??= setTimeout(publish, SHELL_SAMPLE_MS);
-							},
-						},
-						durableContext(abort.signal),
-					);
-					if (result.ok)
-						ended = {
-							exitCode: result.value.exitCode,
-							...(result.value.spillPath ? { fullOutputPath: result.value.spillPath } : {}),
-						};
-					else if (result.error.code !== "aborted")
-						ended = {
-							error: result.error.code === "timeout" ? "Command timed out" : result.error.message,
-							...(result.error.spillPath ? { fullOutputPath: result.error.spillPath } : {}),
-						};
-				} catch (error) {
-					ended = { error: error instanceof Error ? error.message : String(error) };
-				} finally {
-					clearTimeout(timer);
-				}
-				const cancelled = abort.signal.aborted;
-				// A command's last newline ends its output; it is not an empty last line.
-				output = output.replace(/\r?\n$/, "");
-				const data: ShellData = {
-					author: input.author,
-					command: input.command,
-					output,
-					cancelled,
-					truncated,
-					includeInContext: input.includeInContext,
-					...ended,
-				};
-				live = {
-					...live,
-					output,
-					truncated,
-					running: false,
-					cancelled,
-					...(ended.exitCode === undefined ? {} : { exitCode: ended.exitCode }),
-					...(ended.error === undefined ? {} : { error: ended.error }),
-				};
-				await setShell(live, ctx);
-				try {
-					// A write never starts a run; while the agent works it is placed at the run's next boundary.
-					const submission = await target().conversation.submit(
-						{
-							type: "write",
-							entry: {
-								kind: SHELL_ENTRY,
-								data: data as unknown as JsonValue,
-								...(input.includeInContext
-									? {
-											model: [
-												{
-													role: "user" as const,
-													content: [
-														{ type: "text" as const, text: speakerText(input.author) },
-														{ type: "text" as const, text: shellContextText(data) },
-													],
-													timestamp: Date.now(),
-												},
-											],
-										}
-									: {}),
-							},
-							requestId: `${input.author.id}:shell:${shellId}`,
-						},
-						durableContext(ctx),
-					);
-					await submission.wait(durableContext(ctx));
-				} finally {
-					// The entry shows the command from now on (or the write failed: nothing to keep showing).
-					if (shell.value?.id === shellId) await setShell(null, ctx);
-				}
 			};
 			return {
 				view,
 				stats: deriveTyped(self, [live], ([value]) => value.stats),
 				model: modelState,
-				shell: deriveTyped(self, [live], ([value]) => value.shell),
 				costs: async (ctx) =>
-					responseCosts((await target().conversation.context(durableContext(ctx))).entries).map(
-						({ cacheHit, ...cost }) => (cacheHit === undefined ? cost : { ...cost, cacheHit }),
+					responseCosts((await target().conversation.context(ctx)).entries).map(({ cacheHit, ...cost }) =>
+						cacheHit === undefined ? cost : { ...cost, cacheHit },
 					),
-				runShell: async ({ command, includeInContext, requestId, author }, ctx) => {
-					const key = `${author.id}:${requestId}`;
-					const known = admitted.get(key);
-					if (known) return { shellId: known };
-					if (shell.value?.running) throw new Error(SHELL_BUSY);
-					for (const gate of gates.value.values()) await gate(ctx);
-					const shellId = crypto.randomUUID();
-					admitted.set(key, shellId);
-					if (admitted.size > 100) admitted.delete(admitted.keys().next().value!);
-					const abort = new AbortController();
-					running = { id: shellId, abort };
-					// An active call while it runs: the worker stays up, and a move or clone waits for it.
-					// The method returns now: the command runs under its own root context, not the call's.
-					void worker()
-						.liveness.call(() =>
-							worker().root((root) => runShell(shellId, { command, includeInContext, author }, abort, root)),
-						)
-						.catch((error: unknown) => console.error("shell:", error))
-						.finally(() => {
-							if (running?.id === shellId) running = undefined;
-						});
-					return { shellId };
-				},
-				abortShell: async ({ shellId }) => {
-					if (running?.id !== shellId || running.abort.signal.aborted) return { aborted: false };
-					running.abort.abort();
-					return { aborted: true };
-				},
 				compact: async ({ instructions }, ctx) => {
-					const taskId = await target().conversation.compact(
-						instructions?.trim() || undefined,
-						durableContext(ctx),
-					);
+					const taskId = await target().conversation.compact(instructions?.trim() || undefined, ctx);
+					await status.push(ctx);
 					return { taskId };
 				},
 				reset: async ({ handoff }, ctx) => {
-					await target().conversation.reset(handoff?.trim() || undefined, durableContext(ctx));
+					await target().conversation.reset(handoff?.trim() || undefined, ctx);
 					return null;
 				},
 				abortCompaction: async (ctx) => {
-					const context = durableContext(ctx);
 					const { harness: durable } = target();
 					// The live compaction tasks of this conversation, as its view shows them.
 					const running = view.value?.docs["pi.live"] as { compactions?: { taskId: number }[] } | undefined;
 					let aborted = 0;
 					for (const { taskId } of running?.compactions ?? [])
-						if ((await durable.abortTask(taskId as TaskId, context)) === "marked") aborted++;
+						if ((await durable.abortTask(taskId as TaskId, ctx)) === "marked") {
+							// The indicator goes with the task's terminal commit (its abort hook removes its status).
+							await durable.waitForTask(taskId as TaskId, ctx);
+							aborted++;
+						}
+					await status.push(ctx);
 					return { aborted };
 				},
 				dequeueOwn: async ({ authorId }, ctx) => {
-					const context = durableContext(ctx);
 					const { harness: durable, conversation: current } = target();
 					// Selected by the author stamped into each input's entry, never by client-supplied IDs.
 					const restored: { author: Author; text: string }[] = [];
 					let skipped = 0;
-					for (const item of await queued(context)) {
+					for (const item of await queued(ctx)) {
 						const input = restoredInput(item);
 						if (input?.author.id !== authorId) continue;
-						if ((await durable.abortSubmission(item.id as SubmissionId, context, current.id)) === "aborted")
+						if ((await durable.abortSubmission(item.id as SubmissionId, ctx, current.id)) === "aborted")
 							restored.push(input);
 						else skipped++;
 					}
@@ -477,61 +310,60 @@ export default defineFacet((host) => {
 					const submission = await current.submit(
 						{
 							type: "input",
-							// The speaker block stays for the model (the system prompt attributes input by it); readers use the data.
+							// The sender block is for the model (the system prompt attributes input by it); readers use the data.
 							content: [
-								{ type: "text", text: speakerText(author) },
-								...(await content(text, files ?? [], current, models(), ctx, maxImages)),
+								{ type: "text", text: senderText(authorSender(author)) },
+								...(await content(text, files ?? [], current, models(), worker().images, ctx, maxImages)),
 							],
 							entry: entry ? { kind: entry.kind, data: entry.data as JsonValue } : { kind: INPUT_ENTRY, data },
 							requestId: `${author.id}:${requestId}`,
 							whenBusy: whenBusy ?? "steer",
 						},
-						durableContext(ctx),
+						ctx,
 					);
+					await status.push(ctx);
 					return { submissionId: submission.id };
 				},
 				write: async ({ kind, data, requestId, author }, ctx) => {
 					for (const gate of gates.value.values()) await gate(ctx);
 					const submission = await target().conversation.submit(
 						{ type: "write", entry: { kind, data: data as JsonValue }, requestId: `${author.id}:${requestId}` },
-						durableContext(ctx),
+						ctx,
 					);
 					return { submissionId: submission.id };
 				},
 				stop: async (ctx) => {
-					const context = durableContext(ctx);
 					const { harness: durable, conversation: current } = target();
-					// Conversation.abort() discards queued inputs. Withdraw them first, one by one, so each author gets
-					// their text back; already placed ones are skipped.
+					// The abort withdraws the queued inputs in the commit that marks the run, except other agents' and
+					// sessions' messages (`onAbort: "keep"`), which stay queued for the next input. Each author gets back
+					// the text of their inputs it withdrew; one admitted after this read goes without.
+					const before = await queued(ctx);
+					await current.abort(ctx, { background: false });
 					const restored: { author: Author; text: string }[] = [];
-					const inbox = await durable.snapshot(InboxDoc, current.id, context);
-					for (const item of inbox?.items ?? []) {
-						if (item.mode === "write") continue;
-						if ((await durable.abortSubmission(item.id as SubmissionId, context, current.id)) !== "aborted")
-							continue;
+					for (const item of before) {
 						const input = restoredInput(item);
-						if (input) restored.push(input);
+						if (!input) continue;
+						const record = await (await durable.submission(item.id as SubmissionId, ctx))?.status(ctx);
+						if (record?.status === "unanswered" && record.reason === "aborted") restored.push(input);
 					}
-					await current.abort(context, { background: false });
+					await status.push(ctx);
 					return { restored };
 				},
 				dequeue: async ({ submissionId, restore }, ctx) => {
-					const context = durableContext(ctx);
 					const { harness: durable, conversation: current } = target();
 					// Removing (no restore) discards the input: its text goes to nobody.
 					const item = restore
-						? (await durable.snapshot(InboxDoc, current.id, context))?.items.find(
+						? (await durable.snapshot(InboxDoc, current.id, ctx))?.items.find(
 								(entry) => entry.id === submissionId,
 							)
 						: undefined;
-					const result = await durable.abortSubmission(submissionId as SubmissionId, context, current.id);
+					const result = await durable.abortSubmission(submissionId as SubmissionId, ctx, current.id);
 					if (result === "not_found") throw new Error("Unknown queued message");
 					// If it raced into the transcript, it is not returned to the editor (no duplicate).
 					const input = result === "aborted" && item ? restoredInput(item) : undefined;
 					return { restored: input ? [input] : [] };
 				},
 				entries: async ({ limit, ...query }, ctx) => {
-					const context = durableContext(ctx);
 					const { conversation: current } = target();
 					const page = await current.entries(
 						{
@@ -541,27 +373,41 @@ export default defineFacet((host) => {
 						},
 						limit,
 						undefined,
-						context,
+						ctx,
 					);
-					// Cut at about a megabyte (images make entries large); the loader asks again from where it ends.
+					// Cut at about a megabyte (long outputs make entries large); the loader asks again from where it ends.
 					const items: EntryRecord[] = [];
 					let bytes = 0;
 					for (const entry of page.items) {
 						if (items.length > 0 && bytes >= ENTRIES_PAGE_BYTES) break;
-						items.push(entry);
-						bytes += JSON.stringify(entry).length;
+						const shown = withRefs(entry);
+						items.push(shown);
+						bytes += JSON.stringify(shown).length;
 					}
 					return {
 						items,
 						more: items.length < page.items.length || page.next !== undefined,
 					} satisfies EntriesPage;
 				},
+				image: async (place, ctx) => {
+					const entryId = place.entry as EntryId;
+					const page = await target().conversation.entries(
+						{ minEntryId: entryId, maxEntryId: entryId },
+						1,
+						undefined,
+						ctx,
+					);
+					const entry = page.items[0];
+					const image = entry === undefined ? undefined : imageAt(entry, place);
+					if (image === undefined) throw new Error("No such image");
+					return { mimeType: image.mimeType, data: image.data };
+				},
 				configure: async ({ model, thinkingLevel }, ctx) => {
 					if (model && !models()?.getModel(model.provider, model.modelId)) throw new Error("Unknown model");
 					const current = target().conversation;
 					await current.configure(
 						{ ...(model ? { model } : {}), ...(thinkingLevel ? { thinkingLevel: thinkingLevel as never } : {}) },
-						durableContext(ctx),
+						ctx,
 					);
 					for (const after of configured.value.values()) await after(current, ctx);
 					return null;
@@ -581,22 +427,22 @@ export default defineFacet((host) => {
 		const settings = self.get(WorkerModels, {});
 		/** The author an entry records, with the owner's name as settings.json says now. */
 		const author = (): Author => authorOf(principal, settings.settings.value.ownerName ?? DEFAULT_OWNER_NAME);
-		const worker = workerOf(self);
-		// Each live Chat object is a viewer: the worker stays up while someone looks.
-		self.open(
-			async () => worker().liveness.add("viewers", 1),
-			() => worker().liveness.add("viewers", -1),
-		);
+		const shells = self.get(ShellCommands, {});
+		const liveShell = deriveTyped(self, [shells.shells], ([value]) => value[conversation] ?? null);
 		const entries: typeof chat.entries = (query, ctx) => chat.entries(query, ctx);
 		if (!canSend(principal, session))
 			return {
 				variant: "viewer",
-				members: { view: chat.view, stats: chat.stats, model: chat.model, liveShell: chat.shell, entries },
+				members: { view: chat.view, stats: chat.stats, model: chat.model, liveShell, entries },
 			};
+		const worker = workerOf(self);
+		const harness = harnessOf(self);
+		/** A participant's call: refused while the session moves, which waits for running calls (`Liveness.call`). */
 		const call = <T>(fn: () => Promise<T>): Promise<T> => worker().liveness.call(fn);
 		/** Refuses writes a plugin does not allow here (a one-shot agent's conversation); Stop is not one of them. */
 		const readOnlyConversations = self.registry(ReadOnlyConversations);
 		const routers = self.registry(SendRouters);
+		const gates = self.registry(InputGates);
 		const writable = async (ctx: Ctx): Promise<void> => {
 			for (const readOnly of readOnlyConversations.value.values()) {
 				const reason = await readOnly(conversation, ctx);
@@ -615,7 +461,7 @@ export default defineFacet((host) => {
 				view: chat.view,
 				stats: chat.stats,
 				model: chat.model,
-				liveShell: chat.shell,
+				liveShell,
 				entries,
 
 				compact: (args, ctx) =>
@@ -631,20 +477,23 @@ export default defineFacet((host) => {
 						await writable(ctx);
 						return chat.reset(args, ctx);
 					}),
-				shell: (input, ctx) =>
+				shell: ({ command, includeInContext, requestId }, ctx) =>
 					call(async () => {
 						// Anyone who may send may run commands, as tools run them for them (full guests included).
 						await writable(ctx);
-						if (!input.command.trim()) throw new Error("Invalid command");
-						return chat.runShell({ ...input, author: author() }, ctx);
+						if (!command.trim()) throw new Error("Invalid command");
+						for (const gate of gates.value.values()) await gate(ctx);
+						return shells.start({ conversation, command, includeInContext, requestId, author: author() }, ctx);
 					}),
 				abortShell: ({ shellId }, ctx) =>
 					call(async () => {
-						// Its author or the owner; the command's author comes from the conversation's live state.
-						const live = chat.shell.value;
-						if (live?.id === shellId && principal.kind !== "owner" && live.author.id !== authorId)
+						// Its author or the owner; the command's author comes from its running state.
+						const live = liveShell.value;
+						// Only this conversation's command: `shellId` is its caller's request ID, not secret.
+						if (live?.id !== shellId) return { aborted: false };
+						if (principal.kind !== "owner" && live.author.id !== authorId)
 							throw forbidden("only its author or the owner cancels a command");
-						return chat.abortShell({ shellId }, ctx);
+						return shells.abort({ shellId }, ctx);
 					}),
 				dequeueOwn: (ctx) =>
 					call(async () => {
@@ -689,9 +538,12 @@ export default defineFacet((host) => {
 						if (principal.kind !== "owner") throw forbidden("only the owner configures the model");
 						await writable(ctx);
 						await chat.configure(change, ctx);
-						// The root conversation's model is the session's: the sidebar and the next worker start use it. Either
+						// The main conversation's model is the session's: the sidebar and the next worker start use it. Either
 						// field alone updates it (Pi Mobile's configure).
-						if (conversation === 1 && (change.model || change.thinkingLevel)) {
+						if (
+							(change.model || change.thinkingLevel) &&
+							conversation === (await mainConversation(harness().durable, ctx))
+						) {
 							await expectVariant(await ctx.get(Sessions, {}), "worker").configureSelf(
 								{
 									...(change.model ? { model: change.model } : {}),
@@ -711,4 +563,27 @@ export default defineFacet((host) => {
 		return { variant: "viewer", members: { costs: (ctx) => chat.costs(ctx) } };
 	});
 	host.serve(Chat, chatFactory);
+	host.serve(RunControl, ({ session, conversation }, principal, self) => {
+		if (!canSend(principal, session)) throw forbidden("participants only");
+		const chat = self.get(Conversation, { conversation });
+		const worker = workerOf(self);
+		return {
+			variant: "participant",
+			members: {
+				// Refused while the session moves, as the chat's calls are (`Liveness.call`).
+				stop: (ctx) =>
+					worker().liveness.call(async () => {
+						const { restored } = await chat.stop(ctx);
+						if (restored.length)
+							await (await ctx.get(DraftStore, {})).add({ conversation, items: restored }, ctx);
+						return null;
+					}),
+			},
+		};
+	});
+	host.serve(ChatImages, ({ conversation }, principal, self) => {
+		if (principal.kind !== "server") throw forbidden("server only");
+		const chat = self.get(Conversation, { conversation });
+		return { variant: "server", members: { image: (place, ctx) => chat.image(place, ctx) } };
+	});
 });

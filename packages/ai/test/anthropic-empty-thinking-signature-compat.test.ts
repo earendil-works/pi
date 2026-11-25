@@ -109,7 +109,7 @@ describe("Anthropic empty thinking signature compat", () => {
 		"accounts/fireworks/models/deepseek-v4p1-flash",
 		"accounts/fireworks/models/qwen3p8-max",
 		"accounts/fireworks/models/qwen3p8-2p4t-a95b",
-		"accounts/fireworks/models/nemotron-3-ultra-nvfp4",
+		"accounts/fireworks/models/ember-1",
 	] as const)("preserves unsigned thinking for Fireworks %s", async (modelId) => {
 		const model = getModel("fireworks", modelId);
 		expect(model.compat?.allowEmptySignature).toBe(true);

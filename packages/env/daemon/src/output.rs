@@ -49,7 +49,7 @@ impl Output {
     }
 
     /// Wait while more than the bulk limit is unsent, unless `stop` is set.
-    pub fn wait_for_room(&self, stop: &AtomicBool) {
+    fn wait_for_room(&self, stop: &AtomicBool) {
         let mut queues = self.queues.lock().unwrap();
         while queues.bulk_bytes > BULK_LIMIT && !queues.closed && !stop.load(Ordering::SeqCst) {
             queues = self
@@ -96,5 +96,37 @@ impl Output {
                 return;
             }
         }
+    }
+}
+
+/// Backpressure for the readers of one command: like a full pipe, a reader that read a chunk waits for room before it
+/// reads the next. A reader counts as held while it hands a chunk over and waits, so the command can tell a reader the
+/// link holds up from a pipe that went silent.
+#[derive(Clone)]
+pub struct Gate {
+    output: Arc<Output>,
+    held: Arc<AtomicUsize>,
+}
+
+impl Gate {
+    pub fn new(output: &Arc<Output>) -> Gate {
+        Gate {
+            output: output.clone(),
+            held: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    /// Run `deliver` for a chunk just read, then wait for room unless `stop` is set; returns what `deliver` returned.
+    pub fn pass(&self, stop: &AtomicBool, deliver: impl FnOnce() -> bool) -> bool {
+        self.held.fetch_add(1, Ordering::SeqCst);
+        let delivered = deliver();
+        self.output.wait_for_room(stop);
+        self.held.fetch_sub(1, Ordering::SeqCst);
+        delivered
+    }
+
+    /// Whether a reader is handing over a chunk or waiting for room: its silence is not the end of the output.
+    pub fn held(&self) -> bool {
+        self.held.load(Ordering::SeqCst) > 0
     }
 }

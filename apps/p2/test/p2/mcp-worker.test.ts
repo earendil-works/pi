@@ -1,8 +1,9 @@
 // MCP tools in a session worker, end to end with the fake provider: the worker leases the owner's servers at the
-// session's location with the project `.pi/mcp.json` it read there, the `mcp_servers` section lists them, a code mode
-// script's call returns the server's answer (the model is not offered the tools, as in pi), a relocation moves the
-// lease, a subagent's own location is leased while it is not archived, and with code mode off `tool_search` loads the
-// tools for the model.
+// session's location with the project `.pi/mcp.json` it read there, the `codemode` section lists each server's namespace
+// with its summary, `describeNamespace()` describes it, a code mode script's call returns the server's whole
+// `CallToolResult`, uncut past the harness's output bound (the model is not offered the tools, as in pi), a relocation moves the lease, a subagent's own location is leased while it
+// is not archived (its project's servers stay out of the main conversation), and with code mode off `tool_search` loads
+// the tools for the model and the `mcp_servers` section lists the servers.
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -53,7 +54,9 @@ test(
 		t.after(() => fixture.close());
 		writeFileSync(
 			join(fixture.dataDir, "mcp.json"),
-			JSON.stringify({ mcpServers: { files: { command: process.execPath, args: [FIXTURE] } } }),
+			JSON.stringify({
+				mcpServers: { files: { command: process.execPath, args: [FIXTURE], description: "Files of the fixture." } },
+			}),
 		);
 		// The project at the session's cwd adds a server there and refuses an HTTP one.
 		mkdirSync(join(fixture.workspace, ".pi"));
@@ -101,15 +104,29 @@ test(
 		};
 		// As in pi, the tools are for code mode scripts: the model is not offered them, and `tool_search` is not installed.
 		const echo = async (said: string) => {
-			const result = await call(`codemode return await tools.mcp__files__echo({ text: ${JSON.stringify(said)} });`);
+			const result = await call(
+				`codemode return (await tools.mcp__files__echo({ text: ${JSON.stringify(said)} })).content[0].text;`,
+			);
 			assert.equal(result.isError, false, text(result));
 			return scriptOutput(result);
 		};
 		assert.equal(await echo("hello"), "echo: hello");
-		assert.equal(
-			sections(await until(chat.view, Boolean)).mcp_servers,
-			"<mcp_servers>\nMCP servers whose tools are not declared to you. Call the tools of `codemode` servers from codemode scripts.\n- mcp__files (codemode)\n- mcp__lint (codemode)\n</mcp_servers>",
+		// Past Durable's 50KB output bound and pi's 20KB MCP limit, the script still gets every character.
+		const large = await call(
+			'codemode const r = await tools.mcp__files__echo({ text: "x".repeat(100000) }); return r.content[0].text.length;',
 		);
+		assert.equal(large.isError, false, text(large));
+		assert.equal(scriptOutput(large), String("echo: ".length + 100000));
+		const listing = sections(await until(chat.view, Boolean));
+		assert.equal(listing.mcp_servers, undefined);
+		assert.match(
+			listing.codemode ?? "",
+			/## mcp__files\nFiles of the fixture\.\nTools of the MCP server "files" \(find them with searchTools\(\)\)\.\n\n## mcp__lint\nTools of the MCP server "lint"/,
+		);
+		// The deferred MCP tools are never declared inline.
+		assert.doesNotMatch(listing.codemode ?? "", /mcp__files__echo/);
+		const described = await call('codemode return await describeNamespace("mcp__files");');
+		assert.match(text(described), /"tools":\[[^\]]*"mcp__files__echo"/);
 		assert.equal((await call(`mcp__files__echo ${JSON.stringify({ text: "hello" })}`)).isError, true);
 		assert.equal((await call(`tool_search ${JSON.stringify({ query: "echo" })}`)).isError, true);
 		// The session moves in place: the worker leases the new location (no project there) and gives up the old one.
@@ -124,15 +141,29 @@ test(
 		assert.notEqual(after[0]!.id, instance!.id);
 		assert.equal(await echo("there"), "echo: there");
 		// A subagent spawned with its own cwd (a commit of the subagent registry): its location is leased too, until it is
-		// archived.
+		// archived. Its project's server runs only there: the main conversation does not see it (its prompt does not
+		// change), and a script there cannot call it.
 		const own = join(moved, "own");
-		mkdirSync(own);
+		mkdirSync(join(own, ".pi"), { recursive: true });
+		writeFileSync(
+			join(own, ".pi", "mcp.json"),
+			JSON.stringify({ mcpServers: { lint: { command: process.execPath, args: [FIXTURE] } } }),
+		);
 		await call(
 			`subagent ${JSON.stringify({ action: "spawn", name: "own", message: "hi", cwd: "own", tools: ["bash"] })}`,
 		);
-		await until(mcp.instances, (instances) =>
-			instances.some((item) => item.location?.cwd === own && item.status === "connected"),
+		await until(
+			mcp.instances,
+			(instances) =>
+				instances.filter((item) => item.location?.cwd === own && item.status === "connected").length === 2,
 		);
+		assert.equal(await echo("still here"), "echo: still here");
+		const main = sections(await until(chat.view, Boolean)).codemode ?? "";
+		assert.match(main, /## mcp__files\n/);
+		assert.doesNotMatch(main, /mcp__lint/);
+		const unreachable = await call("codemode return await tools.mcp__lint__echo({ text: 'x' });");
+		assert.equal(unreachable.isError, true);
+		assert.match(text(unreachable), /tools\.mcp__lint__echo does not exist\./);
 		await call(`subagent ${JSON.stringify({ action: "archive", name: "own" })}`);
 		await until(mcp.instances, (instances) => instances.length === 1 && instances[0]!.location?.cwd === moved);
 		// Code mode off: as pi falls back, `tool_search` loads the tools and the model calls them. The worker's settings
@@ -145,13 +176,13 @@ test(
 		}
 		assert.equal(found?.isError, false, text(found));
 		assert.match(text(found), /mcp__files__echo/);
-		assert.match(
-			sections(await until(chat.view, Boolean)).mcp_servers ?? "",
-			/- mcp__files \(tool_search\)\n<\/mcp_servers>$/,
-		);
 		const echoed = await call(`mcp__files__echo ${JSON.stringify({ text: "hello" })}`);
 		assert.equal(echoed.isError, false, text(echoed));
 		assert.equal(text(echoed), "echo: hello");
 		assert.deepEqual(echoed.details, { server: "files", tool: "echo" });
+		// Without code mode, the model learns of the servers from the `mcp_servers` section, as in pi.
+		const fallback = sections(await until(chat.view, Boolean));
+		assert.equal(fallback.codemode, undefined);
+		assert.match(fallback.mcp_servers ?? "", /^- mcp__files \(tool_search\): Files of the fixture\.$/m);
 	},
 );

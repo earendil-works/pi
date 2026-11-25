@@ -2,11 +2,17 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypt
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import type { IncomingMessage } from "node:http";
 import { join } from "node:path";
-import { cookieValue } from "@p2/app/v1/server";
+import { cookieValue, localOwnerProof } from "@p2/app/v1/server";
+
+/** An owner session of a browser or client: an associated device's, or the local owner's (loopback only). */
+export type OwnerSession = { readonly kind: "device" | "local"; readonly id: string; readonly expires: number };
 
 export const ownerCookieName = (port: number): string => `p2_owner_${port}`;
 const TOKEN_LIFETIME = 10 * 60_000;
+const CHALLENGE_LIFETIME = 60_000;
 const COOKIE_LIFETIME = 30 * 24 * 60 * 60_000;
+/** `[local.]<id>.<expiry>.<signature>`; the signature covers the port and everything before it. */
+const SESSION_COOKIE = /^((?:local\.)?)([a-f0-9]{32})\.(\d+)\.([a-f0-9]{64})$/;
 const hash = (value: string): string => createHash("sha256").update(value).digest("hex");
 
 /** Atomically replace private state; a failed write never truncates the previous key or revocations. */
@@ -20,12 +26,17 @@ async function privateWrite(path: string, content: string): Promise<void> {
 	}
 }
 
-/** Browser cookies are distinct signed devices, not the installation key. Invitations stay single-use in memory. */
+/**
+ * Owner sessions are signed cookies, never the installation key: one per associated device, and local sessions that
+ * prove a loopback client ran as the server's user (it answered a challenge with the key, `src/runtime/local-owner.ts`).
+ * Invitations and challenges stay single-use in memory. Rotating the key ends every session of both kinds.
+ */
 export class OwnerAccess {
 	private key: string;
 	private readonly directory: string;
 	private readonly now: () => number;
 	private readonly invitations = new Map<string, number>();
+	private readonly challenges = new Map<string, number>();
 	private revoked: Record<string, number>;
 	private operations: Promise<void> = Promise.resolve();
 
@@ -85,18 +96,37 @@ export class OwnerAccess {
 	}
 
 	issueToken(): string {
-		for (const [id, expires] of this.invitations) if (expires <= this.now()) this.invitations.delete(id);
-		if (this.invitations.size >= 32) this.invitations.delete(this.invitations.keys().next().value ?? "");
-		const token = randomBytes(32).toString("hex");
-		this.invitations.set(hash(token), this.now() + TOKEN_LIFETIME);
-		return token;
+		return this.issue(this.invitations, TOKEN_LIFETIME);
 	}
 
 	claim(token: unknown): boolean {
-		if (typeof token !== "string") return false;
-		const id = hash(token.trim());
-		const expires = this.invitations.get(id);
-		this.invitations.delete(id);
+		return typeof token === "string" && this.redeem(this.invitations, token.trim());
+	}
+
+	/** A one-time local sign-in challenge (one minute); a restart or key rotation forgets it. */
+	issueChallenge(): string {
+		return this.issue(this.challenges, CHALLENGE_LIFETIME);
+	}
+
+	/** Whether `proof` answers the unused challenge for this port with the current key; the challenge is used up. */
+	proveLocal(challenge: unknown, proof: unknown, port: number): boolean {
+		if (typeof challenge !== "string" || typeof proof !== "string" || !/^[a-f0-9]{64}$/.test(proof)) return false;
+		if (!this.redeem(this.challenges, challenge)) return false;
+		return timingSafeEqual(Buffer.from(proof, "hex"), Buffer.from(localOwnerProof(this.key, port, challenge), "hex"));
+	}
+
+	private issue(pending: Map<string, number>, lifetime: number): string {
+		for (const [id, expires] of pending) if (expires <= this.now()) pending.delete(id);
+		if (pending.size >= 32) pending.delete(pending.keys().next().value ?? "");
+		const token = randomBytes(32).toString("hex");
+		pending.set(hash(token), this.now() + lifetime);
+		return token;
+	}
+
+	private redeem(pending: Map<string, number>, token: string): boolean {
+		const id = hash(token);
+		const expires = pending.get(id);
+		pending.delete(id);
 		return expires !== undefined && expires > this.now();
 	}
 
@@ -104,8 +134,20 @@ export class OwnerAccess {
 		return createHmac("sha256", this.key).update(`${port}:${payload}`).digest("hex");
 	}
 
+	/** A new associated device's session cookie. */
 	cookie(port: number, secure: boolean): string {
-		const payload = `${randomBytes(16).toString("hex")}.${this.now() + COOKIE_LIFETIME}`;
+		return this.sessionCookie(port, "", randomBytes(16).toString("hex"), secure);
+	}
+
+	/** A local session cookie: a new session, or `id`'s renewed for another 30 days (loopback only, never Secure). */
+	localCookie(port: number, id = randomBytes(16).toString("hex")): string {
+		return this.sessionCookie(port, "local.", id, false);
+	}
+
+	// SameSite=Lax, not Strict: a link into p2 from another site or local port must arrive signed in. The server drops
+	// every cookie principal of another site's requests except top-level page navigations (Fetch Metadata).
+	private sessionCookie(port: number, prefix: string, id: string, secure: boolean): string {
+		const payload = `${prefix}${id}.${this.now() + COOKIE_LIFETIME}`;
 		return `${ownerCookieName(port)}=${payload}.${this.signature(port, payload)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=2592000${secure ? "; Secure" : ""}`;
 	}
 
@@ -113,27 +155,25 @@ export class OwnerAccess {
 		return `${ownerCookieName(port)}=; HttpOnly${secure ? "; Secure" : ""}; SameSite=Lax; Path=/; Max-Age=0`;
 	}
 
-	device(request: IncomingMessage, port: number): { id: string; expires: number } | undefined {
+	/** The request's valid, unrevoked owner session for this port, if any. */
+	session(request: IncomingMessage, port: number): OwnerSession | undefined {
 		const value = cookieValue(request, ownerCookieName(port));
-		const match = value && /^([a-f0-9]{32})\.(\d+)\.([a-f0-9]{64})$/.exec(value);
+		const match = value && SESSION_COOKIE.exec(value);
 		if (!match) return undefined;
-		const [, id, expiry, signature] = match;
+		const [, prefix, id, expiry, signature] = match;
 		const expires = Number(expiry);
 		if (!Number.isSafeInteger(expires) || expires <= this.now() || (this.revoked[id!] ?? 0) > this.now())
 			return undefined;
-		if (!timingSafeEqual(Buffer.from(signature!, "hex"), Buffer.from(this.signature(port, `${id}.${expiry}`), "hex")))
+		const payload = `${prefix}${id}.${expiry}`;
+		if (!timingSafeEqual(Buffer.from(signature!, "hex"), Buffer.from(this.signature(port, payload), "hex")))
 			return undefined;
-		return { id: id!, expires };
+		return { kind: prefix ? "local" : "device", id: id!, expires };
 	}
 
-	authorized(request: IncomingMessage, port: number): boolean {
-		return this.device(request, port) !== undefined;
-	}
-
-	logout(device: { id: string; expires: number }): Promise<void> {
+	logout(session: OwnerSession): Promise<void> {
 		const operation = this.operations.then(async () => {
 			this.revoked = Object.fromEntries(Object.entries(this.revoked).filter(([, expires]) => expires > this.now()));
-			this.revoked[device.id] = device.expires;
+			this.revoked[session.id] = session.expires;
 			await privateWrite(join(this.directory, "owner-revoked.json"), JSON.stringify(this.revoked));
 		});
 		this.operations = operation.catch(() => {});
@@ -146,6 +186,7 @@ export class OwnerAccess {
 			await privateWrite(join(this.directory, "owner-key"), next);
 			this.key = next;
 			this.invitations.clear();
+			this.challenges.clear();
 			this.revoked = {};
 			await privateWrite(join(this.directory, "owner-revoked.json"), "{}");
 			await privateWrite(join(this.directory, "owner-token.txt"), `${this.issueToken()}\n`);
@@ -156,6 +197,7 @@ export class OwnerAccess {
 
 	async close(): Promise<void> {
 		this.invitations.clear();
+		this.challenges.clear();
 		await this.operations;
 	}
 }

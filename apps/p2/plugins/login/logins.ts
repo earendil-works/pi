@@ -1,11 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { AuthPrompt, AuthType } from "@earendil-works/pi-ai";
-import { LockedFile } from "@p2/app/v1/node";
+import { LockedFile, processLogs } from "@p2/app/v1/node";
 import type { Resources } from "../models/contract.ts";
-import type { LoginEvent, LoginPrompt } from "./contract.ts";
+import type { LoginEvent, LoginPrompt, LoginState } from "./contract.ts";
 
 type PendingPrompt = { prompt: LoginPrompt; resolve: (value: string) => void };
+
+/** Why a login was ended before it finished, by its owner or by p2. */
+type Ending = { kind: "cancelled" } | { kind: "away" } | { kind: "replaced" };
+
 type Attempt = {
 	id: string;
 	owner: string;
@@ -14,33 +18,78 @@ type Attempt = {
 	controller: AbortController;
 	prompts: Map<string, PendingPrompt>;
 	done: Promise<void>;
+	/** Set right before `controller` aborts for an ending. */
+	ending: Ending | undefined;
+	/** Armed while no page of its owner holds the login (see `away`). */
+	awayTimer: ReturnType<typeof setTimeout> | undefined;
 };
 
+/**
+ * How long an unfinished login survives its owner having no page that holds it. A phone's browser drops a background
+ * tab's connection within seconds, and the owner is in the provider's tab then; a closed tab must still free the slot.
+ */
+export const AWAY_MS = 5 * 60_000;
+
+/** The current login (one at a time) and the principal key of the owner that started it. */
+export type LoginsState = { readonly login: LoginState | null; readonly owner: string | null };
+
+/**
+ * Provider logins (provider-owned api-key and OAuth flows over the shared credentials), one at a time. The flow runs
+ * here, outside Chord; its state changes synchronously with each event, and listeners hear of every change (the
+ * server's `LoginService` follows it).
+ */
 export class Logins {
 	private readonly resources: Resources;
-	private readonly emit: (owner: string, event: LoginEvent) => void;
-
 	private readonly lifetime = new AbortController();
 	private readonly device: LockedFile;
+	private readonly listeners = new Set<() => void>();
 	private active: Attempt | undefined;
+	private current: LoginsState = { login: null, owner: null };
+	private readonly awayMs: number;
 
-	constructor(resources: Resources, emit: (owner: string, event: LoginEvent) => void) {
+	/** Logins over `resources`; one whose owner is away `awayMs` ends (tests shorten it). */
+	constructor(resources: Resources, awayMs = AWAY_MS) {
 		this.resources = resources;
-		this.emit = emit;
+		this.awayMs = awayMs;
 		this.device = new LockedFile(join(resources.directory, "device.json"));
 	}
 
-	start(owner: string, providerId: string, authType: AuthType, remote = false): string {
+	get state(): LoginsState {
+		return this.current;
+	}
+
+	/** `listener` hears of every change of `state`; the result stops it. */
+	subscribe(listener: () => void): () => void {
+		this.listeners.add(listener);
+		return () => this.listeners.delete(listener);
+	}
+
+	/** The current login, if `owner` started it. */
+	private mine(owner: string): LoginState | null {
+		return this.current.owner === owner ? this.current.login : null;
+	}
+
+	/**
+	 * Starts a login for `owner`, ending their own unfinished one first: a page that was reloaded or lost its sheet
+	 * cannot reach that one any more. Another owner's unfinished login refuses the start.
+	 */
+	async start(owner: string, providerId: string, authType: AuthType, remote = false): Promise<string> {
 		if (this.lifetime.signal.aborted) throw new Error("Server is shutting down");
+		const provider = this.resources.models.getProvider(providerId);
+		if (!(authType === "oauth" ? provider?.auth.oauth?.login : provider?.auth.apiKey?.login))
+			throw new Error("Provider does not support this login method");
+		const previous = this.active;
+		if (previous?.owner === owner) {
+			// Waits for it to end: its flow may still hold a callback port the new one needs.
+			this.end(previous, { kind: "replaced" });
+			await previous.done;
+		}
 		if (this.active)
 			throw new Error(
 				this.active.owner === owner
 					? "A provider login is already in progress; cancel it first"
 					: "Another owner device is signing in to a provider; try again when it has finished",
 			);
-		const provider = this.resources.models.getProvider(providerId);
-		if (!(authType === "oauth" ? provider?.auth.oauth?.login : provider?.auth.apiKey?.login))
-			throw new Error("Provider does not support this login method");
 		const attempt: Attempt = {
 			id: randomUUID(),
 			owner,
@@ -49,6 +98,8 @@ export class Logins {
 			controller: new AbortController(),
 			prompts: new Map(),
 			done: Promise.resolve(),
+			ending: undefined,
+			awayTimer: undefined,
 		};
 		this.active = attempt;
 		this.emit(owner, { type: "started", attemptId: attempt.id, providerId, authType });
@@ -157,17 +208,39 @@ export class Logins {
 			this.emit(attempt.owner, {
 				type: "finished",
 				attemptId: attempt.id,
-				status: committed ? "success" : signal.aborted ? "cancelled" : "error",
-				message: committed
-					? "Signed in; resource refresh did not complete."
-					: signal.aborted
-						? "Login cancelled."
-						: "Provider login failed. Check the provider configuration and try again.",
+				...(committed
+					? { status: "success", message: "Signed in; resource refresh did not complete." }
+					: this.failure(attempt, deadline)),
 			});
 		} finally {
+			clearTimeout(attempt.awayTimer);
 			attempt.controller.abort(); // Withdraw leftover/manual prompts after callback success.
 			if (this.active === attempt) this.active = undefined;
 		}
+	}
+
+	/** How an attempt that threw before committing ended, and the message that says why. */
+	private failure(attempt: Attempt, deadline: AbortSignal): { status: "cancelled" | "error"; message: string } {
+		switch (attempt.ending?.kind) {
+			case "cancelled":
+				return { status: "cancelled", message: "Login cancelled." };
+			case "replaced":
+				return { status: "cancelled", message: "Replaced by a new login." };
+			case "away":
+				return {
+					status: "error",
+					message: "Login ended: no page of yours was connected for too long. Start it again.",
+				};
+		}
+		if (this.lifetime.signal.aborted) return { status: "cancelled", message: "Login cancelled: the server stopped." };
+		if (deadline.aborted) return { status: "error", message: "Login expired. Start it again." };
+		return { status: "error", message: "Provider login failed. Check the provider configuration and try again." };
+	}
+
+	/** Ends `attempt` for `ending` (the first ending is the one it reports). */
+	private end(attempt: Attempt, ending: Ending): void {
+		attempt.ending ??= ending;
+		attempt.controller.abort();
 	}
 
 	private owned(owner: string, id: string): Attempt {
@@ -176,22 +249,49 @@ export class Logins {
 		return this.active;
 	}
 
+	/** Answers the prompt (closed at once); secrets and pasted codes are redacted from the logs first. */
 	answer(owner: string, attemptId: string, promptId: string, value: string): void {
 		const attempt = this.owned(owner, attemptId);
 		const pending = attempt.prompts.get(promptId);
 		if (!pending) throw new Error("Login prompt is no longer active");
 		if (pending.prompt.type === "select" && !pending.prompt.options.some((option) => option.id === value))
 			throw new Error("Select one of the listed options");
+		if (pending.prompt.type === "secret" || pending.prompt.type === "manual_code")
+			processLogs.redactor.addSecret(value);
 		pending.resolve(value);
 	}
 
-	cancel(owner: string, attemptId: string): void {
-		this.owned(owner, attemptId).controller.abort();
+	/** Cancels the login; resolves once it finished (its state shows "cancelled", or what it reached first). */
+	async cancel(owner: string, attemptId: string): Promise<void> {
+		const attempt = this.owned(owner, attemptId);
+		this.end(attempt, { kind: "cancelled" });
+		await attempt.done;
 	}
 
-	/** Its owner left (closed the sheet everywhere, or disconnected): end its unfinished login, nobody else's. */
-	disconnect(owner: string): void {
-		if (this.active?.owner === owner) this.active.controller.abort();
+	/** Clears `owner`'s finished login `attemptId` from the state. */
+	dismiss(owner: string, attemptId: string): void {
+		const login = this.mine(owner);
+		if (login?.attemptId !== attemptId || login.status === "working") return;
+		this.current = { ...this.current, login: null };
+		this.changed();
+	}
+
+	/**
+	 * No page of `owner` holds the login any more (tabs closed, connections dropped): their unfinished login ends after
+	 * `awayMs` unless `back` comes first. Nobody else's login is touched.
+	 */
+	away(owner: string): void {
+		const attempt = this.active;
+		if (attempt?.owner !== owner || attempt.awayTimer !== undefined) return;
+		attempt.awayTimer = setTimeout(() => this.end(attempt, { kind: "away" }), this.awayMs);
+	}
+
+	/** The unfinished login's owner holds it again (a page reconnected or reloaded): it no longer ends for being away. */
+	back(): void {
+		const attempt = this.active;
+		if (attempt === undefined) return;
+		clearTimeout(attempt.awayTimer);
+		attempt.awayTimer = undefined;
 	}
 
 	async logout(providerId: string): Promise<void> {
@@ -206,10 +306,55 @@ export class Logins {
 		await this.resources.refreshModels(providerId, this.lifetime.signal);
 	}
 
+	/** Applies `event` of `owner`'s login to the state, redacting the codes and URLs it shows from the logs. */
+	private emit(owner: string, event: LoginEvent): void {
+		if (event.type === "notice" && event.event.type === "device_code")
+			processLogs.redactor.addSecret(event.event.userCode);
+		if (event.type === "notice" && event.event.type === "auth_url") processLogs.redactor.addSecret(event.event.url);
+		this.current = {
+			owner: event.type === "started" ? owner : this.current.owner,
+			login: reduce(this.current.login, event),
+		};
+		this.changed();
+	}
+
+	private changed(): void {
+		for (const listener of this.listeners) listener();
+	}
+
 	async close(): Promise<void> {
 		this.lifetime.abort();
 		this.active?.controller.abort();
 		await this.active?.done;
 		await this.device.close();
+	}
+}
+
+/** The next state of the current login after `event`. */
+function reduce(state: LoginState | null, event: LoginEvent): LoginState | null {
+	if (event.type === "started")
+		return {
+			attemptId: event.attemptId,
+			providerId: event.providerId,
+			authType: event.authType,
+			status: "working",
+			prompt: null,
+			notices: [],
+		};
+	if (state === null || state.attemptId !== event.attemptId) return state;
+	switch (event.type) {
+		case "prompt":
+			return { ...state, prompt: event.prompt };
+		case "promptClosed":
+			return state.prompt?.id === event.promptId ? { ...state, prompt: null } : state;
+		case "notice":
+			return { ...state, notices: [...state.notices, { id: state.notices.length, event: event.event }] };
+		case "finished":
+			return {
+				...state,
+				status: event.status,
+				prompt: null,
+				...(event.message === undefined ? {} : { message: event.message }),
+			};
 	}
 }

@@ -27,8 +27,8 @@ export default defineFacet((host) => {
 		);
 		self.open(
 			async () => calls,
-			async (running, reason) => {
-				if (reason.kind === "end" && !worker().liveness.stopping) await running.cancel(harness().durable);
+			async (running, reason, context) => {
+				if (reason.kind === "end" && !worker().liveness.stopping) await running.cancel(harness().durable, context);
 			},
 		);
 		// The tool reads the sandbox when a script starts: a running script keeps the sandbox it started on.

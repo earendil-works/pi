@@ -1,6 +1,7 @@
 import type OpenAI from "openai";
 import type {
 	Tool as OpenAITool,
+	Response,
 	ResponseConfigurationUpdateItemParam,
 	ResponseCreateParamsStreaming,
 	ResponseInput,
@@ -31,6 +32,7 @@ import type {
 	TranscriptContext,
 	Usage,
 } from "../types.ts";
+import { appendAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
 import type { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
@@ -124,7 +126,6 @@ export interface OpenAIResponsesStreamOptions {
 }
 
 export interface ConvertResponsesMessagesOptions {
-	includeSystemPrompt?: boolean;
 	grammarToolInputProperties?: ReadonlyMap<string, string>;
 	/** Whether later system messages are sent in place; otherwise they are folded into the leading prompt. */
 	supportsMidConvoSystemMessages?: boolean;
@@ -189,12 +190,38 @@ function renderToolRemovalNotice(names: readonly string[]): string {
 	return `The following tools are no longer available. Do not call them:\n${names.map((name) => `- ${name}`).join("\n")}`;
 }
 
+/** Render input items for replay, as used by Codex WebSocket continuation. Use `prepareResponsesPrompt` to build a request. */
 export function convertResponsesMessages<TApi extends Api>(
 	model: Model<TApi>,
 	context: TranscriptContext,
 	allowedToolCallProviders: ReadonlySet<string>,
 	options?: ConvertResponsesMessagesOptions,
 ): ResponseInput {
+	return renderResponsesTranscript(model, context, allowedToolCallProviders, options).input;
+}
+
+/** Place transcript-derived declarations and effort changes consistently in input and top-level request fields. */
+export function prepareResponsesPrompt<TApi extends Api>(
+	model: Model<TApi>,
+	context: TranscriptContext,
+	allowedToolCallProviders: ReadonlySet<string>,
+	options?: ConvertResponsesMessagesOptions & { effortBaseline?: "initial" },
+) {
+	const { input, requestTools, requestEffortBaseline } = renderResponsesTranscript(
+		model,
+		context,
+		allowedToolCallProviders,
+		options,
+	);
+	return { input, requestTools: convertResponsesTools(requestTools, options?.toolOptions), requestEffortBaseline };
+}
+
+function renderResponsesTranscript<TApi extends Api>(
+	model: Model<TApi>,
+	context: TranscriptContext,
+	allowedToolCallProviders: ReadonlySet<string>,
+	options?: ConvertResponsesMessagesOptions & { effortBaseline?: "initial" },
+) {
 	const normalizedContext = resolveTranscript(context, options?.supportsMidConvoSystemMessages);
 	const messages: ResponseInput = [];
 
@@ -263,8 +290,17 @@ export function convertResponsesMessages<TApi extends Api>(
 			tools: convertResponsesTools(tools, { ...options?.toolOptions, toolSearchResult: true }),
 		} satisfies ResponseToolSearchOutputItemParam);
 	};
-	const includeInitialSystemMessage = options?.includeSystemPrompt ?? true;
+	let requestEffortBaseline: string | undefined;
+	let previousEffort: string | undefined;
 	const pushConfigurationUpdate = (effort: string): void => {
+		if (options?.effortBaseline === "initial") {
+			if (previousEffort === effort) return;
+			previousEffort = effort;
+			if (requestEffortBaseline === undefined) {
+				requestEffortBaseline = effort;
+				return;
+			}
+		}
 		messages.push({
 			type: "configuration_update",
 			reasoning: { effort: effort as NonNullable<ResponseConfigurationUpdateItemParam.Reasoning["effort"]> },
@@ -282,20 +318,18 @@ export function convertResponsesMessages<TApi extends Api>(
 			// transformMessages keeps system messages in order, so their position matches the transcript.
 			const anchorsToolChanges = systemIndex++ >= transcriptTools.foldedSystemMessages;
 			if (anchorsToolChanges) appendSystemToolAdditions(msg, `system:${msgIndex}`);
-			if (!isLeadingSystemMessage || includeInitialSystemMessage) {
-				const parts = [isLeadingSystemMessage ? getSystemMessageText(msg) : renderSystemMessageUpdate(msg)];
-				if (anchorsToolChanges) {
-					// A redefinition is a removal plus an addition of the same name; only true removals are announced.
-					const added = new Set((msg.toolsAdded ?? []).map((tool) => tool.name));
-					const removed = (msg.toolsRemoved ?? []).map((tool) => tool.name).filter((name) => !added.has(name));
-					if (removed.length > 0) parts.push(renderToolRemovalNotice(removed));
-					// Recorded after this message's additions, whose notice precedes this removal notice.
-					for (const name of removed) unavailableTools.add(name);
-				}
-				const text = parts.filter((part) => part.length > 0).join("\n\n");
-				if (text.length > 0) {
-					messages.push({ role: instructionRole, content: sanitizeSurrogates(text) });
-				}
+			const parts = [isLeadingSystemMessage ? getSystemMessageText(msg) : renderSystemMessageUpdate(msg)];
+			if (anchorsToolChanges) {
+				// A redefinition is a removal plus an addition of the same name; only true removals are announced.
+				const added = new Set((msg.toolsAdded ?? []).map((tool) => tool.name));
+				const removed = (msg.toolsRemoved ?? []).map((tool) => tool.name).filter((name) => !added.has(name));
+				if (removed.length > 0) parts.push(renderToolRemovalNotice(removed));
+				// Recorded after this message's additions, whose notice precedes this removal notice.
+				for (const name of removed) unavailableTools.add(name);
+			}
+			const text = parts.filter((part) => part.length > 0).join("\n\n");
+			if (text.length > 0) {
+				messages.push({ role: instructionRole, content: sanitizeSurrogates(text) });
 			}
 		} else if (msg.role === "user") {
 			if (typeof msg.content === "string") {
@@ -375,25 +409,33 @@ export function convertResponsesMessages<TApi extends Api>(
 						itemId = undefined;
 					}
 
+					// OpenAI returns tool calls with status "completed", so replay them the same way. Over the Codex WebSocket,
+					// OpenAI keeps the previous response's items itself, and later reasoning is generated after calls that have
+					// the status. After 5 idle minutes the connection closes and pi sends the whole history again. If a call
+					// lacks the status there, the history no longer matches, and from GPT-6.2 on OpenAI drops the reasoning
+					// that follows it (`prefix_mismatch`, #12367).
+					// Always "completed": a stream that ends with an unfinished tool call fails, and failed messages are not replayed.
+					// `status` is spread in because the SDK declares it only on returned custom tool calls; the API accepts it on input too.
+					const replayedCall = {
+						id: itemId,
+						call_id: callId,
+						name: toolCall.name,
+						status: "completed" as const,
+						...(isSameModel && toolCall.namespace !== undefined ? { namespace: toolCall.namespace } : {}),
+					};
 					if (customInputProperty !== undefined) {
 						output.push({
 							type: "custom_tool_call",
-							id: itemId,
-							call_id: callId,
-							name: toolCall.name,
+							...replayedCall,
 							input: sanitizeSurrogates(
 								getGrammarToolInput(toolCall.name, toolCall.arguments, customInputProperty),
 							),
-							...(isSameModel && toolCall.namespace !== undefined ? { namespace: toolCall.namespace } : {}),
-						} satisfies ResponseOutputItem);
+						});
 					} else {
 						output.push({
 							type: "function_call",
-							id: itemId,
-							call_id: callId,
-							name: toolCall.name,
+							...replayedCall,
 							arguments: JSON.stringify(toolCall.arguments),
-							...(isSameModel && toolCall.namespace !== undefined ? { namespace: toolCall.namespace } : {}),
 						});
 					}
 				}
@@ -429,7 +471,7 @@ export function convertResponsesMessages<TApi extends Api>(
 	}
 	if (options?.configurationUpdateEffort !== undefined) pushConfigurationUpdate(options.configurationUpdateEffort);
 
-	return messages;
+	return { input: messages, requestTools: transcriptTools.requestTools, requestEffortBaseline };
 }
 
 // =============================================================================
@@ -626,6 +668,7 @@ export async function processResponsesStream<TApi extends Api>(
 	): void => {
 		sawTerminalResponseEvent = true;
 		backfillReasoningSignatures(response.output ?? []);
+		appendReasoningRemovals(output, response.input_transformations);
 		if (response?.id) {
 			output.responseId = response.id;
 		}
@@ -825,6 +868,35 @@ export async function processResponsesStream<TApi extends Api>(
 			);
 		}
 	}
+}
+
+/**
+ * Record the replayed reasoning items the API withheld from the model, with the reason for each.
+ * From GPT-6.2 on, OpenAI removes reasoning that follows an edit of earlier input (`prefix_mismatch`)
+ * and reasoning created under another organization, end user, or model. A removal is reported again
+ * on every later request that replays the item.
+ *
+ * `turn_boundary` removals are left out: models that use only current-turn reasoning (all models
+ * before GPT-5.6) report every earlier turn's reasoning item on every request. That is their normal
+ * behavior, and storing it would grow the session quadratically with the conversation.
+ */
+function appendReasoningRemovals(output: AssistantMessage, transformations: Response["input_transformations"]): void {
+	// Wire input: older servers and proxies omit the field, and Codex tolerates malformed entries too.
+	if (!Array.isArray(transformations)) return;
+	const removals = transformations.filter(
+		(transformation) =>
+			transformation?.type === "reasoning" &&
+			transformation.action === "removed" &&
+			transformation.reason !== "turn_boundary",
+	);
+	if (removals.length === 0) return;
+	appendAssistantMessageDiagnostic(output, {
+		type: "openai_input_transformations",
+		timestamp: Date.now(),
+		details: {
+			transformations: removals.map(({ type, id, action, reason }) => ({ type, id, action, reason })),
+		},
+	});
 }
 
 type CustomInput = Extract<ToolCallInput, { kind: "custom" }>;

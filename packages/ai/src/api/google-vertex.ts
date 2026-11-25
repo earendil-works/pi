@@ -10,6 +10,7 @@ import { calculateCost, clampThinkingLevel } from "../models.ts";
 import type {
 	Api,
 	AssistantMessage,
+	FetchFunction,
 	Model,
 	ProviderEnv,
 	ProviderHeaders,
@@ -17,7 +18,6 @@ import type {
 	StreamFunction,
 	StreamOptions,
 	TextContent,
-	ThinkingBudgets,
 	ThinkingContent,
 	ToolCall,
 	TranscriptContext,
@@ -30,11 +30,13 @@ import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { getSystemMessageText } from "../utils/text.ts";
 import { collapseSystemMessages, getCurrentTools, getInitialSystemMessage } from "../utils/transcript.ts";
-import type { GoogleApiThinkingLevel, ResolvedGoogleThinkingLevel } from "./google-shared.ts";
+import type { GoogleApiThinkingLevel } from "./google-shared.ts";
 import {
 	convertMessages,
 	convertTools,
+	formatGooglePromptBlockError,
 	getDisabledGoogleThinkingConfig,
+	getGoogleBudget,
 	isThinkingPart,
 	mapStopReason,
 	resolveGoogleFunctionCallingMode,
@@ -93,13 +95,10 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 		};
 
 		try {
-			if (options?.fetch && options.fetch !== globalThis.fetch) {
-				throw new Error("Custom fetch is not supported by the Google Vertex adapter");
-			}
 			const apiKey = resolveApiKey(options);
 			// Create the client using either a Vertex API key, if provided, or ADC with project and location
 			const client = apiKey
-				? createClientWithApiKey(model, apiKey, options?.headers, options?.identity)
+				? createClientWithApiKey(model, apiKey, options?.headers, options?.identity, options?.fetch)
 				: createClient(
 						model,
 						resolveProject(options),
@@ -107,20 +106,31 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 						options?.headers,
 						options?.env,
 						options?.identity,
+						options?.fetch,
 					);
 			let params = buildParams(model, normalizedContext, options);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
 				params = nextParams as GenerateContentParameters;
 			}
-			const googleStream = await retryGoogleRequest(() => client.models.generateContentStream(params), options);
+			const googleStream = await retryGoogleRequest(
+				() => client.models.generateContentStream(params),
+				model,
+				options,
+			);
 
 			stream.push({ type: "start", partial: output });
 			let currentBlock: TextContent | ThinkingContent | null = null;
+			let receivedChunkCount = 0;
+			let promptBlockError: string | undefined;
 			const blocks = output.content;
 			const blockIndex = () => blocks.length - 1;
 			for await (const chunk of googleStream) {
 				await options?.onProviderStreamEvent?.(chunk, model);
+				receivedChunkCount++;
+				if (chunk.promptFeedback?.blockReason) {
+					promptBlockError ??= formatGooglePromptBlockError("Google Vertex", chunk.promptFeedback);
+				}
 				// Vertex uses the same @google/genai GenerateContentResponse type as Gemini.
 				// responseId is documented there as an output-only identifier for each response.
 				output.responseId ||= chunk.responseId;
@@ -289,7 +299,11 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 			}
 
 			if (output.stopReason === "pending") {
-				throw new Error("Google Vertex stream ended without a finish reason");
+				if (promptBlockError) throw new Error(promptBlockError);
+				const chunkLabel = receivedChunkCount === 1 ? "chunk" : "chunks";
+				throw new Error(
+					`Google Vertex stream ended without a finish reason after receiving ${receivedChunkCount} ${chunkLabel}`,
+				);
 			}
 			if (output.stopReason === "aborted" || output.stopReason === "error") {
 				const errorMessage = output.rawStopReason
@@ -362,6 +376,7 @@ function createClient(
 	optionsHeaders?: ProviderHeaders,
 	env?: ProviderEnv,
 	identity?: ClientIdentity,
+	fetch?: FetchFunction,
 ): GoogleGenAI {
 	const googleAuthOptions = buildGoogleAuthOptions(env);
 	return new GoogleGenAI({
@@ -370,7 +385,7 @@ function createClient(
 		location,
 		apiVersion: API_VERSION,
 		...(googleAuthOptions ? { googleAuthOptions } : {}),
-		httpOptions: buildHttpOptions(model, optionsHeaders, identity),
+		httpOptions: buildHttpOptions(model, optionsHeaders, identity, fetch),
 	});
 }
 
@@ -379,12 +394,13 @@ function createClientWithApiKey(
 	apiKey: string,
 	optionsHeaders?: ProviderHeaders,
 	identity?: ClientIdentity,
+	fetch?: FetchFunction,
 ): GoogleGenAI {
 	return new GoogleGenAI({
 		vertexai: true,
 		apiKey,
 		apiVersion: API_VERSION,
-		httpOptions: buildHttpOptions(model, optionsHeaders, identity),
+		httpOptions: buildHttpOptions(model, optionsHeaders, identity, fetch),
 	});
 }
 
@@ -392,8 +408,11 @@ function buildHttpOptions(
 	model: Model<"google-vertex">,
 	optionsHeaders?: ProviderHeaders,
 	identity?: ClientIdentity,
-): HttpOptions | undefined {
-	const httpOptions: HttpOptions = {};
+	fetch?: FetchFunction,
+): HttpOptions {
+	// Always pass fetch: without one, @google/genai adds a per-request dispatcher that disables
+	// undici's header and body timeouts, bypassing the idle timeouts of the global dispatcher.
+	const httpOptions: HttpOptions = { fetch: fetch ?? globalThis.fetch };
 	const baseUrl = resolveCustomBaseUrl(model.baseUrl);
 	if (baseUrl) {
 		httpOptions.baseUrl = baseUrl;
@@ -408,7 +427,7 @@ function buildHttpOptions(
 		httpOptions.headers = headers;
 	}
 
-	return Object.keys(httpOptions).length > 0 ? httpOptions : undefined;
+	return httpOptions;
 }
 
 function resolveCustomBaseUrl(baseUrl: string): string | undefined {
@@ -483,7 +502,7 @@ function buildParams(
 		generationConfig.maxOutputTokens = options.maxTokens;
 	}
 
-	const supportsStrictMode = supportsGoogleStrictToolSampling(model.id);
+	const supportsStrictMode = supportsGoogleStrictToolSampling(model);
 	const functionCallingMode =
 		currentTools.length > 0
 			? resolveGoogleFunctionCallingMode(currentTools, options.toolChoice, supportsStrictMode)
@@ -498,6 +517,9 @@ function buildParams(
 		...(functionCallingMode !== undefined && {
 			toolConfig: { functionCallingConfig: { mode: functionCallingMode } },
 		}),
+		// Off for now, until we have evaluated the implications of the SDK's automatic continuation
+		// (extra requests and stream resumes inside the SDK). A CONTINUATION finish ends the turn as "length".
+		automaticContinuation: false,
 	};
 
 	if (options.thinking?.enabled && model.reasoning) {
@@ -526,36 +548,4 @@ function buildParams(
 	};
 
 	return params;
-}
-
-function getGoogleBudget(
-	model: Model<"google-vertex">,
-	level: ResolvedGoogleThinkingLevel,
-	customBudgets?: ThinkingBudgets,
-): number {
-	if (customBudgets?.[level] !== undefined) {
-		return customBudgets[level]!;
-	}
-
-	if (model.id.includes("2.5-pro")) {
-		const budgets: Record<ResolvedGoogleThinkingLevel, number> = {
-			minimal: 128,
-			low: 2048,
-			medium: 8192,
-			high: 32768,
-		};
-		return budgets[level];
-	}
-
-	if (model.id.includes("2.5-flash")) {
-		const budgets: Record<ResolvedGoogleThinkingLevel, number> = {
-			minimal: 128,
-			low: 2048,
-			medium: 8192,
-			high: 24576,
-		};
-		return budgets[level];
-	}
-
-	return -1;
 }

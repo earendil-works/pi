@@ -3,7 +3,6 @@ import { defineProvider } from "../define.ts";
 
 const COMPAT: OpenAICompletionsCompat = {
 	supportsStore: false,
-	supportsDeveloperRole: false,
 	supportsReasoningEffort: false,
 	maxTokensField: "max_tokens",
 	thinkingFormat: "deepseek",

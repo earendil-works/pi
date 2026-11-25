@@ -1,0 +1,147 @@
+# Builds the Pi Mac app (apps/p2-mac) every night from the newest commit on main that passed CI, and publishes it on
+# pkg.earendil.com as the `nightly` channel of the app `pi-mac`: a signed, notarized DMG that carries p2 and Node
+# (apps/p2-mac/scripts/package-app.sh). Installed apps update themselves from the channel's appcast through Sparkle.
+# A night without new commits builds nothing. Never runs for PRs: the job holds the signing keys.
+#
+# pkg.earendil.com accepts the upload only from this workflow on main (its src/config.ts). The environment
+# `p2-mac-release` (deployments from main only) holds the following; apps/p2-mac/scripts/release-secrets.sh sets them:
+#   secrets  MACOS_CERTIFICATE_P12        base64 of the Developer ID Application certificate with its key (.p12)
+#            MACOS_CERTIFICATE_PASSWORD   its password
+#            APPLE_NOTARY_KEY             base64 of an App Store Connect API key (.p8), for notarytool
+#            APPLE_NOTARY_KEY_ID, APPLE_NOTARY_ISSUER
+#            SPARKLE_PRIVATE_KEY          Sparkle's EdDSA private key (base64, as generate_keys -x exports it)
+#   vars     MACOS_SIGN_IDENTITY          e.g. "Developer ID Application: Armin Ronacher (TEAMID)"
+#            SPARKLE_PUBLIC_KEY           the matching public key; it goes into every build's Info.plist
+
+name: p2-mac nightly
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Full commit SHA to build (default: newest commit on main that passed CI)"
+        required: false
+        type: string
+      force:
+        description: Build even if the channel already has this commit
+        required: false
+        type: boolean
+
+permissions: {}
+
+concurrency:
+  group: p2-mac-nightly
+  cancel-in-progress: false
+
+env:
+  PKG: https://pkg.earendil.com
+  APP: pi-mac
+  CHANNEL: nightly
+
+jobs:
+  build:
+    runs-on: macos-latest
+    environment: p2-mac-release
+    timeout-minutes: 60
+    permissions:
+      actions: read # find the newest passing CI run
+      contents: read
+      id-token: write # authenticate to pkg.earendil.com
+    steps:
+      - name: Pick the commit
+        id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_SHA: ${{ inputs.sha }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          sha="$INPUT_SHA"
+          if [ -z "$sha" ]; then
+            sha=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?branch=main&event=push&status=success&per_page=1" \
+              --jq '.workflow_runs[0].head_sha')
+          fi
+          if ! [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then echo "::error::Not a full commit SHA: $sha"; exit 1; fi
+          current=$(curl -fsS "$PKG/-/apps/$APP/$CHANNEL" | jq -r .sha || true)
+          if [ "$current" = "$sha" ] && [ "$FORCE" != "true" ]; then
+            echo "::notice::$CHANNEL already has $sha"
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        if: steps.pick.outputs.build == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.pick.outputs.sha }}
+          persist-credentials: false
+
+      # A throwaway keychain with the certificate, and the keys as files, all under the runner's temp directory.
+      - name: Install signing keys
+        if: steps.pick.outputs.build == 'true'
+        env:
+          CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          keys="$RUNNER_TEMP/keys"
+          mkdir -m 700 "$keys"
+          keychain="$keys/signing.keychain-db"
+          password=$(openssl rand -hex 24)
+          printf '%s' "$CERTIFICATE" | base64 --decode > "$keys/certificate.p12"
+          printf '%s' "$NOTARY_KEY" | base64 --decode > "$keys/notary.p8"
+          printf '%s' "$SPARKLE_PRIVATE_KEY" > "$keys/sparkle.key"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$keys/certificate.p12" -k "$keychain" -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          rm "$keys/certificate.p12"
+
+      - name: Package
+        if: steps.pick.outputs.build == 'true'
+        working-directory: apps/p2-mac
+        env:
+          SIGN_IDENTITY: ${{ vars.MACOS_SIGN_IDENTITY }}
+          NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.APPLE_NOTARY_ISSUER }}
+          SPARKLE_PUBLIC_KEY: ${{ vars.SPARKLE_PUBLIC_KEY }}
+          FEED_URL: ${{ env.PKG }}/-/apps/${{ env.APP }}/${{ env.CHANNEL }}/appcast.xml
+        run: |
+          NOTARY_KEY="$RUNNER_TEMP/keys/notary.p8" SPARKLE_KEY_FILE="$RUNNER_TEMP/keys/sparkle.key" \
+            ./scripts/package-app.sh
+
+      # Upload first, then move the channel: a channel never points at a build that is not there.
+      - name: Publish
+        if: steps.pick.outputs.build == 'true'
+        working-directory: apps/p2-mac/build/dist
+        env:
+          SHA: ${{ steps.pick.outputs.sha }}
+        run: |
+          oidc=$(curl -sSf -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$PKG" | jq -r .value)
+          echo "::add-mask::$oidc"
+          field() { jq -r ".$1" build.json; }
+          file=$(field file)
+          curl -sS --fail-with-body -X PUT -H "Authorization: Bearer $oidc" --upload-file "$file" \
+            --url-query "version=$(field version)" \
+            --url-query "shortVersion=$(field shortVersion)" \
+            --url-query "minimumSystemVersion=$(field minimumSystemVersion)" \
+            --url-query "edSignature=$(field edSignature)" \
+            "$PKG/_/apps/$APP/$SHA/$file"
+          jq -n --arg channel "$CHANNEL" --arg sha "$SHA" --arg file "$file" --argjson run "$GITHUB_RUN_ID" \
+            '{channel: $channel, sha: $sha, file: $file, run: $run}' |
+            curl -sS --fail-with-body -X POST -H "Authorization: Bearer $oidc" -H "content-type: application/json" \
+              --data-binary @- "$PKG/_/apps/$APP/channels"
+          echo "::notice::Published $file: $PKG/-/apps/$APP/$CHANNEL/download"
+
+      - name: Remove signing keys
+        if: always() && steps.pick.outputs.build == 'true'
+        run: |
+          security delete-keychain "$RUNNER_TEMP/keys/signing.keychain-db" || true
+          rm -rf "$RUNNER_TEMP/keys"

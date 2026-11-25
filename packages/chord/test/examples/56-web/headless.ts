@@ -1,5 +1,5 @@
 // A page without a browser, for examples 56 and 58: what `startPage` does, run in Node. It loads the page's combined
-// file and runs its registered scripts (`vm` here; `<script src>` in a browser), connects to `/chord` with the session
+// file and runs its registered scripts (`vm` here; `<script src>` in a browser), connects to `/chord` with the sign-in
 // token, and keeps its plugins current with `startClient` (the same code `startPage` runs). No DOM: what the page would
 // render is read from its host.
 
@@ -38,7 +38,7 @@ export async function headlessPage(
 	const headers = { authorization: `Bearer ${token}` };
 	const get = async (path: string): Promise<string> => (await fetch(new URL(path, url), { headers })).text();
 	const html = await get("/");
-	const base = /chordPage=\{base:"([0-9a-f]+)"/.exec(html)![1]!;
+	const base = /chordPage=\{"base":"([0-9a-f]+)"/.exec(html)![1]!;
 	const combined = /src="(\/_chord\/web\/plugins\.[0-9a-f]+\.js)"/.exec(html)![1]!;
 	return startClient<BoardPrincipal>({
 		scripts: WebScripts,

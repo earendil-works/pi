@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+	event,
 	evolve,
 	hostKind,
 	int,
@@ -96,5 +97,38 @@ describe("fingerprints", () => {
 		const a = remote("a", { version: 1, params: {}, hostAddress: () => Server(), variants: { v: {} } });
 		const b = remote("b", { version: 7, params: {}, hostAddress: () => Server(), variants: { v: {} } });
 		expect(a.fingerprint).toBe(b.fingerprint);
+	});
+});
+
+describe("fingerprints of event members", () => {
+	it("keep a contract without events at its fingerprint; an event member changes it, under its own kind", () => {
+		const plain = remote("n", {
+			version: 1,
+			params: {},
+			hostAddress: () => Server(),
+			variants: { a: { state: { s: int() } } },
+		});
+		const empty = remote("n", {
+			version: 1,
+			params: {},
+			hostAddress: () => Server(),
+			variants: { a: { state: { s: int() }, events: {} } },
+		});
+		const withEvent = remote("n", {
+			version: 1,
+			params: {},
+			hostAddress: () => Server(),
+			variants: { a: { state: { s: int() }, events: { e: int() } } },
+		});
+		const asState = remote("n", {
+			version: 1,
+			params: {},
+			hostAddress: () => Server(),
+			variants: { a: { state: { s: int(), e: int() } } },
+		});
+		expect(empty.fingerprint).toBe(plain.fingerprint);
+		expect(new Set([plain.fingerprint, withEvent.fingerprint, asState.fingerprint]).size).toBe(3);
+		const store = local("n", { version: 1, params: {}, members: { e: event(int()) } });
+		expect(store.fingerprint).not.toBe(local("n", { version: 1, params: {}, members: { e: int() } }).fingerprint);
 	});
 });

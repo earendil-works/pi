@@ -15,10 +15,12 @@ export {
 	type Message,
 	NO_RETIRED,
 	type OriginMessage,
+	originOf,
 	type ProviderMessage,
 	RETRY_HOPS,
 	type StateEntry,
 	type WireAddress,
+	type WireEvent,
 } from "./message.ts";
 export {
 	type Compression,

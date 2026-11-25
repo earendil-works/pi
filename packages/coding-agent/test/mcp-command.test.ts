@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ProjectTrustStore } from "../src/core/trust-manager.ts";
 import { runMcpCommand } from "../src/extensions/mcp/cli.ts";
+import { startOAuthMcpServer } from "./suite/mcp-oauth-server.ts";
 
 const FIXTURE = resolve(import.meta.dirname, "../../mcp/test/fixtures/stdio-server.mjs");
 
@@ -14,7 +15,12 @@ describe("pi mcp", () => {
 		while (dirs.length > 0) rmSync(dirs.pop() ?? "", { recursive: true, force: true });
 	});
 
-	async function run(args: string[], servers: Record<string, unknown> | undefined, dir?: string) {
+	async function run(
+		args: string[],
+		servers: Record<string, unknown> | undefined,
+		dir?: string,
+		providerToken?: (provider: string) => Promise<string | undefined>,
+	) {
 		const agentDir = dir ?? mkdtempSync(join(tmpdir(), "pi-mcp-command-"));
 		if (!dir) dirs.push(agentDir);
 		if (servers) writeFileSync(join(agentDir, "mcp.json"), JSON.stringify({ mcpServers: servers }));
@@ -22,6 +28,7 @@ describe("pi mcp", () => {
 		const exitCode = await runMcpCommand(args, {
 			cwd: agentDir,
 			agentDir,
+			providerToken,
 			log: (line) => output.push(line),
 			error: (line) => output.push(line),
 		});
@@ -79,6 +86,36 @@ describe("pi mcp", () => {
 		expect((await run(["login", "fixtures"], servers)).output).toBe(
 			'No MCP server named "fixtures". Did you mean "fixture"? Configured: fixture, broken, parked.',
 		);
+	});
+
+	it("sends the token of the provider named by auth.provider", async () => {
+		const server = await startOAuthMcpServer();
+		try {
+			const radius = { radius: { url: server.url, auth: { provider: "radius" } } };
+			const token = server.issueAccessToken();
+			const requested: string[] = [];
+			const signedIn = await run(["list"], radius, undefined, async (provider) => {
+				requested.push(provider);
+				return token;
+			});
+			expect(signedIn).toMatchObject({ exitCode: 0, output: expect.stringContaining("radius: connected, 1 tool") });
+			expect(requested).toContain("radius");
+
+			// Without the provider's credentials the hint names the provider's /login, not `pi mcp login`.
+			const signedOut = await run(["list"], radius, undefined, async () => undefined);
+			expect(signedOut.exitCode).toBe(1);
+			expect(signedOut.output).toContain("radius: needs sign-in (codemode, global)");
+			expect(signedOut.output).toContain("  sign in with: /login radius in pi");
+
+			for (const command of ["login", "logout"]) {
+				expect(await run([command, "radius"], radius)).toMatchObject({
+					exitCode: 1,
+					output: `MCP server "radius" uses the credentials of provider "radius". Run "pi auth ${command} radius".`,
+				});
+			}
+		} finally {
+			await server.close();
+		}
 	});
 
 	it("reports options as typed", async () => {

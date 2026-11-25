@@ -6,20 +6,26 @@
 // A read/write guest talks (its transcripts are its own messages) but hears nothing yet: the answers are read aloud only
 // in the owner's browser. View-only guests have no voice mode. Only when the server has a speech service (voice.json).
 
-import { Access, BACKGROUND_CONTEXT, contribute, defineFacet, grantMode, type HeldIn, liveIn } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, contribute, defineFacet, type HeldIn, liveIn } from "@p2/app/v1";
 import {
 	CheckIcon,
 	closeLayers,
-	openLayer,
+	pressVerb,
+	SettingsSections,
 	Sheet,
 	Slots,
+	upperFirst,
+	useCanWrite,
+	useComposerState,
 	useObject,
+	useOptimisticCall,
 	useOwner,
+	usePointerKind,
 	useReadable,
 	useRoute,
 	useSheet,
 } from "@p2/app/v1/web";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Chat } from "../chat/contract.ts";
 import { ChatMode, DEFAULT_AGENT_NAME } from "../chat-mode/contract.ts";
 import { engineLabel, languagesOf, resolved, resolveVoice } from "./choice.ts";
@@ -172,11 +178,7 @@ function MicIcon({ muted = false, size = 18 }: { muted?: boolean; size?: number 
  * view-only guest only reads).
  */
 function useTalker(): { owner: boolean; talker: boolean } {
-	const owner = useOwner();
-	const { session } = useRoute();
-	const access = useObject(Access, {});
-	const grant = useReadable(liveIn(access, "guest")?.grant);
-	return { owner, talker: owner || grantMode(grant, session) === "full" };
+	return { owner: useOwner(), talker: useCanWrite(useRoute().session) };
 }
 
 /** The voice mode switch of a conversation (the owner's variant or a guest's) and its shared voice. */
@@ -372,6 +374,7 @@ function VoiceChip() {
  * guest's has the state and its own pause only (the voice is the owner's).
  */
 function VoiceSheet({ config, owner, onClose }: { config: VoiceConfig; owner: boolean; onClose: () => void }) {
+	const pointer = usePointerKind();
 	const { session, conversation = 1 } = useRoute();
 	const input = useMemo(() => (session ? { session, conversation } : undefined), [session, conversation]);
 	const { ownerMode, voice: shared } = useVoiceMode(input);
@@ -379,7 +382,12 @@ function VoiceSheet({ config, owner, onClose }: { config: VoiceConfig; owner: bo
 	const [, setTick] = useState(0);
 	useEffect(() => shown.subscribe(() => setTick((tick) => tick + 1)), []);
 	const mine = useStored();
-	const settings = shared ?? mine;
+	// The owner's choice shows at once; a refused one goes back with the error in the toast.
+	const [settings, choose] = useOptimisticCall(
+		shared ?? mine,
+		(_, next: VoiceSettings) => next,
+		useComposerState().fail,
+	);
 	const { engine: ttsEngine, voice, language } = resolveVoice(config, settings);
 	const languages = languagesOf(ttsEngine);
 	const voiceName = ttsEngine?.voices.find((option) => option.id === voice)?.name ?? voice;
@@ -416,7 +424,7 @@ function VoiceSheet({ config, owner, onClose }: { config: VoiceConfig; owner: bo
 		const next = resolved(config, { ...settings, ...change });
 		sampling.current = next;
 		stored.set(next);
-		void ownerMode?.choose(next, BACKGROUND_CONTEXT).catch((error: unknown) => console.error("[voice]", error));
+		if (ownerMode) choose(next, () => ownerMode.choose(next, BACKGROUND_CONTEXT));
 	};
 	const sample = () => sampler.sample();
 
@@ -541,37 +549,41 @@ function VoiceSheet({ config, owner, onClose }: { config: VoiceConfig; owner: bo
 					</section>
 				))}
 			</div>
-			<p className="muted small">Tap a voice, or choose a language, to hear it.</p>
+			<p className="muted small">{upperFirst(pressVerb(pointer))} a voice, or choose a language, to hear it.</p>
 		</Sheet>
 	);
 }
 
 /**
- * The sidebar footer's entry to the Voice sheet, when the server has a speech service: the owner's whole sheet, a
- * read/write guest's own pause.
+ * The Voice sheet while it is open, when the server has a speech service: the owner's whole sheet, a read/write
+ * guest's own pause.
  */
-function VoiceButton() {
+function VoiceSheetSlot() {
 	const { owner, talker } = useTalker();
 	const config = useVoiceConfig(talker);
 	const sheet = useSheet("voice");
-	if (!talker || !config) return null;
-	return (
-		<>
-			<button
-				type="button"
-				className="foot-button"
-				title={owner ? "Voice mode's voice, speed and pause" : "Voice mode's pause"}
-				onClick={() => openLayer({ kind: "sheet", name: "voice" }, { fromDrawer: true })}
-			>
-				Voice
-			</button>
-			{sheet && <VoiceSheet config={config} owner={owner} onClose={closeLayers} />}
-		</>
-	);
+	return talker && config && sheet ? <VoiceSheet config={config} owner={owner} onClose={closeLayers} /> : null;
+}
+
+/** Settings' Voice section while the server has a speech service. */
+function VoiceShown({ children }: { children: ReactNode }) {
+	const { talker } = useTalker();
+	return useVoiceConfig(talker) ? children : null;
 }
 
 export default defineFacet((host) => {
 	contribute(host, "p2.voice-web", (self) => {
-		self.contribute(Slots, { "composer:voice": VoiceChip, "sidebar-foot:voice": VoiceButton });
+		self.contribute(SettingsSections, {
+			voice: {
+				label: "Voice",
+				title: "Voice mode's voice, speed and pause",
+				order: 70,
+				Sheet: VoiceSheetSlot,
+				Shown: VoiceShown,
+			},
+		});
+		self.contribute(Slots, {
+			"composer:voice": VoiceChip,
+		});
 	});
 });

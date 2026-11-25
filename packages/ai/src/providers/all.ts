@@ -33,6 +33,7 @@ import { openrouterProvider } from "./openrouter.ts";
 import { qwenTokenPlanProvider } from "./qwen-token-plan.ts";
 import { qwenTokenPlanCnProvider } from "./qwen-token-plan-cn.ts";
 import { qwenTokenPlanIndividualProvider } from "./qwen-token-plan-individual.ts";
+import { qwenTokenPlanIndividualCnProvider } from "./qwen-token-plan-individual-cn.ts";
 import { radiusProvider } from "./radius.ts";
 import { togetherProvider } from "./together.ts";
 import { typesafeProvider } from "./typesafe.ts";
@@ -166,6 +167,7 @@ export function builtinProviders(): Provider[] {
 		qwenTokenPlanProvider(),
 		qwenTokenPlanCnProvider(),
 		qwenTokenPlanIndividualProvider(),
+		qwenTokenPlanIndividualCnProvider(),
 		radiusProvider(),
 		togetherProvider(),
 		typesafeProvider(),

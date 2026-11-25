@@ -12,7 +12,7 @@ import { getAgentDir } from "../config.ts";
 import { raceWithAbortSignal } from "../utils/abort.ts";
 import { getFileRevision, normalizePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
-import { isCommandConfigValue, resolveConfigValue } from "./resolve-config-value.ts";
+import { clearConfigValueCacheEntry, isCommandConfigValue, resolveConfigValue } from "./resolve-config-value.ts";
 
 type AuthStorageData = Record<string, Credential>;
 
@@ -83,7 +83,8 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 		const delayMs = 20;
 		for (let attempt = 1; ; attempt++) {
 			try {
-				return lockfile.lockSync(path, { realpath: false });
+				// Lock the resolved file so symlinked aliases of auth.json share one lock (#11655).
+				return lockfile.lockSync(path);
 			} catch (error) {
 				if (!getRetryableLockErrorCode(error) || attempt === maxAttempts) throw error;
 				const start = Date.now();
@@ -127,8 +128,8 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 			signal?.throwIfAborted();
 			let release: (() => Promise<void>) | undefined;
 			try {
+				// Lock the resolved file so symlinked aliases of auth.json share one lock (#11655).
 				release = await lockfile.lock(this.authPath, {
-					realpath: false,
 					retries: 0,
 					stale: staleMs,
 					onCompromised,
@@ -454,6 +455,7 @@ export class AuthStorage implements CredentialStore {
 	): Promise<Credential | undefined> {
 		let latestData = this.readState.data;
 		let revision: string | undefined;
+		let written: Credential | undefined;
 		const result = await this.storage.withLockAsync(async (content) => {
 			const currentData = this.parseStorageData(content);
 			const next = await fn(currentData[provider]);
@@ -465,9 +467,13 @@ export class AuthStorage implements CredentialStore {
 
 			const merged: AuthStorageData = { ...currentData, [provider]: next };
 			latestData = merged;
+			written = next;
 			return { result: next, next: JSON.stringify(merged, null, 2) };
 		}, options);
 		this.updateReadState(latestData, revision);
+		// Command results are cached for the process. Saving a `!command` key, even the same one, runs it
+		// again, so signing in to a secrets manager and saving the key again recovers from a failure.
+		if (written?.type === "api_key" && written.key) clearConfigValueCacheEntry(written.key);
 		return result;
 	}
 

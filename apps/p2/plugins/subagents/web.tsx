@@ -1,23 +1,14 @@
+// The subagents' web facet: the subagent tool's card and the conversation commands of the command menu (commands.tsx).
 import { contribute, defineFacet } from "@p2/app/v1";
-import { conversationRoute, Slots, useNavigation, useRoute } from "@p2/app/v1/web";
-
-function ParentLink() {
-	const nav = useNavigation();
-	const route = useRoute();
-	if (!route.session || (route.conversation ?? 1) === 1) return null;
-	return (
-		<button
-			type="button"
-			className="row-button"
-			onClick={() => void nav.backOrPush(conversationRoute(route, route.session))}
-		>
-			Back to main conversation
-		</button>
-	);
-}
+import { CommandPages, CommandSearches, Commands, ToolActivities } from "@p2/app/v1/web";
+import { subagentActivity } from "./activity.tsx";
+import { CONVERSATION_COMMANDS, CONVERSATION_PAGES, CONVERSATION_SEARCH } from "./commands.tsx";
 
 export default defineFacet((host) => {
 	contribute(host, "p2.web-subagents", (self) => {
-		self.contribute(Slots, { "chat-parent": ParentLink });
+		self.contribute(ToolActivities, { subagent: subagentActivity });
+		self.contribute(Commands, CONVERSATION_COMMANDS);
+		self.contribute(CommandPages, CONVERSATION_PAGES);
+		self.contribute(CommandSearches, { conversations: CONVERSATION_SEARCH });
 	});
 });

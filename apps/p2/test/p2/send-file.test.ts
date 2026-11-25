@@ -11,7 +11,7 @@ import { SentFiles } from "../../plugins/send-file/contract.ts";
 import { previewText } from "../../plugins/send-file/worker.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import type { RefIn } from "../../src/runtime/chord.ts";
-import { type Fixture, holdIn, http, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
 
 const results = (view: ConversationView | null | undefined): ToolResultMessage[] =>
 	(view?.entries ?? []).flatMap((entry) =>
@@ -56,7 +56,7 @@ describe("send_file (fake provider)", () => {
 		assert.equal(info.size, 18);
 		await rm(path);
 		await fixture.server.reload(["send-file"]);
-		const response = await http(fixture.server.port, `/download?session=${session}&id=${info.id}`);
+		const response = await fixture.http(`/download?session=${session}&id=${info.id}`);
 		assert.equal(response.status, 200);
 		assert.equal(response.body, "immutable sentinel");
 		assert.match(String(response.headers["content-disposition"]), /attachment/);

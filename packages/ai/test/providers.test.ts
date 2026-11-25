@@ -100,6 +100,9 @@ describe("builtin providers", () => {
 			supportsOpenAIGrammarTools: true,
 		});
 		expect(getBuiltinModel("anthropic", "claude-haiku-4-5").compat?.supportsStrictTools).toBe(true);
+		const copilotClaude = getBuiltinModels("github-copilot").filter((model) => model.api === "anthropic-messages");
+		expect(copilotClaude.length).toBeGreaterThan(0);
+		for (const model of copilotClaude) expect(model.compat).toMatchObject({ supportsStrictTools: true });
 	});
 
 	it("keeps the conservative resize profile on every vision model", () => {
@@ -184,15 +187,15 @@ describe("builtin providers", () => {
 			["opencode", "claude-opus-5"],
 			["opencode", "kimi-k3"],
 			["opencode-go", "kimi-k3"],
-			["github-copilot", "gpt-5.6-terra"],
-			["github-copilot", "claude-opus-5"],
+			["github-copilot", "gpt-6.1-terra"],
+			["github-copilot", "claude-opus-5.5"],
 			["github-copilot", "claude-opus-4.8"],
 			["github-copilot", "kimi-k3"],
 			["deepseek", "deepseek-v4-pro"],
 			["openrouter", "openai/gpt-5.6-terra"],
 		] as const;
 		const unsupported = [
-			["fireworks", "accounts/fireworks/models/nemotron-3-ultra-nvfp4"],
+			["fireworks", "accounts/fireworks/models/deepseek-v4p1-flash"],
 			["openai", "gpt-4.1"],
 			["openai", "gpt-5.2"],
 			["anthropic", "claude-sonnet-4-5"],
@@ -222,7 +225,7 @@ describe("builtin providers", () => {
 		const models = builtinModels();
 		for (const [provider, modelId] of [
 			["opencode", "gpt-5.6-terra"],
-			["github-copilot", "gpt-5.6-terra"],
+			["github-copilot", "gpt-6.1-terra"],
 		] as const) {
 			// Proxies pass `additional_tools` through to OpenAI but are not verified for tool search.
 			expect(models.getModel(provider, modelId)?.compat, `${provider}/${modelId}`).toMatchObject({
@@ -233,8 +236,11 @@ describe("builtin providers", () => {
 			);
 		}
 		// Proxied Anthropic endpoints reject `tool_addition`/`tool_removal` blocks.
-		for (const provider of ["opencode", "github-copilot"] as const) {
-			expect(models.getModel(provider, "claude-opus-5")?.compat, provider).not.toHaveProperty(
+		for (const [provider, modelId] of [
+			["opencode", "claude-opus-5"],
+			["github-copilot", "claude-opus-5.5"],
+		] as const) {
+			expect(models.getModel(provider, modelId)?.compat, `${provider}/${modelId}`).not.toHaveProperty(
 				"supportsMidConvoToolChanges",
 			);
 		}

@@ -27,7 +27,7 @@
  */
 
 import { join, resolve } from "node:path";
-import { createMcpToolName, mcpNamespace } from "@earendil-works/pi-mcp";
+import { createMcpToolName, mcpNamespace, mcpServerSummary } from "@earendil-works/pi-mcp";
 import type { SelectItem } from "@earendil-works/pi-tui";
 import type { TSchema } from "typebox";
 import { getAgentDir } from "../../config.ts";
@@ -39,6 +39,7 @@ import type {
 	ToolDefinition,
 } from "../../core/extensions/types.ts";
 import type { ModelRegistry } from "../../core/model-registry.ts";
+import { sliceHead } from "../../core/tools/truncate.ts";
 import { openBrowser } from "../../utils/open-browser.ts";
 import { CODEMODE_TOOL_NAME } from "../codemode/tool.ts";
 import { TOOL_SEARCH_TOOL_NAME } from "../tool-search/tool.ts";
@@ -172,19 +173,13 @@ function serversSectionIntro(reaches: ReadonlySet<string>): string {
 
 function truncate(text: string, max: number): string {
 	if (text.length <= max) return text;
-	return max <= 1 ? "" : `${text.slice(0, max - 1).trimEnd()}…`;
+	return max <= 1 ? "" : `${sliceHead(text, max - 1).trimEnd()}…`;
 }
 
 /** What the `mcp_servers` section needs of a server. */
 export interface McpServerListing {
 	entry: McpServerEntry;
 	connection?: { instructions?: string };
-}
-
-/** First line of the configured description, or of the server instructions once connected. */
-function serverSummary(server: McpServerListing): string {
-	const text = server.entry.config.description?.trim() || server.connection?.instructions || "";
-	return (text.split("\n", 1)[0] ?? "").trim();
 }
 
 /**
@@ -214,7 +209,10 @@ export function renderServersSection(servers: readonly McpServerListing[]): stri
 			? 0
 			: Math.min(MAX_SERVER_DESCRIPTION_CHARS, Math.floor((MAX_SERVERS_SECTION_CHARS - size(kept)) / kept) - 2);
 	const lines = listed.slice(0, kept).map((server, index) => {
-		const summary = perServer > 0 ? truncate(serverSummary(server), perServer) : "";
+		const summary =
+			perServer > 0
+				? truncate(mcpServerSummary(server.entry.config.description, server.connection?.instructions), perServer)
+				: "";
 		return summary ? `${heads[index]}: ${summary}` : heads[index];
 	});
 	return [intro, ...lines, ...omitted(listed.length - kept)].join("\n");

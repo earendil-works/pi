@@ -57,9 +57,15 @@ export function readParams(declared: readonly [string, unknown][], path: string)
 	};
 }
 
+/** What `joinKey` escapes in a part: its separator and the escape itself. */
+const SPECIAL = /[\\|]/;
+
 /** Joins key parts with `|`, each escaped (`\\` and `|`), so two different part lists never join to one key. */
 export function joinKey(parts: readonly string[]): string {
-	return parts.map((part) => part.replaceAll("\\", "\\\\").replaceAll("|", "\\|")).join("|");
+	// Most parts have nothing to escape: no copy for them.
+	return parts
+		.map((part) => (SPECIAL.test(part) ? part.replaceAll("\\", "\\\\").replaceAll("|", "\\|") : part))
+		.join("|");
 }
 
 type SchemaNode = { readonly [keyword: string]: JsonValue };

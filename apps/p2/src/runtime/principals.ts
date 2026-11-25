@@ -1,8 +1,13 @@
 // Principals of p2 (browser-safe). Links stamp them; plugins check them in factories and methods.
 
+import type { PrincipalAttributes } from "@earendil-works/chord";
+
 /** The person running this p2 (one today). */
 export type OwnerPrincipal =
-	/** A browser on this machine (loopback), with or without the loopback owner cookie. */
+	/**
+	 * A local owner session on loopback: a client that proved to run as the server's user, or a browser that redeemed an
+	 * owner link on loopback. Its local-only powers (minting owner links, loopback provider sign-ins) rest on that proof.
+	 */
 	| { readonly kind: "owner"; readonly access: "local" }
 	/** Through Radius, authenticated by the relay. */
 	| { readonly kind: "owner"; readonly access: "relay" }
@@ -34,9 +39,13 @@ export type P2Principal = OwnerPrincipal | GuestPrincipal | WorkerPrincipal | Se
 
 /**
  * What revokes principals (`host.revoke`, the same on every host): one associated device's owner, every remote owner
- * (relay and devices: "sign out all devices"), or one guest (all revisions of its grant).
+ * (relay and devices), every local owner session ("sign out all devices" revokes both), or one guest (all revisions of
+ * its grant).
  */
-export type Revocation = { readonly device: string } | { readonly owners: "remote" } | { readonly guest: string };
+export type Revocation =
+	| { readonly device: string }
+	| { readonly owners: "remote" | "local" }
+	| { readonly guest: string };
 
 /** The revocations that end `principal`'s objects and links. */
 export function revokedBy(principal: P2Principal): Revocation[] {
@@ -46,7 +55,7 @@ export function revokedBy(principal: P2Principal): Revocation[] {
 				? [{ device: principal.device }, { owners: "remote" }]
 				: principal.access === "relay"
 					? [{ owners: "remote" }]
-					: [];
+					: [{ owners: "local" }];
 		case "guest":
 			return [{ guest: principal.id }];
 		default:
@@ -58,6 +67,24 @@ export function revokedBy(principal: P2Principal): Revocation[] {
 export const HOST: HostPrincipal = { kind: "host" };
 /** What a worker's parent (the server) acts as when its own code calls the worker (`connect`). */
 export const SERVER: ServerPrincipal = { kind: "server" };
+
+/**
+ * What telemetry records about a principal (every host's `principalAttributes`; Chord's "Who a span was for"): its
+ * kind, the owner's access, a guest's id and a worker's session; never a name or an email (a guest's principal key
+ * would carry both, kept 7 days).
+ */
+export const principalAttributes: PrincipalAttributes<P2Principal> = (principal) => {
+	switch (principal.kind) {
+		case "owner":
+			return { "p2.principal": `owner:${principal.access}` };
+		case "guest":
+			return { "p2.principal": "guest", "p2.guest": principal.id };
+		case "worker":
+			return { "p2.principal": "worker", "p2.session": principal.session };
+		default:
+			return { "p2.principal": principal.kind };
+	}
+};
 
 // `undefined`: no principal (a request nobody authenticated).
 export const isOwner = (principal: P2Principal | undefined): principal is OwnerPrincipal => principal?.kind === "owner";

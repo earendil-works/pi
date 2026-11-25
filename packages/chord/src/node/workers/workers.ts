@@ -3,18 +3,26 @@
 // `fatal` or a failed start leaves the address failed until `retry` or a rollout. A running worker's lost link is a
 // stop its holders start a new worker after, once a minute (decision "A lost worker link is recovered from").
 // Per address, a child's events are recorded on that child as they happen; starts and stops run one after another.
+// A worker's exit is published only after its link's work ended (decision "A worker's exit is published after its
+// link's work ended"): no call of an exited worker runs, and no change it made lands, once `state` says it is gone.
+// Every worker is forked from the kind's worker base, bundled once by `build` (the kit: right after the server
+// listens; a start waits for it, and fails when it did not build; decision "Workers start from the base code the server
+// booted with").
 
 import type { Context } from "../../context/index.ts";
 import { awaitWithContext, BACKGROUND_CONTEXT, withAbortSignal } from "../../context/index.ts";
 import type { Address, HostKind, KindShape } from "../../contracts/index.ts";
 import type { Params } from "../../contracts/internal.ts";
 import { ChordError, type Principal } from "../../data/index.ts";
-import type { Host, RouteHandle } from "../../host/index.ts";
+import type { Host, RouteHandle, RouteOptions } from "../../host/index.ts";
 import type { JsonValue } from "../../json.ts";
 import { Batch, type BatchError, Source } from "../../state/internal.ts";
+import type { ChordStore, Store } from "../../store/store.ts";
 import type { Watchable } from "../../watch.ts";
+import type { BaseInputs } from "../plugins/base-inputs.ts";
 import type { Plugins, RolloutHost, RolloutStep } from "../plugins/plugins.ts";
 import type { PluginScript } from "../plugins/runtime.ts";
+import { buildWorkerBase, type WorkerBase } from "./base.ts";
 import { type CrossedError, type CrossedReport, type FromWorker, uncrossed, uncrossedReport } from "./control.ts";
 import { clearStaleLock } from "./lock.ts";
 import { type Exit, WorkerProcess } from "./process.ts";
@@ -23,12 +31,31 @@ import { type Exit, WorkerProcess } from "./process.ts";
 export type WorkersOptions<P extends Principal, K extends KindShape> = {
 	/** The facet kind its workers load (`"worker"`), shipped by the plugins component. */
 	readonly kind: string;
-	/** The worker's entry module (it calls `workerMain`), its Node flags and its environment. */
+	/**
+	 * The worker's entry module (it calls `workerMain`), bundled with the base code it imports by `build`; its Node flags
+	 * (their `--conditions` resolve the bundle's imports too) and its environment.
+	 */
 	readonly entry: string;
 	readonly execArgv?: readonly string[];
 	readonly env?: Readonly<Record<string, string>>;
+	/**
+	 * The private directory the worker base's files are written into at the first fork, its own while the component is
+	 * open (emptied first, removed at `close`; never touched after it, so a later start may own it then): one that stays
+	 * the same between starts lets Node's compile cache know them; none: a new temporary directory.
+	 */
+	readonly baseDir?: string;
+	/**
+	 * Node's compile cache for the workers (`NODE_COMPILE_CACHE` in their environment unless `env` sets it): forks load
+	 * the base and the packages it imports from compiled code; none: the server's environment decides.
+	 */
+	readonly compileCache?: string;
 	/** The route's `authorize`: whether `principal` may reach `address` (synchronous). */
 	readonly authorize: (principal: P, address: Address<K>) => boolean;
+	/**
+	 * The route's admission (`RouteOptions.admit`, slice 14 §2.3), passed through: no worker starts for a principal the
+	 * decision does not allow. It reads only contracts the app's API owns (base code never reloads).
+	 */
+	readonly admit?: RouteOptions<P, K>["admit"];
 	/** Who the worker at `address` is (stamped on its link). */
 	readonly principal: (address: Address<K>) => P;
 	/** The worker's start data (JSON), before each start; abortable (`close`), a throw fails the start. */
@@ -37,6 +64,12 @@ export type WorkersOptions<P extends Principal, K extends KindShape> = {
 	readonly lock: (address: Address<K>) => string;
 	/** How long a worker idles before it is stopped: 5 minutes by default. */
 	readonly idleMs?: () => number;
+	/**
+	 * The server host's store, the one its `createHost` got: a worker's exit is published once the commits queued in it
+	 * before the exit settled. Required, so it is not forgotten: `undefined` only for a host without a store (nothing
+	 * is waited for then).
+	 */
+	readonly store: Store | undefined;
 	readonly plugins: Plugins;
 	/** A worker's output; without it, mirrored to this process's own. */
 	readonly onOutput?: (address: Address<K>, stream: "stdout" | "stderr", chunk: Uint8Array) => void;
@@ -45,10 +78,17 @@ export type WorkersOptions<P extends Principal, K extends KindShape> = {
 
 /**
  * One address's worker (R5): running or on its way, or failed (until `retry` or a rollout) with a public error: a fixed
- * message (`worker failed to start`, `worker exited (SIGSEGV)`) or the child's redacted `fatal`.
+ * message (`worker failed to start`, `worker exited (SIGSEGV)`) or the child's redacted `fatal`. `incarnation` is this
+ * run of the worker's host, the `ctx.incarnation` of every call it makes: there from its link's handshake on, so
+ * before its first call is handled (also one its startup makes, long before `running`); absent before.
  */
 export type WorkerState =
-	| { readonly status: "starting" | "running" | "stopping"; readonly pid: number; readonly startedAt: number }
+	| {
+			readonly status: "starting" | "running" | "stopping";
+			readonly pid: number;
+			readonly startedAt: number;
+			readonly incarnation?: string;
+	  }
 	| { readonly status: "failed"; readonly error: CrossedError; readonly at: number };
 
 /** What the component reports (and the state's watch listeners that threw). */
@@ -80,21 +120,47 @@ export type WorkersError =
 	  }
 	| BatchError;
 
+/** How a worker base's build ended: built (the files it read), or failed (esbuild's failure). */
+export type WorkersBuilt =
+	| { readonly kind: "built"; readonly inputs: BaseInputs }
+	| { readonly kind: "failed"; readonly error: unknown };
+
 /** The workers component. */
 export interface Workers<K extends KindShape> {
-	/** Per address key its `WorkerState`; no entry when stopped or never started. A JSON watchable. */
+	/**
+	 * Per address key its `WorkerState`; no entry when stopped or never started. A JSON watchable. A worker's entry
+	 * goes (or turns `failed`) only after its link's work ended: its link is closed first, which aborts the calls it
+	 * made (a transaction under a call's `ctx` not yet at its commit is refused) and drops what it sent and was not
+	 * handled yet, and the commits those calls had queued in `store` settled. So nothing an exited worker reported is
+	 * handled or lands after its exit shows here, and its successor starts after that: an app needs no check of its own
+	 * against reports of a worker that is gone.
+	 */
 	readonly state: Watchable<Readonly<Record<string, WorkerState>>>;
+	/**
+	 * Bundles the worker base, once (a start waits for it, and starts it when nothing did). Never rejects: how it ended
+	 * (`built`: the files it was built from with their bytes' hashes, the app's base code for its workers). Every start
+	 * fails while it failed.
+	 */
+	build(): Promise<WorkersBuilt>;
+	/** How the build ended, once it did. */
+	readonly built: WorkersBuilt | undefined;
 	/** Suspends `address` while it has holders (`RouteHandle.suspend`), then stops its worker. */
 	stop(address: Address<K>, context: Context): Promise<void>;
 	/** Clears `address`'s failure and suspension: it starts again now if held (`RouteHandle.retry`). */
 	retry(address: Address<K>, context: Context): Promise<void>;
 	/** A rollout step shipping the kind's current set to every worker, one result per worker (§4). */
 	step(name: string): RolloutStep;
-	/** Cancels starts, stops every worker; new starts reject `released/closed`. */
+	/**
+	 * Cancels starts, stops every worker, then removes the worker base's files once every worker exited (also when
+	 * `context` ends the wait first); new starts reject `released/closed`.
+	 */
 	close(context: Context): Promise<void>;
 }
 
-/** Creates the workers component on `host`: it routes `Kind` itself (`host.route`, before `load`). */
+/**
+ * Creates the workers component on `host`: it routes `Kind` itself (`host.route`, before `load`). Its worker base is
+ * not built yet (`build`).
+ */
 export function createWorkers<P extends Principal, N extends string, Q extends Params>(
 	host: Host<P>,
 	Kind: HostKind<N, Q>,
@@ -118,11 +184,8 @@ export function createWorkers<P extends Principal, N extends string, Q extends P
 			// The address is the route's, of `Kind` (the component works on any kind's); the principal is
 			// `options.principal`'s, a `P`.
 			resolve: (address, routing) =>
-				component.resolve(address as unknown as Address<HostKind>, routing) as Promise<{
-					link: Link;
-					principal: P;
-					trusted: true;
-				}>,
+				component.resolve(address as unknown as Address<HostKind>, routing) as Promise<Resolved<P>>,
+			...(options.admit === undefined ? {} : { admit: options.admit }),
 		},
 		context,
 	);
@@ -163,6 +226,10 @@ type Child = {
 	readonly started: PromiseWithResolvers<void>;
 	/** `ready`: its load report; rejected when it exits before. */
 	readonly ready: PromiseWithResolvers<CrossedReport>;
+	/** Its exit was published (`#left`): its address's next start may go on. */
+	readonly gone: PromiseWithResolvers<void>;
+	/** Its host's incarnation, from its link's handshake on (`resolve`'s `opened`). */
+	incarnation: string | undefined;
 	/** Since when it is idle (from `ready`); `undefined` while busy or before `ready`. */
 	idleSince: number | undefined;
 	/** An idle stop is queued (checked again when it runs). */
@@ -172,7 +239,7 @@ type Child = {
 	/** Its reloads, one outstanding at a time; settles to nothing (a report kept as its value would stay alive). */
 	reloading: Promise<void>;
 	/** The waiter of its outstanding reload. */
-	reloaded: ((reply: Extract<FromWorker, { readonly kind: "reloaded" }>) => void) | undefined;
+	reloaded: ((reply: Extract<FromWorker, { readonly kind: "reloaded" | "reload_failed" }>) => void) | undefined;
 	/** Set once its link is gone or it exited: every reload queued behind settles with it. */
 	ended: Ended | undefined;
 	/** The grace timer of a stop or of a lost link. */
@@ -212,8 +279,26 @@ const RECOVERY_WINDOW = 60_000;
 /** The public error of a start that failed. */
 const START_FAILED: CrossedError = { message: "worker failed to start", code: "unavailable" };
 
+/** How the worker base's build ended: its handle, or esbuild's failure. */
+type Base =
+	| { readonly kind: "built"; readonly base: WorkerBase }
+	| { readonly kind: "failed"; readonly error: unknown };
+
+/** `base` as callers see it. */
+function builtOf(base: Base): WorkersBuilt {
+	return base.kind === "built" ? { kind: "built", inputs: base.base.inputs } : base;
+}
+
 /** The link type a route's `resolve` returns. */
 type Link = WorkerProcess["link"];
+
+/** What the component's `resolve` gives the route: the worker's link, who it is, and where its incarnation goes. */
+type Resolved<P extends Principal> = {
+	readonly link: Link;
+	readonly principal: P;
+	readonly trusted: true;
+	readonly opened: (incarnation: string) => void;
+};
 
 class WorkersComponent implements Workers<HostKind> {
 	/** Set by `createWorkers` once the route exists. */
@@ -221,6 +306,13 @@ class WorkersComponent implements Workers<HostKind> {
 	readonly state: Watchable<Readonly<Record<string, WorkerState>>>;
 	readonly #state: WorkersState;
 	readonly #options: WorkersOptions<Principal, HostKind>;
+	/** The server host's store, if it has one: `openStore`'s, the one maker of a `Store`. */
+	readonly #store: ChordStore | undefined;
+	/** What every fork's environment adds to the server's: the app's `env`, the compile cache's directory. */
+	readonly #environment: Readonly<Record<string, string>> | undefined;
+	/** The worker base's build, started once; its outcome once it ended. */
+	#building: Promise<Base> | undefined;
+	#base: Base | undefined;
 	readonly #addresses = new Map<string, Routed>();
 	/** Aborted at `close`: starts waiting in the app's `start` or for `started` end. */
 	readonly #closing = new AbortController();
@@ -232,17 +324,44 @@ class WorkersComponent implements Workers<HostKind> {
 
 	constructor(options: WorkersOptions<Principal, HostKind>, context: Context) {
 		this.#options = options;
+		this.#store = options.store as ChordStore | undefined;
+		const { compileCache, env } = options;
+		this.#environment = compileCache === undefined ? env : { NODE_COMPILE_CACHE: compileCache, ...env };
 		this.#state = new WorkersState(this.#addresses, new Batch((error) => options.onError(error), undefined));
 		// Its value is a `Record<string, WorkerState>`.
 		this.state = this.#state as unknown as Watchable<Readonly<Record<string, WorkerState>>>;
 		this.#closeWith(context);
 	}
 
+	build(): Promise<WorkersBuilt> {
+		return this.#built().then(builtOf);
+	}
+
+	get built(): WorkersBuilt | undefined {
+		return this.#base === undefined ? undefined : builtOf(this.#base);
+	}
+
+	/** The worker base's build, started once. */
+	#built(): Promise<Base> {
+		const { entry, execArgv = [], baseDir } = this.#options;
+		this.#building ??= buildWorkerBase(entry, execArgv, baseDir)
+			.then(
+				// Nothing is written until a fork (`file()`): a build that ends after the close touches no file.
+				(base): Base => ({ kind: "built", base }),
+				(error: unknown): Base => ({ kind: "failed", error }),
+			)
+			.then((outcome) => {
+				this.#base = outcome;
+				return outcome;
+			});
+		return this.#building;
+	}
+
 	/**
 	 * The route's `resolve`: a failed address rejects at once with its (public) failure, nothing forks; otherwise a
 	 * start, after the previous child's exit.
 	 */
-	resolve(address: Address<HostKind>, routing: Context): Promise<{ link: Link; principal: Principal; trusted: true }> {
+	resolve(address: Address<HostKind>, routing: Context): Promise<Resolved<Principal>> {
 		if (!this.#routing) {
 			this.#routing = true;
 			this.#closeWith(routing);
@@ -291,7 +410,13 @@ class WorkersComponent implements Workers<HostKind> {
 		const stops = [...this.#addresses.values()].map((routed) =>
 			this.#enqueue(routed, () => this.#stop(routed)).then(() => routed.queue),
 		);
-		await awaitWithContext(Promise.all(stops), context);
+		// The base's files stay until every child exited or was killed (a stopping worker's closers may import a lazy
+		// chunk), also when `context` ends the wait first: nothing forks once closing, and only files this component
+		// wrote go. The kit releases the data directory's lock only after this close resolved.
+		const exited = Promise.all(stops).then(() => {
+			if (this.#base?.kind === "built") this.#base.base.remove();
+		});
+		await awaitWithContext(exited, context);
 	}
 
 	/** `context`'s abort closes the component (the route's is aborted when the host closes). */
@@ -353,13 +478,21 @@ class WorkersComponent implements Workers<HostKind> {
 	 * start timer (fork, lock and connect only). Its failure fails the address; `close` ends it at any of its waits (an
 	 * app's `start` that ignores its signal too), a forked child is stopped.
 	 */
-	async #start(routed: Routed, routing: Context): Promise<{ link: Link; principal: Principal; trusted: true }> {
+	async #start(routed: Routed, routing: Context): Promise<Resolved<Principal>> {
 		const { address } = routed;
-		// After the previous child's exit (its link may close first): a crash recorded meanwhile rejects this start.
-		await routed.child?.process.exited;
+		// After the previous child's exit was published (its link closes before, which may have asked for this start):
+		// a crash recorded meanwhile rejects this start.
+		await routed.child?.gone.promise;
 		const crashed = routed.failure;
 		if (crashed !== undefined) throw uncrossed(crashed.error);
 		if (this.#closing.signal.aborted) throw closed();
+		// The kind's worker base: a start waits for its build, and fails while it failed.
+		const base = await awaitWithContext(this.#built(), this.#closingContext).catch(() => {
+			// `#built` never rejects: the close ended the wait.
+			throw closed();
+		});
+		if (this.#closing.signal.aborted) throw closed();
+		if (base.kind === "failed") throw this.#fail(routed, { error: base.error, public: START_FAILED }, undefined);
 		const context = withAbortSignal(this.#closing.signal, routing);
 		let data: JsonValue;
 		try {
@@ -368,10 +501,12 @@ class WorkersComponent implements Workers<HostKind> {
 			if (this.#closing.signal.aborted) throw closed();
 			throw this.#fail(routed, { error, public: START_FAILED }, undefined);
 		}
+		// Checked in the same synchronous step as the fork, which writes the base's files (`file()`): never after the
+		// close (the kit releases the data directory's lock after it; a later start owns `baseDir` then).
 		if (this.#closing.signal.aborted) throw closed();
 		let child: Child;
 		try {
-			child = this.#fork(routed);
+			child = this.#fork(routed, base.base);
 		} catch (error) {
 			throw this.#fail(routed, { error, public: START_FAILED }, undefined);
 		}
@@ -394,13 +529,18 @@ class WorkersComponent implements Workers<HostKind> {
 			child.lock = lock;
 			child.process.send({ kind: "start", address, start: data, scripts, lock });
 			await awaitWithContext(child.started.promise, this.#closingContext);
-			return { link: child.process.link, principal: this.#options.principal(address), trusted: true };
+			return {
+				link: child.process.link,
+				principal: this.#options.principal(address),
+				trusted: true,
+				opened: (incarnation) => this.#opened(routed, child, incarnation),
+			};
 		} catch (error) {
 			// Closing is a stop (no failure); anything else fails the start.
 			if (this.#closing.signal.aborted) child.stopping = true;
 			else child.cause ??= { error, public: START_FAILED, killed: true };
 			child.process.kill();
-			await child.process.exited;
+			await child.gone.promise;
 			if (this.#closing.signal.aborted) throw closed();
 			throw uncrossed(routed.failure?.error ?? START_FAILED);
 		} finally {
@@ -409,15 +549,19 @@ class WorkersComponent implements Workers<HostKind> {
 	}
 
 	/** Forks the address's worker and records its events on it as they happen. */
-	#fork(routed: Routed): Child {
+	#fork(routed: Routed, base: WorkerBase): Child {
 		const { address } = routed;
 		const onOutput = this.#options.onOutput;
 		let child!: Child;
 		const process = new WorkerProcess(
 			{
-				entry: this.#options.entry,
-				...(this.#options.execArgv === undefined ? {} : { execArgv: this.#options.execArgv }),
-				...(this.#options.env === undefined ? {} : { env: this.#options.env }),
+				entry: base.file(),
+				// No `--enable-source-maps`: Node would parse the base's whole map at the first stack made text (Chord makes a
+				// kept error's stack text at once), a p2 session worker's about 1M positions, 50 MiB of its heap for its
+				// life. Stacks name the bundle's files and functions; its source maps lie beside them (an app passes the
+				// flag in `execArgv` to have Node map them, at that cost).
+				execArgv: this.#options.execArgv ?? [],
+				...(this.#environment === undefined ? {} : { env: this.#environment }),
 				...(onOutput === undefined ? {} : { onOutput: (stream, chunk) => onOutput(address, stream, chunk) }),
 			},
 			{
@@ -434,6 +578,8 @@ class WorkersComponent implements Workers<HostKind> {
 			cause: undefined,
 			started: Promise.withResolvers(),
 			ready: Promise.withResolvers(),
+			gone: Promise.withResolvers(),
+			incarnation: undefined,
 			idleSince: undefined,
 			idleStop: false,
 			shipped: "",
@@ -450,6 +596,15 @@ class WorkersComponent implements Workers<HostKind> {
 		this.#state.refresh();
 		this.#watchIdle();
 		return child;
+	}
+
+	/**
+	 * `child`'s link completed its handshake with its host's `incarnation`: in `state` before anything else that host
+	 * sent is handled, so a handler of its first call finds its `ctx.incarnation` there.
+	 */
+	#opened(routed: Routed, child: Child, incarnation: string): void {
+		child.incarnation = incarnation;
+		if (routed.child === child) this.#state.refresh();
 	}
 
 	/** A control message of `child`. */
@@ -474,6 +629,7 @@ class WorkersComponent implements Workers<HostKind> {
 				child.process.kill();
 				return;
 			case "reloaded":
+			case "reload_failed":
 				child.reloaded?.(message);
 		}
 	}
@@ -502,18 +658,21 @@ class WorkersComponent implements Workers<HostKind> {
 	}
 
 	/**
-	 * `child` exited: a stop's exit forgets it, as does a lost link the address recovers from (`worker_link_lost`: its
-	 * holders' route resolves again, a start after this exit); any other is a crash that fails the address
-	 * (`worker_exited` and `worker_failed` once, the full error and stderr tail for the app's logs only), except once the
-	 * component closes.
+	 * `child` exited, its link closed before this was told (`WorkerProcess`): what it sent and was not handled yet is
+	 * dropped and the calls it made are aborted, so a transaction of theirs not yet at its commit is refused. Its
+	 * waiters end now; its exit is published (`#left`) once the commits queued in the server's store before now
+	 * settled (the only changes of its calls that can still land: a queued commit ignores its caller's abort). Until
+	 * then `state` still shows it, and its address's next start waits (`gone`).
 	 */
 	#exited(routed: Routed, child: Child, exit: Exit): void {
 		clearTimeout(child.grace);
+		// Read now: what its events recorded up to its exit.
 		const clean = child.stopping && child.cause === undefined;
 		const cause: Cause = child.cause ?? { error: exitError(routed.address, exit, child) };
-		const error = cause.public ?? publicExit(exit, child);
-		child.started.reject(uncrossed(error));
-		child.ready.reject(uncrossed(error));
+		const shown = cause.public ?? publicExit(exit, child);
+		const failure = clean ? undefined : { ...cause, public: shown };
+		child.started.reject(uncrossed(shown));
+		child.ready.reject(uncrossed(shown));
 		this.#ended(child);
 		const lock = child.lock;
 		// A child a signal ended (SIGKILL) ran no exit hooks: its socket file would stay until the address's next start.
@@ -521,18 +680,37 @@ class WorkersComponent implements Workers<HostKind> {
 		if (lock !== undefined && exit.signal !== null) {
 			void this.#enqueue(routed, () => clearStaleLock(lock, BACKGROUND_CONTEXT)).catch(() => {});
 		}
+		// `settled` never rejects.
+		void (this.#store?.settled() ?? Promise.resolve()).then(() => {
+			this.#left(routed, child, exit, failure);
+			child.gone.resolve();
+		});
+	}
+
+	/**
+	 * Publishes `child`'s exit: a stop's exit (no `failure`) forgets it, as does a lost link the address recovers from
+	 * (`worker_link_lost`: its holders' route resolves again, a start after this); any other is a crash that fails the
+	 * address (`worker_exited` and `worker_failed` once, the full error and stderr tail for the app's logs only), except
+	 * once the component closes.
+	 */
+	#left(
+		routed: Routed,
+		child: Child,
+		exit: Exit,
+		failure: (Cause & { readonly public: CrossedError }) | undefined,
+	): void {
 		if (routed.child !== child) return;
 		routed.child = undefined;
-		if (!clean && !this.#closing.signal.aborted) {
-			if (cause.lost === true && this.#recovers(routed)) {
-				this.#options.onError({ kind: "worker_link_lost", address: routed.address.key, error: cause.error });
+		if (failure !== undefined && !this.#closing.signal.aborted) {
+			if (failure.lost === true && this.#recovers(routed)) {
+				this.#options.onError({ kind: "worker_link_lost", address: routed.address.key, error: failure.error });
 			} else {
 				const { code, signal } = exit;
 				// A failed start's kill is the component's own act (Opus's second recheck): only `worker_failed`.
-				if (cause.killed !== true) {
+				if (failure.killed !== true) {
 					this.#options.onError({ kind: "worker_exited", address: routed.address.key, code, signal });
 				}
-				this.#fail(routed, { ...cause, public: error }, child.process.stderrTail);
+				this.#fail(routed, failure, child.process.stderrTail);
 			}
 		}
 		this.#state.refresh();
@@ -560,7 +738,7 @@ class WorkersComponent implements Workers<HostKind> {
 			child.stopping && child.cause === undefined
 				? { kind: "stopped" }
 				: { kind: "failed", error: new ChordError({ code: "unavailable", message: "worker: its link is gone" }) };
-		child.reloaded?.({ kind: "reloaded", error: { message: "worker: its link is gone" } });
+		child.reloaded?.({ kind: "reload_failed", error: { message: "worker: its link is gone" } });
 	}
 
 	/**
@@ -579,14 +757,14 @@ class WorkersComponent implements Workers<HostKind> {
 		return uncrossed(cause.public);
 	}
 
-	/** A stop: `shutdown`, the grace, then the tree killed; resolves at its exit. */
+	/** A stop: `shutdown`, the grace, then the tree killed; resolves once its exit was published. */
 	async #stop(routed: Routed): Promise<void> {
 		const child = routed.child;
 		if (child === undefined) return;
 		child.stopping = true;
 		this.#shutdown(child);
 		this.#state.refresh();
-		await child.process.exited;
+		await child.gone.promise;
 	}
 
 	/** Asks `child` to shut down and kills its tree after the grace. */
@@ -672,9 +850,9 @@ class WorkersComponent implements Workers<HostKind> {
 			await started;
 			const child = routed.child;
 			if (child === undefined) throw new Error("worker: exited");
-			return { host, report: uncrossedReport(await child.ready.promise) };
+			return { kind: "reloaded", host, report: uncrossedReport(await child.ready.promise) };
 		} catch (error) {
-			return { host, error };
+			return { kind: "failed", host, error };
 		}
 	}
 
@@ -687,7 +865,11 @@ class WorkersComponent implements Workers<HostKind> {
 			() =>
 				new Promise<RolloutHost>((resolve) => {
 					const settle = (ended: Ended): void => {
-						resolve(ended.kind === "stopped" ? { host, stopped: true } : { host, error: ended.error });
+						resolve(
+							ended.kind === "stopped"
+								? { kind: "stopped", host }
+								: { kind: "failed", host, error: ended.error },
+						);
 					};
 					if (child.ended !== undefined) {
 						settle(child.ended);
@@ -695,13 +877,13 @@ class WorkersComponent implements Workers<HostKind> {
 					}
 					child.reloaded = (reply) => {
 						child.reloaded = undefined;
-						if ("report" in reply) {
+						if (reply.kind === "reloaded") {
 							if (reply.report.failed.length === 0) child.shipped = key;
-							resolve({ host, report: uncrossedReport(reply.report) });
+							resolve({ kind: "reloaded", host, report: uncrossedReport(reply.report) });
 						} else if (child.ended !== undefined) {
 							settle(child.ended);
 						} else {
-							resolve({ host, error: uncrossed(reply.error) });
+							resolve({ kind: "failed", host, error: uncrossed(reply.error) });
 						}
 					};
 					child.process.send({ kind: "reload", scripts });
@@ -758,7 +940,7 @@ async function bounded(host: string, entry: Promise<RolloutHost>, context: Conte
 	try {
 		return await awaitWithContext(entry, context);
 	} catch (error) {
-		return { host, error };
+		return { kind: "failed", host, error };
 	}
 }
 
@@ -804,7 +986,8 @@ function stateOf(addresses: ReadonlyMap<string, Routed>): Record<string, WorkerS
 			state[key] = { status: "failed", ...failure };
 		} else if (child !== undefined) {
 			const { pid, startedAt } = child.process;
-			state[key] = { status: child.status, pid, startedAt };
+			const { status, incarnation } = child;
+			state[key] = { status, pid, startedAt, ...(incarnation === undefined ? {} : { incarnation }) };
 		}
 	}
 	return state;

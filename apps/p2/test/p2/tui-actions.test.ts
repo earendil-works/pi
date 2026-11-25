@@ -105,10 +105,11 @@ test("openUrl: https externals and allowlisted origin paths only, never with cre
 	for (const url of ["http://provider.test", "https://user:pass@provider.test", "javascript:alert(1)", "file:///etc"])
 		assert(!ok({ kind: "external", url }), url);
 	assert(ok({ kind: "origin", path: `/s/${OTHER}` }));
-	assert(ok({ kind: "origin", path: `/artifact?session=${SESSION}&name=chart&version=2` }));
+	assert(ok({ kind: "origin", path: `/artifact-frame?session=${SESSION}&id=chart&version=2` }));
 	assert(ok({ kind: "origin", path: `/download?session=${SESSION}&id=${FILE}` }));
 	for (const path of [
-		`/artifact?session=${OTHER}&name=chart&version=2`,
+		`/artifact-frame?session=${OTHER}&id=chart&version=2`,
+		`/artifact-frame?session=${SESSION}&id=../x&version=2`,
 		`/download?session=${SESSION}&id=${FILE}&cookie=1`,
 		"/owner",
 		"/__p2_dev",
@@ -188,9 +189,9 @@ test("download: fixed route, the launcher's cookie, bounded, sanitized, never ov
 	mode = "redirect";
 	await assert.rejects(download.run(payload, context()));
 	assert.equal(readdirSync(folder).length, 2, "failed downloads leave nothing behind");
+	// Only sent files download: artifacts are pages, opened in the browser.
 	const artifact = { kind: "artifact", session: SESSION, name: "chart", version: 3 };
-	assert(download.consent(artifact, { origin: url, target }));
-	assert.equal(download.consent({ ...artifact, name: "../x" }, { origin: url, target }), undefined);
+	assert.equal(download.consent(artifact, { origin: url, target }), undefined);
 	assert.equal(safeFileName("..\\..\\secret"), "secret");
 	assert.equal(safeFileName(""), "download");
 });
@@ -243,7 +244,7 @@ test("external editor and suspend lend the terminal; devCommand and signOut are 
 	assert.match(windows.notices[0]!, /not supported on Windows/);
 
 	const requests: { path: string; method: string; origin: string | null; cookie: string | null; body: string }[] = [];
-	t.mock.method(
+	const fetchMock = t.mock.method(
 		globalThis,
 		"fetch",
 		async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
@@ -261,8 +262,10 @@ test("external editor and suspend lend the terminal; devCommand and signOut are 
 	);
 	const dev = C(actions.devCommand);
 	assert(dev.consent({ action: "reload" }, { origin, target }));
-	assert.equal(dev.consent({ action: "restart" }, { origin, target }), undefined);
+	assert.match(dev.consent({ action: "restart" }, { origin, target })?.action ?? "", /Restart the server/);
+	assert.equal(dev.consent({ action: "restart" }, { origin, target })?.ask, false, "a restart runs without asking");
 	assert.equal(dev.consent({ action: "reload", plugins: ["x"] }, { origin, target }), undefined);
+	assert.equal(dev.consent({ action: "stop" }, { origin, target }), undefined);
 	assert.deepEqual(await dev.run({ action: "reload" }, context()), { message: "Reloaded: chat" });
 	const signOut = C(actions.signOut);
 	assert.match(signOut.consent({ all: true }, { origin, target })?.action ?? "", /ALL owner devices/);
@@ -275,8 +278,15 @@ test("external editor and suspend lend the terminal; devCommand and signOut are 
 		],
 	);
 	assert.equal(requests[0]!.body, '{"action":"reload"}');
+	// A restart may drop the request as the server exits: requested, not failed. A reload that drops still fails.
+	fetchMock.mock.mockImplementation(async () => {
+		throw new TypeError("fetch failed");
+	});
+	assert.deepEqual(await dev.run({ action: "restart" }, context()), { message: "Restart requested; reconnecting…" });
+	await assert.rejects(dev.run({ action: "reload" }, context()), /fetch failed/);
 	const guest = launcherActions({ url: origin, credentials: { cookie: "g" }, role: "guest" });
 	assert.equal(C(guest.devCommand).consent({ action: "reload" }, { origin, target }), undefined);
+	assert.equal(C(guest.devCommand).consent({ action: "restart" }, { origin, target }), undefined);
 	assert.equal(C(guest.signOut).consent({ all: true }, { origin, target }), undefined);
 	const loopback = launcherActions({ url: new URL("http://127.0.0.1:1"), credentials: {}, role: "owner" });
 	assert.equal(
@@ -422,11 +432,12 @@ test(
 		const client = await startTuiClient({
 			terminal,
 			url,
+			credentials: { cookie: fixture.owner.cookie },
 			pollMs: 60000,
 			colorQueryMs: 10,
 			actions: launcherActions({
 				url,
-				credentials: {},
+				credentials: { cookie: fixture.owner.cookie },
 				role: "owner",
 				clipboard: async (text) => {
 					copies.push(text);

@@ -1,6 +1,12 @@
 import { resetCapabilitiesCache, setCapabilities } from "@earendil-works/pi-tui";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { getMarkdownTheme, highlightCode, initTheme, theme } from "../src/modes/interactive/theme/theme.ts";
+import {
+	getLanguageFromPath,
+	getMarkdownTheme,
+	highlightCode,
+	initTheme,
+	theme,
+} from "../src/modes/interactive/theme/theme.ts";
 import {
 	highlight,
 	loadAllHighlightLanguages,
@@ -39,6 +45,14 @@ describe("syntax highlight renderer", () => {
 		expect(uncommonLanguageLoadedAtStartup).toBe(false);
 		await loadAllHighlightLanguages();
 		expect(supportsLanguage("ada")).toBe(true);
+	});
+
+	it("maps file extensions of eagerly loaded languages to their language", () => {
+		expect(getLanguageFromPath("lib/main.dart")).toBe("dart");
+		expect(getLanguageFromPath("flake.nix")).toBe("nix");
+		expect(getLanguageFromPath("script.groovy")).toBe("groovy");
+		expect(getLanguageFromPath("build.gradle")).toBe("groovy");
+		expect(getLanguageFromPath("src/Main.kt")).toBe("kotlin");
 	});
 
 	it("renders highlighted spans with the provided theme", () => {
@@ -106,11 +120,22 @@ describe("theme syntax highlighting", () => {
 			"",
 			`${ansi}line two\x1b[39m`,
 			`${ansi}"""\x1b[39m`,
-			"after",
+			`${theme.getFgAnsi("text")}after\x1b[39m`,
 		];
 
 		expect(highlightCode(code, "python")).toEqual(expected);
 		expect(getMarkdownTheme().highlightCode?.(code, "python")).toEqual(expected);
+	});
+
+	// Regression for #11092.
+	it("colors unscoped highlighted code with the theme foreground", () => {
+		initTheme("light");
+
+		const lines = highlightCode("plainIdentifier\nconst answer = 42;", "typescript");
+		const text = theme.getFgAnsi("text");
+
+		expect(lines[0]).toBe(`${text}plainIdentifier\x1b[39m`);
+		expect(lines[1]).toContain(`${text} answer = \x1b[39m`);
 	});
 
 	it("colors diff additions and deletions in fenced diff blocks", () => {

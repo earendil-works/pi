@@ -3,6 +3,7 @@
  */
 
 import { Container, Loader, Spacer, Text, type TUI } from "@earendil-works/pi-tui";
+import { bashTruncationNote } from "../../../core/messages.ts";
 import {
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,
@@ -26,6 +27,7 @@ export class BashExecutionComponent extends Container {
 	private loader: Loader;
 	private truncationResult?: TruncationResult;
 	private fullOutputPath?: string;
+	private fullOutputError?: string;
 	private expanded = false;
 	private contentContainer: Container;
 	/** `dim` marks `!!` commands, whose output is excluded from the model context. */
@@ -103,6 +105,7 @@ export class BashExecutionComponent extends Container {
 		cancelled: boolean,
 		truncationResult?: TruncationResult,
 		fullOutputPath?: string,
+		fullOutputError?: string,
 	): void {
 		this.exitCode = exitCode;
 		this.status = cancelled
@@ -112,6 +115,7 @@ export class BashExecutionComponent extends Container {
 				: "complete";
 		this.truncationResult = truncationResult;
 		this.fullOutputPath = fullOutputPath;
+		this.fullOutputError = fullOutputError;
 
 		// Stop loader
 		this.loader.stop();
@@ -152,7 +156,7 @@ export class BashExecutionComponent extends Container {
 				const styledOutput = previewLogicalLines.map((line) => theme.fg("muted", line)).join("\n");
 				const styledInput = `\n${styledOutput}`;
 				let cachedWidth: number | undefined;
-				let cachedLines: string[] | undefined;
+				let cachedLines: readonly string[] | undefined;
 				this.contentContainer.addChild({
 					render: (width: number) => {
 						if (cachedLines === undefined || cachedWidth !== width) {
@@ -197,8 +201,13 @@ export class BashExecutionComponent extends Container {
 
 			// Add truncation warning (context truncation, not preview truncation)
 			const wasTruncated = this.truncationResult?.truncated || contextTruncation.truncated;
-			if (wasTruncated && this.fullOutputPath) {
-				statusParts.push(theme.fg("warning", `Output truncated. Full output: ${this.fullOutputPath}`));
+			if (wasTruncated) {
+				statusParts.push(
+					theme.fg(
+						"warning",
+						bashTruncationNote({ fullOutputPath: this.fullOutputPath, fullOutputError: this.fullOutputError }),
+					),
+				);
 			}
 
 			if (statusParts.length > 0) {

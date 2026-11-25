@@ -28,8 +28,9 @@ function showToken(ctx: TuiContext, token: string): void {
 
 /**
  * The launcher's consent UI (section 3.3) is the confirmation: it states the scope before anything is signed out. On
- * success the server revokes this connection; the launcher then forgets its cookie and asks for an owner link. The
- * device owner on loopback has no cookie, so "this device" is refused there (`denied`, like declining).
+ * success the server revokes this connection; the launcher then forgets its cookie and asks for an owner link. On
+ * loopback the launcher signs in again with the data directory's owner key, so "this device" is refused there
+ * (`denied`, like declining).
  */
 async function signOut(ctx: TuiContext, all: boolean): Promise<void> {
 	const result = await ctx.grant("signOut", { all });

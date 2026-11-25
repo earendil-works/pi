@@ -1,9 +1,19 @@
-// Table columns (decisions "Flat columns", "Nullable columns and the `set` form", "Restricted names"): the restricted
-// subset of L1's helpers a table's `columns` take (`str int num bool`, `opt(...)` of them, `json(...)`, defaults),
-// their types for rows, keys and column references, and the column descriptors and records the store keeps.
+// Table columns (decisions "Flat columns", "Nullable columns and the `set` form", "Restricted names", "Documents and
+// table rows can belong to a host"): the restricted subset of L1's helpers a table's `columns` take (`str int num
+// bool`, `opt(...)` of them, `json(...)`, `host(...)`, defaults), their types for rows, keys and column references, and
+// the column descriptors and records the store keeps.
 
-import type { BooleanSchema, IntegerSchema, NumberSchema, Schema, Static, StringSchema } from "../contracts/index.ts";
+import type {
+	BooleanSchema,
+	IntegerSchema,
+	KindShape,
+	NumberSchema,
+	Schema,
+	Static,
+	StringSchema,
+} from "../contracts/index.ts";
 import { isOptional, type Optional } from "../contracts/schema.ts";
+import { HostColumn, type HostColumnSchema } from "./host-column.ts";
 import { JsonColumn, type JsonColumnSchema } from "./json-column.ts";
 import { storedText } from "./text.ts";
 
@@ -11,6 +21,7 @@ import { storedText } from "./text.ts";
 export type ColumnSchema =
 	| ScalarSchema
 	| JsonColumnSchema<unknown>
+	| HostColumnSchema<KindShape>
 	| Optional<ScalarSchema | JsonColumnSchema<unknown>>;
 
 type ScalarSchema = StringSchema | IntegerSchema | NumberSchema | BooleanSchema;
@@ -21,18 +32,20 @@ export type Columns = { readonly [name: string]: ColumnSchema };
 /** A column's type in the store. */
 export type ColumnType = "str" | "int" | "num" | "bool" | "json";
 
-/** The store type of column schema `S`. */
+/** The store type of column schema `S` (a `host(...)` column is a `str` one holding address keys). */
 export type ColumnTypeOf<S> = S extends Optional<infer I>
 	? ColumnTypeOf<I>
-	: S extends StringSchema
+	: S extends HostColumnSchema<KindShape>
 		? "str"
-		: S extends IntegerSchema
-			? "int"
-			: S extends NumberSchema
-				? "num"
-				: S extends BooleanSchema
-					? "bool"
-					: "json";
+		: S extends StringSchema
+			? "str"
+			: S extends IntegerSchema
+				? "int"
+				: S extends NumberSchema
+					? "num"
+					: S extends BooleanSchema
+						? "bool"
+						: "json";
 
 /** The value type of column schema `S` (without `undefined` for an `opt(...)` one). */
 export type ValueOf<S> = S extends Optional<infer I> ? ValueOf<I> : S extends Schema ? Static<S> : never;
@@ -55,21 +68,35 @@ export type PutRowOf<C extends Columns> = { [K in Exclude<RequiredNames<C>, Defa
 	[K in Exclude<keyof C, Exclude<RequiredNames<C>, DefaultedNames<C>>>]?: ValueOf<C[K]>;
 };
 
-/** The columns a key, an index or an `orderBy` may use: non-`opt` `str` or `int`. */
+/** The columns a key, an index or an `orderBy` may use: non-`opt` `str`, `int` or `host(...)`. */
 export type OrderColumn<C extends Columns> = {
-	[K in keyof C]: C[K] extends Optional ? never : C[K] extends StringSchema | IntegerSchema ? K : never;
+	[K in keyof C]: C[K] extends Optional
+		? never
+		: C[K] extends StringSchema | IntegerSchema | HostColumnSchema<KindShape>
+			? K
+			: never;
 }[keyof C] &
 	string;
 
-/** A column of the store: its name, type, nullability and default; a `json(...)` one with its definition. */
+/**
+ * A column of the store: its name, type, nullability and default; a `json(...)` one with its definition; a `host(...)`
+ * one is a non-`opt` `str` column with its `host` definition.
+ */
 export type Column =
 	| {
 			readonly name: string;
 			readonly type: "str" | "int" | "num" | "bool";
 			readonly optional: boolean;
 			readonly default: string | number | boolean | undefined;
+			readonly host?: HostColumn;
 	  }
 	| { readonly name: string; readonly type: "json"; readonly optional: boolean; readonly json: JsonColumn };
+
+/** A column that is not `json(...)`: a scalar one, a `host(...)` one among them. */
+export type ScalarColumn = Exclude<Column, { readonly type: "json" }>;
+
+/** A `host(...)` column: a non-`opt` `str` column with its definition. */
+export type HostColumnOf = ScalarColumn & { readonly type: "str"; readonly host: HostColumn };
 
 /** A column as the `table` write records it (slice 6a §5): what a replica needs without the plugin's code. */
 export type ColumnRecord = {
@@ -79,6 +106,8 @@ export type ColumnRecord = {
 	/** A `json(...)` column's version and schema fingerprint. */
 	readonly version?: number;
 	readonly fingerprint?: string;
+	/** A `host(...)` column's host kind (a `str` column holding its address keys). */
+	readonly host?: string;
 };
 
 /** The column name rule (decision "Restricted names"). */
@@ -118,6 +147,11 @@ function describeColumn(name: string, column: ColumnSchema, what: string): Colum
 	const fields = (optional ? column.schema : column) as { readonly [key: string]: unknown };
 	const json = fields.json;
 	if (json instanceof JsonColumn) return { name, type: "json", optional, json };
+	const host = fields.host;
+	if (host instanceof HostColumn) {
+		if (optional) throw new Error(`${what}: a host(...) column is not opt(...)`);
+		return { name, type: "str", optional, default: undefined, host };
+	}
 	const type = SCALAR_TYPES[String(fields.type)];
 	if (type === undefined) throw new Error(`${what}: expected str(), int(), num(), bool(), opt(...) or json(...)`);
 	for (const key of Object.keys(fields)) {
@@ -149,5 +183,6 @@ export function columnRecord(column: Column): ColumnRecord {
 	if (column.type === "json") {
 		return { type: "json", ...optional, version: column.json.version, fingerprint: column.json.fingerprint };
 	}
+	if (column.host !== undefined) return { type: "str", host: column.host.kind.kind };
 	return { type: column.type, ...optional, ...(column.default === undefined ? {} : { default: column.default }) };
 }

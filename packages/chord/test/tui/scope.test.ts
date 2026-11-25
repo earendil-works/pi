@@ -1,7 +1,9 @@
 // Tests of `TuiScope` (slice 11 §4, decision "Slice 11, P9"): references held for a component, watchables and
 // registries followed, one `changed` callback for every change, everything released at `dispose`, and the host's page
 // state shared by every scope (decision "Tutorial gaps" (1)), and messages in the host's language, a change redrawing
-// (decision "Messages and languages in the app kit").
+// (decision "Messages and languages in the app kit"), an optimistic value shown while a call is pending (decision
+// "A call's answer follows its state"), and a reference read in one variant (decision "C15 stands; the UI bindings
+// follow the variant").
 
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
@@ -11,6 +13,7 @@ import {
 	defineFacet,
 	defineMessages,
 	defineRegistry,
+	event,
 	hostLanguage,
 	local,
 	method,
@@ -18,8 +21,13 @@ import {
 } from "../../src/index.ts";
 import { NO_TRANSLATIONS } from "../../src/surfaces/translations.ts";
 import { TuiScope } from "../../src/tui/scope.ts";
+import { Desk, desk, expectCollected } from "../support.ts";
 
-const Notes = local("test.notes", { version: 1, params: {}, members: { text: str(), write: method(str()) } });
+const Notes = local("test.notes", {
+	version: 1,
+	params: {},
+	members: { text: str(), write: method(str()), written: event(str()) },
+});
 
 const Panels = defineRegistry<string, readonly string[]>("test.panels", { version: 1 });
 
@@ -33,10 +41,13 @@ async function host() {
 				facet: defineFacet((h, self) => {
 					h.serve(Notes, (_params, object) => {
 						const text = object.writable("first");
+						const written = object.events<string>();
 						return {
 							text: object.derive([text], ([value]) => value),
+							written,
 							write: async (next) => {
 								text.set(next);
+								written.emit(next);
 								return null;
 							},
 						};
@@ -88,6 +99,178 @@ describe("a component's scope", () => {
 		});
 		expect(read()).toBeUndefined();
 		scope.dispose();
+		await h.close(context);
+	});
+});
+
+describe('a scope\'s reference in one variant (decision "C15 stands; the UI bindings follow the variant")', () => {
+	it("reads it narrowed while live in the variant; a change of its variant calls changed, once per state", async () => {
+		const { client, admit } = await desk();
+		let changes = 0;
+		const scope = new TuiScope(client, () => changes++);
+		const held = scope.hold(Desk, {});
+		const editor = scope.variant(held, "editor");
+		const reader = scope.variant(held, "reader");
+		expect(reader()).toBeUndefined();
+		await until(() => reader() === held);
+		expect(editor()).toBeUndefined();
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		const before = changes;
+		// Another allowed value while it is held: loading, then live in the other variant.
+		await admit("editor");
+		await until(() => editor() === held);
+		await editor()!.write("edited", context);
+		expect(reader()).toBeUndefined();
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		// One watch of the reference's state, whoever asked for it: a redraw per state.
+		expect(changes - before).toBe(2);
+		await admit("none");
+		await until(() => held.state.value.kind === "failed");
+		expect(editor()).toBeUndefined();
+		scope.dispose();
+		expect(editor()).toBeUndefined();
+	});
+
+	it("follows a reference the scope does not hold, until dispose", async () => {
+		const { client, admit } = await desk();
+		let changes = 0;
+		const scope = new TuiScope(client, () => changes++);
+		const held = client.hold(Desk, {}, context);
+		const editor = scope.variant(held, "editor");
+		await until(() => held.state.value.kind === "live");
+		const before = changes;
+		await admit("editor");
+		await until(() => editor() === held && changes > before);
+		scope.dispose();
+		const after = changes;
+		await admit("reader");
+		await until(() => held.variant === "reader" && held.state.value.kind === "live");
+		expect(changes).toBe(after);
+		expect(editor()).toBeUndefined();
+		held.release();
+	});
+
+	it("keeps no reference its holder released, while the scope lives (GC)", async () => {
+		const { client } = await desk();
+		const scope = new TuiScope(client, () => {});
+		const released = await (async () => {
+			const held = client.hold(Desk, {}, context);
+			const reader = scope.variant(held, "reader");
+			await until(() => reader() === held);
+			held.release();
+			return new WeakRef(held);
+		})();
+		await expectCollected(released);
+		scope.dispose();
+	});
+});
+
+describe('a scope\'s event subscriptions (decision "Events: fire-and-forget members")', () => {
+	it("call the listener for each event, never changed by themselves, until dispose", async () => {
+		const created = await host();
+		let changes = 0;
+		const scope = new TuiScope(created, () => changes++);
+		const notes = scope.hold(Notes, {});
+		await until(() => notes.state.value.kind === "live");
+		const seen: string[] = [];
+		scope.on(notes.written, ({ value }) => void seen.push(value));
+		const before = changes;
+		await notes.write("a", context);
+		await until(() => seen.length === 1);
+		// The event called its listener only (the text is not followed here: nothing else changed).
+		expect(changes).toBe(before);
+		scope.dispose();
+		const again = await created.get(Notes, {}, context);
+		await again.write("b", context);
+		await new Promise((resolve) => setTimeout(resolve, 5));
+		expect(seen).toEqual(["a"]);
+	});
+});
+
+describe("a scope's optimistic values", () => {
+	it("show the value while its call is pending, then the reader's, calling changed on each change", async () => {
+		const h = await host();
+		let changes = 0;
+		const scope = new TuiScope(h, () => changes++);
+		const notes = scope.hold(Notes, {});
+		const [text, add] = scope.optimistic(scope.watch(notes.text));
+		await until(() => text() === "first");
+		const before = changes;
+		const written = add("second", notes.write("second", context));
+		expect(text()).toBe("second");
+		expect(changes).toBe(before + 1);
+		await written;
+		await until(() => changes > before + 1);
+		expect(text()).toBe("second");
+		scope.dispose();
+		await h.close(context);
+	});
+
+	it("show the last value until every call settled; a rejected call drops it as a resolved one does", async () => {
+		const h = await host();
+		const calls: string[] = [];
+		const scope = new TuiScope(h, () => calls.push(text()!));
+		const [text, add] = scope.optimistic(() => "real");
+		const first = Promise.withResolvers<null>();
+		const second = Promise.withResolvers<null>();
+		add("one", first.promise);
+		const failing = add("two", second.promise);
+		first.resolve(null);
+		await first.promise;
+		await Promise.resolve();
+		expect(text()).toBe("two");
+		second.reject(new Error("refused"));
+		await expect(failing).rejects.toThrow("refused");
+		await Promise.resolve();
+		expect(calls).toEqual(["one", "two", "two", "real"]);
+		scope.dispose();
+		await h.close(context);
+	});
+
+	it("apply a reducer over every action in flight, in order, and say whether a call is pending", async () => {
+		const h = await host();
+		const scope = new TuiScope(h, () => {});
+		let real = ["a", "b", "c"];
+		const [list, add, pending] = scope.optimistic(
+			() => real,
+			(current: string[], removed: string) => current.filter((each) => each !== removed),
+		);
+		const first = Promise.withResolvers<null>();
+		const second = Promise.withResolvers<null>();
+		add("a", first.promise);
+		add("c", second.promise);
+		expect(list()).toEqual(["b"]);
+		// Unchanged reader and actions: the same value, not a new array per read.
+		expect(list()).toBe(list());
+		expect(pending()).toBe(true);
+		// The first call settled with its change committed: both actions stay until the second settles too.
+		real = ["b", "c"];
+		first.resolve(null);
+		await first.promise;
+		await Promise.resolve();
+		expect(list()).toEqual(["b"]);
+		real = ["b"];
+		second.resolve(null);
+		await second.promise;
+		await Promise.resolve();
+		expect(list()).toBe(real);
+		expect(pending()).toBe(false);
+		scope.dispose();
+		await h.close(context);
+	});
+
+	it("never call changed after dispose", async () => {
+		const h = await host();
+		let changes = 0;
+		const scope = new TuiScope(h, () => changes++);
+		const [, add] = scope.optimistic(() => "real");
+		const call = Promise.withResolvers<null>();
+		add("shown", call.promise);
+		scope.dispose();
+		call.resolve(null);
+		await call.promise;
+		await Promise.resolve();
+		expect(changes).toBe(1);
 		await h.close(context);
 	});
 });

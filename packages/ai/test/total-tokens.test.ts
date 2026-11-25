@@ -442,10 +442,10 @@ describe("totalTokens field", () => {
 
 	describe.skipIf(!process.env.MISTRAL_API_KEY)("Mistral", () => {
 		it(
-			"devstral-medium-latest - should return totalTokens equal to sum of components",
+			"mistral-medium-latest - should return totalTokens equal to sum of components",
 			{ retry: 3, timeout: 60000 },
 			async () => {
-				const llm = getModel("mistral", "devstral-medium-latest");
+				const llm = getModel("mistral", "mistral-medium-latest");
 
 				console.log(`\nMistral / ${llm.id}:`);
 				const { first, second } = await testTotalTokensWithCache(llm, { apiKey: process.env.MISTRAL_API_KEY });
@@ -642,6 +642,27 @@ describe("totalTokens field", () => {
 				const llm = getModel("qwen-token-plan-cn", "qwen3.7-max");
 
 				console.log(`\nQwen Token Plan CN / ${llm.id}:`);
+				const { first, second } = await testTotalTokensWithCache(llm, {
+					apiKey: process.env.QWEN_TOKEN_PLAN_CN_API_KEY,
+				});
+
+				logUsage("First request", first);
+				logUsage("Second request", second);
+
+				assertTotalTokensEqualsComponents(first);
+				assertTotalTokensEqualsComponents(second);
+			},
+		);
+	});
+
+	describe.skipIf(!process.env.QWEN_TOKEN_PLAN_CN_API_KEY)("Qwen Token Plan Individual (CN)", () => {
+		it(
+			"qwen3.8-max - should return totalTokens equal to sum of components",
+			{ retry: 3, timeout: 60000 },
+			async () => {
+				const llm = getModel("qwen-token-plan-individual-cn", "qwen3.8-max");
+
+				console.log(`\nQwen Token Plan Individual CN / ${llm.id}:`);
 				const { first, second } = await testTotalTokensWithCache(llm, {
 					apiKey: process.env.QWEN_TOKEN_PLAN_CN_API_KEY,
 				});

@@ -4,7 +4,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
-import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
+import { InMemoryTelemetryContext, type TelemetryContext } from "@earendil-works/pi-telemetry";
 import { afterEach, beforeAll, beforeEach, describe, expect, vi } from "vitest";
 import { BACKGROUND_CONTEXT, type Context, withTelemetry } from "../src/context/index.ts";
 import {
@@ -13,11 +13,16 @@ import {
 	bool,
 	bytes,
 	type Contract,
+	type EventSource,
+	event,
+	evolve,
 	hostKind,
 	int,
 	local,
 	method,
+	num,
 	obj,
+	oneOf,
 	opt,
 	type ParamsOf,
 	remote,
@@ -30,9 +35,11 @@ import type { Op } from "../src/delta/index.ts";
 import { defineState } from "../src/documents/index.ts";
 import type { Attempt } from "../src/host/attempt.ts";
 import {
+	allow,
 	type Ctx,
 	createHost,
 	defineFacet,
+	deny,
 	type FacetHost,
 	type FacetSelf,
 	type Host,
@@ -40,6 +47,7 @@ import {
 	type PluginFailure,
 	type RefState,
 	type RouteHandle,
+	type RouteOptions,
 	type Self,
 	type StoreSelf,
 } from "../src/host/index.ts";
@@ -59,11 +67,11 @@ import {
 } from "../src/link/internal.ts";
 import { nodeCompression } from "../src/node/compression.ts";
 import { NodeSqliteDatabase, openNodeSqliteDatabase } from "../src/sqlite/node.ts";
+import type { Writable } from "../src/state/index.ts";
 import type { ArchivePart } from "../src/store/archive.ts";
 import { sqliteBackend } from "../src/store/backend.ts";
 import { changeDocument, createDocument, retireDocument } from "../src/store/engine.ts";
 import { json } from "../src/store/json-column.ts";
-import { LiveQueries } from "../src/store/live-query.ts";
 import type { StagedWrite } from "../src/store/step.ts";
 import { type ChordStore, openStore, type Store } from "../src/store/store.ts";
 import { defineTable, type TableDefinition } from "../src/store/table.ts";
@@ -241,12 +249,14 @@ export async function loaded(
 		readonly context?: Context;
 		readonly closeTimeout?: number;
 		readonly readyTimeout?: number;
+		readonly reloadDrainTimeout?: number;
 		readonly store?: Store;
 	} = {},
 ): Promise<{ readonly host: Host; readonly errors: HostError[]; readonly failed: readonly PluginFailure[] }> {
 	const errors: HostError[] = [];
-	const { telemetry, closeTimeout, readyTimeout, store } = options;
-	const host = createHost({ telemetry, closeTimeout, readyTimeout, store, onError: (error) => errors.push(error) });
+	const { telemetry, closeTimeout, readyTimeout, reloadDrainTimeout, store } = options;
+	const onError = (error: HostError) => errors.push(error);
+	const host = createHost({ telemetry, closeTimeout, readyTimeout, reloadDrainTimeout, store, onError });
 	const facets = [{ name: "@test/app", facet: defineFacet(setup) }];
 	const { failed } = await host.load(facets, options.context ?? BACKGROUND_CONTEXT);
 	return { host, errors, failed };
@@ -332,7 +342,6 @@ export function tableOwner(failures: ChordError[] = []): TableOwner & { readonly
 	return {
 		label: "app.store",
 		scope: {},
-		queries: new LiveQueries(),
 		assertLive: () => {},
 		fail: (error) => void failures.push(error),
 		failures,
@@ -446,7 +455,8 @@ export class RawPeer {
 		link: Link,
 		options: {
 			readonly hello?: boolean;
-			readonly calls?: number;
+			/** The call window its `hello` announces: 256 by default, `null` for none (a trusted link's). */
+			readonly calls?: number | null;
 			readonly ack?: boolean;
 			readonly codec?: Codec;
 		} = {},
@@ -464,7 +474,13 @@ export class RawPeer {
 			for (const wake of this.#waiters.splice(0)) wake();
 		});
 		if (options.hello !== false) {
-			this.send({ kind: "hello", protocol: PROTOCOL_VERSION, incarnation: RAW_PEER, calls: options.calls ?? 256 });
+			const calls = options.calls === undefined ? 256 : options.calls;
+			this.send({
+				kind: "hello",
+				protocol: PROTOCOL_VERSION,
+				incarnation: RAW_PEER,
+				...(calls === null ? {} : { calls }),
+			});
 		}
 	}
 
@@ -538,13 +554,14 @@ export function wireNames(Type: Contract, variant: string) {
 		variant: variantOrder(Type).indexOf(variant),
 		state: indexes(names.state),
 		methods: indexes(names.methods),
+		events: indexes(names.events),
 		/** A message's members by index as an object by name, their parts parsed. */
 		named: (members: readonly { readonly member: number; readonly ops?: Part; readonly value?: Part }[]) =>
 			Object.fromEntries(members.map(({ member, ops, value }) => [names.state[member], partValue((ops ?? value)!)])),
 	};
 }
 
-/** A server host as in `linked` and a raw peer on a link it accepted as `child`, with `limits`. */
+/** A server host as in `linked` and a raw peer on a link it accepted as `child` (trusted when `trusted`), with `limits`. */
 export async function rawLinked(
 	setup: (host: FacetHost<TestPrincipal>) => void,
 	options: {
@@ -555,23 +572,35 @@ export async function rawLinked(
 		readonly compression?: Compression;
 		/** What the raw peer is to the host: a child (`accept`, the default) or its parent (`connect`). */
 		readonly role?: "child" | "parent";
+		readonly telemetry?: TelemetryContext;
+		/** Whether the host trusts the raw peer's link (its messages are not checked; `call.old` is honoured). */
+		readonly trusted?: boolean;
+		/** The host's `callWindow`. */
+		readonly callWindow?: number;
+		/** The host's `eventWindow`. */
+		readonly eventWindow?: number;
+		/** Whether the raw peer acknowledges `bound` and `state` by itself (by default). */
+		readonly ack?: boolean;
 	} = {},
 ): Promise<{ readonly server: Host<TestPrincipal>; readonly peer: RawPeer; readonly errors: HostError[] }> {
 	const errors: HostError[] = [];
 	const server = createHost<TestPrincipal>({
 		address: Server(),
 		principal: { kind: "server" },
+		callWindow: options.callWindow,
+		eventWindow: options.eventWindow,
 		readyTimeout: options.readyTimeout,
 		compression: options.compression,
+		telemetry: options.telemetry,
 		onError: (error) => errors.push(error),
 	});
 	await server.load([{ name: "@test/app", facet: defineFacet<TestPrincipal>(setup) }], BACKGROUND_CONTEXT);
 	const [a, b] = memoryLinkPair();
 	const child = (options.child ?? { kind: "owner" }) as TestPrincipal;
-	const link = { principal: child, codec: testCodec(), limits: options.limits };
+	const link = { principal: child, codec: testCodec(), limits: options.limits, trusted: options.trusted };
 	if (options.role === "parent") server.connect(a, link, BACKGROUND_CONTEXT);
 	else server.accept(a, link, BACKGROUND_CONTEXT);
-	return { server, peer: new RawPeer(b, { hello: options.hello }), errors };
+	return { server, peer: new RawPeer(b, { hello: options.hello, ack: options.ack }), errors };
 }
 
 /** Waits until messages and closes in flight on memory links (one task per hop) have arrived. */
@@ -685,6 +714,140 @@ export function serveNotes(
 	return probe;
 }
 
+/** An event's value in the tests: a paddle's position. */
+export const Sample = obj({ y: num() });
+
+export type Sample = { y: number };
+
+/**
+ * A server type with events (decision "Events: fire-and-forget members"): a player has the score, two event members
+ * (`ball`, `paddle`) and a method; a watcher (a guest) the score only. The score is a derive over a writable, so a
+ * test commits synchronously.
+ */
+export const Match = remote("app.match", {
+	version: 1,
+	params: { id: int() },
+	hostAddress: () => Server(),
+	variants: {
+		player: { state: { score: int() }, events: { paddle: Sample, ball: Sample }, methods: { bump: method() } },
+		watcher: { state: { score: int() } },
+	},
+});
+
+/** `Match` with the paddle's values carrying a sample time: an older consumer gets them mapped. */
+export const MatchV2 = evolve(Match, (e) => e.event("player", "paddle", obj({ y: num(), t: num() })));
+
+/** What a test reaches of each match attempt: its paddle source, its score's writable and its `self`. */
+export type MatchProbe = {
+	readonly paddles: EventSource<Sample>[];
+	readonly scores: Writable<number>[];
+	readonly selves: Self[];
+};
+
+/** Serves `Match`; guests get the watcher variant. */
+export function serveMatch(h: FacetHost<TestPrincipal>, probe: MatchProbe): void {
+	h.serve(Match, (_, principal, self) => {
+		const paddle = self.events<Sample>();
+		const ball = self.events<Sample>();
+		const writable = self.writable(0);
+		probe.paddles.push(paddle);
+		probe.scores.push(writable);
+		probe.selves.push(self);
+		const score = self.derive([writable], ([s]) => s);
+		if (principal.kind === "guest") return { variant: "watcher", members: { score } };
+		return { variant: "player", members: { score, paddle, ball, bump: async () => null } };
+	});
+}
+
+/** Event tickers on one host (decision "Events: fire-and-forget members"). */
+const TickerCounter = defineState("ticker-counter", {
+	schema: obj({ n: int() }),
+	version: 1,
+	initial: () => ({ n: 0 }),
+});
+
+/** A host-lifetime ticker: an event member, a count, and a method emitting inside a transaction that fails. */
+export const Ticker = local("app.ticker", {
+	version: 1,
+	params: {},
+	members: { ticks: event(Sample), count: int(), failing: method(Sample) },
+});
+
+/** A ticker per name (lives while referenced): what a test makes and drops references to. */
+export const NamedTicker = local("app.named-ticker", {
+	version: 1,
+	params: { name: str() },
+	members: { ticks: event(Sample) },
+});
+
+/** Re-exposes the ticker's member (a view of it). */
+export const TickerView = local("app.ticker-view", {
+	version: 1,
+	params: { name: str() },
+	members: { ticks: event(Sample) },
+});
+
+/** What a test reaches of its objects: each attempt's sources and `self`. */
+export type TickerProbe = {
+	readonly sources: EventSource<Sample>[];
+	readonly selves: Self[];
+	readonly named: EventSource<Sample>[];
+	readonly namedSelves: Self[];
+};
+
+/** Serves the ticker (its sources and selves recorded in `probe`), named tickers and their views. */
+export function serveTickers(h: FacetHost, probe: TickerProbe): void {
+	h.serve(Ticker, (_, self) => {
+		const ticks = self.events<Sample>();
+		const counter = self.state(TickerCounter);
+		probe.sources.push(ticks);
+		probe.selves.push(self);
+		return {
+			ticks,
+			count: self.derive([counter], ([c]) => c.n),
+			failing: async (value, ctx) => {
+				await self.tx(async (tx) => {
+					(await tx.draft(counter)).n++;
+					ticks.emit(value);
+					throw new Error("refused");
+				}, ctx);
+				return null;
+			},
+		};
+	});
+	h.serve(NamedTicker, (_, self) => {
+		const ticks = self.events<Sample>();
+		probe.named.push(ticks);
+		probe.namedSelves.push(self);
+		return { ticks };
+	});
+	h.serve(TickerView, ({ name }, self) => ({ ticks: self.get(NamedTicker, { name }).ticks }));
+}
+
+/** A loaded host serving the ticker, with its probe and the ticker's current source. */
+export async function ticking(options: { readonly telemetry?: InMemoryTelemetryContext } = {}) {
+	const probe: TickerProbe = { sources: [], selves: [], named: [], namedSelves: [] };
+	const made = await loaded((h) => serveTickers(h, probe), options);
+	const source = (): EventSource<Sample> => probe.sources.at(-1)!;
+	return { ...made, probe, source };
+}
+
+/** A listener recording `y` of every event it gets, in `seen`. */
+export function recorder(seen: unknown[], tag?: string) {
+	return ({ value }: { readonly value: Sample }) => void seen.push(tag === undefined ? value.y : `${tag}${value.y}`);
+}
+
+/** Waits (a few turns at most) until `check` holds. */
+export async function until(check: () => boolean): Promise<void> {
+	for (let tries = 0; tries < 50 && !check(); tries++) await flushed();
+	expect(check()).toBe(true);
+}
+
+/** Waits until `ref` is live. */
+export function waitLive(ref: { readonly state: { readonly value: { readonly kind: string } } }): Promise<void> {
+	return until(() => ref.state.value.kind === "live");
+}
+
 /** Adds a note to the session's store from the server itself; the reference it takes keeps the store. */
 export async function addNote(server: Host<TestPrincipal>, session: string, text: string): Promise<void> {
 	const store = await server.get(NoteStore, { session }, BACKGROUND_CONTEXT);
@@ -693,12 +856,18 @@ export async function addNote(server: Host<TestPrincipal>, session: string, text
 
 /** A client connected to a raw peer playing the provider (the link's limits `limits`), after the handshake. */
 export async function rawProvider(
-	options: { readonly readyTimeout?: number; readonly limits?: PartLimits; readonly compression?: Compression } = {},
+	options: {
+		readonly readyTimeout?: number;
+		readonly limits?: PartLimits;
+		readonly compression?: Compression;
+		readonly telemetry?: TelemetryContext;
+	} = {},
 ) {
 	const errors: HostError[] = [];
 	const client = createHost<TestPrincipal>({
 		readyTimeout: options.readyTimeout,
 		compression: options.compression,
+		telemetry: options.telemetry,
 		onError: (error) => errors.push(error),
 	});
 	await client.load([], BACKGROUND_CONTEXT);
@@ -802,6 +971,8 @@ export async function relayed(
 	options: {
 		readonly tab?: TestPrincipal;
 		readonly authorize?: (principal: TestPrincipal, address: { readonly key: string }) => boolean;
+		/** The route's admission (slice 14 §2.3). */
+		readonly admit?: RouteOptions<TestPrincipal, typeof Session>["admit"];
 		readonly trusted?: boolean;
 		readonly codecs?: { readonly tab?: Codec; readonly route?: Codec };
 		readonly server?: (host: FacetHost<TestPrincipal>) => void;
@@ -824,6 +995,14 @@ export async function relayed(
 		};
 		/** The limits of the tab's link at the server. */
 		readonly limits?: PartLimits;
+		/** The workers' `callWindow` (announced on their route links unless `trusted`). */
+		readonly workerCallWindow?: number;
+		/** The telemetry adapter of each host: tab, server, workers. */
+		readonly telemetry?: {
+			readonly tab?: TelemetryContext;
+			readonly server?: TelemetryContext;
+			readonly worker?: TelemetryContext;
+		};
 	} = {},
 ): Promise<Relayed> {
 	const context = options.context ?? BACKGROUND_CONTEXT;
@@ -831,12 +1010,13 @@ export async function relayed(
 	const workers = new Map<string, Host<TestPrincipal>>();
 	const routeLinks: Link[] = [];
 	const resolves: string[] = [];
-	const { revokedBy, compression = {} } = options;
+	const { revokedBy, compression = {}, telemetry = {} } = options;
 	const server = createHost<TestPrincipal>({
 		address: Server(),
 		principal: { kind: "server" },
 		revokedBy: options.serverRevokedBy ?? revokedBy,
 		compression: compression.server,
+		telemetry: telemetry.server,
 		onError: (error) => errors.server.push(error),
 	});
 	const codec = options.codecs?.route ?? testCodec();
@@ -849,6 +1029,8 @@ export async function relayed(
 			principal,
 			revokedBy,
 			compression: compression.worker,
+			telemetry: telemetry.worker,
+			callWindow: options.workerCallWindow,
 			onError: (error) => errors.worker.push(error),
 		});
 		host.connect(b, { principal: { kind: "server" }, trusted: options.trusted, codec }, context);
@@ -867,6 +1049,7 @@ export async function relayed(
 		{
 			authorize: options.authorize ?? (() => true),
 			resolve: (address, routing) => resolve(address, () => worker(address), routing),
+			...(options.admit === undefined ? {} : { admit: options.admit }),
 		},
 		context,
 	);
@@ -874,7 +1057,11 @@ export async function relayed(
 		[{ name: "@test/server", facet: defineFacet<TestPrincipal>((h) => options.server?.(h)) }],
 		context,
 	);
-	const tab = createHost<TestPrincipal>({ compression: compression.tab, onError: (error) => errors.tab.push(error) });
+	const tab = createHost<TestPrincipal>({
+		compression: compression.tab,
+		telemetry: telemetry.tab,
+		onError: (error) => errors.tab.push(error),
+	});
 	await tab.load([], context);
 	const [a, b] = memoryLinkPair();
 	const tabCodec = options.codecs?.tab ?? testCodec();
@@ -891,7 +1078,7 @@ export async function relayed(
 export function rawWorkers(
 	peers: RawPeer[],
 	options: {
-		readonly calls?: number;
+		readonly calls?: number | null;
 		readonly ack?: boolean;
 		readonly trusted?: boolean;
 		readonly limits?: PartLimits;
@@ -1039,4 +1226,63 @@ export async function exported(store: Store): Promise<ArchivePart[]> {
 	const parts: ArchivePart[] = [];
 	for await (const part of store.export(BACKGROUND_CONTEXT)) parts.push(part);
 	return parts;
+}
+
+/** A desk its caller reads or edits by its admitted mode: a variant each (the UI bindings' variant tests). */
+export const Desk = remote("test.desk", {
+	version: 1,
+	params: {},
+	hostAddress: () => Server(),
+	admission: oneOf("reader", "editor"),
+	variants: {
+		reader: { state: { text: str() } },
+		editor: { state: { text: str() }, methods: { write: method(str()) } },
+	},
+});
+
+/** The mode `Desk`'s admission reads. */
+const DeskMode = local("test.desk.mode", { version: 1, params: {}, members: { mode: str(), set: method(str()) } });
+
+/**
+ * A server serving `Desk` and a client connected to it (`linked`), which is admitted as the desk's mode says: `reader`
+ * at first; `admit(mode)` changes it (`none`: denied).
+ */
+export async function desk(): Promise<{
+	readonly server: Host<TestPrincipal>;
+	readonly client: Host<TestPrincipal>;
+	admit(mode: "reader" | "editor" | "none"): Promise<void>;
+}> {
+	const { server, client } = await linked((h) => {
+		h.serve(DeskMode, (_params, self) => {
+			const mode = self.writable("reader");
+			return {
+				mode: self.derive([mode], ([value]) => value),
+				set: async (next) => {
+					mode.set(next);
+					return null;
+				},
+			};
+		});
+		h.serve(
+			Desk,
+			(_params, _principal, mode, self) => {
+				const text = self.writable("a desk");
+				const shown = self.derive([text], ([value]) => value);
+				if (mode === "reader") return { variant: "reader", members: { text: shown } };
+				const write = async (next: string) => {
+					text.set(next);
+					return null;
+				};
+				return { variant: "editor", members: { text: shown, write } };
+			},
+			{
+				admit: (_params, _principal, self) =>
+					self.derive([self.get(DeskMode, {}).mode], ([mode]) =>
+						mode === "reader" || mode === "editor" ? allow(mode) : deny("no access"),
+					),
+			},
+		);
+	});
+	const mode = await server.get(DeskMode, {}, BACKGROUND_CONTEXT);
+	return { server, client, admit: (next) => mode.set(next, BACKGROUND_CONTEXT).then(() => {}) };
 }

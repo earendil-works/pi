@@ -70,7 +70,7 @@ const tools: AgentTool[] = (await client.listTools()).map((tool) => ({
 }));
 ```
 
-For applications that name tools like pi's coding agent: `createMcpToolName(server, tool, isTaken)` builds `mcp__<server>__<tool>`, limited to the characters and the 64-character length providers accept, with a hash suffix for long names and for names `isTaken` reports as used by another tool. `mcpNamespace(server)` is the prefix of a server's tool names. `normalizeMcpInputSchema()` turns an input schema into an object schema with `properties`, and `limitMcpContent(content, saveOutput)` keeps model-facing text within `MCP_OUTPUT_MAX_BYTES` (20KB) by cutting its middle; `saveOutput`, when given, stores the full text and returns the path the model can read it from.
+For applications that name tools like pi's coding agent: `createMcpToolName(server, tool, isTaken)` builds `mcp__<server>__<tool>`, limited to the characters and the 64-character length providers accept, with a hash suffix for long names and for names `isTaken` reports as used by another tool. `mcpNamespace(server)` is the prefix of a server's tool names. `normalizeMcpInputSchema()` turns an input schema into an object schema with `properties`, and `limitMcpContent(content, saveOutput)` keeps model-facing text within `MCP_OUTPUT_MAX_BYTES` (20KB) by cutting its middle; `saveOutput`, when given, stores the full text and returns the path the model can read it from. `toMcpModelContent(server, result, { saveOutput, readResourceTool })` converts a result's blocks for the model as pi does: text blobs as text, binary resources saved through `saveOutput`, and resource links naming `readResourceTool`. `createMcpResultSchema(tool.outputSchema)` is the output schema for programs (such as code mode scripts) that get a tool's whole `CallToolResult`, with the tool's own output schema as `structuredContent`.
 
 The [mcp-codemode example](https://github.com/earendil-works/pi/tree/main/packages/agent/examples/mcp-codemode) also forwards progress, passes `structuredContent` through, and lets `@earendil-works/pi-codemode` scripts call the tools.
 
@@ -147,7 +147,7 @@ if (started.kind === "redirect") {
 
 For a browser on the same machine, `listenForLoopbackSignIn()` starts a loopback callback server and returns its redirect URI, and `waitForLoopbackSignIn()` waits for the response on it or for a pasted redirect URL. `clientMetadataDocuments` lets authorization servers that support Client ID Metadata Documents identify the application by a document it publishes instead of registering a client. `createMcpAuthProvider()` is the matching `AuthProvider` for connections: it refreshes the stored tokens and throws `McpOAuthAuthorizationRequiredError` when the user has to sign in.
 
-The OAuth implementation is adapted from the MIT-licensed Model Context Protocol TypeScript SDK v1.29.0. Its license is included under `LICENSES/`.
+The OAuth implementation is adapted from the MIT-licensed Model Context Protocol TypeScript SDK v1.29.0. Its license is included under `THIRD_PARTY_NOTICES/`.
 
 ### Configuration
 

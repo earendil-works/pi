@@ -219,7 +219,28 @@ function patchRow(
 	context: Context,
 ): StagedWrite {
 	const { table: definition } = step;
-	const patch = step.patch(definition.rows.decode(stored, context));
+	const set = patchSet(step, definition.rows.decode(stored, context), v);
+	const key: { [column: string]: Scalar } = {};
+	// Key columns are non-opt `str` or `int`: stored scalars.
+	for (const name of definition.key) key[name] = stored[name] as Scalar;
+	const versions = jsonVersions(definition, set);
+	const params = definition.key.map((name) => stored[name]!);
+	const statement = sql.update({ ...set, [ROW_VERSION]: v }, params, versions);
+	return stageUpdate(statement, table, key, set, recordedVersions(set, versions), v);
+}
+
+/**
+ * The `set` of `step`'s patch of one decoded row (of the step's table) at version `v`: the patch run, its result
+ * checked (an object of non-key columns of the version, values of their types). Throws for a patch the version cannot
+ * take. Shared by the eager migration and the migration of imported rows (`host-data.ts`).
+ */
+export function patchSet(
+	step: Extract<DataStep, { readonly kind: "rows" }>,
+	row: { readonly [column: string]: unknown },
+	v: number,
+): SetNode {
+	const { table: definition } = step;
+	const patch = step.patch(row);
 	const what = `${definition.name} version ${v}: rows`;
 	if (typeof patch !== "object" || patch === null || Array.isArray(patch)) {
 		throw new Error(`${what}: expected an object of column values`);
@@ -231,13 +252,7 @@ function patchRow(
 		if (definition.key.includes(name)) throw new Error(`${what}: key column "${name}" cannot change`);
 		set[name] = cellOf(column, value, `${what}: column "${name}"`);
 	}
-	const key: { [column: string]: Scalar } = {};
-	// Key columns are non-opt `str` or `int`: stored scalars.
-	for (const name of definition.key) key[name] = stored[name] as Scalar;
-	const versions = jsonVersions(definition, set);
-	const params = definition.key.map((name) => stored[name]!);
-	const statement = sql.update({ ...set, [ROW_VERSION]: v }, params, versions);
-	return stageUpdate(statement, table, key, set, recordedVersions(set, versions), v);
+	return set;
 }
 
 /**

@@ -54,9 +54,22 @@ describe("llama.cpp extension", () => {
 	});
 
 	it("normalizes management and inference URLs", () => {
-		expect(normalizeLlamaServerUrl("http://127.0.0.1:8080/v1/")).toBe("http://127.0.0.1:8080");
+		expect(normalizeLlamaServerUrl("http://127.0.0.1:9931/v1/")).toBe("http://127.0.0.1:9931");
 		expect(normalizeLlamaServerUrl("https://example.com/prefix/v1")).toBe("https://example.com/prefix");
 		expect(() => normalizeLlamaServerUrl("file:///tmp/llama")).toThrow("http or https");
+	});
+
+	// #11745: a refused connection showed only "fetch failed"
+	it("names the server and the cause when it cannot be reached", async () => {
+		const server = createServer();
+		server.listen(0, "127.0.0.1");
+		await once(server, "listening");
+		const port = (server.address() as AddressInfo).port;
+		await new Promise<void>((resolve) => server.close(() => resolve()));
+
+		await expect(new LlamaClient(`http://127.0.0.1:${port}`).list()).rejects.toThrow(
+			`Could not reach llama.cpp server at http://127.0.0.1:${port}: connect ECONNREFUSED 127.0.0.1:${port}`,
+		);
 	});
 
 	it("exposes loaded and sleeping models with router metadata", () => {
@@ -73,20 +86,20 @@ describe("llama.cpp extension", () => {
 				{ id: "unloaded", status: { value: "unloaded" } },
 				{ id: "loading", status: { value: "loading" } },
 			],
-			"http://localhost:8080",
+			"http://localhost:9931",
 		);
 
 		expect(controller.provider.getModels()).toEqual([
 			expect.objectContaining({
 				id: "loaded",
-				baseUrl: "http://localhost:8080/v1",
+				baseUrl: "http://localhost:9931/v1",
 				contextWindow: 65536,
 				maxTokens: 65536,
 				input: ["text", "image"],
 			}),
 			expect.objectContaining({
 				id: "sleeping",
-				baseUrl: "http://localhost:8080/v1",
+				baseUrl: "http://localhost:9931/v1",
 			}),
 		]);
 	});
@@ -527,6 +540,69 @@ describe("llama.cpp extension", () => {
 		]);
 	});
 
+	// #12282: decision models that advertise image input were registered as text-only
+	it("sends images to decision models that advertise image input as data URLs", async () => {
+		const requests: Array<{ headers: Record<string, unknown>; body: unknown }> = [];
+		const { url } = await listen((request, response) => {
+			let body = "";
+			request.on("data", (chunk) => {
+				body += chunk;
+			});
+			request.on("end", () => {
+				requests.push({ headers: request.headers, body: JSON.parse(body) });
+				json(response, { answers: { screenshot: { type: "noul", noul: 0.9 } } });
+			});
+		});
+
+		const controller = createLlamaProvider();
+		controller.setCatalog(
+			[
+				{
+					id: "clef",
+					status: { value: "loaded" },
+					architecture: { input_modalities: ["text", "image"], output_modalities: ["decisions"] },
+				},
+				// The next-token fallback cannot take images, whatever the model reads.
+				{
+					id: "vision-chat",
+					status: { value: "loaded" },
+					architecture: { input_modalities: ["text", "image"], output_modalities: ["text"] },
+				},
+			],
+			url,
+		);
+		const classifiers = controller.provider.getAllModels?.().filter((model) => model.type === "classifier");
+		expect(classifiers?.map((model) => [model.id, model.input])).toEqual([
+			["clef", ["text", "image"]],
+			["vision-chat", ["text"]],
+		]);
+
+		const clef = classifiers?.[0];
+		if (clef?.type !== "classifier") throw new Error("missing decision classifier model");
+		const result = await controller.provider.classify!(
+			clef,
+			{
+				state: { task: "Check the screenshot." },
+				images: [{ type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" }],
+				questions: {
+					screenshot: { type: "bool", instructions: "Is this a screenshot?", criteria: { true: "", false: "" } },
+				},
+			},
+			{ apiKey: "local" },
+		);
+
+		expect(result.errorMessage).toBeUndefined();
+		expect(result.answers.screenshot).toEqual({ type: "bool", probability: 0.9 });
+		expect(requests).toHaveLength(1);
+		expect(requests[0]?.headers["typesafe-danger-zone-images"]).toBeUndefined();
+		expect(requests[0]?.body).toMatchObject({
+			model: "clef",
+			state: { task: "Check the screenshot." },
+			images: ["data:image/png;base64,iVBORw0KGgo="],
+		});
+		expect(requests[0]?.body).not.toHaveProperty("assets");
+	});
+
 	it("lists decision models that also output text for chat", () => {
 		const controller = createLlamaProvider();
 		controller.setCatalog(
@@ -538,7 +614,7 @@ describe("llama.cpp extension", () => {
 					architecture: { output_modalities: ["text", "decisions"] },
 				},
 			],
-			"http://localhost:8080",
+			"http://localhost:9931",
 		);
 		expect(controller.provider.getModels().map((model) => model.id)).toEqual(["hybrid"]);
 		expect(

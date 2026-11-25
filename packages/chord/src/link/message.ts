@@ -1,10 +1,11 @@
 // Messages (§22, R1, R4, 2b): the one `Message` type every link carries, defined as a schema and checked after every
 // decode, and the codecs that turn it into bytes.
 
-import { obj as openObj, type Schema } from "@earendil-works/pi-schema";
+import { map, obj as openObj, type Schema } from "@earendil-works/pi-schema";
 import type { Context } from "../context/index.ts";
 import { arr, int, lit, obj, oneOf, opt, type Static, str, union, unknown } from "../contracts/index.ts";
 import { validatorFor } from "../data/internal.ts";
+import { chordMetrics } from "../telemetry.ts";
 import type { Part } from "./part.ts";
 
 /** A link-local id, chosen by its origin: a counter, unique per link, direction and origin while in use. */
@@ -38,14 +39,38 @@ const part = unknown() as Schema<Part>;
  */
 const segments = opt(unknown() as Schema<readonly Uint8Array[]>);
 
+/**
+ * The longest name a message carries (a type's, a host kind's): a relay records them in its spans unparsed, so a peer
+ * cannot hand it an unbounded string (slice 9 review M1).
+ */
+export const NAME_LENGTH = 256;
+
+/** A type's or a host kind's name. */
+const name = str({ max: NAME_LENGTH });
+
 /** An address as a hold names it: its host kind and params, checked against the kind where it is routed. */
-const address = obj({ kind: str(), params: unknown() });
+const address = obj({ kind: name, params: unknown() });
 
 /** A principal on a hold: JSON with a `kind`, honoured only on a parent link. */
 const principal = openObj({ kind: str() }, { open: true });
 
 /** A uuidv7 as text. */
 const incarnation = str({ pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" });
+
+/** The most keys a trace carrier has, and the longest key or value (R5). */
+export const CARRIER = { keys: 8, length: 256 } as const;
+
+/**
+ * The caller's trace carrier on a `hold` or `call` (R5, slice 9): an adapter's opaque string record, bounded, of
+ * printable ASCII only (keys without spaces), as W3C's headers and Chord's adapters are; anything else fails this schema
+ * as any malformed header does, so no control character becomes a stored trace or span id (review M2). The provider
+ * extracts it with its own adapter (absent or unknown: the adapter's root).
+ */
+const trace = opt({
+	...map(str({ max: CARRIER.length, pattern: "^[\\x20-\\x7e]*$" })),
+	propertyNames: { maxLength: CARRIER.length, pattern: "^[\\x21-\\x7e]+$" },
+	maxProperties: CARRIER.keys,
+} as Schema<Record<string, string>>);
 
 /** The longest activation chain a hold carries (Q5): a longer one keeps its last entries. */
 export const CHAIN = 32;
@@ -54,17 +79,18 @@ export const CHAIN = 32;
 export const RETRY_HOPS = 16;
 
 /** The kinds of a `failed` message's cause, in their codes' order (the binary codec's byte, the text codec's letter). */
-export const CAUSE_KINDS: ["transient", "broken", "waiting"] = ["transient", "broken", "waiting"];
+export const CAUSE_KINDS: ["transient", "broken", "waiting", "denied"] = ["transient", "broken", "waiting", "denied"];
 
 /** The protocol's messages, one tagged union. Parts are opaque here (the owners parse them). */
 const MESSAGE = union([
-	// `calls`: how many concurrent calls this side accepts (the call window).
-	obj({ kind: lit("hello"), protocol: int({ min: 0 }), incarnation, calls: int({ min: 1 }) }),
+	// `calls`: how many concurrent calls of one origin this side accepts (the call window); absent: no window (a link
+	// this side was given as trusted, decision "Call windows only for untrusted links").
+	obj({ kind: lit("hello"), protocol: int({ min: 0 }), incarnation, calls: opt(int({ min: 1 })) }),
 	obj({
 		kind: lit("hold"),
 		origin: opt(origin),
 		hold: id,
-		type: str(),
+		type: name,
 		version: int({ min: 1 }),
 		fingerprint: str({ pattern: "^[0-9a-f]{16}$" }),
 		params: part,
@@ -77,9 +103,21 @@ const MESSAGE = union([
 		chain: opt(arr(incarnation, { max: CHAIN })),
 		// The decoded limit per part of the link the hold was admitted on (Q2); read only on a parent link.
 		limit: opt(int({ min: 0 })),
+		trace,
 	}),
 	obj({ kind: lit("release"), origin: opt(origin), hold: id }),
-	obj({ kind: lit("call"), origin: opt(origin), call: id, hold: id, method: index, args: opt(part), segments }),
+	obj({
+		kind: lit("call"),
+		origin: opt(origin),
+		call: id,
+		hold: id,
+		method: index,
+		args: opt(part),
+		segments,
+		trace,
+		// Old work of a reload (decision "Reload restarts every affected object"): honoured only from a trusted link.
+		old: opt(lit(true)),
+	}),
 	obj({ kind: lit("abort"), origin: opt(origin), call: id }),
 	// Asks the provider for an attempt of a failed hold's object now (`ref.retry()`); `hops` is its budget: the host
 	// there passes it on to its remote dependencies with one less, never at 0, so a waiting ring of hosts stops. Relays
@@ -98,8 +136,10 @@ const MESSAGE = union([
 		// mechanism"); a `bound` snapshot carries no flag.
 		holds: arr(obj({ hold: id, members: arr(obj({ member: index, ops: part })), failed, retired: arr(index) })),
 	}),
-	// One per applied `bound` or `state` message of its origin (the window).
-	obj({ kind: lit("ack"), origin: opt(origin) }),
+	// One per applied `bound` or `state` message of its origin (the window); with `events`, none of those: the number of
+	// `event` messages of the origin consumed since the last such ack (the event window, decision "Events:
+	// fire-and-forget members").
+	obj({ kind: lit("ack"), origin: opt(origin), events: opt(int({ min: 1 })) }),
 	// A relay's downstream link closed: the origin's holds are released and its calls aborted.
 	obj({ kind: lit("closed"), origin }),
 	// A revocation from the parent, applied with this host's own `revokedBy` (no origin).
@@ -121,6 +161,14 @@ const MESSAGE = union([
 	obj({ kind: lit("result"), origin: opt(origin), call: id, value: opt(part), segments }),
 	obj({ kind: lit("error"), origin: opt(origin), call: id, error: wireError }),
 	obj({ kind: lit("gone"), origin: opt(origin), hold: id, error: wireError }),
+	// Events of bound holds (decision "Events: fire-and-forget members"): `member` an index into the bound variant's event
+	// members, `at` the emitting host's `Date.now()` at the emit, `value` a part; one message per flush per link and
+	// origin, possibly without entries (a relay forwards what is left after filtering).
+	obj({
+		kind: lit("event"),
+		origin: opt(origin),
+		events: arr(obj({ hold: id, member: index, at: int({ min: 0 }), value: part })),
+	}),
 ]);
 
 /**
@@ -150,8 +198,11 @@ export type ProviderMessage = Extract<
 /** A message for a consumer side: the direction from the provider. */
 export type ConsumerMessage = Extract<
 	Message,
-	{ readonly kind: "bound" | "state" | "failed" | "loading" | "result" | "error" | "gone" }
+	{ readonly kind: "bound" | "state" | "failed" | "loading" | "result" | "error" | "gone" | "event" }
 >;
+
+/** One entry of an `event` message. */
+export type WireEvent = Extract<Message, { readonly kind: "event" }>["events"][number];
 
 /** One hold's entry of a `bound` message. */
 export type BoundEntry = Extract<Message, { readonly kind: "bound" }>["holds"][number];
@@ -184,8 +235,21 @@ const MESSAGE_SCHEMA = { schema: MESSAGE };
  * `chord.link.checks`.
  */
 export function checkMessage(message: unknown, context: Context): Message {
-	context.telemetry.metrics?.counter("chord.link.checks").add(1);
+	chordMetrics(context.telemetry.metrics).counter("chord.link.checks").add(1);
 	if (!validatorFor(MESSAGE_SCHEMA, context).check(message)) throw new Error("message: fails the message schema");
 	// The check above establishes the type.
 	return message as Message;
+}
+
+/** The origin a message carries; none for the kinds that never carry one (`hello`, `revoke`, `ping`, `pong`). */
+export function originOf(message: Message): number | undefined {
+	switch (message.kind) {
+		case "hello":
+		case "revoke":
+		case "ping":
+		case "pong":
+			return undefined;
+		default:
+			return message.origin;
+	}
 }

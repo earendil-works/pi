@@ -39,6 +39,8 @@ const SESSION: Session = {
 	pinned: false,
 	model: { provider: "faux", modelId: "faux-1" },
 	thinkingLevel: "off",
+	main: 1,
+	branches: [],
 };
 const typed = (send: (data: string) => void, text: string) => {
 	for (const char of text) send(char);
@@ -74,11 +76,14 @@ function stubs(calls: Calls, role: "owner" | "guest" = "owner") {
 					sessions,
 					defaultCwd,
 					defaultEnv,
-					create: (args: { cwd: string; env?: string | null }, ctx: Ctx) => {
-						record("create", args);
+					operations: self.state([]),
+					dismissOperation: () => {},
+					create: (args: { id: string; cwd: string; env?: string | null }, ctx: Ctx) => {
+						const { id: _id, ...location } = args;
+						record("create", location);
 						const created = {
 							...SESSION,
-							id: `new-${calls.create?.length}`,
+							id: args.id,
 							cwd: args.cwd,
 							env: args.env ?? null,
 						};
@@ -134,6 +139,10 @@ function stubs(calls: Calls, role: "owner" | "guest" = "owner") {
 					generateKey: () => ({ publicKey: "", identityFile: "" }),
 					uploadKey: () => ({ publicKey: "", identityFile: "" }),
 					publicKey: () => null,
+					sandboxStatus: () => ({ state: "stopped" as const }),
+					sandboxStart: () => ({ state: "stopped" as const }),
+					sandboxStop: () => ({ state: "stopped" as const }),
+					sandboxResetDisk: () => ({ state: "stopped" as const }),
 				};
 			},
 		],
@@ -186,18 +195,43 @@ async function setup(t: { after(fn: () => unknown): void }, role: "owner" | "gue
 
 test("parseLocation reads [env:]path as the footer writes it", () => {
 	const envs = ["gpu", "local2"];
-	assert.deepEqual(parseLocation("gpu:/data", envs, { env: null }), { env: "gpu", path: "/data" });
-	assert.deepEqual(parseLocation("gpu:", envs, { env: null }), { env: "gpu", path: "~" });
-	assert.deepEqual(parseLocation("/tmp/x", envs, { env: null }), { env: null, path: "/tmp/x" });
+	assert.deepEqual(parseLocation("gpu:/data", envs, { env: null }), {
+		kind: "parsed",
+		location: { env: "gpu", path: "/data" },
+	});
+	assert.deepEqual(parseLocation("gpu:", envs, { env: null }), {
+		kind: "parsed",
+		location: { env: "gpu", path: "~" },
+	});
+	assert.deepEqual(parseLocation("/tmp/x", envs, { env: null }), {
+		kind: "parsed",
+		location: { env: null, path: "/tmp/x" },
+	});
 	// /cd: no prefix stays in the session's environment, relative to its directory.
-	assert.deepEqual(parseLocation("../b/./c", envs, { env: "gpu", cwd: "/srv/a" }), { env: "gpu", path: "/srv/b/c" });
-	assert.deepEqual(parseLocation("local:~/p", envs, { env: "gpu", cwd: "/srv" }), { env: null, path: "~/p" });
+	assert.deepEqual(parseLocation("../b/./c", envs, { env: "gpu", cwd: "/srv/a" }), {
+		kind: "parsed",
+		location: { env: "gpu", path: "/srv/b/c" },
+	});
+	assert.deepEqual(parseLocation("local:~/p", envs, { env: "gpu", cwd: "/srv" }), {
+		kind: "parsed",
+		location: { env: null, path: "~/p" },
+	});
 	// Another environment, or /new: relative to the home directory.
-	assert.deepEqual(parseLocation("gpu:rel", envs, { env: null, cwd: "/work" }), { env: "gpu", path: "~/rel" });
-	assert.deepEqual(parseLocation("rel", envs, { env: null }), { env: null, path: "~/rel" });
+	assert.deepEqual(parseLocation("gpu:rel", envs, { env: null, cwd: "/work" }), {
+		kind: "parsed",
+		location: { env: "gpu", path: "~/rel" },
+	});
+	assert.deepEqual(parseLocation("rel", envs, { env: null }), {
+		kind: "parsed",
+		location: { env: null, path: "~/rel" },
+	});
 	// One letter is a Windows drive; other unknown names are refused.
-	assert.deepEqual(parseLocation("c:/x", envs, { env: null }), { env: null, path: "c:/x" });
+	assert.deepEqual(parseLocation("c:/x", envs, { env: null }), {
+		kind: "parsed",
+		location: { env: null, path: "c:/x" },
+	});
 	assert.deepEqual(parseLocation("tpu:/x", envs, { env: null }), {
+		kind: "invalid",
 		error: 'Unknown environment "tpu" (/envs lists them)',
 	});
 	assert.equal(joinPath("C:\\work\\a", "..\\b"), "C:\\work\\b");
@@ -217,7 +251,7 @@ test("/cd relocates: folder completion, relative paths, the web's errors, env mo
 	await poll(() => (calls.relocate?.length ?? 0) === 1);
 	assert.deepEqual(calls.relocate?.[0], { id: "s", env: null, cwd: "/work/src" });
 	await poll(async () => (await screen()).includes("/work/src • Fixture"));
-	await poll(() => runtime.notices.some((notice) => notice.text === "Working directory: /work/src"));
+	await poll(() => runtime.notices.some((notice) => notice.text === "Moving to /work/src…"));
 	// A missing folder: the server's error text, nothing relocated.
 	typed(send, "/cd /nope");
 	send(ENTER);

@@ -1,7 +1,8 @@
 // Tests of live queries (decision "Live queries over an object's own tables"): `self.query(table, q, limit)` runs
 // before its object goes live, again in the commit step of every commit of the object that writes its table, and
-// publishes the diff in that commit's batch; a commit writing another table runs none; a reload swaps the object;
-// the limit is required; a failing run is a failed member; an ended attempt's query is collected.
+// publishes the diff in that commit's batch; a commit writing another table runs none; a reload restarts the object;
+// the limit is required; a failing run is a failed member; an ended attempt's query is collected; a refresh applied
+// again adopts only its last runs.
 
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
@@ -12,6 +13,9 @@ import { eq } from "../../src/store/expression.ts";
 import { json } from "../../src/store/json-column.ts";
 import { LiveQuery } from "../../src/store/live-query.ts";
 import { query } from "../../src/store/query.ts";
+import type { Read } from "../../src/store/read.ts";
+import { ReadRefresh, Reads } from "../../src/store/reads.ts";
+import type { Step } from "../../src/store/step.ts";
 import type { ChordStore } from "../../src/store/store.ts";
 import { defineTable } from "../../src/store/table.ts";
 import {
@@ -127,9 +131,12 @@ describe("activation", () => {
 		await host.load([{ name: "@test/app", facet: defineFacet((h) => serveBoard(h, 3)) }], context);
 		const refused = (await rejection(host.get(Board, {}, context))) as ChordError;
 		expect(refused.message).toContain("stored at version 9");
-		expect(errors.map((error) => [error.kind, "failure" in error ? error.failure.kind : ""])).toEqual([
-			["activation_failed", "broken"],
-		]);
+		expect(
+			errors.map((error) => [
+				error.kind,
+				error.kind === "activation_failed" || error.kind === "object_failed" ? error.failure.kind : "",
+			]),
+		).toEqual([["activation_failed", "broken"]]);
 		await host.close(context);
 		await store.close(context);
 	});
@@ -208,9 +215,10 @@ describe("publication", () => {
 		await b.put({ id: 1, text: "a" }, counting);
 		const touching = [statements() - before[0]!, runs() - before[1]!];
 		await delivered();
-		// The same one-row put: the touching commit costs one query, one statement more.
+		// The same one-row put: the touching commit costs one query and two statements more (slice 14 §3.3: a `put`
+		// of a row not in the window asks the keyed probe first, and it finds the row).
 		expect(other[1]).toBe(0);
-		expect(touching).toEqual([other[0]! + 1, 1]);
+		expect(touching).toEqual([other[0]! + 2, 1]);
 		expect(calls).toHaveLength(1);
 		watch.stop();
 		await host.close(context);
@@ -219,12 +227,12 @@ describe("publication", () => {
 });
 
 describe("reload", () => {
-	it("swaps the object (no restart): the new attempt's query runs at its activation and takes over", async () => {
+	it("restarts the object: the new attempt's query runs at its activation and takes over", async () => {
 		const store = await memoryStore();
 		const { board: b, host, context: counting, counts } = await board(store);
 		for (const id of [1, 2, 3]) await b.put({ id, text: `t${id}` }, context);
 		const report = await host.reload([{ name: "@test/app", facet: defineFacet((h) => serveBoard(h, 2)) }], context);
-		expect(report.objects).toEqual([{ object: "app.board", kind: "swapped" }]);
+		expect(report.objects).toEqual([{ object: "app.board", kind: "restarted" }]);
 		await flushed();
 		expect(ids(b.items.value)).toEqual([3, 2]);
 		const runs = counts()["chord.query.runs"] ?? 0;
@@ -310,7 +318,7 @@ describe("failure", () => {
 				],
 			],
 		});
-		expect(errors.map((error) => [error.kind, "table" in error ? error.table : ""])).toEqual([
+		expect(errors.map((error) => [error.kind, error.kind === "query_failed" ? error.query : ""])).toEqual([
 			["query_failed", "items"],
 		]);
 		// The object stays live: only the member failed.
@@ -322,7 +330,7 @@ describe("failure", () => {
 });
 
 describe("memory", () => {
-	it("collects a swapped-out attempt's query: no commit re-runs it", async () => {
+	it("collects a restarted attempt's query: no commit re-runs it", async () => {
 		const store = await memoryStore();
 		const { host } = await board(store);
 		const from = queries.length - 1;
@@ -331,5 +339,28 @@ describe("memory", () => {
 		await expectCollected(queries[from]!);
 		await host.close(context);
 		await store.close(context);
+	});
+});
+
+describe("a refresh applied again", () => {
+	it("adopts its last application's runs only: a grouped commit that rolled back applies again alone", async () => {
+		const adopted: unknown[] = [];
+		let runs = 0;
+		// Stubs: the refresh takes the reads over the written table from the index, runs and adopts them, and hands the
+		// step through. A read without a result is never skipped.
+		const stub = {
+			plan: { uses: [{ table: "t" }] },
+			latest: () => undefined,
+			run: async () => ({ kind: "count", count: ++runs }),
+			ran: () => {},
+			adopt: (run: unknown) => void adopted.push(run),
+		} as unknown as Read;
+		const reads = new Reads();
+		reads.add(stub);
+		const refresh = new ReadRefresh(reads, ["t"], () => [{ table: "t", kind: "bulk", assigned: undefined }], context);
+		await refresh.write.apply({} as Step);
+		await refresh.write.apply({} as Step);
+		refresh.adopt();
+		expect(adopted).toEqual([{ kind: "count", count: 2 }]);
 	});
 });

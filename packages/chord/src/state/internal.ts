@@ -3,6 +3,7 @@
 
 export { Batch, type BatchError, type Delivered } from "./batch.ts";
 export { Derive, type DeriveInput, type DeriveSource } from "./derive.ts";
+export { type FramedOwner, FramedSource } from "./framed.ts";
 export {
 	FollowedSource,
 	type NativeObservation,

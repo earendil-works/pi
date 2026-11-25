@@ -2,7 +2,7 @@
 // the viewed conversation's `PromptResources`, and their expansion on the session worker when the editor submits.
 
 import type { Held } from "@p2/app/v1";
-import { BACKGROUND_CONTEXT, contribute, defineFacet, statusOf } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, contribute, defineFacet, liveIn } from "@p2/app/v1";
 import type { TuiContext } from "@p2/app/v1/tui";
 import {
 	lineText,
@@ -21,7 +21,7 @@ export class PromptSurface implements TuiSurface {
 	readonly runtime: TuiRuntime;
 	private scope: TuiScope | undefined;
 	private viewed: string | undefined;
-	private ref: (() => Held<typeof PromptResources>) | undefined;
+	private ref: Held<typeof PromptResources> | undefined;
 	templates: readonly TemplateInfo[] = [];
 	skills: readonly SkillInfo[] = [];
 	private stop: () => void;
@@ -66,9 +66,8 @@ export class PromptSurface implements TuiSurface {
 		];
 	}
 	async expand(text: string): Promise<string | undefined> {
-		const ref = this.ref?.();
-		if (ref === undefined || statusOf(ref) !== "live" || ref.variant !== "participant") return undefined;
-		return (await ref.expand({ text }, BACKGROUND_CONTEXT)).text;
+		const ref = liveIn(this.ref, "participant");
+		return ref && (await ref.expand({ text }, BACKGROUND_CONTEXT)).text;
 	}
 	render(): string[] {
 		return [];

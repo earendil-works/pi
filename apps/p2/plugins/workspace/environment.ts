@@ -52,13 +52,10 @@ const WATCH_EXCLUDED = [".git", "node_modules"];
 // a hostile environment, which owners and read/write guests can already command.
 export class Workspace {
 	readonly env: ExecutionEnv;
-	/** Canonical directories the panel must never expose, such as pi-mobile's private data. */
-	private readonly denied: readonly string[];
 	private root?: string;
 
-	constructor(env: ExecutionEnv, denied: readonly string[]) {
+	constructor(env: ExecutionEnv) {
 		this.env = env;
-		this.denied = denied;
 	}
 
 	private async canonicalRoot(context: Context): Promise<string> {
@@ -110,7 +107,6 @@ export class Workspace {
 		const inside = (base: string, value: string) =>
 			value === base || value.startsWith(base === "/" ? "/" : `${base}/`);
 		if (!inside(root, canonical.value)) throw new Error("Path leaves the working directory");
-		if (this.denied.some((denied) => inside(denied, canonical.value))) throw new Error("Path is private");
 	}
 
 	/** Every query but `place`, which the worker answers (where it opened this workspace). */
@@ -328,7 +324,7 @@ export class Workspace {
 	/**
 	 * Every file below the root, for the name filter. In a repository: tracked and untracked files without ignored ones,
 	 * as Quick Open skips them. Elsewhere (or without git): a walk of the directory, skipping `.git` and `node_modules`
-	 * folders and not following symlinks. Private directories inside the root are left out either way.
+	 * folders and not following symlinks.
 	 *
 	 * The walk is breadth first with each directory's entries in name order (UTF-16 code units; byte order for names
 	 * without astral characters, as pi-env's `listDir` and `listFiles`), so a truncated walk keeps the same files on
@@ -338,8 +334,6 @@ export class Workspace {
 	private async files(context: Context): Promise<WorkspaceResult> {
 		const root = await this.canonicalRoot(context);
 		const base = root === "/" ? "" : root;
-		const privateDirectory = (absolute: string) =>
-			this.denied.some((denied) => absolute === denied || absolute.startsWith(`${denied}/`));
 		const run = await this.git(
 			["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
 			FILES_BYTES,
@@ -348,7 +342,7 @@ export class Workspace {
 		if (run && (run.exitCode === 0 || run.truncated)) {
 			// The text after the last NUL is empty, or a record cut at the output cap. Unmerged files repeat.
 			const records = run.stdout.split("\0").slice(0, -1);
-			const paths = [...new Set(records)].filter((path) => !privateDirectory(`${base}/${path}`));
+			const paths = [...new Set(records)];
 			return {
 				kind: "files",
 				paths: paths.slice(0, FILES_LIMIT),
@@ -365,7 +359,6 @@ export class Workspace {
 			}
 			const relative = queue[index] ?? "";
 			const absolute = relative ? `${base}/${relative}` : root;
-			if (privateDirectory(absolute)) continue;
 			const opened = await this.env.openDirReader(absolute, context);
 			if (!opened.ok) continue;
 			const entries: FileInfo[] = [];
@@ -894,47 +887,24 @@ export class Workspace {
 	}
 
 	/**
-	 * The working tree's watch targets, without private directories inside it (p2's data directory below a home folder
-	 * changes all the time): the root recursively; around a private directory, each directory on the way to it by its own
-	 * entries and its other folders recursively. A tree over `WATCH_DIRECTORIES` folders gets its root's entries only.
-	 * Counted with a walk first (stopping at the bound, and when the watch is abandoned), as the watcher would scan it.
+	 * The working tree's watch targets: the root recursively, or its own entries only for a tree over
+	 * `WATCH_DIRECTORIES` folders. Counted with a walk first (stopping at the bound, and when the watch is abandoned), as
+	 * the watcher would scan it.
 	 */
 	private async watchTargets(root: string, context: Context): Promise<WatchTarget[]> {
-		const join = (directory: string, name: string) => `${directory === "/" ? "" : directory}/${name}`;
-		const within = (directory: string, path: string) =>
-			path === directory || path.startsWith(directory === "/" ? "/" : `${directory}/`);
-		const hidden = this.denied.filter((denied) => denied !== root && within(root, denied));
-		const holdsPrivate = (path: string) => hidden.some((denied) => within(path, denied));
-		/** Folders of the directories on the way to a private one. */
-		const folders = new Map<string, string[]>();
 		const queue = [root];
 		let counted = 0;
 		for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
 			context.abortSignal?.throwIfAborted();
 			const listed = await this.env.listDir(next, context);
 			if (!listed.ok) continue;
-			const names: string[] = [];
 			for (const entry of listed.value) {
 				if (entry.kind !== "directory" || WATCH_EXCLUDED.includes(entry.name)) continue;
-				const path = join(next, entry.name);
-				if (hidden.some((denied) => within(denied, path))) continue;
 				if (++counted > WATCH_DIRECTORIES) return [{ path: root }];
-				names.push(entry.name);
-				queue.push(path);
+				queue.push(`${next === "/" ? "" : next}/${entry.name}`);
 			}
-			if (holdsPrivate(next)) folders.set(next, names);
 		}
-		const targets: WatchTarget[] = [];
-		const cover = (directory: string): void => {
-			if (!holdsPrivate(directory)) {
-				targets.push({ path: directory, recursive: true, exclude: { names: WATCH_EXCLUDED } });
-				return;
-			}
-			targets.push({ path: directory });
-			for (const name of folders.get(directory) ?? []) cover(join(directory, name));
-		};
-		cover(root);
-		return targets;
+		return [{ path: root, recursive: true, exclude: { names: WATCH_EXCLUDED } }];
 	}
 }
 

@@ -86,4 +86,37 @@ describe("replicas", () => {
 		expect(await watch.closed).toEqual({ kind: "ended" });
 		expect(() => source.value).toThrow("app.notes: ended");
 	});
+
+	it("counts the values it takes: a snapshot's value, each adoption and recovery; failures and vanishings count none", () => {
+		const batch = new Batch(() => {}, undefined);
+		const failed = new Replica(batch, { kind: "failed", error: new Error("x") });
+		expect(failed.generation).toBe(0);
+		const { batch: own, source } = replica();
+		expect(source.generation).toBe(1);
+		own.commit(() => source.adopt({ n: 2 }, [["s", ["n"], 2]], false), context);
+		own.commit(() => source.fail(new Error("down")), context);
+		own.commit(() => source.vanish(new ChordError({ code: "invalid", reason: "member", message: "gone" })), context);
+		expect(source.generation).toBe(2);
+		own.commit(() => source.reset({ kind: "value", value: { n: 3 } }), context);
+		own.commit(() => source.retireAlone(), context);
+		expect(source.generation).toBe(4);
+		expect(batch).toBeDefined();
+	});
+
+	it("forks with its state, last good value and count, on another batch, with a fresh decoder", async () => {
+		const { batch, source } = replica();
+		batch.commit(() => source.adopt({ n: 2 }, [["s", ["n"], 2]], false), context);
+		batch.commit(() => source.fail(new Error("down")), context);
+		const other = new Batch(() => {}, undefined);
+		const fork = source.fork(other);
+		expect([fork.generation, fork.start()]).toEqual([
+			2,
+			{ kind: "failed", error: new Error("down"), last: { n: 2 } },
+		]);
+		// A failed member recovers with a root replacement; the fork's decoder knows nothing of the original's ops.
+		const { value } = fork.decode([["r", { n: 5 }]]);
+		other.commit(() => fork.adopt(value, [["r", value]], false), context);
+		await delivered();
+		expect([fork.value, fork.generation, source.generation]).toEqual([{ n: 5 }, 3, 2]);
+	});
 });

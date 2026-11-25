@@ -1,5 +1,21 @@
-// The app-level collapsed sidebar state from Pi Mobile, shared by the shell and drawer controls.
+// The app-level collapsed sidebar state from Pi Mobile, shared by the shell and drawer controls, and where the sidebar
+// docks instead of being the drawer.
 import { useSyncExternalStore } from "react";
+
+/** Where the sidebar docks beside the main area; below it the sessions are a drawer. */
+export const SIDEBAR_DOCKS = "(min-width: 900px)";
+
+const subscribeDocked = (changed: () => void) => {
+	const media = window.matchMedia(SIDEBAR_DOCKS);
+	media.addEventListener("change", changed);
+	return () => media.removeEventListener("change", changed);
+};
+const dockedSnapshot = () => window.matchMedia(SIDEBAR_DOCKS).matches;
+
+/** Whether the sidebar docks (wide screens) rather than opening as the drawer. */
+export function useSidebarDocked(): boolean {
+	return useSyncExternalStore(subscribeDocked, dockedSnapshot);
+}
 
 const KEY = "pi-sidebar-collapsed";
 const listeners = new Set<() => void>();

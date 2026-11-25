@@ -10,6 +10,7 @@ import chatModeWorker from "../../plugins/chat-mode/worker.ts";
 import { Attachments } from "../../plugins/files/contract.ts";
 import { WorkerModels } from "../../plugins/models/contract.ts";
 import { createP2Models } from "../../plugins/models/models.ts";
+import { StatusReport } from "../../plugins/status/contract.ts";
 import { type Facet, Session } from "../../src/runtime/chord.ts";
 import { durableContext } from "../../src/runtime/durable.ts";
 import type { HarnessParts } from "../../src/runtime/worker.ts";
@@ -42,6 +43,8 @@ export async function chatModeHost(options: { facet?: Facet; directory?: string 
 		],
 		stubs: [
 			[Attachments, { resolve: async ({ ids }: { ids: string[] }) => ids.map(fakeUpload) }],
+			// No server here: the worker's status pushes go nowhere.
+			[StatusReport, { push: async () => null }],
 			// No settings.json: the owner's entries carry the default name.
 			[WorkerModels, (_input, _principal, self) => ({ settings: self.state({}) })],
 		],

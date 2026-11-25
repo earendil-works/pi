@@ -9,7 +9,7 @@ import { BACKGROUND_CONTEXT, statusOf } from "@p2/app/v1";
 import { Chat } from "../../plugins/chat/contract.ts";
 import { Models } from "../../plugins/models/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
-import { SessionStatus } from "../../plugins/status/contract.ts";
+import { SessionStatus, StatusStore } from "../../plugins/status/contract.ts";
 import type { Host, RefIn } from "../../src/runtime/chord.ts";
 import { type Fixture, failureOf, holdIn, poll, startFixture, until } from "./helpers.ts";
 
@@ -99,12 +99,16 @@ describe("M1: a working chat (fake provider)", () => {
 
 	it("streams partial text, shows the session busy, and stops", async () => {
 		await chat.send({ text: "slow one", requestId: "r2" }, BACKGROUND_CONTEXT);
+		// Send pushes the worker's status before it answers: the server's index shows the session busy already.
+		const store = await fixture.server.host.get(StatusStore, {}, BACKGROUND_CONTEXT);
+		assert(store.statuses.value[sessionId]?.busy.includes(1));
 		await until(chat.view, (value) => partial(value).length > 20);
 		await until(status.statuses, (value) => value?.[sessionId]?.busy.includes(1) === true);
 		// A follow-up queued behind the run comes back to its author when stopping.
 		await chat.send({ text: "queued later", requestId: "r3", whenBusy: "followUp" }, BACKGROUND_CONTEXT);
 		const { restored } = await chat.stop(BACKGROUND_CONTEXT);
 		assert.deepEqual(restored, ["queued later"]);
+		assert.deepEqual(store.statuses.value[sessionId]?.busy, [], "stop pushes the idle status before it answers");
 		const view = await until(
 			chat.view,
 			(value) => !live(value)?.run && assistants(value).at(-1)?.stopReason === "aborted",

@@ -27,7 +27,7 @@ export interface TruncationResult {
 	outputLines: number;
 	/** Number of bytes in the truncated output */
 	outputBytes: number;
-	/** Whether the last line was partially truncated (only for tail truncation edge case) */
+	/** Whether the first output line was partially truncated: an over-long line at the end, possibly followed by blank lines (only for tail truncation) */
 	lastLinePartial: boolean;
 	/** Whether the first line exceeded the byte limit (for head truncation) */
 	firstLineExceedsLimit: boolean;
@@ -53,6 +53,10 @@ function splitLinesForCounting(content: string): string[] {
 		lines.pop();
 	}
 	return lines;
+}
+
+function isBlankLine(line: string): boolean {
+	return line.trim().length === 0;
 }
 
 /**
@@ -202,12 +206,17 @@ export function truncateTail(content: string, options: TruncationOptions = {}): 
 
 		if (outputBytesCount + lineBytes > maxBytes) {
 			truncatedBy = "bytes";
-			// Edge case: if we haven't added ANY lines yet and this line exceeds maxBytes,
-			// take the end of the line (partial)
-			if (outputLinesArr.length === 0) {
-				const truncatedLine = truncateStringToBytesFromEnd(line, maxBytes);
+			// Edge case: if this line exceeds the limit and nothing or only blank lines come after it,
+			// take the end of the line (partial) so the output is not just the blank lines
+			const remainingBytes = maxBytes - outputBytesCount - (outputLinesArr.length > 0 ? 1 : 0);
+			if (
+				outputLinesArr.length === 0 ||
+				(!isBlankLine(line) && outputLinesArr.every(isBlankLine) && remainingBytes > 0)
+			) {
+				const truncatedLine = truncateStringToBytesFromEnd(line, remainingBytes);
 				outputLinesArr.unshift(truncatedLine);
-				outputBytesCount = Buffer.byteLength(truncatedLine, "utf-8");
+				outputBytesCount +=
+					lineBytes - Buffer.byteLength(line, "utf-8") + Buffer.byteLength(truncatedLine, "utf-8");
 				lastLinePartial = true;
 			}
 			break;
@@ -272,5 +281,31 @@ export function truncateLine(
 	if (line.length <= maxChars) {
 		return { text: line, wasTruncated: false };
 	}
-	return { text: `${line.slice(0, maxChars)}... [truncated]`, wasTruncated: true };
+	return { text: `${sliceHead(line, maxChars)}... [truncated]`, wasTruncated: true };
+}
+
+/** Returns at most the first `maxUnits` UTF-16 code units of `text`, without splitting a surrogate pair. */
+export function sliceHead(text: string, maxUnits: number): string {
+	const end = Math.max(0, maxUnits);
+	// A lone high surrogate before the cut would be invalid UTF-16; keep the whole character out instead.
+	return isHighSurrogate(text.charCodeAt(end - 1)) && isLowSurrogate(text.charCodeAt(end))
+		? text.slice(0, end - 1)
+		: text.slice(0, end);
+}
+
+/** Returns at most the last `maxUnits` UTF-16 code units of `text`, without splitting a surrogate pair. */
+export function sliceTail(text: string, maxUnits: number): string {
+	if (maxUnits <= 0) return "";
+	const start = Math.max(0, text.length - maxUnits);
+	return isLowSurrogate(text.charCodeAt(start)) && isHighSurrogate(text.charCodeAt(start - 1))
+		? text.slice(start + 1)
+		: text.slice(start);
+}
+
+function isHighSurrogate(code: number): boolean {
+	return code >= 0xd800 && code <= 0xdbff;
+}
+
+function isLowSurrogate(code: number): boolean {
+	return code >= 0xdc00 && code <= 0xdfff;
 }

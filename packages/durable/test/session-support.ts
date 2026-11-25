@@ -65,7 +65,7 @@ export async function refusingAt(
 	const at = batches.findIndex(refuses);
 	if (at < 0) return commit(batches, receive, commitContext);
 	const result = await commit(batches.slice(0, at), receive, commitContext);
-	return result.stored < at ? result : { stored: at, refused: error };
+	return result.stored < at ? result : { kind: "refused", stored: at, refused: error };
 }
 
 /** Memory storage with observable commits, held calls, and injected commit failures. */
@@ -138,7 +138,7 @@ export class ControlledStorage extends MemoryStorage {
 		}
 		if (failure !== undefined) {
 			this.#commitFailure = undefined;
-			return { stored: 0, refused: failure };
+			return { kind: "refused", stored: 0, refused: failure };
 		}
 		const step = (index: number, seq: Seq): void => {
 			this.adopting = true;

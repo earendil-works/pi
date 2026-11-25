@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	rmSync,
+	symlinkSync,
+	truncateSync,
+	writeFileSync,
+} from "node:fs";
 import { createServer } from "node:http";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +21,7 @@ import { launcherActions, localPath, openLocalFile, uploadName } from "../../src
 import { startTuiClient } from "../../src/hosts/tui-client.ts";
 import { Grants, type LauncherAction, type LauncherActionContext } from "../../src/hosts/tui-grants.ts";
 import { TrustedUi } from "../../src/hosts/tui-trusted-ui.ts";
+import { hostFiles, sessionDirectory } from "../../src/runtime/host-dirs.ts";
 import { holdIn, poll, startFixture } from "./helpers.ts";
 
 const supported = Number(process.versions.node.split(".")[0]) >= 26;
@@ -110,7 +120,7 @@ test("uploads: the bound session, fixed route and Origin, confirmation first, no
 		BACKGROUND_CONTEXT,
 	);
 	const url = new URL(`http://127.0.0.1:${fixture.server.port}`);
-	const actions = launcherActions({ url, credentials: {}, role: "owner" });
+	const actions = launcherActions({ url, credentials: { cookie: fixture.owner.cookie }, role: "owner" });
 	const attach = C(actions.attach);
 	assert.equal(attach.consent({ path: file }, { origin: url, target: undefined }), undefined, "no session bound");
 	assert.equal(
@@ -122,11 +132,13 @@ test("uploads: the bound session, fixed route and Origin, confirmation first, no
 	assert.match(denied.shown[0]!, /notes\.txt/);
 	assert.match(denied.shown[0]!, /12 B/);
 	assert.match(denied.shown[0]!, new RegExp(session.id));
-	assert.deepEqual(readdirSync(fixture.dataDir).includes("uploads"), false, "nothing uploaded without confirmation");
+	// The session's stored files: their blobs in its files directory.
+	const blobs = join(hostFiles(sessionDirectory(fixture.server.dataDir, session.id)), "blobs");
+	const stored = () => (existsSync(blobs) ? readdirSync(blobs, { recursive: true }).length : 0);
+	assert.equal(stored(), 0, "nothing uploaded without confirmation");
 	const uploaded = (await attach.run({ path: file }, context(session.id, true))) as { id: string; name: string };
 	assert.equal(uploaded.name, "notes.txt");
-	const stored = readdirSync(join(fixture.dataDir, "uploads", session.id));
-	assert.deepEqual(stored, [`${uploaded.id}-notes.txt`]);
+	assert(stored() > 0, "the upload is stored in the session's files");
 	await assert.rejects(attach.run({ path: directory }, context(session.id, true)), /regular file/);
 
 	// A redirecting or slow server: refused, and a cancelled grant aborts the upload.
@@ -172,7 +184,7 @@ test("Ctrl+V: an image uploads after confirmation; text is pasted as typed; file
 	const paste = K(
 		launcherActions({
 			url,
-			credentials: {},
+			credentials: { cookie: fixture.owner.cookie },
 			role: "owner",
 			readClipboard: {
 				files: async () => null,
@@ -219,11 +231,12 @@ test(
 		const client = await startTuiClient({
 			terminal,
 			url,
+			credentials: { cookie: fixture.owner.cookie },
 			pollMs: 60000,
 			colorQueryMs: 10,
 			actions: launcherActions({
 				url,
-				credentials: {},
+				credentials: { cookie: fixture.owner.cookie },
 				role: "owner",
 				readClipboard: {
 					files: async () => null,

@@ -1,24 +1,27 @@
 // p2's service worker: the app starts without the network, or before it answers (a cold start of the home-screen app,
 // a slow connection). It keeps only the app itself, never conversation data (that is src/web/conversation-cache.ts):
 //
-// - the page (`/`, `/s/…`; one shell for all of them): from the network first, the last one kept when the network
-//   fails or has not answered within PAGE_WAIT. Only an app page is kept (it names its bundle version), never a
+// - the page (`/`, `/s/…`, `/list/…`; one shell for all of them): from the network first, the last one kept when the
+//   network fails or has not answered within PAGE_WAIT. Only an app page is kept (it names its bundle version), never a
 //   sign-in page or an error. A kept page with older code is replaced by the page's own version check, as always.
-// - the web bundle's files (`/__p2_web/<content hash>.…`): named by their content, so a kept file is never stale; from
-//   the cache first. The files of the newest two bundle versions are kept.
-// - everything else (the bundle manifest, the WebSocket, uploads, routes): the network, untouched.
+// - the web surface's files (`/_chord/web/…`: the base bundle, the combined plugins file, plugin scripts, stylesheets and
+//   assets): named by their content, so a kept file is never stale; from the cache first. The files of the newest two
+//   base versions are kept. Not `/_chord/web/base`, the server's current base hash, which an outdated page asks.
+// - everything else (the base hash, the WebSocket, uploads, routes): the network, untouched.
 //
 // Pi Mobile had no service worker because one would have kept stale code across Vite's hot reloads and restarts. p2
 // serves no source modules: every file it would keep is content-named, and the page is never preferred to the network.
 
 const PREFIX = "p2-app-";
 const SHELL = `${PREFIX}shell`;
-const BUNDLE = "/__p2_web/";
+const BUNDLE = "/_chord/web/";
+/** The server's current base hash: always the network's. */
+const BASE = "/_chord/web/base";
 const PAGE_WAIT = 3000;
 const VERSIONS = 2;
 
-/** An app page path: the root, a session, a conversation. */
-const isPage = (path) => path === "/" || /^\/s\/[0-9a-f-]+(?:\/c\/[1-9]\d*)?$/.test(path);
+/** An app page path: the root, a session, a conversation, a sidebar list (src/hosts/web.ts's `PAGE`). */
+const isPage = (path) => path === "/" || /^\/(?:s\/[0-9a-f-]+(?:\/c\/[1-9]\d*)?|list\/[^/]+)$/.test(path);
 const versionOf = (html) => /data-web-version="([a-f0-9]+)"/.exec(html)?.[1];
 const bundleCache = (version) => `${PREFIX}bundle-${version}`;
 
@@ -38,7 +41,7 @@ async function keepPage(response) {
 	if (!version) return;
 	await (await caches.open(SHELL)).put("/", response.clone());
 	const cache = await caches.open(bundleCache(version));
-	const files = [...html.matchAll(/(?:src|href)="(\/__p2_web\/[^"]+)"/g)].map((match) => match[1]);
+	const files = [...html.matchAll(/(?:src|href)="(\/_chord\/web\/[^"]+)"/g)].map((match) => match[1]);
 	await Promise.all(
 		files.map(async (file) => {
 			if (await cache.match(file)) return;
@@ -55,11 +58,15 @@ async function keepPage(response) {
 const isAppPage = (response) =>
 	response.ok && response.type === "basic" && (response.headers.get("Content-Type") ?? "").startsWith("text/html");
 
-async function page(request) {
+async function page(event) {
+	const request = event.request;
 	const network = fetch(request).then(async (response) => {
 		if (isAppPage(response)) await keepPage(response).catch(() => {});
 		return response;
 	});
+	// When the kept page answers first, the worker stays alive until the network's page is kept too: the next start
+	// gets the current version, instead of the kept one again whenever the network is slower than PAGE_WAIT.
+	event.waitUntil(network.catch(() => {}));
 	const kept = () => caches.open(SHELL).then((cache) => cache.match("/"));
 	const waited = new Promise((resolve) => setTimeout(resolve, PAGE_WAIT, "waited"));
 	try {
@@ -101,6 +108,6 @@ self.addEventListener("fetch", (event) => {
 	const url = new URL(request.url);
 	if (url.origin !== self.location.origin) return;
 	if (request.mode === "navigate" && request.destination === "document" && isPage(url.pathname))
-		event.respondWith(page(request));
-	else if (url.pathname.startsWith(BUNDLE)) event.respondWith(bundleFile(request));
+		event.respondWith(page(event));
+	else if (url.pathname.startsWith(BUNDLE) && url.pathname !== BASE) event.respondWith(bundleFile(request));
 });

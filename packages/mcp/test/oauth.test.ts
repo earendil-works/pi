@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { once } from "node:events";
+import { createConnection } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { McpClient, StreamableHttpTransport } from "../src/index.ts";
 import {
@@ -619,6 +621,25 @@ describe("OAuthCallbackServer pages", () => {
 			expect((await pending).code).toBe("abc");
 		} finally {
 			await callback.close();
+		}
+	});
+
+	// #11311
+	it("closes while the browser keeps an unused connection open", async () => {
+		const callback = await OAuthCallbackServer.listen();
+		const url = new URL(callback.redirectUrl);
+		const spare = createConnection({ host: url.hostname, port: Number(url.port) });
+		try {
+			await once(spare, "connect");
+			const pending = callback.waitForCallback("s1");
+			const response = await fetch(`${callback.redirectUrl}?code=abc&state=s1`);
+			expect(await response.text()).toBe("Authorization complete. You may close this window.");
+			expect((await pending).code).toBe("abc");
+			const closed = callback.close().then(() => "closed");
+			const timeout = new Promise((resolve) => setTimeout(() => resolve("timed out"), 2000));
+			expect(await Promise.race([closed, timeout])).toBe("closed");
+		} finally {
+			spare.destroy();
 		}
 	});
 

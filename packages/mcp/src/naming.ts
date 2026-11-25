@@ -1,7 +1,7 @@
 /**
- * Names of MCP tools and of their servers' namespaces as models and code mode scripts see them.
- * Applications that name tools the same way rank and group them the same way in tool search and
- * code mode.
+ * Names of MCP tools and of their servers' namespaces, and the servers' one-line summaries, as models
+ * and code mode scripts see them. Applications that name tools the same way rank and group them the
+ * same way in tool search and code mode.
  */
 
 import { createHash } from "node:crypto";
@@ -32,4 +32,13 @@ export function createMcpToolName(
  */
 export function mcpNamespace(server: string): string {
 	return `mcp__${server.replace(/-/g, "_")}`;
+}
+
+/**
+ * A server's one-line summary for the system prompt: the first line of its configured `description`,
+ * else of the instructions it sent in `initialize`; empty when it has neither.
+ */
+export function mcpServerSummary(description: string | undefined, instructions: string | undefined): string {
+	const text = description?.trim() || instructions?.trim() || "";
+	return (text.split("\n", 1)[0] ?? "").trim();
 }

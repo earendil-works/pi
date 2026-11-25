@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { Sessions } from "../../plugins/sessions/contract.ts";
-import { Browser, browserTests } from "./browser.ts";
+import { Browser, browserTests, COMPOSER, composerText, setComposer } from "./browser.ts";
 import { type Fixture, holdIn, startFixture } from "./helpers.ts";
 
 const key = (browser: Browser, name: string, code: number) =>
@@ -42,7 +42,7 @@ const enter = (browser: Browser) =>
 			windowsVirtualKeyCode: 13,
 		});
 	})();
-const value = (browser: Browser) => browser.evaluate<string>(`document.querySelector('.composer textarea').value`);
+const value = (browser: Browser) => browser.evaluate<string>(composerText);
 const popover = (browser: Browser) =>
 	browser.evaluate<string>(`document.querySelector('.file-completion')?.textContent ?? ''`);
 
@@ -62,24 +62,22 @@ describe("web composer file completion", { skip: !browserTests }, () => {
 			).create({ cwd: fixture.workspace, title: "Completion" }, BACKGROUND_CONTEXT)
 		).id;
 		browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 		await browser.metrics(1280, 900);
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${id}`);
-		await browser.click(".composer textarea");
+		await browser.click(COMPOSER);
 	});
 	after(async () => {
 		await browser?.close();
 		await fixture?.close();
 	});
-	const clear = () =>
-		browser.evaluate(
-			`(()=>{const e=document.querySelector('.composer textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(e,'');e.dispatchEvent(new Event('input',{bubbles:true}));})()`,
-		);
+	const clear = () => browser.evaluate(setComposer(""));
 
 	it("opens on @, applies with Enter instead of sending, closes with Escape", async () => {
 		await browser.call("Input.insertText", { text: "fix @pars" });
 		await browser.wait(`document.querySelector('.file-completion')?.textContent.includes('src/parser.ts')`);
 		await enter(browser);
-		await browser.wait(`document.querySelector('.composer textarea').value==='fix @src/parser.ts '`);
+		await browser.wait(`${composerText}==='fix @src/parser.ts '`);
 		assert.equal(await popover(browser), "");
 		assert.equal(
 			await browser.evaluate<number>(`document.querySelectorAll('.messages .user').length`),
@@ -119,9 +117,9 @@ describe("web composer file completion", { skip: !browserTests }, () => {
 			code: "Tab",
 			windowsVirtualKeyCode: 9,
 		});
-		await browser.wait(`document.querySelector('.composer textarea').value==='open src/parser.ts'`);
+		await browser.wait(`${composerText}==='open src/parser.ts'`);
 		assert.equal(
-			await browser.evaluate<boolean>(`document.activeElement===document.querySelector('.composer textarea')`),
+			await browser.evaluate<boolean>(`document.activeElement===document.querySelector('${COMPOSER}')`),
 			true,
 			"Tab stayed in the composer",
 		);

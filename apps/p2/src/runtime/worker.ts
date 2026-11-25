@@ -1,23 +1,26 @@
 // Locals, registries and natives a session worker host provides to plugins (Chord v2), and the worker's core facet.
 import { existsSync } from "node:fs";
-import { defineRegistry, local, type Native, type RegistryValue } from "@earendil-works/chord";
+import { defineRegistry, local, type Native, type RegistryValue, type Store } from "@earendil-works/chord";
+import { copyFiles } from "@earendil-works/chord/app/files";
 import type { Context } from "@earendil-works/chord/context";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord/json";
 import type { Watchable, WatchCall, WatchHandle } from "@earendil-works/chord/watch";
-import type { Models } from "@earendil-works/pi-ai/models";
+import type { Api, AssistantMessage, Message, Model } from "@earendil-works/pi-ai";
+import type { Models, ModelsSimpleStreamOptions } from "@earendil-works/pi-ai/models";
 import {
 	type ConversationId,
 	configure,
 	type DocumentReader,
 	type Conversation as DurableConversation,
 	Harness as DurableHarness,
+	type HarnessOptions,
 	type HarnessSettings,
 	ROOT_CONVERSATION_ID,
 } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
-import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
+import type { ImageProcessor } from "@earendil-works/pi-durable/tools";
 import { Connection, LocalExecutionEnv, localDaemon, RemoteExecutionEnv } from "@earendil-works/pi-env";
 import {
 	type Ctx,
@@ -30,7 +33,10 @@ import {
 	serveKeyed,
 } from "./chord.ts";
 import { durableContext, durableRegistry, ExtensionSwitches, Extensions } from "./durable.ts";
+import { hostFiles, sessionDirectory } from "./host-dirs.ts";
 import { isRooted, type Location, type LocationInput, sameLocation } from "./location.ts";
+import { topLevelConversations } from "./main-conversation.ts";
+import { durableStorage } from "./session-store.ts";
 import { type SessionInit, WorkerBoundary } from "./session-worker.ts";
 
 export { ExtensionSwitches, Extensions } from "./durable.ts";
@@ -43,6 +49,8 @@ export type WorkerInit = {
 	readonly app: string;
 	readonly dataDir: string;
 	readonly fake: boolean;
+	/** Whether the worker records telemetry and sends it to the server (settings.json's `telemetry`, read at its start). */
+	readonly telemetry: boolean;
 	readonly generation: number;
 	readonly values: { readonly session: SessionInit } & Readonly<Record<string, JsonValue>>;
 };
@@ -110,8 +118,8 @@ export class SessionLocation {
 }
 
 /**
- * Whether `env` runs on this machine (not an SSH environment): p2's private data directory is denied there. Decided
- * from the environment, not from `SessionLocation.value`, which lags behind the environments during a move.
+ * Whether `env` runs on this machine (not an SSH environment; attachments need no copy there). Decided from the
+ * environment, not from `SessionLocation.value`, which lags behind the environments during a move.
  */
 export const isLocalEnvironment = (env: ExecutionEnv): boolean => !(env instanceof RemoteExecutionEnv);
 
@@ -173,20 +181,25 @@ export type Machine = { at: (cwd: string) => ExecutionEnv; close: () => void };
 export type HarnessEnvironmentEntry = {
 	/** The machine of the remote environment `env`. Connecting may wait for its first operation. */
 	open: (env: string) => Promise<Machine>;
-	/** The SSH host environment `env`'s tools run on, for the prompt's `cwd` section. */
-	readonly host?: (env: string) => Promise<string | undefined>;
+	/** Where environment `env`'s tools run, for the prompt's `cwd` section, e.g. `the SSH host gpu-box`. */
+	readonly describe?: (env: string) => Promise<string | undefined>;
+	/**
+	 * Whether environment `env` is a sandbox, decided by its configuration's type (never its name): conversations
+	 * working there cannot leave it. Cheap: read on every confinement check.
+	 */
+	readonly sandbox: (env: string) => boolean;
 };
 export const HarnessEnvironments = keyedRegistry<HarnessEnvironmentEntry>("p2.harness-environments");
 
 /**
  * What keeps the worker process alive besides held references (Chord's own count): its Durable tasks, calls under way
- * (`call`), viewers plugins count themselves, and the relocation fence. A JSON watchable of those counts
- * (`workerMain`'s `busy`): the worker is idle when every count is zero.
+ * (`call`), viewers plugins count themselves, conversations whose prompt cache is kept warm, and the relocation fence.
+ * A JSON watchable of those counts (`workerMain`'s `busy`): the worker is idle when every count is zero.
  */
 export class Liveness implements Watchable<Readonly<Record<string, number>>> {
 	#relocating = false;
 	#stopping = false;
-	#counts: Readonly<Record<string, number>> = { activeCalls: 0, viewers: 0, durableTasks: 0 };
+	#counts: Readonly<Record<string, number>> = { activeCalls: 0, viewers: 0, durableTasks: 0, cacheWarming: 0 };
 	readonly #listeners = new Set<() => void>();
 	get value(): Readonly<Record<string, number>> {
 		return this.#counts;
@@ -224,7 +237,7 @@ export class Liveness implements Watchable<Readonly<Record<string, number>>> {
 		this.#counts = { ...this.#counts, [kind]: count };
 		for (const listener of [...this.#listeners]) listener();
 	}
-	add(kind: "activeCalls" | "viewers", delta: number): void {
+	add(kind: "activeCalls" | "viewers" | "cacheWarming", delta: number): void {
 		this.#set(kind, (this.#counts[kind] ?? 0) + delta);
 	}
 	setDurableTasks(count: number): void {
@@ -277,10 +290,25 @@ export type WorkerParts = {
 	readonly liveness: Liveness;
 	readonly location: SessionLocation;
 	/**
-	 * Runs `fn` in a root of the worker's own (`HOST`): for code outside Chord calls (Durable tools, sections). `signal`
-	 * ends it early.
+	 * Runs `fn` in a root of the worker's own (`HOST`) under `context`: for code outside Chord calls (a Durable tool or
+	 * section passes its Durable context), or a method acting as the worker (`withoutAbortSignal(ctx)`).
 	 */
-	readonly root: <T>(fn: (ctx: Ctx) => Promise<T>, signal?: AbortSignal) => Promise<T>;
+	readonly root: <T>(fn: (ctx: Ctx) => Promise<T>, context: Context) => Promise<T>;
+	/**
+	 * Copies this session's files (the kit's `Files`: its index and blobs) into the directory of the new session
+	 * `session`, which must not exist yet: a fork, whose worker waits while it copies. The session goes on meanwhile.
+	 */
+	readonly copyFilesTo: (session: string, context: Context) => Promise<void>;
+	/**
+	 * Fits images to a model's limits (Photon in a worker thread that exits when idle): one per process, for `read`, the
+	 * `fit-images` extension and attachments.
+	 */
+	readonly images: ImageProcessor;
+	/**
+	 * The session's Chord store (one writer: this worker), for its backup (`plugins/backup`). Never close it. Absent in
+	 * test hosts without a store.
+	 */
+	readonly store?: Store;
 };
 
 /**
@@ -317,6 +345,20 @@ export type HarnessParts = {
 	 * environments nothing uses any more.
 	 */
 	relocate(location: Location, context: Context): Promise<void>;
+	/** The request that produced `response`, for `GenerationTask`'s `afterResponse` hooks; each response is taken once. */
+	requestOf(response: AssistantMessage): ModelRequest | undefined;
+};
+
+/**
+ * One provider request the Harness sent: the model, the messages after Durable's `beforeRequest` chain, and the
+ * attempt's options without its `signal`, `telemetry` and `onPayload`. Read-only: the messages are Durable's (frozen)
+ * entry messages; never mutate, copy or freeze any of it. Sending it again skips Durable's `beforeProviderRequest`
+ * hooks (no p2 extension has one).
+ */
+export type ModelRequest = {
+	readonly model: Model<Api>;
+	readonly messages: readonly Message[];
+	readonly options: ModelsSimpleStreamOptions;
 };
 
 /** The session's Harness (the core's contribution once it is open). */
@@ -370,15 +412,22 @@ export function workerCore(
 	init: WorkerInit,
 	liveness: Liveness,
 	location: SessionLocation,
+	store: Store,
 	root: WorkerParts["root"],
+	images: ImageProcessor,
+	/** The worker host's telemetry adapter, the Harness's too (its `pi.durable.*` and pi-ai's spans); none in tests. */
+	telemetry: HarnessOptions["telemetry"],
 ): Facet {
 	return defineFacet((host, self) => {
 		serveWorkerRegistries(host);
 		host.serve(WorkerProcess, { compose: (table) => table[0]?.value });
-		self.contribute(WorkerProcess, { init, liveness, location, root });
+		const own = sessionDirectory(init.dataDir, init.values.session.id);
+		const copyFilesTo = (session: string, context: Context) =>
+			copyFiles({ store, files: hostFiles(own) }, sessionDirectory(init.dataDir, session), context);
+		self.contribute(WorkerProcess, { init, liveness, location, root, copyFilesTo, images, store });
 		host.serve(HarnessNative, { compose: (table) => table[0]?.value });
 		host.serve(HarnessHost, (_params, self) => {
-			self.contribute(HarnessNative, openHarness(self, init, location));
+			self.contribute(HarnessNative, openHarness(self, init, location, store, telemetry));
 			return {};
 		});
 		host.serve(WorkerBoundary, (_params, principal, self) => {
@@ -462,7 +511,24 @@ export type ExecutionEnvironments = {
 	locate(id: ConversationId, context: Context, read?: DocumentReader): Promise<Location>;
 	/** The environment at `location`: one per directory, on one connection per machine, opened at its first use. */
 	at(location: Location): Promise<ExecutionEnv>;
+	/** `env` itself when it is a sandbox (see `HarnessEnvironmentEntry.sandbox`), else undefined; this device never is. */
+	sandbox(env: string | null): Promise<string | undefined>;
 };
+
+/**
+ * The sandbox conversation `id` is confined to: the environment it works in, when that is a sandbox. Decided from its
+ * current location at each call, so it holds per conversation (a subagent placed in a sandbox is confined, its main
+ * agent elsewhere is not) and follows moves.
+ */
+export async function conversationConfinement(
+	environments: ExecutionEnvironments,
+	id: ConversationId,
+	context: Context,
+	read?: DocumentReader,
+): Promise<{ sandbox: string } | undefined> {
+	const sandbox = await environments.sandbox((await environments.locate(id, context, read)).env);
+	return sandbox === undefined ? undefined : { sandbox };
+}
 
 /** Where conversation `id` works and its environment there. */
 export async function conversationEnvironment(
@@ -485,6 +551,7 @@ export async function conversationEnvironment(
 class Execution implements ExecutionEnvironments {
 	#session: Location;
 	readonly #open: (env: string | null, signal: AbortSignal) => Promise<Machine>;
+	readonly #sandbox: (env: string, signal: AbortSignal) => Promise<boolean>;
 	readonly #own: (
 		read: DocumentReader | undefined,
 		id: ConversationId,
@@ -499,11 +566,17 @@ class Execution implements ExecutionEnvironments {
 	constructor(
 		session: Location,
 		open: (env: string | null, signal: AbortSignal) => Promise<Machine>,
+		sandbox: (env: string, signal: AbortSignal) => Promise<boolean>,
 		own: (read: DocumentReader | undefined, id: ConversationId, context: Context) => Promise<Location | undefined>,
 	) {
 		this.#session = session;
 		this.#open = open;
+		this.#sandbox = sandbox;
 		this.#own = own;
+	}
+	async sandbox(env: string | null): Promise<string | undefined> {
+		if (env === null) return undefined;
+		return (await this.#sandbox(env, this.#closing.signal)) ? env : undefined;
 	}
 	get session(): Location {
 		return this.#session;
@@ -573,8 +646,9 @@ class Execution implements ExecutionEnvironments {
 }
 
 /**
- * Moves the root and the conversations following the session to `session.cwd` in one commit (those already there stay
- * untouched), after the placement provider committed what an older version left unplaced. Children copied the session's
+ * Moves the top-level conversations (the root and its `/tree` branches) and the conversations following the session to
+ * `session.cwd` in one commit (those already there stay untouched), after the placement provider committed what an older
+ * version left unplaced. Children copied the session's
  * cwd when created, so a move leaves them behind; this runs at every start (sessions moved before subagents tracked
  * their own cwd still hold the old path) and at every in-place relocation. Nothing resolves against this process's cwd.
  * Returns the own locations of the other conversations.
@@ -588,13 +662,12 @@ async function followSession(
 		  ) => Promise<{ readonly followers: readonly ConversationId[]; readonly own: readonly Location[] }>)
 		| undefined,
 	harness: DurableHarness,
-	root: ConversationId,
 	session: Location,
 	context: Context,
 ): Promise<readonly Location[]> {
 	const placed = place ? await place(harness, session, context) : { followers: [], own: [] };
 	const stale: ConversationId[] = [];
-	for (const id of [root, ...placed.followers]) {
+	for (const id of [...(await topLevelConversations(harness, context)), ...placed.followers]) {
 		const current = (await (await harness.conversation(id, context))?.agent(context))?.cwd;
 		if (current !== undefined && current !== session.cwd && !stale.includes(id)) stale.push(id);
 	}
@@ -611,8 +684,14 @@ async function followSession(
  * with the root conversation created from the session's model and cwd. Scheduling starts with `resume()` once the
  * worker's plugins are loaded (the worker entry). Returns the contribution: the natives, read at each use.
  */
-function openHarness(self: Self, init: WorkerInit, location: SessionLocation): HarnessParts {
-	const { dataDir, values } = init;
+function openHarness(
+	self: Self,
+	init: WorkerInit,
+	location: SessionLocation,
+	store: Store,
+	telemetry: HarnessOptions["telemetry"],
+): HarnessParts {
+	const { values } = init;
 	const session = values.session;
 	const config = self.registry(HarnessConfig);
 	const environments = self.registry(HarnessEnvironments);
@@ -624,10 +703,13 @@ function openHarness(self: Self, init: WorkerInit, location: SessionLocation): H
 		if (entry === undefined) throw new Error("No model configuration installed (models plugin)");
 		return entry;
 	};
-	// Model access is looked up at each use: the models plugin may reload or replace its configuration.
+	// Model access is looked up at each use: the models plugin may reload or replace its configuration. Every generation
+	// request passes through `streamSimple` here, after Durable and the Harness's identity wrapper completed it.
+	const requests = new WeakMap<AssistantMessage, ModelRequest>();
 	const models = new Proxy({} as Models, {
 		get: (_target, key) => {
 			const current = configured().models();
+			if (key === "streamSimple") return remembering(current, requests);
 			const value: unknown = Reflect.get(current, key, current);
 			return typeof value === "function" ? value.bind(current) : value;
 		},
@@ -644,12 +726,15 @@ function openHarness(self: Self, init: WorkerInit, location: SessionLocation): H
 		const remote = await whenPresent(environments, "remote", signal);
 		return remote.open(env);
 	};
+	/** Whether a remote environment is a sandbox, once the plugin providing them is there. */
+	const sandbox = async (env: string, signal: AbortSignal): Promise<boolean> =>
+		(await whenPresent(environments, "remote", signal)).sandbox(env);
 	const place = async (harness: DurableHarness, at: Location, context: Context) =>
 		(await placements.value.get("subagents")?.place(harness, at, values, context)) ?? { followers: [], own: [] };
 	let reader: DocumentReader | undefined;
 	const execution: Native<Execution> = self.open(
-		async (ctx) => {
-			const created = new Execution(location.value, open, async (read, id, context) => {
+		async () => {
+			const created = new Execution(location.value, open, sandbox, async (read, id, context) => {
 				const documents = read ?? reader;
 				if (!documents) throw new Error("The session's Harness is not open");
 				return placements.value.get("subagents")?.own(documents, id, context);
@@ -660,7 +745,6 @@ function openHarness(self: Self, init: WorkerInit, location: SessionLocation): H
 				await created.close();
 				throw error;
 			}
-			void ctx;
 			return created;
 		},
 		(created) => created.close(),
@@ -670,11 +754,13 @@ function openHarness(self: Self, init: WorkerInit, location: SessionLocation): H
 		async (ctx) => {
 			// Generation needs model access: open once the models plugin has contributed it.
 			await whenPresent(config, "default", ctx.abortSignal ?? new AbortController().signal);
-			const storage = await openNodeSqliteStorage(`${dataDir}/sessions/${session.id}.sqlite`);
+			// Durable's records in the session's store, beside the kit's `Files`.
+			const storage = await durableStorage(store, ctx);
 			const harness = await DurableHarness.open(
 				storage,
 				{
 					models,
+					...(telemetry === undefined ? {} : { telemetry }),
 					registry: durableRegistry(extensions, switches, durableContext(observing.signal)),
 					settings,
 					// The conversation's location, not its agent cwd alone: a subagent's own may be on another machine.
@@ -692,7 +778,7 @@ function openHarness(self: Self, init: WorkerInit, location: SessionLocation): H
 			const agent = await root.agent(ctx);
 			// Before the Harness is live: nothing can run or resume in a stale cwd first.
 			try {
-				await followSession(place, harness, root.id, location.value, ctx);
+				await followSession(place, harness, location.value, ctx);
 			} catch (error) {
 				await harness.close(ctx).catch(() => {});
 				throw error;
@@ -727,13 +813,31 @@ function openHarness(self: Self, init: WorkerInit, location: SessionLocation): H
 			// catalog.
 			await environments.at(next);
 			environments.switch(next);
-			const root = await harness.root(context);
-			const own = await followSession(place, harness, root.id, next, context);
+			const own = await followSession(place, harness, next, context);
 			location.set(next);
 			await environments
 				.retire([next, ...own])
 				.catch((error: unknown) => console.error("p2 worker: closing old environments:", error));
 		},
+		requestOf: (response) => {
+			const request = requests.get(response);
+			requests.delete(response);
+			return request;
+		},
+	};
+}
+
+/** `models.streamSimple` that remembers each request by its terminal message, for `HarnessParts.requestOf`. */
+function remembering(models: Models, requests: WeakMap<AssistantMessage, ModelRequest>): Models["streamSimple"] {
+	return (model, context, options) => {
+		const stream = models.streamSimple(model, context, options);
+		// Registered before the caller awaits result(): the entry exists when Durable's afterResponse hooks run.
+		// result() never rejects; pi-ai encodes failures as `stopReason: "error"`.
+		void stream.result().then((message) => {
+			const { signal: _signal, telemetry: _telemetry, onPayload: _onPayload, ...kept } = options ?? {};
+			requests.set(message, { model, messages: context.messages, options: kept });
+		});
+		return stream;
 	};
 }
 
@@ -786,7 +890,9 @@ export async function resolveDirectory(
 	target: LocationInput,
 	from: Location,
 	context: Context,
-): Promise<Location | { error: string }> {
+): Promise<
+	{ readonly kind: "directory"; readonly location: Location } | { readonly kind: "invalid"; readonly error: string }
+> {
 	const same = target.env === from.env;
 	const typed = target.path.trim();
 	const path = !typed ? (same ? from.cwd : "~") : same || isRooted(typed) ? typed : `~/${typed}`;
@@ -795,9 +901,10 @@ export async function resolveDirectory(
 		const absolute = await env.absolutePath(path, context);
 		const canonical = absolute.ok ? await env.canonicalPath(absolute.value, context) : undefined;
 		const info = canonical?.ok ? await env.fileInfo(canonical.value, context) : undefined;
-		if (!absolute.ok || !info?.ok || info.value.kind !== "directory") return { error: "not an existing directory" };
-		return { env: target.env, cwd: absolute.value };
+		if (!absolute.ok || !info?.ok || info.value.kind !== "directory")
+			return { kind: "invalid", error: "not an existing directory" };
+		return { kind: "directory", location: { env: target.env, cwd: absolute.value } };
 	} catch (error) {
-		return { error: error instanceof Error ? error.message : String(error) };
+		return { kind: "invalid", error: error instanceof Error ? error.message : String(error) };
 	}
 }

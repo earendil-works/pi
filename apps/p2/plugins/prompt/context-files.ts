@@ -1,11 +1,10 @@
 // Skill frontmatter/prompt conventions adapted from earendil-works/pi (MIT).
 // See third-party/pi.LICENSE. This host uses only global and cwd-local skill roots.
-import { readdir } from "node:fs/promises";
+import { readdir, realpath } from "node:fs/promises";
 import { basename, dirname, join, type PlatformPath, resolve } from "node:path";
 import { optionalText, stripBom } from "@p2/app/v1/node";
 import { type PromptTemplate, parseFrontmatter, parseTemplate, type SkillFile } from "./templates.ts";
 
-type Skill = { name: string; description: string; path: string; disabled: boolean };
 /**
  * A session's loaded prompt resources: the instructions and skills sections, every skill (including those hidden from
  * the model with `disable-model-invocation`, which `/skill:` still invokes, as in pi) and the prompt templates.
@@ -16,7 +15,14 @@ export type LoadedPrompt = {
 	fingerprint: string;
 	skillFiles: SkillFile[];
 	templates: PromptTemplate[];
+	/**
+	 * The same without the global `AGENTS.md`, skills and prompt templates (only the project's): what a locked session
+	 * gets unless its owner picked the global instructions.
+	 */
+	project?: Omit<LoadedPrompt, "project" | "fingerprint">;
 };
+
+type Skill = { name: string; description: string; path: string; disabled: boolean; global: boolean };
 
 /**
  * Where project instructions and skills are read: the local filesystem, or a session's execution environment. Missing
@@ -24,6 +30,8 @@ export type LoadedPrompt = {
  */
 export type PromptFiles = {
 	readonly paths: Pick<PlatformPath, "join" | "dirname" | "resolve" | "basename">;
+	/** Files of this machine (not an SSH environment's): the global `AGENTS.md` may be among the project's ones. */
+	readonly local: boolean;
 	readText(path: string): Promise<string | undefined>;
 	/** Entries of a directory, without following symbolic links. */
 	entries(path: string): Promise<{ name: string; kind: "file" | "directory" | "other" }[] | undefined>;
@@ -32,6 +40,7 @@ export type PromptFiles = {
 /** The local filesystem. */
 export const localFiles: PromptFiles = {
 	paths: { join, dirname, resolve, basename },
+	local: true,
 	readText: optionalText,
 	async entries(path) {
 		try {
@@ -91,7 +100,9 @@ export function agentsCandidates(paths: Pick<PlatformPath, "join" | "dirname" | 
 
 /**
  * Instructions and skills for a session: the global `AGENTS.md` of the data directory (always local), then the
- * project's `AGENTS.md` files and skills under `<directory>/skills` and `<cwd>/.pi/skills` on the local filesystem.
+ * project's `AGENTS.md` files and skills under `<directory>/skills` and `<cwd>/.pi/skills` on the local filesystem,
+ * then the plugins' skills (`pluginSkillRoots`, given only where they are files of `files`: the server's own machine).
+ * The first skill of a name wins: the environment's and the project's before a plugin's.
  */
 export async function loadPromptResources(
 	directory: string,
@@ -99,26 +110,30 @@ export async function loadPromptResources(
 	files: PromptFiles = localFiles,
 	skillsRoot = join(directory, "skills"),
 	promptsRoot = join(directory, "prompts"),
+	pluginSkillRoots: readonly string[] = [],
 ): Promise<LoadedPrompt> {
-	const agents: string[] = [];
+	const agents: { text: string; global: boolean }[] = [];
 	const fingerprint: string[] = [];
-	const read = async (path: string, from: PromptFiles) => {
+	const read = async (path: string, from: PromptFiles, isGlobal = false) => {
 		const content = await from.readText(path);
 		fingerprint.push(`${path}\n${content ?? ""}`);
-		if (content !== undefined) agents.push(`## ${path}\n${stripBom(content)}`);
+		if (content !== undefined) agents.push({ text: `## ${path}\n${stripBom(content)}`, global: isGlobal });
 	};
 	const global = join(directory, "AGENTS.md");
-	await read(global, localFiles);
-	// The same path on a remote environment is another file: only a local session skips the global one it read.
+	await read(global, localFiles, true);
+	// On this machine the global file is also a project's when the session works in p2's data directory (or below it,
+	// `<data>/plugins`), maybe by another path (a symbolic link): read once, compared by canonical path. The same path
+	// on a remote environment is another file.
+	const globalFile = files.local ? await canonical(global) : undefined;
 	for (const path of agentsCandidates(files.paths, cwd))
-		if (files !== localFiles || path !== global) await read(path, files);
+		if (globalFile === undefined || (await canonical(path)) !== globalFile) await read(path, files);
 	const skills = new Map<string, Skill>();
-	const paths = [
-		...new Set([
-			...(await skillFiles(files, skillsRoot)),
-			...(await skillFiles(files, files.paths.join(cwd, ".pi", "skills"))),
-		]),
-	];
+	const environmentSkills = await skillFiles(files, skillsRoot);
+	const projectSkills = await skillFiles(files, files.paths.join(cwd, ".pi", "skills"));
+	const pluginSkills = (await Promise.all(pluginSkillRoots.map((root) => skillFiles(files, root)))).flat();
+	// Plugins' skills count as global ones: a locked session gets them only with the global instructions.
+	const globalSkills = new Set([...environmentSkills, ...pluginSkills]);
+	const paths = [...new Set([...environmentSkills, ...projectSkills, ...pluginSkills])];
 	for (const path of paths) {
 		const content = await files.readText(path);
 		if (content === undefined) continue;
@@ -139,7 +154,13 @@ export async function loadPromptResources(
 				? frontmatter.name
 				: files.paths.basename(files.paths.dirname(path));
 		if (!skills.has(name))
-			skills.set(name, { name, description, path, disabled: frontmatter["disable-model-invocation"] === true });
+			skills.set(name, {
+				name,
+				description,
+				path,
+				disabled: frontmatter["disable-model-invocation"] === true,
+				global: globalSkills.has(path),
+			});
 	}
 	// Prompt templates (pi's format): `.md` files directly in the global and the project's prompts directory. An
 	// unreadable or invalid template is skipped (pi warns and goes on); symbolic links are not followed.
@@ -164,31 +185,38 @@ export async function loadPromptResources(
 			}
 		}
 	}
-	const skillEntries = [...skills.values()].map(({ name, description, path }) => ({
-		name,
-		description,
-		path,
-		baseDir: files.paths.dirname(path),
-	}));
-	const visible = [...skills.values()].filter((skill) => !skill.disabled);
-	const prompt =
-		visible.length === 0
-			? ""
-			: [
-					"Use the read tool to load a skill's file when the task matches its description.",
-					"Resolve relative paths against the skill's directory.",
-					"<available_skills>",
-					...visible.map(
-						(skill) =>
-							`<skill><name>${escapeXml(skill.name)}</name><description>${escapeXml(skill.description)}</description><location>${escapeXml(skill.path)}</location></skill>`,
-					),
-					"</available_skills>",
-				].join("\n");
-	return {
-		agents: agents.join("\n\n"),
-		skills: prompt,
-		fingerprint: fingerprint.join("\n\0\n"),
-		skillFiles: skillEntries,
-		templates,
+	const assemble = (all: boolean) => {
+		const kept = [...skills.values()].filter((skill) => all || !skill.global);
+		const visible = kept.filter((skill) => !skill.disabled);
+		return {
+			agents: agents
+				.filter((entry) => all || !entry.global)
+				.map((entry) => entry.text)
+				.join("\n\n"),
+			skills:
+				visible.length === 0
+					? ""
+					: [
+							"Use the read tool to load a skill's file when the task matches its description.",
+							"Resolve relative paths against the skill's directory.",
+							"<available_skills>",
+							...visible.map(
+								(skill) =>
+									`<skill><name>${escapeXml(skill.name)}</name><description>${escapeXml(skill.description)}</description><location>${escapeXml(skill.path)}</location></skill>`,
+							),
+							"</available_skills>",
+						].join("\n"),
+			skillFiles: kept.map(({ name, description, path }) => ({
+				name,
+				description,
+				path,
+				baseDir: files.paths.dirname(path),
+			})),
+			templates: templates.filter((template) => all || template.source !== "global"),
+		};
 	};
+	return { ...assemble(true), fingerprint: fingerprint.join("\n\0\n"), project: assemble(false) };
 }
+
+/** `path` with symbolic links resolved on this machine; itself when it does not exist (nothing to read there). */
+const canonical = (path: string): Promise<string> => realpath(path).catch(() => path);

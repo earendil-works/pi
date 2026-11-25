@@ -49,6 +49,10 @@ describe("worker lifecycle (fake provider)", () => {
 		const statuses = await until(status.statuses, (value) => Boolean(value?.[session.id]?.error));
 		assert.match(statuses?.[session.id]?.error ?? "", /Unknown model/);
 		chat.release();
+		// Retry answers with the outcome: the start fails again, so does the call (with why), even with nobody holding.
+		const control = await holdIn(owner, WorkerControl, { session: session.id }, "owner");
+		await assert.rejects(control.restart(BACKGROUND_CONTEXT), /Unknown model/);
+		control.release();
 	});
 
 	it("records an unrequested exit as a notice and restarts the worker for its holders", async () => {
@@ -104,8 +108,9 @@ describe("worker lifecycle (fake provider)", () => {
 				until(status.statuses, (value) => !value?.[session.id]?.error, 1_500),
 				/timed out/,
 			);
-			// The owner's Retry starts it again, and clears the count.
+			// The owner's Retry starts it again, and clears the count: it answers once the new worker runs.
 			await control.restart(BACKGROUND_CONTEXT);
+			assert.equal(hosts.workers.value[session.id]?.running, true, "running when Retry answered");
 			pid = await running(pid);
 			process.kill(pid, "SIGKILL");
 			await running(pid);

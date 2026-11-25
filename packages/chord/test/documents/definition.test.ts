@@ -1,6 +1,6 @@
 import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
-import { arr, int, obj, str } from "../../src/contracts/index.ts";
+import { arr, hostKind, int, obj, str } from "../../src/contracts/index.ts";
 import { defineState, type StateDefinition } from "../../src/documents/index.ts";
 import { metered } from "../support.ts";
 
@@ -20,6 +20,23 @@ describe("defineState", () => {
 		expectTypeOf(Notes).toEqualTypeOf<StateDefinition<{ list: string[] }, false>>();
 		expectTypeOf(Drafts).toEqualTypeOf<StateDefinition<{ n: number }, true>>();
 		expect([Notes.keyed, Drafts.keyed]).toEqual([false, true]);
+	});
+
+	it("keys by a declared host kind: keyed, with the kind as its host; an undeclared kind is refused", () => {
+		const Session = hostKind("session", { id: str() });
+		const Meta = defineState("meta", {
+			schema: obj({ n: int() }),
+			version: 1,
+			initial: () => ({ n: 0 }),
+			keyed: Session,
+		});
+		expectTypeOf(Meta).toEqualTypeOf<StateDefinition<{ n: number }, typeof Session>>();
+		expect([Meta.keyed, Meta.host]).toEqual([true, Session]);
+		const options = { schema: obj({ n: int() }), version: 1, initial: () => ({ n: 0 }) };
+		expect(defineState("plain", { ...options, keyed: true }).host).toBeUndefined();
+		expect(() => defineState("meta", { ...options, keyed: { kind: "session" } as typeof Session })).toThrow(
+			"session: not a declared host kind",
+		);
 	});
 
 	it('takes a restricted name only: lowercase [a-z0-9@/._~-] (decision "Restricted names")', () => {

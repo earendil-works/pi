@@ -1,6 +1,7 @@
 import type { Held } from "@p2/app/v1";
 import { BACKGROUND_CONTEXT, whenLive } from "@p2/app/v1";
 import {
+	APPLE,
 	browserEnvironment,
 	CloseIcon,
 	HideIcon,
@@ -9,10 +10,14 @@ import {
 	PanelBottomIcon,
 	PanelSideIcon,
 	PlusIcon,
+	type PointerKind,
+	pointerKind,
 	type ReconnectLink,
+	type Route,
 	type SocketEvents,
+	useDragSize,
 } from "@p2/app/v1/web";
-import { type CSSProperties, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Terminals } from "./contract.ts";
 import {
 	BOLD,
@@ -47,6 +52,11 @@ import "./terminal-clipboard.css";
 // terminal's cursor some other way (Enter, arrows, a paste), so the keyboard's idea of the text matches the field. A
 // field kept empty by cancelling every insertion does not: the keyboard deletes and corrects text the field never
 // had, which changes nothing and sends nothing.
+//
+// Touch: a long press on output text is the browser's own (word selection, handles, Copy); a long press on a blank
+// spot puts the textarea under the finger, so the browser offers Paste into it. Example: on "$ ls -la", a long press
+// on "ls" selects "ls"; one right of the prompt's end gets the Paste menu. While output is selected, rows are not
+// redrawn (`#held`): replacing a row's spans would drop the selection the moment the program printed.
 
 /** Where terminals open: a tab of the workspace panel, or a panel below the chat. Kept per browser. */
 export type TerminalPlacement = "side" | "bottom";
@@ -58,6 +68,10 @@ const ACK_BATCH_BYTES = 64 * 1024;
 const ACK_DELAY_MS = 50;
 /** The server pings every 15 s (TERMINAL_PING_MS in service.ts): a socket silent for three of them is replaced. */
 const SILENCE_TIMEOUT_MS = 45_000;
+/** A touch held this long without moving is a long press (before Chrome's own, about 400 to 500 ms). */
+const LONG_PRESS_MS = 350;
+/** Selected output stays drawn as it is for this long after the selection last changed, despite new output. */
+const SELECTION_HOLD_MS = 15_000;
 const PLACEMENT = "p2-terminal-position";
 
 export function terminalPlacement(): TerminalPlacement {
@@ -72,6 +86,30 @@ export function setTerminalPlacement(placement: TerminalPlacement): void {
 	try {
 		localStorage.setItem(PLACEMENT, placement);
 	} catch {}
+}
+
+/** Whether `route` shows its session's terminal: below the chat, or on the workspace's Terminal tab. */
+export const terminalShown = (route: Route): boolean =>
+	route.terminal !== undefined || route.workspace?.tab === "terminal";
+
+/** `route` with its session's terminal shown where the reader last had it, starting one if the session has none. */
+export function withTerminal(route: Route): Route {
+	return terminalPlacement() === "bottom"
+		? { ...route, terminal: "", startTerminal: true }
+		: { ...route, workspace: { tab: "terminal", directory: route.workspace?.directory ?? "", startTerminal: true } };
+}
+
+/**
+ * How to paste without clipboard access: a long press opens the field's Paste menu; the browser's own paste key goes
+ * past the terminal's key encoding (Cmd+V on Apple's, Ctrl+Shift+V elsewhere, as #keyDown leaves them).
+ */
+function pasteHint(kind: PointerKind): string {
+	const key = APPLE ? "⌘V" : "Ctrl+Shift+V";
+	return kind === "touch"
+		? "Long-press the terminal to paste."
+		: kind === "mouse"
+			? `Press ${key} in the terminal to paste.`
+			: `Long-press the terminal or press ${key} to paste.`;
 }
 
 /** Whether the row of extra keys shows. Kept per browser; by default only on touch screens. */
@@ -305,8 +343,13 @@ class TerminalSession {
 	#frame = 0;
 	#connection?: { stop(): void };
 	#stopped = false;
-	/** Open a terminal if the first listing has none (`start`); later reconnects only reattach. */
-	#autoOpen: boolean;
+	/**
+	 * What the next listing does: attach the preferred or newest terminal, opening one if there is none (`start`, the
+	 * first listing only), or open a new one (`openNew` before it). Later reconnects only reattach.
+	 */
+	#onList: "attach" | "start" | "new";
+	/** A listing arrived since the channel opened: a terminal opened now is not replaced by the listing's attach. */
+	#listed = false;
 	#cell = { width: 8, height: 16 };
 	#resize: ResizeObserver;
 	/** The app's light/dark switch, which programs in the terminal hear about through the host. */
@@ -330,13 +373,19 @@ class TerminalSession {
 	};
 	#fling = 0;
 	#longPress?: ReturnType<typeof setTimeout>;
+	/** Rows are not redrawn while output is selected (`#holdForSelection`), until `#holdTimer` or `#release`. */
+	#held = false;
+	#holdTimer?: ReturnType<typeof setTimeout>;
 	/** The next frame redraws every row (after a resize, a snapshot or a theme change). */
 	#full = false;
 	/** The textarea's text the terminal got, with its cursor after it (see the top of this file). */
 	#typed = "";
 	#composing = false;
 	readonly #conversation: () => number;
-	readonly #selectionChange = () => this.#caretMoved();
+	readonly #selectionChange = () => {
+		this.#caretMoved();
+		this.#holdForSelection();
+	};
 
 	constructor(options: {
 		control: Held<typeof Terminals>;
@@ -355,7 +404,7 @@ class TerminalSession {
 		this.#control = options.control;
 		this.#conversation = options.conversation;
 		if (options.terminalId) this.#preferred = options.terminalId;
-		this.#autoOpen = options.start;
+		this.#onList = options.start ? "start" : "attach";
 		this.#screen = options.screen;
 		this.#input = options.input;
 		this.#onState = options.onState;
@@ -402,9 +451,11 @@ class TerminalSession {
 			this.#pressed = undefined;
 			this.#touch = undefined;
 		});
-		// The right button goes to programs that track the mouse.
+		// The right button goes to programs that track the mouse. A long press (pointerType "touch") is never a right
+		// button: cancelling it would take the selection's Copy or the field's Paste menu away.
 		screen.addEventListener("contextmenu", (event) => {
 			if (
+				event.pointerType !== "touch" &&
 				!input.hasAttribute("data-native-menu") &&
 				window.getSelection()?.isCollapsed !== false &&
 				this.#vt?.mouseTracking() &&
@@ -412,6 +463,7 @@ class TerminalSession {
 			)
 				event.preventDefault();
 		});
+		screen.addEventListener("copy", (event) => this.#copy(event));
 	}
 
 	restartHost(): void {
@@ -430,6 +482,7 @@ class TerminalSession {
 		this.#stopped = true;
 		this.#connection?.stop();
 		clearTimeout(this.#longPress);
+		clearTimeout(this.#holdTimer);
 		clearTimeout(this.#ackTimer);
 		cancelAnimationFrame(this.#pumpFrame);
 		cancelAnimationFrame(this.#frame);
@@ -439,6 +492,12 @@ class TerminalSession {
 		this.#themeObserver.disconnect();
 		this.#vt?.free();
 		this.#vt = undefined;
+	}
+
+	/** Opens a new terminal now, or once the channel listed the terminals (before that, the listing would replace it). */
+	openNew(): void {
+		if (this.#listed && this.#socket?.readyState === WebSocket.OPEN) this.open();
+		else this.#onList = "new";
 	}
 
 	open(): void {
@@ -468,6 +527,7 @@ class TerminalSession {
 
 	/** Keys from the on-screen key row. */
 	key(input: KeyInput): void {
+		this.#release();
 		const bytes = this.#vt?.encodeKey(input);
 		if (bytes) this.#send(bytes);
 		this.#clearInput();
@@ -475,6 +535,7 @@ class TerminalSession {
 
 	/** Text from the key row. */
 	text(text: string): void {
+		this.#release();
 		this.#send(this.#encodeText(text).bytes);
 		this.#clearInput();
 	}
@@ -487,6 +548,7 @@ class TerminalSession {
 	}
 
 	paste(text: string): void {
+		this.#release();
 		const bytes = this.#vt?.encodePaste(text);
 		if (bytes) this.#send(bytes);
 		this.#clearInput();
@@ -543,6 +605,77 @@ class TerminalSession {
 		const arrow = this.#vt?.encodeKey({ code: "ArrowLeft", key: "ArrowLeft" });
 		if (arrow) this.#send(concat(new Array<Uint8Array>(left).fill(arrow)));
 		this.#clearInput();
+	}
+
+	/** The document's selection, when it is a range of the output rows. */
+	#outputSelection(): Range | undefined {
+		const selection = window.getSelection();
+		if (!selection || selection.isCollapsed || selection.rangeCount === 0) return undefined;
+		const range = selection.getRangeAt(0);
+		return range.intersectsNode(this.#rows) ? range : undefined;
+	}
+
+	/**
+	 * Selected output keeps its rows: a redraw replaces a changed row's spans, and a selection in them is gone (Chrome
+	 * then also drops its handles and Copy menu). Each change of the selection holds the rows for SELECTION_HOLD_MS more;
+	 * a selection that ends (Copy, a tap elsewhere) draws what arrived meanwhile at once.
+	 */
+	#holdForSelection(): void {
+		clearTimeout(this.#holdTimer);
+		if (this.#outputSelection()) {
+			this.#held = true;
+			this.#holdTimer = setTimeout(() => this.#release(), SELECTION_HOLD_MS);
+		} else this.#release();
+	}
+
+	/** Draw again: the selection ended or expired, or the user typed, pasted or scrolled. */
+	#release(): void {
+		clearTimeout(this.#holdTimer);
+		if (!this.#held) return;
+		this.#held = false;
+		this.#schedule();
+	}
+
+	/**
+	 * Copy selected output as a terminal does: a soft-wrapped line (a long command) as one line, without the blanks
+	 * that fill each row to the terminal's width.
+	 */
+	#copy(event: ClipboardEvent): void {
+		const range = this.#outputSelection();
+		if (!range || !event.clipboardData || !this.#rows.contains(range.commonAncestorContainer)) return;
+		const rows = [...this.#rows.children].filter((row) => range.intersectsNode(row));
+		let text = "";
+		for (const [index, row] of rows.entries()) {
+			const part = document.createRange();
+			part.selectNodeContents(row);
+			if (row.contains(range.startContainer)) part.setStart(range.startContainer, range.startOffset);
+			if (row.contains(range.endContainer)) part.setEnd(range.endContainer, range.endOffset);
+			const last = index === rows.length - 1;
+			if (row.hasAttribute("data-wrapped") && !last) text += part.toString();
+			else text += part.toString().trimEnd() + (last ? "" : "\n");
+		}
+		event.preventDefault();
+		event.clipboardData.setData("text/plain", text);
+	}
+
+	/**
+	 * Whether a character of the output is under a point: a long press there selects it natively; on a blank cell (the
+	 * cursor's, the rest of a line) the textarea goes under the finger for Paste. Columns come from the row's spans:
+	 * ASCII runs have a character per column, other characters are `.cell` boxes of their width (drawRow).
+	 */
+	#textAt(x: number, y: number): boolean {
+		const box = this.#rows.getBoundingClientRect();
+		const row = this.#rows.children[Math.floor((y - box.top) / this.#cell.height)];
+		const column = Math.floor((x - box.left) / this.#cell.width);
+		let start = 0;
+		for (const span of row?.children ?? []) {
+			const text = span.textContent ?? "";
+			const cell = span instanceof HTMLElement && span.classList.contains("cell");
+			const width = cell ? Math.round(Number.parseFloat(span.style.width) / this.#cell.width) : text.length;
+			if (column < start + width) return /\S/.test(cell ? text : (text[column - start] ?? ""));
+			start += width;
+		}
+		return false;
 	}
 
 	#keydown(event: KeyboardEvent): void {
@@ -613,7 +746,8 @@ class TerminalSession {
 
 	// Mouse buttons go to programs that track the mouse, as in a terminal; Shift keeps the browser's text selection.
 	// A finger taps, long-presses for the native menu, or scrolls (`scroll`). Capture only once it moves: rows can be
-	// replaced while scrolling, but capture during a stationary long press interferes with Chrome's text menu.
+	// replaced while scrolling, but capture during a stationary long press interferes with Chrome's text menu. Never
+	// cancel a touch's pointerdown, touchstart or contextmenu: that takes away the long press's selection and menus.
 	#pointerDown(event: PointerEvent): void {
 		if (event.pointerType === "touch") {
 			cancelAnimationFrame(this.#fling);
@@ -627,7 +761,7 @@ class TerminalSession {
 			clearTimeout(this.#longPress);
 			delete this.#input.dataset.nativeMenu;
 			// Leave an existing output selection alone: Chrome owns its Copy menu and handles.
-			if (window.getSelection()?.isCollapsed === false) return;
+			if (this.#outputSelection()) return;
 			this.#scrolled = 0;
 			const { clientX: x, clientY: y } = event;
 			const touch = {
@@ -641,16 +775,21 @@ class TerminalSession {
 				velocity: 0,
 			};
 			this.#touch = touch;
-			// Put a real, transparent editing target under the finger BEFORE Chrome's long-press deadline.
-			// Do not capture the pointer or cancel touch/contextmenu: those suppress the native text menu.
-			const box = (this.#input.parentElement ?? this.#screen).getBoundingClientRect();
-			this.#input.dataset.nativeMenu = "";
-			this.#input.style.transform = `translate(${x - box.left - this.#input.offsetLeft - 22}px, ${y - box.top - this.#input.offsetTop - 22}px)`;
+			// On output text the long press is Chrome's: it selects the word under the finger. The textarea must not be
+			// there, or Chrome selects in the (empty) field and offers only Paste.
+			const text = this.#textAt(x, y);
+			if (!text) {
+				// A blank spot: put a real, transparent editing target under the finger BEFORE Chrome's long-press deadline.
+				const box = (this.#input.parentElement ?? this.#screen).getBoundingClientRect();
+				this.#input.dataset.nativeMenu = "";
+				this.#input.style.transform = `translate(${x - box.left - this.#input.offsetLeft - 22}px, ${y - box.top - this.#input.offsetTop - 22}px)`;
+			}
+			// A long press neither scrolls when the finger then moves (it extends Chrome's selection) nor taps on lifting.
 			this.#longPress = setTimeout(() => {
-				if (this.#touch !== touch || touch.moved || window.getSelection()?.isCollapsed === false) return;
+				if (this.#touch !== touch || touch.moved || this.#outputSelection()) return;
 				touch.longPressed = true;
-				this.#input.focus({ preventScroll: true });
-			}, 350);
+				if (!text) this.#input.focus({ preventScroll: true });
+			}, LONG_PRESS_MS);
 			return;
 		}
 		if (event.shiftKey || !this.#vt?.mouseTracking()) return;
@@ -734,6 +873,7 @@ class TerminalSession {
 	): void {
 		const vt = this.#vt;
 		if (!vt) return;
+		this.#release();
 		this.#scrolled += pixels;
 		const rows = Math.trunc(this.#scrolled / this.#cell.height);
 		if (!rows) return;
@@ -849,6 +989,7 @@ class TerminalSession {
 			channel.onopen = () => {
 				if (ended) return;
 				events.opened();
+				this.#listed = false;
 				this.#emit({ connected: true, error: undefined, outdated: undefined });
 				// First: terminals opened or attached afterwards answer color queries in these colors.
 				this.#request((control) => control.theme(this.#theme(), BACKGROUND_CONTEXT));
@@ -898,13 +1039,26 @@ class TerminalSession {
 					event.terminals.find((terminal) => terminal.id === wanted) ??
 					running.toSorted((a, b) => b.createdAt - a.createdAt)[0];
 				this.#preferred = undefined;
-				if (target) {
+				if (this.#onList === "new") this.open();
+				else if (target) {
 					this.#emit({ current: undefined });
 					this.#request((control) => control.attach({ terminalId: target.id }, BACKGROUND_CONTEXT), true);
-				} else if (this.#autoOpen) this.open();
-				this.#autoOpen = false;
+				} else if (this.#onList === "start") this.open();
+				this.#onList = "attach";
+				this.#listed = true;
 				return;
 			}
+			case "terminals": {
+				// Another viewer or the agent opened, closed or renamed one. The shown terminal stays; only a panel showing
+				// none attaches the newest that runs (the agent just opened it).
+				const known = new Set(this.#state.terminals.map((terminal) => terminal.id));
+				this.#emit({ terminals: event.terminals });
+				const added = event.terminals.filter((terminal) => !known.has(terminal.id) && !terminal.exited);
+				if (!this.#state.current && added.length > 0) this.attach((added.at(-1) as TerminalInfo).id);
+				return;
+			}
+			case "reply":
+				return;
 			case "attached": {
 				const terminal = event.terminal;
 				const loaded = await loadGhostty();
@@ -912,6 +1066,8 @@ class TerminalSession {
 				this.#vt = loaded.terminal({ cols: terminal.cols, rows: terminal.rows, scrollback: 10_000 });
 				this.#snapshot = true;
 				this.#ready = true;
+				// A selection in the previous terminal's rows must not keep this one from being drawn.
+				this.#release();
 				this.#pump();
 				this.#emit({
 					current: terminal,
@@ -1066,7 +1222,8 @@ class TerminalSession {
 
 	#draw(): void {
 		const vt = this.#vt;
-		if (!vt) return;
+		// Libghostty keeps the changes until the next frame, so the release draws everything that arrived meanwhile.
+		if (!vt || (this.#held && this.#outputSelection())) return;
 		const all = this.#full;
 		this.#full = false;
 		const frame = vt.frame(all);
@@ -1076,9 +1233,12 @@ class TerminalSession {
 			this.#rows.append(row);
 		}
 		while (this.#rows.children.length > frame.rows) this.#rows.lastElementChild?.remove();
-		for (const { y, cells } of frame.changed) {
+		for (const { y, cells, wrapped } of frame.changed) {
 			const row = this.#rows.children[y];
-			if (row instanceof HTMLElement) drawRow(row, cells, this.#cell.width);
+			if (!(row instanceof HTMLElement)) continue;
+			drawRow(row, cells, this.#cell.width);
+			// Copying joins it with the next row (`#copy`).
+			row.toggleAttribute("data-wrapped", wrapped);
 		}
 		const cursor = frame.cursor;
 		this.#cursor.hidden = !cursor;
@@ -1115,8 +1275,10 @@ const KEYS: { label: string; input?: KeyInput; text?: string }[] = [
 	{ label: "-", text: "-" },
 ];
 
-function label(terminal: TerminalInfo, index: number): string {
-	const name = terminal.title || `Terminal ${index + 1}`;
+/** A tab's text: the name it was opened with, else its program's title, else its number (the agent's `-t`). */
+function label(terminal: TerminalInfo): string {
+	// A host running older code numbers none.
+	const name = terminal.name || terminal.title || (terminal.index ? `Terminal ${terminal.index}` : "Terminal");
 	return terminal.exited ? `${name} (exited)` : name;
 }
 
@@ -1125,6 +1287,7 @@ export function TerminalView({
 	conversation = 1,
 	terminalId,
 	start = false,
+	newTerminal,
 	onTerminal,
 	placement,
 	onMove,
@@ -1137,6 +1300,8 @@ export function TerminalView({
 	terminalId?: string;
 	/** Start a terminal if the session has none: the user just opened this view. */
 	start?: boolean;
+	/** A new terminal asked for from outside the view (the command menu): the view opens one, then calls `taken`. */
+	newTerminal?: { readonly taken: () => void };
 	/** The shown terminal, for the route. */
 	onTerminal: (terminalId: string) => void;
 	placement: TerminalPlacement;
@@ -1194,6 +1359,14 @@ export function TerminalView({
 		};
 	}, [control]);
 
+	// After the session above: a view opening with the request opens the new terminal instead of attaching one.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: control makes the session above; a request waits for it.
+	useEffect(() => {
+		if (!newTerminal || !session.current) return;
+		session.current.openNew();
+		newTerminal.taken();
+	}, [newTerminal, control]);
+
 	// Back or Forward to another terminal of this session.
 	useEffect(() => {
 		if (terminalId) session.current?.attach(terminalId);
@@ -1222,7 +1395,7 @@ export function TerminalView({
 	const pasteClipboard = () => {
 		void session.current?.pasteClipboard().then(
 			() => setPasteNotice(""),
-			() => setPasteNotice("Clipboard unavailable. Long-press the terminal to paste."),
+			() => setPasteNotice(`Clipboard unavailable. ${pasteHint(pointerKind())}`),
 		);
 	};
 	const toggleKeys = () => {
@@ -1237,17 +1410,18 @@ export function TerminalView({
 	return (
 		<div className="terminal">
 			<div className="terminal-tabs">
-				{state.terminals.map((terminal, index) => (
+				{state.terminals.map((terminal) => (
 					<button
 						type="button"
 						key={terminal.id}
 						aria-pressed={terminal.id === current?.id}
 						className={terminal.exited ? "exited" : ""}
-						title={terminal.env ? `${terminal.env}:${terminal.cwd}` : terminal.cwd}
+						title={`${terminal.index}: ${terminal.env ? `${terminal.env}:${terminal.cwd}` : terminal.cwd}${terminal.agent ? " (opened by the agent)" : ""}`}
 						onPointerDown={keepFocus}
 						onClick={() => session.current?.attach(terminal.id)}
 					>
-						{label(terminal, index)}
+						{terminal.agent && <span className="terminal-agent">Pi</span>}
+						{label(terminal)}
 					</button>
 				))}
 				<button
@@ -1410,44 +1584,17 @@ export function TerminalView({
 /** The terminal below the chat; its top edge drags to resize it. */
 export function TerminalPanel(props: Omit<Parameters<typeof TerminalView>[0], "placement">) {
 	const panel = useRef<HTMLElement>(null);
-	const [height, setHeight] = useState(() => Number(localStorage.getItem("p2-terminal-height")) || undefined);
-	// Like the workspace's width: the handle captures the pointer, and only the CSS variable changes while dragging.
+	const height = useDragSize("p2-terminal-height", "--terminal-height");
 	const startResize = (event: React.PointerEvent<HTMLButtonElement>) => {
 		const element = panel.current;
 		const parent = element?.parentElement;
-		if (!element || !parent || (event.pointerType === "mouse" && event.button !== 0)) return;
-		event.preventDefault();
-		const handle = event.currentTarget;
-		const pointer = event.pointerId;
-		handle.setPointerCapture(pointer);
+		if (!element || !parent) return;
 		const bottom = element.getBoundingClientRect().bottom;
 		const limit = parent.getBoundingClientRect().height * 0.85;
-		let last = height;
-		const move = (moved: PointerEvent) => {
-			if (moved.pointerId !== pointer) return;
-			last = Math.round(Math.min(Math.max(bottom - moved.clientY, 120), limit));
-			element.style.setProperty("--terminal-height", `${last}px`);
-		};
-		const end = (ended: PointerEvent) => {
-			if (ended.pointerId !== pointer) return;
-			handle.removeEventListener("pointermove", move);
-			handle.removeEventListener("pointerup", end);
-			handle.removeEventListener("pointercancel", end);
-			if (!last) return;
-			setHeight(last);
-			localStorage.setItem("p2-terminal-height", String(last));
-		};
-		handle.addEventListener("pointermove", move);
-		handle.addEventListener("pointerup", end);
-		handle.addEventListener("pointercancel", end);
+		height.drag(event, element, (moved) => Math.min(Math.max(bottom - moved.clientY, 120), limit));
 	};
 	return (
-		<section
-			className="terminal-panel"
-			aria-label="Terminal"
-			ref={panel}
-			style={height ? ({ "--terminal-height": `${height}px` } as CSSProperties) : undefined}
-		>
+		<section className="terminal-panel" aria-label="Terminal" ref={panel} style={height.style}>
 			<button
 				type="button"
 				className="terminal-resize"

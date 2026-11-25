@@ -1,0 +1,1024 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pi Roam: what the base must enable</title>
+<style>
+
+:root{--paper:#fbf8f2;--ink:#2a2723;--muted:#7b7468;--rule:#e3dbcc;--accent:#b4472f;--blue:#2e6a8a;--sand:#c2b18c;--soft:#f4eee2}
+*{box-sizing:border-box}
+html{background:#efe9dd}
+body{margin:0;color:var(--ink);font:19px/1.68 'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,serif;
+ -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+.book{max-width:860px;margin:0 auto;background:var(--paper);box-shadow:0 0 0 1px #e1d9c8,0 30px 80px -40px rgba(60,40,10,.35);padding:0 0 4rem}
+.inner{padding:0 90px}
+h1,h2,h3{font-weight:400;line-height:1.15}
+h2{font-size:2.1rem;margin:.2em 0 .3em;letter-spacing:-.01em}
+h3{font-size:1.05rem;text-transform:uppercase;letter-spacing:.14em;margin:2.4em 0 .6em;color:var(--ink);font-weight:600;
+ font-family:'Avenir Next','Helvetica Neue',sans-serif}
+p{margin:0 0 1.05em;hyphens:auto;text-align:left}
+code{font:.8em/1 'SF Mono',Menlo,Consolas,monospace;background:#f1ebde;padding:.1em .35em;border-radius:3px}
+pre{font:.74rem/1.55 'SF Mono',Menlo,Consolas,monospace;background:#f4eee2;border-left:3px solid var(--sand);padding:1rem 1.2rem;margin:1.4rem 0 1.8rem;
+ overflow-x:auto;border-radius:0 4px 4px 0;white-space:pre;tab-size:2}
+pre code{background:none;padding:0;font-size:1em}
+em{font-style:italic}
+a{color:var(--blue)}
+.cover{min-height:92vh;display:flex;flex-direction:column;justify-content:center;padding:90px;background:
+ radial-gradient(circle at 85% 15%,rgba(180,71,47,.13),transparent 40%),radial-gradient(circle at 10% 90%,rgba(46,106,138,.12),transparent 45%),var(--paper);
+ border-bottom:1px solid var(--rule)}
+.kicker{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.22em;text-transform:uppercase;color:var(--accent)}
+.cover h1{font-size:5.2rem;line-height:.98;margin:.35em 0 .25em;letter-spacing:-.025em}
+.subtitle{font-size:1.45rem;font-style:italic;color:#4a453e;max-width:30em;text-align:left}
+.cover-stats,.stats{display:flex;flex-wrap:wrap;gap:1.2rem 2.4rem;margin:2.2rem 0}
+.stats{margin:1.6rem 0 1.8rem;padding:1.1rem 0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.stat b{display:block;font-size:2.1rem;font-weight:400;line-height:1.1;font-variant-numeric:lining-nums}
+.stat span{font:.78rem/1.3 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);letter-spacing:.03em;display:block;max-width:14em}
+.cover-note{font-size:.9rem;color:var(--muted);max-width:34em;text-align:left;margin-top:2rem}
+.toc{padding:4rem 0 2rem}
+.toc ol{list-style:none;padding:0;margin:1rem 0;columns:2;column-gap:3rem}
+.toc li{padding:.3rem 0;border-bottom:1px dotted var(--rule);break-inside:avoid}
+.toc a{color:var(--ink);text-decoration:none}
+.toc a:hover{color:var(--accent)}
+.preface{padding-top:2rem}
+.findings{padding-left:1.4em}
+.findings li{margin:.55em 0;padding-left:.3em}
+.findings li::marker{color:var(--accent);font-weight:600}
+.chapter{padding-top:4.5rem;margin-top:3rem;border-top:1px solid var(--rule)}
+.opener{text-align:center;margin-bottom:2.6rem}
+.numeral{font-size:4.2rem;color:var(--accent);line-height:1;font-variant:small-caps;letter-spacing:.05em}
+.opener h2{font-size:2.5rem;margin:.25em 0}
+.lede{font-style:italic;color:#5a544a;font-size:1.12rem;max-width:30em;margin:0 auto;text-align:center}
+.dropcap::first-letter{float:left;font-size:4.1em;line-height:.82;padding:.06em .09em 0 0;color:var(--accent)}
+.fig{margin:2rem 0 2.2rem}
+.fig.wide{margin-left:-50px;margin-right:-50px}
+.fig svg{display:block;margin:0 auto}
+figcaption{font:.8rem/1.45 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:.7rem;padding-left:.8rem;border-left:2px solid var(--rule)}
+.fignum{color:var(--ink);font-weight:600}
+.note{font:.86rem/1.55 'Avenir Next','Helvetica Neue',sans-serif;color:#5b5549;background:#f4eee2;border-left:3px solid var(--sand);
+ padding:.9rem 1.1rem;margin:1.8rem 0;border-radius:0 4px 4px 0}
+.note.review{border-left-color:var(--accent)}
+.note b.tag{font-weight:600;letter-spacing:.12em;text-transform:uppercase;font-size:.72rem;color:var(--accent);display:block;margin-bottom:.3rem}
+.note code{font-size:.85em}
+table{width:100%;border-collapse:collapse;margin:1.4rem 0 1.8rem;font:.8rem/1.4 'Avenir Next','Helvetica Neue',sans-serif}
+th{text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:.68rem;border-bottom:1.5px solid var(--ink);padding:.45rem .5rem}
+td{padding:.42rem .5rem;border-bottom:1px solid var(--rule);vertical-align:top}
+td code{font-size:.92em}
+table.num td:not(:first-child),table.num th:not(:first-child){text-align:right}
+.epilogue p{font-size:1.04em}
+.appendix{font-size:.92em}
+.appendix ul,.chapter ul{padding-left:1.2em}
+.appendix li,.chapter li{margin:.4em 0}
+.colophon{text-align:center;font:.78rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:4rem;letter-spacing:.05em}
+@media (max-width:760px){.inner{padding:0 22px}.cover{padding:40px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}
+ .toc ol{columns:1}p{text-align:left}body{font-size:17px}}
+@media print{html{background:#fff}.book{box-shadow:none}.chapter{break-before:page}.fig{break-inside:avoid}}
+.transcript p b{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-right:.3em}
+pre .tk-c{color:#8d8576;font-style:italic}pre .tk-s{color:#5f7a3d}pre .tk-n{color:#a0662a}pre .tk-k{color:#b4472f}pre .tk-t{color:#2e6a8a}pre .tk-f{color:#7a3f6a}
+h4{font:600 .82rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.06em;margin:1.8em 0 .5em;color:var(--muted)}
+.inner ul,.inner ol:not(.findings){padding-left:1.2em}
+.inner li{margin:.35em 0}
+blockquote{margin:1.4rem 0;padding:.2rem 0 .2rem 1.2rem;border-left:3px solid var(--rule);color:#5a544a;font-style:italic}
+.fig svg text{dominant-baseline:auto}
+.fig .replay{font:600 .7rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);
+ background:none;border:1px solid var(--rule);border-radius:3px;padding:.2rem .55rem;margin:0 0 0 1rem;cursor:pointer;float:right}
+.fig .replay:hover{border-color:var(--accent)}
+.anim.armed .step{opacity:0}
+.anim.armed.play .step{animation:stepIn .45s ease-out both;animation-delay:calc(var(--i) * var(--pace, .45s))}
+.anim.armed.play .step.edge{animation-name:edgeIn}
+@keyframes stepIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes edgeIn{from{opacity:0}to{opacity:1}}
+.steps{margin:2rem 0 2.2rem;border:1px solid var(--rule);border-radius:6px;background:#fffdf8}
+.steps-head{display:flex;align-items:center;gap:.8rem;padding:.6rem 1rem;border-bottom:1px solid var(--rule);
+ font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.steps-head .title{flex:1}
+.steps-head .count{color:var(--muted);letter-spacing:.06em}
+.steps-head button{font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--ink);background:var(--soft);border:1px solid var(--rule);
+ border-radius:3px;padding:.25rem .65rem;cursor:pointer}
+.steps-head button:disabled{opacity:.35;cursor:default}
+.step-panel{padding:1rem 1.2rem .4rem}
+.step-panel>h4:first-child{margin-top:.2rem;color:var(--ink)}
+.steps.js .step-panel{display:none}
+.steps.js .step-panel.on{display:block}
+.steps:not(.js) .steps-head button,.steps:not(.js) .steps-head .count{display:none}
+.steps:not(.js) .step-panel+.step-panel{border-top:1px dashed var(--rule)}
+.fig figcaption{display:flow-root}
+.fig svg{max-width:100%;height:auto}
+table{max-width:100%}
+@media (max-width:760px){.inner{padding:0 20px}.cover{padding:48px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}table{display:block;overflow-x:auto}.toc ol{columns:1}}
+</style>
+
+
+</head>
+<body><div class="book">
+<section class="cover">
+  <div class="kicker">An explainer · Pi Roam base inventory · second edition · 2026-11-09</div>
+  <h1>Everything<br>As a Plugin</h1>
+  <p class="subtitle">The smallest set of base pieces with which chat assistants, orchestrators, triage apps, automations, stats, Discord and backups are all plugins</p>
+  <div class="cover-stats"><div class="stat"><b>200+</b><span>use cases from three independent inventories</span></div><div class="stat"><b>17</b><span>base pieces after merging</span></div><div class="stat"><b>3</b><span>tiers: base code, core plugins, ordinary plugins</span></div><div class="stat"><b>0</b><span>permission engines in the base</span></div></div>
+  <div class="cover-note"><p>For the owner. The merged result of three inventories (Astra: products and UX; Sol: parity with all 39 p2 plugins
+and the old coding agent&#39;s extension API; Opus: what nobody listed yet), read against the decisions of the voice
+discussion on 2026-11-09. Sources: <code>apps/p3/docs/base-inventory/</code> (the three reports and <code>merged.md</code>),
+<code>apps/p3/docs/status-2026-11-09.md</code>, <code>apps/p3/docs/decisions.md</code>. Code is illustrative: names and shapes are
+proposals, Durable and Chord APIs are real. Nothing is built.</p>
+</div>
+</section><div class="inner">
+<nav class="toc"><h2>Contents</h2><ol>
+<li><a href="#before-we-begin">Before we begin</a></li>
+<li><a href="#products">I. What People Want to Build</a></li>
+<li><a href="#sessions">II. Sessions and Their Data</a></li>
+<li><a href="#harness">III. The Harness</a></li>
+<li><a href="#offered">IV. What Is Offered</a></li>
+<li><a href="#waiting">V. Waiting Costs Nothing</a></li>
+<li><a href="#page">VI. The Page</a></li>
+<li><a href="#rest">VII. The Rest of the Base</a></li>
+<li><a href="#features">VIII. Building Features</a></li>
+<li><a href="#tiers">IX. Three Tiers</a></li>
+<li><a href="#open-questions">Open Questions</a></li>
+<li><a href="#the-seventeen-pieces">Appendix A: The Seventeen Pieces</a></li>
+<li><a href="#acceptance-tests">Appendix B: Acceptance Tests</a></li>
+</ol></nav>
+
+<section class="preface" id="before-we-begin">
+<h2>Before we begin</h2>
+<p class="dropcap">Mario wants a personal assistant he talks to through iMessage, with almost no screen. Armin wants a Home conversation
+that sends work off to sessions in the background and shows an inbox of what needs him. The team wants the triage
+agent&#39;s issue analysis inside Pi, one tap from &quot;continue in a session&quot;. Someone wants cost statistics across every
+session, someone else a Discord channel that gets its own locked-down session on its first message. And everyone wants
+backups, so a dead laptop costs nothing.</p>
+<p>None of these should be built into Pi. The question the owner set as the guiding light is the opposite one: <strong>does the
+base offer everything needed to build each of them as a plugin?</strong> Three subagents went broad, from different angles,
+and listed more than two hundred use cases with the base pieces each needs. This book is the merge: seventeen pieces,
+sorted into what must be base code, what can be a reloadable core plugin, and what is an ordinary plugin.</p>
+<h3 id="eight-things-to-know">Eight things to know</h3>
+<ol class="findings">
+<li><strong>The guiding light is &quot;can it be a plugin?&quot;</strong> Every piece below exists because at least one product cannot be
+built without it, and most because dozens cannot.</li>
+<li><strong>The instance is the trust boundary.</strong> Permissions, ACLs and lock-downs are plugins built from hooks the base
+offers. There is no policy engine in the base.</li>
+<li><strong>The harness is one object with two registries:</strong> extensions (tools, prompt sections, hooks, wraps, tasks) and
+filters (what is offered). Hooks and wraps always apply; order comes from phases.</li>
+<li><strong>Sessions are a service plugins call:</strong> create, configure, archive, copy, delete, query, each with typed checks a
+plugin can hook before it runs.</li>
+<li><strong>Session data lives in two places:</strong> the session metadata store on the server (anything needed without the worker)
+and the session&#39;s own store. Backups and exports use one format.</li>
+<li><strong>Waiting costs nothing.</strong> A session waiting for a person, a webhook or a time holds no process: Durable suspends
+the work, the server remembers when to wake it.</li>
+<li><strong>Questions are a base mechanism, the inbox is a plugin.</strong> Ask, wait, answer from anywhere; renderers per form;
+late joiners see them because they are state.</li>
+<li><strong>Some things can never be plugins:</strong> principal kinds, tunnel ingress, restore, the plugin loader, real isolation.
+Everything else is, and most &quot;base services&quot; are reloadable core plugins, not frozen code.</li>
+</ol>
+<h3 id="words-used-throughout">Words used throughout</h3>
+<p>The <strong>base</strong> is what a plugin cannot replace: kit and base code that changes only with a restart. A <strong>core plugin</strong> is
+a reloadable plugin every instance runs because other plugins depend on its contract (sessions, the harness). An
+<strong>ordinary plugin</strong> is everything else. The <strong>harness</strong> is the session worker&#39;s object that builds what the agent gets.
+A <strong>filter</strong> cuts what is offered; a <strong>chain</strong> (hook) sees each call or result and may change or block it; a <strong>wrap</strong>
+goes around the whole thing. A <strong>phase</strong> orders them. <strong>Suspended</strong> work waits for an outside value without holding a
+process. A <strong>question</strong> is a typed ask a person answers. The <strong>metadata store</strong> keeps what is known about a session
+while its worker is off.</p>
+</section>
+
+<section class="chapter" id="products"><header class="opener"><div class="numeral">I</div><h2>What People Want to Build</h2><p class="lede">Fourteen themes from three inventories, and why each one is a plugin.</p></header>
+<p class="dropcap">The three inventories overlapped heavily once deduplicated. The themes, each a family of plugins:</p>
+<table>
+<thead>
+<tr>
+<th>Theme</th>
+<th>Examples</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Assistants over chat apps</td>
+<td>iMessage, WhatsApp, Slack, Discord, email; almost no UI</td>
+</tr>
+<tr>
+<td>Orchestrator, Home, inbox</td>
+<td>one conversation spawning background sessions; cards; &quot;needs you&quot;</td>
+</tr>
+<tr>
+<td>Questions and approvals</td>
+<td>typed asks, approvals around tools, review loops, sign-in codes, camera or file requests</td>
+</tr>
+<tr>
+<td>Bespoke apps</td>
+<td>the triage agent inside Pi, dashboards, boards, projects that become their own screens, agent-built views</td>
+</tr>
+<tr>
+<td>Coding workflows</td>
+<td>per-checkout sessions, diffs, worktrees, parallel helpers, PRs and CI cards, browsers</td>
+</tr>
+<tr>
+<td>Automations</td>
+<td>timers, cron reports, webhooks, watchers, scheduled sessions, hour-long jobs</td>
+</tr>
+<tr>
+<td>Stats, analysis, search, memory</td>
+<td>usage and cost, reading session content, search, knowledge across sessions, replay</td>
+</tr>
+<tr>
+<td>Sharing and teams</td>
+<td>a shared session, Radius guests, the team instance on a cloud machine</td>
+</tr>
+<tr>
+<td>Discord and other ingress</td>
+<td>a session per channel from a template, closed until opened, its own policy</td>
+</tr>
+<tr>
+<td>Machines and tools</td>
+<td>local, SSH, sandboxes, VMs, MCP, terminals, ports, computer use</td>
+</tr>
+<tr>
+<td>Surfaces</td>
+<td>voice, mobile, notifications, several devices, the terminal client</td>
+</tr>
+<tr>
+<td>Data</td>
+<td>whole-instance backups and restore, one-session export and import</td>
+</tr>
+<tr>
+<td>Plugins</td>
+<td>catalog, install, update, rollback, settings</td>
+</tr>
+<tr>
+<td>The agent operating the instance</td>
+<td>changing settings through typed contracts instead of files</td>
+</tr>
+</tbody></table>
+<p>The rest of this book is the pieces they need, grouped by where they live.</p>
+</section>
+
+<section class="chapter" id="sessions"><header class="opener"><div class="numeral">II</div><h2>Sessions and Their Data</h2><p class="lede">Where everything about a session lives, and the service plugins call to create and change sessions.</p></header>
+<p class="dropcap">Discord, automations, the orchestrator and triage all create sessions, and many plugins keep facts about a session
+that must be readable while its worker is off (a Discord channel binding, a title, an archive flag). This chapter
+defines both: the session metadata store, then the session service.</p>
+<p>Names are proposals; Chord (<code>local</code>, <code>remote</code>, <code>keyed</code>, <code>defineRegistry</code>, <code>defineState</code>, <code>self.writable</code>), Durable
+(<code>Extension</code>, <code>ToolRegistration</code>, <code>PromptSection</code>, <code>ExecutionEnv</code>, <code>defineExtension</code>, <code>hook</code>, <code>ToolTask</code>,
+<code>GenerationTask</code>) and pi-ai (<code>Model</code>, <code>Models</code>) are real. Every block names its file, so it is clear which facets can
+import it: a plugin&#39;s <code>contract.ts</code> is bundled into all its facets, <code>contract.server.ts</code> only into server facets,
+<code>contract.worker.ts</code> only into worker facets, <code>contract.web.ts</code> only into page facets.</p>
+<h3 id="session-metadata">Session metadata</h3>
+<p>The rule (decided): anything about a session needed while its worker is off goes in the <strong>session metadata store</strong> on
+the server; anything only used while the worker runs (the transcript, Durable&#39;s state) goes in the session&#39;s own
+store; never both. A rename is one server write.</p>
+<p>A plugin&#39;s metadata is a typed <strong>key</strong> it defines once, like <code>defineState</code>. The server stores one JSON value per key and
+session, and checks the key&#39;s schema on every write (the trust boundary), so reads are typed without a second check.</p>
+<p>A metadata key is a token a plugin defines once, like <code>defineState</code>. The server stores one JSON value per key and
+session; the schema is checked on every write (the trust boundary), so reads are typed without a second check.</p>
+<pre><code><span class="tk-c">// plugins/sessions/contract.ts: shared by every facet</span>
+<span class="tk-c">/** A typed key of the session metadata store, owned by the plugin that defines it. */</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">SessionMetadataKey</span>&lt;T <span class="tk-k">extends</span> <span class="tk-t">JsonValue</span>&gt; = {
+	<span class="tk-k">readonly</span> name: string;                 <span class="tk-c">// written once, e.g. "discord.channel"</span>
+	<span class="tk-k">readonly</span> schema: <span class="tk-t">Schema</span>&lt;T&gt;;
+	<span class="tk-k">readonly</span> <span class="tk-s">"~value"</span>?: T;                 <span class="tk-c">// type only</span>
+};
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">defineSessionMetadata</span>&lt;S <span class="tk-k">extends</span> <span class="tk-t">Schema</span>&gt;(name: string, schema: S): <span class="tk-t">SessionMetadataKey</span>&lt;<span class="tk-t">Static</span>&lt;S&gt;&gt;;
+
+<span class="tk-c">/** All metadata of one session as it crosses the wire: key name -&gt; value (erased; read it with `metadataOf`). */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">MetadataSnapshot</span> = <span class="tk-f">map</span>(<span class="tk-k">unknown</span>());
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">MetadataSnapshot</span> = <span class="tk-t">Static</span>&lt;<span class="tk-k">typeof</span> <span class="tk-t">MetadataSnapshot</span>&gt;;
+
+<span class="tk-c">/** The value of `key` in `snapshot`, typed by the key; undefined when absent. Validated when it was written. */</span>
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">metadataOf</span>&lt;T <span class="tk-k">extends</span> <span class="tk-t">JsonValue</span>&gt;(snapshot: <span class="tk-t">MetadataSnapshot</span>, key: <span class="tk-t">SessionMetadataKey</span>&lt;T&gt;): T | <span class="tk-k">undefined</span>;</code></pre>
+<pre><code><span class="tk-c">// plugins/sessions/contract.server.ts: server facets only</span>
+<span class="tk-c">/** The session metadata store (server, host lifetime). */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">SessionMetadataStore</span> = <span class="tk-f">local</span>(<span class="tk-s">"sessions.metadata"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: {},
+	members: {
+		<span class="tk-c">/** Every session's metadata, by session id; pinned with `at(session)` or watched with `watch(session, ctx)`. */</span>
+		bySession: <span class="tk-f">keyed</span>(<span class="tk-t">MetadataSnapshot</span>),
+		<span class="tk-c">/** Writes one key's value for one session; validates `value` with the key's registered schema. */</span>
+		write: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ session: <span class="tk-f">str</span>(), key: <span class="tk-f">str</span>(), value: <span class="tk-k">unknown</span>() })),
+		<span class="tk-c">/** Removes one key's value for one session. */</span>
+		clear: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ session: <span class="tk-f">str</span>(), key: <span class="tk-f">str</span>() })),
+	},
+});
+<span class="tk-c">/** Registry: each plugin registers its metadata keys, so the store can validate writes and export them. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">SessionMetadataKeys</span> = defineRegistry&lt;<span class="tk-k">readonly</span> <span class="tk-t">SessionMetadataKey</span>&lt;<span class="tk-t">JsonValue</span>&gt;[], <span class="tk-t">KeyIndex</span>&gt;(<span class="tk-s">"sessions.metadata-keys"</span>, { version: <span class="tk-n">1</span> });
+
+<span class="tk-c">/** Typed helpers over the store for server code. */</span>
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">writeMetadata</span>&lt;T <span class="tk-k">extends</span> <span class="tk-t">JsonValue</span>&gt;(store: <span class="tk-t">Ref</span>&lt;<span class="tk-k">typeof</span> <span class="tk-t">SessionMetadataStore</span>&gt;, key: <span class="tk-t">SessionMetadataKey</span>&lt;T&gt;, session: string, value: T, ctx: <span class="tk-t">Ctx</span>): <span class="tk-t">Promise</span>&lt;<span class="tk-k">void</span>&gt;;
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">readMetadata</span>&lt;T <span class="tk-k">extends</span> <span class="tk-t">JsonValue</span>&gt;(store: <span class="tk-t">Ref</span>&lt;<span class="tk-k">typeof</span> <span class="tk-t">SessionMetadataStore</span>&gt;, key: <span class="tk-t">SessionMetadataKey</span>&lt;T&gt;, session: string, ctx: <span class="tk-t">Ctx</span>): <span class="tk-t">Promise</span>&lt;T | <span class="tk-k">undefined</span>&gt;;</code></pre>
+<pre><code><span class="tk-c">// plugins/sessions/contract.ts: the worker's view of its own session's metadata</span>
+<span class="tk-c">/** Served on the server; a session worker holds it with params {} (its principal names the session). */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">SessionMetadataView</span> = <span class="tk-f">remote</span>(<span class="tk-s">"sessions.metadata-view"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: {},
+	hostAddress: () =&gt; <span class="tk-t">Server</span>(),
+	variants: {
+		worker: {
+			state: { metadata: <span class="tk-t">MetadataSnapshot</span> },
+			methods: { write: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ key: <span class="tk-f">str</span>(), value: <span class="tk-k">unknown</span>() })) },   <span class="tk-c">// one writer: the server's store</span>
+		},
+	},
+});</code></pre>
+<p><strong>Where the worker&#39;s snapshot comes from:</strong> the sessions plugin&#39;s worker facet holds <code>SessionMetadataView</code> in a
+host-lifetime object and contributes its <code>metadata</code> member to a worker registry, <code>SessionMetadata</code>, whose composed value
+is the current <code>MetadataSnapshot</code>. Any worker code reads it with <code>self.registry(SessionMetadata)</code> and <code>metadataOf</code>.
+That is the snapshot filters receive below; there is no separate reader type.</p>
+<pre><code><span class="tk-c">// plugins/sessions/contract.worker.ts</span>
+<span class="tk-c">/** The current metadata of this worker's session, followed from the server. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">SessionMetadata</span> = defineRegistry&lt;<span class="tk-t">Watchable</span>&lt;<span class="tk-t">MetadataSnapshot</span>&gt;, <span class="tk-t">MetadataSnapshot</span>&gt;(<span class="tk-s">"sessions.metadata-current"</span>, { version: <span class="tk-n">1</span> });</code></pre>
+<p>A short example, the Discord plugin&#39;s binding of a session to a channel, written on the server and read on the worker:</p>
+<pre><code><span class="tk-c">// plugins/discord/contract.ts: Discord's record, "this session belongs to that channel and may reach these sessions"</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">ChannelBinding</span> = <span class="tk-f">defineSessionMetadata</span>(<span class="tk-s">"discord.channel"</span>, <span class="tk-f">obj</span>({ guild: <span class="tk-f">str</span>(), channel: <span class="tk-f">str</span>(), reach: <span class="tk-f">arr</span>(<span class="tk-f">str</span>()) }));
+
+<span class="tk-c">// plugins/discord/server.ts, inside the Discord plugin's server object: written by session id, no worker started</span>
+<span class="tk-k">const</span> metadata = self.<span class="tk-f">get</span>(<span class="tk-t">SessionMetadataStore</span>, {});
+<span class="tk-k">await</span> <span class="tk-f">writeMetadata</span>(metadata, <span class="tk-t">ChannelBinding</span>, sessionId, { guild, channel, reach: [] }, ctx);
+
+<span class="tk-c">// plugins/discord/worker.ts, inside a worker object: read from the session's current metadata</span>
+<span class="tk-k">const</span> current = self.<span class="tk-f">registry</span>(<span class="tk-t">SessionMetadata</span>);                 <span class="tk-c">// the snapshot, followed from the server</span>
+<span class="tk-k">const</span> binding = <span class="tk-f">metadataOf</span>(current.value, <span class="tk-t">ChannelBinding</span>);     <span class="tk-c">// typed; undefined: not a Discord session</span></code></pre>
+<h3 id="the-session-service">The session service</h3>
+<pre><code><span class="tk-c">// plugins/sessions/contract.ts</span>
+<span class="tk-c">/** Who made a session: a typed origin a plugin defines (Discord channel, automation, Home), erased on the wire. */</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">SessionOrigin</span>&lt;T <span class="tk-k">extends</span> <span class="tk-t">JsonValue</span>&gt; = { <span class="tk-k">readonly</span> name: string; <span class="tk-k">readonly</span> schema: <span class="tk-t">Schema</span>&lt;T&gt; };
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">defineSessionOrigin</span>&lt;S <span class="tk-k">extends</span> <span class="tk-t">Schema</span>&gt;(name: string, schema: S): <span class="tk-t">SessionOrigin</span>&lt;<span class="tk-t">Static</span>&lt;S&gt;&gt;;
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">OriginData</span> = <span class="tk-f">obj</span>({ name: <span class="tk-f">str</span>(), value: <span class="tk-k">unknown</span>() });
+
+<span class="tk-c">/** A model by provider and id, and a thinking level: the schemas of Durable's `ModelRef` and pi-ai's levels. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">ModelRef</span> = <span class="tk-f">obj</span>({ provider: <span class="tk-f">str</span>(), modelId: <span class="tk-f">str</span>() });
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">ThinkingLevel</span> = <span class="tk-f">oneOf</span>(<span class="tk-s">"off"</span>, <span class="tk-s">"minimal"</span>, <span class="tk-s">"low"</span>, <span class="tk-s">"medium"</span>, <span class="tk-s">"high"</span>, <span class="tk-s">"xhigh"</span>);
+
+<span class="tk-c">/** What a session is configured with when created or reconfigured; every field optional on configure. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">SessionConfig</span> = <span class="tk-f">obj</span>({
+	title: <span class="tk-f">str</span>(),
+	model: <span class="tk-f">opt</span>(<span class="tk-t">ModelRef</span>),                                  <span class="tk-c">// from what the harness offers (chapter IV)</span>
+	thinkingLevel: <span class="tk-f">opt</span>(<span class="tk-t">ThinkingLevel</span>),
+	tools: <span class="tk-f">opt</span>(<span class="tk-f">arr</span>(<span class="tk-f">str</span>())),                                <span class="tk-c">// tool names chosen from the offers; absent: all offered</span>
+	location: <span class="tk-f">nullable</span>(<span class="tk-f">obj</span>({ environment: <span class="tk-f">str</span>(), cwd: <span class="tk-f">str</span>() })),   <span class="tk-c">// null: no machine</span>
+	instructions: <span class="tk-f">opt</span>(<span class="tk-f">str</span>()),
+});
+<span class="tk-c">/** A change on configure: absent fields stay. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">SessionConfigChange</span> = <span class="tk-f">obj</span>({
+	title: <span class="tk-f">opt</span>(<span class="tk-f">str</span>()), model: <span class="tk-f">opt</span>(<span class="tk-t">ModelRef</span>), thinkingLevel: <span class="tk-f">opt</span>(<span class="tk-t">ThinkingLevel</span>), tools: <span class="tk-f">opt</span>(<span class="tk-f">arr</span>(<span class="tk-f">str</span>())),
+	location: <span class="tk-f">opt</span>(<span class="tk-f">nullable</span>(<span class="tk-f">obj</span>({ environment: <span class="tk-f">str</span>(), cwd: <span class="tk-f">str</span>() }))), instructions: <span class="tk-f">opt</span>(<span class="tk-f">str</span>()),
+});
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">SessionRef</span> = <span class="tk-f">obj</span>({ id: <span class="tk-f">str</span>() });</code></pre>
+<pre><code><span class="tk-c">// plugins/sessions/contract.server.ts</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">SessionService</span> = <span class="tk-f">local</span>(<span class="tk-s">"sessions.service"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: {},
+	members: {
+		<span class="tk-c">/** Creates a session, or returns the one already created under `key` (idempotent). `open: false` holds input. */</span>
+		create: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ actor: <span class="tk-f">str</span>(), key: <span class="tk-f">str</span>(), origin: <span class="tk-t">OriginData</span>, config: <span class="tk-t">SessionConfig</span>, open: <span class="tk-f">bool</span>() }), <span class="tk-t">SessionRef</span>),
+		configure: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ actor: <span class="tk-f">str</span>(), session: <span class="tk-f">str</span>(), change: <span class="tk-t">SessionConfigChange</span> })),
+		open: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ actor: <span class="tk-f">str</span>(), session: <span class="tk-f">str</span>() })),          <span class="tk-c">// starts accepting input</span>
+		archive: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ actor: <span class="tk-f">str</span>(), session: <span class="tk-f">str</span>() })),
+		restore: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ actor: <span class="tk-f">str</span>(), session: <span class="tk-f">str</span>() })),
+		fork: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ actor: <span class="tk-f">str</span>(), session: <span class="tk-f">str</span>(), at: <span class="tk-f">opt</span>(<span class="tk-t">EntryId</span>) }), <span class="tk-t">SessionRef</span>),
+		remove: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ actor: <span class="tk-f">str</span>(), session: <span class="tk-f">str</span>() })),
+	},
+});
+
+<span class="tk-c">/** A check before an operation; every contribution must allow. `actor` is the user the calling plugin acts for. */</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">Decision</span> = { <span class="tk-k">readonly</span> kind: <span class="tk-s">"allow"</span> } | { <span class="tk-k">readonly</span> kind: <span class="tk-s">"deny"</span>; <span class="tk-k">readonly</span> reason: <span class="tk-t">MessageData</span> };
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">SessionAdmission</span> = {
+	<span class="tk-k">readonly</span> create?: (request: { actor: <span class="tk-t">UserId</span>; origin: <span class="tk-t">Static</span>&lt;<span class="tk-k">typeof</span> <span class="tk-t">OriginData</span>&gt;; config: <span class="tk-t">Static</span>&lt;<span class="tk-k">typeof</span> <span class="tk-t">SessionConfig</span>&gt; }) =&gt; <span class="tk-t">Decision</span>;
+	<span class="tk-k">readonly</span> configure?: (request: { actor: <span class="tk-t">UserId</span>; session: string; change: <span class="tk-t">Static</span>&lt;<span class="tk-k">typeof</span> <span class="tk-t">SessionConfigChange</span>&gt; }) =&gt; <span class="tk-t">Decision</span>;
+	<span class="tk-k">readonly</span> archive?: (request: { actor: <span class="tk-t">UserId</span>; session: string }) =&gt; <span class="tk-t">Decision</span>;
+	<span class="tk-k">readonly</span> fork?: (request: { actor: <span class="tk-t">UserId</span>; session: string }) =&gt; <span class="tk-t">Decision</span>;
+	<span class="tk-k">readonly</span> remove?: (request: { actor: <span class="tk-t">UserId</span>; session: string }) =&gt; <span class="tk-t">Decision</span>;
+};
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">SessionAdmissions</span> = <span class="tk-f">defineRegistry</span>&lt;<span class="tk-t">SessionAdmission</span>, <span class="tk-k">readonly</span> <span class="tk-t">SessionAdmission</span>[]&gt;(<span class="tk-s">"sessions.admissions"</span>, { version: <span class="tk-n">1</span> });</code></pre>
+<p><code>actor</code> is data because a local call runs as the server (Chord §4): a plugin passes the link-stamped principal of its own
+user-facing method, or its own service identity for automated work. Pages call the sessions plugin&#39;s per-user remote view,
+which stamps the actor itself.</p>
+<h3 id="backups-and-exports">Backups and exports</h3>
+<p>Backups and exports use the stores&#39; sync format. A <strong>backup</strong> is the whole instance: the server store (with the
+metadata store), every session store, files and the plugin manifest; restore runs before the server loads. An
+<strong>export</strong> is one session&#39;s store plus its metadata entries (the store knows every key through <code>SessionMetadataKeys</code>);
+importing resolves its references to this instance&#39;s environments and providers; credentials never travel. There is no
+live session sync: a session is useless without its instance.</p>
+</section>
+
+<section class="chapter" id="harness"><header class="opener"><div class="numeral">III</div><h2>The Harness</h2><p class="lede">One object in the session worker: extensions, filters, model and environment providers, composed per conversation.</p></header>
+<p class="dropcap">Everything the agent gets comes from the harness, and every restriction on it too. The old coding agent had a flat bus
+of about forty events; Durable already has the principled core. The harness keeps Durable&#39;s model and adds what makes
+restrictions possible as plugins.</p>
+<h3 id="the-contracts">The contracts</h3>
+<p>The harness plugin defines these in its worker contract. Filters read the session metadata from the previous chapter.</p>
+<pre><code><span class="tk-c">// plugins/harness/contract.worker.ts</span>
+<span class="tk-c">/** Where in the order an extension's hooks and wraps run. */</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">Phase</span> = <span class="tk-s">"security"</span> | <span class="tk-s">"transform"</span> | <span class="tk-s">"observe"</span>;
+
+<span class="tk-c">/** A Durable extension as plugins contribute it, with its phase (default "transform"). */</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">HarnessExtension</span> = { <span class="tk-k">readonly</span> extension: <span class="tk-t">Extension</span>; <span class="tk-k">readonly</span> phase?: <span class="tk-t">Phase</span> };
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">HarnessExtensions</span> = defineRegistry&lt;
+	<span class="tk-k">readonly</span> <span class="tk-t">HarnessExtension</span>[] | <span class="tk-t">Watchable</span>&lt;<span class="tk-k">readonly</span> <span class="tk-t">HarnessExtension</span>[]&gt;, <span class="tk-k">readonly</span> <span class="tk-t">HarnessExtension</span>[]
+&gt;(<span class="tk-s">"harness.extensions"</span>, { version: <span class="tk-n">1</span> });
+
+<span class="tk-c">/** What a filter is told: the session's metadata and the conversation it filters for. */</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">FilterScope</span> = {
+	<span class="tk-k">readonly</span> metadata: <span class="tk-t">MetadataSnapshot</span>;                        <span class="tk-c">// from SessionMetadata (above)</span>
+	<span class="tk-k">readonly</span> conversation: {
+		<span class="tk-k">readonly</span> id: <span class="tk-t">ConversationId</span>;
+		<span class="tk-k">readonly</span> role: <span class="tk-s">"main"</span> | <span class="tk-s">"subagent"</span> | <span class="tk-s">"one-shot"</span>;
+		<span class="tk-k">readonly</span> parent?: <span class="tk-t">ConversationId</span>;
+	};
+};
+
+<span class="tk-c">/** Cuts what extensions and providers offer; synchronous and pure over its arguments; all filters apply in turn. */</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">HarnessFilter</span> = {
+	<span class="tk-k">readonly</span> tools?: (tools: <span class="tk-k">readonly</span> <span class="tk-t">ToolRegistration</span>[], scope: <span class="tk-t">FilterScope</span>) =&gt; <span class="tk-k">readonly</span> <span class="tk-t">ToolRegistration</span>[];
+	<span class="tk-k">readonly</span> sections?: (sections: <span class="tk-k">readonly</span> <span class="tk-t">PromptSection</span>[], scope: <span class="tk-t">FilterScope</span>) =&gt; <span class="tk-k">readonly</span> <span class="tk-t">PromptSection</span>[];
+	<span class="tk-k">readonly</span> models?: (models: <span class="tk-k">readonly</span> <span class="tk-t">OfferedModel</span>[], scope: <span class="tk-t">FilterScope</span>) =&gt; <span class="tk-k">readonly</span> <span class="tk-t">OfferedModel</span>[];
+	<span class="tk-k">readonly</span> environments?: (environments: <span class="tk-k">readonly</span> <span class="tk-t">OfferedEnvironment</span>[], scope: <span class="tk-t">FilterScope</span>) =&gt; <span class="tk-k">readonly</span> <span class="tk-t">OfferedEnvironment</span>[];
+};
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">HarnessFilters</span> = <span class="tk-f">defineRegistry</span>&lt;<span class="tk-t">HarnessFilter</span>, <span class="tk-k">readonly</span> <span class="tk-t">HarnessFilter</span>[]&gt;(<span class="tk-s">"harness.filters"</span>, { version: <span class="tk-n">1</span> });
+
+<span class="tk-c">/** Model providers from plugins; the harness builds Durable's `models` from them. */</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">ModelProviderContribution</span> = { <span class="tk-k">readonly</span> id: string; <span class="tk-k">readonly</span> label: <span class="tk-t">MessageData</span>; <span class="tk-k">readonly</span> models: <span class="tk-t">Models</span> };
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">ModelProviders</span> = defineRegistry&lt;
+	<span class="tk-t">ModelProviderContribution</span> | <span class="tk-t">Watchable</span>&lt;<span class="tk-t">ModelProviderContribution</span>&gt;, <span class="tk-k">readonly</span> <span class="tk-t">ModelProviderContribution</span>[]
+&gt;(<span class="tk-s">"harness.model-providers"</span>, { version: <span class="tk-n">1</span> });
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">OfferedModel</span> = { <span class="tk-k">readonly</span> provider: string; <span class="tk-k">readonly</span> id: string; <span class="tk-k">readonly</span> label: string; <span class="tk-k">readonly</span> model: <span class="tk-t">Model</span>&lt;<span class="tk-t">Api</span>&gt; };
+
+<span class="tk-c">/** Environment kinds from plugins; the harness builds Durable's `env` from them. */</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">EnvironmentProvider</span> = {
+	<span class="tk-k">readonly</span> kind: string;                                    <span class="tk-c">// e.g. "envs.ssh", written once in the plugin's contract</span>
+	<span class="tk-k">readonly</span> offers: <span class="tk-t">Watchable</span>&lt;<span class="tk-k">readonly</span> <span class="tk-t">OfferedEnvironment</span>[]&gt;;
+	<span class="tk-f">resolve</span>(id: string, cwd: string, context: <span class="tk-t">Context</span>): <span class="tk-t">Promise</span>&lt;<span class="tk-t">ExecutionEnv</span> | <span class="tk-k">undefined</span>&gt;;
+};
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">OfferedEnvironment</span> = { <span class="tk-k">readonly</span> id: string; <span class="tk-k">readonly</span> label: string; <span class="tk-k">readonly</span> kind: string; <span class="tk-k">readonly</span> capabilities: <span class="tk-k">readonly</span> (<span class="tk-s">"shell"</span> | <span class="tk-s">"files"</span> | <span class="tk-s">"pty"</span>)[] };
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">EnvironmentProviders</span> = <span class="tk-f">defineRegistry</span>&lt;<span class="tk-t">EnvironmentProvider</span>, <span class="tk-k">readonly</span> <span class="tk-t">EnvironmentProvider</span>[]&gt;(<span class="tk-s">"harness.environments"</span>, { version: <span class="tk-n">1</span> });</code></pre>
+<p>How the harness composes, once per change of any registry or of the metadata:</p>
+<ol>
+<li>Install every <code>HarnessExtension</code> in Durable&#39;s registry, sorted by phase (security, transform, observe), and select all
+of them in every conversation; a conversation&#39;s own choice narrows only <code>AgentState.tools</code>.</li>
+<li>For each conversation, run the filters over the installed tools and sections, the providers&#39; models and the
+providers&#39; environments, in contributor order; the result is what the conversation is <strong>offered</strong>.</li>
+<li>Give Durable <code>models</code> that only resolve offered models and <code>env</code> that only resolves offered environments; a call to
+a tool that is not offered is refused at dispatch (nested and code mode calls included).</li>
+</ol>
+<h3 id="using-them">Using them</h3>
+<p>Contributing tools is contributing a Durable extension, as in p2. A filter uses the key from the previous chapter:</p>
+<pre><code><span class="tk-c">// plugins/coding-tools/worker.ts</span>
+self.<span class="tk-f">contribute</span>(<span class="tk-t">HarnessExtensions</span>, [{ extension: <span class="tk-f">defineExtension</span>({ name: <span class="tk-s">"coding"</span>, tools: [read, write, edit, bash] }) }]);
+
+<span class="tk-c">// plugins/discord/worker.ts: sessions bound to a channel are offered only two tools; other sessions are untouched</span>
+<span class="tk-k">const</span> ALLOWED = <span class="tk-k">new</span> <span class="tk-t">Set</span>([<span class="tk-s">"conversations"</span>, <span class="tk-s">"read"</span>]);
+self.<span class="tk-f">contribute</span>(<span class="tk-t">HarnessFilters</span>, {
+	tools: (tools, scope) =&gt; <span class="tk-f">metadataOf</span>(scope.metadata, <span class="tk-t">ChannelBinding</span>) === <span class="tk-k">undefined</span>
+		? tools
+		: tools.<span class="tk-f">filter</span>((tool) =&gt; ALLOWED.<span class="tk-f">has</span>(tool.name)),
+});</code></pre>
+<h3 id="a-call-through-the-three-shapes">A call through the three shapes</h3>
+<figure class="fig wide anim"><svg viewBox="0 0 720 375" width="100%" role="img" aria-label="A tool call through the three shapes: filters decided it was offered; wraps sit around the chain; the chain's hooks run in phase order." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f1m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f1a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f1b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><text x="16" y="22" font-size="10" fill="#2e6a8a" text-anchor="start" font-weight="600" letter-spacing="2">BEFORE ANYTHING RUNS</text><text x="16" y="155" font-size="10" fill="#b4472f" text-anchor="start" font-weight="600" letter-spacing="2">AROUND THE CALL</text><text x="16" y="288" font-size="10" fill="#7b7468" text-anchor="start" font-weight="600" letter-spacing="2">THE CHAIN</text><g class="step" style="--i:1"><rect x="255" y="36" width="210" height="55" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="360" y="54.5" font-size="11" fill="#2a2723" text-anchor="middle">Filters</text><text x="360" y="68.5" font-size="9.5" fill="#7b7468" text-anchor="middle">which tools, sections, environments,</text><text x="360" y="81" font-size="9.5" fill="#7b7468" text-anchor="middle">models a conversation is offered</text></g><g class="step" style="--i:3"><rect x="137" y="169" width="210" height="55" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="242" y="187.5" font-size="11" fill="#2a2723" text-anchor="middle">security wraps</text><text x="242" y="201.5" font-size="9.5" fill="#7b7468" text-anchor="middle">outermost: see input first, output</text><text x="242" y="214" font-size="9.5" fill="#7b7468" text-anchor="middle">last</text></g><g class="step" style="--i:5"><rect x="373" y="169" width="210" height="55" rx="4" fill="#fff" stroke="#c9bfae"/><text x="478" y="193.8" font-size="11" fill="#2a2723" text-anchor="middle">transform wraps</text><text x="478" y="207.8" font-size="9.5" fill="#7b7468" text-anchor="middle">nested inside</text></g><g class="step" style="--i:7"><rect x="19" y="302" width="210" height="55" rx="4" fill="#fff" stroke="#c9bfae"/><text x="124" y="320.5" font-size="11" fill="#2a2723" text-anchor="middle">beforeTool hooks</text><text x="124" y="334.5" font-size="9.5" fill="#7b7468" text-anchor="middle">change arguments or block; first</text><text x="124" y="347" font-size="9.5" fill="#7b7468" text-anchor="middle">block wins</text></g><g class="step" style="--i:9"><rect x="255" y="302" width="210" height="55" rx="4" fill="#fff" stroke="#c9bfae"/><text x="360" y="326.8" font-size="11" fill="#2a2723" text-anchor="middle">execute</text><text x="360" y="340.8" font-size="9.5" fill="#7b7468" text-anchor="middle">the tool itself</text></g><g class="step" style="--i:11"><rect x="491" y="302" width="210" height="55" rx="4" fill="#fff" stroke="#c9bfae"/><text x="596" y="326.8" font-size="11" fill="#2a2723" text-anchor="middle">afterTool hooks</text><text x="596" y="340.8" font-size="9.5" fill="#7b7468" text-anchor="middle">replace the result</text></g><g class="step edge" style="--i:2"><path d="M360 91 L242 167" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="305" y="123" width="108.1" height="13" fill="#fbf8f2" opacity=".92"/><text x="309" y="133" font-size="9.5" fill="#7b7468" text-anchor="start">offered tool called</text></g><g class="step edge" style="--i:4"><path d="M347 196.5 L371 196.5" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/></g><g class="step edge" style="--i:6"><path d="M478 224 L124 300" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/></g><g class="step edge" style="--i:8"><path d="M229 329.5 L253 329.5" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/></g><g class="step edge" style="--i:10"><path d="M465 329.5 L489 329.5" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 1.</span> A tool call through the three shapes: filters decided it was offered; wraps sit around the chain; the chain&#39;s hooks run in phase order.</figcaption></figure>
+<p>The rules that make it work:</p>
+<ul>
+<li><strong>Hooks and wraps always apply,</strong> in every conversation, whatever it selected. Durable alone runs only the hooks of
+extensions a conversation selects; the harness composes so that selection narrows tools and never switches off
+another plugin&#39;s hooks. Subagents choose tools from their caller&#39;s tools, after the filters.</li>
+<li><strong>Order comes from phases,</strong> not from registration: security outermost, then transform, then observe; filters
+commute; a chain&#39;s first block wins; rewritten arguments are validated again.</li>
+<li><strong>Model providers and environments are contributions too.</strong> Durable takes one <code>models</code> and one <code>env</code> function; the
+harness composes them from plugins: several providers and a router, several environment kinds with capabilities.
+An environment wrap sees requests, not effects: it is not confinement; a sandbox is.</li>
+<li><strong>One input path.</strong> Web, terminal, chat connectors, other sessions and automations all submit through one typed
+path with source attribution; input hooks may transform, handle or refuse.</li>
+<li><strong>Observation is public.</strong> Entries, documents, the commit signal, the task graph, usage and wake state are readable
+by plugins in the worker. Stats, search and memory observe there and push to their own server tables; no central
+event log.</li>
+</ul>
+<p>The Discord policy, a tool settings sheet, an approval wrapper, a budget, redaction: each is one ordinary plugin that
+contributes an extension and maybe a filter, and decides for itself which sessions it applies to.</p>
+</section>
+
+<section class="chapter" id="offered"><header class="opener"><div class="numeral">IV</div><h2>What Is Offered</h2><p class="lede">How a page knows which tools, models and machines a conversation may use, so it can show selector sheets.</p></header>
+<p class="dropcap">The UI never guesses what exists. The harness serves each conversation&#39;s composed offer (after every filter of the
+previous chapter) with the current choice, and one method to change it that refuses anything not offered.</p>
+<p>The UI never guesses what exists: the harness serves the composed offer per conversation, so a page can show selector
+sheets (tools, model, location) and change the choice through one method that validates against the same offer.</p>
+<pre><code><span class="tk-c">// plugins/harness/contract.ts: shared with the page</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">OfferedTool</span> = <span class="tk-f">obj</span>({ name: <span class="tk-f">str</span>(), label: <span class="tk-f">str</span>(), description: <span class="tk-f">str</span>(), plugin: <span class="tk-f">str</span>(), chosen: <span class="tk-f">bool</span>() });
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">OfferedModelInfo</span> = <span class="tk-f">obj</span>({ provider: <span class="tk-f">str</span>(), id: <span class="tk-f">str</span>(), label: <span class="tk-f">str</span>(), chosen: <span class="tk-f">bool</span>() });
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">OfferedEnvironmentInfo</span> = <span class="tk-f">obj</span>({ id: <span class="tk-f">str</span>(), label: <span class="tk-f">str</span>(), kind: <span class="tk-f">str</span>(), chosen: <span class="tk-f">bool</span>() });
+
+<span class="tk-c">/** One conversation's offer and choice; held by pages through the server, served by the session's worker. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">ConversationOffer</span> = <span class="tk-f">remote</span>(<span class="tk-s">"harness.offer"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: { session: <span class="tk-f">str</span>(), conversation: <span class="tk-f">int</span>() },
+	hostAddress: ({ session }) =&gt; <span class="tk-t">Session</span>({ id: session }),
+	variants: {
+		user: {
+			state: {
+				tools: <span class="tk-f">arr</span>(<span class="tk-t">OfferedTool</span>),
+				models: <span class="tk-f">arr</span>(<span class="tk-t">OfferedModelInfo</span>),
+				environments: <span class="tk-f">arr</span>(<span class="tk-t">OfferedEnvironmentInfo</span>),
+				cwd: <span class="tk-f">nullable</span>(<span class="tk-f">str</span>()),
+			},
+			methods: {
+				<span class="tk-c">/** Changes the conversation's choice; refused when a name is not offered (a filter removed it). */</span>
+				choose: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ tools: <span class="tk-f">opt</span>(<span class="tk-f">arr</span>(<span class="tk-f">str</span>())), model: <span class="tk-f">opt</span>(<span class="tk-t">ModelRef</span>), environment: <span class="tk-f">opt</span>(<span class="tk-f">nullable</span>(<span class="tk-f">obj</span>({ id: <span class="tk-f">str</span>(), cwd: <span class="tk-f">str</span>() }))) })),
+			},
+		},
+	},
+});</code></pre>
+<p>The state is a derive over the composed offer and the conversation&#39;s Durable agent state, so a filter change (Discord
+locking the channel down) updates every open selector sheet at once.</p>
+<p>A model picker sheet, using only that:</p>
+<p>What it does: a sheet listing the models this conversation is offered (after every filter), the current one ticked;
+choosing one changes the conversation.</p>
+<pre><code><span class="tk-c">// plugins/chat/web.tsx (or any plugin's)</span>
+<span class="tk-k">function</span> <span class="tk-t">ModelSheet</span>({ session, conversation }: { session: string; conversation: number }) {
+	<span class="tk-k">const</span> offer = <span class="tk-f">useHold</span>(<span class="tk-t">ConversationOffer</span>, { session, conversation });
+	<span class="tk-k">const</span> models = <span class="tk-f">useWatch</span>(offer.models) ?? [];
+	<span class="tk-k">return</span> &lt;<span class="tk-t">Sheet</span> title={<span class="tk-f">t</span>(<span class="tk-s">"model"</span>)}&gt;
+		{models.<span class="tk-f">map</span>((m) =&gt; (
+			&lt;<span class="tk-t">SheetRow</span> key={<span class="tk-s">`${m.provider}/${m.id}`</span>} checked={m.chosen}
+				onSelect={(ctx) =&gt; offer.<span class="tk-f">choose</span>({ model: { provider: m.provider, modelId: m.id } }, ctx)}&gt;
+				{m.label}
+			&lt;/<span class="tk-t">SheetRow</span>&gt;
+		))}
+	&lt;/<span class="tk-t">Sheet</span>&gt;;
+}</code></pre>
+<p>The tool and location sheets read <code>offer.tools</code> and <code>offer.environments</code> the same way. When the Discord filter removes
+a tool, it disappears from the sheet in the same push; <code>choose</code> refuses a name that is no longer offered, so a stale
+sheet cannot add it back.</p>
+</section>
+
+<section class="chapter" id="waiting"><header class="opener"><div class="numeral">V</div><h2>Waiting Costs Nothing</h2><p class="lede">Suspended work, a wake index on the server, and questions answered from anywhere.</p></header>
+<p class="dropcap">A session waiting for a person, a webhook or a time should not hold a process. p2 keeps a worker alive while any
+Durable task is live, so an approval left for a night holds a process all night. Three pieces fix that:</p>
+<ol>
+<li><strong>Suspendable work in Durable</strong> (designed, <code>packages/durable/docs/suspendable/</code>): a task may suspend until a signal
+or a deadline; it holds no code; a signal delivered through the harness wakes it; escape cancels it at once. Hooks
+never suspend: <code>afterRun</code>, <code>afterTools</code> and <code>onYield</code> return child tasks the generation waits on.</li>
+<li><strong>The wake bridge:</strong> the worker publishes Durable&#39;s wake state; the server keeps a durable index of next wake
+times; a due wake starts the worker. Liveness comes from the wake state, not from counting tasks.</li>
+<li><strong>Questions:</strong> a plugin defines a question kind (payload and answer schemas); a tool or a hook asks; the worker
+pushes the open question to a server index; one server method answers.</li>
+</ol>
+<figure class="fig anim"><svg viewBox="0 0 720 390" width="100%" role="img" aria-label="A permission plugin asks before bash runs; the worker stops; the answer arrives from the phone; the tool continues." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f2m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f2a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f2b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="130.7" y1="52" x2="130.7" y2="382" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="45.7" y="10" width="170" height="42" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="130.7" y="27" font-size="11" fill="#2a2723" text-anchor="middle">session worker</text><text x="130.7" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">harness</text><line x1="360" y1="52" x2="360" y2="382" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="275" y="10" width="170" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="360" y="27" font-size="11" fill="#2a2723" text-anchor="middle">server</text><text x="360" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">questions index, wake</text><line x1="589.3" y1="52" x2="589.3" y2="382" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="504.3" y="10" width="170" height="42" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="589.3" y="27" font-size="11" fill="#2a2723" text-anchor="middle">Mario's phone</text><text x="589.3" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">inbox plugin</text><g class="step edge" style="--i:1"><path d="M130.7 72 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f2m)"/><text x="172.7" y="82" font-size="10" fill="#2a2723" text-anchor="start">approval wrap: bash &quot;rm -rf build&quot; needs a yes</text></g><g class="step edge" style="--i:2"><line x1="130.7" y1="118" x2="357" y2="118" stroke="#7b7468" marker-end="url(#f2m)"/><text x="245.3" y="112" font-size="10" fill="#2a2723" text-anchor="middle">push open question (kind, summary)</text></g><g class="step edge" style="--i:3"><path d="M130.7 144 h34 v14 h-32" fill="none" stroke="#b4472f" marker-end="url(#f2a)"/><text x="172.7" y="154" font-size="10" fill="#b4472f" text-anchor="start">tool task suspended; nothing runs</text></g><g class="step edge" style="--i:4"><line x1="360" y1="190" x2="133.7" y2="190" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f2m)"/><text x="245.3" y="184" font-size="10" fill="#2a2723" text-anchor="middle">(worker idles out and stops)</text></g><g class="step edge" style="--i:5"><line x1="360" y1="222" x2="586.3" y2="222" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f2m)"/><text x="474.7" y="216" font-size="10" fill="#2a2723" text-anchor="middle">index changed: &quot;1 needs you&quot;</text></g><g class="step edge" style="--i:6"><line x1="589.3" y1="254" x2="363" y2="254" stroke="#7b7468" marker-end="url(#f2m)"/><text x="474.7" y="248" font-size="10" fill="#2a2723" text-anchor="middle">answer { question, allow }</text></g><g class="step edge" style="--i:7"><line x1="360" y1="286" x2="133.7" y2="286" stroke="#b4472f" marker-end="url(#f2a)"/><text x="245.3" y="280" font-size="10" fill="#b4472f" text-anchor="middle">start worker, signal the task</text></g><g class="step edge" style="--i:8"><path d="M130.7 312 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f2m)"/><text x="172.7" y="322" font-size="10" fill="#2a2723" text-anchor="start">resume: bash runs</text></g><g class="step edge" style="--i:9"><line x1="130.7" y1="358" x2="357" y2="358" stroke="#7b7468" marker-end="url(#f2m)"/><text x="245.3" y="352" font-size="10" fill="#2a2723" text-anchor="middle">question settled</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 2.</span> A permission plugin asks before bash runs; the worker stops; the answer arrives from the phone; the tool continues.</figcaption></figure>
+<p>Questions are state, so a late joiner (the same user on the phone, an hour later) sees them through the same views.
+They render through the UI registries, per form: a row in an inbox, a card in the transcript, a detail sheet, or a
+Discord message from the Discord plugin. The inbox, notifications and approval policies are plugins.</p>
+<h3 id="the-question-contracts">The question contracts</h3>
+<pre><code><span class="tk-c">// plugins/questions/contract.ts</span>
+<span class="tk-c">/** A kind of question, defined once by the plugin that asks it. */</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">QuestionKind</span>&lt;P <span class="tk-k">extends</span> <span class="tk-t">JsonValue</span>, A <span class="tk-k">extends</span> <span class="tk-t">JsonValue</span>&gt; = {
+	<span class="tk-k">readonly</span> name: string; <span class="tk-k">readonly</span> payload: <span class="tk-t">Schema</span>&lt;P&gt;; <span class="tk-k">readonly</span> answer: <span class="tk-t">Schema</span>&lt;A&gt;;
+};
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">defineQuestion</span>&lt;P <span class="tk-k">extends</span> <span class="tk-t">Schema</span>, A <span class="tk-k">extends</span> <span class="tk-t">Schema</span>&gt;(name: string, shape: { payload: P; answer: A }): <span class="tk-t">QuestionKind</span>&lt;<span class="tk-t">Static</span>&lt;P&gt;, <span class="tk-t">Static</span>&lt;A&gt;&gt;;
+
+<span class="tk-c">/** An open question as the server index holds it (erased; render it with the kind's renderers). */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">OpenQuestion</span> = <span class="tk-f">obj</span>({
+	id: <span class="tk-f">str</span>(),                       <span class="tk-c">// "&lt;session&gt;/&lt;taskId&gt;/&lt;signal key&gt;"</span>
+	session: <span class="tk-f">str</span>(), conversation: <span class="tk-f">int</span>(),
+	kind: <span class="tk-f">str</span>(), payload: <span class="tk-k">unknown</span>(), summary: <span class="tk-f">str</span>(),
+	asked: <span class="tk-f">num</span>(), until: <span class="tk-f">nullable</span>(<span class="tk-f">num</span>()),
+});
+
+<span class="tk-c">/** Per user: the open questions of every session the user may see; `answer` validates with the kind's answer schema. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Questions</span> = <span class="tk-f">remote</span>(<span class="tk-s">"questions.open"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: {},
+	hostAddress: () =&gt; <span class="tk-t">Server</span>(),
+	variants: { user: { state: { open: <span class="tk-f">arr</span>(<span class="tk-t">OpenQuestion</span>) }, methods: { answer: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ id: <span class="tk-f">str</span>(), answer: <span class="tk-k">unknown</span>() })) } } },
+});
+
+<span class="tk-c">// plugins/questions/contract.worker.ts</span>
+<span class="tk-c">/**
+ * Inside a tool's execute: suspends the tool until the question is answered (or `until` passes), using Durable's
+ * suspendable work; on resume returns the typed answer, or "timeout".
+ */</span>
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">ask</span>&lt;P <span class="tk-k">extends</span> <span class="tk-t">JsonValue</span>, A <span class="tk-k">extends</span> <span class="tk-t">JsonValue</span>&gt;(
+	api: <span class="tk-t">ToolExecutionApi</span>, kind: <span class="tk-t">QuestionKind</span>&lt;P, A&gt;, payload: P, options?: { until?: number; summary?: string },
+): <span class="tk-t">Suspension</span> | { <span class="tk-k">readonly</span> answered: A } | { <span class="tk-k">readonly</span> timeout: <span class="tk-k">true</span> };</code></pre>
+<p>The questions plugin&#39;s worker part watches the task graph for suspended tasks whose <code>request</code> names a question kind and
+pushes them to the server index; <code>Questions.answer</code> routes to the session&#39;s worker (starting it), which calls
+<code>Harness.signal(task, key, answer)</code>.</p>
+</section>
+
+<section class="chapter" id="page"><header class="opener"><div class="numeral">VI</div><h2>The Page</h2><p class="lede">A route by kind and id, layouts, views per form, panels, groupings, commands: the page draws what plugins register.</p></header>
+<p class="dropcap">Every product above shows something different: a transcript, a Home with cards, a triage queue, a dashboard, nothing
+at all for a chat assistant. The base only offers composition:</p>
+<ul>
+<li>a <strong>route</strong> addressed by <code>(kind, id)</code>, with <code>navigate</code> and deep links;</li>
+<li><strong>layouts</strong>, one active; the default sidebar, transcript and panel layout is just a plugin;</li>
+<li><strong>views and renderers</strong> per kind and form (row, card, detail), for sessions, machines, questions, tool calls,
+transcript entries; a missing renderer falls back;</li>
+<li><strong>panels</strong> assembled from several plugins for one detail view;</li>
+<li><strong>groupings</strong> that only show (recent, folders, projects, Discord servers);</li>
+<li><strong>commands, keybindings and composer extension points</strong>;</li>
+<li>the PWA manifest and service worker delegated to plugins.</li>
+</ul>
+<p><strong>How a page knows what it may offer.</strong> Selector sheets (tools, model, location) never guess: the harness serves each
+conversation&#39;s composed offer, after every filter, as <code>ConversationOffer { session, conversation }</code> with the current
+choice ticked and one <code>choose</code> method that refuses anything not offered (chapter IV defines it and shows the model picker). When a filter changes, every open sheet updates in the same push.</p>
+<p>Web and terminal keep separate registries; the terminal is not reduced to the web&#39;s shapes, nor the reverse.</p>
+<h3 id="the-page-contracts">The page contracts</h3>
+<pre><code><span class="tk-c">// plugins/presentation/contract.web.ts</span>
+<span class="tk-c">/** A kind of thing pages can route to and render: a name written once and its typed params. */</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">ThingKind</span>&lt;P <span class="tk-k">extends</span> <span class="tk-t">Record</span>&lt;string, string | number&gt;&gt; = { <span class="tk-k">readonly</span> name: string; <span class="tk-k">readonly</span> <span class="tk-s">"~params"</span>?: P };
+<span class="tk-k">export</span> <span class="tk-k">function</span> defineThingKind&lt;P <span class="tk-k">extends</span> <span class="tk-t">Record</span>&lt;string, string | number&gt;&gt;(name: string): <span class="tk-t">ThingKind</span>&lt;P&gt;;
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">ThingRef</span> = { <span class="tk-k">readonly</span> kind: string; <span class="tk-k">readonly</span> params: <span class="tk-t">Readonly</span>&lt;<span class="tk-t">Record</span>&lt;string, string | number&gt;&gt; };
+<span class="tk-k">export</span> <span class="tk-k">function</span> thing&lt;P <span class="tk-k">extends</span> <span class="tk-t">Record</span>&lt;string, string | number&gt;&gt;(kind: <span class="tk-t">ThingKind</span>&lt;P&gt;, params: P): <span class="tk-t">ThingRef</span>;
+
+<span class="tk-c">/** A place things are drawn, with the props its views get. */</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">Form</span>&lt;<span class="tk-t">Props</span>&gt; = { <span class="tk-k">readonly</span> name: string; <span class="tk-k">readonly</span> <span class="tk-s">"~props"</span>?: <span class="tk-t">Props</span> };
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Row</span>: <span class="tk-t">Form</span>&lt;{ <span class="tk-k">readonly</span> density: <span class="tk-s">"compact"</span> | <span class="tk-s">"comfortable"</span> }&gt;;
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Card</span>: <span class="tk-t">Form</span>&lt;<span class="tk-t">Record</span>&lt;<span class="tk-k">never</span>, <span class="tk-k">never</span>&gt;&gt;;
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Detail</span>: <span class="tk-t">Form</span>&lt;<span class="tk-t">Record</span>&lt;<span class="tk-k">never</span>, <span class="tk-k">never</span>&gt;&gt;;
+
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">View</span> = { <span class="tk-k">readonly</span> kind: string; <span class="tk-k">readonly</span> form: string; <span class="tk-k">readonly</span> <span class="tk-t">Component</span>: <span class="tk-t">ComponentType</span>&lt;{ <span class="tk-k">readonly</span> thing: <span class="tk-t">ThingRef</span> } &amp; object&gt; };
+<span class="tk-k">export</span> <span class="tk-k">function</span> view&lt;P <span class="tk-k">extends</span> <span class="tk-t">Record</span>&lt;string, string | number&gt;, <span class="tk-t">Props</span>&gt;(kind: <span class="tk-t">ThingKind</span>&lt;P&gt;, form: <span class="tk-t">Form</span>&lt;<span class="tk-t">Props</span>&gt;, <span class="tk-t">Component</span>: <span class="tk-t">ComponentType</span>&lt;{ params: P } &amp; <span class="tk-t">Props</span>&gt;): <span class="tk-t">View</span>;
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Views</span> = <span class="tk-f">defineRegistry</span>&lt;<span class="tk-k">readonly</span> <span class="tk-t">View</span>[], <span class="tk-t">ViewIndex</span>&gt;(<span class="tk-s">"presentation.views"</span>, { version: <span class="tk-n">1</span> });
+
+<span class="tk-c">/** Renders `thing` in `form` with the registered view, else the generic fallback. */</span>
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-t">Present</span>&lt;<span class="tk-t">Props</span>&gt;(props: { thing: <span class="tk-t">ThingRef</span>; form: <span class="tk-t">Form</span>&lt;<span class="tk-t">Props</span>&gt; } &amp; <span class="tk-t">Props</span>): <span class="tk-t">ReactElement</span>;
+<span class="tk-c">/** Moves the page's route to `thing` (deep-linkable). */</span>
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">useNavigate</span>(): (thing: <span class="tk-t">ThingRef</span>) =&gt; <span class="tk-k">void</span>;
+
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">Layout</span> = { <span class="tk-k">readonly</span> name: string; <span class="tk-k">readonly</span> label: <span class="tk-t">MessageData</span>; <span class="tk-k">readonly</span> <span class="tk-t">Root</span>: <span class="tk-t">ComponentType</span> };
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Layouts</span> = <span class="tk-f">defineRegistry</span>&lt;<span class="tk-k">readonly</span> <span class="tk-t">Layout</span>[], <span class="tk-t">LayoutIndex</span>&gt;(<span class="tk-s">"presentation.layouts"</span>, { version: <span class="tk-n">1</span> });</code></pre>
+<p>Question kinds are thing kinds too, so their renderers are ordinary views per form:</p>
+<pre><code><span class="tk-c">// plugins/questions/contract.web.ts</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">QuestionThing</span> = <span class="tk-f">defineThingKind</span>&lt;{ id: string }&gt;(<span class="tk-s">"questions.question"</span>);   <span class="tk-c">// id: OpenQuestion.id</span></code></pre>
+</section>
+
+<section class="chapter" id="rest"><header class="opener"><div class="numeral">VII</div><h2>The Rest of the Base</h2><p class="lede">Secrets, platform bindings, ingress, and the agent&#39;s typed surface.</p></header>
+<ul>
+<li><strong>Secrets and settings:</strong> one owner for secrets, encrypted, backed up as an opaque blob; plugin-owned settings
+with schemas, no global settings bag.</li>
+<li><strong>Platform bindings:</strong> what only the start script holds today, exposed as narrow objects: a plugin manager
+(install, apply, roll back), reports from process start, keep-alive contributions, telemetry sinks, and the store
+bindings the harness needs.</li>
+<li><strong>Tunnel ingress and a public origin:</strong> Radius or a tunnel plugin hands requests, sockets and Chord links to the
+HTTP component with their provenance; webhooks get a URL that survives moving the instance to another machine.</li>
+<li><strong>The agent&#39;s typed surface:</strong> instead of a tool per setting, one generic surface over Chord contracts (list,
+describe, call), with model-readable descriptions and methods each plugin opts in.</li>
+<li><strong>Already there:</strong> Chord&#39;s hosts, objects, principals, registries, documents, tables, routines and jobs; the kit&#39;s
+files, HTTP routes, sockets and authenticators.</li>
+</ul>
+</section>
+
+<section class="chapter" id="features"><header class="opener"><div class="numeral">VIII</div><h2>Building Features</h2><p class="lede">Three features end to end, using only what the previous chapters defined: a Discord channel session, an approval, usage stats.</p></header>
+<p class="dropcap">Each feature is an ordinary plugin: a <code>contract.ts</code> and the facets it needs. Nothing below touches the base.</p>
+<h3 id="a-session-per-discord-channel-locked-down">A session per Discord channel, locked down</h3>
+<p>What it does: the first message from a channel creates one session from a template, closed until the owner opens it;
+the session only offers the conversation tool and file reading, and the conversation tool may only reach sessions
+the owner marked for that channel.</p>
+<pre><code><span class="tk-c">// plugins/discord/contract.ts</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">ChannelBinding</span> = <span class="tk-f">defineSessionMetadata</span>(<span class="tk-s">"discord.channel"</span>, <span class="tk-f">obj</span>({
+	guild: <span class="tk-f">str</span>(), channel: <span class="tk-f">str</span>(),
+	reach: <span class="tk-f">arr</span>(<span class="tk-f">str</span>()),                          <span class="tk-c">// session ids the conversation tool may reach</span>
+}));
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">ChannelOrigin</span> = <span class="tk-f">defineSessionOrigin</span>(<span class="tk-s">"discord.channel"</span>, <span class="tk-f">obj</span>({ guild: <span class="tk-f">str</span>(), channel: <span class="tk-f">str</span>() }));
+<span class="tk-k">const</span> ALLOWED_TOOLS = [<span class="tk-s">"conversations"</span>, <span class="tk-s">"read"</span>];   <span class="tk-c">// tool names this policy keeps</span>
+
+<span class="tk-c">// The plugin's own objects (host lifetime, empty params): one on the server, one in each session worker.</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">DiscordBridge</span> = <span class="tk-f">local</span>(<span class="tk-s">"discord.bridge"</span>, { version: <span class="tk-n">1</span>, params: {}, members: {} });   <span class="tk-c">// the bot connection</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">DiscordPolicy</span> = <span class="tk-f">local</span>(<span class="tk-s">"discord.policy"</span>, { version: <span class="tk-n">1</span>, params: {}, members: {} });   <span class="tk-c">// contributes the hook</span></code></pre>
+<pre><code><span class="tk-c">// plugins/discord/server.ts</span>
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((host, self) =&gt; {
+	self.<span class="tk-f">contribute</span>(<span class="tk-t">SessionMetadataKeys</span>, [<span class="tk-t">ChannelBinding</span>]);
+	host.<span class="tk-f">serve</span>(<span class="tk-t">DiscordBridge</span>, (_params, self) =&gt; {
+		<span class="tk-k">const</span> sessions = self.<span class="tk-f">get</span>(<span class="tk-t">SessionService</span>, {});
+		<span class="tk-k">const</span> metadata = self.<span class="tk-f">get</span>(<span class="tk-t">SessionMetadataStore</span>, {});
+		<span class="tk-k">const</span> bot = self.<span class="tk-f">open</span>((ctx) =&gt; <span class="tk-f">connectBot</span>(ctx), (b) =&gt; b.<span class="tk-f">close</span>());   <span class="tk-c">// discord.js client, a native of this object</span>
+		<span class="tk-k">const</span> BOT_ACTOR = INSTANCE;                         <span class="tk-c">// the instance user (users plugin): automated work acts for it</span>
+		self.<span class="tk-f">onLive</span>(<span class="tk-k">async</span> (ctx) =&gt; {
+			<span class="tk-k">for</span> <span class="tk-k">await</span> (<span class="tk-k">const</span> message <span class="tk-k">of</span> bot.value.<span class="tk-f">messages</span>(ctx)) {
+				<span class="tk-c">// Idempotent by key: racing first messages from one channel create one session.</span>
+				<span class="tk-k">const</span> { id } = <span class="tk-k">await</span> sessions.<span class="tk-f">create</span>({
+					actor: BOT_ACTOR,
+					key: <span class="tk-s">`discord:${message.guild}:${message.channel}`</span>,
+					origin: { name: <span class="tk-t">ChannelOrigin</span>.name, value: { guild: message.guild, channel: message.channel } },
+					config: { title: <span class="tk-s">`#${message.channelName}`</span>, tools: ALLOWED_TOOLS, location: <span class="tk-k">null</span> },
+					open: <span class="tk-k">false</span>,                                    <span class="tk-c">// held until the owner opens it</span>
+				}, ctx);
+				<span class="tk-k">if</span> ((<span class="tk-k">await</span> <span class="tk-f">readMetadata</span>(metadata, <span class="tk-t">ChannelBinding</span>, id, ctx)) === <span class="tk-k">undefined</span>)
+					<span class="tk-k">await</span> <span class="tk-f">writeMetadata</span>(metadata, <span class="tk-t">ChannelBinding</span>, id, { guild: message.guild, channel: message.channel, reach: [] }, ctx);
+				<span class="tk-k">await</span> <span class="tk-f">deliver</span>(id, message, ctx);                    <span class="tk-c">// the plugin's helper: submits through the one input path</span>
+			}
+		});
+		<span class="tk-k">return</span> {};
+	});
+});</code></pre>
+<pre><code><span class="tk-c">// plugins/discord/worker.ts</span>
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((host, self) =&gt; {
+	<span class="tk-c">// A filter: sessions bound to a channel are offered only the allowed tools; other sessions are untouched.</span>
+	self.<span class="tk-f">contribute</span>(<span class="tk-t">HarnessFilters</span>, {
+		tools: (tools, scope) =&gt; <span class="tk-f">metadataOf</span>(scope.metadata, <span class="tk-t">ChannelBinding</span>) === <span class="tk-k">undefined</span>
+			? tools
+			: tools.<span class="tk-f">filter</span>((tool) =&gt; ALLOWED_TOOLS.<span class="tk-f">includes</span>(tool.name)),
+	});
+	<span class="tk-c">// A security hook: the conversation tool may only reach the sessions marked for this channel.</span>
+	host.<span class="tk-f">serve</span>(<span class="tk-t">DiscordPolicy</span>, (_params, self) =&gt; {
+		<span class="tk-k">const</span> metadata = self.<span class="tk-f">registry</span>(<span class="tk-t">SessionMetadata</span>);
+		<span class="tk-k">const</span> extension = <span class="tk-f">defineExtension</span>({
+			name: <span class="tk-s">"discord.policy"</span>,
+			hooks: [<span class="tk-f">hook</span>(<span class="tk-t">ToolTask</span>, {
+				beforeTool: (call) =&gt; {
+					<span class="tk-k">const</span> binding = <span class="tk-f">metadataOf</span>(metadata.value, <span class="tk-t">ChannelBinding</span>);
+					<span class="tk-k">if</span> (binding === <span class="tk-k">undefined</span> || call.name !== <span class="tk-s">"conversations"</span>) <span class="tk-k">return</span> <span class="tk-k">undefined</span>;
+					<span class="tk-k">const</span> to = (call.arguments <span class="tk-k">as</span> { to?: string }).to;     <span class="tk-c">// the conversations tool's typed args (its contract)</span>
+					<span class="tk-k">return</span> to === <span class="tk-k">undefined</span> || binding.reach.<span class="tk-f">includes</span>(to) ? <span class="tk-k">undefined</span> : { block: <span class="tk-s">"not reachable from this channel"</span> };
+				},
+			})],
+		});
+		self.<span class="tk-f">contribute</span>(<span class="tk-t">HarnessExtensions</span>, [{ extension, phase: <span class="tk-s">"security"</span> }]);
+		<span class="tk-k">return</span> {};
+	});
+});</code></pre>
+<p>The owner opens the session from its detail view (<code>SessionService.open</code> through the sessions plugin&#39;s user view) and
+ticks reachable sessions in a sheet the Discord plugin contributes as a <code>Detail</code> panel, which writes <code>ChannelBinding</code>
+through the store. Every change reaches the filter and the hook through <code>SessionMetadata</code>: no restart, no reload.</p>
+<h3 id="an-approval-before-bash">An approval before bash</h3>
+<p>What it does: before bash runs a command that matches a list, the session asks the owner; the worker may stop while
+waiting; the answer arrives from any device; denial returns an error to the agent.</p>
+<pre><code><span class="tk-c">// plugins/approvals/contract.ts</span>
+<span class="tk-k">const</span> RISKY = [/\brm\s+-rf\b/, /\bgit\s+push\b/];   <span class="tk-c">// commands that need a yes; the plugin's own setting in practice</span>
+
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">ApproveCommand</span> = <span class="tk-f">defineQuestion</span>(<span class="tk-s">"approvals.command"</span>, {
+	payload: <span class="tk-f">obj</span>({ command: <span class="tk-f">str</span>() }),
+	answer: <span class="tk-f">union</span>([<span class="tk-f">obj</span>({ kind: <span class="tk-f">lit</span>(<span class="tk-s">"allow"</span>) }), <span class="tk-f">obj</span>({ kind: <span class="tk-f">lit</span>(<span class="tk-s">"deny"</span>), reason: <span class="tk-f">opt</span>(<span class="tk-f">str</span>()) })]),
+});</code></pre>
+<pre><code><span class="tk-c">// plugins/approvals/worker.ts</span>
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((host, self) =&gt; {
+	<span class="tk-k">const</span> extension = <span class="tk-f">defineExtension</span>({
+		name: <span class="tk-s">"approvals.bash"</span>,
+		<span class="tk-c">// A Durable wrap targets a tool by name; coding-tools exports BASH_TOOL in its contract.</span>
+		wraps: [{ tool: BASH_TOOL, wrap: (bash) =&gt; ({
+			...bash,
+			execute: <span class="tk-k">async</span> (args, api, context) =&gt; {
+				<span class="tk-k">if</span> (!RISKY.<span class="tk-f">some</span>((pattern) =&gt; pattern.<span class="tk-f">test</span>(args.command))) <span class="tk-k">return</span> bash.<span class="tk-f">execute</span>(args, api, context);
+				<span class="tk-k">const</span> asked = <span class="tk-f">ask</span>(api, <span class="tk-t">ApproveCommand</span>, { command: args.command }, { summary: <span class="tk-s">`Run: ${args.command}`</span> });
+				<span class="tk-k">if</span> (<span class="tk-s">"suspend"</span> <span class="tk-k">in</span> asked) <span class="tk-k">return</span> asked;                       <span class="tk-c">// the tool task suspends; no process needed</span>
+				<span class="tk-k">if</span> (<span class="tk-s">"timeout"</span> <span class="tk-k">in</span> asked || asked.answered.kind === <span class="tk-s">"deny"</span>)
+					<span class="tk-k">return</span> { output: [{ <span class="tk-k">type</span>: <span class="tk-s">"text"</span>, text: <span class="tk-s">"The owner did not approve this command."</span> }], isError: <span class="tk-k">true</span> };
+				<span class="tk-k">return</span> bash.<span class="tk-f">execute</span>(args, api, context);
+			},
+		}) }],
+	});
+	self.<span class="tk-f">contribute</span>(<span class="tk-t">HarnessExtensions</span>, [{ extension, phase: <span class="tk-s">"security"</span> }]);
+});</code></pre>
+<pre><code><span class="tk-c">// plugins/approvals/web.tsx: how the question looks, per form; any page that lists questions uses these</span>
+self.<span class="tk-f">contribute</span>(<span class="tk-t">Views</span>, [
+	<span class="tk-f">view</span>(<span class="tk-t">QuestionThing</span>, <span class="tk-t">Card</span>, ({ params }) =&gt; &lt;<span class="tk-t">ApprovalCard</span> id={params.id} /&gt;),       <span class="tk-c">// in the transcript</span>
+	<span class="tk-f">view</span>(<span class="tk-t">QuestionThing</span>, <span class="tk-t">Row</span>, ({ params }) =&gt; &lt;<span class="tk-t">ApprovalRow</span> id={params.id} /&gt;),         <span class="tk-c">// in an inbox plugin's list</span>
+]);
+<span class="tk-k">function</span> <span class="tk-t">ApprovalCard</span>({ id }: { id: string }) {
+	<span class="tk-k">const</span> questions = <span class="tk-f">useHold</span>(<span class="tk-t">Questions</span>, {});
+	<span class="tk-k">const</span> open = <span class="tk-f">useWatch</span>(questions.open)?.<span class="tk-f">find</span>((q) =&gt; q.id === id);
+	<span class="tk-k">if</span> (open === <span class="tk-k">undefined</span>) <span class="tk-k">return</span> <span class="tk-k">null</span>;
+	<span class="tk-k">return</span> &lt;<span class="tk-t">Card</span> title={open.summary}&gt;
+		&lt;<span class="tk-t">Button</span> onClick={(ctx) =&gt; questions.<span class="tk-f">answer</span>({ id, answer: { kind: <span class="tk-s">"allow"</span> } }, ctx)}&gt;<span class="tk-t">Allow</span>&lt;/<span class="tk-t">Button</span>&gt;
+		&lt;<span class="tk-t">Button</span> onClick={(ctx) =&gt; questions.<span class="tk-f">answer</span>({ id, answer: { kind: <span class="tk-s">"deny"</span> } }, ctx)}&gt;<span class="tk-t">Deny</span>&lt;/<span class="tk-t">Button</span>&gt;
+	&lt;/<span class="tk-t">Card</span>&gt;;
+}</code></pre>
+<h3 id="usage-statistics-across-sessions">Usage statistics across sessions</h3>
+<p>What it does: tokens and cost per user and day, without starting idle workers to show the page.</p>
+<pre><code><span class="tk-c">// plugins/stats/contract.ts</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">DayUsage</span> = <span class="tk-f">obj</span>({ day: <span class="tk-f">str</span>(), tokens: <span class="tk-f">int</span>(), costMicros: <span class="tk-f">int</span>(), turns: <span class="tk-f">int</span>() });
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">StatsFeed</span> = <span class="tk-f">remote</span>(<span class="tk-s">"stats.feed"</span>, {
+	version: <span class="tk-n">1</span>, params: {}, hostAddress: () =&gt; <span class="tk-t">Server</span>(),
+	variants: { worker: { methods: { add: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ day: <span class="tk-f">str</span>(), tokens: <span class="tk-f">int</span>(), costMicros: <span class="tk-f">int</span>(), turns: <span class="tk-f">int</span>(), through: <span class="tk-f">str</span>() })) } } },
+});
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">MyUsage</span> = <span class="tk-f">remote</span>(<span class="tk-s">"stats.mine"</span>, {
+	version: <span class="tk-n">1</span>, params: {}, hostAddress: () =&gt; <span class="tk-t">Server</span>(),
+	variants: { user: { state: { days: <span class="tk-f">arr</span>(<span class="tk-t">DayUsage</span>) } } },
+});</code></pre>
+<pre><code><span class="tk-c">// plugins/stats/worker.ts: an observe-phase hook; the response's usage, pushed as a delta</span>
+host.<span class="tk-f">serve</span>(<span class="tk-t">UsageReporter</span>, (_params, self) =&gt; {
+	<span class="tk-k">const</span> feed = self.<span class="tk-f">get</span>(<span class="tk-t">StatsFeed</span>, {});
+	<span class="tk-k">const</span> extension = <span class="tk-f">defineExtension</span>({
+		name: <span class="tk-s">"stats.usage"</span>,
+		hooks: [<span class="tk-f">hook</span>(<span class="tk-t">GenerationTask</span>, {
+			afterResponse: <span class="tk-k">async</span> (message, api, context) =&gt; {
+				<span class="tk-c">// chord(fn, context): runs a Chord call inside a Durable hook (design §24); today(): "YYYY-MM-DD"</span>
+				<span class="tk-k">await</span> <span class="tk-f">chord</span>((ctx) =&gt; feed.<span class="tk-f">add</span>({
+					day: <span class="tk-f">today</span>(), tokens: message.usage.totalTokens, costMicros: <span class="tk-t">Math</span>.<span class="tk-f">round</span>(message.usage.cost.total * <span class="tk-n">1e6</span>),
+					turns: <span class="tk-n">1</span>, through: <span class="tk-s">`${api.taskId}`</span>,                  <span class="tk-c">// the server ignores a delta it has seen</span>
+				}, ctx), context);
+			},
+		})],
+	});
+	self.<span class="tk-f">contribute</span>(<span class="tk-t">HarnessExtensions</span>, [{ extension, phase: <span class="tk-s">"observe"</span> }]);
+	<span class="tk-k">return</span> {};
+});</code></pre>
+<pre><code><span class="tk-c">// plugins/stats/server.ts: one row per user and day, one transaction per delta</span>
+<span class="tk-k">const</span> <span class="tk-t">Days</span> = <span class="tk-f">defineTable</span>(<span class="tk-s">"stats.days"</span>, { version: <span class="tk-n">1</span>, columns: { user: <span class="tk-f">str</span>(), day: <span class="tk-f">str</span>(), tokens: <span class="tk-f">int</span>(), costMicros: <span class="tk-f">int</span>(), turns: <span class="tk-f">int</span>() }, key: [<span class="tk-s">"user"</span>, <span class="tk-s">"day"</span>] });
+<span class="tk-c">// StatsStore: the plugin's host-lifetime server object owning `Days`; `add` updates one row in one transaction.</span>
+host.<span class="tk-f">serve</span>(<span class="tk-t">StatsFeed</span>, (_params, principal, self) =&gt; {
+	<span class="tk-k">const</span> store = self.<span class="tk-f">get</span>(<span class="tk-t">StatsStore</span>, {});
+	<span class="tk-k">if</span> (principal.kind !== <span class="tk-s">"worker"</span>) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"session workers only"</span>);
+	<span class="tk-k">return</span> { variant: <span class="tk-s">"worker"</span>, members: { add: (delta, ctx) =&gt; store.<span class="tk-f">add</span>({ session: principal.session, ...delta }, ctx) } };
+});</code></pre>
+<p>The page holds <code>MyUsage</code> and draws a chart. A budget plugin would be the same hook in the security phase, refusing
+the next request through <code>beforeRequest</code> once the day&#39;s cost passes a limit the owner set in its settings.</p>
+</section>
+
+<section class="chapter" id="tiers"><header class="opener"><div class="numeral">IX</div><h2>Three Tiers</h2><p class="lede">What is base code, what is a reloadable core plugin, and what is an ordinary plugin.</p></header>
+<figure class="fig wide"><svg viewBox="0 0 720 414" width="100%" role="img" aria-label="The seventeen pieces by tier. Only the top row needs a restart to change." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f3m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f3a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f3b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><text x="16" y="22" font-size="10" fill="#b4472f" text-anchor="start" font-weight="600" letter-spacing="2">TIER 1: BASE CODE (RESTART)</text><text x="16" y="169" font-size="10" fill="#2e6a8a" text-anchor="start" font-weight="600" letter-spacing="2">TIER 2: CORE PLUGINS (RELOADABLE, REQUIRED)</text><text x="16" y="314.5" font-size="10" fill="#7b7468" text-anchor="start" font-weight="600" letter-spacing="2">TIER 3: ORDINARY PLUGINS</text><rect x="16" y="36" width="152.5" height="69" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="92.3" y="61.5" font-size="11" fill="#2a2723" text-anchor="middle">API and principals</text><text x="92.3" y="75.5" font-size="9.5" fill="#7b7468" text-anchor="middle">server, worker, user,</text><text x="92.3" y="88" font-size="9.5" fill="#7b7468" text-anchor="middle">guest</text><rect x="194.5" y="36" width="152.5" height="69" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="270.8" y="60.8" font-size="11" fill="#2a2723" text-anchor="middle">Root route and PWA</text><text x="270.8" y="74.8" font-size="11" fill="#2a2723" text-anchor="middle">hooks</text><text x="270.8" y="88.8" font-size="9.5" fill="#7b7468" text-anchor="middle">per surface</text><rect x="373" y="36" width="152.5" height="69" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="449.3" y="61.5" font-size="11" fill="#2a2723" text-anchor="middle">Platform bindings</text><text x="449.3" y="75.5" font-size="9.5" fill="#7b7468" text-anchor="middle">plugin manager, reports,</text><text x="449.3" y="88" font-size="9.5" fill="#7b7468" text-anchor="middle">keep-alive</text><rect x="551.5" y="36" width="152.5" height="69" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="627.8" y="54.5" font-size="11" fill="#2a2723" text-anchor="middle">Ingress, restore,</text><text x="627.8" y="68.5" font-size="11" fill="#2a2723" text-anchor="middle">Durable</text><text x="627.8" y="82.5" font-size="9.5" fill="#7b7468" text-anchor="middle">tunnels; restore before</text><text x="627.8" y="95" font-size="9.5" fill="#7b7468" text-anchor="middle">load; suspendable</text><rect x="16" y="183" width="152.5" height="67.5" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="92.3" y="201.5" font-size="11" fill="#2a2723" text-anchor="middle">Sessions</text><text x="92.3" y="215.5" font-size="9.5" fill="#7b7468" text-anchor="middle">service, catalog,</text><text x="92.3" y="228" font-size="9.5" fill="#7b7468" text-anchor="middle">metadata, admissions, wake</text><text x="92.3" y="240.5" font-size="9.5" fill="#7b7468" text-anchor="middle">index</text><rect x="194.5" y="183" width="152.5" height="67.5" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="270.8" y="201.5" font-size="11" fill="#2a2723" text-anchor="middle">Harness</text><text x="270.8" y="215.5" font-size="9.5" fill="#7b7468" text-anchor="middle">extensions + filters,</text><text x="270.8" y="228" font-size="9.5" fill="#7b7468" text-anchor="middle">models, environments,</text><text x="270.8" y="240.5" font-size="9.5" fill="#7b7468" text-anchor="middle">input, observation</text><rect x="373" y="183" width="152.5" height="67.5" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="449.3" y="207" font-size="11" fill="#2a2723" text-anchor="middle">Questions, secrets,</text><text x="449.3" y="221" font-size="11" fill="#2a2723" text-anchor="middle">settings</text><text x="449.3" y="235" font-size="9.5" fill="#7b7468" text-anchor="middle">mechanisms</text><rect x="551.5" y="183" width="152.5" height="67.5" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="627.8" y="214" font-size="11" fill="#2a2723" text-anchor="middle">UI registries, backup</text><text x="627.8" y="228" font-size="9.5" fill="#7b7468" text-anchor="middle">default layout included</text><rect x="16" y="328.5" width="152.5" height="67.5" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="92.3" y="347" font-size="11" fill="#2a2723" text-anchor="middle">Policy and people</text><text x="92.3" y="361" font-size="9.5" fill="#7b7468" text-anchor="middle">inbox, approvals,</text><text x="92.3" y="373.5" font-size="9.5" fill="#7b7468" text-anchor="middle">permissions, resource</text><text x="92.3" y="386" font-size="9.5" fill="#7b7468" text-anchor="middle">model, sharing</text><rect x="194.5" y="328.5" width="152.5" height="67.5" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="270.8" y="353.3" font-size="11" fill="#2a2723" text-anchor="middle">Ingress</text><text x="270.8" y="367.3" font-size="9.5" fill="#7b7468" text-anchor="middle">Discord, Slack, WhatsApp,</text><text x="270.8" y="379.8" font-size="9.5" fill="#7b7468" text-anchor="middle">iMessage, webhooks</text><rect x="373" y="328.5" width="152.5" height="67.5" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="449.3" y="353.3" font-size="11" fill="#2a2723" text-anchor="middle">Products</text><text x="449.3" y="367.3" font-size="9.5" fill="#7b7468" text-anchor="middle">triage, dashboards, Home,</text><text x="449.3" y="379.8" font-size="9.5" fill="#7b7468" text-anchor="middle">automations, stats</text><rect x="551.5" y="328.5" width="152.5" height="67.5" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="627.8" y="353.3" font-size="11" fill="#2a2723" text-anchor="middle">Tools and machines</text><text x="627.8" y="367.3" font-size="9.5" fill="#7b7468" text-anchor="middle">MCP, environments,</text><text x="627.8" y="379.8" font-size="9.5" fill="#7b7468" text-anchor="middle">terminals, voice</text></svg><figcaption><span class="fignum">Figure 3.</span> The seventeen pieces by tier. Only the top row needs a restart to change.</figcaption></figure>
+<p><strong>What can never be a plugin,</strong> and why: principal kinds (facets are typed by the app&#39;s principal union); tunnel
+ingress (the app holds the HTTP listener and <code>host.accept</code>); restore (the data being restored holds the plugins); the
+plugin loader and its rollback (it must work when plugins do not); keep-alive, reports and telemetry sinks (host
+options); new worker kinds (start options); always-on hooks (only the harness owner can guarantee them); real
+isolation (an OS, a VM or a remote service, never a hook); exactly-once external effects (idempotency keys and receipts
+instead).</p>
+<p><strong>What was cut:</strong> compulsory resources, ACLs, projects, Home, inbox or ticket types in the base; a policy provider; a
+central event log; a second workflow engine; a stringly action bus; fixed UI slots per product; mandatory payload
+logging; compatibility with old pi&#39;s file formats and mutable events; live session sync.</p>
+</section>
+
+<section class="chapter epilogue" id="open-questions"><header class="opener"><div class="numeral">∴</div><h2>Open Questions</h2><p class="lede">Fifteen, five of them only the owner can decide.</p></header>
+<p class="dropcap"><strong>For the owner:</strong></p>
+<ol>
+<li><strong>The UI people see when you share a session:</strong> relay the instance&#39;s own UI (recommended: sandboxed frame,
+credentials only on Radius pages, no agent-driven plugin reloads while shared) or Cristina&#39;s Radius-built bundle.</li>
+<li><strong>Read-only sharing:</strong> keep a viewer that cannot send (recommended), or every viewer a full collaborator.</li>
+<li><strong>Plugin workers:</strong> a generic worker kind for heavy plugin work (indexing, sync, transcription), or not yet.</li>
+<li><strong>Tool risk hints:</strong> allow one annotations field like MCP&#39;s read-only and destructive hints, or keep policies on
+tool names (the earlier rule: no new fields on tool declarations).</li>
+<li><strong>Secrets in backups:</strong> encrypted with a recovery key, or references only.</li>
+</ol>
+<p><strong>With a recommendation:</strong> chat-network users stay attributed authors, not principals, until a plugin needs more;
+built-in Durable tasks are reached only through their hooks; no further Durable boundaries until a plugin needs one;
+environments usable from server objects through the environments plugin; no free-form transcript injection on create
+(fork or import instead); cross-session input goes through the one input path; a stable public URL is the instance&#39;s
+Radius identity; voice and live views use plugin sockets until a second user justifies a byte channel; the install
+screen says plainly that plugins run in every session, locked or not.</p>
+</section>
+
+<section class="chapter appendix" id="the-seventeen-pieces"><header class="opener"><div class="numeral">A</div><h2>The Seventeen Pieces</h2></header>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Piece</th>
+<th>Host</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1</td>
+<td>Chord substrate</td>
+<td>all</td>
+<td>exists</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Session service and catalog</td>
+<td>server</td>
+<td>needed</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Session metadata store</td>
+<td>server</td>
+<td>decided</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Harness: extensions + filters, phases</td>
+<td>worker</td>
+<td>needed</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Model providers and environments as contributions</td>
+<td>worker</td>
+<td>needed</td>
+</tr>
+<tr>
+<td>6</td>
+<td>One input path</td>
+<td>worker</td>
+<td>needed</td>
+</tr>
+<tr>
+<td>7</td>
+<td>Observation facade, read-only reader</td>
+<td>worker, server</td>
+<td>needed</td>
+</tr>
+<tr>
+<td>8</td>
+<td>Wake bridge and liveness</td>
+<td>worker, server</td>
+<td>needed</td>
+</tr>
+<tr>
+<td>9</td>
+<td>Suspendable work</td>
+<td>Durable</td>
+<td>designed</td>
+</tr>
+<tr>
+<td>10</td>
+<td>Questions</td>
+<td>worker, server</td>
+<td>needed</td>
+</tr>
+<tr>
+<td>11</td>
+<td>UI composition</td>
+<td>page, terminal</td>
+<td>needed</td>
+</tr>
+<tr>
+<td>12</td>
+<td>Files, HTTP, sockets, authenticators</td>
+<td>server</td>
+<td>exists</td>
+</tr>
+<tr>
+<td>13</td>
+<td>Secrets and settings</td>
+<td>server</td>
+<td>needed</td>
+</tr>
+<tr>
+<td>14</td>
+<td>Platform bindings</td>
+<td>kit</td>
+<td>needed</td>
+</tr>
+<tr>
+<td>15</td>
+<td>Backup, restore, export</td>
+<td>kit, supervisor</td>
+<td>needed, format decided</td>
+</tr>
+<tr>
+<td>16</td>
+<td>Tunnel ingress, public origin</td>
+<td>kit</td>
+<td>needed</td>
+</tr>
+<tr>
+<td>17</td>
+<td>The agent&#39;s typed surface</td>
+<td>worker</td>
+<td>direction</td>
+</tr>
+</tbody></table>
+</section>
+
+<section class="chapter appendix" id="acceptance-tests"><header class="opener"><div class="numeral">B</div><h2>Acceptance Tests</h2></header>
+<ol>
+<li>A chat connector alone receives two duplicate webhooks while the worker is stopped: one input, one reply.</li>
+<li>Racing first Discord messages create one session, closed, its filters active before the first model request.</li>
+<li>Home and triage, installed independently: triage opens a session from an analysis, Home follows it.</li>
+<li>A second layout and a third-party panel replace the default shell with no server change.</li>
+<li>An approval suspends a tool and the worker stops; a withdrawn permission refuses the late answer at dispatch.</li>
+<li>A future task survives a worker exit and a server restart and resumes on time with no client.</li>
+<li>Stats recover from their own cursor; opening the dashboard starts no idle worker.</li>
+<li>A reader cannot submit or reach a secret; revocation ends live references.</li>
+<li>A whole instance restored on a clean machine shows missing plugins and accounts as repair steps.</li>
+<li>One session exported, imported elsewhere, its environment and providers resolved, continued.</li>
+</ol>
+</section>
+
+<p class="colophon">Pi Roam base inventory · explainer, second edition (types and worked features) · 2026-11-09</p>
+</div></div>
+<script>(function activate(root) {
+	const replay = (f) => {
+		f.classList.remove("play");
+		void f.getBoundingClientRect();
+		f.classList.add("play");
+	};
+	const io = new IntersectionObserver(
+		(es) => {
+			for (const e of es)
+				if (e.isIntersecting) {
+					e.target.classList.add("play");
+					io.unobserve(e.target);
+				}
+		},
+		{ threshold: 0.3 },
+	);
+	root.querySelectorAll(".anim:not(.armed)").forEach((f) => {
+		f.classList.add("armed");
+		io.observe(f);
+		const b = f.querySelector(".replay");
+		if (b) b.onclick = () => replay(f);
+	});
+	root.querySelectorAll(".steps:not(.js)").forEach((s) => {
+		s.classList.add("js");
+		const ps = [...s.querySelectorAll(":scope>.step-panel")];
+		let i = 0;
+		const c = s.querySelector(".count"),
+			p = s.querySelector(".prev"),
+			n = s.querySelector(".next");
+		const show = () => {
+			ps.forEach((x, j) => x.classList.toggle("on", j === i));
+			c.textContent = `${i + 1} / ${ps.length}`;
+			p.disabled = i === 0;
+			n.disabled = i === ps.length - 1;
+			ps[i].querySelectorAll(".anim").forEach(replay);
+		};
+		p.onclick = () => {
+			i--;
+			show();
+		};
+		n.onclick = () => {
+			i++;
+			show();
+		};
+		show();
+	});
+})(document)</script>
+</body></html>

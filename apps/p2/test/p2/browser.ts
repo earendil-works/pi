@@ -17,6 +17,14 @@ export const chromium =
 export const browserTests =
 	process.env.P2_BROWSER_TESTS === "1" ||
 	(process.env.P2_BROWSER_TESTS !== "0" && process.platform !== "android" && existsSync(chromium));
+/** The composer's editor (plugins/chat/draft-editor.tsx), a contenteditable element. */
+export const COMPOSER = ".composer .draft-editor";
+/** An expression: the composer's text as shown (file pills as their labels, caret slots left out). */
+export const composerText = `document.querySelector(${JSON.stringify(COMPOSER)}).textContent.replaceAll('\u200B','')`;
+/** An expression that replaces the composer's text with `text`, as typing would (an `input` event), the caret at its end. */
+export const setComposer = (text: string): string =>
+	`(()=>{const e=document.querySelector(${JSON.stringify(COMPOSER)});e.focus();e.textContent=${JSON.stringify(text)};const s=getSelection();s.selectAllChildren(e);s.collapseToEnd();e.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText'}));})()`;
+
 export class Browser {
 	readonly process: ChildProcess;
 	readonly profile: string;
@@ -86,12 +94,41 @@ export class Browser {
 		await browser.call("Page.setLifecycleEventsEnabled", { enabled: true });
 		return browser;
 	}
-	call(method: string, params: object = {}): Promise<unknown> {
+	/** Sends a DevTools command to the page, or to an attached target's flat session (`evaluateInFrame`). */
+	call(method: string, params: object = {}, sessionId?: string): Promise<unknown> {
 		return new Promise((resolve, reject) => {
 			const id = ++this.id;
 			this.pending.set(id, { resolve, reject });
-			this.socket.send(JSON.stringify({ id, method, params }));
+			this.socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
 		});
+	}
+	/**
+	 * Evaluates `expression` in the out-of-process frame whose URL contains `url`: an artifact preview has an opaque
+	 * origin, so the page itself cannot reach into it.
+	 */
+	async evaluateInFrame<T>(url: string, expression: string): Promise<T> {
+		const { targetInfos } = (await this.call("Target.getTargets")) as {
+			targetInfos: { targetId: string; type: string; url: string }[];
+		};
+		const target = targetInfos.find((info) => info.type === "iframe" && info.url.includes(url));
+		if (!target) throw new Error(`No frame target for ${url}`);
+		const { sessionId } = (await this.call("Target.attachToTarget", {
+			targetId: target.targetId,
+			flatten: true,
+		})) as {
+			sessionId: string;
+		};
+		try {
+			const response = (await this.call(
+				"Runtime.evaluate",
+				{ expression, returnByValue: true, awaitPromise: true },
+				sessionId,
+			)) as { result: { value: T }; exceptionDetails?: unknown };
+			if (response.exceptionDetails) throw new Error(JSON.stringify(response.exceptionDetails));
+			return response.result.value;
+		} finally {
+			await this.call("Target.detachFromTarget", { sessionId }).catch(() => {});
+		}
 	}
 	async evaluate<T>(expression: string): Promise<T> {
 		const response = (await this.call("Runtime.evaluate", {
@@ -104,6 +141,17 @@ export class Browser {
 	}
 	wait(expression: string): Promise<void> {
 		return poll(() => this.evaluate<boolean>(`Boolean(${expression})`), 30_000, expression);
+	}
+	/** Gives this profile the local owner's session cookie, as the owner's sign-in link would. */
+	async signIn(owner: { readonly port: number; readonly cookie: string }): Promise<void> {
+		const [name, value] = owner.cookie.split("=", 2) as [string, string];
+		await this.call("Network.setCookie", {
+			name,
+			value,
+			url: `http://127.0.0.1:${owner.port}/`,
+			httpOnly: true,
+			sameSite: "Lax",
+		});
 	}
 	async metrics(width: number, height: number): Promise<void> {
 		await this.call("Emulation.setDeviceMetricsOverride", {
@@ -134,6 +182,18 @@ export class Browser {
 			`(() => {const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()`,
 		);
 		await this.clickPoint(point.x, point.y);
+	}
+	/**
+	 * Opens the Settings window from the sidebar's gear (a click in the page: on phones the drawer may be closed) and
+	 * then its section `label`, and waits for that section's page.
+	 */
+	async openSettings(label: string): Promise<void> {
+		await this.wait(`document.querySelector('.drawer-foot .settings-open')`);
+		await this.evaluate(`document.querySelector('.drawer-foot .settings-open').click()`);
+		const item = `[...document.querySelectorAll('.settings-nav-item')].find((e) => e.textContent === ${JSON.stringify(label)})`;
+		await this.wait(item);
+		await this.evaluate(`${item}.click()`);
+		await this.wait(`document.querySelector('.settings-pane > .settings-page')`);
 	}
 	async clickPoint(x: number, y: number): Promise<void> {
 		await this.call("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });

@@ -1,5 +1,6 @@
 // The member check (Q14): an implementation is one variant with exactly that variant's members, methods being
-// functions and state members JSON watchables; and the resolution of what Chord follows behind every derive's declared
+// functions, state members JSON watchables and event members the attempt's own sources or references' event members
+// (decision "Events: fire-and-forget members"); and the resolution of what Chord follows behind every derive's declared
 // sources (JSON and native) and every contribution to a registry (slice 8).
 //
 // The rule for watches across attempts (decision "References are the only indirection"): consumers' watches and
@@ -22,7 +23,10 @@ import {
 	type RegistryRecord,
 } from "../registries/internal.ts";
 import { type Derive, type DeriveInput, type DeriveSource, NativeSource } from "../state/internal.ts";
+import { type EventNode, OwnEventSource, type SourceOwner } from "./events.ts";
+import { type OwnQuery, ownQueries } from "./named-query.ts";
 import { type Binding, resolveKeyed, resolveWatchable } from "./reference.ts";
+import { ReexposedEvents, ReferenceEvents } from "./reference-events.ts";
 
 /** A checked implementation, as Chord calls and follows it. */
 export type Members = {
@@ -32,6 +36,10 @@ export type Members = {
 	readonly state: ReadonlyMap<string, DeriveSource>;
 	/** The keyed members (slice 6a §12): the object's own slot, or the provider's member it re-exposes. */
 	readonly keyed: ReadonlyMap<string, KeyedBinding>;
+	/** The event members: the attempt's own sources, or nodes fed by the references they re-expose (`ReexposedEvents`). */
+	readonly events: ReadonlyMap<string, EventNode>;
+	/** The `queries` members (slice 14 §3.1): the object's own named queries, by member and query name. */
+	readonly queries: ReadonlyMap<string, ReadonlyMap<string, OwnQuery>>;
 };
 
 /**
@@ -40,41 +48,93 @@ export type Members = {
  */
 export type KeyedBinding =
 	| { readonly kind: "own"; readonly slot: KeyedSlot }
-	| { readonly kind: "reexposed"; readonly binding: Binding; readonly member: string };
+	| {
+			readonly kind: "reexposed";
+			readonly binding: Binding;
+			readonly member: string;
+			/** The host kind the re-exposed member is keyed by; `undefined` for string keys. */
+			readonly key: string | undefined;
+	  };
 
 /** A method as Chord calls it. */
 export type Method = (args: unknown, context: Context) => Promise<unknown>;
 
 /**
  * Checks what a factory returned (plugin code): a local contract's members, or a remote contract's `{ variant,
- * members }` naming one of its current variants. Errors name the variant or member (the failure cause adds the
- * object).
+ * members }` naming one of its current variants. `sources` owns the attempt's own event sources (none declared:
+ * `undefined`). Errors name the variant or member (the failure cause adds the object).
  */
 export function checkImplementation(
 	contract: Contract,
 	implementation: unknown,
+	sources: SourceOwner | undefined,
 ): { readonly variant: string | undefined; readonly members: Members } {
 	const variants = currentVariants(contract);
 	if (contract.kind === "local") {
 		// The member check establishes the shape.
-		return { variant: undefined, members: checkMembers(variants.get(LOCAL)!, implementation as Implementation) };
+		const members = checkMembers(variants.get(LOCAL)!, implementation as Implementation, sources);
+		return { variant: undefined, members };
 	}
 	// Plugin code: a remote factory returns `{ variant, members }`, which the checks below establish.
 	const { variant, members } = implementation as { readonly variant: string; readonly members: Implementation };
 	const data = variants.get(variant);
 	if (data === undefined) throw new Error(`variant ${JSON.stringify(variant)}: not a variant of ${contract.name}`);
-	return { variant, members: checkMembers(data, members) };
+	return { variant, members: checkMembers(data, members, sources) };
 }
 
 type Implementation = { readonly [member: string]: unknown };
 
+/** The `queries` members of a variant without any: shared, never written. */
+const NO_QUERIES: ReadonlyMap<string, ReadonlyMap<string, OwnQuery>> = new Map();
+
 /**
- * Checks members against a variant's (exactly its members, methods being functions, state members JSON watchables and
- * keyed members keyed document handles); a method without arguments is called with the context alone.
+ * Checks the `queries` members: each is what `self.queries` returned (an object's own named queries: a reference's
+ * are not re-exposed), with a builder for every query the contract lists, which takes the contract's argument schema.
  */
-function checkMembers({ state, methods, keyed }: VariantData, implementation: Implementation): Members {
+function checkQueries(
+	queries: VariantData["queries"],
+	own: (member: string) => unknown,
+): ReadonlyMap<string, ReadonlyMap<string, OwnQuery>> {
+	const checked = new Map<string, ReadonlyMap<string, OwnQuery>>();
+	for (const [member, { args }] of queries) {
+		const declared = ownQueries(own(member));
+		if (declared === undefined) throw new Error(`${member}: a queries member is what self.queries returned`);
+		for (const [name, schema] of args) {
+			const query = declared.get(name);
+			if (query === undefined) throw new Error(`${member}: no builder for the listed query "${name}"`);
+			query.listed(schema);
+		}
+		for (const [name, query] of declared) {
+			if (!query.checked) throw new Error(`${member}: query "${name}" is not listed and brings no argument schema`);
+		}
+		checked.set(member, declared);
+	}
+	return checked;
+}
+
+/** The event members of a variant without any: shared, never written. */
+const NO_EVENTS: ReadonlyMap<string, EventNode> = new Map();
+
+/**
+ * Checks members against a variant's (exactly its members, methods being functions, state members JSON watchables,
+ * keyed members keyed document handles and event members the attempt's own sources or references' event members); a
+ * method without arguments is called with the context alone.
+ */
+function checkMembers(
+	{ state, methods, keyed, events, queries }: VariantData,
+	implementation: Implementation,
+	sources: SourceOwner | undefined,
+): Members {
 	for (const member of Object.keys(implementation)) {
-		if (!state.has(member) && !methods.has(member) && !keyed.has(member)) throw new Error(`${member}: not a member`);
+		if (
+			!state.has(member) &&
+			!methods.has(member) &&
+			!keyed.has(member) &&
+			!events.has(member) &&
+			!queries.has(member)
+		) {
+			throw new Error(`${member}: not a member`);
+		}
 	}
 	// Own properties only: an inherited `toString` is no implementation of a member named so.
 	const own = (member: string): unknown =>
@@ -83,6 +143,8 @@ function checkMembers({ state, methods, keyed }: VariantData, implementation: Im
 		methods: new Map<string, Method>(),
 		state: new Map<string, DeriveSource>(),
 		keyed: new Map<string, KeyedBinding>(),
+		events: NO_EVENTS,
+		queries: NO_QUERIES,
 	};
 	for (const [member, data] of methods) {
 		const method = own(member);
@@ -97,12 +159,43 @@ function checkMembers({ state, methods, keyed }: VariantData, implementation: Im
 		if (source === undefined) throw new Error(`${member}: a state member is a JSON watchable`);
 		checked.state.set(member, source);
 	}
-	for (const member of keyed.keys()) {
+	for (const [member, { key }] of keyed) {
 		const resolved = resolveKeyed(own(member));
 		if (resolved === undefined) throw new Error(`${member}: a keyed member is a keyed document handle`);
+		// Declaration policy: the handle's keys are the member's (strings, or addresses of its host kind).
+		const keys = resolved.kind === "own" ? resolved.slot.definition.current.host?.kind : resolved.key;
+		if (keys !== key?.kind) {
+			const what = (kind: string | undefined) => (kind === undefined ? "string keys" : `addresses of ${kind}`);
+			throw new Error(`${member}: declared with ${what(key?.kind)}, implemented with ${what(keys)}`);
+		}
 		checked.keyed.set(member, resolved);
 	}
+	if (events.size > 0) checked.events = checkEvents(events, own, sources);
+	if (queries.size > 0) checked.queries = checkQueries(queries, own);
 	return checked;
+}
+
+/**
+ * Checks event members: each is the attempt's own source (owned by `sources`) or a reference's event member, re-exposed
+ * (the declaration boundary, Q14: only Chord-made event members).
+ */
+function checkEvents(
+	events: ReadonlyMap<string, unknown>,
+	own: (member: string) => unknown,
+	sources: SourceOwner | undefined,
+): ReadonlyMap<string, EventNode> {
+	const nodes = new Map<string, EventNode>();
+	for (const member of events.keys()) {
+		const value = own(member);
+		if (value instanceof OwnEventSource && sources !== undefined && value.ownedBy(sources)) {
+			nodes.set(member, value);
+		} else if (value instanceof ReferenceEvents) {
+			nodes.set(member, new ReexposedEvents(value));
+		} else {
+			throw new Error(`${member}: an event member is this object's own self.events() or a reference's event member`);
+		}
+	}
+	return nodes;
 }
 
 /**

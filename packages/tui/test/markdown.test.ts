@@ -124,6 +124,21 @@ describe("Markdown component", () => {
 		});
 	});
 
+	describe("Images", () => {
+		it("keeps hard breaks after an inline image as separate rows", () => {
+			setCapabilities({ images: "kitty", trueColor: false, hyperlinks: false });
+			const image = "\x1b_Ga=T,f=100,q=2,c=20,r=3,C=1;AAAA\x1b\\";
+			const markdown = new Markdown(`\`${image}\`  \n\` \`  \n\` \`\n\n- one`, 0, 0, defaultMarkdownTheme);
+			const lines = markdown.render(80);
+			assert.ok(lines.every((line) => !line.includes("\n")));
+			assert.ok(lines[0].includes(image));
+			assert.deepStrictEqual(
+				lines.slice(1).map((line) => stripAnsi(line).trim()),
+				["", "", "", "- one"],
+			);
+		});
+	});
+
 	describe("Lists", () => {
 		it("should render simple nested list", () => {
 			const markdown = new Markdown(
@@ -959,6 +974,21 @@ A=
 				.render(80)
 				.map((line) => stripAnsi(line).trimEnd());
 			assert.deepStrictEqual(shellLines, [shellVariables]);
+		});
+
+		it("keeps Markdown after an unclosed currency dollar sign", () => {
+			const cases = [
+				["Costs +$50 for **this** option.", ["Costs +$50 for this option."]],
+				["**A:** costs +$50 (once).\n**B:** next.", ["A: costs +$50 (once).", "B: next."]],
+				["**A:** costs $x + y\n**B:** next.", ["A: costs $x + y", "B: next."]],
+			] as const;
+
+			for (const [source, expected] of cases) {
+				const lines = new Markdown(source, 0, 0, defaultMarkdownTheme)
+					.render(80)
+					.map((line) => stripAnsi(line).trimEnd());
+				assert.deepStrictEqual(lines, expected);
+			}
 		});
 
 		it("preserves unsupported and incomplete LaTeX exactly", () => {
@@ -1832,6 +1862,17 @@ bar`,
 			const output = new Markdown(source, 0, 0, defaultMarkdownTheme).render(160).join("");
 			assert.ok(output.includes("\x1b]8;;https://example.com\x1b\\"));
 			assert.ok(stripAnsi(output).includes("\x1b]8;;\x1b\\.，后面的中文"));
+		});
+
+		it("should not hyperlink a bare URL that runs into a very long line", () => {
+			// A bare URL ends only at whitespace, so it can swallow a long base64 line. Wrapping re-opens
+			// a hyperlink on every line with the full URL, which made the output quadratic in its length.
+			setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+			const url = `https://example.com/path,data:${"x".repeat(20_000)}`;
+			const output = new Markdown(url, 0, 0, defaultMarkdownTheme).render(80).join("");
+			assert.ok(!output.includes("\x1b]8;"));
+			assert.ok(output.length < 3 * url.length);
+			assert.strictEqual(stripAnsi(output).replace(/\s/g, ""), url);
 		});
 
 		it("should not duplicate URL for autolinked emails", () => {

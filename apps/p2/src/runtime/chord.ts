@@ -72,12 +72,9 @@ export const sessionHost = ({ session }: { readonly session: string }) => Sessio
 /** Params fields (Chord's typed schemas): a required string, integer, boolean or one of some strings. */
 export const param = { str, int, bool, oneOf };
 
-/** An `invalid` ChordError with `reason` (`args`, `params`, …): a request p2 refuses as malformed. */
-export const invalid = (reason: string, message: string): ChordError =>
-	new ChordError({ code: "invalid", reason, message } as never);
-
-/** A `forbidden` ChordError (p2's access checks in factories, methods and routes). */
-export const forbidden = (message: string): ChordError => new ChordError({ code: "forbidden", message });
+// Chord's decided errors for plugins: `invalid(reason, message)` for refused arguments or params, `forbidden(message)`
+// for a refused principal.
+export { forbidden, invalid } from "@earendil-works/chord";
 
 type Variants<R> = R extends { readonly variant: infer V } ? Exclude<V, undefined> : never;
 /** The variants of a reference to `C` (remote types), or `never`. */
@@ -180,8 +177,27 @@ export function hostErrorText(error: HostError): string {
 		case "transaction_cancelled":
 			return `${error.object}: a transaction was cancelled before it committed (${message(error.error)})`;
 	}
-	const failure = "error" in error ? error.error : "failure" in error ? error.failure.error : undefined;
-	return `${error.kind}: ${message(failure)}`;
+	return `${error.kind}: ${message(hostErrorCause(error))}`;
+}
+
+/** What a host error carries as its cause: its error, its failure's error, or nothing for the kinds without one. */
+export function hostErrorCause(error: HostError): unknown {
+	switch (error.kind) {
+		case "activation_failed":
+		case "object_failed":
+			return error.failure.error;
+		case "close_timeout":
+		case "drain_timeout":
+		case "job_interrupted":
+		case "job_dropped":
+		case "parked_long":
+		case "registry_undeclared":
+		case "registry_conflict":
+		case "contribution_refused":
+			return undefined;
+		default:
+			return error.error;
+	}
 }
 
 /**
@@ -228,5 +244,27 @@ export function serveKeyed<V>(host: FacetHost, registry: KeyedRegistry<V>): void
 	host.serve(registry, {
 		compose: (table, { report }) =>
 			new Map([...keyedEntries(table, (value) => value, report)].map(([key, item]) => [key, item.value])),
+	});
+}
+
+/**
+ * A state source following a native that tells listeners of its changes (`subscribe` returns the stop): `self.follow`
+ * of a synchronous observer, so the state is the native's, never a copy a routine keeps. Its value is `read()` at
+ * activation and after every change, sent whole (`[["r", value]]`: derives over it diff for the wire). Both run once
+ * the object's natives opened, so they may read a native's `.value`. A change the native makes inside a method
+ * reaches the source before the method's answer (an off-batch change commits on the next microtask).
+ */
+export function followNative<T>(
+	self: Self,
+	subscribe: (changed: () => void) => () => void,
+	read: () => T,
+): Watchable<T> {
+	return self.follow(async (observer, context) => {
+		const detach = subscribe(() => {
+			const value = read();
+			// JSON at runtime: `read` gives the native's plain data (optional fields TypeScript does not see as JSON).
+			observer.advance({ kind: "value", value, ops: [["r", value as never]], retired: false }, context);
+		});
+		return { value: read(), detach };
 	});
 }

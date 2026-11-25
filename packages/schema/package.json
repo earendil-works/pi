@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-schema",
-	"version": "1.5.0",
+	"version": "1.6.0",
 	"description": "JSON Schema validation without eval: drafts 2020-12 and 7, compiled into plain closures",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -22,7 +22,7 @@
 		"dist",
 		"README.md",
 		"CHANGELOG.md",
-		"LICENSES"
+		"THIRD_PARTY_NOTICES"
 	],
 	"scripts": {
 		"clean": "node ../../scripts/package-files.mjs clean dist",

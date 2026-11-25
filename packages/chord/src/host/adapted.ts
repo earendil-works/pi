@@ -2,8 +2,9 @@
 // shared mapping for the consumers of one older version its provider accepts. Per state member one derive of the
 // instance's member through `(current) => old` (a changed member), of its variant's whole state through `(state) => old`
 // (a removed member), or the member itself (unchanged), made on first use; per key of a keyed member one derive of the
-// key's document through the member's mapping, shared by the references holding it. One map and one diff per commit
-// per version, whatever the number of old references. Dropped when no reference of the version is left, gone with the
+// key's document through the member's mapping, shared by the references holding it; per changed event member one node
+// mapping each value once per emit (decision "Events: fire-and-forget members"). One map and one diff per commit per
+// version, whatever the number of old references. Dropped when no reference of the version is left, gone with the
 // instance; references move to a new instance's mappings as to any new instance. A version the provider does not
 // accept, or a refused member, gives no member (`contract_mismatch`): its consumers wait unbound.
 
@@ -13,15 +14,18 @@ import { ChordError } from "../data/index.ts";
 import type { JsonValue } from "../json.ts";
 import type { Batch } from "../state/batch.ts";
 import { Derive, type DeriveSource } from "../state/internal.ts";
+import type { ChordMetrics } from "../telemetry.ts";
+import { type EventEntry, type EventFlush, EventNode, type Tap } from "./events.ts";
 import type { Served } from "./object.ts";
 
 /** A state mapping as an accepts table holds it (checked by `checkAccepts`). */
 type StateMapping = ((current: never) => unknown) | "refuse";
 
-/** One older version's mappings, as `checkAccepts` checked them: remote state by variant, local state flat. */
+/** One older version's mappings, as `checkAccepts` checked them: remote state and events by variant, local flat. */
 type VersionMappings = {
 	readonly state?: { readonly [key: string]: StateMapping | { readonly [member: string]: StateMapping } };
 	readonly keyed?: { readonly [member: string]: StateMapping };
+	readonly events?: { readonly [key: string]: StateMapping | { readonly [member: string]: StateMapping } };
 };
 
 /** What the mappings of one instance read: its provider, its variant, its own members, its host's batch and reports. */
@@ -32,8 +36,14 @@ export type AdaptedInstance = {
 	readonly batch: Batch;
 	/** The instance's state member `member` (`invalid/member` when its variant has none). */
 	member(member: string): DeriveSource;
+	/** The instance's event member `member`'s node; `undefined` when its variant has none. */
+	event(member: string): EventNode | undefined;
 	/** Reports a mapping derive's failure (`derive_failed`). */
 	report(member: string, error: unknown): void;
+	/** Reports an event mapping's failure (`event_mapping_failed`), once per failure episode. */
+	reportEvent(member: string, error: unknown): void;
+	/** The host's instruments: an event dropped by its mapping is counted (`chord.events.dropped`). */
+	readonly metrics: ChordMetrics;
 };
 
 /** A key's mapping derive, shared by the references holding the key at this version. */
@@ -56,6 +66,10 @@ export function refusal(served: Served, version: number, variant: string | undef
 	for (const member of old?.keyed.keys() ?? []) {
 		if (mappings?.keyed?.[member] === "refuse") return refused(contract, version, member);
 	}
+	for (const member of old?.events.keys() ?? []) {
+		if (sectionMapping(served, mappings?.events, variant, member) === "refuse")
+			return refused(contract, version, member);
+	}
 	return undefined;
 }
 
@@ -69,6 +83,8 @@ export class AdaptedMembers {
 	readonly #derives = new Set<Derive>();
 	/** The keys held so far, by the instance's key document. */
 	#keys: Map<string, Map<DeriveSource, MappedKey>> | undefined;
+	/** The event members mapped so far, each tapping the instance's node; made by the first. */
+	#events: Map<string, MappedEvents> | undefined;
 
 	constructor(instance: AdaptedInstance, version: number) {
 		this.#instance = instance;
@@ -140,8 +156,34 @@ export class AdaptedMembers {
 		return this.#keyed(member);
 	}
 
+	/**
+	 * Event member `member`'s node as this version's bindings tap it: the instance's own when unchanged since, a mapping
+	 * node (made by the first use) when changed; `undefined` when this version is not accepted, or the current variant
+	 * lacks the member (removed since: an older consumer receives none of it).
+	 */
+	event(member: string): EventNode | undefined {
+		const instance = this.#instance;
+		const { served, variant } = instance;
+		if (!served.provider.accepted.some(({ version }) => version === this.version)) return undefined;
+		const node = instance.event(member);
+		if (node === undefined) return undefined;
+		const mapping = sectionMapping(served, this.#mappings?.events, variant, member);
+		if (mapping === undefined) return node;
+		// A refused member refused the binding (`refusal`): no binding of this version taps it.
+		if (mapping === "refuse") return undefined;
+		this.#events ??= new Map();
+		let mapped = this.#events.get(member);
+		if (mapped === undefined) {
+			mapped = new MappedEvents(node, mapping, (error) => instance.reportEvent(member, error), instance.metrics);
+			this.#events.set(member, mapped);
+		}
+		return mapped;
+	}
+
 	/** Its instance ended, or the version's last reference left: its derives go (their watches end with `error`). */
 	detach(error: Error): void {
+		for (const mapped of this.#events?.values() ?? []) mapped.detach();
+		this.#events = undefined;
 		for (const derive of this.#derives) derive.detach(error);
 		this.#derives.clear();
 		this.#members.clear();
@@ -236,11 +278,68 @@ function stateMapping(
 	variant: string | undefined,
 	member: string,
 ): StateMapping | undefined {
-	const state = mappings?.state;
-	if (state === undefined) return undefined;
-	if (served.contract.kind === "local") return state[member] as StateMapping | undefined;
-	const section = state[variant ?? ""] as { readonly [member: string]: StateMapping } | undefined;
-	return section?.[member];
+	return sectionMapping(served, mappings?.state, variant, member);
+}
+
+/**
+ * The mapping of member `member` of `variant` in a section of state or events mappings (a remote contract's by variant,
+ * a local one's flat); `undefined` when it is unchanged.
+ */
+function sectionMapping(
+	served: Served,
+	section: VersionMappings["state"] | undefined,
+	variant: string | undefined,
+	member: string,
+): StateMapping | undefined {
+	if (section === undefined) return undefined;
+	if (served.contract.kind === "local") return section[member] as StateMapping | undefined;
+	const mappings = section[variant ?? ""] as { readonly [member: string]: StateMapping } | undefined;
+	return mappings?.[member];
+}
+
+/**
+ * An older version's event member: a node tapping the instance's (every entry), mapping each value once for all of
+ * this version's bindings, delivered to them with its stamp and counter value. A mapping that throws drops that emit
+ * for this version only (counted), reported once per failure episode, and is tried again at the next emit.
+ */
+class MappedEvents extends EventNode {
+	readonly #source: EventNode;
+	readonly #tap: Tap;
+	#failing = false;
+
+	constructor(
+		source: EventNode,
+		mapping: (current: never) => unknown,
+		report: (error: unknown) => void,
+		metrics: ChordMetrics,
+	) {
+		super();
+		this.#source = source;
+		const deliver = (entry: EventEntry, flush: EventFlush): void => {
+			if (!this.tapped) return;
+			let value: JsonValue;
+			try {
+				// The provider's mapping, typed by its contract; its result is the old shape (not validated).
+				value = mapping(entry.value as never) as JsonValue;
+			} catch (error) {
+				metrics.counter("chord.events.dropped").add(1, { reason: "mapping" });
+				if (!this.#failing) report(error);
+				this.#failing = true;
+				return;
+			}
+			this.#failing = false;
+			this.deliver({ node: this, value, at: entry.at, n: entry.n, part: undefined }, flush);
+		};
+		// Every entry: its own bindings judge them by their counter values.
+		this.#tap = { boundAt: Number.NEGATIVE_INFINITY, deliver };
+		source.tap(this.#tap);
+	}
+
+	/** Its version's last binding left, or its instance ended: it maps nothing more. */
+	detach(): void {
+		this.#source.untap(this.#tap);
+		this.clear();
+	}
 }
 
 /** The `contract_mismatch` of a member of `version` the provider refuses. */

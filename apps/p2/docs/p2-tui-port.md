@@ -164,7 +164,7 @@ Renderers are combined at `REN/index.ts:32`.
 | `/new` | `IM:6938` | (b) `Sessions.create({cwd, env})`. A separate `/new-context` uses **new** `Chat.reset(handoff?)` (`DUR/harness/types.ts:642`). |
 | `/name` | `IM:6680` | (b) `Sessions.rename`. pi distinguishes an explicit session name; p2 rows have only `title` (`P2/plugins/sessions/contract.ts:9-20`). |
 | `/session` | `IM:6705` | (b) Section 1.16 provenance. |
-| `/tree`, `/fork`, `/clone`, double-Esc action | `CMP/tree-selector.ts:1336`, `CMP/user-message-selector.ts:110`, `IM:5571`, `IM:5512`, `IM:5550`, `IM:3070-3093` | (c) `/tree` and double-Esc; (d) `/fork` and `/clone` via **new** `Sessions.fork` (`DUR/harness/types.ts:663`). |
+| `/tree`, `/fork`, `/clone`, double-Esc action | `CMP/tree-selector.ts:1336`, `CMP/user-message-selector.ts:110`, `IM:5571`, `IM:5512`, `IM:5550`, `IM:3070-3093` | (b) `/tree` and double-Esc on Durable forks (`docs/tree.md`); (d) `/fork` and `/clone` via **new** `Sessions.fork` (`DUR/harness/types.ts:663`). |
 | `/export`, `/import` | `IM:6532`, `IM:6579` | (c) |
 | `/share` | `IM:6623` | p2 sharing overlay (`P2/plugins/sharing/contract.ts:90`). |
 | `/compact [instructions]` | `IM:7092` | (b) **new** `Chat.compact` (`DUR/harness/types.ts:647`). |
@@ -179,7 +179,7 @@ registered only in the phase that implements it (section 10). Example: `/copy` a
 | --- | --- |
 | `/settings` | Overlay: guest UI prefs (section 4) plus a read-only view of server settings for the owner. |
 | `/model`, `/thinking`, `/scoped-models` | 1.7 |
-| `/tree`, `/export`, `/import`, `/bug`, `/changelog`, `/trust`, `/debug`, `/arminsayshi`, `/dementedelves` | (c) |
+| `/export`, `/import`, `/bug`, `/changelog`, `/trust`, `/debug`, `/arminsayshi`, `/dementedelves` | (c) |
 | `/share` | Sharing overlay |
 | `/copy` | **L:copy** with trusted confirmation (section 3.2) |
 | `/name`, `/session`, `/new`, `/resume`, `/compact` | 1.9 |
@@ -270,7 +270,7 @@ Nested keys are shown as pi spells them.
 
 | pi setting | Kind in p2 | Notes |
 | --- | --- | --- |
-| `theme`, `quietStartup`, `editorPaddingX`, `outputPad`, `autocompleteMaxVisible`, `showHardwareCursor`, `hideThinkingBlock`, `doubleEscapeAction` | **G** | `doubleEscapeAction` only supports `none` until `/tree`/`/fork` exist |
+| `theme`, `quietStartup`, `editorPaddingX`, `outputPad`, `autocompleteMaxVisible`, `showHardwareCursor`, `hideThinkingBlock`, `doubleEscapeAction` | **G** | `doubleEscapeAction`: `tree` (default, `docs/tree.md`), `fork`, `none` |
 | `terminal.clearOnShrink`, `terminal.showTerminalProgress`, `terminal.showImages`, `terminal.imageWidthCells`, `terminal.hyperlinks`, `terminal.images`, `terminal.trueColor` | **G** | Image protocol selection only matters once launcher images exist. Hyperlinks need the URL policy (section 3.4). |
 | `markdown.codeBlockIndent`, `markdown.mermaid` | **G** | |
 | `tuiMode` | (c) fullscreen only (1.1) | |
@@ -343,6 +343,10 @@ Adaptations:
   (`Subagents`) rather than by forks.
 - **Named filter.** pi's named filter becomes a "pinned" filter (`pinned` exists).
 - **Delete.** Delete means archive, with restore available in the archived scope.
+- **Activity marker.** Each row starts with the web drawer's dot (`SessionStatus`, `SessionReads`): `●` working
+  (a subagent row: its conversation), `!` a failed worker, `◦` an unread answer (owner), else blank. The column
+  is two cells wide on every row, so titles stay put when a session starts or stops. As on the web, the chat showing
+  a session's main conversation marks it read through its latest answer (`SessionReads.markRead`).
 
 Adding regex/phrase search would be a `Search` contract change (d).
 
@@ -355,7 +359,7 @@ Adding regex/phrase search would be a `Search` contract change (d).
 | Launcher (terminal, connection, sign-in, grants, consent UI, modes, output filter) | `P2/src/hosts/tui.ts`, `tui-client.ts`, `tui-config.ts`, `tui-grants.ts`, `tui-actions.ts`, `tui-trusted-ui.ts`, `tui-modes.ts`, `tui-filter.ts`, `tui-local-preferences.ts` |
 | Bundle and sandbox | `P2/src/hosts/tui-bundle.ts`, `tui-sandbox.ts`, `tui-bootstrap.mjs`, `tui-worker-runtime.ts` |
 | Runtime (screens, overlays, commands, renderer registries, context) | `P2/src/runtime/tui.ts`, `tui-commands.ts`, `tui-renderers.ts`, `tui-context.ts`, `tui-preferences.ts` |
-| Copied components | `P2/src/tui/components/` (messages, transcript, tool card, status indicators and editor, selectors, header/footer/status lines), `P2/src/tui/tools/` (tool renderers), `P2/src/tui/theme/` |
+| Copied components | `P2/src/tui/components/` (messages, transcript, tool card, status indicators and editor, selectors, header/footer/status lines), `P2/src/tui/tools/` (renderer contract, helpers, the shared shell card; the tools' own renderers moved to their plugins' TUI facets), `P2/src/tui/theme/` |
 | Runtime commands, keybindings, reload snapshot | `P2/src/tui/core-commands.ts`, `keybindings.ts`, `snapshot.ts` |
 | Chat surface: transcript `ScrollView` over the dock, pending area, working indicator, sends | `P2/plugins/chat/tui.ts` (`ChatSurface`), `tui-commands.ts` |
 | Plugin screens and cards | `P2/plugins/<name>/tui.ts` |
@@ -599,8 +603,8 @@ session the worker last reported (`navigation`).
 | `download` | C | `{kind: "file", session, id, name?}` or `{kind: "artifact", session, name, version}` | `GET /download` or `/artifact?download=1` on the fixed origin with the launcher's cookie, `redirect: "error"`, 60 s, ≤ 25 MiB (declared and streamed); saves into the download folder (launcher-only `prefs.json` `downloads`, default `~/Downloads/p2`) under a sanitized name with `O_EXCL` (`name (1).ext`, never overwrites); partial files are removed. The local path is shown in a notice, never returned (`{saved: true}`). |
 | `editor.external` | K `app.editor.external` (Ctrl+G) | — | Asks `editorText` → `{text}` (null when there is no editable editor), writes a 0600 temp file, lends the terminal (worker IO suspended, modes undone, terminal stopped), runs the command by argv, restores, and sends `editorResult` `{text}` through the grant, so it is dropped after navigation or a swap. The command is launcher-only: `prefs.json` `externalEditor`, pi's `externalEditor`, `$VISUAL`, `$EDITOR`, then `nano`/`notepad`; split into argv without a shell (quotes group). |
 | `suspend` | K `app.suspend` (Ctrl+Z) | — | Lends the terminal and raises SIGTSTP (keep-alive, SIGINT ignored while stopped); on SIGCONT restores modes and the worker redraws. Not on Windows. |
-| `devCommand` | C, owner | `{action: "reload"}` (nothing else) | `POST /__p2_dev` with the launcher's sign-in and exact Origin; returns `{message}` from the server. The server decides whether it is a dev server. |
-| `signOut` | C, owner | `{all: boolean}` | `POST /owner/logout` or `/owner/logout-all`. Denied for guests, and `all: false` on loopback (the device owner has no cookie). The server then revokes the connection, so the launcher shows "Signed out on this device." and the owner-link prompt (P0a), forgetting the cookie. |
+| `devCommand` | C, owner | `{action: "reload"}` or `{action: "restart"}` (nothing else) | `POST /__p2_dev` with the launcher's sign-in and exact Origin; returns `{message}` from the server. The server decides whether it is a dev server (a restart also needs the `npm run dev` supervisor). A restart runs without the consent screen (`ask: false`: it only asks the server the worker came from to restart itself); the server answers before it stops, and a request that drops anyway returns "Restart requested; reconnecting…". |
+| `signOut` | C, owner | `{all: boolean}` | `POST /owner/logout` or `/owner/logout-all`. Denied for guests, and `all: false` on loopback (a local sign-in comes back from the owner key at once). The server then revokes the connection, so the launcher shows "Signed out on this device." and the owner-link prompt (P0a), forgetting the cookie. |
 
 Worker side: the chat surface answers `copyText`, `editorText` and `editorResult` (`registerLauncherAnswers`,
 `P2/plugins/chat/tui-commands.ts`) and registers `/copy` (`p2.chat.copy`). `copy.selection` (kind `gesture`,
@@ -643,8 +647,8 @@ The worker cannot open the terminals byte channel (a separate authenticated upgr
   or the session was archived: delete the stored cookie and prompt for a new link.
 - **Revocation while running.** If `Access` becomes gone or forbidden, show a launcher-drawn notice ("Access to this
   session ended") and exit or prompt. No guest preferences or presence are sent before admission succeeds.
-- **Loopback.** Direct loopback is always the device owner (`P2/src/hosts/tui-config.ts:60-62`), so guest admission
-  applies to remote origins and proxied local origins.
+- **Loopback.** Direct loopback signs in as the local owner with the data directory's owner key
+  (`P2/src/hosts/tui-config.ts`), so guest admission applies to remote origins and proxied local origins.
 - **Presence.** After admission the worker holds `GuestPresence` and shows "Guest · name · view/full" in the header.
 
 **As implemented (P0a).**
@@ -658,11 +662,9 @@ The worker cannot open the terminals byte channel (a separate authenticated upgr
   identity (the server's rule). Server error text is reduced to one plain line. The invitation is never stored.
 - **Storage.** `config.json` keeps a guest beside the owner cookie per origin: `{cookie?, guest?: {cookie, session}}`.
 - **Start.** Remote origins: a valid owner cookie (`/owner/check`), else a valid guest cookie (`HEAD /__p2_tui`;
-  401/403 forgets it and prompts again), else the prompt. Loopback is the device owner; a stored guest cookie never
-  downgrades it. **Deviation:** an explicit `--join` on loopback joins as a guest for that run (useful for trying a
-  guest view locally). Note that on loopback the server itself treats a cookie-less request as the device owner, so a
-  revoked loopback guest silently becomes the owner on reconnect; revocation detection therefore applies to remote
-  origins.
+  401/403 forgets it and prompts again), else the prompt. Loopback is the local owner (by the data directory's owner key); a stored guest cookie
+  never downgrades it. **Deviation:** an explicit `--join` on loopback joins as a guest for that run (useful for trying
+  a guest view locally).
 - **Revocation while running** (`P2/src/hosts/tui-client.ts`, `P2/src/hosts/tui.ts`). A WebSocket upgrade refused
   with 401/403, or a 401/403 from the bundle poll, is confirmed by the launcher's own `HEAD /__p2_tui` (the web page
   asks the same question with `HEAD /`). The client closes and, on the restored terminal, the launcher prints the web
@@ -1157,13 +1159,13 @@ Requests are debounced (~80 ms), aborted when superseded, and inserted as `@path
 | Web feature | Source | TUI exposure |
 | --- | --- | --- |
 | Shell, navigation, drawer | `P2/plugins/web-shell/web.tsx`, `P2/src/web/AppLayout.tsx`, `P2/src/web/navigation.ts` | Screens + overlays; Ctrl+R and `/resume` instead of a sidebar |
-| Sessions grouped by env:cwd, pinned, busy, children | `P2/src/web/Drawer.tsx` | Session selector (1.9, 1.17) |
+| Sessions grouped by env:cwd, pinned, busy, children | `P2/plugins/sessions/sidebar/` | Session selector (1.9, 1.17) |
 | New session (env + directory browser, model, first prompt) | `P2/src/web/new-session.tsx`, `P2/plugins/envs/DirectoryPicker.tsx` | `/new` overlay (`Envs.envs`, `Envs.listDirectory`) |
-| Session options (rename, pin, archive/restore, relocate) | `P2/plugins/sessions/SessionOptions.tsx` | `/name`, `sessions.pin`, `sessions.archive`, `sessions.relocate` |
-| Search, archived | `P2/plugins/search`, `P2/src/web/Drawer.tsx` | Session selector (1.17) |
+| Session options (rename, pin, archive/restore, relocate) | `P2/plugins/sessions/web.tsx` (Session sheet) | `/name`, `sessions.pin`, `sessions.archive`, `sessions.relocate` |
+| Search, archived | `P2/plugins/search`, `P2/plugins/sessions/sidebar/ListPage.tsx` | Session selector (1.17) |
 | Transcript, tool cards | `P2/src/web/Chat.tsx`, `P2/src/web/Markdown.tsx`, `P2/src/web/Code.tsx` | 1.3, 1.4 |
 | Composer (steer/follow-up, stop, queue edit, attachments, drag/drop) | `P2/plugins/chat/web.tsx:83-200`, `P2/src/web/composer-state.tsx` | Editor, pending area, attachments via **L:pasteImage/attach** shown as chips in a `composer:attachments` widget |
-| Model/thinking sheet | `P2/src/web/ModelPicker.tsx` | 1.7 |
+| Model/thinking (footer links, command menu pages) | `P2/plugins/chat/commands.tsx` | 1.7 |
 | Cost, context, cache, viewers | `P2/src/web/CostPanel.tsx`, `P2/src/web/SessionStats.tsx` | Footer and `/session` (1.16); viewers from `SessionMetrics.clients` |
 | Owner notices, dev reload, worker retry | `P2/src/web/OwnerNotices.tsx`, `WorkerControl.retry` | Notification widget; `/retry-worker`; `/reload` (owner) |
 | Logs | `P2/plugins/logs/web.tsx` | `/logs` overlay |
@@ -1413,7 +1415,7 @@ contract), so no plugin gains a dependency.
   the viewed session's worker log (else the server's), follows the tail and Tab cycles sources. A failed session
   worker (`SessionStatus.error`) is reported once with `/retry-worker` (`WorkerControl.retry`). **Deviation:** dev
   reload is `/dev-reload`, not `/reload` (that is the TUI's own reload, P0c). The dev channel `/__p2_dev` is an owner
-  HTTP route, so the command asks the launcher for a C action `devCommand` (`{action: "reload"}`). The launcher action
+  HTTP route, so the command asks the launcher for a C action `devCommand` (`{action: "reload"}`; `/dev-restart` sends `{action: "restart"}`). The launcher action
   exists since P5 (3.6b).
 - **P11e** (`P2/plugins/envs/tui.ts`): `/envs` is the one environment screen. Enter moves the viewed session to the
   selected environment (section 10.6). Management is on secondary keys:
@@ -1437,7 +1439,7 @@ contract), so no plugin gains a dependency.
   Participants only (`when: participant`), so view-only guests never acquire `Workspace`. Git's unified patch is
   converted to pi's numbered diff lines (`piDiff`) for the copied `renderDiff`. Worker text is sanitized line by line
   (`lineText`). Comments, commits and uploads stay on the web.
-- **Owner panels** (`/logs`, `/notices`, `/retry-worker`, `/dev-reload`, `/envs`, `/ports`, `/devices`, `/share`)
+- **Owner panels** (`/logs`, `/notices`, `/retry-worker`, `/dev-reload`, `/dev-restart`, `/envs`, `/ports`, `/devices`, `/share`)
   are `when: owner`; the notice and worker-status watches start only for owners. A test asserts that guests acquire
   none of them.
 - **P11a** (`P2/plugins/sharing/tui.ts`): `/share` (owner) is the web's share sheet: the read-only and read/write
@@ -1450,7 +1452,8 @@ contract), so no plugin gains a dependency.
   editor would be (the web's read-only bar). GuestPresence is still held from the `widget-above:sharing` slot.
 - **P11c**:
   - **Artifacts** (`P2/plugins/artifacts/tui.ts`). The card adds "/artifacts opens". For text and Markdown it shows
-    the content the call wrote: 8 lines, all when expanded.
+    the content the call wrote: 8 lines, all when expanded. A call with `inline: true` shows all of it at once,
+    Markdown rendered; inline HTML and SVG keep the card line.
   - **`/artifacts`** lists `ArtifactList`. Enter shows an artifact inline: Markdown rendered with the instance
     theme, text and HTML/SVG source as sanitized lines. HTML/SVG carry a "Source only" note, because they run only in
     a browser. Ctrl+B is `openUrl` `{kind: "origin", path: "/artifact?…"}` and Ctrl+S is `download`
@@ -1470,9 +1473,9 @@ contract), so no plugin gains a dependency.
   - Bounding and never overwriting downloads are the launcher's job (3.6b).
 - **Launcher results** (`P2/src/tui/grant-notice.ts`): `ok` shows the action's notice and `denied` (declined) shows
   nothing. `failed` says the launcher showed its own message, since the worker never learns it. `busy` and
-  `cancelled` are named. `/dev-reload` shows the server's `{message}` (e.g. "No dirty plugins"). `/devices` sign-out
-  of "this device" on loopback is refused by the launcher (`denied`, "Not signed out"), because the device owner has
-  no cookie.
+  `cancelled` are named. `/dev-reload` and `/dev-restart` show the server's `{message}` (e.g. "No dirty plugins"). `/devices` sign-out
+  of "this device" on loopback is refused by the launcher (`denied`, "Not signed out"), because a local sign-in comes
+  back from the owner key at once.
 - `ListOverlay` footers wrap (at most three lines each), and `TextViewer` passes the width to its lines, so Markdown
   wraps.
 
@@ -1570,8 +1573,8 @@ Tests: `P2/test/p2/shell.test.ts` (a bare session host with real Durable and a r
   - One command at a time; Escape cancels.
 - **Contract.**
   - `Chat` is version 4 (versions 2 and 3 are accepted as they are).
-  - Participants get `shell({command, includeInContext, requestId})` → `{shellId}` and `abortShell({shellId})` →
-    `{aborted}`.
+  - Participants get `shell({command, includeInContext, requestId})` → `{shellId}` (the `requestId`, so a TUI shows
+    the command's block under its final ID before the state arrives) and `abortShell({shellId})` → `{aborted}`.
   - Both variants get the state `liveShell` (a state member cannot share the method's name):
     `{id, command, author, includeInContext, output, truncated, running, exitCode?, cancelled, error?} | null`.
   - **Who may:** anyone who may send, so full guests too, as tools run commands for them. Viewers watch.
@@ -1579,21 +1582,24 @@ Tests: `P2/test/p2/shell.test.ts` (a bare session host with real Durable and a r
   - **Cancelling:** the command's author or the owner.
   - **One at a time per conversation;** a second command is refused with pi's text (`SHELL_BUSY`).
   - **Retries:** a call with the same request ID runs once.
-- **Worker** (`P2/plugins/chat/worker.ts`; the shared `Conversation` object runs it, `runShell`/`abortShell`):
+- **Worker** (`P2/plugins/chat/shell.ts`; the worker's `ShellCommands` object, which `Chat` holds):
+  - A command is a Chord job (`p2.shell-commands.run`): `Chat.shell` returns once the run is started (committed with
+    the request ID it dedupes, among the last 100 starts per author), so `liveShell` shows it when the call answers.
   - The command runs on the conversation's environment, `Harness.environments.at(agent.cwd)`: local or remote, and
     a subagent's own cwd.
   - It uses the bash tool's settings (`inheritEnv`, spill and an output window at Durable's 2000 lines / 50 KiB,
     sampled every 200 ms at 100 KiB/s).
-  - The kept tail is published as `liveShell`.
-  - It runs as one active call (`Liveness.call`), so the worker stays up, and a move or clone waits for it. It runs
-    under its own root context (the method returns at once). Closing the object cancels it.
+  - The kept tail is the run's state document, which `liveShell` shows.
+  - A running job keeps the worker up (`host.activity.jobs`) and counts as one active call (`Liveness`, from before
+    its start until its run ends), so a move or a clone waits for it. `abortShell` aborts the run and answers once
+    `liveShell` shows it cancelled. A reload of the chat plugin or the worker's end aborts it.
   - When it ends, a Durable write submission places a `p2.shell` entry (`P2/src/runtime/shell.ts`, `ShellData`:
     author, command, output tail, `exitCode`, `cancelled`, `truncated`, `fullOutputPath`, `includeInContext`, `error`).
-  - **`!`:** the entry also carries a user message (the speaker block plus pi's `bashExecutionToText`,
+  - **`!`:** the entry also carries a user message (the sender block plus pi's `bashExecutionToText`,
     `shellContextText`). The agent reads it on its next run, and no run starts now.
   - **`!!`:** the entry is display-only.
-  - **Busy agent:** while the agent runs, the entry is placed at the run's next boundary, like any write.
-    `liveShell` clears once it is placed.
+  - **Busy agent:** while the agent runs, the entry is placed at the run's next boundary, like any write. The run
+    waits for the placement, so `liveShell` clears once the entry shows.
   - The data has no `text` field, so no reader takes it for a person's message.
   - **Deviation:** a command is not refused during a compaction; the write's placement keeps the order.
 - **TUI** (`P2/plugins/chat/tui.ts`):
@@ -1693,7 +1699,7 @@ Tests: `P2/test/p2/fork-clone.test.ts` (real server and workers, fake provider),
     session".
   - **`/clone`** (`p2.session.clone`, owner) opens the copy ("Cloned to new session").
   - **Double Escape:** `doubleEscapeAction: "fork"` opens the picker on a second Escape within 500 ms on an empty,
-    idle editor (owner). `"tree"` behaves as `"none"` (no `/tree`).
+    idle editor (owner); `"tree"` (the default, as in pi) opens `/tree` (`docs/tree.md`).
 - **Web:** no UI yet.
 
 ---

@@ -79,6 +79,7 @@ describe("Anthropic strict tool schemas", () => {
 			type: "object",
 			properties: legacyParameters.properties,
 			required: legacyParameters.required,
+			additionalProperties: false,
 		});
 
 		const strictTool = await captureFirstTool(
@@ -121,6 +122,26 @@ describe("Anthropic strict tool schemas", () => {
 				...definitions,
 			});
 		}
+	});
+
+	// https://github.com/earendil-works/pi/issues/12212
+	it("preserves the declared dialect and tuple syntax in non-strict schemas", async () => {
+		const parameters = {
+			$schema: "http://json-schema.org/draft-07/schema#",
+			type: "object",
+			properties: {
+				pair: {
+					type: "array",
+					items: [{ type: "string" }, { type: "string" }],
+					minItems: 2,
+					maxItems: 2,
+				},
+			},
+			required: ["pair"],
+		} as unknown as Tool["parameters"];
+		const tool = await captureFirstTool(createTool(parameters));
+		expect(tool.strict).toBeUndefined();
+		expect(tool.input_schema).toEqual(parameters);
 	});
 
 	// https://github.com/earendil-works/pi/issues/9953

@@ -2,6 +2,7 @@ import type { Context } from "@earendil-works/chord/context";
 import { withAbortSignal, withoutAbortSignal } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord/json";
 import type { Models } from "@earendil-works/pi-ai";
+import { cleanupSessionResources } from "@earendil-works/pi-ai/session-resources";
 import {
 	type ClientIdentity,
 	mergeClientIdentity,
@@ -19,6 +20,7 @@ import { ResetEntry } from "../entries.ts";
 import type { ExecutionEnv } from "../env/index.ts";
 import { contained, SessionImpl } from "../session/session.ts";
 import type { Transaction } from "../session/transaction.ts";
+import type { SignalResult, SignalToken } from "../signals.ts";
 import { hostTimers } from "../timers.ts";
 import type {
 	CommitOptions,
@@ -44,7 +46,7 @@ import { ROOT_CONVERSATION_ID } from "../types.ts";
 import { AgentDoc, configure, createAgent, resolveAgent, resolveSettings } from "./agent.ts";
 import { createCompaction } from "./compaction.ts";
 import { readContext } from "./context.ts";
-import { InboxDoc, withdrawQueuedInputs } from "./inbox.ts";
+import { InboxDoc, withdrawAbortedInputs } from "./inbox.ts";
 import { LIMITS_RESTARTS, LiveDoc, settleSchedulerOutcome } from "./live.ts";
 import { ProviderDoc } from "./provider.ts";
 import { BUILTIN_TASKS } from "./registry.ts";
@@ -52,6 +54,7 @@ import { type InvocationBinding, TaskScheduler } from "./scheduler.ts";
 import { Submissions } from "./submissions.ts";
 import { type TaskGraph, TaskGraphView, type TaskGraphWatch } from "./task-graph.ts";
 import { DURABLE_TELEMETRY_SCHEMA } from "./telemetry.ts";
+import { gatedCall, keepsChildren } from "./tool.ts";
 import type {
 	Agent,
 	AgentChange,
@@ -127,12 +130,12 @@ class ConversationImpl<Tool extends ToolRegistration> implements Conversation {
 		return this.#host.harness.commitWith((tx) => configure(tx, this.id, change), context);
 	}
 
-	submit(submission: SubmissionDraft, context: Context): Promise<Submission>;
-	submit(tx: Tx, submission: SubmissionDraft): Promise<SubmissionId>;
-	submit(first: SubmissionDraft | Tx, second: Context | SubmissionDraft): Promise<Submission | SubmissionId> {
-		// The overloads pair a draft with a context, and anything else (a transaction) with a draft.
-		if ("type" in first) return this.#host.submissions.submit(this.id, first, second as Context);
-		return this.#host.submissions.admit(first, this.id, second as SubmissionDraft);
+	submit(submission: SubmissionDraft, context: Context): Promise<Submission> {
+		return this.#host.submissions.submit(this.id, submission, context);
+	}
+
+	admit(tx: Tx, submission: SubmissionDraft): Promise<SubmissionId> {
+		return this.#host.submissions.admit(tx, this.id, submission);
 	}
 
 	async compact(instructions: string | undefined, context: Context): Promise<TaskId<CompactionResult>> {
@@ -250,8 +253,10 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 			writeAtClose: (writes) => this.writeAtClose(writes),
 			report: this.#report,
 			limitsRestarts: (kind) => LIMITS_RESTARTS.has(kind),
+			keepsAbandoned: keepsChildren,
+			gated: gatedCall,
 			settleOutcome: settleSchedulerOutcome,
-			withdrawInputs: withdrawQueuedInputs,
+			withdrawInputs: withdrawAbortedInputs,
 			conversation: async (id, binding, callContext) => {
 				const record = await this.readOnLine((line) => line.conversation(id, callContext));
 				return record === undefined ? undefined : boundConversation(id, binding, this.#submissions, this.#tasks);
@@ -353,6 +358,17 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 		return this.#tasks.abort(id, context);
 	}
 
+	async signal<T>(
+		taskId: TaskId,
+		token: SignalToken<T>,
+		key: string,
+		value: T,
+		context: Context,
+	): Promise<SignalResult> {
+		this.#tasks.resume();
+		return this.commitWith((tx) => tx.signal(taskId, token, key, value), context);
+	}
+
 	async waitForTask<R>(id: TaskId<R>, context: Context): Promise<SettledTask<R>> {
 		this.#tasks.resume();
 		return this.#tasks.waitForTask(id, context) as Promise<SettledTask<R>>;
@@ -421,9 +437,19 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 		return this.#tasks.membershipKeys(tx);
 	}
 
-	/** Signal and join task invocations after the close listeners and before Storage closes; writes no task outcome. */
+	/** Join task invocations before releasing provider resources, so none close while in use or outlive the Harness. */
 	protected override beforeClose(): Promise<void> {
-		return this.#tasks.join();
+		const joined = this.#tasks.join();
+		if (this.#tasks.providerSessionIds.size === 0) return joined;
+		return joined.then(() => {
+			for (const sessionId of this.#tasks.providerSessionIds) {
+				contained(
+					() => cleanupSessionResources(sessionId),
+					(error) => this.#report(error, { kind: "host_error", callback: "models" }),
+				);
+			}
+			this.#tasks.providerSessionIds.clear();
+		});
 	}
 
 	async #create(target: CreateTarget, options: CreateOptions, context: Context): Promise<Conversation> {
@@ -549,30 +575,25 @@ function boundConversation(
 			return operation(bind(context));
 		};
 	};
-	function submit(draft: SubmissionDraft, context: Context): Promise<Submission>;
-	function submit(tx: Tx, draft: SubmissionDraft): Promise<SubmissionId>;
-	async function submit(
-		first: SubmissionDraft | Tx,
-		second: Context | SubmissionDraft,
-	): Promise<Submission | SubmissionId> {
+	const submit = async (draft: SubmissionDraft, context: Context): Promise<Submission> => {
 		binding.check();
-		// The overloads pair a draft with a context, and anything else (a transaction) with a draft.
-		if (!("type" in first)) {
-			// The caller's commit carries its own context, so the invocation's abort is checked here.
-			binding.signal.throwIfAborted();
-			return submissions.admit(first, id, second as SubmissionDraft);
-		}
-		const submission = await submissions.submit(id, first, bind(second as Context));
+		const submission = await submissions.submit(id, draft, bind(context));
 		return {
 			id: submission.id,
 			status: bound((callContext) => submission.status(callContext)),
 			wait: bound((callContext) => submission.wait(callContext)),
 			abort: bound((callContext) => submission.abort(callContext)),
 		};
-	}
+	};
 	return {
 		id,
 		submit,
+		admit: async (tx, draft) => {
+			binding.check();
+			// The caller's commit carries its own context, so the invocation's abort is checked here.
+			binding.signal.throwIfAborted();
+			return submissions.admit(tx, id, draft);
+		},
 		abort: async (context, options) => {
 			binding.check();
 			return tasks.abortConversation(id, options?.background === true, bind(context));

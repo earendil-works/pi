@@ -5,6 +5,7 @@ export {
 	renderToolOutputType,
 	renderToolSample,
 	renderToolSignature,
+	resolveSchemaRef,
 	schemaToType,
 } from "./declarations.ts";
 export { toCodemodeIdentifier } from "./identifier.ts";

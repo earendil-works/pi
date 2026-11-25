@@ -93,10 +93,10 @@ All three are registered by a new plugin `plugins/history/` (worker facet) as on
 
 ## 5. UI
 
-Web tool cards live in `src/web/Chat.tsx` (the `ToolCard` switch); TUI cards in the plugin's `tui.ts` (as
-`send-file`/`artifacts`).
+On the web each call is a step of its turn's activity (`src/web/activity/`: its label in `model.ts`, its detail in
+`Detail.tsx`); TUI cards are in the plugin's `tui.ts` (as `send-file`/`artifacts`).
 
-| Tool | Web card | TUI card |
+| Tool | Web step | TUI card |
 | --- | --- | --- |
 | `history_search` | the query; a list of hits (role, author, snippet, entry id); a hit is clickable and reveals the entry in the transcript (the existing `revealEntry`, loading older history pages if needed) | query, hit count; expanded: hit lines with entry ids |
 | `history_read` | mode and range ("10 entries before the handoff"); collapsed list of the entries read, each clickable to reveal it | mode, count, `truncated` marker; expanded: the entry lines |

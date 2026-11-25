@@ -80,8 +80,8 @@
 		transform: rotate(1turn);
 	}
 }
-/* The voice sheet reuses the model picker (.sheet-sticky, .label, .model-list, .model-row); the speed sits where the
-   thinking level does there, its value on the label's right. */
+/* The voice sheet uses the list look of style.css (.sheet-sticky, .label, .model-list, .model-row); the speed sits
+   above the list, its value on the label's right. */
 /* The current choice, and the language select beside it when the engine speaks several. */
 .voice-choice {
 	display: flex;

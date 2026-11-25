@@ -153,11 +153,22 @@ interface SchemaContext {
 	tags: boolean;
 }
 
-function resolveRef(ref: string, root: CodemodeJsonSchema): CodemodeJsonSchema | undefined {
+/**
+ * The subschema a local `$ref` (`#`, `#/$defs/Item`) names in `root`, or undefined for remote references and
+ * references that name nothing. Pointer segments are URI-decoded and JSON Pointer unescaped (`~1` is `/`, `~0` is `~`).
+ */
+export function resolveSchemaRef(ref: string, root: unknown): CodemodeJsonSchema | undefined {
 	if (ref !== "#" && !ref.startsWith("#/")) return undefined;
 	let current: unknown = root;
 	for (const segment of ref.slice(2).split("/").filter(Boolean)) {
-		const key = decodeURIComponent(segment).replaceAll("~1", "/").replaceAll("~0", "~");
+		let decoded: string;
+		try {
+			decoded = decodeURIComponent(segment);
+		} catch {
+			// Schemas come from tools and MCP servers: a malformed escape names nothing instead of failing the caller.
+			return undefined;
+		}
+		const key = decoded.replaceAll("~1", "/").replaceAll("~0", "~");
 		if (typeof current !== "object" || current === null || Array.isArray(current) || !(key in current)) {
 			return undefined;
 		}
@@ -176,7 +187,7 @@ function toType(schema: CodemodeJsonSchema, context: SchemaContext): string {
 	if (typeof schema.$ref === "string") {
 		const ref = schema.$ref;
 		if (context.resolving.has(ref) || context.expansions >= MAX_REF_EXPANSIONS) return "unknown";
-		const target = resolveRef(ref, context.root);
+		const target = resolveSchemaRef(ref, context.root);
 		if (target === undefined) return "unknown";
 		context.expansions++;
 		context.resolving.add(ref);

@@ -9,22 +9,16 @@ const LIST_ENTRIES = 50_000;
 const LIST_BYTES = 4 * 1024 * 1024;
 const LIST_TIMEOUT_MS = 10_000;
 
-/** Whether `path` is `base` or below it (canonical absolute paths, `/` separators). */
-export const inside = (base: string, path: string): boolean =>
-	path === base || path.startsWith(base === "/" ? "/" : `${base}/`);
-
 /**
  * Files and directories below `root` (the canonical working directory) from `env.listFiles`: empty and hidden
  * directories included; `.git`, `node_modules` and, in a git work tree, what git ignores left out; symbolic links
- * listed as files and not followed. Entries in a `denied` directory (canonical; p2's private data) are left out, as
- * the workspace leaves them out. `undefined` when the environment cannot list: no `listFiles` (`NodeExecutionEnv`),
+ * listed as files and not followed. `undefined` when the environment cannot list: no `listFiles` (`NodeExecutionEnv`),
  * or a daemon released before it (`not_supported`); the caller then uses the workspace's git/walk index. Other
  * failures are thrown.
  */
 export async function listIndex(
 	env: ExecutionEnv,
 	root: string,
-	denied: readonly string[],
 	context: Context,
 ): Promise<{ items: FileItem[]; truncated: boolean } | undefined> {
 	if (env.listFiles === undefined) return undefined;
@@ -37,11 +31,6 @@ export async function listIndex(
 		if (listed.error.code === "not_supported") return undefined;
 		throw listed.error;
 	}
-	const base = root.replace(/\/+$/, "");
-	const items: FileItem[] = [];
-	for (const entry of listed.value.entries) {
-		if (denied.length > 0 && denied.some((directory) => inside(directory, `${base}/${entry.path}`))) continue;
-		items.push({ path: entry.path, dir: entry.kind === "directory" });
-	}
+	const items = listed.value.entries.map((entry): FileItem => ({ path: entry.path, dir: entry.kind === "directory" }));
 	return { items, truncated: listed.value.truncated };
 }

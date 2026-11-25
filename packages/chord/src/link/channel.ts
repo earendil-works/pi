@@ -1,9 +1,10 @@
 // A host's end of a link (§3, §22, 2b): the handshake, the link's codec, the checks of every message (skipped on a
 // trusted link), the heartbeat, and messages handled in order while one waits for an asynchronous inflate; a protocol
-// error closes the link.
+// error closes the link. The bytes of every message it encodes and receives are counted (`chord.link.bytes`).
 
 import type { Context } from "../context/index.ts";
 import { PROTOCOL_VERSION } from "../data/internal.ts";
+import type { ChordCounter, ChordMetrics } from "../telemetry.ts";
 import type { Link } from "./link.ts";
 import { type Codec, checkMessage, type Message } from "./message.ts";
 
@@ -26,25 +27,32 @@ type ChannelOptions = {
 	readonly codec: Codec;
 	/** This host's incarnation, sent in `hello`. */
 	readonly incarnation: string;
-	/** How many concurrent calls this side accepts, sent in `hello`. */
-	readonly calls: number;
+	/** How many concurrent calls of one origin this side accepts, sent in `hello`; `undefined`: no window. */
+	readonly calls: number | undefined;
 	/** Skips the `MESSAGE` check (framing, the codec's decode and the owners' checks still run). */
 	readonly trusted: boolean;
 	/** Where protocol errors go. */
 	readonly report: (error: unknown) => void;
+	/** The host's instruments: the bytes of every encoded message sent and received (`chord.link.bytes`). */
+	readonly metrics: ChordMetrics;
 };
+
+/** `chord.link.bytes`' attributes, made once. */
+const SENT = { direction: "sent" } as const;
+
+const RECEIVED = { direction: "received" } as const;
 
 /**
  * Where a channel stands: `greeting` until the peer's `hello`, with what this end sent meanwhile; `open` with the
- * peer's incarnation and call window.
+ * peer's incarnation and call window (`undefined`: it announced none).
  */
 type ChannelState =
 	| { readonly kind: "greeting"; readonly queued: Uint8Array[] }
-	| { readonly kind: "open"; readonly peer: string; readonly calls: number }
+	| { readonly kind: "open"; readonly peer: string; readonly calls: number | undefined }
 	| { readonly kind: "closed" };
 
 /**
- * One end of a link. It sends `hello { protocol, incarnation, calls }` first and nothing else until the peer's arrived
+ * One end of a link. It sends `hello { protocol, incarnation, calls? }` first and nothing else until the peer's arrived
  * (its own messages wait). Every message is decoded by the link's codec and, unless the link is trusted, checked
  * against the message schema; a first message that is no `hello` of this codec, a second `hello`, another protocol
  * version, or a message failing a check closes the link and is reported. The heartbeat: every received message
@@ -65,6 +73,11 @@ export class Channel {
 	#lastReceived = Date.now();
 	/** Whether a `ping` went out since the last received message. */
 	#pinged = false;
+	/** How many `ping`s it sent and how many `pong`s it received: a fence waits for the `pong` of its own `ping`. */
+	#pings = 0;
+	#pongs = 0;
+	/** The fences waiting for their `pong`, oldest first; made by the first (most links never fence). */
+	#fences: { readonly ping: number; readonly then: () => void }[] | undefined;
 	/**
 	 * Messages received while one is handled asynchronously, in order, and the index of the next to handle; `undefined`
 	 * while none waits.
@@ -73,19 +86,23 @@ export class Channel {
 	/** Whether a message is being handled asynchronously: the held ones wait. */
 	#waiting = false;
 	readonly #hello: Uint8Array;
+	/** Counts the bytes of the encoded messages (sizes the channel has). */
+	readonly #bytes: ChordCounter<"chord.link.bytes">;
 
 	constructor(link: Link, handler: ChannelHandler, options: ChannelOptions, context: Context) {
 		this.#link = link;
+		this.#bytes = options.metrics.counter("chord.link.bytes");
 		this.#codec = options.codec;
 		this.#handler = handler;
 		this.#report = options.report;
 		this.#trusted = options.trusted;
 		this.#context = context;
+		const { incarnation, calls } = options;
 		this.#hello = this.#codec.encode({
 			kind: "hello",
 			protocol: PROTOCOL_VERSION,
-			incarnation: options.incarnation,
-			calls: options.calls,
+			incarnation,
+			...(calls === undefined ? {} : { calls }),
 		});
 	}
 
@@ -94,6 +111,7 @@ export class Channel {
 	 * calls `closed` now; so the handler is complete before it starts.
 	 */
 	start(): void {
+		this.#bytes.add(this.#hello.byteLength, SENT);
 		this.#link.send(this.#hello);
 		this.#link.onMessage((bytes) => this.#receive(bytes));
 		this.#link.onClose(() => this.#closed());
@@ -104,9 +122,12 @@ export class Channel {
 		return this.#state.kind === "open" ? this.#state.peer : "";
 	}
 
-	/** How many concurrent calls the peer accepts, from its `hello`; 0 before it arrived. */
-	get peerCalls(): number {
-		return this.#state.kind === "open" ? this.#state.calls : 0;
+	/**
+	 * How many concurrent calls of one origin the peer accepts, from its `hello`: `undefined` when it announced no window;
+	 * read once the channel is open (`opened`).
+	 */
+	get peerCalls(): number | undefined {
+		return this.#state.kind === "open" ? this.#state.calls : undefined;
 	}
 
 	get opened(): boolean {
@@ -122,6 +143,7 @@ export class Channel {
 		const state = this.#state;
 		if (state.kind === "closed") return;
 		const bytes = this.#codec.encode(message);
+		this.#bytes.add(bytes.byteLength, SENT);
 		if (state.kind === "greeting") state.queued.push(bytes);
 		else this.#link.send(bytes);
 	}
@@ -142,12 +164,38 @@ export class Channel {
 		if (silent >= close) this.close();
 		else if (silent >= ping && !this.#pinged && this.#state.kind === "open") {
 			this.#pinged = true;
+			this.#pings++;
 			this.#link.send(this.#codec.encode({ kind: "ping" }));
 		}
 	}
 
+	/**
+	 * A fence (slice 14 §2.3): sends a `ping` and runs `then` when its `pong` arrived. A link is ordered and the peer
+	 * answers a `ping` after everything it handled before it, so whatever the peer sent before it saw the `ping` has
+	 * arrived here by then. Pings and pongs are counted: a liveness `pong` in transit ends no fence. Returns what
+	 * cancels it; a link that closes first runs none.
+	 */
+	fence(then: () => void): () => void {
+		const fence = { ping: ++this.#pings, then };
+		this.#fences ??= [];
+		this.#fences.push(fence);
+		this.send({ kind: "ping" });
+		return () => {
+			const at = this.#fences?.indexOf(fence) ?? -1;
+			if (at !== -1) this.#fences!.splice(at, 1);
+		};
+	}
+
+	/** A `pong` arrived: the fences of the pings up to it run, in order. */
+	#ponged(): void {
+		this.#pongs++;
+		const fences = this.#fences;
+		while (fences !== undefined && fences.length > 0 && fences[0]!.ping <= this.#pongs) fences.shift()!.then();
+	}
+
 	#receive(bytes: Uint8Array): void {
 		if (this.#state.kind === "closed") return;
+		this.#bytes.add(bytes.byteLength, RECEIVED);
 		this.#lastReceived = Date.now();
 		this.#pinged = false;
 		if (this.#held === undefined) this.#handle(bytes);
@@ -166,7 +214,8 @@ export class Channel {
 			if (message.kind === "hello") throw new Error("handshake: a second hello");
 			// Control of the link itself, never queued behind the window.
 			if (message.kind === "ping") this.#link.send(this.#codec.encode({ kind: "pong" }));
-			else if (message.kind !== "pong") {
+			else if (message.kind === "pong") this.#ponged();
+			else {
 				const handling = this.#handler.message(message);
 				if (handling !== undefined) this.#hold(handling);
 			}
@@ -241,6 +290,7 @@ export class Channel {
 		if (this.#state.kind === "closed") return;
 		this.#state = { kind: "closed" };
 		this.#held = undefined;
+		this.#fences = undefined;
 		this.#handler.closed();
 	}
 }

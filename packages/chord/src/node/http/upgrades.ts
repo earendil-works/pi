@@ -49,7 +49,8 @@ export class Upgrades {
 	/**
 	 * Upgrades `message` to the links endpoint: `host.accept` over the socket (its output capped) as the admitted
 	 * principal, with `options`' limits; `context` is the parent of the work on the link. `opened` runs once the link
-	 * is accepted; what it returns runs when its socket closes.
+	 * is accepted, with what terminates that link at once (as a revocation does: no close handshake a peer could
+	 * ignore); what it returns runs when its socket closes.
 	 */
 	link<P extends Principal>(
 		message: IncomingMessage,
@@ -58,20 +59,21 @@ export class Upgrades {
 		admission: Admission<P> & LinkOptions,
 		host: Host<P>,
 		context: Context,
-		opened: () => (() => void) | undefined,
+		opened: (close: () => void) => (() => void) | undefined,
 	): void {
 		const { principal, limits } = admission;
 		upgrade(message, stream, head, admission.maxPayload ?? DEFAULT_LINK_PAYLOAD, (socket) => {
 			const link = webSocketLink(limitedSocket(socket));
-			this.#keep({
+			const upgraded = {
 				socket,
 				allowed: admission.allowed,
 				relay: admission.relay,
 				handler: undefined,
 				seal: () => link.close(),
-			});
+			};
+			this.#keep(upgraded);
 			host.accept(link, { principal, ...(limits === undefined ? {} : { limits }) }, context);
-			const closed = opened();
+			const closed = opened(() => end(upgraded));
 			if (closed !== undefined) socket.once("close", closed);
 		});
 	}
@@ -149,10 +151,13 @@ export class Upgrades {
 		for (const upgraded of this.#open) end(upgraded);
 	}
 
-	/** Keeps `upgraded` until its socket closes; an error (an oversized frame) terminates only that socket. */
+	/** Keeps `upgraded` until its socket closes, letting a protocol error finish its close handshake. */
 	#keep(upgraded: Upgraded): void {
 		const { socket } = upgraded;
-		socket.on("error", () => socket.terminate());
+		socket.on("error", () => {
+			// ws already sends the protocol close code (such as 1009); terminating now can discard that frame.
+			if (socket.readyState !== socket.CLOSING) socket.terminate();
+		});
 		this.#open.add(upgraded);
 		socket.once("close", () => this.#open.delete(upgraded));
 	}

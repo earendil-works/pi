@@ -104,6 +104,72 @@ describe("consumeSseStream", () => {
 		expect(events).toEqual([{ id: "7", data: '{"one":\n1}' }]);
 	});
 
+	it("recognizes CR, LF, and CRLF line endings, including CRLF split across chunks", async () => {
+		const encoder = new TextEncoder();
+		const parse = async (chunks: string[]) => {
+			const stream = new ReadableStream<Uint8Array>({
+				start(controller) {
+					for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+					controller.close();
+				},
+			});
+			const events: SseEvent[] = [];
+			await consumeSseStream(stream, { onEvent: (event) => events.push(event) });
+			return events;
+		};
+		const expected = [{ id: "1", data: "a\nb" }, { data: "c" }];
+		for (const separator of ["\n", "\r\n", "\r"]) {
+			const text = ["id: 1", "data: a", "data: b", "", "data: c", "", ""].join(separator);
+			expect(await parse([text])).toEqual(expected);
+			// One character per chunk splits every CRLF between chunks.
+			expect(await parse([...text])).toEqual(expected);
+		}
+		expect(await parse(["id: 1\rdata: a\r\ndata: b\n\r", "\ndata: c\r\r"])).toEqual(expected);
+	});
+
+	// Regression test for #12224: a large event split across many chunks is measured and scanned once.
+	it("reads a large event split across many chunks in linear time", async () => {
+		const encoder = new TextEncoder();
+		const text = `data: ${"x".repeat(1024 * 1024)}\n\n`;
+		const stream = new ReadableStream<Uint8Array>({
+			start(controller) {
+				for (let i = 0; i < text.length; i += 4096) controller.enqueue(encoder.encode(text.slice(i, i + 4096)));
+				controller.close();
+			},
+		});
+		let measured = 0;
+		const byteLength = Buffer.byteLength;
+		const spy = vi.spyOn(Buffer, "byteLength").mockImplementation((value, encoding) => {
+			if (typeof value === "string") measured += value.length;
+			return byteLength(value, encoding);
+		});
+		const events: SseEvent[] = [];
+		try {
+			await consumeSseStream(stream, { onEvent: (event) => events.push(event) });
+		} finally {
+			spy.mockRestore();
+		}
+		expect(events).toEqual([{ data: "x".repeat(1024 * 1024) }]);
+		// Each chunk once, then the complete data line once.
+		expect(measured).toBeLessThanOrEqual(2 * text.length);
+	});
+
+	it("dispatches CR-terminated events while the stream stays open", async () => {
+		const encoder = new TextEncoder();
+		let controller!: ReadableStreamDefaultController<Uint8Array>;
+		const stream = new ReadableStream<Uint8Array>({
+			start(c) {
+				controller = c;
+			},
+		});
+		const received = new Promise<SseEvent>((resolve) => {
+			void consumeSseStream(stream, { onEvent: resolve }).catch(() => {});
+		});
+		controller.enqueue(encoder.encode("data: first\r\r"));
+		expect(await received).toEqual({ data: "first" });
+		controller.close();
+	});
+
 	it("rejects events whose data lines exceed the limit without a blank line", async () => {
 		const encoder = new TextEncoder();
 		let sent = 0;
@@ -112,6 +178,22 @@ describe("consumeSseStream", () => {
 				// Never sends a blank line, so the event is never dispatched.
 				if (sent++ > 1000) controller.close();
 				else controller.enqueue(encoder.encode("data: xxxxxxxxxxxxxxxx\n"));
+			},
+		});
+		await expect(consumeSseStream(stream, { maxEventBytes: 256, onEvent: () => {} })).rejects.toThrow(
+			"MCP SSE event exceeds 256 bytes",
+		);
+		expect(sent).toBeLessThan(100);
+	});
+
+	it("rejects a line that exceeds the limit before its line ending arrives", async () => {
+		const encoder = new TextEncoder();
+		let sent = 0;
+		const stream = new ReadableStream<Uint8Array>({
+			pull(controller) {
+				// One data line that never ends.
+				if (sent++ > 1000) controller.close();
+				else controller.enqueue(encoder.encode(sent === 1 ? "data: " : "xxxxxxxxxxxxxxxx"));
 			},
 		});
 		await expect(consumeSseStream(stream, { maxEventBytes: 256, onEvent: () => {} })).rejects.toThrow(
@@ -250,6 +332,29 @@ describe("StreamableHttpTransport", () => {
 		expect(await client.callTool("echo")).toEqual({ content: [{ type: "text", text: "resumed" }] });
 		expect(resumeHeaders).toEqual(["1"]);
 		expect(errors).toEqual([]);
+		await client.close();
+	});
+
+	it("matches a streamed response that echoes the request id as a string", async () => {
+		const { url, requests } = await startServer(async (request, response, requests) => {
+			if (request.method !== "POST") return protocolHandler(request, response, requests);
+			const message = JSON.parse(await readBody(request)) as Record<string, unknown>;
+			if (message.method !== "tools/call") return protocolHandler(request, response, requests, message);
+			response.writeHead(200, { "content-type": "text/event-stream" });
+			response.end(
+				`id: e1\nretry: 5\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: String(message.id), result: { content: [{ type: "text", text: "hello" }] } })}\n\n`,
+			);
+		});
+		const client = new McpClient({ name: "http-test", version: "1.0.0" });
+		const errors: Error[] = [];
+		client.onError((error) => errors.push(error));
+		await client.connect(new StreamableHttpTransport({ url, openGetStream: false }));
+		expect(await client.callTool("echo", {}, { timeoutMs: 2_000 })).toEqual({
+			content: [{ type: "text", text: "hello" }],
+		});
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		expect(errors).toEqual([]);
+		expect(requests.some((entry) => entry.method === "GET")).toBe(false);
 		await client.close();
 	});
 

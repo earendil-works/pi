@@ -109,7 +109,7 @@ describe("turn limit", () => {
 		let yields = 0;
 		const { setup, harness, root } = await limited(2, (chat) =>
 			addHooks(chat.registry, GenerationTask, {
-				onYield: () => (yields++ === 0 ? { continue: "keep going" } : undefined),
+				onYield: () => (yields++ === 0 ? { kind: "continue", continue: "keep going" } : undefined),
 			}),
 		);
 		// Round (1 turn), answer: the continuation resets the count; then two rounds reach the limit.

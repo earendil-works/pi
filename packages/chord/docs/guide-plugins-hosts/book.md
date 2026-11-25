@@ -13,7 +13,7 @@ note: |
   `slice-10.md`, `slice-12.md`, `slice-13.md`, the decision log and the code in `packages/chord/src`. API names
   are the current ones. The early chapters wire hosts by hand to show the parts; the last chapter shows the app kit
   (`chord/app`), which does that wiring for an app.
-colophon: Hosts and Plugins · third edition · 2026-11-03 · Chord v2 slices 1-10, 12 and 13, messages and languages
+colophon: Hosts and Plugins · fourth edition · 2026-11-04 · Chord v2 slices 1-13, messages and languages, telemetry
 ---
 
 # Before we begin {.preface}
@@ -45,8 +45,8 @@ This book builds the app in that order. Each chapter adds one concept and shows 
    server, workers and tabs load the scripts for their kind.
 6. **Plugins meet through types and registries.** One plugin uses another's objects through its contract, or
    contributes to a registry another defines. Nothing else crosses between plugins.
-7. **An edit is a rollout.** Change a file, build, roll out: the server, then every worker, swap the plugin's objects in
-   place; a broken edit keeps the old code running and reports why.
+7. **An edit is a rollout.** Change a file, build, roll out: the server, then every worker, restart the plugin's
+   objects (running work finishes on the old code); a broken edit keeps the old code running and reports why.
 :::
 
 :::flow wide animate | How it all fits: plugins on disk are built once on the server; each host evaluates the facets of its kind; tabs and the TUI are clients that reach workers' objects through the server.
@@ -225,9 +225,9 @@ self.onLive(async (ctx) => {                                  // a routine start
 });
 ```
 
-Natives are why some objects restart when their plugin changes: an open connection cannot be moved to new code, so
-Chord closes it and opens it again. Objects without natives are swapped in place. A first read of a table is no
-native: declare it as a live query, not with `self.open`, or the object restarts at every change of its plugin.
+Every live object restarts when its plugin changes; natives close (`reload`) and open again with the new code, since
+an open connection cannot be moved to new code. A first read of a table needs no native: declare it as a live query,
+not with `self.open`.
 
 **Await what you start in a root or a handler.** What is started with a context ends with it. Code outside objects
 gets its `ctx` from `host.root(fn, ctx)`, and that scope seals when `fn` returns; a handler's context ends when its
@@ -404,6 +404,62 @@ const { t } = useMessages(messages);                       // re-renders when th
 // plugins/notes/worker.ts: a notice as data; every client renders it with t.render(notice)
 draft.notice = messages.message("empty");
 ```
+
+## Optimistic UI
+
+A user renames a session. The call goes from the tab through the server to the session's worker, which renames it and
+reports the new title to the server's index of sessions, then answers. That round trip takes a moment, and the title
+should change at once. React's `useOptimistic` shows a value while a transition runs, and Chord's references fit it:
+
+```tsx
+// plugins/sessions/web.tsx
+function SessionName({ id }: { id: string }) {
+	const sessions = useHold(Sessions, {});                       // the server's index, which every list shows
+	const session = useHold(SessionTitle, { id });                // on the session's worker
+	const title = useWatch(sessions?.titles)?.[id] ?? "";
+	const [shown, showOptimistic] = useOptimistic(title);
+	const rename = (next: string) =>
+		startTransition(async () => {
+			showOptimistic(next);                                    // drawn at once
+			await session?.rename(next, BACKGROUND_CONTEXT);         // settles once the index has `next`
+		});
+	return <TitleField value={shown} onRename={rename} />;
+}
+```
+
+When the transition ends, React drops the optimistic value and draws `title` again. That is only right if `title` is
+already the new name by then. **Chord guarantees it:** a call settles in the page only after every change its answering
+host committed before answering is applied there, and so does every change a host that relays the answer committed
+before it forwarded it. Here the worker's own changes travel before its answer, and the server sends its index change
+for this tab before it forwards the worker's answer, even on a slow connection whose window of unacknowledged state is
+full (design §3). Without that, the answer could overtake the index change and the old title flickered back.
+
+**What it does not cover:**
+
+- Changes committed after the answer: a method that starts work and returns before it lands (a `void` call, a job, a
+  routine) answers first; the optimistic value goes and the old one shows until the change arrives.
+- Changes on a host that neither answers nor relays the answer. A server method that calls a worker and then answers
+  the tab orders only the server's own changes before its answer; what the worker changed for the tab travels on its
+  own and may come later.
+
+So the rule for a method that should feel instant: it awaits its own changes, the pushes to other hosts included (the
+worker's `rename` awaits its report to the index), and keeps them on the host that answers or relays the answer.
+
+A terminal UI does the same with its component scope: `scope.optimistic(read, reduce?)` wraps a reader and returns
+it with `add(action, call)` and `pending()`, as React's `useOptimistic`: while calls are in flight the reader shows
+`reduce(current, action)` over each action, in order (without a reducer the last action is the value), until every
+call added settles. `add` returns the call; a rejection is the caller's to handle.
+
+```ts
+const titles = scope.watch(sessions.titles);
+const [title, add] = scope.optimistic(() => titles()?.[id]);
+await add(next, session.rename(next, ctx));               // title() is `next` at once, the real one when it settles
+
+const [rows, change] = scope.optimistic(() => list() ?? [], (rows, id: string) => rows.filter((row) => row.id !== id));
+change(id, store.remove({ id }, ctx)).catch(fail);        // gone at once; back with the error if refused
+```
+
+`test/examples/63-optimistic-answers.ts` runs this with a stalled terminal client and prints what each redraw showed.
 
 # Plugins {#plugins lede="Move the code into a directory that can be added, edited and removed while the app runs."}
 
@@ -647,11 +703,12 @@ then gives every object of the changed plugin its fate:
 
 | The object | What happens |
 | --- | --- |
-| holds no natives (open files, sockets), the new code neither | **swapped** in place: new methods, same documents; running calls finish on the old code |
-| holds natives | **restarted**: calls wait, running ones finish, natives close and reopen with the new code |
+| live | **restarted**: running calls, and the calls they make with their `ctx`, finish on the old code; new calls wait for the new code; same documents; natives close and reopen |
+| not live (failed, parked) | **retried** on the new code |
 | its type was removed | **ended**; its users wait until something serves it again |
 
-The tab's reference follows the new object and gets one frame with the difference. Nothing reconnects. If the edit
+The tab's reference stays live while the old code drains, shows `loading` for a moment, then follows the new object
+with one frame of difference. Nothing reconnects. If the edit
 is broken (a syntax error, a factory that throws), that plugin keeps its old code on that host and the report says why;
 every other plugin of the rollout applies.
 
@@ -723,8 +780,8 @@ same name, the first root wins, and the other is reported.
 - **A single file** at a root's top is a plugin: `plugins/hello.server.ts` and `plugins/hello.web.tsx` are the plugin
   `hello` with two facets. It has no `package.json` and imports only the API; when it needs a second file or a
   package, it becomes the directory `hello/`, which a reload treats as the same plugin.
-- **Installing** from git or npm: `plugins.installPlugin({ git: url, ref }, root, ctx)` clones the ref (a branch, tag
-  or commit) into the root, `{ npm: name, version }` extracts the package; then its dependencies are installed. Removal
+- **Installing** from git or npm: `plugins.installPlugin({ kind: "git", git: url, ref }, root, ctx)` clones the ref (a branch, tag
+  or commit) into the root, `{ kind: "npm", npm: name, version }` extracts the package; then its dependencies are installed. Removal
   is deleting the directory.
 - **Testing** a plugin alone: `testPlugin("./plugins/stats", { kind: "worker", api, modules, stubs }, ctx)` builds it
   as production does, loads it on an in-memory host beside stub facets serving what it uses, collects what it
@@ -748,7 +805,11 @@ const app = await startServer<NotesPrincipal>({
 	root: "./plugins",                              // the app's own plugins: a required root
 	api: { name: "@notes/app", versions: ["v1"], modules: { "@notes/app/v1": v1, "@notes/app/v1/server": v1server } },
 	kinds: { server: { platform: "node" }, worker: { platform: "node" } },
-	principal: { server: { kind: "server" }, worker: (address) => ({ kind: "worker", project: address.key }) },
+	principal: {
+		server: { kind: "server" },
+		worker: (address) => ({ kind: "worker", project: address.key }),
+		owner: { kind: "owner" },                   // whom the owner link, the token file and pairing sign in
+	},
 	workers: [{
 		kind: Project,                              // one worker per project
 		entry: "./worker.ts",
@@ -773,11 +834,11 @@ directory and store, the host at the project's address, the link to the server f
 
 Plugins still import only the app's API; the API re-exports the kit's objects it offers:
 
-- `AppInfo` on the server (data directory, app name, API version) and `WorkerInfo` on workers (the address and the
-  start data `start(address)` made): the **start-data objects**. Process values reach plugins only through them.
+- `AppInfo` on the server (data directory, app name, API version, owner) and `WorkerInfo` on workers (the address and
+  the start data `start(address)` made): the **start-data objects**. Process values reach plugins only through them.
 - `Files`, one per host: `put` for small files, `begin`, `append` and `finish` for large ones, ranged `read`, `remove`
   and a watchable `list`, stored in the host's directory with caps per host.
-- `Sessions` on the server: `issue`, `revoke`, `list`.
+- `SignIns` on the server: `issue`, `revoke`, `list`.
 
 This finishes what the previous chapter started. Base code is the API, the start script and the worker's entry. The
 providers of the app's own registries live in its required root: example 53's API declares a `Sections` registry, and
@@ -786,10 +847,12 @@ its home plugin serves it and reads `AppInfo`, so it reloads like any other plug
 ## Who may come in
 
 HTTP **denies by default**: a request without a principal gets 401 before any plugin code runs, unless the route says
-`public: true`. Someone gets a principal through a **session**: a random token, kept in the store only as a hash, sent
-as a signed cookie by a browser or as `Authorization: Bearer` by a command-line client.
+`public: true`. Someone gets a principal through a **sign-in** (one browser or device signed in as that principal): a
+random token, kept in the store only as a hash, sent as a signed cookie by a browser or as `Authorization: Bearer` by a
+command-line client.
 
-The first session is the owner's. At each start the kit makes a one-time **owner link**,
+The first sign-in is the owner's, the principal the app names in `principal.owner` (a variant of its own, as here, or
+one of its users). At each start the kit makes a one-time **owner link**,
 `http://127.0.0.1:8788/_chord/owner#<token>`, valid ten minutes; the start script prints it. The token is in the
 fragment, which browsers never send, so it never reaches a log: the page posts it, the kit consumes it and sets the
 owner's cookie. A command-line client on the same machine reads `<dataDir>/owner-token` (mode 0600). One on another
@@ -809,6 +872,71 @@ writes them as one archive (a manifest, the store's export, the files) and stops
 own store at one consistent point. `app.importData(path, Project({ id: "copy" }), ctx)` makes a new project from it and
 refuses one that already has data (example 55).
 
+# Seeing a Request Across Hosts {#telemetry lede="One trace from a click in a client through the server's relay into a worker's method: adapters, carriers and spans."}
+
+A tab calls `notes.add(…)`. The call leaves the tab, the server relays it, the project's worker runs the method, the
+method commits. When it is slow, where did the time go? Each host is a different process, so no single log has the
+answer. Chord's telemetry makes the four steps one **trace**: a tree of **spans** (named, timed pieces of work), each
+host recording its own with its own **adapter**, joined by **carriers** (a few strings naming the caller's span) that
+ride on the wire with every `hold` and `call`.
+
+Give the server a store and the kit does the rest. The SQLite store (`@earendil-works/chord/telemetry-sqlite`)
+records settled spans and metrics in one file in the data directory, and the server is its only writer: every worker
+records in memory and sends its spans and metrics to the server once a second over its link, and a page that records
+(`startPage({ telemetry: true })`) sends its own every few seconds and when hidden (example 62):
+
+```ts
+// start.ts: the server, its store, and whom spans were for (default: the principal's key)
+const telemetry = await createSqliteTelemetry(await openNodeSqliteDatabase(join(dataDir, "telemetry.sqlite")));
+await startServer({ ...options, telemetry, principalAttributes: (p) => ({ "chord.principal": p.kind }) }, ctx);
+// worker.ts: nothing about telemetry (its own `principalAttributes`, if any)
+startWorker({ api, kinds, onError });
+// the web entry: the page records
+startPage({ ...options, telemetry: true });
+```
+
+A page is untrusted: the server checks each batch's every field (sizes, no control characters, ids printable ASCII),
+keeps only spans under the page's own ids, caps them per page and minute, marks them `chord.host: browser` and stamps
+them with the principal of their link. A click is a trace of its own with `host.root(fn, ctx, { trace: { name } })`.
+
+Nothing else changes in plugin code. A method's `ctx.telemetry` is its `chord.method` span, so whatever it calls or
+commits is parented under it, on its host or the next one. `ctx.trace(name, attributes, fn)` adds a span of your own:
+
+```ts
+add: async (n, ctx) => {
+	await ctx.trace("tally.check", { n }, async () => {
+		if (!Number.isSafeInteger(n) || n <= 0) throw new Error("add a positive count");
+	});
+	return store.add(n, ctx);
+},
+```
+
+The store renders the click's trace across the three hosts (the client's spans, the server's relay, the worker's
+methods and the commit, an event of the method that made it); every span of Chord names the host that recorded it
+(`chord.host`: its address key, `client` without an address), and method and call spans whom they were for
+(`chord.principal`, the host's `principalAttributes` hook):
+
+```
+tally.click
+  chord.hold chord.host="client" type="tally.counter" object="tally.counter(t1)" address.kind="tally" outcome="bound"
+    chord.relay chord.host="server" type="tally.counter" member="hold" upstream.kind="tally" outcome="ok"
+      → link to chord.resolve
+  chord.call chord.host="client" type="tally.counter" member="add" object="tally.counter(t1)" address.kind="tally" outcome="ok"
+    chord.relay chord.host="server" type="tally.counter" member="#0" upstream.kind="tally" outcome="ok"
+      chord.method chord.host="tally|t1" type="tally.counter" member="add" object="tally.counter(t1)" principal.kind="owner" chord.principal="{\"kind\":\"owner\"}" outcome="ok"
+        tally.check chord.host="tally|t1" n=3
+        chord.method chord.host="tally|t1" type="tally.store" member="add" object="tally.store" principal.kind="worker" chord.principal="{\"kind\":\"worker\",\"tally\":\"tally|t1\"}" outcome="ok"
+          · chord.commit documents=1 ops=1 rows=0 duration=1.9
+```
+
+Work shared by several requests is its own trace, linked rather than nested: the worker's start (`chord.resolve`),
+an object's activation (`chord.activate`, linked to whoever asked first). Routines and job phases are roots too; a job's
+`run` and `finish` stay under the carrier its start stored, even when a restarted worker resumes the run. Metrics
+(`chord.link.bytes`, `chord.commit.duration`, `chord.calls.in_flight`, ...) are aggregated per 10 s; ids are never their
+attributes. Without an adapter (the default), Chord starts no span and sends no carrier: a call costs what it did before.
+A script or a viewer reads the file with `openTelemetryStore(path)` (`@earendil-works/chord/telemetry-sqlite/node`),
+which opens it read-only and offers only the read interface (`findTraces`, `getTrace`, `findMetrics`).
+
 # Reference {.appendix}
 
 | Call | What it does |
@@ -827,4 +955,4 @@ refuses one that already has data (example 55).
 | `startWorker({ api, kinds, busy?, onError })` | a worker's entry, with the kit |
 | `app.ownerLink()`, `app.applyChanges(ctx)`, `app.plugins.install(source, ctx)` | sign in, apply changes, install |
 | `app.exportData(address, path, ctx)`, `app.importData(path, address, ctx)` | move a worker's data |
-| `AppInfo`, `WorkerInfo`, `Files`, `Sessions` | the kit's objects plugins get |
+| `AppInfo`, `WorkerInfo`, `Files`, `SignIns` | the kit's objects plugins get |

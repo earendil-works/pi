@@ -1,5 +1,6 @@
-// The binary codec (2b): a kind byte (its high bit set when an origin follows as a varint), then the kind's fields as
-// unsigned varints, length-prefixed UTF-8 strings, raw incarnation (16 bytes) and fingerprint (8 bytes), parts as
+// The binary codec (2b): a kind byte (its high bit set when an origin follows as a varint, the next one when a trace
+// carrier follows as JSON, slice 9, the third for a `call`'s old-work flag and an event `ack`), then the kind's fields
+// as unsigned varints, length-prefixed UTF-8 strings, raw incarnation (16 bytes) and fingerprint (8 bytes), parts as
 // length-prefixed bytes whose prefix also says whether the part is deflated (decoded as views of the message, never
 // parsed or inflated here), and byte segments only beside payloads marked as carrying bytes. No outer length: links
 // deliver whole messages.
@@ -38,12 +39,22 @@ const KINDS = [
 	"ping",
 	"pong",
 	"revoke",
+	"event",
 ] as const;
 
 const KIND_BYTES = new Map<string, number>(KINDS.map((kind, byte) => [kind, byte]));
 
 /** The kind byte's flag for an origin. */
 const ORIGIN = 0x80;
+
+/** The kind byte's flag for a trace carrier (a `hold`'s or `call`'s; the message schema refuses it elsewhere). */
+const TRACE = 0x40;
+
+/**
+ * The kind byte's third flag: on a `call`, old work of a reload (`call.old`); on an `ack`, an event ack, its count
+ * following (so a state ack stays one byte); another kind with it is unknown.
+ */
+const OLD = 0x20;
 
 /** A payload's flags: present, and carrying byte segments. */
 const PRESENT = 1;
@@ -67,26 +78,35 @@ export const binaryCodec: Codec = {
 	name: "binary",
 	encode(message) {
 		const writer = new Writer();
-		const origin = "origin" in message ? message.origin : undefined;
-		if (origin === undefined) {
-			writer.byte(KIND_BYTES.get(message.kind)!);
-		} else {
-			writer.byte(KIND_BYTES.get(message.kind)! | ORIGIN);
-			writer.varint(origin);
-		}
+		// Encoded on any kind: the message schema, after decoding, refuses an origin on a kind that has none.
+		const origin = (message as { readonly origin?: number }).origin;
+		const trace = message.kind === "hold" || message.kind === "call" ? message.trace : undefined;
+		const old =
+			(message.kind === "call" && message.old === true) || (message.kind === "ack" && message.events !== undefined)
+				? OLD
+				: 0;
+		writer.byte(
+			KIND_BYTES.get(message.kind)! | (origin === undefined ? 0 : ORIGIN) | (trace === undefined ? 0 : TRACE) | old,
+		);
+		if (origin !== undefined) writer.varint(origin);
+		if (trace !== undefined) writer.json(trace);
 		encodeFields(message, writer);
 		return writer.finish();
 	},
 	decode(bytes) {
 		const reader = new Reader(bytes);
 		const byte = reader.byte();
+		const kind = KINDS[byte & ~(ORIGIN | TRACE | OLD)];
+		if (kind === undefined || (byte & OLD && kind !== "call" && kind !== "ack"))
+			throw new Error("binary: an unknown kind");
 		const origin = byte & ORIGIN ? reader.varint() : undefined;
-		const kind = KINDS[byte & ~ORIGIN];
-		if (kind === undefined) throw new Error("binary: an unknown kind");
-		const message = decodeFields(kind, reader);
+		const trace = byte & TRACE ? reader.json() : undefined;
+		const message = kind === "ack" && byte & OLD ? { kind, events: reader.varint() } : decodeFields(kind, reader);
 		reader.end();
-		// A fresh object; the message schema refuses an origin on a kind without one.
+		// A fresh object; the message schema refuses an origin or a trace on a kind without one, and checks the trace.
 		if (origin !== undefined) (message as { origin?: number }).origin = origin;
+		if (trace !== undefined) (message as { trace?: unknown }).trace = trace;
+		if (kind === "call" && byte & OLD) (message as { old?: true }).old = true;
 		return message;
 	},
 };
@@ -96,7 +116,8 @@ function encodeFields(message: Message, writer: Writer): void {
 		case "hello":
 			writer.varint(message.protocol);
 			writer.raw(hex(message.incarnation.replaceAll("-", ""), 16));
-			writer.varint(message.calls);
+			// 0 when absent: no window (a window is at least 1).
+			writer.varint(message.calls ?? 0);
 			return;
 		case "hold": {
 			writer.varint(message.hold);
@@ -186,7 +207,19 @@ function encodeFields(message: Message, writer: Writer): void {
 		case "revoke":
 			writer.json(message.revocation);
 			return;
+		case "event":
+			writer.varint(message.events.length);
+			for (const { hold, member, at, value } of message.events) {
+				writer.varint(hold);
+				writer.varint(member);
+				writer.varint(at);
+				writer.part(value);
+			}
+			return;
 		case "ack":
+			// An event ack's count (the kind byte's flag says it follows); a state ack has no field.
+			if (message.events !== undefined) writer.varint(message.events);
+			return;
 		case "closed":
 		case "ping":
 		case "pong":
@@ -198,8 +231,10 @@ function encodeFields(message: Message, writer: Writer): void {
 function decodeFields(kind: (typeof KINDS)[number], reader: Reader): Message {
 	// The message schema establishes the types of what is read here (JSON fields are checked by it).
 	switch (kind) {
-		case "hello":
-			return { kind, protocol: reader.varint(), incarnation: uuid(reader.raw(16)), calls: reader.varint() };
+		case "hello": {
+			const [protocol, incarnation, calls] = [reader.varint(), uuid(reader.raw(16)), reader.varint()];
+			return { kind, protocol, incarnation, ...(calls === 0 ? {} : { calls }) };
+		}
 		case "hold": {
 			const hold = reader.varint();
 			const type = reader.string();
@@ -280,6 +315,13 @@ function decodeFields(kind: (typeof KINDS)[number], reader: Reader): Message {
 			return { kind, hold: reader.varint(), error: reader.json() as Extract<Message, { kind: "error" }>["error"] };
 		case "revoke":
 			return { kind, revocation: reader.json() };
+		case "event": {
+			const events = reader.list(() => {
+				const [hold, member, at] = [reader.varint(), reader.varint(), reader.varint()];
+				return { hold, member, at, value: reader.part() };
+			});
+			return { kind, events };
+		}
 		case "ack":
 		case "ping":
 		case "pong":

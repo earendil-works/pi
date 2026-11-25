@@ -36,6 +36,7 @@ describe("long conversation in the browser", { skip: !browserTests }, () => {
 			BACKGROUND_CONTEXT,
 		);
 		browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 		await browser.call("Page.addScriptToEvaluateOnNewDocument", { source: COUNT_RECEIVED });
 	});
 	after(async () => {

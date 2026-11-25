@@ -160,7 +160,7 @@ export class FooterSurface implements TuiSurface {
 		if (branch) where += ` (${branch})`;
 		if (session?.title) where += `${where ? " • " : ""}${session.title}`;
 		// The subagent crumb (the web's top-bar crumb): the session › the shown subagent conversation.
-		if (this.runtime.conversation !== 1) {
+		if (this.runtime.conversation !== (session?.main ?? 1)) {
 			const child = this.children[this.session ?? ""]?.find(
 				(row) => row.conversationId === this.runtime.conversation,
 			);
@@ -268,14 +268,16 @@ export default tuiFacet("footer", (runtime) => new FooterSurface(runtime), {
 		category: "Owner",
 		when: "owner && !overlay",
 		slash: { name: "retry-worker" },
+		// Long work: the pending line shows at once, the outcome when the worker started (or failed again).
 		run: (ctx) => {
 			const session = ctx.identity.session;
 			if (!session) return;
+			ctx.notify("Retrying the session worker…");
 			return ctx.host.root(async (root) => {
 				const control = await root.get(WorkerControl, { session });
 				if (control.variant !== "owner") return;
 				await control.restart(root);
-				ctx.notify("Retrying the session worker");
+				ctx.notify("Session worker started");
 			}, BACKGROUND_CONTEXT);
 		},
 	},
@@ -292,6 +294,20 @@ export default tuiFacet("footer", (runtime) => new FooterSurface(runtime), {
 			const value = result.ok && result.value && typeof result.value === "object" ? result.value : undefined;
 			const text = value && "message" in value && typeof value.message === "string" ? lineText(value.message) : "";
 			grantNotice(ctx, text.slice(0, 200) || "Plugin reload requested", result);
+		},
+	},
+	"p2.dev.restart": {
+		title: "Restart the server (dev server)",
+		category: "Owner",
+		when: "owner && !overlay",
+		slash: { name: "dev-restart" },
+		// Same dev channel as /dev-reload; the server restarts only under the `npm run dev` supervisor and says so
+		// otherwise. The request may drop as the server exits; the launcher then reconnects.
+		run: async (ctx) => {
+			const result = await ctx.grant("devCommand", { action: "restart" });
+			const value = result.ok && result.value && typeof result.value === "object" ? result.value : undefined;
+			const text = value && "message" in value && typeof value.message === "string" ? lineText(value.message) : "";
+			grantNotice(ctx, text.slice(0, 200) || "Restart requested", result);
 		},
 	},
 	"p2.session.info": {

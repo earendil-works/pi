@@ -23,6 +23,7 @@ import {
 	type ToolResultContentBlock,
 	ToolResultStatus,
 } from "@aws-sdk/client-bedrock-runtime";
+import { type DefaultProviderInit, defaultProvider } from "@aws-sdk/credential-provider-node";
 import { NodeHttpHandler } from "@smithy/node-http-handler";
 import type { BuildMiddleware, DeserializeMiddleware, DocumentType, HttpResponse, MetadataBearer } from "@smithy/types";
 import { HttpProxyAgent } from "http-proxy-agent";
@@ -67,7 +68,6 @@ import {
 } from "../utils/transcript.ts";
 import {
 	getJsonSchemaToolParameters,
-	isStrictToolLimitErrorMessage,
 	prefersJsonSchemaStrictSampling,
 	resolveJsonSchemaStrictSampling,
 } from "./constrained-sampling.ts";
@@ -77,6 +77,11 @@ import {
 	clampMaxTokensToContext,
 	clampReasoning,
 } from "./simple-options.ts";
+import {
+	hasExceededStrictToolLimits,
+	isStrictToolLimitErrorMessage,
+	markStrictToolLimitsExceeded,
+} from "./strict-tool-limits.ts";
 import { splitErrorToolResultImages, transformMessages } from "./transform-messages.ts";
 
 export type BedrockThinkingDisplay = "summarized" | "omitted";
@@ -234,10 +239,18 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 				// Bedrock runtime uses NodeHttp2Handler by default since v3.798.0, which is based
 				// on `http2` module and has no support for http agent.
 				// Use NodeHttpHandler to support HTTP(S) proxy agents.
-				config.requestHandler = new NodeHttpHandler({
+				const requestHandler = new NodeHttpHandler({
 					httpAgent: new HttpProxyAgent(proxyUrl),
 					httpsAgent: new HttpsProxyAgent(proxyUrl) as unknown as HttpsAgent,
 				});
+				config.requestHandler = requestHandler;
+				// The default credential chain builds its own SSO and SSO OIDC clients, which do
+				// not inherit the Bedrock client's request handler (#12353). The SDK uses this
+				// chain only when `credentials` is unset, so explicit keys keep their precedence.
+				// Those are static (env keys, skip-auth dummies) and make no requests, so they
+				// need no proxy.
+				config.credentialDefaultProvider = (init: DefaultProviderInit) =>
+					defaultProvider({ ...init, clientConfig: { ...init.clientConfig, requestHandler } });
 			} else if (getProviderEnvValue("AWS_BEDROCK_FORCE_HTTP1", options.env) === "1") {
 				// Some custom endpoints require HTTP/1.1 instead of HTTP/2
 				config.requestHandler = new NodeHttpHandler();
@@ -275,7 +288,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 			const inferenceMaxTokens = options.maxTokens ?? (isAnthropicClaudeModel(model) ? model.maxTokens : undefined);
 			const initialSystemMessage = getInitialSystemMessage(normalizedContext.messages);
 			const initialSystemPrompt = initialSystemMessage ? getSystemMessageText(initialSystemMessage) : undefined;
-			let disablePreferredStrictTools = false;
+			let disablePreferredStrictTools = hasExceededStrictToolLimits(options.sessionId);
 			let response: ConverseStreamCommandOutput;
 			for (;;) {
 				const tools = convertToolConfig(
@@ -316,6 +329,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 						throw error;
 					}
 					disablePreferredStrictTools = true;
+					markStrictToolLimitsExceeded(options.sessionId);
 					appendAssistantMessageDiagnostic(output, {
 						type: "bedrock_strict_tools_fallback",
 						timestamp: Date.now(),

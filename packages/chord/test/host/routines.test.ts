@@ -2,8 +2,9 @@
 // with the whole value, retirements, the source ending or failing, native sources, facets), `onLive` (returning,
 // retries, the backoff reset after a long run, aborts), the drain and `host.close`, and what routines leave behind.
 
+import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { describe, expect, expectTypeOf, it, vi } from "vitest";
-import { type Context, BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
+import { type Context, BACKGROUND_CONTEXT as context, withTelemetry } from "../../src/context/index.ts";
 import { int, local, method, obj, remote } from "../../src/contracts/index.ts";
 import type { Op } from "../../src/delta/index.ts";
 import { defineState, type SingletonHandle } from "../../src/documents/index.ts";
@@ -57,7 +58,7 @@ const Item = local("app.item", { version: 1, params: { id: int() }, members: { n
 /** Loads a host serving `Store`; `declare` declares its routines over its document. */
 async function store(
 	declare: (doc: SingletonHandle<{ n: number }>, self: Self) => void,
-	options: { readonly closeTimeout?: number } = {},
+	options: { readonly closeTimeout?: number; readonly telemetry?: InMemoryTelemetryContext } = {},
 ) {
 	const loadedHost = await loaded(
 		(h) =>
@@ -1152,5 +1153,67 @@ describe("routines and the end", () => {
 		expect({ watches: watches.size, calls: refs.length }).toEqual({ watches: 0, calls: 2 });
 		await expectCollected(...refs);
 		refs = [];
+	});
+});
+
+describe("routine spans (slice 9)", () => {
+	it("traces each routine call as a root, its commits events of it, a throw `routine_failed`", async () => {
+		const telemetry = new InMemoryTelemetryContext();
+		const seen: number[] = [];
+		const { ref } = await store(
+			(doc, self) => {
+				self.on(doc, async ({ value }) => {
+					seen.push(value.n);
+					if (value.n === 1) throw new Error("odd");
+				});
+				self.onLive(async (ctx) => {
+					await bump(doc, ctx);
+				});
+			},
+			{ telemetry },
+		);
+		await flushed();
+		await settled();
+		expect(seen).toContain(1);
+		const routines = telemetry.getSpans().filter(({ name }) => name === "chord.routine");
+		const live = routines.find(({ attributes }) => attributes.routine === "onLive")!;
+		expect([live.parentId, live.attributes]).toEqual([
+			null,
+			{
+				"chord.host": "client",
+				type: "app.store",
+				object: "app.store",
+				routine: "onLive",
+				position: 1,
+				outcome: "ok",
+			},
+		]);
+		expect(live.events.map(({ name }) => name)).toEqual(["chord.commit"]);
+		const ons = routines.filter(({ attributes }) => attributes.routine === "on");
+		expect(ons.map(({ attributes, status }) => [attributes.outcome, status.status])).toContainEqual([
+			"error",
+			"error",
+		]);
+		const failedCall = ons.find(({ status }) => status.status === "error")!;
+		expect(failedCall.status).toEqual({ status: "error", error: { name: "routine_failed", message: "odd" } });
+		// Its backoff (review L7), and the commit that changed its source: the `onLive` call's.
+		expect(failedCall.events).toEqual([{ name: "chord.retry", attributes: { backoff: 1_000 } }]);
+		expect(failedCall.links.map(({ context: carrier }) => carrier)).toEqual([live.context]);
+		// The first call (the current value) has no trigger.
+		expect(ons[0]!.links).toEqual([]);
+		expect(ref).toBeDefined();
+	});
+
+	it("links a call to the method span whose commit changed its source (review L7)", async () => {
+		const telemetry = new InMemoryTelemetryContext();
+		const { ref } = await store((doc, self) => self.on(doc, async () => {}), { telemetry });
+		await flushed();
+		await telemetry.startSpan({ name: "request" }, (span) => ref.bump(withTelemetry(span, context)));
+		await flushed();
+		await settled();
+		const spans = telemetry.getSpans();
+		const bumped = spans.find(({ name, attributes }) => name === "chord.method" && attributes.member === "bump")!;
+		const calls = spans.filter(({ name }) => name === "chord.routine");
+		expect(calls.map(({ links }) => links.map(({ context: carrier }) => carrier))).toEqual([[], [bumped.context]]);
 	});
 });

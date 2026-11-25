@@ -39,8 +39,6 @@ export {
 	type StoredDocument,
 	writeContent,
 } from "./store/engine.ts";
-/** @internal */
-export type { WhereNode } from "./store/expression.ts";
 export * from "./store/index.ts";
 /** @internal */
 export type { EncodedRow } from "./store/rows.ts";
@@ -51,3 +49,4 @@ export type { StagedWrite, Step } from "./store/step.ts";
 /** @internal */
 export type { ChordStore, SeriesCommit, SeriesResult } from "./store/store.ts";
 export * from "./surfaces/index.ts";
+export { CHORD_TELEMETRY_SCHEMA, type ChordSpanName } from "./telemetry.ts";

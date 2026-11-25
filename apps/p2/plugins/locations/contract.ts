@@ -7,6 +7,8 @@ import { DirectoryListingSchema, literal, method, remote, serverHost } from "@p2
 /** One environment as an agent sees it: never keys or identity files. */
 export const EnvInfoSchema = obj({
 	name: str(),
+	/** `gondolin`: a sandbox, `host` naming the SSH environment it runs on; conversations working there cannot leave it. */
+	type: union([literal("ssh"), literal("gondolin")]),
 	host: str(),
 	user: opt(str()),
 	port: opt(num()),
@@ -17,22 +19,19 @@ export const EnvInfoSchema = obj({
 });
 export type EnvInfo = Static<typeof EnvInfoSchema>;
 
-/** The worker attests that the owner started the calling turn; only such turns use the location tools. */
-const Owner = literal("owner");
-
 export const AgentLocations = remote("p2.agent-locations", {
-	version: 1,
+	/** 2: no `origin` (p2 has no per-turn authority). Only workers hold it, and they reload with the server. */
+	version: 2,
 	params: {},
 	hostAddress: serverHost,
 	variants: {
 		worker: {
 			methods: {
-				/** The configured SSH environments (this device is always available besides them). */
-				envs: method(obj({ origin: Owner }), obj({ envs: arr(EnvInfoSchema) })),
+				/** The configured SSH environments and sandboxes (this device is always available besides them). */
+				envs: method(undefined, obj({ envs: arr(EnvInfoSchema) })),
 				/** Folders of `path` (absolute or `~`-relative) on `env` (null: this device), as the directory picker lists them. */
 				directories: method(
 					obj({
-						origin: Owner,
 						env: union([str(), nul()]),
 						path: str({ minLength: 1 }),
 					}),
@@ -40,11 +39,10 @@ export const AgentLocations = remote("p2.agent-locations", {
 				),
 				/**
 				 * Moves the worker's session (`SessionMoves.relocate`); `refused` is why its busy worker could not be fenced
-				 * (nothing moved).
+				 * (nothing moved). A session working in a sandbox only moves within it (only the owner's Relocate leaves it).
 				 */
 				move: method(
 					obj({
-						origin: Owner,
 						env: union([str(), nul()]),
 						cwd: str({ minLength: 1 }),
 					}),

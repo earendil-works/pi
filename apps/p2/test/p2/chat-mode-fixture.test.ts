@@ -47,7 +47,7 @@ describe("chat mode (server, sharing, fake provider)", () => {
 					.map((line) => JSON.parse(line) as Logged[])
 			: [];
 	const upload = async (name: string, body: string | Buffer, headers: Record<string, string> = {}) => {
-		const response = await http(fixture.server.port, `/upload?${new URLSearchParams({ session, name })}`, {
+		const response = await fixture.http(`/upload?${new URLSearchParams({ session, name })}`, {
 			method: "POST",
 			headers: { Origin: `http://127.0.0.1:${fixture.server.port}`, ...headers },
 			body,
@@ -84,6 +84,7 @@ describe("chat mode (server, sharing, fake provider)", () => {
 				"chat",
 				"chat-mode",
 				"conversations",
+				"devices",
 				"drafts",
 				"envs",
 				"files",
@@ -157,7 +158,11 @@ describe("chat mode (server, sharing, fake provider)", () => {
 	});
 
 	it("gives a mention the chat no mention passed on yet, with authors, attachments and capped images", async () => {
-		const png = Buffer.from("89504e470d0a1a0a", "hex");
+		// A real 1x1 PNG: inline images are decoded, and bytes that are not one are left out.
+		const png = Buffer.from(
+			"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+			"base64",
+		);
 		const alice = await joinAs("full", "Alice");
 		const [aliceChat, aliceMode] = await Promise.all([
 			holdIn(alice.host, Chat, { session, conversation: 1 }, "participant"),
@@ -193,7 +198,7 @@ describe("chat mode (server, sharing, fake provider)", () => {
 		const asked = requests()[before]!.at(-1)!;
 		assert.equal(asked.role, "user");
 		const text = textOf(asked);
-		assert.match(text, /<mobile-speaker>.*"name":"Alice"/);
+		assert.match(text, /<sender kind="guest" id="[^"]+" name="Alice"\/>/);
 		assert.match(text, /^Alice \(guest\): screenshots \[attached: a\.png, b\.png, c\.png\]$/m);
 		assert.match(text, /^Owner: my notes \[attached: notes\.txt, d\.png, e\.png\]$/m);
 		assert.match(text, /Alice \(guest\) mentioned you:\n@Pi, what do you think\?/);

@@ -26,9 +26,10 @@ import {
 	readClipboardImage,
 	readClipboardText,
 } from "./tui-clipboard.ts";
-import { configDirectory, connectionHeaders, type TuiCredentials } from "./tui-config.ts";
+import { configDirectory, type TuiCredentials } from "./tui-config.ts";
 import type { LauncherAction, LauncherActionContext } from "./tui-grants.ts";
 import { applyPrefsPatch, prefsDiff, readPrefsFile, validatePrefsPatch, writePrefsFile } from "./tui-prefs-save.ts";
+import { cookieTransport, type TuiRequestInit, type TuiTransport } from "./tui-transport.ts";
 import type { ConsentRequest } from "./tui-trusted-ui.ts";
 
 export const MAX_COPY = 1024 * 1024;
@@ -40,6 +41,8 @@ const ARTIFACT = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 export type LauncherActionOptions = {
 	url: URL;
 	credentials: TuiCredentials;
+	/** How requests reach the server; default: directly to `url` with `credentials`. */
+	transport?: TuiTransport;
 	role: "owner" | "guest";
 	/** Download folder (launcher-only preference; default ~/Downloads/p2). */
 	downloads?: string;
@@ -181,10 +184,10 @@ export function originPath(url: URL, path: unknown): URL | undefined {
 	if (/^\/s\/[0-9a-f-]{36}$/i.test(target.pathname) && UUID.test(target.pathname.slice(3)) && query.length === 0)
 		return target;
 	if (
-		target.pathname === "/artifact" &&
-		only("session", "name", "version", "download") &&
+		target.pathname === "/artifact-frame" &&
+		only("session", "id", "version") &&
 		UUID.test(session) &&
-		ARTIFACT.test(target.searchParams.get("name") ?? "") &&
+		ARTIFACT.test(target.searchParams.get("id") ?? "") &&
 		/^\d{1,6}$/.test(target.searchParams.get("version") ?? "")
 	)
 		return target;
@@ -277,13 +280,12 @@ function suspendThisProcess(): Promise<void> {
 export function launcherActions(options: LauncherActionOptions): Record<string, LauncherAction> {
 	const { url } = options;
 	const platform = options.platform ?? process.platform;
-	const headers = connectionHeaders(url, options.credentials);
+	const transport = options.transport ?? cookieTransport(url, options.credentials);
 	const clipboard = options.clipboard ?? ((text, write) => copyToClipboard(text, write));
 	const open = options.openBrowser ?? ((target) => openBrowser(target));
 	const folder = options.downloads ?? join(homedir(), "Downloads", "p2");
 	const loopback = ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) && url.protocol === "http:";
-	const request = (path: string, init: RequestInit & { signal: AbortSignal }) =>
-		fetch(new URL(path, url), { ...init, headers: { ...headers, ...init.headers }, redirect: "error" });
+	const request = (path: string, init: TuiRequestInit) => transport.request(path, init);
 	const copyText = (value: unknown): string | undefined => {
 		const text = record(value)?.text;
 		return typeof text === "string" && text.length > 0 && Buffer.byteLength(text) <= MAX_COPY ? text : undefined;
@@ -321,17 +323,12 @@ export function launcherActions(options: LauncherActionOptions): Record<string, 
 						}
 					})();
 		if (body instanceof Uint8Array && body.byteLength > MAX_UPLOAD) throw new Error("Larger than 25 MiB");
-		const response = await fetch(new URL(`/upload?${query}`, url), {
+		const response = await request(`/upload?${query}`, {
 			method: "POST",
-			headers: { ...headers, "Content-Type": "application/octet-stream" },
-			body:
-				body instanceof Uint8Array
-					? Buffer.from(body)
-					: (stream as AsyncIterable<Uint8Array> as unknown as BodyInit),
-			redirect: "error",
+			headers: { "Content-Type": "application/octet-stream" },
+			body: body instanceof Uint8Array ? Buffer.from(body) : (stream as AsyncIterable<Uint8Array>),
 			signal: AbortSignal.any([signal, AbortSignal.timeout(60_000)]),
-			...(stream ? { duplex: "half" } : {}),
-		} as RequestInit);
+		});
 		const text = (await response.text()).slice(0, 8192);
 		let value: Record<string, unknown> | undefined;
 		try {
@@ -524,7 +521,7 @@ export function launcherActions(options: LauncherActionOptions): Record<string, 
 				return null;
 			},
 		},
-		/** C: `{kind: "file", session, id, name?}` (sent files) or `{kind: "artifact", session, name, version}`. */
+		/** C: `{kind: "file", session, id, name?}` (sent files). */
 		download: {
 			kind: "C",
 			consent: (payload, { target }) => {
@@ -620,7 +617,7 @@ export function launcherActions(options: LauncherActionOptions): Record<string, 
 			kind: "C",
 			consent: (payload) => {
 				const checked = validatePrefsPatch(record(payload)?.patch);
-				if ("error" in checked) return undefined;
+				if (checked.kind === "invalid") return undefined;
 				let current: Record<string, unknown>;
 				try {
 					current = readPrefsFile(prefsDirectory);
@@ -638,29 +635,44 @@ export function launcherActions(options: LauncherActionOptions): Record<string, 
 			},
 			run: async (payload) => {
 				const checked = validatePrefsPatch(record(payload)?.patch);
-				if ("error" in checked) throw new Error(checked.error);
+				if (checked.kind === "invalid") throw new Error(checked.error);
 				// Re-read: the file may have changed while the screen was up; the patch applies to what is there now.
 				writePrefsFile(prefsDirectory, applyPrefsPatch(readPrefsFile(prefsDirectory), checked.patch));
 				return { saved: true };
 			},
 		},
-		/** C (owner): `{action: "reload"}` on the dev channel `/__p2_dev`, with the launcher's own sign-in. */
+		/**
+		 * C (owner): `{action: "reload" | "restart"}` on the dev channel `/__p2_dev`, with the launcher's own sign-in.
+		 * A restart may drop the request as the server exits; that counts as requested (the launcher reconnects).
+		 */
 		devCommand: {
 			kind: "C",
-			consent: (payload) =>
-				options.role === "owner" &&
-				record(payload)?.action === "reload" &&
-				Object.keys(record(payload)!).length === 1
-					? { action: "Reload the server's changed plugins (dev server)", confirmLabel: "reload" }
-					: undefined,
-			run: async (_payload, context) => {
-				const response = await request("/__p2_dev", {
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ action: "reload" }),
-					signal: AbortSignal.any([context.grant.signal, AbortSignal.timeout(120_000)]),
-				});
-				const text = (await response.text()).slice(0, 2000);
+			consent: (payload) => {
+				const action = record(payload)?.action;
+				if (options.role !== "owner" || Object.keys(record(payload) ?? {}).length !== 1) return undefined;
+				if (action === "reload")
+					return { action: "Reload the server's changed plugins (dev server)", confirmLabel: "reload" };
+				// No screen: the request goes to the server the worker came from, which can restart itself anyway.
+				if (action === "restart") return { action: "Restart the server (npm run dev supervisor)", ask: false };
+				return undefined;
+			},
+			run: async (payload, context) => {
+				const action = record(payload)?.action === "restart" ? "restart" : "reload";
+				let response: Response;
+				let text: string;
+				try {
+					response = await request("/__p2_dev", {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({ action }),
+						signal: AbortSignal.any([context.grant.signal, AbortSignal.timeout(120_000)]),
+					});
+					text = (await response.text()).slice(0, 2000);
+				} catch (error) {
+					if (action === "restart" && !context.grant.signal.aborted)
+						return { message: "Restart requested; reconnecting…" };
+					throw error;
+				}
 				let message = "";
 				try {
 					const value = record(JSON.parse(text));
@@ -676,7 +688,7 @@ export function launcherActions(options: LauncherActionOptions): Record<string, 
 			consent: (payload) => {
 				const all = record(payload)?.all;
 				if (options.role !== "owner" || typeof all !== "boolean") return undefined;
-				// Loopback is the device owner by address; it has no cookie to end.
+				// A loopback launcher signs in again with the data directory's owner key: one sign-out ends nothing.
 				if (!all && (loopback || !options.credentials.cookie)) return undefined;
 				return {
 					action: all ? "Sign out ALL owner devices, this one included" : "Sign out this device",
@@ -729,20 +741,6 @@ export function launcherActions(options: LauncherActionOptions): Record<string, 
 				label: value.name,
 				fallback: typeof value.name === "string" ? value.name : undefined,
 			};
-		}
-		if (
-			value.kind === "artifact" &&
-			typeof value.name === "string" &&
-			ARTIFACT.test(value.name) &&
-			typeof value.version === "number" &&
-			Number.isInteger(value.version) &&
-			value.version >= 0 &&
-			value.version < 1_000_000
-		) {
-			query.set("name", value.name);
-			query.set("version", String(value.version));
-			query.set("download", "1");
-			return { path: `/artifact?${query}`, label: `${value.name} v${value.version}`, fallback: value.name };
 		}
 		return undefined;
 	}

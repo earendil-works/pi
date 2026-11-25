@@ -38,6 +38,28 @@ test("terminal modes: ?7 admitted, mouse only by policy, tracked, undone on clea
 	);
 });
 
+test("terminal modes: the kitty keyboard flags are pushed on the alternate screen and popped before leaving it", () => {
+	const PUSH = "\x1b[>7u";
+	const POP = "\x1b[<u";
+	const modes = new TerminalModes();
+	assert.equal(modes.keyboard(true), "", "the main screen has the launcher's own push");
+	modes.filter("\x1b[?1049h");
+	assert.equal(modes.keyboard(false), "", "nothing without the kitty protocol");
+	assert.equal(modes.keyboard(true), PUSH);
+	assert.equal(modes.keyboard(true), "", "once per alternate screen");
+	// The worker leaves the alternate screen: the pop comes first, on the screen that has the push.
+	assert.equal(modes.filter("a\x1b[?1049lb"), `a${POP}\x1b[?1049lb`);
+	assert.equal(modes.keyboard(true), "");
+	modes.filter("\x1b[?1049h");
+	assert.equal(modes.keyboard(true), PUSH);
+	// Suspend leaves the screen (pop), resume re-enters it and the next keyboard() pushes again.
+	assert(modes.suspendSequence().startsWith(POP));
+	assert(modes.resumeSequence().startsWith("\x1b[?1049h"));
+	assert.equal(modes.keyboard(true), PUSH);
+	assert(modes.cleanup().startsWith(POP));
+	assert(!modes.cleanup().includes(POP), "popped once");
+});
+
 test("trusted UI: only Enter or y confirms; data is shown with visible control characters", async () => {
 	const written: string[] = [];
 	const ui = new TrustedUi({ write: (data) => written.push(data), columns: 60, rows: 12 }, "https://server.test");
@@ -121,6 +143,7 @@ const FAKE_WORKER = `const seen=[];export default ({send,onMessage})=>onMessage(
 	const d=message.data;
 	if(d==='r')send({kind:'request',id:seen.length,action:'test.confirm',payload:{text:'hello'}});
 	if(d==='q')send({kind:'request',id:seen.length,action:'unknown.action',payload:{}});
+	if(d==='w')send({kind:'request',id:seen.length,action:'test.unasked',payload:{}});
 	if(d==='o')send({kind:'output',data:'WORKER-OUTPUT'});
 	if(d==='s')send({kind:'keyContext',suspendPrivileged:true});
 	if(d==='u')send({kind:'keyContext',suspendPrivileged:false});
@@ -178,6 +201,14 @@ test(
 				run: async (payload, context) => {
 					ran.push(`${JSON.stringify(payload)}@${context.grant.target?.session}`);
 					return "done";
+				},
+			},
+			"test.unasked": {
+				kind: "C",
+				consent: () => ({ action: "Restart the server", ask: false }),
+				run: async () => {
+					ran.push("unasked");
+					return "restarted";
 				},
 			},
 			"test.key": {
@@ -245,6 +276,12 @@ test(
 		terminal.sendInput("y");
 		await poll(async () => JSON.stringify((await responses()).at(-1)).includes('"cancelled"'));
 		assert.equal(ran.length, 1);
+		// ask: false runs at once, without the screen.
+		writes.length = 0;
+		terminal.sendInput("w");
+		await poll(async () => JSON.stringify((await responses()).at(-1)).includes('"restarted"'));
+		assert.deepEqual(ran.slice(1), ["unasked"]);
+		assert(!writes.join("").includes("Action: Restart the server"), "no consent screen");
 		// Unknown actions are denied without any UI.
 		terminal.sendInput("q");
 		await poll(async () => JSON.stringify((await responses()).at(-1)).includes('"denied"'));
@@ -289,6 +326,7 @@ test(
 			const client = await startTuiClient({
 				terminal,
 				url: new URL(`http://127.0.0.1:${fixture.server.port}`),
+				credentials: { cookie: fixture.owner.cookie },
 				pollMs: 60000,
 				colorQueryMs: 10,
 			});
@@ -333,6 +371,7 @@ test(
 		const client = await startTuiClient({
 			terminal,
 			url: new URL(`http://127.0.0.1:${fixture.server.port}`),
+			credentials: { cookie: fixture.owner.cookie },
 			pollMs: 60000,
 			colorQueryMs: 10,
 			actions: {

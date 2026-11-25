@@ -2,9 +2,18 @@
 // privileged-action bindings never come from the server. Browser/worker-safe: types and schemas only.
 
 import { method, remote } from "@earendil-works/chord";
-import { arr, bool, int, obj, opt, type Static, str, union } from "@earendil-works/pi-schema";
-import { serverHost } from "./chord.ts";
+import { arr, bool, int, map, num, obj, opt, type Schema, type Static, str, union } from "@earendil-works/pi-schema";
+import { keyedRegistry, serverHost } from "./chord.ts";
 import { literal, record } from "./schema.ts";
+
+/** One plugin setting's value. The launcher never runs plugin code: this shape is all it checks. */
+export type PluginSettingValue = boolean | number | string;
+const PluginSettingValueSchema = union([bool(), num(), str({ maxLength: 200 })]);
+/** `plugins.<plugin>.<setting>`, bounded so a plugin cannot grow the visitor's prefs.json without limit. */
+const PluginSettingsSchema: Schema<Record<string, Record<string, PluginSettingValue>>> = {
+	...map({ ...map(PluginSettingValueSchema), maxProperties: 32 }),
+	maxProperties: 64,
+};
 
 const Bool = opt(bool());
 /** pi `settings.json` keys marked G in section 1.14, spelled (and nested) as pi spells them. */
@@ -37,8 +46,31 @@ export const TuiSettingsSchema = obj({
 	fullscreenScrollbar: opt(union([literal("auto"), literal("always"), literal("hidden")])),
 	fullscreenCopyOnSelect: Bool,
 	fullscreenWheelScrollLines: opt(union([literal("auto"), int({ minimum: 1, maximum: 100 })])),
+	/** p2: plugin settings by plugin name, declared through `TuiSettingFields`. */
+	plugins: opt(PluginSettingsSchema),
 });
 export type TuiSettings = Static<typeof TuiSettingsSchema>;
+
+/**
+ * A plugin's row in `/settings`: the values it cycles and the value it means when unset. It is stored at
+ * `plugins.<plugin>.<name>` of the visitor's settings; read it with `pluginSetting`.
+ */
+export type TuiSettingField = {
+	plugin: string;
+	name: string;
+	label: string;
+	description: string;
+	values: readonly PluginSettingValue[];
+	fallback: PluginSettingValue;
+};
+/** Plugin rows of `/settings`, listed after the built-in ones in key order; key `<plugin>.<name>`. */
+export const TuiSettingFields = keyedRegistry<TuiSettingField>("p2.tui-setting-fields");
+
+/** A plugin setting's value, or the field's fallback when unset or not one of its values. */
+export function pluginSetting(settings: TuiSettings | undefined, field: TuiSettingField): PluginSettingValue {
+	const value = settings?.plugins?.[field.plugin]?.[field.name];
+	return value !== undefined && field.values.includes(value) ? value : field.fallback;
+}
 
 export const TuiPreferencesSchema = obj({
 	keybindings: record(union([str(), arr(str())])),

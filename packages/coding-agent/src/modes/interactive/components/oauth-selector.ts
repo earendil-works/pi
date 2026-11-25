@@ -8,16 +8,28 @@ import {
 	Input,
 	Spacer,
 	TruncatedText,
+	type TUI,
 } from "@earendil-works/pi-tui";
+import { isPreferredProvider } from "../../../core/preferred-providers.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
+import { getProviderBrandStyle, type ProviderBrandStyle, startBrandAnimation } from "./provider-brand.ts";
+
+/**
+ * Auth state of a login option: auth that works, or a stored credential that does not resolve to a key,
+ * for example a failing `!command`.
+ */
+export type AuthSelectorStatus =
+	| { kind: "configured"; type: AuthCheck["type"]; source?: string }
+	| { kind: "unresolved" };
 
 export type AuthSelectorProvider = {
 	id: string;
 	name: string;
 	authType: "oauth" | "api_key";
 	method?: ApiKeyAuth | OAuthAuth;
-	status?: AuthCheck;
+	/** Unset when nothing is configured. */
+	status?: AuthSelectorStatus;
 	/**
 	 * Whether the provider's OAuth sign-in is backed by a subscription. `false` labels it as an account;
 	 * unset keeps the "subscription" label.
@@ -35,28 +47,27 @@ export function formatAuthSelectorProviderType(
 
 /** Themed suffix describing whether and how a login option is configured, for example " ✓ configured". */
 export function formatAuthSelectorProviderStatus(provider: AuthSelectorProvider): string {
-	if (!provider.status) return theme.fg("muted", " • not configured");
-	if (provider.status.type !== provider.authType) {
-		const label = `${formatAuthSelectorProviderType(provider.status.type, provider.subscription)} configured`;
+	const { status } = provider;
+	if (!status) return theme.fg("muted", " • not configured");
+	if (status.kind === "unresolved") return theme.fg("muted", " • ") + theme.fg("error", "stored key did not resolve");
+	if (status.type !== provider.authType) {
+		const label = `${formatAuthSelectorProviderType(status.type, provider.subscription)} configured`;
 		return theme.fg("muted", " • ") + theme.fg("warning", label);
 	}
-	if (
-		!provider.status.source ||
-		provider.status.source === "OAuth" ||
-		provider.status.source === "stored credential"
-	) {
+	if (!status.source || status.source === "OAuth" || status.source === "stored credential") {
 		return theme.fg("success", " ✓ configured");
 	}
-	const source = /^[A-Z][A-Z0-9_]*(?:, [A-Z][A-Z0-9_]*)*$/.test(provider.status.source)
-		? `env: ${provider.status.source}`
-		: provider.status.source;
+	const source = /^[A-Z][A-Z0-9_]*(?:, [A-Z][A-Z0-9_]*)*$/.test(status.source)
+		? `env: ${status.source}`
+		: status.source;
 	return theme.fg("success", ` ✓ ${source}`);
 }
 
 const MAX_VISIBLE = 8;
 
 /**
- * Component that renders an auth provider selector
+ * Component that renders an auth provider selector. With `tui`, the selected row of a preferred partner provider
+ * shows its animated brand style.
  */
 export class OAuthSelectorComponent extends Container implements Focusable {
 	readonly capturesViewportInput: boolean = true;
@@ -80,6 +91,8 @@ export class OAuthSelectorComponent extends Container implements Focusable {
 	private onSelectCallback: (providerId: string, authType: AuthSelectorProvider["authType"]) => void;
 	private onCancelCallback: () => void;
 	private showAuthTypeLabels: boolean;
+	private readonly animationStart = performance.now();
+	private stopAnimation: (() => void) | undefined;
 
 	constructor(
 		mode: "login" | "logout",
@@ -87,6 +100,7 @@ export class OAuthSelectorComponent extends Container implements Focusable {
 		onSelect: (providerId: string, authType: AuthSelectorProvider["authType"]) => void,
 		onCancel: () => void,
 		initialSearchInput?: string,
+		tui?: TUI,
 	) {
 		super();
 
@@ -130,6 +144,25 @@ export class OAuthSelectorComponent extends Container implements Focusable {
 
 		// Initial render
 		this.filterProviders(initialSearchInput ?? "");
+
+		if (tui) this.stopAnimation = startBrandAnimation(tui, () => this.getSelectedBrandStyle() !== undefined);
+	}
+
+	override render(width: number): readonly string[] {
+		// The list is built from styled text, so an animated row needs a rebuild for each frame.
+		if (this.stopAnimation && this.getSelectedBrandStyle()) this.updateList();
+		return super.render(width);
+	}
+
+	/** Stops the brand animation. */
+	dispose(): void {
+		this.stopAnimation?.();
+		this.stopAnimation = undefined;
+	}
+
+	private getSelectedBrandStyle(): ProviderBrandStyle | undefined {
+		const selectedProvider = this.filteredProviders[this.selectedIndex];
+		return selectedProvider && getProviderBrandStyle(selectedProvider.id);
 	}
 
 	private filterProviders(query: string): void {
@@ -140,7 +173,8 @@ export class OAuthSelectorComponent extends Container implements Focusable {
 					(provider) => `${provider.name} ${provider.id} ${provider.authType} ${provider.method?.name ?? ""}`,
 				)
 			: this.allProviders;
-		this.selectedIndex = Math.max(0, Math.min(this.selectedIndex, Math.max(0, this.filteredProviders.length - 1)));
+		// A query moves the selection to the top row, so the best match is highlighted.
+		this.selectedIndex = query ? 0 : Math.min(this.selectedIndex, Math.max(0, this.filteredProviders.length - 1));
 		this.updateList();
 	}
 
@@ -160,17 +194,22 @@ export class OAuthSelectorComponent extends Container implements Focusable {
 			const isSelected = i === this.selectedIndex;
 
 			const statusIndicator = formatAuthSelectorProviderStatus(provider);
+			// U+2726 is single-width in every terminal, unlike star emoji or ambiguous-width symbols such as U+2605.
+			const partnerMarker = isPreferredProvider(provider.id) ? theme.fg("muted", " ✦") : "";
 			const authTypeLabel = this.showAuthTypeLabels
 				? theme.fg("muted", ` [${formatAuthSelectorProviderType(provider.authType, provider.subscription)}]`)
 				: "";
 			let line = "";
 			if (isSelected) {
 				const prefix = theme.fg("accent", "→ ");
-				const text = theme.fg("accent", provider.name);
-				line = prefix + text + authTypeLabel + statusIndicator;
+				const brandStyle = this.stopAnimation && getProviderBrandStyle(provider.id);
+				const text = brandStyle
+					? brandStyle(provider.name, performance.now() - this.animationStart)
+					: theme.fg("accent", provider.name);
+				line = prefix + text + partnerMarker + authTypeLabel + statusIndicator;
 			} else {
 				const text = `  ${theme.fg("text", provider.name)}`;
-				line = text + authTypeLabel + statusIndicator;
+				line = text + partnerMarker + authTypeLabel + statusIndicator;
 			}
 
 			this.listContainer.addChild(new TruncatedText(line, 1, 0));
@@ -225,10 +264,12 @@ export class OAuthSelectorComponent extends Container implements Focusable {
 		else if (kb.matches(keyData, "tui.select.cancel")) {
 			this.onCancelCallback();
 		}
-		// Pass everything else to search input
+		// Pass everything else to search input. Cursor keys leave the query as it is and must not move the selection.
 		else {
+			const previousQuery = this.searchInput.getValue();
 			this.searchInput.handleInput(keyData);
-			this.filterProviders(this.searchInput.getValue());
+			const query = this.searchInput.getValue();
+			if (query !== previousQuery) this.filterProviders(query);
 		}
 	}
 }

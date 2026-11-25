@@ -8,13 +8,13 @@ import { ChordError } from "../data/index.ts";
 import { type Prepared, type Tracker, track } from "../delta/index.ts";
 import type { StagedWrite } from "../store/step.ts";
 import { AddressSource } from "./address-source.ts";
-import type { CommitPersistence, JsonObject, StateDefinition } from "./definition.ts";
+import type { CommitPersistence, JsonObject, KeyedBy, StateDefinition } from "./definition.ts";
 import type { Documents } from "./documents.ts";
 import type { SealToken } from "./fence.ts";
 import { type DocumentChange, type Persistence, type Stored, type StoredChange, storedAfter } from "./persistence.ts";
 
 /** A document definition, whatever its value and keyedness. */
-export type AnyDefinition = StateDefinition<JsonObject, boolean, boolean>;
+export type AnyDefinition = StateDefinition<JsonObject, KeyedBy, boolean>;
 
 /**
  * What a transaction drafts and adopts: documents of one object by key (a singleton ignores the key). The slots of
@@ -89,13 +89,20 @@ export class SlotDefinition {
 	}
 
 	/**
-	 * Checks a declaration of this name by a new attempt: a flipped `keyed` or `persist`, a version older than the values (old code)
-	 * or the same version with another fingerprint (a schema changed without a bump) throw (the attempt fails broken).
+	 * Checks a declaration of this name by a new attempt: a flipped `keyed` or `persist`, another key kind (strings or a
+	 * host kind), a version older than the values (old code) or the same version with another fingerprint (a schema
+	 * changed without a bump) throw (the attempt fails broken).
 	 */
 	check(definition: AnyDefinition): void {
-		const { name, version, keyed, persist, fingerprint } = this.#current;
+		const { name, version, keyed, host, persist, fingerprint } = this.#current;
 		if (definition.keyed !== keyed) {
 			throw new Error(`${name}: declared ${definition.keyed ? "keyed" : "singleton"}, its documents are not`);
+		}
+		if (definition.host?.kind !== host?.kind) {
+			const keys = (kind: string | undefined) => (kind === undefined ? "string keys" : `addresses of ${kind}`);
+			throw new Error(
+				`${name}: declared with ${keys(definition.host?.kind)}, its documents have ${keys(host?.kind)}`,
+			);
 		}
 		if (definition.persist !== persist) {
 			throw new Error(`${name}: declared ${definition.persist ? "persisted" : "in memory"}, its documents are not`);
@@ -211,6 +218,11 @@ export class SingletonSlot extends AddressSource implements DocumentSlot, Persis
 
 	/** A singleton has one document: its key is always `""`. */
 	key(_key: string): string {
+		return "";
+	}
+
+	/** As `key`: a singleton takes no key from a handle. */
+	keyOf(_key: unknown): string {
 		return "";
 	}
 

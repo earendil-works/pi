@@ -1,7 +1,8 @@
+// `reload_plugins` in every session's worker, reaching the server's `PluginReload` in roots of the worker's own.
 import { relative, resolve, sep } from "node:path";
-import { contribute, defineFacet, signalOf } from "@p2/app/v1";
-import { ExtensionSwitches } from "@p2/app/v1/node";
-import { Extensions, sendDevCommand, workerOf } from "@p2/app/v1/worker";
+import { contribute, defineFacet, expectVariant } from "@p2/app/v1";
+import { Extensions, workerOf } from "@p2/app/v1/worker";
+import { PluginReload } from "./contract.ts";
 import { createReloadExtension } from "./tool.ts";
 
 const inside = (parent: string, child: string) => {
@@ -14,35 +15,21 @@ export default defineFacet((host) => {
 		const worker = workerOf(self);
 		const extension = createReloadExtension(
 			(plugins, context) =>
-				sendDevCommand(
-					worker().init.dataDir,
-					{ action: "reload", ...(plugins ? { plugins } : {}) },
-					context.abortSignal,
+				worker().root(
+					async (ctx) =>
+						expectVariant(await ctx.get(PluginReload, {}), "worker").reload(
+							plugins ? { plugins: [...plugins] } : {},
+							ctx,
+						),
+					context,
 				),
-			() => onCheckout(),
-		);
-		// Offered only where it can run: a dev-mode server (`npm run dev`, which gives workers P2_DEV=1) and a local
-		// session working on this p2 checkout. Owner attribution is per turn, so each call still checks it.
-		const offered = self.writable(false);
-		// Again after every move: the session may move onto or off this checkout.
-		self.onLive(async (ctx) => {
-			while (!signalOf(ctx).aborted) {
-				offered.set(process.env.P2_DEV === "1" && onCheckout());
-				await worker()
-					.location.next(signalOf(ctx))
-					.catch(() => {});
-			}
-		});
-		const onCheckout = (): boolean => {
-			const location = worker().location.value;
-			if (location.env) return false;
-			const cwd = resolve(location.cwd);
-			const project = worker().init.app;
-			return inside(project, cwd) || inside(cwd, project);
-		};
-		self.contribute(
-			ExtensionSwitches,
-			self.derive([offered], ([value]) => ({ [extension.name]: value })),
+			() => {
+				const location = worker().location.value;
+				if (location.env) return false;
+				const cwd = resolve(location.cwd);
+				const project = worker().init.app;
+				return inside(project, cwd) || inside(cwd, project);
+			},
 		);
 		self.contribute(Extensions, { [extension.name]: extension });
 	});

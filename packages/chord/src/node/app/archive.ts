@@ -1,9 +1,10 @@
-// Data archives (slice 13 §4, decisions "The app kit, point 5" and "App kit naming and export"): one tar of the data a
-// host created, `manifest.json` (the app, its API version, the kit's format version, the address), `store.archive` (the
-// store's export archive, slice 6a, as JSONL: one consistent point, the export holding the commit queue while it reads)
-// and `files/` (its finished files). A running worker packs its own open store; without one the server packs the
-// directory under the worker's lock. Unpacking makes a new directory for an address that has none, refusing every path
-// that would leave it.
+// Data archives (slice 13 §4, decisions "The app kit, point 5", "App kit naming and export" and "Documents and table
+// rows can belong to a host"): one tar of the data a host created, `manifest.json` (the app, its API version, the kit's
+// format version, the address), `store.archive` (the store's export archive, slice 6a, as JSONL: one consistent point,
+// the export holding the commit queue while it reads), `server.archive` (the server's records and rows belonging to the
+// address, `exportHostData`, as JSONL) and `files/` (its finished files). A running worker packs its own open store;
+// without one the server packs the directory under the worker's lock. Unpacking makes a staging directory, refusing
+// every path that would leave it; the kit puts it in place, then imports the server's part (`app.ts`).
 
 import { createReadStream, createWriteStream, type Dirent } from "node:fs";
 import { mkdir, mkdtemp, open, readdir, rename, rm, stat } from "node:fs/promises";
@@ -15,8 +16,8 @@ import { decodeJsonl, encodeJsonl, importStore, openStore, type Store, sqliteBac
 import { privateDirectory, privateStore } from "./layout.ts";
 import { readTar, type TarEntry, writeTar } from "./tar.ts";
 
-/** The kit's archive format version. */
-export const ARCHIVE_FORMAT = 1;
+/** The kit's archive format version (2: `server.archive`). */
+export const ARCHIVE_FORMAT = 2;
 
 /** What an archive says about itself. */
 export type ArchiveManifest = {
@@ -31,27 +32,35 @@ const STORE = "store.sqlite";
 
 /**
  * Packs the host directory `dir` of a host that does not run (its worker's lock held: nothing writes it) into the
- * archive at `path`: `manifest`, its store's export and its files.
+ * archive at `path`: `manifest`, its store's export, the server's part (the JSONL file `server`) and its files.
  */
-export async function packData(dir: string, manifest: ArchiveManifest, path: string, context: Context): Promise<void> {
+export async function packData(
+	dir: string,
+	manifest: ArchiveManifest,
+	server: string,
+	path: string,
+	context: Context,
+): Promise<void> {
 	if (!(await exists(dir))) throw new Error(`exportData: ${manifest.address.key} has no data`);
 	const store = await openStore(sqliteBackend(await openNodeSqliteDatabase(join(dir, STORE))), context);
 	try {
-		await packStore(store, join(dir, "files"), manifest, path, context);
+		await packStore(store, join(dir, "files"), manifest, server, path, context);
 	} finally {
 		await store.close(context);
 	}
 }
 
 /**
- * Packs the open `store` and the files directory `files` into the archive at `path` (mode 0600, staged beside it and
- * renamed): `manifest`, the store's export (one consistent point, written while the host runs on) and the finished
- * files (uploads under way left out).
+ * Packs the open `store`, the server's part (the JSONL file `server`, the server's records and rows belonging to the
+ * address) and the files directory `files` into the archive at `path` (mode 0600, staged beside it and renamed):
+ * `manifest`, the store's export (one consistent point, written while the host runs on), `server.archive` and the
+ * finished files (uploads under way left out).
  */
 export async function packStore(
 	store: Store,
 	files: string,
 	manifest: ArchiveManifest,
+	server: string,
 	path: string,
 	context: Context,
 ): Promise<void> {
@@ -61,9 +70,11 @@ export async function packStore(
 		await pipeline(encodeJsonl(store.export(context)), createWriteStream(exported, { mode: 0o600 }));
 		const text = new TextEncoder().encode(JSON.stringify(manifest));
 		const size = (await stat(exported)).size;
+		const serverSize = (await stat(server)).size;
 		async function* entries(): AsyncGenerator<TarEntry> {
 			yield { path: "manifest.json", size: text.length, data: chunksOf(text) };
 			yield { path: "store.archive", size, data: createReadStream(exported) };
+			yield { path: "server.archive", size: serverSize, data: createReadStream(server) };
 			yield* filesOf(files);
 		}
 		const written = join(staging, "archive.tar");
@@ -131,28 +142,28 @@ async function pathsUnder(root: string): Promise<string[]> {
 export type ImportLimits = { readonly bytes?: number; readonly entries?: number };
 
 /**
- * Unpacks the archive at `archive` into the new host directory `dir` (refused when it exists): its manifest checked by
- * `accept` (a throw refuses it), the store made from `store.archive`, `files/` restored, within `limits`. Staged beside
- * `dir` (mode 0700, files 0600) and renamed into place at the end, so a refused or broken archive leaves nothing.
+ * Unpacks the archive at `archive` into a new staging directory in `parent` (mode 0700, files 0600): its manifest
+ * checked by `accept` (a throw refuses it), the store made from `store.archive`, `files/` restored, `server.archive`
+ * kept for the server, within `limits`. Changes nothing else: a refused or broken archive leaves nothing. The staging
+ * directory and its server part's path; the caller renames it into place and then imports the server's part.
  */
-export async function unpackData(
+export async function unpackStaging(
 	archive: string,
-	dir: string,
+	parent: string,
 	accept: (manifest: ArchiveManifest) => void,
 	limits: ImportLimits,
 	context: Context,
-): Promise<void> {
-	if (await exists(dir)) throw new Error(`importData: ${dir} exists already (an address is imported once)`);
-	await privateDirectory(dirname(dir));
-	const staging = await mkdtemp(join(dirname(dir), ".chord-import-"));
+): Promise<{ readonly staging: string; readonly server: string }> {
+	await privateDirectory(parent);
+	const staging = await mkdtemp(join(parent, ".chord-import-"));
 	try {
-		const storeArchive = await unpackEntries(archive, staging, accept, limits, context);
+		const { store: storeArchive, server } = await unpackEntries(archive, staging, accept, limits, context);
 		await privateStore(join(staging, STORE));
 		const backend = sqliteBackend(await openNodeSqliteDatabase(join(staging, STORE)));
 		const store = await importStore(backend, decodeJsonl(createReadStream(storeArchive)), context);
 		await store.close(context);
 		await rm(storeArchive);
-		await rename(staging, dir);
+		return { staging, server };
 	} catch (error) {
 		await rm(staging, { recursive: true, force: true });
 		throw error;
@@ -161,8 +172,8 @@ export async function unpackData(
 
 /**
  * Writes the entries of `archive` into `staging`: the manifest first (checked by `accept` before any data is written),
- * then `store.archive` and `files/…`, within `limits` (counted from the headers, before an entry is written). The path
- * of the staged `store.archive`.
+ * then `store.archive`, `server.archive` and `files/…`, within `limits` (counted from the headers, before an entry is
+ * written). The paths of the staged `store.archive` and `server.archive`.
  */
 async function unpackEntries(
 	archive: string,
@@ -170,11 +181,12 @@ async function unpackEntries(
 	accept: (manifest: ArchiveManifest) => void,
 	limits: ImportLimits,
 	context: Context,
-): Promise<string> {
+): Promise<{ readonly store: string; readonly server: string }> {
 	const maxBytes = limits.bytes ?? 4 * 1024 ** 3;
 	const maxEntries = limits.entries ?? 100_000;
 	let manifest: ArchiveManifest | undefined;
 	let storeArchive: string | undefined;
+	let serverArchive: string | undefined;
 	let bytes = 0;
 	let entries = 0;
 	for await (const entry of readTar(createReadStream(archive))) {
@@ -190,9 +202,11 @@ async function unpackEntries(
 			// A trust boundary: the archive's own description, checked by `accept`.
 			manifest = JSON.parse(new TextDecoder().decode(await collect(entry.data, 64 * 1024))) as ArchiveManifest;
 			accept(manifest);
-		} else if (entry.path === "store.archive") {
-			storeArchive = join(staging, "store.archive");
-			await pipeline(entry.data, createWriteStream(storeArchive, { mode: 0o600 }));
+		} else if (entry.path === "store.archive" || entry.path === "server.archive") {
+			const target = join(staging, entry.path);
+			if (entry.path === "store.archive") storeArchive = target;
+			else serverArchive = target;
+			await pipeline(entry.data, createWriteStream(target, { mode: 0o600 }));
 		} else if (entry.path.startsWith("files/")) {
 			// `readTar` refused absolute paths and `..`: `files/<path>` stays inside the staging directory.
 			const target = join(staging, ...entry.path.split("/"));
@@ -202,10 +216,10 @@ async function unpackEntries(
 			throw new Error(`importData: the archive holds ${entry.path}, which an address archive does not`);
 		}
 	}
-	if (manifest === undefined || storeArchive === undefined) {
-		throw new Error("importData: the archive has no manifest.json or store.archive");
+	if (manifest === undefined || storeArchive === undefined || serverArchive === undefined) {
+		throw new Error("importData: the archive has no manifest.json, store.archive or server.archive");
 	}
-	return storeArchive;
+	return { store: storeArchive, server: serverArchive };
 }
 
 /** The bytes of `data`, refused past `limit`. */
@@ -221,7 +235,7 @@ async function collect(data: AsyncIterable<Uint8Array>, limit: number): Promise<
 }
 
 /** Whether `path` exists. */
-async function exists(path: string): Promise<boolean> {
+export async function exists(path: string): Promise<boolean> {
 	return stat(path).then(
 		() => true,
 		() => false,

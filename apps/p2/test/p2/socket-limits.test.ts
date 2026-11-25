@@ -67,14 +67,16 @@ describe("chord2 socket limits on the server", () => {
 	});
 
 	it("closes a connection that sends a frame over 1 MiB", async () => {
-		const socket = new NodeWebSocket(`ws://127.0.0.1:${fixture.server.port}/chord`);
+		const socket = new NodeWebSocket(`ws://127.0.0.1:${fixture.server.port}/chord`, {
+			headers: { Cookie: fixture.owner.cookie },
+		});
 		await new Promise((resolve) => socket.once("open", resolve));
 		const closed = new Promise<number>((resolve) => socket.once("close", (code) => resolve(code)));
 		socket.send(new Uint8Array(MAX_CLIENT_FRAME + 1));
 		assert.equal(await closed, 1009);
 		// The server lives on (an unhandled socket error would have ended the process).
 		// A browser-sized message still goes through a normal client.
-		const host = clientHost(fixture.server.port);
+		const host = clientHost(fixture.owner);
 		try {
 			const sessions = await holdIn(host, Sessions, {}, "owner");
 			await assert.rejects(

@@ -1,0 +1,5 @@
+{
+	"name": "discord",
+	"private": true,
+	"type": "module"
+}

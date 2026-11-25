@@ -1,0 +1,1042 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rooms, the simple way: thirteen use cases</title>
+<style>
+
+:root{--paper:#fbf8f2;--ink:#2a2723;--muted:#7b7468;--rule:#e3dbcc;--accent:#b4472f;--blue:#2e6a8a;--sand:#c2b18c;--soft:#f4eee2}
+*{box-sizing:border-box}
+html{background:#efe9dd}
+body{margin:0;color:var(--ink);font:19px/1.68 'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,serif;
+ -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+.book{max-width:860px;margin:0 auto;background:var(--paper);box-shadow:0 0 0 1px #e1d9c8,0 30px 80px -40px rgba(60,40,10,.35);padding:0 0 4rem}
+.inner{padding:0 90px}
+h1,h2,h3{font-weight:400;line-height:1.15}
+h2{font-size:2.1rem;margin:.2em 0 .3em;letter-spacing:-.01em}
+h3{font-size:1.05rem;text-transform:uppercase;letter-spacing:.14em;margin:2.4em 0 .6em;color:var(--ink);font-weight:600;
+ font-family:'Avenir Next','Helvetica Neue',sans-serif}
+p{margin:0 0 1.05em;hyphens:auto;text-align:left}
+code{font:.8em/1 'SF Mono',Menlo,Consolas,monospace;background:#f1ebde;padding:.1em .35em;border-radius:3px}
+pre{font:.74rem/1.55 'SF Mono',Menlo,Consolas,monospace;background:#f4eee2;border-left:3px solid var(--sand);padding:1rem 1.2rem;margin:1.4rem 0 1.8rem;
+ overflow-x:auto;border-radius:0 4px 4px 0;white-space:pre;tab-size:2}
+pre code{background:none;padding:0;font-size:1em}
+em{font-style:italic}
+a{color:var(--blue)}
+.cover{min-height:92vh;display:flex;flex-direction:column;justify-content:center;padding:90px;background:
+ radial-gradient(circle at 85% 15%,rgba(180,71,47,.13),transparent 40%),radial-gradient(circle at 10% 90%,rgba(46,106,138,.12),transparent 45%),var(--paper);
+ border-bottom:1px solid var(--rule)}
+.kicker{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.22em;text-transform:uppercase;color:var(--accent)}
+.cover h1{font-size:5.2rem;line-height:.98;margin:.35em 0 .25em;letter-spacing:-.025em}
+.subtitle{font-size:1.45rem;font-style:italic;color:#4a453e;max-width:30em;text-align:left}
+.cover-stats,.stats{display:flex;flex-wrap:wrap;gap:1.2rem 2.4rem;margin:2.2rem 0}
+.stats{margin:1.6rem 0 1.8rem;padding:1.1rem 0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.stat b{display:block;font-size:2.1rem;font-weight:400;line-height:1.1;font-variant-numeric:lining-nums}
+.stat span{font:.78rem/1.3 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);letter-spacing:.03em;display:block;max-width:14em}
+.cover-note{font-size:.9rem;color:var(--muted);max-width:34em;text-align:left;margin-top:2rem}
+.toc{padding:4rem 0 2rem}
+.toc ol{list-style:none;padding:0;margin:1rem 0;columns:2;column-gap:3rem}
+.toc li{padding:.3rem 0;border-bottom:1px dotted var(--rule);break-inside:avoid}
+.toc a{color:var(--ink);text-decoration:none}
+.toc a:hover{color:var(--accent)}
+.preface{padding-top:2rem}
+.findings{padding-left:1.4em}
+.findings li{margin:.55em 0;padding-left:.3em}
+.findings li::marker{color:var(--accent);font-weight:600}
+.chapter{padding-top:4.5rem;margin-top:3rem;border-top:1px solid var(--rule)}
+.opener{text-align:center;margin-bottom:2.6rem}
+.numeral{font-size:4.2rem;color:var(--accent);line-height:1;font-variant:small-caps;letter-spacing:.05em}
+.opener h2{font-size:2.5rem;margin:.25em 0}
+.lede{font-style:italic;color:#5a544a;font-size:1.12rem;max-width:30em;margin:0 auto;text-align:center}
+.dropcap::first-letter{float:left;font-size:4.1em;line-height:.82;padding:.06em .09em 0 0;color:var(--accent)}
+.fig{margin:2rem 0 2.2rem}
+.fig.wide{margin-left:-50px;margin-right:-50px}
+.fig svg{display:block;margin:0 auto}
+figcaption{font:.8rem/1.45 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:.7rem;padding-left:.8rem;border-left:2px solid var(--rule)}
+.fignum{color:var(--ink);font-weight:600}
+.note{font:.86rem/1.55 'Avenir Next','Helvetica Neue',sans-serif;color:#5b5549;background:#f4eee2;border-left:3px solid var(--sand);
+ padding:.9rem 1.1rem;margin:1.8rem 0;border-radius:0 4px 4px 0}
+.note.review{border-left-color:var(--accent)}
+.note b.tag{font-weight:600;letter-spacing:.12em;text-transform:uppercase;font-size:.72rem;color:var(--accent);display:block;margin-bottom:.3rem}
+.note code{font-size:.85em}
+table{width:100%;border-collapse:collapse;margin:1.4rem 0 1.8rem;font:.8rem/1.4 'Avenir Next','Helvetica Neue',sans-serif}
+th{text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:.68rem;border-bottom:1.5px solid var(--ink);padding:.45rem .5rem}
+td{padding:.42rem .5rem;border-bottom:1px solid var(--rule);vertical-align:top}
+td code{font-size:.92em}
+table.num td:not(:first-child),table.num th:not(:first-child){text-align:right}
+.epilogue p{font-size:1.04em}
+.appendix{font-size:.92em}
+.appendix ul,.chapter ul{padding-left:1.2em}
+.appendix li,.chapter li{margin:.4em 0}
+.colophon{text-align:center;font:.78rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:4rem;letter-spacing:.05em}
+@media (max-width:760px){.inner{padding:0 22px}.cover{padding:40px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}
+ .toc ol{columns:1}p{text-align:left}body{font-size:17px}}
+@media print{html{background:#fff}.book{box-shadow:none}.chapter{break-before:page}.fig{break-inside:avoid}}
+.transcript p b{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-right:.3em}
+pre .tk-c{color:#8d8576;font-style:italic}pre .tk-s{color:#5f7a3d}pre .tk-n{color:#a0662a}pre .tk-k{color:#b4472f}pre .tk-t{color:#2e6a8a}pre .tk-f{color:#7a3f6a}
+h4{font:600 .82rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.06em;margin:1.8em 0 .5em;color:var(--muted)}
+.inner ul,.inner ol:not(.findings){padding-left:1.2em}
+.inner li{margin:.35em 0}
+blockquote{margin:1.4rem 0;padding:.2rem 0 .2rem 1.2rem;border-left:3px solid var(--rule);color:#5a544a;font-style:italic}
+.fig svg text{dominant-baseline:auto}
+.fig .replay{font:600 .7rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);
+ background:none;border:1px solid var(--rule);border-radius:3px;padding:.2rem .55rem;margin:0 0 0 1rem;cursor:pointer;float:right}
+.fig .replay:hover{border-color:var(--accent)}
+.anim.armed .step{opacity:0}
+.anim.armed.play .step{animation:stepIn .45s ease-out both;animation-delay:calc(var(--i) * var(--pace, .45s))}
+.anim.armed.play .step.edge{animation-name:edgeIn}
+@keyframes stepIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes edgeIn{from{opacity:0}to{opacity:1}}
+.steps{margin:2rem 0 2.2rem;border:1px solid var(--rule);border-radius:6px;background:#fffdf8}
+.steps-head{display:flex;align-items:center;gap:.8rem;padding:.6rem 1rem;border-bottom:1px solid var(--rule);
+ font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.steps-head .title{flex:1}
+.steps-head .count{color:var(--muted);letter-spacing:.06em}
+.steps-head button{font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--ink);background:var(--soft);border:1px solid var(--rule);
+ border-radius:3px;padding:.25rem .65rem;cursor:pointer}
+.steps-head button:disabled{opacity:.35;cursor:default}
+.step-panel{padding:1rem 1.2rem .4rem}
+.step-panel>h4:first-child{margin-top:.2rem;color:var(--ink)}
+.steps.js .step-panel{display:none}
+.steps.js .step-panel.on{display:block}
+.steps:not(.js) .steps-head button,.steps:not(.js) .steps-head .count{display:none}
+.steps:not(.js) .step-panel+.step-panel{border-top:1px dashed var(--rule)}
+.fig figcaption{display:flow-root}
+.fig svg{max-width:100%;height:auto}
+table{max-width:100%}
+@media (max-width:760px){.inner{padding:0 20px}.cover{padding:48px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}table{display:block;overflow-x:auto}.toc ol{columns:1}}
+</style>
+
+
+</head>
+<body><div class="book">
+<section class="cover">
+  <div class="kicker">A walkthrough · p2 rooms v3 · 2026-11-11</div>
+  <h1>Rooms<br>Use Cases</h1>
+  <p class="subtitle">The server orders what people do, every view computes the same state, and thirteen real uses show where that is enough and where it is not</p>
+  <div class="cover-stats"><div class="stat"><b>13</b><span>use cases worked through</span></div><div class="stat"><b>1 RTT</b><span>from a tap to every view</span></div><div class="stat"><b>~0.19 ms</b><span>server work per input (approximation)</span></div><div class="stat"><b>0</b><span>browsers in the input path</span></div></div>
+  <div class="cover-note"><p>Based on the working model <code>apps/p2/docs/rooms-v3-model.md</code>, the independent verdicts of claude-opus-5-5
+(<code>/tmp/rooms-verdict-opus.md</code>) and gpt-6-astra (<code>/tmp/rooms-verdict-astra.md</code>), and the use cases worked through by
+claude-opus-5-5 (games, <code>/tmp/uc-opus.md</code>), gpt-6-astra (documents and boards, <code>/tmp/uc-astra.md</code>) and gpt-6.1-sol
+(cross-cutting, <code>/tmp/uc-sol.md</code>), each cross-reviewed by another (<code>/tmp/uc-review-{opus,astra,sol}.md</code>); second
+edition with all three cross-reviews folded in; third edition with the RTS chapter rewritten from Terrano and Bettner&#39;s
+&quot;1500 Archers on a 28.8&quot; (read in full) and the glyph chapter rewritten from Max&#39;s actual editor (his gist:
+<code>glyph-editor.html</code>, <code>glyph-editor-ge.py</code>, <code>glyph-editor-bridge.js</code>), after the owner rejected both stories. Nothing here is built. Latencies are estimates
+at 200 ms round trip; server costs come from an isolated approximation of today&#39;s publish path, not from a v3
+implementation. Notes marked <em>review</em> are open points found while working through the cases.</p>
+</div>
+</section><div class="inner">
+<nav class="toc"><h2>Contents</h2><ol>
+<li><a href="#before-we-begin">Before we begin</a></li>
+<li><a href="#history">I. How We Got Here</a></li>
+<li><a href="#model">II. The Model</a></li>
+<li><a href="#connect-four">III. Connect Four</a></li>
+<li><a href="#pong">IV. Pong</a></li>
+<li><a href="#rts">V. A Little RTS</a></li>
+<li><a href="#glyph">VI. Max&#39;s Glyph Editor</a></li>
+<li><a href="#whiteboard">VII. A Whiteboard</a></li>
+<li><a href="#family">VIII. The Family List</a></li>
+<li><a href="#poll">IX. The Meetup Poll</a></li>
+<li><a href="#notes">X. Shared Notes</a></li>
+<li><a href="#presence">XI. Cursors and Presence</a></li>
+<li><a href="#agent">XII. The Agent</a></li>
+<li><a href="#guests">XIII. Read-Only Guests</a></li>
+<li><a href="#failures">XIV. When Things Break</a></li>
+<li><a href="#plugins">XV. Where Sketches Stop</a></li>
+<li><a href="#what-the-model-needs">What the Model Needs</a></li>
+<li><a href="#verdicts-at-a-glance">Appendix A: Verdicts at a Glance</a></li>
+</ol></nav>
+
+<section class="preface" id="before-we-begin">
+<h2>Before we begin</h2>
+<p class="dropcap">Mario opens a Connect Four view on his laptop; his son opens the same view on the tablet in the next room. Each taps a
+column, the piece falls on both screens about a fifth of a second later, and the agent, asked &quot;who is winning?&quot;,
+looks at the board and answers. They stop for dinner and continue the next evening, where they left off. A guest at
+a meetup watches a Pong match on her phone without being able to play. Max reshapes the <code>a</code> of a typeface while the
+agent fixes the other glyphs and writes them back to the font&#39;s sources. Each of these is a <strong>sketch</strong>: an HTML view the agent wrote, running in a sandboxed
+frame, with no server code of its own.</p>
+<p>The first rooms (built, <code>rooms.md</code>) gave sketches a numbered journal, keyed messages, three room kinds,
+acknowledgements and a lag rule; the lag rule evicted Pong players in turn every 30 seconds, and their sides swapped
+mid-game. The second design (<code>rooms-v2.md</code>, four drafts, three reviews) made one browser tab the sketch&#39;s server: it
+grew terms, grants, batches and refusal cascades, and every review found new holes in exactly those parts. Two
+independent reviewers then recommended what Mario had described as his model all along, the &quot;1500 archers&quot;
+lockstep: <strong>the server only orders what people do; every view computes the same state from it.</strong></p>
+<p>This walkthrough takes that model through thirteen uses, from Connect Four to the son&#39;s robot, and says for each
+one what the person sees, what the sketch&#39;s code looks like, what crosses the wire, what the agent can do, what
+survives a restart, how it fails, what it costs, and whether it works.</p>
+<h3 id="nine-things-to-know">Nine things to know</h3>
+<ol class="findings">
+<li><strong>The server orders, it never computes.</strong> It stamps each input with a number, a sender and the server&#39;s time, and
+sends it to every view. It does not parse inputs or run the sketch&#39;s code.</li>
+<li><strong>Every view computes the same state.</strong> The sketch declares <code>initial()</code> and one deterministic <code>apply</code> per kind of
+input; every view folds the same inputs in the same order. An invalid move is a no-op in every view: rules hold
+without an authority.</li>
+<li><strong>Checkpoints let people start late and the server forget.</strong> A caught-up view posts the folded state at a
+number; the server accepts it by numbers alone, trims the inputs it covers, and saves it as the view&#39;s state.</li>
+<li><strong>Cursors and motion stay out of the sequence.</strong> Events carry motion (cursors, drags, paddles); peer state holds
+each view&#39;s latest value a joiner must see (a selection, a grabbed point, &quot;typing&quot;). A moving mouse never touches
+the journal.</li>
+<li><strong>Games fit, with changes.</strong> Connect Four is the model&#39;s best case. Pong works as a hybrid (paddles as events, one
+input per hit), with visible corrections at 200 ms. A small RTS works the way Age of Empires did: every player sends one input per turn, and a
+turn runs when all are in; no server clock.</li>
+<li><strong>Documents mostly need no rules at all.</strong> Max&#39;s glyph editor (a font on disk, edited by a person and the agent)
+needs only path-level built-ins the server applies, path reads for the agent, and read-only view assets for its
+big base data; a whiteboard hits the 256 Ki-character limit after about 150 strokes.</li>
+<li><strong>The agent sees fresh computed state only while a view runs.</strong> Otherwise it gets the last checkpoint plus the
+raw inputs after it, labelled as such. Data kept with the kit&#39;s built-in operations (<code>$set</code>, <code>$delete</code>, <code>$merge</code>)
+is the exception: the server applies those itself, so a shopping list the agent edits alone stays current.</li>
+<li><strong>Some things are not sketches.</strong> A trusted vote, hidden cards, real motors and secrets need a plugin.</li>
+<li><strong>The model needs changes before it is built.</strong> Identity and seats, input outcomes, saved watermarks,
+server-applied built-ins with path reads, view assets, a persisted input catalogue, migration, and more (the
+epilogue).</li>
+</ol>
+<h3 id="words-used-throughout">Words used throughout</h3>
+<p>A <strong>view</strong> is one open frame of a sketch on someone&#39;s screen; a <strong>peer</strong> is a view in a room, a <strong>writer</strong> one that
+may change things, a <strong>read-only</strong> one that may only watch. A <strong>room</strong> is the server object all open views of one
+sketch share. An <strong>input</strong> is something a person or the agent does (<code>drop({ col: 3 })</code>); the <strong>sequence</strong> is the
+room&#39;s numbered order of inputs; <strong>apply</strong> is the sketch&#39;s deterministic function that changes the state for one
+input; <strong>folding</strong> is applying inputs in order. A <strong>checkpoint</strong> is the folded state at a number; the <strong>tail</strong> is the
+inputs after it. <strong>Peer state</strong> is each view&#39;s own latest value (a selection); an <strong>event</strong> is a lossy value for motion (a cursor).
+An <strong>epoch</strong> starts when the state is replaced wholesale. A <strong>plugin</strong> is ordinary Chord code with its own server
+object, the alternative to a sketch.</p>
+</section>
+
+<section class="chapter" id="history"><header class="opener"><div class="numeral">I</div><h2>How We Got Here</h2><p class="lede">Two designs, and why the third one is the owner&#39;s lockstep.</p></header>
+<p class="dropcap">The rooms built on 2026-11-11 (<code>rooms.md</code>) are a small replication system of their own: numbered messages in a
+journal, keyed messages sharing the numbering, live, log and text room kinds, acknowledgements from every view, and
+a lag rule that disconnects a view behind the others for 30 seconds. In the field, Pong views counted only plain
+messages as applied while the game sent only keyed ones, so the view that joined first looked behind forever, was
+evicted, rejoined with a new ID, and took the other side. The fix was one line; the lesson was that the coupling
+between unrelated traffic and eviction was the problem.</p>
+<p>The second design (<code>rooms-v2.md</code>) kept the state in Chord and made the oldest writer view the sketch&#39;s server: it
+runs every intent on its copy and sends the changes. Four drafts and three review rounds made it correct, and each
+round found new majors in the parts that exist only because the authority is a browser tab: leader grants with
+terms, tentative copies, batches with one in flight, refusal cascades, calls pinned to a leader. A frozen phone tab as
+leader stalls everyone, the agent included; a follower&#39;s move costs two to three round trips.</p>
+<p>Opus and Astra, asked independently whether this was too complex, slow and brittle, both said yes, and both pointed
+at the same alternative: systems without application server code either merge without an authority (Liveblocks,
+Yjs) or sequence inputs and fold them in every client (Croquet). Electing a client as the server is game
+middleware&#39;s &quot;master client&quot; pattern, known for exactly v2&#39;s failures. The second option is the owner&#39;s lockstep
+model, and it reuses most of v1: the numbered journal was right; the acknowledgements, the lag rule and the mixing
+of cursors into the numbering were not.</p>
+</section>
+
+<section class="chapter" id="model"><header class="opener"><div class="numeral">II</div><h2>The Model</h2><p class="lede">Five parts, one rule for each, and an API of about twenty lines.</p></header>
+<p class="dropcap">The room keeps one sequence of inputs per sketch. Every view runs the sketch&#39;s model over it. Everything that does
+not need an order travels beside it.</p>
+<table>
+<thead>
+<tr>
+<th>Part</th>
+<th>What</th>
+<th>Ordered</th>
+<th>Kept</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>inputs</strong></td>
+<td>what a view or the agent does, stamped <code>{ seq, from, at }</code></td>
+<td>yes, one sequence</td>
+<td>from the last checkpoint on, persisted</td>
+</tr>
+<tr>
+<td><strong>model</strong></td>
+<td>the sketch&#39;s <code>initial()</code> and one <code>apply</code> per input kind</td>
+<td>-</td>
+<td>code, in every view</td>
+</tr>
+<tr>
+<td><strong>checkpoint</strong></td>
+<td><code>{ modelVersion, epoch, seq, value }</code>, posted by a caught-up writer view</td>
+<td>-</td>
+<td>the latest, as the view&#39;s state</td>
+</tr>
+<tr>
+<td><strong>peer state</strong></td>
+<td>each view&#39;s latest selection, grabbed point or &quot;typing&quot;</td>
+<td>no</td>
+<td>while the view is there</td>
+</tr>
+<tr>
+<td><strong>events</strong></td>
+<td>lossy motion: cursors, drags, paddles</td>
+<td>no</td>
+<td>never</td>
+</tr>
+</tbody></table>
+<p>Presence (who is here) and the server&#39;s clock are as today. <strong>Questions</strong> stay from the first rooms: the agent may
+ask a view something that is not a state change (&quot;what lies under this region?&quot;), answered by one view.</p>
+<figure class="fig anim"><svg viewBox="0 0 720 361" width="100%" role="img" aria-label="One input, from a tap to every view: one round trip for the sender, about the same for everyone else." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f1m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f1a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f1b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="130.7" y1="42" x2="130.7" y2="353" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="45.7" y="10" width="170" height="32" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="130.7" y="30" font-size="11" fill="#2a2723" text-anchor="middle">Alice's view</text><line x1="360" y1="42" x2="360" y2="353" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="275" y="10" width="170" height="32" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="360" y="30" font-size="11" fill="#2a2723" text-anchor="middle">room (server)</text><line x1="589.3" y1="42" x2="589.3" y2="353" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="504.3" y="10" width="170" height="32" rx="4" fill="#fff" stroke="#c9bfae"/><text x="589.3" y="30" font-size="11" fill="#2a2723" text-anchor="middle">Bob's view</text><g class="step edge" style="--i:1"><path d="M130.7 62 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><text x="172.7" y="72" font-size="10" fill="#2a2723" text-anchor="start">tap: drop({ col: 3 }), counter n = 5</text></g><g class="step edge" style="--i:2"><line x1="130.7" y1="108" x2="357" y2="108" stroke="#7b7468" marker-end="url(#f1m)"/><text x="245.3" y="102" font-size="10" fill="#2a2723" text-anchor="middle">input drop {col:3}, n 5</text></g><g class="step edge" style="--i:3"><path d="M360 134 h34 v14 h-32" fill="none" stroke="#b4472f" marker-end="url(#f1a)"/><text x="402" y="144" font-size="10" fill="#b4472f" text-anchor="start">n &gt; mark[Alice]? stamp seq 18, at; append</text></g><g class="step edge" style="--i:4"><line x1="360" y1="180" x2="133.7" y2="180" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f1m)"/><text x="245.3" y="174" font-size="10" fill="#2a2723" text-anchor="middle">seq 18</text></g><g class="step edge" style="--i:5"><line x1="360" y1="212" x2="586.3" y2="212" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f1m)"/><text x="474.7" y="206" font-size="10" fill="#2a2723" text-anchor="middle">seq 18</text></g><g class="step edge" style="--i:6"><path d="M130.7 238 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><text x="172.7" y="248" font-size="10" fill="#2a2723" text-anchor="start">apply: the piece falls</text></g><g class="step edge" style="--i:7"><path d="M589.3 278 h-34 v14 h32" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><text x="547.3" y="288" font-size="10" fill="#2a2723" text-anchor="end">apply: the piece falls</text></g><g class="step" style="--i:8"><rect x="26" y="310" width="668" height="23" rx="3" fill="#f4eee2" stroke="#c2b18c"/><text x="360" y="324" font-size="10" fill="#5b5549" text-anchor="middle">the server neither parses the input nor runs apply</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 1.</span> One input, from a tap to every view: one round trip for the sender, about the same for everyone else.</figcaption></figure>
+<h3 id="the-api">The API</h3>
+<pre><code><span class="tk-k">const</span> room = p2view.<span class="tk-f">room</span>({
+  version: <span class="tk-n">1</span>,                                          <span class="tk-c">// model version</span>
+  initial: () =&gt; ({ board: <span class="tk-f">emptyBoard</span>(), turn: <span class="tk-n">0</span>, players: [] }),
+  inputs: {
+    join: { <span class="tk-f">apply</span>(s, _args, { <span class="tk-k">from</span> }) { <span class="tk-k">if</span> (s.players.length &lt; <span class="tk-n">2</span> &amp;&amp; !s.players.<span class="tk-f">includes</span>(<span class="tk-k">from</span>)) s.players.<span class="tk-f">push</span>(<span class="tk-k">from</span>); } },
+    drop: {
+      description: <span class="tk-s">"Drop a piece into a column"</span>,       <span class="tk-c">// the agent sees name, description and args</span>
+      args: { <span class="tk-k">type</span>: <span class="tk-s">"object"</span>, properties: { col: { <span class="tk-k">type</span>: <span class="tk-s">"integer"</span> } }, required: [<span class="tk-s">"col"</span>] },
+      <span class="tk-f">apply</span>(s, { col }, { <span class="tk-k">from</span> }) {                    <span class="tk-c">// deterministic; an invalid input returns: a no-op everywhere</span>
+        <span class="tk-k">const</span> slot = s.players.<span class="tk-f">indexOf</span>(<span class="tk-k">from</span>);
+        <span class="tk-k">if</span> (slot !== s.turn % <span class="tk-n">2</span>) <span class="tk-k">return</span>;
+        <span class="tk-k">const</span> row = <span class="tk-f">freeRow</span>(s.board, col);
+        <span class="tk-k">if</span> (row === <span class="tk-k">undefined</span>) <span class="tk-k">return</span>;
+        s.board[row][col] = slot; s.turn++;
+      },
+    },
+  },
+});
+<span class="tk-k">const</span> { join, drop } = room.inputs;                    <span class="tk-c">// functions, no strings</span>
+<span class="tk-k">await</span> <span class="tk-f">drop</span>({ col: <span class="tk-n">3</span> });                                <span class="tk-c">// resolves { seq } once sequenced</span>
+room.state; room.<span class="tk-f">onState</span>((state, input) =&gt; <span class="tk-f">draw</span>(state));
+room.me; room.peers; room.<span class="tk-f">onPeers</span>((peers) =&gt; ...);
+room.<span class="tk-f">setMine</span>({ cursor: { x, y } }); room.<span class="tk-f">onPeerState</span>((id, value) =&gt; ...);
+room.<span class="tk-f">emit</span>(v); room.<span class="tk-f">onEvent</span>(({ <span class="tk-k">from</span>, at, value }) =&gt; ...);
+room.<span class="tk-f">answer</span>({ describeRegion: <span class="tk-k">async</span> (args) =&gt; ... });  <span class="tk-c">// questions the agent may ask</span></code></pre>
+<p><code>apply</code> gets <code>meta</code>: <code>from</code> (the sender, or <code>&quot;agent&quot;</code>), <code>at</code> (server time), <code>seq</code>, and <code>rand()</code> seeded by <code>seq</code>.</p>
+<h3 id="the-rules">The rules</h3>
+<ul>
+<li><strong>Exactly once.</strong> Every input carries its editor&#39;s counter; the server drops what it has seen (the text room&#39;s
+watermark rule); the kit resends unconfirmed inputs after a reconnect.</li>
+<li><strong>Determinism is the sketch&#39;s contract.</strong> <code>apply</code> reads only its arguments and <code>meta</code>: no <code>Date.now</code>, no
+<code>Math.random</code>, no DOM, no network. Views compare state hashes at the same number to notice drift.</li>
+<li><strong>Checkpoints by numbers.</strong> A caught-up writer posts one every couple of hundred inputs or after a quiet moment;
+the server accepts it for the current version and epoch if it is newer, trims, and saves it as the view&#39;s state.
+No leader, no term: a checkpoint at a number is a function of the inputs before it.</li>
+<li><strong>Persistence.</strong> The server saves the checkpoint and the tail periodically, without any view.</li>
+<li><strong>No server clock.</strong> Turns are the game&#39;s own: in a real-time simulation every player sends one input per turn and a
+turn runs when all are in, as in Age of Empires (chapter V). The server never ticks.</li>
+<li><strong>Built-in data operations.</strong> <code>room.set(path, value)</code>, <code>room.delete(path)</code>, <code>room.merge(path, value)</code>, list append and
+remove, and conditional forms, are the kit&#39;s own inputs; the server applies them to the checkpoint itself whenever
+the tail holds no custom input (Opus, cross-review). Documents kept with them need no view for current state and
+no <code>apply</code> at all, which is most documents (chapter VI).</li>
+<li><strong>The agent.</strong> It reads (fresh with a view running or a built-ins-only tail, labelled stale otherwise), sends inputs
+by name, replaces the state (a new epoch), merges, and asks questions (chapter XII).</li>
+</ul>
+<div class="note"><b class="tag">What is reused and what is new</b><p>Reused from the built rooms: principals, tokens, revocation, the journal blocks, the window and history paging, the
+memory budget, events, presence, the text room, questions. New: input deduplication by editor, checkpoints from any
+caught-up writer, persisting the tail, model versions and epochs, the agent&#39;s read barrier (Sol checked each against
+<code>apps/p2/plugins/views/</code>).</p>
+</div>
+</section>
+
+<section class="chapter" id="connect-four"><header class="opener"><div class="numeral">III</div><h2>Connect Four</h2><p class="lede">The model&#39;s best case: small state, turns, rules every view can check.</p></header>
+<p class="dropcap">Two seated players take turns; others watch. A piece lands about a fifth of a second after the click, and the
+sketch can show a faded ghost at once. Hovering over a column shows a marker on the other screen.</p>
+<pre><code><span class="tk-k">const</span> ROWS = <span class="tk-n">6</span>, COLS = <span class="tk-n">7</span>, empty = () =&gt; <span class="tk-t">Array</span>.<span class="tk-k">from</span>({ length: ROWS }, () =&gt; <span class="tk-t">Array</span>(COLS).<span class="tk-f">fill</span>(-<span class="tk-n">1</span>));
+<span class="tk-k">const</span> room = p2view.<span class="tk-f">room</span>({
+  version: <span class="tk-n">1</span>,
+  initial: () =&gt; ({ board: <span class="tk-f">empty</span>(), turn: <span class="tk-n">0</span>, players: [], winner: -<span class="tk-n">1</span> }),
+  inputs: {
+    join: { description: <span class="tk-s">"Take a free seat"</span>, <span class="tk-f">apply</span>(s, _a, { <span class="tk-k">from</span> }) { <span class="tk-k">if</span> (s.players.length &lt; <span class="tk-n">2</span> &amp;&amp; !s.players.<span class="tk-f">includes</span>(<span class="tk-k">from</span>)) s.players.<span class="tk-f">push</span>(<span class="tk-k">from</span>); } },
+    drop: {
+      description: <span class="tk-s">"Drop your piece into a column (0-6) on your turn"</span>,
+      args: { <span class="tk-k">type</span>: <span class="tk-s">"object"</span>, properties: { col: { <span class="tk-k">type</span>: <span class="tk-s">"integer"</span>, minimum: <span class="tk-n">0</span>, maximum: <span class="tk-n">6</span> } }, required: [<span class="tk-s">"col"</span>] },
+      <span class="tk-f">apply</span>(s, { col }, { <span class="tk-k">from</span> }) {
+        <span class="tk-k">const</span> slot = s.players.<span class="tk-f">indexOf</span>(<span class="tk-k">from</span>);
+        <span class="tk-k">if</span> (s.winner !== -<span class="tk-n">1</span> || s.players.length &lt; <span class="tk-n">2</span> || slot !== s.turn % <span class="tk-n">2</span>) <span class="tk-k">return</span> <span class="tk-s">"not your turn"</span>;
+        <span class="tk-k">const</span> row = <span class="tk-f">freeRow</span>(s.board, col);
+        <span class="tk-k">if</span> (row === <span class="tk-k">undefined</span>) <span class="tk-k">return</span> <span class="tk-s">"column full"</span>;
+        s.board[row][col] = slot; s.turn++;
+        <span class="tk-k">if</span> (<span class="tk-f">fourFrom</span>(s.board, row, col, slot)) s.winner = slot; <span class="tk-k">else</span> <span class="tk-k">if</span> (s.turn === ROWS * COLS) s.winner = <span class="tk-n">2</span>;
+      },
+    },
+    rematch: { description: <span class="tk-s">"New game, seats swapped"</span>, <span class="tk-f">apply</span>(s) { <span class="tk-k">if</span> (s.winner === -<span class="tk-n">1</span>) <span class="tk-k">return</span>; s.board = <span class="tk-f">empty</span>(); s.turn = <span class="tk-n">0</span>; s.winner = -<span class="tk-n">1</span>; s.players.<span class="tk-f">reverse</span>(); } },
+  },
+});
+<span class="tk-k">const</span> { join, drop, rematch } = room.inputs;
+room.<span class="tk-f">onState</span>((s) =&gt; <span class="tk-f">draw</span>(s));
+boardEl.onclick = <span class="tk-k">async</span> (e) =&gt; { <span class="tk-f">ghost</span>(<span class="tk-f">colAt</span>(e)); <span class="tk-k">await</span> <span class="tk-f">drop</span>({ col: <span class="tk-f">colAt</span>(e) }); <span class="tk-f">clearGhost</span>(); };
+boardEl.onpointermove = (e) =&gt; room.<span class="tk-f">setMine</span>({ hover: <span class="tk-f">colAt</span>(e) });
+room.<span class="tk-f">onPeerState</span>((id, v) =&gt; <span class="tk-f">drawHover</span>(id, v?.hover));</code></pre>
+<h3 id="what-happens">What happens</h3>
+<p>At t = 0 Alice clicks column 3; the kit sends <code>drop { col: 3 }</code> with her counter and the sketch draws a ghost. At
+about 100 ms the server checks the counter, stamps <code>seq 18</code>, appends and fans out, without parsing the input. At
+about 200 ms both views apply it; the piece falls, the ghost clears, <code>drop()</code> resolves <code>{ seq: 18 }</code>. If Bob clicked
+while it was still Alice&#39;s turn and his <code>drop</code> reached the server before hers, it becomes <code>seq 17</code> and is a no-op in
+every view: his ghost disappears, and nothing tells him why. If his click reaches the server after hers, it is his
+turn by then and the move counts, although he made it without seeing her piece; a sketch that wants to prevent that
+sends the turn number it saw and refuses a mismatch (Sol, cross-review). After a quiet 300 ms the checkpoint writer posts the 250-byte board and the server saves it.</p>
+<h3 id="joining-the-agent-persistence">Joining, the agent, persistence</h3>
+<p>A joiner gets the checkpoint (usually current, thanks to the quiet rule) and folds the few inputs after it. A
+dropped link keeps the seat and the kit resends an unconfirmed <code>drop</code>, applied once. The agent reads the 250-byte
+board directly (with a view open, a fresh read takes 200-300 ms), takes a seat and plays as <code>&quot;agent&quot;</code>, and can set up
+a puzzle with <code>view update</code> (a new epoch; an opponent&#39;s drop in flight is refused). It cannot wait for its turn: it has
+to ask again. A server crash rewinds by whatever was not saved yet; with a save interval of a couple of seconds that
+is a move or two.</p>
+<h3 id="how-it-fails">How it fails</h3>
+<ul>
+<li><strong>Clicking out of turn:</strong> the ghost appears and vanishes with no message; <code>drop()</code> only says it was sequenced.
+The ghost must stay until the input is applied locally, not until the server&#39;s receipt.</li>
+<li><strong>A reload loses the seat.</strong> <code>from</code> is today the frame&#39;s editor ID, new on every reload and every day; the player
+is no longer <code>players[slot]</code> and can never move again in this game.</li>
+<li><strong>An opponent who never returns:</strong> the game waits forever; the rules cannot see who is present.</li>
+<li><strong>A hostile writer posts a fake checkpoint</strong> (a win): accepted. Hashes show the mismatch; same trust as today.</li>
+</ul>
+<p><strong>Numbers:</strong> about 100 bytes per input per view, about 0.19 ms of server work per input, a 250-byte checkpoint, under
+2 KB per room. <strong>Verdict: works well.</strong> Caveats: identity across reloads, no feedback for a no-op, no way for the agent
+to wait.</p>
+</section>
+
+<section class="chapter" id="pong"><header class="opener"><div class="numeral">IV</div><h2>Pong</h2><p class="lede">Lockstep is unplayable at 200 ms; a hybrid with paddles as events is not.</p></header>
+<p class="dropcap"><strong>Lockstep, rejected.</strong> If every view sends its paddle each tick and every view runs the ball&#39;s physics, your own
+paddle reaches the simulation one round trip plus a tick after you move it: 200 to 250 ms at 200 ms round trip. Drawing
+it locally does not help, because the hit is judged against the sequenced paddle, so the ball passes through the
+paddle you see. At 60 ms round trip lockstep would be acceptable.</p>
+<p><strong>The hybrid, chosen.</strong> Paddles travel as events. The ball is state, changed by one sequenced input per hit or
+miss. The side the ball heads to decides, with its own current paddle.</p>
+<pre><code><span class="tk-k">const</span> W = <span class="tk-n">800</span>, H = <span class="tk-n">480</span>, PAD = <span class="tk-n">80</span>, V = <span class="tk-n">0.5</span>;
+<span class="tk-k">const</span> launch = (y, dir, vy, t0) =&gt; ({ y, dir, vy, t0, arrive: t0 + (W - <span class="tk-n">40</span>) / V });
+<span class="tk-k">const</span> defender = (s) =&gt; s.players[s.ball.dir &gt; <span class="tk-n">0</span> ? <span class="tk-n">1</span> : <span class="tk-n">0</span>];
+<span class="tk-k">const</span> room = p2view.<span class="tk-f">room</span>({
+  version: <span class="tk-n">1</span>,
+  initial: () =&gt; ({ players: [], score: [<span class="tk-n">0</span>, <span class="tk-n">0</span>], rally: <span class="tk-n">0</span>, ball: <span class="tk-k">null</span> }),
+  inputs: {
+    join: { <span class="tk-f">apply</span>(s, _a, { <span class="tk-k">from</span> }) { <span class="tk-k">if</span> (s.players.length &lt; <span class="tk-n">2</span> &amp;&amp; !s.players.<span class="tk-f">includes</span>(<span class="tk-k">from</span>)) s.players.<span class="tk-f">push</span>(<span class="tk-k">from</span>); } },
+    serve: { <span class="tk-f">apply</span>(s, _a, { at, rand }) { <span class="tk-k">if</span> (s.players.length === <span class="tk-n">2</span> &amp;&amp; !s.ball) s.ball = <span class="tk-f">launch</span>(H / <span class="tk-n">2</span>, <span class="tk-f">rand</span>() &lt; <span class="tk-n">0.5</span> ? <span class="tk-n">1</span> : -<span class="tk-n">1</span>, <span class="tk-f">rand</span>() * <span class="tk-n">0.4</span> - <span class="tk-n">0.2</span>, at); } },
+    hit: { <span class="tk-f">apply</span>(s, { rally, off }, { <span class="tk-k">from</span> }) { <span class="tk-k">if</span> (s.ball &amp;&amp; rally === s.rally &amp;&amp; <span class="tk-k">from</span> === <span class="tk-f">defender</span>(s)) { s.ball = <span class="tk-f">bounce</span>(s.ball, off); s.rally++; } } },
+    miss: { <span class="tk-f">apply</span>(s, { rally }, { <span class="tk-k">from</span>, at }) {
+      <span class="tk-k">if</span> (!s.ball || rally !== s.rally || (<span class="tk-k">from</span> !== <span class="tk-f">defender</span>(s) &amp;&amp; at &lt; s.ball.arrive + <span class="tk-n">1500</span>)) <span class="tk-k">return</span>;  <span class="tk-c">// the attacker may claim after 1.5 s</span>
+      <span class="tk-k">if</span> (at &lt; s.ball.arrive + <span class="tk-n">10000</span>) s.score[s.ball.dir &gt; <span class="tk-n">0</span> ? <span class="tk-n">0</span> : <span class="tk-n">1</span>]++;                                  <span class="tk-c">// a stale rally scores nothing</span>
+      s.ball = <span class="tk-k">null</span>; s.rally++;
+    } },
+  },
+});
+canvas.onpointermove = (e) =&gt; { me = e.offsetY; room.<span class="tk-f">emit</span>({ y: me }); };
+room.<span class="tk-f">onEvent</span>(({ <span class="tk-k">from</span>, value }) =&gt; { <span class="tk-k">if</span> (<span class="tk-k">from</span> !== room.me) them = value.y; });   <span class="tk-c">// buffered by `at`, drawn ~100 ms behind</span>
+<span class="tk-c">// each frame: when the ball arrives on my side, judge it with my paddle: hit({ rally, off }) or miss({ rally }),</span>
+<span class="tk-c">// and draw my predicted bounce at once until the sequence confirms it</span></code></pre>
+<figure class="fig anim"><svg viewBox="0 0 720 324" width="100%" role="img" aria-label="A hit: Bob defends; the ball arrives at t = 5000 in server time." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f2m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f2a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f2b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="130.7" y1="42" x2="130.7" y2="316" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="45.7" y="10" width="170" height="32" rx="4" fill="#fff" stroke="#c9bfae"/><text x="130.7" y="30" font-size="11" fill="#2a2723" text-anchor="middle">Alice (attacker)</text><line x1="360" y1="42" x2="360" y2="316" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="275" y="10" width="170" height="32" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="360" y="30" font-size="11" fill="#2a2723" text-anchor="middle">room</text><line x1="589.3" y1="42" x2="589.3" y2="316" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="504.3" y="10" width="170" height="32" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="589.3" y="30" font-size="11" fill="#2a2723" text-anchor="middle">Bob (defender)</text><g class="step edge" style="--i:1"><path d="M589.3 62 h-34 v14 h32" fill="none" stroke="#b4472f" marker-end="url(#f2a)"/><text x="547.3" y="72" font-size="10" fill="#b4472f" text-anchor="end">t=5000: ball arrives, paddle at 300: hit({ rally: 7, off: 0.25 }); draw the bounce at once</text></g><g class="step edge" style="--i:2"><path d="M130.7 102 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f2m)"/><text x="172.7" y="112" font-size="10" fill="#2a2723" text-anchor="start">t=5000: predict the bounce from Bob's last paddle</text></g><g class="step edge" style="--i:3"><line x1="589.3" y1="148" x2="363" y2="148" stroke="#7b7468" marker-end="url(#f2m)"/><text x="474.7" y="142" font-size="10" fill="#2a2723" text-anchor="middle">hit</text></g><g class="step edge" style="--i:4"><path d="M360 174 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f2m)"/><text x="402" y="184" font-size="10" fill="#2a2723" text-anchor="start">t≈5100: seq 42</text></g><g class="step edge" style="--i:5"><line x1="360" y1="220" x2="133.7" y2="220" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f2m)"/><text x="245.3" y="214" font-size="10" fill="#2a2723" text-anchor="middle">seq 42</text></g><g class="step edge" style="--i:6"><line x1="360" y1="252" x2="586.3" y2="252" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f2m)"/><text x="474.7" y="246" font-size="10" fill="#2a2723" text-anchor="middle">seq 42</text></g><g class="step edge" style="--i:7"><path d="M130.7 278 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f2m)"/><text x="172.7" y="288" font-size="10" fill="#2a2723" text-anchor="start">t≈5200: apply: correct the predicted bounce by a few pixels</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 2.</span> A hit: Bob defends; the ball arrives at t = 5000 in server time.</figcaption></figure>
+<p>Your paddle follows your finger with no delay, the ball moves smoothly on both screens from a shared trajectory and
+the server clock, and you never lose to a ball that passed through your paddle. The opponent&#39;s paddle trails by about
+a quarter second. The attacker predicts the bounce from the opponent&#39;s last paddle, about 200 ms old; the real <code>off</code>
+can differ by up to 2, which moves the ball by up to 120 px by the time the hit arrives (Sol, cross-review), so the
+sketch blends the correction over a moment. The defender&#39;s decision is trusted: every view replays it, none checks the
+collision itself. <strong>Numbers:</strong> one sequenced input every 1.5 s, paddle events throttled to about 30 per second per
+player of about 70 bytes, state under 1 KB. <strong>Verdict: works with caveats</strong> at 60 to 200 ms: visible corrections after
+the opponent&#39;s hits, the sketch writes its own prediction (the kit gives no access to pending inputs), and a reload
+loses the seat.</p>
+<div class="note review"><b class="tag">Review: the sketch above is not finished</b><p>Sol found three bugs in this code: a defender returning the next day can hit the hours-old ball before the timeout
+voids the rally (stale rallies must be handled before any collision test); <code>hit</code> has no time window and <code>miss</code> lets an
+unseated view claim; <code>bounce</code> reuses the vertical speed before the wall reflections instead of the reflected one. Fix
+before using it as the reference sketch.</p>
+</div>
+</section>
+
+<section class="chapter" id="rts"><header class="opener"><div class="numeral">V</div><h2>A Little RTS</h2><p class="lede">Age of Empires&#39; model, as the article describes it: commands for two turns ahead, and a turn runs when every player&#39;s turn is in.</p></header>
+<p class="dropcap">Three players, 500 archers each, integer math. The model is the one Mark Terrano and Paul Bettner describe in &quot;1500
+Archers on a 28.8&quot; (Age of Empires, 2001), and it maps onto the room almost one to one.</p>
+<h3 id="what-age-of-empires-does">What Age of Empires does</h3>
+<ul>
+<li><strong>Simultaneous simulations.</strong> No unit state crosses the network; every machine runs the same simulation from the
+same commands. Passing positions would have capped the game at 250 moving units.</li>
+<li><strong>Commands for two turns ahead.</strong> Commands issued during communication turn 1000 execute in turn 1002, so they are
+received and acknowledged while turn 1001 still animates. Turns were about 200 ms; rendering frames are separate.</li>
+<li><strong>A turn runs when every player&#39;s turn is in.</strong> Each machine sends a &quot;Turn Done&quot; each turn, with its commands. The
+game runs only as fast as the slowest machine and connection; a frozen machine stalls everyone.</li>
+<li><strong>Speed control.</strong> Each Turn Done carries the frame rate that machine can sustain and its longest ping (2 bytes);
+the host sets the next turn length from them, rising fast and settling slowly, because a steady 500 ms of command
+latency plays better than latency jumping between 80 and 500 ms. Players did not notice 250 ms at all.</li>
+<li><strong>Out of sync stops the game.</strong> Checksums of the world catch the slightest divergence (&quot;a deer slightly out of
+alignment ... minutes later a villager would path a tiny bit off&quot;); random numbers are seeded and synchronized and
+must be drawn the same number of times everywhere.</li>
+<li><strong>Recorded games come free.</strong> The command stream replays the whole game; it became a feature and the best bug report.</li>
+<li><strong>Players send a command every 1.5 to 2 seconds,</strong> spikes of 3 to 4 per second in battles; repeated clicks on the
+same spot are filtered.</li>
+</ul>
+<h3 id="in-the-room">In the room</h3>
+<p>Each player&#39;s view sends <strong>one input per turn</strong>, its Turn Done: the commands collected during the turn, scheduled for
+two turns ahead, plus its frame rate, its ping and a hash of an earlier turn&#39;s state. The room orders them; that is
+all the server does. Every view runs turn T as soon as the sequence holds every seated player&#39;s input for T. Since
+every view sees the same sequence, every view runs every turn at the same point and in the same way. No server ticks,
+no host: the turn length is a deterministic function of the reported frame rates and pings, computed identically in
+every view.</p>
+<pre><code><span class="tk-k">const</span> AHEAD = <span class="tk-n">2</span>;
+<span class="tk-k">const</span> room = p2view.<span class="tk-f">room</span>({
+  version: <span class="tk-n">1</span>,
+  initial: () =&gt; ({ turn: <span class="tk-n">0</span>, turnMs: <span class="tk-n">200</span>, seats: [], units: [], pending: {}, nextId: <span class="tk-n">1</span>, outOfSync: <span class="tk-k">false</span> }),
+  inputs: {
+    seat: { description: <span class="tk-s">"Take a free seat before the match starts"</span>, <span class="tk-f">apply</span>(s, { name }, { <span class="tk-k">from</span>, rand }) {
+      <span class="tk-k">if</span> (s.turn === <span class="tk-n">0</span> &amp;&amp; s.seats.length &lt; <span class="tk-n">3</span> &amp;&amp; !s.seats.<span class="tk-f">some</span>((x) =&gt; x.peer === <span class="tk-k">from</span>)) <span class="tk-f">spawn</span>(s, { name, peer: <span class="tk-k">from</span> }, rand);
+    } },
+    turnDone: {
+      description: <span class="tk-s">"One player's commands for a turn, sent every turn even when empty"</span>,
+      <span class="tk-f">apply</span>(s, { t, commands, fps, ping, hash }, { <span class="tk-k">from</span> }) {
+        <span class="tk-k">const</span> seat = s.seats.<span class="tk-f">findIndex</span>((x) =&gt; x.peer === <span class="tk-k">from</span>);
+        <span class="tk-k">if</span> (seat &lt; <span class="tk-n">0</span> || t &lt; s.turn || s.outOfSync) <span class="tk-k">return</span>;
+        (s.pending[t] ??= {})[seat] = { commands, fps, ping, hash };
+        <span class="tk-k">while</span> (s.turn &lt; AHEAD || s.seats.<span class="tk-f">every</span>((_, i) =&gt; s.pending[s.turn]?.[i])) <span class="tk-f">runTurn</span>(s);
+      },
+    },
+  },
+});
+<span class="tk-k">function</span> <span class="tk-f">runTurn</span>(s) {
+  <span class="tk-k">const</span> turn = s.pending[s.turn] ?? {}; <span class="tk-k">delete</span> s.pending[s.turn];
+  <span class="tk-k">for</span> (<span class="tk-k">const</span> [seat, { commands }] <span class="tk-k">of</span> <span class="tk-t">Object</span>.<span class="tk-f">entries</span>(turn)) <span class="tk-k">for</span> (<span class="tk-k">const</span> c <span class="tk-k">of</span> commands) <span class="tk-f">command</span>(s, <span class="tk-t">Number</span>(seat), c);
+  <span class="tk-k">if</span> (<span class="tk-k">new</span> <span class="tk-t">Set</span>(<span class="tk-t">Object</span>.<span class="tk-f">values</span>(turn).<span class="tk-f">map</span>((x) =&gt; x.hash)).size &gt; <span class="tk-n">1</span>) s.outOfSync = <span class="tk-k">true</span>;   <span class="tk-c">// the senders' hashes of turn T-2</span>
+  s.turnMs = <span class="tk-f">speedControl</span>(s.turnMs, turn);       <span class="tk-c">// from every fps and ping: rise fast, settle slowly, the same in every view</span>
+  <span class="tk-f">simulate</span>(s, s.turnMs);                          <span class="tk-c">// integer steps, squared distances, fixed tie order, rand from meta</span>
+  s.turn++;
+}
+<span class="tk-c">// the view: collect clicks during a turn, send them for two turns ahead</span>
+<span class="tk-k">let</span> commands = [];
+canvas.onpointerup = () =&gt; commands.<span class="tk-f">push</span>({ box: <span class="tk-f">dragBox</span>(), x: <span class="tk-f">px</span>(mouse.x), y: <span class="tk-f">px</span>(mouse.y) });
+<span class="tk-f">setInterval</span>(() =&gt; {
+  room.inputs.<span class="tk-f">turnDone</span>({ t: room.state.turn + AHEAD, commands, fps: <span class="tk-f">sustainableFps</span>(), ping: room.<span class="tk-f">rtt</span>(), hash: <span class="tk-f">hashOfTurn</span>(room.state.turn - AHEAD) });
+  commands = [];
+}, room.state.turnMs);</code></pre>
+<figure class="fig anim"><svg viewBox="0 0 720 377" width="100%" role="img" aria-label="One turn: three players, 200 ms turns, 200 ms round trip; A's click executes two turns later in every view." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f3m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f3a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f3b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="102" y1="42" x2="102" y2="369" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="23" y="10" width="158" height="32" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="102" y="30" font-size="11" fill="#2a2723" text-anchor="middle">A's view</text><line x1="274" y1="42" x2="274" y2="369" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="195" y="10" width="158" height="32" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="274" y="30" font-size="11" fill="#2a2723" text-anchor="middle">room</text><line x1="446" y1="42" x2="446" y2="369" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="367" y="10" width="158" height="32" rx="4" fill="#fff" stroke="#c9bfae"/><text x="446" y="30" font-size="11" fill="#2a2723" text-anchor="middle">B's view</text><line x1="618" y1="42" x2="618" y2="369" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="539" y="10" width="158" height="32" rx="4" fill="#fff" stroke="#c9bfae"/><text x="618" y="30" font-size="11" fill="#2a2723" text-anchor="middle">C's view</text><g class="step edge" style="--i:1"><line x1="102" y1="68" x2="271" y2="68" stroke="#7b7468" marker-end="url(#f3m)"/><text x="188" y="62" font-size="10" fill="#2a2723" text-anchor="middle">turnDone t=1002: [order hill], fps 30, ping 200, hash(1000)</text></g><g class="step edge" style="--i:2"><line x1="446" y1="100" x2="277" y2="100" stroke="#7b7468" marker-end="url(#f3m)"/><text x="360" y="94" font-size="10" fill="#2a2723" text-anchor="middle">turnDone t=1002: [], fps 60, ping 180, hash(1000)</text></g><g class="step edge" style="--i:3"><line x1="618" y1="132" x2="277" y2="132" stroke="#7b7468" marker-end="url(#f3m)"/><text x="446" y="126" font-size="10" fill="#2a2723" text-anchor="middle">turnDone t=1002: [], fps 24, ping 210, hash(1000)</text></g><g class="step edge" style="--i:4"><line x1="274" y1="164" x2="105" y2="164" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f3m)"/><text x="188" y="158" font-size="10" fill="#2a2723" text-anchor="middle">seq 3007, 3008, 3009</text></g><g class="step edge" style="--i:5"><line x1="274" y1="196" x2="443" y2="196" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f3m)"/><text x="360" y="190" font-size="10" fill="#2a2723" text-anchor="middle">seq 3007, 3008, 3009</text></g><g class="step edge" style="--i:6"><line x1="274" y1="228" x2="615" y2="228" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f3m)"/><text x="446" y="222" font-size="10" fill="#2a2723" text-anchor="middle">seq 3007, 3008, 3009</text></g><g class="step" style="--i:7"><rect x="26" y="246" width="668" height="23" rx="3" fill="#f4eee2" stroke="#c2b18c"/><text x="360" y="260" font-size="10" fill="#5b5549" text-anchor="middle">turn 1001 still animates meanwhile</text></g><g class="step edge" style="--i:8"><path d="M102 291 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f3m)"/><text x="144" y="301" font-size="10" fill="#2a2723" text-anchor="start">all three for 1002 are in: run turn 1002, the archers turn towards the hill</text></g><g class="step edge" style="--i:9"><path d="M618 331 h-34 v14 h32" fill="none" stroke="#7b7468" marker-end="url(#f3m)"/><text x="576" y="341" font-size="10" fill="#2a2723" text-anchor="end">the same turn, the same result; hashes of 1000 agree</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 3.</span> One turn: three players, 200 ms turns, 200 ms round trip; A&#39;s click executes two turns later in every view.</figcaption></figure>
+<h3 id="what-the-person-sees-and-when">What the person sees, and when</h3>
+<p>A&#39;s click shows a target marker at once; the archers start moving two turns later, about 400 ms with 200 ms turns,
+the same moment on every screen (as the article says, 250 to 500 ms is very playable in an RTS, and steady matters more
+than short). If C&#39;s phone falls behind, its frame rate in its turn inputs raises the turn length a little for
+everyone; the game slows smoothly instead of stuttering.</p>
+<h3 id="waiting-leaving-coming-back">Waiting, leaving, coming back</h3>
+<ul>
+<li><strong>A frozen phone stalls the match,</strong> as in Age of Empires: no turn runs without C&#39;s input. After a while the others
+can sequence <code>drop({ seat })</code>, which every view applies at the same turn, and the match goes on without C&#39;s commands
+(C&#39;s archers stand).</li>
+<li><strong>Everyone leaves:</strong> nobody sends turn inputs, so nothing runs; there is no server clock to keep the battle going
+through the night. The next day the views load the checkpoint, and the match resumes when the seated players are
+back (or the others drop the missing ones).</li>
+<li><strong>A spectator or a late view</strong> loads the checkpoint (taken at any number: the state includes the pending inputs of
+future turns) and replays the inputs after it, about 1 s on a phone for a few hundred.</li>
+<li><strong>Out of sync</strong> stops the game for everyone, visibly, as in Age of Empires, and the recording (checkpoint plus
+inputs) is the bug report. Refolding silently would hide exactly the bug the article spent years on.</li>
+<li><strong>Recorded games:</strong> the sequence is the recording; a replay view folds it from the start of the match.</li>
+</ul>
+<h3 id="numbers-and-verdict">Numbers and verdict</h3>
+<p>Three players at 200 ms turns send 15 inputs per second, mostly empty (about 60 bytes, commands about 40 bytes more):
+about 3 ms of server work per second at the 0.19 ms approximation, 2.7 KB/s of fan-out per view. The checkpoint (about
+60 KB for 1500 units) goes out every few hundred inputs, about every 20 to 30 seconds. <strong>Verdict: works well,</strong> with
+no tick machinery in the room at all. What it needs from the model: seats that survive a reload (a frame ID changes,
+so a seat must be reclaimable by its person), a migration when the sketch changes between sessions, and a simulation
+loop that does not pay for a tracking draft on every unit (measure it). Like every sketch it trusts its players.</p>
+</section>
+
+<section class="chapter" id="glyph"><header class="opener"><div class="numeral">VI</div><h2>Max&#39;s Glyph Editor</h2><p class="lede">Not a game with rules: a font on disk that a person and the agent edit together.</p></header>
+<p class="dropcap">The real editor (Max&#39;s gist, <code>glyph-editor.html</code>, <code>glyph-editor-ge.py</code>, <code>glyph-editor-bridge.js</code>) edits the UFO
+sources of a typeface, Mallos Serif, four masters. The truth lives in <code>.glif</code> files on disk; the view holds a working
+copy. Its state today:</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>What</th>
+<th>Size</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>glyphs</code></td>
+<td>every glyph of one master, compactly encoded (<code>{ w, u, c: [[x, y, t, ...]], k, a }</code>)</td>
+<td>the bulk; one master must fit the 256 KB view-state limit</td>
+</tr>
+<tr>
+<td><code>edits</code></td>
+<td>the unsaved glyphs, name to glyph, overlaying <code>glyphs</code></td>
+<td>small; kept first because the agent&#39;s <code>view read</code> returns only the first 40,000 characters</td>
+</tr>
+<tr>
+<td><code>current</code>, <code>notes</code>, <code>previewText</code>, <code>metrics</code>, <code>order</code></td>
+<td>the open glyph, the agent&#39;s notes pinned on glyphs, the preview line</td>
+<td>small</td>
+</tr>
+</tbody></table>
+<p>The page edits one glyph locally: points, handles, the pen, contours, components, undo. Dragging stays local; every
+finished operation writes the whole glyph into <code>edits[name]</code> (<code>commit()</code>, through <code>p2view.setState</code>, saved after 300 ms
+of rest). Its selection goes to the agent with <code>p2view.select</code> (&quot;Regular /a: 2 points selected ...&quot;).</p>
+<p><strong>The agent is the main partner,</strong> through code-mode helpers (<code>bridge.js</code>): <code>load(master)</code> exports a master from the UFO
+with Python and pushes it into the view (<code>view update</code> with the whole state); <code>peek()</code> reads the open glyph, the
+unsaved names, the notes and the selection; <code>edit(fn)</code> changes glyphs programmatically (<code>api.get</code>, <code>api.set</code>,
+<code>api.note</code>, <code>api.open</code>) and merges <code>edits</code>, <code>notes</code> and <code>current</code>; <code>save()</code> writes the unsaved glyphs back to the
+<code>.glif</code> files and folds them into the base, keeping &quot;edits made since the read&quot;. Every one of these works around a limit
+of today&#39;s views: reads chunked to 30 KB because the read tool truncates, the state ordered so <code>edits</code> survive the
+40,000-character read, whole-map merges that can overwrite a glyph the person changed meanwhile, and the 256 KB cap on a
+master.</p>
+<h3 id="under-the-new-model">Under the new model</h3>
+<p>The editor has no rules for the server or other views to agree on: it is a document. It needs no custom inputs and no
+deterministic <code>apply</code>, only the room&#39;s built-in operations at path granularity, which the server applies itself:</p>
+<pre><code><span class="tk-k">const</span> room = p2view.<span class="tk-f">room</span>({ version: <span class="tk-n">1</span>, initial: () =&gt; ({ edits: {}, current: <span class="tk-k">null</span>, notes: {}, previewText: <span class="tk-s">""</span> }) });
+<span class="tk-c">// the page, after each finished operation on the open glyph: one glyph, one path</span>
+<span class="tk-k">const</span> commit = (name, glyph) =&gt; room.<span class="tk-f">set</span>([<span class="tk-s">"edits"</span>, name], <span class="tk-f">encode</span>(glyph));
+<span class="tk-k">const</span> open = (name) =&gt; room.<span class="tk-f">set</span>([<span class="tk-s">"current"</span>], name);
+<span class="tk-k">const</span> dropNote = (id) =&gt; room.<span class="tk-k">delete</span>([<span class="tk-s">"notes"</span>, id]);              <span class="tk-c">// notes keyed by id, not by index</span>
+room.<span class="tk-f">onState</span>((s) =&gt; <span class="tk-f">redraw</span>(s));                                   <span class="tk-c">// the agent's edits arrive as state changes</span>
+room.<span class="tk-f">emit</span>({ glyph: cur, points: <span class="tk-f">draggedPoints</span>() });               <span class="tk-c">// optional: show the live drag to others</span>
+room.<span class="tk-f">setMine</span>({ glyph: cur, selection: <span class="tk-f">selectedKeys</span>() });          <span class="tk-c">// who is on which glyph, for other people</span></code></pre>
+<p>And the agent, without rewriting the state:</p>
+<pre><code><span class="tk-c">// code mode, through the view tool's room operations (proposed)</span>
+<span class="tk-k">await</span> tools.<span class="tk-f">view</span>({ action: <span class="tk-s">"set"</span>, id: <span class="tk-s">"glyph"</span>, path: [<span class="tk-s">"edits"</span>, <span class="tk-s">"a"</span>], value: <span class="tk-f">enc</span>(fixedA) });   <span class="tk-c">// one glyph, a few hundred bytes</span>
+<span class="tk-k">await</span> tools.<span class="tk-f">view</span>({ action: <span class="tk-s">"read"</span>, id: <span class="tk-s">"glyph"</span>, path: [<span class="tk-s">"edits"</span>] });                             <span class="tk-c">// only what it needs</span>
+<span class="tk-c">// save: write the .glif files, then drop each saved glyph from `edits` only if it is still what was saved</span>
+<span class="tk-k">await</span> tools.<span class="tk-f">view</span>({ action: <span class="tk-s">"deleteIf"</span>, id: <span class="tk-s">"glyph"</span>, path: [<span class="tk-s">"edits"</span>, <span class="tk-s">"a"</span>], equals: <span class="tk-f">hashOf</span>(saved.a) });</code></pre>
+<p>What changes, concretely:</p>
+<ul>
+<li><strong>The agent&#39;s edits are small and current.</strong> A glyph change is one <code>set</code> at <code>[&quot;edits&quot;, name]</code>, applied by the server
+whether or not the view is open, instead of a merge of the whole <code>edits</code> map. A person editing glyph <code>b</code> while the
+agent saves glyph <code>a</code> lose nothing; today&#39;s whole-map merge could.</li>
+<li><strong>Reads by path.</strong> The agent reads <code>[&quot;edits&quot;]</code>, <code>[&quot;current&quot;]</code> or one glyph, not the first 40,000 characters of
+everything; the ordering trick and the chunked reads go away. This is possible only because the server applies the
+built-ins and so always holds the current document.</li>
+<li><strong>Saving without a race.</strong> <code>deleteIf</code> drops a saved glyph from <code>edits</code> only if it still equals what was written to
+disk; an edit made during the save stays unsaved. A conditional built-in, compare-and-set on one path.</li>
+<li><strong>Same glyph, two people:</strong> the later commit of the whole glyph wins. Peer state shows who has which glyph open, so
+people see the collision coming; finer merges inside a contour are not worth it (point indexes shift when points are
+added).</li>
+<li><strong>The base master is not state.</strong> All glyphs of a master are reference data from disk that only <code>load</code> and <code>save</code>
+change. Kept in the room, they are what hits the 256 KB cap and makes every checkpoint and every joiner carry a
+whole master. They belong in a read-only <strong>view asset</strong>: a file of the session the frame fetches by URL, as it
+fetches its HTML, written by <code>load</code> and <code>save</code>. The room then holds only <code>edits</code>, <code>current</code>, <code>notes</code> and the
+preview line, a few KB.</li>
+</ul>
+<p><strong>Numbers:</strong> a glyph commit is a few hundred bytes to a few KB; the room&#39;s state is the unsaved glyphs plus a little;
+the master asset is loaded once per frame (about 200 KB for Mallos Serif Regular). <strong>Verdict: works well</strong> with
+path-level built-ins, path reads for the agent, a conditional delete, and view assets; the custom-input machinery of
+the model plays no part. The ideas from the first edition of this chapter (point-level moves, a guarded whole-glyph
+replace) were invented, not taken from the real editor.</p>
+</section>
+
+<section class="chapter" id="whiteboard"><header class="opener"><div class="numeral">VII</div><h2>A Whiteboard</h2><p class="lede">Strokes as one input each at pointer-up; the checkpoint limit arrives early.</p></header>
+<p class="dropcap">A pen follows the hand at once; others see a slightly delayed preview that may have gaps, and pointer-up publishes
+the complete stroke, which repairs them. Shapes can be selected and moved; overlapping edits settle in sequence order.</p>
+<pre><code><span class="tk-k">const</span> room = p2view.<span class="tk-f">room</span>({
+  version: <span class="tk-n">1</span>,
+  initial: () =&gt; ({ items: {}, order: [] }),
+  inputs: {
+    stroke: { <span class="tk-f">apply</span>(s, a) { <span class="tk-k">if</span> (<span class="tk-t">Object</span>.<span class="tk-f">hasOwn</span>(s.items, a.id)) <span class="tk-k">return</span>; s.items[a.id] = { kind: <span class="tk-s">"stroke"</span>, points: a.points, color: a.color, x: <span class="tk-n">0</span>, y: <span class="tk-n">0</span> }; s.order.<span class="tk-f">push</span>(a.id); } },
+    move: { <span class="tk-f">apply</span>(s, { id, x, y }) { <span class="tk-k">if</span> (!<span class="tk-t">Object</span>.<span class="tk-f">hasOwn</span>(s.items, id)) <span class="tk-k">return</span>; s.items[id].x = x; s.items[id].y = y; } },
+    remove: { <span class="tk-f">apply</span>(s, { id }) { <span class="tk-k">delete</span> s.items[id]; s.order = s.order.<span class="tk-f">filter</span>((k) =&gt; k !== id); } },
+  },
+});
+room.<span class="tk-f">onState</span>((s) =&gt; { <span class="tk-f">drawBoard</span>(s); <span class="tk-f">clearCommittedPreviews</span>(s.items); });
+room.<span class="tk-f">onEvent</span>(({ <span class="tk-k">from</span>, value }) =&gt; <span class="tk-f">previewFromPeer</span>(<span class="tk-k">from</span>, value));   <span class="tk-c">// lossy preview chunks while drawing</span>
+<span class="tk-k">const</span> finishStroke = (id, points, color) =&gt; room.inputs.<span class="tk-f">stroke</span>({ id, points, color });   <span class="tk-c">// id: a UUID made by the page</span></code></pre>
+<p>The limit is size: a 150-point stroke is about 2 KB, so about 140 to 150 strokes exceed the 256 Ki-character
+checkpoint (integer deltas instead of coordinates give about three times as many). Every stroke was accepted, the board still looks right, but checkpoints start failing and the tail grows
+until the memory budget refuses work. The model has no rule or visible signal for that yet. And drawing is stroke, pause, stroke: the &quot;300 ms after the last
+input&quot; rule would post the whole board after almost every stroke, 200 KB for a 2 KB stroke. Checkpoints for large
+states go by the size of the tail relative to the checkpoint (say a quarter), and views that are current get a
+reference, not the value (Opus, cross-review). <strong>Numbers:</strong> two artists
+each finishing a stroke per second in a room of six views: about 24 KB/s of durable fan-out, plus about 60 KB/s of
+previews. <strong>Verdict: works with caveats for a small canvas.</strong> A real whiteboard needs a document or file-backed
+plugin; the sequencer does not solve size, persistent undo or large assets.</p>
+</section>
+
+<section class="chapter" id="family"><header class="opener"><div class="numeral">VIII</div><h2>The Family List</h2><p class="lede">Long-lived data the agent edits while nobody looks: custom rules do not fit, built-ins do.</p></header>
+<p class="dropcap">When a phone is open, items tick off and the other phone sees it about 200 ms later. When both phones are closed and
+the agent queues &quot;add milk&quot; and &quot;move dinner to Friday&quot;, the server stores the inputs but runs no model. The next
+&quot;what do we still need?&quot; gets the old list plus a tail of commands, not the current list; the agent can reason
+through the tail itself, but that is its work, not the room&#39;s.</p>
+<pre><code><span class="tk-k">const</span> room = p2view.<span class="tk-f">room</span>({
+  version: <span class="tk-n">1</span>,
+  initial: () =&gt; ({ items: {}, order: [] }),
+  inputs: {
+    put: { description: <span class="tk-s">"Add an item or change its label/day"</span>, <span class="tk-f">apply</span>(s, { id, label, day }) {
+      <span class="tk-k">if</span> (!<span class="tk-t">Object</span>.<span class="tk-f">hasOwn</span>(s.items, id)) { s.items[id] = { label, day, done: <span class="tk-k">false</span> }; s.order.<span class="tk-f">push</span>(id); }
+      <span class="tk-k">else</span> { s.items[id].label = label; s.items[id].day = day; } } },
+    setDone: { description: <span class="tk-s">"Set whether an item is checked"</span>, <span class="tk-f">apply</span>(s, { id, done }) { <span class="tk-k">if</span> (<span class="tk-t">Object</span>.<span class="tk-f">hasOwn</span>(s.items, id)) s.items[id].done = done; } },
+    remove: { <span class="tk-f">apply</span>(s, { id }) { <span class="tk-k">delete</span> s.items[id]; s.order = s.order.<span class="tk-f">filter</span>((k) =&gt; k !== id); } },
+  },
+});</code></pre>
+<p>Three more problems follow from &quot;nobody runs the model&quot;: a view question (<code>forDay</code>) cannot be answered with every
+view closed; the agent can only send inputs whose names and schemas the server has persisted, which needs a
+registration path the model does not have; and the tail grows (about 4 KB a day at 20 edits) until a phone opens.
+Astra&#39;s verdict was a server-owned document or a plugin. Opus, in the cross-review, found a cheaper way inside the
+model: the kit&#39;s built-in operations are the server&#39;s own vocabulary, so the server can apply them itself whenever
+the tail holds no custom input. A list written with built-ins only is always current for the agent, takes writes with
+no view open, and is saved without any view:</p>
+<pre><code><span class="tk-k">const</span> room = p2view.<span class="tk-f">room</span>({ version: <span class="tk-n">1</span>, initial: () =&gt; ({ items: {}, order: [] }) });   <span class="tk-c">// no custom inputs</span>
+<span class="tk-k">const</span> add = (label, day = <span class="tk-s">""</span>) =&gt; { <span class="tk-k">const</span> id = crypto.<span class="tk-f">randomUUID</span>(); room.<span class="tk-f">set</span>([<span class="tk-s">"items"</span>, id], { label, day, done: <span class="tk-k">false</span> }); room.<span class="tk-f">append</span>([<span class="tk-s">"order"</span>], id); };
+<span class="tk-k">const</span> check = (id, done) =&gt; room.<span class="tk-f">set</span>([<span class="tk-s">"items"</span>, id, <span class="tk-s">"done"</span>], done);
+<span class="tk-k">const</span> remove = (id) =&gt; { room.<span class="tk-k">delete</span>([<span class="tk-s">"items"</span>, id]); room.<span class="tk-f">remove</span>([<span class="tk-s">"order"</span>], id); };</code></pre>
+<p><strong>Verdict: works well with built-ins;</strong> custom rules (a list that refuses duplicates, a planner that moves conflicting
+entries) need a view to run them, and then the caveat above holds. The built-ins need precise semantics (paths,
+arrays, deletion) before they are built.</p>
+<div class="note review"><b class="tag">Review: built-ins or a separate document kind</b><p>Astra proposed a separate server-owned document kind; Opus proposes server-applied built-ins inside the room. Both give
+the agent current data without a view; the built-ins keep one room kind. Open for the owner.</p>
+</div>
+</section>
+
+<section class="chapter" id="poll"><header class="opener"><div class="numeral">IX</div><h2>The Meetup Poll</h2><p class="lede">Seventy guests are not the hard part; who may vote, and whether the tally can be trusted, are.</p></header>
+<p class="dropcap">Guests see a question, choices and live counts; eligible voters tap a choice and see it confirmed about 200 ms
+later; voting again replaces the choice. The model records one choice per <code>from</code>.</p>
+<pre><code><span class="tk-k">const</span> room = p2view.<span class="tk-f">room</span>({
+  version: <span class="tk-n">1</span>,
+  initial: () =&gt; ({ question: <span class="tk-s">"Which session next?"</span>, closed: <span class="tk-k">false</span>, choices: { a: <span class="tk-s">"Graphics"</span>, b: <span class="tk-s">"Agents"</span> }, votes: {} }),
+  inputs: {
+    vote: { description: <span class="tk-s">"Set this peer's choice"</span>, <span class="tk-f">apply</span>(s, { choice }, { <span class="tk-k">from</span> }) { <span class="tk-k">if</span> (!s.closed &amp;&amp; <span class="tk-k">from</span> !== <span class="tk-s">"agent"</span>) s.votes[<span class="tk-k">from</span>] = choice; } },
+    close: { description: <span class="tk-s">"The agent closes voting"</span>, <span class="tk-f">apply</span>(s, _a, { <span class="tk-k">from</span> }) { <span class="tk-k">if</span> (<span class="tk-k">from</span> === <span class="tk-s">"agent"</span>) s.closed = <span class="tk-k">true</span>; } },
+  },
+});</code></pre>
+<p>Thirty votes in a two-second burst to 71 views is about 0.38 MB of fan-out and about 6 ms of server work: fine. Four
+things are not:</p>
+<ul>
+<li><strong>Permissions:</strong> read-only guests cannot submit inputs, and there is no &quot;may vote but not otherwise write&quot; right.</li>
+<li><strong>Identity:</strong> another tab or device is another voter; <code>from</code> is not a person.</li>
+<li><strong>Trust:</strong> any writer may post a checkpoint, accepted by numbers; a modified client can post a fabricated tally.</li>
+<li><strong>Hashes:</strong> if every view publishes a state hash after every input, 71 views turn 30 votes into about 150,000
+deliveries. Hash checks need a cadence.</li>
+</ul>
+<p><strong>Verdict: works with caveats</strong> for a small public honour-system poll; <strong>needs a plugin</strong> for one person one vote,
+secret ballots or a trusted result.</p>
+</section>
+
+<section class="chapter" id="notes"><header class="opener"><div class="numeral">X</div><h2>Shared Notes</h2><p class="lede">The text service stays; only its carets move to peer state.</p></header>
+<p class="dropcap">Two people type in the same note; their own typing appears at once, the other&#39;s arrives without overwriting the
+document, and named carets follow characters, not positions. The text room&#39;s rules (ID-based editing with
+articulated, editor watermarks) keep running on the server, so no view has to run them and no checkpoint has to hold
+the whole ID model.</p>
+<pre><code><span class="tk-k">const</span> text = p2view.<span class="tk-f">text</span>();                       <span class="tk-c">// today's text client under its new name</span>
+<span class="tk-k">const</span> unbind = text.<span class="tk-f">bind</span>(document.<span class="tk-f">querySelector</span>(<span class="tk-s">"#note"</span>));
+text.<span class="tk-f">onChange</span>((value, <span class="tk-k">from</span>) =&gt; <span class="tk-f">status</span>(<span class="tk-s">`${value.length} characters (${from})`</span>));
+text.<span class="tk-f">onCursors</span>((cursors) =&gt; <span class="tk-f">drawCarets</span>(cursors));</code></pre>
+<p>A joiner rebuilds the text from the text service&#39;s base and journal; a reconnect resends pending edits and the
+watermarks stop duplicates. The agent&#39;s text changes stay ID-preserving edits, as today. Two notes from Sol&#39;s check
+of the code: today&#39;s kit waits for each edit call per editor, about five confirmed batches per second per editor at
+200 ms, enough for normal typing with a short local queue during bursts; and carets are still numbered keyed messages,
+so moving them to peer state needs a small text-service facet.</p>
+<div class="note review"><b class="tag">Review: a text bug found while working through this</b><p>Astra reproduced data loss in today&#39;s text binder: while an input method composes (a phone keyboard&#39;s suggestions),
+the binder keeps the old field text while remote edits arrive; at the end of the composition it submits the stale
+field. Alice composes in <code>abc</code>, Bob inserts <code>x</code> meanwhile, Alice ends with <code>aZbc</code>: Bob&#39;s <code>x</code> is gone. The fix is in
+the text client (rebase the composition&#39;s edit over remote changes), not in the room. Also missing: the text kit
+reports later edit refusals only in the log, never to the page.</p>
+</div>
+<p><strong>Verdict: works well</strong> after that fix.</p>
+</section>
+
+<section class="chapter" id="presence"><header class="opener"><div class="numeral">XI</div><h2>Cursors and Presence</h2><p class="lede">Latest values, never in the sequence, and N² once rooms get large.</p></header>
+<p class="dropcap">People see names appear as views connect, cursors moving on the same board, and highlights of others&#39; selections.
+Cursors are motion and go as events, about 20 per second; selections are latest values a joiner must see and go as
+peer state. Peer state is Chord state, which a passive receiver gets about twice per round trip, folded: right for a
+selection, too coarse for a cursor (Opus, cross-review). A departure removes the peer&#39;s state; nothing is journaled. Committing something (pinning an object) is an input; a
+selection is not.</p>
+<pre><code>pad.<span class="tk-f">addEventListener</span>(<span class="tk-s">"pointermove"</span>, (e) =&gt; room.<span class="tk-f">emit</span>({ cursor: <span class="tk-f">normalised</span>(e) }));      <span class="tk-c">// motion: events</span>
+pad.<span class="tk-f">addEventListener</span>(<span class="tk-s">"click"</span>, (e) =&gt; room.<span class="tk-f">setMine</span>({ selection: e.target.dataset.id ?? <span class="tk-k">null</span> }));   <span class="tk-c">// latest value</span>
+room.<span class="tk-f">onEvent</span>(({ <span class="tk-k">from</span>, value }) =&gt; <span class="tk-f">moveCursor</span>(<span class="tk-k">from</span>, value.cursor));
+room.<span class="tk-f">onPeerState</span>((id, value) =&gt; <span class="tk-f">paintSelection</span>(id, value?.selection));
+room.<span class="tk-f">onPeers</span>((peers) =&gt; { people.textContent = peers.<span class="tk-f">map</span>((p) =&gt; p.name).<span class="tk-f">join</span>(<span class="tk-s">", "</span>); });</code></pre>
+<p><strong>Numbers:</strong> ten peers at 20 updates per second are about 2,000 deliveries per second (all-to-all), about 300 KB/s;
+two peers about 12 KB/s. <strong>Verdict: works well</strong> for small rooms. Open: whether read-only guests may publish a cursor,
+and which ID is the public one (today a link ID, while the reconnectable editor ID is another).</p>
+</section>
+
+<section class="chapter" id="agent"><header class="opener"><div class="numeral">XII</div><h2>The Agent</h2><p class="lede">Five different operations, and one honest limit.</p></header>
+<p class="dropcap">The agent reads, sends inputs, replaces the state, merges, and asks questions. They are not five spellings of one
+thing:</p>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>What happens</th>
+<th>Time at 200 ms</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>read</strong>, a view open</td>
+<td>the server asks a caught-up writer for a checkpoint at the current head</td>
+<td>one view round trip, ~200 ms</td>
+</tr>
+<tr>
+<td><strong>read</strong>, no view</td>
+<td>the last checkpoint plus the raw inputs since it, labelled with both numbers; current if the tail holds only built-ins</td>
+<td>server only</td>
+</tr>
+<tr>
+<td><strong>input</strong></td>
+<td>an input by name, args checked against its schema, from <code>&quot;agent&quot;</code>; the game may still reject it as a no-op</td>
+<td>server only to sequence</td>
+</tr>
+<tr>
+<td><strong>update</strong></td>
+<td>the value becomes a new checkpoint in a new epoch; old-epoch inputs are refused; works with no view</td>
+<td>server only</td>
+</tr>
+<tr>
+<td><strong>merge</strong></td>
+<td>the built-in <code>$merge</code>, applied by the server itself when the tail holds no custom input</td>
+<td>server only</td>
+</tr>
+<tr>
+<td><strong>question</strong></td>
+<td>one view answers (&quot;what is under this region?&quot;); <code>uncertain</code> if it leaves</td>
+<td>one view round trip, ~200 ms</td>
+</tr>
+</tbody></table>
+<p>The agent&#39;s tool runs on the session&#39;s worker, next to the server, so only the view&#39;s round trip counts (Astra,
+cross-review).</p>
+<p>The limit: a server that never runs the sketch cannot hand the agent the current computed state when no view runs
+it. Astra put it as &quot;pick three of four&quot;: arbitrary derived state, a server that never runs application logic, no
+live view, and an immediate fresh read. Sketches choose the first three and label reads; data kept with built-ins gets
+the fourth for free, and data with custom rules that needs it is a plugin. <strong>Verdict: works with caveats</strong> until the read results, reset fences, agent
+request identities and a question catalogue with schemas are specified.</p>
+</section>
+
+<section class="chapter" id="guests"><header class="opener"><div class="numeral">XIII</div><h2>Read-Only Guests</h2><p class="lede">Watching is cheap and safe; hiding anything is impossible.</p></header>
+<p class="dropcap">A guest sees the same board and motion as the players and cannot move. A late guest gets the checkpoint and the tail
+and renders once it has a coherent prefix. Re-enabling a button in developer tools changes nothing: the server
+refuses the input. Revoking the share closes the guest&#39;s frame link; the game continues. Guests never pin history:
+retention is checkpoint plus tail, not &quot;keep everything until the slowest viewer catches up&quot;.</p>
+<p>&quot;Read-only&quot; is an access rule, not secrecy: every view receives every input and the whole state. Hidden cards, a
+robot&#39;s token or a private answer cannot be protected by a sketch. <strong>Numbers:</strong> an input reaches a guest in about
+200 ms; 20 guests at 100 inputs per second of 200 bytes cost about 400 KB/s. <strong>Verdict: works well</strong> for public state;
+<strong>needs a plugin</strong> for hidden information or anti-cheat.</p>
+</section>
+
+<section class="chapter" id="failures"><header class="opener"><div class="numeral">XIV</div><h2>When Things Break</h2><p class="lede">Reconnects, frozen phones, restarts, code edits and drift, one at a time.</p></header>
+<ul>
+<li><strong>A lost reply.</strong> Alice&#39;s input is sequenced as #80, her link drops before the answer. On rejoin the kit resends the
+same input identity, and deduplication must answer with #80, not append a second one. A watermark alone cannot map
+every older resend to its number: the receipts need persisting.</li>
+<li><strong>A frozen phone.</strong> Everyone else goes on. The phone&#39;s presence disappears when its link closes (Chord pings after
+15 s of silence and closes at 30 s), not when the screen locks. It is never the reason a match stalls.</li>
+<li><strong>A server restart.</strong> All views reconnect and get the saved checkpoint and tail. Inputs sequenced since the last
+save are lost and the views rewind by that much; the model does not yet name the save interval or show a &quot;saved
+through&quot; number.</li>
+<li><strong>The agent edits the HTML mid-session.</strong> The pane replaces the frame. Version 2 must not fold a version 1 sequence,
+and an old frame elsewhere must stop submitting. Changing rendering only, changing rules compatibly, and starting a
+new model are three different things the agent has to say; a migration of the checkpoint is needed for the third.</li>
+<li><strong>Drift.</strong> Compare hashes only at the same version, epoch and number. Refolding from a good checkpoint repairs a
+missed delivery; it cannot repair a nondeterministic <code>apply</code> or a bad checkpoint everyone trusts. The person needs to
+see &quot;out of sync&quot;, not a silent loop.</li>
+</ul>
+<p><strong>Verdict: works with caveats.</strong> Ordinary reconnects and frozen phones fit well; restart durability, version
+changes and repair need explicit protocols and visible states (connecting, catching up, incompatible version, reset,
+budget refused, out of sync).</p>
+</section>
+
+<section class="chapter" id="plugins"><header class="opener"><div class="numeral">XV</div><h2>Where Sketches Stop</h2><p class="lede">The son&#39;s robot, secrets, and rules that must hold with nobody watching.</p></header>
+<p class="dropcap">A sketch can show a robot plan; pressing a real motor button must be a command to a trusted owner of the device. A
+motor call inside <code>apply</code> would run in every view, again on every replay and every join. Exactly-once sequencing does
+not make a physical effect happen once. Closing every view must not remove speed limits, authentication or an
+emergency stop, and a frozen phone must never be the stop mechanism.</p>
+<p>The plugin version: the view sends a typed command to the plugin&#39;s server object, which owns the device connection,
+checks limits, records the intent, drives the device and reports &quot;accepted&quot;, &quot;rejected&quot;, &quot;done&quot; or &quot;outcome unknown&quot;
+as state. Credentials stay with that object, never in HTML, inputs, peer state or a checkpoint. The same holds without
+hardware for timers, spending limits, protected game rules, audits and authorization.</p>
+<p><strong>How a sketch grows into a plugin:</strong> keep the rendering; move validation, state transitions and effects into the
+plugin&#39;s object; replace sequenced inputs with typed command methods; expose state and events back to the view. One
+authority, never the same rule in both the reducer and the plugin. How a sandboxed sketch reaches a plugin&#39;s objects
+is not designed yet.</p>
+</section>
+
+<section class="chapter epilogue" id="what-the-model-needs"><header class="opener"><div class="numeral">∴</div><h2>What the Model Needs</h2><p class="lede">The changes the use cases found, in order of importance, and the decisions for the owner.</p></header>
+<p class="dropcap">The core holds across all thirteen cases: the server orders, every view folds, checkpoints by numbers, cursors and
+motion beside the sequence. Before building, the model needs these changes; the use cases that need each are in
+brackets.</p>
+<ol>
+<li><strong>Identity, three kinds.</strong> <code>from</code> is the editor ID (the frame), kept across reconnects, and <code>room.me === from</code>;
+<code>meta.person</code> is the authenticated principal (the owner or a guest grant, with a role); a game&#39;s <strong>seat</strong> is its own
+state, claimed and recovered explicitly, since two of the owner&#39;s devices are one person (Sol). The editor map is
+persisted. [Connect Four, Pong, RTS, poll, presence, failures]</li>
+<li><strong>Outcomes, validation, status.</strong> <code>apply</code> may return a reason; a submit resolves <code>{ seq, result }</code> after the local
+apply (a local result, not a durable one); a throwing <code>apply</code> is a no-op everywhere; the kit checks <code>args</code> in every view before <code>apply</code> (the server
+checks only the agent&#39;s inputs); a room status: connecting, catching up, incompatible version, reset, out of sync,
+budget refused. [Connect Four, glyph, whiteboard, poll, agent, guests, failures]</li>
+<li><strong>Durability and dedupe.</strong> A named save interval; accepted versus saved progress; checkpoint, tail, epoch, version
+and per-editor marks saved together; a reconnecting kit finds its own input by <code>from</code> and counter, and a checkpoint
+carries the marks, so a lost reply resolves without a receipt table; agent tool calls get a request ID.
+[Connect Four, family list, poll, agent, failures]</li>
+<li><strong>Checkpoint production and size.</strong> Cadence by tail size relative to the checkpoint, by count or by time (the idle
+rule only for small states); a fallback producer when the preferred one is frozen; a reference, not the value, to
+current views; whether a checkpoint may exceed the view-state limit with a projection as the view&#39;s state; a
+refused checkpoint visible to person and agent. [RTS, whiteboard, family list, agent, failures]</li>
+<li><strong>View assets.</strong> Read-only files of the session a frame fetches by URL, as it fetches its HTML, for large reference
+data (a font master) that should not live in the room&#39;s state, its checkpoints and every joiner&#39;s snapshot. [glyph,
+whiteboard backgrounds, RTS maps]</li>
+<li><strong>Server-applied built-ins.</strong> Precisely defined <code>set</code>, <code>delete</code>, <code>merge</code>, list append and remove, and a conditional
+<code>deleteIf</code>/<code>setIf</code> (compare-and-set on one path), applied by the server while the tail has no custom input; the
+agent reads and writes by path through the view tool; <code>view update</code> takes an expected epoch or head; <code>at</code> never
+decreases and <code>seq</code> keeps rising across epochs. [glyph, family list, agent, simple boards]</li>
+<li><strong>A persisted input catalogue.</strong> Names, descriptions and schemas per opening and version, posted by the kit, stored
+by the server, for the agent&#39;s inputs with no view open. [family list, agent, Connect Four]</li>
+<li><strong>Versions and migration.</strong> <code>view update</code> carries the new version; a <code>migrate(value, fromVersion)</code> hook in the
+first newer writer; frames of the old version fenced. [RTS, failures, glyph, agent]</li>
+<li><strong>The read contract.</strong> <code>{ value, seq, head, epoch, version, fresh or stale, saved }</code>, a timeout and another writer as
+fallback, projections of large states. [Connect Four, RTS, family list, agent]</li>
+<li><strong>Opt-in sequenced presence.</strong> <code>$joined</code>/<code>$left</code> appended by the server at its own observation, so every view
+applies them at the same number. [RTS, Connect Four, Pong]</li>
+<li><strong>Drift detection.</strong> Hashes at fixed multiples of <code>seq</code>, compared at the same version, epoch and number, in a
+kit-owned slot, throttled in large rooms; a visible notice; a lint of <code>apply</code> sources. [RTS, poll, failures]</li>
+<li><strong>Permissions and trust.</strong> Whether read-only peers may publish peer state; a scoped &quot;may submit these inputs&quot;
+right (vote-only guests); any writer&#39;s checkpoint is trusted, documented. [poll, presence, guests]</li>
+<li><strong>Questions as a catalogue</strong> with description, args schema, which view answers, and the shape of <code>uncertain</code>.
+[RTS, glyph, whiteboard, agent]</li>
+<li><strong>Agent wake-up:</strong> wait for inputs after a number instead of polling. [Connect Four, RTS, family list]</li>
+<li><strong>Kit conveniences:</strong> <code>room.pending</code>; one <code>onState</code> after a catch-up; a plain-mutation mode for simulations
+(measure a 1500-unit step first). [Pong, Connect Four, RTS, glyph, whiteboard]</li>
+<li><strong>Guidance:</strong> events for motion, peer state for latest values; event payloads named <code>value</code> (today <code>data</code>).</li>
+<li><strong>View lifecycle:</strong> the page&#39;s old <code>setState</code> fenced for room views; library save and load capture checkpoint,
+tail and version. [glyph, whiteboard, family list]</li>
+<li><strong>Text service:</strong> carets as peer state, a fresh text read, the composition fix, edit refusals reported. [notes]</li>
+<li><strong>A plugin path for sketches:</strong> an authenticated way for a sandboxed view to call a plugin&#39;s typed methods.
+[robot, and any sketch that outgrows itself]</li>
+</ol>
+<h3 id="decisions-for-the-owner">Decisions for the owner</h3>
+<ul>
+<li><strong>Build the sequenced room</strong> as the generic sketch room, replacing v1&#39;s live and log kinds and dropping v2.</li>
+<li><strong>Server-applied built-ins</strong> (Opus) or a <strong>separate server-owned document kind</strong> (Astra) for data the agent
+maintains alone, like the family list.</li>
+<li><strong>Identity:</strong> <code>from</code> (the frame) and <code>person</code> (the principal), with seats left to each game.</li>
+<li><strong>Checkpoint trust:</strong> any writer (simple; a modified client can lie) or only the owner&#39;s views (safer; stalls when
+the owner is away).</li>
+</ul>
+</section>
+
+<section class="chapter appendix" id="verdicts-at-a-glance"><header class="opener"><div class="numeral">A</div><h2>Verdicts at a Glance</h2></header>
+<table>
+<thead>
+<tr>
+<th>Use case</th>
+<th>Verdict</th>
+<th>What it needs or where it stops</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Connect Four</td>
+<td>works well</td>
+<td>seats; no-op feedback; agent waiting</td>
+</tr>
+<tr>
+<td>Pong (hybrid)</td>
+<td>works with caveats</td>
+<td>corrections up to 120 px; own prediction; seats; code fixes</td>
+</tr>
+<tr>
+<td>RTS</td>
+<td>works well</td>
+<td>per-turn inputs as in Age of Empires; seats across reloads, migration, a cheap draft</td>
+</tr>
+<tr>
+<td>Glyph editor</td>
+<td>works well</td>
+<td>path-level built-ins, path reads, a conditional delete, view assets for the base master</td>
+</tr>
+<tr>
+<td>Whiteboard</td>
+<td>works with caveats</td>
+<td>checkpoint size limit, ~150 strokes</td>
+</tr>
+<tr>
+<td>Family list</td>
+<td>works well with built-ins</td>
+<td>custom rules need a view; built-ins need precise semantics</td>
+</tr>
+<tr>
+<td>Meetup poll</td>
+<td>caveats / plugin</td>
+<td>vote rights, identity, checkpoint trust, hash cadence</td>
+</tr>
+<tr>
+<td>Shared notes</td>
+<td>works well after a fix</td>
+<td>the composition bug; caret facet for the text service</td>
+</tr>
+<tr>
+<td>Cursors, presence</td>
+<td>works well</td>
+<td>read-only peer state, public ID</td>
+</tr>
+<tr>
+<td>The agent</td>
+<td>works with caveats</td>
+<td>read freshness, reset fences, catalogue, waiting</td>
+</tr>
+<tr>
+<td>Read-only guests</td>
+<td>works well / plugin</td>
+<td>no hidden information in sketches</td>
+</tr>
+<tr>
+<td>Failures</td>
+<td>works with caveats</td>
+<td>receipts, save interval, versions, visible states</td>
+</tr>
+<tr>
+<td>Robot, secrets</td>
+<td>plugin</td>
+<td>effects and secrets never in a sketch</td>
+</tr>
+</tbody></table>
+<h3 id="numbers">Numbers</h3>
+<table>
+<thead>
+<tr>
+<th>What</th>
+<th>Estimate</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Tap to every view</td>
+<td>about one round trip; A to B about (R_A + R_B)/2</td>
+</tr>
+<tr>
+<td>Server per input</td>
+<td>~0.19 ms single (an isolated approximation of v1&#39;s publish path, without validation, fan-out or storage)</td>
+</tr>
+<tr>
+<td>Agent read with a view</td>
+<td>~200 ms (one view round trip; the tool runs next to the server)</td>
+</tr>
+<tr>
+<td>Joiner</td>
+<td>one checkpoint plus up to ~200 inputs; RTS ~1 s on a phone</td>
+</tr>
+<tr>
+<td>Checkpoint</td>
+<td>Connect Four 250 B, glyph 6-10 KB, RTS 60 KB, limit 256 Ki characters</td>
+</tr>
+<tr>
+<td>Cursors</td>
+<td>N² × rate: 10 peers at 20/s ≈ 2,000 deliveries/s</td>
+</tr>
+</tbody></table>
+</section>
+
+<p class="colophon">Rooms v3 use cases · third edition · 2026-11-11 · p3 session 8b6ab5cc with Opus, Astra and Sol</p>
+</div></div>
+<script>(function activate(root) {
+	const replay = (f) => {
+		f.classList.remove("play");
+		void f.getBoundingClientRect();
+		f.classList.add("play");
+	};
+	const io = new IntersectionObserver(
+		(es) => {
+			for (const e of es)
+				if (e.isIntersecting) {
+					e.target.classList.add("play");
+					io.unobserve(e.target);
+				}
+		},
+		{ threshold: 0.3 },
+	);
+	root.querySelectorAll(".anim:not(.armed)").forEach((f) => {
+		f.classList.add("armed");
+		io.observe(f);
+		const b = f.querySelector(".replay");
+		if (b) b.onclick = () => replay(f);
+	});
+	root.querySelectorAll(".steps:not(.js)").forEach((s) => {
+		s.classList.add("js");
+		const ps = [...s.querySelectorAll(":scope>.step-panel")];
+		let i = 0;
+		const c = s.querySelector(".count"),
+			p = s.querySelector(".prev"),
+			n = s.querySelector(".next");
+		const show = () => {
+			ps.forEach((x, j) => x.classList.toggle("on", j === i));
+			c.textContent = `${i + 1} / ${ps.length}`;
+			p.disabled = i === 0;
+			n.disabled = i === ps.length - 1;
+			ps[i].querySelectorAll(".anim").forEach(replay);
+		};
+		p.onclick = () => {
+			i--;
+			show();
+		};
+		n.onclick = () => {
+			i++;
+			show();
+		};
+		show();
+	});
+})(document)</script>
+</body></html>

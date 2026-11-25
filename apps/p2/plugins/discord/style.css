@@ -1,0 +1,43 @@
+.discord-sheet .sheet-body {
+	display: grid;
+	gap: var(--s3);
+	align-content: start;
+}
+.discord-sheet .list {
+	margin-top: 0;
+}
+.discord-avatar {
+	flex: none;
+	width: var(--control-sm);
+	height: var(--control-sm);
+	border-radius: 50%;
+}
+.discord-identity {
+	display: flex;
+	align-items: center;
+	gap: var(--s3);
+}
+.discord-identity p,
+.discord-hint {
+	margin: 0;
+}
+/* A read-only row: a row's height and inset, no press state. */
+.discord-row {
+	display: flex;
+	align-items: center;
+	gap: var(--s2);
+	min-height: var(--row);
+	font-size: var(--fs-md);
+	border-bottom: 1px solid var(--line);
+}
+.discord-row > span {
+	flex: 1;
+	min-width: 0;
+}
+.discord-steps {
+	margin: 0;
+	padding-left: var(--s5);
+}
+.discord-indent {
+	padding-left: var(--s5);
+}

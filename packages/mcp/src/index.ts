@@ -11,7 +11,8 @@ export {
 	validateMcpServerConfig,
 } from "./config.ts";
 export { normalizeMcpInputSchema } from "./input-schema.ts";
-export { createMcpToolName, mcpNamespace } from "./naming.ts";
+export { type McpModelContentOptions, toMcpModelContent } from "./model-content.ts";
+export { createMcpToolName, mcpNamespace, mcpServerSummary } from "./naming.ts";
 export {
 	type LimitedMcpContent,
 	limitMcpContent,
@@ -73,6 +74,7 @@ export {
 	type ToolAnnotations,
 	type ToolExecution,
 } from "./protocol/types.ts";
+export { createMcpResultSchema } from "./result-schema.ts";
 export {
 	type McpPipe,
 	type McpPipeHandlers,

@@ -13,11 +13,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { Chat } from "../../plugins/chat/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
-import { Browser, browserTests } from "./browser.ts";
-import { clientHost, holdIn, poll, until } from "./helpers.ts";
-
-const draft = (text: string) =>
-	`(()=>{const e=document.querySelector('.composer textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(e,${JSON.stringify(text)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`;
+import { Browser, browserTests, COMPOSER, composerText, setComposer } from "./browser.ts";
+import { clientHost, holdIn, localOwner, poll, until } from "./helpers.ts";
 
 describe("an open Chromium tab reconnects after backend downtime", { skip: !browserTests, timeout: 150_000 }, () => {
 	let browser: Browser,
@@ -61,10 +58,10 @@ describe("an open Chromium tab reconnects after backend downtime", { skip: !brow
 	const recovered = async (text: string) => {
 		try {
 			await browser.wait(
-				`!document.querySelector('.read-only-bar') && !document.querySelector('.offline') && document.querySelector('.composer textarea')`,
+				`!document.querySelector('.read-only-bar') && !document.querySelector('.offline') && document.querySelector('${COMPOSER}')`,
 			);
 			assert.equal(await browser.evaluate<string>("window.reconnectDocument"), "original document");
-			assert.equal(await browser.evaluate<string>("document.querySelector('.composer textarea').value"), text);
+			assert.equal(await browser.evaluate<string>(composerText), text);
 			assert.match(
 				await browser.evaluate<string>("document.querySelector('.messages').textContent"),
 				/Echo: restart fixture/,
@@ -125,7 +122,8 @@ export default defineFacet((host) => host.serve(Delay, (_params, self) => {
 		port = address.port;
 		await new Promise<void>((resolve) => listener.close(() => resolve()));
 		await start();
-		const client = clientHost(port);
+		const owner = await localOwner({ port, dataDir: join(root, "data") });
+		const client = clientHost(owner);
 		try {
 			id = (
 				await (
@@ -145,6 +143,7 @@ export default defineFacet((host) => host.serve(Delay, (_params, self) => {
 			await client.close(BACKGROUND_CONTEXT);
 		}
 		browser = await Browser.start();
+		await browser.signIn(owner);
 		await browser.metrics(1280, 900);
 		// Count the chord WebSocket's opens and the dev notice reads; the sockets themselves remain real.
 		await browser.call("Page.addScriptToEvaluateOnNewDocument", {
@@ -153,7 +152,7 @@ export default defineFacet((host) => host.serve(Delay, (_params, self) => {
 			const originalFetch=window.fetch.bind(window);window.fetch=async(url,options)=>{const response=await originalFetch(url,options);if(String(url)==='/__p2_dev' && options?.method!=='POST')window.devNoticeReads++;return response;};
 			window.WebSocket=new Proxy(window.WebSocket,{construct(Target,args){
 				const socket=Reflect.construct(Target,args);
-				if(String(args[0]).endsWith('/chord'))socket.addEventListener('open',()=>window.reconnectOpens++);
+				if(new URL(String(args[0])).pathname==='/chord')socket.addEventListener('open',()=>window.reconnectOpens++);
 				return socket;
 			}});
 		`,
@@ -163,7 +162,7 @@ export default defineFacet((host) => host.serve(Delay, (_params, self) => {
 			`document.querySelector('.messages')?.textContent.includes('Echo: restart fixture')&&!document.querySelector('.read-only-bar')`,
 		);
 		await browser.evaluate("window.reconnectDocument='original document'");
-		await browser.evaluate(draft("unsent supervisor draft"));
+		await browser.evaluate(setComposer("unsent supervisor draft"));
 	});
 	after(async () => {
 		await browser?.close();
@@ -189,7 +188,7 @@ export default defineFacet((host) => host.serve(Delay, (_params, self) => {
 		assert(event.noticeId && event.noticeTime > 0);
 		await browser.open(`http://127.0.0.1:${port}/s/${id}`);
 		await browser.wait(
-			`window.devNoticeReads>=2 && document.querySelector('.composer textarea') && !document.querySelector('.read-only-bar')`,
+			`window.devNoticeReads>=2 && document.querySelector('${COMPOSER}') && !document.querySelector('.read-only-bar')`,
 		);
 		assert.equal(
 			await browser.evaluate<number>(`document.querySelectorAll('.owner-notice.success').length`),
@@ -233,10 +232,15 @@ export default defineFacet((host) => host.serve(Delay, (_params, self) => {
 		await browser.evaluate("window.reconnectDocument='original document'");
 	});
 	it("recovers the same document after the whole server is down for 30 seconds", async () => {
-		await browser.evaluate(draft("unsent outage draft"));
+		await browser.evaluate(setComposer("unsent outage draft"));
 		await stop();
 		await browser.wait(`document.querySelector('.offline')`);
 		await delay(30_000);
+		// The sidebar keeps the rows as last seen while the server is down.
+		assert.match(
+			await browser.evaluate<string>("document.querySelector('.session-scroll')?.textContent ?? ''"),
+			/Reconnect fixture/,
+		);
 		await start();
 		await recovered("unsent outage draft");
 		assert.equal(await browser.evaluate<number>("window.reconnectOpens"), 2);

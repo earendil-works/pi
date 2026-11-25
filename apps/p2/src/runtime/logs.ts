@@ -63,6 +63,8 @@ export class LogRedactor {
 				"models.json",
 				"settings.json",
 				"envs.json",
+				"sandbox-secrets.json",
+				"discord.json",
 				"owner-key",
 				"owner-token.txt",
 			]) {
@@ -72,7 +74,13 @@ export class LogRedactor {
 					const fingerprint = `${info.ino}:${info.mtimeNs}:${info.ctimeNs}:${info.size}`;
 					if (this.#fingerprints.get(path) === fingerprint) continue;
 					const text = readFileSync(path, "utf8");
-					if (name.endsWith(".json")) this.#collect(JSON.parse(text.replace(/^\uFEFF/, "")));
+					const parsed: unknown = name.endsWith(".json") ? JSON.parse(text.replace(/^\uFEFF/, "")) : undefined;
+					// Sandbox secrets: `{ <sandbox>: { <NAME>: { value, hosts, … } } }`; only the values are secret.
+					if (name === "sandbox-secrets.json" && parsed && typeof parsed === "object")
+						for (const secrets of Object.values(parsed))
+							for (const secret of Object.values((secrets ?? {}) as Record<string, { value?: unknown }>))
+								if (typeof secret?.value === "string") this.addSecret(secret.value);
+					if (name.endsWith(".json")) this.#collect(parsed);
 					else this.addSecret(text.trim());
 					this.#fingerprints.set(path, fingerprint);
 				} catch {

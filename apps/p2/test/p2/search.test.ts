@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT, type Held, isChordError, whenLive } from "@p2/app/v1";
 import { Chat } from "../../plugins/chat/contract.ts";
+import { DiscordIngress } from "../../plugins/discord/contract.ts";
 import { Search, SearchFeed, SearchIndex } from "../../plugins/search/contract.ts";
 import { type Session, Sessions } from "../../plugins/sessions/contract.ts";
 import { Subagents } from "../../plugins/subagents/contract.ts";
@@ -59,7 +60,7 @@ describe("search (fake provider)", () => {
 		await fixture?.close();
 	});
 
-	it("finds root user and assistant messages, never the speaker block", async () => {
+	it("finds root user and assistant messages, never the sender block", async () => {
 		const chat = await chatOf(session.id);
 		await chat.send({ text: "please index quokka pancakes", requestId: "q" }, BACKGROUND_CONTEXT);
 		const results = await found("quokka", (value) => value.messages.length === 2);
@@ -70,7 +71,7 @@ describe("search (fake provider)", () => {
 			assert.equal(hit.title, "Zebra migration");
 			assert.match(hit.text, /quokka/);
 		}
-		assert.deepEqual((await search.search({ query: "mobile-speaker" }, BACKGROUND_CONTEXT)).messages, []);
+		assert.deepEqual((await search.search({ query: "sender" }, BACKGROUND_CONTEXT)).messages, []);
 		assert.deepEqual(
 			(await search.search({ query: "owner" }, BACKGROUND_CONTEXT)).messages,
 			[],
@@ -120,6 +121,45 @@ describe("search (fake provider)", () => {
 		await sessions.restore({ id: session.id }, BACKGROUND_CONTEXT);
 	});
 
+	it("limits a search to the given sessions before ranking and the hit limit (a sidebar list's own sessions)", async () => {
+		// 45 sessions whose message ranks above the listed one's: an unscoped search's 41 hits leave it out.
+		const crowd = await Promise.all(
+			Array.from({ length: 45 }, (_, index) =>
+				sessions.create({ cwd: fixture.workspace, title: `Crowd ${index}` }, BACKGROUND_CONTEXT),
+			),
+		);
+		const listed = await sessions.create({ cwd: fixture.workspace, title: "Listed" }, BACKGROUND_CONTEXT);
+		const text = (id: string) =>
+			id === listed.id ? "pangolin facts, among other things" : "pangolin pangolin pangolin";
+		await fixture.server.host.root(async (ctx) => {
+			const index = await ctx.get(SearchIndex, {});
+			for (const { id } of [...crowd, listed])
+				await index.index(
+					{
+						session: id,
+						conversation: 1,
+						messages: [{ conversationId: 1, entryId: 1, role: "user", timestamp: Date.now(), text: text(id) }],
+						through: 1,
+					},
+					ctx,
+				);
+		}, BACKGROUND_CONTEXT);
+		const everywhere = await search.search({ query: "pangolin" }, BACKGROUND_CONTEXT);
+		assert.equal(everywhere.messages.length, 41);
+		assert(!everywhere.messages.some((hit) => hit.session === listed.id));
+		const within = await search.search({ query: "pangolin", sessions: [listed.id] }, BACKGROUND_CONTEXT);
+		assert.deepEqual(
+			within.messages.map((hit) => hit.session),
+			[listed.id],
+		);
+		// Titles too: only the listed sessions'.
+		assert.deepEqual(
+			(await search.search({ query: "crowd", sessions: [listed.id] }, BACKGROUND_CONTEXT)).sessions,
+			[],
+		);
+		for (const { id } of [...crowd, listed]) await sessions.archive({ id }, BACKGROUND_CONTEXT);
+	});
+
 	it("indexes subagent messages with independent cursors", async () => {
 		const chat = await chatOf(other.id);
 		await chat.send({ text: "subagent", requestId: "child" }, BACKGROUND_CONTEXT);
@@ -138,6 +178,24 @@ describe("search (fake provider)", () => {
 		}, BACKGROUND_CONTEXT);
 		sub.release();
 		children.release();
+	});
+
+	it("indexes a forked subagent from its fork point; what it inherits stays with the main conversation", async () => {
+		const forked = await sessions.create({ cwd: fixture.workspace, title: "Forked" }, BACKGROUND_CONTEXT);
+		const chat = await chatOf(forked.id);
+		await chat.send({ text: "inherited narwhal", requestId: "narwhal" }, BACKGROUND_CONTEXT);
+		await found("narwhal", (value) => value.messages.length === 2);
+		// A Discord thread's subagent: forked from the main conversation at its last finished answer.
+		const ingress = fixture.server.host.hold(DiscordIngress, { session: forked.id }, BACKGROUND_CONTEXT);
+		const { conversation } = await ingress.thread({ name: "fork", before: Date.now() }, BACKGROUND_CONTEXT);
+		ingress.release();
+		const sub = await holdIn(owner, Chat, { session: forked.id, conversation }, "participant");
+		await sub.send({ text: "own okapi", requestId: "okapi" }, BACKGROUND_CONTEXT);
+		const own = await found("okapi", (value) => value.messages.length === 2);
+		assert.ok(own.messages.every((hit) => hit.session === forked.id && hit.conversationId === conversation));
+		const inherited = await found("narwhal", (value) => value.messages.length === 2);
+		assert.ok(inherited.messages.every((hit) => hit.conversationId === 1));
+		sub.release();
 	});
 
 	it("derives a default title once and advances activity without undoing renames", async () => {

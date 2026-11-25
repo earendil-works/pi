@@ -507,7 +507,9 @@ export function buildContextEntries(
 			contextEntries.push(entry);
 		}
 	}
-	contextEntries.push(...path.slice(compactionIdx + 1));
+	for (let i = compactionIdx + 1; i < path.length; i++) {
+		contextEntries.push(path[i]);
+	}
 	return contextEntries;
 }
 
@@ -640,16 +642,18 @@ export function loadEntriesFromFile(filePath: string): FileEntry[] {
 			const bytesRead = readSync(fd, buffer, 0, buffer.length, null);
 			if (bytesRead === 0) break;
 
-			pending += decoder.write(buffer.subarray(0, bytesRead));
+			const text = decoder.write(buffer.subarray(0, bytesRead));
+			// Only the new text is scanned, so a line longer than the read buffer is not rescanned per read.
 			let lineStart = 0;
-			let newlineIndex = pending.indexOf("\n", lineStart);
+			let newlineIndex = text.indexOf("\n", lineStart);
 			while (newlineIndex !== -1) {
-				const entry = parseSessionEntryLine(pending.slice(lineStart, newlineIndex));
+				const entry = parseSessionEntryLine(pending + text.slice(lineStart, newlineIndex));
 				if (entry) entries.push(entry);
+				pending = "";
 				lineStart = newlineIndex + 1;
-				newlineIndex = pending.indexOf("\n", lineStart);
+				newlineIndex = text.indexOf("\n", lineStart);
 			}
-			pending = pending.slice(lineStart);
+			pending += text.slice(lineStart);
 		}
 
 		pending += decoder.end();
@@ -811,46 +815,53 @@ async function buildSessionInfo(
 		let name: string | undefined;
 		let lastActivityTime: number | undefined;
 
-		const rl = createInterface({
-			input: createReadStream(filePath, { encoding: "utf8", signal }),
-			crlfDelay: Infinity,
-		});
+		// No signal for the stream: leaving the loop early stops readline from listening for the stream's
+		// errors, so a later abort would destroy it with an 'error' no listener handles (#11956). The loop
+		// checks the signal instead, and the stream is destroyed when reading stops, closing its file.
+		const stream = createReadStream(filePath, { encoding: "utf8" });
+		try {
+			const rl = createInterface({ input: stream, crlfDelay: Infinity });
+			for await (const line of rl) {
+				signal?.throwIfAborted();
+				const entry = parseSessionEntryLine(line);
+				if (!entry) continue;
 
-		for await (const line of rl) {
-			const entry = parseSessionEntryLine(line);
-			if (!entry) continue;
+				if (!header) {
+					if (entry.type !== "session") return null;
+					header = entry;
+					continue;
+				}
 
-			if (!header) {
-				if (entry.type !== "session") return null;
-				header = entry;
-				continue;
+				// Extract session name (use latest, including explicit clears)
+				if (entry.type === "session_info") {
+					name = entry.name?.trim() || undefined;
+				}
+
+				if (entry.type !== "message") continue;
+				messageCount++;
+
+				const activityTime = getMessageActivityTime(entry);
+				if (typeof activityTime === "number") {
+					lastActivityTime = Math.max(lastActivityTime ?? 0, activityTime);
+				}
+
+				const message = entry.message;
+				if (!isMessageWithContent(message)) continue;
+				if (message.role !== "user" && message.role !== "assistant") continue;
+
+				const textContent = extractTextContent(message);
+				if (!textContent) continue;
+
+				allMessages.push(textContent);
+				if (!firstMessage && message.role === "user") {
+					firstMessage = textContent;
+				}
 			}
-
-			// Extract session name (use latest, including explicit clears)
-			if (entry.type === "session_info") {
-				name = entry.name?.trim() || undefined;
-			}
-
-			if (entry.type !== "message") continue;
-			messageCount++;
-
-			const activityTime = getMessageActivityTime(entry);
-			if (typeof activityTime === "number") {
-				lastActivityTime = Math.max(lastActivityTime ?? 0, activityTime);
-			}
-
-			const message = entry.message;
-			if (!isMessageWithContent(message)) continue;
-			if (message.role !== "user" && message.role !== "assistant") continue;
-
-			const textContent = extractTextContent(message);
-			if (!textContent) continue;
-
-			allMessages.push(textContent);
-			if (!firstMessage && message.role === "user") {
-				firstMessage = textContent;
-			}
+		} finally {
+			stream.destroy();
 		}
+		// An abort while readline waited for the end of the file, after the last line.
+		signal?.throwIfAborted();
 
 		if (!header) return null;
 

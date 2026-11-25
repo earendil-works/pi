@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { BACKGROUND_CONTEXT, whenLive } from "@p2/app/v1";
 import { LogNotices } from "../../plugins/logs/contract.ts";
 import { processLogs } from "../../src/runtime/logs.ts";
-import { Browser, browserTests } from "./browser.ts";
+import { Browser, browserTests, COMPOSER } from "./browser.ts";
 import { startFixture, until } from "./helpers.ts";
 
 for (const [width, height] of [
@@ -19,6 +19,7 @@ for (const [width, height] of [
 			const fixture = await startFixture({ web: true });
 			t.after(() => fixture.close());
 			const browser = await Browser.start();
+			await browser.signIn(fixture.owner);
 			t.after(() => browser.close());
 			await browser.metrics(width, height);
 			const plugins = [
@@ -48,9 +49,9 @@ for (const [width, height] of [
 		};
 	`,
 			});
-			await browser.open(`http://127.0.0.1:${fixture.server.port}/`);
+			await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
 			await browser.wait(
-				`document.querySelector('.composer textarea') && document.querySelectorAll('.owner-notice.pending').length===2 && !document.querySelector('.offline')`,
+				`document.querySelector('${COMPOSER}') && document.querySelectorAll('.owner-notice.pending').length===2 && !document.querySelector('.offline')`,
 			);
 			await browser.evaluate(
 				`document.documentElement.style.setProperty('--safe-top','24px');document.documentElement.style.setProperty('--safe-bottom','20px');`,
@@ -174,6 +175,7 @@ test(
 		const fixture = await startFixture({ web: true });
 		t.after(() => fixture.close());
 		const browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 		t.after(() => browser.close());
 		await browser.metrics(390, 844);
 		await browser.call("Page.addScriptToEvaluateOnNewDocument", {
@@ -185,9 +187,9 @@ test(
 		};
 	`,
 		});
-		await browser.open(`http://127.0.0.1:${fixture.server.port}/`);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
 		await browser.wait(
-			`document.querySelector('.owner-notice.pending button') && document.querySelector('.composer textarea')`,
+			`document.querySelector('.owner-notice.pending button') && document.querySelector('${COMPOSER}')`,
 		);
 		await browser.click(".owner-notice.pending button");
 		await browser.wait(
@@ -221,12 +223,13 @@ test(
 		const fixture = await startFixture({ web: true });
 		t.after(() => fixture.close());
 		const browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 		t.after(() => browser.close());
 		await browser.metrics(390, 844);
-		const url = `http://127.0.0.1:${fixture.server.port}/`;
+		const url = `http://127.0.0.1:${fixture.server.port}/new`;
 		processLogs.notice("dev", "No dirty plugins");
 		await browser.open(url);
-		await browser.wait(`document.querySelector('.composer textarea') && !document.querySelector('.offline')`);
+		await browser.wait(`document.querySelector('${COMPOSER}') && !document.querySelector('.offline')`);
 		// The notices as the server publishes them (Chord's frames are binary: the page's own are not inspected).
 		const notices = fixture.browser().hold(LogNotices, {}, BACKGROUND_CONTEXT);
 		await until(notices.notices, (rows) => Boolean(rows?.some((row) => row.message === "No dirty plugins")));
@@ -234,7 +237,7 @@ test(
 		processLogs.notice("dev", "Restarted server");
 		await browser.wait(`document.querySelector('.owner-notice.success')?.textContent.includes('Restarted server')`);
 		await browser.open(url);
-		await browser.wait(`document.querySelector('.composer textarea') && !document.querySelector('.offline')`);
+		await browser.wait(`document.querySelector('${COMPOSER}') && !document.querySelector('.offline')`);
 		const failure = "Native notice failure fixture";
 		processLogs.notice("dev", failure);
 		await browser.wait(
@@ -258,7 +261,7 @@ test(
 			"1",
 		);
 		await browser.open(url);
-		await browser.wait(`document.querySelector('.composer textarea') && !document.querySelector('.offline')`);
+		await browser.wait(`document.querySelector('${COMPOSER}') && !document.querySelector('.offline')`);
 		await until(notices.notices, (rows) => !rows?.some((row) => row.message === failure));
 		assert.equal(
 			await browser.evaluate<number>(

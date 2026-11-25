@@ -15,9 +15,9 @@ import {
 	GenerationTask,
 	Harness,
 	hook,
+	hookTask,
 	LiveDoc,
 	MemoryStorage,
-	runEndTask,
 	ToolResultEntry,
 } from "../../src/index.ts";
 
@@ -56,7 +56,7 @@ const RunTests = defineTask<{ attempt: number }, { phase: "run" }, boolean>({
 			await runtime.commit(async (tx) => {
 				// Admitted with this commit, before its own table writes: placed when the run ends.
 				if (!result.passed && task.input.attempt < 3) {
-					await conversation.submit(tx, {
+					await conversation.admit(tx, {
 						type: "input",
 						content: `The tests failed: ${result.output}. Fix it.`,
 						whenBusy: "followUp",
@@ -88,7 +88,7 @@ const TestsAfterEdits = defineExtension({
 					return ToolResultEntry.is(entry) && message?.role === "toolResult" && message.toolName === "edit";
 				});
 				// Each fix run asks again with a fresh turn budget: the extension caps the loop itself.
-				return edited ? { tasks: [runEndTask(RunTests, { attempt: ++attempts })] } : undefined;
+				return edited ? { tasks: [hookTask(RunTests, { attempt: ++attempts })] } : undefined;
 			},
 		}),
 	],

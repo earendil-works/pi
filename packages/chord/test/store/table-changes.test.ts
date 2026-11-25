@@ -1,9 +1,11 @@
-// A transaction's table writes (slice 6a §6, §7): staging, and the `tx.get` overlay over committed rows.
+// A transaction's table writes (slice 6a §6, §7): staging, and the `tx.get` overlay over committed rows (a `host(...)`
+// cell read as its address).
 
 import { afterEach, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
-import { int, opt, str } from "../../src/contracts/index.ts";
-import { add, eq, prefix } from "../../src/store/expression.ts";
+import { hostKind, int, opt, str } from "../../src/contracts/index.ts";
+import { add, eq, prefix, when } from "../../src/store/expression.ts";
+import { host } from "../../src/store/host-column.ts";
 import type { StagedWrite } from "../../src/store/step.ts";
 import type { ChordStore } from "../../src/store/store.ts";
 import { defineTable } from "../../src/store/table.ts";
@@ -80,5 +82,29 @@ describe("the tx.get overlay", () => {
 		other.deleteWhere((e: { id: never }) => eq(e.id, "x"));
 		expect(await rejection(other.get({ id: "e1" }, context))).toMatchObject({ reason: "read_after_bulk" });
 		expect(await new TableChanges(changes.handle, []).get({ id: "e1" }, context)).toBeDefined();
+	});
+});
+
+describe("the tx.get overlay of a host(...) column", () => {
+	it("reads the committed row and its own writes with the address, compares the stored key in a when", async () => {
+		const Session = hostKind("session", { id: str() });
+		const Pins = defineTable("pins", {
+			version: 1,
+			columns: { id: str(), session: host(Session), n: int({ default: 0 }) },
+			key: ["id"],
+		});
+		store = await memoryStore();
+		const pins = await tableIn(store, Pins);
+		const seed: StagedWrite[] = [];
+		new TableChanges(pins, seed).put({ id: "p1", session: Session({ id: "S1" }) });
+		await store.commit(seed, FENCE, context);
+		const changes = new TableChanges(pins, []);
+		const S1 = Session({ id: "S1" });
+		changes.update({ id: "p1" }, (p: { session: never; n: never }) => ({
+			n: when(eq(p.session, S1 as never), 5, 0),
+		}));
+		expect(await changes.get({ id: "p1" }, context)).toEqual({ id: "p1", session: S1, n: 5 });
+		changes.put({ id: "p2", session: Session({ id: "S2" }) });
+		expect(await changes.get({ id: "p2" }, context)).toEqual({ id: "p2", session: Session({ id: "S2" }), n: 0 });
 	});
 });

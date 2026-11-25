@@ -24,7 +24,7 @@ import { terminalDaemon } from "../../plugins/terminals/daemon.ts";
 import type { TerminalEvent } from "../../plugins/terminals/protocol.ts";
 import { Workspace } from "../../plugins/workspace/contract.ts";
 import { Hosts } from "../../src/runtime/server.ts";
-import { expectChord, failureOf, holdIn, http, poll, startFixture, until } from "./helpers.ts";
+import { expectChord, failureOf, holdIn, poll, startFixture, until } from "./helpers.ts";
 
 const config = { type: "ssh" as const, host: "box" };
 function which(program: string): string | undefined {
@@ -110,7 +110,8 @@ test(
 		const browser = fixture.browser();
 		const envs = browser.hold(Envs, {}, BACKGROUND_CONTEXT);
 		await envs.save({ name: "gpu", config }, BACKGROUND_CONTEXT);
-		await until(envs.envs, (entries) => entries?.[0]?.name === "gpu");
+		// The answer follows its state: the saved environment is listed when the call resolves.
+		assert.equal(envs.envs.value[0]?.name, "gpu");
 		await writeFile(join(fixture.dataDir, "envs.json"), JSON.stringify({ gpu: { ...config, host: "changed" } }));
 		await until(envs.envs, (entries) => entries?.[0]?.config.host === "changed");
 		await writeFile(join(fixture.dataDir, "envs.json"), "{");
@@ -281,7 +282,7 @@ test(
 		assert(trusted.ok, trusted.ok ? "" : trusted.error);
 		assert.equal(trusted.home, home);
 		// The folder picker warms every environment's connection first (Pi Mobile's `envs` with `warm`).
-		assert.equal(await envs.warm(BACKGROUND_CONTEXT), undefined);
+		assert.equal(await envs.warm(BACKGROUND_CONTEXT), null);
 		assert.equal((await envs.listDirectory({ env: "box", path: "~" }, BACKGROUND_CONTEXT)).path, home);
 		const uploadedKey = await envs.uploadKey(
 			{ name: "copy", key: readFileSync(key.identityFile, "utf8") },
@@ -293,6 +294,7 @@ test(
 		);
 		assert.equal((await stat(uploadedKey.identityFile)).mode & 0o777, 0o600);
 		await envs.delete({ name: "copy" }, BACKGROUND_CONTEXT);
+		assert(!envs.envs.value.some((entry) => entry.name === "copy"), "the deleted environment is gone at the answer");
 		const sessions = await holdIn(owner, Sessions, {}, "owner");
 		const session = await sessions.create(
 			{ env: "box", cwd: "~/project", createDirectory: true },
@@ -318,8 +320,7 @@ test(
 		await chat.send({ text: "bash", requestId: "ssh-bash" }, BACKGROUND_CONTEXT);
 		await until(chat.view, (view) => results(view, "bash").some((text) => text.includes(session.cwd)), 60000);
 		const origin = `http://127.0.0.1:${fixture.server.port}`;
-		const uploaded = await http(
-			fixture.server.port,
+		const uploaded = await fixture.http(
 			`/upload?${new URLSearchParams({ session: session.id, name: "notes.txt" })}`,
 			{ method: "POST", headers: { Origin: origin }, body: "remote attachment" },
 		);
@@ -363,6 +364,9 @@ test(
 		assert.match(system, /REMOTE PROJECT sentinel/);
 		assert.match(system, /LOCAL GLOBAL sentinel/);
 		assert.match(system, /Remote skill sentinel/);
+		// Plugins' skills point at the server's files: a remote conversation gets the hint to write plugins there instead.
+		assert.doesNotMatch(sections.skills ?? "", /writing-p2-plugins/);
+		assert.match(sections["p2-plugins"] ?? "", /spawn a subagent with env null and cwd ".*\/plugins"/);
 		// The main agent's location tools see the environment (never its key) and where the session works.
 		await chat.send({ text: "location_envs {}", requestId: "ssh-location-envs" }, BACKGROUND_CONTEXT);
 		const listed = await until(chat.view, (view) => results(view, "location_envs").length > 0, 60000);
@@ -377,7 +381,10 @@ test(
 		await sharing.link({ mode: "view" }, BACKGROUND_CONTEXT);
 		const terminals = owner.hold(Terminals, { session: session.id, view: crypto.randomUUID() }, BACKGROUND_CONTEXT);
 		const { token } = await terminals.channel({}, BACKGROUND_CONTEXT);
-		const socket = new WebSocket(`ws://127.0.0.1:${fixture.server.port}/terminal?${new URLSearchParams({ token })}`);
+		// The grant admits the byte channel together with the owner's credentials (docs/p2-notes.md, terminals).
+		const socket = new WebSocket(`ws://127.0.0.1:${fixture.server.port}/terminal?${new URLSearchParams({ token })}`, {
+			headers: { Cookie: fixture.owner.cookie },
+		});
 		const events: TerminalEvent[] = [];
 		const output: Buffer[] = [];
 		socket.on("message", (bytes, binary) => {
@@ -409,9 +416,10 @@ test(
 		await chat.send({ text: "slow-tool", requestId: "ssh-busy-edit" }, BACKGROUND_CONTEXT);
 		await until(chat.view, (view) => JSON.stringify(view).includes("tool-running"));
 		await until(status.statuses, (statuses) => (statuses?.[session.id]?.tasks ?? 0) > 0);
-		const saved = (await envs.list(BACKGROUND_CONTEXT))[0]!;
+		const saved = (await envs.list(BACKGROUND_CONTEXT))[0]!.config;
+		assert.equal(saved.type, "ssh");
 		await envs.save(
-			{ name: "box", config: { ...saved.config, shellEnv: { P2_TEST_ENV_REVISION: "edited" } } },
+			{ name: "box", config: { ...saved, shellEnv: { P2_TEST_ENV_REVISION: "edited" } } },
 			BACKGROUND_CONTEXT,
 		);
 		await until(chat.view, (view) => results(view, "bash").some((text) => text.includes("tool-finished")), 60000);
@@ -527,5 +535,15 @@ test(
 		await envs.forgetHostKey({ name: "box" }, BACKGROUND_CONTEXT);
 		const forgotten = await envs.test({ name: "box" }, BACKGROUND_CONTEXT);
 		assert(!forgotten.ok && forgotten.hostKey?.state === "unknown");
+		// The sheet lists what blocks deleting (archived sessions too); the owner may delete anyway.
+		const blocking = await until(envs.envs, (entries) =>
+			Boolean(entries?.find((entry) => entry.name === "box")?.users?.length),
+		);
+		assert.deepEqual(
+			blocking?.find((entry) => entry.name === "box")?.users?.map((user) => [user.id, user.archived]),
+			[[session.id, true]],
+		);
+		await envs.delete({ name: "box", force: true }, BACKGROUND_CONTEXT);
+		await until(envs.envs, (entries) => entries !== undefined && !entries.some((entry) => entry.name === "box"));
 	},
 );

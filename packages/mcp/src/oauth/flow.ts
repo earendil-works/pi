@@ -1,6 +1,6 @@
 /*
  * Adapted from modelcontextprotocol/typescript-sdk v1.29.0 src/client/auth.ts.
- * Copyright (c) 2024 Anthropic, PBC. Licensed under MIT; see LICENSES/.
+ * Copyright (c) 2024 Anthropic, PBC. Licensed under MIT; see THIRD_PARTY_NOTICES/.
  * Modified to remove SDK/Zod dependencies and use WebCrypto for PKCE.
  */
 

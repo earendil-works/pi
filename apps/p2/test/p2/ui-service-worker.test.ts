@@ -7,7 +7,7 @@ import { BACKGROUND_CONTEXT, follow } from "@p2/app/v1";
 import { Chat } from "../../plugins/chat/contract.ts";
 import { Models } from "../../plugins/models/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
-import { Browser, browserTests } from "./browser.ts";
+import { Browser, browserTests, COMPOSER } from "./browser.ts";
 import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
 
 describe("the app without its server", { skip: !browserTests }, () => {
@@ -16,6 +16,7 @@ describe("the app without its server", { skip: !browserTests }, () => {
 	before(async () => {
 		fixture = await startFixture({ web: true });
 		browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 	});
 	after(async () => {
 		await browser?.close();
@@ -55,7 +56,7 @@ describe("the app without its server", { skip: !browserTests }, () => {
 		await browser.wait(`(async () => {
 			const shell = await (await caches.open('p2-app-shell')).match('/');
 			if (!shell) return false;
-			const script = /src="(\\/__p2_web\\/[^"]+)"/.exec(await shell.text())?.[1];
+			const script = /src="(\\/_chord\\/web\\/base\\.[^"]+)"/.exec(await shell.text())?.[1];
 			return Boolean(script && (await caches.match(script)));
 		})()`);
 		await new Promise((resolve) => setTimeout(resolve, 1_500));
@@ -66,6 +67,6 @@ describe("the app without its server", { skip: !browserTests }, () => {
 		await browser.open(page);
 		await browser.wait(`Boolean(document.querySelector('.offline'))`);
 		await browser.wait(`document.querySelector('.messages')?.textContent.includes('Echo: still here offline')`);
-		assert.ok(await browser.evaluate<boolean>(`Boolean(document.querySelector('.composer textarea'))`));
+		assert.ok(await browser.evaluate<boolean>(`Boolean(document.querySelector('${COMPOSER}'))`));
 	});
 });

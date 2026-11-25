@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/chord",
-	"version": "1.5.0",
+	"version": "1.6.0",
 	"description": "Object runtime for apps across processes: contracts, documents, a store, links, plugins with hot reload, HTTP, workers, web and terminal clients",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -56,6 +56,16 @@
 			"types": "./dist/telemetry-sqlite/index.d.ts",
 			"import": "./dist/telemetry-sqlite/index.js"
 		},
+		"./telemetry-sqlite/node": {
+			"source": "./src/telemetry-sqlite/node.ts",
+			"types": "./dist/telemetry-sqlite/node.d.ts",
+			"import": "./dist/telemetry-sqlite/node.js"
+		},
+		"./telemetry-ingest": {
+			"source": "./src/telemetry-ingest/index.ts",
+			"types": "./dist/telemetry-ingest/index.d.ts",
+			"import": "./dist/telemetry-ingest/index.js"
+		},
 		"./http": {
 			"source": "./src/node/http/index.ts",
 			"types": "./dist/node/http/index.d.ts",
@@ -65,6 +75,16 @@
 			"source": "./src/node/workers/index.ts",
 			"types": "./dist/node/workers/index.d.ts",
 			"import": "./dist/node/workers/index.js"
+		},
+		"./compression": {
+			"source": "./src/node/compression.ts",
+			"types": "./dist/node/compression.d.ts",
+			"import": "./dist/node/compression.js"
+		},
+		"./workers/child": {
+			"source": "./src/node/workers/child.ts",
+			"types": "./dist/node/workers/child.d.ts",
+			"import": "./dist/node/workers/child.js"
 		},
 		"./plugins": {
 			"source": "./src/node/plugins/index.ts",
@@ -80,6 +100,11 @@
 			"source": "./src/node/app/index.ts",
 			"types": "./dist/node/app/index.d.ts",
 			"import": "./dist/node/app/index.js"
+		},
+		"./app/files": {
+			"source": "./src/node/app/files-entry.ts",
+			"types": "./dist/node/app/files-entry.d.ts",
+			"import": "./dist/node/app/files-entry.js"
 		},
 		"./web": {
 			"source": "./src/web/index.ts",
@@ -105,6 +130,11 @@
 			"source": "./src/node/tui/index.ts",
 			"types": "./dist/node/tui/index.d.ts",
 			"import": "./dist/node/tui/index.js"
+		},
+		"./sync": {
+			"source": "./src/sync/index.ts",
+			"types": "./dist/sync/index.d.ts",
+			"import": "./dist/sync/index.js"
 		},
 		"./package.json": "./package.json"
 	},
@@ -140,13 +170,13 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"@earendil-works/pi-schema": "1.5.0",
-		"@earendil-works/pi-telemetry": "1.5.0"
+		"@earendil-works/pi-schema": "1.6.0",
+		"@earendil-works/pi-telemetry": "1.6.0"
 	},
 	"peerDependencies": {
-		"esbuild": "0.28.2",
-		"react": "19.3.0",
-		"ws": "8.21.0"
+		"esbuild": "^0.28.2",
+		"react": "^19.3.0",
+		"ws": "^8.21.0"
 	},
 	"peerDependenciesMeta": {
 		"esbuild": {

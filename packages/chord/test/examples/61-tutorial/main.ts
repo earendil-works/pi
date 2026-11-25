@@ -1,14 +1,19 @@
 // The tutorial's app (`docs/tutorial/book.md`): a shared todo app built with the app kit, one worker per list. Each
 // numbered step is the tutorial's chapter of that number: the server and the owner's sign-in, a list on its worker,
 // routes, the page, the terminal, a theme plugin added while the app runs, a second user, languages, an edit applied in
-// place, and a list exported and imported. The lists plugin's own test is `plugins/lists/worker.test.ts`;
-// `screenshots.ts` shows the page in Chromium.
+// place, a list exported and imported, and a request's trace across the server and a worker, read back from the app's
+// telemetry store. The lists plugin's own test is `plugins/lists/worker.test.ts`; `screenshots.ts` shows the page and
+// the trace viewer in Chromium; `trace.ts` reads a data directory's traces.
 // Run from packages/chord (with Node 26.5.1 or later the terminal client runs too; `--serve` keeps the app running):
 //   node --conditions=source --experimental-strip-types test/examples/61-tutorial/main.ts
+import { execFile } from "node:child_process";
 import { cp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+import type { StoredTrace } from "@earendil-works/pi-telemetry";
+import { renderTrace } from "@earendil-works/pi-telemetry/render";
 import { List } from "@todo/app/v1";
 import { WebSocket } from "ws";
 import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
@@ -24,14 +29,16 @@ import { type RunningTerminal, requireSandboxNode, startTerminal } from "../../.
 import { type Item, Todos } from "./plugins/lists/contract.ts";
 import { messages } from "./plugins/lists/messages.ts";
 import type { TodoPrincipal } from "./src/principals.ts";
+import { openTelemetry, type TodoTelemetry, telemetryFile } from "./src/telemetry.ts";
 import { startTodo, todoDirectories } from "./start.ts";
 
 const { base, dataDir, root } = await todoDirectories();
 
 // 1. Start the app: the kit makes the data directory, the server's store and host, HTTP and the owner link. Nobody is
 //    signed in yet, so the page answers 401. The owner opens the link: its page posts the token from the URL's fragment
-//    and gets a session cookie.
-const app = await startTodo(dataDir, root, context);
+//    and gets a sign-in cookie.
+const telemetry = await openTelemetry(telemetryFile(dataDir));
+const app = await startTodo(dataDir, root, telemetry, context);
 const link = new URL(app.ownerLink());
 const url = link.origin;
 console.log("1. owner link:", `http://127.0.0.1:<port>${link.pathname}#<token>`);
@@ -123,6 +130,10 @@ if (sandboxAvailable()) {
 	for (const line of screen(frames).trim().split("\r\n")) console.log(`   ${line}`);
 } else console.log("5. (the terminal client needs Node 26.5.1 or later for its sandbox)");
 
+// After the start, the app watches the files its bases were built from. On macOS, adding a watch briefly drops file
+// events for every watch of the process, so the new plugin directory below could go unnoticed: wait for it to finish.
+await app.baseWatched;
+
 // 6. A theme plugin added while the app runs: a new directory in the plugins root marks the set changed, and applying
 //    the changes builds it and rolls it out. Pages and terminals restyle in place.
 await cp(fileURLToPath(new URL("./later/harbor/", import.meta.url)), join(root, "harbor"), { recursive: true });
@@ -204,9 +215,9 @@ if (terminal !== undefined) {
 // 9. An edit applied in place: the lists plugin's worker facet trims a todo's text, so a blank one is empty and the
 //    store refuses it with Chord's `invalid/args`, which reaches Ada as it would a refused argument. The
 //    watcher marks the plugin dirty; applying the changes rolls it out to the server, the list's worker, the page and
-//    the terminal. On the worker each object of the plugin takes its fate: the store opens no native, so it is swapped
-//    in place (its live query runs again); the views wait for it, then go on with the new code. Ada's
-//    reference follows them.
+//    the terminal. On the worker each object of the plugin restarts: running calls finish on the old code, new calls
+//    wait for the new code, documents and tables stay (the store's live query runs again on its new attempt). Ada's
+//    reference stays live while the old code drains, then shows `loading` briefly and the new code's snapshot.
 // The edit: `add` in the `Todos` view, before and after.
 const BEFORE = "add: (text: string, ctx: Ctx) => store.add({ text, by }, ctx),";
 const AFTER = "add: (text: string, ctx: Ctx) => store.add({ text: text.trim(), by }, ctx),";
@@ -216,7 +227,7 @@ await until(() => app.plugins.state.value.dirty.includes("@todo/lists"));
 const applied = await app.applyChanges(context);
 console.log("9. lists changed, rolled out to:", applied.steps.map(({ name }) => name).join(", "));
 for (const host of applied.steps.find(({ name }) => name === "list")!.hosts) {
-	const fates = "report" in host ? host.report.objects.map(({ object, kind }) => `${object} ${kind}`) : [];
+	const fates = host.kind === "reloaded" ? host.report.objects.map(({ object, kind }) => `${object} ${kind}`) : [];
 	console.log(`   on ${host.host}:`, [...new Set(fates)].join(", "));
 }
 await adas.add("  tea  ", context);
@@ -241,16 +252,42 @@ await app.importData(archive, List({ id: "groceries" }), context).catch((error: 
 	console.log("   importing over groceries:", error.message.replace(base, "…"));
 });
 
+// 11. Telemetry. The server records to the store in the data directory (step 1 opened it) and writes what every list's
+//    worker sends it. A command-line client adds honey and a blank todo: each request is a `chord.http` trace of the
+//    server, the call into the list's worker under it, and the store's `add` checks the text in a span of its own
+//    (`ctx.trace`). A page's click, recorded by the page itself, is `screenshots.ts`'s (it needs Chromium).
+for (const text of ["honey", " "]) {
+	await fetch(`${url}/api/lists/groceries`, {
+		method: "POST",
+		headers: { ...cli, "content-type": "application/json" },
+		body: JSON.stringify(text),
+	});
+}
+// The worker sends every second, the server writes every second: read until the worker's spans of both are there.
+const [refusedTrace, honeyTrace] = await written(telemetry.store, "chord.http", 2, "todos.validate");
+console.log("11. adding honey from the command line:");
+printTelemetry(renderTrace(honeyTrace!.spans));
+// `trace.ts` reads the same file from a process of its own: the newest traces, then one by its id.
+const traceScript = fileURLToPath(new URL("./trace.ts", import.meta.url));
+const read = async (...args: string[]) =>
+	(await promisify(execFile)(process.execPath, [...process.execArgv, traceScript, ...args])).stdout;
+console.log("   trace.ts <data directory> --name chord.http --principal owner:");
+printTelemetry(await read(dataDir, "--name", "chord.http", "--principal", "owner"));
+console.log("   trace.ts <data directory> <the refused one's id>:");
+printTelemetry(await read(dataDir, refusedTrace!.traceId));
+
 if (process.argv.includes("--serve")) {
 	console.log(`Open ${app.ownerLink()} (Ctrl-C to stop); terminal: 57-tui's terminal.ts with ${app.ownerTokenFile}`);
+	console.log(`Traces: ${url}/traces, or trace.ts ${dataDir}`);
 } else {
 	await terminal?.stop();
 	groceries.release();
 	adas.release();
 	await ada.close(context);
 	await app.close(context);
+	await telemetry.close();
 	await rm(base, { recursive: true, force: true });
-	console.log("11. closed");
+	console.log("12. closed");
 }
 
 /** Todos as one line: `[x] milk (owner), [ ] eggs (owner)`. */
@@ -270,7 +307,7 @@ async function until(check: () => boolean): Promise<void> {
 
 /** An asset's URL with its content hash masked, so the output is the same at every run. */
 function hashless(asset: string): string {
-	return asset.replace(/\.[0-9a-f]{8,}\./, ".<hash>.");
+	return asset.replaceAll(/\.[0-9a-f]{8,}(?=\.)/g, ".<hash>");
 }
 
 /** The terminal's last frame as text (its colours stripped). */
@@ -280,6 +317,33 @@ function screen(written: readonly string[]): string {
 		.split("\x1b[2J\x1b[H")
 		.at(-1)!
 		.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
+/** The newest `count` traces whose first span is `name`, once each has a span named `last` (the server's flushed). */
+async function written(
+	store: TodoTelemetry["store"],
+	name: string,
+	count: number,
+	last: string,
+): Promise<readonly StoredTrace[]> {
+	for (;;) {
+		await store.flush();
+		const { traces } = await store.findTraces({ name, limit: count });
+		const complete = traces.filter(({ spans }) => spans.some((span) => span.name === last));
+		if (complete.length === count) return traces;
+		await new Promise((resolve) => setTimeout(resolve, 100));
+	}
+}
+
+/** Prints telemetry indented, as the same text at every run: span ids, lengths of time and byte counts masked. */
+function printTelemetry(text: string): void {
+	const steady = text
+		.replaceAll(/[0-9a-f-]{36}:\d+/g, "<id>")
+		.replaceAll(/ \(\+?[\d.]+ms\)/g, "")
+		.replaceAll(/duration=[\d.]+/g, "duration=<ms>")
+		.replaceAll(/ [\d.]+ ms/g, " <ms>")
+		.replaceAll(/\d+ bytes in \d+ messages/g, "<n> bytes in <n> messages");
+	for (const line of steady.trim().split("\n")) console.log(`   ${line}`);
 }
 
 /** Whether this Node can run the terminal's sandbox. */

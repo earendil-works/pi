@@ -1,8 +1,9 @@
 // Table columns (decisions "Flat columns", "Nullable columns and the `set` form"): descriptors and row types.
 
 import { describe, expect, it } from "vitest";
-import { arr, bool, int, num, obj, opt, str } from "../../src/contracts/index.ts";
+import { type Address, arr, bool, hostKind, int, num, obj, opt, str } from "../../src/contracts/index.ts";
 import { type Columns, columnRecord, describeColumns, type PutRowOf, type RowOf } from "../../src/store/columns.ts";
+import { host } from "../../src/store/host-column.ts";
 import { json } from "../../src/store/json-column.ts";
 import type { Equal } from "../support.ts";
 
@@ -63,5 +64,22 @@ describe("row types", () => {
 		const row: Equal<RowOf<S>, { id: string; hits: number } & { note?: string }> = true;
 		const put: Equal<PutRowOf<S>, { id: string } & { hits?: number; note?: string }> = true;
 		expect([row, put]).toEqual([true, true]);
+	});
+});
+
+describe("host(...) columns", () => {
+	const Session = hostKind("session", { id: str() });
+
+	it("are recorded as str columns with their kind, refused inside opt(...)", () => {
+		const [column] = describeColumns({ session: host(Session) }, "t");
+		expect(columnRecord(column!)).toEqual({ type: "str", host: "session" });
+		// @ts-expect-error: a host column is never opt(...)
+		expect(() => describeColumns({ session: opt(host(Session)) }, "t")).toThrow("not opt(...)");
+	});
+
+	it("type rows with addresses of their kind", () => {
+		const columns = { session: host(Session), n: int() };
+		const check: Equal<RowOf<typeof columns>["session"], Address<typeof Session>> = true;
+		expect(check).toBe(true);
 	});
 });

@@ -146,6 +146,41 @@ describe("submissions", () => {
 		await expect(pending).rejects.toThrow("Harness is closed");
 	});
 
+	// #11963, #11820: the wait's promise is handed out only after earlier outcomes on the line are delivered.
+	it("reports no unhandled rejection for a wait cancelled before its result is delivered", async () => {
+		let slow = false;
+		class SlowPublications extends ControlledStorage {
+			publishing(publish: () => void): void {
+				if (slow) setTimeout(publish, 20);
+				else publish();
+			}
+		}
+		const unhandled: unknown[] = [];
+		const onUnhandled = (reason: unknown) => unhandled.push(reason);
+		process.on("unhandledRejection", onUnhandled);
+		try {
+			const setup = chatSetup();
+			setup.faux.setResponses([unanswered().step]);
+			const { harness, root } = await openChat(new SlowPublications(), setup);
+			const submission = await root.submit({ type: "input", content: "hi" }, context);
+			slow = true;
+			const write = root.submit({ type: "write", entry: { kind: "note", data: { text: "x" } } }, context);
+			const controller = new AbortController();
+			controller.abort(new Error("stop waiting"));
+			const waiting = expect(submission.wait({ ...context, abortSignal: controller.signal })).rejects.toThrow(
+				"stop waiting",
+			);
+			await write;
+			await waiting;
+			slow = false;
+			await harness.close(context);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			expect(unhandled).toEqual([]);
+		} finally {
+			process.off("unhandledRejection", onUnhandled);
+		}
+	});
+
 	it("rejects a wait whose submission read spans the start of close", async () => {
 		const entered = deferred();
 		const release = deferred();

@@ -1,6 +1,6 @@
 // Schema helpers: Chord's short constructors over pi-schema's builders (plain JSON Schema, typed with the values they
-// accept), and method and keyed member declarations. The helpers keep the shapes contracts were fingerprinted with:
-// literals carry their `type`, `oneOf` is a union of literals, `map` a pattern-property record.
+// accept), and method, keyed member and event member declarations. The helpers keep the shapes contracts were
+// fingerprinted with: literals carry their `type`, `oneOf` is a union of literals, `map` a pattern-property record.
 
 import {
 	arr as arrSchema,
@@ -21,6 +21,9 @@ import {
 } from "@earendil-works/pi-schema";
 
 export { Optional, opt, type Schema, type Static } from "@earendil-works/pi-schema";
+
+import type { HostKind, KindShape } from "./host-kind.ts";
+import type { Params } from "./params.ts";
 
 /** Bounds of a string length, a number or an array length. */
 export type Bounds = { readonly min?: number; readonly max?: number };
@@ -177,8 +180,63 @@ export class Method<A extends Schema = Schema, R extends Schema = Schema> {
 	}
 }
 
-/** A keyed state member's declaration (slice 6a §12): documents of `schema` by string key; only in `local` contracts. */
-export class KeyedMember<S extends Schema = Schema> {
+/**
+ * A keyed state member's declaration (slice 6a §12): documents of `schema` by string key, or by address of host kind
+ * `key` (decision "Documents and table rows can belong to a host"); only in `local` contracts.
+ */
+export class KeyedMember<S extends Schema = Schema, K extends KindShape | undefined = KindShape | undefined> {
+	readonly schema: S;
+	readonly key: K;
+
+	constructor(schema: S, key: K) {
+		this.schema = schema;
+		this.key = key;
+	}
+}
+
+/** The argument schemas of a `queries` member's named queries, by query name. */
+export type QueryArguments = { readonly [query: string]: Schema };
+
+/**
+ * A `queries` member's declaration (slice 14 §3.1): named queries over one of the object's tables, each with the
+ * schema of its arguments, whose rows are values of `item`; only in `local` contracts.
+ */
+export class QueriesMember<I extends Schema = Schema, A extends QueryArguments = QueryArguments> {
+	readonly item: I;
+	readonly args: A;
+
+	constructor(item: I, args: A) {
+		this.item = item;
+		this.args = args;
+	}
+}
+
+/**
+ * Declares a `queries` member of a `local` contract: the named queries other objects on the host may read, each
+ * with its argument schema (part of the fingerprint). The handle of `self.queries(...)` implements it.
+ */
+export function queries<I extends Schema, const A extends QueryArguments>(item: I, args: A): QueriesMember<I, A> {
+	return new QueriesMember(item, args);
+}
+
+/**
+ * Declares a keyed state member of a `local` contract: documents of `schema` by string key, or with `key` (a host kind)
+ * by address of that kind (a host-keyed document handle implements it), each watchable.
+ */
+export function keyed<S extends Schema>(schema: S): KeyedMember<S, undefined>;
+export function keyed<S extends Schema, N extends string, P extends Params>(
+	schema: S,
+	key: HostKind<N, P>,
+): KeyedMember<S, HostKind<N, P>>;
+export function keyed(schema: Schema, key?: KindShape): KeyedMember {
+	return new KeyedMember(schema, key);
+}
+
+/**
+ * An event member's declaration in a `local` contract's flat members (decision "Events: fire-and-forget members"): the
+ * schema of the JSON values its object emits.
+ */
+export class EventDeclaration<S extends Schema = Schema> {
 	readonly schema: S;
 
 	constructor(schema: S) {
@@ -186,9 +244,13 @@ export class KeyedMember<S extends Schema = Schema> {
 	}
 }
 
-/** Declares a keyed state member of a `local` contract: documents of `schema` by string key, each watchable. */
-export function keyed<S extends Schema>(schema: S): KeyedMember<S> {
-	return new KeyedMember(schema);
+/**
+ * Declares an event member of a `local` contract, as `keyed(schema)` marks a keyed member: JSON values of `schema` the
+ * object emits, delivered once to the references bound to it, never kept (a remote contract lists them under a
+ * variant's `events`).
+ */
+export function event<S extends Schema>(schema: S): EventDeclaration<S> {
+	return new EventDeclaration(schema);
 }
 
 /** Declares a method: `method()`, `method(args)`, `method(args, result)` or `method(undefined, result)`. */

@@ -5,11 +5,14 @@
 // plugin's loaded facet. `rollout` runs the app's steps in order (one result per host) and clears the marks of plugins
 // applied on every host of every step.
 
+import { access } from "node:fs/promises";
+import { join } from "node:path";
 import type { Context } from "../../context/index.ts";
 import type { Principal } from "../../data/index.ts";
 import type { Host, LoadReport, PluginFacet, ReloadReport } from "../../host/index.ts";
 import { Batch, type BatchError } from "../../state/internal.ts";
 import type { Watchable } from "../../watch.ts";
+import type { BaseInputs } from "./base-inputs.ts";
 import { type AppApi, type BuiltFacet, buildFacet } from "./build.ts";
 import { type Discovery, discoverPlugins, type Plugin, type PluginRoot, sameFiles } from "./discover.ts";
 import type { HostPackages } from "./evaluate.ts";
@@ -35,7 +38,11 @@ export type PluginsOptions = {
 	 * keep external: `{ server: { platform: "node", hostPackages: ["@earendil-works/chord", "@app/core"] }, … }`.
 	 */
 	readonly kinds: Readonly<Record<string, KindDefinition>>;
-	/** The app's base code: a change sets `base` (the app restarts its hosts; Chord restarts nothing). */
+	/**
+	 * The server's own base code, files and directories, hashed when the component is created: `base` is set while one
+	 * differs from it or a source file is new in one of the directories (the app restarts its hosts; Chord restarts
+	 * nothing).
+	 */
 	readonly base?: readonly string[];
 	/** Where the app serves browser builds' assets: the URL prefix their imports evaluate to. */
 	readonly publicPath?: string;
@@ -62,14 +69,14 @@ export type Built = {
 };
 
 /**
- * What a rollout step did on one of its hosts (`host` named by the step): its reload's report; `stopped` when the host
- * stopped cleanly during the step (it gets the current set at its next start); `error` when it crashed or its reload
- * failed (every plugin of the step's kinds in the build counts as failed there).
+ * What a rollout step did on one of its hosts (`host` named by the step): `reloaded` with its reload's report;
+ * `stopped` when the host stopped cleanly during the step (it gets the current set at its next start); `failed` when
+ * it crashed or its reload failed (every plugin of the step's kinds in the build counts as failed there).
  */
 export type RolloutHost =
-	| { readonly host: string; readonly report: ReloadReport }
-	| { readonly host: string; readonly stopped: true }
-	| { readonly host: string; readonly error: unknown };
+	| { readonly kind: "reloaded"; readonly host: string; readonly report: ReloadReport }
+	| { readonly kind: "stopped"; readonly host: string }
+	| { readonly kind: "failed"; readonly host: string; readonly error: unknown };
 
 /** What a rollout step does: reloads its hosts with the facets of its kinds, one result per host (D12). */
 export type RolloutStep = {
@@ -92,7 +99,8 @@ export interface Plugins {
 	readonly discovery: Discovery;
 	/**
 	 * Builds every facet of `names` (and of plugins discovered since the last build; discovery runs again first when
-	 * the plugin set changed): plain data. It changes no current set: a rollout ships it.
+	 * the plugin set changed, or when a named plugin is unknown to it or its files are gone before the watcher said
+	 * so): plain data. It changes no current set: a rollout ships it.
 	 */
 	build(names: readonly string[], context: Context): Promise<Built>;
 	/**
@@ -133,6 +141,12 @@ export interface Plugins {
 	rollout(steps: readonly RolloutStep[], built: Built, context: Context): Promise<RolloutResult>;
 	/** Installs plugin `name`'s dependencies (`installDependencies`): its install mark clears, and it is dirty. */
 	installDependencies(name: string, context: Context): Promise<void>;
+	/**
+	 * Adds a running base artifact's record (a base bundle's `inputs`, beside `base`): `base` is set while one of its
+	 * files differs from the bytes it read or is gone; each is compared once now (settles once those comparisons did).
+	 * Files under `node_modules` are never watched.
+	 */
+	watchBase(inputs: BaseInputs): Promise<void>;
 	/**
 	 * Installs new plugins from git or npm into `root`, one of the roots (`installPlugin`), and marks `set`: the next
 	 * build discovers and builds them. Returns their names.
@@ -188,7 +202,8 @@ class PluginsComponent implements Plugins {
 
 	async build(names: readonly string[], context: Context): Promise<Built> {
 		const before = new Map(this.#discovery.plugins.map((plugin) => [plugin.name, plugin]));
-		if (!this.#discovered || this.#watcher.needsDiscovery) await this.#discover(context);
+		if (!this.#discovered || this.#watcher.needsDiscovery || (await unseen(names, before)))
+			await this.#discover(context);
 		const now = this.#discovery.plugins;
 		const removed = [...before.keys()].filter((name) => !now.some((plugin) => plugin.name === name));
 		// A plugin whose files moved (a single file became a directory, a facet file came or went) is built again too.
@@ -252,7 +267,7 @@ class PluginsComponent implements Plugins {
 			name,
 			kinds: [kind],
 			reload: async (built, context) => ({
-				hosts: [{ host: name, report: await this.reload(host, built, context) }],
+				hosts: [{ kind: "reloaded", host: name, report: await this.reload(host, built, context) }],
 			}),
 		};
 	}
@@ -271,8 +286,8 @@ class PluginsComponent implements Plugins {
 			}
 			for (const kind of step.kinds) shipped.add(kind);
 			for (const entry of hosts) {
-				if ("report" in entry) for (const { plugin } of entry.report.failed) failed.add(plugin);
-				else if ("error" in entry) for (const plugin of builtOf(built, step.kinds)) failed.add(plugin);
+				if (entry.kind === "reloaded") for (const { plugin } of entry.report.failed) failed.add(plugin);
+				else if (entry.kind === "failed") for (const plugin of builtOf(built, step.kinds)) failed.add(plugin);
 			}
 			done.push({ name: step.name, hosts });
 		}
@@ -286,6 +301,10 @@ class PluginsComponent implements Plugins {
 			);
 		}
 		return { steps: done, stopped: undefined };
+	}
+
+	watchBase(inputs: BaseInputs): Promise<void> {
+		return this.#watcher.recordBase(inputs);
 	}
 
 	async installDependencies(name: string, context: Context): Promise<void> {
@@ -364,6 +383,31 @@ class PluginsComponent implements Plugins {
 		return built;
 	}
 }
+
+/**
+ * Whether a named plugin changed in a way the watcher has not reported yet (its events lag behind the files, more on
+ * some platforms than others): discovery does not know it, or a file discovery found for it is gone. A build of named
+ * plugins never trusts the watcher's timing for them.
+ */
+async function unseen(names: readonly string[], known: ReadonlyMap<string, Plugin>): Promise<boolean> {
+	for (const name of names) {
+		const plugin = known.get(name);
+		if (plugin === undefined) return true;
+		const files = [
+			...Object.values(plugin.facets),
+			...(plugin.layout === "directory" ? [join(plugin.dir, "package.json")] : []),
+		];
+		for (const file of files) if (!(await exists(file))) return true;
+	}
+	return false;
+}
+
+/** Whether `path` exists. */
+const exists = (path: string): Promise<boolean> =>
+	access(path).then(
+		() => true,
+		() => false,
+	);
 
 /**
  * Applies `built` to `set`, `kind`'s current set: its removed plugins and those rebuilt without a facet of `kind` leave

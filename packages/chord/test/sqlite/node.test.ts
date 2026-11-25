@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it, vi } from "vitest";
 import type { SqliteExecutor } from "../../src/sqlite/index.ts";
@@ -196,6 +199,37 @@ describe("Node SQLite driver", () => {
 		).rejects.toThrow(AggregateError);
 		expect(await database.get("SELECT value FROM rollback_probe")).toEqual({ value: 1 });
 		await database.close();
+	});
+});
+
+describe("read-only connections", () => {
+	it("read a file another connection writes, in deferred transactions, and never write it", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "chord-sqlite-"));
+		const file = join(dir, "data.sqlite");
+		try {
+			const writer = await openNodeSqliteDatabase(file);
+			await writer.exec("CREATE TABLE probe (value INTEGER)");
+			await writer.run("INSERT INTO probe VALUES (1)");
+			const reader = await openNodeSqliteDatabase(file, { mode: "read-only" });
+			const exec = vi.spyOn(DatabaseSync.prototype, "exec");
+			// One snapshot per transaction: a write committed meanwhile shows in the next one.
+			expect(
+				await reader.transaction(async (tx) => {
+					const before = await tx.all("SELECT value FROM probe");
+					await writer.run("INSERT INTO probe VALUES (2)");
+					return [before, await tx.all("SELECT value FROM probe")];
+				}),
+			).toEqual([[{ value: 1 }], [{ value: 1 }]]);
+			expect(exec.mock.calls.map(([sql]) => sql)).toEqual(["BEGIN", "COMMIT"]);
+			expect(await reader.all("SELECT value FROM probe")).toEqual([{ value: 1 }, { value: 2 }]);
+			await expect(reader.run("INSERT INTO probe VALUES (3)")).rejects.toThrow(/readonly/);
+			exec.mockRestore();
+			await reader.close();
+			await writer.close();
+			await expect(openNodeSqliteDatabase(join(dir, "missing.sqlite"), { mode: "read-only" })).rejects.toThrow();
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });
 

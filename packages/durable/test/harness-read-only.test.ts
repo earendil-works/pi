@@ -1,11 +1,12 @@
 // A read-only Harness: a viewer of a session another process drives, such as a synced copy on another device.
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { Harness, LiveDoc, ReadOnlySession, UserEntry, type Wake } from "@earendil-works/pi-durable";
 import { afterEach, describe, expect, it } from "vitest";
+import { openNodeJsonlStorage } from "../src/storage/jsonl/node.ts";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { allEntries, type ChatSetup, chatSetup, openChat, unanswered } from "./chat-support.ts";
 import { context } from "./session-support.ts";
@@ -49,6 +50,15 @@ function head(path: string): number | undefined {
 	}
 }
 
+/** Every file of `directory` with its bytes. */
+async function directoryBytes(directory: string): Promise<Record<string, string>> {
+	const files: Record<string, string> = {};
+	for (const name of (await readdir(directory)).sort()) {
+		files[name] = (await readFile(join(directory, name))).toString("base64");
+	}
+	return files;
+}
+
 /** A session whose root generation is running in another Harness, still open, waiting for the model. */
 async function runningSession(path: string, setup: ChatSetup) {
 	const busy = unanswered();
@@ -80,6 +90,36 @@ describe("read-only Harness", () => {
 
 		expect(head(path)).toBe(before);
 		expect(wakes).toEqual([]);
+		await driver.harness.close(context);
+	});
+
+	// #11939: JSONL storage opened with its own `readOnly` writes nothing, not even recovery repairs.
+	it("opens a JSONL session with work running elsewhere without writing", async () => {
+		const directory = await mkdtemp(join(tmpdir(), "pi-durable-read-only-jsonl-"));
+		directories.add(directory);
+		const setup = chatSetup();
+		const busy = unanswered();
+		setup.faux.setResponses([busy.step]);
+		const driver = await openChat(await openNodeJsonlStorage(directory, context), setup);
+		await driver.root.submit({ type: "input", content: "slow" }, context);
+		await busy.reached;
+		// A torn line, as left by an append in flight.
+		await writeFile(join(directory, "main.jsonl"), '{"format":1', { flag: "a" });
+		const before = await directoryBytes(directory);
+
+		const viewerSetup = chatSetup();
+		const viewer = await Harness.open(
+			await openNodeJsonlStorage(directory, context, { readOnly: true }),
+			{ models: viewerSetup.models, registry: viewerSetup.registry, readOnly: true },
+			context,
+		);
+		const root = await viewer.root(context);
+		expect((await allEntries(root)).map((entry) => entry.kind)).toEqual([UserEntry.kind]);
+		const run = (await viewer.snapshot(LiveDoc, root.id, context))?.run;
+		expect((await viewer.getTask(run!.taskId, context))?.state.status).toBe("running");
+		await viewer.close(context);
+
+		expect(await directoryBytes(directory)).toEqual(before);
 		await driver.harness.close(context);
 	});
 

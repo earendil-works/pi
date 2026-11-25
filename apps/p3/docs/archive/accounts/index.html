@@ -1,0 +1,810 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>p3: users, accounts and access</title>
+<style>
+
+:root{--paper:#fbf8f2;--ink:#2a2723;--muted:#7b7468;--rule:#e3dbcc;--accent:#b4472f;--blue:#2e6a8a;--sand:#c2b18c;--soft:#f4eee2}
+*{box-sizing:border-box}
+html{background:#efe9dd}
+body{margin:0;color:var(--ink);font:19px/1.68 'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,serif;
+ -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+.book{max-width:860px;margin:0 auto;background:var(--paper);box-shadow:0 0 0 1px #e1d9c8,0 30px 80px -40px rgba(60,40,10,.35);padding:0 0 4rem}
+.inner{padding:0 90px}
+h1,h2,h3{font-weight:400;line-height:1.15}
+h2{font-size:2.1rem;margin:.2em 0 .3em;letter-spacing:-.01em}
+h3{font-size:1.05rem;text-transform:uppercase;letter-spacing:.14em;margin:2.4em 0 .6em;color:var(--ink);font-weight:600;
+ font-family:'Avenir Next','Helvetica Neue',sans-serif}
+p{margin:0 0 1.05em;hyphens:auto;text-align:left}
+code{font:.8em/1 'SF Mono',Menlo,Consolas,monospace;background:#f1ebde;padding:.1em .35em;border-radius:3px}
+pre{font:.74rem/1.55 'SF Mono',Menlo,Consolas,monospace;background:#f4eee2;border-left:3px solid var(--sand);padding:1rem 1.2rem;margin:1.4rem 0 1.8rem;
+ overflow-x:auto;border-radius:0 4px 4px 0;white-space:pre;tab-size:2}
+pre code{background:none;padding:0;font-size:1em}
+em{font-style:italic}
+a{color:var(--blue)}
+.cover{min-height:92vh;display:flex;flex-direction:column;justify-content:center;padding:90px;background:
+ radial-gradient(circle at 85% 15%,rgba(180,71,47,.13),transparent 40%),radial-gradient(circle at 10% 90%,rgba(46,106,138,.12),transparent 45%),var(--paper);
+ border-bottom:1px solid var(--rule)}
+.kicker{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.22em;text-transform:uppercase;color:var(--accent)}
+.cover h1{font-size:5.2rem;line-height:.98;margin:.35em 0 .25em;letter-spacing:-.025em}
+.subtitle{font-size:1.45rem;font-style:italic;color:#4a453e;max-width:30em;text-align:left}
+.cover-stats,.stats{display:flex;flex-wrap:wrap;gap:1.2rem 2.4rem;margin:2.2rem 0}
+.stats{margin:1.6rem 0 1.8rem;padding:1.1rem 0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.stat b{display:block;font-size:2.1rem;font-weight:400;line-height:1.1;font-variant-numeric:lining-nums}
+.stat span{font:.78rem/1.3 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);letter-spacing:.03em;display:block;max-width:14em}
+.cover-note{font-size:.9rem;color:var(--muted);max-width:34em;text-align:left;margin-top:2rem}
+.toc{padding:4rem 0 2rem}
+.toc ol{list-style:none;padding:0;margin:1rem 0;columns:2;column-gap:3rem}
+.toc li{padding:.3rem 0;border-bottom:1px dotted var(--rule);break-inside:avoid}
+.toc a{color:var(--ink);text-decoration:none}
+.toc a:hover{color:var(--accent)}
+.preface{padding-top:2rem}
+.findings{padding-left:1.4em}
+.findings li{margin:.55em 0;padding-left:.3em}
+.findings li::marker{color:var(--accent);font-weight:600}
+.chapter{padding-top:4.5rem;margin-top:3rem;border-top:1px solid var(--rule)}
+.opener{text-align:center;margin-bottom:2.6rem}
+.numeral{font-size:4.2rem;color:var(--accent);line-height:1;font-variant:small-caps;letter-spacing:.05em}
+.opener h2{font-size:2.5rem;margin:.25em 0}
+.lede{font-style:italic;color:#5a544a;font-size:1.12rem;max-width:30em;margin:0 auto;text-align:center}
+.dropcap::first-letter{float:left;font-size:4.1em;line-height:.82;padding:.06em .09em 0 0;color:var(--accent)}
+.fig{margin:2rem 0 2.2rem}
+.fig.wide{margin-left:-50px;margin-right:-50px}
+.fig svg{display:block;margin:0 auto}
+figcaption{font:.8rem/1.45 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:.7rem;padding-left:.8rem;border-left:2px solid var(--rule)}
+.fignum{color:var(--ink);font-weight:600}
+.note{font:.86rem/1.55 'Avenir Next','Helvetica Neue',sans-serif;color:#5b5549;background:#f4eee2;border-left:3px solid var(--sand);
+ padding:.9rem 1.1rem;margin:1.8rem 0;border-radius:0 4px 4px 0}
+.note.review{border-left-color:var(--accent)}
+.note b.tag{font-weight:600;letter-spacing:.12em;text-transform:uppercase;font-size:.72rem;color:var(--accent);display:block;margin-bottom:.3rem}
+.note code{font-size:.85em}
+table{width:100%;border-collapse:collapse;margin:1.4rem 0 1.8rem;font:.8rem/1.4 'Avenir Next','Helvetica Neue',sans-serif}
+th{text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:.68rem;border-bottom:1.5px solid var(--ink);padding:.45rem .5rem}
+td{padding:.42rem .5rem;border-bottom:1px solid var(--rule);vertical-align:top}
+td code{font-size:.92em}
+table.num td:not(:first-child),table.num th:not(:first-child){text-align:right}
+.epilogue p{font-size:1.04em}
+.appendix{font-size:.92em}
+.appendix ul,.chapter ul{padding-left:1.2em}
+.appendix li,.chapter li{margin:.4em 0}
+.colophon{text-align:center;font:.78rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:4rem;letter-spacing:.05em}
+@media (max-width:760px){.inner{padding:0 22px}.cover{padding:40px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}
+ .toc ol{columns:1}p{text-align:left}body{font-size:17px}}
+@media print{html{background:#fff}.book{box-shadow:none}.chapter{break-before:page}.fig{break-inside:avoid}}
+.transcript p b{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-right:.3em}
+pre .tk-c{color:#8d8576;font-style:italic}pre .tk-s{color:#5f7a3d}pre .tk-n{color:#a0662a}pre .tk-k{color:#b4472f}pre .tk-t{color:#2e6a8a}pre .tk-f{color:#7a3f6a}
+h4{font:600 .82rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.06em;margin:1.8em 0 .5em;color:var(--muted)}
+.inner ul,.inner ol:not(.findings){padding-left:1.2em}
+.inner li{margin:.35em 0}
+blockquote{margin:1.4rem 0;padding:.2rem 0 .2rem 1.2rem;border-left:3px solid var(--rule);color:#5a544a;font-style:italic}
+.fig svg text{dominant-baseline:auto}
+.fig .replay{font:600 .7rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);
+ background:none;border:1px solid var(--rule);border-radius:3px;padding:.2rem .55rem;margin:0 0 0 1rem;cursor:pointer;float:right}
+.fig .replay:hover{border-color:var(--accent)}
+.anim.armed .step{opacity:0}
+.anim.armed.play .step{animation:stepIn .45s ease-out both;animation-delay:calc(var(--i) * var(--pace, .45s))}
+.anim.armed.play .step.edge{animation-name:edgeIn}
+@keyframes stepIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes edgeIn{from{opacity:0}to{opacity:1}}
+.steps{margin:2rem 0 2.2rem;border:1px solid var(--rule);border-radius:6px;background:#fffdf8}
+.steps-head{display:flex;align-items:center;gap:.8rem;padding:.6rem 1rem;border-bottom:1px solid var(--rule);
+ font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.steps-head .title{flex:1}
+.steps-head .count{color:var(--muted);letter-spacing:.06em}
+.steps-head button{font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--ink);background:var(--soft);border:1px solid var(--rule);
+ border-radius:3px;padding:.25rem .65rem;cursor:pointer}
+.steps-head button:disabled{opacity:.35;cursor:default}
+.step-panel{padding:1rem 1.2rem .4rem}
+.step-panel>h4:first-child{margin-top:.2rem;color:var(--ink)}
+.steps.js .step-panel{display:none}
+.steps.js .step-panel.on{display:block}
+.steps:not(.js) .steps-head button,.steps:not(.js) .steps-head .count{display:none}
+.steps:not(.js) .step-panel+.step-panel{border-top:1px dashed var(--rule)}
+.fig figcaption{display:flow-root}
+.fig svg{max-width:100%;height:auto}
+table{max-width:100%}
+@media (max-width:760px){.inner{padding:0 20px}.cover{padding:48px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}table{display:block;overflow-x:auto}.toc ol{columns:1}}
+</style>
+
+
+</head>
+<body><div class="book">
+<section class="cover">
+  <div class="kicker">A design explainer · p3 · 2026-11-07</div>
+  <h1>Users<br>Accounts<br>Access</h1>
+  <p class="subtitle">How third-party plugins let a p3 user sign in with another service, connect their accounts there, and use them for models, MCP servers and tools, while every secret stays on the server</p>
+  <div class="cover-stats"><div class="stat"><b>3</b><span>concepts: identity, accounts, access</span></div><div class="stat"><b>1</b><span>built-in owner of external accounts (the server&#39;s <code>Accounts</code>)</span></div><div class="stat"><b>0</b><span>integrations p3 ships itself: Radius, Gmail, Notion, Slack, Discord are plugins</span></div><div class="stat"><b>0</b><span>long-lived secrets on workers, pages or terminals</span></div></div>
+  <div class="cover-note"><p>A design proposal for the owner, written 2026-11-07 after his direction: &quot;we won&#39;t provide those integrations
+ourselves, but p3 must allow 3rd parties to integrate them and associate external accounts with the p3 account AND let
+a plugin that provides that integration use that account info to do stuff like mcp sign in, or providers, or
+whatever.&quot; Nothing here is decided or built; every name is a proposal. Chord names (remote, local, registries,
+references, the kit&#39;s <code>Sessions</code> and <code>Http</code>) are real. pi-ai&#39;s provider auth follows its <code>ApiKeyAuth</code>
+(<code>packages/ai/src/auth/types.ts</code>). The decisions needed are listed at the end.</p>
+</div>
+</section><div class="inner">
+<nav class="toc"><h2>Contents</h2><ol>
+<li><a href="#before-we-begin">Before we begin</a></li>
+<li><a href="#concepts">I. Three Concepts</a></li>
+<li><a href="#identity">II. Identity: Users and Sign-In</a></li>
+<li><a href="#accounts">III. Accounts: One Owner on the Server</a></li>
+<li><a href="#integration">IV. A Third-Party Integration</a></li>
+<li><a href="#where">V. Stored on the Server, Used Elsewhere</a></li>
+<li><a href="#models">VI. Models</a></li>
+<li><a href="#mcp">VII. MCP</a></li>
+<li><a href="#grants">VIII. Bringing an Account Into a Session</a></li>
+<li><a href="#access">IX. Access: a Pluggable Policy</a></li>
+<li><a href="#byo">X. Bring Your Own Org Model</a></li>
+<li><a href="#what-p3-provides-what-integrations-provide">What p3 Provides, What Integrations Provide</a></li>
+<li><a href="#reference">Appendix A: Reference</a></li>
+</ol></nav>
+
+<section class="preface" id="before-we-begin">
+<h2>Before we begin</h2>
+<p class="dropcap">Mario installs a plugin a third party wrote, <code>@acme/p3-radius</code>, into <code>~/.p3/plugins/</code> and applies it. p3&#39;s sign-in page
+now has a button <strong>Sign in with Radius</strong>. He taps it, signs in at Radius, and lands in p3 as his p3 user <code>u1</code>; his
+Radius account <code>mario@earendil.com</code> shows under Settings, Accounts. He opens a session and picks the model
+<code>radius/claude-sonnet</code>: the session&#39;s worker calls Radius&#39;s model gateway with a token for his account. He adds
+Radius&#39;s MCP server to the session: it connects as him. Later Ada, another p3 user, signs in with her own Radius
+account; her sessions use hers. When Mario shares a session with Ada, his Radius account does not come along unless he
+brings it in.</p>
+<p>p3 ships none of this. It ships the places it plugs into: a users store, one owner of external accounts on the server,
+a registry through which an integration says how to turn a stored account into credentials, a way to hand those
+credentials to a session&#39;s worker for a few minutes at a time, a slot on the sign-in page, and a pluggable access
+policy. The <code>@acme/p3-radius</code> plugin fills them; a Gmail, Notion, Slack or Discord plugin would fill them the same way.</p>
+<h3 id="nine-things-to-know">Nine things to know</h3>
+<ol class="findings">
+<li><strong>Three concepts.</strong> <strong>Identity</strong>: who someone is in p3 (a p3 user id). <strong>Accounts</strong>: their connections to other
+services (a Radius, Gmail or Slack account), linked to the p3 user. <strong>Access</strong>: what a p3 user may do in p3 (a
+policy). Each is a different owner; none knows the others&#39; internals.</li>
+<li><strong>The principal stays tiny.</strong> <code>{ kind: &quot;user&quot;, id: &quot;u1&quot; }</code> on every call. External ids, tokens and roles never go
+into it.</li>
+<li><strong>&quot;Sign in with X&quot; is a plugin.</strong> It runs X&#39;s OAuth flow through routes it contributes to <code>Http</code>, finds or creates
+the p3 user that X&#39;s account is linked to, and issues an ordinary kit session for that user.</li>
+<li><strong>One owner keeps every external account: <code>Accounts</code>, on the server.</strong> A table of <code>{ user, provider, account, label, data }</code>; <code>data</code> is the integration&#39;s own JSON (tokens, scopes), stored in the server&#39;s store, never sent to a client.</li>
+<li><strong>Integrations say how to use an account: the <code>AccountProviders</code> registry.</strong> One contribution per integration:
+<code>credentials(account)</code> turns a stored account into usable credentials (refreshing tokens when needed) and gives the
+updated <code>data</code> back to store.</li>
+<li><strong>Clients see accounts without secrets.</strong> Pages and terminals hold <code>MyAccounts</code>, a per-user view of the user&#39;s own
+accounts: provider, label, status. Never <code>data</code>.</li>
+<li><strong>Workers get short-lived credentials, followed, not fetched.</strong> A session&#39;s worker holds <code>AccountCredentials</code> for an
+account the session may use; its state is the current access token and its expiry. The server refreshes it before it
+expires and the new token arrives as a state change; every use on the worker is a local read.</li>
+<li><strong>A session uses an account only when its owner brought it in.</strong> Bringing an account into a session is a grant the
+account&#39;s user makes; the server checks it when the session&#39;s worker asks for credentials. Nothing personal comes
+into a shared session by itself.</li>
+<li><strong>Models and MCP use the same path.</strong> A model-provider plugin contributes a pi-ai provider whose auth reads the
+followed token; the MCP plugin connects to a server with an <code>auth: { account }</code> setting the same way.</li>
+</ol>
+<h3 id="words-used-throughout">Words used throughout</h3>
+<p>A <strong>p3 user</strong> is a row of p3&#39;s users store, with an id like <code>u1</code>; its principal is <code>{ kind: &quot;user&quot;, id }</code>. An
+<strong>identity</strong> links an external sign-in (a provider and its subject id) to a p3 user. An <strong>account</strong> is a connection of a
+p3 user to another service: a provider name (<code>radius</code>), the account&#39;s id there, a label to show, and the integration&#39;s
+<strong>data</strong> (tokens and whatever else it needs). An <strong>integration</strong> is a third-party plugin for one service: it contributes
+routes, an account provider, UI, and whatever it does with the account (a model provider, tools). <strong>Credentials</strong> are
+what an account yields for one use: an access token with an expiry, or a key. A <strong>grant</strong> lets one session use one
+account. A <strong>policy</strong> answers &quot;may this user do this to that&quot;.</p>
+</section>
+
+<section class="chapter" id="concepts"><header class="opener"><div class="numeral">I</div><h2>Three Concepts</h2><p class="lede">Who someone is, what they are connected to, and what they may do: three owners.</p></header>
+<figure class="fig wide"><svg viewBox="0 0 720 363" width="100%" role="img" aria-label="The three owners on the server, and who reads them where. Accent: p3's built-in parts; muted: a third-party integration." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f1m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f1a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f1b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><text x="16" y="22" font-size="10" fill="#b4472f" text-anchor="start" font-weight="600" letter-spacing="2">SERVER</text><text x="16" y="144" font-size="10" fill="#7b7468" text-anchor="start" font-weight="600" letter-spacing="2">INTEGRATION PLUGINS (THIRD PARTY)</text><text x="16" y="266" font-size="10" fill="#2e6a8a" text-anchor="start" font-weight="600" letter-spacing="2">READERS</text><rect x="19" y="36" width="210" height="44" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="124" y="55.3" font-size="11" fill="#2a2723" text-anchor="middle">Users</text><text x="124" y="69.3" font-size="9.5" fill="#7b7468" text-anchor="middle">p3 users, identities</text><rect x="255" y="36" width="210" height="44" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="360" y="55.3" font-size="11" fill="#2a2723" text-anchor="middle">Accounts</text><text x="360" y="69.3" font-size="9.5" fill="#7b7468" text-anchor="middle">accounts with data (tokens)</text><rect x="491" y="36" width="210" height="44" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="596" y="55.3" font-size="11" fill="#2a2723" text-anchor="middle">Access policy</text><text x="596" y="69.3" font-size="9.5" fill="#7b7468" text-anchor="middle">the acl plugin, replaceable</text><rect x="19" y="158" width="210" height="44" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="124" y="177.3" font-size="11" fill="#2a2723" text-anchor="middle">@acme/p3-radius</text><text x="124" y="191.3" font-size="9.5" fill="#7b7468" text-anchor="middle">sign-in, provider, models</text><rect x="255" y="158" width="210" height="44" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="360" y="177.3" font-size="11" fill="#2a2723" text-anchor="middle">@acme/p3-gmail</text><text x="360" y="191.3" font-size="9.5" fill="#7b7468" text-anchor="middle">provider, tools</text><rect x="491" y="158" width="210" height="44" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="596" y="177.3" font-size="11" fill="#2a2723" text-anchor="middle">mcp plugin</text><text x="596" y="191.3" font-size="9.5" fill="#7b7468" text-anchor="middle">servers with auth: { account }</text><rect x="137" y="280" width="210" height="44" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="242" y="299.3" font-size="11" fill="#2a2723" text-anchor="middle">page / terminal</text><text x="242" y="313.3" font-size="9.5" fill="#7b7468" text-anchor="middle">MyAccounts: labels only</text><rect x="373" y="280" width="210" height="44" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="478" y="299.3" font-size="11" fill="#2a2723" text-anchor="middle">session worker</text><text x="478" y="313.3" font-size="9.5" fill="#7b7468" text-anchor="middle">AccountCredentials: a token</text><path d="M124 158 L124 82" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="128" y="114" width="76.5" height="13" fill="#fbf8f2" opacity=".92"/><text x="132" y="124" font-size="9.5" fill="#7b7468" text-anchor="start">link identity</text><path d="M124 158 L360 82" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="246" y="114" width="118.6" height="13" fill="#fbf8f2" opacity=".92"/><text x="250" y="124" font-size="9.5" fill="#7b7468" text-anchor="start">link account, refresh</text><path d="M360 158 L360 82" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="364" y="114" width="118.6" height="13" fill="#fbf8f2" opacity=".92"/><text x="368" y="124" font-size="9.5" fill="#7b7468" text-anchor="start">link account, refresh</text><path d="M242 280 L360 82" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="305" y="175" width="97.6" height="13" fill="#fbf8f2" opacity=".92"/><text x="309" y="185" font-size="9.5" fill="#7b7468" text-anchor="start">MyAccounts (view)</text><path d="M478 280 L360 82" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="423" y="175" width="139.7" height="13" fill="#fbf8f2" opacity=".92"/><text x="427" y="185" font-size="9.5" fill="#7b7468" text-anchor="start">AccountCredentials (view)</text><path d="M596 202 L478 278" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="541" y="234" width="81.8" height="13" fill="#fbf8f2" opacity=".92"/><text x="545" y="244" font-size="9.5" fill="#7b7468" text-anchor="start">uses the token</text><text x="16" y="348" font-size="10.5" fill="#7b7468" text-anchor="start">Every secret is in Accounts' table in the server's store; clients see labels, workers see a short-lived token.</text></svg><figcaption><span class="fignum">Figure 1.</span> The three owners on the server, and who reads them where. Accent: p3&#39;s built-in parts; muted: a third-party integration.</figcaption></figure>
+<p>The three are separate because they change separately and belong to different parties. Identity is p3&#39;s: a p3 user
+exists whether or not they ever connected Radius. Accounts are the integrations&#39;: only the Radius plugin knows what a
+Radius token looks like and how to refresh it, but it should not have to keep its own vault, own its own table per user,
+or invent how a session&#39;s worker gets a token. Access is the instance owner&#39;s: who may administer the app, which
+groups may use which models, who sees whose sessions.</p>
+</section>
+
+<section class="chapter" id="identity"><header class="opener"><div class="numeral">II</div><h2>Identity: Users and Sign-In</h2><p class="lede">A p3 user is p3&#39;s own; an external sign-in only finds one.</p></header>
+<p class="dropcap">p3&#39;s built-in <code>users</code> plugin owns the users and the identities linked to them, in two tables of the server&#39;s store:</p>
+<pre><code><span class="tk-c">// plugins/users/server.ts (built-in)</span>
+<span class="tk-k">const</span> <span class="tk-t">UsersTable</span> = <span class="tk-f">defineTable</span>(<span class="tk-s">"p3.users"</span>, {
+	version: <span class="tk-n">1</span>,
+	columns: { id: <span class="tk-f">str</span>(), name: <span class="tk-f">str</span>(), created: <span class="tk-f">num</span>() },
+	key: [<span class="tk-s">"id"</span>],
+});
+<span class="tk-k">const</span> <span class="tk-t">Identities</span> = <span class="tk-f">defineTable</span>(<span class="tk-s">"p3.identities"</span>, {
+	version: <span class="tk-n">1</span>,
+	columns: { provider: <span class="tk-f">str</span>(), subject: <span class="tk-f">str</span>(), user: <span class="tk-f">str</span>(), created: <span class="tk-f">num</span>() },
+	key: [<span class="tk-s">"provider"</span>, <span class="tk-s">"subject"</span>],
+	indexes: { by_user: [<span class="tk-s">"user"</span>] },
+});</code></pre>
+<p>Its contract, published in p3&#39;s API so integrations can use it:</p>
+<pre><code><span class="tk-c">// @p3/app/v1/server</span>
+<span class="tk-c">/** p3's users and the external sign-ins linked to them (server, trusted callers: routes and server objects). */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Users</span> = <span class="tk-f">local</span>(<span class="tk-s">"p3.users"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: {},
+	members: {
+		<span class="tk-c">/** The p3 user an external sign-in is linked to, or null. */</span>
+		byIdentity: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ provider: <span class="tk-f">str</span>(), subject: <span class="tk-f">str</span>() }), <span class="tk-f">union</span>([<span class="tk-f">str</span>(), <span class="tk-f">nul</span>()])),
+		<span class="tk-c">/** Makes a p3 user (when the instance's policy allows new users) and links the identity to it. */</span>
+		create: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ name: <span class="tk-f">str</span>(), identity: <span class="tk-f">obj</span>({ provider: <span class="tk-f">str</span>(), subject: <span class="tk-f">str</span>() }) }), <span class="tk-f">str</span>()),
+		<span class="tk-c">/** Links another identity to an existing user (a signed-in user connecting a second sign-in method). */</span>
+		link: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ user: <span class="tk-f">str</span>(), identity: <span class="tk-f">obj</span>({ provider: <span class="tk-f">str</span>(), subject: <span class="tk-f">str</span>() }) })),
+		<span class="tk-c">/** Issues a sign-in session for `user` (the kit's `Sessions`, principal `{ kind: "user", id }`): its cookie. */</span>
+		signIn: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ user: <span class="tk-f">str</span>(), label: <span class="tk-f">str</span>(), secure: <span class="tk-f">bool</span>() }), <span class="tk-f">obj</span>({ cookie: <span class="tk-f">str</span>() })),
+	},
+});</code></pre>
+<p><code>signIn</code> is the one place that turns a p3 user into a kit session: it calls the kit&#39;s <code>Sessions.issue({ principal: { kind: &quot;user&quot;, id }, label, kind: &quot;browser&quot;, secure })</code> and returns the cookie. Integrations never build principals
+themselves. The first user of an instance is made at its first start (the start link signs in as it), and is an admin
+of the default policy (chapter VIII).</p>
+<p><strong>The sign-in page is the app&#39;s.</strong> The kit renders no pages (owner, 2026-11-07); p3&#39;s page bundle has a public route
+<code>/sign-in</code> drawn with p3&#39;s components and theme. Integrations add their buttons through a registry of the page:</p>
+<pre><code><span class="tk-c">// @p3/app/v1/web</span>
+<span class="tk-c">/** A way to sign in, shown on the sign-in page: its label and where it starts. Ordered by plugin name. */</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">SignInMethod</span> = { <span class="tk-k">readonly</span> name: string; <span class="tk-k">readonly</span> label: string; <span class="tk-k">readonly</span> start: string };
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">SignInMethods</span> = <span class="tk-f">defineRegistry</span>&lt;<span class="tk-t">SignInMethod</span>, <span class="tk-k">readonly</span> <span class="tk-t">SignInMethod</span>[]&gt;(<span class="tk-s">"p3.sign-in-methods"</span>, { version: <span class="tk-n">1</span> });</code></pre>
+</section>
+
+<section class="chapter" id="accounts"><header class="opener"><div class="numeral">III</div><h2>Accounts: One Owner on the Server</h2><p class="lede">Every external account of every user, with the integration&#39;s data, in one table nobody else writes.</p></header>
+<p class="dropcap">The built-in <code>accounts</code> plugin owns all external accounts. One table in the server&#39;s store; one local object writes it;
+per-principal views read it.</p>
+<pre><code><span class="tk-c">// @p3/app/v1 (shared: the schema clients and workers see)</span>
+<span class="tk-c">/** An account as its user sees it: no data. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">AccountInfo</span> = <span class="tk-f">obj</span>({
+	provider: <span class="tk-f">str</span>(),                 <span class="tk-c">// the integration's name: "radius", "gmail"</span>
+	account: <span class="tk-f">str</span>(),                  <span class="tk-c">// the account's id at the provider: "usr_8f2…", "mario@earendil.com"</span>
+	label: <span class="tk-f">str</span>(),                    <span class="tk-c">// what to show: "mario@earendil.com (Radius)"</span>
+	status: <span class="tk-f">oneOf</span>(<span class="tk-s">"ok"</span>, <span class="tk-s">"needs_reconnect"</span>),
+	created: <span class="tk-f">num</span>(),
+});
+
+<span class="tk-c">// @p3/app/v1/server</span>
+<span class="tk-c">/** The owner of external accounts (server, trusted callers). `data` is the integration's own JSON. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Accounts</span> = <span class="tk-f">local</span>(<span class="tk-s">"p3.accounts"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: {},
+	members: {
+		link: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ user: <span class="tk-f">str</span>(), provider: <span class="tk-f">str</span>(), account: <span class="tk-f">str</span>(), label: <span class="tk-f">str</span>(), data: <span class="tk-k">unknown</span>() })),
+		unlink: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ user: <span class="tk-f">str</span>(), provider: <span class="tk-f">str</span>(), account: <span class="tk-f">str</span>() })),
+		<span class="tk-c">/** The user an account is linked to, or null: how "sign in with X" finds its user. */</span>
+		userOf: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ provider: <span class="tk-f">str</span>(), account: <span class="tk-f">str</span>() }), <span class="tk-f">union</span>([<span class="tk-f">str</span>(), <span class="tk-f">nul</span>()])),
+		<span class="tk-c">/** Credentials for one use, from the account's provider (refreshed and stored when the provider says so). */</span>
+		credentials: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ user: <span class="tk-f">str</span>(), provider: <span class="tk-f">str</span>(), account: <span class="tk-f">str</span>() }), <span class="tk-t">Credentials</span>),
+		<span class="tk-c">/** Lets `session` use the account (only its user may: checked by the views that call this). */</span>
+		grant: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ user: <span class="tk-f">str</span>(), provider: <span class="tk-f">str</span>(), account: <span class="tk-f">str</span>(), session: <span class="tk-f">str</span>() })),
+		revoke: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ provider: <span class="tk-f">str</span>(), account: <span class="tk-f">str</span>(), session: <span class="tk-f">str</span>() })),
+	},
+});
+
+<span class="tk-c">/** What an account yields for one use. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Credentials</span> = <span class="tk-f">union</span>([
+	<span class="tk-f">obj</span>({ kind: <span class="tk-f">lit</span>(<span class="tk-s">"token"</span>), token: <span class="tk-f">str</span>(), expires: <span class="tk-f">num</span>() }),       <span class="tk-c">// OAuth access token, epoch ms</span>
+	<span class="tk-f">obj</span>({ kind: <span class="tk-f">lit</span>(<span class="tk-s">"key"</span>), key: <span class="tk-f">str</span>() }),                           <span class="tk-c">// an API key that does not expire</span>
+	<span class="tk-f">obj</span>({ kind: <span class="tk-f">lit</span>(<span class="tk-s">"unavailable"</span>), reason: <span class="tk-f">str</span>() }),                <span class="tk-c">// needs a reconnect: the user signs in again</span>
+]);</code></pre>
+<p>The table and the object, in the plugin:</p>
+<pre><code><span class="tk-c">// plugins/accounts/server.ts (built-in)</span>
+<span class="tk-k">const</span> <span class="tk-t">Table</span> = <span class="tk-f">defineTable</span>(<span class="tk-s">"p3.accounts"</span>, {
+	version: <span class="tk-n">1</span>,
+	columns: {
+		user: <span class="tk-f">str</span>(), provider: <span class="tk-f">str</span>(), account: <span class="tk-f">str</span>(), label: <span class="tk-f">str</span>(),
+		data: <span class="tk-f">json</span>(<span class="tk-k">unknown</span>(), { version: <span class="tk-n">1</span> }),      <span class="tk-c">// the integration's JSON: stored, never queried</span>
+		status: <span class="tk-f">str</span>(), created: <span class="tk-f">num</span>(),
+	},
+	key: [<span class="tk-s">"provider"</span>, <span class="tk-s">"account"</span>],                  <span class="tk-c">// one external account belongs to one p3 user</span>
+	indexes: { by_user: [<span class="tk-s">"user"</span>] },
+});
+<span class="tk-k">const</span> <span class="tk-t">Grants</span> = <span class="tk-f">defineTable</span>(<span class="tk-s">"p3.account-grants"</span>, {
+	version: <span class="tk-n">1</span>,
+	columns: { provider: <span class="tk-f">str</span>(), account: <span class="tk-f">str</span>(), session: <span class="tk-f">str</span>(), user: <span class="tk-f">str</span>() },
+	key: [<span class="tk-s">"provider"</span>, <span class="tk-s">"account"</span>, <span class="tk-s">"session"</span>],
+	indexes: { by_session: [<span class="tk-s">"session"</span>] },
+});
+
+host.<span class="tk-f">serve</span>(<span class="tk-t">Accounts</span>, (_params, self) =&gt; {
+	<span class="tk-k">const</span> rows = self.<span class="tk-f">table</span>(<span class="tk-t">Table</span>);
+	<span class="tk-k">const</span> grants = self.<span class="tk-f">table</span>(<span class="tk-t">Grants</span>);
+	<span class="tk-k">const</span> providers = self.<span class="tk-f">registry</span>(<span class="tk-t">AccountProviders</span>);
+	<span class="tk-k">return</span> {
+		credentials: <span class="tk-k">async</span> ({ user, provider, account }, ctx) =&gt; {
+			<span class="tk-k">const</span> row = <span class="tk-k">await</span> rows.<span class="tk-f">get</span>({ provider, account }, ctx);
+			<span class="tk-k">if</span> (row === <span class="tk-k">undefined</span> || row.user !== user) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"not this user's account"</span>);
+			<span class="tk-k">const</span> integration = providers.value.<span class="tk-f">get</span>(provider);
+			<span class="tk-k">if</span> (integration === <span class="tk-k">undefined</span>) <span class="tk-k">return</span> { kind: <span class="tk-s">"unavailable"</span>, reason: <span class="tk-s">`no plugin provides ${provider}`</span> };
+			<span class="tk-k">const</span> { credentials, data } = <span class="tk-k">await</span> integration.<span class="tk-f">credentials</span>(row.data, ctx);   <span class="tk-c">// may refresh</span>
+			<span class="tk-k">if</span> (data !== <span class="tk-k">undefined</span>) <span class="tk-k">await</span> self.<span class="tk-f">tx</span>(<span class="tk-k">async</span> (tx) =&gt; tx.<span class="tk-f">update</span>(rows, { provider, account }, { data }), ctx);
+			<span class="tk-k">return</span> credentials;
+		},
+		<span class="tk-c">// link, unlink, userOf, grant, revoke: one transaction each</span>
+	};
+});</code></pre>
+<p>The extension point an integration fills:</p>
+<pre><code><span class="tk-c">// @p3/app/v1/server</span>
+<span class="tk-c">/**
+ * How to use one provider's accounts: `credentials` turns a stored account's `data` into credentials for one use,
+ * returning updated `data` when it refreshed something (stored by `Accounts` in the same call).
+ */</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">AccountProvider</span> = {
+	<span class="tk-k">readonly</span> name: string;
+	<span class="tk-f">credentials</span>(data: <span class="tk-k">unknown</span>, ctx: <span class="tk-t">Ctx</span>): <span class="tk-t">Promise</span>&lt;{ <span class="tk-k">readonly</span> credentials: <span class="tk-t">Credentials</span>; <span class="tk-k">readonly</span> data?: <span class="tk-k">unknown</span> }&gt;;
+};
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">AccountProviders</span> = defineRegistry&lt;<span class="tk-t">AccountProvider</span>, <span class="tk-t">ReadonlyMap</span>&lt;string, <span class="tk-t">AccountProvider</span>&gt;&gt;(
+	<span class="tk-s">"p3.account-providers"</span>,
+	{ version: <span class="tk-n">1</span> },
+);</code></pre>
+<p><strong>Why one owner.</strong> Each integration could keep its own table of tokens per user. Then deleting a user means asking every
+plugin; listing &quot;what is this user connected to&quot; means asking every plugin; handing a token to a worker is reinvented
+per plugin, each with its own way of leaking it. One owner gives one place for all three, and an integration&#39;s code
+shrinks to the protocol it knows: how to start the OAuth flow, how to refresh.</p>
+</section>
+
+<section class="chapter" id="integration"><header class="opener"><div class="numeral">IV</div><h2>A Third-Party Integration</h2><p class="lede">The @acme/p3-radius plugin, end to end: connect, sign in, refresh.</p></header>
+<p class="dropcap">The whole plugin is ordinary p3 plugin code against p3&#39;s API. Its server facet contributes routes and its account
+provider:</p>
+<pre><code><span class="tk-c">// ~/.p3/plugins/p3-radius/server.ts (third party)</span>
+<span class="tk-k">import</span> { <span class="tk-t">AccountProviders</span>, <span class="tk-t">Accounts</span>, defineFacet, <span class="tk-t">Http</span>, <span class="tk-t">Users</span> } <span class="tk-k">from</span> <span class="tk-s">"@p3/app/v1/server"</span>;
+<span class="tk-k">import</span> { exchange, me, refresh } <span class="tk-k">from</span> <span class="tk-s">"./oauth.ts"</span>;
+
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((_host, self) =&gt; {
+	self.<span class="tk-f">contribute</span>(<span class="tk-t">AccountProviders</span>, {
+		name: <span class="tk-s">"radius"</span>,
+		credentials: <span class="tk-k">async</span> (data, ctx) =&gt; {
+			<span class="tk-k">const</span> stored = data <span class="tk-k">as</span> <span class="tk-t">RadiusTokens</span>;
+			<span class="tk-k">if</span> (stored.expires - <span class="tk-t">Date</span>.<span class="tk-f">now</span>() &gt; <span class="tk-n">60_000</span>) <span class="tk-k">return</span> { credentials: { kind: <span class="tk-s">"token"</span>, token: stored.access, expires: stored.expires } };
+			<span class="tk-k">const</span> fresh = <span class="tk-k">await</span> <span class="tk-f">refresh</span>(stored.refresh, ctx.abortSignal);            <span class="tk-c">// Radius's token endpoint</span>
+			<span class="tk-k">if</span> (fresh === <span class="tk-k">undefined</span>) <span class="tk-k">return</span> { credentials: { kind: <span class="tk-s">"unavailable"</span>, reason: <span class="tk-s">"sign in to Radius again"</span> } };
+			<span class="tk-k">return</span> { credentials: { kind: <span class="tk-s">"token"</span>, token: fresh.access, expires: fresh.expires }, data: fresh };
+		},
+	});
+	self.<span class="tk-f">contribute</span>(<span class="tk-t">Http</span>, {
+		routes: {
+			<span class="tk-s">"GET /radius/start"</span>: { <span class="tk-k">public</span>: <span class="tk-k">true</span>, handler: (request) =&gt; <span class="tk-f">redirectToRadius</span>(request) },   <span class="tk-c">// state + PKCE</span>
+			<span class="tk-s">"GET /radius/callback"</span>: {
+				<span class="tk-k">public</span>: <span class="tk-k">true</span>,
+				handler: <span class="tk-k">async</span> (request, ctx) =&gt; {
+					<span class="tk-k">const</span> tokens = <span class="tk-k">await</span> <span class="tk-f">exchange</span>(request.query.<span class="tk-f">get</span>(<span class="tk-s">"code"</span>)!, request);
+					<span class="tk-k">const</span> radius = <span class="tk-k">await</span> <span class="tk-f">me</span>(tokens.access);                      <span class="tk-c">// { id, email, name }</span>
+					<span class="tk-k">const</span> users = <span class="tk-k">await</span> ctx.<span class="tk-f">get</span>(<span class="tk-t">Users</span>, {});
+					<span class="tk-k">const</span> accounts = <span class="tk-k">await</span> ctx.<span class="tk-f">get</span>(<span class="tk-t">Accounts</span>, {});
+					<span class="tk-c">// A signed-in user connects Radius; otherwise this is "sign in with Radius".</span>
+					<span class="tk-k">const</span> user =
+						<span class="tk-f">signedIn</span>(ctx) ??
+						(<span class="tk-k">await</span> accounts.<span class="tk-f">userOf</span>({ provider: <span class="tk-s">"radius"</span>, account: radius.id }, ctx)) ??
+						(<span class="tk-k">await</span> users.<span class="tk-f">create</span>({ name: radius.name, identity: { provider: <span class="tk-s">"radius"</span>, subject: radius.id } }, ctx));
+					<span class="tk-k">await</span> accounts.<span class="tk-f">link</span>({ user, provider: <span class="tk-s">"radius"</span>, account: radius.id, label: radius.email, data: tokens }, ctx);
+					<span class="tk-k">const</span> { cookie } = <span class="tk-k">await</span> users.<span class="tk-f">signIn</span>({ user, label: <span class="tk-s">"Radius"</span>, secure: request.provenance.kind !== <span class="tk-s">"local"</span> }, ctx);
+					<span class="tk-k">return</span> { kind: <span class="tk-s">"redirect"</span>, to: <span class="tk-s">"/"</span>, headers: { <span class="tk-s">"Set-Cookie"</span>: cookie } };
+				},
+			},
+		},
+	});
+});
+
+<span class="tk-c">// ~/.p3/plugins/p3-radius/web.tsx: the button on the sign-in page, and a row under Settings, Accounts</span>
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((_host, self) =&gt; {
+	self.<span class="tk-f">contribute</span>(<span class="tk-t">SignInMethods</span>, { name: <span class="tk-s">"radius"</span>, label: <span class="tk-s">"Sign in with Radius"</span>, start: <span class="tk-s">"/radius/start"</span> });
+	self.<span class="tk-f">contribute</span>(<span class="tk-t">AccountKinds</span>, { provider: <span class="tk-s">"radius"</span>, label: <span class="tk-s">"Radius"</span>, connect: <span class="tk-s">"/radius/start"</span> });
+});</code></pre>
+<figure class="fig anim"><svg viewBox="0 0 720 430" width="100%" role="img" aria-label="Signing in with Radius for the first time: the plugin finds no linked user, makes one, links the account, and gets a p3 session." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f2m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f2a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f2b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="84.8" y1="52" x2="84.8" y2="422" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="23" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="84.8" y="27" font-size="11" fill="#2a2723" text-anchor="middle">p3 sign-in page</text><text x="84.8" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">app's page bundle</text><line x1="222.4" y1="52" x2="222.4" y2="422" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="160.6" y="10" width="123.6" height="42" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="222.4" y="27" font-size="11" fill="#2a2723" text-anchor="middle">@acme/p3-radius</text><text x="222.4" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">server routes</text><line x1="360" y1="52" x2="360" y2="422" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="298.2" y="10" width="123.6" height="42" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="360" y="27" font-size="11" fill="#2a2723" text-anchor="middle">Radius</text><text x="360" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">OAuth</text><line x1="497.6" y1="52" x2="497.6" y2="422" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="435.8" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="497.6" y="27" font-size="11" fill="#2a2723" text-anchor="middle">Users</text><text x="497.6" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">server</text><line x1="635.2" y1="52" x2="635.2" y2="422" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="573.4" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="635.2" y="27" font-size="11" fill="#2a2723" text-anchor="middle">Accounts</text><text x="635.2" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">server</text><g class="step edge" style="--i:1"><line x1="84.8" y1="78" x2="219.4" y2="78" stroke="#7b7468" marker-end="url(#f2m)"/><text x="153.6" y="72" font-size="10" fill="#2a2723" text-anchor="middle">GET /radius/start</text></g><g class="step edge" style="--i:2"><line x1="222.4" y1="110" x2="87.8" y2="110" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f2m)"/><text x="153.6" y="104" font-size="10" fill="#2a2723" text-anchor="middle">redirect to Radius (state, PKCE)</text></g><g class="step edge" style="--i:3"><line x1="84.8" y1="142" x2="357" y2="142" stroke="#7b7468" marker-end="url(#f2m)"/><text x="222.4" y="136" font-size="10" fill="#2a2723" text-anchor="middle">sign in, consent</text></g><g class="step edge" style="--i:4"><line x1="360" y1="174" x2="87.8" y2="174" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f2m)"/><text x="222.4" y="168" font-size="10" fill="#2a2723" text-anchor="middle">redirect /radius/callback?code</text></g><g class="step edge" style="--i:5"><line x1="84.8" y1="206" x2="219.4" y2="206" stroke="#7b7468" marker-end="url(#f2m)"/><text x="153.6" y="200" font-size="10" fill="#2a2723" text-anchor="middle">GET /radius/callback</text></g><g class="step edge" style="--i:6"><line x1="222.4" y1="238" x2="357" y2="238" stroke="#7b7468" marker-end="url(#f2m)"/><text x="291.2" y="232" font-size="10" fill="#2a2723" text-anchor="middle">exchange code; who am I?</text></g><g class="step edge" style="--i:7"><line x1="222.4" y1="270" x2="632.2" y2="270" stroke="#7b7468" marker-end="url(#f2m)"/><text x="428.8" y="264" font-size="10" fill="#2a2723" text-anchor="middle">userOf(radius, usr_8f2) -&gt; null</text></g><g class="step edge" style="--i:8"><line x1="222.4" y1="302" x2="494.6" y2="302" stroke="#b4472f" marker-end="url(#f2a)"/><text x="360" y="296" font-size="10" fill="#b4472f" text-anchor="middle">create(Mario, identity radius/usr_8f2) -&gt; u1</text></g><g class="step edge" style="--i:9"><line x1="222.4" y1="334" x2="632.2" y2="334" stroke="#b4472f" marker-end="url(#f2a)"/><text x="428.8" y="328" font-size="10" fill="#b4472f" text-anchor="middle">link(u1, radius, usr_8f2, tokens)</text></g><g class="step edge" style="--i:10"><line x1="222.4" y1="366" x2="494.6" y2="366" stroke="#7b7468" marker-end="url(#f2m)"/><text x="360" y="360" font-size="10" fill="#2a2723" text-anchor="middle">signIn(u1) -&gt; cookie</text></g><g class="step edge" style="--i:11"><line x1="222.4" y1="398" x2="87.8" y2="398" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f2m)"/><text x="153.6" y="392" font-size="10" fill="#2a2723" text-anchor="middle">redirect / with the session cookie: principal { user u1 }</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 2.</span> Signing in with Radius for the first time: the plugin finds no linked user, makes one, links the account, and gets a p3 session.</figcaption></figure>
+<p>A <strong>Gmail</strong> plugin is the same minus the sign-in button: only <code>AccountKinds</code> (connect from Settings) and the provider,
+plus its tools. A <strong>Slack</strong> or <strong>Discord</strong> plugin may also keep a bot token for the instance, not a user: that is the
+integration&#39;s own configuration, outside <code>Accounts</code>, which is about users&#39; accounts.</p>
+</section>
+
+<section class="chapter" id="where"><header class="opener"><div class="numeral">V</div><h2>Stored on the Server, Used Elsewhere</h2><p class="lede">Where the secret is, what each kind of host sees, and how it stays current.</p></header>
+<table>
+<thead>
+<tr>
+<th>Host</th>
+<th>Holds</th>
+<th>Sees</th>
+<th>How it stays current</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>server</td>
+<td><code>Accounts</code> (the table with <code>data</code>), <code>Users</code></td>
+<td>everything</td>
+<td>it writes it</td>
+</tr>
+<tr>
+<td>page, terminal</td>
+<td><code>MyAccounts {}</code> (remote, per user)</td>
+<td>the user&#39;s own accounts as <code>AccountInfo</code>: no <code>data</code></td>
+<td>a reference: state pushed on change</td>
+</tr>
+<tr>
+<td>session worker</td>
+<td><code>AccountCredentials { provider, account }</code> (remote, per session)</td>
+<td>one account&#39;s current credentials, if the session was granted it</td>
+<td>a reference: the server pushes a new token before the old expires</td>
+</tr>
+</tbody></table>
+<p><strong>What a page shows:</strong></p>
+<pre><code><span class="tk-c">// @p3/app/v1</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">MyAccounts</span> = <span class="tk-f">remote</span>(<span class="tk-s">"p3.my-accounts"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: {},
+	hostAddress: () =&gt; <span class="tk-t">Server</span>(),
+	variants: {
+		user: {
+			state: { accounts: <span class="tk-f">arr</span>(<span class="tk-t">AccountInfo</span>) },
+			methods: {
+				unlink: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ provider: <span class="tk-f">str</span>(), account: <span class="tk-f">str</span>() })),
+				<span class="tk-c">/** Brings one of my accounts into one of my sessions (a grant the session's worker can use). */</span>
+				bring: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ provider: <span class="tk-f">str</span>(), account: <span class="tk-f">str</span>(), session: <span class="tk-f">str</span>() })),
+			},
+		},
+	},
+});
+
+<span class="tk-c">// plugins/accounts/server.ts: the view derives from the shared table, filtered to its user, `data` left out</span>
+host.<span class="tk-f">serve</span>(<span class="tk-t">MyAccounts</span>, (_params, principal, self) =&gt; {
+	<span class="tk-k">if</span> (principal.kind !== <span class="tk-s">"user"</span>) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"accounts are users'"</span>);
+	<span class="tk-k">const</span> store = self.<span class="tk-f">get</span>(<span class="tk-t">AccountsStore</span>, {});        <span class="tk-c">// the shared store object holding the live query</span>
+	<span class="tk-k">return</span> {
+		variant: <span class="tk-s">"user"</span>,
+		members: {
+			accounts: self.<span class="tk-f">derive</span>([store.byUser], ([all]) =&gt; all[principal.id] ?? NONE),
+			unlink: (args, ctx) =&gt; store.<span class="tk-f">unlink</span>({ user: principal.id, ...args }, ctx),
+			bring: (args, ctx) =&gt; store.<span class="tk-f">grant</span>({ user: principal.id, ...args }, ctx),   <span class="tk-c">// the store checks the session is the user's</span>
+		},
+	};
+});</code></pre>
+<p>The terminal shows the same view with <code>scope.hold(MyAccounts, {})</code>; Settings in the page with <code>useHold(MyAccounts, {})</code>.</p>
+<p><strong>What a worker uses:</strong></p>
+<pre><code><span class="tk-c">// @p3/app/v1</span>
+<span class="tk-c">/** One account's credentials for the session that holds it: on the server, for the session's worker only. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">AccountCredentials</span> = <span class="tk-f">remote</span>(<span class="tk-s">"p3.account-credentials"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: { provider: <span class="tk-f">str</span>(), account: <span class="tk-f">str</span>() },
+	hostAddress: () =&gt; <span class="tk-t">Server</span>(),
+	variants: { session: { state: { credentials: <span class="tk-t">Credentials</span> }, methods: {} } },
+});
+
+<span class="tk-c">// plugins/accounts/server.ts</span>
+host.<span class="tk-f">serve</span>(<span class="tk-t">AccountCredentials</span>, ({ provider, account }, principal, self) =&gt; {
+	<span class="tk-c">// A worker's link stamps its session: the grant decides, never the caller's data.</span>
+	<span class="tk-k">if</span> (principal.kind !== <span class="tk-s">"worker"</span>) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"credentials go to session workers only"</span>);
+	<span class="tk-k">const</span> store = self.<span class="tk-f">get</span>(<span class="tk-t">AccountsStore</span>, {});
+	<span class="tk-k">const</span> current = self.<span class="tk-f">state</span>(<span class="tk-t">Current</span>);               <span class="tk-c">// in memory: the credentials this view hands out</span>
+	self.<span class="tk-f">onLive</span>(<span class="tk-k">async</span> (ctx) =&gt; {
+		<span class="tk-k">for</span> (;;) {
+			<span class="tk-k">const</span> credentials = <span class="tk-k">await</span> store.<span class="tk-f">credentialsFor</span>({ provider, account, session: principal.session }, ctx);
+			<span class="tk-k">await</span> current.<span class="tk-f">change</span>((draft) =&gt; { draft.credentials = credentials; }, ctx);
+			<span class="tk-c">// Refresh a minute before expiry; a key or "unavailable" waits for a change of the account instead.</span>
+			<span class="tk-k">if</span> (credentials.kind !== <span class="tk-s">"token"</span>) <span class="tk-k">return</span>;
+			<span class="tk-k">await</span> <span class="tk-f">sleep</span>(<span class="tk-t">Math</span>.<span class="tk-f">max</span>(<span class="tk-n">0</span>, credentials.expires - <span class="tk-t">Date</span>.<span class="tk-f">now</span>() - <span class="tk-n">60_000</span>), ctx);
+		}
+	});
+	<span class="tk-k">return</span> { variant: <span class="tk-s">"session"</span>, members: { credentials: self.<span class="tk-f">derive</span>([current], ([c]) =&gt; c.credentials) } };
+});</code></pre>
+<p>On the worker, anything that needs the token holds the reference once and reads it locally:</p>
+<pre><code><span class="tk-c">// a worker plugin</span>
+<span class="tk-k">const</span> radius = self.<span class="tk-f">get</span>(<span class="tk-t">AccountCredentials</span>, { provider: <span class="tk-s">"radius"</span>, account });   <span class="tk-c">// in a factory: live once bound</span>
+<span class="tk-c">// …at each use, no round trip:</span>
+<span class="tk-k">const</span> credentials = radius.credentials.value;</code></pre>
+<p>The secret on the worker is a token that expires within the hour; the refresh token and everything else stays in the
+server&#39;s table. A revoked grant ends the view (<code>Accounts.revoke</code> ends the session&#39;s <code>AccountCredentials</code> objects), so the
+worker&#39;s reference fails and its next use sees &quot;unavailable&quot;.</p>
+<figure class="fig anim"><svg viewBox="0 0 720 392" width="100%" role="img" aria-label="A worker keeps a Radius token current without asking for it." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f3m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f3a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f3b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="102" y1="52" x2="102" y2="384" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="23" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="102" y="27" font-size="11" fill="#2a2723" text-anchor="middle">session worker</text><text x="102" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">a model request</text><line x1="274" y1="52" x2="274" y2="384" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="195" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="274" y="27" font-size="11" fill="#2a2723" text-anchor="middle">AccountCredentials</text><text x="274" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">server, per session</text><line x1="446" y1="52" x2="446" y2="384" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="367" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="446" y="27" font-size="11" fill="#2a2723" text-anchor="middle">Accounts</text><text x="446" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">server</text><line x1="618" y1="52" x2="618" y2="384" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="539" y="10" width="158" height="42" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="618" y="27" font-size="11" fill="#2a2723" text-anchor="middle">@acme/p3-radius</text><text x="618" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">provider</text><g class="step edge" style="--i:1"><line x1="102" y1="78" x2="271" y2="78" stroke="#7b7468" marker-end="url(#f3m)"/><text x="188" y="72" font-size="10" fill="#2a2723" text-anchor="middle">hold { radius, usr_8f2 } (once)</text></g><g class="step edge" style="--i:2"><line x1="274" y1="110" x2="443" y2="110" stroke="#7b7468" marker-end="url(#f3m)"/><text x="360" y="104" font-size="10" fill="#2a2723" text-anchor="middle">credentialsFor(session S1): granted? yes</text></g><g class="step edge" style="--i:3"><line x1="446" y1="142" x2="615" y2="142" stroke="#7b7468" marker-end="url(#f3m)"/><text x="532" y="136" font-size="10" fill="#2a2723" text-anchor="middle">credentials(data): still valid</text></g><g class="step edge" style="--i:4"><line x1="274" y1="174" x2="105" y2="174" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f3m)"/><text x="188" y="168" font-size="10" fill="#2a2723" text-anchor="middle">state: token T1, expires 12:00</text></g><g class="step edge" style="--i:5"><path d="M102 200 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f3m)"/><text x="144" y="210" font-size="10" fill="#2a2723" text-anchor="start">each request reads T1 (local)</text></g><g class="step" style="--i:6"><rect x="198" y="232" width="152" height="36" rx="3" fill="#f4eee2" stroke="#c2b18c"/><text x="274" y="246" font-size="10" fill="#5b5549" text-anchor="middle">11:59: a minute before</text><text x="274" y="259" font-size="10" fill="#5b5549" text-anchor="middle">expiry</text></g><g class="step edge" style="--i:7"><line x1="274" y1="296" x2="443" y2="296" stroke="#7b7468" marker-end="url(#f3m)"/><text x="360" y="290" font-size="10" fill="#2a2723" text-anchor="middle">credentialsFor again</text></g><g class="step edge" style="--i:8"><line x1="446" y1="328" x2="615" y2="328" stroke="#7b7468" marker-end="url(#f3m)"/><text x="532" y="322" font-size="10" fill="#2a2723" text-anchor="middle">credentials(data): refresh -&gt; T2, new data stored</text></g><g class="step edge" style="--i:9"><line x1="274" y1="360" x2="105" y2="360" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f3m)"/><text x="188" y="354" font-size="10" fill="#2a2723" text-anchor="middle">state: token T2</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 3.</span> A worker keeps a Radius token current without asking for it.</figcaption></figure>
+</section>
+
+<section class="chapter" id="models"><header class="opener"><div class="numeral">VI</div><h2>Models</h2><p class="lede">A model-provider plugin whose auth reads the followed token.</p></header>
+<p class="dropcap">The Radius integration (or a separate plugin) contributes a pi-ai provider to the session worker&#39;s <code>ModelProviders</code>
+registry (the harness&#39;s, from the map). Its auth resolves the token from the followed <code>AccountCredentials</code>, so each
+request uses the current token and the refresh is the server&#39;s business:</p>
+<pre><code><span class="tk-c">// ~/.p3/plugins/p3-radius/worker.ts (third party)</span>
+host.<span class="tk-f">serve</span>(<span class="tk-t">RadiusModels</span>, (_params, self) =&gt; {
+	<span class="tk-k">const</span> session = self.<span class="tk-f">get</span>(<span class="tk-t">SessionAccounts</span>, {});                     <span class="tk-c">// the session's granted accounts (worker data)</span>
+	<span class="tk-k">const</span> radius = self.writable&lt;<span class="tk-t">Held</span>&lt;<span class="tk-k">typeof</span> <span class="tk-t">AccountCredentials</span>&gt; | <span class="tk-k">undefined</span>&gt;(<span class="tk-k">undefined</span>);
+	self.<span class="tk-f">on</span>(session.granted, <span class="tk-k">async</span> ({ value }, ctx) =&gt; {               <span class="tk-c">// follow which Radius account the session has</span>
+		<span class="tk-k">const</span> account = value.<span class="tk-f">find</span>((each) =&gt; each.provider === <span class="tk-s">"radius"</span>);
+		radius.<span class="tk-f">set</span>(account === <span class="tk-k">undefined</span> ? <span class="tk-k">undefined</span> : <span class="tk-k">await</span> ctx.<span class="tk-f">get</span>(<span class="tk-t">AccountCredentials</span>, account));
+	});
+	self.<span class="tk-f">contribute</span>(<span class="tk-t">ModelProviders</span>, <span class="tk-f">createProvider</span>({
+		id: <span class="tk-s">"radius"</span>,
+		api: openAiCompatible,                                         <span class="tk-c">// Radius's gateway speaks an OpenAI-style API</span>
+		baseUrl: <span class="tk-s">"https://radius.earendil.com/v1"</span>,
+		models: radiusModels,
+		auth: {
+			apiKey: {
+				name: <span class="tk-s">"Radius account"</span>,
+				resolve: <span class="tk-k">async</span> () =&gt; {
+					<span class="tk-k">const</span> credentials = radius.value?.credentials.value;
+					<span class="tk-k">return</span> credentials?.kind === <span class="tk-s">"token"</span> ? { auth: { apiKey: credentials.token }, source: <span class="tk-s">"p3 account"</span> } : <span class="tk-k">undefined</span>;
+				},
+			},
+		},
+	}));
+	<span class="tk-k">return</span> {};
+});</code></pre>
+<p>(The reference is kept for the object&#39;s life in practice; this sketch shows the shape. <code>SessionAccounts</code> is the
+session&#39;s own list of accounts brought into it, chapter VII.)</p>
+</section>
+
+<section class="chapter" id="mcp"><header class="opener"><div class="numeral">VII</div><h2>MCP</h2><p class="lede">An MCP server that needs a sign-in names the account; the MCP plugin uses its token.</p></header>
+<p class="dropcap">The MCP plugin (built-in or not) keeps each session&#39;s MCP servers. A server entry can name an account instead of a
+static header:</p>
+<pre><code>{ <span class="tk-s">"name"</span>: <span class="tk-s">"radius"</span>, <span class="tk-s">"url"</span>: <span class="tk-s">"https://radius.earendil.com/mcp"</span>, <span class="tk-s">"auth"</span>: { <span class="tk-s">"account"</span>: { <span class="tk-s">"provider"</span>: <span class="tk-s">"radius"</span> } } }</code></pre>
+<p>When it connects, the MCP plugin holds <code>AccountCredentials</code> for the session&#39;s Radius account and sends its token as
+the bearer; when the state changes (a refreshed token), it uses the new token for the next request or reconnects,
+depending on the transport. A tool call of an MCP server with several accounts brought into the session carries which
+one in the call&#39;s envelope <code>{ account?, input }</code> (decided for MCP earlier); without one, the session&#39;s only account of
+that provider is used.</p>
+<p>Who connects as whom in a shared session follows from the grant: the account belongs to whoever brought it, and every
+user who may send inputs to the session uses it through the session (the resources rule: anything brought into a
+session is usable by everyone who can send inputs there; nothing personal is brought implicitly).</p>
+</section>
+
+<section class="chapter" id="grants"><header class="opener"><div class="numeral">VIII</div><h2>Bringing an Account Into a Session</h2><p class="lede">The one step that lets a session use a user&#39;s account, and how it is checked.</p></header>
+<p class="dropcap">The grant is stored on the server (<code>Grants</code>), because it gates a secret the server keeps; the session&#39;s worker keeps its
+own list of what was brought in (<code>SessionAccounts</code>), because tools and the UI read it there. The user brings an
+account in from the session&#39;s resources panel:</p>
+<ol>
+<li>The page calls <code>MyAccounts.bring({ provider, account, session })</code> as the user.</li>
+<li>The server checks the account is the user&#39;s and the user may change the session&#39;s resources (the policy, chapter
+VIII), stores the grant, and tells the session&#39;s worker through <code>SessionAccounts.add</code> (the worker owns its data;
+the server pushes).</li>
+<li>The worker&#39;s plugins see the account in <code>SessionAccounts</code> and hold <code>AccountCredentials</code> for it.</li>
+</ol>
+<p>Removing it revokes the grant; the server ends that session&#39;s <code>AccountCredentials</code> objects; the worker&#39;s references
+fail; tools and providers using it see &quot;unavailable&quot; at their next use.</p>
+</section>
+
+<section class="chapter" id="access"><header class="opener"><div class="numeral">IX</div><h2>Access: a Pluggable Policy</h2><p class="lede">One provider answers &#39;may this user do this&#39;, locally on every host.</p></header>
+<pre><code><span class="tk-c">// @p3/app/v1</span>
+<span class="tk-c">/** What a user may do. One provider per host (the `acl` plugin by default); readers call it locally. */</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">Policy</span> = {
+	<span class="tk-f">allows</span>(user: string, action: string, thing: <span class="tk-t">ThingAddress</span>): boolean;   <span class="tk-c">// ThingAddress: a contract name and params</span>
+};
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Access</span> = <span class="tk-f">defineRegistry</span>&lt;<span class="tk-t">Policy</span>, <span class="tk-t">Policy</span> | <span class="tk-k">undefined</span>&gt;(<span class="tk-s">"p3.access"</span>, { version: <span class="tk-n">1</span> });</code></pre>
+<p>The default <code>acl</code> plugin keeps a small model in the server&#39;s store, close to Radius&#39;s organizations: built-in roles
+(<code>admin</code>, <code>member</code>) mirrored as groups (<code>@admins</code>, <code>@members</code>), groups the instance&#39;s admins define, and grants of
+actions on things to users or groups. Its server facet serves the data; its worker facet follows the parts a worker
+needs as a reference (live state, pushed on change) and contributes a <code>Policy</code> whose <code>allows</code> reads only that local
+state. The kit asks the app one question, &quot;may this user administer the app?&quot;, which p3 answers as
+<code>access.allows(user, &quot;administer&quot;, App())</code>.</p>
+<p>A third party replaces the policy by installing another plugin that serves <code>Access</code> (one provider per registry: the
+<code>acl</code> plugin is then switched off). Example: a policy that reads the user&#39;s Radius organization role and groups through
+their Radius account (<code>context_read</code>, <code>groups_read</code> in Radius&#39;s API), refreshed like credentials, so a Radius
+organization&#39;s admins administer the p3 instance.</p>
+</section>
+
+<section class="chapter" id="byo"><header class="opener"><div class="numeral">X</div><h2>Bring Your Own Org Model</h2><p class="lede">An integration that knows its service&#39;s users, orgs, groups and roles answers p3&#39;s access questions from them; p3 never copies them.</p></header>
+<p class="dropcap">Radius has its own model: an organization, members with a fixed membership role (owner, admin, member), groups (local
+ones, externally managed ones, and the built-in <code>@owners</code> and <code>@admins</code> that mirror the roles), and things attached to
+groups (budgets, model availability, policies). Google Workspace, Slack and Discord each have theirs. Mapping all of
+them into one generic p3 model of orgs and groups would be a parallel system that is always a little wrong; each
+service&#39;s integration already knows its service&#39;s model, and it is the only code that needs to.</p>
+<p>So p3 keeps only two things of its own, and asks the rest:</p>
+<ul>
+<li><strong>the anchor</strong>: a p3 user (an id, a name) and the identities linked to it, so everything else has something to
+point at;</li>
+<li><strong>the question</strong>: <code>Access.allows(user, action, thing)</code>, asked by p3&#39;s built-in parts and by plugins.</li>
+</ul>
+<p>Who answers the question is a plugin. p3&#39;s default <code>acl</code> plugin answers from its own small model (roles, groups,
+grants in the server&#39;s store) for instances that have no outside org. An instance run by a Radius organization installs
+the Radius integration&#39;s policy instead, which answers from Radius:</p>
+<pre><code><span class="tk-c">// ~/.p3/plugins/p3-radius/server.ts (third party), its policy part</span>
+host.<span class="tk-f">serve</span>(<span class="tk-t">RadiusOrg</span>, (_params, self) =&gt; {
+	<span class="tk-k">const</span> accounts = self.<span class="tk-f">get</span>(<span class="tk-t">AccountsStore</span>, {});
+	<span class="tk-c">// Each user's Radius role and groups, read through their Radius account, kept in memory and refreshed.</span>
+	<span class="tk-k">const</span> members = self.<span class="tk-f">state</span>(<span class="tk-t">Members</span>);                <span class="tk-c">// { [p3 user]: { role: "owner" | "admin" | "member"; groups: string[] } }</span>
+	self.<span class="tk-f">onLive</span>(<span class="tk-k">async</span> (ctx) =&gt; {
+		<span class="tk-k">for</span> (;;) {
+			<span class="tk-k">await</span> <span class="tk-f">refreshMembers</span>(members, accounts, ctx);     <span class="tk-c">// Radius API: context_read, members_list, groups_read</span>
+			<span class="tk-k">await</span> <span class="tk-f">sleep</span>(<span class="tk-n">5</span> * <span class="tk-n">60_000</span>, ctx);
+		}
+	});
+	self.<span class="tk-f">contribute</span>(<span class="tk-t">Access</span>, {
+		allows: (user, action, thing) =&gt; {
+			<span class="tk-k">const</span> member = members.value[user];
+			<span class="tk-k">if</span> (member === <span class="tk-k">undefined</span>) <span class="tk-k">return</span> <span class="tk-k">false</span>;                                   <span class="tk-c">// no Radius account: not in the org</span>
+			<span class="tk-k">if</span> (action === <span class="tk-s">"administer"</span>) <span class="tk-k">return</span> member.role === <span class="tk-s">"owner"</span> || member.role === <span class="tk-s">"admin"</span>;
+			<span class="tk-k">if</span> (action === <span class="tk-s">"use-model"</span>) <span class="tk-k">return</span> <span class="tk-f">modelAvailableTo</span>(member.groups, thing); <span class="tk-c">// the org's model availability</span>
+			<span class="tk-k">return</span> member.role !== <span class="tk-k">undefined</span>;                                         <span class="tk-c">// members may use p3</span>
+		},
+	});
+	<span class="tk-k">return</span> { members };
+});</code></pre>
+<p>And the same policy is followed on each worker (its worker facet holds the server&#39;s <code>RadiusOrg</code> view and contributes a
+local <code>Policy</code> reading it), so a check in a session is a local read there too.</p>
+<p>What stays p3&#39;s even then: the things only p3 has. Who a session is shared with, and what a guest may do in it, is the
+session&#39;s own data; the policy can consult it (<code>allows(user, &quot;send&quot;, Chat({ session }))</code> asks the session&#39;s sharing
+first), but Radius knows nothing about p3 sessions and should not.</p>
+<p><strong>Where each kind of rule lives:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Rule</th>
+<th>Owner</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>who is a p3 user, which sign-ins are theirs</td>
+<td>p3 (<code>Users</code>)</td>
+<td>Mario is <code>u1</code>, signs in with Radius or Google</td>
+</tr>
+<tr>
+<td>what a user is in an outside org (role, groups)</td>
+<td>the integration, read from the service</td>
+<td>Mario is an admin of the Earendil org</td>
+</tr>
+<tr>
+<td>what an outside resource allows (budgets, model availability, a Notion page&#39;s sharing)</td>
+<td>the service itself, enforced when the account is used</td>
+<td>Radius&#39;s gateway refuses a model the user&#39;s groups cannot use</td>
+</tr>
+<tr>
+<td>who may administer p3, use p3 at all</td>
+<td>the policy plugin (default <code>acl</code>, or the integration&#39;s)</td>
+<td>Radius org admins administer this p3</td>
+</tr>
+<tr>
+<td>who may see or send in a session</td>
+<td>the session&#39;s sharing data</td>
+<td>Mario shared session S1 with Ada as a reader</td>
+</tr>
+</tbody></table>
+<p><strong>Is each service&#39;s model used only by its integration?</strong> Mostly, and that is the point: Radius&#39;s groups are read by
+the Radius plugin, Slack&#39;s channels by the Slack plugin. Two cases cross that line, both through p3&#39;s contracts, never
+through another plugin&#39;s internals: the policy (an integration&#39;s org model answering p3&#39;s <code>Access</code> question for
+everyone), and accounts (a Radius account used by the MCP plugin or a model provider through <code>AccountCredentials</code>).
+Neither needs the other side to know the service&#39;s model.</p>
+</section>
+
+<section class="chapter epilogue" id="what-p3-provides-what-integrations-provide"><header class="opener"><div class="numeral">∴</div><h2>What p3 Provides, What Integrations Provide</h2><p class="lede">The split, and the decisions this needs.</p></header>
+<table>
+<thead>
+<tr>
+<th>p3 (built-in plugins and API)</th>
+<th>A third-party integration</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>Users</code>: p3 users, identities, <code>signIn</code></td>
+<td>its OAuth routes (<code>/x/start</code>, <code>/x/callback</code>)</td>
+</tr>
+<tr>
+<td><code>Accounts</code>: the table, links, grants, <code>credentials</code></td>
+<td>its <code>AccountProvider</code>: how to refresh and what credentials are</td>
+</tr>
+<tr>
+<td><code>MyAccounts</code> (pages, terminals), <code>AccountCredentials</code> (workers), <code>SessionAccounts</code></td>
+<td>what it does with credentials: a model provider, tools, an MCP server entry</td>
+</tr>
+<tr>
+<td><code>AccountProviders</code>, <code>SignInMethods</code>, <code>AccountKinds</code>, <code>Access</code> registries</td>
+<td>its sign-in button and settings row</td>
+</tr>
+<tr>
+<td>the sign-in page, Settings, Accounts, the session&#39;s resources panel</td>
+<td>its own configuration (a bot token, a workspace id)</td>
+</tr>
+<tr>
+<td>the default <code>acl</code> policy</td>
+<td>optionally a replacement policy</td>
+</tr>
+</tbody></table>
+<p>Decisions this needs, one at a time:</p>
+<ol>
+<li><strong>Users instead of an owner</strong>: principals <code>server | worker | user { id }</code>; the first user made at first start; the
+kit asks the app whether a user may administer (replaces <code>principal.owner</code>, built and committed as d4d6d9241).</li>
+<li><strong>The kit renders no pages</strong>: sign-in, pairing approval and invites are endpoints; p3&#39;s page bundle draws the pages.</li>
+<li><strong><code>Accounts</code> as the one owner of external accounts</strong>, with <code>data</code> opaque to p3 and only <code>AccountInfo</code> shown to
+clients.</li>
+<li><strong>Credentials to workers as followed state</strong>, refreshed by the server, never the refresh token.</li>
+<li><strong>Grants per session</strong>, stored on the server, mirrored into the session&#39;s <code>SessionAccounts</code>.</li>
+<li><strong>The <code>Access</code> registry</strong> with one provider: a default <code>acl</code> plugin for instances without an outside org, replaced
+by an integration&#39;s policy (e.g. Radius roles and groups) when the instance belongs to one. p3 never copies an
+outside org model; it keeps only users, identities and its own sessions&#39; sharing.</li>
+<li><strong>Trust</strong>: installed plugins run in the server&#39;s process and could read any integration&#39;s <code>data</code>; p3 does not
+pretend otherwise. Installing a plugin is trusting it; per-plugin isolation of <code>data</code> (each integration reads only
+its own provider&#39;s rows) is enforceable for well-behaved plugins through the API, not against hostile code.</li>
+</ol>
+</section>
+
+<section class="chapter appendix" id="reference"><header class="opener"><div class="numeral">A</div><h2>Reference</h2></header>
+<h3 id="contracts-and-registries-proposed">Contracts and registries (proposed)</h3>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Kind</th>
+<th>Host</th>
+<th>For</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>Users</code></td>
+<td>local</td>
+<td>server</td>
+<td>trusted callers: find, create, link users; <code>signIn</code></td>
+</tr>
+<tr>
+<td><code>Accounts</code></td>
+<td>local</td>
+<td>server</td>
+<td>trusted callers: link, unlink, <code>userOf</code>, <code>credentials</code>, grants</td>
+</tr>
+<tr>
+<td><code>MyAccounts</code></td>
+<td>remote, per user</td>
+<td>server</td>
+<td>pages and terminals: the user&#39;s accounts without data</td>
+</tr>
+<tr>
+<td><code>AccountCredentials { provider, account }</code></td>
+<td>remote, per session worker</td>
+<td>server</td>
+<td>workers: current credentials of a granted account</td>
+</tr>
+<tr>
+<td><code>SessionAccounts</code></td>
+<td>local</td>
+<td>session worker</td>
+<td>the session&#39;s accounts brought in</td>
+</tr>
+<tr>
+<td><code>AccountProviders</code></td>
+<td>registry</td>
+<td>server</td>
+<td>integrations: how to use their accounts</td>
+</tr>
+<tr>
+<td><code>SignInMethods</code>, <code>AccountKinds</code></td>
+<td>registries</td>
+<td>page</td>
+<td>integrations: buttons and settings rows</td>
+</tr>
+<tr>
+<td><code>Access</code></td>
+<td>registry</td>
+<td>every host</td>
+<td>the policy: <code>allows(user, action, thing)</code></td>
+</tr>
+</tbody></table>
+</section>
+
+<p class="colophon">p3 users, accounts and access · design proposal, first edition · 2026-11-07 · sources: Chord design §4, §6, §7, §17, §23; the app kit; pi-ai auth types; the Radius API&#39;s members, groups and context operations</p>
+</div></div>
+<script>(function activate(root) {
+	const replay = (f) => {
+		f.classList.remove("play");
+		void f.getBoundingClientRect();
+		f.classList.add("play");
+	};
+	const io = new IntersectionObserver(
+		(es) => {
+			for (const e of es)
+				if (e.isIntersecting) {
+					e.target.classList.add("play");
+					io.unobserve(e.target);
+				}
+		},
+		{ threshold: 0.3 },
+	);
+	root.querySelectorAll(".anim:not(.armed)").forEach((f) => {
+		f.classList.add("armed");
+		io.observe(f);
+		const b = f.querySelector(".replay");
+		if (b) b.onclick = () => replay(f);
+	});
+	root.querySelectorAll(".steps:not(.js)").forEach((s) => {
+		s.classList.add("js");
+		const ps = [...s.querySelectorAll(":scope>.step-panel")];
+		let i = 0;
+		const c = s.querySelector(".count"),
+			p = s.querySelector(".prev"),
+			n = s.querySelector(".next");
+		const show = () => {
+			ps.forEach((x, j) => x.classList.toggle("on", j === i));
+			c.textContent = `${i + 1} / ${ps.length}`;
+			p.disabled = i === 0;
+			n.disabled = i === ps.length - 1;
+			ps[i].querySelectorAll(".anim").forEach(replay);
+		};
+		p.onclick = () => {
+			i--;
+			show();
+		};
+		n.onclick = () => {
+			i++;
+			show();
+		};
+		show();
+	});
+})(document)</script>
+</body></html>

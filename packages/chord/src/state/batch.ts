@@ -4,6 +4,7 @@
 import type { TelemetryMetrics } from "@earendil-works/pi-telemetry";
 import type { Context } from "../context/index.ts";
 import { invalid } from "../data/internal.ts";
+import { type ChordMetrics, chordMetrics } from "../telemetry.ts";
 
 /** What a batch reports: a watch listener that threw, or a frame delivery that threw (a derive's value is no JSON). */
 export type BatchError =
@@ -21,7 +22,7 @@ export class Batch {
 	/** Reports a throwing watch listener's error (to the host's `onError`); what watches get as their `report`. */
 	readonly reportListener: (error: unknown) => void;
 	readonly #report: (error: BatchError) => void;
-	readonly #metrics: TelemetryMetrics | undefined;
+	readonly #metrics: ChordMetrics;
 	/** Set while adopting, delivering or computing a derive; one flag per host. */
 	#running = false;
 	/** Set while a pure compute runs (a derive's, a registry's `compose`): nothing may change a source then. */
@@ -40,7 +41,7 @@ export class Batch {
 	constructor(report: (error: BatchError) => void, metrics: TelemetryMetrics | undefined) {
 		this.#report = report;
 		this.reportListener = (error) => report({ kind: "listener_error", error });
-		this.#metrics = metrics;
+		this.#metrics = chordMetrics(metrics);
 	}
 
 	/** Whether a commit's adoption, a delivery or a derive compute runs now: a change made now lands in this batch. */
@@ -178,6 +179,6 @@ export class Batch {
 			| "chord.registry.adapts"
 			| "chord.contract.adapts",
 	): void {
-		this.#metrics?.counter(counter).add(1);
+		this.#metrics.counter(counter).add(1);
 	}
 }

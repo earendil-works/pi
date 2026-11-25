@@ -37,11 +37,13 @@ export type Sender = {
 const SHOWN_AT_MOST = 10_000;
 const RETRY_MIN = 500;
 const RETRY_MAX = 10_000;
+/** The wait before retry `attempt` (from 0): doubling from half a second, at most ten seconds. */
+export const retryDelay = (attempt: number): number => Math.min(RETRY_MAX, RETRY_MIN * 2 ** attempt);
 /**
  * Failed tries while connected after which a message goes back to the composer (about half a minute): an error that
  * keeps coming back is not the connection. A reconnect starts the count again.
  */
-const GIVE_UP = 6;
+export const GIVE_UP = 6;
 
 export class Outbox {
 	readonly #retryDelay: (attempt: number) => number;
@@ -57,7 +59,7 @@ export class Outbox {
 
 	/** Timings: the wait before retry `attempt` (from 0), and how long an accepted message stays shown at most. */
 	constructor(timing: { retryDelay?: (attempt: number) => number; shownAtMost?: number } = {}) {
-		this.#retryDelay = timing.retryDelay ?? ((attempt) => Math.min(RETRY_MAX, RETRY_MIN * 2 ** attempt));
+		this.#retryDelay = timing.retryDelay ?? retryDelay;
 		this.#shownAtMost = timing.shownAtMost ?? SHOWN_AT_MOST;
 	}
 

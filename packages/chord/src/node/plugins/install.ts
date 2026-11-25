@@ -25,8 +25,8 @@ export type InstallPluginOptions = InstallOptions & {
 
 /** Where `installPlugin` installs from: a git repository at a ref (a branch, tag or commit), or an npm package. */
 export type PluginSource =
-	| { readonly git: string; readonly ref: string }
-	| { readonly npm: string; readonly version: string };
+	| { readonly kind: "git"; readonly git: string; readonly ref: string }
+	| { readonly kind: "npm"; readonly npm: string; readonly version: string };
 
 /** The install's arguments: production dependencies only, no host peers, no scripts, no audit or funding notes. */
 const INSTALL_ARGS = ["install", "--omit=dev", "--legacy-peer-deps", "--ignore-scripts", "--no-audit", "--no-fund"];
@@ -69,7 +69,7 @@ export async function installPlugin(
 		// Hidden: discovery skips it while it is staged; in the root: the rename stays on one file system.
 		staging = await mkdtemp(join(root, STAGING));
 		const staged = join(staging, "package");
-		if ("git" in source) await clone(source.git, source.ref, staged, context);
+		if (source.kind === "git") await clone(source.git, source.ref, staged, context);
 		else await unpack(source.npm, source.version, staged, context, options);
 		await checkPackage(staged, made.target, root, context, options);
 		// The claimed directory is empty: renaming onto it moves the package into place in one step. Windows renames onto
@@ -109,7 +109,7 @@ function targetName(source: PluginSource): string {
 	const option = (value: string, what: string) => {
 		if (value === "" || value.startsWith("-")) throw new Error(`installPlugin: ${what} "${value}" is refused`);
 	};
-	if ("git" in source) {
+	if (source.kind === "git") {
 		option(source.git, "repository");
 		option(source.ref, "ref");
 		const name = basename(source.git.replace(/\/+$/, "")).replace(/\.git$/, "");
@@ -229,6 +229,9 @@ async function clone(url: string, ref: string, dir: string, context: Context): P
 	await run("git", ["-c", "advice.detachedHead=false", "checkout", "--quiet", "FETCH_HEAD", "--"], dir, context, what);
 }
 
+/** What `npm pack --json` prints: a list of the packed tarballs (npm 11 and earlier), or them by package name. */
+type PackOutput = { readonly filename: string }[] | Readonly<Record<string, { readonly filename: string } | undefined>>;
+
 /** npm package `name` at `version` packed (`npm pack`) and extracted into `dir` (made). */
 async function unpack(
 	name: string,
@@ -241,8 +244,10 @@ async function unpack(
 	const packed = await mkdtemp(join(dirname(dir), "pack-"));
 	const what = `${command} pack ${name}@${version}`;
 	const args = [...prefix, "pack", "--json", "--pack-destination", packed, "--", `${name}@${version}`];
-	// npm's own output: a list of the packed tarballs.
-	const [tarball] = JSON.parse(await run(command, args, packed, context, what)) as { readonly filename: string }[];
+	// npm's own output (a trust boundary: its shape is npm's): the packed tarballs, a list up to npm 11, an object keyed
+	// by package name from npm 12.
+	const output = JSON.parse(await run(command, args, packed, context, what)) as PackOutput;
+	const tarball = Array.isArray(output) ? output[0] : output[name];
 	if (tarball === undefined) throw new Error(`${what}: packed nothing`);
 	await mkdir(dir);
 	const file = join(packed, basename(tarball.filename));

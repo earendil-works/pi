@@ -2,14 +2,21 @@
 // A page's plugin scripts (slice 11 §2, decision "Slice 11's points" (P2)): scripts that register themselves through
 // `chordFacet`, loaded with `<script src>` (no `eval` under the page's CSP). The combined file's scripts ran before the
 // base bundle and queued (the page's bootstrap); later ones are fetched one each and resolve the fetch that asked for
-// them. The plugins' stylesheets follow the applied set.
+// them. The plugins' stylesheets are `styles.ts`'s.
 
-import type { FacetFunction, RegisteredScript, ScriptEntry, ScriptSet } from "../surfaces/index.ts";
+import type { FacetFunction, RegisteredScript, ScriptEntry } from "../surfaces/index.ts";
 import { REGISTER } from "../surfaces/index.ts";
 
-/** What the page's bootstrap left: the base bundle's hash and the scripts the combined file registered. */
+/**
+ * What the page's bootstrap left: the base bundle's hash, the stylesheet of each plugin's script in the combined file
+ * (by plugin), how each stylesheet's load ended so far (by `href`) and the listener recording it, and the scripts the
+ * combined file registered.
+ */
 export type PageBootstrap = {
 	readonly base: string;
+	readonly styles: Readonly<Record<string, string>>;
+	readonly links: Readonly<Record<string, "load" | "error">>;
+	readonly watching: (event: Event) => void;
 	readonly queued: readonly (readonly [string, string, FacetFunction])[];
 };
 
@@ -55,25 +62,5 @@ export class PageScripts {
 			element.src = entry.url;
 			document.head.append(element);
 		});
-	}
-}
-
-/**
- * Makes the page's plugin stylesheets those of `set`: a new one added, one no longer in it removed (the base bundle's
- * and the app's own stylesheets untouched).
- */
-export function syncStylesheets(set: ScriptSet, prefix: string): void {
-	const wanted = new Set(set.plugins.flatMap(({ css }) => (css === undefined ? [] : [css])));
-	const links = document.querySelectorAll<HTMLLinkElement>(`link[rel="stylesheet"][href^="${prefix}plugin/"]`);
-	for (const link of links) {
-		const href = link.getAttribute("href") ?? "";
-		if (wanted.has(href)) wanted.delete(href);
-		else link.remove();
-	}
-	for (const href of wanted) {
-		const link = document.createElement("link");
-		link.rel = "stylesheet";
-		link.href = href;
-		document.head.append(link);
 	}
 }

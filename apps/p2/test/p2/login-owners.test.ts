@@ -1,5 +1,5 @@
 // A provider login belongs to the owner that started it (as in Pi Mobile): only that owner sees its prompts, answers,
-// cancels or dismisses it; its leaving (closed sheet, disconnect) ends it; another owner's sheet does not.
+// cancels or dismisses it; its staying away (no page holding it, for a while) ends it; another owner's pages do not.
 
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -9,14 +9,17 @@ import { test } from "node:test";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxProvider } from "@earendil-works/pi-ai/providers/faux";
 import { BACKGROUND_CONTEXT, follow, whenLive } from "@p2/app/v1";
-import { ProviderLogin } from "../../plugins/login/contract.ts";
-import loginServer from "../../plugins/login/server.ts";
+import { LoginService, ProviderLogin } from "../../plugins/login/contract.ts";
+import { loginServerFacet } from "../../plugins/login/server.ts";
 import { ModelConfig, ModelResources } from "../../plugins/models/contract.ts";
 import { Resources } from "../../plugins/models/resources.ts";
-import { nativeFacet, poll, settled, testHost, until } from "./helpers.ts";
+import { nativeFacet, settled, testHost, until } from "./helpers.ts";
 
 const DEVICE = { kind: "owner", access: "local" } as const;
 const LAPTOP = { kind: "owner", access: "device", device: "laptop" } as const;
+/** How long a login here waits for its owner's pages to come back (the server's `AWAY_MS`, shortened). */
+const AWAY_MS = 300;
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 test("a provider login belongs to the owner that started it", async (t) => {
 	const directory = await mkdtemp(join(tmpdir(), "p2-login-owners-"));
@@ -49,7 +52,7 @@ test("a provider login belongs to the owner that started it", async (t) => {
 	});
 	await resources.start();
 	const fixture = await testHost({
-		facets: [nativeFacet(ModelResources, { resources }), loginServer],
+		facets: [nativeFacet(ModelResources, { resources }), loginServerFacet(AWAY_MS)],
 		stubs: [
 			[
 				ModelConfig,
@@ -94,7 +97,7 @@ test("a provider login belongs to the owner that started it", async (t) => {
 	await assert.rejects(laptop.cancel({ attemptId }, BACKGROUND_CONTEXT), /no longer active for this connection/);
 	// The other owner closing its sheet (its last hold) does not abandon the login.
 	laptop.release();
-	await new Promise((resolve) => setTimeout(resolve, 100));
+	await sleep(AWAY_MS * 2);
 	const still = await until(device.login, (state) => state?.attemptId === attemptId);
 	assert.equal(still?.status, "working");
 	await device.answer({ attemptId, promptId: prompted!.prompt!.id, value: "account" }, BACKGROUND_CONTEXT);
@@ -102,24 +105,29 @@ test("a provider login belongs to the owner that started it", async (t) => {
 	await device.dismiss({ attemptId }, BACKGROUND_CONTEXT);
 	await until(device.login, (state) => state === null);
 
-	// The laptop's own login ends when it disconnects (its connection's holds go), and the device may sign in again.
+	// The laptop's own login survives its connection dropping (a phone's background tab while its owner is in the
+	// provider's tab): the laptop's page that comes back in time finds the prompt still waiting.
 	laptop = laptopHost.hold(ProviderLogin, {}, BACKGROUND_CONTEXT);
 	const second = await laptop.start({ providerId: "faux", authType: "oauth" }, BACKGROUND_CONTEXT);
 	await until(laptop.login, (state) => state?.attemptId === second.attemptId && state.prompt !== null);
 	assert.equal(device.login.value, null, "the device sees nothing of the laptop's login");
 	await laptopHost.close(BACKGROUND_CONTEXT);
-	let again: { attemptId: string } | undefined;
-	await poll(
-		async () => {
-			again = await device
-				.start({ providerId: "faux", authType: "oauth" }, BACKGROUND_CONTEXT)
-				.catch(() => undefined);
-			return again !== undefined;
-		},
-		10_000,
-		"the laptop's login to end with its connection",
+	const returnedHost = fixture.client(LAPTOP);
+	const returned = returnedHost.hold(ProviderLogin, {}, BACKGROUND_CONTEXT);
+	await until(returned.login, (state) => state?.attemptId === second.attemptId && state.prompt !== null);
+	await sleep(AWAY_MS * 2);
+	assert.equal(returned.login.value?.status, "working", "a page back in time keeps the login");
+	// Away for longer, it ends and says why; the device may sign in again.
+	const service = await fixture.host.get(LoginService, {}, BACKGROUND_CONTEXT);
+	t.after(follow(service.login, () => {}));
+	await returnedHost.close(BACKGROUND_CONTEXT);
+	const ended = await until(
+		service.login,
+		(state) => state?.attemptId === second.attemptId && state.status !== "working",
 	);
-	const restarted = again!.attemptId;
+	assert.equal(ended?.status, "error");
+	assert.match(ended?.message ?? "", /no page of yours was connected/);
+	const restarted = (await device.start({ providerId: "faux", authType: "oauth" }, BACKGROUND_CONTEXT)).attemptId;
 	assert.notEqual(restarted, second.attemptId);
 	await device.cancel({ attemptId: restarted }, BACKGROUND_CONTEXT);
 	await until(device.login, (state) => state?.attemptId === restarted && state.status === "cancelled");

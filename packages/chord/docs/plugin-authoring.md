@@ -82,8 +82,117 @@ host.serve(Store, (_params, self) => {                 // a local type with empt
   (`invalid/args` without one).
 - One query per writing commit, at most `limit` rows (for 100 rows about 60 µs more per commit, 80 µs when watched;
   `benchmarks.md`): there may be dragons for a table written hundreds of times a second. Keep a document for those.
-- Never read a table in `self.open` to fill a window: that makes a native, and the object restarts at every reload of
-  its plugin instead of swapping in place. A live query is no native.
+- Never read a table in `self.open` to fill a window: a live query reruns by itself after every commit and at a
+  reload's restart; a read in `self.open` is a one-time snapshot.
+
+## Queries other objects read
+
+`self.query` is for your own windows. What other objects read, a store offers under names (slice 14):
+
+```ts
+// contract: the queries, each with the schema of its arguments (part of the fingerprint)
+sessions: queries(SessionRow, { visible: obj({ app: str(), condition: unknown() }), one: obj({ id: str() }) }),
+
+// the table's owner: one builder per listed query; `reads` are the columns the mapping gets
+const sessions = self.queries(rows, { map: rowOf, reads: ["id", "title", "state", "lastTouch"] }, {
+	visible: ({ app, condition }) => query(Rows).where((s) => eq(s.app, app))      // index by_app (app, lastTouch)
+		.whereNode(SessionColumns, condition).orderBy((s) => s.lastTouch, "desc"),
+	one: ({ id }) => query(Rows).where((s) => eq(s.id, id)),
+});
+
+// any object on the store's host
+const store = self.get(SessionsStore, {});
+self.liveQuery(store.sessions.visible, args, { first: 50 })     // Watchable<{ rows, more }>; `args` may be a watchable
+self.count(store.sessions.visible, args)                        // Watchable<number>: read the rule below first
+await store.sessions.visible.page(args, 100, ctx, { after })    // not live: for jobs and scripts
+```
+
+- **Name the index.** Each builder says, in a comment, which index its order and its condition's selective part run
+  on, and gets a plan test. An `inArray` on one column with an order on another walks the order's index: order by
+  the `inArray` column first.
+- **A write names what it changes.** `tx.update(table, key, { lastTouch })` tells every reader which columns
+  changed: the ones that depend on none of them skip for free, the others ask one keyed probe before they run. A
+  `put` tells them nothing. A touch is an `update`.
+- **`reads` is a projection.** A column the mapping does not list is absent (also one the query orders or matches
+  by), and its changes re-run nothing. `partnerReads` is the same for a joined set's row.
+- **A transaction of many rows runs the reads over its table.** A read asks at most eight probes per commit; past
+  that it runs. Imports and bulk writes cost one run per open read, not one probe per row.
+- **A reader's arguments come from what is there when the object activates:** params, references, registries,
+  writables. Reads open before natives and followed sources, so an object waiting on a read holds no native;
+  arguments computed from one fail the object `broken`, with this rule in the message.
+- **A count is exact and expensive.** Every run reads every matching row, nothing caps it, and every write to its
+  tables runs it again unless it is an `update` of no condition column. Count what a key or an index bounds (a
+  team's sessions), never behind a hot condition column. The number of loaded rows is free: `rows.length`, with
+  "+" while `more`.
+- **Another plugin's rows: a column set.** Its contract declares the columns you may use (`defineColumns`), its
+  table `exposes` them. Test `exists(Set, { setColumn: column }, (t) => condition)`, or join one row by its key:
+  `query(Mine).join(Set, (row) => ({ id: row.session }))`. Tables are matched only by equality to the set's key or
+  a declared index.
+- **The driver finds, the condition decides.** Drive a list from rows the person has (their teams, their shares,
+  what they created) and apply their whole condition to what the rows point at. An `exists` is never the selective
+  part of a list: it walks the table for a person who sees few of many rows.
+- **Conditions are built by server code** (`compile(Set, condition)`, `whereNode`, `existsNode`). Clients send
+  values (an app id, a team), never a condition.
+- **No substring filter.** The only text operator is `prefix`. Filtering as you type goes through a search
+  plugin's method, its hits read with a named query; never read everything and filter in a derive.
+- **A screen's list is `self.list`.** `self.list("sessions", [[store.sessions.visible, args]], { first: 50 })`
+  returns `{ value, more }`: `value` (`{ rows, moreAfter }`) is the state member, `more` the method's body. One
+  remote object per screen, with the screen's own id in its params (a fresh id is a fresh list). Never chain
+  `liveQuery` calls or page methods to build a list, and never read "the first n" with a growing n: a row that moves
+  would leave a gap. `moreAfter` may be stale after a delete: a `more` that loads nothing turns it false.
+- **A source of access fails closed.** A read that decides what someone may see throws when it has `more` rows
+  than it read.
+
+## Who may do what: admission
+
+A factory is synchronous: it cannot read rows about its caller before it builds the caller's object. A remote type
+whose access depends on data declares an **admission** (slice 14): the contract names the value, `admit` reads the
+data and decides, and the factory is handed the value.
+
+```ts
+// contract.ts
+export const Transcript = remote("notes.transcript", { version: 1, params: { session: str() },
+	hostAddress: ({ session }) => Session({ id: session }),
+	admission: obj({ mode: oneOf("read", "write") }),
+	variants: { viewer: { … }, participant: { … } } });
+// worker.ts: `PersonHere` is a local object on the worker that follows the server's answer for this person (it
+// holds a remote object of the server, in a contract the app's API owns)
+host.serve(Transcript, (params, principal, admitted, self) =>
+	admitted.mode === "read" ? { variant: "viewer", members: … } : { variant: "participant", members: … },
+	{ admit: ({ session }, principal, self) =>
+		self.derive([self.get(PersonHere, { session, person: principal.id }).mode], ([mode]) =>
+			mode === "none" ? deny("no access") : allow({ mode })) });
+```
+
+- `admit` declares only `self.get` (and `at(key)`), `self.registry`, `self.derive` and `self.liveQuery`, and returns
+  a watchable of `allow(value)` or `deny(reason)`. It runs first in every attempt; the reason is shown to the person.
+- **The value is small and changes rarely** (a mode, a role). It selects the variant and the members. Another value
+  rebuilds the person's object; an equal one changes nothing. What a list shows is not in it: a list's condition is
+  an argument of its named query.
+- A denial shows `failed { denied }` and keeps no value: reads throw `forbidden`, running calls reject
+  `forbidden/revoked`. What your UI already rendered is yours to hide: watch `ref.state`. An object that had failed
+  shows the denial too; when the person is allowed again it is retried.
+- **In a component, read the variant with `useVariant(ref, "participant")`** (a terminal: `scope.variant(ref,
+  "participant")`), not with `ref.variant === "participant"`: it returns the reference narrowed to that variant
+  while it is live in it and `undefined` otherwise, and re-renders when the person's value changes. The variant of
+  a held reference is `undefined` before it binds, changes while your component is mounted, and stays the last one
+  while the reference loads, so the comparison alone keeps a participant's controls up for a viewer.
+- **No `self.job` in an admitted type.** Work for a person lives in a `local` store, carries the person in its
+  arguments, and asks the person's access again on every run.
+- **The objects an admission reads `accept` their previous version.** A reader whose version is refused is sealed
+  until its own code follows (a rollout's gap). While such an object only restarts, the last decision is kept.
+- The principal is identity only. Plugins never branch on principal kinds beyond "a person"; they read the value.
+- A route's `admit` (the app's base code, `createWorkers`' `admit`) decides who reaches a worker at all; it reads
+  only contracts the app's API owns.
+
+## Reports from a worker
+
+A server object a worker reports to needs no check against a worker that is gone. When a worker exits, the app's
+workers component closes its link first (a report not handled yet is dropped, a running one is aborted: its
+transaction under `ctx` does not commit), waits for the commits already queued, and only then shows the exit in its
+state and starts a successor. Write the report inside the call, under its `ctx`. For data you keep across runs of a
+worker (the last report of each), store `ctx.incarnation` with it and compare with the incarnation in the workers'
+state (the app's API shows it): another incarnation is another run.
 
 ## What a plugin may import
 
@@ -158,6 +267,14 @@ The app's own contracts for third parties come with its API (`@acme/app/v3` expo
 changes shape, bump its `version`; the provider serves older consumers through `accepts`, else they wait "contract
 mismatch" (visible, never wrong data).
 
+## Reloads
+
+A reload of the plugin restarts each of its live objects. The calls running at that moment, and every call they make
+with their `ctx`, finish on the old code; new calls wait for the new code; documents and tables stay. Two rules keep
+that working: a root opened inside a method takes the method's `ctx` (`host.root(fn, withoutAbortSignal(ctx))`), so its
+calls count as the method's; and work longer than a few seconds is a job, since a call still running at
+`reloadDrainTimeout` (5 s) is cut `released`.
+
 ## How the app builds it
 
 The server builds each facet with one esbuild call from source: TypeScript and TSX (JSX with the automatic React
@@ -216,9 +333,9 @@ export const messages = defineMessages("bob.stats", {
 
 ## Installing
 
-- `plugins.installPlugin({ git: "https://github.com/bob/stats.git", ref: "v1.2.0" }, root, ctx)`: a shallow clone of
+- `plugins.installPlugin({ kind: "git", git: "https://github.com/bob/stats.git", ref: "v1.2.0" }, root, ctx)`: a shallow clone of
   the branch, tag or commit into `<root>/stats`; its plugins are the folders its `chord.plugins` lists, else by
-  convention. `{ npm: "@bob/stats", version: "1.2.0" }`: the package extracted into `<root>/@bob/stats`. Then their
+  convention. `{ kind: "npm", npm: "@bob/stats", version: "1.2.0" }`: the package extracted into `<root>/@bob/stats`. Then their
   dependencies are installed (`npm install --omit=dev --ignore-scripts`; no lifecycle scripts run). Refused: a plugin
   name the app has already, an existing directory, a ref or name starting with `-`.
 - Removing is deleting the directory. To update, install another ref (a new directory) or delete and install again.
@@ -261,7 +378,11 @@ of plugins it has no files of, it declares again, as `Notes` above.
 3. Imports: the app's API at one version, own files, same-root contract files by relative path, other repositories'
    by package name pinned in `dependencies`.
 4. Contracts prefixed with the plugin's name; a version bump for every change of shape.
-5. Live rows of a table through `self.query(table, q, limit)`, never a read in `self.open`.
+5. Live rows of a table through `self.query(table, q, limit)` (your own windows) or a named query read with
+   `self.liveQuery` (other objects), never a read in `self.open`; an index named for every named query; touches as
+   `update`.
+5a. Access that depends on data in an admission (`admission` in the contract, `admit` in `serve`), never in every
+   method; no jobs in an admitted type; admission sources `accept` their previous version.
 6. Files of one kind named `*.<kind>.ts(x)`.
 7. A test with `testPlugin` and stubs for every name `t.unserved()` lists.
 8. Texts people read in `messages.ts` (`defineMessages`), its catalogs contributed from each facet that renders, state

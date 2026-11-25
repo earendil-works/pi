@@ -1,4 +1,5 @@
 import { getEventListeners } from "node:events";
+import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context, withAbortSignal, withCancel } from "../../src/context/index.ts";
 import { hostKind, int, local, method, remote, str } from "../../src/contracts/index.ts";
@@ -204,5 +205,45 @@ describe("host.root", () => {
 		})();
 		await expectCollected(...refs);
 		await host.close(context);
+	});
+});
+
+describe("host.root's trace", () => {
+	it("runs fn in a new root span of the host's adapter, with its host and attributes; a throw fails it", async () => {
+		const telemetry = new InMemoryTelemetryContext();
+		const host = createHost({ telemetry, onError: () => {} });
+		await host.load([], context);
+		const seen = await host.root(async (ctx) => ctx.telemetry, context, {
+			trace: { name: "page.add", attributes: { n: 1 } },
+		});
+		const error = await host
+			.root(
+				async () => {
+					throw new Error("refused");
+				},
+				context,
+				{ trace: { name: "page.add" } },
+			)
+			.catch((thrown: unknown) => thrown);
+		expect(error).toBeInstanceOf(Error);
+		const spans = telemetry.getSpans();
+		expect(spans.map(({ name, parentId, attributes, status }) => [name, parentId, attributes, status])).toEqual([
+			["page.add", null, { "chord.host": "client", n: 1 }, { status: "ok" }],
+			[
+				"page.add",
+				null,
+				{ "chord.host": "client" },
+				{ status: "error", error: { name: "trace_failed", message: "refused" } },
+			],
+		]);
+		expect(telemetry.inject(seen)).toEqual(spans[0]!.context);
+	});
+
+	it("starts nothing without an adapter that records", async () => {
+		const host = createHost({ onError: () => {} });
+		await host.load([], context);
+		expect(
+			await host.root(async (ctx) => ctx.telemetry === context.telemetry, context, { trace: { name: "x" } }),
+		).toBe(true);
 	});
 });

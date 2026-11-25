@@ -10,13 +10,16 @@ import {
 	configure,
 	defineDoc,
 	defineExtension,
-	defineTool,
+	type Extension,
+	ROOT_CONVERSATION_ID,
 } from "@earendil-works/pi-durable";
 import { arr, compile, obj, opt, str, unknown, type Validator } from "@earendil-works/pi-schema";
 import { formats } from "@earendil-works/pi-schema/formats";
 import type { JsonValue } from "@p2/app/v1";
-import { record } from "@p2/app/v1";
-import { resolveChoice, Subagents } from "../subagents/contract.worker.ts";
+import { record, SUBAGENT_TASK_ENTRY } from "@p2/app/v1";
+import { defineP2Tool, isTopLevel, type P2Tool } from "@p2/app/v1/worker";
+import { InheritedLocation, resolveChoice, Subagents } from "../subagents/contract.worker.ts";
+import { ownLocation } from "../subagents/tools.ts";
 
 export const AGENT_TOOL = "agent";
 const ATTEMPTS = 3;
@@ -32,8 +35,9 @@ const AgentRun = defineDoc<{ conversationId?: ConversationId }>({
 	checkpointWhen: () => true,
 });
 
-export function createAgentExtension(models: Models) {
-	const tool = defineTool({
+/** `access` gives the worker's tools by name, with what they declare (`P2Tool`): which ones the agent may get. */
+export function createAgentExtension(models: Models, access: () => ReadonlyMap<string, P2Tool>): Extension<P2Tool> {
+	const tool = defineP2Tool({
 		name: AGENT_TOOL,
 		description:
 			"Run a one-shot subagent in your cwd and resolve to its final answer, parsed as JSON and validated against `schema` (a JSON Schema object). Rejects when the subagent fails, or when its answer still does not validate after 3 attempts. Its answer is not reported to you, only what the script returns. Run many at once with `Promise.all`.",
@@ -48,7 +52,8 @@ export function createAgentExtension(models: Models) {
 				thinkingLevel: opt(str({ description: "off|minimal|low|medium|high|xhigh|max; default: the caller's." })),
 				tools: opt(
 					arr(str(), {
-						description: "Subset of read, write, edit, bash, send_file, artifact; default: all.",
+						description:
+							"Names of tools of yours it gets (default: all you can give); not those that work only in your conversation.",
 					}),
 				),
 			},
@@ -70,34 +75,44 @@ export function createAgentExtension(models: Models) {
 			}
 			// A rerun reattaches to the conversation it created, even if its model has since left the configuration.
 			const existing = (await api.snapshot(AgentRun, api.taskId, context))?.conversationId;
-			const choice = existing === undefined ? await resolveChoice(models, api, args, undefined, context) : undefined;
+			const choice =
+				existing === undefined
+					? await resolveChoice(models, api, access(), args, undefined, "one-shot", context)
+					: undefined;
 			if (typeof choice === "string") return fail(choice);
 			// Owned by this call: aborting the call aborts the agent's work. Listed in the same commit, by the call ID the
 			// script's tool card shows it under, so the user can open its transcript.
+			// The main conversation's and its `/tree` branches' one-shot agents are listed in the session's registry.
+			const listedOn = (await isTopLevel(api, api.conversationId, context))
+				? ROOT_CONVERSATION_ID
+				: api.conversationId;
+			// The agent works where its caller does: a caller with its own location (a subagent's) passes it on.
+			const inherited = await ownLocation(api, api.conversationId, context);
 			const conversationId = await api.commit(async (tx) => {
 				const run = await tx.doc(AgentRun, api.taskId);
 				if (run.conversationId === undefined) {
 					if (!choice) throw new Error("The agent's conversation record disappeared");
 					const child = await tx.createConversation({ ownership: { kind: "task", taskId: api.taskId } });
-					// One-shot agents read their history (search and read) but never hand off.
-					const installed = api.registry.tools().map((entry) => entry.tool);
-					const history = ["history_search", "history_read"].flatMap((name) =>
-						installed.filter((tool) => tool.name === name).slice(0, 1),
-					);
 					await configure(tx, child.id, {
-						...choice,
-						tools: [...choice.tools, ...history],
+						model: choice.model,
+						thinkingLevel: choice.thinkingLevel,
+						tools: choice.tools,
+						modelTools: { add: choice.loaded },
 						instructions: `You are a one-shot subagent working for a script. Do the requested work. Your final answer is parsed by the script: it must be only a JSON value matching this JSON Schema, without prose or code fences:\n${JSON.stringify(args.schema)}`,
 					});
+					if (inherited) {
+						(await tx.doc(InheritedLocation, child.id)).location = inherited;
+						await configure(tx, child.id, { cwd: inherited.cwd });
+					}
 					run.conversationId = child.id;
-					const registry = await tx.doc(Subagents, api.conversationId);
+					const registry = await tx.doc(Subagents, listedOn);
 					registry.oneShots ??= {};
 					registry.oneShots[api.callId] = {
 						conversationId: child.id,
 						label: (args.label ?? args.prompt).replace(/\s+/g, " ").trim().slice(0, 80),
 						model: `${choice.model.provider}/${choice.model.modelId}`,
 						thinkingLevel: choice.thinkingLevel,
-						tools: choice.tools.map((each) => each.name),
+						tools: choice.chosen,
 					};
 				}
 				return run.conversationId;
@@ -108,7 +123,13 @@ export function createAgentExtension(models: Models) {
 			let problem = "";
 			for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
 				const submission = await child.submit(
-					{ type: "input", content: message, whenBusy: "followUp", requestId: `agent:${attempt}` },
+					{
+						type: "input",
+						content: message,
+						entry: { kind: SUBAGENT_TASK_ENTRY, data: {} },
+						whenBusy: "followUp",
+						requestId: `agent:${attempt}`,
+					},
 					context,
 				);
 				const settled = await submission.wait(context);
@@ -145,7 +166,7 @@ export function createAgentExtension(models: Models) {
 			return fail(`The agent's answer was not usable after ${ATTEMPTS} attempts: ${problem}.`);
 		},
 	});
-	return defineExtension({
+	return defineExtension<P2Tool>({
 		name: "p2-agent",
 		tools: [tool],
 	});

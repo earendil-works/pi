@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingHttpHeaders } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,11 +8,16 @@ import type { Duplex } from "node:stream";
 import { type TestContext, test } from "node:test";
 import { BACKGROUND_CONTEXT, statusOf, whenLive } from "@p2/app/v1";
 import { WebSocket, WebSocketServer } from "ws";
+import { Chat } from "../../plugins/chat/contract.ts";
 import { Devices } from "../../plugins/devices/contract.ts";
 import { ProviderLogin } from "../../plugins/login/contract.ts";
-import { ForwardsNative } from "../../plugins/ports/contract.ts";
-import { RadiusBrain, type RadiusStatus, readRadiusConfig, writeRadiusConfig } from "../../plugins/radius/brain.ts";
-import { RadiusConnections } from "../../plugins/radius/contract.ts";
+import {
+	currentShellPage,
+	RadiusBrain,
+	type RadiusStatus,
+	readRadiusConfig,
+	writeRadiusConfig,
+} from "../../plugins/radius/brain.ts";
 import {
 	encodeRelayUser,
 	RELAY_ORIGIN_HEADER,
@@ -24,230 +29,12 @@ import {
 import { radiusStatusText } from "../../plugins/radius/server.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
-import { startServer } from "../../src/hosts/server.ts";
+import { Terminals } from "../../plugins/terminals/contract.ts";
+import { radiusTransport } from "../../src/hosts/tui-radius.ts";
 import { Access } from "../../src/runtime/access.ts";
-import { defineFacet } from "../../src/runtime/chord.ts";
-import { isOwner } from "../../src/runtime/principals.ts";
-import { Routes } from "../../src/runtime/server.ts";
-import { clientHost, expectChord, holdIn, http, poll, until } from "./helpers.ts";
-
-const OWNER = { kind: "user", id: "usr_1", organization_id: "org_1" };
-const PUBLIC_ORIGIN = "https://0123456789abcdef0123456789abcdef.rdtun.com";
-type Frame = { id: string; type: number; payload: Buffer };
-
-/**
- * Local stand-in for the Radius context endpoint and relay v4, or v5 with `channels`: then the brain's channel sockets
- * (`/v1/servers/<id>/channels/<connection>`) are accepted unless `rejectChannels`, and `channel(id)` resolves with the
- * relay's end of one. Never contacts Radius.
- */
-async function fakeRadius(options: { channels?: boolean; rejectChannels?: boolean } = {}) {
-	const version = options.channels ? "pi-server.host.v5" : "pi-server.host.v4";
-	const sockets = new WebSocketServer({
-		noServer: true,
-		handleProtocols: (protocols) =>
-			protocols.has(version) ? version : protocols.has("pi-server.channel.v1") ? "pi-server.channel.v1" : false,
-	});
-	const channels = new Map<string, WebSocket>();
-	const channelWaiters = new Map<string, (socket: WebSocket) => void>();
-	const shares: string[][] = [];
-	const server = createServer((request, response) => {
-		const shared = /^\/v1\/servers\/[^/]+\/shares$/.test(request.url ?? "") && request.method === "PUT";
-		if (shared) {
-			let body = "";
-			request.on("data", (chunk: Buffer) => {
-				body += chunk.toString("utf8");
-			});
-			request.on("end", () => {
-				shares.push((JSON.parse(body) as { emails: string[] }).emails);
-				response.writeHead(204);
-				response.end();
-			});
-			return;
-		}
-		if (request.url !== "/v1/context") {
-			response.writeHead(404);
-			response.end();
-			return;
-		}
-		response.writeHead(200, { "content-type": "application/json" });
-		response.end(
-			JSON.stringify({
-				actor: { principal_id: OWNER.id, principal_kind: OWNER.kind },
-				organization: { id: OWNER.organization_id },
-			}),
-		);
-	});
-	let host: WebSocket | undefined;
-	const controls: Array<Record<string, unknown>> = [];
-	const frames: Frame[] = [];
-	const hostReady = new Promise<WebSocket>((resolve) =>
-		server.on("upgrade", (request, socket, head) => {
-			const channelId = /^\/v1\/servers\/[^/]+\/channels\/([^/]+)$/.exec(request.url ?? "")?.[1];
-			if (channelId !== undefined) {
-				assert.equal(request.headers.authorization, "Bearer fixture-token");
-				if (options.rejectChannels) {
-					socket.end("HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\n\r\n");
-					return;
-				}
-				sockets.handleUpgrade(request, socket, head, (connection) => {
-					channels.set(channelId, connection);
-					channelWaiters.get(channelId)?.(connection);
-				});
-				return;
-			}
-			sockets.handleUpgrade(request, socket, head, (connection) => {
-				host = connection;
-				connection.on("message", (data: Buffer, binary) => {
-					if (!binary) controls.push(JSON.parse(data.toString("utf8")) as Record<string, unknown>);
-					else {
-						const hex = data.subarray(2, 18).toString("hex");
-						frames.push({
-							id: `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`,
-							type: data[1] ?? 0,
-							payload: data.subarray(18),
-						});
-					}
-				});
-				resolve(connection);
-			});
-		}),
-	);
-	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-	const address = server.address();
-	assert(address && typeof address !== "string");
-	const sendData = (id: string, payload: Buffer, type = 1) => {
-		const frame = Buffer.alloc(18 + payload.length);
-		frame[0] = 2;
-		frame[1] = type;
-		Buffer.from(id.replaceAll("-", ""), "hex").copy(frame, 2);
-		payload.copy(frame, 18);
-		host?.send(frame);
-	};
-	return {
-		gateway: `http://127.0.0.1:${address.port}`,
-		/** Every set of emails the brain reported, in order. */
-		shares,
-		hostReady,
-		controls,
-		frames,
-		sendData,
-		send: (message: object) => host?.send(JSON.stringify(message)),
-		channel: (id: string) => channels.get(id) ?? new Promise<WebSocket>((resolve) => channelWaiters.set(id, resolve)),
-		reading: (on: boolean) => {
-			if (on) host?.resume();
-			else host?.pause();
-		},
-		response: async (id: string) => {
-			await poll(() => controls.some((message) => message.type === "response" && message.connection_id === id));
-			return controls.find((message) => message.type === "response" && message.connection_id === id)!;
-		},
-		body: async (id: string) => {
-			await poll(() => frames.some((frame) => frame.id === id && frame.type === 3));
-			return Buffer.concat(frames.filter((frame) => frame.id === id).map((frame) => frame.payload));
-		},
-		close: async () => {
-			for (const client of sockets.clients) client.terminate();
-			await new Promise<void>((resolve) => server.close(() => resolve()));
-		},
-	};
-}
-
-async function fixture(t: TestContext, content = Buffer.from("body"), relay: Parameters<typeof fakeRadius>[0] = {}) {
-	const directory = await mkdtemp(join(tmpdir(), "p2-radius-"));
-	const radius = await fakeRadius(relay);
-	t.after(async () => {
-		await radius.close();
-		await rm(directory, { recursive: true, force: true });
-	});
-	await writeRadiusConfig(directory, {
-		gateway: radius.gateway,
-		serverId: randomUUID(),
-		credential: {
-			type: "oauth",
-			access: "fixture-token",
-			refresh: "fixture-refresh",
-			expires: Date.now() + 3_600_000,
-		},
-	});
-	// A probe plugin's routes: who the server sees, a large body, an echo.
-	const probe = defineFacet((_host, self) =>
-		self.contribute(Routes, {
-			"GET /probe": (_request, response, access) => {
-				response.writeHead(isOwner(access.principal) ? 200 : 403);
-				response.end(JSON.stringify(access));
-			},
-			"GET /body": (_request, response) => {
-				response.writeHead(200);
-				response.end(content);
-			},
-			"POST /echo": async (request, response, access) => {
-				if (!isOwner(access.principal)) {
-					response.writeHead(403);
-					response.end();
-					return;
-				}
-				const chunks: Buffer[] = [];
-				for await (const chunk of request) chunks.push(Buffer.from(chunk));
-				response.writeHead(200);
-				response.end(Buffer.concat(chunks));
-			},
-		}),
-	);
-	const server = await startServer({
-		dataDir: directory,
-		port: 0,
-		fake: true,
-		web: false,
-		facets: [{ name: "radius-probe", facet: probe }],
-	});
-	t.after(() => server.close());
-	await radius.hostReady;
-	// The natives the radius and ports plugins contribute once open (their objects live from the load).
-	const natives = await Promise.all([
-		server.host.registry(RadiusConnections, BACKGROUND_CONTEXT),
-		server.host.registry(ForwardsNative, BACKGROUND_CONTEXT),
-	]);
-	const native = { relay: natives[0].value!.connection.relay, forwards: natives[1].value!.forwards };
-	const open = (
-		path: string,
-		options: {
-			method?: string;
-			kind?: "http" | "ws" | "stream";
-			forward?: string;
-			anonymous?: boolean;
-			principal?: typeof OWNER & { email?: string };
-			window?: number;
-			headers?: [string, string][];
-		} = {},
-	) => {
-		const id = randomUUID();
-		const origin = options.forward
-			? `https://fwd--0123456789abcdef0123456789abcdef--${options.forward}.rdtun.com`
-			: PUBLIC_ORIGIN;
-		radius.send({
-			version: 2,
-			type: "connection_open",
-			connection_id: id,
-			kind: options.kind ?? "http",
-			...(options.anonymous ? {} : { principal: options.principal ?? OWNER }),
-			public_origin: origin,
-			request: {
-				method: options.method ?? "GET",
-				path,
-				headers: options.headers ?? [
-					["origin", origin],
-					["x-radius-shell-origin", "https://radius.earendil.com"],
-				],
-			},
-			...(options.forward ? { forward: options.forward } : {}),
-			window: options.window ?? 64 * 1024,
-		});
-		if ((!options.kind || options.kind === "http") && options.method !== "POST")
-			radius.sendData(id, Buffer.alloc(0), 3);
-		return id;
-	};
-	return { directory, server, radius, open, ...native };
-}
+import { ServerNameSettings } from "../../src/runtime/server-name.ts";
+import { clientHost, expectChord, holdIn, http, localOwner, poll, until } from "./helpers.ts";
+import { radiusFixture as fixture, OWNER, PUBLIC_ORIGIN } from "./radius-fixture.ts";
 
 test(
 	"Radius plugin admits its authenticated remote owner including provider login, without local cookies",
@@ -323,9 +110,126 @@ test(
 			(await http(f.server.port, "/probe", { headers: { ...marked, [RELAY_SECRET_HEADER]: "forged" } })).status,
 			403,
 		);
-		assert.equal((await http(f.server.port, "/probe")).status, 200);
+		// Radius needs no local credential, and loopback alone is nobody.
+		assert.equal((await http(f.server.port, "/probe")).status, 403);
+		// A plugin's own WebSocket upgrade (a terminal's byte channel) admits the relayed owner too.
+		const session = await (await holdIn(browser, Sessions, {}, "owner")).create(
+			{ cwd: f.directory },
+			BACKGROUND_CONTEXT,
+		);
+		const view = browser.hold(Terminals, { session: session.id, view: randomUUID() }, BACKGROUND_CONTEXT);
+		const { token } = await view.channel({}, BACKGROUND_CONTEXT);
+		const channel = (headers: Record<string, string>) =>
+			new Promise<number>((resolve) => {
+				const socket = new WebSocket(`ws://127.0.0.1:${f.server.port}/terminal?${new URLSearchParams({ token })}`, {
+					headers,
+				});
+				socket.on("open", () => {
+					socket.terminate();
+					resolve(101);
+				});
+				socket.on("unexpected-response", (_request, response) => {
+					response.resume();
+					resolve(response.statusCode ?? 0);
+				});
+				socket.on("error", () => {});
+			});
+		assert.equal(await channel({}), 403, "not without Radius or a local credential");
+		assert.equal(await channel(marked), 101);
+		view.release();
 	},
 );
+
+test("Radius-relayed artifact previews may sit below the Radius shell's frame", { timeout: 30_000 }, async (t) => {
+	const f = await fixture(t);
+	const owner = clientHost(await localOwner(f.server));
+	t.after(() => owner.close(BACKGROUND_CONTEXT));
+	const session = (await (await holdIn(owner, Sessions, {}, "owner")).create({ cwd: f.directory }, BACKGROUND_CONTEXT))
+		.id;
+	const chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
+	await chat.send({ text: "artifact", requestId: "artifact" }, BACKGROUND_CONTEXT);
+	await until(chat.view, (view) =>
+		(view?.entries ?? []).some((entry) =>
+			(entry.model ?? []).some((message) => message.role === "toolResult" && message.toolName === "codemode"),
+		),
+	);
+	chat.release();
+	// The relayed app is framed by the shell, and `frame-ancestors` checks every ancestor: `'self'` alone showed
+	// Chrome's blocked-frame page instead of every inline preview.
+	const id = f.open(`/artifact-frame?${new URLSearchParams({ session, id: "demo", version: "1" })}`);
+	const response = await f.radius.response(id);
+	assert.equal(response.status, 200);
+	const csp = (response.headers as [string, string][]).find(
+		([key]) => key.toLowerCase() === "content-security-policy",
+	);
+	assert.match(String(csp?.[1]), /; frame-ancestors 'self' https:\/\/radius\.earendil\.com$/);
+});
+
+test(
+	"a relayed session file opens in a tab of its own, but no other site's page reads it",
+	{ timeout: 30_000 },
+	async (t) => {
+		const f = await fixture(t);
+		const owner = clientHost(await localOwner(f.server));
+		t.after(() => owner.close(BACKGROUND_CONTEXT));
+		const session = (
+			await (await holdIn(owner, Sessions, {}, "owner")).create({ cwd: f.directory }, BACKGROUND_CONTEXT)
+		).id;
+		await writeFile(join(f.directory, "note.txt"), "hello");
+		const path = `/workspace-file?${new URLSearchParams({ session, conversation: "1", path: "note.txt" })}`;
+		const status = async (headers: [string, string][]) =>
+			(
+				await f.radius.response(
+					f.open(path, { headers: [["x-radius-shell-origin", "https://radius.earendil.com"], ...headers] }),
+				)
+			).status;
+		// Opened in a new tab without the tab's Radius cookie, the request passes Radius sign-in and comes back cross-site.
+		const tab: [string, string][] = [
+			["sec-fetch-site", "cross-site"],
+			["sec-fetch-mode", "navigate"],
+		];
+		assert.equal(await status([...tab, ["sec-fetch-dest", "document"]]), 200);
+		assert.equal(await status([...tab, ["sec-fetch-dest", "iframe"]]), 403, "another site's frame");
+		assert.equal(
+			await status([
+				["sec-fetch-site", "cross-site"],
+				["sec-fetch-mode", "no-cors"],
+				["sec-fetch-dest", "image"],
+			]),
+			403,
+			"another site's subresource",
+		);
+		assert.equal(
+			await status([
+				["sec-fetch-site", "same-origin"],
+				["sec-fetch-mode", "no-cors"],
+				["sec-fetch-dest", "image"],
+			]),
+			200,
+		);
+	},
+);
+
+test("the relayed app page names the Radius shell that frames it", { timeout: 60_000 }, async (t) => {
+	const f = await fixture(t, undefined, {}, { web: true });
+	const id = f.open("/s/0b0e6f1c-1d2e-4f00-9a7a-3c1e2f1a0b0c");
+	assert.equal((await f.radius.response(id)).status, 200);
+	const html = (await f.radius.body(id)).toString();
+	// The shell bridge (src/web/shell-bridge.ts) posts only to this origin.
+	assert.match(html, /<meta name="p2-shell-origin" content="https:\/\/radius\.earendil\.com" \/>/);
+});
+
+test("a shell page saved before the shell's URLs dropped /brains is read in the current form", () => {
+	const server = randomUUID();
+	assert.equal(
+		currentShellPage(`https://radius.earendil.com/pi/brains/org_1/${server}`),
+		`https://radius.earendil.com/pi/org_1/${server}`,
+	);
+	assert.equal(
+		currentShellPage(`https://radius.earendil.com/pi/org_1/${server}`),
+		`https://radius.earendil.com/pi/org_1/${server}`,
+	);
+});
 
 test("Radius admits people sessions are shared with by email, across organizations", { timeout: 30_000 }, async (t) => {
 	const f = await fixture(t);
@@ -333,7 +237,7 @@ test("Radius admits people sessions are shared with by email, across organizatio
 	assert.equal((await f.radius.response(f.open("/probe"))).status, 200);
 	const config = await readRadiusConfig(f.directory);
 	assert(config);
-	const owner = clientHost(f.server.port);
+	const owner = clientHost(await localOwner(f.server));
 	t.after(() => owner.close(BACKGROUND_CONTEXT));
 	const sessions = await holdIn(owner, Sessions, {}, "owner");
 	const first = await sessions.create({ cwd: f.directory, title: "First" }, BACKGROUND_CONTEXT);
@@ -351,7 +255,7 @@ test("Radius admits people sessions are shared with by email, across organizatio
 	);
 	assert.equal(
 		await until(sharing.peopleUrl, Boolean),
-		`https://radius.earendil.com/pi/brains/org_1/${config.serverId}?path=%2Fs%2F${first.id}`,
+		`https://radius.earendil.com/pi/org_1/${config.serverId}/s/${first.id}`,
 	);
 	await poll(() => f.radius.shares.at(-1)?.[0] === "annexample@gmail.com", 10_000, "Radius learns the email");
 	const secondSharing = owner.hold(Sharing, { session: second.id }, BACKGROUND_CONTEXT);
@@ -605,15 +509,101 @@ test(
 	},
 );
 
+test(
+	"Radius client channels: the owner's TUI launcher reaches the server, one Radius connection per request",
+	{ timeout: 30_000 },
+	async (t) => {
+		const content = randomBytes(3 * 1024 * 1024);
+		const f = await fixture(t, content, { channels: true });
+		const transport = radiusTransport(
+			{ gateway: f.radius.gateway, access: async () => "fixture-token" },
+			randomUUID(),
+		);
+		const signal = AbortSignal.timeout(20_000);
+		const probe = await transport.request("/probe", { signal });
+		assert.equal(probe.status, 200);
+		// The owner by Radius alone, framed by no shell; until a browser opened the brain, its origin is a placeholder.
+		const access = (await probe.json()) as { principal: unknown; origin: unknown };
+		assert.deepEqual(access.principal, { kind: "owner", access: "relay" });
+		assert.deepEqual(access.origin, { origin: "https://radius.invalid", remote: true, port: f.server.port });
+		assert.equal(transport.origin, "https://radius.invalid");
+		// Bodies larger than one message, both ways; a request body may stream.
+		assert(Buffer.from(await (await transport.request("/body", { signal })).arrayBuffer()).equals(content));
+		const upload = randomBytes(1024 * 1024);
+		const echo = await transport.request("/echo", {
+			method: "POST",
+			body: (async function* () {
+				yield upload.subarray(0, 1000);
+				yield upload.subarray(1000);
+			})(),
+			signal,
+		});
+		assert(Buffer.from(await echo.arrayBuffer()).equals(upload));
+		// Only the device itself mints owner links.
+		assert.equal((await transport.request("/owner-token", { signal })).status, 403);
+		// Once the owner opened the brain in a browser, clients get its Radius origin.
+		assert.equal((await f.radius.response(f.open("/probe"))).status, 200);
+		await (await transport.request("/probe", { signal })).arrayBuffer();
+		assert.equal(transport.origin, PUBLIC_ORIGIN);
+	},
+);
+
+test(
+	"Radius client channels admit only the owner, and only through channel sockets",
+	{ timeout: 30_000 },
+	async (t) => {
+		const f = await fixture(t, undefined, { channels: true });
+		const stranger = radiusTransport(
+			{ gateway: f.radius.gateway, access: async () => "stranger-token" },
+			randomUUID(),
+		);
+		assert.equal((await stranger.request("/probe", { signal: AbortSignal.timeout(10_000) })).status, 403);
+		const refused = await new Promise<number>((resolve) =>
+			stranger.socket("/chord", { open: () => {}, message: () => {}, refused: resolve, close: () => {} }),
+		);
+		assert.equal(refused, 403);
+		// A request that is not one is refused on the channel.
+		const id = randomUUID();
+		f.radius.send({ version: 2, type: "connection_open", connection_id: id, kind: "ws", principal: OWNER });
+		const channel = await f.radius.channel(id);
+		const closed = new Promise<number>((resolve) => channel.once("close", resolve));
+		channel.send(JSON.stringify({ type: "http", method: "GET", path: "//elsewhere.example/", headers: {} }));
+		assert.equal(await closed, 1008);
+		// Relays before channel sockets do not carry them.
+		const old = await fixture(t);
+		const oldId = randomUUID();
+		old.radius.send({ version: 2, type: "connection_open", connection_id: oldId, kind: "ws", principal: OWNER });
+		await poll(() =>
+			old.radius.controls.some(
+				(message) =>
+					message.type === "connection_close" && message.connection_id === oldId && message.code === 1008,
+			),
+		);
+	},
+);
+
 /**
  * A relay whose network can fail: `silent` drops everything in both directions without closing (as a lost network
  * does), `stallHandshakes` leaves upgrade requests unanswered, `drop()` closes the host socket. `occupied` answers
  * upgrades with 409 as while another host is connected, and `replace()` closes the host as a relay does when another
- * brain with the same server ID takes over. `urls` records every upgrade request.
+ * brain with the same server ID takes over. `urls` records every upgrade request, `renames` every name the brain sent
+ * with `PUT /v1/servers/<id>/name`, which answers `renameStatus`. The brain starts under `name`.
  */
-async function flakyRelay(t: TestContext) {
+async function flakyRelay(t: TestContext, name?: string) {
 	const sockets = new WebSocketServer({ noServer: true, handleProtocols: () => "pi-server.host.v4" });
 	const server = createServer((request, response) => {
+		if (request.method === "PUT" && /^\/v1\/servers\/[^/]+\/name$/.test(request.url ?? "")) {
+			let body = "";
+			request.on("data", (chunk: Buffer) => {
+				body += chunk.toString("utf8");
+			});
+			request.on("end", () => {
+				state.renames.push((JSON.parse(body) as { name: string }).name);
+				response.writeHead(state.renameStatus);
+				response.end();
+			});
+			return;
+		}
 		response.writeHead(request.url === "/v1/context" ? 200 : 404, { "content-type": "application/json" });
 		response.end(
 			JSON.stringify({
@@ -630,6 +620,8 @@ async function flakyRelay(t: TestContext) {
 		pings: 0,
 		stalled: 0,
 		urls: [] as string[],
+		renames: [] as string[],
+		renameStatus: 204,
 	};
 	let host: WebSocket | undefined;
 	const stalled: Duplex[] = [];
@@ -677,6 +669,7 @@ async function flakyRelay(t: TestContext) {
 		directory,
 		port: () => 1,
 		relay: new RelayAccess(),
+		...(name === undefined ? {} : { name }),
 		onStatus: (status) => statuses.push(status),
 		// The silence timeout leaves ample margin for event-loop stalls on a loaded machine.
 		timing: { heartbeatIdleMs: 250, heartbeatTimeoutMs: 2_000, handshakeTimeoutMs: 300 },
@@ -692,6 +685,7 @@ async function flakyRelay(t: TestContext) {
 		state,
 		statuses,
 		brain,
+		directory,
 		drop: () => host?.close(1001),
 		replace: () => host?.close(1012, "Server host replaced"),
 	};
@@ -711,10 +705,7 @@ test("Radius brain pings a quiet relay and reconnects when the network goes sile
 	// A lost network: no close, just no traffic. The brain gives up on the socket and connects again.
 	f.state.silent = true;
 	await poll(() => f.statuses.some((status) => status.status === "retrying"));
-	assert.match(
-		String(f.statuses.find((status) => status.status === "retrying" && "error" in status)?.error),
-		/no message from Radius/,
-	);
+	assert.match(String(f.statuses.find((status) => status.status === "retrying")?.error), /no message from Radius/);
 	f.state.silent = false;
 	await poll(() => connectedCount(f.statuses) === 2);
 	assert.equal(f.state.connections, 2);
@@ -786,7 +777,65 @@ test(
 	},
 );
 
+test(
+	"Radius brain connects under the server's name and sends a rename at once, without reconnecting",
+	{ timeout: 20_000 },
+	async (t) => {
+		const f = await flakyRelay(t, "Studio");
+		const names = () => f.state.urls.map((url) => new URL(url, "http://relay").searchParams.get("name"));
+		f.brain.start();
+		await poll(() => connectedCount(f.statuses) === 1);
+		assert.deepEqual(names(), ["Studio"]);
+		assert.equal(f.statuses.findLast((status) => status.status === "connected")?.name, "Studio");
+		// Radius has the name the connect carried: nothing to send.
+		f.brain.rename("Studio");
+		f.brain.rename("Lab");
+		await poll(() => f.state.renames.length === 1);
+		assert.deepEqual(f.state.renames, ["Lab"]);
+		assert.equal(f.state.connections, 1);
+		// A relay without the endpoint gets the name with the next connect.
+		f.state.renameStatus = 404;
+		f.brain.rename("Attic");
+		await poll(() => f.state.renames.length === 2);
+		f.drop();
+		await poll(() => connectedCount(f.statuses) === 2);
+		assert.equal(names().at(-1), "Attic");
+		// A rename while offline goes with the next connect, without a request of its own.
+		f.state.silent = true;
+		await poll(() => f.statuses.at(-1)?.status === "retrying");
+		f.brain.rename("Cellar");
+		f.state.silent = false;
+		await poll(() => connectedCount(f.statuses) === 3);
+		assert.equal(names().at(-1), "Cellar");
+		assert.equal(f.state.renames.length, 2);
+	},
+);
+
+test("The owner's rename of the server reaches Radius while connected", { timeout: 30_000 }, async (t) => {
+	const f = await fixture(t);
+	const names = await holdIn(clientHost(await localOwner(f.server)), ServerNameSettings, {}, "owner");
+	await names.rename({ name: "Studio" }, BACKGROUND_CONTEXT);
+	await poll(() => f.radius.names.at(-1) === "Studio", 10_000, "Radius learns the name");
+	await names.rename({ name: null }, BACKGROUND_CONTEXT);
+	const device = names.device.value;
+	if (device !== null) await poll(() => f.radius.names.at(-1) === device, 10_000, "Radius learns the device's name");
+});
+
+test("Radius brain without a name connects without one, and sends its first name once connected", async (t) => {
+	const f = await flakyRelay(t);
+	f.brain.start();
+	await poll(() => connectedCount(f.statuses) === 1);
+	assert.equal(new URL(f.state.urls[0] ?? "", "http://relay").searchParams.has("name"), false);
+	f.brain.rename("Studio");
+	await poll(() => f.state.renames.length === 1);
+	assert.deepEqual(f.state.renames, ["Studio"]);
+});
+
 test("Radius status lines as Pi Mobile logs them, retries with their error", () => {
+	assert.equal(
+		radiusStatusText({ status: "connected", serverId: "brain-1", organizationId: "org", name: "Studio" }),
+		'connected as brain "Studio" (brain-1)',
+	);
 	assert.equal(
 		radiusStatusText({ status: "connected", serverId: "brain-1", organizationId: "org" }),
 		"connected as brain brain-1",

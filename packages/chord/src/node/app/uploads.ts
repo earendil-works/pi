@@ -11,10 +11,9 @@ import { ChordError } from "../../data/index.ts";
 import { invalid } from "../../data/internal.ts";
 import { newToken } from "./secrets.ts";
 
-/** An upload under way: its file, the bytes accepted, its writes in flight, its first failed write, its end. */
-type Upload = {
-	readonly name: string;
-	readonly mime: string;
+/** An upload under way: its owner's data, its file, the bytes accepted, its writes in flight, its first failed write, its end. */
+type Upload<T> = {
+	readonly data: T;
 	readonly handle: FileHandle;
 	size: number;
 	touched: number;
@@ -23,18 +22,18 @@ type Upload = {
 	ended: Promise<void> | undefined;
 };
 
-/** A finished upload: its name, type and size, its bytes moved to the path `finish` was given. */
-export type Finished = { readonly name: string; readonly mime: string; readonly size: number };
+/** A finished upload: what it was begun with and its size, its bytes moved to the path `finish` was given. */
+export type Finished<T> = { readonly data: T; readonly size: number };
 
 /**
  * The uploads under way of one `Files` object, in the directory `run` (this object's own, made on first use), at most
  * `max` at once: each holds a file handle until it ends, so a caller beginning uploads without end would exhaust the
- * process's descriptors.
+ * process's descriptors. Each carries its owner's `T` (what the file becomes when it finishes).
  */
-export class Uploads {
+export class Uploads<T> {
 	readonly #run: string;
 	readonly #max: number;
-	readonly #uploads = new Map<string, Upload>();
+	readonly #uploads = new Map<string, Upload<T>>();
 
 	constructor(run: string, max: number) {
 		this.#run = run;
@@ -48,8 +47,14 @@ export class Uploads {
 		return size;
 	}
 
-	/** A new upload of `name` and `mime`: its id; `unavailable` (`busy`) while `max` are under way. */
-	async begin(name: string, mime: string): Promise<string> {
+	/** The id of the upload under way whose data `matches`, if any. */
+	find(matches: (data: T) => boolean): string | undefined {
+		for (const [id, upload] of this.#uploads) if (matches(upload.data)) return id;
+		return undefined;
+	}
+
+	/** A new upload carrying `data`: its id; `unavailable` (`busy`) while `max` are under way. */
+	async begin(data: T): Promise<string> {
 		if (this.#uploads.size >= this.#max) {
 			throw new ChordError({
 				code: "unavailable",
@@ -60,9 +65,8 @@ export class Uploads {
 		const id = newToken(12);
 		await mkdir(this.#run, { recursive: true, mode: 0o700 });
 		const handle = await open(join(this.#run, id), "wx", 0o600);
-		const upload: Upload = {
-			name,
-			mime,
+		const upload: Upload<T> = {
+			data,
 			handle,
 			size: 0,
 			touched: Date.now(),
@@ -122,14 +126,20 @@ export class Uploads {
 	}
 
 	/** Ends upload `id` once its writes landed and moves its file to `path`; refused when a write of it failed. */
-	async finish(id: string, path: string): Promise<Finished> {
+	async finish(id: string, path: string): Promise<Finished<T>> {
 		const upload = this.#underway(id);
 		// Taken out first: an append arriving now finds no upload.
 		this.#uploads.delete(id);
 		await this.#end(upload);
 		if (upload.failed) throw failedUpload(id);
 		await rename(join(this.#run, id), path);
-		return { name: upload.name, mime: upload.mime, size: upload.size };
+		return { data: upload.data, size: upload.size };
+	}
+
+	/** Drops upload `id` once its writes landed (an unknown one: nothing): its writer gave up. */
+	async cancel(id: string): Promise<void> {
+		const upload = this.#uploads.get(id);
+		if (upload !== undefined) await this.#discard(id, upload);
 	}
 
 	/** Drops the uploads unwritten for `idleMs`, once their writes landed. */
@@ -146,21 +156,21 @@ export class Uploads {
 	}
 
 	/** The upload `id` under way; else `invalid`. */
-	#underway(id: string): Upload {
+	#underway(id: string): Upload<T> {
 		const upload = this.#uploads.get(id);
 		if (upload === undefined) throw invalid("args", `files: no upload ${id} (finished, failed, expired or unknown)`);
 		return upload;
 	}
 
 	/** Takes upload `id` out, closes its file once its writes landed and removes it. */
-	async #discard(id: string, upload: Upload): Promise<void> {
+	async #discard(id: string, upload: Upload<T>): Promise<void> {
 		this.#uploads.delete(id);
 		await this.#end(upload);
 		await rm(join(this.#run, id), { force: true });
 	}
 
 	/** Closes `upload`'s file once its writes in flight landed; once, whoever ends it first. */
-	#end(upload: Upload): Promise<void> {
+	#end(upload: Upload<T>): Promise<void> {
 		upload.ended ??= Promise.allSettled([...upload.writes]).then(() => upload.handle.close());
 		return upload.ended;
 	}

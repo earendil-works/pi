@@ -10,7 +10,7 @@ import { BACKGROUND_CONTEXT, follow } from "@p2/app/v1";
 import { Chat } from "../../plugins/chat/contract.ts";
 import { Models } from "../../plugins/models/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
-import { Browser, browserTests } from "./browser.ts";
+import { Browser, browserTests, COMPOSER, composerText, setComposer } from "./browser.ts";
 import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
 
 /**
@@ -35,8 +35,6 @@ const SWITCH = `(() => {
 		for (const socket of sockets) socket.close();
 	};
 })()`;
-const draft = (text: string) =>
-	`(()=>{const e=document.querySelector('.composer textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(e,${JSON.stringify(text)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`;
 /** How many people's messages end with `text`. */
 const bubbles = (text: string) =>
 	`[...document.querySelectorAll('.messages .user .bubble')].filter((e) => e.textContent.trim().endsWith(${JSON.stringify(text)})).length`;
@@ -55,6 +53,7 @@ describe("offline in the browser", { skip: !browserTests }, () => {
 			.hold(Models, {}, BACKGROUND_CONTEXT)
 			.setDefault({ provider: "faux", modelId: "faux-1", thinkingLevel: "off" }, BACKGROUND_CONTEXT);
 		browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 		await browser.call("Page.addScriptToEvaluateOnNewDocument", { source: SWITCH });
 	});
 	after(async () => {
@@ -75,17 +74,17 @@ describe("offline in the browser", { skip: !browserTests }, () => {
 		try {
 			await browser.metrics(390, 844);
 			await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${session.id}`);
-			await browser.wait(`document.querySelector('.composer textarea') && !document.querySelector('.offline')`);
+			await browser.wait(`document.querySelector('${COMPOSER}') && !document.querySelector('.offline')`);
 
 			await browser.evaluate("window.__goOffline()");
 			await browser.wait(`Boolean(document.querySelector('.offline'))`);
 			// The composer stays (no "Connecting…" bar): the page still knows it is the owner.
-			assert.ok(await browser.evaluate<boolean>(`Boolean(document.querySelector('.composer textarea'))`));
+			assert.ok(await browser.evaluate<boolean>(`Boolean(document.querySelector('${COMPOSER}'))`));
 			const text = "hello while offline";
-			await browser.evaluate(draft(text));
+			await browser.evaluate(setComposer(text));
 			await browser.click("button[aria-label=Send]");
 			// It leaves the composer and shows at once, as any message does; the server does not have it yet.
-			await browser.wait(`document.querySelector('.composer textarea').value === '' && ${bubbles(text)} === 1`);
+			await browser.wait(`${composerText} === '' && ${bubbles(text)} === 1`);
 			assert.equal(inputs(chat.view.value, text), 0);
 
 			await browser.evaluate("window.__offline = false");
@@ -150,7 +149,8 @@ describe("offline in the browser", { skip: !browserTests }, () => {
 					arrived.some((row) => row.text.includes(text)),
 					`${text} arrived: ${JSON.stringify(arrived)}`,
 				);
-			assert.equal(arrived.length, 4, JSON.stringify(arrived));
+			// Each turn: the message, the answer's thought and the answer.
+			assert.equal(arrived.length, 6, JSON.stringify(arrived));
 			assert.ok((await browser.evaluate<number>("window.__glides")) > 0, "the transcript glides up to make room");
 			// One after another: increasing delays.
 			const delays = arrived.map((row) => Number.parseFloat(row.delay || "0"));
@@ -176,7 +176,7 @@ describe("offline in the browser", { skip: !browserTests }, () => {
 		const page = `http://127.0.0.1:${fixture.server.port}/s/${session.id}`;
 		const keys = `new Promise((resolve) => { const open = indexedDB.open("p2-conversations"); open.onsuccess = () => { const all = open.result.transaction("kept").objectStore("kept").getAllKeys(); all.onsuccess = () => resolve(all.result); }; })`;
 		await browser.open(page);
-		await browser.wait(`document.querySelector('.composer textarea')`);
+		await browser.wait(`document.querySelector('${COMPOSER}')`);
 		// A conversation kept for a session the server does not have (deleted, or the data restored from a backup).
 		const gone = "00000000-0000-4000-8000-000000000000#1";
 		// Written and read back in one transaction: the open page may forget it right after (what this test checks).
@@ -214,7 +214,7 @@ describe("offline in the browser", { skip: !browserTests }, () => {
 			await browser.open(page);
 			await browser.wait(`Boolean(document.querySelector('.offline'))`);
 			await browser.wait(`document.querySelector('.messages')?.textContent.includes('Echo: remember me')`);
-			assert.ok(await browser.evaluate<boolean>(`Boolean(document.querySelector('.composer textarea'))`));
+			assert.ok(await browser.evaluate<boolean>(`Boolean(document.querySelector('${COMPOSER}'))`));
 			assert.equal(await browser.evaluate<number>(bubbles("remember me")), 1);
 			// The context bar's space is there before its numbers: the composer area keeps its height when they come.
 			assert.ok(await browser.evaluate<boolean>(`Boolean(document.querySelector('.context-usage.pending'))`));
@@ -230,6 +230,83 @@ describe("offline in the browser", { skip: !browserTests }, () => {
 			);
 			await browser.wait(`document.querySelector('.messages')?.textContent.includes('Echo: remember me')`);
 			assert.equal(await browser.evaluate<number>(bubbles("remember me")), 1);
+		} finally {
+			stop();
+			chat.release();
+		}
+	});
+
+	it("keeps the one composer, focused, when a new session's first message opens the session", async () => {
+		await browser.metrics(390, 844);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
+		await browser.wait(
+			`document.querySelector('${COMPOSER}') && document.querySelector('.cwd-pick') && !document.querySelector('.offline') && document.querySelector('.model-control')?.textContent !== 'Choose model'`,
+		);
+		await browser.evaluate(`window.__composer = document.querySelector('${COMPOSER}'); window.__composer.focus()`);
+		const text = "first message, still typing";
+		await browser.evaluate(setComposer(text));
+		// Sent as Enter sends it, the focus staying in the editor.
+		await browser.evaluate(`document.querySelector('.composer').requestSubmit()`);
+		await browser.wait(`location.pathname.startsWith('/s/') && ${bubbles(text)} === 1`);
+		// One composer for both screens: the same editor, focused throughout.
+		assert.ok(
+			await browser.evaluate<boolean>(
+				`document.querySelector('${COMPOSER}') === window.__composer && document.activeElement === window.__composer`,
+			),
+			"the session opens with the same composer, still focused",
+		);
+	});
+
+	it("shows a new session's first message at once and creates the session once back online", async () => {
+		const catalog = await holdIn(owner, Sessions, {}, "owner");
+		const before = new Set(catalog.sessions.value.map((session) => session.id));
+		await browser.metrics(390, 844);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
+		await browser.wait(
+			`document.querySelector('${COMPOSER}') && document.querySelector('.cwd-pick') && !document.querySelector('.offline') && document.querySelector('.model-control')?.textContent !== 'Choose model'`,
+		);
+
+		// The composer's place: the new-session screen has the session screen's context bar (empty), so it stays.
+		const composerTop = `Math.round(document.querySelector('.composer').getBoundingClientRect().top)`;
+		const top = await browser.evaluate<number>(composerTop);
+		await browser.evaluate("window.__goOffline()");
+		await browser.wait(`Boolean(document.querySelector('.offline'))`);
+		const text = "first message while offline";
+		await browser.evaluate(setComposer(text));
+		await browser.click("button[aria-label=Send]");
+		// It leaves the composer and shows at once, on the new-session screen: the session does not exist yet.
+		await browser.wait(`${composerText} === '' && ${bubbles(text)} === 1 && location.pathname === '/new'`);
+		assert.equal(catalog.sessions.value.filter((session) => !before.has(session.id)).length, 0);
+		// From here until the answer: the message never leaves the screen (creation, navigation, the worker's start).
+		await browser.evaluate(
+			`(() => { window.__shown = []; window.__tops = []; window.__sampler = setInterval(() => { window.__shown.push(${bubbles(text)}); window.__tops.push(${composerTop}); }, 10); })()`,
+		);
+
+		await browser.evaluate("window.__offline = false");
+		await browser.wait(`location.pathname.startsWith('/s/')`);
+		const id = await browser.evaluate<string>("location.pathname.slice(3)");
+		const chat = await holdIn(owner, Chat, { session: id, conversation: 1 }, "participant");
+		const stop = follow(chat.view, () => {});
+		try {
+			await until(chat.view, (view) => JSON.stringify(view?.entries ?? []).includes(`Echo: ${text}`), 60_000);
+			await browser.wait(`document.querySelector('.messages')?.textContent.includes('Echo: ${text}')`);
+			assert.equal(await browser.evaluate<number>(bubbles(text)), 1, "shown once");
+			const shown = await browser.evaluate<number[]>("clearInterval(window.__sampler), window.__shown");
+			assert.ok(
+				shown.every((count) => count === 1),
+				`shown throughout: ${JSON.stringify([...new Set(shown)])}`,
+			);
+			assert.deepEqual(
+				[...new Set(await browser.evaluate<number[]>("window.__tops"))],
+				[top],
+				"the composer stays in place",
+			);
+			assert.equal(inputs(chat.view.value, text), 1, "delivered once");
+			assert.deepEqual(
+				catalog.sessions.value.filter((session) => !before.has(session.id)).map((session) => session.id),
+				[id],
+				"one session created",
+			);
 		} finally {
 			stop();
 			chat.release();

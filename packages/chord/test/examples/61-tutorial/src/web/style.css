@@ -3,3 +3,25 @@ body { margin: 0; font: 15px system-ui, sans-serif; background: var(--bg); color
 main { max-width: 26rem; margin: 1.5rem auto; padding: 0 1rem; }
 h1 { color: var(--accent); font-size: 1.4rem; margin: 0 0 1rem; }
 h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+
+/* The trace viewer (`/traces`): the list (filtered by principal) beside the chosen trace's tree, a colour per host. */
+main.wide { max-width: 60rem; }
+.traces { display: grid; grid-template-columns: 13rem 1fr; gap: 1rem; align-items: start; }
+.traces nav a { display: block; padding: 0.3rem 0.4rem; color: var(--fg); text-decoration: none; border-left: 2px solid transparent; }
+.traces nav a.traces-chosen { border-left-color: var(--accent); background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.traces nav small { display: block; color: var(--muted); font-size: 0.75rem; }
+.traces-filter { width: 100%; box-sizing: border-box; margin-bottom: 0.5rem; background: transparent; color: var(--fg); border: 1px solid var(--muted); border-radius: 3px; padding: 0.2rem 0.4rem; }
+.traces-tree { list-style: none; margin: 0; padding: 0; font-size: 0.8rem; }
+.traces-tree li { padding: 0.25rem 0; border-bottom: 1px solid color-mix(in srgb, var(--muted) 30%, transparent); }
+.traces-span { display: flex; gap: 0.5rem; align-items: baseline; }
+.traces-ms { margin-left: auto; color: var(--muted); }
+.traces-host { font-size: 0.7rem; padding: 0 0.3rem; border-radius: 3px; color: var(--bg); }
+.traces-line { position: relative; height: 4px; margin: 0.2rem 0; }
+.traces-bar { position: absolute; top: 0; height: 4px; border-radius: 2px; }
+.traces-details { color: var(--muted); font: 0.72rem ui-monospace, monospace; overflow-wrap: anywhere; }
+.traces-error, .traces-failed b { color: var(--error); }
+.traces-link { font-style: italic; }
+.traces-host-0 { background: var(--accent); }
+.traces-host-1 { background: var(--success); }
+.traces-host-2 { background: var(--warning); }
+.traces-host-3 { background: var(--muted); }

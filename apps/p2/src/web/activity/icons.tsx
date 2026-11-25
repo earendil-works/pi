@@ -1,0 +1,23 @@
+// The activity's icons: Elanor's Material Symbols (@earendil-works/elanor-icons-react), at Elanor's one icon size,
+// as its Ticker, Timeline and Drawer use. The rest of p2 keeps its own set (../icons.tsx).
+export {
+	AutoAwesomeIcon as SparkIcon,
+	BuildIcon as ToolIcon,
+	ChatBubbleIcon as CommentIcon,
+	CheckIcon,
+	ChevronRightIcon as ChevronIcon,
+	CodeIcon,
+	ContentCutIcon as CutIcon,
+	DownloadIcon,
+	DraftIcon as FileIcon,
+	EditIcon as PencilIcon,
+	ErrorIcon as AlertIcon,
+	ForumIcon as ConversationIcon,
+	LanIcon as PortIcon,
+	RefreshIcon,
+	SearchIcon,
+	ShapesIcon as ArtifactIcon,
+	SmartToyIcon as BotIcon,
+	StopIcon,
+	TerminalIcon,
+} from "@earendil-works/elanor-icons-react";

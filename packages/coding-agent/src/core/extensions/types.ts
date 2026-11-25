@@ -118,6 +118,11 @@ export interface ExtensionUIDialogOptions {
 	signal?: AbortSignal;
 	/** Timeout in milliseconds. Dialog auto-dismisses with live countdown display. */
 	timeout?: number;
+	/**
+	 * What the dialog waits for, reported as blocked program status (OSC 7501) with the first line of the title.
+	 * Defaults to `"permission"` for `confirm()` and `"question"` for `select()` and `input()`.
+	 */
+	blockedKind?: NonNullable<ProgramStatus["kind"]>;
 }
 
 /** Placement for extension widgets. */
@@ -240,8 +245,9 @@ export interface ExtensionUIContext {
 			/** Called with the overlay handle after the overlay is shown. Use to control visibility. */
 			onHandle?: (handle: OverlayHandle) => void;
 			/**
-			 * Report pi as blocked on user input (OSC 7501 program status) while this component is visible.
-			 * Only applies to inline components, not overlays.
+			 * Report pi as blocked on user input (OSC 7501 program status) while this component waits for input.
+			 * Inline components report it while visible. Overlays report it until `done()` is called, also while
+			 * hidden with `setHidden()`.
 			 */
 			blocked?: { kind: NonNullable<ProgramStatus["kind"]>; message: string };
 		},
@@ -933,7 +939,10 @@ export interface BeforeProviderHeadersEvent {
 	headers: ProviderHeaders;
 }
 
-/** Fired after a provider response is received and before the response stream is consumed. */
+/**
+ * Fired for each provider HTTP response, including error responses and retried attempts. Successful responses fire
+ * before the response stream is consumed. Coverage depends on provider and transport.
+ */
 export interface AfterProviderResponseEvent {
 	type: "after_provider_response";
 	status: number;
@@ -2215,6 +2224,11 @@ export interface ExtensionRuntimeState {
 	invalidate: (message?: string) => void;
 	/** Retain an event-bus subscription until this runtime is invalidated. */
 	trackEventBusSubscription: (unsubscribe: () => void) => () => void;
+	/**
+	 * Report an error thrown by a `pi.events` handler. Dropped before the runner exists; the runner
+	 * replaces this to call its emitError() until the runner is invalidated.
+	 */
+	reportError: (error: ExtensionError) => void;
 	/**
 	 * Register or unregister a provider.
 	 *

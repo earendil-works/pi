@@ -5,6 +5,10 @@ import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHarness, getAssistantTexts, getMessageText, getUserTexts, type Harness } from "./harness.ts";
 
+// Image processing omits images it cannot decode, so the fixture must be a real PNG.
+const TINY_PNG_BASE64 =
+	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
+
 async function createWaitingHarness(
 	options: {
 		tools?: AgentTool[];
@@ -434,6 +438,35 @@ describe("AgentSession queue characterization", () => {
 		await promptPromise;
 
 		expect(countsAtQueuedMessageStart).toEqual([0]);
+		expect(harness.session.pendingMessageCount).toBe(0);
+	});
+
+	it("removes an image-only steering message after delivery", async () => {
+		const waiting = await createWaitingHarness();
+		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;
+		harnesses.push(harness);
+		let sawImage = false;
+
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			(context) => {
+				const user = [...context.messages].reverse().find((message) => message.role === "user");
+				sawImage =
+					user?.role === "user" &&
+					typeof user.content !== "string" &&
+					user.content.some((part) => part.type === "image");
+				return fauxAssistantMessage("done");
+			},
+		]);
+
+		await waitForToolStart;
+		await harness.session.steer("", [{ type: "image", mimeType: "image/png", data: TINY_PNG_BASE64 }]);
+		expect(harness.session.pendingMessageCount).toBe(1);
+		releaseToolExecution();
+		await promptPromise;
+
+		expect(sawImage).toBe(true);
+		expect(harness.session.agent.hasQueuedMessages()).toBe(false);
 		expect(harness.session.pendingMessageCount).toBe(0);
 	});
 

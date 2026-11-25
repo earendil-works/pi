@@ -9,7 +9,7 @@ import { Envs } from "../../plugins/envs/contract.ts";
 import { PROXY_MARKER_HEADER } from "../../plugins/proxy-marker/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
-import { expectChord, holdIn, http, startFixture, until, webBundle } from "./helpers.ts";
+import { expectChord, holdIn, http, startFixture, until, webAssets } from "./helpers.ts";
 
 const hasKeygen = !spawnSync("ssh-keygen", ["-?"], { stdio: "ignore" }).error;
 const TUNNEL = { Host: "keys.test", Origin: "https://keys.test" };
@@ -50,10 +50,10 @@ for (const via of ["token", "relay", "proxy"] as const)
 			assert.equal(stored.identityFile, join(fixture.dataDir, "ssh", "keys", "box"));
 			assert.equal(await readFile(stored.identityFile, "utf8"), key);
 			assert.equal((await stat(stored.identityFile)).mode & 0o777, 0o600);
-			const published = await until(
-				envs.envs,
-				(entries) => entries?.[0]?.config.identityFile === stored.identityFile,
-			);
+			const published = await until(envs.envs, (entries) => {
+				const config = entries?.[0]?.config;
+				return config?.type === "ssh" && config.identityFile === stored.identityFile;
+			});
 			assert(!JSON.stringify(published).includes("PRIVATE KEY"));
 			await assert.rejects(envs.uploadKey({ name: "box", key: "invalid" }, BACKGROUND_CONTEXT), /private key/i);
 			await assert.rejects(envs.uploadKey({ name: "box", key: "PRIVATE KEY".repeat(2000) }, BACKGROUND_CONTEXT));
@@ -92,7 +92,10 @@ for (const via of ["token", "relay", "proxy"] as const)
 			await expectChord(guest.uploadKey({ name: "guest", key }, BACKGROUND_CONTEXT), "forbidden");
 			await expectChord(guest.generateKey({ name: "guest" }, BACKGROUND_CONTEXT), "forbidden");
 			await expectChord(guest.publicKey({ name: "generated" }, BACKGROUND_CONTEXT), "forbidden");
-			const ui = await http(fixture.server.port, (await webBundle(fixture.server.port)).script);
+			// The envs plugin's web script, in the page's combined plugins file.
+			const ui = await fixture.http(
+				(await webAssets(fixture.server.port, { Cookie: fixture.owner.cookie })).plugins,
+			);
 			assert.equal(ui.status, 200);
 			assert(ui.body.includes("Upload private key"));
 			assert(!ui.body.includes("Generate/upload keys only on the device"));

@@ -280,6 +280,9 @@ function checkTable(write: Extract<TableWrite, { readonly kind: "table" }>, what
 		throw invalid("args", (error as Error).message);
 	}
 	const folded = new Set<string>();
+	if (Object.values(write.columns).filter((column) => column.host !== undefined).length > 1) {
+		throw invalid("args", `${what}: more than one host column`);
+	}
 	for (const [name, column] of Object.entries(write.columns)) {
 		const where = `${what}: column ${JSON.stringify(name)}`;
 		if (!COLUMN_NAME.test(name) || folded.has(name.toLowerCase()))
@@ -292,6 +295,17 @@ function checkTable(write: Extract<TableWrite, { readonly kind: "table" }>, what
 }
 
 function checkColumn(column: ColumnRecord, what: string): void {
+	if (column.host !== undefined) {
+		if (column.type !== "str" || column.optional === true || column.default !== undefined) {
+			throw invalid("args", `${what}: a host column is a non-opt str column without a default`);
+		}
+		try {
+			checkName(column.host, `${what}: host kind`);
+		} catch (error) {
+			// `checkName` throws plain Errors.
+			throw invalid("args", (error as Error).message);
+		}
+	}
 	const json = column.type === "json";
 	if (json !== (column.version !== undefined) || json !== (column.fingerprint !== undefined)) {
 		throw invalid("args", `${what}: a json(...) column has a version and a fingerprint, no other column has`);

@@ -84,11 +84,11 @@ p2 gets MCP servers. The design, in short:
 | 5 | p2 | **gate:** p2's Chord v2 port has landed; WP1-3 present | **done**: p2 imported at `05dc8d239`, deps in "feat(p2): MCP servers on the host, on environments and from projects" | 1-3, the port |
 | 6 | `apps/p2/plugins/mcp` | manager, view, worker object; owner config; host stdio and HTTP | **done**: "feat(p2): MCP servers on the host, on environments and from projects" | 2, 5 |
 | 7 | `apps/p2/plugins/mcp` | environment placement; project `mcp.json` | **done**: "feat(p2): MCP servers on the host, on environments and from projects" | 1, 6 |
-| 8 | `apps/p2/plugins/mcp` | OAuth: flows, routes, loopback, pasting; web and TUI | open | 3, 6 |
+| 8 | `apps/p2/plugins/mcp` | OAuth: flows, routes, loopback, pasting; web and TUI | **done**: see section 4.7 | 3, 6 |
 | 9 | `apps/p2/plugins/mcp`, `plugins/codemode` | code mode namespaces, progress, first-turn admission | open | 6 |
 
 Section 4.5 lists where the built APIs of WP2-4 differ from sections 5-7, section 4.6 where WP6-7 differ from sections
-9-10.
+9-10, section 4.7 where WP8 differs from section 11.
 
 ---
 
@@ -214,6 +214,38 @@ export class RemoteProcess {
   itself and has no verbatim mode).
 - **Not watched:** a changed project `mcp.json` is read again at the worker's next `setLocations` (a commit, a move,
   the view re-activating), not when the file changes.
+
+### 4.7 As built (WP8): differences from section 11
+
+- **Which servers sign in:** as in pi, an owner HTTP server without an `Authorization` header (`oauthServerOf` in
+  `placement.ts`); its instances list `auth: "oauth"`. Only those wait for a sign-in on a 401 (`McpAuthRequiredError` or
+  `McpOAuthAuthorizationRequiredError`), also when a call's tokens are refused for good; a server refusing its
+  configured headers fails and retries instead.
+- **Credentials:** `credentials.ts`, `<P2_DATA_DIR>/mcp-auth.json` through p2's `LockedFile` (0600), keyed like pi's
+  (`mcpNamespace(name)|url`). The refresh lock is a promise chain per server in the process, not `proper-lockfile`: one
+  p2 server owns a data directory (process lock), and nothing else reads this file.
+- **Flows:** `sign-in.ts` (`SignIns`, a native of the manager), in memory, one per server (a new one replaces it),
+  10 minutes each; listed (`signIns`: id, server, `via: "loopback" | "route"`, `waiting | failed`, error) as the
+  manager follows them (`self.follow`: a method's change is listed when it answers). Not a Chord flow object: the manager's methods are `beginSignIn`, `completeSignIn`
+  (callback route), `pasteSignIn`, `cancelSignIn`, `signOut`, `probe`. A done flow disappears; the instances of its
+  server restart (`Instances.reconnect`). A pre-registered client (`oauth.clientId`) always uses loopback.
+- **Links by server, not flow:** `GET /mcp/sign-in/<server>` begins (or replaces) the server's flow, so the link is
+  stable (the `mcp_servers` section and call errors name it). The owner view has no `signIn` returning a link: its
+  `signIn({ server })` begins a loopback flow and returns the authorization URL (the TUI opens it); the web opens the
+  route.
+- **Where the browser runs (owner addition):** the device owner (`access: "local"` on loopback) always returns to
+  loopback. Any other owner (Radius relay, an allowed public host) first gets a probe page (`pages.ts`): it fetches
+  `http://127.0.0.1:<port>/<nonce>` from a listener on the p2 host (`probe.ts`), which answers 204 with CORS only for the
+  page's origin and a nonce only this p2 issued. Answered: the browser runs on the p2 host, so `?via=loopback`; refused
+  or blocked: `?via=callback`, the route on the origin p2 is reached through. While the answer takes more than 1.5 s
+  (a browser asking for local network access), the page offers both. A wrong guess only means pasting.
+- **Callback route:** `GET /mcp/callback` completes the route flow whose `state` matches, for owners only; a browser
+  without p2's sign-in there (a cookie not sent) gets a page saying to paste its address.
+- **Model:** the `mcp_servers` section marks servers waiting for a sign-in; a call of one says to sign in from the MCP
+  panel or at `/mcp/sign-in/<server>`. Plain text: p2's Markdown renders relative links as text.
+- **UI:** web `plugins/mcp/web.tsx` (sidebar footer "MCP": instances, restart, sign in, sign out, paste, cancel); TUI
+  `/mcp` (Ctrl+R restart, Ctrl+S sign in through the launcher's `openUrl`, Ctrl+O sign out) and `/mcp paste <url>`.
+- **Not verified by hand:** whether Radius sends its cookie on the redirect back to the cortex origin (section 14).
 
 ---
 

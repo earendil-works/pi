@@ -18,8 +18,9 @@ export const CHORD_ERROR_REASONS = {
 	// `discarded`: a transaction cut at the seal.
 	released: ["ended", "closed", "settled", "version", "discarded"],
 	too_large: ["part"],
-	// `undeclared`: a registry no plugin serves on this host.
-	unavailable: ["locked", "park_timeout", "busy", "storage_failed", "undeclared"],
+	// `undeclared`: a registry no plugin serves on this host; `version`: waiting for a dependency refused for its version
+	// (it heals with another host's reload); `reload_cycle`: old work waiting on its own drain during a reload.
+	unavailable: ["locked", "park_timeout", "busy", "storage_failed", "undeclared", "version", "reload_cycle"],
 	aborted: [],
 } as const;
 

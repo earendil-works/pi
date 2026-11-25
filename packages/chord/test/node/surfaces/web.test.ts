@@ -2,13 +2,17 @@
 // forever, rebuilt at each start), plugin scripts as registered scripts and one combined file, `WebScripts` updated by
 // a rollout, the page through the app's template with the baseline's CSP, signed in unless public.
 
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
+import { hostKind } from "../../../src/contracts/index.ts";
+import { createHost } from "../../../src/host/index.ts";
 import { WebScripts } from "../../../src/index.ts";
-import { Sessions } from "../../../src/node/app/index.ts";
-import { pageScripts } from "../../../src/node/surfaces/index.ts";
+import { SignIns } from "../../../src/node/app/index.ts";
+import { createHttp } from "../../../src/node/http/index.ts";
+import { createPlugins } from "../../../src/node/plugins/index.ts";
+import { pageBootstrap, pageScripts, webSurface } from "../../../src/node/surfaces/index.ts";
 import { tempDir, testApp } from "../app/support.ts";
 import { send } from "../http/support.ts";
 
@@ -46,11 +50,11 @@ async function webApp(
 	});
 }
 
-/** A bearer header of a new owner session of `app`. */
+/** A bearer header of a new owner sign-in of `app`. */
 async function owner(app: Awaited<ReturnType<typeof webApp>>["app"]): Promise<Record<string, string>> {
 	const issued = await app.host.root(
 		async (ctx) =>
-			(await ctx.get(Sessions, {})).issue({ principal: { kind: "owner" }, label: "t", kind: "device" }, ctx),
+			(await ctx.get(SignIns, {})).issue({ principal: { kind: "owner" }, label: "t", kind: "device" }, ctx),
 		context,
 	);
 	return { authorization: `Bearer ${issued.token}` };
@@ -69,7 +73,7 @@ describe("the base bundle and the page", () => {
 		expect(answer.status).toBe(200);
 		const html = answer.body.toString();
 		const nonce = /script-src [^;]*'nonce-([^']+)'/.exec(String(answer.headers["content-security-policy"]))![1]!;
-		expect(html).toContain(`<script nonce="${nonce}">globalThis.chordPage={base:"${app.web!.base}"`);
+		expect(html).toContain(`<script nonce="${nonce}">globalThis.chordPage={"base":"${app.web!.base}"`);
 		expect(String(answer.headers["content-security-policy"])).toContain("style-src 'self'");
 		// Scripts from the surface's files and the nonce only, not any same-origin response (Opus L8).
 		expect(String(answer.headers["content-security-policy"])).toContain(
@@ -78,7 +82,7 @@ describe("the base bundle and the page", () => {
 		const urls = urlsOf(html);
 		expect(urls).toEqual([
 			`/_chord/web/base.${app.web!.base}.css`,
-			expect.stringMatching(/^\/_chord\/web\/plugin\/@test~notes\.[0-9a-f]+\.css$/),
+			expect.stringMatching(/^\/_chord\/web\/plugin\/@test~notes\.[0-9a-f]+\.[0-9a-f]{16}\.css$/),
 			expect.stringMatching(/^\/_chord\/web\/plugins\.[0-9a-f]{16}\.js$/),
 			`/_chord/web/base.${app.web!.base}.js`,
 		]);
@@ -94,7 +98,7 @@ describe("the base bundle and the page", () => {
 		await app.close(context);
 	});
 
-	it("answers the current base hash publicly, and refuses the page and files to a request without a session", async () => {
+	it("answers the current base hash publicly, and refuses the page and files to a request without a sign-in", async () => {
 		const { app, port } = await webApp();
 		const base = await send(port, "GET", "/_chord/web/base");
 		expect([base.status, JSON.parse(base.body.toString()), base.headers["cache-control"]]).toEqual([
@@ -147,7 +151,9 @@ describe("plugin scripts", () => {
 				name: "@test/notes",
 				digest: expect.stringMatching(/^[0-9a-f]+$/),
 				url: `/_chord/web/plugin/@test~notes.${set.plugins[0]!.digest}.js`,
-				css: `/_chord/web/plugin/@test~notes.${set.plugins[0]!.digest}.css`,
+				css: expect.stringMatching(
+					new RegExp(`^/_chord/web/plugin/@test~notes\\.${set.plugins[0]!.digest}\\.[0-9a-f]{16}\\.css$`),
+				),
 			},
 		]);
 		const script = (await send(port, "GET", set.plugins[0]!.url, { headers })).body.toString();
@@ -202,6 +208,7 @@ describe("plugin scripts", () => {
 		expect(result.steps.map(({ name }) => name)).toEqual(["server", "web"]);
 		expect(result.steps[1]!.hosts).toEqual([
 			{
+				kind: "reloaded",
 				host: "web",
 				report: { plugins: { added: [], changed: ["@test/notes"], removed: [] }, failed: [], objects: [] },
 			},
@@ -214,5 +221,65 @@ describe("plugin scripts", () => {
 		}
 		scripts.release();
 		await app.close(context);
+	});
+});
+
+describe("an app serving the surface itself (routes: false)", () => {
+	it("contributes no routes, and gives the files, the page's assets and the base hash", async () => {
+		const root = join(await tempDir(), "plugins");
+		await mkdir(join(root, "notes"), { recursive: true });
+		await writeFile(join(root, "notes", "package.json"), '{ "name": "notes" }');
+		await writeFile(join(root, "notes", "web.ts"), "export default { setup() {} };\n");
+		const server = createHost<{ readonly kind: "server" }>({
+			address: hostKind("server")(),
+			principal: { kind: "server" },
+			onError: () => {},
+		});
+		const plugins = createPlugins(
+			{ roots: [root], kinds: { web: { platform: "browser", hostPackages: [] } }, onError: () => {} },
+			context,
+		);
+		const web = webSurface(server, { plugins, entry: await entry(), routes: false });
+		const http = createHttp(server, { onError: () => {} }, context);
+		try {
+			await server.load(
+				[
+					{ name: "chord.http", facet: http.facet },
+					{ name: "chord.web", facet: web.facet },
+				],
+				context,
+			);
+			expect((await web.build()).kind).toBe("built");
+			// The surface's public route of every app serving it through the HTTP component: none here.
+			const asked = await http.fetch(
+				new Request("http://127.0.0.1/_chord/web/base", { headers: { host: "127.0.0.1" } }),
+				{
+					localAddress: "127.0.0.1",
+					localPort: 80,
+					remoteAddress: "127.0.0.1",
+				},
+			);
+			expect(asked.status).toBe(404);
+			const base = await web.base();
+			expect(base).toMatch(/^[0-9a-f]{16}$/);
+			const assets = await web.pageAssets();
+			const scripts = await server.get(WebScripts, {}, context);
+			const set = scripts.set.value;
+			expect(set.plugins.map(({ name }) => name)).toEqual(["notes"]);
+			expect(assets).toEqual({
+				bootstrap: pageBootstrap(base!, set),
+				script: `/_chord/web/base.${base}.js`,
+				plugins: set.combined,
+				styles: [`/_chord/web/base.${base}.css`],
+			});
+			const file = await web.file(set.combined);
+			expect(file.kind).toBe("bytes");
+			expect((await web.file("/_chord/web/none.js")).kind).toBe("error");
+			scripts.release();
+		} finally {
+			await http.close(context);
+			await server.close(context);
+			plugins.close();
+		}
 	});
 });

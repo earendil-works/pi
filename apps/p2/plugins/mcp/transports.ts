@@ -1,14 +1,21 @@
 // How an instance opens its MCP transport, by where it runs: a program on the p2 host (`StdioTransport`), a program
 // on an environment through its pi-env daemon (`PipeTransport` over `openProcess`, through `cmd.exe` on Windows), or
-// a Streamable HTTP server.
+// a Streamable HTTP server (with the stored OAuth tokens when it signs in).
 
 import { posix, win32 } from "node:path";
 import { pathToFileURL } from "node:url";
 import { type Connection, nodePlatform, openProcess, RemoteError } from "@earendil-works/pi-env";
-import { type McpTransport, PipeTransport, StdioTransport, StreamableHttpTransport } from "@earendil-works/pi-mcp";
+import {
+	type AuthProvider,
+	type McpTransport,
+	PipeTransport,
+	StdioTransport,
+	StreamableHttpTransport,
+} from "@earendil-works/pi-mcp";
 import { expandHostVariables } from "./config.ts";
 import type { EnvConnections } from "./environments.ts";
 import type { Connect, RemoteConnect } from "./placement.ts";
+import type { OAuthServer } from "./sign-in.ts";
 import { windowsCommand } from "./windows-command.ts";
 
 /** A transport, not started yet, and the `file://` roots its client offers. */
@@ -20,11 +27,17 @@ export type Transports = { open(): Promise<Opened>; release(): void };
 /** The environment's daemon predates the `process` operation: retrying does not help, updating it does. */
 export class DaemonTooOldError extends Error {}
 
-/** The transports of an instance connecting as `connect`; an environment's connection is taken from `envs`. */
-export function transportsFor(connect: Connect, envs: EnvConnections): Transports {
+/** The auth provider of an HTTP server that signs in with OAuth. */
+export type AuthProviders = (server: OAuthServer) => AuthProvider;
+
+/**
+ * The transports of an instance connecting as `connect`; an environment's connection is taken from `envs`, an OAuth
+ * server's tokens from `auth`.
+ */
+export function transportsFor(connect: Connect, envs: EnvConnections, auth: AuthProviders): Transports {
 	switch (connect.kind) {
 		case "remote": {
-			const lease = envs.acquire(connect.environment, connect.config);
+			const lease = envs.acquire(connect.environment, connect.config, connect.revision);
 			return { open: () => remoteTransport(connect, lease.connection), release: () => lease.release() };
 		}
 		case "host":
@@ -41,14 +54,20 @@ export function transportsFor(connect: Connect, envs: EnvConnections): Transport
 				}),
 				release: () => {},
 			};
-		case "http":
+		case "http": {
+			const authProvider = connect.oauth === undefined ? undefined : auth(connect.oauth);
 			return {
 				open: async () => ({
-					transport: new StreamableHttpTransport({ url: connect.url, headers: expandValues(connect.headers) }),
+					transport: new StreamableHttpTransport({
+						url: connect.url,
+						headers: expandValues(connect.headers),
+						...(authProvider === undefined ? {} : { authProvider }),
+					}),
 					roots: [],
 				}),
 				release: () => {},
 			};
+		}
 		case "unplaced":
 			return {
 				open: async () => {

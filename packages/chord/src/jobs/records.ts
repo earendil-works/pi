@@ -18,6 +18,7 @@ import { uuidv7 } from "../host/internal.ts";
 import type { JsonValue } from "../json.ts";
 import type { StagedWrite } from "../store/step.ts";
 import type { ChordStore } from "../store/store.ts";
+import { carrierOf } from "../telemetry.ts";
 import type { JobDefinition, JobError } from "./definition.ts";
 import type { CutReason, Job, StartOptions } from "./job.ts";
 import { type LoadedRecord, PersistedRuns } from "./persisted.ts";
@@ -343,7 +344,8 @@ export class JobRecords {
 			throw new ChordError({ code: "unavailable", reason: "busy", message });
 		}
 		const persisted = this.#persisted !== undefined;
-		const trace = persisted ? context.telemetry.propagation?.inject(context.telemetry) : undefined;
+		// Its starter's carrier: its later phases are children of it (a persisted run stores it, for a later process).
+		const trace = carrierOf(context.telemetry);
 		// Checked above: the args are JSON (the definition refuses bytes).
 		const run = new JobRun(
 			uuidv7(),

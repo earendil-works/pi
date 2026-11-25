@@ -29,6 +29,8 @@ const error = { kind: "chord", error: { code: "released", message: "gone" } } as
 /** One message of every kind, with the optional fields both present and absent; parts are JSON text. */
 const EVERY_KIND: Message[] = [
 	{ kind: "hello", protocol: 1, incarnation, calls: 256 },
+	// No call window: a trusted link's (decision "Call windows only for untrusted links").
+	{ kind: "hello", protocol: 1, incarnation },
 	{
 		kind: "hold",
 		hold: 300,
@@ -106,6 +108,12 @@ const EVERY_KIND: Message[] = [
 		hold: 0,
 		cause: { kind: "waiting", error: { kind: "chord", error: { code: "contract_mismatch", message: "m" } } },
 	},
+	// An admission refused the caller (slice 14 §2.4): no backoff window, the decision wakes it.
+	{
+		kind: "failed",
+		hold: 0,
+		cause: { kind: "denied", error: { kind: "chord", error: { code: "forbidden", message: "no access" } } },
+	},
 	// The wire error format in `failed` and `gone`: a plugin's error travels too.
 	{ kind: "failed", hold: 0, cause: { kind: "broken", error: { kind: "plugin", code: "config", message: "m" } } },
 	{ kind: "gone", hold: 1, error: { kind: "plugin", code: "config", message: "m", details: { at: 1 } } },
@@ -125,7 +133,19 @@ const EVERY_KIND: Message[] = [
 	{ kind: "gone", hold: 0, error: { kind: "chord", error: { code: "released", message: "m" } } },
 	{ kind: "ack" },
 	{ kind: "ack", origin: 1 },
+	// Event acks (decision "Events: fire-and-forget members"): the event messages consumed, never a state ack.
+	{ kind: "ack", events: 1 },
+	{ kind: "ack", origin: 300, events: 4000 },
 	{ kind: "closed", origin: 300 },
+	// Events: `at` a whole `Date.now()`, several holds and members in one message, and none (a relay's filtered one).
+	{
+		kind: "event",
+		events: [
+			{ hold: 0, member: 0, at: 1_762_819_200_123, value: '{"t":1,"y":0.5}' },
+			{ hold: 300, member: 2, at: 0, value: "null" },
+		],
+	},
+	{ kind: "event", origin: 7, events: [] },
 	{
 		kind: "hold",
 		origin: 2,
@@ -176,7 +196,39 @@ const EVERY_KIND: Message[] = [
 	{ kind: "revoke", revocation: { grant: "g1" } },
 	{ kind: "ping" },
 	{ kind: "pong" },
+	// Trace carriers (R5, slice 9) on a hold and a call, with and without an origin, arguments and other fields.
+	{
+		kind: "hold",
+		hold: 5,
+		type: "app.notes",
+		version: 1,
+		fingerprint: "0123456789abcdef",
+		params: "{}",
+		address: server,
+		trace: { "pi-memory-span": "1", "pi-memory-trace": "s:1" },
+	},
+	{
+		kind: "hold",
+		origin: 3,
+		hold: 6,
+		type: "app.notes",
+		version: 1,
+		fingerprint: "0123456789abcdef",
+		params: "{}",
+		address: server,
+		limit: 10,
+		trace: { traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" },
+	},
+	{ kind: "call", call: 7, hold: 0, method: 1, args: '{"text":"x"}', trace: { a: "b" } },
+	{ kind: "call", origin: 2, call: 8, hold: 3, method: 0, trace: {} },
+	{ kind: "call", call: 9, hold: 0, method: 1, args: '{"text":"x"}', old: true },
+	{ kind: "call", origin: 2, call: 10, hold: 3, method: 0, trace: { a: "b" }, old: true },
 ];
+
+/** A carrier at the bounds: 8 keys, keys and values of 256 characters. */
+const LARGEST_CARRIER = Object.fromEntries(
+	Array.from({ length: 8 }, (_, index) => [`${index}`.padEnd(256, "k"), "v".repeat(256)]),
+);
 
 /** A decoded message with every part as its text, to compare with one built from text parts. */
 function plain(message: Message): Message {
@@ -203,6 +255,8 @@ function plain(message: Message): Message {
 					members: entry.members.map(({ member, ops }) => ({ member, ops: partText(ops) })),
 				})),
 			};
+		case "event":
+			return { ...message, events: message.events.map((entry) => ({ ...entry, value: partText(entry.value) })) };
 		default:
 			return message;
 	}
@@ -236,6 +290,7 @@ forEachCodec(() => {
 					holds: [{ hold: 0, variant: 0, members: [{ member: 0, value: deflated() }], failed: [] }],
 				},
 				{ kind: "state", holds: [{ hold: 0, members: [{ member: 0, ops: deflated() }], failed: [], retired: [] }] },
+				{ kind: "event", origin: 2, events: [{ hold: 0, member: 1, at: 5, value: deflated() }] },
 			];
 			for (const message of messages) {
 				const decoded = checkMessage(codec.decode(codec.encode(message)), context);
@@ -276,7 +331,7 @@ forEachCodec(() => {
 			const trailing = new Uint8Array([...release, ...(codec === binaryCodec ? [0] : [0x20, 0x31])]);
 			expect(() => codec.decode(new Uint8Array())).toThrow();
 			expect(() =>
-				codec.decode(codec === binaryCodec ? new Uint8Array([99]) : new TextEncoder().encode('["?"]')),
+				codec.decode(codec === binaryCodec ? new Uint8Array([31]) : new TextEncoder().encode('["?"]')),
 			).toThrow("unknown kind");
 			expect(() => codec.decode(trailing)).toThrow();
 		});
@@ -289,6 +344,63 @@ forEachCodec(() => {
 			expect(check({ kind: "ack", origin: 0 })).toThrow("message schema");
 			const closed = codec === binaryCodec ? new Uint8Array([14]) : new TextEncoder().encode('["C"]');
 			expect(() => checkMessage(codec.decode(closed), context)).toThrow("message schema");
+		});
+
+		it("carry a trace carrier up to its bounds; past them, of another shape or on another kind, the schema refuses it", () => {
+			const codec = testCodec();
+			const check = (message: unknown) => () =>
+				checkMessage(codec.decode(codec.encode(message as Message)), context);
+			const call = { kind: "call", call: 0, hold: 0, method: 0 } as const;
+			expect(check({ ...call, trace: LARGEST_CARRIER })()).toEqual({ ...call, trace: LARGEST_CARRIER });
+			expect(check({ ...call, trace: { ...LARGEST_CARRIER, nine: "x" } })).toThrow("message schema");
+			expect(check({ ...call, trace: { ["k".repeat(257)]: "v" } })).toThrow("message schema");
+			expect(check({ ...call, trace: { k: "v".repeat(257) } })).toThrow("message schema");
+			expect(check({ ...call, trace: { k: 1 } })).toThrow("message schema");
+			expect(check({ ...call, trace: ["k"] })).toThrow("message schema");
+			// Printable ASCII only (review M2): no control character, no space in a key; a value may hold one (W3C's
+			// `tracestate`).
+			expect(check({ ...call, trace: { k: "a\u001b[2J" } })).toThrow("message schema");
+			expect(check({ ...call, trace: { "k\u0007": "v" } })).toThrow("message schema");
+			expect(check({ ...call, trace: { "a b": "v" } })).toThrow("message schema");
+			expect(check({ ...call, trace: { k: "é" } })).toThrow("message schema");
+			expect(check({ ...call, trace: { k: "a=1, b=2" } })()).toEqual({ ...call, trace: { k: "a=1, b=2" } });
+			// The codecs write it only on a hold or a call; a decoder's forgery fails the schema.
+			expect(() => checkMessage({ kind: "abort", call: 0, trace: { k: "v" } }, context)).toThrow("message schema");
+		});
+
+		it("carry a trace carrier beside a call's byte segments", () => {
+			const codec = testCodec();
+			const { json, segments } = payloadPart({ data: new Uint8Array([1, 2, 3]) }, true);
+			const message: Message = {
+				kind: "call",
+				call: 0,
+				hold: 0,
+				method: 0,
+				args: json,
+				segments,
+				trace: { a: "b" },
+			};
+			const decoded = codec.decode(codec.encode(message)) as Extract<Message, { kind: "call" }>;
+			expect(decoded.trace).toEqual({ a: "b" });
+			expect(decoded.segments).toEqual(segments);
+		});
+
+		it("refuse a type or host kind past 256 characters (review M1: a relay records them unparsed)", () => {
+			const codec = testCodec();
+			const check = (message: unknown) => () =>
+				checkMessage(codec.decode(codec.encode(message as Message)), context);
+			const hold = {
+				kind: "hold",
+				hold: 0,
+				type: "t".repeat(256),
+				version: 1,
+				fingerprint: "0123456789abcdef",
+				params: "{}",
+				address: { kind: "k".repeat(256), params: {} },
+			};
+			expect(check(hold)).not.toThrow();
+			expect(check({ ...hold, type: "t".repeat(257) })).toThrow("message schema");
+			expect(check({ ...hold, address: { kind: "k".repeat(257), params: {} } })).toThrow("message schema");
 		});
 
 		it("keep a leading U+FEFF in strings and parts (it is data, not a byte order mark)", () => {
@@ -323,6 +435,10 @@ forEachCodec(() => {
 describe("the binary codec", () => {
 	it("writes ids as varints, the incarnation as 16 and the fingerprint as 8 raw bytes, no outer length", () => {
 		expect(binaryCodec.encode({ kind: "hello", protocol: 1, incarnation, calls: 1 })).toHaveLength(1 + 1 + 16 + 1);
+		// No call window is written as 0 (a window is at least 1) and read back as absent.
+		const none = binaryCodec.encode({ kind: "hello", protocol: 1, incarnation });
+		expect(none.at(-1)).toBe(0);
+		expect(binaryCodec.decode(none)).toEqual({ kind: "hello", protocol: 1, incarnation });
 		expect([...binaryCodec.encode({ kind: "release", hold: 300 })]).toEqual([2, 0xac, 0x02]);
 		const hold = binaryCodec.encode({
 			kind: "hold",
@@ -336,23 +452,27 @@ describe("the binary codec", () => {
 		// kind, id, type, version, fingerprint, params, the address's kind and params, the optional fields' flags
 		expect(hold).toHaveLength(1 + 1 + 2 + 1 + 8 + 3 + 7 + 3 + 1);
 		expect([...binaryCodec.encode({ kind: "ack" })]).toEqual([13]);
+		// An event ack: the kind byte's third flag, then its count (a state ack stays one byte).
+		expect([...binaryCodec.encode({ kind: "ack", events: 3 })]).toEqual([13 | 0x20, 3]);
+		expect(binaryCodec.decode(binaryCodec.encode({ kind: "ack", events: 3 }))).toEqual({ kind: "ack", events: 3 });
+		expect(() => binaryCodec.decode(new Uint8Array([14 | 0x20, 1]))).toThrow("binary: an unknown kind");
 		// An origin: the kind byte's high bit, then the origin as a varint.
 		expect([...binaryCodec.encode({ kind: "ack", origin: 300 })]).toEqual([13 | 0x80, 0xac, 0x02]);
 		expect([...binaryCodec.encode({ kind: "closed", origin: 1 })]).toEqual([14 | 0x80, 1]);
 	});
 
-	it("writes a failure's cause as one byte, 0 transient, 1 broken, 2 waiting (dependency model §2); refuses another", () => {
+	it("writes a failure's cause as one byte, 0 transient, 1 broken, 2 waiting, 3 denied (slice 14 §2.4); refuses another", () => {
 		const error = { kind: "chord", error: { code: "unavailable", message: "m" } } as const;
-		const failed = (kind: "transient" | "broken" | "waiting"): Message => ({
+		const failed = (kind: "transient" | "broken" | "waiting" | "denied"): Message => ({
 			kind: "failed",
 			hold: 0,
 			cause: { kind, error },
 		});
 		expect(
-			["transient", "broken", "waiting"].map((kind) => binaryCodec.encode(failed(kind as "waiting"))[2]),
-		).toEqual([0, 1, 2]);
+			["transient", "broken", "waiting", "denied"].map((kind) => binaryCodec.encode(failed(kind as "denied"))[2]),
+		).toEqual([0, 1, 2, 3]);
 		const unknown = binaryCodec.encode(failed("waiting"));
-		unknown[2] = 3;
+		unknown[2] = 4;
 		expect(() => binaryCodec.decode(unknown)).toThrow("an unknown failure kind");
 	});
 
@@ -399,6 +519,23 @@ describe("the binary codec", () => {
 	it("refuses a varint of more than 8 bytes, which would read as no number", () => {
 		const state = new Uint8Array([6, ...new Array(150).fill(0x80), 0]);
 		expect(() => binaryCodec.decode(state)).toThrow("a varint does not fit");
+	});
+
+	it("flags a trace carrier in the kind byte (0x40) and writes it as JSON after the origin", () => {
+		const call = binaryCodec.encode({ kind: "call", origin: 2, call: 0, hold: 0, method: 0, trace: { a: "b" } });
+		const json = new TextEncoder().encode('{"a":"b"}');
+		expect([...call.subarray(0, 3 + json.byteLength)]).toEqual([3 | 0x80 | 0x40, 2, json.byteLength, ...json]);
+		const plainCall = binaryCodec.encode({ kind: "call", call: 0, hold: 0, method: 0 });
+		expect(plainCall[0]).toBe(3);
+	});
+
+	it("flags a call that is old work of a reload in the kind byte (0x20); another kind with that flag is unknown", () => {
+		const call = binaryCodec.encode({ kind: "call", call: 0, hold: 0, method: 0, old: true });
+		expect(call[0]).toBe(3 | 0x20);
+		expect(binaryCodec.decode(call)).toEqual({ kind: "call", call: 0, hold: 0, method: 0, old: true });
+		const release = binaryCodec.encode({ kind: "release", hold: 1 });
+		release[0]! |= 0x20;
+		expect(() => binaryCodec.decode(release)).toThrow("unknown kind");
 	});
 
 	it("refuses unknown hold flags", () => {
@@ -472,8 +609,15 @@ describe("the text codec", () => {
 		expect(text({ kind: "failed", hold: 2, cause: { ...cause, kind: "waiting" } })).toBe(
 			'["f",2,"w",{"kind":"chord","error":{"code":"unavailable","message":"m"}}]',
 		);
+		expect(text({ kind: "failed", hold: 2, cause: { ...cause, kind: "denied" } })).toBe(
+			'["f",2,"d",{"kind":"chord","error":{"code":"unavailable","message":"m"}}]',
+		);
 		expect(() => textCodec.decode(new TextEncoder().encode('["f",2,"x",{}]'))).toThrow("an unknown failure kind");
 		expect(text({ kind: "ack" })).toBe('["a"]');
+		expect(text({ kind: "ack", events: 2 })).toBe('["a",2]');
+		expect(text({ kind: "event", events: [{ hold: 1, member: 0, at: 9, value: '{"y":1}' }] })).toBe(
+			'["E",[[1,0,9,[0,{"y":1}]]]]',
+		);
 		// An origin wraps the message's own tuple.
 		expect(text({ kind: "release", origin: 4, hold: 3 })).toBe('["@",4,["R",3]]');
 		expect(text({ kind: "closed", origin: 4 })).toBe('["@",4,["C"]]');
@@ -521,6 +665,27 @@ describe("the text codec", () => {
 		expect(text(hold)).toBe(`${head}]`);
 		expect(text({ ...hold, incarnation })).toBe(`${head},null,"${incarnation}"]`);
 		expect(text({ ...hold, limit: 5 })).toBe(`${head},null,null,null,5]`);
+		expect(text({ ...hold, trace: { a: "b" } })).toBe(`${head},null,null,null,null,{"a":"b"}]`);
+	});
+
+	it("writes a call's trace carrier last, its payload's fields positional then (null when absent)", () => {
+		const call = { kind: "call", call: 0, hold: 1, method: 2 } as const;
+		expect(text({ ...call, trace: { a: "b" } })).toBe('["c",0,1,2,null,null,{"a":"b"}]');
+		expect(text({ ...call, args: "[1]", trace: { a: "b" } })).toBe('["c",0,1,2,[0,[1]],null,{"a":"b"}]');
+		expect(text({ ...call, args: "[1]" })).toBe('["c",0,1,2,[0,[1]]]');
+	});
+
+	it("writes a call's old-work flag after its carrier (null when absent), its payload's fields positional then", () => {
+		const call = { kind: "call", call: 0, hold: 1, method: 2 } as const;
+		expect(text({ ...call, old: true })).toBe('["c",0,1,2,null,null,null,true]');
+		expect(text({ ...call, args: "[1]", trace: { a: "b" }, old: true })).toBe(
+			'["c",0,1,2,[0,[1]],null,{"a":"b"},true]',
+		);
+	});
+
+	it("leaves the old-work flag's value to the message schema: only true passes", () => {
+		const decoded = textCodec.decode(new TextEncoder().encode('["c",0,1,2,null,null,null,1]'));
+		expect(() => checkMessage(decoded, context)).toThrow("message schema");
 	});
 
 	it("puts byte segments after the tuple and a newline, their lengths the tuple's last field", () => {

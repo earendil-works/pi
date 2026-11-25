@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Where p3's web UI is heading</title>
+<style>
+:root{--bg:#151413;--page:#0e0d0c;--text:#ecebe8;--muted:#9b958d;--faint:#6c6761;--line:#2c2a27;--hover:#22201e;--user:#252321;--code:#1a1918;
+--ok:#5cc493;--blue:#5b9cf0;--orange:#f59e42;--red:#f07a72;--purple:#b48cf0;--add:#17301f;--add-ink:#7fd8a3;--del:#3a1d1b;--del-ink:#f4a19a;
+--sans:-apple-system,BlinkMacSystemFont,"Inter","Segoe UI",Roboto,sans-serif;--mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,monospace}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--page);color:var(--text);font:14px/1.55 var(--sans)}
+main{max-width:1080px;margin:0 auto;padding:40px 22px 80px}
+h1{font-size:30px;margin:0 0 6px;letter-spacing:-.3px}
+h2{font-size:20px;margin:56px 0 8px}
+p{margin:0 0 10px;color:#d6d3cd;max-width:760px}
+.sub{color:var(--muted);font-size:15px;margin-bottom:26px}
+.lead{font-size:15px}
+code{font-family:var(--mono);font-size:12.5px;background:var(--code);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.key{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:18px 0 6px}
+.key div{border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:#131211}
+.key b{display:block;margin-bottom:2px}
+.key span{color:var(--muted);font-size:13px}
+.tag{display:inline-block;font-size:11px;padding:0 6px;border-radius:3px;border:1px solid;line-height:18px;white-space:nowrap}
+.t-wb{color:var(--blue);border-color:rgba(91,156,240,.5)}
+.t-view{color:var(--orange);border-color:rgba(245,158,66,.5)}
+.t-slot{color:var(--purple);border-color:rgba(180,140,240,.5)}
+.t-lay{color:var(--ok);border-color:rgba(92,196,147,.5)}
+.cap{color:var(--muted);font-size:13px;margin:8px 0 0}
+/* window */
+.win{border:1px solid var(--line);border-radius:10px;background:var(--bg);overflow:hidden;display:flex;flex-direction:column;margin-top:14px}
+.bar{height:30px;display:flex;align-items:center;gap:4px;padding:0 8px;background:#0f0e0d;border-bottom:1px solid var(--line);font-size:12px;color:var(--muted)}
+.bar .b{padding:1px 8px;border:1px solid transparent;border-radius:4px}
+.bar .sp{flex:1}
+.body{display:flex;min-height:0;flex:1}
+.region{display:flex;flex-direction:column;min-width:0;position:relative}
+.region+.region{border-left:1px solid var(--line)}
+.pane{display:flex;flex-direction:column;flex:1;min-height:0;position:relative}
+.pane+.pane{border-top:1px solid var(--line)}
+.chrome{height:30px;flex:none;display:flex;align-items:center;gap:0;background:#191817;border-bottom:1px solid var(--line);font-size:12px}
+.chrome .tab{padding:0 12px;height:100%;display:flex;align-items:center;gap:6px;color:var(--muted);border-right:1px solid var(--line)}
+.chrome .tab.on{color:var(--text);background:var(--bg);box-shadow:inset 0 2px 0 var(--text)}
+.chrome .sp{flex:1}.chrome .x{color:var(--faint);padding:0 10px}
+.content{flex:1;min-height:0;overflow:hidden;padding:10px 12px;position:relative}
+/* outlines */
+.outline .o-wb{outline:2px dashed var(--blue);outline-offset:-2px}
+.outline .o-view{outline:2px dashed var(--orange);outline-offset:-4px}
+.outline .o-slot{outline:2px dashed var(--purple);outline-offset:1px}
+.label{display:none;position:absolute;z-index:3;font-size:10.5px;padding:0 6px;border-radius:3px;line-height:17px;pointer-events:none;white-space:nowrap}
+.outline .label{display:block}
+.l-wb{background:var(--blue);color:#0b1220}.l-view{background:var(--orange);color:#1d1205}.l-slot{background:var(--purple);color:#170d26}.l-lay{background:var(--ok);color:#06150d}
+/* content bits */
+.side .grp{font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--faint);margin:10px 0 4px}
+.side .it{display:flex;align-items:center;gap:7px;padding:4px 6px;border-radius:4px;color:var(--muted);font-size:13px;position:relative}
+.side .it.on{background:var(--hover);color:var(--text)}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--faint);flex:none}
+.dot.w{background:var(--orange)}.dot.ok{background:var(--ok)}.dot.u{background:var(--blue)}.dot.r{background:var(--red)}
+.badge{margin-left:auto;font-size:10.5px;color:var(--muted);border:1px solid var(--line);border-radius:3px;padding:0 4px}
+.msg{margin:0 0 9px;font-size:13px}
+.msg.user{margin-left:auto;background:var(--user);padding:6px 10px;border-radius:9px;max-width:78%;width:fit-content}
+.tool{font-family:var(--mono);font-size:11.5px;color:var(--muted);margin:0 0 8px}
+.card{border:1px solid var(--line);border-radius:7px;padding:8px 10px;margin:0 0 9px;background:#1a1917;position:relative;font-size:12.5px}
+.card pre{margin:5px 0 7px;font-family:var(--mono);font-size:11.5px;background:var(--code);padding:5px 7px;border-radius:4px;border:1px solid var(--line)}
+.btn{display:inline-block;font-size:12px;padding:2px 10px;border-radius:4px;border:1px solid var(--line);background:var(--hover);color:var(--text);margin-right:5px}
+.btn.p{background:var(--text);color:var(--bg);font-weight:600}
+.composer{flex:none;border-top:1px solid var(--line);padding:8px 12px;position:relative}
+.composer .box{border:1px solid var(--line);border-radius:9px;padding:6px 9px;background:#1a1918;color:var(--faint);font-size:13px;display:flex;align-items:center;gap:6px}
+.chip{font-size:11.5px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:0 8px;background:var(--hover);position:relative}
+.diff{font-family:var(--mono);font-size:11.5px;line-height:1.6}
+.diff .a{background:var(--add);color:var(--add-ink);padding:0 6px}.diff .d{background:var(--del);color:var(--del-ink);padding:0 6px}.diff .c{color:var(--muted);padding:0 6px}.diff .f{color:var(--text);margin-bottom:3px}
+.frame{border:1px dashed var(--line);border-radius:6px;padding:8px;background:#121110}
+.frame .hd{font-size:10.5px;color:var(--faint);margin-bottom:6px;display:flex;gap:6px;align-items:center}
+.glyph{display:grid;grid-template-columns:repeat(8,15px);gap:2px}
+.glyph i{width:15px;height:15px;background:#24221f;border-radius:2px}.glyph i.on{background:var(--text)}
+.issue{font-size:13px}
+.issue h3{margin:0 0 4px;font-size:15px}
+.issue .meta{color:var(--faint);font-size:11.5px;margin-bottom:8px}
+.analysis{border-left:2px solid var(--ok);padding:4px 10px;background:#141a16;margin:8px 0;font-size:12.5px}
+.ctl{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;margin-top:14px}
+.ctl button{background:none;border:0;color:var(--muted);padding:5px 14px;font:inherit;cursor:pointer}
+.ctl button.on{background:var(--hover);color:var(--text)}
+.toggle{margin-left:14px;color:var(--muted);font-size:13px;cursor:pointer}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:14px}
+.box3{border:1px solid var(--line);border-radius:8px;padding:12px;background:#131211}
+.box3 h4{margin:0 0 4px;font-size:14px}
+.box3 p{font-size:13px;color:var(--muted);margin:0}
+.flow{display:flex;align-items:center;gap:10px;margin:14px 0 0;flex-wrap:wrap}
+.flow .st{border:1px solid var(--line);border-radius:8px;padding:8px 12px;background:#131211;font-size:13px}
+.flow .st small{display:block;color:var(--faint);font-size:11.5px}
+.flow .ar{color:var(--faint)}
+.phone{width:250px;height:470px;border:8px solid #2a2826;border-radius:30px;background:var(--bg);overflow:hidden;display:flex;flex-direction:column}
+.phone .top{height:38px;display:flex;align-items:center;gap:8px;padding:0 10px;border-bottom:1px solid var(--line);font-size:13px}
+.phone .strip{display:flex;border-bottom:1px solid var(--line);font-size:12px}
+.phone .strip span{padding:7px 10px;color:var(--muted)}.phone .strip span.on{color:var(--text);box-shadow:inset 0 -2px 0 var(--text)}
+.phone .pb{flex:1;padding:10px;overflow:hidden}
+.phone .fb{display:flex;justify-content:space-around;border-top:1px solid var(--line);padding:6px 0 10px;font-size:11px;color:var(--muted);background:#0f0e0d}
+.term{font-family:var(--mono);font-size:12px;line-height:1.4;background:#0b0b0a;border:1px solid var(--line);border-radius:8px;padding:10px;white-space:pre;color:#d6d3cd;overflow:auto}
+.term .k{color:var(--orange)}.term .m{color:var(--faint)}.term .b{color:var(--blue)}.term .inv{background:#d6d3cd;color:#0b0b0a}
+.room{display:flex;gap:16px;align-items:flex-start;margin-top:14px;flex-wrap:wrap}
+.ghost{position:absolute;width:12px;height:12px;border-radius:50%;border:2px solid}
+.peer{font-size:11px;padding:1px 6px;border-radius:3px;position:absolute;white-space:nowrap}
+footer{margin-top:60px;color:var(--faint);font-size:12px;border-top:1px solid var(--line);padding-top:12px}
+@media (max-width:820px){.key,.grid3,.grid2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main id="top">
+<h1>Where p3's web UI is heading</h1>
+<div class="sub">An idea sketch, not a spec. Starting from Max's views and Christian's rollups in p2, and where we want to take them in p3.</div>
+
+<p class="lead">You've seen Max's views: panes next to the chat that the agent and you share, including a custom page the agent writes (the glyph editor). And Christian's rollups: sidebar sections computed from your sessions, some of them written as small scripts. The idea for p3 is to make <b>everything</b> on the page work like that. The whole UI becomes views that plugins (and the agent) provide, arranged by layouts, with a thin, unbreakable frame around them.</p>
+
+<div class="key">
+<div><span class="tag t-wb">workbench</span><b>The frame</b><span>The page's base code. Draws pane frames and a small fixed bar. Can't be replaced, so it can always rescue you.</span></div>
+<div><span class="tag t-lay">app</span><b>A layout of views</b><span>A plugin that arranges views for one purpose: coding, triage, family. You switch between apps.</span></div>
+<div><span class="tag t-view">view</span><b>A place</b><span>Anything you can open, keep beside other things and link to: the chat, a diff, an issue, a sidebar.</span></div>
+<div><span class="tag t-slot">slot</span><b>A spot inside a view</b><span>Where other plugins add their part without replacing the view: a card in the chat, a chip in the composer.</span></div>
+</div>
+
+<h2>1. One page, four layers</h2>
+<p>This is the default p3 screen. Turn on the outlines to see who draws what.</p>
+<span class="ctl"><button class="on" data-outline="off">Plain</button><button data-outline="on">Show who draws what</button></span>
+
+<div class="win" id="w1" style="height:430px">
+ <div class="bar o-wb" style="position:relative"><span class="b" style="border-color:var(--line);color:var(--text)">◆ Coding ▾</span><span class="b">▤ Views</span><span class="b">↺ Reset layout</span><span class="b">⛨ Safe mode</span><span class="sp"></span><span>fixed bar</span><span class="label l-wb" style="right:6px;top:6px">workbench: fixed bar</span></div>
+ <div class="body">
+  <div class="region" style="width:220px">
+   <div class="pane o-view"><div class="content side">
+    <div class="grp">Recent</div>
+    <div class="it on"><span class="dot w"></span>p3 web ideas</div>
+    <div class="it"><span class="dot ok"></span>kit cleanup</div>
+    <div class="grp">Triage</div>
+    <div class="it o-slot"><span class="dot u"></span>Flaky test in CI<span class="badge">#11981</span></div>
+    <div class="it"><span class="dot"></span>Crash on resume<span class="badge">#11990</span></div>
+    <div class="grp">Folder: ~/pi</div>
+    <div class="it"><span class="dot"></span>Durable signals</div>
+    <span class="label l-view" style="left:6px;bottom:6px">view: Sidebar</span><span class="label l-slot" style="left:60px;top:92px">slot: row badge (triage plugin)</span>
+   </div></div>
+  </div>
+  <div class="region" style="flex:1.3">
+   <div class="pane">
+    <div class="chrome o-wb" style="position:relative"><span class="tab on">Chat</span><span class="sp"></span><span class="x">⋯</span><span class="label l-wb" style="right:6px;top:6px">workbench: pane frame</span></div>
+    <div class="content o-view">
+     <div class="msg user">Make the CI tests faster and push it.</div>
+     <div class="tool">▸ edit ci/run-tests.sh</div>
+     <div class="card o-slot"><b>Approval needed</b> <span style="color:var(--muted)">bash</span><pre>git push origin faster-ci</pre><span class="btn p">Allow</span><span class="btn">Deny</span><span class="label l-slot" style="right:6px;top:6px">slot: chat entry (approvals plugin)</span></div>
+     <span class="label l-view" style="left:6px;bottom:6px">view: Transcript</span>
+    </div>
+    <div class="composer o-view"><div class="box">Message… <span class="chip o-slot">⎘ screenshot.png</span><span class="label l-slot" style="right:6px;top:-9px">slot: composer part</span></div></div>
+   </div>
+  </div>
+  <div class="region" style="flex:1">
+   <div class="pane">
+    <div class="chrome o-wb"><span class="tab on">Changes</span><span class="tab">Glyph editor</span><span class="sp"></span><span class="x">✕</span></div>
+    <div class="content o-view"><div class="diff"><div class="f">ci/run-tests.sh</div><div class="d">- npm test</div><div class="a">+ npm test -- --shard=$SHARD</div><div class="c">  echo done</div></div><span class="label l-view" style="left:6px;bottom:6px">view: Changes</span></div>
+   </div>
+  </div>
+ </div>
+</div>
+<p class="cap">The <span class="tag t-lay">coding app</span> put the sidebar on the left, the chat in the middle and other views on the right. Every piece of content is a plugin's view; the frames around them and the top bar are the workbench's.</p>
+
+<h2>2. Views come from two places</h2>
+<div class="grid2">
+ <div class="box3"><h4>Plugin views</h4><p>Installed plugins provide views like the chat, diffs, files, terminals and the sidebar. They run inside the app, use p3's real components and data, and can also render in the terminal.</p></div>
+ <div class="box3"><h4>Agent sketches</h4><p>The agent writes a page on the fly, like Max's glyph editor. It runs <b>sandboxed</b>: it can't act as you, so it can't, say, approve its own requests. It still gets p3's look and components.</p></div>
+</div>
+<div class="flow">
+ <div class="st">Sketch<small>agent writes it in a session</small></div><span class="ar">→</span>
+ <div class="st">Library<small>saved, reusable in any session</small></div><span class="ar">→</span>
+ <div class="st">Plugin<small>same code, plus its own server logic</small></div>
+</div>
+<p class="cap">A sketch you like doesn't get rewritten: it's saved to a library the agent can see, and if it needs more (rules, storage), a plugin wraps the very same page.</p>
+
+<h2>3. Apps: one instance, many agentic apps</h2>
+<p>An app is a layout of views for one purpose, and each app works on its own slice of your sessions. You pick the app; clicking a thing inside it opens that thing's view right there. The same instance can hold a coding app per project, the triage agent, a talking robot for a kid who can't read yet, a family planner, a music tracker you make songs in together, a space shared with friends, and an app for looking after your machines.</p>
+<span class="ctl" id="layctl"><button class="on" data-lay="coding">Coding: pi</button><button data-lay="triage">Triage</button><button data-lay="kid">Robot (for my son)</button><button data-lay="family">Family</button><button data-lay="music">Music</button><button data-lay="friends">Friends</button><button data-lay="envs">Environments</button></span>
+<div class="win" style="height:360px" id="lay">
+</div>
+<p class="cap">Each app is a plugin: its layout, its views and its own data on the server. The sessions underneath are ordinary sessions; an app only decides which ones it shows and how. Clicking a session in any app opens it inside that app.</p>
+<h2>3a. What an app is made of</h2>
+<div class="grid3">
+ <div class="box3"><h4>Its layout and its views</h4><p>Where things go and what draws them. Coding has sidebars and the chat in the middle; the robot has no sidebar at all; the family app has its own sidebar. And the same session is a robot face with voice there, a plain chat in the family app, and the full chat with diffs in coding.</p></div>
+ <div class="box3"><h4>Its slice of the instance</h4><p>Which sessions it shows (maybe just one long-running session in a fixed folder, with that folder's skills and AGENTS.md), and which machines and accounts it reaches: calendars, mail, the family files.</p></div>
+ <div class="box3"><h4>Its own views</h4><p>Whatever the purpose needs beside the chat: a calendar, a game canvas, a tracker, the list of your machines.</p></div>
+</div>
+<p class="cap">Sharing a whole app with friends, not just one session, fits the same idea (you share its slice). How exactly is still open.</p>
+
+<h2>4. One sidebar up close: the coding app's</h2>
+<p>Each app brings its own sidebar, or none. This is the coding app's built-in one: Christian's rollups, generalized. It shows sections, and anyone can contribute one. They all produce the same thing: a list or groups of sessions.</p>
+<div class="grid3">
+ <div class="box3"><h4>Built in</h4><p>Recent, by folder, by project, archive.</p></div>
+ <div class="box3"><h4>From a plugin</h4><p>Triage contributes "Triage", grouped by repository, straight from its own data.</p></div>
+ <div class="box3"><h4>From a script</h4><p>You or the agent write a small rule ("sessions that mention GitHub"), as rollup scripts do today.</p></div>
+</div>
+<p class="cap">Open question: whether one session may appear in several sections at once (p2 allows it; it can be confusing). That only concerns this built-in sidebar: anyone can build a different sidebar view and switch it into their app's layout. Clicking a session always opens the same place: the link names the session, not the section.</p>
+
+<h2>5. Rooms: working on a view together</h2>
+<p>Every open view gets a room: who else is looking, a live channel, and a shared clock. That's what makes collaboration feel live, not just "saved on drop".</p>
+<div class="room">
+ <div class="frame" style="position:relative;width:260px">
+  <div class="hd"><span class="tag t-view">sketch</span>glyph editor · 3 people here</div>
+  <div class="glyph" id="gl"></div>
+  <span class="ghost" style="left:96px;top:66px;border-color:var(--orange)"></span><span class="peer" style="left:110px;top:58px;background:var(--orange);color:#1d1205">Max dragging</span>
+  <span class="ghost" style="left:44px;top:118px;border-color:var(--blue)"></span><span class="peer" style="left:58px;top:110px;background:var(--blue);color:#0b1220">Christian</span>
+ </div>
+ <div style="max-width:520px">
+  <p><b>While you drag,</b> others see the handle move live; <b>when you let go,</b> it's saved for good.</p>
+  <p><b>Games like Pong</b> work the classic way: one player's tab runs the game and the others predict and smooth, so a quarter-second of lag over the internet is fine.</p>
+  <p><b>Each view gets its own connection</b>, so a fast game never waits behind the chat's traffic.</p>
+ </div>
+</div>
+
+<h2>6. You can always get out</h2>
+<div class="grid3">
+ <div class="box3"><h4>A broken view</h4><p>Only its pane shows the error, with Close and Reload. The frame belongs to the workbench, so close always works.</p></div>
+ <div class="box3"><h4>A broken layout</h4><p>Falls back to the default layout.</p></div>
+ <div class="box3"><h4>Safe mode</h4><p>One button in the fixed bar: only the chat, the composer and the plugin manager, until you turn off what broke.</p></div>
+</div>
+
+<h2>7. Phone and terminal</h2>
+<div class="room">
+ <div class="phone">
+  <div class="top">☰ <b style="flex:1">p3 web ideas</b> ⋯</div>
+  <div class="strip"><span class="on">Chat</span><span>Changes</span><span>Glyphs</span></div>
+  <div class="pb"><div class="msg user">Make the CI tests faster.</div><div class="tool">▸ edit ci/run-tests.sh</div><div class="card"><b>Approval needed</b><pre>git push</pre><span class="btn p">Allow</span><span class="btn">Deny</span></div></div>
+  <div class="fb"><span>▤ Views</span><span>↺ Reset</span><span>⛨ Safe</span></div>
+ </div>
+ <div style="flex:1;min-width:320px">
+  <p><b>Phone:</b> one view at a time, picked from tabs; the sidebar is a drawer. Same views, same layout ideas.</p>
+  <p><b>Terminal:</b> the same views, drawn as text. A view without a text version shows its name and a link to open it in the browser.</p>
+<div class="term"><span class="inv"> 1 Chat </span>  <span class="m">2</span> Changes  <span class="m">3</span> Glyphs
+┌─ Chat ──────────────────────────────────┐
+│ <span class="m">you</span> Make the CI tests faster.            │
+│ <span class="k">pi</span>  <span class="m">▸ edit ci/run-tests.sh</span>                │
+│     Approval needed: git push  <span class="b">[a]llow</span> <span class="b">[d]eny</span> │
+└─────────────────────────────────────────┘
+<span class="m">Glyphs: no text version · open in browser</span></div>
+ </div>
+</div>
+
+<h2>The short version</h2>
+<p>A thin frame that can't break; apps (layouts) you switch between, each a different view on your sessions; everything on screen is a view from a plugin or the agent; plugins add to views through slots instead of replacing them; and rooms make shared views live. Next step: a spike rewriting p2's UI this way to see what holds up, then the clean version in p3.</p>
+<footer>p3 · idea sketch for the team · not a spec</footer>
+</main>
+<script>
+"use strict";
+// outlines
+document.querySelectorAll("[data-outline]").forEach(b=>b.addEventListener("click",()=>{
+ document.querySelectorAll("[data-outline]").forEach(x=>x.classList.toggle("on",x===b));
+ document.getElementById("w1").classList.toggle("outline",b.dataset.outline==="on");
+}));
+// glyph
+const g=document.getElementById("gl");const on=new Set([10,11,12,13,17,22,25,30,33,34,35,36,37,38,41,46,49,54]);
+for(let i=0;i<64;i++){const c=document.createElement("i");if(on.has(i))c.className="on";g.appendChild(c)}
+// layouts
+const appbar=(name)=>`<div class="bar"><span class="b" style="border-color:var(--line);color:var(--text)">◆ ${name} ▾</span><span class="b">▤ Views</span><span class="b">↺ Reset layout</span><span class="b">⛨ Safe mode</span><span class="sp"></span><span>app switcher in the fixed bar</span></div>`;
+const DEFAULT=appbar("Coding: pi")+`
+<div class="body"><div class="region" style="width:200px"><div class="pane"><div class="content side"><div class="grp">Recent</div><div class="it on"><span class="dot w"></span>Flaky test in CI</div><div class="it"><span class="dot ok"></span>kit cleanup</div><div class="grp">Triage</div><div class="it"><span class="dot u"></span>Flaky test in CI<span class="badge">#11981</span></div><div class="it"><span class="dot"></span>Crash on resume<span class="badge">#11990</span></div></div></div></div>
+<div class="region" style="flex:1"><div class="pane"><div class="chrome"><span class="tab on">Chat · Flaky test in CI</span></div><div class="content"><div class="msg user">Analyze issue #11981.</div><div class="tool">▸ read test/p2/subagents.test.ts</div><div class="msg">The test waits for a report that may already be in the window…</div><div class="tool">▸ submit_analysis(#11981, cause: test race)</div></div></div></div></div>`;
+const TRIAGE=appbar("Triage")+`
+<div class="body"><div class="region" style="width:210px"><div class="pane"><div class="chrome"><span class="tab on">Issue queue</span></div><div class="content side"><div class="grp">Untriaged · 3</div><div class="it on"><span class="dot u"></span>#11981 Flaky test</div><div class="it"><span class="dot u"></span>#11990 Crash on resume</div><div class="it"><span class="dot"></span>#11994 Docs typo</div><div class="grp">Done today · 5</div></div></div></div>
+<div class="region" style="flex:1"><div class="pane"><div class="chrome"><span class="tab on">Issue #11981</span></div><div class="content issue"><h3>subagents test times out</h3><div class="meta">earendil-works/pi · opened 2h ago</div><div class="analysis"><b>Analysis:</b> a test race, not a lost update. The test waits for a report from the previous case.<br><span style="color:var(--muted)">from session "Flaky test in CI"</span></div><span class="btn p">Accept fix</span><span class="btn">Open session</span><span class="btn">Close issue</span></div></div></div>
+<div class="region" style="flex:1"><div class="pane"><div class="chrome"><span class="tab on">Chat · analysis session</span></div><div class="content"><div class="tool">▸ read test/p2/subagents.test.ts</div><div class="msg">The test waits for a report that may already be in the window…</div><div class="tool">▸ submit_analysis(#11981)</div></div></div></div></div>`;
+const GAMES=appbar("Kids' games")+`<div class="body"><div class="region" style="width:190px"><div class="pane"><div class="chrome"><span class="tab on">Our games</span></div><div class="content side"><div class="it on"><span class="dot w"></span>Space Pong</div><div class="it"><span class="dot ok"></span>Cat maze</div><div class="it"><span class="dot"></span>Dino jump</div><div class="grp">Ideas</div><div class="it"><span class="dot"></span>Underwater racer</div></div></div></div>
+<div class="region" style="flex:1.2"><div class="pane"><div class="chrome"><span class="tab on">Play · Space Pong</span></div><div class="content" style="display:flex;align-items:center;justify-content:center"><div style="width:260px;height:170px;border:1px solid var(--line);border-radius:6px;background:#0b0b14;position:relative"><div style="position:absolute;left:10px;top:60px;width:6px;height:40px;background:var(--blue)"></div><div style="position:absolute;right:10px;top:80px;width:6px;height:40px;background:var(--orange)"></div><div style="position:absolute;left:120px;top:70px;width:10px;height:10px;border-radius:50%;background:#fff"></div><div style="position:absolute;left:0;right:0;top:6px;text-align:center;color:var(--muted);font-size:12px">Lena 3 : 2 Papa</div></div></div></div></div>
+<div class="region" style="flex:.9"><div class="pane"><div class="chrome"><span class="tab on">Build it with Pi</span></div><div class="content"><div class="msg user">Make the ball faster after every hit!</div><div class="msg">Done. It speeds up a little each time. Want stars in the background?</div></div><div class="composer"><div class="box">Tell Pi what to change…</div></div></div></div></div>`;
+const FAMILY=appbar("Family")+`<div class="body"><div class="region" style="flex:1.3"><div class="pane"><div class="chrome"><span class="tab on">This week</span></div><div class="content"><div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;font-size:12px">${[["Mon",["School 8:00","Dentist 15:30"]],["Tue",["Swim 17:00"]],["Wed",["Parents' evening 19:00"]],["Thu",[]],["Fri",["Grandma visits"]]].map(([d,ev])=>`<div style="border:1px solid var(--line);border-radius:6px;padding:6px;min-height:150px"><b>${d}</b>${ev.map(e=>`<div style="margin-top:6px;background:#1c2230;border-left:2px solid var(--blue);padding:3px 5px;border-radius:3px">${e}</div>`).join("")}</div>`).join("")}</div></div></div></div>
+<div class="region" style="flex:.8"><div class="pane"><div class="chrome"><span class="tab on">Shopping</span></div><div class="content side"><div class="it">☐ Milk</div><div class="it">☐ Swim goggles</div><div class="it">☑ Birthday present</div></div></div><div class="pane"><div class="chrome"><span class="tab on">Ask Pi</span></div><div class="content"><div class="msg user">Move the dentist to next week.</div><div class="msg">Moved to Monday the 17th, 15:30. I told the practice by email.</div></div></div></div></div>`;
+
+const KID=appbar("Robot")+`<div class="body"><div class="region" style="flex:1"><div class="pane"><div class="content" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:#14161d">
+<div style="width:150px;height:120px;border-radius:28px;background:#2b3550;position:relative;box-shadow:0 0 0 6px #1f2740">
+<div style="position:absolute;left:30px;top:38px;width:26px;height:26px;border-radius:50%;background:#9fd3ff"></div>
+<div style="position:absolute;right:30px;top:38px;width:26px;height:26px;border-radius:50%;background:#9fd3ff"></div>
+<div style="position:absolute;left:50px;right:50px;bottom:24px;height:12px;border-radius:0 0 12px 12px;background:#9fd3ff"></div></div>
+<div style="width:86px;height:86px;border-radius:50%;background:var(--orange);display:flex;align-items:center;justify-content:center;font-size:34px;color:#1d1205">🎤</div>
+<div style="color:var(--muted);font-size:12px">Hold to talk · one session, always the same, with its own skills</div></div></div></div></div>`;
+const FAMILY2=appbar("Family")+`<div class="body"><div class="region" style="flex:1.2"><div class="pane"><div class="chrome"><span class="tab on">Calendar</span></div><div class="content"><div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;font-size:12px">${[["Mon",["School 8:00","Dentist 15:30"]],["Tue",["Swim 17:00"]],["Wed",["Parents' evening"]],["Thu",[]]].map(([d,ev])=>`<div style="border:1px solid var(--line);border-radius:6px;padding:6px;min-height:120px"><b>${d}</b>${ev.map(e=>`<div style="margin-top:6px;background:#1c2230;border-left:2px solid var(--blue);padding:3px 5px;border-radius:3px">${e}</div>`).join("")}</div>`).join("")}</div></div></div>
+<div class="pane"><div class="chrome"><span class="tab on">Mail</span></div><div class="content side"><div class="it"><span class="dot u"></span>School: trip on Friday</div><div class="it"><span class="dot"></span>Insurance renewal</div></div></div></div>
+<div class="region" style="flex:.9"><div class="pane"><div class="chrome"><span class="tab on">Pi</span></div><div class="content"><div class="msg user">Move the dentist to next week.</div><div class="msg">Moved to Monday the 17th, 15:30, and emailed the practice.</div></div><div class="composer"><div class="box">🎤 Speak or type…</div></div></div></div></div>`;
+const MUSIC=appbar("Music")+`<div class="body"><div class="region" style="flex:1.4"><div class="pane"><div class="chrome"><span class="tab on">Tracker · "Saturday loop"</span><span class="sp"></span><span style="color:var(--muted);font-size:11px;padding-right:10px">Mario, Pi, Max here</span></div><div class="content" style="font-family:var(--mono);font-size:11.5px;line-height:1.5">
+<div style="display:grid;grid-template-columns:28px repeat(4,1fr);gap:4px;color:var(--muted)"><span></span><span>KICK</span><span>BASS</span><span>LEAD</span><span>HATS</span></div>
+${["C-4 01","--- --","C-4 01","--- --","C-4 01","--- --","C-4 01","--- --"].map((k,i)=>`<div style="display:grid;grid-template-columns:28px repeat(4,1fr);gap:4px;${i===2?"background:#2a2416;":""}"><span style="color:var(--faint)">0${i}</span><span>${k}</span><span>${i%2?"--- --":"A-2 02"}</span><span style="${i===2?"outline:1px solid var(--orange);":""}">${i===2?"E-5 03":i===5?"G-5 03":"--- --"}</span><span>${i%2?"F#6 04":"--- --"}</span></div>`).join("")}
+<div style="margin-top:8px;color:var(--orange);font-family:var(--sans);font-size:11px">Max is editing LEAD row 02 (live)</div></div></div></div>
+<div class="region" style="flex:.8"><div class="pane"><div class="chrome"><span class="tab on">Pi</span></div><div class="content"><div class="msg user">Give the lead a bit more swing in the second half.</div><div class="msg">Shifted the off-beats by 2 ticks from row 08. Listen?</div></div></div></div></div>`;
+const FRIENDS=appbar("Friends")+`<div class="body"><div class="region" style="width:200px"><div class="pane"><div class="chrome"><span class="tab on">Shared with</span></div><div class="content side"><div class="it"><span class="dot ok"></span>Armin</div><div class="it"><span class="dot ok"></span>Colin</div><div class="it"><span class="dot"></span>Charlotta</div><div class="grp">In this app</div><div class="it on"><span class="dot w"></span>Board game rules</div><div class="it"><span class="dot"></span>Trip to Graz</div></div></div></div>
+<div class="region" style="flex:1"><div class="pane"><div class="chrome"><span class="tab on">Board game rules</span></div><div class="content"><div class="msg user">Armin: can a pawn jump twice?</div><div class="msg">Only on the first move, rule 4.2. I added it to the rules doc.</div></div><div class="composer"><div class="box">Message the group…</div></div></div></div>
+<div class="region" style="flex:.8"><div class="pane"><div class="chrome"><span class="tab on">Rules doc</span></div><div class="content" style="font-size:12.5px"><b>4. Moving</b><p style="font-size:12.5px;color:var(--muted)">4.2 A pawn may jump twice on its first move.</p><div style="color:var(--faint);font-size:11px">How sharing a whole app works is still open.</div></div></div></div></div>`;
+const ENVS=appbar("Environments")+`<div class="body"><div class="region" style="flex:1.2"><div class="pane"><div class="chrome"><span class="tab on">Machines</span></div><div class="content">
+${[["slayer","Linux x64 · 64 GB","ok","3 sessions, 41% disk"],["phone","Android · Termux","ok","p2 server"],["nas","Debian · backups","r","disk 93% full"],["sandbox-1","container","","idle"]].map(([n,d,c,x])=>`<div style="display:flex;gap:10px;align-items:center;border:1px solid var(--line);border-radius:6px;padding:8px 10px;margin-bottom:6px"><span class="dot ${c}"></span><b style="width:90px">${n}</b><span style="color:var(--muted);flex:1;font-size:12px">${d}</span><span style="font-size:12px;color:${c==="r"?"var(--red)":"var(--muted)"}">${x}</span><span class="btn">Terminal</span></div>`).join("")}</div></div></div>
+<div class="region" style="flex:.9"><div class="pane"><div class="chrome"><span class="tab on">Caretaker</span></div><div class="content"><div class="msg">nas is 93% full. The oldest backups are from March; delete those older than 90 days?</div><div class="card"><b>Approval needed</b><pre>ssh nas 'prune-backups --older 90d'</pre><span class="btn p">Allow</span><span class="btn">Deny</span></div></div></div></div></div>`;
+const LAYOUTS={coding:DEFAULT,triage:TRIAGE,kid:KID,family:FAMILY2,music:MUSIC,friends:FRIENDS,envs:ENVS};
+const lay=document.getElementById("lay");lay.innerHTML=DEFAULT;
+document.querySelectorAll("[data-lay]").forEach(b=>b.addEventListener("click",()=>{
+ document.querySelectorAll("[data-lay]").forEach(x=>x.classList.toggle("on",x===b));
+ lay.innerHTML=LAYOUTS[b.dataset.lay];
+}));
+</script>
+</body>
+</html>
