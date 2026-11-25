@@ -71,7 +71,7 @@ describe("the installed release", () => {
 			const client = await ownerClient(server.dataDir, server.port);
 			const id = await (await client.get(Sessions, {}, context)).create({ title: "one" }, context);
 			const worker = await client.get(SessionWorker, { session: id }, context);
-			assert.equal(worker.variant, "owner");
+			assert.equal(worker.state.value.kind, "live");
 			// Besides the worker, the server has esbuild's service as a child (it builds the plugins).
 			const commands = await eventually(
 				async () =>
@@ -133,7 +133,8 @@ const HELLO = {
 		"	version: 1,",
 		'	params: { tone: oneOf("plain", "loud") },',
 		"	hostAddress: () => Server(),",
-		"	variants: { owner: { state: { text: str() }, methods: { greet: method(obj({ name: str() }), str()) } } },",
+		"	state: { text: str() },",
+		"	methods: { greet: method(obj({ name: str() }), str()) },",
 		"});",
 	].join("\n"),
 	"server.ts": [
@@ -144,10 +145,7 @@ const HELLO = {
 		"	host.serve(Hello, ({ tone }, principal) => {",
 		'		if (principal.kind !== "owner") throw forbidden("hello: the owner\'s");',
 		'		const said = (text: string): string => (tone === "loud" ? text.toUpperCase() : text);',
-		"		return {",
-		'			variant: "owner",',
-		'			members: { text: constant(said("hello")), greet: async ({ name }) => said("hello, " + name) },',
-		"		};",
+		'		return { text: constant(said("hello")), greet: async ({ name }) => said("hello, " + name) };',
 		"	});",
 		"});",
 	].join("\n"),

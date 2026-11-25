@@ -15,18 +15,15 @@ export default defineFacet((host) => {
 		if (principal.kind !== "owner") throw forbidden("probe: the owner's");
 		const facts = self.get(SessionFacts, {});
 		return {
-			variant: "owner",
-			members: {
-				pid: constant(process.pid),
-				report: ({ state }, ctx) => facts.report({ state }, ctx),
-				busy: async (count) => {
-					busy?.set(count);
-					return null;
-				},
-				crash: async () => {
-					setImmediate(() => process.exit(1));
-					return null;
-				},
+			pid: constant(process.pid),
+			report: ({ state }, ctx) => facts.report({ state }, ctx),
+			busy: async (count) => {
+				busy?.set(count);
+				return null;
+			},
+			crash: async () => {
+				setImmediate(() => process.exit(1));
+				return null;
 			},
 		};
 	});

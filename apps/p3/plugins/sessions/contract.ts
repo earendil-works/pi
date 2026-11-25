@@ -69,16 +69,12 @@ export const Sessions = remote("sessions.sessions", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
-	variants: {
-		owner: {
-			methods: {
-				/** Makes a session; answers its id. */
-				create: method(obj({ title: opt(Title) }), str()),
-				rename: method(obj({ id: str(), title: Title })),
-				archive: method(obj({ id: str() })),
-				restore: method(obj({ id: str() })),
-			},
-		},
+	methods: {
+		/** Makes a session; answers its id. */
+		create: method(obj({ title: opt(Title) }), str()),
+		rename: method(obj({ id: str(), title: Title })),
+		archive: method(obj({ id: str() })),
+		restore: method(obj({ id: str() })),
 	},
 });
 
@@ -91,12 +87,8 @@ export const SessionsList = remote("sessions.list", {
 	version: 1,
 	params: { app: str(), set: oneOf("active", "archived"), view: str() },
 	hostAddress: () => Server(),
-	variants: {
-		owner: {
-			state: { list: obj({ rows: arr(SessionRow), moreAfter: bool() }) },
-			methods: { more: method() },
-		},
-	},
+	state: { list: obj({ rows: arr(SessionRow), moreAfter: bool() }) },
+	methods: { more: method() },
 });
 
 /**
@@ -107,12 +99,8 @@ export const SessionFacts = remote("sessions.facts", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
-	variants: {
-		worker: {
-			state: { session: union([SessionRow, nul()]) },
-			methods: { report: method(obj({ state: SessionState })) },
-		},
-	},
+	state: { session: union([SessionRow, nul()]) },
+	methods: { report: method(obj({ state: SessionState })) },
 });
 
 /**
@@ -123,7 +111,7 @@ export const SessionStart = remote("sessions.start", {
 	version: 1,
 	params: { session: str() },
 	hostAddress: ({ session }) => Session({ id: session }),
-	variants: { server: { state: { session: str() } } },
+	state: { session: str() },
 });
 
 /** A session's worker as the owner sees it: the row it follows from the server. */
@@ -131,5 +119,5 @@ export const SessionWorker = remote("sessions.worker", {
 	version: 1,
 	params: { session: str() },
 	hostAddress: ({ session }) => Session({ id: session }),
-	variants: { owner: { state: { session: union([SessionRow, nul()]) } } },
+	state: { session: union([SessionRow, nul()]) },
 });

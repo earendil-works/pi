@@ -43,9 +43,6 @@ describe("reloads while in use", () => {
 		const { t, owner, sessions, id } = await withSession();
 		const list = await owner.get(SessionsList, { app: "coding", set: "active", view: "v1" }, context);
 		const worker = await owner.get(SessionWorker, { session: id }, context);
-		assert.equal(list.variant, "owner");
-		assert.equal(worker.variant, "owner");
-		if (list.variant !== "owner" || worker.variant !== "owner") return;
 		await t.reload("@earendil-works/p3-sessions");
 		const second = await sessions.create({ title: "two" }, context);
 		await until(list.list, (value) => value.rows.some((row) => row.id === second), context);
@@ -57,7 +54,6 @@ describe("reloads while in use", () => {
 	it("the sessions plugin on a worker: its row still follows the server", async () => {
 		const { t, owner, sessions, id } = await withSession();
 		const worker = await owner.get(SessionWorker, { session: id }, context);
-		if (worker.variant !== "owner") return assert.fail(worker.variant);
 		await t.reload("@earendil-works/p3-sessions", id);
 		await sessions.rename({ id, title: "renamed" }, context);
 		await until(worker.session, (row) => row?.title === "renamed", context);
@@ -111,7 +107,6 @@ describe("access", () => {
 		const other = await sessions.create({ title: "other" }, context);
 		const worker = await t.client({ kind: "worker", session: id });
 		const facts = await worker.get(SessionFacts, {}, context);
-		if (facts.variant !== "worker") return assert.fail(facts.variant);
 		assert.equal(facts.session.value?.id, id);
 		await assert.rejects(worker.get(SessionWorker, { session: other }, context, { readyTimeout: 1000 }));
 		assert.equal(t.workers.has(other), false, "no worker started for a refused principal");

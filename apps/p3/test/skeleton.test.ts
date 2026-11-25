@@ -21,7 +21,7 @@ const Versioned = remote("versioned.versioned", {
 	version: 1,
 	params: { session: str() },
 	hostAddress: ({ session }) => Session({ id: session }),
-	variants: { owner: { state: { version: str() } } },
+	state: { version: str() },
 });
 
 /** The source of a single-file worker plugin serving `Versioned` with `version`. */
@@ -31,10 +31,10 @@ const Versioned = remote("versioned.versioned", {
 	version: 1,
 	params: { session: str() },
 	hostAddress: ({ session }) => Session({ id: session }),
-	variants: { owner: { state: { version: str() } } },
+	state: { version: str() },
 });
 export default defineFacet((host) => {
-	host.serve(Versioned, () => ({ variant: "owner", members: { version: constant(${JSON.stringify(version)}) } }));
+	host.serve(Versioned, () => ({ version: constant(${JSON.stringify(version)}) }));
 });
 `;
 }
@@ -55,22 +55,18 @@ async function withSession(): Promise<{ readonly t: TestServer; readonly id: str
 /** The probe on session `id`'s worker, held by a new owner client until `release`. */
 async function probe(t: TestServer, id: string) {
 	const client = await t.client();
-	const held = await client.get(Probe, { session: id }, context);
-	assert.equal(held.variant, "owner");
-	return held as Extract<typeof held, { readonly variant: "owner" }>;
+	return client.get(Probe, { session: id }, context);
 }
 
 describe("session workers", () => {
 	it("a worker starts on the first hold, as a process of its own, and follows its session's row", async () => {
 		const { t, id } = await withSession();
 		const worker = await (await t.client()).get(SessionWorker, { session: id }, context);
-		assert.equal(worker.variant, "owner");
 		const pid = (await probe(t, id)).pid.value;
 		assert.notEqual(pid, process.pid);
 		assert.ok(alive(pid));
 		const sessions = await (await t.client()).get(Sessions, {}, context);
 		await sessions.rename({ id, title: "two" }, context);
-		if (worker.variant !== "owner") return;
 		await until(worker.session, (row) => row?.title === "two", context);
 	});
 
@@ -144,8 +140,6 @@ describe("session workers", () => {
 			await t.server.runtime.apply(context);
 			return client.get(Versioned, { session: id }, context, { readyTimeout: 500 });
 		});
-		assert.equal(held.variant, "owner");
-		if (held.variant !== "owner") return;
 		assert.equal(held.version.value, "1");
 		await writeFile(file, versioned("2"));
 		await eventually(

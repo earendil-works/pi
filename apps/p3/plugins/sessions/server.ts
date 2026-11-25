@@ -130,7 +130,7 @@ export default defineFacet((host) => {
 	host.serve(Sessions, (_params, principal, self) => {
 		if (principal.kind !== "owner") throw forbidden("sessions: the owner's");
 		const store = self.get(SessionsStore, {});
-		return forward(store, Sessions, "owner", {
+		return forward(store, Sessions, {
 			create: ({ title }, ctx) => store.create({ title: title ?? "", creator: { kind: "owner" } }, ctx),
 		});
 	});
@@ -138,7 +138,7 @@ export default defineFacet((host) => {
 	host.serve(SessionsList, ({ app, set }, principal, self) => {
 		if (principal.kind !== "owner") throw forbidden("sessions: the owner's");
 		const list = self.list("sessions", [[self.get(SessionsStore, {}).sessions[set], { app }]], { first: PAGE });
-		return { variant: "owner", members: { list: list.value, more: (ctx) => list.more(ctx) } };
+		return { list: list.value, more: (ctx) => list.more(ctx) };
 	});
 
 	host.serve(SessionFacts, (_params, principal, self) => {
@@ -146,11 +146,8 @@ export default defineFacet((host) => {
 		const store = self.get(SessionsStore, {});
 		const found = self.liveQuery(store.sessions.one, { id: principal.session }, { first: 1 });
 		return {
-			variant: "worker",
-			members: {
-				session: self.derive([found], ([{ rows }]) => rows[0] ?? null),
-				report: ({ state }, ctx) => store.report({ id: principal.session, state }, ctx),
-			},
+			session: self.derive([found], ([{ rows }]) => rows[0] ?? null),
+			report: ({ state }, ctx) => store.report({ id: principal.session, state }, ctx),
 		};
 	});
 

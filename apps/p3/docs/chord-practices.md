@@ -68,19 +68,21 @@ worker.ts            the worker facet
 sessions.test.ts     the plugin tier test
 ```
 
-**One audience per contract.** The owner, a session's worker and the server never share a contract through variants;
-variants are levels of one audience (`viewer`, `participant`). A worker reading its own session gets its own contract.
+**One audience per contract.** The owner, a session's worker and the server never share a contract; what some callers
+of one audience may do and others not is a `grantable(...)` member or a flag their admission grants (Chord slice 15:
+`state: { history: grantable(...) }`, `methods: { send: grantable(method(...)) }`, `flags: { export: "…" }`). A worker
+reading its own session gets its own contract.
 
 ```ts
 // contract.ts: what other plugins and facets import
 export const Sessions = remote("sessions.sessions", { version: 1, params: {}, hostAddress: () => Server(),
-	variants: { owner: { methods: { create: method(obj({ title: opt(Title) }), str()), rename: …, archive: …, restore: … } } } });
+	methods: { create: method(obj({ title: opt(Title) }), str()), rename: …, archive: …, restore: … } });
 export const SessionsList = remote("sessions.list", { version: 1,
 	params: { app: str(), set: oneOf("active", "archived"), view: str() },          // view: the screen's own id
 	hostAddress: () => Server(),
-	variants: { owner: { state: { list: obj({ rows: arr(SessionRow), moreAfter: bool() }) }, methods: { more: method() } } } });
+	state: { list: obj({ rows: arr(SessionRow), moreAfter: bool() }) }, methods: { more: method() } });
 export const SessionFacts = remote("sessions.facts", { version: 1, params: {}, hostAddress: () => Server(),
-	variants: { worker: { state: { session: union([SessionRow, nul()]) } } } });   // the worker's own row: its principal names it
+	state: { session: union([SessionRow, nul()]) } });   // the worker's own row: its principal names it
 
 // contract.server.ts: the store, for server facets only; other objects read its named queries
 export const SessionsStore = local("sessions.store", { version: 1, params: {}, members: {
@@ -122,7 +124,7 @@ host.serve(SessionsStore, (_params, self) => {
 host.serve(Sessions, (_params, principal, self) => {
 	if (principal.kind !== "owner") throw forbidden("sessions: the owner's");
 	const store = self.get(SessionsStore, {});
-	return forward(store, Sessions, "owner", {                        // members taken from the store, by the contract's names
+	return forward(store, Sessions, {                        // members taken from the store, by the contract's names
 		create: ({ title }, ctx) => store.create({ title: title ?? "", creator: { kind: "owner" } }, ctx),   // one that needs the caller
 	});
 });
@@ -130,17 +132,17 @@ host.serve(Sessions, (_params, principal, self) => {
 host.serve(SessionsList, ({ app, set }, principal, self) => {
 	if (principal.kind !== "owner") throw forbidden("sessions: the owner's");
 	const list = self.list("sessions", [[self.get(SessionsStore, {}).sessions[set], { app }]], { first: 50 });
-	return { variant: "owner", members: { list: list.value, more: (ctx) => list.more(ctx) } };
+	return { list: list.value, more: (ctx) => list.more(ctx) };
 });
 
 host.serve(SessionFacts, (_params, principal, self) => {
 	if (principal.kind !== "worker") throw forbidden("sessions: a session's worker only");
 	const found = self.liveQuery(self.get(SessionsStore, {}).sessions.one, { id: principal.session }, { first: 1 });
-	return { variant: "worker", members: { session: self.derive([found], ([{ rows }]) => rows[0] ?? null) } };
+	return { session: self.derive([found], ([{ rows }]) => rows[0] ?? null) };
 });
 ```
 
-**Helpers in p3's API:** `forward(store, Remote, variant, own?)` fills a view's members from a store by the remote
+**Helpers in p3's API:** `forward(store, Remote, own?)` fills a view's members from a store by the remote
 contract's names (never derive a public contract from a store: it would publish whatever internal member is added
 next); `contribute(host, name, register)` makes an object that only contributes, when a contribution needs a
 reference or a native.

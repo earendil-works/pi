@@ -10,10 +10,10 @@ import { SessionFacts, SessionStart, SessionWorker } from "./contract.ts";
 export default defineFacet((host) => {
 	host.serve(SessionWorker, (_params, principal, self) => {
 		if (principal.kind !== "owner") throw forbidden("sessions: the owner's");
-		return forward(self.get(SessionFacts, {}), SessionWorker, "owner");
+		return forward(self.get(SessionFacts, {}), SessionWorker);
 	});
 	host.serve(SessionStart, ({ session }, principal) => {
 		if (principal.kind !== "server") throw forbidden("sessions: the server's waker only");
-		return { variant: "server", members: { session: constant(session) } };
+		return { session: constant(session) };
 	});
 });
