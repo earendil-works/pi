@@ -133,7 +133,7 @@ describe("Radius provider catalogs", () => {
 					headers: { "content-type": "application/json" },
 				});
 			}
-			if (url === "https://radius.example/v1/classify") {
+			if (url === "https://radius.example/v1/decision") {
 				return new Response(
 					JSON.stringify({
 						answers: { approved: { type: "bool", probability: 0.91 } },
