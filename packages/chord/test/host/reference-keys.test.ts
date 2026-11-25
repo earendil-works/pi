@@ -4,11 +4,12 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { type Context, BACKGROUND_CONTEXT as context, withAbortSignal } from "../../src/context/index.ts";
-import { int, keyed, local, method, obj, str } from "../../src/contracts/index.ts";
+import { evolve, int, keyed, local, method, obj, str } from "../../src/contracts/index.ts";
 import { ChordError } from "../../src/data/index.ts";
 import { defineState, type KeyedHandle } from "../../src/documents/index.ts";
 import { createHost, defineFacet, type Self } from "../../src/host/index.ts";
 import { ChordObject } from "../../src/host/object.ts";
+import { constant } from "../../src/state/index.ts";
 import {
 	changesOf,
 	delivered,
@@ -700,5 +701,46 @@ describe("keys across a restart and a failed re-pin (Astra's coverage note)", ()
 		expect(valuesOf(calls)).toEqual([{ failed: expect.stringContaining("disk") }, { n: 1 }]);
 		await host.close(context);
 		await store.close(context);
+	});
+});
+
+describe("a version refused while its object lives (review round 3, Astra 2)", () => {
+	it("keeps its key's last value, unpinned: a later write of the current version does not reach it", async () => {
+		const V1 = local("app.keyed-refused", {
+			version: 1,
+			params: {},
+			members: { title: str(), rows: keyed(Schema), set: method(int()) },
+		});
+		const V2 = evolve(V1, (e) => e.removeState("title"));
+		const rows = (self: Self) => {
+			const docs = self.state(Notes);
+			const set = async (n: number, ctx: Context) => {
+				await docs.change(
+					"a",
+					(draft) => {
+						draft.n = n;
+					},
+					ctx,
+				);
+				return null;
+			};
+			return { rows: docs, set };
+		};
+		const v1 = defineFacet((h) => h.serve(V1, (_, self) => ({ title: constant("title"), ...rows(self) })));
+		const v2 = defineFacet((h) =>
+			h.serve(V2, (_, self) => rows(self), { accepts: { 1: { state: { title: "refuse" } } } }),
+		);
+		const host = createHost({ onError: () => {} });
+		await host.load([{ name: "test", facet: v1 }], context);
+		const older = await host.get(V1, {}, context);
+		await older.set(1, context);
+		const watch = (await older.rows.watch("a", context))!;
+		watch.start(async () => {});
+		await host.reload([{ name: "test", facet: v2 }], context);
+		await vi.waitFor(() => expect(older.state.value).toMatchObject({ kind: "failed", cause: { kind: "waiting" } }));
+		await (await host.get(V2, {}, context)).set(2, context);
+		await delivered();
+		expect(watch.value).toEqual({ n: 1 });
+		await host.close(context);
 	});
 });

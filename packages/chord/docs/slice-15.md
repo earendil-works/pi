@@ -258,10 +258,13 @@ and `78-denial-messages.ts`.
   keeps it as an own property. Before any read the object has no own property: `Object.keys` lists nothing (`in` and
   `for…in` see the names). Heap per reference to a store of 23 named queries, none read: 6.35 KiB before, 1.30 KiB
   after (`test/bench/reference-heap.ts`).
-- **Review round 2 (granttest's model):** a refusal of a granted member is shown through the object's state per
-  version and grant (`ChordObject.stateFor`, `followed`), not by unbinding the holder, so another grant re-evaluates it;
-  a denial unbinds the holders of versions the provider no longer binds (they showed the denial forever). The instance
-  such a holder sees decides its refusal: the live one, else a restart's open old one, else the last shown, so a
-  reload never binds it to (nor throws on) a member its last provider refused.
+- **Review round 2 (granttest's model, Astra, Sol, Opus, Fable):** a holder refused a member waits unbound as before
+  slice 15 (reported, no holder), and its object keeps a set of such refused waiters: they keep it from idling, so its
+  admission is still watched, and it places them again at every decision (a live attempt: another grant may fit; a
+  denial: they show it). An intermediate design (3dd0e9f9a, 864a0e253) kept refused holders bound with the refusal
+  in their state; it broke calls at the reload gate, keyed watches, state identity and idling, and was replaced. The
+  refusal is the instance's the holder would see (live, a restart's open old one, else the last shown); waiting again
+  for the same cause shows the same state (no frame), and a hold over a link placed again quietly sends nothing
+  unless something changed. A denial unbinds the holders of versions the provider no longer binds.
 - **§2:** a denial's message travels as the `forbidden` error's `details.message` (no new field in a failure or on the
   wire); `sameCause` compares details, so a changed message reaches the holders.

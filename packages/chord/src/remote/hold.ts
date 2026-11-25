@@ -106,7 +106,13 @@ type HoldState =
 	 * provider's code) in the unbound index until a publication wakes it; `broken` (invalid params, a cycle, a route that
 	 * refused, a part past the limits) until a `retry` restarts it.
 	 */
-	| { readonly kind: "refused"; readonly request: HoldRequest; readonly cause: FailureCause }
+	| {
+			readonly kind: "refused";
+			readonly request: HoldRequest;
+			readonly cause: FailureCause;
+			/** Told when it leaves the wait (released, or placed again): an object's refused waiter (`Removal.left`). */
+			readonly left?: () => void;
+	  }
 	| { readonly kind: "released" };
 
 /** A bound hold's state. */
@@ -171,6 +177,8 @@ export class Hold implements Holder, UnboundRequest {
 	 * failure it was told since; `undefined` before either.
 	 */
 	#latest: Decoding | undefined;
+	/** The failure its consumer was told while `wake` places it again: refused again the same, nothing is sent. */
+	#quiet: ChordError | undefined;
 	/**
 	 * One fence per `bound` its consumer has not acknowledged, oldest first: A, B, C sent before the first `ack` are two
 	 * fences, and a call sent between B's and C's application is decoded by B's names. Each goes with the `ack` of
@@ -328,6 +336,13 @@ export class Hold implements Holder, UnboundRequest {
 		if (state.kind === "unplaced") {
 			this.#state = PENDING;
 			this.start(state.request);
+		} else if (state.kind === "refused" && state.left !== undefined) {
+			// An object's refused waiter, placed again quietly: its consumer hears only a change (`bound`, another failure).
+			state.left();
+			this.#state = PENDING;
+			this.#quiet = state.cause.error;
+			this.start(state.request);
+			this.#quiet = undefined;
 		} else if (state.kind === "refused") {
 			this.#restart(state.request);
 		}
@@ -420,6 +435,7 @@ export class Hold implements Holder, UnboundRequest {
 			return;
 		}
 		if (state.cause.kind === "waiting") this.#provider.link.host.unindex(state.request.type, this);
+		state.left?.();
 		this.#restart(state.request);
 	}
 
@@ -574,6 +590,7 @@ export class Hold implements Holder, UnboundRequest {
 		} else if (state.kind === "unplaced" || (state.kind === "refused" && state.cause.kind === "waiting")) {
 			host.unindex(state.request.type, this);
 		}
+		if (state.kind === "refused") state.left?.();
 		this.#state = { kind: "released" };
 		if (this.#counted) {
 			host.count("references", -1);
@@ -665,7 +682,7 @@ export class Hold implements Holder, UnboundRequest {
 		this.#touched = false;
 		this.#provider.unbound(this, removal.cause.error);
 		this.#object = undefined;
-		this.#refuse(this.contract, removal.cause);
+		this.#refuse(this.contract, removal.cause, removal.left);
 	}
 
 	/**
@@ -740,10 +757,13 @@ export class Hold implements Holder, UnboundRequest {
 	 * Refuses the hold with `cause`, holding nothing: it keeps `request`, indexed under its type while `waiting` (a
 	 * publication starts it again), for a `retry` otherwise.
 	 */
-	#refuse(request: HoldRequest, cause: FailureCause): void {
-		this.#state = { kind: "refused", request: owned(request), cause };
+	#refuse(request: HoldRequest, cause: FailureCause, left?: () => void): void {
+		this.#state = { kind: "refused", request: owned(request), cause, ...(left === undefined ? {} : { left }) };
 		this.#latest = { kind: "refused", error: cause.error };
 		if (cause.kind === "waiting") this.#provider.link.host.index(request.type, this, cause);
+		// Placed again quietly and refused again the same (`wake`): its consumer was told already.
+		const told = this.#quiet;
+		if (told !== undefined && told.code === cause.error.code && told.message === cause.error.message) return;
 		this.#provider.send({
 			kind: "failed",
 			hold: this.id,

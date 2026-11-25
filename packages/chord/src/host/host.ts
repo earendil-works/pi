@@ -73,7 +73,7 @@ import type { Facet } from "./facet.ts";
 import { deleteFrom, HostDataGate, type HostDataSite, importInto } from "./host-data.ts";
 import { contributionOf } from "./members.ts";
 import type { CloseFailed } from "./native.ts";
-import { ChordObject, type Holder, type ReloadFate, type Served } from "./object.ts";
+import { ChordObject, type Holder, type ReloadFate, type Removal, type Served } from "./object.ts";
 import { chainAttempts, OldWork } from "./old-work.ts";
 import { type Presence, References } from "./presence.ts";
 import { Binding, type CheckedParams, type Reference, type Target } from "./reference.ts";
@@ -1365,11 +1365,16 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 	}
 
 	/**
-	 * `binding`, whose object left it (its type removed, its version no longer bound: slice 7b §6), waits unbound with
-	 * `cause` under its type's name; a publication places it again (`params` checked as it was, under `context`).
+	 * `binding`, whose object left it (its type removed, its version no longer bound or refused a member: slice 7b §6),
+	 * waits unbound with `removal`'s cause under its type's name; a publication, or the object (`left`), places it again.
 	 */
-	rewait(binding: Binding, Type: Contract, params: CheckedParams, cause: FailureCause, context: Context): void {
-		this.#wait(binding, Type.name, cause, () => this.#place(binding, Type, params, context));
+	rewait(binding: Binding, Type: Contract, { params, cause, context, left }: Removal): void {
+		this.#wait(binding, Type.name, cause, () => this.#place(binding, Type, params, context), left);
+	}
+
+	/** Places again every request waiting unbound for `name` (an object's refused waiters at its decision). */
+	wakeUnbound(name: string): void {
+		this.#unbound.wake([name]);
 	}
 
 	/** `request` left the unbound index's wait for `name` (it ended, or a retry checks it again). */
@@ -1752,9 +1757,12 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 		return error === undefined ? undefined : { kind: "waiting", error };
 	}
 
-	/** Leaves `binding` unbound in the index under `name`: `cause` (`waiting`), or none before the publication. */
-	#wait(binding: Binding, name: string, cause: FailureCause | undefined, place: () => void): void {
-		binding.wait(cause, place, () => this.#unbound.delete(name, binding));
+	/** Leaves `binding` unbound in the index under `name` (`cause`, none before the publication); `left` when it leaves. */
+	#wait(binding: Binding, name: string, cause: FailureCause | undefined, place: () => void, left?: () => void): void {
+		binding.wait(cause, place, () => {
+			this.#unbound.delete(name, binding);
+			left?.();
+		});
 		this.#unbound.add(name, binding, cause);
 	}
 

@@ -26,7 +26,7 @@ import {
 	takesNoArgs,
 } from "../contracts/internal.ts";
 import { ChordError, type FailureCause, type Principal } from "../data/index.ts";
-import { invalid } from "../data/internal.ts";
+import { invalid, sameCause } from "../data/internal.ts";
 import { Keyed, type KeyedSlot, type SealToken, Singleton } from "../documents/internal.ts";
 import type { JsonValue } from "../json.ts";
 import { RETRY_HOPS } from "../link/internal.ts";
@@ -308,12 +308,13 @@ export class Binding implements Holder, UnboundRequest {
 	 * then (decision "References share one wire hold"); one is seen once that count passes. Made at the join.
 	 */
 	#unseen: Map<string, number> | undefined;
+	/** The failure it waited with last: waiting again for the same cause shows the same state (`wait`). */
+	#waited: Failed | undefined;
 	/** Whether it was seen live or denied: from then on its grantable members are there only while granted (`#exposes`). */
 	#decided = false;
 	/** Whether the last state it settled in was live, not failed: a UI shows it while it loads again (`WAS_LIVE`). */
 	#wasLive = false;
-	/** Its grant at its version: set when it is seen live (from `#projection`), emptied by a denial. */
-	#grant: ReadonlySet<string> = NO_GRANTS;
+	/** Its grant at its version (`to`), by its target's it was read from: made when seen live, dropped by a denial. */
 	#projection: { readonly from: ReadonlySet<string>; readonly to: ReadonlySet<string> } | undefined;
 	/** Who reads its object's named queries: each told when another instance is live (`followInstance`). */
 	#instanceFollowers: Set<() => void> | undefined;
@@ -413,10 +414,7 @@ export class Binding implements Holder, UnboundRequest {
 		const state = this.#state;
 		if (state.kind === "refused") return state.failure.cause.error;
 		if (state.kind === "waiting") return state.failure?.cause.error;
-		if (state.kind !== "bound") return undefined;
-		// Its version's state first: a member its provider refuses at its version is its failure (`stateFor`).
-		const shown = this.refState;
-		return shown.kind === "failed" ? shown.cause.error : state.target.lastFailure;
+		return state.kind === "bound" ? state.target.lastFailure : undefined;
 	}
 
 	/**
@@ -555,7 +553,7 @@ export class Binding implements Holder, UnboundRequest {
 			events.taps?.retarget(undefined);
 		}
 		this.#state = { kind: "unbound", batch: state.batch, dependent: state.dependent };
-		removal.host.rewait(this, this.contract, removal.params, removal.cause, removal.context);
+		removal.host.rewait(this, this.contract, removal);
 	}
 
 	/**
@@ -576,8 +574,12 @@ export class Binding implements Holder, UnboundRequest {
 		if (state.kind !== "unbound") return;
 		// Kept while it waits: its stack made text now, so it keeps none of the frames' objects (an ended instance's).
 		if (cause !== undefined) void cause.error.stack;
+		// Waiting again for the same cause (placed again and refused again) is no change: the same state, no frame.
+		const last = this.#waited;
+		const same = cause !== undefined && last !== undefined && sameCause(last.cause, cause);
 		const failure: Failed | undefined =
-			cause === undefined ? undefined : { kind: "failed", cause, retryAt: undefined };
+			cause === undefined || same ? last : { kind: "failed", cause, retryAt: undefined };
+		this.#waited = failure;
 		const { batch, dependent } = state;
 		this.#state = { kind: "waiting", batch, dependent, failure, place, leave };
 		// Unchanged while loading: nothing to tell.
@@ -590,6 +592,7 @@ export class Binding implements Holder, UnboundRequest {
 		if (state.kind !== "waiting") return;
 		const { batch, dependent } = state;
 		this.#state = { kind: "unbound", batch, dependent };
+		state.leave();
 		state.place();
 	}
 
@@ -1029,19 +1032,19 @@ export class Binding implements Holder, UnboundRequest {
 		return this.#decided ? granted.has(member) : true;
 	}
 
-	/** Its grant (`#grant`), read through: a rebind changes it in its batch, before `moved`; throws once released. */
+	/** Its grant, read through: a rebind changes it in its batch, before `moved`; none before it; throws once released. */
 	#granted(): ReadonlySet<string> {
 		const state = this.#state;
 		if (state.kind === "released") throw state.state.error;
 		if (state.kind === "bound") this.#settled(this.refState);
-		return this.#grant;
+		return this.#projection?.to ?? NO_GRANTS;
 	}
 
 	/** Takes what `state` says: live, its target's grant at its version; denied, none; failed, it is live no more. */
 	#settled(state: RefState): void {
 		if (state.kind === "failed") {
 			this.#wasLive = false;
-			if (state.cause.kind === "denied") [this.#decided, this.#grant] = [true, NO_GRANTS];
+			if (state.cause.kind === "denied") [this.#decided, this.#projection] = [true, undefined];
 		}
 		if (state.kind !== "live") return;
 		// At its own version (an older consumer has only its version's names), the same set while its target's is.
@@ -1050,7 +1053,7 @@ export class Binding implements Holder, UnboundRequest {
 			const kept = [...granted].filter((name) => currentVersion(this.contract).grants.includes(name));
 			this.#projection = { from: granted, to: kept.length === granted.size ? granted : new Set(kept) };
 		}
-		[this.#wasLive, this.#decided, this.#grant] = [true, true, this.#projection.to];
+		this.#wasLive = this.#decided = true;
 	}
 
 	/** The error of this reference's release by its holder (`released`, no reason). */

@@ -138,6 +138,8 @@ export type Removal = {
 	readonly host: AnyHost;
 	readonly params: CheckedParams;
 	readonly context: Context;
+	/** Called once the holder leaves this wait (released, or placed again): the object keeps it no more. */
+	readonly left?: () => void;
 };
 
 /** What a reload does to an object whose type is still served: a live one restarts, any other is retried. */
@@ -295,6 +297,11 @@ export class ChordObject implements Target {
 	 * for a type without an admission.
 	 */
 	#allowed: boolean;
+	/**
+	 * Holders refused a member of their version: waiting unbound (no holders), they keep it from idling, so its admission
+	 * is still watched, and are placed again at its next decision (F5: another grant may fit them, a denial they show).
+	 */
+	readonly #refusedWaiters = new Set<Holder>();
 	/** What its last live attempt was granted (slice 15 §1.4): kept while it loads or failed, none once denied. */
 	#granted: ReadonlySet<string> = NO_GRANTS;
 
@@ -353,31 +360,14 @@ export class ChordObject implements Target {
 
 	/**
 	 * The state a same-host consumer of `version` and `fingerprint` sees (rule 5): `live` while a restart's open old
-	 * attempt binds that version and its successor is not parked on a failure; live, `failed { waiting }` while the
-	 * provider refuses a member of that version its grant includes (re-read with every grant: F5); otherwise `state`.
+	 * attempt binds that version and its successor is not parked on a failure; otherwise `state`.
 	 */
 	stateFor(version: number, fingerprint: string): RefState {
 		const state = this.#state;
-		const error = this.#refused(version);
-		if (error !== undefined) return { kind: "failed", cause: { kind: "waiting", error }, retryAt: undefined };
 		if (state.kind === "activating" && state.shown.kind !== "failed" && this.oldServes(version, fingerprint)) {
 			return LIVE;
 		}
 		return this.state;
-	}
-
-	/**
-	 * A member of the older, accepted `version` its provider refuses at its grant: its holders' failure, shown and not
-	 * unbound (F5), until a grant without it; a failure or denial of the object shows instead. The instance such a holder
-	 * sees decides: the live one, else a restart's open old one, else the last shown (N1 to N3).
-	 */
-	#refused(version: number): ChordError | undefined {
-		const state = this.#state;
-		const attempt = state.kind === "live" ? state.attempt : (this.openOldAttempt ?? this.#exposed);
-		if (attempt === undefined || version === attempt.served.contract.version) return undefined;
-		if (!attempt.served.provider.accepted.some((each) => each.version === version)) return undefined;
-		const shown = this.state.kind;
-		return shown === "failed" || shown === "ended" ? undefined : refusal(attempt.served, version, attempt.granted);
 	}
 
 	/** Whether a restart's open old attempt binds `version` and `fingerprint`: its consumers of that version may use it. */
@@ -552,6 +542,10 @@ export class ChordObject implements Target {
 			}
 			// Old work here found no open old attempt (else it was routed above): any version cycles through the gate.
 			await this.host.waitAsOldWork(this.#openerGate(context), this, this.served.contract, context);
+			// The attempt it waited for may refuse its version a member: nothing of it runs (its holder waits unbound).
+			const refused =
+				version === this.served.contract.version ? undefined : refusal(this.served, version, this.granted);
+			if (refused !== undefined) throw refused;
 		}
 		return this.#live().call(method, args, context, caller, version, parent ?? context.telemetry);
 	}
@@ -573,10 +567,6 @@ export class ChordObject implements Target {
 	 * `failed` with the cause's error, or `loading`, with that member to take a last value from.
 	 */
 	followed(member: string, version: number): Followed {
-		// A version whose member its provider refuses at this grant follows nothing (`stateFor`), a restart's old attempt
-		// included.
-		const refused = this.#refused(version);
-		if (refused !== undefined) return { kind: "failed", error: refused, last: undefined, instance: undefined };
 		const exposed = this.#exposed;
 		let shown: DeriveSource | undefined;
 		let lacking: ChordError | undefined;
@@ -729,6 +719,18 @@ export class ChordObject implements Target {
 	 * lingering object stays.
 	 */
 	hold(holder: Holder): void {
+		this.#refusedWaiters.delete(holder);
+		// A version it binds whose member the instance it would see refuses (an older consumer): it waits unbound instead.
+		const state = this.#state;
+		const shown = state.kind === "live" ? state.attempt : (this.openOldAttempt ?? this.#exposed);
+		let unfit = state.kind === "live" ? this.#unfit(holder, state.attempt) : undefined;
+		// Loading again: only a refusal by the instance it sees meanwhile (a version only the old attempt binds waits for
+		// it); a failure or denial shows instead (F5b).
+		if (state.kind === "activating" && state.shown.kind !== "failed") unfit = this.#refusedBy(shown, holder);
+		if (unfit !== undefined) {
+			this.#unbound(holder, unfit, shown);
+			return;
+		}
 		this.#holders.add(holder);
 		this.#stopLingering();
 		// Last: a derive over the presence list may close a link synchronously, which may release this holder again.
@@ -1027,7 +1029,9 @@ export class ChordObject implements Target {
 	#disallow(): void {
 		this.#granted = NO_GRANTS;
 		// A holder of a version its provider no longer binds waits for one that does: the denial is no answer for it (F3).
-		this.#unbindUnfit();
+		// Its last holders gone, it ends as at their release, once the caller told the rest.
+		if (this.#unbindUnfit(undefined)) queueMicrotask(() => this.#idle());
+		this.#placeRefused();
 		if (!this.#allowed) return;
 		this.host.unreferenced(this, this.#holders, this.#context);
 		this.#allowed = false;
@@ -1344,7 +1348,7 @@ export class ChordObject implements Target {
 		if (this.#wakes !== undefined) this.#wakes.during = undefined;
 		// Before the new instance is shown: holders of a version its provider does not bind leave with their last values,
 		// which their references take from the instance shown so far.
-		const unbound = this.#unbindUnfit();
+		const unbound = this.#unbindUnfit(attempt);
 		this.#state = { kind: "live", attempt };
 		this.#granted = attempt.granted;
 		this.#exposed = attempt;
@@ -1371,6 +1375,8 @@ export class ChordObject implements Target {
 		this.host.wentLive(this);
 		// Its references move to the new instance (one frame each); holds get a fresh `bound`.
 		this.#notify();
+		// Its refused waiters are placed again: this attempt's grant binds them or refuses them again (F5).
+		this.#placeRefused();
 		this.#settleFirstOutcome();
 		attempt.live();
 		this.#takeJobs(attempt);
@@ -1397,10 +1403,10 @@ export class ChordObject implements Target {
 	 * references with their last values, until a publication serves their version again. The object and its other
 	 * holders stay.
 	 */
-	#unbindUnfit(): boolean {
+	#unbindUnfit(attempt: Attempt | undefined): boolean {
 		let unfit: [Holder, ChordError][] | undefined;
 		for (const holder of this.#holders) {
-			const error = this.#unfit(holder);
+			const error = this.#unfit(holder, attempt);
 			if (error === undefined) continue;
 			unfit ??= [];
 			unfit.push([holder, error]);
@@ -1412,7 +1418,7 @@ export class ChordObject implements Target {
 			unfit.map(([holder]) => holder),
 			this.#context,
 		);
-		for (const [holder, error] of unfit) this.#unbound(holder, error);
+		for (const [holder, error] of unfit) this.#unbound(holder, error, attempt);
 		return true;
 	}
 
@@ -1423,22 +1429,47 @@ export class ChordObject implements Target {
 	}
 
 	/**
-	 * Why `holder` cannot bind: its version is not one the provider binds (`contract_mismatch`); `undefined` when it
-	 * binds (a member the provider refuses shows in its state, `stateFor`).
+	 * Why `holder` cannot bind to `attempt` (live; none for a denial, which no member refusal concerns): its version is
+	 * not one the provider binds, or the provider refuses a member of it (`contract_mismatch`); `undefined` when it binds.
 	 */
-	#unfit(holder: Holder): ChordError | undefined {
+	#unfit(holder: Holder, attempt: Attempt | undefined): ChordError | undefined {
 		const { contract, provider } = this.served;
 		const { version, fingerprint } = holder.contract;
-		if (binds(provider, version, fingerprint)) return undefined;
+		if (version === contract.version && fingerprint === contract.fingerprint) return undefined;
+		if (binds(provider, version, fingerprint)) return this.#refusedBy(attempt, holder);
 		return new ChordError({ code: "contract_mismatch", message: `${contract.name} v${version} is not served here` });
 	}
 
+	/** The member of `holder`'s older version that `attempt`'s provider refuses at its grant (`contract_mismatch`). */
+	#refusedBy(attempt: Attempt | undefined, holder: Holder): ChordError | undefined {
+		const { version, fingerprint } = holder.contract;
+		if (attempt === undefined || version === attempt.served.contract.version) return undefined;
+		const { served, granted } = attempt;
+		return binds(served.provider, version, fingerprint) ? refusal(served, version, granted) : undefined;
+	}
+
 	/**
-	 * `holder` (no longer held) waits unbound with `error` (`failed { waiting }`) until a publication fits it.
+	 * `holder` (no longer held) waits unbound with `error` (`failed { waiting }`) until a publication fits it; one
+	 * refused a member by `attempt` also until the object's next decision (`#refusedWaiters`, F5).
 	 */
-	#unbound(holder: Holder, error: ChordError): void {
+	#unbound(holder: Holder, error: ChordError, attempt?: Attempt): void {
 		const cause: FailureCause = { kind: "waiting", error };
-		holder.removed({ cause, host: this.host, params: this.checkedParams, context: this.#context });
+		// Refused a member, not its version: what fits it may change with the object's next decision.
+		const refused =
+			attempt !== undefined && binds(this.served.provider, holder.contract.version, holder.contract.fingerprint);
+		if (refused) this.#refusedWaiters.add(holder);
+		// Leaving the wait (released, or placed again), it keeps this object no more; idle once the placing is over.
+		const left = () => {
+			this.#refusedWaiters.delete(holder);
+			queueMicrotask(() => this.#idle());
+		};
+		const removal = { cause, host: this.host, params: this.checkedParams, context: this.#context };
+		holder.removed(refused ? { ...removal, left } : removal);
+	}
+
+	/** Places its refused waiters again at a decision: another grant may fit them, a denial they show (F5). */
+	#placeRefused(): void {
+		if (this.#refusedWaiters.size > 0) this.host.wakeUnbound(this.served.contract.name);
 	}
 
 	/**
@@ -1612,7 +1643,8 @@ export class ChordObject implements Target {
 		const kind = this.#state.kind;
 		// A run waiting for a live attempt keeps its object only while one is live or activating.
 		const running = this.#runs > 0 && (kind === "live" || kind === "activating");
-		const kept = this.#holders.size > 0 || running || (this.served.kind === "local" && this.served.hostLifetime);
+		const held = this.#holders.size > 0 || this.#refusedWaiters.size > 0;
+		const kept = held || running || (this.served.kind === "local" && this.served.hostLifetime);
 		if (kept || this.#state.kind === "ended" || this.#lingering !== undefined) return;
 		if (this.#state.kind !== "live" || this.served.linger === 0) {
 			this.end();

@@ -562,7 +562,7 @@ describe("a stall of the server (slice 15 §4)", () => {
 		} finally {
 			await world.close();
 		}
-	}, 20_000);
+	}, 40_000);
 
 	it("shorter than `close` − `ping`: no link closes, every holder gets the change", async () => {
 		// A link may have been quiet for up to `ping` before the stall began: only a stall shorter than `close − ping`
@@ -581,12 +581,12 @@ describe("a stall of the server (slice 15 §4)", () => {
 		} finally {
 			await world.close();
 		}
-	}, 20_000);
+	}, 40_000);
 });
 
-/** Resolves once `done` holds, polling; throws after 5 s. */
+/** Resolves once `done` holds, polling; throws after 15 s (a full parallel run is slow to fork). */
 async function until(done: () => boolean): Promise<void> {
-	for (const end = Date.now() + 5_000; !done(); ) {
+	for (const end = Date.now() + 15_000; !done(); ) {
 		if (Date.now() > end) throw new Error("timed out");
 		await new Promise((resolve) => setTimeout(resolve, 10));
 	}

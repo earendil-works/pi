@@ -3456,10 +3456,13 @@ const accepted = checkAccepts(NotesV2, {
   for an older local consumer), removed keyed members `"refuse"`, changed event members `(current value) => old
   value` or `"refuse"` (section `events`, flat as every section: `{ 1: {
   events: { paddle: (current) => old } } }`; `"refuse"` refuses that version's binding, as a refused state
-  member does). A refusal of a member the caller is granted follows the grant (review round 2): its holders stay on the
-  object showing `failed { waiting, contract_mismatch }` while the grant includes the member, and bind with the first
-  grant without it; a denial or failure of the object shows instead. A denial unbinds the holders of a version the
-  provider no longer binds, as going live does: they wait for a publication); added members need nothing, and neither does a removed event member (the exception to the rule above:
+  member does). A refused holder waits unbound (`failed { waiting, contract_mismatch }`, reported `unbound_long`, no
+  holder, not in presence) until a publication fits it, and also until its object's next decision (review round 2):
+  the object keeps its refused waiters, which keep it from idling, and places them again when an attempt goes live
+  (another grant may fit them) and at a denial (which they then show). The refusal is the one of the instance the
+  holder would see: the live one, else a restart's open old one, else the last shown; a call that waited at the reload
+  gate runs only if the new attempt does not refuse its version. A denial unbinds the holders of a version the
+  provider no longer binds, as going live does); added members need nothing, and neither does a removed event member (the exception to the rule above:
   an older consumer binds and receives none of it; an event has no value to hydrate). No-op edits need identity
   mappings. Untyped JavaScript providers fail at declaration naming the member; unknown keys and wrong shapes are
   rejected. An older consumer gets each event mapped by its version's mapping, run once per emit per bound older
