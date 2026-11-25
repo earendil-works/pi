@@ -563,8 +563,10 @@ console.log("\nslice 14, §9: a touch of a club session at the mix");
 	const touch = await touched(mix, 400);
 	console.log(`  ${mix.reads} reads open; a touch with no read open takes ${baseline.toFixed(3)} ms`);
 	expectExactly("runs a touch causes", touch.runs, 9);
-	expectExactly("keyed probes a touch causes", touch.probes, 101);
-	expectExactly("reads a touch skips", touch.skips, mix.reads - 9);
+	// The commit index (slice 15 §3) leaves out the 41 reads whose bucket the touched row is not in (another app's
+	// lists, other teams' pages): no candidates, so no skip test and none of their probes (101 and 185 before it).
+	expectExactly("keyed probes a touch causes", touch.probes, 79);
+	expectExactly("reads a touch skips", touch.skips, mix.reads - 9 - 41);
 	expectAtMost("an ordinary commit, every re-run included", touch.ms, 5, "ms");
 
 	// A probe: a touch of a session only probes ask about (archived elsewhere: shown by nobody).

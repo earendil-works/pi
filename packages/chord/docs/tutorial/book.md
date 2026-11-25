@@ -2004,7 +2004,7 @@ export const Scratchpad = remote("p2.scratchpad", {
 	version: 1,
 	params: { session: param.str() },
 	hostAddress: sessionHost,
-	variants: { reader: { state: { notes: arr(str()) } } },
+	state: { notes: arr(str()) },
 });
 ```
 
@@ -2052,7 +2052,7 @@ export default defineFacet((host) => {
 	host.serve(Scratchpad, ({ session }, principal, self) => {
 		if (!canView(principal, session)) throw forbidden("viewers only");
 		const store = self.get(ScratchpadStore, {});
-		return { variant: "reader", members: { notes: self.derive([store.notes], ([notes]) => notes) } };
+		return { notes: self.derive([store.notes], ([notes]) => notes) };
 	});
 });
 ```

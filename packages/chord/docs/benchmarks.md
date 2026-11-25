@@ -1180,3 +1180,53 @@ all of §9's numbers for the built parts are met
   child in the middle of 20 loaded pages runs two pages (the one it left, the first) in 0.6 ms (one compiled plan
   per list since code review round 1; 0.9 ms with a plan per page); after 10,000 such
   touches the 1,000 loaded rows are in 26 pages (at most 2 × rows / page size, by the merge rule).
+
+## Slice 15: grantable members, the commit index, lazy named queries (2026-11-25)
+
+Before: the existing benches at the start of the build, on main (`b882d08f3`), before slice 15's code; the two new
+benches on `286d58e71` (before the commit index and lazy queries) from a temporary worktree. After: `ba0e18c89`. Same
+machine (slayer, 32 cores, Node 26.11.1), each bench run by hand from `packages/chord` as its header says.
+
+**New: the commit index** (`test/bench/commit-index.ts`; slice 15 §3). Reads tested = skips + runs.
+
+| Case | before | after |
+| --- | --- | --- |
+| one write to one session's row, 10,000 open reads of other sessions | 10,000 tested (9,999 skips, 1 run), 11.65 ms | 1 tested (1 run), 0.14 ms |
+| an import of 3,549 rows into one session, 4,020 open reads | 4,020 tested, 32,160 probes, 4,020 runs, 103 ms | 1 tested, 8 probes, 1 run, 10.3 ms |
+
+The import's before: every read probed eight of the rows (none of its session) and then ran, as the probe limit
+demanded; after, only the session's read is a candidate (its probe limit counts its own candidate rows).
+
+**New: a reference's heap** (`test/bench/reference-heap.ts`; slice 15 §5), per reference to a store of 23 named
+queries, 2,000 references to one object: none read 6.35 KiB before, 1.30 KiB after; one read 6.26 KiB before, 1.31
+KiB after.
+
+**slice-14** (the screens' mix, `test/bench/slice-14.ts`): a touch of a club session, 194 open reads: 9 runs as
+before; keyed probes 101 → 79, reads skip-tested 185 → 144 (41 reads whose bucket the touched row is not in are no
+candidates); the commit 3.70 → 3.61 ms. Ten times the mix (1,940 reads): 81 runs, probes 1,010 → 790, 31.7 → 31.2 ms.
+A touch of a session nobody shows: 109 → 65 probes. The bench's expected counts are updated to the index's. Every
+per-run number is unchanged within noise (one-sample numbers such as the archive, 6.0 to 9.2 ms over runs of either
+commit, move between runs).
+
+**Unchanged within noise** (before → after):
+
+| Bench | Case | before | after |
+| --- | --- | --- | --- |
+| live-query | one-row commit through a call, query watched (median) | 100.5 µs | 101.9 µs |
+| live-query | unwatched / no query / other table (median) | 79.5 / 9.3 / 8.3 µs | 81.5 / 9.2 / 8.2 µs |
+| store | Chord store commit (median) | 12.8 µs | 13.2 µs |
+| store | Chord host commit (median) | 17.5 µs | 16.7 µs |
+| store | query pages: 100 rows in an index's order | 134 µs | 132 µs |
+| shared-holds | first reference: get and release | 83.3 µs, 20,756 B | 85.7 µs, 19,865 B |
+| shared-holds | 1,000 references held: heap per reference | 1,498 B | 1,519 B |
+| links | notes list of 1,000 items: hold to live (two hops, binary) | 0.019 ms | 0.019 ms |
+| links | one appended item: commit to frame (median, binary) | 0.037 ms | 0.037 ms |
+| events | current, in-memory, 10 holders | 61.6 µs | 59.7 µs |
+| calls | local method call / commit through a watched derive | 1.83 / 5.52 µs | 1.86 / 5.43 µs |
+| derives | retire + recreate under a 40-derive diamond (median) | 8.7 µs | 8.6 µs |
+| state-binding | over a link: get and release | 10.57 µs | 10.84 µs |
+
+- **The commit index's own cost** is a read's re-filing by its kept keys when it runs (its rows' keys out of the
+  index, the new ones in) and, for a bucket on a column outside the key, one lookup by key per written key in the
+  commit step. Neither shows in the live-query bench (a 100-row window re-filed per commit) or the slice-14 runs.
+- **A heartbeat close** (slice 15 §4) adds one counter per closed link; nothing per message.

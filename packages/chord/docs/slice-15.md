@@ -1,8 +1,8 @@
 # Slice 15: grantable members and flags, denials with a message, the commit index, stale holders, lazy queries
 
-Status: first version (2026-11-25), written from the drafts of 2026-11-24 (`/tmp/primitives/issues/01` to `06`,
-`/tmp/primitives/chord.md`, decisions of 2026-11-24 items 1 to 5) and built in the same night on branch `chord-core`
-(from main). Points the drafts left open are decided here by the builder and marked **(B)**: the owner reviews them.
+Status: built (2026-11-25) on branch `chord-core` (from main), written from the drafts of 2026-11-24
+(`/tmp/primitives/issues/01` to `06`, `/tmp/primitives/chord.md`, decisions of 2026-11-24 items 1 to 5); what the
+build found is §8, the benchmarks `benchmarks.md` "Slice 15". Points the drafts left open are decided here by the builder and marked **(B)**: the owner reviews them.
 Every decision is folded into `design.md` (§5, §6, §7, §22, §23, §10) and listed in `decisions.md` ("Slice 15").
 
 **Read first, in full:** `design.md` (all), `slices.md`, the root `AGENTS.md` section "Chord v2 Code Style"; the

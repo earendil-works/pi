@@ -3772,6 +3772,36 @@ From `research/chord-on-durable-objects.md`, adopted for the Chord v2 kernel bec
   reference while it loads again after it was live, a link drop included. Superseded: "C15 stands; the UI bindings
   follow the variant" and every rule about variants (§5, §7, §22, §23, §27 of `design.md` are rewritten).
 
+- **Denials with a message (owner, 2026-11-24, decisions of that day item 5; spec `slice-15.md` §2, built
+  2026-11-25):** `deny(reason, message?)`: `reason` is English for logs (the `forbidden` error's message), `message` a
+  message as data (`MessageData`) the person's client renders in their language. Decided by the builder, for review:
+  it travels as the error's `details.message` (no new field in a failure or on the wire), in the denied reference's
+  failure, a call's `forbidden` on it and the `forbidden/revoked` of the calls the denial cut; a changed message is a
+  new decision (holders see it, nothing is rebuilt); one that is no `MessageSchema` breaks the attempt.
+  `MessageData` and `MessageSchema` live in `data` (the kernel names them), re-exported by `surfaces`.
+
+- **The commit index (owner, 2026-11-24, decisions of that day item 4; spec `slice-15.md` §3, built 2026-11-25):**
+  the problem: after a commit every open read of a written table was skip-tested against every written row (bench
+  round 1: a commit of 3,549 rows with 4,020 reads blocked 4 s). The rule, a pure speedup: per table, a read whose
+  condition fixes own columns with `eq`/`inArray` is filed by those values and by the keys of its last result; a keyed
+  write's candidates are the reads holding its key, the reads whose bucket the row after the write matches, and the
+  unindexed reads; a bulk write's are every read of the table; every candidate still takes the skip test, whose probe
+  limit counts its candidate rows. Decided by the builder, for review: (1) at most 32 value combinations per bucket, a
+  column past that left out; (2) no test switch for the old path: the differential check is the oracle (every read
+  equal to a fresh run after every commit) with a mutation check.
+
+- **A stall leaves no holder live and old (owner, 2026-11-24, decisions of that day item 5; spec `slice-15.md` §4,
+  §8, built 2026-11-25):** reproduced across processes: a stalled host keeps its links (its late tick is no silence);
+  its peers find it silent past `close` and close theirs, and their holders wait `loading` until a new link; none is
+  live with an old value. Bench round 1's stale holders were such holders, on a load process that never reconnects,
+  and nothing was reported. Now every closed link is counted (`chord.links.closed { reason }`) and a heartbeat close
+  is reported once (`link_closed`). Decided by the builder: a stall is sure to close nothing only when shorter than
+  `close − ping` (the quiet time before it counts); `close` keeps its meaning.
+
+- **A reference makes its named queries on first use (spec `slice-15.md` §5, built 2026-11-25):** bench round 2: a
+  reference to a store of 23 named queries cost 8.6 KiB, all of it handles nobody read. A `queries` member is an
+  object whose handles are made by their first read and kept; labels are built when asked (6.35 to 1.30 KiB).
+
 ## Still valid from `target-design.md`
 
 Documents and the store (async `tx.draft`, keys, tags, eviction, Durable's transaction rule), job sandwich, routines
