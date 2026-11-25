@@ -3540,7 +3540,9 @@ export class InteractiveMode {
 				const command = isExcluded ? text.slice(2).trim() : text.slice(1).trim();
 				if (command) {
 					if (this.session.isBashRunning) {
-						this.showWarning("A bash command is already running. Press Esc to cancel it first.");
+						this.showWarning(
+							`A bash command is already running. Press ${keyText("app.interrupt")} to cancel it first.`,
+						);
 						this.editor.setText(text);
 						return;
 					}
