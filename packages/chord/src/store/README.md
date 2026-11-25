@@ -55,7 +55,12 @@ const copy = await importStore(sqliteBackend(db), decodeJsonl(bytes), ctx);
   as data, `query(T).whereNode(Set, node)` takes one after checking the whole node.
 - The store's reads (slice 14): `store.reads` (`reads.ts`) indexes every registered read (`read.ts`) by the tables
   it uses, whoever owns it, and keeps the bindings of column sets and the tables that are not ready. A transaction
-  that wrote tables stages `ReadRefresh`: inside its commit step it takes the reads over those tables, runs the
+  that wrote tables stages `ReadRefresh`: inside its commit step it takes the reads its writes can concern from the
+  commit index (`read-index.ts`, slice 15 §3: a read whose condition fixes own columns with `eq` or `inArray` is
+  filed by those values, up to 32 combinations, and by the keys of its last result; a keyed write's candidates are
+  the reads holding its key, the reads whose bucket the row after the write matches, read back by key in the step
+  when a bucket fixes a column outside the key, and the unindexed reads: counts, reads without an equality or using
+  their table twice, reads without a result; a bulk write concerns every read of its table), runs the
   skip test (`skip.ts`: the columns an `update` assigns, the keys a read kept, then one keyed probe, the read's own
   statement limited to the rows the written row pairs with) and runs the others again. `read-plan.ts` compiles a
   query against the bindings, checks every column and match, and renders the statements; `open-query.ts` keeps a

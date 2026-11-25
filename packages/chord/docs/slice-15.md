@@ -164,9 +164,11 @@ after the write ∪ the unindexed reads; a `bulk` change (no key) makes every re
 limit (`PROBES_PER_READ`, 8) counts a read's candidate rows, not every written row. A read re-files itself when it
 re-runs (its arguments or its kept keys changed).
 
-- **Differential test:** both paths in one process over the same commits (a test-only switch on the store's reads,
-  `everyRead`, never set outside tests **(B)**): every read the old path re-ran is a candidate of the new one, and
-  results are equal; generated tables, reads (equality, `in`, range, none, joins, watchable arguments) and commits
+- **Differential test:** ~~both paths in one process over the same commits (a test-only switch on the store's reads,
+  `everyRead`)~~ **(B, changed in the build):** no switch (the code style has no test modes); the check is the skip
+  test's oracle (slice 14): after every commit every read equals a fresh run of its statement, which is what both
+  paths must give. "Every read the old path re-ran is a candidate" does not hold literally: the old path ran a read
+  whose probe limit ran out on rows that could not concern it; results are equal; generated tables, reads (equality, `in`, range, none, joins, watchable arguments) and commits
   (`put`, `update`, `delete`, `bulk`, 1 to 5,000 rows) over a fixed seed list; a mutation check (an index that skips
   one bucket lookup fails it).
 

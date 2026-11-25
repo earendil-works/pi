@@ -1,15 +1,16 @@
 // The store's reads (slice 14 §3.2, §5): which reads read which table, whoever owns them, and which table each
 // column set is bound to. A transaction that wrote tables stages `ReadRefresh`: inside its commit step, after its
-// writes, it takes the reads over those tables from the index as it is then, runs the skip test, runs the others again
-// and adopts their results in the commit's batch.
+// writes, it takes the reads its writes can concern from the index as it is then (the commit index, slice 15 §3),
+// runs the skip test, runs the others again and adopts their results in the commit's batch.
 
 import type { Context } from "../context/index.ts";
 import { chordMetrics } from "../telemetry.ts";
 import { existsIn, type WhereNode } from "./expression.ts";
 import type { Query } from "./query.ts";
 import type { Read, ReadRun } from "./read.ts";
+import { ReadIndex } from "./read-index.ts";
 import type { Bindings, Bound } from "./read-plan.ts";
-import { type Change, skips } from "./skip.ts";
+import { type Change, type KeyedChange, skips } from "./skip.ts";
 import type { StagedWrite, Step } from "./step.ts";
 import type { StoreWrite } from "./writes.ts";
 
@@ -34,8 +35,9 @@ export class Reads implements Bindings {
 	readonly #watchers = new Map<string, Set<() => void>>();
 	/** The open queries by who offers them (`QuerySpec.owner`): closed when that one retires. */
 	readonly #offered = new Map<object, Set<Retirable>>();
+	readonly #index = new ReadIndex();
 
-	/** Enters `read` under every table it uses: every commit writing one of them tests it from now on. */
+	/** Enters `read` under every table it uses: every commit writing one of them it can concern tests it from now on. */
 	add(read: Read): void {
 		for (const { table } of read.plan.uses) {
 			let reads = this.#byTable.get(table);
@@ -45,6 +47,7 @@ export class Reads implements Bindings {
 			}
 			reads.add(read);
 		}
+		this.#index.add(read);
 	}
 
 	/** Removes `read`: no commit runs it again. */
@@ -55,6 +58,33 @@ export class Reads implements Bindings {
 			reads.delete(read);
 			if (reads.size === 0) this.#byTable.delete(table);
 		}
+		this.#index.delete(read);
+	}
+
+	/**
+	 * The reads a step's `changes` to `tables` can concern (slice 15 §3), each with the writes its skip test takes: an
+	 * indexed read the writes it is a candidate of, any other every write. A bulk write concerns every read of its
+	 * table.
+	 */
+	async candidates(
+		tables: readonly string[],
+		changes: readonly Change[],
+		step: Step,
+	): Promise<Map<Read, readonly Change[]>> {
+		const chosen = new Map<Read, readonly Change[]>();
+		const indexed = new Map<Read, KeyedChange[]>();
+		for (const table of tables) {
+			const reads = this.#byTable.get(table);
+			if (reads === undefined) continue;
+			const written = changes.filter((change) => change.table === table);
+			const keyed = written.filter((change): change is KeyedChange => change.kind !== "bulk");
+			const every =
+				keyed.length === written.length ? await this.#index.candidates(table, keyed, step, indexed) : reads;
+			for (const read of every) chosen.set(read, changes);
+		}
+		// A read unindexed on another written table is tested against every write already.
+		for (const [read, its] of indexed) if (!chosen.has(read)) chosen.set(read, its);
+		return chosen;
 	}
 
 	/** `query` is open: it closes when its owner retires. */
@@ -235,12 +265,10 @@ export class ReadRefresh {
 	async #refresh(step: Step): Promise<readonly StoreWrite[]> {
 		// A grouped commit that rolled back applies again alone (store.ts): only the last application's runs count.
 		this.#runs.length = 0;
-		const chosen = new Set<Read>();
-		for (const table of this.#tables) for (const read of this.#reads.on(table) ?? []) chosen.add(read);
-		if (chosen.size === 0) return NO_WRITES;
-		const changes = this.#changes();
+		if (this.#tables.every((table) => this.#reads.on(table) === undefined)) return NO_WRITES;
+		const chosen = await this.#reads.candidates(this.#tables, this.#changes(), step);
 		const metrics = chordMetrics(this.#context.telemetry.metrics);
-		for (const read of chosen) {
+		for (const [read, changes] of chosen) {
 			// Held: a table it reads is being created or migrated; it runs once when the table is ready.
 			if (read.plan.uses.some((use) => this.#reads.isHeld(use.table))) continue;
 			if (await skips(read, changes, step, this.#context)) {

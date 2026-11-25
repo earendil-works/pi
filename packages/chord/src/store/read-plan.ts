@@ -19,7 +19,7 @@ import {
 	type WhereNode,
 } from "./expression.ts";
 import type { Joined, Query } from "./query.ts";
-import { versionColumn } from "./rows.ts";
+import { toSqlite, versionColumn } from "./rows.ts";
 import { type ConditionSql, type Order, quote, type Statement, whereSql } from "./sql.ts";
 import type { TableDefinition } from "./table.ts";
 
@@ -125,6 +125,18 @@ export class ReadPlan {
 		this.#from = fromClause(table, joined, partner);
 		const params: SqliteValue[] = [];
 		this.#where = { sql: condition === undefined ? undefined : whereSql(condition, params, this.#render()), params };
+	}
+
+	/**
+	 * The own columns its condition fixes in its top-level `and` terms, each with the values a row of its result may
+	 * have there: an `eq`'s value, an `inArray`'s list (the first term of a column counts). As stored: a boolean as 0
+	 * or 1, an address as its key. The commit index files the read under them (slice 15 §3).
+	 */
+	equalities(): Map<string, readonly SqliteValue[]> {
+		const found = new Map<string, readonly SqliteValue[]>();
+		const { condition } = this.query;
+		if (condition !== undefined) collectEqualities(condition, this.#sides, found);
+		return found;
 	}
 
 	/** The rows of `range` in the plan's order. */
@@ -402,6 +414,23 @@ function exposed(bound: Bound, set: string): NonNullable<TableDefinition["expose
 function checkColumn(expected: Column | undefined, found: Column | undefined, set: string, name: string): void {
 	if (expected !== undefined && found !== undefined && sameColumn(expected, found)) return;
 	throw invalid("args", `column "${name}" of column set "${set}" is not what this read was written for`);
+}
+
+/** `equalities`' walk: the own `eq` and `inArray` terms of `node`'s top-level `and`. */
+function collectEqualities(node: WhereNode, sides: Sides, into: Map<string, readonly SqliteValue[]>): void {
+	if ("and" in node) {
+		for (const each of node.and) collectEqualities(each, sides, into);
+		return;
+	}
+	// A stored format (`WhereNode`): told apart by its operator's key.
+	const term =
+		"eq" in node
+			? { name: node.eq[0], values: [node.eq[1]] }
+			: "inArray" in node
+				? { name: node.inArray[0], values: node.inArray[1] }
+				: undefined;
+	if (term === undefined || sides.isPartner(term.name) || into.has(term.name)) return;
+	into.set(term.name, term.values.map(toSqlite));
 }
 
 /** The own columns a condition fixes with `eq` or `inArray` in its top-level `and` terms. */

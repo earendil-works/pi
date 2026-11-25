@@ -349,7 +349,8 @@ describe("a refresh applied again", () => {
 		// Stubs: the refresh takes the reads over the written table from the index, runs and adopts them, and hands the
 		// step through. A read without a result is never skipped.
 		const stub = {
-			plan: { uses: [{ table: "t" }] },
+			plan: { uses: [{ table: "t" }], table: "t" },
+			what: { kind: "count" },
 			latest: () => undefined,
 			run: async () => ({ kind: "count", count: ++runs }),
 			ran: () => {},

@@ -14,6 +14,10 @@
 - `deny(reason, message?)`: an admission's denial carries a message as data for the person (`MessageData`), in the `forbidden` error's `details.message` (the denied reference's failure, a call's `forbidden`, a cut call's `forbidden/revoked`). A changed message is a new decision without a rebuild.
 - `MessageData`, `MessageParam` and `MessageSchema` are exported from the package root's data layer as well (still from `/surfaces`).
 
+### Changed
+
+- A store commit skip-tests only the live reads its writes can concern (the commit index): reads are filed by the values their condition fixes with `eq`/`inArray` and by the keys of their last result. One write to one session's row with 10,000 open reads of other sessions now tests one read instead of 10,000; `chord.query.skips` counts only the reads tested.
+
 ## [1.6.1] - 2026-11-25
 
 ### Breaking Changes

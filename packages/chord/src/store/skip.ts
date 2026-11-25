@@ -23,6 +23,9 @@ export type Change =
 	  }
 	| { readonly table: string; readonly kind: "bulk"; readonly assigned: readonly string[] | undefined };
 
+/** A write of one key: what the commit index files reads by (slice 15 §3). */
+export type KeyedChange = Exclude<Change, { readonly kind: "bulk" }>;
+
 /**
  * How many probes one read may ask in one step before it runs instead. A probe costs a few microseconds and a run
  * of a page a few hundred (`benchmarks.md`), so a transaction writing many rows (an import, a bulk `put`) must not

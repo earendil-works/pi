@@ -1509,6 +1509,15 @@ host.serve(DraftStore, (_, self) => {               // local, empty params: may 
   the queue is refreshed by it), runs the skip test for each, and runs the others again on the step's backend
   transaction (one `SELECT` each, `chord.query.runs`); it writes nothing and records nothing in the outbox; the rows
   are adopted with the documents in the commit's batch. A refused step adopts nothing.
+- **The commit index (slice 15 §3):** a commit skip-tests only the reads its writes can concern, a pure speedup. Per
+  table the store files a read whose condition fixes columns of its own table with `eq` or `inArray` (top-level
+  `and` terms) under those values (its bucket; an `inArray` once per value, at most 32 combinations, a column past
+  that left out) and under the keys of the rows of its last result. A keyed write's candidates are the reads holding
+  its key (the row was in their result), the reads whose bucket the row after the write matches (it may be now; the
+  row is read back by key in the step only when a bucket fixes a column outside the key) and the unindexed reads (no
+  equality, a count, its table used twice, no result yet); a bulk write's are every read of its table. A read's
+  probe limit counts its candidate rows. One write to one session's row with 10,000 open reads of other sessions
+  tests one read (`benchmarks.md`, "Slice 15").
 - **The skip test (slice 14 §3.3):** a skip proves the result unchanged by the row before the write (the keys and
   matched values the read kept of its last run, the row past its bound included) and by the row after it (the
   **probe**: the read's own statement, its condition and range, limited to the rows the written row pairs with,
