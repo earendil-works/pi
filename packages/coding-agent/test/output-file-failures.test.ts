@@ -243,7 +243,8 @@ describe("bash tool", () => {
 			{ state: {}, showImages: false, executionStarted: true, invalidate: () => {} } as never,
 		);
 
-		const rendered = stripAnsi(component.render(200).join("\n"));
+		// The notice holds the temp file path, so it wraps when the temp dir path is long (macOS).
+		const rendered = stripAnsi(component.render(200).join("\n")).replace(/\s+/g, " ");
 		expect(rendered).not.toContain("[Showing lines");
 		expect(rendered).toMatch(new RegExp(`\\[Could not save the full output: .*${code}.*\\. Truncated: `));
 	});

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-11-25
+
 ### Breaking Changes
 
 - `RolloutHost` is a tagged union: `{ kind: "reloaded", host, report }`, `{ kind: "stopped", host }` or `{ kind: "failed", host, error }` (was `{ host, report }`, `{ host, stopped: true }`, `{ host, error }`). Migration: a rollout step's `reload` returns entries with `kind`; readers switch on `kind` instead of `"report" in entry`. A worker's reply to a reload is `reloaded` (with its report) or `reload_failed` (with its error).

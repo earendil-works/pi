@@ -51,11 +51,18 @@ export class RadiusSyncRemote implements SessionSyncStore {
 	): Promise<PutBatchResult> {
 		const query = new URLSearchParams({ to: String(to) });
 		if (options.archive === true) query.set("archive", "1");
-		const response = await this.#request(`/${encodeURIComponent(sessionId)}/batches/${after}?${query}`, context, {
+		const init: StreamedInit = {
 			method: "PUT",
 			headers: { "content-type": "application/gzip" },
-			body: await collect(body),
-		});
+			body: streamOf(body),
+			// A body sent as it is read (chunked, no length known up front): fetch needs to be told so.
+			duplex: "half",
+		};
+		const response = await this.#request(
+			`/${encodeURIComponent(sessionId)}/batches/${after}?${query}`,
+			context,
+			init,
+		);
 		if (response.status === 201) return { type: "created" };
 		if (response.status === 409) {
 			const error = errorOf(await response.json());
@@ -139,22 +146,30 @@ export class RadiusSyncRemote implements SessionSyncStore {
 	}
 }
 
-/** Radius currently accepts one HTTP request body, so the prototype collects Chord's streamed body at this boundary. */
-async function collect(body: SyncBody): Promise<Uint8Array<ArrayBuffer>> {
-	const chunks: Uint8Array[] = [];
-	let size = 0;
-	for await (const chunk of body) {
-		chunks.push(chunk);
-		size += chunk.length;
-	}
-	// Joined without Node's `Buffer`: a plugin's file loaded by another plugin may import only host packages.
-	const joined = new Uint8Array(size);
-	let at = 0;
-	for (const chunk of chunks) {
-		joined.set(chunk, at);
-		at += chunk.length;
-	}
-	return joined;
+/** A request whose body streams; `duplex` is Node's fetch option, which the DOM type p2 uses lacks. */
+type StreamedInit = RequestInit & { readonly duplex: "half" };
+
+/**
+ * `body` as a request body that streams: each piece is taken from `body` only when the request reads the next one
+ * (`highWaterMark` 0), so the server holds about one piece per upload, never the whole body, and a slow Radius slows the
+ * worker that produces the pieces instead of filling memory.
+ */
+function streamOf(body: SyncBody): ReadableStream<Uint8Array> {
+	const pieces = body[Symbol.asyncIterator]();
+	return new ReadableStream<Uint8Array>(
+		{
+			async pull(controller) {
+				const next = await pieces.next();
+				if (next.done) controller.close();
+				else controller.enqueue(next.value);
+			},
+			// The request stopped reading (aborted, failed): the producer stops too.
+			async cancel(reason) {
+				await pieces.return?.(reason);
+			},
+		},
+		{ highWaterMark: 0 },
+	);
 }
 
 function isSeq(value: unknown): value is Seq {

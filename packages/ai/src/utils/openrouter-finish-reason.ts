@@ -30,10 +30,9 @@ export function applyOpenRouterNativeFinishReason(
 }
 
 /**
- * Native reasons OpenRouter treats as a clean stop. OpenRouter maps any other value to `stop` as well,
- * so a failure that already streamed output (e.g. Gemini reasoning followed by MALFORMED_RESPONSE)
- * arrives as `stop`. Two of OpenRouter's entries are left out because their providers document them
- * as failures: Gemini's "OTHER" ("stopped for a reason not otherwise specified"; `mapStopReason` in
+ * Native reasons OpenRouter treats as a clean stop; see `flagOpenRouterEmptyStop` for why they matter.
+ * Two of OpenRouter's entries are left out because their providers document them as failures:
+ * Gemini's "OTHER" ("stopped for a reason not otherwise specified"; `mapStopReason` in
  * google-shared.ts maps it to an error) and DeepSeek's "insufficient_system_resource" ("interrupted
  * due to insufficient resource").
  *
@@ -54,9 +53,19 @@ const CLEAN_STOP_NATIVE_REASONS = new Set([
 ]);
 
 /**
- * Turns a finished `stop` without visible output (text or tool calls; reasoning does not count) into an
- * error when the native reason is not a clean stop. The message matches the retry pattern for
- * OpenRouter's own "Provider returned an empty response", so the agent retries it.
+ * Turns an OpenRouter `stop` that is really an upstream failure into a retryable error.
+ *
+ * OpenRouter reports any upstream finish reason it has no failure case for as `finish_reason: "stop"`,
+ * so some upstream failures arrive as `stop` and only `native_finish_reason` still names them.
+ * Without this, pi would end such a turn silently, often with nothing but a thinking block. Example as
+ * of November 2026: Gemini's transient MALFORMED_RESPONSE after streamed reasoning arrives as `stop`
+ * (OpenRouter already reports it as `finish_reason: "error"` when there is no output at all).
+ *
+ * A legitimately empty turn also arrives as `stop`, e.g. Claude ending with an empty `end_turn` after a
+ * tool result, and should still end quietly. Only the native reason tells the two apart: a turn without
+ * visible output (text or tool calls; reasoning does not count) is flagged unless its native reason is
+ * a clean stop. The message matches the retry pattern for OpenRouter's own "Provider returned an
+ * empty response".
  */
 export function flagOpenRouterEmptyStop(message: AssistantMessage, nativeReason: string): void {
 	if (message.stopReason !== "stop" || CLEAN_STOP_NATIVE_REASONS.has(nativeReason.toLowerCase())) return;

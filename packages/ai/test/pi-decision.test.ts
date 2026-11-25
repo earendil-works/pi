@@ -36,7 +36,7 @@ const context: ClassifierContext = {
 };
 
 describe("Pi Decision", () => {
-	it("posts canonical context and options to /classify and returns typed answers with authoritative cost", async () => {
+	it("posts canonical context and options to /decision and returns typed answers with authoritative cost", async () => {
 		const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
 			new Response(
 				JSON.stringify({
@@ -72,7 +72,7 @@ describe("Pi Decision", () => {
 
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 		const [url, init] = fetchMock.mock.calls[0];
-		expect(String(url)).toBe("https://radius.example/v1/classify");
+		expect(String(url)).toBe("https://radius.example/v1/decision");
 		expect(init?.method).toBe("POST");
 		expect(JSON.parse(String(init?.body))).toEqual({
 			model: "jev-latest",

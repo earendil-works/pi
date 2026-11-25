@@ -784,7 +784,7 @@ export class SettingsSelectorComponent extends Container {
 			{
 				id: "fullscreen-copy-on-select",
 				label: "Fullscreen copy on select",
-				description: "Automatically copy selected text in fullscreen mode; disable to copy selections with Ctrl+X",
+				description: `Automatically copy selected text in fullscreen mode; disable to copy selections with ${keyDisplayText("app.message.copy")}`,
 				currentValue: config.fullscreenCopyOnSelect ? "true" : "false",
 				values: ["true", "false"],
 			},

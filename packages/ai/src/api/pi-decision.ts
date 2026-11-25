@@ -17,7 +17,7 @@ import { isRecord, postClassifierRequest, requiredNumber } from "./classifier-sh
  * pi-decision API implementation.
  *
  * Sends pi's own decision protocol directly to a backend: the request is a
- * single POST of `{ model, context, options }` to `<baseUrl>/classify`, and
+ * single POST of `{ model, context, options }` to `<baseUrl>/decision`, and
  * a `200 OK` response is a completed `{ answers, usage?, responseId? }` JSON object. Errors
  * use non-2xx HTTP statuses with the `{ error: { message, code?, details? } }`
  * envelope, matching `pi-messages`.
@@ -30,7 +30,7 @@ export interface PiDecisionOptions extends ClassifierOptions {
 	sessionId?: string;
 }
 
-/** Wire request body sent by `pi-decision` to `POST <baseUrl>/classify`. */
+/** Wire request body sent by `pi-decision` to `POST <baseUrl>/decision`. */
 export type PiDecisionRequest = {
 	model: string;
 	context: ClassifierContext;
@@ -148,7 +148,7 @@ function parseAnswers(value: unknown, context: ClassifierContext): Record<string
 	);
 }
 
-/** Classification through pi's canonical `POST <baseUrl>/classify` protocol. */
+/** Classification through pi's canonical `POST <baseUrl>/decision` protocol. */
 export const classify: ClassifierFunction<PiDecisionOptions> = async (model, context, options) => {
 	const output: ClassifierResult = {
 		api: model.api,
@@ -165,7 +165,7 @@ export const classify: ClassifierFunction<PiDecisionOptions> = async (model, con
 		if (images.length > 0 && !model.input.includes("image")) {
 			throw new Error(`${LABEL} model ${model.id} does not support image input`);
 		}
-		const url = new URL("classify", `${model.baseUrl.replace(/\/+$/u, "")}/`);
+		const url = new URL("decision", `${model.baseUrl.replace(/\/+$/u, "")}/`);
 		const requestBody: PiDecisionRequest = {
 			model: model.id,
 			context: {

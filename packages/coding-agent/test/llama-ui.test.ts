@@ -119,4 +119,25 @@ describe("llama.cpp Hugging Face search", () => {
 
 		expect(selectedId(view)).toBe("qwen/new-GGUF");
 	});
+
+	it("confirms the highlighted model instead of a typed owner/repository after browsing", async () => {
+		const { view, type, finishSearch, selected } = await openSearch();
+		await type("bartowski/Orn");
+		await finishSearch("bartowski/Orn", [model("bartowski/Orn-x-GGUF"), model("bartowski/Ornith-1.5-9B-GGUF")]);
+		view.handleInput?.(DOWN);
+
+		view.handleInput?.(ENTER);
+
+		await expect(selected).resolves.toBe("bartowski/Ornith-1.5-9B-GGUF");
+	});
+
+	it("confirms a typed owner/repository when the user did not browse", async () => {
+		const { view, type, finishSearch, selected } = await openSearch();
+		await type("bartowski/Orn");
+		await finishSearch("bartowski/Orn", [model("bartowski/Orn-x-GGUF"), model("bartowski/Ornith-1.5-9B-GGUF")]);
+
+		view.handleInput?.(ENTER);
+
+		await expect(selected).resolves.toBe("bartowski/Orn");
+	});
 });

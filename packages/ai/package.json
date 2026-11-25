@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-ai",
-	"version": "1.6.0",
+	"version": "1.6.1",
 	"description": "Unified LLM API with automatic model discovery and provider configuration",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -82,8 +82,8 @@
 		"@anthropic-ai/sdk": "0.129.0",
 		"@aws-sdk/client-bedrock-runtime": "3.1127.0",
 		"@aws-sdk/credential-provider-node": "3.972.82",
-		"@earendil-works/pi-schema": "1.6.0",
-		"@earendil-works/pi-telemetry": "1.6.0",
+		"@earendil-works/pi-schema": "1.6.1",
+		"@earendil-works/pi-telemetry": "1.6.1",
 		"@google/genai": "3.6.1",
 		"@smithy/node-http-handler": "4.12.1",
 		"http-proxy-agent": "9.1.0",

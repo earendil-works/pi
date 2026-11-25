@@ -22,6 +22,15 @@ import type { Session } from "./index.ts";
 
 export * from "@earendil-works/chord/http";
 export type { PluginScript, RolloutHost, RolloutResult, RolloutStep } from "@earendil-works/chord/plugins";
+// Chord's sync layer, for the backup plugin's server facet: targets and the relay.
+export {
+	FileSystemSyncRemote,
+	type JsonObject,
+	type PutBatchResult,
+	type SessionSyncStore,
+	SYNC_PROTOCOL,
+	type SyncBody,
+} from "@earendil-works/chord/sync";
 export * from "./control.ts";
 
 /** The server's process values, for plugins: what only the base has. */

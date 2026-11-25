@@ -3535,7 +3535,9 @@ export class InteractiveMode {
 				const command = isExcluded ? text.slice(2).trim() : text.slice(1).trim();
 				if (command) {
 					if (this.session.isBashRunning) {
-						this.showWarning("A bash command is already running. Press Esc to cancel it first.");
+						this.showWarning(
+							`A bash command is already running. Press ${keyText("app.interrupt")} to cancel it first.`,
+						);
 						this.editor.setText(text);
 						return;
 					}
@@ -7078,6 +7080,7 @@ export class InteractiveMode {
 		const yankPop = this.getEditorKeyDisplay("tui.editor.yankPop");
 		const undo = this.getEditorKeyDisplay("tui.editor.undo");
 		const tab = this.getEditorKeyDisplay("tui.input.tab");
+		const cancelAutocomplete = this.getEditorKeyDisplay("tui.select.cancel");
 
 		// App keybindings
 		const interrupt = this.getAppKeyDisplay("app.interrupt");
@@ -7125,7 +7128,8 @@ export class InteractiveMode {
 | Key | Action |
 |-----|--------|
 | \`${tab}\` | Path completion / accept autocomplete |
-| \`${interrupt}\` | Cancel autocomplete / abort streaming |
+| \`${cancelAutocomplete}\` | Cancel autocomplete |
+| \`${interrupt}\` | Abort streaming or running bash command |
 | \`${clear}\` | Clear editor (first) / exit (second) |
 | \`${exit}\` | Exit (when editor is empty) |
 | \`${suspend}\` | Suspend to background |

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-11-25
+
 ### Added
 
 - Added `createMcpResultSchema(outputSchema)`, moved from pi's coding agent: the output schema of an MCP tool for programs that call it, the whole `CallToolResult` with the tool's own output schema as `structuredContent` (its local `$ref`s rewritten to resolve there).
