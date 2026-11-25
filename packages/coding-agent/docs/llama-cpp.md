@@ -74,9 +74,9 @@ llama serve --models-preset qwen3.8-27b.ini --host 127.0.0.1
 
 On first start, the router downloads the model files. Set `HF_TOKEN` in the router's environment if the repository is gated. See the [server guide](https://llama.app/docs/serve#serving-multiple-models-router-mode) for all preset keys, including `load-on-startup`.
 
-### NVIDIA RTX recipes
+### NVIDIA recipes
 
-On NVIDIA GPUs, we recommend starting from [NVIDIA Local AI Inference Recipes](https://nvidia.github.io/local-ai-inference-recipes/index.html). Each recipe gives `llama-server` settings tuned for a specific GPU, operating system, and model, for example batch sizes, context size, and speculative decoding. Pick your hardware and model, choose **llama.cpp**, and install llama.cpp as the recipe describes; its settings may need a specific build, such as CUDA support.
+On NVIDIA hardware, we recommend starting from [NVIDIA Local AI Inference Recipes](https://nvidia.github.io/local-ai-inference-recipes/index.html). The recipes cover NVIDIA local GPUs, including RTX Spark, GeForce RTX, RTX PRO workstations, DGX Spark, and DGX Station, on Windows and Linux. Each recipe gives `llama-server` settings tuned for a specific GPU, operating system, and model, for example batch sizes, context size, and speculative decoding. Pick your hardware, operating system, and model, choose **llama.cpp**, and install llama.cpp as the recipe describes; its settings may need a specific build, such as CUDA support.
 
 A recipe is a single-model `llama-server` command. To use it with the router, turn each option into a preset line:
 
