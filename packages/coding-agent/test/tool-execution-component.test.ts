@@ -710,6 +710,14 @@ describe("ToolExecutionComponent parity", () => {
 			absent: undefined,
 		},
 		{
+			title: "AGENTS.local.md",
+			path: join(process.cwd(), ".pi", "AGENTS.local.md"),
+			content: "Hidden local instructions",
+			compact: "read resource .pi/AGENTS.local.md",
+			hidden: "Hidden local instructions",
+			absent: undefined,
+		},
+		{
 			title: "outside AGENTS.md",
 			path: resolve(process.cwd(), "..", "AGENTS.md"),
 			content: "Hidden outside resource instructions",

@@ -15,7 +15,7 @@ The agent directory is shown as `<agent-dir>` below. Set its location with the `
 | `<agent-dir>/mcp.json` | [MCP servers](mcp.md) available in every project. |
 | `<agent-dir>/models.json` | [Compatible endpoints, models, and model overrides](models.md#configure-a-compatible-endpoint). |
 | `<agent-dir>/auth.json` | Saved API keys and OAuth credentials. |
-| `<agent-dir>/AGENTS.override.md`, `AGENTS.md`, `AGENTS.MD`, `CLAUDE.md`, or `CLAUDE.MD` | User instructions applied across working directories. |
+| `<agent-dir>/AGENTS.override.md`, `AGENTS.local.md`, `AGENTS.md`, `AGENTS.MD`, `CLAUDE.md`, or `CLAUDE.MD` | User instructions applied across working directories. |
 | `<agent-dir>/SYSTEM.md` | Replaces Pi’s default system prompt. |
 | `<agent-dir>/APPEND_SYSTEM.md` | Adds instructions to Pi’s system prompt. |
 | `<agent-dir>/extensions/` | User [extensions](extensions.md). |
@@ -42,6 +42,6 @@ For `SYSTEM.md` and `APPEND_SYSTEM.md`, the trusted project file takes precedenc
 
 Context files are separate from project `.pi` configuration. Pi loads them from the agent directory, the working directory, and its parent directories. A context file applies whenever Pi runs in its directory or anywhere below it.
 
-An `AGENTS.override.md` replaces `AGENTS.md` or `CLAUDE.md` only in the same directory. It does not suppress context files from the agent directory or other directories.
+In each directory, Pi checks `AGENTS.override.md`, `AGENTS.local.md`, `AGENTS.md`, `AGENTS.MD`, `CLAUDE.md`, and `CLAUDE.MD` in that order and loads the first readable file. Pi combines the selected files, starting with the agent directory and then proceeding from the filesystem root to the working directory.
 
 Context-file discovery does not require project trust.

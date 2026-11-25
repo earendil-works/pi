@@ -54,7 +54,7 @@ Granting project trust allows Pi to load:
 
 Declining project trust skips those protected resources, except for the initial `sessionDir` lookup described above.
 
-Context files such as `AGENTS.override.md`, `AGENTS.md`, and `CLAUDE.md` load regardless of project trust unless you disable context loading. Treat instructions in a folder as untrusted input even when you decline project trust.
+Context files such as `AGENTS.override.md`, `AGENTS.local.md`, `AGENTS.md`, and `CLAUDE.md` load regardless of project trust unless you disable context loading. Treat instructions in a folder as untrusted input even when you decline project trust.
 
 ### How Pi chooses a trust decision
 

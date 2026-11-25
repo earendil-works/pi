@@ -23,7 +23,14 @@ interface CompactReadClassification {
 	kind: "docs" | "resource" | "skill";
 	label: string;
 }
-const COMPACT_RESOURCE_FILE_NAMES = new Set(["AGENTS.override.md", "AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"]);
+const COMPACT_RESOURCE_FILE_NAMES = new Set([
+	"AGENTS.override.md",
+	"AGENTS.local.md",
+	"AGENTS.md",
+	"AGENTS.MD",
+	"CLAUDE.md",
+	"CLAUDE.MD",
+]);
 type ReadRenderArgs = { path?: string; file_path?: string; offset?: unknown; limit?: unknown };
 function styledReadLineRange(args: ReadRenderArgs | undefined, theme: Theme): string {
 	const range = formatReadLineRange(args?.offset, args?.limit);

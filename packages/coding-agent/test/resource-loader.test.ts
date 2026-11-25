@@ -521,14 +521,15 @@ Content`,
 			expect(agentsFiles.some((f) => f.path.includes("AGENTS.md"))).toBe(true);
 		});
 
-		it("should prefer AGENTS.override.md within each directory while preserving ancestor layering", async () => {
+		it("should prefer AGENTS.override.md, then AGENTS.local.md, then AGENTS.md within each directory", async () => {
 			const nestedCwd = join(cwd, "service");
 			mkdirSync(nestedCwd);
 			writeFileSync(join(agentDir, "AGENTS.md"), "global instructions");
+			writeFileSync(join(agentDir, "AGENTS.local.md"), "global local instructions");
 			writeFileSync(join(agentDir, "AGENTS.override.md"), "global override");
 			writeFileSync(join(cwd, "AGENTS.md"), "project instructions");
 			writeFileSync(join(nestedCwd, "AGENTS.md"), "service instructions");
-			writeFileSync(join(nestedCwd, "AGENTS.override.md"), "service override");
+			writeFileSync(join(nestedCwd, "AGENTS.local.md"), "local service instructions");
 
 			const loader = new DefaultResourceLoader({ cwd: nestedCwd, agentDir });
 			await loader.reload();
@@ -536,12 +537,13 @@ Content`,
 			expect(loader.getAgentsFiles().agentsFiles).toEqual([
 				{ path: join(agentDir, "AGENTS.override.md"), content: "global override" },
 				{ path: join(cwd, "AGENTS.md"), content: "project instructions" },
-				{ path: join(nestedCwd, "AGENTS.override.md"), content: "service override" },
+				{ path: join(nestedCwd, "AGENTS.local.md"), content: "local service instructions" },
 			]);
 		});
 
 		it("should ignore context file candidates that are directories", async () => {
 			mkdirSync(join(cwd, "AGENTS.override.md"));
+			mkdirSync(join(cwd, "AGENTS.local.md"));
 			mkdirSync(join(cwd, "AGENTS.md"));
 			writeFileSync(join(cwd, "CLAUDE.md"), "Fallback instructions");
 			const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -555,11 +557,13 @@ Content`,
 			});
 			expect(consoleError).not.toHaveBeenCalledWith(expect.stringContaining(join(cwd, "AGENTS.md")));
 			expect(consoleError).not.toHaveBeenCalledWith(expect.stringContaining(join(cwd, "AGENTS.override.md")));
+			expect(consoleError).not.toHaveBeenCalledWith(expect.stringContaining(join(cwd, "AGENTS.local.md")));
 			consoleError.mockRestore();
 		});
 
 		it("should skip context file discovery when noContextFiles is true", async () => {
 			writeFileSync(join(cwd, "AGENTS.override.md"), "# Override Guidelines\n\nBe helpful.");
+			writeFileSync(join(agentDir, "AGENTS.local.md"), "Local instructions");
 			writeFileSync(join(cwd, "AGENTS.md"), "# Project Guidelines\n\nBe helpful.");
 			writeFileSync(join(cwd, "CLAUDE.md"), "# Claude Guidelines\n\nBe helpful.");
 
