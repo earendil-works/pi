@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed `/llama` "Download model" downloading the typed text instead of the highlighted result when the query looked like `owner/repository` and the user had moved the selection with the arrow keys ([#12465](https://github.com/earendil-works/pi/issues/12465))
+
 ## [1.6.1] - 2026-11-25
 
 ### New Features
