@@ -1321,7 +1321,26 @@ function buildAdditionalModelRequestFields(
 	model: Model<"bedrock-converse-stream">,
 	options: BedrockOptions,
 ): Record<string, any> | undefined {
-	if (!options.reasoning || !model.reasoning) {
+	if (!model.reasoning) {
+		return undefined;
+	}
+
+	const candidates = getModelMatchCandidates(model.id, model.name);
+
+	const isOpenAiGpt = candidates.some((s) => s.includes("gpt-"));
+
+	if (!isAnthropicClaudeModel(model) && !isOpenAiGpt) {
+		// Other families (Kimi K3, GLM 5.3) take a flat reasoning_effort. Converse forwards it without
+		// validating it, so send only values the model's thinkingLevelMap lists. Off is sent too:
+		// without a value, models such as Kimi K3.1 reason at max.
+		// Nova and Grok also land here but have no thinkingLevelMap in the catalog, so they send
+		// nothing: Nova 2 takes effort as reasoningConfig.maxReasoningEffort, and Grok documents
+		// no effort field for Converse.
+		const effort = model.thinkingLevelMap?.[options.reasoning ?? "off"];
+		return typeof effort === "string" ? { reasoning_effort: effort } : undefined;
+	}
+
+	if (!options.reasoning) {
 		return undefined;
 	}
 
@@ -1374,20 +1393,14 @@ function buildAdditionalModelRequestFields(
 		return result;
 	}
 
-	const candidates = getModelMatchCandidates(model.id, model.name);
-
 	if (candidates.some((s) => s.includes("gpt-oss"))) {
 		return { reasoning_effort: OPENAI_GPT_OSS_EFFORT[options.reasoning] };
 	}
 
-	if (candidates.some((s) => s.includes("gpt-"))) {
-		const mapped = model.thinkingLevelMap?.[options.reasoning];
-		return {
-			reasoning: { effort: typeof mapped === "string" ? mapped : OPENAI_GPT_EFFORT[options.reasoning] },
-		};
-	}
-
-	return undefined;
+	const mapped = model.thinkingLevelMap?.[options.reasoning];
+	return {
+		reasoning: { effort: typeof mapped === "string" ? mapped : OPENAI_GPT_EFFORT[options.reasoning] },
+	};
 }
 
 type OpenAIGptEffort = "low" | "medium" | "high" | "xhigh" | "max";
