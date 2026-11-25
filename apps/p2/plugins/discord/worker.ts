@@ -298,20 +298,27 @@ async function download(
 		const response = await fetch(file.url, { signal: ctx.abortSignal });
 		if (!response.ok || !response.body) throw new Error(`Download failed: ${response.status}`);
 		let offset = 0;
-		let pending = Buffer.alloc(0);
+		// The parts of the next upload chunk, joined once it is full, so each byte is copied once.
+		let pending: Uint8Array[] = [];
+		let size = 0;
 		const reader = response.body.getReader();
 		for (;;) {
 			const { done, value: chunk } = await reader.read();
 			if (done) break;
-			pending = Buffer.concat([pending, chunk]);
-			while (pending.length >= FILE_CHUNK) {
-				await files.append({ upload: begun.upload, offset, bytes: pending.subarray(0, FILE_CHUNK) }, ctx);
+			for (let at = 0; at < chunk.length; ) {
+				const take = Math.min(chunk.length - at, FILE_CHUNK - size);
+				pending.push(chunk.subarray(at, at + take));
+				size += take;
+				at += take;
+				if (size < FILE_CHUNK) continue;
+				await files.append({ upload: begun.upload, offset, bytes: Buffer.concat(pending, size) }, ctx);
 				offset += FILE_CHUNK;
-				pending = pending.subarray(FILE_CHUNK);
+				pending = [];
+				size = 0;
 				if (offset > MAX_UPLOAD_BYTES) throw new Error("Attachment too large");
 			}
 		}
-		if (pending.length) await files.append({ upload: begun.upload, offset, bytes: pending }, ctx);
+		if (size > 0) await files.append({ upload: begun.upload, offset, bytes: Buffer.concat(pending, size) }, ctx);
 		await files.finish(begun.upload, ctx);
 		return file.key;
 	} catch (error) {

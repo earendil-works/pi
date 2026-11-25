@@ -136,16 +136,32 @@ export function encodeFrame(message: object | Uint8Array): Buffer {
 }
 
 export function readFrames(socket: Socket, onFrame: (frame: unknown | Uint8Array) => void): void {
-	let pending: Buffer = Buffer.alloc(0);
+	// The bytes of an incomplete frame stay chunks and are joined once its last byte arrives, so a large frame (a
+	// backlog replay) arriving in many chunks is not copied again per chunk.
+	let pending: Buffer[] = [];
+	let pendingBytes = 0;
+	// Bytes the next frame, or its length header, needs before it can be read.
+	let needed = 4;
 	socket.on("data", (chunk: Buffer) => {
-		let buffer = pending.length ? Buffer.concat([pending, chunk]) : chunk;
+		if (chunk.length === 0) return;
+		pending.push(chunk);
+		pendingBytes += chunk.length;
+		if (pendingBytes < needed) return;
+		let buffer = pending.length === 1 ? chunk : Buffer.concat(pending, pendingBytes);
+		// Taken out before any frame is delivered, so a throwing `onFrame` cannot have its frames delivered again.
+		pending = [];
+		pendingBytes = 0;
+		needed = 4;
 		while (buffer.length >= 4) {
 			const length = buffer.readUInt32BE(0);
 			if (length < 1 || length > MAX_FRAME) {
 				socket.destroy(new Error("Corrupt terminal frame"));
 				return;
 			}
-			if (buffer.length < 4 + length) break;
+			if (buffer.length < 4 + length) {
+				needed = 4 + length;
+				break;
+			}
 			const kind = buffer.readUInt8(4);
 			const body = buffer.subarray(5, 4 + length);
 			buffer = buffer.subarray(4 + length);
@@ -166,6 +182,7 @@ export function readFrames(socket: Socket, onFrame: (frame: unknown | Uint8Array
 			}
 			onFrame(parsed);
 		}
-		pending = Buffer.from(buffer);
+		pending = buffer.length > 0 ? [Buffer.from(buffer)] : [];
+		pendingBytes = buffer.length;
 	});
 }

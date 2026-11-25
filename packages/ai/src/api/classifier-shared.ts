@@ -74,7 +74,7 @@ export async function postClassifierRequest(
 	const transformed = await options.onPayload?.(payload, model);
 	if (transformed !== undefined) payload = transformed;
 	const requestFetch = options.fetch ?? globalThis.fetch;
-	const { response, json } = await retryProviderRequest(
+	return retryProviderRequest(
 		async () => {
 			const timeoutSignal = options.timeoutMs !== undefined ? AbortSignal.timeout(options.timeoutMs) : undefined;
 			const signal =
@@ -88,8 +88,10 @@ export async function postClassifierRequest(
 					body: JSON.stringify(payload),
 					signal,
 				});
+				// Reported before the body is read, so a body that fails to arrive still reports its status.
+				await options.onResponse?.({ status: next.status, headers: headersToRecord(next.headers) }, model);
 				if (!next.ok) throw httpError(label, next, await next.text());
-				return { response: next, json: (await next.json()) as unknown };
+				return (await next.json()) as unknown;
 			} catch (error) {
 				if (timeoutSignal?.aborted && !options.signal?.aborted) throw timeoutError(options.timeoutMs!);
 				throw error;
@@ -102,8 +104,6 @@ export async function postClassifierRequest(
 			noRetryStatuses,
 		},
 	);
-	await options.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
-	return json;
 }
 
 function tokenCount(value: unknown): number {

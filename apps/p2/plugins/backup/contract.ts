@@ -26,30 +26,37 @@ export const sessionStoreName = (session: string): string => `session-${session}
 /** At most this much of a body crosses in one `append`. */
 export const CHUNK_BYTES = 1024 * 1024;
 
-/** Where one store's backup stands. */
-export const BackupStatusSchema = obj({
-	state: union([
-		/** Everything committed is uploaded, as far as the last upload saw. */
-		literal("synced"),
-		literal("uploading"),
-		/** The last upload failed; it is retried with backoff. */
-		literal("error"),
-		/** The store lost commits it had uploaded (a power loss): uploads stop until it is restored. */
-		literal("behind"),
-		/** The remote's history went on without this store (another machine writes it): uploads stop. */
-		literal("diverged"),
-		/**
-		 * The store's backup belongs to another account than the one signed in: nothing is uploaded until that account is
-		 * back (`account`); its commits wait in the outbox.
-		 */
-		literal("other_account"),
-	]),
-	/** The last sequence the backup holds. */
-	syncedHead: opt(int()),
-	error: opt(str()),
-	/** When this status was reported (ms since the epoch). */
-	at: num(),
-});
+/** What every status carries: the last sequence the backup holds, and when the status was reported (ms since the epoch). */
+const StatusCommon = { syncedHead: opt(int()), at: num() };
+
+/**
+ * Where one store's backup stands, by what the owner has to do: nothing (`synced`, `uploading`, `paused`), nothing yet
+ * (`retrying`), or act (`stopped`). The cause is a tagged `reason`.
+ */
+export const BackupStatusSchema = union([
+	/** Everything committed is uploaded, as far as the last upload saw. */
+	obj({ state: literal("synced"), ...StatusCommon }),
+	obj({ state: literal("uploading"), ...StatusCommon }),
+	/** The last upload failed for a passing reason (the network, the remote): retried with backoff, heals by itself. */
+	obj({ state: literal("retrying"), error: str(), ...StatusCommon }),
+	/**
+	 * Nothing broke: uploads wait and resume by themselves, from the bookmark. `off`: backup was turned off after this
+	 * store was backed up (its outbox was dropped: resuming uploads one full copy). `other_account`: the store's backup
+	 * belongs to another account than the one signed in (its commits wait in the outbox: resuming uploads batches only).
+	 */
+	obj({ state: literal("paused"), reason: union([literal("off"), literal("other_account")]), ...StatusCommon }),
+	/**
+	 * Needs the owner; uploads stop until a restart, the commits stay in the outbox. `diverged`: the backup's history is
+	 * not this store's (another machine wrote it). `behind`: the store lost commits the backup holds. `refused`: the
+	 * target refused for good (a body it rejects, the feature off, a newer protocol needed).
+	 */
+	obj({
+		state: literal("stopped"),
+		reason: union([literal("diverged"), literal("behind"), literal("refused")]),
+		error: str(),
+		...StatusCommon,
+	}),
+]);
 /** Where one store's backup stands (`BackupStatusSchema`). */
 export type BackupStatus = Static<typeof BackupStatusSchema>;
 

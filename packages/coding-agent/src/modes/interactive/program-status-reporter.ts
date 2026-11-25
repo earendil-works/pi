@@ -4,6 +4,11 @@ import type { AgentSessionEvent } from "../../core/agent-session.ts";
 
 export type BlockedStatus = { kind: NonNullable<ProgramStatus["kind"]>; message: string };
 
+/** Blocked status for a dialog. Its message is the first line of the title; later lines hold details such as paths. */
+export function dialogBlockedStatus(kind: BlockedStatus["kind"], title: string): BlockedStatus {
+	return { kind, message: title.split(/\r?\n/, 1)[0] };
+}
+
 function firstLine(text: string | undefined): string {
 	return text?.split(/\r?\n/, 1)[0]?.trim() || "Error";
 }

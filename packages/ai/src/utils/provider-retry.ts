@@ -1,3 +1,6 @@
+import type { ProviderResponse } from "../types.ts";
+import { headersToRecord } from "./headers.ts";
+
 const DEFAULT_MAX_RETRY_DELAY_MS = 60_000;
 
 interface ProviderRetryOptions {
@@ -6,6 +9,11 @@ interface ProviderRetryOptions {
 	signal?: AbortSignal;
 	/** HTTP statuses that fail at once although the default policy would retry them. */
 	noRetryStatuses?: readonly number[];
+	/**
+	 * Called for each attempt that failed with an HTTP status, before the retry decision. SDKs reject non-2xx
+	 * responses, so this is the only place their status and headers reach the caller's `onResponse`.
+	 */
+	onErrorResponse?: (response: ProviderResponse) => void | Promise<void>;
 }
 
 interface ProviderError extends Error {
@@ -117,6 +125,10 @@ export async function retryProviderRequest<T>(
 			return await request();
 		} catch (error) {
 			if (options.signal?.aborted) throw createAbortError();
+			if (isProviderError(error) && error.status !== undefined) {
+				const headers = error.headers ? headersToRecord(error.headers) : {};
+				await options.onErrorResponse?.({ status: error.status, headers });
+			}
 			if (retriesRemaining <= 0 || !isProviderError(error) || !isRetryableProviderError(error)) throw error;
 			if (error.status !== undefined && options.noRetryStatuses?.includes(error.status)) throw error;
 

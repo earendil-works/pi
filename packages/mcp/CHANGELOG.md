@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-11-25
+
 ### Added
 
 - Added `createMcpResultSchema(outputSchema)`, moved from pi's coding agent: the output schema of an MCP tool for programs that call it, the whole `CallToolResult` with the tool's own output schema as `structuredContent` (its local `$ref`s rewritten to resolve there).
@@ -10,6 +12,7 @@
 ### Fixed
 
 - Fixed requests to servers that echo request IDs as strings (`"1"` for `1`) timing out instead of matching the response ([#12205](https://github.com/earendil-works/pi/issues/12205))
+- Fixed Streamable HTTP SSE events that arrive in many chunks taking time quadratic in their size, which blocked the event loop for seconds on multi-MiB tool results ([#12224](https://github.com/earendil-works/pi/issues/12224))
 
 ## [1.6.0] - 2026-11-20
 

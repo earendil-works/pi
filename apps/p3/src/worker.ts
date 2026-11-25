@@ -6,6 +6,7 @@
 // exits 0. On `shutdown`, a disconnect, `SIGTERM` or `SIGINT` it closes its host and store and exits. Control messages travel
 // beside the link's frames on the same IPC channel (`api/v1/control.ts`).
 
+import { access } from "node:fs/promises";
 import { flushCompileCache } from "node:module";
 import { join } from "node:path";
 import { type ChordStore, createHost, type IpcPort, ipcLink, openStore, sqliteBackend } from "@earendil-works/chord";
@@ -13,7 +14,7 @@ import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { createPluginRuntime, type PluginScript } from "@earendil-works/chord/plugins/runtime";
 import { openNodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
 import { Session } from "@earendil-works/p3/v1";
-import type { WorkerRuntime } from "@earendil-works/p3/v1/worker";
+import { BACKUP_MARKER, type WorkerRuntime } from "@earendil-works/p3/v1/worker";
 import { type FromWorker, type ToWorker, workerControl, workerMessage } from "./api/v1/control.ts";
 import { SERVER, workerPrincipal } from "./app.ts";
 import { privateDirectory, privateStore } from "./files.ts";
@@ -106,8 +107,16 @@ async function open(
 	await privateDirectory(message.dir);
 	const file = join(message.dir, "store.sqlite");
 	await privateStore(file);
+	// Backup is on for this session (the backup plugin's marker): the store records an outbox, which the plugin
+	// uploads. Without the marker the outbox is off, its pending commits dropped.
+	const outbox = await access(join(message.dir, BACKUP_MARKER)).then(
+		() => true,
+		() => false,
+	);
 	// `openStore` makes the one kind of store there is.
-	const store = (await openStore(sqliteBackend(await openNodeSqliteDatabase(file)), context)) as ChordStore;
+	const store = (await openStore(sqliteBackend(await openNodeSqliteDatabase(file)), context, {
+		outbox,
+	})) as ChordStore;
 	const host = createHost<P3Principal>({
 		address: Session({ id: message.session }),
 		principal: workerPrincipal(message.session),

@@ -50,7 +50,7 @@ const message: AssistantMessage = {
 
 type NoticeContext = {
 	chatContainer: Container;
-	settingsManager: { getShowCacheMissNotices(): boolean };
+	settingsManager: { getNotices(): { reasoningDrops: boolean } };
 	sessionManager: { getBranch(): Array<{ type: "message"; message: AssistantMessage }> };
 };
 
@@ -60,11 +60,11 @@ const maybeShowThinkingDropNotice = Reflect.get(InteractiveMode.prototype, "mayb
 ) => void;
 
 describe("InteractiveMode assistant diagnostics", () => {
-	test("shows Anthropic thinking drops when cache miss notices are enabled", () => {
+	test("shows Anthropic thinking drops when reasoning drop notices are enabled", () => {
 		initTheme("dark");
 		const enabled = {
 			chatContainer: new Container(),
-			settingsManager: { getShowCacheMissNotices: () => true },
+			settingsManager: { getNotices: () => ({ reasoningDrops: true }) },
 			sessionManager: { getBranch: () => [] },
 		};
 		maybeShowThinkingDropNotice.call(enabled, message);
@@ -73,7 +73,7 @@ describe("InteractiveMode assistant diagnostics", () => {
 
 		const disabled = {
 			chatContainer: new Container(),
-			settingsManager: { getShowCacheMissNotices: () => false },
+			settingsManager: { getNotices: () => ({ reasoningDrops: false }) },
 			sessionManager: { getBranch: () => [] },
 		};
 		maybeShowThinkingDropNotice.call(disabled, message);
@@ -84,7 +84,7 @@ describe("InteractiveMode assistant diagnostics", () => {
 		initTheme("dark");
 		const context = {
 			chatContainer: new Container(),
-			settingsManager: { getShowCacheMissNotices: () => true },
+			settingsManager: { getNotices: () => ({ reasoningDrops: true }) },
 			sessionManager: { getBranch: () => [{ type: "message" as const, message }] },
 		};
 
@@ -97,7 +97,7 @@ describe("InteractiveMode assistant diagnostics", () => {
 		initTheme("dark");
 		const context = {
 			chatContainer: new Container(),
-			settingsManager: { getShowCacheMissNotices: () => true },
+			settingsManager: { getNotices: () => ({ reasoningDrops: true }) },
 			sessionManager: { getBranch: () => [{ type: "message" as const, message }] },
 		};
 
@@ -119,7 +119,7 @@ describe("InteractiveMode assistant diagnostics", () => {
 		const previous = openAIMessage(["rs_1", "rs_2"], ["prefix_mismatch"]);
 		const context = {
 			chatContainer: new Container(),
-			settingsManager: { getShowCacheMissNotices: () => true },
+			settingsManager: { getNotices: () => ({ reasoningDrops: true }) },
 			sessionManager: { getBranch: () => [{ type: "message" as const, message: previous }] },
 		};
 

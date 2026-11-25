@@ -608,6 +608,21 @@ describe("StdinBuffer", () => {
 			assert.deepStrictEqual(emittedSequences, []);
 		});
 
+		it("should find an end marker split across chunks at any position", () => {
+			const input = "\x1b[200~ab\x1b[201~c";
+			for (let chunkSize = 1; chunkSize <= input.length; chunkSize++) {
+				buffer.destroy();
+				buffer = new StdinBuffer({ timeout: 10 });
+				const pastes: string[] = [];
+				const sequences: string[] = [];
+				buffer.on("paste", (data) => pastes.push(data));
+				buffer.on("data", (sequence) => sequences.push(sequence));
+				for (let i = 0; i < input.length; i += chunkSize) buffer.process(input.slice(i, i + chunkSize));
+				assert.deepStrictEqual(pastes, ["ab"], `chunk size ${chunkSize}`);
+				assert.deepStrictEqual(sequences, ["c"], `chunk size ${chunkSize}`);
+			}
+		});
+
 		it("should handle paste with input before and after", () => {
 			processInput("a");
 			processInput("\x1b[200~pasted\x1b[201~");

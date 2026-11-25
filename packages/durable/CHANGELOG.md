@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-11-25
+
 ### Breaking Changes
 
 - Tool parks are tagged: `{ kind: "sleep", checkpoint?, until?, signals? }` and `{ kind: "wait", checkpoint?, on, policy }`, flat, in place of `{ sleep: { ... } }` and `{ wait: { ... } }`; a result has no `kind`. An object with another `kind` is an invalid park. Migration: return `{ kind: "sleep", ...sleep }` or `{ kind: "wait", ...wait }`, and tell a park from a result by `returned.kind`.
@@ -11,6 +13,11 @@
 - `Conversation.submit(tx, draft)` and `ConversationHandle.submit(tx, draft)` are `admit(tx, draft)`; `submit(draft, context)` is unchanged. Migration: rename the transaction form's calls to `admit`.
 - `SignalState` is tagged: `{ kind: "value", value }` or `{ kind: "expired" }`, in place of `{ value }` and `{ expired: true }`. Migration: test `state?.kind === "value"` or `state.kind === "expired"` instead of `"value" in state`. Stored signal memos keep their shape.
 - `CommitResult` (`Storage.commit()`) is tagged: `{ kind: "stored", stored }` or `{ kind: "refused", stored, refused }`. Migration: a custom Storage returns the tagged forms; a caller reads `refused` after checking `result.kind === "refused"`.
+
+### Fixed
+
+- Fixed `NodeExecutionEnv` on Windows not finding Git for Windows installed outside Program Files and running commands through the WSL launcher `System32\bash.exe` instead. It now asks the `git.exe` on `PATH` for its installation (`git var GIT_SHELL_PATH`, Git 2.47+) and uses its Git Bash before other `bash.exe` on `PATH` ([#12408](https://github.com/earendil-works/pi/issues/12408))
+- Fixed the Node environment's text line reader rescanning an incomplete line after every read, which made long lines take time quadratic in their length ([#12224](https://github.com/earendil-works/pi/issues/12224))
 
 ## [1.6.0] - 2026-11-20
 

@@ -18,7 +18,6 @@ import type {
 	StreamFunction,
 	StreamOptions,
 	TextContent,
-	ThinkingBudgets,
 	ThinkingContent,
 	ToolCall,
 	TranscriptContext,
@@ -31,12 +30,13 @@ import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { getSystemMessageText } from "../utils/text.ts";
 import { collapseSystemMessages, getCurrentTools, getInitialSystemMessage } from "../utils/transcript.ts";
-import type { GoogleApiThinkingLevel, ResolvedGoogleThinkingLevel } from "./google-shared.ts";
+import type { GoogleApiThinkingLevel } from "./google-shared.ts";
 import {
 	convertMessages,
 	convertTools,
 	formatGooglePromptBlockError,
 	getDisabledGoogleThinkingConfig,
+	getGoogleBudget,
 	isThinkingPart,
 	mapStopReason,
 	resolveGoogleFunctionCallingMode,
@@ -113,7 +113,11 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 			if (nextParams !== undefined) {
 				params = nextParams as GenerateContentParameters;
 			}
-			const googleStream = await retryGoogleRequest(() => client.models.generateContentStream(params), options);
+			const googleStream = await retryGoogleRequest(
+				() => client.models.generateContentStream(params),
+				model,
+				options,
+			);
 
 			stream.push({ type: "start", partial: output });
 			let currentBlock: TextContent | ThinkingContent | null = null;
@@ -544,36 +548,4 @@ function buildParams(
 	};
 
 	return params;
-}
-
-function getGoogleBudget(
-	model: Model<"google-vertex">,
-	level: ResolvedGoogleThinkingLevel,
-	customBudgets?: ThinkingBudgets,
-): number {
-	if (customBudgets?.[level] !== undefined) {
-		return customBudgets[level]!;
-	}
-
-	if (model.id.includes("2.5-pro")) {
-		const budgets: Record<ResolvedGoogleThinkingLevel, number> = {
-			minimal: 128,
-			low: 2048,
-			medium: 8192,
-			high: 32768,
-		};
-		return budgets[level];
-	}
-
-	if (model.id.includes("2.5-flash")) {
-		const budgets: Record<ResolvedGoogleThinkingLevel, number> = {
-			minimal: 128,
-			low: 2048,
-			medium: 8192,
-			high: 24576,
-		};
-		return budgets[level];
-	}
-
-	return -1;
 }

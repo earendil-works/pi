@@ -81,13 +81,16 @@ async function* lines(chunks: AsyncIterable<Uint8Array>): AsyncGenerator<{ reado
 		}
 	};
 	for await (const chunk of chunks) {
-		rest += decode(chunk);
+		// Only the new text is scanned, so a long line arriving in many chunks is not rescanned per chunk.
+		const text = decode(chunk);
 		let start = 0;
-		for (let end = rest.indexOf("\n"); end >= 0; end = rest.indexOf("\n", start)) {
-			yield { text: rest.slice(start, end), number: ++number };
+		for (let end = text.indexOf("\n"); end >= 0; end = text.indexOf("\n", start)) {
+			const line = rest + text.slice(start, end);
+			rest = "";
 			start = end + 1;
+			yield { text: line, number: ++number };
 		}
-		rest = rest.slice(start);
+		rest += text.slice(start);
 	}
 	rest += decode();
 	if (rest.length > 0) throw new LogFormatError(`The body ends inside log line ${number + 1}`);

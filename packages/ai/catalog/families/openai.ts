@@ -38,6 +38,19 @@ export const OPENAI_STANDARD_COSTS: Record<string, ModelCost> = {
 	"gpt-6.2-sol": { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
 };
 
+/**
+ * GPT-6 Luna on the Decisions API bills input tokens only, with the same long-context multiplier as
+ * chat requests. Usage reports cache reads and writes within input_tokens; they are priced at the input
+ * rate, so splitting them out of input does not change the cost.
+ * https://developers.openai.com/api/docs/guides/decisions
+ */
+export const OPENAI_DECISIONS_COST: ModelCost = withOpenAiLongContextPricing({
+	input: 0.1,
+	output: 0,
+	cacheRead: 0.1,
+	cacheWrite: 0.1,
+});
+
 /** The standard price of an OpenAI model with long-context pricing. */
 export function openAiStandardCost(id: string): ModelCost {
 	return withOpenAiLongContextPricing(OPENAI_STANDARD_COSTS[id]);
