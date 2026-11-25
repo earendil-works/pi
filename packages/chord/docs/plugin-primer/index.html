@@ -227,7 +227,7 @@ object: its state and methods) and registries. A contract has its own version:</
 	version: <span class="tk-n">1</span>,
 	params: { project: <span class="tk-f">str</span>() },
 	hostAddress: ({ project }) =&gt; <span class="tk-t">Project</span>({ id: project }),
-	variants: { reader: { state: { list: <span class="tk-f">obj</span>({ items: <span class="tk-f">arr</span>(<span class="tk-f">str</span>()) }) } } },
+	state: { list: <span class="tk-f">obj</span>({ items: <span class="tk-f">arr</span>(<span class="tk-f">str</span>()) }) },
 });</code></pre>
 <p>Bob&#39;s plugin imports this file, and the build copies it into his script. When his plugin asks for <code>Notes</code>, it says
 &quot;version 1, this shape&quot;; the provider (the <code>notes</code> plugin&#39;s code in the worker) checks that it can serve that version.</p>

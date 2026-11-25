@@ -310,11 +310,12 @@ lives on its project&#39;s worker:</p>
 	version: <span class="tk-n">1</span>,
 	params: { project: <span class="tk-f">str</span>() },
 	hostAddress: ({ project }) =&gt; <span class="tk-t">Project</span>({ id: project }),   <span class="tk-c">// where an object of these params lives</span>
-	variants: { editor: { state: { list: <span class="tk-t">NoteList</span> }, methods: { add: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ text: <span class="tk-f">str</span>() })) } } },
+	state: { list: <span class="tk-t">NoteList</span> },
+	methods: { add: <span class="tk-f">grantable</span>(<span class="tk-f">method</span>(<span class="tk-f">obj</span>({ text: <span class="tk-f">str</span>() }))) },   <span class="tk-c">// only for callers whose admission grants it</span>
 });</code></pre>
-<p>Two things are new. A <code>remote</code> type can be used from any host, and it has <strong>variants</strong>: different sets of members
-for different callers, chosen by the factory (an <code>editor</code> variant with <code>add</code>, a <code>reader</code> variant for guests without
-it). And <code>hostAddress</code> says where its objects live; it is the whole routing story.</p>
+<p>Two things are new. A <code>remote</code> type can be used from any host, and some of its members can be <strong>grantable</strong>: a
+caller has them only if the type&#39;s admission granted them (<code>add</code> for the project&#39;s editors; a guest reads the list
+without it). And <code>hostAddress</code> says where its objects live; it is the whole routing story.</p>
 <p>A tab asks for <code>Notes { project: &quot;p1&quot; }</code>. Its host computes the address,
 <code>Project(p1)</code>, and sends the request to its parent, the server. The server has a <strong>route</strong> for <code>Project</code>: it starts (or
 finds) the worker for <code>p1</code> and passes the request on. The worker serves <code>Notes</code>. The tab gets a reference whose state
@@ -332,11 +333,12 @@ worker.<span class="tk-f">connect</span>(parentLink, { principal: { kind: <span 
 <span class="tk-k">const</span> tab = <span class="tk-f">createHost</span>&lt;P&gt;({ onError });
 tab.<span class="tk-f">connect</span>(<span class="tk-f">webSocketLink</span>(<span class="tk-k">new</span> <span class="tk-t">WebSocket</span>(<span class="tk-s">"/chord"</span>)), { principal: { kind: <span class="tk-s">"server"</span> } }, ctx);</code></pre>
 <p><code>P</code> is your app&#39;s type of <strong>principal</strong>, who is calling: an owner, a guest, the server, a worker. Links stamp it;
-a <code>remote</code> object is made per principal, so a guest can get a read-only variant of the same notes.</p>
+a <code>remote</code> object is made per principal, so a guest can be granted less of the same notes: the list without <code>add</code>.</p>
 <h3 id="who-a-reference-acts-as">Who a reference acts as</h3>
 <p>A reference acts as whoever made it. <code>host.get</code> and <code>self.get</code> in a <code>local</code> object act as the host; <code>self.get</code> in a
 <code>remote</code> object acts as that object&#39;s principal; <strong><code>ctx.get</code> in a method acts as the method&#39;s caller</strong>. That is what
-lets a guest&#39;s call reach a worker as the guest and get the guest&#39;s variant, never more than the guest may see.</p>
+lets a guest&#39;s call reach a worker as the guest and get what the guest&#39;s admission grants, never more than the guest
+may see.</p>
 <p>It surprises one case: a server object that should act as itself towards a worker. The owner calls
 <code>Search.rebuildIndex</code>, which asks each project&#39;s worker to scan its files:</p>
 <pre><code><span class="tk-c">// server.ts: wrong, the worker sees the owner</span>
@@ -383,7 +385,7 @@ tab.<span class="tk-f">connect</span>(<span class="tk-f">webSocketLink</span>(<s
 <span class="tk-k">await</span> notes.<span class="tk-f">add</span>({ text: <span class="tk-s">"from the tab"</span> }, ctx);                        <span class="tk-c">// a call: tab → server → worker</span></code></pre>
 <p><strong>Who the tab is</strong> is not the tab&#39;s to say. The server authenticates the WebSocket when it connects (a cookie, the
 owner on loopback, a guest&#39;s share link) and stamps that principal on everything the tab asks for. The worker&#39;s
-<code>Notes</code> factory receives it and may give a guest a read-only variant. A tab cannot claim to be the owner.</p>
+<code>Notes</code> admission receives it and may grant a guest less (no <code>add</code>). A tab cannot claim to be the owner.</p>
 <p><strong>What a tab serves</strong> is only <code>local</code> types: state of this tab&#39;s UI, never shared. A draft that survives switching
 panels, a selection, a tab-local cache:</p>
 <pre><code><span class="tk-c">// plugins/notes/web.tsx: the web facet serves a local type, and contributes a panel</span>
@@ -451,7 +453,7 @@ call added settles. <code>add</code> returns the call; a rejection is the caller
 <span class="tk-k">await</span> <span class="tk-f">add</span>(next, session.<span class="tk-f">rename</span>(next, ctx));               <span class="tk-c">// title() is `next` at once, the real one when it settles</span>
 
 <span class="tk-k">const</span> [rows, change] = scope.<span class="tk-f">optimistic</span>(() =&gt; <span class="tk-f">list</span>() ?? [], (rows, id: string) =&gt; rows.<span class="tk-f">filter</span>((row) =&gt; row.id !== id));
-<span class="tk-f">change</span>(id, store.<span class="tk-f">remove</span>({ id }, ctx)).<span class="tk-f">catch</span>(fail);        <span class="tk-c">// gone at once; back with the error if refused</span></code></pre>
+<span class="tk-f">change</span>(id, store.<span class="tk-f">remove</span>({ id }, ctx)).<span class="tk-k">catch</span>(fail);        <span class="tk-c">// gone at once; back with the error if refused</span></code></pre>
 <p><code>test/examples/63-optimistic-answers.ts</code> runs this with a stalled terminal client and prints what each redraw showed.</p>
 </section>
 
@@ -471,10 +473,14 @@ default export a <code>defineFacet(...)</code>. A plugin has only the files it n
 <span class="tk-k">import</span> { <span class="tk-t">Notes</span> } <span class="tk-k">from</span> <span class="tk-s">"./contract.ts"</span>;
 
 <span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((host) =&gt; {
-	host.<span class="tk-f">serve</span>(<span class="tk-t">Notes</span>, ({ project }, principal, self) =&gt; {
-		<span class="tk-k">const</span> doc = self.<span class="tk-f">state</span>(<span class="tk-t">NotesDoc</span>);
-		<span class="tk-k">return</span> { variant: <span class="tk-s">"editor"</span>, members: { list: doc, add: <span class="tk-k">async</span> ({ text }, ctx) =&gt; <span class="tk-c">/* … */</span> } };
-	});
+	host.<span class="tk-f">serve</span>(
+		<span class="tk-t">Notes</span>,
+		({ project }, principal, admitted, self) =&gt; {
+			<span class="tk-k">const</span> doc = self.<span class="tk-f">state</span>(<span class="tk-t">NotesDoc</span>);
+			<span class="tk-k">return</span> { list: doc, add: <span class="tk-k">async</span> ({ text }, ctx) =&gt; <span class="tk-c">/* … */</span> };   <span class="tk-c">// `add` reaches only callers granted it</span>
+		},
+		{ admit: (_params, principal) =&gt; <span class="tk-f">constant</span>(principal.kind === <span class="tk-s">"guest"</span> ? <span class="tk-f">allow</span>({}) : <span class="tk-f">allow</span>({ granted: [<span class="tk-s">"add"</span>] })) },
+	);
 });</code></pre>
 <p><code>@app/api/v1</code> is your app&#39;s <strong>API</strong>, version 1: the part of its base code plugins import, as a host package (the
 plugin&#39;s build leaves it out; every host passes its own copy in). It holds what plugins share and never reloads:
@@ -585,7 +591,7 @@ evaluates them with its own modules (a worker&#39;s from <code>workerMain</code>
 host.<span class="tk-f">serve</span>(<span class="tk-t">Search</span>, ({ project }, principal, self) =&gt; {
 	<span class="tk-k">const</span> notes = self.<span class="tk-f">get</span>(<span class="tk-t">Notes</span>, { project });   <span class="tk-c">// a dependency: Search goes live once Notes is</span>
 	<span class="tk-k">const</span> index = self.<span class="tk-f">derive</span>([notes.list], ([list]) =&gt; <span class="tk-f">buildIndex</span>(list.items));
-	<span class="tk-k">return</span> { variant: <span class="tk-s">"main"</span>, members: { find: <span class="tk-k">async</span> ({ q }) =&gt; <span class="tk-f">lookup</span>(index.value, q) } };
+	<span class="tk-k">return</span> { find: <span class="tk-k">async</span> ({ q }) =&gt; <span class="tk-f">lookup</span>(index.value, q) };
 });</code></pre>
 <p>Which file a plugin imports decides which version of the contract it claims, so the rule is: <strong>a plugin carries the
 contract it was written against.</strong> Two cases:</p>
@@ -700,8 +706,8 @@ same name, the first root wins, and the other is reported.</p>
 <li><strong>A single file</strong> at a root&#39;s top is a plugin: <code>plugins/hello.server.ts</code> and <code>plugins/hello.web.tsx</code> are the plugin
 <code>hello</code> with two facets. It has no <code>package.json</code> and imports only the API; when it needs a second file or a
 package, it becomes the directory <code>hello/</code>, which a reload treats as the same plugin.</li>
-<li><strong>Installing</strong> from git or npm: <code>plugins.installPlugin({ git: url, ref }, root, ctx)</code> clones the ref (a branch, tag
-or commit) into the root, <code>{ npm: name, version }</code> extracts the package; then its dependencies are installed. Removal
+<li><strong>Installing</strong> from git or npm: <code>plugins.installPlugin({ kind: &quot;git&quot;, git: url, ref }, root, ctx)</code> clones the ref (a branch, tag
+or commit) into the root, <code>{ kind: &quot;npm&quot;, npm: name, version }</code> extracts the package; then its dependencies are installed. Removal
 is deleting the directory.</li>
 <li><strong>Testing</strong> a plugin alone: <code>testPlugin(&quot;./plugins/stats&quot;, { kind: &quot;worker&quot;, api, modules, stubs }, ctx)</code> builds it
 as production does, loads it on an in-memory host beside stub facets serving what it uses, collects what it
@@ -751,16 +757,17 @@ directory and store, the host at the project&#39;s address, the link to the serv
 the start data <code>start(address)</code> made): the <strong>start-data objects</strong>. Process values reach plugins only through them.</li>
 <li><code>Files</code>, one per host: <code>put</code> for small files, <code>begin</code>, <code>append</code> and <code>finish</code> for large ones, ranged <code>read</code>, <code>remove</code>
 and a watchable <code>list</code>, stored in the host&#39;s directory with caps per host.</li>
-<li><code>Sessions</code> on the server: <code>issue</code>, <code>revoke</code>, <code>list</code>.</li>
+<li><code>SignIns</code> on the server: <code>issue</code>, <code>revoke</code>, <code>list</code>.</li>
 </ul>
 <p>This finishes what the previous chapter started. Base code is the API, the start script and the worker&#39;s entry. The
 providers of the app&#39;s own registries live in its required root: example 53&#39;s API declares a <code>Sections</code> registry, and
 its home plugin serves it and reads <code>AppInfo</code>, so it reloads like any other plugin.</p>
 <h3 id="who-may-come-in">Who may come in</h3>
 <p>HTTP <strong>denies by default</strong>: a request without a principal gets 401 before any plugin code runs, unless the route says
-<code>public: true</code>. Someone gets a principal through a <strong>session</strong>: a random token, kept in the store only as a hash, sent
-as a signed cookie by a browser or as <code>Authorization: Bearer</code> by a command-line client.</p>
-<p>The first session is the owner&#39;s, the principal the app names in <code>principal.owner</code> (a variant of its own, as here, or
+<code>public: true</code>. Someone gets a principal through a <strong>sign-in</strong> (one browser or device signed in as that principal): a
+random token, kept in the store only as a hash, sent as a signed cookie by a browser or as <code>Authorization: Bearer</code> by a
+command-line client.</p>
+<p>The first sign-in is the owner&#39;s, the principal the app names in <code>principal.owner</code> (a kind of its own, as here, or
 one of its users). At each start the kit makes a one-time <strong>owner link</strong>,
 <code>http://127.0.0.1:8788/_chord/owner#&lt;token&gt;</code>, valid ten minutes; the start script prints it. The token is in the
 fragment, which browsers never send, so it never reaches a log: the page posts it, the kit consumes it and sets the
@@ -850,8 +857,12 @@ which opens it read-only and offers only the read interface (<code>findTraces</c
 <td>a live reference / a reference at once that follows its object</td>
 </tr>
 <tr>
-<td><code>local(name, { version, params, members })</code> / <code>remote(name, { version, params, hostAddress, variants })</code></td>
+<td><code>local(name, { version, params, members })</code> / <code>remote(name, { version, params, hostAddress, state, methods, events, flags })</code></td>
 <td>contracts</td>
+</tr>
+<tr>
+<td><code>grantable(member)</code>, <code>flags: { name: label }</code>; <code>host.serve(Type, factory, { admit })</code> with <code>allow({ granted })</code> / <code>deny(reason, message?)</code></td>
+<td>what each caller may use</td>
 </tr>
 <tr>
 <td><code>defineFacet((host, self) =&gt; …)</code>, <code>host.serve(Type, factory)</code>, <code>self.contribute(R, value)</code></td>
@@ -894,7 +905,7 @@ which opens it read-only and offers only the read interface (<code>findTraces</c
 <td>move a worker&#39;s data</td>
 </tr>
 <tr>
-<td><code>AppInfo</code>, <code>WorkerInfo</code>, <code>Files</code>, <code>Sessions</code></td>
+<td><code>AppInfo</code>, <code>WorkerInfo</code>, <code>Files</code>, <code>SignIns</code></td>
 <td>the kit&#39;s objects plugins get</td>
 </tr>
 </tbody></table>

@@ -256,13 +256,14 @@ export const Notes = remote("notes", {
 	version: 1,
 	params: { project: str() },
 	hostAddress: ({ project }) => Project({ id: project }),   // where an object of these params lives
-	variants: { editor: { state: { list: NoteList }, methods: { add: method(obj({ text: str() })) } } },
+	state: { list: NoteList },
+	methods: { add: grantable(method(obj({ text: str() }))) },   // only for callers whose admission grants it
 });
 ```
 
-Two things are new. A `remote` type can be used from any host, and it has **variants**: different sets of members
-for different callers, chosen by the factory (an `editor` variant with `add`, a `reader` variant for guests without
-it). And `hostAddress` says where its objects live; it is the whole routing story.
+Two things are new. A `remote` type can be used from any host, and some of its members can be **grantable**: a
+caller has them only if the type's admission granted them (`add` for the project's editors; a guest reads the list
+without it). And `hostAddress` says where its objects live; it is the whole routing story.
 
 A tab asks for `Notes { project: "p1" }`. Its host computes the address,
 `Project(p1)`, and sends the request to its parent, the server. The server has a **route** for `Project`: it starts (or
@@ -299,13 +300,14 @@ tab.connect(webSocketLink(new WebSocket("/chord")), { principal: { kind: "server
 ```
 
 `P` is your app's type of **principal**, who is calling: an owner, a guest, the server, a worker. Links stamp it;
-a `remote` object is made per principal, so a guest can get a read-only variant of the same notes.
+a `remote` object is made per principal, so a guest can be granted less of the same notes: the list without `add`.
 
 ## Who a reference acts as
 
 A reference acts as whoever made it. `host.get` and `self.get` in a `local` object act as the host; `self.get` in a
 `remote` object acts as that object's principal; **`ctx.get` in a method acts as the method's caller**. That is what
-lets a guest's call reach a worker as the guest and get the guest's variant, never more than the guest may see.
+lets a guest's call reach a worker as the guest and get what the guest's admission grants, never more than the guest
+may see.
 
 It surprises one case: a server object that should act as itself towards a worker. The owner calls
 `Search.rebuildIndex`, which asks each project's worker to scan its files:
@@ -368,7 +370,7 @@ await notes.add({ text: "from the tab" }, ctx);                        // a call
 
 **Who the tab is** is not the tab's to say. The server authenticates the WebSocket when it connects (a cookie, the
 owner on loopback, a guest's share link) and stamps that principal on everything the tab asks for. The worker's
-`Notes` factory receives it and may give a guest a read-only variant. A tab cannot claim to be the owner.
+`Notes` admission receives it and may grant a guest less (no `add`). A tab cannot claim to be the owner.
 
 **What a tab serves** is only `local` types: state of this tab's UI, never shared. A draft that survives switching
 panels, a selection, a tab-local cache:
@@ -484,10 +486,14 @@ import { defineFacet } from "@app/api/v1";
 import { Notes } from "./contract.ts";
 
 export default defineFacet((host) => {
-	host.serve(Notes, ({ project }, principal, self) => {
-		const doc = self.state(NotesDoc);
-		return { variant: "editor", members: { list: doc, add: async ({ text }, ctx) => /* … */ } };
-	});
+	host.serve(
+		Notes,
+		({ project }, principal, admitted, self) => {
+			const doc = self.state(NotesDoc);
+			return { list: doc, add: async ({ text }, ctx) => /* … */ };   // `add` reaches only callers granted it
+		},
+		{ admit: (_params, principal) => constant(principal.kind === "guest" ? allow({}) : allow({ granted: ["add"] })) },
+	);
 });
 ```
 
@@ -647,7 +653,7 @@ import { Notes } from "../notes/contract.ts";   // a plugin of the same root, by
 host.serve(Search, ({ project }, principal, self) => {
 	const notes = self.get(Notes, { project });   // a dependency: Search goes live once Notes is
 	const index = self.derive([notes.list], ([list]) => buildIndex(list.items));
-	return { variant: "main", members: { find: async ({ q }) => lookup(index.value, q) } };
+	return { find: async ({ q }) => lookup(index.value, q) };
 });
 ```
 
@@ -851,7 +857,7 @@ HTTP **denies by default**: a request without a principal gets 401 before any pl
 random token, kept in the store only as a hash, sent as a signed cookie by a browser or as `Authorization: Bearer` by a
 command-line client.
 
-The first sign-in is the owner's, the principal the app names in `principal.owner` (a variant of its own, as here, or
+The first sign-in is the owner's, the principal the app names in `principal.owner` (a kind of its own, as here, or
 one of its users). At each start the kit makes a one-time **owner link**,
 `http://127.0.0.1:8788/_chord/owner#<token>`, valid ten minutes; the start script prints it. The token is in the
 fragment, which browsers never send, so it never reaches a log: the page posts it, the kit consumes it and sets the
@@ -944,7 +950,8 @@ which opens it read-only and offers only the read interface (`findTraces`, `getT
 | `createHost<P>({ address?, principal?, store?, onError })` | a host: addressable with an address, else a client |
 | `host.load([{ name, facet }], ctx)` / `host.reload(...)` | publish facets / apply a new plugin set |
 | `host.get(Type, params, ctx)` / `host.hold(...)` | a live reference / a reference at once that follows its object |
-| `local(name, { version, params, members })` / `remote(name, { version, params, hostAddress, variants })` | contracts |
+| `local(name, { version, params, members })` / `remote(name, { version, params, hostAddress, state, methods, events, flags })` | contracts |
+| `grantable(member)`, `flags: { name: label }`; `host.serve(Type, factory, { admit })` with `allow({ granted })` / `deny(reason, message?)` | what each caller may use |
 | `defineFacet((host, self) => …)`, `host.serve(Type, factory)`, `self.contribute(R, value)` | a facet |
 | factory `self`: `state`, `derive`, `get`, `registry`, `open`, `on`, `onLive`, `job`, `tx` | an object's parts |
 | `createPlugins({ roots, api, kinds, onError }, ctx)` | the plugins component |

@@ -409,8 +409,8 @@ it on to its parent or to a route (design §3, "Host kinds and addresses"). The 
 
 `authorize` runs for every request routed to a
 list before anything starts; the first request for an address starts
-its worker, and a worker idle for five minutes (the default `idleMs`) stops. **Variants** are the member sets a
-contract offers: the owner's `Todos` has `clear`, a member's does not. The factory picks one per principal.
+its worker, and a worker idle for five minutes (the default `idleMs`) stops. **Grantable** members are the ones a
+caller has only if the type's admission granted them: the owner's `Todos` has `clear`, a member's does not.
 
 ## The worker facet
 

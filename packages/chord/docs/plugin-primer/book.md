@@ -115,7 +115,7 @@ export const Notes = remote("notes", {
 	version: 1,
 	params: { project: str() },
 	hostAddress: ({ project }) => Project({ id: project }),
-	variants: { reader: { state: { list: obj({ items: arr(str()) }) } } },
+	state: { list: obj({ items: arr(str()) }) },
 });
 ```
 
