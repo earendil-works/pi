@@ -4531,7 +4531,7 @@ export class InteractiveMode {
 		// dispatch and re-sends the signal if only its own listeners remain.
 
 		if (options?.fromSignal) {
-			// Signal-triggered shutdown (SIGTERM/SIGHUP). Emit extension cleanup
+			// Signal-triggered shutdown (SIGTERM/SIGHUP, SIGBREAK on Windows). Emit extension cleanup
 			// (session_shutdown) BEFORE touching the terminal. Extension teardown
 			// such as removing sockets does not write to the tty, so it must not be
 			// skipped if a later terminal-restore write fails on a dead or stalled
@@ -4631,6 +4631,11 @@ export class InteractiveMode {
 		this.unregisterSignalHandlers();
 
 		const signals: NodeJS.Signals[] = ["SIGTERM", "SIGHUP"];
+		// Without a listener, a console Ctrl+Break ends the process without running any JavaScript,
+		// leaving the alternate screen, mouse reporting and keyboard modes on (#12133). Raw mode does
+		// not block it, and a console child calling GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT) on a
+		// process that is not a group leader sends it to every process in the console.
+		if (process.platform === "win32") signals.push("SIGBREAK");
 
 		for (const signal of signals) {
 			const handler = () => {
