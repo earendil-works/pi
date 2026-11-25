@@ -8,7 +8,15 @@ import {
 import { arr, evolve, grantable, int, keyed, local, method, obj, remote, str } from "../../src/contracts/index.ts";
 import { broken, type ChordError } from "../../src/data/index.ts";
 import { defineState, type KeyedHandle } from "../../src/documents/index.ts";
-import { allow, createHost, defineFacet, type Reference, type RefState, type Self } from "../../src/host/index.ts";
+import {
+	allow,
+	createHost,
+	defineFacet,
+	type FacetHost,
+	type Reference,
+	type RefState,
+	type Self,
+} from "../../src/host/index.ts";
 import { ChordObject } from "../../src/host/object.ts";
 import { Binding } from "../../src/host/reference.ts";
 import { jsonPart } from "../../src/link/internal.ts";
@@ -29,6 +37,7 @@ import {
 	flushed,
 	framesOf,
 	instancesOf,
+	linked,
 	loaded,
 	memoryStore,
 	Notes,
@@ -37,6 +46,7 @@ import {
 	Server,
 	settledHeap,
 	statesOf,
+	type TestPrincipal,
 	valuesOf,
 	waitLive,
 } from "../support.ts";
@@ -857,6 +867,58 @@ describe("a reference's grant (review round 2, Sol 1 and 4)", () => {
 		gate.resolve();
 		await expect.poll(() => ref.state.value.kind).toBe("live");
 		expect([[...ref.granted], ref.number]).toEqual([[], undefined]);
+		await host.close(context);
+	});
+});
+
+describe("a reference's grant is its own binding's (review round 2, granttest F4)", () => {
+	const Flagged = remote("test.flagged", {
+		version: 1,
+		params: {},
+		hostAddress: Server,
+		state: { s0: grantable(str()) },
+		flags: { f0: "Flag" },
+	});
+	const serveFlagged = (h: FacetHost<TestPrincipal>): void =>
+		h.serve(Flagged, () => ({ s0: () => constant("s0") }), {
+			admit: () => constant(allow({ granted: ["f0", "s0"] })),
+		});
+
+	it("one made while its link is down joins the shared hold without its grant (F4a)", async () => {
+		const { server, client, links } = await linked(serveFlagged);
+		const first = client.hold(Flagged, {}, context);
+		await waitLive(first);
+		expect([...first.granted]).toEqual(["f0", "s0"]);
+		links[1].close();
+		await expect.poll(() => first.state.value.kind).toBe("loading");
+		const second = client.hold(Flagged, {}, context);
+		expect([second.state.value.kind, [...second.granted]]).toEqual(["loading", []]);
+		await client.close(context);
+		await server.close(context);
+	});
+
+	it("one on the provider's host refused at its version has none of the object's grant (F4b)", async () => {
+		const Tick = obj({ y: int() });
+		const V1 = remote("test.ticks", {
+			version: 1,
+			params: {},
+			hostAddress: Server,
+			state: { s1: grantable(str()) },
+			events: { e0: Tick },
+		});
+		const V2 = evolve(V1, (e) => e.event("e0", obj({ y: str() })));
+		const host = createHost({ address: Server(), principal: { kind: "server" }, onError: () => {} });
+		const facet = defineFacet((h) =>
+			h.serve(V2, (_p, _principal, _admitted, self) => ({ s1: () => constant("s1"), e0: self.events() }), {
+				admit: () => constant(allow({ granted: ["s1"] })),
+				accepts: { 1: { events: { e0: "refuse" } } },
+			}),
+		);
+		await host.load([{ name: "test", facet }], context);
+		const current = await host.get(V2, {}, context);
+		const older = host.hold(V1, {}, context);
+		await expect.poll(() => older.state.value).toMatchObject({ kind: "failed", cause: { kind: "waiting" } });
+		expect([[...current.granted], [...older.granted]]).toEqual([["s1"], []]);
 		await host.close(context);
 	});
 });

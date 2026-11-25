@@ -413,7 +413,10 @@ export class Binding implements Holder, UnboundRequest {
 		const state = this.#state;
 		if (state.kind === "refused") return state.failure.cause.error;
 		if (state.kind === "waiting") return state.failure?.cause.error;
-		return state.kind === "bound" ? state.target.lastFailure : undefined;
+		if (state.kind !== "bound") return undefined;
+		// Its version's state first: a member its provider refuses at its version is its failure (`stateFor`).
+		const shown = this.refState;
+		return shown.kind === "failed" ? shown.cause.error : state.target.lastFailure;
 	}
 
 	/**

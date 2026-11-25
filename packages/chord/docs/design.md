@@ -3456,7 +3456,10 @@ const accepted = checkAccepts(NotesV2, {
   for an older local consumer), removed keyed members `"refuse"`, changed event members `(current value) => old
   value` or `"refuse"` (section `events`, flat as every section: `{ 1: {
   events: { paddle: (current) => old } } }`; `"refuse"` refuses that version's binding, as a refused state
-  member does); added members need nothing, and neither does a removed event member (the exception to the rule above:
+  member does). A refusal of a member the caller is granted follows the grant (review round 2): its holders stay on the
+  object showing `failed { waiting, contract_mismatch }` while the grant includes the member, and bind with the first
+  grant without it; a denial or failure of the object shows instead. A denial unbinds the holders of a version the
+  provider no longer binds, as going live does: they wait for a publication); added members need nothing, and neither does a removed event member (the exception to the rule above:
   an older consumer binds and receives none of it; an event has no value to hydrate). No-op edits need identity
   mappings. Untyped JavaScript providers fail at declaration naming the member; unknown keys and wrong shapes are
   rejected. An older consumer gets each event mapped by its version's mapping, run once per emit per bound older

@@ -353,14 +353,28 @@ export class ChordObject implements Target {
 
 	/**
 	 * The state a same-host consumer of `version` and `fingerprint` sees (rule 5): `live` while a restart's open old
-	 * attempt binds that version and its successor is not parked on a failure; otherwise `state`.
+	 * attempt binds that version and its successor is not parked on a failure; live, `failed { waiting }` while the
+	 * provider refuses a member of that version its grant includes (re-read with every grant: F5); otherwise `state`.
 	 */
 	stateFor(version: number, fingerprint: string): RefState {
 		const state = this.#state;
+		const error = this.#refused(version);
+		if (error !== undefined) return { kind: "failed", cause: { kind: "waiting", error }, retryAt: undefined };
 		if (state.kind === "activating" && state.shown.kind !== "failed" && this.oldServes(version, fingerprint)) {
 			return LIVE;
 		}
 		return this.state;
+	}
+
+	/**
+	 * A member of the older, accepted `version` its provider refuses at its grant: its holders' failure, shown and not
+	 * unbound (F5), until a grant without it; a failure or denial of the object shows instead.
+	 */
+	#refused(version: number): ChordError | undefined {
+		const { contract, provider } = this.served;
+		if (version === contract.version || !provider.accepted.some((each) => each.version === version)) return undefined;
+		const shown = this.state.kind;
+		return shown === "failed" || shown === "ended" ? undefined : refusal(this.served, version, this.#granted);
 	}
 
 	/** Whether a restart's open old attempt binds `version` and `fingerprint`: its consumers of that version may use it. */
@@ -556,6 +570,10 @@ export class ChordObject implements Target {
 	 * `failed` with the cause's error, or `loading`, with that member to take a last value from.
 	 */
 	followed(member: string, version: number): Followed {
+		// A version whose member its provider refuses at this grant follows nothing (`stateFor`), a restart's old attempt
+		// included.
+		const refused = this.#refused(version);
+		if (refused !== undefined) return { kind: "failed", error: refused, last: undefined, instance: undefined };
 		const exposed = this.#exposed;
 		let shown: DeriveSource | undefined;
 		let lacking: ChordError | undefined;
@@ -708,13 +726,6 @@ export class ChordObject implements Target {
 	 * lingering object stays.
 	 */
 	hold(holder: Holder): void {
-		// A version it binds whose member the live provider refuses (an older consumer): it waits unbound instead.
-		const state = this.#state;
-		const unfit = state.kind === "live" ? this.#unfit(holder, state.attempt) : undefined;
-		if (unfit !== undefined) {
-			this.#unbound(holder, unfit);
-			return;
-		}
 		this.#holders.add(holder);
 		this.#stopLingering();
 		// Last: a derive over the presence list may close a link synchronously, which may release this holder again.
@@ -1012,6 +1023,8 @@ export class ChordObject implements Target {
 	/** An admitted object is denied: presence lists its holders no more, until its next allow (§19). */
 	#disallow(): void {
 		this.#granted = NO_GRANTS;
+		// A holder of a version its provider no longer binds waits for one that does: the denial is no answer for it (F3).
+		this.#unbindUnfit();
 		if (!this.#allowed) return;
 		this.host.unreferenced(this, this.#holders, this.#context);
 		this.#allowed = false;
@@ -1328,7 +1341,7 @@ export class ChordObject implements Target {
 		if (this.#wakes !== undefined) this.#wakes.during = undefined;
 		// Before the new instance is shown: holders of a version its provider does not bind leave with their last values,
 		// which their references take from the instance shown so far.
-		const unbound = this.#unbindUnfit(attempt);
+		const unbound = this.#unbindUnfit();
 		this.#state = { kind: "live", attempt };
 		this.#granted = attempt.granted;
 		this.#exposed = attempt;
@@ -1381,10 +1394,10 @@ export class ChordObject implements Target {
 	 * references with their last values, until a publication serves their version again. The object and its other
 	 * holders stay.
 	 */
-	#unbindUnfit(attempt: Attempt): boolean {
+	#unbindUnfit(): boolean {
 		let unfit: [Holder, ChordError][] | undefined;
 		for (const holder of this.#holders) {
-			const error = this.#unfit(holder, attempt);
+			const error = this.#unfit(holder);
 			if (error === undefined) continue;
 			unfit ??= [];
 			unfit.push([holder, error]);
@@ -1407,14 +1420,13 @@ export class ChordObject implements Target {
 	}
 
 	/**
-	 * Why `holder` cannot bind to `attempt` (live): its version is not one the provider binds, or the provider refuses a
-	 * member of it (`contract_mismatch`); `undefined` when it binds.
+	 * Why `holder` cannot bind: its version is not one the provider binds (`contract_mismatch`); `undefined` when it
+	 * binds (a member the provider refuses shows in its state, `stateFor`).
 	 */
-	#unfit(holder: Holder, attempt: Attempt): ChordError | undefined {
+	#unfit(holder: Holder): ChordError | undefined {
 		const { contract, provider } = this.served;
 		const { version, fingerprint } = holder.contract;
-		if (version === contract.version && fingerprint === contract.fingerprint) return undefined;
-		if (binds(provider, version, fingerprint)) return refusal(this.served, version, attempt.granted);
+		if (binds(provider, version, fingerprint)) return undefined;
 		return new ChordError({ code: "contract_mismatch", message: `${contract.name} v${version} is not served here` });
 	}
 

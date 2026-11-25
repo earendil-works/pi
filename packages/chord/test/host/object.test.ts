@@ -1,18 +1,22 @@
 import { describe, expect, it, vi } from "vitest";
 import { type Context, BACKGROUND_CONTEXT as context, withoutAbortSignal } from "../../src/context/index.ts";
-import { arr, evolve, int, local, method, obj, remote, str } from "../../src/contracts/index.ts";
+import { arr, evolve, grantable, int, local, method, obj, remote, str } from "../../src/contracts/index.ts";
 import { broken, ChordError } from "../../src/data/index.ts";
 import { defineState, type SingletonHandle } from "../../src/documents/index.ts";
 import { Attempt } from "../../src/host/attempt.ts";
 import {
+	type Admit,
+	allow,
 	type Ctx,
 	createHost,
 	defineFacet,
+	deny,
 	type FacetHost,
 	type FacetSelf,
 	type Host,
 	type HostError,
 	type Reference,
+	type RefState,
 	type Self,
 	type StoreSelf,
 	untilAborted,
@@ -35,6 +39,7 @@ import {
 	flushed,
 	holdNextCommit,
 	instancesOf,
+	linked,
 	loaded,
 	memoryStore,
 	metered,
@@ -49,6 +54,7 @@ import {
 	StoreRestartable,
 	statesOf,
 	storeRestartable,
+	type TestPrincipal,
 	testCodec,
 	transported,
 	valuesOf,
@@ -2404,4 +2410,100 @@ describe("a native restart: references take their last values after the admitted
 		await host.close(context);
 		await store.close(context);
 	});
+});
+
+describe("versions and grants together (review round 2, granttest F3 and F5)", () => {
+	/** What the admission says, for every principal: denied, or allowed with `granted`. */
+	const Gate = local("test.gate", {
+		version: 1,
+		params: {},
+		members: { mode: str(), set: method(str()) },
+	});
+	const Tick = obj({ y: int() });
+	/** v1: a plain `s`, a grantable event `e0`; v2 adds `t` and changes `e0`, which v1's consumers are refused. */
+	const V1 = remote("test.versioned", {
+		version: 1,
+		params: {},
+		hostAddress: () => Server(),
+		state: { s: str() },
+		events: { e0: grantable(Tick) },
+	});
+	const V2 = evolve(V1, (e) => e.addState("t", str()).event("e0", obj({ y: str() })));
+
+	/** The gate, and `version`'s provider admitting by it (v2 accepting v1 with `e0` refused). */
+	/** The gate's plugin, loaded once: the versioned provider's reloads keep its mode. */
+	const gate = defineFacet<TestPrincipal>((h) =>
+		h.serve(Gate, (_, self) => {
+			const mode = self.writable("e0");
+			return {
+				mode: self.derive([mode], ([value]) => value),
+				set: async (next) => {
+					mode.set(next);
+					return null;
+				},
+			};
+		}),
+	);
+	const admit: Admit<typeof V1, TestPrincipal> = (_params, _principal, self) =>
+		self.derive([self.get(Gate, {}).mode], ([mode]) =>
+			mode === "deny" ? deny("no access") : allow({ granted: mode === "e0" ? (["e0"] as const) : [] }),
+		);
+	const facet = (version: 1 | 2) =>
+		defineFacet<TestPrincipal>((h) => {
+			if (version === 1) {
+				h.serve(V1, (_p, _principal, _admitted, self) => ({ s: constant("s"), e0: () => self.events() }), {
+					admit,
+				});
+				return;
+			}
+			h.serve(
+				V2,
+				(_p, _principal, _admitted, self) => ({ s: constant("s"), t: constant("t"), e0: () => self.events() }),
+				{
+					// The same decisions: v2's grantable names are v1's.
+					admit: admit as unknown as Admit<typeof V2, TestPrincipal>,
+					accepts: { 1: { events: { e0: "refuse" } } },
+				},
+			);
+		});
+	/** The server's plugins: the gate and `version`'s provider. */
+	const plugins = (version: 1 | 2) => [
+		{ name: "@test/gate", facet: gate },
+		{ name: "@test/app", facet: facet(version) },
+	];
+
+	/** A reference's state, shortly: its kind, and the cause's kind and code when failed. */
+	const shown = (ref: { readonly state: { readonly value: RefState } }) => {
+		const state = ref.state.value;
+		return state.kind === "failed" ? `failed ${state.cause.kind} ${state.cause.error.code}` : state.kind;
+	};
+
+	for (const where of ["on its host", "over a link"] as const) {
+		it(`a denied holder of a version the provider no longer binds waits contract_mismatch (F3, ${where})`, async () => {
+			const { server, client } = await linked(() => {});
+			await server.reload(plugins(2), context);
+			await (await server.get(Gate, {}, context)).set("deny", context);
+			const holder = where === "on its host" ? server : client;
+			const ref = holder.hold(V2, {}, context);
+			await vi.waitFor(() => expect(shown(ref)).toBe("failed denied forbidden"));
+			await server.reload(plugins(1), context);
+			await flushed();
+			expect(shown(ref)).toBe("failed waiting contract_mismatch");
+			await client.close(context);
+			await server.close(context);
+		});
+
+		it(`a holder refused for a member it was granted binds once the grant goes (F5, ${where})`, async () => {
+			const { server, client } = await linked(() => {});
+			await server.reload(plugins(2), context);
+			const holder = where === "on its host" ? server : client;
+			const ref = holder.hold(V1, {}, context);
+			await vi.waitFor(() => expect(shown(ref)).toBe("failed waiting contract_mismatch"));
+			await (await server.get(Gate, {}, context)).set("none", context);
+			await vi.waitFor(() => expect(shown(ref)).toBe("live"));
+			expect([[...ref.granted], ref.e0]).toEqual([[], undefined]);
+			await client.close(context);
+			await server.close(context);
+		});
+	}
 });

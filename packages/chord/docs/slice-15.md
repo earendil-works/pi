@@ -258,5 +258,8 @@ and `78-denial-messages.ts`.
   keeps it as an own property. Before any read the object has no own property: `Object.keys` lists nothing (`in` and
   `for…in` see the names). Heap per reference to a store of 23 named queries, none read: 6.35 KiB before, 1.30 KiB
   after (`test/bench/reference-heap.ts`).
+- **Review round 2 (granttest's model):** a refusal of a granted member is shown through the object's state per
+  version and grant (`ChordObject.stateFor`, `followed`), not by unbinding the holder, so another grant re-evaluates it;
+  a denial unbinds the holders of versions the provider no longer binds (they showed the denial forever).
 - **§2:** a denial's message travels as the `forbidden` error's `details.message` (no new field in a failure or on the
   wire); `sameCause` compares details, so a changed message reaches the holders.
