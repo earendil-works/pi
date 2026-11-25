@@ -1,6 +1,6 @@
 # Codemode
 
-The `codemode` tool lets the model write a JavaScript script that calls pi's other tools and runs non-LLM models, such as classifiers and image models. Only the script's output reaches the model, so a script can run calls in parallel and filter large results before the model sees them. To turn it on, see [Enable codemode](cli.md#enable-codemode).
+The `codemode` tool lets the model write a JavaScript script that calls pi's other tools and runs non-LLM models, such as decision models and image models. Only the script's output reaches the model, so a script can run calls in parallel and filter large results before the model sees them. To turn it on, see [Enable codemode](cli.md#enable-codemode).
 
 ## Scripts
 
@@ -59,7 +59,7 @@ The store is for small state such as IDs, cursors, or summaries. One value may h
 
 ## Models
 
-`models` reaches the model catalog and runs non-LLM models with the session's credentials: classifiers, which answer typed questions about JSON state and, for some models, images, and image models, which generate images. Chat models are listed but cannot be run from scripts. Which classifier and image models exist is described in [Use classifier models](models.md#use-classifier-models) and [Use image models](models.md#use-image-models).
+`models` reaches the model catalog and runs non-LLM models with the session's credentials: decision models (type `"classifier"`), which answer typed questions about JSON state and, for some models, images, and image models, which generate images. Chat models are listed but cannot be run from scripts. Which decision and image models exist is described in [Use decision models](models.md#use-decision-models) and [Use image models](models.md#use-image-models).
 
 ```ts
 type ModelType = "chat" | "image" | "classifier";
@@ -167,7 +167,7 @@ return results.map((result, i) =>
 );
 ```
 
-Classifiers whose `input` includes `"image"` also judge images. `tools.read()` returns an image file as an image block that `images` accepts. Other classifiers return an error result when `images` is not empty.
+Decision models whose `input` includes `"image"` also judge images. `tools.read()` returns an image file as an image block that `images` accepts. Other decision models return an error result when `images` is not empty.
 
 ```js
 const luna = await models.getModelOfType("classifier", "openai", "gpt-6-luna");

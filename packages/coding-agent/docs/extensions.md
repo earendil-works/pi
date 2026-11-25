@@ -1225,7 +1225,7 @@ Use `ctx.modelRegistry.streamSimple(model, context, options)` for provider-neutr
 
 `streamSimple()` returns an `AssistantMessageEventStream`. Iterate it for response events and await `.result()` for the final message. Setup failures produce error events and error results.
 
-For non-chat models, `findOfType()`, `getModelsOfType()`, `getAvailableOfType()`, and `getModelOfType()` look up image and classifier models, and `classify()` and `generateImages()` call them. See [Use classifier models](models.md#use-classifier-models) and [Use image models](models.md#use-image-models).
+For non-chat models, `findOfType()`, `getModelsOfType()`, `getAvailableOfType()`, and `getModelOfType()` look up image and decision (`"classifier"`) models, and `classify()` and `generateImages()` call them. See [Use decision models](models.md#use-decision-models) and [Use image models](models.md#use-image-models).
 
 ### ctx.signal
 

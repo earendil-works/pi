@@ -891,7 +891,7 @@ console.log(model.output); // ['image'] or ['image', 'text']
 
 ## Classification
 
-Classifier models consume structured JSON state, and optionally images, and answer one or more typed questions. They do not use chat or image-generation APIs. TypeSafe's Jev model, Cloudflare's Clef models, OpenAI's GPT-6 Luna, GPT-6 Luna Decisions, and Microsoft-Decision-1 are available from these built-in providers:
+Decision models (model type `"classifier"`) consume structured JSON state, and optionally images, and answer one or more typed questions. They do not use chat or image-generation APIs. TypeSafe's Jev model, Cloudflare's Clef models, OpenAI's GPT-6 Luna, GPT-6 Luna Decisions, and Microsoft-Decision-1 are available from these built-in providers:
 
 | Provider | Model IDs | Auth |
 | --- | --- | --- |
