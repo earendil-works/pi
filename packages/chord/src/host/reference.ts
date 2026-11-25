@@ -266,6 +266,9 @@ const DONE: Decision = { kind: "done" };
 /** A wait for a state: checked at every change, rejected with the reference's end. */
 type Waiter = { readonly check: () => void; readonly end: (error: ChordError) => void };
 
+/** A remote reference's key to whether the last state it settled in was live (`useLive`, `TuiScope.live`). */
+export const WAS_LIVE = Symbol("chord.wasLive");
+
 /**
  * A reference's binding to its object: counted by the object as one of its references while bound, and told of each
  * change of its state. Calls run while live, park while loading (sent in order once live) and reject while failed.
@@ -311,10 +314,13 @@ export class Binding implements Holder, UnboundRequest {
 	 * then (decision "References share one wire hold"); one is seen once that count passes. Made at the join.
 	 */
 	#unseen: Map<string, number> | undefined;
-	/** Whether it was ever seen live: from then on its grantable members are there only while granted (`#exposes`). */
+	/** Whether it was seen live or denied: from then on its grantable members are there only while granted (`#exposes`). */
+	#decided = false;
+	/** Whether the last state it settled in was live, not failed: a UI shows it while it loads again (`WAS_LIVE`). */
 	#wasLive = false;
-	/** What its object granted it when it left it (`removed`): its grant while it waits unbound. */
-	#lastGranted: ReadonlySet<string> = NO_GRANTS;
+	/** Its grant at its version: set when it is seen live (from `#projection`), emptied by a denial. */
+	#grant: ReadonlySet<string> = NO_GRANTS;
+	#projection: { readonly from: ReadonlySet<string>; readonly to: ReadonlySet<string> } | undefined;
 	/** Who reads its object's named queries: each told when another instance is live (`followInstance`). */
 	#instanceFollowers: Set<() => void> | undefined;
 	/** The instance its followers were told of last, held weakly: an ended instance is kept by nothing here. */
@@ -363,6 +369,7 @@ export class Binding implements Holder, UnboundRequest {
 		}
 		if (contract.kind === "remote") {
 			Object.defineProperty(reference, "granted", { get: () => this.#granted(), enumerable: true });
+			Object.defineProperty(reference, WAS_LIVE, { get: () => this.#wasLive });
 		}
 		// Built from the contract's own member lists.
 		this.reference = reference as Reference<Contract>;
@@ -550,8 +557,6 @@ export class Binding implements Holder, UnboundRequest {
 			events.at = undefined;
 			events.taps?.retarget(undefined);
 		}
-		// Waiting, it keeps its grant as it keeps its values: its members stay until a binding says otherwise.
-		this.#lastGranted = state.target.granted;
 		this.#state = { kind: "unbound", batch: state.batch, dependent: state.dependent };
 		removal.host.rewait(this, this.contract, removal.params, removal.cause, removal.context);
 	}
@@ -610,8 +615,8 @@ export class Binding implements Holder, UnboundRequest {
 	moved(): void {
 		this.#refState?.moved();
 		const state = this.refState;
+		this.#settled(state);
 		if (state.kind === "live") {
-			this.#wasLive = true;
 			this.#parked?.flush(
 				(method, args, context) => this.#send(method, args, context),
 				() => this.refState.kind === "live",
@@ -1019,20 +1024,36 @@ export class Binding implements Holder, UnboundRequest {
 	}
 
 	/**
-	 * Whether grantable member `member` is there: granted, once the reference was live; every one before, so a factory
-	 * wires the members of a dependency that has not bound yet (slice 15 §1.4: their reads and calls fail `forbidden`
-	 * once it binds without the grant). Throws once released.
+	 * Whether grantable member `member` is there: granted, once it was live or denied; every one before, so a factory
+	 * wires a dependency that has not bound yet (slice 15 §1.4: `forbidden` once it binds without the grant).
 	 */
 	#exposes(member: string): boolean {
 		const granted = this.#granted();
-		return this.#wasLive ? granted.has(member) : true;
+		return this.#decided ? granted.has(member) : true;
 	}
 
-	/** What its target granted it, or what it had when its object left it (none before a binding); throws once released. */
+	/** Its grant (`#grant`), read through: a rebind changes it in its batch, before `moved`; throws once released. */
 	#granted(): ReadonlySet<string> {
 		const state = this.#state;
 		if (state.kind === "released") throw state.state.error;
-		return state.kind === "bound" ? state.target.granted : this.#lastGranted;
+		if (state.kind === "bound") this.#settled(this.refState);
+		return this.#grant;
+	}
+
+	/** Takes what `state` says: live, its target's grant at its version; denied, none; failed, it is live no more. */
+	#settled(state: RefState): void {
+		if (state.kind === "failed") {
+			this.#wasLive = false;
+			if (state.cause.kind === "denied") [this.#decided, this.#grant] = [true, NO_GRANTS];
+		}
+		if (state.kind !== "live") return;
+		// At its own version (an older consumer has only its version's names), the same set while its target's is.
+		const granted = this.#state.kind === "bound" ? this.#state.target.granted : NO_GRANTS;
+		if (this.#projection?.from !== granted) {
+			const kept = [...granted].filter((name) => currentVersion(this.contract).grants.includes(name));
+			this.#projection = { from: granted, to: kept.length === granted.size ? granted : new Set(kept) };
+		}
+		[this.#wasLive, this.#decided, this.#grant] = [true, true, this.#projection.to];
 	}
 
 	/** The error of this reference's release by its holder (`released`, no reason). */

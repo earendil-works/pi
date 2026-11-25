@@ -107,7 +107,9 @@ type Reference<C> = PlainMembers<C> & { readonly [M in Grantable]?: Member<M> } 
   binding was given (members and flags). Each member keeps its identity across bindings (the same object when granted
   again).
 - `granted` is empty before the first binding and while denied; while loading or failed it is the last binding's (the
-  members keep their last values, as before).
+  members keep their last values, as before). **Review round 2:** the last binding the reference saw live, at the
+  reference's own version (a same-host older consumer has only its version's names), kept while it loads or waits,
+  emptied by a denial; a first denial also removes the grantable members shown while it loaded.
 - `Held<C>` and `RefIn<C, V>` are gone: `host.hold` returns `Reference<C>`. `ref.variant` is gone.
 - Over a link the `bound` message carries `granted` (indexes into the hold version's sorted list of grantable member
   names and flags) in place of the variant; member indexes point into the granted shape's sorted names as they pointed

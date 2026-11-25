@@ -9,7 +9,7 @@ peer), non-React apps never load it. No components, no styling.
 - `useWatch(watchable)`: its current value (`undefined` while it has none), re-rendering on change
   (`useSyncExternalStore` over `watchStore`).
 - `useRegistry(R)`: the registry's composed value; `useRefState(ref)`: the reference's state.
-- `useLive(ref)` (slice 15 §1.5): `ref` while it is live, and while it loads again after it was live (a rebind, a link
+- `useLive(ref)` (slice 15 §1.5): `ref` while it is live, and while it loads again after it last settled live (a rebind, a link
   drop), `undefined` otherwise (no reference, its first load, failed or denied, ended), re-rendering when that changes
   and when its `granted` changes: its grantable members (`ref.add`, `ref.history`) come and go in the same render as
   the grant. `useRefState(ref)` says why there is none. True of the render that read it, not across an `await`.

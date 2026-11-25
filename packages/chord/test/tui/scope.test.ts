@@ -327,3 +327,18 @@ describe("a scope's messages", () => {
 		await h.close(context);
 	});
 });
+
+describe("live after a link drop before a redraw (review round 2, Sol 5)", () => {
+	it("returns the reference loading again after it was live, though no redraw read it live", async () => {
+		const { client, server } = await desk();
+		const scope = new TuiScope(client, () => {});
+		const held = scope.hold(Desk, {});
+		const live = scope.live(held);
+		await expect.poll(() => held.state.value.kind).toBe("live");
+		await server.close(context);
+		await expect.poll(() => held.state.value.kind).toBe("loading");
+		expect(live()).toBe(held);
+		scope.dispose();
+		await client.close(context);
+	});
+});

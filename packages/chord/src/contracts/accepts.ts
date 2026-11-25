@@ -11,7 +11,7 @@ import {
 } from "./contract.ts";
 import { checkKeys, entriesOf } from "./declare.ts";
 import type { Change, ChangesAfter, CurrentStep, MembersShape, OlderVersions, StepAt } from "./history.ts";
-import type { Method, Static, Ungranted } from "./schema.ts";
+import type { Grantable, Method, Static, Ungranted } from "./schema.ts";
 
 /** Per accepted older version, exactly the mappings its later edits require (direct: old to current). */
 export type AcceptsTable<C extends Contract> = AcceptsOf<ShapeOf<C>>;
@@ -85,11 +85,14 @@ type StateMapping<
 	? [S, "state"] extends C
 		? (current: Static<Ungranted<Current["state"][S]>>) => Static<Ungranted<Old["state"][S]>>
 		: never
-	:
-			| ((
-					state: { [M in keyof Current["state"]]: Static<Ungranted<Current["state"][M]>> },
-			  ) => Static<Ungranted<Old["state"][S]>>)
-			| "refuse";
+	: ((state: GrantedState<Current["state"]>) => Static<Ungranted<Old["state"][S]>>) | "refuse";
+
+/** The state a removed member's mapping gets: what its caller was granted, so a grantable member may be absent. */
+type GrantedState<S extends MembersShape["state"]> = {
+	[M in keyof S as S[M] extends Grantable ? never : M]: Static<Ungranted<S[M]>>;
+} & {
+	[M in keyof S as S[M] extends Grantable ? M : never]?: Static<Ungranted<S[M]>>;
+};
 
 type MethodMappings<Old extends MembersShape, Current extends MembersShape, C extends Change> = OmitNever<{
 	[M in keyof Old["methods"]]: M extends keyof Current["methods"]

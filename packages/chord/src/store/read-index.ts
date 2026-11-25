@@ -1,10 +1,9 @@
 // The commit index of a store's reads (slice 15 §3): which reads a commit's keyed writes to a table can concern, so
-// the commit step skip-tests those alone instead of every read of the table. A read whose condition fixes columns of
-// its own table with `eq` or `inArray` is filed under their values (its bucket) and under the keys of the rows of its
-// last result (its kept keys); any other read of a table is unindexed there. A write's candidates are the reads
-// holding its key (the row before the write was in their result), the reads whose bucket the row after the write
-// matches (it may be in their result now) and the unindexed reads. A pure speedup: every candidate still goes through
-// the skip test, and a read neither held the row before nor can hold it after, so the skip test would skip it.
+// the commit step skip-tests those alone. A read whose condition fixes own columns with `eq` or `inArray` is filed
+// under their values (its bucket) and the keys of its last result's rows; any other is unindexed. A write's
+// candidates: the reads holding its key (the row was in their result), those whose bucket the row after the write
+// matches (it may be now) and the unindexed ones. A pure speedup: a read that neither held the row nor can hold it
+// after is one the skip test would skip.
 
 import type { SqliteValue } from "../sqlite/index.ts";
 import { identity, identityOf, type KeptKeysWatcher, type Read } from "./read.ts";
@@ -44,9 +43,8 @@ export class ReadIndex implements KeptKeysWatcher {
 		index.key = plan.query.table.key;
 		const group = index.group(bucket.columns);
 		for (const id of bucket.identities) addTo(group.byValues, id, read);
-		this.#filings.set(read, { index, group, identities: bucket.identities, kept: undefined });
-		// Without a result yet: a candidate of every write until it has one.
-		index.unindexed.add(read);
+		// Filed by no keys yet: `kept` files it by its result, or as a candidate of every write while it has none.
+		this.#filings.set(read, { index, group, identities: bucket.identities, kept: NO_KEYS });
 		read.watchKept(this);
 		this.kept(read);
 	}
@@ -66,7 +64,6 @@ export class ReadIndex implements KeptKeysWatcher {
 		for (const id of filing.identities) removeFrom(group.byValues, id, read);
 		if (group.byValues.size === 0) index.groups.delete(group.columns.join(","));
 		this.#unkeep(read, filing);
-		index.unindexed.delete(read);
 		if (index.isEmpty()) this.#tables.delete(read.plan.table);
 	}
 

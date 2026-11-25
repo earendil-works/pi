@@ -111,22 +111,16 @@ export function useRefState(ref: { readonly state: NativeWatchable<RefState> } |
 }
 
 /**
- * `ref` while it is live, and while it loads again after it was live (a rebind for another `granted`, a link drop: the
- * tools stay up, calls park); else `undefined` (no reference, its first load, failed or denied, ended). Re-renders
- * when that changes and when its `granted` changes (slice 15 §1.5): grantable members come and go with it, in the
- * same render. `useRefState` says why there is none. True of the render that read it: a call made after an `await`
- * may find another grant.
+ * `ref` while it is live, and while it loads again after it last settled live (a rebind, a link drop: the tools stay
+ * up, calls park); else `undefined` (no reference, its first load, failed or denied, ended). Re-renders when that or
+ * its `granted` changes (slice 15 §1.5), so grantable members come and go in the same render. `useRefState` says why
+ * there is none. True of the render that read it, not across an `await`.
  */
 export function useLive<R extends LiveRef>(ref: R | undefined): R | undefined {
 	const store = useMemo(() => watchStore(ref?.state), [ref]);
-	const was = useRef<{ readonly ref: R | undefined; readonly live: boolean }>({ ref: undefined, live: false });
 	// The snapshot is the grant, not the state: live with one grant, then live with another, is one `live` to React
-	// when the loading between them was never rendered. It remembers whether `ref` was live, per reference.
-	const snapshot = (): ReadonlySet<string> | undefined => {
-		const granted = liveGrant(ref, was.current.ref === ref && was.current.live);
-		was.current = { ref, live: granted !== undefined };
-		return granted;
-	};
+	// when the loading between them was never rendered.
+	const snapshot = (): ReadonlySet<string> | undefined => liveGrant(ref);
 	const granted = useSyncExternalStore(store.subscribe, snapshot, snapshot);
 	return granted === undefined ? undefined : ref;
 }

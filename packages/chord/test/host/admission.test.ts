@@ -405,6 +405,22 @@ describe("a denial's message (slice 15 §2)", () => {
 		await h.close(context);
 	});
 
+	it("is told apart from a reason that ends like its JSON (review round 2, Sol 3)", async () => {
+		const message = { namespace: "docs", key: "noShare", params: ["server"] };
+		// The message's canonical JSON, as a key that joins reason and message would end.
+		const reason = 'no access {"key":"noShare","namespace":"docs","params":["server"]}';
+		const admit: Admit<typeof Doc, TestPrincipal> = (_params, principal, self) =>
+			self.derive([self.get(Access, {}).modes], ([all]) =>
+				all[principal.kind] === "plain" ? deny(reason) : deny("no access", message),
+			);
+		const { h, set } = await served({ built: [], admit }, { mode: "plain" });
+		const doc = h.hold(Doc, { id: "a" }, context);
+		await vi.waitFor(() => expect(doc.state.value).toMatchObject({ cause: { error: { message: reason } } }));
+		await set("message");
+		await vi.waitFor(() => expect(messageOf(doc)).toEqual(message));
+		await h.close(context);
+	});
+
 	it("that is no message as data breaks the attempt, reported once", async () => {
 		const { h, errors } = await served({ built: [], admit }, { mode: "bad" });
 		const doc = h.hold(Doc, { id: "a" }, context);

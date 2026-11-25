@@ -238,8 +238,7 @@ export class HostLink implements ChannelHandler {
 		this.#providers.clear();
 		this.consumer.closed();
 		this.host.unlink(this);
-		// A peer silent past `close` is often one whose process stalled: its holders here are not live any more and
-		// wait for another link, which nothing else would tell (slice 15 §4).
+		// Often a stalled peer: holders here wait for another link, which nothing else would tell (slice 15 §4).
 		if (reason === "heartbeat") this.host.report({ kind: "link_closed", reason, role: this.role });
 	}
 

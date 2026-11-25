@@ -493,9 +493,9 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
   last reference gone or a failed attempt; close: `host.close`; reload: slice 7) and a context aborted at its
   `closeTimeout`. Throw `broken(error)` from an open when retrying is pointless.
 - A reference has the contract's members, `state`, `retry()` and `release()`. A remote reference has its plain members,
-  its grantable ones while its binding granted them (optional in the types; every one until it was first live) and
-  `granted` (the names given, empty before the first binding and while denied, the last binding's while loading or
-  failed). A member it lacks fails: `forbidden` when not granted, else `invalid/member`.
+  its grantable ones while its binding granted them (optional in the types) and
+  `granted` (the names given at its version by the last binding it saw live, kept while it loads, waits or fails,
+  emptied by a denial; every grantable member is there until it was first live or denied). A member it lacks fails: `forbidden` when not granted, else `invalid/member`.
 - `ref.state` (a `NativeWatchable<RefState>`, made on first access): `{ kind: "loading" } | { kind: "live" } | { kind:
   "failed"; cause; retryAt }` (`retryAt`: when the object's backoff window ends, `undefined` for a `broken` or
   `waiting` cause) `|

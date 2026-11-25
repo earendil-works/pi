@@ -22,10 +22,7 @@ export interface ChannelHandler {
 	closed(reason: LinkCloseReason): void;
 }
 
-/**
- * Why a link closed: this host closed it (`local`), its heartbeat found the peer silent (`heartbeat`), a message broke
- * the protocol (`protocol`), or the other end or the transport closed it (`peer`).
- */
+/** Why a link closed: this host (`local`), its heartbeat, a protocol error, or the other end or transport (`peer`). */
 export type LinkCloseReason = "local" | "heartbeat" | "protocol" | "peer";
 
 /** What a channel is made with besides its link and handler. */

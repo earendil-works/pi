@@ -54,9 +54,9 @@ from `@earendil-works/chord`.
   contributor; one catalog per namespace and locale) with `translationsFacet`; `LocaleChoice` with
   `localeChoiceFacet`; `followActiveLanguage(host, preferred, changed, report, ctx)`, keeping the host's language as
   its page state (`hostLanguage`).
-- **A reference read while live** (`live.ts`; slice 15 §1.5): `liveGrant(ref, wasLive)`, the reference's `granted`
-  while it is live or loads again after it was live, `undefined` otherwise; internal, what React's `useLive` and
-  `TuiScope.live` compare, each with its own subscription to the reference's state and its own memory of whether it
-  was live. The type `LiveRef` is exported with those bindings.
+- **A reference read while live** (`live.ts`; slice 15 §1.5): `liveGrant(ref)`, the reference's `granted` while it is
+  live or loads again after it last settled live (the reference's own history, `WAS_LIVE`), `undefined` otherwise;
+  internal, what React's `useLive` and `TuiScope.live` compare, each with its own subscription to the reference's
+  state. The type `LiveRef` is exported with those bindings.
 
 Tests: `test/surfaces/`.

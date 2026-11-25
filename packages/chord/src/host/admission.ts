@@ -367,33 +367,24 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 		};
 		if (kind === "allow" && value !== undefined) {
 			const { grants } = this.#owner;
-			if (grants === undefined) {
-				return this.#decide(`allow ${canonicalJson(value, context)}`, () => ({
-					kind: "allow",
-					value,
-					granted: NO_GRANTS,
-				}));
-			}
-			const read = grantedOf(value, grants, label);
-			if (read.kind === "broken") return read;
-			const { normal, granted } = read;
-			return this.#decide(`allow ${canonicalJson(normal, context)}`, () => ({
-				kind: "allow",
-				value: { ...(normal as { readonly [field: string]: JsonValue }), granted },
-				granted,
-			}));
+			// A route's value goes on as it is; an object's is read against its contract's grants.
+			const read = grants === undefined ? undefined : grantedOf(value, grants, label);
+			if (read?.kind === "broken") return read;
+			const granted = read?.granted ?? NO_GRANTS;
+			const admitted =
+				read === undefined ? value : { ...(read.normal as { readonly [field: string]: JsonValue }), granted };
+			const key = canonicalJson(read?.normal ?? value, context);
+			return this.#decide(`allow ${key}`, () => ({ kind: "allow", value: admitted, granted }));
 		}
 		if (kind === "deny" && typeof reason === "string") {
-			if (message === undefined)
-				return this.#decide(`deny ${reason}`, () => ({ kind: "deny", error: forbidden(reason) }));
-			if (!isMessageData(message, context)) {
+			if (message !== undefined && !isMessageData(message, context)) {
 				const error = new Error(`its denial's message is no message as data (MessageSchema): ${reason}`);
 				return { kind: "broken", error: asChordError(error, label) };
 			}
-			return this.#decide(`deny ${reason} ${canonicalJson(message, context)}`, () => ({
-				kind: "deny",
-				error: forbidden(reason, { message }),
-			}));
+			// Checked just above. A structured key: a reason ending like a message's JSON is not that message.
+			const details = message === undefined ? undefined : { message: message as MessageData };
+			const key = canonicalJson(details === undefined ? [reason] : [reason, details.message], context);
+			return this.#decide(`deny ${key}`, () => ({ kind: "deny", error: forbidden(reason, details) }));
 		}
 		const error = new Error("its admission's value is neither allow(value) nor deny(reason)");
 		return { kind: "broken", error: asChordError(error, label) };

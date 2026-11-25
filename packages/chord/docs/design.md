@@ -1068,10 +1068,11 @@ location are dropped.
   (C8) and no `optional` flag.
 - **Grantable members on a reference** (slice 15 §1.4): a remote reference has its plain members always and
   `granted`, the set of names its binding was given (grantable members and flags). A grantable member is the member
-  (the same object each time) while the binding granted it, else `undefined`; until the reference was first live
-  every grantable member is there, so a factory wires a `self.get` dependency that has not bound yet (its reads and
-  calls fail `forbidden` once it binds without the grant). `granted` is empty before the first binding and while
-  denied, the last binding's while loading or failed. In the types grantable members are optional
+  (the same object each time) while the binding granted it, else `undefined`; until the reference was first live or
+  denied every grantable member is there, so a factory wires a `self.get` dependency that has not bound yet (its reads
+  and calls fail `forbidden` once it binds without the grant). `granted` is the reference's own: the grant of the last
+  binding it saw live, at the reference's version (an older consumer has only the names its version declares; review
+  round 2); kept while it loads, waits or fails, emptied by a denial, empty before the first. In the types grantable members are optional
   (`if (ref.add) await ref.add(args, ctx)`). A UI reads a held reference through its binding (`useLive`,
   `TuiScope.live`, §23), which follows the reference's state and its `granted`.
 - **References are the only indirection** (owner, 2026-10-29; supersedes 6a's member source per object and 7b's
@@ -3179,7 +3180,8 @@ Decision "Slice 11's points", "Slice 11, P3" to "P9", and "Tutorial gaps" (1) (p
   (an event member subscribed while mounted, below "Channels"), and `usePageState(key, initial)`:
   `useState`'s pair kept by the page's host under a key, so a component remounted by a plugin reload (a new function)
   keeps it (§21, "UI on client hosts"). `useLive(ref)` (slice 15 §1.5): the reference while it is live, and
-  while it loads again after it was live (a rebind for another `granted`, a link drop: the tools stay up, calls park),
+  while it loads again after it last settled live (a rebind for another `granted`, a link drop: the tools stay up,
+  calls park; the reference's own history, not what a render read),
   `undefined` otherwise (no reference, its first load, failed or denied, ended); it re-renders when that changes and
   when its `granted` changes, so grantable members come and go in the same render as the grant (a held reference
   binds after the first render, an admission's other allowed value rebinds it while the component is mounted, §6).

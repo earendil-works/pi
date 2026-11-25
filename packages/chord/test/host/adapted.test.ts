@@ -2,7 +2,7 @@
 // state mapped (diffs per commit), call it with mapped arguments and results or its replacement of a removed method,
 // read keyed members mapped per key, and are refused a member the provider refuses.
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 import { type Context, BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
 import {
 	arr,
@@ -1646,6 +1646,41 @@ describe('events of an older consumer (decision "Events: fire-and-forget members
 
 /** Every event node cleared in this file (a mapping dropped, an instance ended), weakly. */
 const clearedNodes = instancesOf(EventNode, "clear");
+
+describe("a removed member's mapping (review round 2, Sol 2)", () => {
+	it("gets the state its caller was granted: a grantable member is optional in its type and absent when not granted", async () => {
+		const V1 = remote("test.mapping", {
+			version: 1,
+			params: {},
+			hostAddress: () => Server(),
+			state: { plain: str(), legacy: str(), privateText: grantable(str()) },
+		});
+		const V2 = evolve(V1, (e) => e.removeState("legacy"));
+		const host = createHost({ address: Server(), principal: { kind: "server" }, onError: () => {} });
+		const facet = defineFacet((h) =>
+			h.serve(V2, () => ({ plain: constant("plain"), privateText: () => constant("private") }), {
+				admit: () => constant(allow({})),
+				accepts: {
+					1: {
+						state: {
+							legacy: (current) => {
+								expectTypeOf(current).toEqualTypeOf<
+									{ readonly plain: string } & { readonly privateText?: string }
+								>();
+								return current.privateText?.toUpperCase() ?? `${current.plain} only`;
+							},
+						},
+					},
+				},
+			}),
+		);
+		await host.load([{ name: "test", facet }], context);
+		const older = host.hold(V1, {}, context);
+		await waitLive(older);
+		expect(older.legacy.value).toBe("plain only");
+		await host.close(context);
+	});
+});
 
 describe("an older consumer of grantable members not granted (review round 1, Astra 3)", () => {
 	/**

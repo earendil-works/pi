@@ -18,6 +18,7 @@ export {
 	type RetryWalk,
 	retryWalk,
 	type Target,
+	WAS_LIVE,
 } from "./reference.ts";
 export type { UnboundRequest } from "./unbound.ts";
 export { uuidv7 } from "./uuid.ts";

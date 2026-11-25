@@ -15,7 +15,9 @@ type Served<C extends Contract> = Implementation<C, Ctx<P3Principal>>;
  * members follow it live, its methods are called with the caller's `ctx`).
  */
 export function forward<
-	C extends Contract,
+	// A remote view only: `memberNames` lists state, methods and events, so a local store's keyed members and named
+	// queries would be dropped.
+	C extends Contract & { readonly kind: "remote" },
 	// The names of the members `own` gives; none without it, so `store` owes every member.
 	K extends keyof Served<C> = never,
 >(store: Omit<Served<C>, K>, Remote: C, own?: Pick<Served<C>, K>): Served<C> {

@@ -46,18 +46,12 @@ export class TuiScope<P extends Principal = Principal> {
 	}
 
 	/**
-	 * A reader of `ref` while it is live, and while it loads again after it was live; else `undefined` (its first load,
-	 * failed or denied, ended), as React's `useLive`: `ref`'s state is followed until `dispose`, so a rebind (another
-	 * `granted`, slice 15 §1.5) calls `changed`. True of the redraw that read it: a call made after an `await` may find
-	 * another grant.
+	 * A reader of `ref` as React's `useLive` returns it (`liveGrant`); `ref`'s state is followed until `dispose`, so a
+	 * rebind (another `granted`, slice 15 §1.5) calls `changed`. True of the redraw that read it, not across an `await`.
 	 */
 	live<R extends LiveRef>(ref: R): () => R | undefined {
 		this.#follow(ref.state);
-		let wasLive = false;
-		return () => {
-			wasLive = liveGrant(ref, wasLive) !== undefined;
-			return wasLive ? ref : undefined;
-		};
+		return () => (liveGrant(ref) === undefined ? undefined : ref);
 	}
 
 	/**

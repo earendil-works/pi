@@ -5,7 +5,7 @@ import {
 	BACKGROUND_CONTEXT as context,
 	withAbortSignal,
 } from "../../src/context/index.ts";
-import { arr, grantable, int, keyed, local, method, obj, remote, str } from "../../src/contracts/index.ts";
+import { arr, evolve, grantable, int, keyed, local, method, obj, remote, str } from "../../src/contracts/index.ts";
 import { broken, type ChordError } from "../../src/data/index.ts";
 import { defineState, type KeyedHandle } from "../../src/documents/index.ts";
 import { allow, createHost, defineFacet, type Reference, type RefState, type Self } from "../../src/host/index.ts";
@@ -21,7 +21,9 @@ import {
 	bindHold,
 	bindNext,
 	changesOf,
+	Desk,
 	delivered,
+	desk,
 	EDITOR,
 	expectCollected,
 	flushed,
@@ -775,6 +777,86 @@ describe("a reference's grant while it waits (review round 1, Astra 5)", () => {
 		await host.reload([{ name: "@test/board", facet: serving([]) }], context);
 		await waitLive(board);
 		expect([board.granted.size, board.history]).toEqual([0, undefined]);
+		await host.close(context);
+	});
+});
+
+describe("a reference's grant (review round 2, Sol 1 and 4)", () => {
+	it("a first denial removes the grantable members it showed while it loaded", async () => {
+		const { client, server, admit } = await desk();
+		await admit("none");
+		const held = client.hold(Desk, {}, context);
+		// Loading: every grantable member is there, its calls park until the binding decides.
+		expect(held.write).toBeDefined();
+		await expect.poll(() => held.state.value).toMatchObject({ kind: "failed", cause: { kind: "denied" } });
+		expect([[...held.granted], held.write]).toEqual([[], undefined]);
+		await client.close(context);
+		await server.close(context);
+	});
+
+	it("an older consumer on the same host is granted only the names its version declares", async () => {
+		const V1 = remote("test.versions", {
+			version: 1,
+			params: {},
+			hostAddress: Server,
+			methods: { first: grantable(method()) },
+		});
+		const V2 = evolve(V1, (e) => e.addMethod("second", grantable(method())));
+		const host = createHost({ address: Server(), principal: { kind: "server" }, onError: () => {} });
+		const facet = defineFacet((h) =>
+			h.serve(V2, () => ({ first: async () => null, second: async () => null }), {
+				admit: () => constant(allow({ granted: ["first", "second"] })),
+				accepts: { 1: {} },
+			}),
+		);
+		await host.load([{ name: "test", facet }], context);
+		const older = await host.get(V1, {}, context);
+		expect([...older.granted]).toEqual(["first"]);
+		await host.close(context);
+	});
+
+	it("keeps its last grant while a replacement provider loads; the grant it binds live with replaces it", async () => {
+		const Counter = remote("test.counter", {
+			version: 1,
+			params: {},
+			hostAddress: Server,
+			state: { number: grantable(str()) },
+		});
+		const host = createHost({ address: Server(), principal: { kind: "server" }, onError: () => {} });
+		const gate = Promise.withResolvers<void>();
+		const started = Promise.withResolvers<void>();
+		const granting = defineFacet((h) =>
+			h.serve(Counter, () => ({ number: () => constant("one") }), {
+				admit: () => constant(allow({ granted: ["number"] })),
+			}),
+		);
+		// The replacement grants nothing, and opens a native that waits for the gate.
+		const replacement = defineFacet((h) =>
+			h.serve(
+				Counter,
+				(_params, _principal, _admitted, self) => {
+					self.open(
+						async () => {
+							started.resolve();
+							await gate.promise;
+						},
+						() => {},
+					);
+					return { number: () => constant("two") };
+				},
+				{ admit: () => constant(allow({})) },
+			),
+		);
+		await host.load([{ name: "test", facet: granting }], context);
+		const ref = await host.get(Counter, {}, context);
+		await host.reload([], context);
+		expect([...ref.granted]).toEqual(["number"]);
+		await host.reload([{ name: "test", facet: replacement }], context);
+		await started.promise;
+		expect([ref.state.value.kind, [...ref.granted], ref.number?.value]).toEqual(["loading", ["number"], "one"]);
+		gate.resolve();
+		await expect.poll(() => ref.state.value.kind).toBe("live");
+		expect([[...ref.granted], ref.number]).toEqual([[], undefined]);
 		await host.close(context);
 	});
 });

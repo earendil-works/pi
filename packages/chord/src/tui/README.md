@@ -27,7 +27,8 @@ startTerminalRuntime<P>({
   themes and translations, the language followed from the user's pick and the launcher's `locales` (the bridge's
   start).
 - `scope.ts`: `TuiScope(host, changed)`: `hold`, `watch` (a reader, `undefined` while no value), `registry`,
-  `live(ref)` (a reader of `ref` while it is live and while it loads again after it was live, `undefined` otherwise;
+  `live(ref)` (a reader of `ref` while it is live and while it loads again after it last settled live, also when no
+  redraw read it live, `undefined` otherwise;
   its state is followed, so a rebind for another grant calls `changed`; React's `useLive`), `on(member,
   listener)` (an event member subscribed until `dispose`; events call the listener only, never `changed`),
   `pageState(key, initial)` (the host's value at `key`, shared with React's `usePageState`: a scope opened again after a
