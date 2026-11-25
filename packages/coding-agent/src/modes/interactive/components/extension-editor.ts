@@ -1,6 +1,6 @@
 /**
  * Multi-line editor component for extensions.
- * Supports Ctrl+G for external editor.
+ * Supports the app.editor.external keybinding for an external editor.
  */
 
 import {
@@ -93,7 +93,7 @@ export class ExtensionEditorComponent extends Container implements Focusable {
 
 		// Add hint
 		const hint =
-			keyHint("tui.select.confirm", "submit") +
+			keyHint("tui.input.submit", "submit") +
 			"  " +
 			keyHint("tui.input.newLine", "newline") +
 			"  " +

@@ -109,6 +109,26 @@ describe("session selector rename", () => {
 		expect(renameSession).toHaveBeenCalledWith(sessions[0]!.path, "XOld");
 	});
 
+	it("names the key that submits the rename", async () => {
+		const keybindings = new KeybindingsManager({ "tui.input.submit": "ctrl+s" });
+		setKeybindings(keybindings);
+		const selector = new SessionSelectorComponent(
+			async () => [makeSession({ id: "a" })],
+			async () => [],
+			() => {},
+			() => {},
+			() => {},
+			() => {},
+			{ renameSession: async () => {}, showRenameHint: true, keybindings },
+		);
+		await flushPromises();
+
+		selector.getSessionList().handleInput(CTRL_R);
+		await flushPromises();
+
+		expect(selector.render(120).join("\n")).toContain("ctrl+s to save");
+	});
+
 	it("keeps the renamed session selected when the reload starts with another session", async () => {
 		const sessions = [1, 2, 3, 4, 5].map((i) => makeSession({ id: `s${i}`, modified: new Date(10_000 - i * 1000) }));
 		let loads = 0;

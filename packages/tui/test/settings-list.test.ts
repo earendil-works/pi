@@ -1,6 +1,7 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
 import { SettingsList, type SettingsListTheme } from "../src/components/settings-list.ts";
+import { getKeybindings, KeybindingsManager, setKeybindings, TUI_KEYBINDINGS } from "../src/keybindings.ts";
 
 const testTheme: SettingsListTheme = {
 	label: (text) => text,
@@ -112,5 +113,25 @@ describe("SettingsList", () => {
 		assert.match(list.render(80).join("\n"), /> Setting 11/);
 		list.handleInput("\x1b[5~");
 		assert.match(list.render(80).join("\n"), /> Setting 6/);
+	});
+
+	it("names the configured select keys in the hint", () => {
+		const previousKeybindings = getKeybindings();
+		setKeybindings(
+			new KeybindingsManager(TUI_KEYBINDINGS, { "tui.select.confirm": "ctrl+y", "tui.select.cancel": "ctrl+q" }),
+		);
+		try {
+			const list = new SettingsList(
+				items,
+				10,
+				testTheme,
+				() => {},
+				() => {},
+			);
+
+			assert.match(list.render(80).join("\n"), /ctrl\+y\/space to change · ctrl\+q to cancel/);
+		} finally {
+			setKeybindings(previousKeybindings);
+		}
 	});
 });
