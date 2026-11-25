@@ -260,7 +260,11 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 			}
 			// Aborted already (by what an earlier reference's first telling did, too): this one is not followed.
 			if (signal?.aborted) continue;
-			this.#unfollows = appended(this.#unfollows, dependency.binding.followState(moved));
+			const unfollow = dependency.binding.followState(moved);
+			if (unfollow === undefined) continue;
+			this.#unfollows = appended(this.#unfollows, unfollow);
+			// Told now too, its end kept first: this telling may abort the context, which ends this follow as well.
+			moved();
 		}
 		attachDerives(this.#derives, NO_MEMBERS, () => (error) => {
 			host.report({ kind: "derive_failed", object: label, error });

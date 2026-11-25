@@ -1236,7 +1236,7 @@ commit, move between runs).
 What an object keeps on its host while it is held, after slice 15: the workspace bench (`p3-bench-workspaces`,
 round 2) measured 15 KiB of server heap for a held remote object with a constant admission and about 10 KiB per live
 query. Before: `23e5ad6c6` (slice 15 with its review fixes, merged). After: the hold-memory changes on top of it
-(`slices.md`, "Hold memory"), no behaviour changed: Chord's suite passes unchanged, with 27 tests added. Same
+(`slices.md`, "Hold memory"), no behaviour changed: Chord's suite passes unchanged, with 28 tests added. Same
 machine (slayer, Node 26.11.1).
 
 **New: the heap per held object** (`test/bench/hold-heap.ts`: 1,000 objects per case after a warm-up of 1,000, each

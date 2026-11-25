@@ -25,6 +25,7 @@ import {
 import { broken, ChordError } from "../../src/data/index.ts";
 import { defineState } from "../../src/documents/index.ts";
 import { Decision } from "../../src/host/admission.ts";
+import { ChordHost } from "../../src/host/host.ts";
 import {
 	type Admit,
 	allow,
@@ -819,6 +820,49 @@ describe("a failed admitted object", () => {
 		await delivered();
 		expect([admitted, item.state.value]).toMatchObject([1, { kind: "failed", cause: { kind: "transient" } }]);
 		item.release();
+		await h.close(context);
+	});
+
+	// Found by the same review, on a decision of its own (no owner of today cancels in its first telling): a context
+	// aborted by a reference's first telling ends that reference's follow too, and follows no later one.
+	it("a decision whose first telling aborts its context is told of no reference after it", async () => {
+		const Health = local("test.health", { version: 1, params: {}, members: { status: str() } });
+		let fail = (): void => {
+			throw new Error("the monitor is not followed yet");
+		};
+		const facet = defineFacet<TestPrincipal>((host) =>
+			host.serve(Health, (_, self) => ({
+				status: self.follow(async (observer) => {
+					fail = () => observer.end({ kind: "failed", error: new Error("the monitor stopped") });
+					return { value: "ok", detach() {} };
+				}),
+			})),
+		);
+		const h = new ChordHost<TestPrincipal>({ address: Server(), principal: { kind: "server" }, onError: () => {} });
+		await h.load([{ name: "@test/health", facet }], context);
+		const held = await h.get(Health, {}, context);
+		const stopping = withCancel(context);
+		let told = 0;
+		const decision = new Decision({
+			host: h,
+			label: "a decision",
+			caller: { principal: h.principal, incarnation: h.incarnation },
+			dependent: undefined,
+			grants: undefined,
+			moved: () => {
+				if (++told === 1) stopping.cancel();
+			},
+		});
+		decision.declare((self) => {
+			self.get(Health, {});
+			self.get(Health, {});
+			return constant(allow(null));
+		}, stopping.context);
+		expect(told).toBe(1);
+		fail();
+		expect(told).toBe(1);
+		decision.release();
+		held.release();
 		await h.close(context);
 	});
 });

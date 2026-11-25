@@ -267,9 +267,6 @@ type Waiter = { readonly check: () => void; readonly end: (error: ChordError) =>
 /** A remote reference's key to whether the last state it settled in was live (`useLive`, `TuiScope.live`). */
 export const WAS_LIVE = Symbol("chord.wasLive");
 
-/** The release of a follow that follows nothing. */
-const NOTHING = (): void => {};
-
 /**
  * A reference's binding to its object: counted by the object as one of its references while bound, and told of each
  * change of its state. Calls run while live, park while loading (sent in order once live) and reject while failed.
@@ -660,17 +657,18 @@ export class Binding implements Holder, UnboundRequest {
 	}
 
 	/**
-	 * Calls `moved` now and at every change of the reference's state, until the returned release or the reference's
-	 * end: `until` for a wait that is never done, without its promise and its abort listener (a decision follows each
-	 * of its references so, slice 14 §2.2, and ends all its follows by one listener). A released reference tells nothing.
+	 * Calls `moved` at every change of the reference's state from now on, until the returned release or the
+	 * reference's end: `until` for a wait that is never done, without its promise and its abort listener (a decision
+	 * follows each of its references so, slice 14 §2.2, and ends all its follows by one listener). Not called now: its
+	 * caller does that once it kept the release, which that first telling may need. `undefined` for a released
+	 * reference, which tells nothing.
 	 */
-	followState(moved: () => void): () => void {
-		if (this.#state.kind === "released") return NOTHING;
+	followState(moved: () => void): (() => void) | undefined {
+		if (this.#state.kind === "released") return undefined;
 		const end = (): void => this.#forget(waiter);
 		const waiter: Waiter = { check: moved, end };
 		this.#waiters ??= new Set();
 		this.#waiters.add(waiter);
-		moved();
 		return end;
 	}
 
