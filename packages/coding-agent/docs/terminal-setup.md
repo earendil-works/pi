@@ -15,6 +15,7 @@ Pi uses extended-key protocols so terminals can distinguish combinations such as
 | Inline images or colors are not detected | [Override detected capabilities](#override-detected-capabilities) |
 | An IME candidate window appears in the wrong place | [WezTerm](#wezterm) or [IntelliJ IDEA](#intellij-idea-integrated-terminal) |
 | Modified keys fail only inside tmux | [Run Pi in tmux](tmux.md) |
+| After Pi exits, moving the mouse types text such as `[<35;12;5M` into the shell prompt | [Recover the terminal after Pi was killed](#recover-the-terminal-after-pi-was-killed) |
 
 Use `/hotkeys` to inspect Pi's active shortcuts. See [Keybindings](keybindings.md) to change them.
 
@@ -219,6 +220,18 @@ Pi automatically detects OSC 8 hyperlinks, inline image protocols, and truecolor
 Settings take precedence over environment variables. An unset value or `auto` preserves automatic detection.
 
 Only force a capability supported by the complete terminal path. Unsupported escape sequences can corrupt rendering. See [Environment Variables](environment-variables.md#pi-process-configuration) and [Settings](settings.md) for the canonical value definitions.
+
+## Recover the terminal after Pi was killed
+
+While it runs, Pi switches the terminal to the alternate screen, turns on mouse and focus reporting, and enables extended-key protocols. Pi turns them off when it exits, but it cannot do so when it is killed, for example with `kill -9`, from Task Manager, or when it runs out of memory. The terminal then keeps sending mouse reports and the shell types them into the prompt.
+
+To recover, run `pi` again and quit it with `Ctrl+D` or `/quit`. A clean exit turns all of these modes off and leaves the alternate screen.
+
+Keyboard input still reaches the shell, even if you cannot see what you type:
+
+1. Keep the mouse pointer off the terminal pane.
+2. Press `Ctrl+C` to clear the current line.
+3. Type `pi`, press `Enter`, then quit Pi.
 
 ## Program status
 
