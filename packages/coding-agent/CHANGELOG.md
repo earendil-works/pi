@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### New Features
+
+- **Decision models in codemode**: GitHub Copilot's `gpt-6-luna-decisions` and Radius decision models can be called from codemode `models.classify()`, and results include the provider's `responseId`. See [Classify](docs/codemode.md#classify).
+- **One setting per transcript notice**: cache misses, cache warming, compaction costs, and reasoning drops each have their own setting under Notices in `/settings`. See [Model and thinking](docs/settings.md#model-and-thinking).
+- **Dialog status kind for extensions**: `ctx.ui.select()`, `ctx.ui.confirm()`, and `ctx.ui.input()` accept `blockedKind`, so terminals with program status can show a dialog as a permission request, question, or login. See [Program Status Kind](docs/extensions.md#program-status-kind).
+
 ### Breaking Changes
 
 - Replaced the `showCacheMissNotices` setting with one setting per transcript notice: `notices.cacheMisses`, `notices.cacheWarming`, `notices.compactionCosts`, and `notices.reasoningDrops`, configured under Notices in `/settings`. An existing `showCacheMissNotices` value is migrated to all four. `SettingsManager.getShowCacheMissNotices()` and `setShowCacheMissNotices()` are removed; use `getNotices()` and `setNotice()` instead
@@ -12,11 +18,14 @@
 - Added a `blockedKind` option to `ctx.ui.select()`, `ctx.ui.confirm()` and `ctx.ui.input()` that sets the kind of blocked program status (OSC 7501) the dialog reports, for example `"permission"` for a select that approves an action. See [Dialogs](docs/extensions.md#program-status-kind)
 - Added `full_output_error` to the bash tool's structured output and `fullOutputError` to its details, `BashResult` and `BashExecutionMessage`, giving the reason when truncated output could not be saved to a temp file. User bash output that was truncated without a saved file now says so in the model context and the TUI ([#10585](https://github.com/earendil-works/pi/issues/10585))
 - Added the `gpt-6-luna-decisions` decision model for GitHub Copilot, callable from codemode `models.classify()` with text and images ([#12395](https://github.com/earendil-works/pi/issues/12395))
+- Added decision models on the Radius provider, callable from codemode `models.classify()`
+- Added `responseId` to codemode `models.classify()` results. OpenRouter's System One fills it with its generation ID, and its billed cost replaces the catalog estimate. See [codemode](docs/codemode.md)
 
 ### Changed
 
 - Changed the default Mistral model from `devstral-medium-latest` to `mistral-medium-latest`, because Mistral retired Devstral and the model catalog no longer lists it
 - Changed `after_provider_response` to also fire for HTTP error responses (4xx/5xx) and for each retried attempt on OpenAI, Azure OpenAI, Anthropic, and Google models, as it already did for OpenAI Codex, Mistral, Radius, and Amazon Bedrock, so extensions can read the status and `retry-after` of rate-limited requests ([#12376](https://github.com/earendil-works/pi/issues/12376))
+- Changed first-time setup to show the colored pi logo and only ask about analytics; the theme defaults to the system theme, which follows the terminal's colors
 
 ### Fixed
 
@@ -32,13 +41,29 @@
 - Fixed copies on Wayland silently failing when `wl-copy` guessed a non-text MIME type from the copied text, for example `application/x-ruby` for text starting with `def`, which clipboard managers such as Klipper discard; pi now copies as `text/plain` ([#12446](https://github.com/earendil-works/pi/pull/12446) by [@ttempaa](https://github.com/ttempaa))
 - Fixed pi crashing when the bash tool or a `!` command could not write its full-output temp file, for example when `/tmp` was full, over a per-user quota or not writable; both now keep the truncated output and say why the full output could not be saved. Opening the external editor and `/share` now report such failures instead of crashing ([#10585](https://github.com/earendil-works/pi/issues/10585))
 - Fixed `/login` showing a provider as configured when its stored `auth.json` key is a `!command` that fails, while requests failed with `No API key found`. `/login` now shows `stored key did not resolve`, `getProviderAuthStatus()` returns `{ configured: false, source: "stored" }`, and entering the same `!command` again in `/login` runs it again instead of reusing the cached failure ([#12164](https://github.com/earendil-works/pi/issues/12164))
-- Fixed `/login` showing a provider as configured when its stored `auth.json` key is a `!command` that fails, while requests failed with `No API key found`; the provider now shows as not configured ([#12164](https://github.com/earendil-works/pi/issues/12164))
 - Fixed `pi update` run from WSL through the Windows installation of pi rebuilding that installation with Linux npm; it now stops and says that running the Windows installation from WSL is unsupported ([#12172](https://github.com/earendil-works/pi/issues/12172))
 - Fixed right-click paste inserting the clipboard twice in Tabby on Windows, which pastes on right-click itself ([#12406](https://github.com/earendil-works/pi/issues/12406))
 - Fixed dialogs shown before interactive mode starts, such as the project trust prompt, the missing session folder prompt and first-time setup, reporting no `blocked` program status (OSC 7501). Blocked messages of multi-line dialog titles are now the first line only, for example `Trust project folder?` instead of the folder path and explanation. The project trust prompt and first-time setup report `kind=permission` ([#12439](https://github.com/earendil-works/pi/issues/12439))
 - Fixed GitHub Copilot listing decision models the account cannot use, such as `microsoft-decision-1` on accounts whose plan does not include it, where every call failed with HTTP 400. After `/login` or the next token refresh, only the decision models in the account's Copilot model catalog are listed ([#12395](https://github.com/earendil-works/pi/issues/12395))
 - Fixed the bash tool on Windows not finding Git for Windows installed outside Program Files and running commands through the WSL launcher `System32\bash.exe` instead. pi now asks the `git.exe` on `PATH` for its installation (`git var GIT_SHELL_PATH`, Git 2.47+) and uses its Git Bash before other `bash.exe` on `PATH` ([#12408](https://github.com/earendil-works/pi/issues/12408))
 - Fixed RPC mode, session loading, and llama.cpp model events rescanning an incomplete line on every chunk, which made large lines, such as messages with images, take time quadratic in their size. llama.cpp model events also accept lone CR line endings and CRLF split across chunks ([#12224](https://github.com/earendil-works/pi/issues/12224))
+- Fixed `!` command output coming back collapsed after compaction, `/reload`, `/resume` or `/tree` while ctrl+o was set to expanded ([#12426](https://github.com/earendil-works/pi/issues/12426), [#12427](https://github.com/earendil-works/pi/pull/12427) by [@acmerfight](https://github.com/acmerfight))
+- Fixed more temporary provider failures not being retried automatically: Cloudflare HTTP 525, gateway "provider is temporarily unavailable" and partial-response errors, Anthropic `api_error` events during streaming, OpenRouter empty responses and stops without output, streams ending with `finish_reason: "error"`, and "request rate increased too quickly" throttling ([#12206](https://github.com/earendil-works/pi/issues/12206), [#12227](https://github.com/earendil-works/pi/issues/12227), [#12240](https://github.com/earendil-works/pi/issues/12240), [#12407](https://github.com/earendil-works/pi/issues/12407))
+- Fixed unrelated request errors whose code contains `request_too_large` inside a longer identifier, such as `plugin_request_too_large`, triggering compact-and-retry as if the context overflowed ([#12343](https://github.com/earendil-works/pi/issues/12343), [#12438](https://github.com/earendil-works/pi/pull/12438) by [@muyiyr](https://github.com/muyiyr))
+- Fixed HTTP 400 with thinking `off` on Claude Sonnet 5.5 through GitHub Copilot, and on Claude Opus 5.5 and Sonnet 5.5 through Cloudflare AI Gateway and Vercel AI Gateway; selecting `off` on those models now uses the lowest supported level ([#12429](https://github.com/earendil-works/pi/issues/12429))
+- Fixed Gemini 3+ models whose IDs carry a prefix, such as `vendor-gemini-4-argon`, being treated as older Gemini models: they now get strict tools, tool-call IDs, and images inside function responses ([#12321](https://github.com/earendil-works/pi/issues/12321))
+- Fixed Google prompt blocks being reported and retried as incomplete streams; the error now includes the block reason and safety ratings ([#12330](https://github.com/earendil-works/pi/issues/12330))
+- Fixed `openai-codex` starting GPT-6 requests at `medium` regardless of the selected thinking level ([#12361](https://github.com/earendil-works/pi/issues/12361))
+- Fixed GPT-6.2 dropping earlier reasoning as `prefix_mismatch` after the OpenAI Codex WebSocket connection expired ([#12367](https://github.com/earendil-works/pi/issues/12367))
+- Fixed Amazon Bedrock requests hanging behind `HTTPS_PROXY` with AWS SSO profiles ([#12353](https://github.com/earendil-works/pi/issues/12353))
+- Fixed HTTP 400 after tool calls without text on Cloudflare Workers AI's GPT-OSS 120B and 20B, Granite 4.0 H Micro, and Llama 3.3 70B Instruct FP8 Fast ([#12194](https://github.com/earendil-works/pi/issues/12194))
+- Fixed HTTP 400 for non-strict Anthropic tools with Draft 7 tuples ([#12212](https://github.com/earendil-works/pi/issues/12212))
+- Fixed OpenAI Decisions usage dropping cache read and write tokens ([#12264](https://github.com/earendil-works/pi/issues/12264))
+- Fixed extension providers with `fetchModels` making model lookups quadratic in catalog size, which blocked pi for about a second with ~10k models ([#12311](https://github.com/earendil-works/pi/issues/12311))
+- Fixed the model list still offering models their providers shut down: `gpt-5-chat-latest` on `openai` and `azure`, Groq's `llama-3.1-8b-instant`, `llama-3.3-70b-versatile` and `qwen/qwen3.6-27b`, and the undocumented `mistral-medium-3.5` ([#12202](https://github.com/earendil-works/pi/issues/12202))
+- Fixed Markdown after an unclosed `$` before a number, such as `+$50`, rendering as raw text for the rest of the paragraph ([#12389](https://github.com/earendil-works/pi/issues/12389) by [@wuhaoyujerry](https://github.com/wuhaoyujerry))
+- Fixed rendering a bare URL that runs into a multi-megabyte line exhausting the heap in terminals with OSC 8 hyperlinks ([#12416](https://github.com/earendil-works/pi/issues/12416))
+- Fixed MCP requests to servers that echo request IDs as strings timing out, and large MCP Streamable HTTP events blocking pi for seconds ([#12205](https://github.com/earendil-works/pi/issues/12205), [#12224](https://github.com/earendil-works/pi/issues/12224))
 
 ## [1.6.0] - 2026-11-20
 
