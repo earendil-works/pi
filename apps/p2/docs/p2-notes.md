@@ -500,6 +500,15 @@ npm start
   from the relayed requests' shell origin (`radius.json` `shellPage`; one saved in the older `/pi/brains/…` form is
   read in the current one). People a session is shared with by email get `<shell page>/s/<session>`. The shell names
   the organization by its slug once it opens; a kept link names it by ID, which a slug change leaves valid.
+- **Invites** (share links through Radius): without a tunnel host a link's own URL reaches nobody, so copying it
+  (`ShareInvite`, `Shares.invite`) asks Radius for an invite to it (`ShareInviters`, `RadiusBrain.invite`):
+  `<brain origin>/__join#<token>`, which opens for 15 minutes and `shareInviteUses` times (settings.json, default 1).
+  Radius keeps only the token's hash (gateway `servers/guests.ts`). Redeeming it gives the browser a guest cookie of
+  Radius naming an admission with a 10-minute lease; the brain gets it as the guest header (`RequestOrigin.relayGuest`),
+  the join page (`/join/radius`) makes the admission ID the guest's ID (no p2 cookie), and the brain renews the leases
+  of guests whose page is open (`Shares.admissions`, every 3 minutes and on change). A guest who left lapses within a
+  lease and needs a new invite; resetting the link or removing the guest ends access at once as before. Test:
+  `radius.test.ts` ("invites").
 - The worker's root-only `ports` tool has `list/open/close`, fixes owner/peer attribution at its calling assistant
   entry, and denies guest/unattributed turns. It lists every forward and explicitly names all public endpoints,
   asks the model to obtain confirmation before publishing. As in Pi Mobile (67cdb4ca4) it may change or close any

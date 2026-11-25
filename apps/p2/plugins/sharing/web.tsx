@@ -18,8 +18,8 @@ import {
 } from "@p2/app/v1/web";
 import { useEffect, useState } from "react";
 import { SHARING_COMMANDS, SHARING_PAGES } from "./commands.tsx";
-import { GuestPresence, type ShareMode, Sharing } from "./contract.ts";
-import { confirmsFirst, LINK_LABEL, linkUrl, resetLink } from "./links.ts";
+import { GuestPresence, ShareInvite, type ShareMode, Sharing } from "./contract.ts";
+import { confirmsFirst, LINK_LABEL, linkToShare, resetLink } from "./links.ts";
 
 /**
  * Two links per session (read-only; read/write: send and Stop), the people it is shared with by email, and the guests
@@ -28,12 +28,15 @@ import { confirmsFirst, LINK_LABEL, linkUrl, resetLink } from "./links.ts";
  */
 function ShareSheet({ session, onClose }: { session: string; onClose: () => void }) {
 	const sharing = useObject(Sharing, { session });
+	const invites = useObject(ShareInvite, { session });
 	const links = useReadable(sharing?.links);
 	const guests = useReadable(sharing?.guests);
 	const people = useReadable(sharing?.people);
 	const peopleUrl = useReadable(sharing?.peopleUrl);
 	const remoteEnv = useReadable(sharing?.env);
 	const [copied, setCopied] = useState<ShareMode | "address">();
+	/** A copied link was an invite (through Radius): it opens for 15 minutes. */
+	const [invited, setInvited] = useState(false);
 	const [email, setEmail] = useState("");
 	const [personMode, setPersonMode] = useState<ShareMode>("view");
 	const [confirming, setConfirming] = useState<
@@ -49,15 +52,16 @@ function ShareSheet({ session, onClose }: { session: string; onClose: () => void
 		return () => clearTimeout(timer);
 	}, [copied]);
 	const copy = async (mode: ShareMode, remoteConfirmed = false) => {
-		if (!sharing) return;
+		if (!invites) return;
 		setError(undefined);
 		if (!remoteConfirmed && confirmsFirst(mode, links, remoteEnv)) {
 			setConfirming({ kind: "remote" });
 			return;
 		}
 		try {
-			const url = await linkUrl(sharing, mode, remoteConfirmed);
-			if (url !== undefined && (await copyText(url))) setCopied(mode);
+			const link = await linkToShare(invites, mode, remoteConfirmed);
+			if (await copyText(link.url)) setCopied(mode);
+			setInvited(link.expiresAt !== null);
 		} catch (reason) {
 			setError(errorText(reason));
 		}
@@ -164,7 +168,7 @@ function ShareSheet({ session, onClose }: { session: string; onClose: () => void
 									<button
 										type="button"
 										className={`button ${copied === mode ? "done" : ""}`}
-										disabled={links === undefined}
+										disabled={links === undefined || !invites}
 										onClick={() => void copy(mode)}
 									>
 										{copied === mode ? "Copied" : "Copy link"}
@@ -175,6 +179,12 @@ function ShareSheet({ session, onClose }: { session: string; onClose: () => void
 					);
 				})}
 			</div>
+			{invited && (
+				<p className="muted small">
+					Through Radius every copied link is a new invite: it opens for 15 minutes. Its guests stay while their
+					page is open.
+				</p>
+			)}
 			{peopleUrl && (
 				<div className="list">
 					<span className="label">People</span>

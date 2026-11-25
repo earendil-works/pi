@@ -9,7 +9,8 @@ import { SERVER_PART_LIMITS } from "@p2/app/v1";
 import { WebSocket } from "ws";
 import type { Forwards } from "../ports/contract.ts";
 import {
-	encodeRelayUser,
+	encodeRelayHeader,
+	RELAY_GUEST_HEADER,
 	RELAY_ORIGIN_HEADER,
 	RELAY_SECRET_HEADER,
 	RELAY_SHELL_HEADER,
@@ -37,8 +38,9 @@ import {
  * when the brain shared a session with their email (`reportShares`): Radius
  * verifies the email, and the brain passes such a user on as a Radius user (not
  * an owner), whom p2's sharing maps to the sessions shared with that email now.
- * A user without an email, service accounts, and everyone but the owner on
- * forward origins are refused. Browser cookies never reach the server through
+ * Guests Radius admitted through one of the brain's invites reach its UI too
+ * (see "Guests"). A user without an email, service accounts, and everyone but
+ * the owner on forward origins are refused. Browser cookies never reach the server through
  * the brain's UI channels.
  *
  * Shares. Radius admits and lists a brain for the emails the brain reports with
@@ -113,6 +115,19 @@ import {
  * without `replace`, gets 409 until the other process is gone, and replaces
  * again once it is connected. So the most recently started process wins.
  *
+ * Guests. People without a Radius account join through invites (Radius
+ * gateway `servers/guests.ts`). `invite` asks Radius for one, for one of
+ * sharing's links (`ref`), and makes it a link to `/__join` on the brain's
+ * origin with the token in the fragment; it opens for 15 minutes and as many
+ * times as asked. Whoever redeems it gets an admission, and their channels
+ * arrive with the principal `{ kind: "guest", id, invite }`, which the brain
+ * passes on with the guest header for sharing to decide, on the brain's UI
+ * only. Radius refuses an admission once its lease (10 minutes) lapses, and
+ * only the brain extends leases: it renews the admissions `reportGuests`
+ * names (the guests whose pages are open now) when that set changes, after
+ * every connect, and every GUEST_RENEW_MS. A guest who closed their page
+ * lapses within a lease and needs a new invite.
+ *
  * Public forwards. Radius opens channels from a forward's public origin
  * (`pub--<label>--<forward>`) without a principal: nobody signed in. Such a
  * channel reaches only a forward the owner marked public; for any other
@@ -169,6 +184,8 @@ const HEARTBEAT_IDLE_MS = 20_000;
 /** Silence from the relay after which the connection counts as lost and is replaced. */
 const HEARTBEAT_TIMEOUT_MS = 60_000;
 const HANDSHAKE_TIMEOUT_MS = 30_000;
+/** How often the brain renews its guests' admissions: well within Radius's 10-minute lease, so one lost renewal is harmless. */
+const GUEST_RENEW_MS = 3 * 60_000;
 /** A client channel's origin while the brain's Radius origin is unknown (nobody opened it in a browser yet). */
 const CLIENT_ORIGIN = "https://radius.invalid";
 /** The relay's close of a host socket another brain with this server ID replaced (relay protocol). */
@@ -186,6 +203,7 @@ const DROPPED_HEADERS = new Set([
 	RELAY_ORIGIN_HEADER,
 	RELAY_SHELL_HEADER,
 	RELAY_USER_HEADER,
+	RELAY_GUEST_HEADER,
 ]);
 
 export type RadiusBrainConfig = {
@@ -213,8 +231,15 @@ export type RadiusStatus =
 	| { status: "connected"; serverId: string; organizationId: string; name?: string }
 	| { status: "retrying"; error: string };
 
-/** Who opened a channel; `email` (normalized, verified) is set for people other than the owner. */
-type Principal = { kind: string; id: string; organization_id: string; email?: string };
+/**
+ * Who opened a channel: a Radius principal (`email`, normalized and verified, is set for people other than the owner),
+ * or a guest admitted through an invite (see "Guests"), whose `invite` is the reference this brain gave it.
+ */
+type Principal =
+	| { kind: "user" | "service_account"; id: string; organization_id: string; email?: string }
+	| { kind: "guest"; id: string; invite?: string };
+/** The brain's owner: never a guest. */
+type Owner = { kind: string; id: string; organization_id: string };
 type RequestHead = { method: string; path: string; headers: [string, string][] };
 type Control =
 	| {
@@ -338,6 +363,12 @@ export class RadiusBrain {
 	/** Connect with `?replace=1`; false while another brain with this server ID holds the relay. */
 	#replace = true;
 	#shellPage: string | undefined;
+	/** The brain's own Radius origin (`RadiusBrainConfig.publicOrigin`), once known: invite links point there. */
+	#publicOrigin: string | undefined;
+	/** The admissions to keep renewing (see "Guests"); renewals run one at a time. */
+	#guests: readonly string[] = [];
+	#renewing: Promise<void> = Promise.resolve();
+	#renewTimer: NodeJS.Timeout | undefined;
 	/** The emails to report (see "Shares"), once known; `#reported` while Radius has them. */
 	#shares: readonly string[] | undefined;
 	#reported = false;
@@ -376,7 +407,27 @@ export class RadiusBrain {
 	}
 
 	start(): void {
+		this.#renewTimer = setInterval(() => this.#renew(), GUEST_RENEW_MS);
 		void this.#connect();
+	}
+
+	/**
+	 * An invite to the link `ref` of sharing (see "Guests"), landing on `path` and admitting `uses` people: its URL and
+	 * when it stops opening. Rejects while not connected, or before the brain knows its Radius origin.
+	 */
+	async invite(ref: string, path: string, uses: number): Promise<{ url: string; expiresAt: number }> {
+		const origin = this.#publicOrigin;
+		if (this.#socket?.readyState !== WebSocket.OPEN || origin === undefined)
+			throw new Error("Radius is not connected; open Pi through Radius first");
+		const response = await this.#post("invites", { ref, path, uses });
+		const { token, expires_at } = (await response.json()) as { token: string; expires_at: string };
+		return { url: `${origin}/__join#${token}`, expiresAt: Date.parse(expires_at) };
+	}
+
+	/** Keeps renewing the admissions of `ids` (and no others), starting now (see "Guests"). */
+	reportGuests(ids: readonly string[]): void {
+		this.#guests = ids;
+		this.#renew();
 	}
 
 	/** Reports the emails sessions are shared with now if connected, else after the next connect (see "Shares"). */
@@ -390,6 +441,11 @@ export class RadiusBrain {
 	rename(name: string | undefined): void {
 		this.#name = name;
 		this.#sendName();
+	}
+
+	/** The brain's own Radius origin, once known (see `RadiusBrainConfig.publicOrigin`). */
+	get publicOrigin(): string | undefined {
+		return this.#publicOrigin;
 	}
 
 	/** This brain's page in the Radius shell, once known (see `RadiusBrainConfig.shellPage`). */
@@ -430,6 +486,7 @@ export class RadiusBrain {
 		this.#closed = true;
 		this.#abort.abort();
 		clearTimeout(this.#retryTimer);
+		clearInterval(this.#renewTimer);
 		clearInterval(this.#congestion);
 		this.#socket?.close(1000);
 		for (const channel of this.#channels.values()) channel.close();
@@ -439,7 +496,7 @@ export class RadiusBrain {
 	async #connect(): Promise<void> {
 		if (this.#closed) return;
 		let config: RadiusBrainConfig;
-		let owner: Principal;
+		let owner: Owner;
 		let name: string | undefined;
 		try {
 			if (!(await readRadiusConfig(this.#directory))) {
@@ -454,6 +511,7 @@ export class RadiusBrain {
 			if (this.#forwards && !this.#forwards.radiusOrigin && config.publicOrigin)
 				this.#forwards.radiusOrigin = config.publicOrigin;
 			this.#shellPage ??= config.shellPage && currentShellPage(config.shellPage);
+			this.#publicOrigin ??= config.publicOrigin;
 		} catch (error) {
 			this.#retry(error);
 			return;
@@ -505,6 +563,7 @@ export class RadiusBrain {
 			});
 			this.#reported = false;
 			this.#report();
+			this.#renew();
 			// Radius has the name this connect carried; a rename during the handshake is sent now.
 			this.#radiusName = name;
 			this.#sendName();
@@ -577,6 +636,33 @@ export class RadiusBrain {
 			});
 	}
 
+	/** Renews the reported guests' admissions while connected; a failure waits for the next change, connect or tick. */
+	#renew(): void {
+		this.#renewing = this.#renewing
+			.then(async () => {
+				const ids = this.#guests;
+				if (ids.length === 0 || this.#socket?.readyState !== WebSocket.OPEN) return;
+				await this.#post("admissions", { ids });
+			})
+			.catch((error: unknown) => {
+				if (!this.#closed)
+					console.warn(`Radius: renewing guests failed (${error instanceof Error ? error.message : error})`);
+			});
+	}
+
+	/** POSTs `body` to this server's `path` at the gateway, as the owner; rejects unless it succeeds. */
+	async #post(path: string, body: unknown): Promise<Response> {
+		const config = await this.#currentConfig();
+		const response = await fetch(new URL(`/v1/servers/${config.serverId}/${path}`, config.gateway), {
+			method: "POST",
+			headers: { authorization: `Bearer ${config.credential.access}`, "content-type": "application/json" },
+			body: JSON.stringify(body),
+			signal: AbortSignal.any([this.#abort.signal, AbortSignal.timeout(30_000)]),
+		});
+		if (!response.ok) throw new Error(`${response.status}: ${(await response.text()).slice(0, 200)}`);
+		return response;
+	}
+
 	#sendName(): void {
 		this.#naming = this.#naming
 			.then(async () => {
@@ -629,7 +715,7 @@ export class RadiusBrain {
 	}
 
 	/** The principal the credential authenticates: the only principal this brain serves. */
-	async #owner(config: RadiusBrainConfig): Promise<Principal> {
+	async #owner(config: RadiusBrainConfig): Promise<Owner> {
 		const response = await fetch(new URL("/v1/context", config.gateway), {
 			headers: { authorization: `Bearer ${config.credential.access}`, accept: "application/json" },
 			signal: AbortSignal.any([this.#abort.signal, AbortSignal.timeout(30_000)]),
@@ -646,7 +732,7 @@ export class RadiusBrain {
 		};
 	}
 
-	#onControl(socket: WebSocket, owner: Principal, message: Control): void {
+	#onControl(socket: WebSocket, owner: Owner, message: Control): void {
 		if (message.type === "ping") {
 			socket.send(JSON.stringify({ version: PROTOCOL_VERSION, type: "pong" }));
 			return;
@@ -664,7 +750,9 @@ export class RadiusBrain {
 		const id = message.connection_id;
 		const principal = message.principal;
 		const isOwner =
-			principal?.kind === owner.kind &&
+			principal !== undefined &&
+			principal.kind !== "guest" &&
+			principal.kind === owner.kind &&
 			principal.id === owner.id &&
 			principal.organization_id === owner.organization_id;
 		if (isOwner && message.kind === "ws" && message.request === undefined && message.forward === undefined) {
@@ -673,11 +761,13 @@ export class RadiusBrain {
 		}
 		// Someone a session is shared with, on the brain's UI only: sharing decides what they reach.
 		const member = !isOwner && principal?.kind === "user" && !!principal.email && message.forward === undefined;
+		// Someone admitted through an invite, on the brain's UI only: sharing decides what they joined.
+		const guest = principal?.kind === "guest" && principal.invite !== undefined && message.forward === undefined;
 		// Only a public forward's origin connects without a principal; #openForward checks the forward is public.
 		const anonymous = principal === undefined && message.forward !== undefined;
 		if (
 			message.kind === "stream" ||
-			!(isOwner || member || anonymous) ||
+			!(isOwner || member || guest || anonymous) ||
 			!message.request ||
 			!message.public_origin
 		) {
@@ -702,8 +792,10 @@ export class RadiusBrain {
 			headers[RELAY_SECRET_HEADER] = this.#relay.secret;
 			headers[RELAY_ORIGIN_HEADER] = message.public_origin;
 			headers[RELAY_SHELL_HEADER] = shellOrigin;
-			if (member && principal?.email)
-				headers[RELAY_USER_HEADER] = encodeRelayUser({ id: principal.id, email: principal.email });
+			if (member && principal?.kind === "user" && principal.email)
+				headers[RELAY_USER_HEADER] = encodeRelayHeader({ id: principal.id, email: principal.email });
+			if (guest && principal?.kind === "guest" && principal.invite !== undefined)
+				headers[RELAY_GUEST_HEADER] = encodeRelayHeader({ admission: principal.id, invite: principal.invite });
 			const port = this.#port();
 			const target = { host: "127.0.0.1", port };
 			if (message.kind === "http") this.#openHttp(id, head, headers, window, target);
@@ -763,7 +855,8 @@ export class RadiusBrain {
 	 * Keeps the brain's Radius addresses, in memory and in radius.json: its origin for forward links, and its page in the
 	 * shell that framed the request for share links.
 	 */
-	#remember(origin: string, shellOrigin: string, owner: Principal): void {
+	#remember(origin: string, shellOrigin: string, owner: Owner): void {
+		this.#publicOrigin = origin;
 		const shellPage =
 			SHELL_ORIGIN.test(shellOrigin) && this.#config
 				? `${shellOrigin}/pi/${encodeURIComponent(owner.organization_id)}/${encodeURIComponent(this.#config.serverId)}`

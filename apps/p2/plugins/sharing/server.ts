@@ -15,6 +15,7 @@ import {
 	isOwner,
 	type P2Principal,
 	query,
+	serveKeyed,
 } from "@p2/app/v1";
 import {
 	Authenticators,
@@ -29,9 +30,19 @@ import {
 	ShareUrls,
 	sendJson,
 } from "@p2/app/v1/server";
+import { ModelConfig } from "../models/contract.ts";
 import { Catalog } from "../sessions/contract.ts";
 import { ChildStore, remoteEnvironments } from "../subagents/contract.ts";
-import { GuestPresence, Presence, type ShareLink, type ShareMode, Shares, Sharing } from "./contract.ts";
+import {
+	GuestPresence,
+	Presence,
+	ShareInvite,
+	ShareInviters,
+	type ShareLink,
+	type ShareMode,
+	Shares,
+	Sharing,
+} from "./contract.ts";
 import {
 	emailGrantsOf,
 	GrantRows,
@@ -48,6 +59,9 @@ import {
 /** Registers the join routes, the guest cookie and Radius authenticators, and guest session access. */
 
 const cookieName = (port: number): string => `p2_guest_${port}`;
+
+/** Where a guest Radius admitted through an invite lands: the join page, which knows their link from the admission. */
+const INVITE_PATH = "/join/radius";
 
 /** The URL of a share link: on the first tunnel host, or on loopback when there is none. */
 function shareUrl(token: string, { allowedHosts, port }: ServerInfo): string {
@@ -115,10 +129,14 @@ const guestMap = <G extends { readonly id: string }>(rows: readonly G[]): Map<st
 	new Map(rows.map((row) => [row.id, row]));
 
 export default defineFacet((host) => {
+	serveKeyed(host, ShareInviters);
 	host.serve(Shares, (_params, self) => {
 		const catalog = self.get(Catalog, {});
 		const children = self.get(ChildStore, {});
 		const server = self.get(Server, {});
+		const presence = self.get(Presence, {});
+		const models = self.get(ModelConfig, {});
+		const inviters = self.registry(ShareInviters);
 		const archived = self.state(Archived);
 		// Links, guests and grants: tables of the server's store, their live queries the source of the lists below.
 		const linkTable = self.table(LinkRows);
@@ -192,6 +210,15 @@ export default defineFacet((host) => {
 				return openEmails(emailGrantsOf(rows, guestMap(guestRows)), (session) => !archivedNow.has(session));
 			}),
 			people: deriveTyped(self, [grants, guests], ([rows, guestRows]) => peopleOf(rows, guestMap(guestRows))),
+			// Guests with neither cookie nor email are Radius admissions (their IDs); connected ones are renewed.
+			admissions: deriveTyped(self, [guests, presence.guests], ([rows, connected]) =>
+				rows
+					.filter(
+						(row) => row.secretHash === undefined && row.email === undefined && Object.hasOwn(connected, row.id),
+					)
+					.map((row) => row.id)
+					.sort(),
+			),
 			authenticate: async ({ cookie }, ctx) => {
 				const principal = await principalOf(await db.guestOfCookie(cookie, ctx), ctx);
 				if (principal) await db.seen(principal.id, ctx);
@@ -202,9 +229,18 @@ export default defineFacet((host) => {
 				if (principal) await db.seen(principal.id, ctx);
 				return principal;
 			},
+			authenticateAdmission: async ({ admission }, ctx) => {
+				const principal = await principalOf(await db.guestOfAdmission(admission, ctx), ctx);
+				if (principal) await db.seen(principal.id, ctx);
+				return principal;
+			},
 			grant: async ({ id }, ctx) => principalOf(await db.guest(id, ctx), ctx),
 			active: async ({ token }, ctx) => {
 				const link = await db.linkByToken(token, ctx);
+				return link && (await open(link.session, ctx)) ? link : null;
+			},
+			invited: async ({ id }, ctx) => {
+				const link = await db.linkById(id, ctx);
 				return link && (await open(link.session, ctx)) ? link : null;
 			},
 			link: async ({ session, mode, reset, remoteConfirmed }, ctx) => {
@@ -232,6 +268,42 @@ export default defineFacet((host) => {
 				const joined = await db.join(link, name, existing, ctx);
 				if (joined.changed) await revoke([joined.guest], ctx);
 				return { session: link.session, ...(joined.cookie ? { cookie: joined.cookie } : {}) };
+			},
+			joinAdmission: async ({ link: id, admission, name }, ctx) => {
+				const link = await db.linkById(id, ctx);
+				if (!link || !(await open(link.session, ctx))) throw new JoinError("This share has ended");
+				const existing = await db.guestOfAdmission(admission, ctx);
+				const joined = await db.join(link, name, existing, ctx, admission);
+				if (joined.changed) await revoke([joined.guest], ctx);
+				return { session: link.session };
+			},
+			invite: async ({ session, mode, remoteConfirmed }, ctx) => {
+				// Only a new read/write link on a remote environment is confirmed; copying an existing one is not.
+				const exists = (await db.linkOf(session, mode, ctx)) !== undefined;
+				await confirmRemote(session, mode, remoteConfirmed || exists, ctx);
+				const link = await db.ensureLink(session, mode, ctx);
+				const info = server.info.value;
+				// A tunnel host reaches the link itself; without one, a transport that admits link holders makes an invite.
+				if (info.allowedHosts.length === 0) {
+					const uses = models.snapshot.value.settings.shareInviteUses ?? 1;
+					for (const inviter of inviters.value.values()) {
+						const made = inviter(link.id, INVITE_PATH, uses);
+						if (made !== undefined) return await made;
+					}
+				}
+				return { url: shareUrl(link.token, info), expiresAt: null };
+			},
+		};
+	});
+
+	host.serve(ShareInvite, ({ session }, principal, self) => {
+		if (!isOwner(principal)) throw forbidden("sharing is owner-only");
+		const shares = self.get(Shares, {});
+		return {
+			variant: "owner",
+			members: {
+				invite: ({ mode, remoteConfirmed }, ctx) =>
+					shares.invite({ session, mode, ...(remoteConfirmed ? { remoteConfirmed } : {}) }, ctx),
 			},
 		};
 	});
@@ -321,11 +393,14 @@ export default defineFacet((host) => {
 		const joinPage = async (
 			request: IncomingMessage,
 			response: ServerResponse,
-			principal: P2Principal | undefined,
+			{ principal, origin }: { principal: P2Principal | undefined; origin: RequestOrigin },
 			ctx: Ctx,
 		): Promise<void> => {
 			const token = new URL(request.url ?? "/", "http://localhost").pathname.split("/")[2] ?? "";
-			const link = await shares.active({ token }, ctx);
+			// A guest Radius admitted joins the link its invite names, whatever the path says.
+			const link = origin.relayGuest
+				? await shares.invited({ id: origin.relayGuest.invite }, ctx)
+				: await shares.active({ token }, ctx);
 			if (!link) {
 				sendPage(request, response, 410, {
 					title: "Share ended",
@@ -375,6 +450,12 @@ export default defineFacet((host) => {
 				)
 					throw new JoinError("Invalid join");
 				const { token, name } = input as { token: string; name: string };
+				if (origin.relayGuest) {
+					const { invite, admission } = origin.relayGuest;
+					const joined = await shares.joinAdmission({ link: invite, admission, name }, ctx);
+					sendJson(response, 200, { session: joined.session });
+					return;
+				}
 				const cookie = cookieValue(request, cookieName(origin.port));
 				const joined = await shares.join({ token, name, ...(cookie ? { cookie } : {}) }, ctx);
 				sendJson(
@@ -394,17 +475,19 @@ export default defineFacet((host) => {
 				});
 			}
 		};
-		/** Through Radius, people are shared with by email and carry no cookie, so links do not apply there. */
+		/** Through Radius, people are shared with by email and carry no cookie; links reach them only as invites. */
 		const refuseRelayed = (request: IncomingMessage, response: ServerResponse): void => {
 			request.resume();
 			response.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" });
-			response.end("Share links do not work through Radius. Ask the owner to share the session with your email.\n");
+			response.end(
+				"This link does not work through Radius. Ask the owner for a new link or to share the session with your email.\n",
+			);
 		};
 		self.contribute(Routes, {
-			"GET /join/*": (request, response, { principal, origin }, ctx) =>
-				origin.relayUser ? refuseRelayed(request, response) : joinPage(request, response, principal, ctx),
-			"HEAD /join/*": (request, response, { principal, origin }, ctx) =>
-				origin.relayUser ? refuseRelayed(request, response) : joinPage(request, response, principal, ctx),
+			"GET /join/*": (request, response, access, ctx) =>
+				access.origin.relayUser ? refuseRelayed(request, response) : joinPage(request, response, access, ctx),
+			"HEAD /join/*": (request, response, access, ctx) =>
+				access.origin.relayUser ? refuseRelayed(request, response) : joinPage(request, response, access, ctx),
 			"POST /join": (request, response, { origin }, ctx) =>
 				origin.relayUser ? refuseRelayed(request, response) : join(request, response, origin, ctx),
 		});
@@ -412,6 +495,10 @@ export default defineFacet((host) => {
 			guest: async (request, origin, ctx) => {
 				if (origin.relayUser !== undefined)
 					return (await shares.authenticateEmail({ email: origin.relayUser.email }, ctx)) ?? undefined;
+				if (origin.relayGuest !== undefined)
+					return (
+						(await shares.authenticateAdmission({ admission: origin.relayGuest.admission }, ctx)) ?? undefined
+					);
 				const cookie = cookieValue(request, cookieName(origin.port));
 				return cookie === undefined ? undefined : ((await shares.authenticate({ cookie }, ctx)) ?? undefined);
 			},

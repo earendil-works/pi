@@ -121,6 +121,8 @@ export async function fakeRadius(options: { channels?: boolean; rejectChannels?:
 	};
 	const shares: string[][] = [];
 	const names: string[] = [];
+	const invites: Array<{ ref: string; path: string; uses: number }> = [];
+	const renewals: string[][] = [];
 	/** Who the credential signs in as (`/v1/context`): a test switches it to play another person on the machine. */
 	const actor = { ...OWNER };
 	const server = createServer((request, response) => {
@@ -141,6 +143,26 @@ export async function fakeRadius(options: { channels?: boolean; rejectChannels?:
 				names.push((JSON.parse(body) as { name: string }).name);
 				response.writeHead(204);
 				response.end();
+			});
+			return;
+		}
+		const guests = /^\/v1\/servers\/[^/]+\/(invites|admissions)$/.exec(request.url ?? "")?.[1];
+		if (guests !== undefined && request.method === "POST") {
+			assert.equal(request.headers.authorization, "Bearer fixture-token");
+			let body = "";
+			request.on("data", (chunk: Buffer) => {
+				body += chunk.toString("utf8");
+			});
+			request.on("end", () => {
+				if (guests === "admissions") {
+					renewals.push((JSON.parse(body) as { ids: string[] }).ids);
+					response.writeHead(204);
+					response.end();
+					return;
+				}
+				invites.push(JSON.parse(body) as { ref: string; path: string; uses: number });
+				response.writeHead(200, { "content-type": "application/json" });
+				response.end(JSON.stringify({ token: `token-${invites.length}`, expires_at: "2030-01-01T00:15:00.000Z" }));
 			});
 			return;
 		}
@@ -231,6 +253,9 @@ export async function fakeRadius(options: { channels?: boolean; rejectChannels?:
 		shares,
 		/** Every name the brain sent on a rename, in order. */
 		names,
+		/** Every invite the brain asked for, and every set of admissions it renewed, in order. */
+		invites,
+		renewals,
 		actor,
 		hostReady,
 		controls,
@@ -325,7 +350,7 @@ export async function radiusFixture(
 			kind?: "http" | "ws" | "stream";
 			forward?: string;
 			anonymous?: boolean;
-			principal?: typeof OWNER & { email?: string };
+			principal?: (typeof OWNER & { email?: string }) | { kind: "guest"; id: string; invite?: string };
 			window?: number;
 			headers?: [string, string][];
 		} = {},
