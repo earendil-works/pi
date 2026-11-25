@@ -7,6 +7,7 @@
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
 import { arr, bool, hostKind, int, local, method, obj, opt, queries, str } from "../../src/contracts/index.ts";
+import { currentVersion } from "../../src/contracts/internal.ts";
 import {
 	createHost,
 	defineFacet,
@@ -858,12 +859,16 @@ describe("a reference's named queries, made on first use (slice 15 §5)", () => 
 	});
 
 	it("keeps no contract: the classes of the members' objects are held weakly by the contract's version", async () => {
-		const made = new WeakRef(manyQueries(3));
 		const host = createHost({ onError: () => {} });
 		await host.load([], context);
-		// A reference made and released: the class it was made with goes with the contract.
-		host.hold(made.deref()!, {}, context).release();
+		// A reference made and released: the class cached for the member's `QueriesData` goes with its contract (the
+		// cache's key, not the contract's handle, is what a strong cache would keep; review round 1, Astra 8).
+		const key = await (async () => {
+			const Many = manyQueries(3);
+			host.hold(Many, {}, context).release();
+			return new WeakRef(currentVersion(Many).members.queries.get("rows")!);
+		})();
 		await host.close(context);
-		await expectCollected(made);
+		await expectCollected(key);
 	});
 });
