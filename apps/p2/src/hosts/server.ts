@@ -1025,7 +1025,8 @@ function recentErrors(since: number): string[] {
  * the caller is told) or a worker's start (the session's own notice has it).
  */
 function isOwnerNotice(error: HostError): boolean {
-	if (error.kind === "resolve_failed") return false;
+	// A page or worker whose link the heartbeat closed (a sleeping laptop, a lost phone) is no news for the owner.
+	if (error.kind === "resolve_failed" || error.kind === "link_closed") return false;
 	const failure = hostErrorCause(error);
 	return !isChordError(failure, "released") && !isChordError(failure, "forbidden");
 }

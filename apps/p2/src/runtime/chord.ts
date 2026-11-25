@@ -170,6 +170,8 @@ export function hostErrorText(error: HostError): string {
 			return `a request has waited for ${error.waitingFor} since ${new Date(error.since).toISOString()}: ${error.error.message}`;
 		case "transaction_cancelled":
 			return `${error.object}: a transaction was cancelled before it committed (${message(error.error)})`;
+		case "link_closed":
+			return `a ${error.role} link closed: its peer stayed silent (heartbeat)`;
 	}
 	return `${error.kind}: ${message(hostErrorCause(error))}`;
 }
@@ -188,6 +190,7 @@ export function hostErrorCause(error: HostError): unknown {
 		case "registry_undeclared":
 		case "registry_conflict":
 		case "contribution_refused":
+		case "link_closed":
 			return undefined;
 		default:
 			return error.error;
