@@ -78,14 +78,6 @@ export class RouteAdmission {
 		this.#route = route;
 		this.#admit = admit;
 		this.#context = withContextValue(ADMITTING, route, context);
-		// Its decisions declare under this context: their follows of their references end with it (`Decision.unfollow`).
-		context.abortSignal?.addEventListener(
-			"abort",
-			() => {
-				for (const asked of this.#asked.values()) asked.decision.unfollow();
-			},
-			{ once: true },
-		);
 	}
 
 	/** Whether `context` binds a reference of this route's own admission (which may hold nothing behind the route). */

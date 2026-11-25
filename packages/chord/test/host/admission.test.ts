@@ -8,7 +8,7 @@
 // factory's error at its activation, a decision change while its old attempt drains or its successor opens a native).
 
 import { describe, expect, it, vi } from "vitest";
-import { awaitWithContext, BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
+import { awaitWithContext, BACKGROUND_CONTEXT as context, withCancel } from "../../src/context/index.ts";
 import {
 	evolve,
 	grantable,
@@ -752,6 +752,73 @@ describe("a failed admitted object", () => {
 		await delivered();
 		expect([doc.state.value, built]).toMatchObject([{ kind: "failed", cause: { kind: "broken" } }, ["a:read"]]);
 		doc.release();
+		await h.close(context);
+	});
+
+	// Found by the same review: the follows end ahead of the listeners of signals made from the attempt's context
+	// later (an opener's). Ended after them, the admission below ran twice and the object showed `failed { waiting }`.
+	it("whose opener timed out is not admitted again by a reference that fails in the opener's abort listener", async () => {
+		const Health = local("test.health", { version: 1, params: {}, members: { status: str() } });
+		const Item = remote("test.item", {
+			version: 1,
+			params: {},
+			hostAddress: () => Server(),
+			state: { name: str() },
+			admission: obj({}),
+		});
+		let fail = (): void => {
+			throw new Error("the monitor is not followed yet");
+		};
+		const stopped = Promise.withResolvers<void>();
+		let admitted = 0;
+		const facet = defineFacet<TestPrincipal>((host) => {
+			host.serve(Health, (_, self) => ({
+				status: self.follow(async (observer) => {
+					fail = () => observer.end({ kind: "failed", error: new Error("the monitor stopped") });
+					return { value: "ok", detach() {} };
+				}),
+			}));
+			host.serve(
+				Item,
+				(_params, _principal, _admitted, self) => {
+					// An opener that never opens; cancelled (the ready timeout), it stops the monitor in its abort listener.
+					self.open(
+						(opening) => {
+							const { context: waiting } = withCancel(opening);
+							return new Promise<never>((_resolve, reject) => {
+								waiting.abortSignal!.addEventListener("abort", () => {
+									fail();
+									stopped.resolve();
+									reject(waiting.abortSignal!.reason);
+								});
+							});
+						},
+						() => {},
+					);
+					return { name: constant("item") };
+				},
+				{
+					admit: (_params, _principal, self) => {
+						admitted++;
+						self.get(Health, {});
+						return constant(allow({}));
+					},
+				},
+			);
+		});
+		const options = {
+			address: Server(),
+			principal: { kind: "server" },
+			readyTimeout: 50,
+			onError: () => {},
+		} as const;
+		const h = createHost<TestPrincipal>(options);
+		await h.load([{ name: "@test/health", facet }], context);
+		const item = h.hold(Item, {}, context);
+		await stopped.promise;
+		await delivered();
+		expect([admitted, item.state.value]).toMatchObject([1, { kind: "failed", cause: { kind: "transient" } }]);
+		item.release();
 		await h.close(context);
 	});
 });
@@ -1678,9 +1745,9 @@ describe("what a decision keeps (hold memory)", () => {
 		const before = await settledHeap();
 		const held = await hold(300, 2_300);
 		const each = ((await settledHeap()) - before) / held.length;
-		// Measured 10.3 KiB for both ends (the object, its attempt, decision, reference and derive here; the hold's
-		// reference and replica there); 18.4 KiB when a decision followed its references through an abort signal joined
-		// with its attempt's, and every source kept a set for its one dependent.
+		// Measured 11.6 KiB for both ends (the object, its attempt, decision, reference and derive here; the hold's
+		// reference and replica there); 18.4 KiB when a decision followed each reference by a promise and an abort
+		// listener under a signal joined with its attempt's, and every source kept a set for its one dependent.
 		expect(each).toBeLessThan(14 * 1024);
 		for (const reference of [...warm, ...held]) reference.release();
 		await client.close(context);

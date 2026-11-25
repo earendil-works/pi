@@ -991,8 +991,6 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		this.#abandoned = outcome;
 		const reason = outcome.kind === "ended" ? outcome.error : outcome.cause.error;
 		this.#abort.abort(reason);
-		// Its admission declared under the context just aborted: its follows of its references end with it.
-		this.#decision?.unfollow();
 		this.#stopRoutines(reason);
 	}
 

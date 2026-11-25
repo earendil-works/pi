@@ -103,9 +103,8 @@ slice spec's section citations are for orientation, not a reading limit (owner, 
   `admission.ts`, `reference.ts`, `documents/documents.ts`); short lists are built without a `push`'s slack
   (`src/lists.ts`: `appended`, `NO_ITEMS`); a source keeps none or one dependent without a set
   (`state/dependents.ts`, telling whom a set's iteration tells whatever its dependents do meanwhile); a decision
-  follows its references' states directly, with no abort signal joined with its attempt's (`Binding.followState`;
-  its owner ends the follows where that signal aborted: `Decision.unfollow` from `Attempt.abandon` and a route's
-  context); a granted set is shared by the decisions granting the same names of a contract version, held weakly
+  follows its references' states directly (`Binding.followState`), no promise and abort listener per reference, and
+  ends all its follows by one listener of a signal depending on its context's; a granted set is shared by the decisions granting the same names of a contract version, held weakly
   (`grantedSet` in `host/admission.ts`), a member order by every binding of the same members (`memberOrder` in
   `contracts/contract.ts`); canonical JSON, labels and
   instance ids are flat strings (`data/principal.ts`, `host/object.ts`, `host/uuid.ts`); a read plan of an unjoined
@@ -289,6 +288,12 @@ deleted (the slice's spec and code are the record). Moved here from `carry-over.
 
 ### Any slice (memory of held objects; from the hold-memory pass, 2026-11-25)
 
+- **A decision with references keeps a signal depending on its context's** (`AbortSignal.any`, 1.2 KiB with its one
+  listener, `Decision.#followUntilAborted`), only to end its follows at the place of an abort's dispatch they always
+  ended at: after the listeners of the context's own signal, ahead of the signals made from it later (an opener's, a
+  resolver's). Both orders are observable (`test/host/admission.test.ts` "whose opener timed out…",
+  `test/host/route-admission.test.ts` "is still told of a reference that fails in a listener…"). Decide the rule (an
+  attempt's follows end before its abort is dispatched, say) and the owner can end them with one call, for nothing.
 - **A read plan per live query.** Every open query compiles its own `ReadPlan` (its uses with two sets, its select
   list and statement texts, about 4 KiB of the 5.5 KiB a live query keeps), though every read of one named query
   differs only in its condition's parameters. Share the compiled shape per named query and bound table, with the

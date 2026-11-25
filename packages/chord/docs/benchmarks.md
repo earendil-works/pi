@@ -1236,7 +1236,7 @@ commit, move between runs).
 What an object keeps on its host while it is held, after slice 15: the workspace bench (`p3-bench-workspaces`,
 round 2) measured 15 KiB of server heap for a held remote object with a constant admission and about 10 KiB per live
 query. Before: `23e5ad6c6` (slice 15 with its review fixes, merged). After: the hold-memory changes on top of it
-(`slices.md`, "Hold memory"), no behaviour changed: Chord's suite passes unchanged, with 26 tests added. Same
+(`slices.md`, "Hold memory"), no behaviour changed: Chord's suite passes unchanged, with 27 tests added. Same
 machine (slayer, Node 26.11.1).
 
 **New: the heap per held object** (`test/bench/hold-heap.ts`: 1,000 objects per case after a warm-up of 1,000, each
@@ -1251,7 +1251,7 @@ another process. Two runs of each tree agree to 0.01 KiB).
 | the same with one live query of that store | 14.80 KiB | 9.56 KiB |
 | a remote object held over a link, no admission | 6.45 KiB | 3.13 KiB |
 | the same, a constant admission granting two names | 8.76 KiB | 3.93 KiB |
-| the same, its admission a derive over one reference | 13.61 KiB | 6.35 KiB |
+| the same, its admission a derive over one reference | 13.61 KiB | 7.55 KiB |
 
 The first version of this bench ran all cases in one process after a warm-up of 200: code and its feedback still grew
 during a case (about 0.5 KiB per object counted for it), and on `23e5ad6c6` what earlier cases left to collect was
@@ -1266,8 +1266,10 @@ Where it went, per held object with an admission over one reference (heap snapsh
   `appended` (an exact copy while short), starting from one shared empty list.
 - **An abort signal joined with the attempt's** (`AbortSignal.any`: a set, weak references and listeners, about
   1.7 KiB) and a pending promise with its abort listener per reference a decision follows (about 0.6 KiB): a decision
-  registers with its references directly (`Binding.followState`), and its owner ends that where the signal aborted
-  (`Decision.unfollow`; one abort listener per decision instead would cost 0.4 KiB).
+  registers with its references directly (`Binding.followState`). What stays is one signal per decision that depends
+  on its context's, with the decision as its one listener (1.2 KiB): the follows must end at the same place of an
+  abort's dispatch as before (after the context's own listeners, ahead of the signals made from it later), and only
+  a dependent signal sits there (`slices.md`, "Carry-over").
 - **A set per source for its one dependent** (184 B; a derive over a member, a decision over its derive): `Dependents`
   keeps none or one without a set, and tells whom a set's iteration would.
 - **Text kept as the tree of its concatenations:** an instance id (360 B for 36 characters), a decision's key, a

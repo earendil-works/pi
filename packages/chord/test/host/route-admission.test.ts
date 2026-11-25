@@ -5,8 +5,8 @@
 // three in a row); one decision per principal and address (two principals on one address, several holds sharing one,
 // released with the last); a failed source; `RouteHandle.retry`; a hold behind the route's own route (`invalid/cycle`).
 
-import { describe, expect, it, vi } from "vitest";
-import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
+import { describe, expect, it } from "vitest";
+import { BACKGROUND_CONTEXT as context, withCancel } from "../../src/context/index.ts";
 import { local, map, method, obj, str } from "../../src/contracts/index.ts";
 import type { ChordError } from "../../src/data/index.ts";
 import { defineState } from "../../src/documents/index.ts";
@@ -23,7 +23,7 @@ import {
 } from "../../src/host/index.ts";
 import { memoryLinkPair } from "../../src/link/index.ts";
 import { jsonPart, type Message } from "../../src/link/internal.ts";
-import type { Writable } from "../../src/state/index.ts";
+import { constant, type Writable } from "../../src/state/index.ts";
 import { type Batch, Source } from "../../src/state/internal.ts";
 import type { Watchable } from "../../src/watch.ts";
 import {
@@ -322,23 +322,48 @@ describe("one decision per principal and address", () => {
 		await server.close(context);
 	});
 
-	// From the review of the hold-memory pass (2026-11-25): a decision's follows of its references end where the
-	// context it declared under is aborted, as a wait under it would; for a route that is its host's close.
-	it("follows its references no more from its host's close on, before its holds leave", async () => {
-		const { tab, server, set } = await gated();
-		await set("yes");
-		await tab.get(PlacedNotes, { session: "S1" }, context);
-		const unfollow = vi.spyOn(Decision.prototype, "unfollow");
-		const release = vi.spyOn(Decision.prototype, "release");
-		try {
-			await server.close(context);
-			const routes = release.mock.contexts.filter((decision) => unfollow.mock.contexts[0] === decision);
-			expect(routes.length).toBe(1);
-			expect(unfollow.mock.invocationCallOrder[0]).toBeLessThan(release.mock.invocationCallOrder[0]!);
-		} finally {
-			unfollow.mockRestore();
-			release.mockRestore();
-		}
+	// From the review of the hold-memory pass (2026-11-25): a decision's follows of its references end where a wait
+	// under its context would, after the listeners of that context's own signal. Ended before them, the hold below
+	// stayed `loading`.
+	it("is still told of a reference that fails in a listener of its route's aborted context: the waiting hold shows it", async () => {
+		const stopping = withCancel(context);
+		const Health = local("test.health", { version: 1, params: {}, members: { status: str() } });
+		let fail = (): void => {
+			throw new Error("the monitor is not followed yet");
+		};
+		const resolving = Promise.withResolvers<void>();
+		const cleaned = Promise.withResolvers<void>();
+		const relay = await relayed({
+			context: stopping.context,
+			server: (facet) =>
+				facet.serve(Health, (_, self) => ({
+					status: self.follow(async (observer) => {
+						fail = () => observer.end({ kind: "failed", error: new Error("the monitor stopped") });
+						return { value: "ok", detach() {} };
+					}),
+				})),
+			admit: (_principal, _address, self) => {
+				self.get(Health, {});
+				return constant(allow(null));
+			},
+			// A resolver that stops the monitor when its context is aborted, and goes on cleaning up.
+			resolve: async (_address, _worker, ctx) => {
+				ctx.abortSignal!.addEventListener("abort", fail, { once: true });
+				resolving.resolve();
+				await cleaned.promise;
+				throw new Error("the resolver stopped");
+			},
+		});
+		const hold = relay.tab.hold(PlacedNotes, { session: "S1" }, context);
+		await resolving.promise;
+		expect(hold.state.value.kind).toBe("loading");
+		stopping.cancel();
+		await transported();
+		expect(hold.state.value).toMatchObject({ kind: "failed", cause: { kind: "waiting" } });
+		cleaned.resolve();
+		hold.release();
+		await relay.server.close(context);
+		await relay.tab.close(context);
 	});
 
 	it("a failed source leaves bound holds alone and fails new ones waiting; it heals with the source", async () => {

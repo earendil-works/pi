@@ -143,8 +143,10 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 	#dependencies: readonly Dependency[] = NO_ITEMS;
 	#derives: readonly Derive[] = NO_ITEMS;
 	#readers: readonly Reader[] = NO_ITEMS;
-	/** Ends its follows of its references' states (`unfollow`). */
+	/** Ends its follows of its references' states (`#unfollow`). */
 	#unfollows: readonly (() => void)[] = NO_ITEMS;
+	/** The signal whose abort ends those follows, while it listens to it (`#followUntilAborted`). */
+	#ending: AbortSignal | undefined;
 	/** Ends its reads of its registries: `release`. */
 	#releases: readonly (() => void)[] = NO_ITEMS;
 	/** The watchable `admit` returned, as Chord follows it. */
@@ -246,10 +248,10 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 			const { target } = binding;
 			if (target !== undefined) dependent?.assertNoCycle(target, context);
 		}
-		// Told now and at every change of a reference, until the release or `context`'s abort (`unfollow`): its owner
-		// checks it again.
+		// Told now and at every change of a reference, until the release or `context`'s abort: its owner checks it again.
 		const moved = (): void => this.#owner.moved();
 		const signal = context.abortSignal;
+		if (signal !== undefined && this.#references.length > 0) this.#followUntilAborted(signal);
 		for (const dependency of this.dependencies) {
 			if (dependency.kind === "registry") {
 				// Read until its release: an older version's mapping is kept meanwhile.
@@ -260,7 +262,6 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 			if (signal?.aborted) continue;
 			this.#unfollows = appended(this.#unfollows, dependency.binding.followState(moved));
 		}
-		if (signal?.aborted) this.unfollow();
 		attachDerives(this.#derives, NO_MEMBERS, () => (error) => {
 			host.report({ kind: "derive_failed", object: label, error });
 		});
@@ -317,7 +318,7 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 		this.#released = true;
 		const { label } = this.#owner;
 		const ended = new ChordError({ code: "released", reason: "ended", message: `${label}: its admission ended` });
-		this.unfollow();
+		this.#unfollow();
 		const source = this.#source;
 		if (source instanceof Source) source.dependents.delete(this);
 		this.#source = undefined;
@@ -337,11 +338,27 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 	}
 
 	/**
-	 * Ends its follows of its references' states. Its owner calls it when the context it declared under is aborted,
-	 * where a wait under that context would end: an abandoned attempt's decision is told of its references no more,
-	 * only of its source. No listener per decision: an abort listener costs each admitted object 0.4 KiB.
+	 * Its follows of its references' states end where a wait under the context it declares under would: among the
+	 * listeners of a signal that depends on the context's, made now. That place in an abort's dispatch decides what
+	 * the decision is still told (after the listeners of the context's own signal and of the signals made from it
+	 * before, ahead of those made later: an opener's, a resolver's), so the signal is the price of it (about 1.1 KiB
+	 * for a decision with references; the decision itself is its listener, `handleEvent`).
 	 */
-	unfollow(): void {
+	#followUntilAborted(signal: AbortSignal): void {
+		if (signal.aborted) return;
+		this.#ending = AbortSignal.any([signal]);
+		this.#ending.addEventListener("abort", this, { once: true });
+	}
+
+	/** The context it declared under was aborted (`#followUntilAborted`): it follows its references no more. */
+	handleEvent(): void {
+		this.#unfollow();
+	}
+
+	/** Ends its follows of its references' states; it listens for no abort any more. */
+	#unfollow(): void {
+		this.#ending?.removeEventListener("abort", this);
+		this.#ending = undefined;
 		const unfollows = this.#unfollows;
 		this.#unfollows = NO_ITEMS;
 		for (const unfollow of unfollows) unfollow();
