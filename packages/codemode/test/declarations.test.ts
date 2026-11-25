@@ -105,6 +105,32 @@ describe("schemaToType", () => {
 		);
 	});
 
+	// https://github.com/earendil-works/pi/issues/12156
+	it("renders array item constraints with an items prefix", () => {
+		expect(
+			schemaToType({
+				type: "object",
+				properties: {
+					my_array: { type: "array", minItems: 1, maxItems: 5, items: { type: "string", maxLength: 300 } },
+					matrix: { type: "array", items: { type: "array", items: { type: "integer", minimum: 1 } } },
+					codes: { type: "array", items: { type: "string", pattern: "^[a-z ]+$" } },
+				},
+				required: ["my_array"],
+			}),
+		).toBe(
+			[
+				"{",
+				"  // @items.pattern ^[a-z ]+$",
+				"  codes?: Array<string>;",
+				"  // @items.items.integer @items.items.minimum 1",
+				"  matrix?: Array<Array<number>>;",
+				"  // @minItems 1 @maxItems 5 @items.maxLength 300",
+				"  my_array: Array<string>;",
+				"}",
+			].join("\n"),
+		);
+	});
+
 	it("reads constraints of optional fields from the non-null branch", () => {
 		// Pydantic's `limit: int | None = Field(None, ge=1, le=100)`.
 		expect(

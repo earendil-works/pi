@@ -261,7 +261,7 @@ function descriptionOf(property: unknown): string {
  * Constraints of a property that its TypeScript type cannot express, as JSDoc-style tags:
  * `@integer @minimum 1 @maximum 100 @default 20`. Empty when there are none.
  */
-function constraintTags(schema: unknown): string {
+function constraintTags(schema: unknown, prefix = ""): string {
 	if (typeof schema !== "object" || schema === null || Array.isArray(schema)) return "";
 	const property = schema as Record<string, unknown>;
 	// Optional fields such as Pydantic's `int | None` keep their constraints in the non-null branch.
@@ -284,27 +284,39 @@ function constraintTags(schema: unknown): string {
 		}),
 	);
 
+	const pushTag = (tag: string) => {
+		tags.push(prefix ? tag.replace(/^@([A-Za-z]+)/, `@${prefix}$1`) : tag);
+	};
 	const tags: string[] = [];
 	const isInteger = (type: unknown) => type === "integer" || (Array.isArray(type) && type.includes("integer"));
-	if (schemas.some((schema) => isInteger(schema.type))) tags.push("@integer");
+	if (schemas.some((schema) => isInteger(schema.type))) pushTag("@integer");
 	for (const keyword of TAG_KEYWORDS) {
 		const values = schemas.map((schema) => schema[keyword]);
 		if (LOWER_BOUNDS.has(keyword) || UPPER_BOUNDS.has(keyword)) {
 			const numbers = values.filter((value) => typeof value === "number");
 			if (numbers.length === 0) continue;
-			tags.push(`@${keyword} ${LOWER_BOUNDS.has(keyword) ? Math.max(...numbers) : Math.min(...numbers)}`);
+			pushTag(`@${keyword} ${LOWER_BOUNDS.has(keyword) ? Math.max(...numbers) : Math.min(...numbers)}`);
 			continue;
 		}
 		for (const value of new Set(values)) {
-			if (typeof value === "number" || typeof value === "string") tags.push(`@${keyword} ${value}`);
+			if (typeof value === "number" || typeof value === "string") pushTag(`@${keyword} ${value}`);
 		}
 	}
-	if (schemas.some((schema) => schema.uniqueItems === true)) tags.push("@uniqueItems");
+	if (schemas.some((schema) => schema.uniqueItems === true)) pushTag("@uniqueItems");
 	// Annotations, unlike constraints, come from the property itself.
 	if (property.default !== undefined && property.default !== null) {
-		tags.push(`@default ${JSON.stringify(property.default)}`);
+		pushTag(`@default ${JSON.stringify(property.default)}`);
 	}
-	if (property.deprecated === true) tags.push("@deprecated");
+	if (property.deprecated === true) pushTag("@deprecated");
+
+	// Array item constraints are not expressible in the element type, so render them with an
+	// `items.` prefix, including nested arrays (`items.items.`).
+	const items = property.items;
+	if (typeof items === "object" && items !== null && !Array.isArray(items)) {
+		const itemTags = constraintTags(items, `${prefix}items.`);
+		if (itemTags) tags.push(...itemTags.split(/ (?=@)/));
+	}
+
 	return tags
 		.filter((tag) => tag.length <= MAX_TAG_CHARS)
 		.map((tag) => tag.replace(LINE_TERMINATORS, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`))
