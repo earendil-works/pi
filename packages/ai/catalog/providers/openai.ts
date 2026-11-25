@@ -119,6 +119,11 @@ export default defineProvider({
 		// those models accept `prompt_cache_options`; older models reject the parameter.
 		// https://developers.openai.com/api/docs/guides/prompt-caching
 		if (model.cost.cacheWrite > 0) mergeCompat(responsesModel, { supportsExplicitPromptCacheMode: true });
+		// No `promptCache`, so pi does not warm OpenAI prompt caches. Before GPT-5.6, caching is best
+		// effort with no fixed lifetime and no write charge: a refresh has no expiry to time and little
+		// to save. From GPT-5.6, entries live 30 minutes (12 hours with `ttl: "12h"`, at twice the write
+		// price). That outlasts pi's 30-minute idle warming window, and every real request renews the
+		// entry, so warming does not look worth it. Decided from the documented lifetimes, not measured.
 		if (OPENAI_MID_CONVO_EFFORT_MODEL_IDS.has(model.id)) {
 			mergeCompat(responsesModel, { supportsMidConvoEffort: true });
 		}
