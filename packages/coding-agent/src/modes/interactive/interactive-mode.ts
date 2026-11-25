@@ -3634,7 +3634,7 @@ export class InteractiveMode {
 		this.programStatus.handleEvent(event);
 		// The session file, and with it the resume command, appears when the first prompt is written, which
 		// happens after its message_end reaches listeners. The reply's message_start or the run's end sees it.
-		if (event.type === "message_start" || event.type === "agent_settled") this.programResume?.report();
+		if (event.type === "message_start" || event.type === "agent_settled") this.programResume?.reportIfNone();
 
 		switch (event.type) {
 			case "agent_start":

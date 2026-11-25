@@ -32,6 +32,14 @@ export class ProgramResumeReporter {
 	}
 
 	/**
+	 * Report once the session gets a file to resume. No work while a command is reported: after that it only
+	 * changes on a session switch, which calls {@link report}.
+	 */
+	reportIfNone(): void {
+		if (this.reported === undefined) this.report();
+	}
+
+	/**
 	 * Report the current command even if unchanged. A program that ran while pi was suspended may have replaced
 	 * pi's command in a terminal that keeps only the latest one.
 	 */

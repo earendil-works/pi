@@ -84,6 +84,28 @@ describe("ProgramResumeReporter", () => {
 		expect(reports()).toEqual([{ kind: "resume", ...session("a") }, { kind: "clear" }]);
 	});
 
+	it("reportIfNone checks only while no command is reported", () => {
+		const getResumeCommand = vi.fn<() => ProgramResumeCommand | undefined>(() => undefined);
+		const writes: string[] = [];
+		const terminal = { write: (data: string) => writes.push(data) } as unknown as Terminal;
+		const reporter = new ProgramResumeReporter(TOKEN, () => terminal, getResumeCommand);
+		reporter.reportIfNone();
+		expect(writes).toEqual([]);
+		// The first message creates the session file.
+		getResumeCommand.mockReturnValue(session("a"));
+		reporter.reportIfNone();
+		reporter.reportIfNone();
+		reporter.reportIfNone();
+		expect(writes.map(decode)).toEqual([{ kind: "resume", ...session("a") }]);
+		expect(getResumeCommand).toHaveBeenCalledTimes(2);
+		// A session switch (/new) clears through report(); reportIfNone() checks again until the next file.
+		getResumeCommand.mockReturnValue(undefined);
+		reporter.report();
+		reporter.reportIfNone();
+		expect(writes.map(decode)).toEqual([{ kind: "resume", ...session("a") }, { kind: "clear" }]);
+		expect(getResumeCommand).toHaveBeenCalledTimes(4);
+	});
+
 	it("reports an unchanged command again after a suspend", () => {
 		const { reporter, reports } = setup(session("a"));
 		reporter.report();
