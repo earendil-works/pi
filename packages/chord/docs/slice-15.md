@@ -260,6 +260,8 @@ and `78-denial-messages.ts`.
   after (`test/bench/reference-heap.ts`).
 - **Review round 2 (granttest's model):** a refusal of a granted member is shown through the object's state per
   version and grant (`ChordObject.stateFor`, `followed`), not by unbinding the holder, so another grant re-evaluates it;
-  a denial unbinds the holders of versions the provider no longer binds (they showed the denial forever).
+  a denial unbinds the holders of versions the provider no longer binds (they showed the denial forever). The instance
+  such a holder sees decides its refusal: the live one, else a restart's open old one, else the last shown, so a
+  reload never binds it to (nor throws on) a member its last provider refused.
 - **§2:** a denial's message travels as the `forbidden` error's `details.message` (no new field in a failure or on the
   wire); `sameCause` compares details, so a changed message reaches the holders.

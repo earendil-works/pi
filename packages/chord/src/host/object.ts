@@ -368,13 +368,16 @@ export class ChordObject implements Target {
 
 	/**
 	 * A member of the older, accepted `version` its provider refuses at its grant: its holders' failure, shown and not
-	 * unbound (F5), until a grant without it; a failure or denial of the object shows instead.
+	 * unbound (F5), until a grant without it; a failure or denial of the object shows instead. The instance such a holder
+	 * sees decides: the live one, else a restart's open old one, else the last shown (N1 to N3).
 	 */
 	#refused(version: number): ChordError | undefined {
-		const { contract, provider } = this.served;
-		if (version === contract.version || !provider.accepted.some((each) => each.version === version)) return undefined;
+		const state = this.#state;
+		const attempt = state.kind === "live" ? state.attempt : (this.openOldAttempt ?? this.#exposed);
+		if (attempt === undefined || version === attempt.served.contract.version) return undefined;
+		if (!attempt.served.provider.accepted.some((each) => each.version === version)) return undefined;
 		const shown = this.state.kind;
-		return shown === "failed" || shown === "ended" ? undefined : refusal(this.served, version, this.#granted);
+		return shown === "failed" || shown === "ended" ? undefined : refusal(attempt.served, version, attempt.granted);
 	}
 
 	/** Whether a restart's open old attempt binds `version` and `fingerprint`: its consumers of that version may use it. */

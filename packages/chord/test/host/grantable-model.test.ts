@@ -1296,12 +1296,7 @@ const STEPS = env("GRANTABLE_STEPS", 30);
  * Findings not fixed yet, by the name of their case below (expected to fail until the fix lands, then removed), and
  * the default seeds that fail only because of them (skipped until then).
  */
-const OPEN: Readonly<Record<string, string>> = {
-	"a reload never throws when a refused reference's provider stops accepting its version": "N1",
-	"a reference refused a member has no grant after a reload that stops accepting it (same host)": "N2",
-	"a reference refused a member has no grant after a reload that stops accepting it (over a link)": "N2",
-	"a reference refused a member takes no value at a reload that stops accepting it": "N3",
-};
+const OPEN: Readonly<Record<string, string>> = {};
 const OPEN_SEEDS: Readonly<Record<number, string>> = {};
 
 describe("grantable members across versions and lifecycles, against the model", () => {
