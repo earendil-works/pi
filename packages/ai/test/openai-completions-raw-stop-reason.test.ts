@@ -106,8 +106,9 @@ describe("OpenRouter native_finish_reason", () => {
 		mockState.chunks = [];
 	});
 
-	it("records a native reason hidden behind a successful finish_reason without changing the stop reason", async () => {
+	it("records a native reason hidden behind a successful finish_reason without changing a turn with text", async () => {
 		mockState.chunks = [
+			{ id: "gen-1", choices: [{ index: 0, delta: { content: "Done." }, finish_reason: null }] },
 			{
 				id: "gen-1",
 				choices: [{ index: 0, delta: {}, finish_reason: "stop", native_finish_reason: "MALFORMED_RESPONSE" }],
@@ -118,6 +119,60 @@ describe("OpenRouter native_finish_reason", () => {
 
 		expect(message.stopReason).toBe("stop");
 		expect(message.rawStopReason).toBe("stop.MALFORMED_RESPONSE");
+		expect(message.errorMessage).toBeUndefined();
+	});
+
+	it("retries a stop after reasoning only when the native reason is not a clean stop", async () => {
+		mockState.chunks = [
+			{ id: "gen-8", choices: [{ index: 0, delta: { reasoning: "Let me think." }, finish_reason: null }] },
+			{
+				id: "gen-8",
+				choices: [{ index: 0, delta: {}, finish_reason: "stop", native_finish_reason: "MALFORMED_RESPONSE" }],
+			},
+		];
+
+		const message = await streamOpenAICompletions(openRouterModel, context, { apiKey: "test" }).result();
+
+		expect(message.stopReason).toBe("error");
+		expect(message.rawStopReason).toBe("stop.MALFORMED_RESPONSE");
+		expect(message.errorMessage).toBe(
+			"OpenRouter returned an empty response (native_finish_reason: MALFORMED_RESPONSE)",
+		);
+		expect(isRetryableAssistantError(message)).toBe(true);
+	});
+
+	it("retries an empty stop whose native reason OpenRouter counts as clean but its provider documents as a failure", async () => {
+		mockState.chunks = [
+			{ id: "gen-9", choices: [{ index: 0, delta: { content: "  " }, finish_reason: null }] },
+			{ id: "gen-9", choices: [{ index: 0, delta: {}, finish_reason: "stop", native_finish_reason: "OTHER" }] },
+		];
+
+		const message = await streamOpenAICompletions(openRouterModel, context, { apiKey: "test" }).result();
+
+		expect(message.stopReason).toBe("error");
+		expect(isRetryableAssistantError(message)).toBe(true);
+	});
+
+	it("keeps an empty stop whose native reason is a clean stop", async () => {
+		mockState.chunks = [
+			{ id: "gen-10", choices: [{ index: 0, delta: {}, finish_reason: "stop", native_finish_reason: "end_turn" }] },
+		];
+
+		const message = await streamOpenAICompletions(openRouterModel, context, { apiKey: "test" }).result();
+
+		expect(message.stopReason).toBe("stop");
+		expect(message.rawStopReason).toBe("stop.end_turn");
+		expect(message.errorMessage).toBeUndefined();
+	});
+
+	it("matches clean stop reasons case-insensitively", async () => {
+		mockState.chunks = [
+			{ id: "gen-11", choices: [{ index: 0, delta: {}, finish_reason: "stop", native_finish_reason: "End_Turn" }] },
+		];
+
+		const message = await streamOpenAICompletions(openRouterModel, context, { apiKey: "test" }).result();
+
+		expect(message.stopReason).toBe("stop");
 		expect(message.errorMessage).toBeUndefined();
 	});
 
