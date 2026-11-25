@@ -35,10 +35,7 @@ const LIMITS: Limits = {
  * Findings not fixed yet, by the name of their case below (expected to fail until the fix lands, then removed), and
  * the default seeds that fail only because of them (skipped until then).
  */
-const OPEN: Readonly<Record<string, string>> = {
-	"a denied reference waits once a reload refuses its version a member (same host)": "G1",
-	"a denied reference waits once a reload refuses its version a member (over a link)": "G1",
-};
+const OPEN: Readonly<Record<string, string>> = {};
 const OPEN_SEEDS: Readonly<Record<number, string>> = {};
 
 describe("grantable members across versions and lifecycles, against the model", () => {
