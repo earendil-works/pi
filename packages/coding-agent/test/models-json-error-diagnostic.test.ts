@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { ENV_AGENT_DIR } from "../src/config.ts";
+import { createAgentSessionServices } from "../src/core/agent-session-services.ts";
 
 const cliPath = resolve(__dirname, "../src/cli.ts");
 // --import takes a module specifier, not a filesystem path.
@@ -17,8 +18,8 @@ afterEach(() => {
 	}
 });
 
-/** Runs the CLI with an agent dir whose models.json has a string contextWindow, and returns its output. */
-async function runWithInvalidModelsJson(args: string[], input = ""): Promise<{ stdout: string; stderr: string }> {
+/** Creates an agent dir whose models.json has a string contextWindow, and an empty project dir. */
+function createDirsWithInvalidModelsJson(): { agentDir: string; projectDir: string } {
 	const tempRoot = mkdtempSync(join(tmpdir(), "pi-models-json-error-"));
 	tempDirs.push(tempRoot);
 	const agentDir = join(tempRoot, "agent");
@@ -38,7 +39,12 @@ async function runWithInvalidModelsJson(args: string[], input = ""): Promise<{ s
 			},
 		}),
 	);
+	return { agentDir, projectDir };
+}
 
+/** Runs the CLI with an agent dir whose models.json is invalid, and returns its output. */
+async function runWithInvalidModelsJson(args: string[], input = ""): Promise<{ stdout: string; stderr: string }> {
+	const { agentDir, projectDir } = createDirsWithInvalidModelsJson();
 	const child = spawn(process.execPath, ["--import", sourceResolverUrl, cliPath, ...args], {
 		cwd: projectDir,
 		env: { ...process.env, [ENV_AGENT_DIR]: agentDir, PI_OFFLINE: "1" },
@@ -68,11 +74,39 @@ function countOccurrences(text: string, search: string): number {
 // Regression tests for https://github.com/earendil-works/pi/issues/12522: only interactive mode and --list-models reported models.json errors, so
 // print, JSON and RPC modes failed with "Model not found" or "No API key found" and never named the cause.
 describe("models.json error", () => {
+	it("is a warning in the services diagnostics, so SDK runtimes report it too", async () => {
+		const { agentDir, projectDir } = createDirsWithInvalidModelsJson();
+
+		const services = await createAgentSessionServices({
+			cwd: projectDir,
+			agentDir,
+			resourceLoaderOptions: { noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true },
+		});
+
+		const modelsJsonDiagnostics = services.diagnostics.filter((d) => d.message.startsWith("models.json error:"));
+		expect(modelsJsonDiagnostics).toHaveLength(1);
+		expect(modelsJsonDiagnostics[0].type).toBe("warning");
+		expect(modelsJsonDiagnostics[0].message).toContain("providers.local.models.0.contextWindow");
+	});
+
 	it("is written to stderr once in print mode", async () => {
 		const { stderr } = await runWithInvalidModelsJson(["-p", "--model", "local/local-model", "hi"]);
 
 		expect(countOccurrences(stderr, "Warning: models.json error:")).toBe(1);
 		expect(countOccurrences(stderr, "providers.local.models.0.contextWindow")).toBe(1);
+	}, 60_000);
+
+	it("is written to stderr once in JSON mode", async () => {
+		const { stdout, stderr } = await runWithInvalidModelsJson([
+			"--mode",
+			"json",
+			"--model",
+			"local/local-model",
+			"hi",
+		]);
+
+		expect(countOccurrences(stderr, "Warning: models.json error:")).toBe(1);
+		expect(stdout).not.toContain("models.json error");
 	}, 60_000);
 
 	it("is written to stderr once in RPC mode", async () => {
