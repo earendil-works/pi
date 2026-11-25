@@ -508,15 +508,11 @@ export async function busyReload(
 		};
 	for (const { held, member, at, call } of parked) {
 		const got = await call;
-		// Loading without the grant: the reference may refuse it at once or the new binding may grant it.
-		if (at === "loading-ungranted") continue;
-		const want =
-			at === "failed"
-				? thrown("*")
-				: at === "live-ungranted"
-					? thrown("forbidden")
-					: expectedCall(spec, state.world, held, held.view, member, `y${index}`);
-		if (!fits(want, got))
+		const after = expectedCall(spec, state.world, held, held.view, member, `y${index}`);
+		const want = at === "failed" ? thrown("*") : after;
+		// Without the grant when made: refused `forbidden` by the binding it was made on (over a link the fence decodes
+		// it by the old names), or met by the new provider as any call.
+		if (at === "ungranted" ? !fits(thrown("forbidden"), got) && !fits(after, got) : !fits(want, got))
 			return {
 				category: "parked call",
 				message: `${held.label} ${member}() made while the provider reloaded (${at}, then ${held.view.status}): expected ${JSON.stringify(want)}, saw ${JSON.stringify(got)}`,
@@ -526,16 +522,15 @@ export async function busyReload(
 }
 
 /**
- * How a call meets its reference: failed (rejected at once), live without the method's grant (refused at once,
- * `forbidden`), loading without it (either), or waiting at the gate or parked (it runs on the new provider).
+ * How a call meets its reference: failed (rejected at once), without the method's grant (refused, or met by the new
+ * provider), or waiting at the gate or parked (it runs on the new provider).
  */
-type CalledAt = "failed" | "live-ungranted" | "loading-ungranted" | "runs";
+type CalledAt = "failed" | "ungranted" | "runs";
 
 function calledAt(ref: DynRef, ungranted: boolean): CalledAt {
 	const { kind } = ref.state.value;
 	if (kind === "failed" || kind === "ended") return "failed";
-	if (!ungranted) return "runs";
-	return kind === "live" ? "live-ungranted" : "loading-ungranted";
+	return ungranted ? "ungranted" : "runs";
 }
 
 /** A live consumer's method call that reaches the provider's code (a value expected), to keep the old attempt busy. */
