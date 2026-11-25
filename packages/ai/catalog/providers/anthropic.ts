@@ -58,8 +58,8 @@ export default defineProvider({
 		}
 		mergeCompat(messagesModel, { supportsStrictTools: true });
 		// Ephemeral entries have a hard five-minute lifetime; `ttl: "1h"` extends
-		// it to one hour. Only direct Anthropic is annotated so cache warming does
-		// not assume equivalent behavior through proxies.
+		// it to one hour. Proxies are annotated only after their lifetimes were
+		// checked (github-copilot), so cache warming does not assume them.
 		// https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
 		model.promptCache = { short: 300, long: 3600 };
 		withInputLimits(model, {
