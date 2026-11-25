@@ -3,7 +3,7 @@ import { RequestResolvers, Server, ServerName, ShareUrls } from "@p2/app/v1/serv
 import { BackupTargets } from "../backup/contract.ts";
 import { isTerminalSyncError, RadiusSyncRemote } from "../backup/radius-remote.ts";
 import { ForwardStore, ForwardsNative } from "../ports/contract.ts";
-import { Shares } from "../sharing/contract.ts";
+import { ShareInviters, Shares } from "../sharing/contract.ts";
 import { RadiusBrain, type RadiusStatus } from "./brain.ts";
 import { RadiusConnections, RadiusService } from "./contract.ts";
 import { RelayAccess } from "./relay-access.ts";
@@ -58,10 +58,12 @@ export default defineFacet((host) => {
 					port: server.info.value.port,
 					...(relayed.shellOrigin === undefined ? {} : { relayShellOrigin: relayed.shellOrigin }),
 				};
-				// Anyone else is whom sharing finds by their email (the sessions shared with them), or nobody.
-				return relayed.user === undefined
-					? { principal: { kind: "owner", access: "relay" }, origin }
-					: { principal: undefined, origin: { ...origin, relayUser: relayed.user } };
+				// Anyone else is whom sharing finds by their email or admission (what they were given), or nobody.
+				if (relayed.user !== undefined)
+					return { principal: undefined, origin: { ...origin, relayUser: relayed.user } };
+				if (relayed.guest !== undefined)
+					return { principal: undefined, origin: { ...origin, relayGuest: relayed.guest } };
+				return { principal: { kind: "owner", access: "relay" }, origin };
 			},
 		});
 		// Radius shows the server under its name: a copy, which follows every rename.
@@ -72,6 +74,17 @@ export default defineFacet((host) => {
 		const shares = self.get(Shares, {});
 		self.on(shares.emails, async ({ value: emails }) => {
 			connection.value.brain.reportShares(emails);
+		});
+		// Radius keeps admitting the guests whose pages are open; the others lapse.
+		self.on(shares.admissions, async ({ value: admissions }) => {
+			connection.value.brain.reportGuests(admissions);
+		});
+		// Through Radius, a link holder needs an invite: once the brain knows its Radius origin.
+		self.contribute(ShareInviters, {
+			radius: (link, path, uses) => {
+				const brain = connection.value.brain;
+				return brain.publicOrigin === undefined ? undefined : brain.invite(link, path, uses);
+			},
 		});
 		self.contribute(ShareUrls, {
 			radius: (session) => {

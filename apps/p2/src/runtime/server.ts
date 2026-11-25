@@ -219,17 +219,25 @@ export type RequestOrigin = {
 	 * them because a session is shared with their email; authenticators map them to what is shared with them now.
 	 */
 	readonly relayUser?: RelayUser;
+	/**
+	 * Someone Radius admitted through one of this server's invites, without a Radius account (relayed requests only).
+	 * Radius refuses them once the server stops renewing their admission; authenticators map them to what they joined.
+	 */
+	readonly relayGuest?: RelayGuest;
 };
 
 /** A person Radius authenticated: their Radius user ID and normalized, verified email. */
 export type RelayUser = { readonly id: string; readonly email: string };
+
+/** A guest Radius admitted: their admission's ID and the invite reference this server gave the invite. */
+export type RelayGuest = { readonly admission: string; readonly invite: string };
 
 /** Who sent an HTTP request (undefined: nobody authenticated, e.g. a guest before joining) and from where. */
 export type RequestAccess = { readonly principal: P2Principal | undefined; readonly origin: RequestOrigin };
 
 /**
  * Trusted transports may authenticate a marked loopback request as remote, before ordinary Host checks. Without a
- * principal, the authenticators decide who the request is (a relayed Radius user: see `RequestOrigin.relayUser`).
+ * principal, the authenticators decide who the request is (a relayed Radius user or guest: see `RequestOrigin`).
  */
 export type RequestResolver = (request: IncomingMessage, ctx: Ctx) => RequestAccess | undefined;
 export const RequestResolvers = keyedRegistry<RequestResolver>("p2.request-resolvers");

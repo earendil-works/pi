@@ -1,5 +1,5 @@
 import { arr, bool, nul, num, obj, opt, type Static, str, union } from "@earendil-works/pi-schema";
-import { literal, local, method, param, record, remote, serverHost } from "@p2/app/v1";
+import { keyedRegistry, literal, local, method, param, record, remote, serverHost } from "@p2/app/v1";
 
 export const ModeSchema = union([literal("view"), literal("full")]);
 export type ShareMode = Static<typeof ModeSchema>;
@@ -42,6 +42,12 @@ export const ConnectedSchema = obj({
  *   (the name is self-chosen); the same browser joining more links gains their sessions.
  * - By email, for people who reach the brain through Radius (only offered while it is connected to Radius). Radius
  *   verifies the email of whoever opens the brain, and admits only emails the brain reported (`emails`).
+ *
+ * Through Radius without a tunnel host a link's own URL reaches nobody, so copying it makes an invite instead (`invite`,
+ * `ShareInviters`): a URL that opens for 15 minutes and admits `shareInviteUses` people (settings.json, default 1).
+ * Radius admits whoever redeems it as a guest with an admission ID and a lease that the brain renews while that guest's
+ * page is open (`admissions`); joining makes the admission ID the guest's ID (no cookie). A guest whose lease lapsed
+ * needs a new invite; lasting access is sharing by email.
  */
 export const Shares = local("p2.shares", {
 	version: 1,
@@ -53,14 +59,20 @@ export const Shares = local("p2.shares", {
 		emails: arr(str()),
 		/** Every grant to a person by email that is not removed (archived sessions included). */
 		people: arr(PersonSchema),
+		/** The admissions of the Radius guests whose pages are open now: whose leases the brain renews. */
+		admissions: arr(str()),
 		/** The principal of a guest cookie value (`<id>.<secret>`), or null. */
 		authenticate: method(obj({ cookie: str() }), union([GuestGrantSchema, nul()])),
 		/** The principal of a person Radius authenticated by their normalized email, or null. */
 		authenticateEmail: method(obj({ email: str() }), union([GuestGrantSchema, nul()])),
+		/** The principal of a guest Radius admitted (its admission ID), or null. */
+		authenticateAdmission: method(obj({ admission: str() }), union([GuestGrantSchema, nul()])),
 		/** A guest's current principal, or null (nothing shared with it now). */
 		grant: method(obj({ id: str() }), union([GuestGrantSchema, nul()])),
 		/** The live link of a token, or null (reset, archived). */
 		active: method(obj({ token: str() }), union([LinkSchema, nul()])),
+		/** The live link of an ID (an invite's reference), or null (reset, archived). */
+		invited: method(obj({ id: str() }), union([LinkSchema, nul()])),
 		link: method(
 			obj({
 				session: str(),
@@ -77,6 +89,43 @@ export const Shares = local("p2.shares", {
 		 * created and `cookie` is its value. Throws when the link ended or the guest was removed from that session.
 		 */
 		join: method(obj({ token: str(), name: str(), cookie: opt(str()) }), obj({ session: str(), cookie: opt(str()) })),
+		/** Joins the link of ID `link` as the guest of a Radius admission (created first); throws as `join` does. */
+		joinAdmission: method(obj({ link: str(), admission: str(), name: str() }), obj({ session: str() })),
+		/**
+		 * The URL to hand out for the session's link of `mode` (made first when there is none): an invite while Radius is
+		 * the only way in (`expiresAt` when it stops opening), else the link's own URL (`expiresAt` null).
+		 */
+		invite: method(
+			obj({ session: str(), mode: ModeSchema, remoteConfirmed: opt(bool()) }),
+			obj({ url: str(), expiresAt: union([num(), nul()]) }),
+		),
+	},
+});
+
+/**
+ * Makes invites for a link (its ID), landing on `path` and admitting `uses` people, where a transport admits link
+ * holders itself (Radius); undefined while it cannot (not connected).
+ */
+export type ShareInviter = (
+	link: string,
+	path: string,
+	uses: number,
+) => Promise<{ url: string; expiresAt: number }> | undefined;
+export const ShareInviters = keyedRegistry<ShareInviter>("p2.share-inviters");
+
+/**
+ * The URL to hand out for a session's link (owner only): see `Shares.invite`. 2: a new base (grantable members
+ * replaced variants; older versions are refused).
+ */
+export const ShareInvite = remote("p2.share-invite", {
+	version: 2,
+	params: { session: param.str() },
+	hostAddress: serverHost,
+	methods: {
+		invite: method(
+			obj({ mode: ModeSchema, remoteConfirmed: opt(bool()) }),
+			obj({ url: str(), expiresAt: union([num(), nul()]) }),
+		),
 	},
 });
 

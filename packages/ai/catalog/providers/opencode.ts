@@ -9,8 +9,8 @@ import {
 } from "../define.ts";
 import {
 	enableClaudeMidConvoEffort,
+	supportsClaudeMidConvoChanges,
 	supportsClaudeMidConvoEffort,
-	supportsClaudeMidConvoSystemMessages,
 } from "../families/anthropic.ts";
 import { googleThinkingLevels } from "../families/google.ts";
 import { isKimiK3FamilyId } from "../families/kimi.ts";
@@ -150,7 +150,7 @@ export function finalizeOpencodeModel(model: ChatModel): void {
 		const messagesModel = model as Model<"anthropic-messages">;
 		// OpenCode Zen forwards mid-conversation system messages but rejects
 		// `tool_addition`/`tool_removal` blocks, so tool changes stay top-level.
-		if (model.provider === "opencode" && supportsClaudeMidConvoSystemMessages(model.id)) {
+		if (model.provider === "opencode" && supportsClaudeMidConvoChanges(model.id)) {
 			mergeCompat(messagesModel, { supportsMidConvoSystemMessages: true });
 		}
 		// Zen and Go forward per-message effort and `thinking.block_binding`. Without

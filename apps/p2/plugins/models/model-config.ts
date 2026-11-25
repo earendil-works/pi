@@ -127,7 +127,6 @@ const OpenAICompletionsCompatSchema = obj(
 				literal("chat-template"),
 				literal("qwen-chat-template"),
 				literal("string-thinking"),
-				literal("ant-ling"),
 			]),
 		),
 		chatTemplateKwargs: opt(record(ChatTemplateKwargSchema)),

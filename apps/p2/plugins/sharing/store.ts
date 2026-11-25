@@ -36,8 +36,9 @@ export const LinkRows = defineTable("links", {
 });
 
 /**
- * A guest: a browser that joined through links (`secretHash` of its cookie), or a person the owner shared with by
- * email (`email`, normalized; Radius authenticates them). Never both.
+ * A guest: a browser that joined through links (`secretHash` of its cookie), a person the owner shared with by email
+ * (`email`, normalized; Radius authenticates them), or a guest Radius admitted through an invite (neither; its `id` is
+ * the admission's, which only Radius vouches for). Never more than one.
  */
 export const GuestRows = defineTable("guests", {
 	version: 1,
@@ -159,6 +160,13 @@ export function emailGrantsOf(grants: readonly GrantStored[], guests: ReadonlyMa
 	});
 }
 
+/** A new link (fresh ID and token) for `key`. */
+const newLink = (key: { session: LinkStored["session"]; mode: ShareMode }): LinkStored => ({
+	...key,
+	id: randomUUID(),
+	token: randomBytes(32).toString("base64url"),
+});
+
 /** The share tables of `Shares` and its transactions. */
 export type ShareTables = {
 	readonly links: LinkTable;
@@ -185,6 +193,34 @@ export class ShareStore {
 		return sortedLinks(items)[0];
 	}
 
+	async linkById(id: string, context: Context): Promise<ShareLink | undefined> {
+		const { items } = await this.#t.links.page(
+			query(LinkRows).where((row) => eq(row.id, id)),
+			1,
+			context,
+		);
+		return sortedLinks(items)[0];
+	}
+
+	/** The session's link of `mode`. */
+	async linkOf(session: string, mode: ShareMode, context: Context): Promise<ShareLink | undefined> {
+		const row = await this.#t.links.get({ session: Session({ id: session }), mode }, context);
+		return row && sortedLinks([row])[0];
+	}
+
+	/** The session's link of `mode`, made first when there is none. */
+	ensureLink(session: string, mode: ShareMode, context: Context): Promise<ShareLink> {
+		const key = { session: Session({ id: session }), mode };
+		return this.#t.tx(async (tx) => {
+			let row = await tx.get(this.#t.links, key);
+			if (row === undefined) {
+				row = newLink(key);
+				tx.put(this.#t.links, row);
+			}
+			return { id: row.id, session, mode, token: row.token };
+		}, context);
+	}
+
 	async guest(id: string, context: Context): Promise<GuestRow | undefined> {
 		const row = await this.#t.guests.get({ id }, context);
 		return row === undefined ? undefined : guestOf(row);
@@ -196,6 +232,12 @@ export class ShareStore {
 		if (!id || !secret || secret.length !== 64) return undefined;
 		const row = await this.#t.guests.get({ id }, context);
 		return row !== undefined && row.secretHash === hash(secret) ? guestOf(row) : undefined;
+	}
+
+	/** The guest of a Radius admission: a guest with neither cookie nor email whose ID is the admission's. */
+	async guestOfAdmission(admission: string, context: Context): Promise<GuestRow | undefined> {
+		const row = await this.#t.guests.get({ id: admission }, context);
+		return row !== undefined && row.secretHash === undefined && row.email === undefined ? guestOf(row) : undefined;
 	}
 
 	/** The guest of a normalized email. */
@@ -236,7 +278,7 @@ export class ShareStore {
 				for (const grant of through) tx.delete(this.#t.grants, { session: grant.session, guest: grant.guest });
 				for (const id of ended) await this.#bump(tx, id);
 			}
-			tx.put(this.#t.links, { ...key, id: randomUUID(), token: randomBytes(32).toString("base64url") });
+			tx.put(this.#t.links, newLink(key));
 			return ended;
 		}, context);
 	}
@@ -268,15 +310,17 @@ export class ShareStore {
 	}
 
 	/**
-	 * Joins `link`: `existing` (the browser's guest, by its cookie) gains the link's session, else a new guest is created
-	 * with the cleaned name, made unique ("Alice (2)"), and a cookie. Joining a session again takes the link's mode.
-	 * `changed` says whether an existing guest's grants changed (its revision was bumped).
+	 * Joins `link`: `existing` (the browser's guest, by its cookie or admission) gains the link's session, else a new
+	 * guest is created with the cleaned name, made unique ("Alice (2)"), and a cookie; or, for a Radius `admission`, the
+	 * admission's ID and no cookie. Joining a session again takes the link's mode. `changed` says whether an existing
+	 * guest's grants changed (its revision was bumped).
 	 */
 	join(
 		link: ShareLink,
 		requestedName: string,
 		existing: GuestRow | undefined,
 		context: Context,
+		admission?: string,
 	): Promise<{ guest: string; cookie?: string; changed: boolean }> {
 		const session = Session({ id: link.session });
 		return this.#t.tx(async (tx) => {
@@ -293,7 +337,17 @@ export class ShareStore {
 				throw new JoinError("Guest limit reached");
 			let id = existing?.id;
 			let cookie: string | undefined;
-			if (id === undefined) {
+			if (id === undefined && admission !== undefined) {
+				id = admission;
+				// Radius picks admission IDs: one must never take over a guest of another kind.
+				if (await tx.get(this.#t.guests, { id })) throw new JoinError("Could not join this session.");
+				tx.put(this.#t.guests, {
+					id,
+					name: await this.#uniqueName(tx, requestedName),
+					revision: 1,
+					lastSeen: Date.now(),
+				});
+			} else if (id === undefined) {
 				id = randomUUID();
 				const secret = randomBytes(32).toString("hex");
 				tx.put(this.#t.guests, {

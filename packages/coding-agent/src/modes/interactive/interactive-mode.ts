@@ -26,6 +26,7 @@ import type {
 	MarkdownTheme,
 	OverlayHandle,
 	OverlayOptions,
+	ProgramResumeCommand,
 	SlashCommand,
 	TuiMainScreenRenderState,
 } from "@earendil-works/pi-tui";
@@ -196,6 +197,7 @@ import { UserMessageSelectorComponent } from "./components/user-message-selector
 import { editInExternalEditor } from "./external-editor.ts";
 import { refreshModelCatalogs } from "./model-catalog-refresh.ts";
 import { getModelSearchText } from "./model-search.ts";
+import { ProgramResumeReporter } from "./program-resume-reporter.ts";
 import { type BlockedStatus, dialogBlockedStatus, ProgramStatusReporter } from "./program-status-reporter.ts";
 import { shareSession } from "./session-share.ts";
 import {
@@ -350,8 +352,8 @@ function quoteIfNeeded(value: string): string {
 	return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-export function formatResumeCommand(sessionManager: SessionManager): string | undefined {
-	if (!process.stdout.isTTY) return undefined;
+/** Arguments that open the session in a new process, or undefined while the session has no file to open. */
+function getResumeArgs(sessionManager: SessionManager): string[] | undefined {
 	if (!sessionManager.isPersisted()) return undefined;
 
 	const sessionFile = sessionManager.getSessionFile();
@@ -359,10 +361,25 @@ export function formatResumeCommand(sessionManager: SessionManager): string | un
 
 	const args = [APP_NAME];
 	if (!sessionManager.usesDefaultSessionDir()) {
-		args.push("--session-dir", quoteIfNeeded(sessionManager.getSessionDir()));
+		args.push("--session-dir", sessionManager.getSessionDir());
 	}
 	args.push("--session", sessionManager.getSessionId());
-	return args.join(" ");
+	return args;
+}
+
+/** The resume command as shell text for the user to copy. */
+export function formatResumeCommand(sessionManager: SessionManager): string | undefined {
+	if (!process.stdout.isTTY) return undefined;
+	return getResumeArgs(sessionManager)?.map(quoteIfNeeded).join(" ");
+}
+
+/**
+ * The command a terminal runs to bring this session back (OSC 7577). It is the command printed on exit, run in
+ * the session's directory: `--session <id>` finds the session there.
+ */
+function getProgramResumeCommand(sessionManager: SessionManager): ProgramResumeCommand | undefined {
+	const argv = getResumeArgs(sessionManager);
+	return argv && { argv, cwd: sessionManager.getCwd() };
 }
 
 function hasDefaultModelProvider(providerId: string): providerId is keyof typeof defaultModelPerProvider {
@@ -460,6 +477,11 @@ export interface InteractiveModeOptions {
 	initialThemeSetting?: string;
 	/** Terminal implementation. Defaults to the current process terminal. */
 	terminal?: Terminal;
+	/**
+	 * Token the terminal set in `OSC7577_TOKEN`, taken out of the environment before any child process starts.
+	 * When set, pi tells the terminal how to resume the session after the terminal restarts.
+	 */
+	programResumeToken?: string;
 }
 
 interface ExtensionChangelogUpdate {
@@ -626,6 +648,9 @@ export class InteractiveMode {
 		() => this.sessionManager.getSessionName(),
 	);
 
+	/** Reports how to resume the session to terminals that support OSC 7577. Undefined without a token. */
+	private readonly programResume: ProgramResumeReporter | undefined;
+
 	/** The `/bug` hint is shown at most once per session so error output stays readable. */
 	private bugReportHintShown = false;
 	private installChangeWarningShown = false;
@@ -691,6 +716,13 @@ export class InteractiveMode {
 		const tuiMode = options.tuiMode ?? this.settingsManager.getTuiMode();
 		this.options = { ...options, tuiMode };
 		this.autoTrustOnReloadCwd = options.autoTrustOnReloadCwd;
+		if (options.programResumeToken) {
+			this.programResume = new ProgramResumeReporter(
+				options.programResumeToken,
+				() => this.ui.terminal,
+				() => getProgramResumeCommand(this.sessionManager),
+			);
+		}
 		this.runtimeHost.setBeforeSessionInvalidate(() => {
 			this.resetExtensionUI();
 		});
@@ -1094,6 +1126,7 @@ export class InteractiveMode {
 		this.ui.start();
 		this.isInitialized = true;
 		this.programStatus.report();
+		this.programResume?.report();
 		this.ensurePngTranscoder();
 
 		this.themeController.applyFromSettings();
@@ -1295,11 +1328,6 @@ export class InteractiveMode {
 
 		if (migratedProviders && migratedProviders.length > 0) {
 			this.showWarning(`Migrated credentials to auth.json: ${migratedProviders.join(", ")}`);
-		}
-
-		const modelsJsonError = this.session.modelRuntime.getError();
-		if (modelsJsonError) {
-			this.showError(`models.json error: ${modelsJsonError}`);
 		}
 
 		if (modelFallbackMessage) {
@@ -2280,6 +2308,7 @@ export class InteractiveMode {
 		this.unsubscribe?.();
 		this.unsubscribe = undefined;
 		this.programStatus.reset();
+		this.programResume?.report();
 		this.applyRuntimeSettings();
 
 		if (options.renderBeforeBind) {
@@ -3603,6 +3632,9 @@ export class InteractiveMode {
 
 		this.footer.invalidate();
 		this.programStatus.handleEvent(event);
+		// The session file, and with it the resume command, appears when the first prompt is written, which
+		// happens after its message_end reaches listeners. The reply's message_start or the run's end sees it.
+		if (event.type === "message_start" || event.type === "agent_settled") this.programResume?.reportIfNone();
 
 		switch (event.type) {
 			case "agent_start":
@@ -4536,7 +4568,7 @@ export class InteractiveMode {
 		// dispatch and re-sends the signal if only its own listeners remain.
 
 		if (options?.fromSignal) {
-			// Signal-triggered shutdown (SIGTERM/SIGHUP). Emit extension cleanup
+			// Signal-triggered shutdown (SIGTERM/SIGHUP, SIGBREAK on Windows). Emit extension cleanup
 			// (session_shutdown) BEFORE touching the terminal. Extension teardown
 			// such as removing sockets does not write to the tty, so it must not be
 			// skipped if a later terminal-restore write fails on a dead or stalled
@@ -4559,6 +4591,8 @@ export class InteractiveMode {
 		// This prevents escape sequences from leaking to the parent shell over slow SSH.
 		this.themeController.disableAutoSync();
 		await this.ui.terminal.drainInput(1000);
+		// The user ended pi, so the terminal must not bring it back. Signal shutdowns above keep the command.
+		this.programResume?.clear();
 
 		this.stop();
 		await this.runtimeHost.dispose();
@@ -4636,6 +4670,11 @@ export class InteractiveMode {
 		this.unregisterSignalHandlers();
 
 		const signals: NodeJS.Signals[] = ["SIGTERM", "SIGHUP"];
+		// Without a listener, a console Ctrl+Break ends the process without running any JavaScript,
+		// leaving the alternate screen, mouse reporting and keyboard modes on (#12133). Raw mode does
+		// not block it, and a console child calling GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT) on a
+		// process that is not a group leader sends it to every process in the console.
+		if (process.platform === "win32") signals.push("SIGBREAK");
 
 		for (const signal of signals) {
 			const handler = () => {
@@ -4700,6 +4739,7 @@ export class InteractiveMode {
 			clearInterval(suspendKeepAlive);
 			process.removeListener("SIGINT", ignoreSigint);
 			this.ui.start();
+			this.programResume?.reportAgain();
 			this.ui.requestRender(true);
 		});
 
@@ -6750,7 +6790,7 @@ export class InteractiveMode {
 			const savedImplicitProjectTrust = this.maybeSaveImplicitProjectTrustAfterReload();
 			const modelsJsonError = this.session.modelRuntime.getError();
 			if (modelsJsonError) {
-				this.showError(`models.json error: ${modelsJsonError}`);
+				this.showWarning(`models.json error: ${modelsJsonError}`);
 			}
 			this.showStatus(
 				savedImplicitProjectTrust

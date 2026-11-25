@@ -3,8 +3,8 @@ import { addMissing, defineProvider, mergeCompat, mergeThinking, modelsDevModels
 import {
 	CLAUDE_55_THINKING_LEVELS,
 	enableClaudeMidConvoEffort,
+	supportsClaudeMidConvoChanges,
 	supportsClaudeMidConvoEffort,
-	supportsClaudeMidConvoSystemMessages,
 } from "../families/anthropic.ts";
 
 // Models the API may fall back to, with the price the caller is billed.
@@ -53,7 +53,7 @@ export default defineProvider({
 		if (model.api !== "anthropic-messages") return;
 		const messagesModel = model as Model<"anthropic-messages">;
 		if (supportsClaudeMidConvoEffort(model.id)) enableClaudeMidConvoEffort(messagesModel);
-		if (supportsClaudeMidConvoSystemMessages(model.id)) {
+		if (supportsClaudeMidConvoChanges(model.id)) {
 			mergeCompat(messagesModel, { supportsMidConvoSystemMessages: true, supportsMidConvoToolChanges: true });
 		}
 		mergeCompat(messagesModel, { supportsStrictTools: true });

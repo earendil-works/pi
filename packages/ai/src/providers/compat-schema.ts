@@ -273,11 +273,10 @@ const OpenAICompletionsCompatProperties = {
 				stringLiteral("chat-template"),
 				stringLiteral("qwen-chat-template"),
 				stringLiteral("string-thinking"),
-				stringLiteral("ant-ling"),
 			],
 			{
 				description:
-					'Format for reasoning or thinking parameters. When omitted, Pi auto-detects the format from the provider URL. "openai" uses reasoning_effort, "openrouter" uses reasoning.effort, "deepseek" uses thinking.type plus reasoning_effort when supported, "together" uses reasoning.enabled plus reasoning_effort when supported, "baseten" uses configurable chat_template_args plus reasoning_effort when supported, "zai" uses thinking.type, "qwen" uses top-level enable_thinking, "qwen-chat-template" uses chat_template_kwargs.enable_thinking and preserve_thinking, "chat-template" uses configurable chat_template_kwargs, "string-thinking" uses top-level thinking, and "ant-ling" uses reasoning.effort only when the mapped effort is non-null.',
+					'Format for reasoning or thinking parameters. When omitted, Pi auto-detects the format from the provider URL. "openai" uses reasoning_effort, "openrouter" uses reasoning.effort, "deepseek" uses thinking.type plus reasoning_effort when supported, "together" uses reasoning.enabled plus reasoning_effort when supported, "baseten" uses configurable chat_template_args plus reasoning_effort when supported, "zai" uses thinking.type, "qwen" uses top-level enable_thinking, "qwen-chat-template" uses chat_template_kwargs.enable_thinking and preserve_thinking, "chat-template" uses configurable chat_template_kwargs, and "string-thinking" uses top-level thinking.',
 			},
 		),
 	),
@@ -538,6 +537,11 @@ const BedrockCompatProperties = {
 	supportsStrictMode: optionalCompatBoolean({
 		description: "Whether the model supports Bedrock strict tool schemas.",
 		default: false,
+	}),
+	supportsReasoningReplay: optionalCompatBoolean({
+		description:
+			"Whether the model accepts reasoning blocks from earlier assistant messages. When false, earlier reasoning is not sent back. The generated catalog disables this for Kimi K3 models, which fail on Converse when it is sent.",
+		default: true,
 	}),
 };
 

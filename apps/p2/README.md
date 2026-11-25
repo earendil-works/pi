@@ -222,6 +222,8 @@ or `>`; default "Owner") is the name your messages carry from then on; messages 
 agent's texts and its tool calls on one wheel per turn; 2 the texts too, thinking and calls on wheels between them;
 3 thinking too (collapsed), only runs of tool calls on wheels; 4 thinking in full and each tool call as its own row,
 no wheels.
+`shareInviteUses` (1 to 100, default 1) is how many people one share link copied through Radius admits: there,
+without a tunnel host, every copy is a new invite that opens for 15 minutes (see `docs/p2-notes.md`, Radius).
 `telemetry` (boolean, default `false`) records traces and metrics: the server's own, every session worker's and owners'
 pages', in `<P2_DATA_DIR>/telemetry.sqlite` (7 days), read in the Traces pane (Settings, or the command "Show traces")
 and by the agent's `telemetry_*` code-mode tools. It costs CPU and storage on every request, so it is off unless set to

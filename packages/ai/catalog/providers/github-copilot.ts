@@ -1,10 +1,16 @@
 import type { Api, ClassifierModel, Model, ThinkingLevelMap } from "../../src/types.ts";
 import { addMissing, type ChatModel, defineProvider, mergeCompat, mergeThinking, modelsDevModels } from "../define.ts";
-import { CLAUDE_55_THINKING_LEVELS, supportsClaudeMidConvoSystemMessages } from "../families/anthropic.ts";
+import {
+	CLAUDE_55_THINKING_LEVELS,
+	enableClaudeMidConvoEffort,
+	supportsClaudeMidConvoChanges,
+	supportsClaudeMidConvoEffort,
+} from "../families/anthropic.ts";
 import {
 	enableOpenAiGrammarTools,
 	enableOpenAiMidConvoSystemMessages,
 	OPENAI_DECISIONS_COST,
+	OPENAI_MID_CONVO_EFFORT_MODEL_IDS,
 	openAiStandardCost,
 } from "../families/openai.ts";
 
@@ -34,6 +40,16 @@ const EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_MODEL_IDS = new Set([
 	"claude-haiku-4.5",
 	"claude-sonnet-4",
 	"claude-sonnet-4.5",
+]);
+
+// Copilot-served Responses models outside OpenAI's verified list that follow a developer message sent
+// mid-conversation and keep the prompt cache with it; folded into the leading prompt, the flash models
+// and gpt-5.3-codex ignored it (#12316, checked 2026-11-25).
+const MID_CONVO_SYSTEM_MESSAGE_MODEL_IDS = new Set([
+	"gpt-5.3-codex",
+	"mai-code-1.1-flash",
+	"mai-code-2",
+	"mai-code-2-flash",
 ]);
 
 // Checked manually against the authenticated GitHub Copilot /models endpoint on 2026-06-15.
@@ -140,11 +156,16 @@ export default defineProvider({
 		if (override) mergeThinking(model, override);
 		if (model.api === "anthropic-messages") {
 			const messagesModel = model as Model<"anthropic-messages">;
-			// Copilot forwards mid-conversation system messages but rejects
-			// `tool_addition`/`tool_removal` blocks, so tool changes stay top-level.
-			if (supportsClaudeMidConvoSystemMessages(model.id)) {
-				mergeCompat(messagesModel, { supportsMidConvoSystemMessages: true });
+			// Copilot forwards per-message `output_config` effort, mid-conversation system messages, and
+			// `tool_addition`/`tool_removal` blocks with their betas (#12316, checked 2026-11-23 on
+			// Opus, Sonnet, and Haiku 5.5).
+			if (supportsClaudeMidConvoEffort(model.id)) enableClaudeMidConvoEffort(messagesModel);
+			if (supportsClaudeMidConvoChanges(model.id)) {
+				mergeCompat(messagesModel, { supportsMidConvoSystemMessages: true, supportsMidConvoToolChanges: true });
 			}
+			// Copilot keeps Anthropic's cache lifetimes: a default entry was hit after 270 s and missed
+			// after 330 s, a `ttl: "1h"` entry was hit after 420 s (#12316, checked 2026-11-23).
+			messagesModel.promptCache = { short: 300, long: 3600 };
 			if (EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_MODEL_IDS.has(model.id)) {
 				mergeCompat(messagesModel, { supportsEagerToolInputStreaming: false });
 			}
@@ -156,6 +177,14 @@ export default defineProvider({
 		// Copilot passes mid-conversation developer messages and `additional_tools`
 		// through to OpenAI unchanged; tool search is not verified through it.
 		enableOpenAiMidConvoSystemMessages(model, { proxy: true });
+		if (model.api === "openai-responses" && MID_CONVO_SYSTEM_MESSAGE_MODEL_IDS.has(model.id)) {
+			mergeCompat(model as Model<"openai-responses">, { supportsMidConvoSystemMessages: true });
+		}
 		enableOpenAiGrammarTools(model);
+		// Copilot applies `configuration_update` effort items and keeps the prompt cache across
+		// effort changes, which a changed `reasoning.effort` drops (#12316, checked 2026-11-23).
+		if (model.api === "openai-responses" && OPENAI_MID_CONVO_EFFORT_MODEL_IDS.has(model.id)) {
+			mergeCompat(model as Model<"openai-responses">, { supportsMidConvoEffort: true });
+		}
 	},
 });

@@ -5,7 +5,7 @@
 //
 // `/share` (owner): the session's two links and the guests connected now. Enter copies a link (creating it first)
 // through the launcher's `copy` (its consent screen shows the link); a first read/write link on a remote environment is
-// confirmed first. Ctrl+R resets a link (new token, its guests lose access), Ctrl+D removes a guest; both confirmed.
+// confirmed first. Through Radius without a tunnel host the copied link is a new invite (`ShareInvite`). Ctrl+R resets a link (new token, its guests lose access), Ctrl+D removes a guest; both confirmed.
 //
 // While the brain is connected to Radius, `/share <email> [full]` shares the session with a person, who opens it in
 // Radius signed in with that email. The overlay lists them; Enter copies the session's Radius address to send them.
@@ -13,7 +13,7 @@
 import { BACKGROUND_CONTEXT, follow, live, whenLive } from "@p2/app/v1";
 import type { TuiCommand, TuiContext } from "@p2/app/v1/tui";
 import { confirm, grantNotice, ListOverlay, type ListRow, lineText, TuiScope, tuiFacet } from "@p2/app/v1/tui";
-import { GuestPresence, type ShareMode, Sharing } from "./contract.ts";
+import { GuestPresence, ShareInvite, type ShareMode, Sharing } from "./contract.ts";
 
 const LABEL: Record<ShareMode, string> = { view: "Read-only", full: "Read/write" };
 type Link = { mode: ShareMode; token: string; url: string };
@@ -26,6 +26,7 @@ function openShare(ctx: TuiContext): void {
 	const session = ctx.identity.session;
 	if (!session) return;
 	const sharing = ctx.host.hold(Sharing, { session }, BACKGROUND_CONTEXT);
+	const invites = ctx.host.hold(ShareInvite, { session }, BACKGROUND_CONTEXT);
 	const owner = () => live(sharing);
 	let links: Link[] | undefined;
 	let guests: Guest[] = [];
@@ -63,13 +64,11 @@ function openShare(ctx: TuiContext): void {
 		status = message(error);
 		ctx.requestRender();
 	};
-	/** The link of `mode`, created first when missing (and confirmed for read/write on a remote environment). */
-	const linkOf = async (mode: ShareMode): Promise<string | undefined> => {
-		const service = owner();
+	/** The URL to hand out for the link of `mode`, created first when missing (confirmed for read/write remotely). */
+	const linkOf = async (mode: ShareMode): Promise<{ url: string; expiresAt: number | null } | undefined> => {
+		const service = live(invites);
 		if (!service) return undefined;
-		const existing = links?.find((link) => link.mode === mode)?.url;
-		if (existing) return existing;
-		const remote = mode === "full" && env !== null;
+		const remote = mode === "full" && env !== null && !links?.some((link) => link.mode === mode);
 		if (
 			remote &&
 			!(await confirm(ctx, [
@@ -78,16 +77,15 @@ function openShare(ctx: TuiContext): void {
 			]))
 		)
 			return undefined;
-		await service.link({ mode, ...(remote ? { remoteConfirmed: true } : {}) }, BACKGROUND_CONTEXT);
-		// The answer follows its state: the new link is in `links` when the call resolves.
-		return service.links.value.find((link) => link.mode === mode)?.url;
+		return service.invite({ mode, ...(remote ? { remoteConfirmed: true } : {}) }, BACKGROUND_CONTEXT);
 	};
 	const copy = async (mode: ShareMode) => {
 		status = "";
-		const url = await linkOf(mode);
-		if (!url) return;
-		const result = await ctx.grant("copy", { text: url, label: `${LABEL[mode]} share link` });
-		grantNotice(ctx, `${LABEL[mode]} link copied`, result);
+		const link = await linkOf(mode);
+		if (!link) return;
+		const result = await ctx.grant("copy", { text: link.url, label: `${LABEL[mode]} share link` });
+		const invite = link.expiresAt === null ? "" : " (an invite: it opens for 15 minutes)";
+		grantNotice(ctx, `${LABEL[mode]} link copied${invite}`, result);
 	};
 	const reset = async (mode: ShareMode) => {
 		const service = owner();
@@ -199,6 +197,7 @@ function openShare(ctx: TuiContext): void {
 			onClose: () => {
 				for (const stop of stops) stop();
 				sharing.release();
+				invites.release();
 				overlay.close();
 			},
 		}),
