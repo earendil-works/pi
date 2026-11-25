@@ -1,5 +1,9 @@
 # Waiting work: the host side of suspendable work (p2, p3)
 
+**Predates Chord slice 15:** its contract variants (`variants`, `{ variant, members }`, `ref.variant`, `expectVariant`)
+are gone; a remote contract now has one shape with `grantable(...)` members granted per caller by its `admit`
+(`packages/chord/docs/slice-15.md`; p2: `grantBy`, `liveWith` in `docs/p2-notes.md`).
+
 Status: design draft, 2026-11-09, by the p3 session (8b6ab5cc) at the owner's request. Nothing is built or committed.
 It builds on `packages/durable/docs/suspendable/spec.md` (fifth revision, cited as "S§n") and changes nothing in
 Durable. It covers what S§9 leaves to hosts: how plugins' hooks are composed, the records of open waits and their UI,

@@ -1,5 +1,9 @@
 # p3 / Chord v2: the whole target design as a walkthrough
 
+**Predates Chord slice 15:** its contract variants (`variants`, `{ variant, members }`, `ref.variant`, `expectVariant`)
+are gone; a remote contract now has one shape with `grantable(...)` members granted per caller by its `admit`
+(`packages/chord/docs/slice-15.md`; p2: `grantBy`, `liveWith` in `docs/p2-notes.md`).
+
 A reading aid for checking completeness, not a new source. Sources: `redesign-decisions.md` (wins on conflict),
 `target-design.md`, `questions.md`, `plugin-loading.md`, `p3-functions/`, `changes.md`. Marks: **[D]** decided,
 **[B]** built in today's Chord, **[S]** superseded by a later decision, **[O]** open, **[P]** proposed, not decided.

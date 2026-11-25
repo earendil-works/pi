@@ -1,5 +1,9 @@
 # Chord and p2: target design (superseded)
 
+**Predates Chord slice 15:** its contract variants (`variants`, `{ variant, members }`, `ref.variant`, `expectVariant`)
+are gone; a remote contract now has one shape with `grantable(...)` members granted per caller by its `admit`
+(`packages/chord/docs/slice-15.md`; p2: `grantBy`, `liveWith` in `docs/p2-notes.md`).
+
 **Superseded by `packages/chord/docs/design.md` (target design v2).** Kept for its history and reasoning.
 
 Replaces the previous target design (drain-based handover, fences, code versions) and the proposals

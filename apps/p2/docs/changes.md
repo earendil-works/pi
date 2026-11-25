@@ -1,5 +1,9 @@
 # Chord and p2: decided changes
 
+**Predates Chord slice 15:** its contract variants (`variants`, `{ variant, members }`, `ref.variant`, `expectVariant`)
+are gone; a remote contract now has one shape with `grantable(...)` members granted per caller by its `admit`
+(`packages/chord/docs/slice-15.md`; p2: `grantBy`, `liveWith` in `docs/p2-notes.md`).
+
 Changes decided while walking through Chord's concepts. Each entry says what changes, why, and what it touches. The
 loader and reload work is in `plugin-loading.md` (12.1, 14); the open redesign of resources, listeners and lifecycles is
 still being discussed and is not listed here until decided.

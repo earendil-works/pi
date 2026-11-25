@@ -1,5 +1,9 @@
 # Chord and p2: a guided walkthrough
 
+**Predates Chord slice 15:** its contract variants (`variants`, `{ variant, members }`, `ref.variant`, `expectVariant`)
+are gone; a remote contract now has one shape with `grantable(...)` members granted per caller by its `admit`
+(`packages/chord/docs/slice-15.md`; p2: `grantBy`, `liveWith` in `docs/p2-notes.md`).
+
 A step-by-step introduction to how p2 plugins work on top of Chord, for someone who knows nothing about either. It
 describes the design (`target-design.md`), not the state of the implementation.
 
