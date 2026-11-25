@@ -39,25 +39,31 @@ const OPEN: Readonly<Record<string, string>> = {};
 const OPEN_SEEDS: Readonly<Record<number, string>> = {};
 
 describe("grantable members across versions and lifecycles, against the model", () => {
-	it(`hold for seeds ${FIRST} to ${FIRST + SEEDS - 1} (${STEPS} steps each)`, async () => {
-		const found: string[] = [];
-		const categories = new Set<string>();
-		for (let seed = FIRST; seed < FIRST + SEEDS; seed++) {
-			if (OPEN_SEEDS[seed] !== undefined) continue;
-			const spec = generate(seed, STEPS, LIMITS);
-			const failure = await run(spec, seed);
-			if (failure === undefined || categories.has(failure.category)) {
-				if (failure !== undefined) found.push(`seed ${seed}: ${failure.category} (shrunk under an earlier seed)`);
-				continue;
+	it(
+		`hold for seeds ${FIRST} to ${FIRST + SEEDS - 1} (${STEPS} steps each)`,
+		async () => {
+			const found: string[] = [];
+			const categories = new Set<string>();
+			for (let seed = FIRST; seed < FIRST + SEEDS; seed++) {
+				if (OPEN_SEEDS[seed] !== undefined) continue;
+				const spec = generate(seed, STEPS, LIMITS);
+				const failure = await run(spec, seed);
+				if (failure === undefined || categories.has(failure.category)) {
+					if (failure !== undefined)
+						found.push(`seed ${seed}: ${failure.category} (shrunk under an earlier seed)`);
+					continue;
+				}
+				categories.add(failure.category);
+				const small = await shrink(spec, failure, seed);
+				const text = `seed ${seed}, step ${small.failure.step}, ${small.failure.category}:\n${small.failure.message}\n${describeCase(small.spec)}\n${JSON.stringify(small.spec)}`;
+				console.log(text);
+				found.push(text);
 			}
-			categories.add(failure.category);
-			const small = await shrink(spec, failure, seed);
-			const text = `seed ${seed}, step ${small.failure.step}, ${small.failure.category}:\n${small.failure.message}\n${describeCase(small.spec)}\n${JSON.stringify(small.spec)}`;
-			console.log(text);
-			found.push(text);
-		}
-		expect(found).toEqual([]);
-	}, 600_000);
+			expect(found).toEqual([]);
+			// A long hunt runs as long as it needs: about a second per seed and step at most.
+		},
+		Math.max(600_000, SEEDS * STEPS * 1_000),
+	);
 });
 
 /** `spec` with the keyed contract's history `versions` (its members named `k…` keyed, `t…` plain). */
@@ -261,6 +267,40 @@ const REGRESSIONS: Readonly<Record<string, Case>> = {
 		"e0",
 		[[add("e0")], [change("e0")]],
 		[serve(2, [1]), hold(1, 1, "link"), decide("owner", denying), serve(2, [1], { "1:e0": "refuse" })],
+	),
+	// What the model had wrong (seeds 13, 218, 50655, 50994 of the long hunts): an attempt drops the in-memory documents
+	// its code no longer declares, so a keyed member declared again starts over (as on main) ...
+	"a keyed member declared again after a version without it starts over": withKeyed(
+		scenario(
+			"",
+			[[]],
+			[
+				{ kind: "kserve", version: 1, accepts: { versions: [], choices: {} } },
+				{ kind: "khold", id: 1, version: 1 },
+				{ kind: "kput", member: "k0", key: "a", value: "stored" },
+				{ kind: "kserve", version: 2, accepts: { versions: [1], choices: {} } },
+				{ kind: "kserve", version: 1, accepts: { versions: [], choices: {} } },
+			],
+		),
+		[[add("k0")], [remove("k0")]],
+	),
+	// ... a call of a grantable method its live binding does not grant is refused at once, also during a reload ...
+	"a call its binding does not grant is refused while the provider reloads": scenario(
+		"m0 m1g",
+		[[add("m0"), add("m1")], [remove("m1")]],
+		[decide("owner", allowing("m1")), serve(2), hold(1, 1, "link"), serve(1, [], {}, false, true)],
+	),
+	// ... and a decision the admission filters to the same value does not retry a failed object.
+	"a decision equal after the admission's filter leaves a failed object failed": scenario(
+		"m0g",
+		[[]],
+		[
+			serve(1),
+			hold(1, 1, "local"),
+			decide("server", allowing("f0")),
+			{ kind: "break", who: "server" },
+			decide("server", allowing("m0", "f0")),
+		],
 	),
 	// Round 2 of the reviews (on 864a0e253), as the model finds them.
 	"a call made at the reload's gate does not run once its version is refused": scenario(

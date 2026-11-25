@@ -12,17 +12,7 @@ import type { JsonValue } from "../../../src/json.ts";
 import { memoryLinkPair } from "../../../src/link/index.ts";
 import type { NativeWatchHandle, WatchHandle } from "../../../src/watch.ts";
 import { failLive, instancesOf, Server, type TestPrincipal, testCodec } from "../../support.ts";
-import {
-	type Case,
-	type Decision,
-	encode,
-	KEYS,
-	keyedMembersAt,
-	membersAt,
-	poolOf,
-	type Step,
-	type Who,
-} from "./case.ts";
+import { type Case, encode, KEYS, keyedMembersAt, membersAt, poolOf, type Step, type Who } from "./case.ts";
 import {
 	ABSENT,
 	bindingOf,
@@ -39,6 +29,7 @@ import {
 	PRESENT,
 	type Received,
 	type Status,
+	sameDecision,
 	thrown,
 	type View,
 	type World,
@@ -225,7 +216,7 @@ export async function run(spec: Case, seed = 0): Promise<Failure | undefined> {
 			const factoriesBefore = shared.factories;
 			const equalDecision =
 				step.kind === "decide" &&
-				sameDecision(world.decisions[step.who], step.decision) &&
+				sameDecision(spec, world, world.decisions[step.who], step.decision) &&
 				world.provider !== undefined;
 			state.emitted = new Map();
 			for (const followed of everyFollowed(state)) followed.frames = [];
@@ -285,6 +276,10 @@ export async function perform(state: Run, step: Step, index: number): Promise<Om
 			break;
 		case "kserve":
 			world.keyed.provider = { version: step.version, accepts: step.accepts };
+			// An attempt drops the in-memory documents its code no longer declares (`Documents.hydrate`): a member
+			// declared again starts over from `initial()`.
+			for (const member of Object.keys(world.keyed.docs))
+				if (!keyedMembersAt(spec, step.version).has(member)) delete world.keyed.docs[member];
 			state.plugins.keyed = keyedPlugin(spec, state.keyedContracts, step.version, step.accepts, shared);
 			await reload(state);
 			break;
@@ -338,7 +333,7 @@ export async function perform(state: Run, step: Step, index: number): Promise<Om
 		case "decide": {
 			// Another decision retries a failed object or shows its denial (§6 "A failed admitted object follows its
 			// admission"); an equal one does nothing.
-			if (!sameDecision(world.decisions[step.who], step.decision)) world.broken.delete(step.who);
+			if (!sameDecision(spec, world, world.decisions[step.who], step.decision)) world.broken.delete(step.who);
 			world.decisions[step.who] = step.decision;
 			const access = await server.get(Access, {}, ctx);
 			await access.set(null, ctx);
@@ -487,16 +482,16 @@ export async function busyReload(
 	// The restart's old attempt stays open for the running call; the reload commits before the drain.
 	for (let round = 0; round < 200 && !objects.some((object) => object.deref()?.openOldAttempt !== undefined); round++)
 		await delay(0);
-	// What each reference shows when it calls: a failure rejects at once; live or loading, the call waits at the gate
-	// (or parks) and runs on the new provider.
-	const parked: { held: Held; member: string; shown: string; call: Promise<Outcome> }[] = [];
+	// What each reference shows when it calls: a failure rejects at once, and so does a grantable method its binding
+	// does not grant; otherwise, live or loading, the call waits at the gate (or parks) and runs on the new provider.
+	const parked: { held: Held; member: string; at: CalledAt; call: Promise<Outcome> }[] = [];
 	for (const held of state.consumers.values()) {
 		if (held.view.status === "loading") continue;
 		for (const [member, shape] of membersAt(spec, held.version)) {
 			const handle = methodHandle(spec, held, member);
-			const shown = held.ref.state.value.kind;
-			if (handle !== undefined)
-				parked.push({ held, member, shown, call: callResult(handle(encode(shape.a, `y${index}`), ctx)) });
+			if (handle === undefined) continue;
+			const at = calledAt(held.ref, poolOf(spec, member).grantable && !held.ref.granted.has(member));
+			parked.push({ held, member, at, call: callResult(handle(encode(shape.a, `y${index}`), ctx)) });
 		}
 	}
 	shared.busy = undefined;
@@ -511,17 +506,36 @@ export async function busyReload(
 			category: "busy call",
 			message: `${blocker.held.label} ${blocker.member}() running at the reload: expected ${JSON.stringify(blocker.want)}, saw ${JSON.stringify(old)}`,
 		};
-	for (const { held, member, shown, call } of parked) {
-		const want =
-			shown === "failed" ? thrown("*") : expectedCall(spec, state.world, held, held.view, member, `y${index}`);
+	for (const { held, member, at, call } of parked) {
 		const got = await call;
+		// Loading without the grant: the reference may refuse it at once or the new binding may grant it.
+		if (at === "loading-ungranted") continue;
+		const want =
+			at === "failed"
+				? thrown("*")
+				: at === "live-ungranted"
+					? thrown("forbidden")
+					: expectedCall(spec, state.world, held, held.view, member, `y${index}`);
 		if (!fits(want, got))
 			return {
 				category: "parked call",
-				message: `${held.label} ${member}() made while the provider reloaded (${shown}, then ${held.view.status}): expected ${JSON.stringify(want)}, saw ${JSON.stringify(got)}`,
+				message: `${held.label} ${member}() made while the provider reloaded (${at}, then ${held.view.status}): expected ${JSON.stringify(want)}, saw ${JSON.stringify(got)}`,
 			};
 	}
 	return undefined;
+}
+
+/**
+ * How a call meets its reference: failed (rejected at once), live without the method's grant (refused at once,
+ * `forbidden`), loading without it (either), or waiting at the gate or parked (it runs on the new provider).
+ */
+type CalledAt = "failed" | "live-ungranted" | "loading-ungranted" | "runs";
+
+function calledAt(ref: DynRef, ungranted: boolean): CalledAt {
+	const { kind } = ref.state.value;
+	if (kind === "failed" || kind === "ended") return "failed";
+	if (!ungranted) return "runs";
+	return kind === "live" ? "live-ungranted" : "loading-ungranted";
 }
 
 /** A live consumer's method call that reaches the provider's code (a value expected), to keep the old attempt busy. */
@@ -557,12 +571,6 @@ export function connect(server: Host<TestPrincipal>, client: Host<TestPrincipal>
 	server.accept(serverEnd, { principal: { kind: "owner" }, codec: testCodec() }, ctx);
 	client.connect(clientEnd, { principal: { kind: "server" }, codec: testCodec() }, ctx);
 	return clientEnd;
-}
-
-export function sameDecision(a: Decision, b: Decision): boolean {
-	if (a.kind === "allow" && b.kind === "allow")
-		return [...new Set(a.granted)].sort().join() === [...new Set(b.granted)].sort().join();
-	return JSON.stringify(a) === JSON.stringify(b);
 }
 
 export function followed(label: string, ref: DynRef): Followed {

@@ -261,3 +261,19 @@ export function whoOf(consumer: Consumer): Who {
 export function baseOf(world: World, member: string): string {
 	return world.base[member] ?? `${member}.0`;
 }
+
+/**
+ * Whether two decisions are one to the provider: the same value once its admission filtered the names to its version's
+ * and Chord sorted and deduped them (slice 15 §1.2: an equal value does nothing).
+ */
+export function sameDecision(spec: Case, world: World, a: Decision, b: Decision): boolean {
+	const now = world.provider === undefined ? undefined : membersAt(spec, world.provider.version);
+	const value = (decision: Decision) =>
+		decision.kind === "deny"
+			? JSON.stringify(decision)
+			: [...new Set(decision.granted)]
+					.filter((name) => now === undefined || isGrantableName(spec, name, now))
+					.sort()
+					.join();
+	return value(a) === value(b);
+}
