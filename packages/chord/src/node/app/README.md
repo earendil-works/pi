@@ -57,7 +57,7 @@ startWorker<P>({ api, kinds, busy, onError });
 ```
 
 - **The principal type** `P` is the app's. The kit needs `principal.server`, `principal.owner` (any value of `P`: one of
-  the app's users or a variant of its own) and, with worker kinds, `principal.worker(address)` (worker kinds without it
+  the app's users or a kind of its own) and, with worker kinds, `principal.worker(address)` (worker kinds without it
   are a type error on `AppOptions`, also a `workers` list typed as an array, not a tuple, that is empty). The owner must
   be strict JSON (sign-ins keep it as JSON) and not the server's principal: `startServer` refuses either. The owner
   link, the owner token file and device pairing sign in as `principal.owner`; pairing's confirm and approval, its caps'

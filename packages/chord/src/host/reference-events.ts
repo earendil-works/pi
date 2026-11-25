@@ -2,7 +2,7 @@
 // (`on` only, never `emit`), what an object re-exposing one implements its member with, and a binding's taps on the
 // instance it is bound to. Per member a binding keeps its subscriptions and the re-exposing nodes it feeds, tapped on
 // the instance's node from the counter value of its binding to that instance; it moves them to every new instance it
-// binds (an older version's mapping; a variant without the member: none), and keeps them untapped while it points at
+// binds (an older version's mapping; an instance without the member: none), and keeps them untapped while it points at
 // nothing. Nothing missed is replayed.
 
 import type { Context } from "../context/index.ts";
@@ -132,7 +132,7 @@ export class ReferenceEventTaps {
 		return taps;
 	}
 
-	/** Taps `member` on the node of the instance pointed at (none: a variant without it, or nothing pointed at). */
+	/** Taps `member` on the node of the instance pointed at (none: an instance without it, or nothing pointed at). */
 	#place(member: string, taps: MemberTaps): void {
 		if (taps.attached !== undefined) taps.attached.node.untap(taps.attached.tap);
 		taps.attached = undefined;

@@ -4,7 +4,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
 import { createHost, defineFacet } from "../../src/host/index.ts";
 import { type WebSocketLike, webSocketLink } from "../../src/link/index.ts";
-import { Notes, Server, serveNotes, type TestPrincipal, transported } from "../support.ts";
+import { assertGranted, NOTES_EDITOR, Notes, Server, serveNotes, type TestPrincipal, transported } from "../support.ts";
 
 /** A socket playing a WebSocket by hand. */
 class FakeSocket implements WebSocketLike {
@@ -130,7 +130,7 @@ describe("WebSocket links over a loopback ws server", () => {
 		await tab.load([], context);
 		tab.connect(webSocketLink(new WebSocket(url)), { principal: { kind: "server" } }, context);
 		const notes = await tab.get(Notes, { session: "S1" }, context);
-		if (notes.variant !== "editor") throw new Error("expected the editor");
+		assertGranted(notes, NOTES_EDITOR);
 		expect(await notes.add({ text: "over ws" }, context)).toBe(1);
 		await transported();
 		expect(notes.notes.value).toEqual([{ text: "over ws" }]);
@@ -147,7 +147,7 @@ describe("WebSocket links over a loopback ws server", () => {
 		const code = new Promise<number>((resolve) => socket.once("close", resolve));
 		tab.connect(webSocketLink(socket), { principal: { kind: "server" } }, context);
 		const notes = await tab.get(Notes, { session: "S1" }, context);
-		if (notes.variant !== "editor") throw new Error("expected the editor");
+		assertGranted(notes, NOTES_EDITOR);
 		const call = notes.echo({ data: new Uint8Array(10_000) }, context).catch((error: unknown) => error);
 		expect(await code).toBe(1009);
 		expect(await call).toMatchObject({ code: "unavailable" });

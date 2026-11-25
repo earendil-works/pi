@@ -49,12 +49,12 @@ describe("host.root", () => {
 			version: 1,
 			params: {},
 			hostAddress: () => Server(),
-			variants: { main: { methods: { read: method(undefined, str()) } } },
+			methods: { read: method(undefined, str()) },
 		});
 		const host = createHost<TestPrincipal>({ address: Server(), principal: { kind: "server" }, onError: () => {} });
 		const facet = defineFacet<TestPrincipal>((h) => {
 			serveInfo(h);
-			h.serve(Secrets, () => ({ variant: "main", members: { read: async () => "secret" } }));
+			h.serve(Secrets, () => ({ read: async () => "secret" }));
 		});
 		await host.load([{ name: "@app/secrets", facet }], context);
 		const anonymous = { principal: undefined };

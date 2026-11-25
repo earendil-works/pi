@@ -29,7 +29,8 @@ const Game = remote("example.game", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
-	variants: { player: { state: { tick: int() }, events: { paddle: Sample } } },
+	state: { tick: int() },
+	events: { paddle: Sample },
 });
 
 const Ticks = defineState("ticks", { schema: obj({ n: int() }), version: 1, initial: () => ({ n: 0 }) });
@@ -51,7 +52,7 @@ const serverFacet = defineFacet<P>((host) => {
 	});
 	host.serve(Game, (_params, _principal, self) => {
 		const clock = self.get(Clock, {});
-		return { variant: "player", members: { tick: clock.tick, paddle: clock.paddle } };
+		return { tick: clock.tick, paddle: clock.paddle };
 	});
 });
 

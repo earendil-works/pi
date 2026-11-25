@@ -1,13 +1,15 @@
 // Admission (slice 14 §2): the decision made about a caller before anything is built or started. A remote type's
-// provider declares it with `admit`, run first in every attempt: it reads data about the caller (references with
-// keyed pins, registries, derives, live queries) and returns a watchable of `allow(value)` or `deny(reason)`; the
-// factory is handed the value. A route asks the same way before it resolves or forwards a hold. This file has the
-// app's types and one `Decision`: what one `admit` declared, what it says now, and the watch its owner follows it
-// with. What follows from a decision is its owner's: an attempt parks, goes on or is sealed (`attempt.ts`,
-// `object.ts`), a route holds back, forwards or releases (`route-admission.ts`).
+// provider declares it with `admit`, run first in every attempt: it reads data about the caller (references with keyed
+// pins, registries, derives, live queries) and returns a watchable of `allow(value)` or `deny(reason)`; the factory is
+// handed the value, whose `granted` names the grantable members and flags the caller gets (slice 15 §1.2). A route asks
+// the same way before it resolves or forwards a hold. This file has the app's types and one `Decision`: what one
+// `admit` declared, what it says now, and the watch its owner follows it with. What follows from a decision is its
+// owner's: an attempt parks, goes on or is sealed (`attempt.ts`, `object.ts`), a route holds back, forwards or releases
+// (`route-admission.ts`).
 
 import { type Context, withAbortSignal } from "../context/index.ts";
-import type { AdmittedOf, Contract, NamedQuery, ParamsOf } from "../contracts/index.ts";
+import type { AllowedOf, Contract, NamedQuery, ParamsOf } from "../contracts/index.ts";
+import { NO_GRANTS } from "../contracts/internal.ts";
 import { ChordError, forbidden, type Principal } from "../data/index.ts";
 import { asChordError, canonicalJson, checkParams } from "../data/internal.ts";
 import type { JsonValue } from "../json.ts";
@@ -54,10 +56,20 @@ export type Admit<C extends Contract, P extends Principal = Principal> = (
 	params: ParamsOf<C>,
 	principal: P,
 	self: AdmitSelf,
-) => Watchable<Admission<AdmittedOf<C>>>;
+) => Watchable<Admission<AllowedOf<C>>>;
 
-/** An allow as a decision keeps it: the same object for as long as the value stays equal (canonical JSON). */
-export type Allowed = { readonly kind: "allow"; readonly value: JsonValue };
+/**
+ * An allow as a decision keeps it: the same object for as long as the value stays equal (canonical JSON, `granted`
+ * sorted and without duplicates). `value` is what the factory is handed (`granted` as a set), `granted` the names.
+ */
+export type Allowed = {
+	readonly kind: "allow";
+	readonly value: JsonValue | AdmittedValue;
+	readonly granted: ReadonlySet<string>;
+};
+
+/** An object's admitted value as its factory gets it: the admitted data, and `granted` as a set. */
+export type AdmittedValue = { readonly [field: string]: unknown; readonly granted: ReadonlySet<string> };
 
 /** A denial as a decision keeps it: the same object, and the same error, for as long as the reason stays. */
 export type Denied = { readonly kind: "deny"; readonly error: ChordError };
@@ -78,13 +90,19 @@ export type DecisionOwner = {
 	readonly caller: Caller;
 	/** The object whose attempt it admits (its references' dependent: cycles, the start barrier); none for a route. */
 	readonly dependent: ChordObject | undefined;
+	/**
+	 * An object's: the names its contract lets an admission grant (grantable members and flags, slice 15 §1.2), against
+	 * which an allowed value is read; none for a route, whose value is passed on as it is.
+	 */
+	readonly grants: readonly string[] | undefined;
 	/** Something it reads changed (a source's state, the decision's value, in that change's batch): check it again. */
 	moved(): void;
 };
 
 /**
- * Allows the caller: `value` is what the factory is handed about it, plain JSON the contract's `admission` schema
- * describes (never validated). Small and rarely changing (a mode, a role): another value rebuilds the caller's object.
+ * Allows the caller: `value` is what the factory is handed about it, plain JSON: the names in `granted` (the grantable
+ * members and flags the caller gets, slice 15 §1.2) and the data the contract's `admission` schema describes (never
+ * validated). Small and rarely changing (a role): another value rebuilds the caller's object.
  */
 export function allow<const T extends JsonValue>(value: T): Admission<T> {
 	return { kind: "allow", value };
@@ -337,7 +355,22 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 		}
 		const { kind, value, reason } = (decision ?? {}) as { kind?: unknown; value?: JsonValue; reason?: unknown };
 		if (kind === "allow" && value !== undefined) {
-			return this.#decide(`allow ${canonicalJson(value, context)}`, () => ({ kind: "allow", value }));
+			const { grants } = this.#owner;
+			if (grants === undefined) {
+				return this.#decide(`allow ${canonicalJson(value, context)}`, () => ({
+					kind: "allow",
+					value,
+					granted: NO_GRANTS,
+				}));
+			}
+			const read = grantedOf(value, grants, label);
+			if (read.kind === "broken") return read;
+			const { normal, granted } = read;
+			return this.#decide(`allow ${canonicalJson(normal, context)}`, () => ({
+				kind: "allow",
+				value: { ...(normal as { readonly [field: string]: JsonValue }), granted },
+				granted,
+			}));
 		}
 		if (kind === "deny" && typeof reason === "string") {
 			return this.#decide(`deny ${reason}`, () => ({ kind: "deny", error: forbidden(reason) }));
@@ -360,6 +393,36 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 		}
 		return declaring;
 	}
+}
+
+/**
+ * An object's allowed value read against the names its contract lets an admission grant (slice 15 §1.2; plugin code,
+ * bundled without type checks): an object whose `granted`, when present, lists only such names. Returns the value with
+ * `granted` sorted and without duplicates (an equal set in another order is the same decision) and the names as a set;
+ * anything else breaks, naming the contract and the name.
+ */
+function grantedOf(
+	value: JsonValue,
+	grants: readonly string[],
+	label: string,
+):
+	| { readonly kind: "read"; readonly normal: JsonValue; readonly granted: ReadonlySet<string> }
+	| Extract<Verdict, { readonly kind: "broken" }> {
+	const broken = (message: string) => ({ kind: "broken" as const, error: asChordError(new Error(message), label) });
+	if (typeof value !== "object" || value === null || Array.isArray(value)) {
+		return broken("its admission's value is an object (allow({ granted, ...data }))");
+	}
+	const listed = value.granted;
+	if (listed === undefined) return { kind: "read", normal: value, granted: NO_GRANTS };
+	if (!Array.isArray(listed)) return broken("its admission's granted is a list of names");
+	for (const name of listed) {
+		if (typeof name !== "string" || !grants.includes(name)) {
+			return broken(`its admission granted ${JSON.stringify(name)}: no grantable member or flag of its contract`);
+		}
+	}
+	const names = [...new Set(listed as string[])].sort();
+	const granted = names.length === 0 ? NO_GRANTS : new Set(names);
+	return { kind: "read", normal: { ...value, granted: names }, granted };
 }
 
 /**

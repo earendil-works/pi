@@ -54,9 +54,9 @@ from `@earendil-works/chord`.
   contributor; one catalog per namespace and locale) with `translationsFacet`; `LocaleChoice` with
   `localeChoiceFacet`; `followActiveLanguage(host, preferred, changed, report, ctx)`, keeping the host's language as
   its page state (`hostLanguage`).
-- **A reference in one variant** (`variant.ts`; decision "C15 stands; the UI bindings follow the variant"): `liveIn(ref,
-  variant)`, the reference narrowed to `variant` while it is live in it, `undefined` otherwise; internal, what
-  React's `useVariant` and `TuiScope.variant` return, each with its own subscription to the reference's state. The
-  types `InVariant`, `VariantOf` and `VariantRef` are exported with those bindings.
+- **A reference read while live** (`live.ts`; slice 15 §1.5): `liveGrant(ref, wasLive)`, the reference's `granted`
+  while it is live or loads again after it was live, `undefined` otherwise; internal, what React's `useLive` and
+  `TuiScope.live` compare, each with its own subscription to the reference's state and its own memory of whether it
+  was live. The type `LiveRef` is exported with those bindings.
 
 Tests: `test/surfaces/`.

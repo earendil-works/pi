@@ -114,13 +114,13 @@ describe("the dependency check", () => {
 			version: 1,
 			params: {},
 			hostAddress: () => Server(),
-			variants: { v: { state: { n: int() } } },
+			state: { n: int() },
 		});
 		const B = remote("app.b", {
 			version: 1,
 			params: {},
 			hostAddress: () => Session({ id: "S1" }),
-			variants: { v: { state: { n: int() } } },
+			state: { n: int() },
 		});
 		const X = local("app.x", { version: 1, params: {}, members: { n: int() } });
 		const Kick = local("app.kick", { version: 1, params: {}, members: { n: int() } });
@@ -132,7 +132,7 @@ describe("the dependency check", () => {
 				// The server's host object starts the worker; its A and the worker's B then start in the same turns, so
 				// the activation chains miss the ring (M§7's gap).
 				h.serve(Kick, (_p, self) => ({ n: self.get(B, {}).n }));
-				h.serve(A, (_p, _principal, self) => ({ variant: "v", members: { n: self.get(B, {}).n } }));
+				h.serve(A, (_p, _principal, self) => ({ n: self.get(B, {}).n }));
 			},
 			worker: (h) => {
 				h.serve(Front, (_p, self) => ({ n: self.get(A, {}).n }));
@@ -140,7 +140,7 @@ describe("the dependency check", () => {
 				h.serve(B, (_p, _principal, self) => {
 					const a = self.get(A, {});
 					self.get(X, {});
-					return { variant: "v", members: { n: a.n } };
+					return { n: a.n };
 				});
 			},
 		});

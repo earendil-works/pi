@@ -4,6 +4,7 @@ import {
 	arr,
 	event,
 	evolve,
+	grantable,
 	hostKind,
 	int,
 	keyed,
@@ -25,10 +26,8 @@ const NotesV1 = remote("notes", {
 	version: 1,
 	params: { session: str() },
 	hostAddress: () => Server(),
-	variants: {
-		editor: { state: { notes: arr(Note), count: int() }, methods: { add: method(Note, str()), clear: method() } },
-		reader: { state: { notes: arr(Note) }, methods: { add: method(Note, str()) } },
-	},
+	state: { notes: arr(Note), count: grantable(int()) },
+	methods: { add: method(Note, str()), clear: grantable(method()) },
 });
 
 /** Calls `checkAccepts` through an untyped door, as a JavaScript caller would. */
@@ -37,64 +36,62 @@ const checkUntyped = checkAccepts as (contract: unknown, accepts: unknown) => un
 const toV1 = (note: { text: string; tag: string }) => ({ text: note.text });
 
 describe("state mappings", () => {
-	const v2 = evolve(NotesV1, (e) => e.state("editor", "notes", arr(NoteV2)));
+	const v2 = evolve(NotesV1, (e) => e.state("notes", arr(NoteV2)));
 
 	it("a changed member maps the current member to the old one", () => {
-		const accepts: AcceptsTable<typeof v2> = { 1: { state: { editor: { notes: (current) => current.map(toV1) } } } };
+		const accepts: AcceptsTable<typeof v2> = { 1: { state: { notes: (current) => current.map(toV1) } } };
 		expect(checkAccepts(v2, accepts)).toEqual({ versions: [{ version: 1, fingerprint: NotesV1.fingerprint }] });
 		// @ts-expect-error: the changed member needs a mapping
-		expect(() => checkAccepts(v2, { 1: { state: { editor: {} } } })).toThrow(
-			"notes accepts[1].state.editor.notes: missing mapping",
-		);
+		expect(() => checkAccepts(v2, { 1: { state: {} } })).toThrow("notes accepts[1].state.notes: missing mapping");
 		// @ts-expect-error: "refuse" is only for removed members
-		expect(() => checkAccepts(v2, { 1: { state: { editor: { notes: "refuse" } } } })).toThrow(
-			"notes accepts[1].state.editor.notes: expected a function",
+		expect(() => checkAccepts(v2, { 1: { state: { notes: "refuse" } } })).toThrow(
+			"notes accepts[1].state.notes: expected a function",
 		);
 		// @ts-expect-error: the mapping returns the old shape, not the current one
-		checkAccepts(v2, { 1: { state: { editor: { notes: (current) => current.map((note) => note.tag) } } } });
+		checkAccepts(v2, { 1: { state: { notes: (current) => current.map((note) => note.tag) } } });
 	});
 
-	it("a removed member maps the variant's whole current state, or refuses", () => {
-		const v3 = evolve(v2, (e) => e.removeState("editor", "count"));
+	it("a removed member maps the whole current state, or refuses; a grantable one like any", () => {
+		const v3 = evolve(v2, (e) => e.removeState("count"));
 		const accepts: AcceptsTable<typeof v3> = {
-			1: { state: { editor: { notes: (current) => current.map(toV1), count: (state) => state.notes.length } } },
-			2: { state: { editor: { count: "refuse" } } },
+			1: { state: { notes: (current) => current.map(toV1), count: (state) => state.notes.length } },
+			2: { state: { count: "refuse" } },
 		};
 		expect(checkAccepts(v3, accepts).versions.map(({ version }) => version)).toEqual([1, 2]);
-		expect(() => checkUntyped(v3, { 2: { state: { editor: { count: 1 } } } })).toThrow(
-			'notes accepts[2].state.editor.count: expected a function or "refuse"',
+		expect(() => checkUntyped(v3, { 2: { state: { count: 1 } } })).toThrow(
+			'notes accepts[2].state.count: expected a function or "refuse"',
 		);
 	});
 
 	it("an absent section is allowed only when nothing is needed there", () => {
 		// @ts-expect-error: the state section is needed
-		expect(() => checkAccepts(v2, { 1: {} })).toThrow("notes accepts[1].state.editor: missing mapping");
-		const v3 = evolve(v2, (e) => e.addState("reader", "count", int()));
+		expect(() => checkAccepts(v2, { 1: {} })).toThrow("notes accepts[1].state.notes: missing mapping");
+		const v3 = evolve(v2, (e) => e.addState("total", int()));
 		expect(() => checkAccepts(v3, { 2: {} })).not.toThrow();
 		expect(() => checkAccepts(v3, { 2: { state: {}, methods: {} } })).not.toThrow();
 	});
 
 	it("unnecessary mappings are refused", () => {
 		expect(() =>
-			// @ts-expect-error: reader.notes did not change
-			checkAccepts(v2, { 1: { state: { editor: { notes: (c) => c.map(toV1) }, reader: { notes: (c) => c } } } }),
-		).toThrow("notes accepts[1].state.reader: unnecessary mapping");
-		const v3 = evolve(v2, (e) => e.addState("reader", "count", int()));
+			// @ts-expect-error: count did not change
+			checkAccepts(v2, { 1: { state: { notes: (c) => c.map(toV1), count: (c) => c } } }),
+		).toThrow("notes accepts[1].state.count: unnecessary mapping");
+		const v3 = evolve(v2, (e) => e.addState("total", int()));
 		// @ts-expect-error: added members need nothing
-		expect(() => checkAccepts(v3, { 2: { state: { reader: { count: () => 0 } } } })).toThrow(
-			"notes accepts[2].state.reader: unnecessary mapping",
+		expect(() => checkAccepts(v3, { 2: { state: { total: () => 0 } } })).toThrow(
+			"notes accepts[2].state.total: unnecessary mapping",
 		);
 	});
 
 	it("is checked by edit, not by schema: a no-op edit and a reverted change still need mappings", () => {
-		const noop = evolve(NotesV1, (e) => e.state("reader", "notes", arr(Note)));
+		const noop = evolve(NotesV1, (e) => e.state("notes", arr(Note)));
 		// @ts-expect-error: the edit needs an (identity) mapping
-		expect(() => checkAccepts(noop, { 1: {} })).toThrow("notes accepts[1].state.reader: missing mapping");
-		expect(() => checkAccepts(noop, { 1: { state: { reader: { notes: (current) => current } } } })).not.toThrow();
-		const reverted = evolve(v2, (e) => e.state("editor", "notes", arr(Note)));
-		expect(() => checkAccepts(reverted, { 1: { state: { editor: { notes: (current) => current } } } })).not.toThrow();
-		const readded = evolve(NotesV1, (e) => e.removeState("editor", "count").addState("editor", "count", int()));
-		expect(() => checkAccepts(readded, { 1: { state: { editor: { count: (current) => current } } } })).not.toThrow();
+		expect(() => checkAccepts(noop, { 1: {} })).toThrow("notes accepts[1].state.notes: missing mapping");
+		expect(() => checkAccepts(noop, { 1: { state: { notes: (current) => current } } })).not.toThrow();
+		const reverted = evolve(v2, (e) => e.state("notes", arr(Note)));
+		expect(() => checkAccepts(reverted, { 1: { state: { notes: (current) => current } } })).not.toThrow();
+		const readded = evolve(NotesV1, (e) => e.removeState("count").addState("count", int()));
+		expect(() => checkAccepts(readded, { 1: { state: { count: (current) => current } } })).not.toThrow();
 	});
 });
 
@@ -144,12 +141,11 @@ describe("method mappings", () => {
 		expect(() => checkAccepts(v2, { 1: {} })).toThrow("notes accepts[1].methods.clear: missing mapping");
 	});
 
-	it("a method removed from one variant that had it counts as removed", () => {
-		const v2 = evolve(NotesV1, (e) => e.removeMethod("add").addMethod("editor", "add", Note, str()));
-		// @ts-expect-error: reader lost `add`
-		expect(() => checkAccepts(v2, { 1: { methods: { add: { args: (old) => old, result: (r) => r } } } })).toThrow(
-			'notes accepts[1].methods.add: expected { call } or "refuse"',
-		);
+	it("a method removed and added again counts as changed on both sides", () => {
+		const v2 = evolve(NotesV1, (e) => e.removeMethod("add").addMethod("add", Note, str()));
+		expect(() =>
+			checkAccepts(v2, { 1: { methods: { add: { args: (old) => old, result: (r) => r } } } }),
+		).not.toThrow();
 		expect(() => checkAccepts(v2, { 1: { methods: { add: "refuse" } } })).not.toThrow();
 	});
 
@@ -165,12 +161,12 @@ describe("method mappings", () => {
 		checkAccepts(v2, { 1: { methods: { add: { call: async () => 1 } } } });
 	});
 
-	it("added methods and methods added to a new variant need nothing", () => {
-		const v2 = evolve(NotesV1, (e) => e.addMethod("reader", "clear", nul(), nul()));
+	it("added methods need nothing, grantable ones too", () => {
+		const v2 = evolve(NotesV1, (e) => e.addMethod("reset", nul(), nul()).addMethod("lock", grantable(method())));
 		expect(checkAccepts(v2, { 1: {} }).versions).toHaveLength(1);
 		// @ts-expect-error: unnecessary mapping
-		expect(() => checkAccepts(v2, { 1: { methods: { clear: "refuse" } } })).toThrow(
-			"notes accepts[1].methods.clear: unnecessary mapping",
+		expect(() => checkAccepts(v2, { 1: { methods: { reset: "refuse" } } })).toThrow(
+			"notes accepts[1].methods.reset: unnecessary mapping",
 		);
 	});
 
@@ -234,14 +230,14 @@ describe("versions", () => {
 
 	it("maps directly over several versions: every edit after the accepted version counts", () => {
 		const v2 = evolve(NotesV1, (e) => e.args("add", NoteV2));
-		const v3 = evolve(v2, (e) => e.result("add", int()).removeState("editor", "count"));
+		const v3 = evolve(v2, (e) => e.result("add", int()).removeState("count"));
 		const accepts: AcceptsTable<typeof v3> = {
 			1: {
-				state: { editor: { count: "refuse" } },
+				state: { count: "refuse" },
 				methods: { add: { args: (old) => ({ ...old, tag: "" }), result: (current) => String(current) } },
 			},
 			2: {
-				state: { editor: { count: (state) => state.notes.length } },
+				state: { count: (state) => state.notes.length },
 				methods: { add: { result: (r) => `${r}` } },
 			},
 		};
@@ -250,7 +246,7 @@ describe("versions", () => {
 			{ version: 2, fingerprint: v2.fingerprint },
 		]);
 		const fromV1 = {
-			state: { editor: { count: "refuse" } },
+			state: { count: "refuse" },
 			methods: { add: { result: (r: number) => `${r}` } },
 		} as const;
 		// @ts-expect-error: from v1, args changed too
@@ -258,18 +254,18 @@ describe("versions", () => {
 	});
 
 	it("never calls a mapping", () => {
-		const v2 = evolve(NotesV1, (e) => e.args("add", NoteV2).removeMethod("clear").state("editor", "count", str()));
+		const v2 = evolve(NotesV1, (e) => e.args("add", NoteV2).removeMethod("clear").state("count", str()));
 		const mappings = { args: vi.fn(), call: vi.fn(), count: vi.fn() };
 		checkUntyped(v2, {
 			1: {
-				state: { editor: { count: mappings.count } },
+				state: { count: mappings.count },
 				methods: { add: { args: mappings.args }, clear: { call: mappings.call } },
 			},
 		});
 		expect(Object.values(mappings).map((mapping) => mapping.mock.calls.length)).toEqual([0, 0, 0]);
 	});
 
-	it("local tables are flat: state without a variant level", () => {
+	it("local tables are flat too", () => {
 		const v1 = local("info", { version: 1, params: {}, members: { title: str(), save: method(str()) } });
 		const v2 = evolve(v1, (e) => e.state("title", int()).args("save", int()));
 		const accepts: AcceptsTable<typeof v2> = {
@@ -277,7 +273,7 @@ describe("versions", () => {
 		};
 		expect(() => checkAccepts(v2, accepts)).not.toThrow();
 		expect(() =>
-			checkUntyped(v2, { 1: { state: { members: { title: String } }, methods: { save: "refuse" } } }),
+			checkUntyped(v2, { 1: { state: { title: String, members: String }, methods: { save: "refuse" } } }),
 		).toThrow("info accepts[1].state.members: unnecessary mapping");
 	});
 });
@@ -289,46 +285,40 @@ describe('event mappings (decision "Events: fire-and-forget members")', () => {
 		version: 1,
 		params: {},
 		hostAddress: () => Server(),
-		variants: {
-			player: { events: { paddle: Sample, ball: Sample } },
-			watcher: { events: { paddle: Sample } },
-		},
+		events: { paddle: Sample, ball: grantable(Sample) },
 	});
 
-	it("need a function or refuse for a changed event member, by variant", () => {
-		const v2 = evolve(MatchV1, (e) => e.event("player", "paddle", Timed));
-		const accepts: AcceptsTable<typeof v2> = { 1: { events: { player: { paddle: ({ y }) => ({ y }) } } } };
+	it("need a function or refuse for a changed event member", () => {
+		const v2 = evolve(MatchV1, (e) => e.event("paddle", Timed));
+		const accepts: AcceptsTable<typeof v2> = { 1: { events: { paddle: ({ y }) => ({ y }) } } };
 		expect(checkAccepts(v2, accepts).versions).toHaveLength(1);
-		expect(checkAccepts(v2, { 1: { events: { player: { paddle: "refuse" } } } }).versions).toHaveLength(1);
+		expect(checkAccepts(v2, { 1: { events: { paddle: "refuse" } } }).versions).toHaveLength(1);
 		// @ts-expect-error: the changed member needs a mapping
-		expect(() => checkAccepts(v2, { 1: {} })).toThrow("match accepts[1].events.player: missing mapping");
-		expect(() => checkUntyped(v2, { 1: { events: { player: { paddle: 1 } } } })).toThrow(
-			'match accepts[1].events.player.paddle: expected a function or "refuse"',
+		expect(() => checkAccepts(v2, { 1: {} })).toThrow("match accepts[1].events.paddle: missing mapping");
+		expect(() => checkUntyped(v2, { 1: { events: { paddle: 1 } } })).toThrow(
+			'match accepts[1].events.paddle: expected a function or "refuse"',
 		);
-		// One variant's change needs nothing for another (its refusal breaks only that variant's binding).
-		expect(() => checkUntyped(v2, { 1: { events: { player: { paddle: "refuse" }, watcher: {} } } })).toThrow(
-			"match accepts[1].events.watcher: unnecessary mapping",
+		expect(() => checkUntyped(v2, { 1: { events: { paddle: "refuse", ball: "refuse" } } })).toThrow(
+			"match accepts[1].events.ball: unnecessary mapping",
 		);
 	});
 
 	it("need nothing for a removed or an added event member; a re-added one counts as changed", () => {
-		const removed = evolve(MatchV1, (e) => e.removeEvent("player", "ball").addEvent("watcher", "ball", Sample));
+		const removed = evolve(MatchV1, (e) => e.removeEvent("ball").addEvent("serve", Sample));
 		expect(checkAccepts(removed, {}).versions).toEqual([]);
 		expect(checkAccepts(removed, { 1: {} }).versions).toHaveLength(1);
-		expect(() => checkUntyped(removed, { 1: { events: { player: { ball: () => null } } } })).toThrow(
-			"match accepts[1].events.player: unnecessary mapping",
+		expect(() => checkUntyped(removed, { 1: { events: { ball: () => null } } })).toThrow(
+			"match accepts[1].events.ball: unnecessary mapping",
 		);
-		const readded = evolve(removed, (e) => e.addEvent("player", "ball", Timed));
-		expect(() => checkUntyped(readded, { 1: {} })).toThrow("match accepts[1].events.player: missing mapping");
-		expect(checkAccepts(readded, { 1: { events: { player: { ball: ({ y }) => ({ y }) } } } }).versions).toHaveLength(
-			1,
-		);
+		const readded = evolve(removed, (e) => e.addEvent("ball", Timed));
+		expect(() => checkUntyped(readded, { 1: {} })).toThrow("match accepts[1].events.ball: missing mapping");
+		expect(checkAccepts(readded, { 1: { events: { ball: ({ y }) => ({ y }) } } }).versions).toHaveLength(1);
 	});
 
 	it("need an identity mapping for a no-op edit (by edit, never by schema)", () => {
-		const v2 = evolve(MatchV1, (e) => e.event("watcher", "paddle", Sample));
-		expect(() => checkUntyped(v2, { 1: {} })).toThrow("match accepts[1].events.watcher: missing mapping");
-		expect(checkAccepts(v2, { 1: { events: { watcher: { paddle: (value) => value } } } }).versions).toHaveLength(1);
+		const v2 = evolve(MatchV1, (e) => e.event("paddle", Sample));
+		expect(() => checkUntyped(v2, { 1: {} })).toThrow("match accepts[1].events.paddle: missing mapping");
+		expect(checkAccepts(v2, { 1: { events: { paddle: (value) => value } } }).versions).toHaveLength(1);
 	});
 
 	it("are flat in a local contract", () => {

@@ -106,7 +106,7 @@ try {
 		async (ctx) => {
 			await (await ctx.get(LocaleChoice, {})).choose("fr", ctx);
 			const todos = await ctx.get(Todos, { list: "groceries" });
-			if (todos.variant === "owner") await todos.clear(ctx);
+			await todos.clear?.(ctx);
 		},
 		context,
 		{ principal: { kind: "owner" } },

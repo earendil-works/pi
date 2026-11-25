@@ -19,12 +19,8 @@ const Notes = remote("example.notes", {
 	version: 1,
 	params: { session: str() },
 	hostAddress: () => Server(),
-	variants: {
-		editor: {
-			state: { notes: arr(str()) },
-			methods: { add: method(obj({ text: str() }), int()), slow: method() },
-		},
-	},
+	state: { notes: arr(str()) },
+	methods: { add: method(obj({ text: str() }), int()), slow: method() },
 });
 
 const NotesDoc = defineState("notes", { schema: obj({ list: arr(str()) }), version: 1, initial: () => ({ list: [] }) });
@@ -36,15 +32,12 @@ const facet = defineFacet<P>((host) => {
 		(_, _principal, self) => {
 			const doc = self.state(NotesDoc);
 			return {
-				variant: "editor",
-				members: {
-					notes: self.derive([doc], ([d]) => d.list),
-					add: async ({ text }, ctx) => {
-						await doc.change((draft) => void draft.list.push(text), ctx);
-						return doc.value.list.length;
-					},
-					slow: (ctx) => new Promise((resolve) => ctx.abortSignal?.addEventListener("abort", () => resolve(null))),
+				notes: self.derive([doc], ([d]) => d.list),
+				add: async ({ text }, ctx) => {
+					await doc.change((draft) => void draft.list.push(text), ctx);
+					return doc.value.list.length;
 				},
+				slow: (ctx) => new Promise((resolve) => ctx.abortSignal?.addEventListener("abort", () => resolve(null))),
 			};
 		},
 		{ linger: 60_000 },
@@ -70,9 +63,9 @@ function connect(server: Host<P>, client: Host<P>, context: Context): Link {
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 10));
 
-// 1. A hold before any link: a reference at once, `loading`, its variant unknown. Calls on it park.
+// 1. A hold before any link: a reference at once, `loading`, granted nothing yet. Calls on it park.
 const notes = client.hold(Notes, { session: "S1" }, context);
-console.log("held without a link:", notes.state.value, "variant:", notes.variant);
+console.log("held without a link:", notes.state.value, "granted:", [...notes.granted]);
 const watch = await notes.state.watch(context);
 watch.start(async (call) => {
 	if (call.kind === "value") console.log("  ref.state →", call.value.kind);
@@ -82,7 +75,7 @@ const parked = notes.add({ text: "written while loading" }, context);
 // 2. Connect: the reference is held over the link, goes live, and the parked call is sent.
 let link = connect(server, client, context);
 console.log("parked call's result once live:", await parked);
-console.log("notes:", notes.notes.value, "variant:", notes.variant);
+console.log("notes:", notes.notes.value, "granted:", [...notes.granted]);
 
 // 3. The link drops (the server's end closes it). A call in flight fails `unavailable` and is never resent; the
 // reference goes loading and keeps its last values.

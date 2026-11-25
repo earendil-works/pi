@@ -4,6 +4,7 @@
 import {
 	arr,
 	bool,
+	grantable,
 	int,
 	List,
 	MessageSchema,
@@ -34,14 +35,7 @@ export const Todos = remote("todo.todos", {
 	version: 1,
 	params: { list: str() },
 	hostAddress: ({ list }) => List({ id: list }),
-	variants: {
-		member: {
-			state: { items: arr(Item), notice: Notice },
-			methods: { add: method(str()), tick: method(obj({ id: int(), done: bool() })) },
-		},
-		owner: {
-			state: { items: arr(Item), notice: Notice },
-			methods: { add: method(str()), tick: method(obj({ id: int(), done: bool() })), clear: method() },
-		},
-	},
+	state: { items: arr(Item), notice: Notice },
+	// `clear` is grantable: the list's admission grants it to the owner only.
+	methods: { add: method(str()), tick: method(obj({ id: int(), done: bool() })), clear: grantable(method()) },
 });

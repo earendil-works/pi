@@ -1,19 +1,22 @@
 // An object held over a link (§7): what the remote references of this host with one sharing key are bound to, across
-// the links of its path (the parent, or a route address); one hold for all of them (decision "References share one
-// wire hold"). Its state, the replicas of its last bound variant (kept while its link is down), the nodes its events
-// arrive at (decision "Events: fire-and-forget members"), its bindings (each reference's own release, calls and seen
-// members), its hold on the path's current link and calls through it: its hold in a `chord.hold` span until bound
-// (shared work: a root on the host's adapter), each call in a `chord.call` span, their carriers on the wire (slice 9).
+// the links of its path (the parent, or a route address); one hold for all of them (decision "References share one wire
+// hold"). Its state, the replicas of the members its last binding was granted (kept while its link is down), the nodes
+// its events arrive at (decision "Events: fire-and-forget members"), its bindings (each reference's own release, calls
+// and seen members), its hold on the path's current link and calls through it: its hold in a `chord.hold` span until
+// bound (shared work: a root on the host's adapter), each call in a `chord.call` span, their carriers on the wire
+// (slice 9).
 
 import type { TelemetryCarrier, TelemetryContext, TelemetrySpan } from "@earendil-works/pi-telemetry";
 import { BACKGROUND_CONTEXT, type Context, withTelemetry } from "../context/index.ts";
 import type { Contract } from "../contracts/index.ts";
 import {
-	currentVariants,
+	currentMembers,
+	currentVersion,
+	grantedMembers,
+	type MemberOrder,
 	type MethodData,
-	type VariantNames,
-	variantNames,
-	variantOrder,
+	memberOrder,
+	NO_GRANTS,
 } from "../contracts/internal.ts";
 import { ChordError, type FailureCause, isChordError } from "../data/index.ts";
 import { asChordError, invalid } from "../data/internal.ts";
@@ -34,6 +37,7 @@ import {
 	revoked,
 	type Target,
 } from "../host/internal.ts";
+import { lacking } from "../host/members.ts";
 import type { JsonValue } from "../json.ts";
 import {
 	type BoundEntry,
@@ -54,14 +58,14 @@ import type { Path } from "./path.ts";
 import { type MemberSnapshot, Replica } from "./replica.ts";
 
 /**
- * The last binding: its variant, methods, the bound version's names (the wire's indexes), a replica per member, and a
+ * The last binding: what it was granted, its methods, their names (the wire's indexes), a replica per member, and a
  * node per event member, at which the events arriving for this binding go out (a new binding has new nodes, so its
  * reference's subscriptions move there from its counter value: nothing of an earlier binding reaches them).
  */
 type Bound = {
-	readonly variant: string;
+	readonly granted: ReadonlySet<string>;
 	readonly methods: ReadonlyMap<string, MethodData>;
-	readonly names: VariantNames;
+	readonly names: MemberOrder;
 	readonly replicas: ReadonlyMap<string, Replica>;
 	/** Event member `member`'s node (its reference binds at its own version: the provider mapped what arrives). */
 	eventNode(member: string): EventNode | undefined;
@@ -69,7 +73,7 @@ type Bound = {
 
 /**
  * The event nodes of a new binding with event members `members` (new nodes: nothing of an earlier binding reaches its
- * reference's subscriptions); one shared lookup without nodes for a variant without event members.
+ * reference's subscriptions); one shared lookup without nodes for a binding without event members.
  */
 function eventNodes(members: readonly string[]): (member: string) => EventNode | undefined {
 	if (members.length === 0) return NO_EVENT_NODES;
@@ -181,9 +185,9 @@ export class RemoteObject implements Target {
 		return this.#lastFailure;
 	}
 
-	/** The variant last bound; `undefined` before the first binding. */
-	get variant(): string | undefined {
-		return this.#bound?.variant;
+	/** What its last binding was granted (kept while loading or failed); none before the first and once denied. */
+	get granted(): ReadonlySet<string> {
+		return this.#bound?.granted ?? NO_GRANTS;
 	}
 
 	/** Whether its state members have values: bound once. */
@@ -199,7 +203,7 @@ export class RemoteObject implements Target {
 	/**
 	 * Counts `binding` as one of its references. One joining it after it was bound (decision "References share one wire
 	 * hold") has not seen what it finds: every member when it is not live, else the members failed or missing from the
-	 * bound variant; each counts as seen once its replica takes a value after the join. `Binding.bind` retargets and
+	 * binding (not granted); each counts as seen once its replica takes a value after the join. `Binding.bind` retargets and
 	 * tells it.
 	 */
 	hold(binding: Binding): void {
@@ -215,12 +219,10 @@ export class RemoteObject implements Target {
 	#unseen(bound: Bound): ReadonlyMap<string, number> {
 		const live = this.#state.kind === "live";
 		const unseen = new Map<string, number>();
-		for (const variant of currentVariants(this.contract).values()) {
-			for (const member of variant.state.keys()) {
-				const replica = bound.replicas.get(member);
-				const good = live && bound.names.state.includes(member) && replica?.start().kind === "value";
-				if (!good) unseen.set(member, replica?.generation ?? 0);
-			}
+		for (const member of currentMembers(this.contract).state.keys()) {
+			const replica = bound.replicas.get(member);
+			const good = live && bound.names.state.includes(member) && replica?.start().kind === "value";
+			if (!good) unseen.set(member, replica?.generation ?? 0);
 		}
 		return unseen;
 	}
@@ -325,16 +327,14 @@ export class RemoteObject implements Target {
 	}
 
 	/**
-	 * Calls a method of the bound variant over the link; one outside it fails `invalid/member`. Only a live object is
-	 * called: bound on an open link.
+	 * Calls a method of the binding over the link; one it lacks fails (`forbidden` when not granted). Only a live object
+	 * is called: bound on an open link.
 	 */
 	async call(method: string, args: unknown, binding: Binding, context: Context): Promise<unknown> {
 		const bound = this.#bound!;
 		const hold = this.#hold!;
 		const data = bound.methods.get(method);
-		if (data === undefined) {
-			throw invalid("member", `${this.label} (variant ${bound.variant}) has no method "${method}"`);
-		}
+		if (data === undefined) throw lacking(this.label, this.contract, method, "method");
 		const index = bound.names.methods.indexOf(method);
 		// Arguments are checked by the provider.
 		const parent = context.telemetry;
@@ -360,22 +360,20 @@ export class RemoteObject implements Target {
 	}
 
 	/**
-	 * The replica of `member`; `not_ready` before the first binding, `invalid/member` for a member no binding had (one
-	 * a later variant lacks reads its `invalid/member` failure).
+	 * The replica of `member`; `not_ready` before the first binding, failing for a member no binding had (one a later
+	 * binding lacks reads its failure).
 	 */
 	member(member: string): DeriveSource {
 		const bound = this.#bound;
 		if (bound === undefined) throw new ChordError({ code: "not_ready", message: `${this.label}: not bound yet` });
 		const replica = bound.replicas.get(member);
-		if (replica === undefined) {
-			throw invalid("member", `${this.label} (variant ${bound.variant}) has no state member "${member}"`);
-		}
+		if (replica === undefined) throw lacking(this.label, this.contract, member, "state member");
 		return replica;
 	}
 
 	/**
 	 * What its reference follows of `member` (a consumer over a link binds at its own version, mapped at the provider):
-	 * the replica while live, a member the bound variant lacks (`invalid/member`); while loading or failed nothing, the
+	 * the replica while live, a member the binding lacks (`forbidden` when not granted); while loading or failed nothing, the
 	 * replica (kept until the next binding) giving its last value (rule 5).
 	 */
 	followed(member: string, _version: number): Followed {
@@ -384,8 +382,7 @@ export class RemoteObject implements Target {
 		const state = this.#state;
 		if (state.kind === "live") {
 			if (replica !== undefined) return { kind: "live", source: replica, instance: bound };
-			const message = `${this.label} (variant ${bound?.variant}) has no state member "${member}"`;
-			return { kind: "lacking", error: invalid("member", message) };
+			return { kind: "lacking", error: lacking(this.label, this.contract, member, "state member") };
 		}
 		if (state.kind === "failed") {
 			const { kind, error } = state.cause;
@@ -451,7 +448,7 @@ export class RemoteObject implements Target {
 	}
 
 	/**
-	 * Moves `binding` to a private object (never shared) that keeps what this one had for it (its variant, copies of its
+	 * Moves `binding` to a private object (never shared) that keeps what this one had for it (its grant, copies of its
 	 * replicas with their counts: its last values and seen members stay its own) and places it anew; the others stay
 	 * here, failed, until they retry. The binding leaves first, so this object ending with its last binding never ends
 	 * it. A placement that throws fails only the private object broken (`hostAddress`, a route that refuses).
@@ -520,19 +517,18 @@ export class RemoteObject implements Target {
 	}
 
 	/**
-	 * Prepares one entry of a `bound` message (a first binding, a re-hold; a live hold is bound again): the
-	 * variant and every state member once, as a value or as failed. Returns what applies it inside the batch of the
-	 * whole message: a member it had gets the snapshot as one frame `[["r", value]]` and a fresh decoder, a member
-	 * outside the new variant fails (its replica stays, for a later binding that has it again), a new one gets its first
+	 * Prepares one entry of a `bound` message (a first binding, a re-hold; a live hold is bound again): what it was
+	 * granted and every granted state member once, as a value or as failed. Returns what applies it inside the batch of
+	 * the whole message: a member it had gets the snapshot as one frame `[["r", value]]` and a fresh decoder, a member
+	 * no longer granted fails (its replica stays, for a later binding that has it again), a new one gets its first
 	 * value. Throws on a snapshot that
 	 * does not fit (a protocol error), and `too_large/part` for a value past the link's limits, before anything changed.
 	 * `wentLive` follows the batch.
 	 */
 	prepareBound(entry: BoundEntry, link: HostLink): () => void {
-		const variant = variantOrder(this.contract)[entry.variant];
-		if (variant === undefined) throw new Error(`hold ${entry.hold}: no variant ${entry.variant}`);
-		const data = currentVariants(this.contract).get(variant)!;
-		const names = variantNames(data);
+		const granted = this.#grantedFrom(entry);
+		const data = grantedMembers(currentVersion(this.contract), granted);
+		const names = memberOrder(data);
 		const members = new Map<string, MemberSnapshot>();
 		const add = (index: number, state: MemberSnapshot): void => {
 			const member = names.state[index];
@@ -549,8 +545,8 @@ export class RemoteObject implements Target {
 		return () => {
 			const previous = this.#bound?.replicas;
 			const replicas = new Map<string, Replica>();
-			// First: a derive recomputing in this batch reads the new variant through its reference.
-			this.#bound = { variant, methods: data.methods, names, replicas, eventNode: eventNodes(names.events) };
+			// First: a derive recomputing in this batch reads the new binding through its reference.
+			this.#bound = { granted, methods: data.methods, names, replicas, eventNode: eventNodes(names.events) };
 			for (const [member, state] of members) {
 				const replica = previous?.get(member);
 				if (replica === undefined) {
@@ -562,10 +558,27 @@ export class RemoteObject implements Target {
 			}
 			for (const [member, replica] of previous ?? []) {
 				if (members.has(member)) continue;
-				replica.vanish(invalid("member", `${this.label} (variant ${variant}) has no state member "${member}"`));
+				replica.vanish(lacking(this.label, this.contract, member, "state member"));
 				replicas.set(member, replica);
 			}
 		};
+	}
+
+	/**
+	 * The names `entry` grants, from its indexes into this version's grants (one outside them is a protocol error); the
+	 * last binding's set when equal, so a re-hold granted the same changes nothing a UI compares (`useLive`).
+	 */
+	#grantedFrom(entry: BoundEntry): ReadonlySet<string> {
+		if (entry.granted.length === 0) return NO_GRANTS;
+		const { grants } = currentVersion(this.contract);
+		const names = entry.granted.map((index) => {
+			const name = grants[index];
+			if (name === undefined) throw new Error(`hold ${entry.hold}: no grant ${index} in bound`);
+			return name;
+		});
+		const last = this.#bound?.granted;
+		if (last !== undefined && last.size === names.length && names.every((name) => last.has(name))) return last;
+		return new Set(names);
 	}
 
 	/** After a `bound` message's batch: the reference goes live (its parked calls are sent, a parked dependent goes on). */
@@ -650,7 +663,7 @@ export class RemoteObject implements Target {
 		if (this.#state.kind !== "live" || bound === undefined) return undefined;
 		const name = bound.names.events[member];
 		if (name === undefined) throw new Error(`${this.label}: no event member ${member}`);
-		// A name of the bound variant's event members has its node.
+		// A name of the binding's event members has its node.
 		const node = bound.eventNode(name)!;
 		return node.tapped ? node : undefined;
 	}

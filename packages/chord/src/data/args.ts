@@ -3,15 +3,8 @@
 import type { Validator } from "@earendil-works/pi-schema";
 import type { Context } from "../context/index.ts";
 import { type AcceptedVersion, type AcceptsTable, checkAccepts } from "../contracts/accepts.ts";
-import {
-	type Contract,
-	type CurrentVariants,
-	contractData,
-	type MethodData,
-	type VersionData,
-} from "../contracts/contract.ts";
-import type { MemberNames, MethodAt } from "../contracts/history.ts";
-import type { Static } from "../contracts/schema.ts";
+import { type Contract, type CurrentMembers, contractData, type VersionData } from "../contracts/contract.ts";
+import type { Static, Ungranted } from "../contracts/schema.ts";
 import type { Snapshot } from "../contracts/snapshot.ts";
 import { ChordError, invalid } from "./errors.ts";
 import { check, validatorFor } from "./validator.ts";
@@ -37,8 +30,8 @@ export type CheckedArgs<C extends Contract, M extends string> =
 	| { readonly kind: "method"; readonly args: ArgsOf<C, M>; readonly result?: (current: Value) => Value }
 	| { readonly kind: "call"; readonly args: Value; readonly call: (args: Value, context: Context) => Promise<Value> };
 
-type ArgsOf<C extends Contract, M extends string> = M extends MemberNames<CurrentVariants<C>, "methods">
-	? Static<MethodAt<CurrentVariants<C>, M>["args"]>
+type ArgsOf<C extends Contract, M extends string> = M extends keyof CurrentMembers<C>["methods"]
+	? Static<Ungranted<CurrentMembers<C>["methods"][M]>["args"]>
 	: Value;
 
 /**
@@ -111,9 +104,7 @@ function dispatchEntries(
 	mappings: { readonly [member: string]: CheckedMethodMapping } | undefined,
 ): Map<string, DispatchEntry> {
 	const entries = new Map<string, DispatchEntry>();
-	// A method has one signature in every variant that has it.
-	const methods = new Map<string, MethodData>([...version.variants.values()].flatMap(({ methods }) => [...methods]));
-	for (const [member, { args }] of methods) {
+	for (const [member, { args }] of version.members.methods) {
 		const mapping = mappings !== undefined && Object.hasOwn(mappings, member) ? mappings[member] : undefined;
 		entries.set(member, dispatchEntry(args, mapping));
 	}

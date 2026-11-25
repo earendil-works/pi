@@ -1,7 +1,8 @@
-// The member check (Q14): an implementation is one variant with exactly that variant's members, methods being
-// functions, state members JSON watchables and event members the attempt's own sources or references' event members
-// (decision "Events: fire-and-forget members"); and the resolution of what Chord follows behind every derive's declared
-// sources (JSON and native) and every contribution to a registry (slice 8).
+// The member check (Q14): an implementation has exactly its contract's members (a remote one's plain members and the
+// grantable ones granted to its caller, slice 15 §1.3), methods being functions, state members JSON watchables and
+// event members the attempt's own sources or references' event members (decision "Events: fire-and-forget members");
+// what a remote factory's return exposes for what was granted; and the resolution of what Chord follows behind every
+// derive's declared sources (JSON and native) and every contribution to a registry (slice 8).
 //
 // The rule for watches across attempts (decision "References are the only indirection"): consumers' watches and
 // derives over another object's member follow it through their reference's member (`reference-source.ts`) and keys
@@ -14,7 +15,15 @@
 
 import type { Context } from "../context/index.ts";
 import type { Contract } from "../contracts/index.ts";
-import { currentVariants, LOCAL, takesNoArgs, type VariantData } from "../contracts/internal.ts";
+import {
+	currentMembers,
+	currentVersion,
+	grantedMembers,
+	type MembersData,
+	takesNoArgs,
+} from "../contracts/internal.ts";
+import { type ChordError, forbidden } from "../data/index.ts";
+import { invalid } from "../data/internal.ts";
 import type { KeyedSlot } from "../documents/internal.ts";
 import {
 	type ContributionContent,
@@ -60,31 +69,67 @@ export type KeyedBinding =
 export type Method = (args: unknown, context: Context) => Promise<unknown>;
 
 /**
- * Checks what a factory returned (plugin code): a local contract's members, or a remote contract's `{ variant,
- * members }` naming one of its current variants. `sources` owns the attempt's own event sources (none declared:
- * `undefined`). Errors name the variant or member (the failure cause adds the object).
+ * What a remote factory's return exposes to a caller granted `granted` (slice 15 §1.3): its plain members as returned,
+ * its granted grantable methods, and its granted grantable state and event members built (their builders called now,
+ * while the factory's declarations are open); nothing of a member not granted. Plugin code: a grantable member that is
+ * no function fails the attempt.
+ */
+export function grantedImplementation(
+	contract: Contract,
+	implementation: unknown,
+	granted: ReadonlySet<string>,
+): unknown {
+	const { grantable, members } = currentVersion(contract);
+	if (grantable.size === 0) return implementation;
+	const exposed: { [member: string]: unknown } = {};
+	// Plugin code: the member check establishes the rest of the shape.
+	for (const [member, value] of Object.entries(implementation as Implementation)) {
+		if (!grantable.has(member)) {
+			exposed[member] = value;
+			continue;
+		}
+		if (typeof value !== "function") {
+			throw new Error(`${member}: a grantable member is a function (a builder of its state or events)`);
+		}
+		if (granted.has(member)) exposed[member] = members.methods.has(member) ? value : value();
+	}
+	return exposed;
+}
+
+/**
+ * Checks what a factory returned (plugin code; a remote one's as `grantedImplementation` exposed it): exactly the
+ * contract's members, a remote one's plain members and the granted ones. `sources` owns the attempt's own event
+ * sources (none declared: `undefined`). Errors name the member (the failure cause adds the object).
  */
 export function checkImplementation(
 	contract: Contract,
 	implementation: unknown,
 	sources: SourceOwner | undefined,
-): { readonly variant: string | undefined; readonly members: Members } {
-	const variants = currentVariants(contract);
-	if (contract.kind === "local") {
-		// The member check establishes the shape.
-		const members = checkMembers(variants.get(LOCAL)!, implementation as Implementation, sources);
-		return { variant: undefined, members };
-	}
-	// Plugin code: a remote factory returns `{ variant, members }`, which the checks below establish.
-	const { variant, members } = implementation as { readonly variant: string; readonly members: Implementation };
-	const data = variants.get(variant);
-	if (data === undefined) throw new Error(`variant ${JSON.stringify(variant)}: not a variant of ${contract.name}`);
-	return { variant, members: checkMembers(data, members, sources) };
+	granted: ReadonlySet<string>,
+): Members {
+	const members =
+		contract.kind === "local" ? currentMembers(contract) : grantedMembers(currentVersion(contract), granted);
+	// The member check establishes the shape.
+	return checkMembers(members, implementation as Implementation, sources);
 }
 
 type Implementation = { readonly [member: string]: unknown };
 
-/** The `queries` members of a variant without any: shared, never written. */
+/**
+ * The error of a use of `member` (`what`: a method, a state member) that the object `label` lacks: `forbidden` for a
+ * grantable member it was not granted (slice 15 §1.3: the member exists), else `invalid/member`.
+ */
+export function lacking(
+	label: string,
+	contract: Contract,
+	member: string,
+	what: "method" | "state member",
+): ChordError {
+	if (currentVersion(contract).grantable.has(member)) return forbidden(`${label} has not granted "${member}"`);
+	return invalid("member", `${label} has no ${what} "${member}"`);
+}
+
+/** No `queries` members: shared, never written. */
 const NO_QUERIES: ReadonlyMap<string, ReadonlyMap<string, OwnQuery>> = new Map();
 
 /**
@@ -92,7 +137,7 @@ const NO_QUERIES: ReadonlyMap<string, ReadonlyMap<string, OwnQuery>> = new Map()
  * are not re-exposed), with a builder for every query the contract lists, which takes the contract's argument schema.
  */
 function checkQueries(
-	queries: VariantData["queries"],
+	queries: MembersData["queries"],
 	own: (member: string) => unknown,
 ): ReadonlyMap<string, ReadonlyMap<string, OwnQuery>> {
 	const checked = new Map<string, ReadonlyMap<string, OwnQuery>>();
@@ -112,16 +157,16 @@ function checkQueries(
 	return checked;
 }
 
-/** The event members of a variant without any: shared, never written. */
+/** No event members: shared, never written. */
 const NO_EVENTS: ReadonlyMap<string, EventNode> = new Map();
 
 /**
- * Checks members against a variant's (exactly its members, methods being functions, state members JSON watchables,
+ * Checks an implementation against `members` (exactly those, methods being functions, state members JSON watchables,
  * keyed members keyed document handles and event members the attempt's own sources or references' event members); a
  * method without arguments is called with the context alone.
  */
 function checkMembers(
-	{ state, methods, keyed, events, queries }: VariantData,
+	{ state, methods, keyed, events, queries }: MembersData,
 	implementation: Implementation,
 	sources: SourceOwner | undefined,
 ): Members {

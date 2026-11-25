@@ -771,7 +771,7 @@ describe("on", () => {
 		const member = EDITOR.state.count!;
 		const failed = [{ member, error: { kind: "plugin", code: "internal", message: "count threw" } } as const];
 		const notes = { member: EDITOR.state.notes!, value: jsonPart([]) };
-		peer.send({ kind: "bound", holds: [{ hold, variant: EDITOR.variant, members: [notes], failed }] });
+		peer.send({ kind: "bound", holds: [{ hold, granted: EDITOR.granted, members: [notes], failed }] });
 		await getting;
 		await transported();
 		// Two state messages in one receive turn: the first value, then a failure again.
@@ -793,32 +793,29 @@ describe("on", () => {
 			version: 1,
 			params: {},
 			hostAddress: () => Server(),
-			variants: { v: { state: { half: int() }, methods: { set: method(int()) } } },
+			state: { half: int() },
+			methods: { set: method(int()) },
 		});
 		const server = createHost<TestPrincipal>({ address: Server(), principal: { kind: "server" }, onError: () => {} });
 		const serve = defineFacet<TestPrincipal>((h) =>
 			h.serve(Halves, (_, _principal, self) => {
 				const doc = self.state(Doc);
 				return {
-					variant: "v",
-					members: {
-						half: self.derive([doc], ([{ n }]) => {
-							if (n === 2) throw new Error("half threw");
-							return n / 2;
-						}),
-						set: async (n, ctx) => {
-							await doc.change((d) => {
-								d.n = n;
-							}, ctx);
-							return null;
-						},
+					half: self.derive([doc], ([{ n }]) => {
+						if (n === 2) throw new Error("half threw");
+						return n / 2;
+					}),
+					set: async (n, ctx) => {
+						await doc.change((d) => {
+							d.n = n;
+						}, ctx);
+						return null;
 					},
 				};
 			}),
 		);
 		await server.load([{ name: "@test/app", facet: serve }], context);
 		const halves = await server.get(Halves, {}, context);
-		if (halves.variant !== "v") throw new Error("expected variant v");
 		await halves.set(2, context);
 		const Viewer = local("app.viewer", { version: 1, params: { id: int() }, members: {} });
 		const calls: unknown[] = [];
@@ -1077,14 +1074,14 @@ describe("routines and the end", () => {
 			version: 1,
 			params: {},
 			hostAddress: () => Server(),
-			variants: { v: { state: {} } },
+			state: {},
 		});
 		const seen: unknown[] = [];
 		const { client } = await linked(
 			(h) =>
 				h.serve(Watcher, (_, _principal, self) => {
 					self.onLive(async (ctx) => void seen.push(ctx.principal));
-					return { variant: "v", members: {} };
+					return {};
 				}),
 			{ child: { kind: "guest", session: "S1" } },
 		);

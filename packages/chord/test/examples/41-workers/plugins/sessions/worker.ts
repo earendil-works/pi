@@ -4,8 +4,5 @@ import { constant, defineFacet } from "@earendil-works/chord";
 import { Greeting } from "./contract.ts";
 
 export default defineFacet((host) =>
-	host.serve(Greeting, ({ id }) => ({
-		variant: "main",
-		members: { text: constant(`hello from session ${id}`), pid: constant(process.pid) },
-	})),
+	host.serve(Greeting, ({ id }) => ({ text: constant(`hello from session ${id}`), pid: constant(process.pid) })),
 );

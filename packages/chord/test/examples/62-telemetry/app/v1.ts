@@ -13,5 +13,6 @@ export const Counter = remote("tally.counter", {
 	version: 1,
 	params: { id: str() },
 	hostAddress: ({ id }) => Tally({ id }),
-	variants: { main: { state: { total: int() }, methods: { add: method(int(), int()) } } },
+	state: { total: int() },
+	methods: { add: method(int(), int()) },
 });

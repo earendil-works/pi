@@ -13,14 +13,17 @@ import type { TodoPrincipal } from "../../principals.ts";
 
 export { BACKGROUND_CONTEXT } from "../../../../../../src/context/index.ts";
 export {
+	allow,
 	arr,
 	bool,
 	type Ctx,
+	constant,
 	defineMessages,
 	defineState,
 	defineTable,
 	eq,
 	forbidden,
+	grantable,
 	int,
 	invalid,
 	local,

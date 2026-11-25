@@ -19,17 +19,13 @@ const Files = remote("example.files", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
-	variants: {
-		owner: {
-			methods: {
-				whoami: method(undefined, str()),
-				// A `bytes()` leaf: the argument and result travel as raw segments, never base64.
-				upload: method(obj({ name: str(), data: bytes() }), int()),
-				download: method(obj({ name: str() }), bytes()),
-				quota: method(),
-				slow: method(),
-			},
-		},
+	methods: {
+		whoami: method(undefined, str()),
+		// A `bytes()` leaf: the argument and result travel as raw segments, never base64.
+		upload: method(obj({ name: str(), data: bytes() }), int()),
+		download: method(obj({ name: str() }), bytes()),
+		quota: method(),
+		slow: method(),
 	},
 });
 
@@ -37,28 +33,25 @@ const stored = new Map<string, Uint8Array>();
 
 const facet = defineFacet<P>((host) => {
 	host.serve(Files, () => ({
-		variant: "owner",
-		members: {
-			// ctx.principal is the caller as its link stamped it; ctx.incarnation the calling host's run (R20).
-			whoami: async (ctx) => `${ctx.principal?.kind} from ${ctx.incarnation.slice(0, 8)}…`,
-			upload: async ({ name, data }) => {
-				stored.set(name, data);
-				return data.byteLength;
-			},
-			download: async ({ name }) => stored.get(name) ?? new Uint8Array(),
-			// A PluginError crosses with its code, message and details; any other throw as code `internal`.
-			quota: async () => {
-				throw new PluginError("quota", "the store is full", { limit: 1 });
-			},
-			// A handler's context is aborted when its caller cancels or releases the reference.
-			slow: (ctx) =>
-				new Promise((resolve) =>
-					ctx.abortSignal?.addEventListener("abort", () => {
-						console.log("server: slow aborted:", (ctx.abortSignal?.reason as Error).message);
-						resolve(null);
-					}),
-				),
+		// ctx.principal is the caller as its link stamped it; ctx.incarnation the calling host's run (R20).
+		whoami: async (ctx) => `${ctx.principal?.kind} from ${ctx.incarnation.slice(0, 8)}…`,
+		upload: async ({ name, data }) => {
+			stored.set(name, data);
+			return data.byteLength;
 		},
+		download: async ({ name }) => stored.get(name) ?? new Uint8Array(),
+		// A PluginError crosses with its code, message and details; any other throw as code `internal`.
+		quota: async () => {
+			throw new PluginError("quota", "the store is full", { limit: 1 });
+		},
+		// A handler's context is aborted when its caller cancels or releases the reference.
+		slow: (ctx) =>
+			new Promise((resolve) =>
+				ctx.abortSignal?.addEventListener("abort", () => {
+					console.log("server: slow aborted:", (ctx.abortSignal?.reason as Error).message);
+					resolve(null);
+				}),
+			),
 	}));
 });
 

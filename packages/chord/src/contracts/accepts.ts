@@ -7,23 +7,11 @@ import {
 	type ContractShape,
 	contractData,
 	type Kind,
-	LOCAL,
 	type ShapeOf,
 } from "./contract.ts";
 import { checkKeys, entriesOf } from "./declare.ts";
-import type {
-	Change,
-	ChangesAfter,
-	CurrentStep,
-	MemberNames,
-	MethodAt,
-	OlderVersions,
-	StepAt,
-	VariantShape,
-	Variants,
-	VariantsWith,
-} from "./history.ts";
-import type { Method, Static } from "./schema.ts";
+import type { Change, ChangesAfter, CurrentStep, MembersShape, OlderVersions, StepAt } from "./history.ts";
+import type { Method, Static, Ungranted } from "./schema.ts";
 
 /** Per accepted older version, exactly the mappings its later edits require (direct: old to current). */
 export type AcceptsTable<C extends Contract> = AcceptsOf<ShapeOf<C>>;
@@ -31,37 +19,34 @@ export type AcceptsTable<C extends Contract> = AcceptsOf<ShapeOf<C>>;
 type AcceptsOf<S extends ContractShape> = {
 	readonly [V in OlderVersions<S["history"]>]?: VersionMappings<
 		S["kind"],
-		StepAt<S["history"], V>["variants"],
-		CurrentStep<S["history"]>["variants"],
+		StepAt<S["history"], V>["members"],
+		CurrentStep<S["history"]>["members"],
 		ChangesAfter<S["history"], V>
 	>;
 };
 
-type VersionMappings<K extends Kind, Old extends Variants, Current extends Variants, C extends Change> = Section<
-	"state",
-	K extends "local" ? StateMappings<Old[Local], Current[Local], Local, C> : RemoteStateMappings<Old, Current, C>
-> &
+type VersionMappings<
+	K extends Kind,
+	Old extends MembersShape,
+	Current extends MembersShape,
+	C extends Change,
+> = Section<"state", StateMappings<Old, Current, C>> &
 	Section<"methods", MethodMappings<Old, Current, C>> &
-	Section<"keyed", K extends "local" ? KeyedMappings<Old[Local], Current[Local], C> : Record<never, never>> &
-	Section<
-		"events",
-		K extends "local" ? EventMappings<Old[Local], Current[Local], Local, C> : RemoteEventMappings<Old, Current, C>
-	>;
-
-type RemoteEventMappings<Old extends Variants, Current extends Variants, C extends Change> = OmitNever<{
-	[X in keyof Old & keyof Current]: [keyof EventMappings<Old[X], Current[X], X, C>] extends [never]
-		? never
-		: EventMappings<Old[X], Current[X], X, C>;
-}>;
+	Section<"keyed", K extends "local" ? KeyedMappings<Old, Current, C> : Record<never, never>> &
+	Section<"events", EventMappings<Old, Current, C>>;
 
 /**
  * Event members (decision "Events: fire-and-forget members"): a changed one maps each current value back, or refuses
  * the version's binding; a removed one needs nothing (an older consumer receives none of it), nor an added one.
  */
-type EventMappings<Old extends VariantShape, Current extends VariantShape, X, C extends Change> = OmitNever<{
+type EventMappings<Old extends MembersShape, Current extends MembersShape, C extends Change> = OmitNever<{
 	[S in keyof NonNullable<Old["events"]>]: S extends keyof NonNullable<Current["events"]>
-		? [X, S, "event"] extends C
-			? ((current: Static<NonNullable<Current["events"]>[S]>) => Static<NonNullable<Old["events"]>[S]>) | "refuse"
+		? [S, "event"] extends C
+			?
+					| ((
+							current: Static<Ungranted<NonNullable<Current["events"]>[S]>>,
+					  ) => Static<Ungranted<NonNullable<Old["events"]>[S]>>)
+					| "refuse"
 			: never
 		: never;
 }>;
@@ -70,15 +55,13 @@ type EventMappings<Old extends VariantShape, Current extends VariantShape, X, C 
  * A local contract's keyed members (slice 7b): a changed one maps each document of the current version back, or
  * refuses; a removed one refuses (no document maps from the whole state).
  */
-type KeyedMappings<Old extends VariantShape, Current extends VariantShape, C extends Change> = OmitNever<{
+type KeyedMappings<Old extends MembersShape, Current extends MembersShape, C extends Change> = OmitNever<{
 	[S in keyof NonNullable<Old["keyed"]>]: S extends keyof NonNullable<Current["keyed"]>
-		? [Local, S, "keyed"] extends C
+		? [S, "keyed"] extends C
 			? ((current: Static<NonNullable<Current["keyed"]>[S]>) => Static<NonNullable<Old["keyed"]>[S]>) | "refuse"
 			: never
 		: "refuse";
 }>;
-
-type Local = typeof LOCAL;
 
 /** A section is required when it holds a required mapping; otherwise it may be absent or empty. */
 type Section<Key extends string, T> = [keyof T] extends [never]
@@ -88,47 +71,36 @@ type Section<Key extends string, T> = [keyof T] extends [never]
 /** `T` without its `never` properties: the members that need no mapping. */
 type OmitNever<T> = { readonly [K in keyof T as [T[K]] extends [never] ? never : K]: T[K] };
 
-type RemoteStateMappings<Old extends Variants, Current extends Variants, C extends Change> = OmitNever<{
-	[X in keyof Old & keyof Current]: [keyof StateMappings<Old[X], Current[X], X, C>] extends [never]
-		? never
-		: StateMappings<Old[X], Current[X], X, C>;
+type StateMappings<Old extends MembersShape, Current extends MembersShape, C extends Change> = OmitNever<{
+	[S in keyof Old["state"]]: StateMapping<Old, Current, S, C>;
 }>;
 
-type StateMappings<Old extends VariantShape, Current extends VariantShape, X, C extends Change> = OmitNever<{
-	[S in keyof Old["state"]]: StateMapping<Old, Current, X, S, C>;
-}>;
-
-/** A changed member maps the current member back; a removed one maps the variant's whole current state, or refuses. */
+/** A changed member maps the current member back; a removed one maps the whole current state, or refuses. */
 type StateMapping<
-	Old extends VariantShape,
-	Current extends VariantShape,
-	X,
+	Old extends MembersShape,
+	Current extends MembersShape,
 	S extends keyof Old["state"],
 	C,
 > = S extends keyof Current["state"]
-	? [X, S, "state"] extends C
-		? (current: Static<Current["state"][S]>) => Static<Old["state"][S]>
+	? [S, "state"] extends C
+		? (current: Static<Ungranted<Current["state"][S]>>) => Static<Ungranted<Old["state"][S]>>
 		: never
-	: ((state: { [M in keyof Current["state"]]: Static<Current["state"][M]> }) => Static<Old["state"][S]>) | "refuse";
+	:
+			| ((
+					state: { [M in keyof Current["state"]]: Static<Ungranted<Current["state"][M]>> },
+			  ) => Static<Ungranted<Old["state"][S]>>)
+			| "refuse";
 
-type MethodMappings<Old extends Variants, Current extends Variants, C extends Change> = OmitNever<{
-	[M in MemberNames<Old, "methods">]: [RemovedFrom<Current, VariantsWith<Old, M>, M>] extends [never]
+type MethodMappings<Old extends MembersShape, Current extends MembersShape, C extends Change> = OmitNever<{
+	[M in keyof Old["methods"]]: M extends keyof Current["methods"]
 		? ChangedMethod<
-				Changed<C, VariantsWith<Old, M>, M, "args">,
-				Changed<C, VariantsWith<Old, M>, M, "result">,
-				MethodAt<Old, M>,
-				MethodAt<Current, M>
+				[M, "args"] extends C ? true : never,
+				[M, "result"] extends C ? true : never,
+				Ungranted<Old["methods"][M]>,
+				Ungranted<Current["methods"][M]>
 			>
-		: Replacement<MethodAt<Old, M>>;
+		: Replacement<Ungranted<Old["methods"][M]>>;
 }>;
-
-/** The variants among `Xs` that no longer have method `M`. */
-type RemovedFrom<Current extends Variants, Xs extends keyof Current, M> = {
-	[X in Xs]: M extends keyof Current[X]["methods"] ? never : X;
-}[Xs];
-
-/** `true` when an edit changed `Side` of `M` in one of `Xs`. */
-type Changed<C, Xs, M, Side> = Xs extends unknown ? ([Xs, M, Side] extends C ? true : never) : never;
 
 /** Mappings for the changed sides of a method (`A`, `R` are `true` when changed), or a replacement. */
 type ChangedMethod<A, R, Old extends Method, Current extends Method> = [A | R] extends [never]
@@ -168,7 +140,7 @@ export function checkAccepts<C extends Contract>(
 		const path = `${data.name} accepts[${key}]`;
 		const index = data.versions.findIndex(({ version }) => String(version) === key);
 		if (index === -1 || index === data.versions.length - 1) throw new Error(`${path}: not an older version`);
-		checkMappings(mappings, needs(data, index), data.kind, path);
+		checkMappings(mappings, needs(data, index), path);
 		const { version, fingerprint } = data.versions[index]!;
 		return { version, fingerprint };
 	});
@@ -177,13 +149,12 @@ export function checkAccepts<C extends Contract>(
 
 /** What an accepted version needs, by edit and never by schema comparison. */
 type Needs = {
-	/** Per variant, per state member. */
-	readonly state: ReadonlyMap<string, ReadonlyMap<string, StateNeed>>;
+	readonly state: ReadonlyMap<string, StateNeed>;
 	readonly methods: ReadonlyMap<string, MethodNeed>;
 	/** Per keyed member (local contracts). */
 	readonly keyed: ReadonlyMap<string, KeyedNeed>;
-	/** Per variant, per event member still declared and changed since: a mapping or `"refuse"`. */
-	readonly events: ReadonlyMap<string, ReadonlyMap<string, "changed">>;
+	/** Per event member still declared and changed since: a mapping or `"refuse"`. */
+	readonly events: ReadonlyMap<string, "changed">;
 };
 
 type StateNeed = "changed" | "removed";
@@ -196,55 +167,42 @@ type MethodNeed =
 	| { readonly kind: "changed"; readonly args: boolean; readonly result: boolean };
 
 function needs(data: ContractData, index: number): Needs {
-	const old = data.versions[index]!;
-	const current = data.versions.at(-1)!;
+	const old = data.versions[index]!.members;
+	const now = data.versions.at(-1)!.members;
 	const changes = new Set(data.versions.slice(index + 1).flatMap((version) => version.changes.map(changeKey)));
 	const changed = (...change: Change) => changes.has(changeKey(change));
-	const state = new Map<string, Map<string, StateNeed>>();
-	const methods = new Map<string, { removed: boolean; args: boolean; result: boolean }>();
+	const state = new Map<string, StateNeed>();
+	const methods = new Map<string, MethodNeed>();
 	const keyed = new Map<string, KeyedNeed>();
-	const events = new Map<string, Map<string, "changed">>();
-	for (const [variant, { state: oldState, methods: oldMethods, keyed: oldKeyed, events: oldEvents }] of old.variants) {
-		const now = current.variants.get(variant)!;
-		// A removed event needs no mapping: an older consumer receives none of it.
-		const eventNeeds = new Map<string, "changed">();
-		for (const member of oldEvents.keys()) {
-			if (now.events.has(member) && changed(variant, member, "event")) eventNeeds.set(member, "changed");
-		}
-		if (eventNeeds.size > 0) events.set(variant, eventNeeds);
-		for (const [member, { key }] of oldKeyed) {
-			const current = now.keyed.get(member);
-			if (current === undefined) keyed.set(member, "removed");
-			else if (current.key?.kind !== key?.kind) keyed.set(member, "rekeyed");
-			else if (changed(variant, member, "keyed")) keyed.set(member, "changed");
-		}
-		const variantNeeds = new Map<string, StateNeed>();
-		for (const member of oldState.keys()) {
-			if (!now.state.has(member)) variantNeeds.set(member, "removed");
-			else if (changed(variant, member, "state")) variantNeeds.set(member, "changed");
-		}
-		if (variantNeeds.size > 0) state.set(variant, variantNeeds);
-		for (const member of oldMethods.keys()) {
-			const need = methods.get(member) ?? { removed: false, args: false, result: false };
-			need.removed ||= !now.methods.has(member);
-			need.args ||= changed(variant, member, "args");
-			need.result ||= changed(variant, member, "result");
-			methods.set(member, need);
-		}
+	const events = new Map<string, "changed">();
+	// A removed event needs no mapping: an older consumer receives none of it.
+	for (const member of old.events.keys()) {
+		if (now.events.has(member) && changed(member, "event")) events.set(member, "changed");
 	}
-	const methodNeeds = new Map<string, MethodNeed>();
-	for (const [member, { removed, args, result }] of methods) {
-		if (removed) methodNeeds.set(member, { kind: "removed" });
-		else if (args || result) methodNeeds.set(member, { kind: "changed", args, result });
+	for (const [member, { key }] of old.keyed) {
+		const current = now.keyed.get(member);
+		if (current === undefined) keyed.set(member, "removed");
+		else if (current.key?.kind !== key?.kind) keyed.set(member, "rekeyed");
+		else if (changed(member, "keyed")) keyed.set(member, "changed");
 	}
-	return { state, methods: methodNeeds, keyed, events };
+	for (const member of old.state.keys()) {
+		if (!now.state.has(member)) state.set(member, "removed");
+		else if (changed(member, "state")) state.set(member, "changed");
+	}
+	for (const member of old.methods.keys()) {
+		const args = changed(member, "args");
+		const result = changed(member, "result");
+		if (!now.methods.has(member)) methods.set(member, { kind: "removed" });
+		else if (args || result) methods.set(member, { kind: "changed", args, result });
+	}
+	return { state, methods, keyed, events };
 }
 
 function changeKey(change: Change): string {
 	return JSON.stringify(change);
 }
 
-function checkMappings(mappings: unknown, needs: Needs, kind: Kind, path: string): void {
+function checkMappings(mappings: unknown, needs: Needs, path: string): void {
 	checkKeys(mappings, ["state", "methods", "keyed", "events"], path);
 	const { state, methods, keyed, events } = mappings as {
 		readonly state?: unknown;
@@ -252,18 +210,8 @@ function checkMappings(mappings: unknown, needs: Needs, kind: Kind, path: string
 		readonly keyed?: unknown;
 		readonly events?: unknown;
 	};
-	const checkVariant = (variantMappings: unknown, variantNeeds: ReadonlyMap<string, StateNeed>, at: string) =>
-		checkSection(variantMappings, variantNeeds, at, checkStateMapping);
-	const checkEvents = (variantMappings: unknown, variantNeeds: ReadonlyMap<string, "changed">, at: string) =>
-		checkSection(variantMappings, variantNeeds, at, checkEventMapping);
-	// A local table is flat: its state and events sections are the one variant's.
-	if (kind === "local") {
-		checkVariant(state, needs.state.get(LOCAL) ?? new Map(), `${path}.state`);
-		checkEvents(events, needs.events.get(LOCAL) ?? new Map(), `${path}.events`);
-	} else {
-		checkSection(state, needs.state, `${path}.state`, checkVariant);
-		checkSection(events, needs.events, `${path}.events`, checkEvents);
-	}
+	checkSection(state, needs.state, `${path}.state`, checkStateMapping);
+	checkSection(events, needs.events, `${path}.events`, checkEventMapping);
 	checkSection(methods, needs.methods, `${path}.methods`, checkMethodMapping);
 	checkSection(keyed, needs.keyed, `${path}.keyed`, checkKeyedMapping);
 }

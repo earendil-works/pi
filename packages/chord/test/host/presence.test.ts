@@ -87,7 +87,7 @@ describe("host.references", () => {
 			version: 1,
 			params: { session: str() },
 			hostAddress: () => Server(),
-			variants: { v: { state: { here: int() } } },
+			state: { here: int() },
 		});
 		const server = createHost<TestPrincipal>({ address: Server(), principal: { kind: "server" }, onError: () => {} });
 		await server.load(
@@ -95,7 +95,7 @@ describe("host.references", () => {
 				{
 					name: "@test/app",
 					facet: defineFacet<TestPrincipal>((host) => {
-						host.serve(Shown, () => ({ variant: "v", members: { here: constant(1) } }));
+						host.serve(Shown, () => ({ here: constant(1) }));
 						host.serve(Viewers, ({ session }, self) => ({
 							count: self.derive(
 								[host.references(Shown)],
@@ -134,7 +134,7 @@ describe("host.references", () => {
 			version: 1,
 			params: { session: str() },
 			hostAddress: () => Server(),
-			variants: { v: { state: { count: int(), viewers: int() } } },
+			state: { count: int(), viewers: int() },
 		});
 		const server = createHost<TestPrincipal>({ address: Server(), principal: { kind: "server" }, onError: () => {} });
 		const facet = defineFacet<TestPrincipal>((host) => {
@@ -143,11 +143,11 @@ describe("host.references", () => {
 				const store = self.get(NoteStore, { session });
 				const count = self.derive([store.list], ([list]) => list.length);
 				const viewers = self.derive([host.references(Viewed)], ([refs]) => refs.length);
-				return { variant: "v", members: { count, viewers } };
+				return { count, viewers };
 			});
 		});
 		await server.load([{ name: "@test/app", facet }], context);
-		const names = wireNames(Viewed, "v").state as { count: number; viewers: number };
+		const names = wireNames(Viewed).state as { count: number; viewers: number };
 		/** A raw tab; its server end closes while it sends, once `drop.armed` (a transport failing on send). */
 		const tab = (drop?: { armed: boolean }) => {
 			const [a, b] = memoryLinkPair();
@@ -189,15 +189,14 @@ describe("host.references", () => {
 			version: 1,
 			params: {},
 			hostAddress: () => Server(),
-			variants: { v: { state: { viewers: int() } } },
+			state: { viewers: int() },
 		});
 		const server = createHost<TestPrincipal>({ address: Server(), principal: { kind: "server" }, onError: () => {} });
 		const facet = defineFacet<TestPrincipal>((host) => {
 			host.serve(
 				Viewed,
 				(_params, _principal, self) => ({
-					variant: "v",
-					members: { viewers: self.derive([host.references(Viewed)], ([refs]) => refs.length) },
+					viewers: self.derive([host.references(Viewed)], ([refs]) => refs.length),
 				}),
 				{ linger: 60_000 },
 			);
@@ -227,15 +226,14 @@ describe("host.references", () => {
 			version: 1,
 			params: {},
 			hostAddress: () => Server(),
-			variants: { v: { state: { viewers: int() } } },
+			state: { viewers: int() },
 		});
 		const server = createHost<TestPrincipal>({ address: Server(), principal: { kind: "server" }, onError: () => {} });
 		const facet = defineFacet<TestPrincipal>((host) => {
 			host.serve(
 				Viewed,
 				(_params, _principal, self) => ({
-					variant: "v",
-					members: { viewers: self.derive([host.references(Viewed)], ([refs]) => refs.length) },
+					viewers: self.derive([host.references(Viewed)], ([refs]) => refs.length),
 				}),
 				{ linger: 50 },
 			);
@@ -316,11 +314,9 @@ describe("host.references", () => {
 			version: 1,
 			params: {},
 			hostAddress: () => Server(),
-			variants: { v: { state: { n: int() } } },
+			state: { n: int() },
 		});
-		const { server, client } = await linked((h) =>
-			h.serve(Kept, () => ({ variant: "v", members: { n: constant(1) } }), { linger: 60_000 }),
-		);
+		const { server, client } = await linked((h) => h.serve(Kept, () => ({ n: constant(1) }), { linger: 60_000 }));
 		const kept = await client.get(Kept, {}, context);
 		const references = server.references(Kept);
 		expect(references.value).toHaveLength(1);

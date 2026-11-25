@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	event,
 	evolve,
+	grantable,
 	hostKind,
 	int,
 	local,
@@ -17,10 +18,9 @@ import type { Params } from "../../src/contracts/params.ts";
 
 const Server = hostKind("server");
 
-/** Fingerprint of a one-variant remote contract with state `s` and params `params`. */
+/** Fingerprint of a remote contract with state `s` and params `params`. */
 function fingerprintOf(state: Schema, params: Params = {}): string {
-	return remote("n", { version: 1, params, hostAddress: () => Server(), variants: { a: { state: { s: state } } } })
-		.fingerprint;
+	return remote("n", { version: 1, params, hostAddress: () => Server(), state: { s: state } }).fingerprint;
 }
 
 describe("fingerprints", () => {
@@ -30,12 +30,11 @@ describe("fingerprints", () => {
 			version: 1,
 			params: { session: str() },
 			hostAddress: () => Server(),
-			variants: {
-				editor: { state: { notes: obj({ text: str() }) }, methods: { add: method(obj({ text: str() }), str()) } },
-				reader: { state: { notes: obj({ text: str() }) } },
-			},
+			state: { notes: obj({ text: str() }) },
+			methods: { add: grantable(method(obj({ text: str() }), str())) },
+			flags: { export: "Export" },
 		});
-		expect(Notes.fingerprint).toBe("b3eda86070a7e319");
+		expect(Notes.fingerprint).toBe("02c6a0d2064e8a71");
 	});
 
 	it("are stable across key order and annotations", () => {
@@ -73,13 +72,12 @@ describe("fingerprints", () => {
 	});
 
 	it("give the same v1 from a separate declaration, and evolve keeps v1's", () => {
-		const declare = () =>
-			remote("n", { version: 1, params: {}, hostAddress: () => Server(), variants: { a: { state: { s: str() } } } });
+		const declare = () => remote("n", { version: 1, params: {}, hostAddress: () => Server(), state: { s: str() } });
 		const v1 = declare();
-		const v2 = evolve(v1, (e) => e.state("a", "s", int()));
+		const v2 = evolve(v1, (e) => e.state("s", int()));
 		expect(declare().fingerprint).toBe(v1.fingerprint);
 		expect(v2.fingerprint).not.toBe(v1.fingerprint);
-		expect(evolve(declare(), (e) => e.state("a", "s", int())).fingerprint).toBe(v2.fingerprint);
+		expect(evolve(declare(), (e) => e.state("s", int())).fingerprint).toBe(v2.fingerprint);
 	});
 
 	it("differ between local and remote", () => {
@@ -87,15 +85,15 @@ describe("fingerprints", () => {
 			version: 1,
 			params: {},
 			hostAddress: () => Server(),
-			variants: { members: { state: { s: str() } } },
+			state: { s: str() },
 		});
 		const asLocal = local("n", { version: 1, params: {}, members: { s: str() } });
 		expect(asLocal.fingerprint).not.toBe(asRemote.fingerprint);
 	});
 
 	it("do not depend on the name or version", () => {
-		const a = remote("a", { version: 1, params: {}, hostAddress: () => Server(), variants: { v: {} } });
-		const b = remote("b", { version: 7, params: {}, hostAddress: () => Server(), variants: { v: {} } });
+		const a = remote("a", { version: 1, params: {}, hostAddress: () => Server() });
+		const b = remote("b", { version: 7, params: {}, hostAddress: () => Server() });
 		expect(a.fingerprint).toBe(b.fingerprint);
 	});
 });
@@ -106,25 +104,27 @@ describe("fingerprints of event members", () => {
 			version: 1,
 			params: {},
 			hostAddress: () => Server(),
-			variants: { a: { state: { s: int() } } },
+			state: { s: int() },
 		});
 		const empty = remote("n", {
 			version: 1,
 			params: {},
 			hostAddress: () => Server(),
-			variants: { a: { state: { s: int() }, events: {} } },
+			state: { s: int() },
+			events: {},
 		});
 		const withEvent = remote("n", {
 			version: 1,
 			params: {},
 			hostAddress: () => Server(),
-			variants: { a: { state: { s: int() }, events: { e: int() } } },
+			state: { s: int() },
+			events: { e: int() },
 		});
 		const asState = remote("n", {
 			version: 1,
 			params: {},
 			hostAddress: () => Server(),
-			variants: { a: { state: { s: int(), e: int() } } },
+			state: { s: int(), e: int() },
 		});
 		expect(empty.fingerprint).toBe(plain.fingerprint);
 		expect(new Set([plain.fingerprint, withEvent.fingerprint, asState.fingerprint]).size).toBe(3);

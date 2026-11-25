@@ -28,12 +28,12 @@ const View = remote("bench.view", {
 	version: 1,
 	params: { id: str() },
 	hostAddress: () => Server(),
-	variants: { v: { state: { n: int() } } },
+	state: { n: int() },
 });
 
 const facet = defineFacet<P>((host) => {
 	host.serve(Counter, () => ({ n: constant(1) }));
-	host.serve(View, () => ({ variant: "v", members: { n: constant(1) } }));
+	host.serve(View, () => ({ n: constant(1) }));
 });
 
 /** Median time (µs) and heap (B) per step of `step`, after a warm-up burst. */
@@ -104,7 +104,7 @@ async function rebound(): Promise<string> {
 		b.send(
 			binaryCodec.encode({
 				kind: "bound",
-				holds: [{ hold, variant: 0, members: [{ member: 0, value: "1" }], failed: [] }],
+				holds: [{ hold, granted: [], members: [{ member: 0, value: "1" }], failed: [] }],
 			}),
 		);
 	const got = client.get(View, { id: "a" }, context);

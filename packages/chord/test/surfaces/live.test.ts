@@ -1,65 +1,57 @@
-// Tests of a reference read in one variant (decision "C15 stands; the UI bindings follow the variant"): narrowed while
-// live in that variant, nothing before it binds, in another variant, while it loads between two, denied or released.
+// Tests of a reference as a UI reads it (slice 15 §1.5): the reference while live and while it loads again after it
+// was live, nothing before its first binding, denied or released; its `granted` changes with an admission's rebind.
 
 import { describe, expect, expectTypeOf, it } from "vitest";
-import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
-import type { Held, Reference, RefIn } from "../../src/host/index.ts";
-import { type InVariant, liveIn } from "../../src/surfaces/variant.ts";
+import { type Context, BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
+import type { Reference } from "../../src/host/index.ts";
+import { liveGrant } from "../../src/surfaces/live.ts";
 import { Desk, desk } from "../support.ts";
 
-describe("liveIn", () => {
-	it("is the reference while it is live in the variant, nothing before it binds or for no reference", async () => {
+describe("liveGrant", () => {
+	it("is the reference's grant while it is live, nothing before it binds or for no reference", async () => {
 		const { client } = await desk();
 		const held = client.hold(Desk, {}, context);
-		expect(liveIn(held, "reader")).toBeUndefined();
-		expect(liveIn(undefined as typeof held | undefined, "reader")).toBeUndefined();
+		expect(liveGrant(held, false)).toBeUndefined();
+		expect(liveGrant(undefined, false)).toBeUndefined();
 		await expect.poll(() => held.state.value.kind).toBe("live");
-		expect(liveIn(held, "reader")).toBe(held);
-		expect(liveIn(held, "editor")).toBeUndefined();
+		expect(liveGrant(held, false)).toBe(held.granted);
+		expect([...held.granted]).toEqual([]);
 		held.release();
 	});
 
-	it("follows the variant an admission rebinds: nothing while it loads between two, denied or released", async () => {
+	it("follows the grant an admission rebinds: kept while it loads after live, nothing denied or released", async () => {
 		const { client, admit } = await desk();
 		const held = client.hold(Desk, {}, context);
-		await expect.poll(() => liveIn(held, "reader")).toBe(held);
-		// Each state as its watch gets it, with what the reference is read as then.
+		await expect.poll(() => liveGrant(held, false)).toBeDefined();
+		// Each state as its watch gets it, with what the reference is read as then (it was live before each).
 		const seen: string[] = [];
 		const watch = await held.state.watch(context);
 		watch.start(async (call) => {
 			if (call.kind !== "value") return;
-			const read = liveIn(held, "reader") ?? liveIn(held, "editor");
-			seen.push(`${call.value.kind} ${held.variant}: read as ${read?.variant}`);
+			const read = liveGrant(held, true);
+			seen.push(`${call.value.kind}: ${read === undefined ? "none" : [...read].join(",") || "plain"}`);
 		});
 		await admit("editor");
-		await expect.poll(() => liveIn(held, "editor")).toBe(held);
-		expect(liveIn(held, "reader")).toBeUndefined();
-		await liveIn(held, "editor")!.write("edited", context);
+		await expect.poll(() => held.write).toBeDefined();
+		const editing = liveGrant(held, true);
+		await held.write!("edited", context);
 		await admit("none");
 		await expect.poll(() => held.state.value).toMatchObject({ kind: "failed", cause: { kind: "denied" } });
-		expect(liveIn(held, "editor")).toBeUndefined();
+		expect([liveGrant(held, true), held.write]).toEqual([undefined, undefined]);
 		await admit("reader");
-		await expect.poll(() => liveIn(held, "reader")).toBe(held);
-		// While it loads between two variants it still says the last one: the comparison alone would keep an editor's
-		// controls up.
-		expect(seen).toEqual([
-			"loading reader: read as undefined",
-			"live editor: read as editor",
-			"failed undefined: read as undefined",
-			"loading undefined: read as undefined",
-			"live reader: read as reader",
-		]);
+		await expect.poll(() => liveGrant(held, true)).toBeDefined();
+		// A rebind is a new grant: what a UI compares to redraw.
+		expect(liveGrant(held, true)).not.toBe(editing);
+		await expect.poll(() => seen.length).toBe(5);
+		expect(seen).toEqual(["loading: plain", "live: write", "failed: none", "loading: plain", "live: plain"]);
 		held.release();
-		expect(liveIn(held, "reader")).toBeUndefined();
+		expect(liveGrant(held, true)).toBeUndefined();
 	});
 
-	it("narrows a held and a got reference to the variant's members", () => {
-		type Editor = InVariant<Held<typeof Desk>, "editor">;
-		expectTypeOf<Editor["variant"]>().toEqualTypeOf<"editor">();
-		expectTypeOf<Editor>().toHaveProperty("write");
-		expectTypeOf<InVariant<Held<typeof Desk>, "reader">>().not.toHaveProperty("write");
-		expectTypeOf<InVariant<Reference<typeof Desk>, "editor">>().toMatchTypeOf<RefIn<typeof Desk, "editor">>();
-		// @ts-expect-error: no such variant
-		liveIn(undefined as Held<typeof Desk> | undefined, "owner");
+	it("types a reference's grantable members as optional and its grant as the contract's names", () => {
+		type Ref = Reference<typeof Desk>;
+		expectTypeOf<Ref["granted"]>().toEqualTypeOf<ReadonlySet<"write">>();
+		expectTypeOf<Ref["write"]>().toEqualTypeOf<((args: string, context: Context) => Promise<null>) | undefined>();
+		expectTypeOf<Ref["text"]["value"]>().toEqualTypeOf<string>();
 	});
 });

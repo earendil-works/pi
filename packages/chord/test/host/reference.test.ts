@@ -1,17 +1,14 @@
 import { describe, expect, expectTypeOf, it, vi } from "vitest";
-import { type Context, BACKGROUND_CONTEXT as context, withAbortSignal } from "../../src/context/index.ts";
-import { int, keyed, local, method, obj, remote, str } from "../../src/contracts/index.ts";
+import {
+	BACKGROUND_CONTEXT,
+	type Context,
+	BACKGROUND_CONTEXT as context,
+	withAbortSignal,
+} from "../../src/context/index.ts";
+import { grantable, int, keyed, local, method, obj, remote, str } from "../../src/contracts/index.ts";
 import { broken, type ChordError } from "../../src/data/index.ts";
 import { defineState, type KeyedHandle } from "../../src/documents/index.ts";
-import {
-	createHost,
-	defineFacet,
-	type Held,
-	type Reference,
-	type RefIn,
-	type RefState,
-	type Self,
-} from "../../src/host/index.ts";
+import { allow, createHost, defineFacet, type Reference, type RefState, type Self } from "../../src/host/index.ts";
 import { ChordObject } from "../../src/host/object.ts";
 import { Binding } from "../../src/host/reference.ts";
 import { jsonPart } from "../../src/link/internal.ts";
@@ -345,34 +342,41 @@ describe("release", () => {
 });
 
 describe("remote references", () => {
-	it("have every member of every variant; variant is undefined before live and released after release", async () => {
+	it("have the plain members always and the grantable ones while granted; granted is empty before live, released after", async () => {
 		const Two = remote("app.two", {
 			version: 1,
 			params: {},
 			hostAddress: () => Server(),
-			variants: { full: { state: { n: int() }, methods: { bump: method() } }, view: { state: { m: int() } } },
+			state: { n: grantable(int()), m: int() },
+			methods: { bump: grantable(method()) },
+			flags: { export: "Export" },
 		});
 		const Holder = local("app.holder", { version: 1, params: {}, members: { n: int() } });
 		const seen: unknown[] = [];
 		const owner = { kind: "owner" } as const;
 		const host = createHost<typeof owner>({ address: Server(), principal: owner, onError: () => {} });
 		const facet = defineFacet<typeof owner>((h) => {
-			h.serve(Two, () => ({ variant: "view", members: { m: constant(1) } }));
+			h.serve(Two, () => ({ n: () => constant(0), m: constant(1), bump: async () => null }), {
+				admit: () => constant(allow({ granted: ["export"] })),
+			});
 			h.serve(Holder, (_, self) => {
 				const two = self.get(Two, {});
 				seen.push(Object.keys(two).sort());
-				seen.push(two.variant);
+				// In a factory the dependency is not bound yet: every member is there, nothing granted (slice 15 §1.4).
+				seen.push([typeof two.n, typeof two.bump, [...two.granted]]);
 				return { n: constant(1) };
 			});
 		});
 		await host.load([{ name: "@test/app", facet }], context);
-		expect(seen).toEqual([["bump", "m", "n", "release", "retry", "state", "variant"], undefined]);
+		expect(seen).toEqual([
+			["bump", "granted", "m", "n", "release", "retry", "state"],
+			["object", "function", []],
+		]);
 		const two = await host.get(Two, {}, context);
-		expect(() => (two as unknown as { n: { value: number } }).n.value).toThrow(
-			'app.two (variant view) has no state member "n"',
-		);
+		expect([two.n, two.bump, [...two.granted], two.m.value]).toEqual([undefined, undefined, ["export"], 1]);
 		two.release();
-		expect(() => two.variant).toThrow("app.two: released");
+		expect(() => two.granted).toThrow("app.two: released");
+		expect(() => two.n).toThrow("app.two: released");
 	});
 });
 
@@ -405,36 +409,39 @@ describe('a binding moved by a retry alone (decision "References share one wire 
 	});
 });
 
-describe("remote reference types", () => {
-	it("narrow on variant; RefIn picks variants", () => {
-		const Two = remote("app.two", {
-			version: 1,
-			params: {},
-			hostAddress: () => Server(),
-			variants: { full: { state: { n: int() }, methods: { bump: method() } }, view: { state: { m: int() } } },
-		});
-		type Ref = Reference<typeof Two>;
-		expectTypeOf<Ref["variant"]>().toEqualTypeOf<"full" | "view">();
-		expectTypeOf<RefIn<typeof Two, "view">["m"]["value"]>().toEqualTypeOf<number>();
-		expectTypeOf<keyof RefIn<typeof Two, "full">>().toEqualTypeOf<
-			"variant" | "n" | "bump" | "release" | "retry" | "state"
-		>();
-		expectTypeOf<Reference<typeof Counter>>().not.toHaveProperty("variant");
+describe("remote reference types (slice 15 §1.4)", () => {
+	const Two = remote("app.two", {
+		version: 1,
+		params: {},
+		hostAddress: () => Server(),
+		state: { n: grantable(int()), m: int() },
+		methods: { bump: grantable(method()), read: method() },
+		flags: { export: "Export" },
 	});
 
-	it("a held reference's variant may be undefined (before its first binding) and still narrows", () => {
-		const Two = remote("app.two", {
-			version: 1,
-			params: {},
-			hostAddress: () => Server(),
-			variants: { full: { state: { n: int() }, methods: { bump: method() } }, view: { state: { m: int() } } },
-		});
-		expectTypeOf<Held<typeof Two>["variant"]>().toEqualTypeOf<"full" | "view" | undefined>();
-		const narrow = (held: Held<typeof Two>) => (held.variant === "full" ? held.bump : undefined);
-		expectTypeOf(narrow).returns.toEqualTypeOf<((ctx: Context) => Promise<null>) | undefined>();
-		expectTypeOf<Held<typeof Counter>>().toEqualTypeOf<Reference<typeof Counter>>();
-		expectTypeOf<Reference<typeof Two>["state"]>().toEqualTypeOf<NativeWatchable<RefState>>();
-		expectTypeOf<Held<typeof Two>["retry"]>().toEqualTypeOf<() => void>();
+	it("have the plain members, the grantable ones optional, and granted", () => {
+		type Ref = Reference<typeof Two>;
+		expectTypeOf<Ref["m"]["value"]>().toEqualTypeOf<number>();
+		expectTypeOf<Ref["n"]>().toEqualTypeOf<Watchable<number> | undefined>();
+		expectTypeOf<Ref["bump"]>().toEqualTypeOf<((ctx: Context) => Promise<null>) | undefined>();
+		expectTypeOf<Ref["read"]>().toEqualTypeOf<(ctx: Context) => Promise<null>>();
+		expectTypeOf<Ref["granted"]>().toEqualTypeOf<ReadonlySet<"n" | "bump" | "export">>();
+		expectTypeOf<keyof Ref>().toEqualTypeOf<
+			"n" | "m" | "bump" | "read" | "granted" | "release" | "retry" | "state"
+		>();
+		expectTypeOf<Reference<typeof Counter>>().not.toHaveProperty("granted");
+		expectTypeOf<Ref["state"]>().toEqualTypeOf<NativeWatchable<RefState>>();
+		expectTypeOf<Ref["retry"]>().toEqualTypeOf<() => void>();
+	});
+
+	it("refuse a call of a grantable method without a check", () => {
+		const call = (ref: Reference<typeof Two>) => {
+			// @ts-expect-error: `bump` may not be granted
+			void ref.bump(BACKGROUND_CONTEXT);
+			if (ref.bump !== undefined) void ref.bump(BACKGROUND_CONTEXT);
+			void ref.read(BACKGROUND_CONTEXT);
+		};
+		expectTypeOf(call).toBeFunction();
 	});
 });
 

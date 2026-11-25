@@ -12,7 +12,7 @@ export const Reports = remote("example.reports", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
-	variants: { main: { methods: { report: method(str()) } } },
+	methods: { report: method(str()) },
 });
 
 /** On a session's worker: makes it report, or report and exit in the same turn. */
@@ -20,5 +20,5 @@ export const Probe = remote("example.probe", {
 	version: 1,
 	params: { id: str() },
 	hostAddress: ({ id }) => Session({ id }),
-	variants: { main: { methods: { report: method(str()), reportAndExit: method(str()) } } },
+	methods: { report: method(str()), reportAndExit: method(str()) },
 });

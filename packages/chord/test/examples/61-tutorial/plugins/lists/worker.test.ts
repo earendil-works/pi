@@ -1,6 +1,6 @@
 // The lists plugin's worker facet, tested alone with `testPlugin`: built as production builds it, evaluated with the
 // app's real API module and loaded on a host of its own (an in-memory store) at a list's address. Each test runs code
-// as a principal of its choice: a user gets the `member` variant, the owner `owner`; a todo keeps who added it, one
+// as a principal of its choice: a user is granted nothing, the owner `clear`; a todo keeps who added it, one
 // without text is refused, and clearing leaves a notice as data. The test imports the app's API by its package name and
 // the plugin's contract from its `contract.ts`, as the facets do.
 // Run from packages/chord:
@@ -37,7 +37,7 @@ describe("the lists plugin on a list's worker", () => {
 		await t.root(
 			async (ctx) => {
 				const todos = await ctx.get(Todos, { list: "groceries" });
-				expect(todos.variant).toBe("member");
+				expect([[...todos.granted], todos.clear]).toEqual([[], undefined]);
 				await todos.add("coffee", ctx);
 				expect(todos.items.value.map(({ text, by }) => `${text} (${by})`)).toEqual(["coffee (ada)"]);
 			},
@@ -62,11 +62,12 @@ describe("the lists plugin on a list's worker", () => {
 		await t.root(
 			async (ctx) => {
 				const todos = await ctx.get(Todos, { list: "groceries" });
-				if (todos.variant !== "owner") throw new Error(`the owner got ${todos.variant}`);
+				const { clear } = todos;
+				if (clear === undefined) throw new Error("the owner is granted clear");
 				await todos.add("milk", ctx);
 				await todos.add("eggs", ctx);
 				await todos.tick({ id: 1, done: true }, ctx);
-				await todos.clear(ctx);
+				await clear(ctx);
 				expect(todos.items.value.map(({ text }) => text)).toEqual(["eggs"]);
 				expect(todos.notice.value).toEqual({ namespace: "todo.lists", key: "cleared", params: ["owner"] });
 			},

@@ -246,12 +246,35 @@ export class EventDeclaration<S extends Schema = Schema> {
 
 /**
  * Declares an event member of a `local` contract, as `keyed(schema)` marks a keyed member: JSON values of `schema` the
- * object emits, delivered once to the references bound to it, never kept (a remote contract lists them under a
- * variant's `events`).
+ * object emits, delivered once to the references bound to it, never kept (a remote contract lists them under its
+ * `events`).
  */
 export function event<S extends Schema>(schema: S): EventDeclaration<S> {
 	return new EventDeclaration(schema);
 }
+
+/**
+ * A grantable member's declaration in a `remote` contract (slice 15 §1): a state or event schema, or a method, that a
+ * caller has only if its admission granted it.
+ */
+export class Grantable<M extends Schema | Method = Schema | Method> {
+	readonly member: M;
+
+	constructor(member: M) {
+		this.member = member;
+	}
+}
+
+/**
+ * Marks a member of a `remote` contract as grantable: `grantable(schema)` in `state` and `events`,
+ * `grantable(method(...))` in `methods`. A caller has it only if its admission granted it (`allow({ granted })`).
+ */
+export function grantable<M extends Schema | Method>(member: M): Grantable<M> {
+	return new Grantable(member);
+}
+
+/** A member's declaration without its `grantable(...)` mark. */
+export type Ungranted<T> = T extends Grantable<infer M> ? M : T;
 
 /** Declares a method: `method()`, `method(args)`, `method(args, result)` or `method(undefined, result)`. */
 export function method(): Method<NullSchema, NullSchema>;

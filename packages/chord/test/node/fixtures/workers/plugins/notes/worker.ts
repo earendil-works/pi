@@ -9,9 +9,7 @@ const Notes = remote("test.notes", {
 	version: 1,
 	params: { id: str() },
 	hostAddress: ({ id }) => Session({ id }),
-	variants: { main: { state: { label: str() } } },
+	state: { label: str() },
 });
 
-export default defineFacet((host) =>
-	host.serve(Notes, ({ id }) => ({ variant: "main", members: { label: constant(`${id} ${label}`) } })),
-);
+export default defineFacet((host) => host.serve(Notes, ({ id }) => ({ label: constant(`${id} ${label}`) })));

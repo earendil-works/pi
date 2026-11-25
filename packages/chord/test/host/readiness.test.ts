@@ -114,13 +114,13 @@ describe("Readiness: when the recorded requests are ready", () => {
 			version: 1,
 			params: {},
 			hostAddress: () => Server(),
-			variants: { main: { state: { text: str() } } },
+			state: { text: str() },
 		});
-		const ShownV2 = evolve(Shown, (e) => e.addState("main", "n", int()));
+		const ShownV2 = evolve(Shown, (e) => e.addState("n", int()));
 		const serve = (h: FacetHost<TestPrincipal>, raised: boolean) =>
 			raised
-				? h.serve(ShownV2, () => ({ variant: "main", members: { text: constant("v2"), n: constant(2) } }))
-				: h.serve(Shown, () => ({ variant: "main", members: { text: constant("v1") } }));
+				? h.serve(ShownV2, () => ({ text: constant("v2"), n: constant(2) }))
+				: h.serve(Shown, () => ({ text: constant("v1") }));
 		const { server, client } = await linked((h) => serve(h, false));
 		const readiness = readinessOf(client as ChordHost, [{ kind: "type", contract: ShownV2, params: {} }]);
 		readiness.start();

@@ -9,5 +9,6 @@ export const Process = remote("example.process", {
 	version: 1,
 	params: { id: str() },
 	hostAddress: ({ id }) => Session({ id }),
-	variants: { main: { state: { pid: int() }, methods: { crash: method() } } },
+	state: { pid: int() },
+	methods: { crash: method() },
 });

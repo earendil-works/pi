@@ -22,7 +22,7 @@ document.getElementById("login").addEventListener("submit", async (event) => {
 </script></body></html>`;
 
 export default defineFacet((host, self) => {
-	host.serve(Channels, () => ({ variant: "main", members: { names: constant(CHANNELS) } }));
+	host.serve(Channels, () => ({ names: constant(CHANNELS) }));
 	self.contribute(Http, {
 		routes: {
 			"GET /": { public: true, handler: async (request) => ({ kind: "html", body: signIn(request.nonce) }) },

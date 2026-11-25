@@ -51,7 +51,7 @@ const S1: TestPrincipal = { kind: "guest", session: "S1" };
 const Barrier = local("app.barrier", { version: 1, params: {}, members: { n: int() } });
 
 /** A guest's variant: its `wait` method's index. */
-const { wait } = wireNames(Notes, "reader").methods as { wait: number };
+const { wait } = wireNames(Notes).methods as { wait: number };
 
 /** A worker of session S1 serving `Notes` (as `serveNotes`, at the address `Notes` names), its parent a raw peer whose holds name their principal. */
 async function worker(setup: (host: FacetHost<TestPrincipal>) => void = (h) => void serveNotes(h)) {
@@ -183,7 +183,7 @@ forEachCodec(() => {
 				version: 1,
 				params: {},
 				hostAddress: () => Server(),
-				variants: { v: { state: { n: int() } } },
+				state: { n: int() },
 			});
 			const aborted: unknown[] = [];
 			const { host, parent } = await worker((h) =>
@@ -198,7 +198,7 @@ forEachCodec(() => {
 							),
 						() => {},
 					);
-					return { variant: "v", members: { n: constant(1) } };
+					return { n: constant(1) };
 				}),
 			);
 			parent.send({
@@ -468,7 +468,8 @@ describe("revocation of this host's own requests over its paths (fix round 1)", 
 		version: 1,
 		params: {},
 		hostAddress: () => There(),
-		variants: { view: { state: {}, methods: {} } },
+		state: {},
+		methods: {},
 	});
 	const guestRevokedBy = (p: Guest) => (p.kind === "guest" ? [p.grant] : []);
 
@@ -524,7 +525,7 @@ describe("revocation of this host's own requests over its paths (fix round 1)", 
 		});
 		const [up, down] = memoryLinkPair();
 		worker.connect(up, { principal: { kind: "owner" }, trusted: true }, context);
-		const facet = defineFacet<Guest>((h) => h.serve(Remote, () => ({ variant: "view", members: {} })));
+		const facet = defineFacet<Guest>((h) => h.serve(Remote, () => ({})));
 		await worker.load([{ name: "@test/late", facet }], context);
 		gate.resolve({ link: down, principal: { kind: "owner" }, trusted: true });
 		expect(await pending).toMatchObject({ code: "forbidden", reason: "revoked" });

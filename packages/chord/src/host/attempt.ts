@@ -18,7 +18,7 @@ import type {
 	ParamsOf,
 	Schema,
 } from "../contracts/index.ts";
-import { contractData, type ShapeOf } from "../contracts/internal.ts";
+import { contractData, currentVersion, NO_GRANTS, type ShapeOf } from "../contracts/internal.ts";
 import { ChordError, type FailureCause, type Principal } from "../data/index.ts";
 import { asChordError, checkArgs, checkParams, invalid, openFailure, type Value } from "../data/internal.ts";
 import type { HandleOf, JsonObject, KeyedBy, StateDefinition, Tx } from "../documents/index.ts";
@@ -49,7 +49,7 @@ import { prepareTables } from "../store/table-migration.ts";
 import { capped, MAX_MESSAGE, OpenSpan, spanFailed, untraced } from "../telemetry.ts";
 import type { NativeWatchable, Watchable, WatchEnd } from "../watch.ts";
 import { AdaptedMembers } from "./adapted.ts";
-import { type Allowed, Decision, refuseAdmittedJob, type Verdict } from "./admission.ts";
+import { type AdmittedValue, type Allowed, Decision, refuseAdmittedJob, type Verdict } from "./admission.ts";
 import { CallContext, type Caller, type Ctx, withLinkedAbortSignal } from "./ctx.ts";
 import { Deadline } from "./deadline.ts";
 import { checkDependencies, type Dependency, ParkedLong, type Parking, parkedCause, pinKeys } from "./dependencies.ts";
@@ -61,7 +61,9 @@ import {
 	attachDerives,
 	checkImplementation,
 	contributionOf,
+	grantedImplementation,
 	type KeyedBinding,
+	lacking,
 	type Members,
 	type Method,
 } from "./members.ts";
@@ -281,15 +283,16 @@ export type PinnedKey = { readonly source: DeriveSource; readonly release: () =>
 
 /**
  * A factory: synchronous and declarative, run once per attempt. A remote one also gets the principal in its object's
- * identity and returns one variant, `{ variant, members }`; one of a contract that declares an `admission` gets the
- * admitted value after the principal (slice 14 §2.1: it selects the variant and the members, and `self.job` is
- * refused there). Methods get a `Ctx` for the app's principal type `P`.
+ * identity and returns every member, its grantable state and event members as builders (slice 15 §1.3); one of a
+ * contract served with `admit` (it declares an `admission`, grantable members or flags) gets the admitted value after
+ * the principal, `granted` among it (slice 14 §2.1; `self.job` is refused there). Methods get a `Ctx` for the app's
+ * principal type `P`.
  */
 export type Factory<C extends Contract, P extends Principal = Principal> = ShapeOf<C>["kind"] extends "local"
 	? (params: ParamsOf<C>, self: keyof ParamsOf<C> extends never ? StoreSelf<P> : Self<P>) => Implementation<C, Ctx<P>>
-	: ShapeOf<C> extends { readonly admission: Schema }
-		? (params: ParamsOf<C>, principal: P, admitted: AdmittedOf<C>, self: Self<P>) => Implementation<C, Ctx<P>>
-		: (params: ParamsOf<C>, principal: P, self: Self<P>) => Implementation<C, Ctx<P>>;
+	: [AdmittedOf<C>] extends [never]
+		? (params: ParamsOf<C>, principal: P, self: Self<P>) => Implementation<C, Ctx<P>>
+		: (params: ParamsOf<C>, principal: P, admitted: AdmittedOf<C>, self: Self<P>) => Implementation<C, Ctx<P>>;
 
 /** A parked attempt whose check found nothing to wait for: the shared answer. */
 const READY: Parking = { kind: "ready" };
@@ -400,9 +403,8 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	#declaring = false;
 	/** Set once it went live: its derives' failures are reported from then on (`derive_failed`). */
 	#isLive = false;
-	/** The checked implementation and, for a remote object, its variant, once activation checked them. */
+	/** The checked implementation, once activation checked it. */
 	#members: Members | undefined;
-	#variant: string | undefined;
 	readonly #derives: Derive[] = [];
 	/** Its followed sources, attached in declaration order after the natives. */
 	readonly #follows: FollowSource[] = [];
@@ -844,6 +846,7 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 			label: object.label,
 			caller: this.#caller(),
 			dependent: object,
+			grants: currentVersion(this.#served.contract).grants,
 			moved: () => this.#admissionMoved(),
 		});
 		try {
@@ -1136,9 +1139,12 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		return this.#registryDeclarations?.contributions ?? NONE;
 	}
 
-	/** The variant a remote object's factory chose; `undefined` for a local object. */
-	get variant(): string | undefined {
-		return this.#variant;
+	/**
+	 * The names its admission granted (slice 15 §1.2): a remote object's grantable members and flags its caller has;
+	 * none for a local object and a type without an admission.
+	 */
+	get granted(): ReadonlySet<string> {
+		return this.#admitted?.granted ?? NO_GRANTS;
 	}
 
 	/** The state members, as Chord follows them. */
@@ -1147,9 +1153,10 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	}
 
 	/**
-	 * Calls a method for `caller`, bound at `version`: a method outside the variant fails `invalid/member` first (for an
-	 * older version after its table's checks), then the arguments are checked against that version (L1) and, for an
-	 * older one (Q10), mapped forwards, the handler's result mapped back, or the provider's replacement of a removed
+	 * Calls a method for `caller`, bound at `version`: a method it lacks fails first, `forbidden` for a grantable one
+	 * not granted, `invalid/member` for any other (for an older version after its table's checks), then the arguments
+	 * are checked against that version (L1) and, for an older one (Q10), mapped forwards, the handler's result mapped
+	 * back, or the provider's replacement of a removed
 	 * method run instead; a refused method fails `contract_mismatch`. The handler runs under a ctx aborted by the caller
 	 * and by this attempt's end, admitted to the drain before it runs. Either rejects the caller at once; the handler
 	 * runs on, its transactions refused, and the drain waits for it. Its `ctx.get` references are released when it
@@ -1230,9 +1237,9 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		});
 	}
 
-	/** The `invalid/member` error of a method outside the variant. */
+	/** The error of a call of a method it lacks: `forbidden` for a grantable one not granted, else `invalid/member`. */
 	#noMethod(method: string): ChordError {
-		return invalid("member", `${this.#object.label}${this.#inVariant()} has no method "${method}"`);
+		return lacking(this.#object.label, this.#served.contract, method, "method");
 	}
 
 	/**
@@ -1259,7 +1266,7 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 
 	/**
 	 * State member `member` as a consumer of `version` follows it: its own member at its version, else its shared mapping
-	 * for that version (`AdaptedMembers`); `invalid/member` outside the variant, `contract_mismatch` for a version or
+	 * for that version (`AdaptedMembers`); `invalid/member` for one it lacks, `contract_mismatch` for a version or
 	 * member its provider refuses.
 	 */
 	memberAt(member: string, version: number): DeriveSource {
@@ -1317,7 +1324,7 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 			adapted = new AdaptedMembers(
 				{
 					served: this.#served,
-					variant: this.#variant,
+					granted: this.granted,
 					label,
 					batch: host.batch,
 					member: (name) => this.member(name),
@@ -1335,21 +1342,19 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	}
 
 	/**
-	 * Event member `member`'s node as a binding of `version` taps it: its own at its version, else its shared mapping for
-	 * that version; `undefined` outside the variant (or removed since that version), before the members check, and for a
-	 * version its provider does not serve.
+	 * Event member `member`'s node as a binding of `version` taps it: its own at its version, else its shared mapping
+	 * for that version; `undefined` for one it lacks (not granted, or removed since that version), before the members
+	 * check, and for a version its provider does not serve.
 	 */
 	eventNode(member: string, version: number): EventNode | undefined {
 		if (version === this.#served.contract.version) return this.#members?.events.get(member);
 		return this.#adaptedAt(version).event(member);
 	}
 
-	/** The state member `member`, as Chord follows it; one outside the variant fails `invalid/member`. */
+	/** The state member `member`, as Chord follows it; one it lacks fails (`forbidden` when not granted). */
 	member(member: string): DeriveSource {
 		const source = this.#members!.state.get(member);
-		if (source === undefined) {
-			throw invalid("member", `${this.#object.label}${this.#inVariant()} has no state member "${member}"`);
-		}
+		if (source === undefined) throw lacking(this.#object.label, this.#served.contract, member, "state member");
 		return source;
 	}
 
@@ -1645,16 +1650,14 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 
 	/**
 	 * The steps after the dependency check (its own: the member check, derives attached, the readers of named queries,
-	 * natives, followed sources, derives computed, the keys references pin on its keyed members), under the deadline. A dependency that leaves `live` meanwhile changes
-	 * nothing (R18 after live).
+	 * natives, followed sources, derives computed, the keys references pin on its keyed members), under the deadline.
+	 * A dependency that leaves `live` meanwhile changes nothing (R18 after live).
 	 */
 	async #ownSteps(implementation: unknown, deadline: Deadline): Promise<Activation> {
 		let members: Members;
 		try {
-			const checked = checkImplementation(this.#object.served.contract, implementation, this.#sourceOwner);
-			members = checked.members;
+			members = checkImplementation(this.#object.served.contract, implementation, this.#sourceOwner, this.granted);
 			this.#members = members;
-			this.#variant = checked.variant;
 			// Fed by their references from now on (the object's bindings tap them once it is live).
 			for (const node of members.events.values()) if (node instanceof ReexposedEvents) node.attach();
 			if (this.#registryDeclarations !== undefined)
@@ -1762,10 +1765,13 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		try {
 			const { served, params, principal } = this.#object;
 			if (served.kind === "local") return served.factory(params, this);
-			// A remote object's identity has its principal; an admitted one's factory gets what its admission allowed.
+			// A remote object's identity has its principal; an admitted one's factory gets what its admission allowed,
+			// and its grantable members are built while declarations are open (slice 15 §1.3).
 			const admitted = this.#admitted;
 			if (admitted === undefined) return served.factory(params, principal!, this);
-			return served.factory(params, principal!, admitted.value, this);
+			// An object's decision reads its value against its contract's grants: an `AdmittedValue`.
+			const implementation = served.factory(params, principal!, admitted.value as AdmittedValue, this);
+			return grantedImplementation(served.contract, implementation, admitted.granted);
 		} catch (error) {
 			for (const release of this.#pins) release();
 			throw error;
@@ -1804,11 +1810,6 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	#caller(): Caller {
 		const { host, served, principal } = this.#object;
 		return { principal: served.kind === "remote" ? principal : host.principal, incarnation: host.incarnation };
-	}
-
-	/** ` (variant reader)` for a remote object, for errors. */
-	#inVariant(): string {
-		return this.#variant === undefined ? "" : ` (variant ${this.#variant})`;
 	}
 
 	#broken(error: unknown): NotLive {

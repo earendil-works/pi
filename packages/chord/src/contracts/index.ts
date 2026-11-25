@@ -3,10 +3,12 @@
 export type { AcceptsTable } from "./accepts.ts";
 export type {
 	AdmittedOf,
+	AllowedOf,
 	Contract,
 	EventMember,
 	EventSource,
 	EventSubscription,
+	GrantableName,
 	HostKeyed,
 	Implementation,
 	KeyedWatchable,
@@ -28,6 +30,8 @@ export {
 	type Defaulted,
 	type EventDeclaration,
 	event,
+	type Grantable,
+	grantable,
 	type IntegerSchema,
 	int,
 	type KeyedMember,

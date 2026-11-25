@@ -12,7 +12,7 @@ const Kept = remote("app.kept", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
-	variants: { v: { state: { n: int() } } },
+	state: { n: int() },
 });
 
 describe("host.activity", () => {
@@ -139,9 +139,7 @@ describe("host.activity", () => {
 		fakeTimers();
 
 		it("counts live objects kept by their type's linger after their last reference, until they end", async () => {
-			const { server, client } = await linked((h) =>
-				h.serve(Kept, () => ({ variant: "v", members: { n: constant(1) } }), { linger: 1000 }),
-			);
+			const { server, client } = await linked((h) => h.serve(Kept, () => ({ n: constant(1) }), { linger: 1000 }));
 			const kept = await client.get(Kept, {}, context);
 			kept.release();
 			await transported();

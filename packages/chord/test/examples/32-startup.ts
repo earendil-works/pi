@@ -30,7 +30,7 @@ const Agent = remote("example.agent", {
 	version: 1,
 	params: { session: str() },
 	hostAddress: ({ session }) => Session({ id: session }),
-	variants: { v: { state: { models: int() } } },
+	state: { models: int() },
 });
 
 /** On the server. */
@@ -38,7 +38,7 @@ const Catalog = remote("example.catalog", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
-	variants: { v: { state: { models: int() } } },
+	state: { models: int() },
 });
 
 /** The worker of a session, started by the server's route; it connects first, then loads (W6). */
@@ -53,7 +53,7 @@ function startWorker(id: string) {
 	const agents = defineFacet<Principal>((host) =>
 		host.serve(Agent, (_params, _principal, self) => {
 			console.log(`${at()}: worker: Agent declares the server's Catalog`);
-			return { variant: "v", members: { models: self.get(Catalog, {}).models } };
+			return { models: self.get(Catalog, {}).models };
 		}),
 	);
 	void worker
@@ -83,7 +83,7 @@ server.route(
 	context,
 );
 const core = defineFacet<Principal>((host) => {
-	host.serve(Catalog, () => ({ variant: "v", members: { models: constant(3) } }));
+	host.serve(Catalog, () => ({ models: constant(3) }));
 	host.serve(Bootstrap, (_, self) => {
 		console.log(`${at()}: server: Bootstrap declares the worker's Agent`);
 		return { agents: self.get(Agent, { session: "S1" }).models };

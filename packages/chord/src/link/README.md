@@ -58,7 +58,7 @@ tab.connect(webSocketLink(new WebSocket(url)), { principal: { kind: "server" } }
     its count following, so a state ack stays one byte. A part's length prefix is its length doubled, plus one when the part is deflated. A hold's `chain`
     as a count and 16 raw bytes per instance id, its `limit` as a varint. No outer length.
   - `textCodec`, for debugging: one JSON tuple per message with a short kind tag and positional fields (`["R", hold]`,
-    `["c", call, hold, method, args?]`, `["b", [[hold, variant, [[member, value]…], [[member, error]…]?]…]]`, `["s",
+    `["c", call, hold, method, args?]`, `["b", [[hold, [granted…], [[member, value]…], [[member, error]…]?]…]]`, `["s",
     [[hold, [[member, ops]…], [[member, error]…]?]…]]`, `["f", hold, "t" | "b", error, retryIn?]`, `["T", hold, hops]`
     for `retry`, `["l", hold]` for `loading`, `["a"]` ack (`["a", events]` an event ack), `["E", [[hold, member, at,
     value]…]]` event, `["C"]` closed, `["p"]` ping, `["P"]` pong, …; a message with an origin wrapped as
@@ -85,11 +85,12 @@ tab.connect(webSocketLink(new WebSocket(url)), { principal: { kind: "server" } }
   trusted link; `limit?`: the decoded limit per part of the link a relay admitted it on, read only on a parent link), `release`, `call { call, hold, method, args?, segments?, old? }` (`old: true`: old work of a reload on the
   caller's host, honoured only from a trusted link and dropped by a relay from one that is not; binary: `0x20` in the
   call's kind byte, text: the seventh element, after the trace carrier), `abort`, `bound { holds: [{ hold,
-  variant, members: [{ member, value }], failed }] }` (one message may bind several holds: first bindings, re-holds),
+  granted, members: [{ member, value }], failed }] }` (`granted`: indexes into the version's sorted grantable members
+  and flags, slice 15) (one message may bind several holds: first bindings, re-holds),
   `state { holds: [{ hold, members: [{ member, ops }], failed }] }`, `ack { events? }` (without `events`, one per
   applied `bound` or `state` of its origin; with `events`, at least 1, the `event` messages of its origin consumed
   since the last such ack, never both), `event { events: [{ hold, member, at, value }] }` (decision "Events:
-  fire-and-forget members": `member` an index into the bound variant's event members, `at` the emitting host's
+  fire-and-forget members": `member` an index into the binding's event members, `at` the emitting host's
   `Date.now()`, `value` a part; possibly without entries, a relay's filtered one), `closed { origin }` (a relay's downstream origin ended: its holds and calls go), `ping {}`, `pong {}`,
   `revoke { revocation }` (from the parent, applied with the child's own `revokedBy`; no origin), `failed { hold, cause,
   retryIn? }` (`retryIn`: the milliseconds left of the provider's backoff window, absent for a broken failure),
@@ -99,8 +100,8 @@ tab.connect(webSocketLink(new WebSocket(url)), { principal: { kind: "server" } }
   `error`, `gone`. `error`, `gone` and a `failed` cause carry the wire error format (`WireError`: a ChordError's JSON,
   or a plugin's code and message). `args` absent is a method without arguments,
   `value` absent is `null`; `segments` present marks a payload with byte segments (its method's schema has a `bytes()`
-  leaf, `Snapshot.bytes`). `member`, `method` and `variant` are indexes into the hold's bound version's names, each
-  variant's sorted (`variantNames`, `variantOrder` in contracts). Every kind but `hello`, `revoke`, `ping` and `pong` may carry
+  leaf, `Snapshot.bytes`). `member`, `method` and `granted` are indexes into the hold's bound version's names: the
+  binding's members of each kind sorted (`memberOrder` in contracts), the version's grants sorted. Every kind but `hello`, `revoke`, `ping` and `pong` may carry
   `origin` (an integer from 1; absent: the sender's own work): a relay's number for one of its downstream origins,
   keying holds, calls, windows and acks with the ids (`OriginMessage`; decision "Relay flow control per origin").
   `PROTOCOL_VERSION` is 1.

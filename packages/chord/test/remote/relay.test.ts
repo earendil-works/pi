@@ -9,14 +9,17 @@ import { nodeCompression } from "../../src/node/compression.ts";
 import { RelayedHold } from "../../src/remote/relay.ts";
 import {
 	addNote,
+	assertGranted,
 	countInflated,
 	EDITOR,
 	expectCollected,
 	fakeTimers,
 	forEachCodec,
+	grantOf,
 	instancesOf,
 	Match,
 	type MatchProbe,
+	NOTES_EDITOR,
 	Notes,
 	PlacedNotes,
 	partValue,
@@ -57,7 +60,7 @@ vi.mock("../../src/link/values.ts", async (importOriginal) => {
 /** Every relayed hold started in this file, weakly. */
 const relayedHolds = instancesOf(RelayedHold, "start");
 
-const READER = wireNames(PlacedNotes, "reader");
+const READER = wireNames(PlacedNotes);
 
 const { wait, add } = EDITOR.methods as { wait: number; add: number };
 
@@ -131,7 +134,7 @@ function originOf({ origin }: Held): { origin?: number } {
 	return origin === undefined ? {} : { origin };
 }
 
-/** Binds `held` on a raw worker with `PlacedNotes`'s editor (or reader) variant and `count`. */
+/** Binds `held` on a raw worker with `PlacedNotes` granted as an owner's (or a guest's) and `count`. */
 function bindPlaced(peer: RawPeer, held: Held, count = 0, variant = EDITOR): void {
 	const members = [
 		{ member: variant.state.notes!, value: "[]" },
@@ -140,7 +143,7 @@ function bindPlaced(peer: RawPeer, held: Held, count = 0, variant = EDITOR): voi
 	peer.send({
 		kind: "bound",
 		...originOf(held),
-		holds: [{ hold: held.hold, variant: variant.variant, members, failed: [] }],
+		holds: [{ hold: held.hold, granted: variant.granted, members, failed: [] }],
 	});
 }
 
@@ -170,7 +173,7 @@ forEachCodec(() => {
 			bindPlaced(worker, held, 3);
 			const bound = await raw.next("bound");
 			expect(bound.origin).toBeUndefined();
-			expect(bound.holds[0]).toMatchObject({ hold: 7, variant: EDITOR.variant });
+			expect(bound.holds[0]).toMatchObject({ hold: 7, granted: EDITOR.granted });
 			raw.send({ kind: "call", call: 5, hold: 7, method: add, args: jsonPart({ text: "x" }) });
 			// Calls are forwarded at once, with the same id.
 			expect(await worker.next("call")).toMatchObject({ origin: 1, call: 5, hold: 7, method: add });
@@ -630,7 +633,7 @@ forEachCodec(() => {
 			const held = await first.next("hold");
 			bindPlaced(first, held, 1);
 			const notes = await got;
-			expect(notes.variant).toBe("editor");
+			expect(grantOf(notes)).toEqual(NOTES_EDITOR);
 			const call = notes.wait(context);
 			await first.next("call");
 			first.close();
@@ -644,7 +647,7 @@ forEachCodec(() => {
 			bindPlaced(second, again, 4, READER);
 			await transported();
 			expect(notes.state.value).toEqual({ kind: "live" });
-			expect(notes.variant).toBe("reader");
+			expect(grantOf(notes)).toEqual([]);
 			expect(notes.count.value).toBe(4);
 			expect(errors.tab).toEqual([]);
 		});
@@ -878,7 +881,7 @@ describe("mixed codecs", () => {
 		await addNote(workers.get("session|S1")!, "S1", "é");
 		await transported();
 		expect(notes.notes.value).toEqual([{ text: "é" }]);
-		if (notes.variant !== "editor") throw new Error("expected the editor");
+		assertGranted(notes, NOTES_EDITOR);
 		expect(await notes.add({ text: "b" }, context)).toBe(2);
 		const { context: cancellable, cancel } = withCancel(context);
 		const waiting = notes.wait(cancellable);
@@ -982,7 +985,7 @@ forEachCodec(() => {
 		it("enforce the stamped limit where the part is decoded: the worker refuses the tab's large argument", async () => {
 			const relay = await relayed({ trusted: true, limits: { decoded: 1000 } });
 			const notes = await relay.tab.get(PlacedNotes, { session: "S1" }, context);
-			if (notes.variant !== "editor") throw new Error("bound as the editor");
+			assertGranted(notes, NOTES_EDITOR);
 			// Within the tab link's wire limit, past its decoded limit, which the trusted worker link does not have.
 			expect(await rejection(notes.add({ text: "x".repeat(2000) }, context))).toMatchObject({
 				code: "too_large",
@@ -995,7 +998,7 @@ forEachCodec(() => {
 			const [server, tab] = [countingInflates(), countingInflates()];
 			const relay = await relayed({ compression: { server, worker: nodeCompression, tab } });
 			const notes = await relay.tab.get(PlacedNotes, { session: "S1" }, context);
-			if (notes.variant !== "editor") throw new Error("bound as the editor");
+			assertGranted(notes, NOTES_EDITOR);
 			const text = "lorem ipsum ".repeat(3000);
 			await notes.add({ text }, context);
 			await transported();
@@ -1010,7 +1013,7 @@ forEachCodec(() => {
 				const tab = countingInflates();
 				const relay = await relayed({ compression: { worker: nodeCompression, tab } });
 				const notes = await relay.tab.get(PlacedNotes, { session: "S1" }, context);
-				if (notes.variant !== "editor") throw new Error("bound as the editor");
+				assertGranted(notes, NOTES_EDITOR);
 				await notes.add({ text: "lorem ipsum ".repeat(3000) }, context);
 				await transported();
 				expect(tab.inflates).toBe(1);
@@ -1028,7 +1031,7 @@ forEachCodec(() => {
 			const held = await worker.next("hold");
 			bindPlaced(worker, held);
 			const notes = await getting;
-			if (notes.variant !== "editor") throw new Error("bound as the editor");
+			assertGranted(notes, NOTES_EDITOR);
 			// A state part and a result past the route link's wire limit reach the tab, whose link has none that small.
 			const ops = jsonPart([["r", 1234567890], ...Array(10).fill(["r", 7])]);
 			worker.send({
@@ -1057,7 +1060,7 @@ forEachCodec(() => {
 					{ member: EDITOR.state.notes!, value: jsonPart([{ text: "z".repeat(60) }]) },
 					{ member: EDITOR.state.count!, value: jsonPart(1) },
 				];
-				first.send({ kind: "bound", holds: [{ hold: held.hold, variant: EDITOR.variant, members, failed: [] }] });
+				first.send({ kind: "bound", holds: [{ hold: held.hold, granted: EDITOR.granted, members, failed: [] }] });
 				expect(await first.next("release")).toMatchObject({ hold: held.hold });
 				expect(notes.state.value).toMatchObject({ kind: "failed", cause: { error: { code: "too_large" } } });
 				// The worker's link drops: nothing holds the address, so nothing resolves it again for this reference.
@@ -1080,7 +1083,7 @@ forEachCodec(() => {
 		it("let a tab without a compressor inflate the worker's deflated parts asynchronously, in order", async () => {
 			const relay = await relayed({ compression: { worker: nodeCompression, server: nodeCompression } });
 			const notes = await relay.tab.get(PlacedNotes, { session: "S1" }, context);
-			if (notes.variant !== "editor") throw new Error("bound as the editor");
+			assertGranted(notes, NOTES_EDITOR);
 			const text = "lorem ipsum ".repeat(3000);
 			for (let i = 0; i < 3; i++) await notes.add({ text }, context);
 			for (let i = 0; i < 100 && notes.count.value < 3; i++) await new Promise((resolve) => setTimeout(resolve, 5));
@@ -1308,14 +1311,14 @@ const PlacedMatch = remote("app.placed-match", {
 	version: 1,
 	params: { session: str() },
 	hostAddress: ({ session }) => Session({ id: session }),
-	variants: { player: { events: { paddle: Sample } } },
+	events: { paddle: Sample },
 });
 
 const Lobby = remote("app.lobby", {
 	version: 1,
 	params: { session: str() },
 	hostAddress: () => Server(),
-	variants: { player: { events: { paddle: Sample } } },
+	events: { paddle: Sample },
 });
 
 describe("events across real hosts", () => {
@@ -1327,13 +1330,10 @@ describe("events across real hosts", () => {
 				h.serve(PlacedMatch, (_, _principal, self) => {
 					const paddle = self.events<Sample>();
 					paddles.push(paddle);
-					return { variant: "player", members: { paddle } };
+					return { paddle };
 				}),
 			server: (h) =>
-				h.serve(Lobby, ({ session }, _principal, self) => ({
-					variant: "player",
-					members: { paddle: self.get(PlacedMatch, { session }).paddle },
-				})),
+				h.serve(Lobby, ({ session }, _principal, self) => ({ paddle: self.get(PlacedMatch, { session }).paddle })),
 		});
 		return { ...relay, paddles };
 	}
@@ -1367,7 +1367,7 @@ describe("relayed calls in a real worker's finite window", () => {
 		version: 1,
 		params: { session: str(), id: int() },
 		hostAddress: ({ session }) => Session({ id: session }),
-		variants: { v: { methods: { wait: method(undefined, int()) } } },
+		methods: { wait: method(undefined, int()) },
 	});
 
 	it("never exceed it when a hold with a forwarded call is released: the release goes before the next call", async () => {
@@ -1376,13 +1376,10 @@ describe("relayed calls in a real worker's finite window", () => {
 			workerCallWindow: 1,
 			worker: (h) =>
 				h.serve(Waiter, ({ id }, _principal) => ({
-					variant: "v",
-					members: {
-						wait: async (ctx) => {
-							runs.push(id);
-							await untilAborted(ctx);
-							return id;
-						},
+					wait: async (ctx) => {
+						runs.push(id);
+						await untilAborted(ctx);
+						return id;
 					},
 				})),
 		});

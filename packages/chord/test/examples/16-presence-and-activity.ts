@@ -22,7 +22,8 @@ const Doc = remote("example.doc", {
 	version: 1,
 	params: { id: str() },
 	hostAddress: () => Server(),
-	variants: { v: { state: { viewers: int() }, methods: { think: method(undefined, int()) } } },
+	state: { viewers: int() },
+	methods: { think: method(undefined, int()) },
 });
 
 // 1. The server serves `Doc`; its factory derives the viewer count from `host.references(Doc)` (on the facet's host).
@@ -31,13 +32,10 @@ const facet = defineFacet<P>((host) => {
 	host.serve(
 		Doc,
 		({ id }, _principal, self) => ({
-			variant: "v",
-			members: {
-				viewers: self.derive([host.references(Doc)], ([refs]) => refs.filter((ref) => ref.params.id === id).length),
-				think: async (ctx) => {
-					await new Promise((resolve) => setTimeout(resolve, 20));
-					return ctx.principal?.kind === "user" ? 42 : 0;
-				},
+			viewers: self.derive([host.references(Doc)], ([refs]) => refs.filter((ref) => ref.params.id === id).length),
+			think: async (ctx) => {
+				await new Promise((resolve) => setTimeout(resolve, 20));
+				return ctx.principal?.kind === "user" ? 42 : 0;
 			},
 		}),
 		{ linger: 50 },

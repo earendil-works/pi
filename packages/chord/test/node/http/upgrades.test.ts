@@ -24,14 +24,11 @@ const Who = remote("test.who", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
-	variants: { main: { methods: { who: method(undefined, str()) } } },
+	methods: { who: method(undefined, str()) },
 });
 
 const serveWho = defineFacet<TestPrincipal>((host) =>
-	host.serve(Who, () => ({
-		variant: "main",
-		members: { who: async (ctx) => JSON.stringify(ctx.principal ?? null) },
-	})),
+	host.serve(Who, () => ({ who: async (ctx) => JSON.stringify(ctx.principal ?? null) })),
 );
 
 /** A plugin socket that echoes text, with its handler's request params and principal sent first. */

@@ -23,7 +23,7 @@ import {
 	str,
 	unknown,
 } from "../../src/contracts/index.ts";
-import type { Held } from "../../src/host/index.ts";
+import type { Reference } from "../../src/host/index.ts";
 import { createHost, defineFacet, type Host } from "../../src/host/index.ts";
 import { openNodeSqliteDatabase } from "../../src/sqlite/node.ts";
 import { constant } from "../../src/state/index.ts";
@@ -450,7 +450,7 @@ async function mixed(scale: number) {
 	const everyone = persons(scale);
 	// 20 workers per mix, each following a session: the touched one and others.
 	const workers = Array.from({ length: 20 * scale }, (_, index) => (index === 0 ? "club-3" : `family-${index}`));
-	const held: Held<typeof Screen>[] = [];
+	const held: Reference<typeof Screen>[] = [];
 	for (const [index, person] of everyone.entries()) {
 		const own = workers.filter((_, worker) => worker % everyone.length === index);
 		for (const params of screens(person, own)) held.push(await host.get(Screen, params, context));

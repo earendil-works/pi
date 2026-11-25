@@ -76,7 +76,7 @@ import type { CloseFailed } from "./native.ts";
 import { ChordObject, type Holder, type ReloadFate, type Served } from "./object.ts";
 import { chainAttempts, OldWork } from "./old-work.ts";
 import { type Presence, References } from "./presence.ts";
-import { Binding, type CheckedParams, type Held, type Reference, type Target } from "./reference.ts";
+import { Binding, type CheckedParams, type Reference, type Target } from "./reference.ts";
 import { ReloadCycles } from "./reload-cycle.ts";
 import { RevocationKeys, type RevokedBy } from "./revocation.ts";
 import { type RootOptions, RootScopes } from "./root.ts";
@@ -335,10 +335,10 @@ export interface Host<P extends Principal = Principal, R extends JsonValue = Jso
 	 * A reference at once, following its object until released: loading, live, failed (retried as its object is) and
 	 * loading again while its link is down; it never rejects. Throws at once only for invalid params and before `load`
 	 * (`not_ready`). A type not served where it goes is `failed { waiting }` (bound when a publication serves it;
-	 * reported `unbound_long` after 5 s); a `hostAddress` or route that refuses fails it broken. Its `variant` is
-	 * `undefined` until its first binding.
+	 * reported `unbound_long` after 5 s); a `hostAddress` or route that refuses fails it broken. Its grantable members
+	 * are `undefined` and `granted` empty until its first binding.
 	 */
-	hold<C extends Contract>(Type: C, params: ParamsOf<C>, context: Context, options?: GetOptions): Held<C>;
+	hold<C extends Contract>(Type: C, params: ParamsOf<C>, context: Context, options?: GetOptions): Reference<C>;
 	/**
 	 * A link from a child: this host serves its remote types over it, every hold and call arriving on it acting as
 	 * `principal`. `context` is the parent of the work arriving on it (its cancellation is dropped).
@@ -1092,10 +1092,10 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 		return binding.reference as Reference<C>;
 	}
 
-	hold<C extends Contract>(Type: C, params: ParamsOf<C>, context: Context, options: GetOptions = {}): Held<C> {
+	hold<C extends Contract>(Type: C, params: ParamsOf<C>, context: Context, options: GetOptions = {}): Reference<C> {
 		this.batch.assertOutside("hold");
-		// The binding was built from `Type`'s members; it may be unbound, so `variant` may be undefined.
-		return this.#hold(Type, params, this.#own(), context, options).reference as Held<C>;
+		// The binding was built from `Type`'s members; unbound, its grantable members are `undefined`.
+		return this.#hold(Type, params, this.#own(), context, options).reference as Reference<C>;
 	}
 
 	accept(link: Link, options: LinkOptions<P>, context: Context): void {

@@ -15,7 +15,7 @@ import {
 import { ChordError } from "../../src/data/index.ts";
 import { PendingOps } from "../../src/delta/index.ts";
 import { defineState } from "../../src/documents/index.ts";
-import { type Ctx, createHost, defineFacet, type FacetHost, type Self } from "../../src/host/index.ts";
+import { allow, type Ctx, createHost, defineFacet, type FacetHost, type Self } from "../../src/host/index.ts";
 import { ChordObject } from "../../src/host/object.ts";
 import { type Compression, memoryLinkPair, type PartLimits } from "../../src/link/index.ts";
 import { DeflatedPart, jsonPart, type Message } from "../../src/link/internal.ts";
@@ -32,6 +32,7 @@ import {
 	forEachCodec,
 	instancesOf,
 	linked,
+	MATCH_PLAYER,
 	Match,
 	type MatchProbe,
 	MatchV2,
@@ -88,11 +89,11 @@ const Kept = remote("app.kept", {
 	version: 1,
 	params: { id: int() },
 	hostAddress: () => Server(),
-	variants: { v: { state: { n: int() } } },
+	state: { n: int() },
 });
 
 /** The wire's indexes of `Notes`'s reader variant. */
-const READER = wireNames(Notes, "reader");
+const READER = wireNames(Notes);
 
 const { add, fail, wait } = EDITOR.methods as { add: number; fail: number; wait: number };
 
@@ -122,7 +123,7 @@ forEachCodec(() => {
 			await addNote(server, "S1", "a");
 			hold(peer, 0, Notes, { session: "S1" });
 			const [bound] = (await peer.next("bound")).holds;
-			expect(bound).toMatchObject({ hold: 0, variant: READER.variant, failed: [] });
+			expect(bound).toMatchObject({ hold: 0, granted: READER.granted, failed: [] });
 			expect(READER.named(bound!.members)).toEqual({ notes: [{ text: "a" }], count: 1 });
 		});
 
@@ -181,7 +182,7 @@ forEachCodec(() => {
 				[{ name: "@test/app", facet: defineFacet<TestPrincipal>((h) => void serveNotes(h)) }],
 				context,
 			);
-			expect((await peer.next("bound")).holds[0]).toMatchObject({ hold: 0, variant: EDITOR.variant });
+			expect((await peer.next("bound")).holds[0]).toMatchObject({ hold: 0, granted: EDITOR.granted });
 		});
 	});
 
@@ -231,7 +232,7 @@ forEachCodec(() => {
 				version: 1,
 				params: {},
 				hostAddress: () => Server(),
-				variants: { v: { state: { n: int() } } },
+				state: { n: int() },
 			});
 			const { peer } = await rawLinked((h) =>
 				h.serve(Slow, (_, _principal, self) => {
@@ -239,7 +240,7 @@ forEachCodec(() => {
 						() => new Promise(() => {}),
 						() => {},
 					);
-					return { variant: "v", members: { n: constant(1) } };
+					return { n: constant(1) };
 				}),
 			);
 			hold(peer, 0, Slow, {});
@@ -309,7 +310,7 @@ forEachCodec(() => {
 			for (const _ of [0, 1, 2]) await peer.next("bound");
 			const { context: counting, counts } = await metered();
 			const store = await server.get(Notes, { session: "S1" }, context);
-			if (store.variant === "editor") await store.add({ text: "a" }, counting);
+			await store.add!({ text: "a" }, counting);
 			await transported();
 			const states = peer.received.filter((message) => message.kind === "state");
 			expect(states).toHaveLength(1);
@@ -325,7 +326,7 @@ forEachCodec(() => {
 				version: 1,
 				params: {},
 				hostAddress: () => Server(),
-				variants: { main: { state: { reading: obj({ n: int() }) } } },
+				state: { reading: obj({ n: int() }) },
 			});
 			let level: { set(value: number): void } | undefined;
 			let reading: { readonly value: unknown } | undefined;
@@ -335,7 +336,7 @@ forEachCodec(() => {
 					const derived = self.derive([source], ([n]) => ({ n }));
 					level = source;
 					reading = derived;
-					return { variant: "main", members: { reading: derived } };
+					return { reading: derived };
 				}),
 			);
 			const held = await client.get(Gauge, {}, context);
@@ -392,7 +393,7 @@ forEachCodec(() => {
 					async () => null,
 					(_value, reason) => void events.push(`close ${reason.kind}`),
 				);
-				return { variant: "v", members: { n: constant(id) } };
+				return { n: constant(id) };
 			});
 		}
 
@@ -448,7 +449,7 @@ forEachCodec(() => {
 				version: 1,
 				params: { id: int() },
 				hostAddress: () => Server(),
-				variants: { v: { state: { n: int() } } },
+				state: { n: int() },
 			});
 			const aborted: string[] = [];
 			const { peer } = await rawLinked((h) =>
@@ -460,7 +461,7 @@ forEachCodec(() => {
 							),
 						() => {},
 					);
-					return { variant: "v", members: { n: constant(id) } };
+					return { n: constant(id) };
 				}),
 			);
 			hold(peer, 0, Slow, { id: 1 });
@@ -476,7 +477,7 @@ forEachCodec(() => {
 				version: 1,
 				params: { id: int() },
 				hostAddress: () => Server(),
-				variants: { v: { state: { n: int() } } },
+				state: { n: int() },
 			});
 			const events: string[] = [];
 			let finish: () => void = () => {};
@@ -493,7 +494,7 @@ forEachCodec(() => {
 								};
 							}),
 					);
-					return { variant: "v", members: { n: constant(id) } };
+					return { n: constant(id) };
 				}),
 			);
 			hold(peer, 0, Closing, { id: 1 });
@@ -525,7 +526,8 @@ forEachCodec(() => {
 				version: 1,
 				params: { id: int() },
 				hostAddress: () => Server(),
-				variants: { v: { state: { n: int(), seen: int() }, methods: { bump: method() } } },
+				state: { n: int(), seen: int() },
+				methods: { bump: method() },
 			});
 			const N = defineState("n", { schema: obj({ n: int() }), version: 1, initial: () => ({ n: 0 }) });
 			// Called inside the batch, from a derive the hold follows.
@@ -539,17 +541,14 @@ forEachCodec(() => {
 						() => void ends.push(`counter ${id} ended`),
 					);
 					return {
-						variant: "v",
-						members: {
-							n: self.derive([n], ([{ n }]) => n),
-							seen: self.derive([n], ([{ n }]) => {
-								if (n > 0) during();
-								return n;
-							}),
-							bump: async (ctx) => {
-								await n.change((draft) => void draft.n++, ctx);
-								return null;
-							},
+						n: self.derive([n], ([{ n }]) => n),
+						seen: self.derive([n], ([{ n }]) => {
+							if (n > 0) during();
+							return n;
+						}),
+						bump: async (ctx) => {
+							await n.change((draft) => void draft.n++, ctx);
+							return null;
 						},
 					};
 				}),
@@ -585,12 +584,8 @@ const Grid = remote("app.grid", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
-	variants: {
-		v: {
-			state: { grid: obj({ cells: map(int()) }), one: int() },
-			methods: { fill: method(obj({ n: int(), value: int() })) },
-		},
-	},
+	state: { grid: obj({ cells: map(int()) }), one: int() },
+	methods: { fill: method(obj({ n: int(), value: int() })) },
 });
 
 const GridDoc = defineState("grid", { schema: obj({ cells: map(int()) }), version: 1, initial: () => ({ cells: {} }) });
@@ -599,16 +594,13 @@ function serveGrid(h: FacetHost<TestPrincipal>): void {
 	h.serve(Grid, (_, _principal, self) => {
 		const grid = self.state(GridDoc);
 		return {
-			variant: "v",
-			members: {
-				grid,
-				one: constant(1),
-				fill: async ({ n, value }, ctx) => {
-					await grid.change((draft) => {
-						for (let cell = 0; cell < n; cell++) draft.cells[`c${cell}`] = value;
-					}, ctx);
-					return null;
-				},
+			grid,
+			one: constant(1),
+			fill: async ({ n, value }, ctx) => {
+				await grid.change((draft) => {
+					for (let cell = 0; cell < n; cell++) draft.cells[`c${cell}`] = value;
+				}, ctx);
+				return null;
 			},
 		};
 	});
@@ -649,7 +641,7 @@ function windowed(peer: RawPeer): string[] {
 	return peer.kinds().filter((kind) => kind === "bound" || kind === "state");
 }
 
-const GRID = wireNames(Grid, "v");
+const GRID = wireNames(Grid);
 
 forEachCodec(() => {
 	describe("the window at the provider", () => {
@@ -897,27 +889,23 @@ forEachCodec(() => {
 				version: 1,
 				params: {},
 				hostAddress: () => Server(),
-				variants: { v: {} },
 			});
 			const N = defineState("n", { schema: obj({ n: int() }), version: 1, initial: () => ({ n: 0 }) });
 			const { peer } = await rawLinked((h) => {
-				h.serve(Empty, () => ({ variant: "v", members: {} }));
+				h.serve(Empty, () => ({}));
 				h.serve(Halves, (_, _principal, self) => {
 					const n = self.state(N);
 					return {
-						variant: "v",
-						members: {
-							one: constant(1),
-							half: self.derive([n], ([{ n }]) => {
-								if (n === 2) throw new Error("half threw");
-								return n / 2;
-							}),
-							set: async (value, ctx) => {
-								await n.change((draft) => {
-									draft.n = value;
-								}, ctx);
-								return null;
-							},
+						one: constant(1),
+						half: self.derive([n], ([{ n }]) => {
+							if (n === 2) throw new Error("half threw");
+							return n / 2;
+						}),
+						set: async (value, ctx) => {
+							await n.change((draft) => {
+								draft.n = value;
+							}, ctx);
+							return null;
 						},
 					};
 				});
@@ -930,11 +918,11 @@ forEachCodec(() => {
 			hold(peer, 2, Halves, {});
 			const bounds = [await peer.next("bound"), await peer.next("bound")];
 			const [empty, halves] = [1, 2].map((id) => bounds.find(({ holds }) => holds[0]!.hold === id)!);
-			expect(empty.holds).toEqual([{ hold: 1, variant: 0, members: [], failed: [] }]);
+			expect(empty.holds).toEqual([{ hold: 1, granted: [], members: [], failed: [] }]);
 			expect(halves.holds).toEqual([
 				{
 					hold: 2,
-					variant: 0,
+					granted: [],
 					members: [{ member: HALVES.state.one!, value: expect.anything() }],
 					failed: [
 						{ member: HALVES.state.half!, error: { kind: "plugin", code: "internal", message: "half threw" } },
@@ -1035,10 +1023,11 @@ const Halves = remote("app.halves", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
-	variants: { v: { state: { one: int(), half: int() }, methods: { set: method(int()) } } },
+	state: { one: int(), half: int() },
+	methods: { set: method(int()) },
 });
 
-const HALVES = wireNames(Halves, "v");
+const HALVES = wireNames(Halves);
 
 forEachCodec(() => {
 	describe("limits per part at the provider", () => {
@@ -1263,21 +1252,19 @@ describe('old work from another host (decision "Reload restarts every affected o
 		version: 1,
 		params: {},
 		hostAddress: () => Server(),
-		variants: { v: { state: {}, methods: { slow: method(undefined, int()), ping: method(undefined, int()) } } },
+		state: {},
+		methods: { slow: method(undefined, int()), ping: method(undefined, int()) },
 	});
-	const CODED = wireNames(Coded, "v");
+	const CODED = wireNames(Coded);
 
 	/** Serves `Coded` as code `code`, `slow` first awaiting `gate`. */
 	const serveCoded = (h: FacetHost<TestPrincipal>, code: number, gate?: Promise<void>) =>
 		h.serve(Coded, () => ({
-			variant: "v",
-			members: {
-				slow: async () => {
-					await gate;
-					return code;
-				},
-				ping: async () => code,
+			slow: async () => {
+				await gate;
+				return code;
 			},
+			ping: async () => code,
 		}));
 
 	/**
@@ -1332,7 +1319,7 @@ const TickView = remote("app.tick-view", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
-	variants: { v: { events: { ticks: Sample } } },
+	events: { ticks: Sample },
 });
 
 /** Every provider side sending events in this file, weakly. */
@@ -1448,10 +1435,7 @@ forEachCodec(() => {
 					sources.push({ source: ticks, self });
 					return { ticks };
 				});
-				h.serve(TickView, (_, _principal, self) => ({
-					variant: "v",
-					members: { ticks: self.get(TickSource, {}).ticks },
-				}));
+				h.serve(TickView, (_, _principal, self) => ({ ticks: self.get(TickSource, {}).ticks }));
 			});
 			hold(peer, 0, TickView, {});
 			await peer.next("bound");
@@ -1536,16 +1520,16 @@ forEachCodec(() => {
 				(h) =>
 					h.serve(
 						MatchV2,
-						(_, _principal, self) => {
+						(_, _principal, _admitted, self) => {
 							const paddle = self.events<{ y: number; t: number }>();
 							paddles.push(paddle);
 							const score = constant(0);
-							return {
-								variant: "player",
-								members: { score, paddle, ball: self.events(), bump: async () => null },
-							};
+							return { score, paddle: () => paddle, ball: () => self.events(), bump: async () => null };
 						},
-						{ accepts: { 1: { events: { player: { paddle: ({ y }) => ({ y }) } } } } },
+						{
+							accepts: { 1: { events: { paddle: ({ y }) => ({ y }) } } },
+							admit: () => constant(allow({ granted: MATCH_PLAYER })),
+						},
 					),
 				{ telemetry },
 			);

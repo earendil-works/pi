@@ -49,12 +49,10 @@ export function sendWorkerTelemetry<P extends Principal>(
 		(partial) => recorder.pending(partial),
 		() => held.release(),
 		(batch) => {
-			if (held.state.value.kind !== "live" || held.variant !== "worker") return undefined;
+			const { ingest } = held;
+			if (held.state.value.kind !== "live" || ingest === undefined) return undefined;
 			// A batch takes at most `WORKER_BATCH_ROWS` metric rows; more series in one interval are dropped.
-			return held.ingest(
-				{ spans: batch.spans, metrics: batch.metrics.slice(0, WORKER_BATCH_ROWS) },
-				BACKGROUND_CONTEXT,
-			);
+			return ingest({ spans: batch.spans, metrics: batch.metrics.slice(0, WORKER_BATCH_ROWS) }, BACKGROUND_CONTEXT);
 		},
 	);
 }

@@ -14,14 +14,17 @@ import { sqliteBackend } from "../../src/store/backend.ts";
 import type { StagedWrite } from "../../src/store/step.ts";
 import { type ChordStore, openStore } from "../../src/store/store.ts";
 import {
+	assertGranted,
 	bindHold,
 	failures,
 	fakeTimers,
 	faultyStore,
 	flushed,
 	forEachCodec,
+	grantOf,
 	linked,
 	loaded,
+	NOTES_EDITOR,
 	Notes,
 	PlacedNotes,
 	partValue,
@@ -378,24 +381,24 @@ describe("startup across hosts (dependency model §6)", () => {
 		version: 1,
 		params: { session: str() },
 		hostAddress: ({ session }) => Session({ id: session }),
-		variants: { v: { state: { n: int() } } },
+		state: { n: int() },
 	});
 	const Catalog = remote("app.catalog", {
 		version: 1,
 		params: {},
 		hostAddress: () => Server(),
-		variants: { v: { state: { n: int() } } },
+		state: { n: int() },
 	});
 
 	it("starts two hosts that would have deadlocked (Sol's probe): an acyclic graph needs no timeout", async () => {
 		const { server, errors } = await relayed({
 			server: (h) => {
 				h.serve(Bootstrap, (_, self) => ({ n: self.get(Agent, { session: "S1" }).n }));
-				h.serve(Catalog, () => ({ variant: "v", members: { n: constant(7) } }));
+				h.serve(Catalog, () => ({ n: constant(7) }));
 			},
 			worker: (h) => {
 				// The worker's own host object waits for the server's catalog during the worker's load.
-				h.serve(Agent, (_params, _principal, self) => ({ variant: "v", members: { n: self.get(Catalog, {}).n } }));
+				h.serve(Agent, (_params, _principal, self) => ({ n: self.get(Catalog, {}).n }));
 			},
 		});
 		await transported();
@@ -441,7 +444,7 @@ describe("startup across hosts (dependency model §6)", () => {
 			version: 1,
 			params: { session: str() },
 			hostAddress: ({ session }) => Session({ id: session }),
-			variants: { v: { state: { n: int() } } },
+			state: { n: int() },
 		});
 		const order: string[] = [];
 		let catalogs = 0;
@@ -456,13 +459,13 @@ describe("startup across hosts (dependency model §6)", () => {
 						() => {},
 					);
 					self.onLive(async () => void order.push("catalog"));
-					return { variant: "v", members: { n: constant(attempt) } };
+					return { n: constant(attempt) };
 				}),
 			worker: (h) =>
 				h.serve(Chat, (_params, _principal, self) => {
 					const catalog = self.get(Catalog, {});
 					self.onLive(async () => void order.push("chat"));
-					return { variant: "v", members: { n: catalog.n } };
+					return { n: catalog.n };
 				}),
 		});
 		const view = tab.hold(Chat, { session: "S1" }, context);
@@ -801,13 +804,13 @@ forEachCodec(() => {
 			version: 1,
 			params: { id: int() },
 			hostAddress: () => Server(),
-			variants: { v: { state: { who: str() } } },
+			state: { who: str() },
 		});
 		const Outer = remote("app.outer", {
 			version: 1,
 			params: {},
 			hostAddress: () => Server(),
-			variants: { v: { state: { who: str() } } },
+			state: { who: str() },
 		});
 		const Inner = local("app.inner", { version: 1, params: { id: int() }, members: { who: str() } });
 		const Desk = local("app.desk", { version: 1, params: {}, members: { who: method(undefined, str()) } });
@@ -815,7 +818,7 @@ forEachCodec(() => {
 			version: 1,
 			params: {},
 			hostAddress: () => Server(),
-			variants: { v: { methods: { who: method(undefined, str()) } } },
+			methods: { who: method(undefined, str()) },
 		});
 		type P = TestPrincipal;
 
@@ -823,16 +826,16 @@ forEachCodec(() => {
 		function serveAll(h: FacetHost<P>, factories: string[]) {
 			h.serve(Who, ({ id }, principal) => {
 				factories.push(`${id} ${principal.kind}`);
-				return { variant: "v", members: { who: constant(principal.kind) } };
+				return { who: constant(principal.kind) };
 			});
-			h.serve(Outer, (_, _principal, self) => ({ variant: "v", members: { who: self.get(Who, { id: 3 }).who } }));
+			h.serve(Outer, (_, _principal, self) => ({ who: self.get(Who, { id: 3 }).who }));
 			h.serve(Inner, ({ id }, self) => ({ who: self.get(Who, { id }).who }));
 			const who = async (ctx: Ctx<P>) => {
 				const ref = await ctx.get(Who, { id: 2 });
 				return ref.who.value;
 			};
 			h.serve(Desk, () => ({ who }));
-			h.serve(Gate, () => ({ variant: "v", members: { who } }));
+			h.serve(Gate, () => ({ who }));
 		}
 
 		it("host.get acts as the host's principal; a host without one (a client) serves no remote type", async () => {
@@ -930,12 +933,12 @@ forEachCodec(() => {
 				version: 1,
 				params: {},
 				hostAddress: () => Server(),
-				variants: { v: { state: { n: int() } } },
+				state: { n: int() },
 			});
 			const { server } = await linked((h) =>
 				h.serve(Empty, (_, principal) => {
 					factories.push(principal.kind);
-					return { variant: "v", members: { n: constant(1) } };
+					return { n: constant(1) };
 				}),
 			);
 			expect(factories).toEqual([]);
@@ -1004,13 +1007,13 @@ describe("host.registry and the host's close (fix round 1)", () => {
 describe("the selected provider's own checks for a request made here (fix round 1)", () => {
 	const Here = hostKind("app-here");
 	const Elsewhere = hostKind("app-elsewhere");
-	const shape = { version: 1, params: {}, variants: { view: { state: { n: int() } } } } as const;
+	const shape = { version: 1, params: {}, state: { n: int() } } as const;
 
 	it("waits a same-host remote request the provider's code places elsewhere: invalid/host_address (Astra 4)", async () => {
 		const Consumer = remote("app.placed", { ...shape, hostAddress: () => Here() });
 		const Provider = remote("app.placed", { ...shape, hostAddress: () => Elsewhere() });
 		const host = createHost({ address: Here(), principal: { kind: "owner" }, onError: () => {} });
-		const facet = defineFacet((h) => h.serve(Provider, () => ({ variant: "view", members: { n: constant(1) } })));
+		const facet = defineFacet((h) => h.serve(Provider, () => ({ n: constant(1) })));
 		await host.load([{ name: "@app/provider", facet }], context);
 		const ref = host.hold(Consumer, {}, context);
 		await flushed();
@@ -1032,7 +1035,7 @@ describe("the selected provider's own checks for a request made here (fix round 
 		});
 		const server = createHost({ address: Server(), principal: { kind: "server" }, onError: () => {} });
 		const client = createHost({ onError: () => {} });
-		const facet = defineFacet((h) => h.serve(Provider, () => ({ variant: "view", members: { n: constant(1) } })));
+		const facet = defineFacet((h) => h.serve(Provider, () => ({ n: constant(1) })));
 		await server.load([{ name: "@app/provider", facet }], context);
 		await client.load([], context);
 		const [down, up] = memoryLinkPair();
@@ -1278,7 +1281,7 @@ forEachCodec(() => {
 			const hold = await parent!.next("hold");
 			expect(hold).toMatchObject({ type: PlacedNotes.name, address: { kind: "session", params: { id: "S2" } } });
 			expect(elsewhere.state.value).toEqual({ kind: "loading" });
-			expect((await host.get(PlacedNotes, { session: "S1" }, context)).variant).toBe("editor");
+			expect(grantOf(await host.get(PlacedNotes, { session: "S1" }, context))).toEqual(NOTES_EDITOR);
 		});
 
 		it("sends a hold it cannot serve or route over the parent link, unparsed", async () => {
@@ -1317,7 +1320,7 @@ forEachCodec(() => {
 				hostAddress: () => {
 					throw new Error("hostAddress threw");
 				},
-				variants: { v: { state: { n: int() } } },
+				state: { n: int() },
 			});
 			const client = createHost<TestPrincipal>(noErrors);
 			await client.load([], context);
@@ -1580,11 +1583,11 @@ const Title = remote("app.title", {
 	version: 1,
 	params: { session: str() },
 	hostAddress: ({ session }) => Session({ id: session }),
-	variants: { v: { state: { title: str() } } },
+	state: { title: str() },
 });
 
 /** `Title` v2: an object; v1 consumers map back through `accepts`. */
-const TitleV2 = evolve(Title, (e) => e.state("v", "title", obj({ text: str() })));
+const TitleV2 = evolve(Title, (e) => e.state("title", obj({ text: str() })));
 
 describe("reload: registries' older readers (slice 7b §3)", () => {
 	it("a reader of an older version follows the new provider's accepts[old].value; one it no longer serves waits", async () => {
@@ -1612,13 +1615,12 @@ describe("reload: registries' older readers (slice 7b §3)", () => {
 
 describe("reload across hosts, in the app's order (slice 7b §11)", () => {
 	it("server, then worker, then tab: an old tab is mapped, then waits for its version, then reloads its own code", async () => {
-		const serveV1 = (h: FacetHost<TestPrincipal>) =>
-			h.serve(Title, () => ({ variant: "v", members: { title: constant("one") } }));
+		const serveV1 = (h: FacetHost<TestPrincipal>) => h.serve(Title, () => ({ title: constant("one") }));
 		const serveV2 = (text: string, accept: boolean) => (h: FacetHost<TestPrincipal>) =>
 			h.serve(
 				TitleV2,
-				() => ({ variant: "v", members: { title: constant({ text }) } }),
-				accept ? { accepts: { 1: { state: { v: { title: (current) => current.text } } } } } : {},
+				() => ({ title: constant({ text }) }),
+				accept ? { accepts: { 1: { state: { title: (current) => current.text } } } } : {},
 			);
 		const workerSet = (setup: (h: FacetHost<TestPrincipal>) => void) => [
 			{
@@ -1738,7 +1740,7 @@ describe("who a span was for (principalAttributes)", () => {
 			version: 1,
 			params: {},
 			hostAddress: () => hostKind("server")(),
-			variants: { main: { methods: { greet: method(str(), str()) } } },
+			methods: { greet: method(str(), str()) },
 		});
 		const server = createHost<{ kind: string; id?: string }>({
 			address: hostKind("server")(),
@@ -1749,9 +1751,7 @@ describe("who a span was for (principalAttributes)", () => {
 			[
 				{
 					name: "@test/greeter",
-					facet: defineFacet((h) =>
-						h.serve(Greeter, () => ({ variant: "main", members: { greet: async (name) => `hi ${name}` } })),
-					),
+					facet: defineFacet((h) => h.serve(Greeter, () => ({ greet: async (name) => `hi ${name}` }))),
 				},
 			],
 			context,
@@ -1826,7 +1826,7 @@ describe("the host's spans (slice 9)", () => {
 		const telemetry = new InMemoryTelemetryContext();
 		const { server, client } = await linked((h) => void serveNotes(h), { telemetry });
 		const notes = await client.get(Notes, { session: "S1" }, context);
-		if (notes.variant !== "editor") throw new Error("expected the editor");
+		assertGranted(notes, NOTES_EDITOR);
 		await notes.add({ text: "a" }, context);
 		await server.root(async (ctx) => (await ctx.get(Notes, { session: "S1" })).release(), context);
 		const counted = new Set(telemetry.getMetrics().map(({ name }) => name));
@@ -1868,7 +1868,8 @@ describe('bind: remote references sharing one wire hold (decision "References sh
 			version,
 			params: { a: str(), b: str() },
 			hostAddress: address,
-			variants: { v: { state: members, methods: {} } },
+			state: members,
+			methods: {},
 		});
 
 	it("one hold per type, version, fingerprint, params and placed address; escaped parts never collide", async () => {
@@ -1938,19 +1939,17 @@ describe('bind: remote references sharing one wire hold (decision "References sh
 			version: 1,
 			params: {},
 			hostAddress: () => Server(),
-			variants: { v: { state: {}, methods: { open: method(undefined, int()) } } },
+			state: {},
+			methods: { open: method(undefined, int()) },
 		});
 		const gate = Promise.withResolvers<void>();
 		const { tab, server, workers } = await relayed({
 			server: (h) =>
 				h.serve(Opener, () => ({
-					variant: "v",
-					members: {
-						open: async (ctx) => {
-							await ctx.get(PlacedNotes, { session: "S1" });
-							await gate.promise;
-							return 1;
-						},
+					open: async (ctx) => {
+						await ctx.get(PlacedNotes, { session: "S1" });
+						await gate.promise;
+						return 1;
 					},
 				})),
 		});

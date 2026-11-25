@@ -51,7 +51,7 @@ type OutgoingCall = {
 	 * cancels its own calls only (decision "References share one wire hold").
 	 */
 	readonly owner: object;
-	/** The method's index in the bound variant and its arguments' part. */
+	/** The method's index in the binding's methods and its arguments' part. */
 	readonly method: number;
 	readonly args: Part | undefined;
 	readonly segments: readonly Uint8Array[] | undefined;
@@ -110,7 +110,7 @@ export class ConsumerSide {
 	}
 
 	/**
-	 * Calls method `method` (an index into the bound variant) on hold `hold` with `args`: left out for a method without
+	 * Calls method `method` (an index into the binding's methods) on hold `hold` with `args`: left out for a method without
 	 * arguments, with byte segments when its argument schema has a `bytes()` leaf, deflated above the threshold except on
 	 * the parent link; with the carrier of `context`'s span when its adapter propagates. The result is parsed here. The
 	 * caller's cancellation rejects it at once and sends `abort` when it is in flight. `owner` is the reference making it.
@@ -430,7 +430,7 @@ export class ConsumerSide {
 
 	/**
 	 * `loading`: the hold's object, or its relay's upstream, starts over; its calls still waiting for a slot reject
-	 * `unavailable` (they may name a method of the old variant), its calls in flight wait for their reply (a provider's
+	 * `unavailable` (they may name a method of the old binding), its calls in flight wait for their reply (a provider's
 	 * `loading` keeps them; a relay's upstream drop answered them before).
 	 */
 	#loading(hold: number): void {

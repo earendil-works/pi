@@ -23,7 +23,8 @@ const Counter = remote("example.shared-counter", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
-	variants: { v: { state: { count: int() }, methods: { bump: method() } } },
+	state: { count: int() },
+	methods: { bump: method() },
 });
 
 const Count = defineState("count", { schema: obj({ n: int() }), version: 1, initial: () => ({ n: 0 }) });
@@ -53,13 +54,10 @@ await server.load(
 				host.serve(Counter, (_, _principal, self) => {
 					const count = self.state(Count);
 					return {
-						variant: "v",
-						members: {
-							count: self.derive([count], ([doc]) => doc.n),
-							bump: async (ctx) => {
-								await count.change((draft) => void draft.n++, ctx);
-								return null;
-							},
+						count: self.derive([count], ([doc]) => doc.n),
+						bump: async (ctx) => {
+							await count.change((draft) => void draft.n++, ctx);
+							return null;
 						},
 					};
 				}),
@@ -89,10 +87,10 @@ const encodes = (): number =>
 		.filter(({ name }) => name === "chord.link.encodes")
 		.reduce((sum, { value }) => sum + value, 0);
 const before = encodes();
-const first = components[0] as Extract<Reference<typeof Counter>, { readonly variant: "v" }>;
+const first = components[0]!;
 await first.bump(context);
 await new Promise((resolve) => setTimeout(resolve, 10));
-const counts = components.map((component) => (component as typeof first).count.value);
+const counts = components.map((component) => component.count.value);
 console.log("counts:", counts, "| encodes for the commit:", encodes() - before);
 
 // 5. Releasing two sends nothing; the last sends the one release; a reference made after it holds anew.

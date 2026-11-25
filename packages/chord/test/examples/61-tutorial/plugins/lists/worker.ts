@@ -1,14 +1,16 @@
 // The lists plugin on a list's worker. The todos live in a table of the worker's store (every one kept), written and
 // read by one local object, `Store`, which shows the newest 50 live with a live query (`self.query`): Chord runs it
 // before the store goes live and again after every commit that writes the table. Each principal's `Todos` view adds
-// todos as that principal, and gives the owner `clear`, which leaves a notice: a message as data (`messages.message`),
-// never a sentence, so each viewer reads it in its own language. The store refuses a todo without text with Chord's
-// `invalid/args`, in a span of its own (`ctx.trace`) that the app's traces show.
+// todos as that principal, and grants the owner `clear` (its admission), which leaves a notice: a message as data
+// (`messages.message`), never a sentence, so each viewer reads it in its own language. The store refuses a todo without
+// text with Chord's `invalid/args`, in a span of its own (`ctx.trace`) that the app's traces show.
 
 import {
+	allow,
 	arr,
 	bool,
 	type Ctx,
+	constant,
 	defineFacet,
 	defineState,
 	defineTable,
@@ -95,17 +97,24 @@ export default defineFacet((host) => {
 			},
 		};
 	});
-	host.serve(Todos, (_params, principal, self) => {
-		const store = self.get(Store, {});
-		// Who adds a todo comes from the principal the link stamped, never from the arguments.
-		const by = principal.kind === "user" ? principal.name : principal.kind;
-		const members = {
-			items: self.derive([store.items], ([items]) => items),
-			notice: self.derive([store.notice], ([notice]) => notice),
-			add: (text: string, ctx: Ctx) => store.add({ text, by }, ctx),
-			tick: (tick: { id: number; done: boolean }, ctx: Ctx) => store.tick(tick, ctx),
-		};
-		if (principal.kind !== "owner") return { variant: "member", members };
-		return { variant: "owner", members: { ...members, clear: (ctx: Ctx) => store.clear({ by }, ctx) } };
-	});
+	host.serve(
+		Todos,
+		(_params, principal, _admitted, self) => {
+			const store = self.get(Store, {});
+			// Who adds a todo comes from the principal the link stamped, never from the arguments.
+			const by = principal.kind === "user" ? principal.name : principal.kind;
+			return {
+				items: self.derive([store.items], ([items]) => items),
+				notice: self.derive([store.notice], ([notice]) => notice),
+				add: (text: string, ctx: Ctx) => store.add({ text, by }, ctx),
+				tick: (tick: { id: number; done: boolean }, ctx: Ctx) => store.tick(tick, ctx),
+				// Exposed only to a caller granted it: the owner.
+				clear: (ctx: Ctx) => store.clear({ by }, ctx),
+			};
+		},
+		{
+			admit: (_params, principal) =>
+				constant(principal.kind === "owner" ? allow({ granted: ["clear"] }) : allow({})),
+		},
+	);
 });

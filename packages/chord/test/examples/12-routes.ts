@@ -4,11 +4,12 @@
 // Run from packages/chord:
 //   node --conditions=source --experimental-strip-types test/examples/12-routes.ts
 import { BACKGROUND_CONTEXT } from "../../src/context/index.ts";
-import { arr, hostKind, int, local, method, obj, remote, str } from "../../src/contracts/index.ts";
+import { arr, grantable, hostKind, int, local, method, obj, remote, str } from "../../src/contracts/index.ts";
 import { isChordError } from "../../src/data/index.ts";
 import { defineState } from "../../src/documents/index.ts";
-import { createHost, defineFacet, type Host } from "../../src/host/index.ts";
+import { allow, createHost, defineFacet, type Host } from "../../src/host/index.ts";
 import { type Link, memoryLinkPair } from "../../src/link/index.ts";
+import { constant } from "../../src/state/index.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -27,13 +28,8 @@ const Notes = remote("example.notes", {
 	version: 1,
 	params: { session: str() },
 	hostAddress: ({ session }) => Session({ id: session }),
-	variants: {
-		editor: {
-			state: { notes: arr(str()) },
-			methods: { add: method(obj({ text: str() }), int()), whoami: method(undefined, str()) },
-		},
-		reader: { state: { notes: arr(str()) }, methods: { whoami: method(undefined, str()) } },
-	},
+	state: { notes: arr(str()) },
+	methods: { add: grantable(method(obj({ text: str() }), int())), whoami: method(undefined, str()) },
 });
 
 // The lobby lives on the server: its handler gets notes for whoever calls it.
@@ -41,7 +37,7 @@ const Lobby = remote("example.lobby", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
-	variants: { visitor: { methods: { peek: method(obj({ session: str() }), str()) } } },
+	methods: { peek: method(obj({ session: str() }), str()) },
 });
 
 // The worker's own store of its session's notes, shared by every principal's `Notes` object.
@@ -65,23 +61,24 @@ const workerFacet = defineFacet<P>((host) => {
 			},
 		};
 	});
-	host.serve(Notes, (_, principal, self) => {
-		const store = self.get(NoteStore, {});
-		const whoami = async (ctx: { readonly principal: P | undefined }) => JSON.stringify(ctx.principal);
-		if (principal.kind !== "owner") return { variant: "reader", members: { notes: store.list, whoami } };
-		return { variant: "editor", members: { notes: store.list, add: (args, ctx) => store.add(args, ctx), whoami } };
-	});
+	host.serve(
+		Notes,
+		(_, _principal, _admitted, self) => {
+			const store = self.get(NoteStore, {});
+			const whoami = async (ctx: { readonly principal: P | undefined }) => JSON.stringify(ctx.principal);
+			return { notes: store.list, add: (args, ctx) => store.add(args, ctx), whoami };
+		},
+		// The owner is granted `add`, anyone else nothing.
+		{ admit: (_params, principal) => constant(principal.kind === "owner" ? allow({ granted: ["add"] }) : allow({})) },
+	);
 });
 
 const serverFacet = defineFacet<P>((host) => {
 	host.serve(Lobby, () => ({
-		variant: "visitor",
-		members: {
-			// `ctx.get` acts as the caller: over the route, the worker sees the guest, not the server.
-			peek: async ({ session }, ctx) => {
-				const notes = await ctx.get(Notes, { session });
-				return `${notes.variant} variant, ${await notes.whoami(ctx)}`;
-			},
+		// `ctx.get` acts as the caller: over the route, the worker sees the guest, not the server.
+		peek: async ({ session }, ctx) => {
+			const notes = await ctx.get(Notes, { session });
+			return `granted [${[...notes.granted]}], ${await notes.whoami(ctx)}`;
 		},
 	}));
 });
@@ -128,14 +125,14 @@ async function tabAs(principal: P): Promise<Host<P>> {
 // 2. The owner's tab gets S1's notes: tab → server (relays) → route → worker. A second get shares the worker.
 const owner = await tabAs({ kind: "owner" });
 const notes = await owner.get(Notes, { session: "S1" }, context);
-if (notes.variant === "editor") await notes.add({ text: "milk" }, context);
+await notes.add?.({ text: "milk" }, context);
 const again = await owner.get(Notes, { session: "S1" }, context);
-console.log("owner:", notes.variant, again.notes.value, "resolves so far:", resolves);
+console.log("owner granted:", [...notes.granted], again.notes.value, "resolves so far:", resolves);
 
 // 3. A guest of S1 reads S1 and is refused S2 by `authorize` (no worker is started for it).
 const guest = await tabAs({ kind: "guest", session: "S1" });
 const read = await guest.get(Notes, { session: "S1" }, context);
-console.log("guest:", read.variant, read.notes.value, "acts as", await read.whoami(context));
+console.log("guest granted:", [...read.granted], read.notes.value, "acts as", await read.whoami(context));
 await guest.get(Notes, { session: "S2" }, context).catch((error) => {
 	console.log("guest, S2:", isChordError(error) ? error.code : error, "resolves so far:", resolves);
 });

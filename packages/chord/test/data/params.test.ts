@@ -11,7 +11,6 @@ const Session = remote("session", {
 	version: 1,
 	params: { id: str({ min: 1 }), mode: oneOf("chat", "agent"), page: int({ min: 0 }), open: bool() },
 	hostAddress: () => Server(),
-	variants: { owner: {} },
 });
 
 const valid = { id: "S1", mode: "chat", page: 2, open: true } as const;

@@ -1,9 +1,16 @@
 import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context, withCancel } from "../../src/context/index.ts";
-import { type EventMember, evolve, int, local, map, method, remote, str } from "../../src/contracts/index.ts";
+import { evolve, int, local, map, method, remote, str } from "../../src/contracts/index.ts";
 import { type ChordError, PluginError } from "../../src/data/index.ts";
-import { type Ctx, createHost, defineFacet, type FacetHost, type HostError, type RefIn } from "../../src/host/index.ts";
+import {
+	type Ctx,
+	createHost,
+	defineFacet,
+	type FacetHost,
+	type HostError,
+	type Reference,
+} from "../../src/host/index.ts";
 import { resolveWatchable } from "../../src/host/reference.ts";
 import { type Compression, memoryLinkPair, type PartLimits } from "../../src/link/index.ts";
 import { DeflatedPart, jsonPart, type Part, wireError } from "../../src/link/internal.ts";
@@ -12,16 +19,20 @@ import { RemoteObject } from "../../src/remote/remote-object.ts";
 import { constant } from "../../src/state/index.ts";
 import {
 	addNote,
+	assertGranted,
 	bindHold,
 	bindNext,
 	EDITOR,
 	expectCollected,
 	forEachCodec,
 	framesOf,
+	grantOf,
 	instancesOf,
 	linked,
+	MATCH_PLAYER,
 	Match,
 	metered,
+	NOTES_EDITOR,
 	Notes,
 	PlacedNotes,
 	partValue,
@@ -53,7 +64,7 @@ forEachCodec(() => {
 			});
 			await addNote(server, "S1", "a");
 			const notes = await client.get(Notes, { session: "S1" }, context);
-			expect(notes.variant).toBe("reader");
+			expect(grantOf(notes)).toEqual([]);
 			expect(notes.notes.value).toEqual([{ text: "a" }]);
 			expect(notes.count.value).toBe(1);
 			const frames = framesOf(await notes.notes.watch(context));
@@ -103,7 +114,7 @@ forEachCodec(() => {
 		it("call methods: results, ChordErrors, PluginErrors and other throws", async () => {
 			const { client } = await linked((h) => void serveNotes(h));
 			const notes = await client.get(Notes, { session: "S1" }, context);
-			if (notes.variant !== "editor") throw new Error("expected the editor");
+			assertGranted(notes, NOTES_EDITOR);
 			expect(await notes.add({ text: "x" }, context)).toBe(1);
 			const chord = await rejection(notes.fail({ how: "chord" }, context));
 			expect(chord).toEqual({ code: "forbidden", message: "not yours" });
@@ -124,7 +135,7 @@ forEachCodec(() => {
 		it("carry bytes as raw segments both ways", async () => {
 			const { client } = await linked((h) => void serveNotes(h));
 			const notes = await client.get(Notes, { session: "S1" }, context);
-			if (notes.variant !== "editor") throw new Error("expected the editor");
+			assertGranted(notes, NOTES_EDITOR);
 			const data = new Uint8Array([1, 2, 3]);
 			const echoed = await notes.echo({ data }, context);
 			expect(echoed).toBeInstanceOf(Uint8Array);
@@ -193,7 +204,7 @@ forEachCodec(() => {
 				{ member: EDITOR.state.notes!, value: "[]" },
 				{ member: EDITOR.state.count!, value: "0" },
 			];
-			peer.send({ kind: "bound", holds: [{ hold, variant: EDITOR.variant, members, failed: [] }] });
+			peer.send({ kind: "bound", holds: [{ hold, granted: EDITOR.granted, members, failed: [] }] });
 			peer.send({
 				kind: "state",
 				holds: [
@@ -304,7 +315,7 @@ forEachCodec(() => {
 				address: SERVER_ADDRESS,
 			});
 			const [bound] = (await peer.next("bound")).holds;
-			expect(bound!.variant).toBe(EDITOR.variant);
+			expect(bound!.granted).toEqual(EDITOR.granted);
 			expect(EDITOR.named(bound!.members)).toEqual({ notes: [], count: 0 });
 			await addNote(server, "S1", "a");
 			const state = await peer.next("state");
@@ -431,11 +442,9 @@ forEachCodec(() => {
 				version: 1,
 				params: {},
 				hostAddress: () => Server(),
-				variants: { v: { methods: { echo: method(map(int()), map(int())) } } },
+				methods: { echo: method(map(int()), map(int())) },
 			});
-			const { client } = await linked((h) =>
-				h.serve(Echo, () => ({ variant: "v", members: { echo: async (args) => args } })),
-			);
+			const { client } = await linked((h) => h.serve(Echo, () => ({ echo: async (args) => args })));
 			const echo = await client.get(Echo, {}, context);
 			expect(await echo.echo({ $bytes: 0 }, context)).toEqual({ $bytes: 0 });
 		});
@@ -547,7 +556,7 @@ forEachCodec(() => {
 			const notes = client.hold(Notes, { session: "S1" }, context);
 			await bindNext(peer);
 			await transported();
-			if (notes.variant !== "editor") throw new Error("bound as the editor");
+			assertGranted(notes, NOTES_EDITOR);
 			const added = notes.add({ text: "x" }, context);
 			const { call } = await peer.next("call");
 			peer.send({ kind: "result", call, value: jsonPart("y".repeat(60)) });
@@ -565,11 +574,11 @@ forEachCodec(() => {
 			const holds = [
 				{
 					hold: one.hold,
-					variant: EDITOR.variant,
+					granted: EDITOR.granted,
 					members: members(jsonPart([{ text: "z".repeat(60) }])),
 					failed: [],
 				},
-				{ hold: two.hold, variant: EDITOR.variant, members: members('[{"text":"a"}]'), failed: [] },
+				{ hold: two.hold, granted: EDITOR.granted, members: members('[{"text":"a"}]'), failed: [] },
 			];
 			peer.send({ kind: "bound", holds });
 			expect(await peer.next("release")).toEqual({ kind: "release", hold: one.hold });
@@ -594,7 +603,7 @@ forEachCodec(() => {
 			const { hold } = await peer.next("hold");
 			const list = [{ text: "q".repeat(30_000) }];
 			const value = new DeflatedPart(nodeCompression.deflate(new TextEncoder().encode(JSON.stringify(list))));
-			const bound = { hold, variant: EDITOR.variant, members: [...members("[]")], failed: [] };
+			const bound = { hold, granted: EDITOR.granted, members: [...members("[]")], failed: [] };
 			bound.members[0] = { member: EDITOR.state.notes!, value };
 			peer.send({ kind: "bound", holds: [bound] });
 			const ops = jsonPart([["r", 2]]);
@@ -614,7 +623,7 @@ forEachCodec(() => {
 			const { hold } = await peer.next("hold");
 			const list = [{ text: "q".repeat(30_000) }];
 			const value = new DeflatedPart(nodeCompression.deflate(new TextEncoder().encode(JSON.stringify(list))));
-			const bound = { hold, variant: EDITOR.variant, members: [...members("[]")], failed: [] };
+			const bound = { hold, granted: EDITOR.granted, members: [...members("[]")], failed: [] };
 			bound.members[0] = { member: EDITOR.state.notes!, value };
 			peer.send({ kind: "bound", holds: [bound] });
 			peer.close();
@@ -660,7 +669,7 @@ forEachCodec(() => {
 					holds: [
 						{
 							hold,
-							variant: EDITOR.variant,
+							granted: EDITOR.granted,
 							members: [
 								{ member: EDITOR.state.notes!, value },
 								{ member: EDITOR.state.count!, value: "1" },
@@ -682,7 +691,7 @@ forEachCodec(() => {
 			peer.send({
 				kind: "bound",
 				holds: [
-					{ hold, variant: EDITOR.variant, members: members(jsonPart([{ text: "z".repeat(60) }])), failed: [] },
+					{ hold, granted: EDITOR.granted, members: members(jsonPart([{ text: "z".repeat(60) }])), failed: [] },
 				],
 			});
 			await peer.next("release");
@@ -721,7 +730,7 @@ forEachCodec(() => {
 					client.hold(Notes, { session: "S1" }, context);
 					const { hold } = await peer.next("hold");
 					const value = new DeflatedPart(nodeCompression.deflate(new TextEncoder().encode("[]")));
-					const entry = { hold, variant: EDITOR.variant, members: members("[]"), failed: [] };
+					const entry = { hold, granted: EDITOR.granted, members: members("[]"), failed: [] };
 					entry.members[0] = { member: EDITOR.state.notes!, value };
 					peer.send({ kind: "bound", holds: [entry] });
 					await transported();
@@ -779,14 +788,16 @@ describe('old work across hosts (decision "Reload restarts every affected object
 			version: 1,
 			params: {},
 			hostAddress: at[side],
-			variants: { v: { state: {}, methods: { work: method(undefined, str()), x: method(undefined, str()) } } },
+			state: {},
+			methods: { work: method(undefined, str()), x: method(undefined, str()) },
 		});
-		const ProviderV2 = evolve(Provider, (e) => e.addState("v", "more", str()));
+		const ProviderV2 = evolve(Provider, (e) => e.addState("more", str()));
 		const Dependent = remote(`app.dependent-${other}`, {
 			version: 1,
 			params: {},
 			hostAddress: at[other],
-			variants: { v: { state: {}, methods: { ping: method(undefined, str()) } } },
+			state: {},
+			methods: { ping: method(undefined, str()) },
 		});
 		const gates: Promise<void>[] = [];
 		const serve = (h: FacetHost<TestPrincipal>, onSide: Side, code: string) => {
@@ -794,23 +805,17 @@ describe('old work across hosts (decision "Reload restarts every affected object
 			const more = P === ProviderV2 ? { more: constant("m") } : {};
 			if (onSide === side)
 				h.serve(P as typeof Provider, () => ({
-					variant: "v",
-					members: {
-						...more,
-						work: async (ctx: Ctx) => {
-							await gates.shift();
-							return `${code} work -> ${await (await ctx.get(Dependent, {})).ping(ctx)}`;
-						},
-						x: async () => `${code} x`,
+					...more,
+					work: async (ctx: Ctx) => {
+						await gates.shift();
+						return `${code} work -> ${await (await ctx.get(Dependent, {})).ping(ctx)}`;
 					},
+					x: async () => `${code} x`,
 				}));
 			else
 				h.serve(Dependent, (_, _principal, self) => {
 					const provider = self.get(P as typeof Provider, {});
-					return {
-						variant: "v",
-						members: { ping: async (ctx: Ctx) => `${code} ping -> ${await provider.x(ctx)}` },
-					};
+					return { ping: async (ctx: Ctx) => `${code} ping -> ${await provider.x(ctx)}` };
 				});
 		};
 		const workerFacet = (code: string) =>
@@ -896,14 +901,14 @@ describe('old work across hosts (decision "Reload restarts every affected object
 	});
 });
 
-/** The wire's indexes of `Match`'s variants. */
-const PLAYER = wireNames(Match, "player");
+/** The wire's indexes of `Match` granted to a player, and to a watcher. */
+const PLAYER = wireNames(Match, MATCH_PLAYER);
 
-const WATCHER = wireNames(Match, "watcher");
+const WATCHER = wireNames(Match);
 
 /**
- * A client connected to a raw provider with `limits` and `compression`, holding `Match` bound (the player variant
- * unless `variant` says otherwise); its background errors and its telemetry's counters.
+ * A client connected to a raw provider with `limits` and `compression`, holding `Match` bound (granted a player's
+ * members unless `variant` says otherwise); its background errors and its telemetry's counters.
  */
 async function eventClient(
 	options: { readonly limits?: PartLimits; readonly compression?: Compression; readonly variant?: "watcher" } = {},
@@ -919,12 +924,12 @@ async function eventClient(
 	const [a, b] = memoryLinkPair();
 	client.connect(a, { principal: { kind: "server" }, codec: testCodec(), limits: options.limits }, context);
 	const peer = new RawPeer(b);
-	const got = client.get(Match, { id: 1 }, context);
+	const match = client.hold(Match, { id: 1 }, context);
+	// Taken before it binds, when a reference has every member: its subscriptions are dormant while a binding lacks it.
+	const paddle = match.paddle!;
 	const { hold } = await peer.next("hold");
 	bindMatch(peer, hold, options.variant);
-	const match = await got;
-	// Every variant's members are on a reference; the paddle's subscriptions are dormant while a variant lacks it.
-	const paddle = (match as unknown as { readonly paddle: EventMember<Sample> }).paddle;
+	await waitLive(match);
 	const counts = (): Record<string, number> => {
 		const result: Record<string, number> = {};
 		for (const { name, value, attributes } of telemetry.getMetrics()) {
@@ -936,11 +941,11 @@ async function eventClient(
 	return { client, peer, match, paddle, hold, errors, counts };
 }
 
-/** Sends `bound` for `hold` with the player (or watcher) variant and a score of 0. */
+/** Sends `bound` for `hold` granted as a player (or a watcher) with a score of 0. */
 function bindMatch(peer: RawPeer, hold: number, variant: "player" | "watcher" = "player"): void {
 	const names = variant === "player" ? PLAYER : WATCHER;
 	const members = [{ member: names.state.score!, value: "0" }];
-	peer.send({ kind: "bound", holds: [{ hold, variant: names.variant, members, failed: [] }] });
+	peer.send({ kind: "bound", holds: [{ hold, granted: names.granted, members, failed: [] }] });
 }
 
 /** An event entry of the paddle (or `member`) of `hold` with `y`, stamped `at`. */
@@ -1037,7 +1042,7 @@ forEachCodec(() => {
 				await transported();
 			}
 			expect(seen).toEqual([]);
-			expect(match.variant).toBe("watcher");
+			expect([grantOf(match), match.paddle]).toEqual([[], undefined]);
 		});
 
 		it("deliver none while bound to a variant without the member, and again once a binding has it", async () => {
@@ -1107,8 +1112,8 @@ describe('cancelling one reference\'s calls on a shared hold (decision "Referenc
 		client.connect(near, { principal: { kind: "server" }, codec: testCodec() }, context);
 		const peer = new RawPeer(far, { calls });
 		await peer.next("hello");
-		const a = client.hold(Notes, { session: "S1" }, context) as unknown as RefIn<typeof Notes, "editor">;
-		const b = client.hold(Notes, { session: "S1" }, context) as unknown as RefIn<typeof Notes, "editor">;
+		const a = client.hold(Notes, { session: "S1" }, context) as unknown as Reference<typeof Notes>;
+		const b = client.hold(Notes, { session: "S1" }, context) as unknown as Reference<typeof Notes>;
 		const hold = await bindNext(peer);
 		await waitLive(b);
 		return { peer, a, b, hold };
@@ -1128,8 +1133,8 @@ describe('cancelling one reference\'s calls on a shared hold (decision "Referenc
 
 	it("a finite window: the released one's queued call leaves unsent, its sent one is aborted, the other's queued call goes out", async () => {
 		const { peer, a, b } = await shared(1);
-		const results = [rejection(a.add({ text: "A1" }, context)), rejection(a.add({ text: "A2" }, context))];
-		const sibling = b.add({ text: "B1" }, context);
+		const results = [rejection(a.add!({ text: "A1" }, context)), rejection(a.add!({ text: "A2" }, context))];
+		const sibling = b.add!({ text: "B1" }, context);
 		await transported();
 		const texts = new Map<number, string>();
 		expect(wire(peer, texts)).toEqual(["call:A1"]);
@@ -1151,10 +1156,10 @@ describe('cancelling one reference\'s calls on a shared hold (decision "Referenc
 				(error: ChordError) => void settled.push(`${tag}:${error.code}`),
 			);
 		const tracked = [
-			track("A1", a.add({ text: "A1" }, context)),
-			track("B1", b.add({ text: "B1" }, context)),
-			track("A2", a.add({ text: "A2" }, context)),
-			track("B2", b.add({ text: "B2" }, context)),
+			track("A1", a.add!({ text: "A1" }, context)),
+			track("B1", b.add!({ text: "B1" }, context)),
+			track("A2", a.add!({ text: "A2" }, context)),
+			track("B2", b.add!({ text: "B2" }, context)),
 		];
 		await transported();
 		const texts = new Map<number, string>();

@@ -18,7 +18,10 @@ const id = int({ min: 0 });
  */
 const origin = int({ min: 1 });
 
-/** A name as an index into the hold's bound version (each variant's names sorted). */
+/**
+ * A name as an index into the hold's bound version: a member into the granted members' names of its kind, a granted
+ * name into the version's grantable members and flags, each list sorted.
+ */
 const index = int({ min: 0 });
 
 /** An error that may come from plugin code: a ChordError's JSON (checked by L1), or a plugin's code and message. */
@@ -127,7 +130,8 @@ const MESSAGE = union([
 	obj({
 		kind: lit("bound"),
 		origin: opt(origin),
-		holds: arr(obj({ hold: id, variant: index, members: arr(obj({ member: index, value: part })), failed })),
+		// `granted`: the names its admission granted (slice 15 §1.4), as indexes into the version's sorted grants.
+		holds: arr(obj({ hold: id, granted: arr(index), members: arr(obj({ member: index, value: part })), failed })),
 	}),
 	obj({
 		kind: lit("state"),
@@ -161,7 +165,7 @@ const MESSAGE = union([
 	obj({ kind: lit("result"), origin: opt(origin), call: id, value: opt(part), segments }),
 	obj({ kind: lit("error"), origin: opt(origin), call: id, error: wireError }),
 	obj({ kind: lit("gone"), origin: opt(origin), hold: id, error: wireError }),
-	// Events of bound holds (decision "Events: fire-and-forget members"): `member` an index into the bound variant's event
+	// Events of bound holds (decision "Events: fire-and-forget members"): `member` an index into the binding's event
 	// members, `at` the emitting host's `Date.now()` at the emit, `value` a part; one message per flush per link and
 	// origin, possibly without entries (a relay forwards what is left after filtering).
 	obj({

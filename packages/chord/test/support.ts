@@ -16,19 +16,19 @@ import {
 	type EventSource,
 	event,
 	evolve,
+	grantable,
 	hostKind,
 	int,
 	local,
 	method,
 	num,
 	obj,
-	oneOf,
 	opt,
 	type ParamsOf,
 	remote,
 	str,
 } from "../src/contracts/index.ts";
-import { currentVariants, variantNames, variantOrder } from "../src/contracts/internal.ts";
+import { currentVersion, grantedMembers, grantIndexes, memberOrder } from "../src/contracts/internal.ts";
 import { ChordError, isChordError, PluginError, type Principal } from "../src/data/index.ts";
 import { PROTOCOL_VERSION } from "../src/data/internal.ts";
 import type { Op } from "../src/delta/index.ts";
@@ -67,7 +67,7 @@ import {
 } from "../src/link/internal.ts";
 import { nodeCompression } from "../src/node/compression.ts";
 import { NodeSqliteDatabase, openNodeSqliteDatabase } from "../src/sqlite/node.ts";
-import type { Writable } from "../src/state/index.ts";
+import { constant, type Writable } from "../src/state/index.ts";
 import type { ArchivePart } from "../src/store/archive.ts";
 import { sqliteBackend } from "../src/store/backend.ts";
 import { changeDocument, createDocument, retireDocument } from "../src/store/engine.ts";
@@ -546,12 +546,16 @@ export function forEachCodec(suite: () => void): void {
 	}
 }
 
-/** The wire's indexes of a remote contract's variant (2b): the variant's, and its state members' and methods' by name. */
-export function wireNames(Type: Contract, variant: string) {
-	const names = variantNames(currentVariants(Type).get(variant)!);
+/**
+ * The wire's indexes of a remote contract's binding granted `granted` (2b, slice 15 §1.4): the granted names', and its
+ * state members', methods' and event members' by name.
+ */
+export function wireNames(Type: Contract, granted: readonly string[] = []) {
+	const version = currentVersion(Type);
+	const names = memberOrder(grantedMembers(version, new Set(granted)));
 	const indexes = (list: readonly string[]) => Object.fromEntries(list.map((name, index) => [name, index]));
 	return {
-		variant: variantOrder(Type).indexOf(variant),
+		granted: grantIndexes(version, new Set(granted)),
 		state: indexes(names.state),
 		methods: indexes(names.methods),
 		events: indexes(names.events),
@@ -609,18 +613,33 @@ export async function transported(): Promise<void> {
 }
 
 /** The variants of the notes types: an editor variant for owners, a reader one for guests. */
-const NOTES_VARIANTS = {
-	editor: {
-		state: { notes: arr(obj({ text: str() })), count: int() },
-		methods: {
-			add: method(obj({ text: str() }), int()),
-			fail: method(obj({ how: str() })),
-			wait: method(),
-			echo: method(obj({ data: bytes() }), bytes()),
-		},
+/** `Notes`' members: owners are granted `add`, `fail` and `echo` (`serveNotes`), guests read and wait. */
+const NOTES_MEMBERS = {
+	state: { notes: arr(obj({ text: str() })), count: int() },
+	methods: {
+		add: grantable(method(obj({ text: str() }), int())),
+		fail: grantable(method(obj({ how: str() }))),
+		wait: method(),
+		echo: grantable(method(obj({ data: bytes() }), bytes())),
 	},
-	reader: { state: { notes: arr(obj({ text: str() })), count: int() }, methods: { wait: method() } },
 };
+
+/** What `serveNotes` grants an owner. */
+export const NOTES_EDITOR: ("add" | "echo" | "fail")[] = ["add", "echo", "fail"];
+
+/** The names a reference was granted, sorted (slice 15 §1.4). */
+export function grantOf(ref: { readonly granted: ReadonlySet<string> }): string[] {
+	return [...ref.granted].sort();
+}
+
+/** Asserts that `ref` was granted `names`: its members of those names are then there (slice 15 §1.4). */
+export function assertGranted<R extends { readonly granted: ReadonlySet<string> }, const K extends keyof R & string>(
+	ref: R,
+	names: readonly K[],
+): asserts ref is R & { readonly [N in K]-?: NonNullable<R[N]> } {
+	const missing = names.filter((name) => !ref.granted.has(name));
+	if (missing.length > 0) throw new Error(`not granted: ${missing.join(", ")} (granted: ${grantOf(ref).join(", ")})`);
+}
 
 /** The host kind of the test servers, where every test type but `PlacedNotes` lives. */
 export const Server = hostKind("server");
@@ -628,12 +647,12 @@ export const Server = hostKind("server");
 /** `Server()` as a hold names it on the wire: the address of every test type served on the server. */
 export const SERVER_ADDRESS = { kind: "server", params: {} };
 
-/** The remote type of the link tests: notes per session, an editor variant for owners, a reader one for guests. */
+/** The remote type of the link tests: notes per session; owners may edit them, guests only read. */
 export const Notes = remote("app.notes", {
 	version: 1,
 	params: { session: str() },
 	hostAddress: () => Server(),
-	variants: NOTES_VARIANTS,
+	...NOTES_MEMBERS,
 });
 
 /** The kind of the relay tests' workers: one per session. */
@@ -644,7 +663,7 @@ export const PlacedNotes = remote("app.placed-notes", {
 	version: 1,
 	params: { session: str() },
 	hostAddress: ({ session }) => Session({ id: session }),
-	variants: NOTES_VARIANTS,
+	...NOTES_MEMBERS,
 });
 
 const NotesDoc = defineState("notes", {
@@ -664,8 +683,8 @@ export const NoteStore = local("app.note-store", {
 export type NotesProbe = { readonly waits: Ctx<TestPrincipal>[]; readonly factories: string[] };
 
 /**
- * Serves `NoteStore` and `Notes` over it: `notes` and `count` are derives over the store's list; guests get the reader
- * variant. `wait` resolves when its context is aborted; `fail` throws a ChordError (`chord`), a PluginError (`plugin`)
+ * Serves `NoteStore` and `Notes` over it: `notes` and `count` are derives over the store's list; guests are granted
+ * nothing (they read and wait), everyone else `NOTES_EDITOR`. `wait` resolves when its context is aborted; `fail` throws a ChordError (`chord`), a PluginError (`plugin`)
  * or a plain Error.
  */
 export function serveNotes(
@@ -684,20 +703,19 @@ export function serveNotes(
 		};
 	});
 	// The two types differ in their name and host address only.
-	host.serve(Type as typeof Notes, ({ session }, principal, self) => {
-		probe.factories.push(`${session} ${principal.kind}`);
-		const store = self.get(NoteStore, { session });
-		const notes = self.derive([store.list], ([list]) => list);
-		const count = self.derive([store.list], ([list]) => list.length);
-		const wait = async (ctx: Ctx<TestPrincipal>) => {
-			probe.waits.push(ctx);
-			await new Promise((resolve) => ctx.abortSignal?.addEventListener("abort", resolve));
-			return null;
-		};
-		if (principal.kind === "guest") return { variant: "reader", members: { notes, count, wait } };
-		return {
-			variant: "editor",
-			members: {
+	host.serve(
+		Type as typeof Notes,
+		({ session }, principal, _admitted, self) => {
+			probe.factories.push(`${session} ${principal.kind}`);
+			const store = self.get(NoteStore, { session });
+			const notes = self.derive([store.list], ([list]) => list);
+			const count = self.derive([store.list], ([list]) => list.length);
+			const wait = async (ctx: Ctx<TestPrincipal>) => {
+				probe.waits.push(ctx);
+				await new Promise((resolve) => ctx.abortSignal?.addEventListener("abort", resolve));
+				return null;
+			};
+			return {
 				notes,
 				count,
 				wait,
@@ -708,9 +726,10 @@ export function serveNotes(
 					throw new Error("plain");
 				},
 				echo: async ({ data }) => data,
-			},
-		};
-	});
+			};
+		},
+		{ admit: (_params, principal) => constant(allow({ granted: principal.kind === "guest" ? [] : NOTES_EDITOR })) },
+	);
 	return probe;
 }
 
@@ -720,22 +739,24 @@ export const Sample = obj({ y: num() });
 export type Sample = { y: number };
 
 /**
- * A server type with events (decision "Events: fire-and-forget members"): a player has the score, two event members
- * (`ball`, `paddle`) and a method; a watcher (a guest) the score only. The score is a derive over a writable, so a
+ * A server type with events (decision "Events: fire-and-forget members"): a player is granted two event members
+ * (`ball`, `paddle`) and a method; a watcher (a guest) has the score only. The score is a derive over a writable, so a
  * test commits synchronously.
  */
 export const Match = remote("app.match", {
 	version: 1,
 	params: { id: int() },
 	hostAddress: () => Server(),
-	variants: {
-		player: { state: { score: int() }, events: { paddle: Sample, ball: Sample }, methods: { bump: method() } },
-		watcher: { state: { score: int() } },
-	},
+	state: { score: int() },
+	events: { paddle: grantable(Sample), ball: grantable(Sample) },
+	methods: { bump: grantable(method()) },
 });
 
+/** What `serveMatch` grants a player. */
+export const MATCH_PLAYER: ("ball" | "bump" | "paddle")[] = ["ball", "bump", "paddle"];
+
 /** `Match` with the paddle's values carrying a sample time: an older consumer gets them mapped. */
-export const MatchV2 = evolve(Match, (e) => e.event("player", "paddle", obj({ y: num(), t: num() })));
+export const MatchV2 = evolve(Match, (e) => e.event("paddle", obj({ y: num(), t: num() })));
 
 /** What a test reaches of each match attempt: its paddle source, its score's writable and its `self`. */
 export type MatchProbe = {
@@ -744,19 +765,22 @@ export type MatchProbe = {
 	readonly selves: Self[];
 };
 
-/** Serves `Match`; guests get the watcher variant. */
+/** Serves `Match`; guests are granted nothing (the watchers), everyone else `MATCH_PLAYER`. */
 export function serveMatch(h: FacetHost<TestPrincipal>, probe: MatchProbe): void {
-	h.serve(Match, (_, principal, self) => {
-		const paddle = self.events<Sample>();
-		const ball = self.events<Sample>();
-		const writable = self.writable(0);
-		probe.paddles.push(paddle);
-		probe.scores.push(writable);
-		probe.selves.push(self);
-		const score = self.derive([writable], ([s]) => s);
-		if (principal.kind === "guest") return { variant: "watcher", members: { score } };
-		return { variant: "player", members: { score, paddle, ball, bump: async () => null } };
-	});
+	h.serve(
+		Match,
+		(_, _principal, _admitted, self) => {
+			const paddle = self.events<Sample>();
+			const ball = self.events<Sample>();
+			const writable = self.writable(0);
+			probe.paddles.push(paddle);
+			probe.scores.push(writable);
+			probe.selves.push(self);
+			const score = self.derive([writable], ([s]) => s);
+			return { score, paddle: () => paddle, ball: () => ball, bump: async () => null };
+		},
+		{ admit: (_params, principal) => constant(allow({ granted: principal.kind === "guest" ? [] : MATCH_PLAYER })) },
+	);
 }
 
 /** Event tickers on one host (decision "Events: fire-and-forget members"). */
@@ -898,23 +922,23 @@ export function statesOf(watch: NativeWatchHandle<RefState>): string[] {
 	return states;
 }
 
-/** The wire's indexes of `Notes`'s editor variant. */
-export const EDITOR = wireNames(Notes, "editor");
+/** The wire's indexes of `Notes` granted to an owner. */
+export const EDITOR = wireNames(Notes, NOTES_EDITOR);
 
-/** Answers the next hold with `bound`: the editor variant with `notes` and `count`. */
+/** Answers the next hold with `bound`: granted `NOTES_EDITOR`, with `notes` and `count`. */
 export async function bindNext(peer: RawPeer, notes: { text: string }[] = []) {
 	const { hold } = await peer.next("hold");
 	bindHold(peer, hold, notes);
 	return hold;
 }
 
-/** Sends `bound` for `hold`: the editor variant with `notes` and `count`. */
+/** Sends `bound` for `hold`: granted `NOTES_EDITOR`, with `notes` and `count`. */
 export function bindHold(peer: RawPeer, hold: number, notes: { text: string }[] = []): void {
 	const members = [
 		{ member: EDITOR.state.notes!, value: jsonPart(notes) },
 		{ member: EDITOR.state.count!, value: jsonPart(notes.length) },
 	];
-	peer.send({ kind: "bound", holds: [{ hold, variant: EDITOR.variant, members, failed: [] }] });
+	peer.send({ kind: "bound", holds: [{ hold, granted: EDITOR.granted, members, failed: [] }] });
 }
 
 /**
@@ -1228,16 +1252,13 @@ export async function exported(store: Store): Promise<ArchivePart[]> {
 	return parts;
 }
 
-/** A desk its caller reads or edits by its admitted mode: a variant each (the UI bindings' variant tests). */
+/** A desk its caller reads, or edits when granted `write` by its admitted mode (the UI bindings' tests). */
 export const Desk = remote("test.desk", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
-	admission: oneOf("reader", "editor"),
-	variants: {
-		reader: { state: { text: str() } },
-		editor: { state: { text: str() }, methods: { write: method(str()) } },
-	},
+	state: { text: str() },
+	methods: { write: grantable(method(str())) },
 });
 
 /** The mode `Desk`'s admission reads. */
@@ -1265,20 +1286,19 @@ export async function desk(): Promise<{
 		});
 		h.serve(
 			Desk,
-			(_params, _principal, mode, self) => {
+			(_params, _principal, _admitted, self) => {
 				const text = self.writable("a desk");
 				const shown = self.derive([text], ([value]) => value);
-				if (mode === "reader") return { variant: "reader", members: { text: shown } };
 				const write = async (next: string) => {
 					text.set(next);
 					return null;
 				};
-				return { variant: "editor", members: { text: shown, write } };
+				return { text: shown, write };
 			},
 			{
 				admit: (_params, _principal, self) =>
 					self.derive([self.get(DeskMode, {}).mode], ([mode]) =>
-						mode === "reader" || mode === "editor" ? allow(mode) : deny("no access"),
+						mode === "reader" ? allow({}) : mode === "editor" ? allow({ granted: ["write"] }) : deny("no access"),
 					),
 			},
 		);

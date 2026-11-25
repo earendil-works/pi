@@ -50,7 +50,7 @@ export function scriptsFacet<P extends Principal>(
 		});
 		host.serve(SCRIPTS[surface], (_params, _principal, self) => {
 			const current = self.get(Current, {});
-			return { variant: "main", members: { set: self.derive([current.set], ([value]) => value) } };
+			return { set: self.derive([current.set], ([value]) => value) };
 		});
 	});
 }

@@ -24,8 +24,8 @@ import { Watch, type WatchCall, type WatchEnd } from "../watch.ts";
  * Where a reference's source stands: never had a value (`unbound`: reads throw what its reference has instead),
  * following an instance's member, holding its last value while pointing at nothing (`failure` while its target is
  * failed: new watches start with it; `told`: its watches got a failure since that value, so the next is whole), failed
- * (a member its target's live variant lacks, or its compute threw when it was held: reads throw, `last` is the last
- * good value) or ended with its reference (nothing kept).
+ * (a member its target's live instance lacks (not granted), or its compute threw when it was held: reads throw, `last`
+ * is the last good value) or ended with its reference (nothing kept).
  */
 type SourceState =
 	| { readonly kind: "unbound" }
@@ -215,8 +215,9 @@ export class ReferenceSource extends Source implements Dependent {
 	}
 
 	/**
-	 * Its target's live variant lacks the member, inside a batch: reads throw `error`; watches and subscribers get one
-	 * failure call and stay open (a later instance may bring the member back, as `[["r", value]]`).
+	 * Its target's live instance lacks the member (not granted), inside a batch: reads throw `error`; watches and
+	 * subscribers get one failure call and stay open (a later instance may bring the member back, as `[["r",
+	 * value]]`).
 	 */
 	vanish(error: ChordError, context: Context): void {
 		const state = this.#state;

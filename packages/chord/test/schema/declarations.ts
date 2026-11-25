@@ -7,6 +7,7 @@ import {
 	arr,
 	bool,
 	bytes,
+	grantable,
 	hostKind,
 	int,
 	keyed,
@@ -69,15 +70,13 @@ export const Everything = local("fixture.switch.everything", {
 
 const Server = hostKind("fixture.switch.server", { region: str() });
 
-/** A remote contract with variants and a host address. */
+/** A remote contract with a grantable member and a host address (variants until slice 15). */
 export const Account = remote("fixture.switch.account", {
 	version: 1,
 	params: { user: str({ min: 1 }) },
 	hostAddress: () => Server({ region: "eu" }),
-	variants: {
-		owner: { state: { balance: num() }, methods: { pay: method(obj({ amount: num({ min: 0 }) }), bool()) } },
-		guest: { state: { balance: num() } },
-	},
+	state: { balance: num() },
+	methods: { pay: grantable(method(obj({ amount: num({ min: 0 }) }), bool())) },
 });
 
 /** A persisted singleton document of `everything`. */

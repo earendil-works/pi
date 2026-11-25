@@ -5,7 +5,7 @@
 import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context, withCancel } from "../../src/context/index.ts";
-import { currentVariants, variantNames } from "../../src/contracts/internal.ts";
+import { currentVersion, grantedMembers, memberOrder, NO_GRANTS } from "../../src/contracts/internal.ts";
 import { ChordError } from "../../src/data/index.ts";
 import { HostEvents, OwnEventSource, Subscription } from "../../src/host/events.ts";
 import type { Self } from "../../src/host/index.ts";
@@ -18,6 +18,7 @@ import {
 	instancesOf,
 	linked,
 	NamedTicker,
+	NOTES_EDITOR,
 	NoteStore,
 	Notes,
 	recorder,
@@ -307,11 +308,11 @@ describe("cost", () => {
 			expect(again.state.value).toEqual({ kind: "live" });
 			(await server.get(NoteStore, { session: "S1" }, context)).release();
 			expect(read).not.toHaveBeenCalled();
-			// Their names share one empty list of event members.
-			const [editor, reader] = ["editor", "reader"].map((variant) =>
-				variantNames(currentVariants(Notes).get(variant)!),
-			);
-			expect(editor!.events).toBe(reader!.events);
+			// Their names share one empty list of event members, whatever they were granted.
+			const version = currentVersion(Notes);
+			const editor = memberOrder(grantedMembers(version, new Set(NOTES_EDITOR)));
+			const reader = memberOrder(grantedMembers(version, NO_GRANTS));
+			expect(editor.events).toBe(reader.events);
 		} finally {
 			read.mockRestore();
 		}

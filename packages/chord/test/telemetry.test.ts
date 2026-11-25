@@ -24,8 +24,10 @@ import {
 } from "../src/telemetry.ts";
 import { createSqliteTelemetry } from "../src/telemetry-sqlite/index.ts";
 import {
+	assertGranted,
 	expectCollected,
 	metered,
+	NOTES_EDITOR,
 	PlacedNotes,
 	RawPeer,
 	relayed,
@@ -76,7 +78,7 @@ describe("the schema", () => {
 		const { tab } = await relayed({ telemetry: { tab: telemetry, server: telemetry, worker: telemetry } });
 		await traced(telemetry, async (context) => {
 			const notes = await tab.get(PlacedNotes, { session: "S1" }, context);
-			if (notes.variant !== "editor") throw new Error("expected the editor");
+			assertGranted(notes, NOTES_EDITOR);
 			await notes.add({ text: "a" }, context);
 		});
 		const recorded = new Set(telemetry.getMetrics().map(({ name }) => name));
@@ -105,7 +107,7 @@ describe("nothing recorded", () => {
 			send(bytes);
 		};
 		const notes = await tab.get(PlacedNotes, { session: "S1" }, BACKGROUND_CONTEXT);
-		if (notes.variant !== "editor") throw new Error("expected the editor");
+		assertGranted(notes, NOTES_EDITOR);
 		expect(await notes.add({ text: "a" }, BACKGROUND_CONTEXT)).toBe(1);
 		expect(sent.length).toBeGreaterThan(0);
 	});
@@ -192,7 +194,7 @@ describe("across hosts", () => {
 		await telemetry.startSpan({ name: "test" }, async (span) => {
 			const context = withTelemetry(span, BACKGROUND_CONTEXT);
 			const notes = await tab.get(PlacedNotes, { session: "S1" }, context);
-			if (notes.variant !== "editor") throw new Error("expected the editor");
+			assertGranted(notes, NOTES_EDITOR);
 			await notes.add({ text: "a" }, context);
 		});
 		await transported();
@@ -230,7 +232,7 @@ describe("across hosts", () => {
 		await telemetry.startSpan({ name: "test" }, async (span) => {
 			const context = withTelemetry(span, BACKGROUND_CONTEXT);
 			const notes = await tab.get(PlacedNotes, { session: "S1" }, context);
-			if (notes.variant !== "editor") throw new Error("expected the editor");
+			assertGranted(notes, NOTES_EDITOR);
 			await notes.add({ text: "a" }, context);
 		});
 		await transported();
@@ -283,7 +285,9 @@ describe("across hosts", () => {
 		expect(noteStore.links.map(({ spanId }) => spanId)).toEqual([activation!.id]);
 		expect(activation!.links.map(({ spanId }) => spanId)).toEqual([relay.id, noteStore.id]);
 		expect(activation!.attributes.outcome).toBe("parked");
-		expect(activation!.events.map(({ name, attributes }) => [name, attributes.cause])).toEqual([
+		// Its admission allowed it first (`PlacedNotes` grants by principal, slice 15), then it parked on its store.
+		expect(activation!.events.map(({ name, attributes }) => [name, attributes.outcome ?? attributes.cause])).toEqual([
+			["chord.admit", "allow"],
 			["chord.park", "loading"],
 		]);
 		expect(resumed!.links.map(({ spanId }) => spanId)).toEqual([activation!.id]);
@@ -304,7 +308,7 @@ describe("across hosts", () => {
 				(telemetry?.getMetrics().filter(({ name }) => name === "chord.link.encodes").length ?? 0);
 			const call = async (caller: Context) => {
 				const notes = await tab.get(PlacedNotes, { session: "S1" }, caller);
-				if (notes.variant !== "editor") throw new Error("expected the editor");
+				assertGranted(notes, NOTES_EDITOR);
 				await notes.add({ text: "warm" }, caller);
 				await transported();
 				const spans = telemetry?.getSpans().length ?? 0;
@@ -344,7 +348,7 @@ describe("across hosts", () => {
 		await tabTelemetry.startSpan({ name: "test" }, async (span) => {
 			const context = withTelemetry(span, BACKGROUND_CONTEXT);
 			const notes = await tab.get(PlacedNotes, { session: "S1" }, context);
-			if (notes.variant !== "editor") throw new Error("expected the editor");
+			assertGranted(notes, NOTES_EDITOR);
 			await notes.add({ text: "a" }, context);
 		});
 		await transported();
@@ -471,7 +475,7 @@ describe("what a peer sends (slice 9 review M1, M2, L8)", () => {
 			kind: "call",
 			call: 0,
 			hold: 0,
-			method: wireNames(PlacedNotes, "editor").methods.add!,
+			method: wireNames(PlacedNotes, NOTES_EDITOR).methods.add!,
 			args: jsonPart({ text: "a" }),
 		});
 		await peer.next("result");

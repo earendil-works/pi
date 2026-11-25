@@ -57,7 +57,8 @@ within each link's limits, compression at the origin, activation chains and revo
   has two kinds of entries: `Hold` (served here) and `RelayedHold` (relayed, never hydrated). A call on a pending hold
   is answered `not_ready`, one crossing a `failed` or a removal with the cause its consumer was told; a call sent with
   the indexes of a binding its consumer has not acknowledged a newer `bound` of yet is decoded by them (another
-  variant's indexes name other methods; one the new variant lacks fails `invalid/member`); an aborted, released or gone
+  grant's indexes name other methods; one the new binding lacks fails `forbidden` when not granted, else
+  `invalid/member`); an aborted, released or gone
   call gets no reply. While the host closes, its holds are only
   dropped (the host ends the objects itself). It sends with its origin. A hold's `chain` is kept only from a trusted
   link and its stamped `limit` only from a parent link; its decoded limit is the smaller of the link's and the stamped
@@ -129,13 +130,13 @@ within each link's limits, compression at the origin, activation chains and revo
   names it was bound with until that is sent (the window may hold it). An object leaving `live` unbinds it with `failed` (its calls in flight rejected) or `loading`: then its calls in flight
   stay, each answered by the instance it runs on or by the object's gate, and calls by the names it was bound with
   still arrive and wait at the gate until its fresh `bound` (decision "Calls in flight survive a `loading` unbind"). Live,
-  it binds through the window (`boundEntry`: the variant and each member's value as a part, names as indexes into the
+  it binds through the window (`boundEntry`: the granted names as indexes and each granted member's value as a part, names as indexes into the
   bound version); its `bound` also taps its instance's event members from the host's counter value then (an older
   version's through the instance's mapping), untapped when it unbinds. Its members' frames arrive as `Subscriber` calls
   inside the batch; at its
   end the hold's entry lists the members that changed with their ops, each encoded with that member's own Delta
   encoder (`entry`), or queues them (`queue`, later `pendingEntry`). Each entry counts one `chord.link.encodes`. A
-  call's method is an index into the bound variant's methods; one outside them is a protocol error, its arguments are
+  call's method is an index into the binding's methods; one outside them is a protocol error, its arguments are
   parsed when it arrives. A member that fails is listed in the header of the message that carries the failure, once
   per failure episode; while the window is full a member keeps one pending failure at most (a later one replaces it,
   dropping the member's pending ops; a value after it replaces it), and a retirement of a failed member waits for its
@@ -192,7 +193,7 @@ within each link's limits, compression at the origin, activation chains and revo
   sent in order as replies free slots; it does not preempt running calls; a waiting call is taken out before a slot it
   would get is counted free (one, a hold's, or those a predicate matches: one owner's, `removeWhere`). A slot is freed once per call: its
   `result` or `error`, its `abort` (when sent), its hold's `release` or `gone`, or the link's close. A call still
-  waiting when its hold gets `loading` is rejected `unavailable` (it may name a method of the old variant); one sent
+  waiting when its hold gets `loading` is rejected `unavailable` (it may name a method of the old binding); one sent
   already waits for its reply.
 - `Path` (the parent, or one route address): its current link and its holders (`RemoteObject`s and `RelayedHold`s),
   held on that link and again on every next one; when the link drops, every holder is told (`dropped`). `changed`
@@ -217,9 +218,9 @@ within each link's limits, compression at the origin, activation chains and revo
   retryIn` for a transient cause, `retryAt` undefined for a broken or waiting one, `live` on `bound`, `released`;
   every change tells every binding, all retargeted in one batch, then each told (`moved`), whose parked dependent
   checks again: no new hold, no backoff), `remote` and
-  `blocksFirstPass` (never: a wait on another host ends this host's first pass), `lastFailure`, `variant` (set in `bound`'s batch, before derives recompute) and
-  `member` (the last binding's, kept while loading or failed; outside the variant `invalid/member`), `call` (only while
-  live; outside the variant `invalid/member`), `retry` (sends `retry` while failed on an open link, for every
+  `blocksFirstPass` (never: a wait on another host ends this host's first pass), `lastFailure`, `granted` (set in `bound`'s batch, before derives recompute; the last
+  binding's set when equal) and `member` (the last binding's, kept while loading or failed; one it lacks fails,
+  `forbidden` when not granted), `call` (only while live; one it lacks fails likewise), `retry` (sends `retry` while failed on an open link, for every
   binding; after a part past the limits only the retrying binding moves, `Binding.transfer`, to a private
   `RemoteObject` with copies of the replicas, `Replica.fork`, placed anew with `host.pathOf` and held with a new id,
   now or on that path's next link; a placement that throws fails only that object broken). Its holds made
@@ -233,7 +234,7 @@ within each link's limits, compression at the origin, activation chains and revo
   it while it is open. Its holds carry the params as a
   part and the address its `hostAddress` computed. A `bound` (a first binding, a re-hold; also on a live hold)
   replaces the replicas in the message's batch: members it had get the snapshot as one frame `[["r", value]]` and a
-  fresh decoder, members outside a new variant vanish (reads throw `invalid/member`, watches get one `failed` call and
+  fresh decoder, members a new binding lacks vanish (reads throw `forbidden` when not granted, watches get one `failed` call and
   stay open, derives over them fail; a later binding with the member brings it back as `[["r", value]]`, as on the
   provider's host), new members are made, and new event nodes (a new binding's: its reference's subscriptions move
   there from their counter value); then the reference goes live (its parked calls are sent). An `event` entry for its

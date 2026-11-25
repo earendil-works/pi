@@ -134,11 +134,9 @@ describe('event members (decision "Events: fire-and-forget members")', () => {
 			version: 1,
 			params: {},
 			hostAddress: () => Server(),
-			variants: { v: { events: { ticks: Sample } } },
+			events: { ticks: Sample },
 		});
-		const { client } = await linked((h) =>
-			h.serve(Only, (_, _principal, self) => ({ variant: "v", members: { ticks: self.events() } })),
-		);
+		const { client } = await linked((h) => h.serve(Only, (_, _principal, self) => ({ ticks: self.events() })));
 		const only = await client.get(Only, {}, context);
 		expect(only.state.value).toEqual({ kind: "live" });
 	});

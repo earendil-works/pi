@@ -59,58 +59,55 @@ const core = defineFacet((facet) => {
 		const busy = self.get(Busy, {});
 		const echo = self.get(Echo, {});
 		return {
-			variant: "main",
-			members: {
-				crash: async (code) => {
-					setTimeout(() => process.exit(code), 10);
-					return null;
-				},
-				fatal: async (message) => {
-					setTimeout(() => {
-						throw new Error(message);
-					}, 10);
-					return null;
-				},
-				block: async (ms) => {
-					setTimeout(() => {
-						const until = Date.now() + ms;
-						while (Date.now() < until) {}
-					}, 10);
-					return null;
-				},
-				blockThenCrash: async (ms) => {
-					setTimeout(() => {
-						const until = Date.now() + ms;
-						while (Date.now() < until) {}
-						process.exit(9);
-					}, 10);
-					return null;
-				},
-				busy: async (ms, ctx) => {
-					await busy.set(1, ctx);
-					// After the call settled (its ctx sealed, maybe this object ended): through the host.
-					setTimeout(async () => {
-						const counts = await host.get(Busy, {}, BACKGROUND_CONTEXT);
-						await counts.set(0, BACKGROUND_CONTEXT);
-						counts.release();
-					}, ms);
-					return null;
-				},
-				localCalls: async (n, ctx) => {
-					const before = sent;
-					for (let i = 0; i < n; i++) await echo.echo(i, ctx);
-					return sent - before;
-				},
-				report: async (text) => {
-					const reports = await serverReports();
-					reports.report(text, BACKGROUND_CONTEXT).catch(() => {});
-					return null;
-				},
-				reportAndExit: async (text) => {
-					const reports = await serverReports();
-					reports.report(text, BACKGROUND_CONTEXT).catch(() => {});
-					process.exit(7);
-				},
+			crash: async (code) => {
+				setTimeout(() => process.exit(code), 10);
+				return null;
+			},
+			fatal: async (message) => {
+				setTimeout(() => {
+					throw new Error(message);
+				}, 10);
+				return null;
+			},
+			block: async (ms) => {
+				setTimeout(() => {
+					const until = Date.now() + ms;
+					while (Date.now() < until) {}
+				}, 10);
+				return null;
+			},
+			blockThenCrash: async (ms) => {
+				setTimeout(() => {
+					const until = Date.now() + ms;
+					while (Date.now() < until) {}
+					process.exit(9);
+				}, 10);
+				return null;
+			},
+			busy: async (ms, ctx) => {
+				await busy.set(1, ctx);
+				// After the call settled (its ctx sealed, maybe this object ended): through the host.
+				setTimeout(async () => {
+					const counts = await host.get(Busy, {}, BACKGROUND_CONTEXT);
+					await counts.set(0, BACKGROUND_CONTEXT);
+					counts.release();
+				}, ms);
+				return null;
+			},
+			localCalls: async (n, ctx) => {
+				const before = sent;
+				for (let i = 0; i < n; i++) await echo.echo(i, ctx);
+				return sent - before;
+			},
+			report: async (text) => {
+				const reports = await serverReports();
+				reports.report(text, BACKGROUND_CONTEXT).catch(() => {});
+				return null;
+			},
+			reportAndExit: async (text) => {
+				const reports = await serverReports();
+				reports.report(text, BACKGROUND_CONTEXT).catch(() => {});
+				process.exit(7);
 			},
 		};
 	});

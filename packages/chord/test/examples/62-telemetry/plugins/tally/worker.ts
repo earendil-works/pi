@@ -31,15 +31,12 @@ export default defineFacet((host) => {
 	host.serve(Counter, (_params, _principal, self) => {
 		const store = self.get(Store, {});
 		return {
-			variant: "main",
-			members: {
-				total: self.derive([store.total], ([value]) => value),
-				add: async (n, ctx) => {
-					await ctx.trace("tally.check", { n }, async () => {
-						if (!Number.isSafeInteger(n) || n <= 0) throw new Error("add a positive count");
-					});
-					return store.add(n, ctx);
-				},
+			total: self.derive([store.total], ([value]) => value),
+			add: async (n, ctx) => {
+				await ctx.trace("tally.check", { n }, async () => {
+					if (!Number.isSafeInteger(n) || n <= 0) throw new Error("add a positive count");
+				});
+				return store.add(n, ctx);
 			},
 		};
 	});

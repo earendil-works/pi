@@ -9,7 +9,7 @@ import type { JsonValue } from "../json.ts";
 import { type Batch, handedOut, Source, type WatchStart } from "../state/internal.ts";
 
 /**
- * Where a replica stands: a value, a failed member (reads throw; the provider's member failed, or a newly bound variant
+ * Where a replica stands: a value, a failed member (reads throw; the provider's member failed, or a new binding
  * lacks it, and either may come back; `last` is its last good value, `undefined` when it had none), or ended with its
  * reference.
  */
@@ -152,8 +152,8 @@ export class Replica extends Source {
 	}
 
 	/**
-	 * The member is not in a newly bound variant, in the batch that binds it: as a failure (`fail`) with `error`; a later
-	 * binding of a variant that has it brings it back (`reset`), as on the provider's host.
+	 * The member is not in a new binding (not granted), in the batch that binds it: as a failure (`fail`) with
+	 * `error`; a later binding that has it brings it back (`reset`), as on the provider's host.
 	 */
 	vanish(error: ChordError): void {
 		this.fail(error);

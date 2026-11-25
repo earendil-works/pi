@@ -1,11 +1,11 @@
 import { describe, expectTypeOf, it } from "vitest";
 import type { ChangesAfter, CurrentStep, Increment, OlderVersions, StepAt } from "../../src/contracts/history.ts";
 
-type Empty = { readonly a: { readonly state: Record<never, never>; readonly methods: Record<never, never> } };
+type Empty = { readonly state: Record<never, never>; readonly methods: Record<never, never> };
 type History = [
-	{ version: "9"; variants: Empty; changes: never },
-	{ version: "10"; variants: Empty; changes: ["a", "x", "state"] },
-	{ version: "11"; variants: Empty; changes: ["a", "m", "args"] },
+	{ version: "9"; members: Empty; changes: never },
+	{ version: "10"; members: Empty; changes: ["x", "state"] },
+	{ version: "11"; members: Empty; changes: ["m", "args"] },
 ];
 
 describe("type-level history", () => {
@@ -20,12 +20,12 @@ describe("type-level history", () => {
 	it("finds the current step, older versions and steps by version", () => {
 		expectTypeOf<CurrentStep<History>["version"]>().toEqualTypeOf<"11">();
 		expectTypeOf<OlderVersions<History>>().toEqualTypeOf<"9" | "10">();
-		expectTypeOf<StepAt<History, "10">["changes"]>().toEqualTypeOf<["a", "x", "state"]>();
+		expectTypeOf<StepAt<History, "10">["changes"]>().toEqualTypeOf<["x", "state"]>();
 	});
 
 	it("collects every change after a version", () => {
-		expectTypeOf<ChangesAfter<History, "9">>().toEqualTypeOf<["a", "x", "state"] | ["a", "m", "args"]>();
-		expectTypeOf<ChangesAfter<History, "10">>().toEqualTypeOf<["a", "m", "args"]>();
+		expectTypeOf<ChangesAfter<History, "9">>().toEqualTypeOf<["x", "state"] | ["m", "args"]>();
+		expectTypeOf<ChangesAfter<History, "10">>().toEqualTypeOf<["m", "args"]>();
 		expectTypeOf<ChangesAfter<History, "11">>().toEqualTypeOf<never>();
 	});
 });

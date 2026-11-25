@@ -9,7 +9,9 @@ import {
 	fakeTimers,
 	flushed,
 	forEachCodec,
+	grantOf,
 	loaded,
+	NOTES_EDITOR,
 	Notes,
 	rawParent,
 	rawProvider,
@@ -164,27 +166,30 @@ forEachCodec(() => {
 			expect(notes.state.value).toMatchObject({ kind: "failed", retryAt: 2_000 });
 		});
 
-		it("variant: undefined before the first binding, the last bound one while loading or failed", async () => {
+		it("granted: empty before the first binding, the last binding's while loading or failed (slice 15 §1.4)", async () => {
 			const { client, peer } = await rawProvider();
 			const notes = client.hold(Notes, { session: "S1" }, context);
-			expect(notes.variant).toBeUndefined();
+			// Before its first binding every member is there (slice 15 §1.4).
+			expect([grantOf(notes), typeof notes.add]).toEqual([[], "function"]);
 			await bindNext(peer, [{ text: "a" }]);
 			await transported();
-			expect(notes.variant).toBe("editor");
+			expect(grantOf(notes)).toEqual(NOTES_EDITOR);
 			peer.close();
 			await transported();
-			expect([notes.variant, notes.count.value]).toEqual(["editor", 1]);
+			expect([grantOf(notes), notes.count.value]).toEqual([NOTES_EDITOR, 1]);
+			expect(notes.add).toBeTypeOf("function");
 			const next = await rawParent(client);
 			const { hold } = await next.next("hold");
 			const error = { code: "unavailable", message: "offline" } as const;
 			next.send({ kind: "failed", hold, cause: { kind: "broken", error: { kind: "chord", error } } });
 			await transported();
 			expect(notes.state.value).toMatchObject({ kind: "failed", retryAt: undefined });
-			expect(notes.variant).toBe("editor");
+			expect(grantOf(notes)).toEqual(NOTES_EDITOR);
 			// Its replica's last value stays readable while the hold is failed (rule 5).
 			expect(notes.count.value).toBe(1);
 			notes.release();
-			expect(() => notes.variant).toThrow("app.notes: released");
+			expect(() => notes.granted).toThrow("app.notes: released");
+			expect(() => notes.add).toThrow("app.notes: released");
 		});
 	});
 });

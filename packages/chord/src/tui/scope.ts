@@ -1,6 +1,6 @@
 // `TuiScope` (slice 11 §4, decision "Slice 11, P9"; p2's `TuiScope`): a terminal component's Chord resources, the
 // counterpart of the React bindings for terminal UI libraries. It holds references, follows watchables and registries,
-// calls one `changed` callback (the app's redraw) on every change, reads a reference in one variant, subscribes to
+// calls one `changed` callback (the app's redraw) on every change, reads a reference while it is live, subscribes to
 // event members, and releases everything at `dispose`. Its page state
 // is the host's, shared by every scope (React's `usePageState`): a scope opened again after a plugin reload finds it.
 // Its messages render in the host's language, and a change of the locale or a translation redraws. A reader can show
@@ -10,11 +10,11 @@
 import { BACKGROUND_CONTEXT, withAbortSignal } from "../context/index.ts";
 import type { Contract, EventMember, ParamsOf } from "../contracts/index.ts";
 import type { Principal } from "../data/index.ts";
-import type { Held, Host } from "../host/index.ts";
+import type { Host, Reference } from "../host/index.ts";
 import type { Registry } from "../registries/index.ts";
 import { hostLanguage, type Language, type MessageData, type Messages, type Translator } from "../surfaces/index.ts";
+import { type LiveRef, liveGrant } from "../surfaces/live.ts";
 import { type PageState, pageState } from "../surfaces/page-state.ts";
-import { type InVariant, liveIn, type VariantOf, type VariantRef } from "../surfaces/variant.ts";
 import type { NativeWatchable, Watchable } from "../watch.ts";
 
 /** Adds an optimistic action shown while `call` is in flight; returns `call` (see `TuiScope.optimistic`). */
@@ -27,10 +27,10 @@ export class TuiScope<P extends Principal = Principal> {
 	readonly #abort = new AbortController();
 	readonly #releases: (() => void)[] = [];
 	/**
-	 * The reference states it follows: one watch each, however often `hold` and `variant` ask. Weak: a reference
-	 * released by its own holder is not kept by a scope that read its variant.
+	 * The reference states it follows: one watch each, however often `hold` and `live` ask. Weak: a reference released
+	 * by its own holder is not kept by a scope that read it.
 	 */
-	readonly #states = new WeakSet<VariantRef["state"]>();
+	readonly #states = new WeakSet<LiveRef["state"]>();
 
 	constructor(host: Host<P>, changed: () => void) {
 		this.#host = host;
@@ -38,7 +38,7 @@ export class TuiScope<P extends Principal = Principal> {
 	}
 
 	/** A reference to `Type` with `params`, held until `dispose`; its state changes call `changed`. */
-	hold<C extends Contract>(Type: C, params: ParamsOf<C>): Held<C> {
+	hold<C extends Contract>(Type: C, params: ParamsOf<C>): Reference<C> {
 		const held = this.#host.hold(Type, params, this.#context());
 		this.#releases.push(() => held.release());
 		this.#follow(held.state);
@@ -46,14 +46,18 @@ export class TuiScope<P extends Principal = Principal> {
 	}
 
 	/**
-	 * A reader of `ref` narrowed to `variant` while it is live in it, else `undefined` (loading, failed or denied,
-	 * ended, another variant), as React's `useVariant`: `ref`'s state is followed until `dispose`, so a change of its
-	 * variant calls `changed` (an admission's other allowed value binds another variant while it is held). True of the
-	 * redraw that read it: a call made after an `await` may find another variant.
+	 * A reader of `ref` while it is live, and while it loads again after it was live; else `undefined` (its first load,
+	 * failed or denied, ended), as React's `useLive`: `ref`'s state is followed until `dispose`, so a rebind (another
+	 * `granted`, slice 15 §1.5) calls `changed`. True of the redraw that read it: a call made after an `await` may find
+	 * another grant.
 	 */
-	variant<R extends VariantRef, const V extends VariantOf<R>>(ref: R, variant: V): () => InVariant<R, V> | undefined {
+	live<R extends LiveRef>(ref: R): () => R | undefined {
 		this.#follow(ref.state);
-		return () => liveIn(ref, variant);
+		let wasLive = false;
+		return () => {
+			wasLive = liveGrant(ref, wasLive) !== undefined;
+			return wasLive ? ref : undefined;
+		};
 	}
 
 	/**
@@ -186,7 +190,7 @@ export class TuiScope<P extends Principal = Principal> {
 	}
 
 	/** Follows the reference state `state` until `dispose`, once. */
-	#follow(state: VariantRef["state"]): void {
+	#follow(state: LiveRef["state"]): void {
 		if (this.#states.has(state)) return;
 		this.#states.add(state);
 		this.watch(state);

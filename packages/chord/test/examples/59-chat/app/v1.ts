@@ -47,19 +47,15 @@ export const Room = remote("chat.room", {
 	version: 1,
 	params: { id: str() },
 	hostAddress: ({ id }) => Channel({ id }),
-	variants: {
-		main: {
-			state: { messages: arr(Message) },
-			methods: {
-				history: method(obj({ before: opt(int()) }), arr(Message)),
-				post: method(str()),
-				begin: method(obj({ name: str(), mime: str() }), str()),
-				append: method(obj({ upload: str(), offset: int(), bytes: bytes() })),
-				share: method(obj({ upload: str(), text: str() })),
-				attachment: method(str(), Attachment),
-				read: method(obj({ id: str(), offset: int(), length: int() }), bytes()),
-			},
-		},
+	state: { messages: arr(Message) },
+	methods: {
+		history: method(obj({ before: opt(int()) }), arr(Message)),
+		post: method(str()),
+		begin: method(obj({ name: str(), mime: str() }), str()),
+		append: method(obj({ upload: str(), offset: int(), bytes: bytes() })),
+		share: method(obj({ upload: str(), text: str() })),
+		attachment: method(str(), Attachment),
+		read: method(obj({ id: str(), offset: int(), length: int() }), bytes()),
 	},
 });
 
@@ -68,5 +64,5 @@ export const Channels = remote("chat.channels", {
 	version: 1,
 	params: {},
 	hostAddress: () => hostKind("server")(),
-	variants: { main: { state: { names: arr(str()) } } },
+	state: { names: arr(str()) },
 });

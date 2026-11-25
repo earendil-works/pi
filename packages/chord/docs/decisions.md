@@ -3749,6 +3749,29 @@ From `research/chord-on-durable-objects.md`, adopted for the Chord v2 kernel bec
   online to clear its bookmark). Every other `not_head`, a slot taken by another device, and `behind` are errors the
   host stops on. The host's rules: `apps/p2/docs/p2-notes.md`, **Backup**.
 
+- **Grantable members and flags replace variants (owner, 2026-11-24, decisions of that day item 1; spec
+  `slice-15.md` §1, built 2026-11-25):** the problem: a remote contract listed variants, one whole shape per audience,
+  so every combination of rights needed a variant (draw × moderate: four), code tested a variant's name instead of the
+  right it needs, and a right that is no call (may this agent export?) had no place. The rule: one shape for every
+  caller; a member marked `grantable(...)` (state, event or method) exists for a caller only if its admission granted
+  it; `flags: { name: label }` are rights that are no member; a name is a member or a flag, never both. A contract
+  with grantable members or flags takes an admission: `allow({ granted: [...], ...data })`, `granted` sorted and
+  deduplicated before decisions compare, a name that is no grantable member or flag (a plain member too) breaks the
+  attempt naming it. The factory returns every member, grantable state and events as builders called right after it
+  only if granted; a member nobody was granted is never built and never sent. A reference has the plain members
+  always, the grantable ones while granted, and `granted`; `useLive`/`TuiScope.live` replace `useVariant`/
+  `TuiScope.variant`; `Held`, `RefIn`, `ref.variant` are gone; the wire's `bound` carries `granted` indexes. A call to
+  a grantable method not granted fails `forbidden`. Decided by the builder, for review: (1) until a reference was
+  first live it has every grantable member, so a factory wires a dependency that has not bound yet (its reads and
+  calls fail `forbidden` once it binds without the grant); (2) whether a member is grantable, and the flags, never
+  change across a history (a change is a new base), so contracts declared with variants continue as new bases and
+  their old pages and workers reload once (`contract_mismatch`); (3) `NORMAL_FORM_VERSION` stays 2: documents' stored
+  fingerprints carry it, and the remote node's new shape (`members`, `grantable`, `flags`) changes remote
+  fingerprints by itself; (4) a declared `admission` is an `obj(...)` without a field `granted`; (5) a flag's label is
+  plain English text, not a message (it is declared by code, the access UI shows it); (6) `useLive` keeps the
+  reference while it loads again after it was live, a link drop included. Superseded: "C15 stands; the UI bindings
+  follow the variant" and every rule about variants (§5, §7, §22, §23, §27 of `design.md` are rewritten).
+
 ## Still valid from `target-design.md`
 
 Documents and the store (async `tx.draft`, keys, tags, eviction, Durable's transaction rule), job sandwich, routines

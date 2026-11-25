@@ -24,21 +24,17 @@ export function fingerprints(): JsonValue {
 			params: data.params.normal,
 			versions: data.versions.map((version) => ({
 				fingerprint: version.fingerprint,
-				variants: Object.fromEntries(
-					[...version.variants].map(([name, variant]) => [
-						name,
-						{
-							state: Object.fromEntries([...variant.state].map(([m, s]) => [m, s.normal])),
-							keyed: Object.fromEntries([...variant.keyed].map(([m, s]) => [m, s.normal])),
-							methods: Object.fromEntries(
-								[...variant.methods].map(([m, { args, result }]) => [
-									m,
-									{ args: args.normal, result: result.normal },
-								]),
-							),
-						},
-					]),
-				),
+				members: {
+					state: Object.fromEntries([...version.members.state].map(([m, s]) => [m, s.normal])),
+					keyed: Object.fromEntries([...version.members.keyed].map(([m, s]) => [m, s.normal])),
+					methods: Object.fromEntries(
+						[...version.members.methods].map(([m, { args, result }]) => [
+							m,
+							{ args: args.normal, result: result.normal },
+						]),
+					),
+				},
+				grantable: [...version.grantable].sort(),
 			})),
 		};
 	};

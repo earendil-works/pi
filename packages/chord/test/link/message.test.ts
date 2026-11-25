@@ -67,13 +67,13 @@ const EVERY_KIND: Message[] = [
 	{ kind: "abort", call: 3 },
 	{
 		kind: "bound",
-		holds: [{ hold: 0, variant: 1, members: [{ member: 0, value: '[1,"a"]' }], failed: [{ member: 1, error }] }],
+		holds: [{ hold: 0, granted: [1], members: [{ member: 0, value: '[1,"a"]' }], failed: [{ member: 1, error }] }],
 	},
 	{
 		kind: "bound",
 		holds: [
-			{ hold: 0, variant: 0, members: [], failed: [] },
-			{ hold: 5, variant: 2, members: [{ member: 1, value: "null" }], failed: [] },
+			{ hold: 0, granted: [], members: [], failed: [] },
+			{ hold: 5, granted: [2], members: [{ member: 1, value: "null" }], failed: [] },
 		],
 	},
 	{
@@ -160,7 +160,7 @@ const EVERY_KIND: Message[] = [
 	{ kind: "call", origin: 2, call: 1, hold: 3, method: 0, args: "[1]" },
 	{ kind: "abort", origin: 2, call: 1 },
 	{ kind: "retry", origin: 2, hold: 3, hops: 16 },
-	{ kind: "bound", origin: 2, holds: [{ hold: 3, variant: 0, members: [], failed: [] }] },
+	{ kind: "bound", origin: 2, holds: [{ hold: 3, granted: [], members: [], failed: [] }] },
 	{ kind: "state", origin: 2, holds: [] },
 	{
 		kind: "failed",
@@ -287,7 +287,7 @@ forEachCodec(() => {
 				{ kind: "result", call: 0, value: deflated(), segments: [new Uint8Array([7])] },
 				{
 					kind: "bound",
-					holds: [{ hold: 0, variant: 0, members: [{ member: 0, value: deflated() }], failed: [] }],
+					holds: [{ hold: 0, granted: [], members: [{ member: 0, value: deflated() }], failed: [] }],
 				},
 				{ kind: "state", holds: [{ hold: 0, members: [{ member: 0, ops: deflated() }], failed: [], retired: [] }] },
 				{ kind: "event", origin: 2, events: [{ hold: 0, member: 1, at: 5, value: deflated() }] },
@@ -560,7 +560,7 @@ describe("the binary codec", () => {
 			{ member: 0, value },
 			{ member: 1, value: "1" },
 		];
-		const bytes = binaryCodec.encode({ kind: "bound", holds: [{ hold: 0, variant: 0, members, failed: [] }] });
+		const bytes = binaryCodec.encode({ kind: "bound", holds: [{ hold: 0, granted: [], members, failed: [] }] });
 		expect(bytes.buffer.byteLength - bytes.byteLength).toBeLessThanOrEqual(4096);
 		const small = binaryCodec.encode({ kind: "release", hold: 1 });
 		expect(small.buffer.byteLength).toBe(small.byteLength);
@@ -591,8 +591,8 @@ describe("the text codec", () => {
 		expect(text({ kind: "release", hold: 3 })).toBe('["R",3]');
 		expect(text({ kind: "call", call: 1, hold: 0, method: 2 })).toBe('["c",1,0,2]');
 		const members = [{ member: 0, value: "5" }];
-		expect(text({ kind: "bound", holds: [{ hold: 0, variant: 1, members, failed: [] }] })).toBe(
-			'["b",[[0,1,[[0,[0,5]]]]]]',
+		expect(text({ kind: "bound", holds: [{ hold: 0, granted: [1, 3], members, failed: [] }] })).toBe(
+			'["b",[[0,[1,3],[[0,[0,5]]]]]]',
 		);
 		expect(text({ kind: "retry", hold: 2, hops: 16 })).toBe('["T",2,16]');
 		expect(text({ kind: "loading", hold: 2 })).toBe('["l",2]');
@@ -754,7 +754,7 @@ describe("the binary codec's strings", () => {
 				{ member: 0, value: jsonPart("€".repeat(length)) },
 				{ member: 1, value: "1" },
 			];
-			const message: Message = { kind: "bound", holds: [{ hold: 1, variant: 0, members, failed: [] }] };
+			const message: Message = { kind: "bound", holds: [{ hold: 1, granted: [], members, failed: [] }] };
 			expect(plain(binaryCodec.decode(binaryCodec.encode(message)))).toEqual(message);
 		}
 	});

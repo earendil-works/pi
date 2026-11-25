@@ -6,7 +6,7 @@ import * as React from "react";
 import { createElement as h, useState } from "react";
 import * as jsx from "react/jsx-runtime";
 import { createRoot } from "react-dom/client";
-import type { Held } from "../../../../src/index.ts";
+import type { Reference } from "../../../../src/index.ts";
 import { HostProvider, useHold, useWatch } from "../../../../src/react/index.ts";
 import { startPage } from "../../../../src/web/index.ts";
 import * as v1 from "../app/v1.ts";
@@ -18,7 +18,7 @@ const { BACKGROUND_CONTEXT: context, Channels, Room } = v1;
 const CHUNK = 256 * 1024;
 
 /** Sends `file` to `room` in chunks, then shares it. */
-async function upload(room: Held<typeof Room>, file: File): Promise<void> {
+async function upload(room: Reference<typeof Room>, file: File): Promise<void> {
 	const id = await room.begin({ name: file.name, mime: file.type || "application/octet-stream" }, context);
 	for (let offset = 0; offset < file.size; offset += CHUNK) {
 		const bytes = new Uint8Array(await file.slice(offset, offset + CHUNK).arrayBuffer());

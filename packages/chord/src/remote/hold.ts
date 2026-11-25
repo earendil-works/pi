@@ -13,7 +13,14 @@
 
 import type { TelemetryContext } from "@earendil-works/pi-telemetry";
 import type { Context } from "../context/index.ts";
-import { type VariantData, type VariantNames, variantNames, variantOrder, variantsAt } from "../contracts/internal.ts";
+import {
+	grantedMembers,
+	grantIndexes,
+	type MemberOrder,
+	type MembersData,
+	memberOrder,
+	versionAt,
+} from "../contracts/internal.ts";
 import { ChordError, type FailureCause, isChordError, type Principal } from "../data/index.ts";
 import { asChordError } from "../data/internal.ts";
 import { type Encoder, encoder, type Op, PendingOps } from "../delta/index.ts";
@@ -77,7 +84,7 @@ type Followed = {
  * Where a hold stands: `unplaced` in the unbound index until the host's publication places it; `pending` until its
  * object is live (the activation, parking and retries; `told`: the failure its consumer was told, so the next attempt
  * is announced with `loading`); `binding` while its object is live and its `bound` waits for a slot; `bound` with the
- * object's variant and the members it follows.
+ * members its caller was granted and the members it follows.
  */
 type HoldState =
 	| { readonly kind: "unplaced"; readonly request: HoldRequest }
@@ -85,10 +92,10 @@ type HoldState =
 	| { readonly kind: "binding" }
 	| {
 			readonly kind: "bound";
-			/** The bound variant's data at the hold's version. */
-			readonly variant: VariantData;
-			/** The bound version's names of the variant, which the wire's indexes point into. */
-			readonly names: VariantNames;
+			/** The members granted to its caller, at the hold's version. */
+			readonly members: MembersData;
+			/** Their names, which the wire's indexes point into. */
+			readonly names: MemberOrder;
 			/** The members it follows, in the order they were subscribed. */
 			readonly followed: Followed[];
 			/** The instance it was bound to: it follows it on while it still changes (a restart's open old attempt). */
@@ -106,10 +113,10 @@ type HoldState =
 type Bound = Extract<HoldState, { readonly kind: "bound" }>;
 
 /**
- * What calls need of a binding: its variant's data at the hold's version and the names the wire's indexes point into.
+ * What calls need of a binding: the members granted at the hold's version and the names the wire's indexes point into.
  * Only contract data: kept after an unbind, it keeps no instance and no source.
  */
-type BoundNames = { readonly variant: VariantData; readonly names: VariantNames };
+type BoundNames = { readonly members: MembersData; readonly names: MemberOrder };
 
 /**
  * What a call is decoded by: the names of a binding (while the hold rebinds after a `loading` its object's gate takes
@@ -126,7 +133,7 @@ type Decoding =
  */
 type Fence = { readonly until: number; readonly before: Decoding };
 
-/** No event taps: a variant without event members, a binding no longer shown live. */
+/** No event taps: a binding without event members, or no longer shown live. */
 const NO_TAPS: readonly (readonly [EventNode, Tap])[] = [];
 
 const PENDING: HoldState = { kind: "pending" };
@@ -181,7 +188,7 @@ export class Hold implements Holder, UnboundRequest {
 	#counted = true;
 	/**
 	 * Its binding's taps on its instance's event members: their events go into the event flush's message; the shared
-	 * empty list for a variant without event members, and once its object no longer shows it live (state may still
+	 * empty list for a binding without event members, and once its object no longer shows it live (state may still
 	 * follow its instance then).
 	 */
 	#taps: readonly (readonly [EventNode, Tap])[] = NO_TAPS;
@@ -222,7 +229,7 @@ export class Hold implements Holder, UnboundRequest {
 
 	/**
 	 * What a call arriving now is decoded by: what its consumer had applied when it sent it, which is what the oldest
-	 * `bound` it has not acknowledged replaced (another variant's indexes name other methods), else the latest.
+	 * `bound` it has not acknowledged replaced (another grant's indexes name other methods), else the latest.
 	 */
 	#decoding(): Decoding | undefined {
 		const fences = this.#acknowledge();
@@ -455,16 +462,16 @@ export class Hold implements Holder, UnboundRequest {
 	}
 
 	/**
-	 * The method at `index` of the bound variant (while it rebinds, of the names its consumer still has: its object answers
-	 * by name) and whether its result carries byte segments (its schema has a `bytes()` leaf). Throws on an index outside
-	 * the variant (a protocol error); a hold that is not callable has none.
+	 * The method at `index` of the binding's members (while it rebinds, of the names its consumer still has: its object
+	 * answers by name) and whether its result carries byte segments (its schema has a `bytes()` leaf). Throws on an index
+	 * outside them (a protocol error); a hold that is not callable has none.
 	 */
 	method(index: number): { readonly name: string; readonly resultBytes: boolean } {
 		const decoding = this.#decoding();
 		const bound = decoding?.kind === "names" ? decoding.bound : undefined;
 		const name = bound?.names.methods[index];
 		if (name === undefined) throw new Error(`hold ${this.id}: no method ${index}`);
-		return { name, resultBytes: bound!.variant.methods.get(name)!.result.bytes };
+		return { name, resultBytes: bound!.members.methods.get(name)!.result.bytes };
 	}
 
 	/**
@@ -506,13 +513,14 @@ export class Hold implements Holder, UnboundRequest {
 			// A constant never changes: nothing to follow.
 			if (source instanceof Source) this.#follow(state, index, source);
 		}
-		// A variant without event members taps nothing (no cost per binding for contracts without events).
+		// A binding without event members taps nothing (no cost per binding for contracts without events).
 		if (state.names.events.length > 0) this.#tapEvents(state, instance, version);
 		this.#changes = [];
 		this.#failed = [];
 		this.#retired = NO_RETIRED;
 		chordMetrics(context.telemetry.metrics).counter("chord.link.encodes").add(1);
-		return { hold: this.id, variant: variantOrder(contract).indexOf(instance.variant!), members, failed };
+		const granted = grantIndexes(versionAt(contract, version), instance.granted);
+		return { hold: this.id, granted, members, failed };
 	}
 
 	/**
@@ -587,20 +595,20 @@ export class Hold implements Holder, UnboundRequest {
 	}
 
 	/**
-	 * The binding: its variant and names at the hold's version, with no member followed yet. What its consumer's calls
-	 * were decoded by so far is fenced until it acknowledged this `bound`, the next of this host's own messages.
+	 * The binding: the members its caller was granted and their names at the hold's version, with no member followed yet.
+	 * What its consumer's calls were decoded by so far is fenced until it acknowledged this `bound`, the next of this
+	 * host's own messages.
 	 */
 	#bindTo(instance: Attempt): Bound {
-		// A live remote object's instance has its variant.
-		const variant = variantsAt(instance.served.contract, this.contract.version).get(instance.variant!)!;
-		const names = variantNames(variant);
-		const state: Bound = { kind: "bound", variant, names, followed: [], instance };
+		const members = grantedMembers(versionAt(instance.served.contract, this.contract.version), instance.granted);
+		const names = memberOrder(members);
+		const state: Bound = { kind: "bound", members, names, followed: [], instance };
 		const latest = this.#latest;
 		if (latest !== undefined) {
 			this.#fences.push({ until: this.#provider.nextOwn, before: latest });
 			this.#provider.fenced(this);
 		}
-		this.#latest = { kind: "names", bound: { variant, names } };
+		this.#latest = { kind: "names", bound: { members, names } };
 		this.#state = state;
 		return state;
 	}
@@ -618,7 +626,7 @@ export class Hold implements Holder, UnboundRequest {
 		this.#taps = NO_TAPS;
 	}
 
-	/** Taps the event members of `state`'s variant (it has some) on `instance` at `version`, from the counter now. */
+	/** Taps the event members of binding `state` (it has some) on `instance` at `version`, from the counter now. */
 	#tapEvents(state: Bound, instance: Attempt, version: number): void {
 		const names = state.names.events;
 		const boundAt = this.#provider.link.host.events.counter;

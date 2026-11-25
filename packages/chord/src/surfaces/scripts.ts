@@ -35,7 +35,7 @@ function scriptsContract<const N extends string>(name: N) {
 		version: 1,
 		params: {},
 		hostAddress: () => Server(),
-		variants: { main: { state: { set: ScriptSet } } },
+		state: { set: ScriptSet },
 	});
 }
 

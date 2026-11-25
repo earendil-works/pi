@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context, withCancel } from "../../src/context/index.ts";
 import { int, local, method, str } from "../../src/contracts/index.ts";
-import { createHost, type Held } from "../../src/host/index.ts";
+import { createHost, type Reference } from "../../src/host/index.ts";
 import {
 	EDITOR,
 	fakeTimers,
@@ -28,7 +28,7 @@ const Gated = local("app.gated", { version: 1, params: { id: int() }, members: {
 async function gated() {
 	const gate = Promise.withResolvers<void>();
 	const log: string[] = [];
-	const self: { ref?: Held<typeof Gated> } = {};
+	const self: { ref?: Reference<typeof Gated> } = {};
 	const { host } = await loaded((h) =>
 		h.serve(Gated, (_, attempt) => {
 			attempt.open(
@@ -168,25 +168,21 @@ forEachCodec(() => {
 			expect([peer.kinds(), next.kinds()]).toEqual([["hold"], []]);
 		});
 
-		it("are resolved against the binding they are sent on: indexes from the new variant, missing methods invalid", async () => {
+		it("are resolved against the binding they are sent on: indexes from the new binding, methods not granted forbidden", async () => {
 			const { client, peer } = await rawProvider();
 			const notes = client.hold(Notes, { session: "S1" }, context);
-			// Typed for the editor: before its first binding the reference may become either variant.
-			const editor = notes as Extract<Held<typeof Notes>, { add: unknown }>;
-			const add = rejection(editor.add({ text: "a" }, context));
-			const wait = editor.wait(context);
+			// Before its first binding the reference has every member (slice 15 §1.4): a call parks, the binding decides.
+			const add = rejection(notes.add!({ text: "a" }, context));
+			const wait = notes.wait(context);
 			const { hold } = await peer.next("hold");
-			const READER = wireNames(Notes, "reader");
+			const READER = wireNames(Notes);
 			const members = [
 				{ member: READER.state.notes!, value: "[]" },
 				{ member: READER.state.count!, value: "0" },
 			];
-			peer.send({ kind: "bound", holds: [{ hold, variant: READER.variant, members, failed: [] }] });
-			expect(await add).toEqual({
-				code: "invalid",
-				reason: "member",
-				message: 'app.notes(S1) (variant reader) has no method "add"',
-			});
+			peer.send({ kind: "bound", holds: [{ hold, granted: READER.granted, members, failed: [] }] });
+			expect(await add).toEqual({ code: "forbidden", message: 'app.notes(S1) has not granted "add"' });
+			expect(notes.add).toBe(undefined);
 			const sent = await peer.next("call");
 			expect(sent.method).toBe(READER.methods.wait);
 			expect(sent.method).not.toBe(EDITOR.methods.wait);

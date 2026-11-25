@@ -12,5 +12,5 @@ export const Label = remote("example.label", {
 	version: 1,
 	params: { id: str() },
 	hostAddress: ({ id }) => Session({ id }),
-	variants: { main: { state: { text: str() } } },
+	state: { text: str() },
 });

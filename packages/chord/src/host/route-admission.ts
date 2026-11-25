@@ -137,6 +137,7 @@ export class RouteAdmission {
 				// The admission's references act as the host.
 				caller: { principal: this.#host.principal, incarnation: this.#host.incarnation },
 				dependent: undefined,
+				grants: undefined,
 				moved: () => this.#moved(made),
 			}),
 			path,

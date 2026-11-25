@@ -162,9 +162,10 @@ function encodeFields(message: Message, writer: Writer): void {
 			return;
 		case "bound":
 			writer.varint(message.holds.length);
-			for (const { hold, variant, members, failed } of message.holds) {
+			for (const { hold, granted, members, failed } of message.holds) {
 				writer.varint(hold);
-				writer.varint(variant);
+				writer.varint(granted.length);
+				for (const name of granted) writer.varint(name);
 				writer.varint(members.length);
 				for (const { member, value } of members) {
 					writer.varint(member);
@@ -275,9 +276,10 @@ function decodeFields(kind: (typeof KINDS)[number], reader: Reader): Message {
 			return { kind, call: reader.varint() };
 		case "bound": {
 			const holds = reader.list((): BoundEntry => {
-				const [hold, variant] = [reader.varint(), reader.varint()];
+				const hold = reader.varint();
+				const granted = reader.list(() => reader.varint());
 				const members = reader.list(() => ({ member: reader.varint(), value: reader.part() }));
-				return { hold, variant, members, failed: reader.failed() };
+				return { hold, granted, members, failed: reader.failed() };
 			});
 			return { kind, holds };
 		}

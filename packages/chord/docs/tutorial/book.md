@@ -52,7 +52,8 @@ that step says so and the rest runs.
    contract also says which host serves it. Any host asks for `Todos { list: "groceries" }`, and Chord routes the
    request to that list's worker.
 4. **Who calls is stamped, never sent.** Every call carries a principal the link stamped from the sign-in. A factory
-   picks a variant per principal; a todo records who added it from the principal, not from its arguments.
+   is handed what an admission granted the principal; a todo records who added it from the principal, not from its
+   arguments.
 5. **A plugin has one file per host kind.** `server.ts`, `worker.ts`, `web.ts`, `tui.ts`: each declares what that kind
    of host serves and contributes. Plugins import only the app's API.
 6. **Plugins meet in registries.** The page shows `Panels`, the terminal `Screens`, the kit's `Themes` restyle both;
@@ -73,8 +74,8 @@ that step says so and the rest runs.
 A **host** is one participant of the app, with an **address** if others can reach it (the server, `List({ id })`) or
 without one (a **client**: a page, a terminal). A **link** connects two hosts. A **principal** is who calls, typed by
 the app and stamped by links. An **object** is state and methods at one identity; its **contract** (`local` for its own
-host only, `remote` for any host) names its **params** (which instance) and members. A remote contract's **variants**
-are the member sets different principals get. A **factory** declares an object's parts: **documents** and **tables**
+host only, `remote` for any host) names its **params** (which instance) and members. A remote contract's **grantable**
+members are the ones a principal has only if its admission granted them. A **factory** declares an object's parts: **documents** and **tables**
 (stored data, changed in **transactions**), **live queries** (a table's rows Chord keeps current), **derives**
 (values computed from others), **natives** (things opened and closed, such as a file or a database cursor). A **reference** is what asking for an object returns. A **facet** is a
 plugin's code for one host kind; a **registry** is an extension point plugins **contribute** to. A **message** is a
@@ -92,7 +93,7 @@ pieces of base code and starts the server.
 
 A **principal** says who is calling. The app defines the type; the kit needs a principal for the server, one for each of
 its workers (an app without worker kinds leaves it out) and one for the owner, whom the owner's sign-in names. The todo
-app gives the owner a variant of its own, `{ kind: "owner" }`; another app could make the owner one of its users:
+app gives the owner a kind of its own, `{ kind: "owner" }`; another app could make the owner one of its users:
 
 <!-- quote: src/principals.ts -->
 ```ts
@@ -106,7 +107,7 @@ export type TodoPrincipal =
 	| { readonly kind: "user"; readonly id: string; readonly name: string };
 ```
 
-The user variant is for chapter VII. A principal travels with every call and is part of objects' identities, so it
+The user kind is for chapter VII. A principal travels with every call and is part of objects' identities, so it
 stays small: a kind and an id. A user's profile, if the app had one, would be data in an object keyed by the id.
 
 ## The API
@@ -118,14 +119,17 @@ Plugins never import Chord. They import the app's **API**, a module the app name
 ```ts
 export { BACKGROUND_CONTEXT } from "../../../../../../src/context/index.ts";
 export {
+	allow,
 	arr,
 	bool,
 	type Ctx,
+	constant,
 	defineMessages,
 	defineState,
 	defineTable,
 	eq,
 	forbidden,
+	grantable,
 	int,
 	invalid,
 	local,
@@ -347,6 +351,7 @@ the lists plugin's, in its `contract.ts`, which its facets of every kind import,
 import {
 	arr,
 	bool,
+	grantable,
 	int,
 	List,
 	MessageSchema,
@@ -377,16 +382,9 @@ export const Todos = remote("todo.todos", {
 	version: 1,
 	params: { list: str() },
 	hostAddress: ({ list }) => List({ id: list }),
-	variants: {
-		member: {
-			state: { items: arr(Item), notice: Notice },
-			methods: { add: method(str()), tick: method(obj({ id: int(), done: bool() })) },
-		},
-		owner: {
-			state: { items: arr(Item), notice: Notice },
-			methods: { add: method(str()), tick: method(obj({ id: int(), done: bool() })), clear: method() },
-		},
-	},
+	state: { items: arr(Item), notice: Notice },
+	// `clear` is grantable: the list's admission grants it to the owner only.
+	methods: { add: method(str()), tick: method(obj({ id: int(), done: bool() })), clear: grantable(method()) },
 });
 ```
 
@@ -509,23 +507,32 @@ contract's schema. The check runs in a span of its own (`ctx.trace`), which chap
 
 ## The view per principal
 
-`Todos` is the remote face of the store, one object per principal. Its factory gets the principal the link stamped:
+`Todos` is the remote face of the store, one object per principal. Its factory gets the principal the link stamped
+and returns every member; its admission (`admit`) decides which grantable members each principal has, here `clear`
+for the owner only, and Chord exposes no other:
 
 <!-- quote: plugins/lists/worker.ts -->
 ```ts
-	host.serve(Todos, (_params, principal, self) => {
-		const store = self.get(Store, {});
-		// Who adds a todo comes from the principal the link stamped, never from the arguments.
-		const by = principal.kind === "user" ? principal.name : principal.kind;
-		const members = {
-			items: self.derive([store.items], ([items]) => items),
-			notice: self.derive([store.notice], ([notice]) => notice),
-			add: (text: string, ctx: Ctx) => store.add({ text, by }, ctx),
-			tick: (tick: { id: number; done: boolean }, ctx: Ctx) => store.tick(tick, ctx),
-		};
-		if (principal.kind !== "owner") return { variant: "member", members };
-		return { variant: "owner", members: { ...members, clear: (ctx: Ctx) => store.clear({ by }, ctx) } };
-	});
+	host.serve(
+		Todos,
+		(_params, principal, _admitted, self) => {
+			const store = self.get(Store, {});
+			// Who adds a todo comes from the principal the link stamped, never from the arguments.
+			const by = principal.kind === "user" ? principal.name : principal.kind;
+			return {
+				items: self.derive([store.items], ([items]) => items),
+				notice: self.derive([store.notice], ([notice]) => notice),
+				add: (text: string, ctx: Ctx) => store.add({ text, by }, ctx),
+				tick: (tick: { id: number; done: boolean }, ctx: Ctx) => store.tick(tick, ctx),
+				// Exposed only to a caller granted it: the owner.
+				clear: (ctx: Ctx) => store.clear({ by }, ctx),
+			};
+		},
+		{
+			admit: (_params, principal) =>
+				constant(principal.kind === "owner" ? allow({ granted: ["clear"] }) : allow({})),
+		},
+	);
 ```
 
 `self.get(Store, {})` declares a dependency: the view goes live once the store is, and holds a **reference** to it
@@ -546,7 +553,7 @@ await app.host.root(
 		await todos.add("eggs", ctx);
 		await todos.tick({ id: 1, done: true }, ctx);
 		await until(() => todos.items.value[0]?.done === true);
-		console.log("2. as the owner:", todos.variant, "|", show(todos.items.value));
+		console.log("2. as the owner: granted", [...todos.granted], "|", show(todos.items.value));
 	},
 	context,
 	{ principal: OWNER },
@@ -555,14 +562,14 @@ await app.host.root(async (ctx) => {
 	const todos = await ctx.get(Todos, { list: "groceries" });
 	await todos.add("bread", ctx);
 	await until(() => todos.items.value.length === 3);
-	console.log("   as the server:", todos.variant, "|", show(todos.items.value.slice(-1)));
+	console.log("   as the server: granted", [...todos.granted], "|", show(todos.items.value.slice(-1)));
 }, context);
 ```
 
 <!-- output: main -->
 ```text
-2. as the owner: owner | [x] milk (owner), [ ] eggs (owner)
-   as the server: member | [ ] bread (server)
+2. as the owner: granted [ 'clear' ] | [x] milk (owner), [ ] eggs (owner)
+   as the server: granted [] | [ ] bread (server)
    workers: list|groceries
    workers/list/list%7Cgroceries: store.sqlite, store.sqlite-shm, store.sqlite-wal
 ```
@@ -628,7 +635,7 @@ export default defineFacet((_host, self) => {
 A **registry** is an extension point: one owner declares how contributions combine (here the kit's HTTP component
 builds a router), plugins contribute one value each. `self.contribute` in a facet adds the plugin's routes while the
 plugin is loaded. A route runs in a root with the request's principal, so `ctx.get(Todos, …)` reaches the list's
-worker as whoever signed in, and gets their variant.
+worker as whoever signed in, and gets what they are granted.
 
 Step 3 is a command-line client with the owner token file:
 
@@ -674,7 +681,7 @@ for them:
 import type { ComponentType } from "react";
 import { defineRegistry } from "../../../../../../src/index.ts";
 
-export { useHold, useHost, useMessages, usePageState, useWatch } from "../../../../../../src/react/index.ts";
+export { useHold, useHost, useLive, useMessages, usePageState, useWatch } from "../../../../../../src/react/index.ts";
 
 /** A panel of the page: its name (a key, never shown) and its React component, which shows its own title. */
 export type Panel = { readonly name: string; readonly Component: ComponentType };
@@ -728,7 +735,8 @@ function TodoList() {
 	const { t } = useMessages(messages);
 	const host = useHost();
 	const list = location.hash.slice(1) || "groceries";
-	const todos = useHold(Todos, { list });
+	// Live or nothing: `clear` comes and goes with what the list's admission grants, in the same render.
+	const todos = useLive(useHold(Todos, { list }));
 	const items = useWatch(todos?.items) ?? [];
 	const notice = useWatch(todos?.notice);
 	// Kept by the page, not the component: the new code's component finds the half-typed todo.
@@ -771,9 +779,9 @@ function TodoList() {
 				onChange: (event: { target: { value: string } }) => setText(event.target.value),
 			}),
 		),
-		todos?.variant === "owner"
-			? h("button", { type: "button", onClick: () => void todos.clear(context) }, t("clearDone"))
-			: null,
+		todos?.clear === undefined
+			? null
+			: h("button", { type: "button", onClick: () => void todos.clear?.(context) }, t("clearDone")),
 		notice === undefined || notice === null ? null : h("p", { className: "lists-notice" }, t.render(notice)),
 	);
 }
@@ -789,8 +797,9 @@ export default defineFacet((_host, self) => {
 the component is mounted and releases it on unmount; it is `undefined` on the first render. `useWatch` follows a member. `usePageState` is `useState` whose value the page keeps under a key instead of the
 component: chapter IX shows why the half-typed todo needs it. Clicks call methods with `BACKGROUND_CONTEXT`, which never ends, so a click's call
 is not cancelled when the handler returns; adding a todo runs in `host.root` (`useHost` gives the page's host), which
-makes the click a trace of its own (chapter XI). `todos?.variant === "owner"` narrows the reference: only the owner's has
-`clear`, and TypeScript knows it. The panel's look reads the active theme's CSS variables, with class names prefixed
+makes the click a trace of its own (chapter XI). `useLive` gives the reference while it is live and `clear` is
+there only when the list granted it (the owner's), so the check is the button's condition; TypeScript makes the code
+check, and the button comes and goes in the same render as the grant. The panel's look reads the active theme's CSS variables, with class names prefixed
 by the plugin's name (a `*.module.css` file would scope them instead):
 
 <!-- quote: plugins/lists/lists.css -->
@@ -844,7 +853,7 @@ The page is the template, the base bundle (`base.<hash>.js` and `.css`), one com
 script and one stylesheet per plugin with CSS: two scripts on a cold load, cacheable forever by their hashes. After the
 owner opened the owner link in Chromium, the page shows the list:
 
-:::figure | The page after the owner signed in: the groceries list, live, each todo with who added it; the owner's variant shows "Clear done".
+:::figure | The page after the owner signed in: the groceries list, live, each todo with who added it; the owner, granted `clear`, sees "Clear done".
 ![The todo page](screens/page.png)
 :::
 
@@ -1089,12 +1098,12 @@ const socket = new WebSocket(`${url.replace(/^http/, "ws")}/chord`, { headers: {
 ada.connect(webSocketLink(socket as unknown as WebSocketLike), { principal: { kind: "server" } }, context);
 const adas = await ada.get(Todos, { list: "groceries" }, context);
 await adas.add("coffee", context);
-console.log("   ada's variant:", adas.variant);
-if (adas.variant === "member") {
-	// @ts-expect-error `clear` is the owner's: TypeScript refuses it, and so does the worker.
-	const clearing: Promise<null> = adas.clear(context);
-	await clearing.catch((error: ChordError) => console.log("   ada's clear:", `${error.code}/${error.reason}`));
-}
+console.log("   ada is granted:", [...adas.granted], "| her clear:", adas.clear);
+// `clear` is grantable: TypeScript makes a caller check for it, and a forged call is refused `forbidden` by the worker.
+const unchecked = () =>
+	// @ts-expect-error `clear` may not be granted
+	adas.clear(context);
+void unchecked;
 await until(() => groceries.items.value.some(({ by }) => by === "ada"));
 console.log("   the server's reference sees:", show(groceries.items.value.slice(-1)));
 ```
@@ -1102,8 +1111,7 @@ console.log("   the server's reference sees:", show(groceries.items.value.slice(
 <!-- output: main -->
 ```text
 7. ada's hold before load: todo.todos: the host has not loaded; call host.load first (a host with nothing to load calls load([]))
-   ada's variant: member
-   ada's clear: invalid/member
+   ada is granted: [] | her clear: undefined
    the server's reference sees: [ ] coffee (ada)
 ```
 
@@ -1114,8 +1122,9 @@ for a publication nobody started, so Chord refuses them with `not_ready` ("call 
 plugins of its own calls `load([])` (design §3). `startPage`, the launcher and the kit do it for you; code that makes
 a host itself must not forget.
 
-Ada got the `member` variant; her `clear` is refused twice, by TypeScript (the `@ts-expect-error`) and by the worker
-(`invalid/member`), because what a reference offers is decided by the provider's variant, not by the caller's code.
+Ada is granted nothing: her reference has no `clear`. TypeScript refuses a call without a check (the
+`@ts-expect-error`), and a forged one would be refused `forbidden` by the worker: what a reference offers is decided by
+the provider's admission, not by the caller's code.
 Her todo is hers: `coffee (ada)`.
 
 # Languages {#languages lede="Messages in code, a French plugin, a language chosen live, and a notice each viewer reads in its own language."}
@@ -1299,7 +1308,7 @@ On the page, `screenshots.ts` has the owner choose French and clear the done tod
 		async (ctx) => {
 			await (await ctx.get(LocaleChoice, {})).choose("fr", ctx);
 			const todos = await ctx.get(Todos, { list: "groceries" });
-			if (todos.variant === "owner") await todos.clear(ctx);
+			await todos.clear?.(ctx);
 		},
 		context,
 		{ principal: { kind: "owner" } },
@@ -1920,11 +1929,12 @@ Each test runs code as a principal of its choice with `t.root`:
 		await t.root(
 			async (ctx) => {
 				const todos = await ctx.get(Todos, { list: "groceries" });
-				if (todos.variant !== "owner") throw new Error(`the owner got ${todos.variant}`);
+				const { clear } = todos;
+				if (clear === undefined) throw new Error("the owner is granted clear");
 				await todos.add("milk", ctx);
 				await todos.add("eggs", ctx);
 				await todos.tick({ id: 1, done: true }, ctx);
-				await todos.clear(ctx);
+				await clear(ctx);
 				expect(todos.items.value.map(({ text }) => text)).toEqual(["eggs"]);
 				expect(todos.notice.value).toEqual({ namespace: "todo.lists", key: "cleared", params: ["owner"] });
 			},
@@ -2148,7 +2158,7 @@ sending it their spans), and spans said nothing of whom they were for (`principa
 | `startServer<P>({ name, dataDir, root, listen, api, kinds, principal, workers, web, tui, onError }, ctx)` | I | the app's server, with the kit |
 | `startWorker({ api, kinds, principalAttributes, onError })` | I, XI | a worker's entry |
 | `app.ownerLink()`, `app.ownerTokenFile` | I, III | the owner's sign-in, for a browser and for local clients |
-| `hostKind(name, params)`, `remote(name, { version, params, hostAddress, variants })`, `local(name, { version, params, members })` | II | host kinds and contracts |
+| `hostKind(name, params)`, `remote(name, { version, params, hostAddress, state, methods, events, flags })`, `grantable(member)`, `local(name, { version, params, members })` | II | host kinds and contracts |
 | `host.serve(Type, factory)`; factory `self`: `table`, `query`, `derive`, `tx`, `get`, `contribute` | II | an object's parts |
 | `host.root(fn, ctx, { principal })`, `ctx.get(Type, params)` | II | code outside objects, as a principal |
 | `invalid(reason, message, details?)`, `forbidden(message, details?)` | II, IX | Chord's errors, thrown by a plugin |

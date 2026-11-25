@@ -117,7 +117,7 @@ export const Notes = remote("notes", {
   version: 1,
   params: { session: str() },                                   // flat record of required scalars
   hostAddress: ({ session }) => Session({ id: session }),       // a typed function of the params
-  variants: { … },
+  state: { … }, methods: { … },                                 // grantable(...) members, flags (§5)
 });
 export const Catalog = remote("catalog", { hostAddress: () => Server(), … });
 ```
@@ -459,7 +459,7 @@ host.route(Session, {
   caller's queue is the caller's (an app's latest-only outbox for motion, `events/spec.md` §7). A slot is freed once
   per call: by its `result` or `error`, its `abort` (when sent, at the caller; when received, at the provider), its
   hold's `release`, `gone`, its origin's `closed` or the link closing. A call still queued when its hold rebinds
-  (`loading`) is rejected `unavailable` (it may name a method of the old variant); one already sent is answered by the
+  (`loading`) is rejected `unavailable` (it may name a method of the old binding); one already sent is answered by the
   provider (a `loading` unbind keeps it, below). A provider seeing more than N running calls of one origin closes the
   link (protocol error), one that announced none never closes it for running calls; a call naming a hold it does not
   know is ignored before it is counted (Q1). **There is no limit on
@@ -478,7 +478,7 @@ host.route(Session, {
   included, parsed, and its entries delivered or deliberately dropped; never on transport receipt), at most one per
   origin per inbound turn (coalesced in a microtask after the first message it consumed, so after the event flush that
   delivered it). An `ack` with `events` acknowledges events only, never combined with a state ack: state's window and
-  its variant fence are untouched, and events flow while the state window is full, and the reverse. **Event tickets:**
+  its binding fence are untouched, and events flow while the state window is full, and the reverse. **Event tickets:**
   per link and origin the provider side keeps a FIFO of the `event` messages it sent and not yet had acknowledged,
   each with its sender, `local` (this host's emits) or the upstream link a relay forwarded it from; `ack { events: n }`
   consumes exactly the first n: a `local` one frees a slot of the event window, a relayed one is returned to its
@@ -527,7 +527,7 @@ drops, folds or resets.
   window, the origin's relayed calls past it wait in a FIFO per (upstream link, origin) and go as answers free slots
   (the consumer side's window logic), a new call never overtaking the origin's queue (none announced: at once). Queued
   relayed calls follow the relay's own queued calls' lifecycle: when the relayed hold gets `loading`, its unsent calls
-  are rejected `unavailable` (they carry the old variant's method indexes) and its forwarded ones are kept; on
+  are rejected `unavailable` (they carry the old binding's method indexes) and its forwarded ones are kept; on
   `failed` or `gone` its unsent calls are rejected with that cause; before the relay forwards the downstream's `ack` of
   a new `bound` upstream (which ends the provider's decoding by the old indexes), it rejects every call of that hold
   still in its queue `unavailable` (one that crossed the `loading` notice carries the old indexes; calls arriving after
@@ -571,7 +571,7 @@ drops, folds or resets.
 ### Recovery
 
 - After a drop the consumer re-holds every hold of the path over the new link and receives snapshots (a `bound` on a
-  bound hold replaces its replicas in one batch, another variant allowed); calls in flight fail like on a disconnect;
+  bound hold replaces its replicas in one batch, another grant allowed); calls in flight fail like on a disconnect;
   calls made meanwhile park (section 7).
 - A slow connection never ends an object: nothing releases a hold for falling behind (the reference count is unchanged).
 - A link drop is a departure (section 19).
@@ -592,7 +592,7 @@ drops, folds or resets.
 
 ## 4. Principals
 
-- The app defines its principal type `P`: JSON, every variant with a `kind`, a type alias (not an interface),
+- The app defines its principal type `P`: JSON, every member of the union with a `kind`, a type alias (not an interface),
   unversioned (owner, 2026-10-22): Chord never persists principals, base code changes every host at once, links stamp
   them. Objects persist a projection with its own schema, never the principal (p2: chat's `Author { kind, id, name }`).
   p2: `owner` (`access: "local" | "relay" | "device"`), `guest` (`session`, `mode`, grant revision), `server`,
@@ -616,8 +616,8 @@ drops, folds or resets.
   | `self.get` in a local object or a facet | the host's own | this host's |
   | a relayed hold | the arriving hold's principal | the arriving hold's incarnation |
 
-  So a guest's call on the server whose handler `ctx.get`s a worker type reaches the worker as the guest and gets the
-  guest's variant; two references with different principals are two remote objects. A server object that acts as
+  So a guest's call on the server whose handler `ctx.get`s a worker type reaches the worker as the guest and gets what
+  the guest is granted; two references with different principals are two remote objects. A server object that acts as
   itself towards a worker takes the reference with `self.get` in its own object or in a server root (`host.root`,
   acting as the host), never with the method's `ctx.get` (owner, 2026-11-03; p2's footgun 7): the owner calls
   `Search.rebuildIndex`, whose `ctx.get(IndexScan, { session })` reaches the worker as the owner, and a worker
@@ -661,7 +661,7 @@ drops, folds or resets.
 ## 5. Object types
 
 ```ts
-export const Notes = remote("notes", { version, hostAddress, params, variants });
+export const Notes = remote("notes", { version, hostAddress, params, state, methods, events, flags });
 export const NoteStore = local("notes.store", { version, params, members });
 ```
 
@@ -669,26 +669,33 @@ export const NoteStore = local("notes.store", { version, params, members });
 | --- | --- | --- |
 | reachable from | any host, across links | its own host only |
 | identity | (type, params, principal key) | (type, params) |
-| principals, variants | yes | no |
-| factory | `(params, principal, self)` returning `{ variant, members }`; `(params, principal, admitted, self)` for a type with an admission | `(params, self)` returning the members |
+| principals, grantable members, flags | yes | no |
+| factory | `(params, principal, self)` returning every member; `(params, principal, admitted, self)` for a type with an admission (declared `admission`, grantable members or flags) | `(params, self)` returning the members |
 | arguments | validated once at the provider for every caller (compiled closed schema, R7, Q12); unknown fields rejected; passed by reference on the same host | validated the same way (Q15), never copied |
 | results | not validated; passed by reference on the same host | not validated, not copied |
 | members | state (JSON), methods (JSON plus bytes) and events (JSON) | plain-data state, methods and events (`event(schema)`); no `opaque`, no callbacks |
 | `ctx.principal` in methods | the caller | the host's principal (none on a client); references a local object makes act as the host |
 
 ```ts
-variants: {
-  editor: { state: { notes: NotesSchema }, methods: { add: method(AddArgs, NoteId), remove: method(RemoveArgs) } },
-  reader: { state: { notes: PublicNotesSchema } },
-},
-// the factory chooses one variant per object (slice 3a, C15):
-host.serve(Notes, ({ session }, principal, self) =>
-  principal.kind === "owner" ? { variant: "editor", members: { notes, add, remove } } : { variant: "reader", members: { notes: publicNotes } });
+// One shape for every caller (slice 15 §1): a grantable member exists for a caller only if its admission granted it.
+state: { notes: arr(PublicNote), authored: grantable(arr(Note)) },
+methods: { add: grantable(method(AddArgs, NoteId)), remove: grantable(method(RemoveArgs)), read: method() },
+flags: { export: "Export the notes" },               // a right that is no member; its label is the access UI's
+host.serve(Notes, ({ session }, principal, admitted, self) => ({
+  notes, authored: () => authoredNotes, add, remove, read,   // grantable state and events are builders
+}), { admit: (params, principal) => constant(principal.kind === "owner" ? allow({ granted: ["authored", "add", "remove", "export"] }) : allow({})) });
 ```
 
-- **Admission** (slice 14): a remote contract may declare `admission: schema`, the JSON value its factory is handed
-  about a caller (`AdmittedOf<C>`). It selects the variant and the members, nothing else; it is not part of the
-  fingerprint and is never validated at runtime (its own fingerprint is what a reload's staging compares).
+- **Grantable members and flags** (slice 15 §1; decision "Grantable members and flags replace variants", 2026-11-25):
+  a remote contract declares one shape for every caller; a member marked `grantable(...)` (state, event or method)
+  exists for a caller only if its admission granted it, a plain one for everyone admitted. `flags: { name: label }`
+  are rights that are no member (the label English, for the access UI). A name is one member or one flag, never two
+  (types and declaration). `GrantableName<C>` is the union of a contract's grantable members and flags. A contract
+  with grantable members or flags takes an admission (`admit` required, §6). `local` contracts have neither.
+- **Admission** (slice 14; slice 15 §1.2): a remote contract may declare `admission: obj(...)`, the data its factory
+  is handed about a caller besides `granted` (`AdmittedOf<C>`: the data and `granted: ReadonlySet<GrantableName<C>>`);
+  a declared schema is an object without a field `granted`. It is not part of the fingerprint and is never validated
+  at runtime (its own fingerprint, with the names the contract may grant, is what a reload's staging compares).
   `evolve`'s `admission(schema)` replaces it (the last edit of a version). `local` types have none. Section 6.
 - **Names** (owner, 2026-10-27): object type names, host kind names, document (`defineState`) and job (`defineJob`)
   names use `[a-z0-9@/._~-]`, lowercase, checked at declaration (they become SQL table names in the store, joined with `:`).
@@ -712,7 +719,9 @@ host.serve(Notes, ({ session }, principal, self) =>
 - **Implementations** (owner, 2026-10-22): a state member is a JSON `Watchable` the factory returns (a document handle,
   a derive, a reference member, `constant(...)`), never a getter; a method is a function `(args, ctx)` or `(ctx)`; an
   event member is an `EventSource<T>` of the attempt's own (`self.events<T>()`) or a reference's `EventMember<T>`
-  (re-exposed). Activation checks what the factory returned (plugin code): exactly the variant's members, methods as
+  (re-exposed). Activation checks what the factory returned (plugin code): exactly the members it exposes for what
+  was granted (the plain ones and the granted ones; a grantable state or event member is a builder `() => …` called
+  right after the factory, with declarations open, only if granted; slice 15 §1.3), methods as
   functions, state members as JSON watchables (a `NativeWatchable` or anything else fails the object `broken` naming
   the member, Q14), event members as one of those Chord-made values (anything else, another attempt's source included,
   fails it `broken` naming the member).
@@ -721,27 +730,28 @@ host.serve(Notes, ({ session }, principal, self) =>
   event is sent, never folded, never kept, never sent to a later holder, dropped for a holder that cannot keep up. Over
   a link the provider's holder is the wire hold: references of one host sharing it (§7) get what arrives at their host
   after each bound, also an event emitted before it that was still in transit (decision "References share one wire
-  hold"). A remote variant lists them under `events` (`variants: { player: { state, events: { paddle: Paddle }, methods } }`), a
+  hold"). A remote contract lists them under `events` (`events: { paddle: Paddle, reported: grantable(Report) }`), a
   local contract marks them in its flat members with `event(schema)`, as `keyed(schema)` marks a keyed member. Their
-  schemas describe JSON only (no `bytes()`) and may differ per variant (redaction). Types: `EventMember<T>` (the read
+  schemas describe JSON only (no `bytes()`); a redacted value is a member of its own (a plain one, and a grantable
+  one with more). Types: `EventMember<T>` (the read
   side, `on(listener, ctx): Promise<EventSubscription>`; references expose only it, never `emit`), `EventSource<T>`
   (the owner's, adds `emit(value)`), `EventSubscription` (`stop()`); a listener gets `{ value, at }`. Delivery, wire and
   versions: sections 11, 22 and 27.
-- **Reserved member names:** `then`, `release`, `state`, `retry` and `variant` are refused at declaration (a reference
+- **Reserved member names:** `then`, `release`, `state`, `retry` and `granted` are refused at declaration (a reference
   has them; `then` would make an awaited reference thenable).
 - **Compatibility (strict, like documents; R6):** a hold carries only the consumer's contract `version` and
   fingerprint, never a description. The provider binds when both equal its current ones, or (slice 7b) when the
   version is one it accepts and the fingerprint equals the one computed from its own history (section 27). Every
   contract change, additive ones included, bumps `version`. Anything else leaves the request unbound `version`:
   `failed { waiting }` with `contract_mismatch` (slice 7a: not the consumer's fault; a publication that fits wakes it,
-  §3). The fingerprint covers params, variants and members, not the host address. A consumer whose contract does not
+  §3). The fingerprint covers params and members, which of them are grantable and the flag names (normal form
+  `{ kind: "remote", params, members, grantable, flags }`, both lists sorted), not the host address nor the flags'
+  labels. A consumer whose contract does not
   fit waits on its own request; the provider object and its other bindings are not affected.
-- **Variants:** a member name has the same kind (state, keyed, method or event) in every variant that has it and for the
-  whole history, and a method the same signature (arguments and result) in every variant; state and event schemas may
-  differ per variant (redaction). Enforced at
-  the type level in `remote(...)` and at declaration at runtime. A remote factory returns one variant, `{ variant,
-  members }`; `ref.variant` is the discriminant (section 7). Calls are checked against the binding's variant
-  (`invalid/member` outside it).
+- **One kind per name:** a member name has one kind (state, keyed, method or event) for the whole history, and is a
+  member or a flag, never both. Enforced at the type level in `remote(...)` and at declaration at runtime. A remote
+  factory returns every member; the reference has the plain ones always and the grantable ones while granted (§7). A
+  call to a grantable method not granted fails `forbidden` (the member exists), another unknown one `invalid/member`.
 - **Params** (owner, 2026-10-21/22): a flat record of required fields, each `str()`, `int()`, `bool()` or `oneOf(...)`
   of string literals, constraints allowed (`str({ pattern })`, `int({ min: 0 })`); no defaults, optional, nested or
   unknown fields. Checked for every caller with one compiled closed-object pi-schema check (a missing or extra field
@@ -911,24 +921,28 @@ type's **admission** does.
 ```ts
 export const Transcript = remote("transcript", { version: 1, params: { session: str() },
   hostAddress: ({ session }) => Session({ id: session }),
-  admission: obj({ mode: oneOf("read", "write") }),          // the value's schema: not in the wire fingerprint
-  variants: { viewer: { … }, participant: { … } } });
-host.serve(Transcript, (params, principal, admitted, self) =>
-  admitted.mode === "read" ? { variant: "viewer", members: … } : { variant: "participant", members: … },
+  admission: obj({ mode: oneOf("read", "write") }),          // the data's schema: not in the wire fingerprint
+  state: { title: str() }, methods: { say: grantable(method(str(), str())) } });
+host.serve(Transcript, (params, principal, { mode, granted }, self) => ({ title, say }),
   { admit: ({ session }, principal, self) =>
       self.derive([self.get(SessionAnswer, { session, person: principal.id }).mode], ([mode]) =>
-        mode === "none" ? deny("no access") : allow({ mode })) });
+        mode === "none" ? deny("no access") : allow({ mode, granted: mode === "write" ? ["say"] : [] })) });
 ```
 
-- **Remote types only.** `admission` without `admit`, the reverse, or either on a `local` type is a declaration
-  error. `admit`'s `self` (`AdmitSelf`) has `get` (and `at(key)` on what it gets), `registry`, `derive` and
+- **Remote types only.** A contract that declares an `admission`, grantable members or flags is served with `admit`
+  (the types require it); `admit` for any other, or on a `local` type, is a declaration error. `admit`'s `self` (`AdmitSelf`) has `get` (and `at(key)` on what it gets), `registry`, `derive` and
   `liveQuery`, nothing else: an admission decides and owns nothing. The value is plain JSON, small and rarely
-  changing (a mode, a role); `deny`'s reason reaches the denied caller.
+  changing (a mode, a role): an object, `allow({ granted: [...], ...data })`; `deny`'s reason reaches the denied
+  caller.
+- **Granted** (slice 15 §1.2): Chord sorts and dedupes `granted` before it compares decisions (canonical JSON), so the
+  same names in another order are the same decision. A name that is no grantable member or flag of the contract (a
+  plain member included: a plain member is never granted) breaks the attempt, naming the contract and the name. The
+  factory gets `granted` as a set; Chord builds and exposes only the granted grantable members.
 - **Admit.** An attempt of an admitted type runs `admit` before its factory, one microtask after its start, and
   parks on its requests with the existing parking. The admission phase does not wait for the previous attempt's
   teardown; only the factory does.
 - **Decide.** With every request live and hydrated the decision is read: `deny` parks the attempt and the object
-  shows `failed { kind: "denied", error: forbidden(reason) }`; `allow(value)` runs the factory with `value`. A
+  shows `failed { kind: "denied", error: forbidden(reason) }`; `allow(value)` runs the factory with `value` (`granted` a set). A
   value that is neither breaks the attempt.
 - **Watch.** From its allow on the attempt follows the decision and its sources through the host's publication: a
   change takes effect in the flush of the batch that changed it, also while the attempt opens its natives and on
@@ -952,7 +966,7 @@ host.serve(Transcript, (params, principal, admitted, self) =>
 - **A rebuild keeps the admission's requests** until a later attempt's admission bound its own: a source held only
   by admissions never ends across a rebuild.
 - **What a denial removes.** The denied object's references and replicas hold no value: a read throws `forbidden`,
-  a watch gets one `failed` call, `ref.variant` is `undefined`, a derive over a member fails as a member until the
+  a watch gets one `failed` call, `ref.granted` is empty and its grantable members are gone, a derive over a member fails as a member until the
   next allow; over a link the consumer drops its replicas. **Data already delivered to application code is not
   retracted** (a `WatchHandle`'s `value`, a rendered value, a method's answer): a UI hides what `ref.state` says is
   denied.
@@ -1002,13 +1016,12 @@ host.serve(NoteStore, ({ session }, self) => {
 NoteStore {S1}          local shared store: the stored notes, once
    ▲ self.get                 ▲
 Notes {S1} as owner      Notes {S1} as read-only guest
- variant "editor"         variant "reader": derives a filtered view
+ granted "authored", "add"   granted nothing: its plain members only
 ```
 
 Heavy or shared parts (a Durable watch, a prompt watcher, a sandbox, a store) live once in a `local` shared store;
 per-principal `remote` views get it and expose what their principal may see. Authority is the view's; the store is
-trusted and acts for the host. Views of the same variant read one value from the store (a redaction is computed once,
-not per guest; section 12). Any plugin uses this pattern with the same primitives; base code is not special.
+trusted and acts for the host. Views read one value from the store (a redaction is computed once per store, not per guest; section 12). Any plugin uses this pattern with the same primitives; base code is not special.
 
 **Worker-wide native owners:** the facet cannot `self.get` a type it serves, so an owner of a per-session native (an
 inbox watcher, a sandbox) is a `local` object with empty params (host lifetime) that reads its session from the core's start
@@ -1033,35 +1046,39 @@ location are dropped.
 | outside | `await host.get(Type, params, context, { readyTimeout? })` / `host.hold(Type, params, context, { readyTimeout? })` | `release()` |
 
 - **`host.get`** (and `ctx.get`, `host.registry`) resolves with a reference once its object is live and **hydrated**
-  (every state member of its variant has a value). It waits while the reference is `loading`, `failed { transient }`
+  (every state member of its binding has a value). It waits while the reference is `loading`, `failed { transient }`
   or `failed { waiting }`, up to its `readyTimeout` (default 60 s, the caller's choice), then rejects with the last
   cause; only `failed { broken }` and `failed { denied }` (slice 14) reject at once (owner, 2026-10-29, decision
   "Getters wait through `waiting`"). A
   getter that gives up releases its reference. **`host.hold`** returns a reference at once that follows its object
   until released (loading, live, failed and retried as its object is, loading again while its link is down) and never
   rejects; only invalid params throw (checked at once: design audit 7, 2026-10-27), and a use before `load` (`not_ready`,
-  §3). A type not served where it goes is `failed { waiting }` (§3; slice 7a), reported `unbound_long` after 5 s. Its `variant` is `undefined` until its first binding (slice 3b). A UI holds and shows
+  §3). A type not served where it goes is `failed { waiting }` (§3; slice 7a), reported `unbound_long` after 5 s. Its `granted` is empty until its first binding (slice 3b, slice 15). A UI holds and shows
   `ref.state`; code that needs the object now gets it, with the patience it passes. There is no `state: false` option
   (C8) and no `optional` flag.
-- **Narrowing by variant:** `ref.variant` is the discriminant (C15: no `inVariant`/`expectVariant`); `RefIn<C, V>`
-  narrows to some variants (strict unions, never weakened). A UI reads a held reference's variant through its
-  binding (`useVariant`, `TuiScope.variant`, §23), which follows the reference's state: the variant is `undefined`
-  until it binds, changes with an admission's other allowed value, and stays the last one while it loads.
+- **Grantable members on a reference** (slice 15 §1.4): a remote reference has its plain members always and
+  `granted`, the set of names its binding was given (grantable members and flags). A grantable member is the member
+  (the same object each time) while the binding granted it, else `undefined`; until the reference was first live
+  every grantable member is there, so a factory wires a `self.get` dependency that has not bound yet (its reads and
+  calls fail `forbidden` once it binds without the grant). `granted` is empty before the first binding and while
+  denied, the last binding's while loading or failed. In the types grantable members are optional
+  (`if (ref.add) await ref.add(args, ctx)`). A UI reads a held reference through its binding (`useLive`,
+  `TuiScope.live`, §23), which follows the reference's state and its `granted`.
 - **References are the only indirection** (owner, 2026-10-29; supersedes 6a's member source per object and 7b's
   hand-over): a consumer's watches and derives over `ref.member` attach through the reference's member, which passes
   the subscription straight through to the object's own document or derive (no extra hop, no copy: the commit's value
   and ops by reference). When what the reference points at changes (a new object instance after a factory re-run:
-  reload, retry, restart; a new object after its type was removed and served again; another variant), the reference
+  reload, retry, restart; a new object after its type was removed and served again; another grant), the reference
   moves its subscriptions to the new one and sends one frame, a diff from the last value (consumers' derives recompute,
-  a failed one heals; a member the new variant lacks fails `invalid/member`). While it points at nothing, its members
+  a failed one heals; a member the new binding lacks fails: `forbidden` when not granted, else `invalid/member`). While it points at nothing, its members
   keep their last values (a pointer, no copy): while loading (a restart's successor not live yet, a retry) its watches
   get no call (`ref.state` says `loading`); while failed (a live failure, its version refused, its type
   removed, a failed dependency) they get one `failed` call with the cause's error and stay open (decision "Failures are
   watch calls"); a reference that never had a value reads `not_ready` while loading and its failure's error while failed, and its
-  watches wait for its first values. A member the new variant lacks is not a failed reference: it fails `invalid/member`
-  (reads throw it, watches get one `failed` call) until a later variant brings it back. Keyed watches and pins
+  watches wait for its first values. A member the new binding lacks is not a failed reference: it fails (`forbidden` for a
+  grantable one; reads throw it, watches get one `failed` call) until a later binding brings it back. Keyed watches and pins
   re-pin on each new instance the same way (a key keeps its last value until the new instance has loaded it); a
-  dependent's factory pin is still loaded before the dependent goes live. Once hydrated, a reference has last values for every state member of its bound variant, read or not: when it
+  dependent's factory pin is still loaded before the dependent goes live. Once hydrated, a reference has last values for every state member of its binding, read or not: when it
   detaches it takes them at its version from the outgoing instance (through that instance's mapping for an older
   version), keeping no node of it. After a `failed` call, the next good value arrives as `[["r", value]]` even when
   unchanged; a watch opened while failed starts at the last value and gets the failure once. No source, mapping,
@@ -1073,7 +1090,7 @@ location are dropped.
   last values readable while its hold is failed. Nothing outlives its object instance and nothing is handed between
   objects. A reference joining a shared remote object (below) does not acquire another reference's last value: "seen"
   means a value this reference received while live. Joining an object that is not live (loading, failed), it has
-  seen no member; joining a live one, it has not seen the members failed or missing from the bound variant. Until a
+  seen no member; joining a live one, it has not seen the members failed or missing from the binding. Until a
   value arrives for such a member after the join (read or not, while its watches exist or not), the member shows no
   last value (a watch on it rejects with its error, as on a fresh failed snapshot; holding and vanishing keep none);
   from then on its own last-value rules apply, across later failures, rebinds and a private retry.
@@ -1095,8 +1112,8 @@ location are dropped.
   ctx)`, `ref.bump(ctx)`). Event members are `EventMember<T>`s (decision "Events: fire-and-forget members"):
   `ref.paddle.on(listener, ctx)` installs a subscription at once, bound or not, and resolves (it rejects `released` for
   a released reference and the context's abort reason for an aborted one); it lives until `stop()`, the context's abort
-  or the reference's release. It receives events while the reference is bound to an instance whose variant has the
-  member and shows it live: none while `loading` or failed, none while bound to a variant without it (no failure call:
+  or the reference's release. It receives events while the reference is bound to an instance that has the member
+  (granted it) and shows it live: none while `loading` or failed, none while bound to an instance without it (no failure call:
   an event has no value to fail), and again when a later binding has it. When the reference moves to a new instance
   (above) its subscriptions move with it, from that binding's counter value (section 11): nothing missed is replayed.
   Events need no hydration (an event-only contract binds live). An event member is not a `Watchable`: no derive or
@@ -1151,7 +1168,7 @@ location are dropped.
   sees `aborted`) and drops its queued ones, the last release sends `release` as before. A consumer receiving `gone(h)`
   rejects its own pending calls on `h` (Q1).
 - References survive link drops: one owner of a host's remote references holds them again on every new link of their
-  path; a re-hold may bind another variant (slice 3b).
+  path; a re-hold may bind another grant (slice 3b).
 - **Consumers** handle a failed call as they handle a disconnect (error shown, user retries); Chat's own submission
   `requestId` stays an app concern.
 
@@ -1723,7 +1740,7 @@ type NativeWatchCall<T> = { kind: "value"; value: T } | { kind: "failed"; error:
 ```
 
 - **Failures are calls, watches end only for good (owner, 2026-10-27):** a source that fails and can recover (a
-  derive whose compute throws, a replica member a hold lists as failed, a member a new variant lacks, a registry whose
+  derive whose compute throws, a replica member a hold lists as failed, a member a new binding lacks, a registry whose
   `compose` throws, slice 8) gives its watches one `{ kind: "failed", error }` call and keeps them open; its next good
   value arrives as `[["r", value]]` (folded with the failure for a busy listener). A failed derive recomputes on every
   later change of its sources and on a re-bind (self-healing). A watch ends only when nothing can come back: its owner
@@ -1732,7 +1749,7 @@ type NativeWatchCall<T> = { kind: "value"; value: T } | { kind: "failed"; error:
   happens: the derive's owner reports `derive_failed { object, member?, error }` once per failure episode, the first
   failure after a value or after creation, not for a derive failing only because a source failed). `ref.state` stays
   a separate watchable of the object's reachability (`loading | live | failed | ended`), with the same words. A
-  replica member that vanished with a variant is kept and comes back with a later binding; while failed it accepts
+  replica member that vanished with a binding is kept and comes back with a later binding; while failed it accepts
   only `[["r", value]]`.
 - **Watch handles are Durable's, moved into Chord** (Durable imports them): `watch()` atomically takes the current
   value and buffers later commits; `start(listener)` installs the one listener; commits are delivered in order, async
@@ -2122,7 +2139,7 @@ export default defineFacet((host, self) => {         // `self` (contributions) a
 - **Facets are typed by the app's principal (owner, 2026-10-21):** base code exports `defineFacet` already bound to its
   `P` (`export const defineFacet = bindFacet<P>()`, next to the principal union), and every facet (server, worker,
   web, TUI) imports it from there; `host.load` accepts only facets typed for the host's `P`, so a factory's `principal`
-  narrows by variant. Nothing is checked at runtime: the principal a factory receives is the one the link stamped.
+  reads what it was granted. Nothing is checked at runtime: the principal a factory receives is the one the link stamped.
 - A plugin's per-host setup, **declarations only** (owner, 2026-10-26): `host.serve`, `self.contribute` (slice 8),
   `host.references`; no natives, no documents (C16 accepted), no routines, no jobs. Everything a plugin does at runtime
   is done through objects: shared or persisted state and standing behaviour live in a `local` store object with empty
@@ -2479,7 +2496,7 @@ type ReloadReport = {
   reference or hold of a version only the new code serves shows `loading` until the successor is live. At the seal
   the old attempt stops being the instance its holders bind (`loading`; a hold waiting for a window slot unbinds);
   once its admitted commits published it stops changing and the references take their last values from it. When the
-  successor goes live they move to its members by name (one frame from the last value; a member the new variant
+  successor goes live they move to its members by name (one frame from the last value; a member the new binding
   lacks fails `invalid/member`; §7); internal derives are rebuilt; in-memory documents migrate through `migrate` when
   the new code declares a higher version; `self.writable` starts at its new initial value (decision 2); `retryOn`
   sources are re-declared.
@@ -2685,7 +2702,7 @@ validation, no clone of snapshots or ops.
   | `abort` | to provider | `origin?`, `call` (named `cancel` until 2026-10-27) |
   | `ack` | to provider | `origin?`, `events?`: without `events` one per applied `bound`/`state` message; with `events` (at least 1) the `event` messages of the origin consumed since the last such ack, never combined with a state ack |
   | `closed` | relay to provider | `origin`: the downstream origin ended |
-  | `bound` | to consumer | `origin?`, `holds: [{ hold, variant, members: [{ member, value }], failed }]`; one batch |
+  | `bound` | to consumer | `origin?`, `holds: [{ hold, granted, members: [{ member, value }], failed }]`; `granted` indexes into the version's sorted grantable members and flags (slice 15); one batch |
   | `state` | to consumer | `origin?`, `holds: [{ hold, members: [{ member, ops }], failed, retired }]`; one batch (`retired`: members retired since the last message, slice 6a) |
   | `failed` | to consumer | `origin?`, `hold`, `cause { kind, error }` (`kind`: `transient`, `broken`, `waiting` (slice 7a) or `denied` (slice 14)), `retryIn?` (a transient cause's backoff; absent: broken, waiting); each new cause of a parked object is a message of its own |
   | `loading` | to consumer | `origin?`, `hold`: a new attempt after a failure, or a relay's upstream dropped |
@@ -2693,10 +2710,10 @@ validation, no clone of snapshots or ops.
   | `error` | to consumer | `origin?`, `call`, `error` (a ChordError's JSON or a plugin's code, message, details) |
   | `gone` | to consumer | `origin?`, `hold`, `error`: the held object ended (revocation 4b; a reload never ends a hold, it unbinds it with `failed`, slice 7b; relays never make one) |
   | `ping`, `pong` | both | the heartbeat |
-  | `event` | to consumer | `origin?`, `events: [{ hold, member, at, value }]` (decision "Events: fire-and-forget members"): `member` an index into the bound variant's event members (sorted, as state members and methods), `at` an integer, `value` a part; one per event flush per link and origin, possibly empty (a relay's filtered one) |
+  | `event` | to consumer | `origin?`, `events: [{ hold, member, at, value }]` (decision "Events: fire-and-forget members"): `member` an index into the binding's event members (sorted, as state members and methods), `at` an integer, `value` a part; one per event flush per link and origin, possibly empty (a relay's filtered one) |
 
-  A `bound` on a hold that is bound already replaces its replicas in one batch, another variant allowed (re-holds,
-  slice 7b's restarted objects, another variant included).
+  A `bound` on a hold that is bound already replaces its replicas in one batch, another grant allowed (re-holds,
+  slice 7b's restarted objects, another grant included).
 - **Codecs are pluggable per link** (both ends use the same): `binaryCodec` (default: a kind byte with a flag for a
   following origin varint, varints, raw incarnations and fingerprints, length-prefixed strings and parts; about 23 B
   for a streamed token) and `textCodec` (Delta-style JSON tuples without field names, a message with an origin wrapped
@@ -2705,7 +2722,7 @@ validation, no clone of snapshots or ops.
   binary codec adds the kind `event` (a count, then per entry hold, member and `at` as varints and the value as a part:
   67 B for one paddle sample) and flags an event `ack` in the kind byte (`0x20`, its count following, so a state ack
   stays one byte); the text codec writes `["E", [[hold, member, at, value]…]]` (wrapped with its origin as any message)
-  and `["a", events]`. Every bound hold receives all its variant's events (no subscription message); a consumer
+  and `["a", events]`. Every bound hold receives all its granted events (no subscription message); a consumer
   without listeners drops them on arrival, unparsed.
 - **Parts are opaque** (slice 4a): `params`, `args`, `value`, snapshot values and ops are a `Part` (JSON text at the
   origin, its UTF-8 bytes once a binary codec received it). A part is parsed only where it is owned, right when its
@@ -2713,7 +2730,7 @@ validation, no clone of snapshots or ops.
   forwards it unparsed and a malformed part is still a protocol error. A message naming an unknown id is ignored
   before its parts are parsed. The text codec re-serializes parts at decode (one parse per part per hop, accepted for
   a debugging codec).
-- **Names travel as indexes** into the hold's bound version (each variant's state members and methods sorted; variants
+- **Names travel as indexes** into the hold's bound version (the binding's state members, methods and event members, each sorted; the granted names
   sorted). A reload that no longer accepts that version unbinds its holds first (`failed { waiting }`, slice 7b).
   **Bindings are fenced per acknowledgement** (slice 14: an admission may rebind a hold several times before the
   first `ack`): a hold keeps one fence per unacknowledged `bound` and decodes a call by what its consumer had
@@ -2824,7 +2841,8 @@ validation, no clone of snapshots or ops.
   cause, `unavailable` after `readyTimeout`, the object's end); an `abort`, a `release`, `gone` or the link's close
   ends it as any call. Until its fresh `bound` is sent the hold takes calls by the names it was bound with (sent before
   its consumer learnt of the `loading`): they wait at the gate too, never `not_ready`; after a `failed` it takes none.
-  The kept call runs by name: a method the new variant lacks fails `invalid/member`; a version the new code no longer
+  The kept call runs by name: a method the new binding lacks fails (`forbidden` when not granted, else
+  `invalid/member`); a version the new code no longer
   binds unbinds the hold (`failed`, `contract_mismatch`), which rejects its calls before the gate lets them run. Kept
   calls hold their call-window slots meanwhile. A relay forwards `loading` and keeps its forwarded calls (its own
   `loading` after an upstream drop rejects them first).
@@ -3019,7 +3037,7 @@ entry. Opinionated and small: an app is its API, its built-in plugins and a star
   with clients only.
 - **Principals and users:** the principal is tiny (a kind and an id) and the app's type; the kit needs only the server's
   principal, each worker's (with worker kinds) and the owner's, values of that type the app chooses (decision "The kit's
-  owner is a principal the app chooses": the owner may be one of the app's users; the kit adds no variant). The owner is
+  owner is a principal the app chooses": the owner may be one of the app's users; the kit adds no kind of its own). The owner is
   strict JSON and never the server's principal (refused at start); the kit serves it as start data (`AppInfo.owner`).
   User data lives in objects keyed by the user's id. Optional kit plugins: users (accounts with an app-supplied profile
   schema), authenticators (device pairing, invite links, an ephemeral pick-a-name login).
@@ -3139,13 +3157,12 @@ Decision "Slice 11's points", "Slice 11, P3" to "P9", and "Tutorial gaps" (1) (p
 - `chord/react`: `HostProvider`, `useHold`, `useWatch`, `useRegistry`, `useRefState`, `useEvents(member, listener)`
   (an event member subscribed while mounted, below "Channels"), and `usePageState(key, initial)`:
   `useState`'s pair kept by the page's host under a key, so a component remounted by a plugin reload (a new function)
-  keeps it (§21, "UI on client hosts"). `useVariant(ref, variant)` (decision "C15 stands; the UI bindings follow
-  the variant"): the reference narrowed to `variant` while it is live in it, `undefined` otherwise (loading, failed
-  or denied, ended, another variant), re-rendering when that changes: a held reference binds after the first render,
-  an admission's other allowed value binds another variant while the component is mounted (§6), and a reference
-  keeps its last variant while it loads, so `ref.variant === "editor"` alone would keep an editor's controls up.
-  The terminal's is `TuiScope.variant(ref, variant)`, a reader. References themselves get no such helper (§5,
-  C15).
+  keeps it (§21, "UI on client hosts"). `useLive(ref)` (slice 15 §1.5): the reference while it is live, and
+  while it loads again after it was live (a rebind for another `granted`, a link drop: the tools stay up, calls park),
+  `undefined` otherwise (no reference, its first load, failed or denied, ended); it re-renders when that changes and
+  when its `granted` changes, so grantable members come and go in the same render as the grant (a held reference
+  binds after the first render, an admission's other allowed value rebinds it while the component is mounted, §6).
+  The terminal's is `TuiScope.live(ref)`, a reader. `useWatch(undefined)` and `useEvents(undefined, …)` do nothing.
 - `chord/tui/launcher`: a Node client connecting with a token, always running the downloaded code (the app's terminal
   entry on `chord/tui`) in a sandbox (decision "The terminal's sandbox is a child process": a child process on pipes
   with an empty environment, `--permission` granting nothing and no SQLite; the builtin allowlist and a frozen
@@ -3387,33 +3404,34 @@ Apps (p3), from the functionality map, decided per domain when p3 is designed:
 **Contract evolution in code (Q10; implemented in `packages/chord/src/contracts/`, see its README):**
 
 ```ts
-export const NotesV1 = remote("notes", { version: 1, params, variants: {
-  editor: { state: { notes: arr(NoteV1) }, methods: { add: method(NoteV1, Id) } },
-} });
-export const NotesV2 = evolve(NotesV1, (e) => e.state("editor", "notes", arr(NoteV2)).args("add", NoteV2));
+export const NotesV1 = remote("notes", { version: 1, params, hostAddress,
+  state: { notes: arr(NoteV1) }, methods: { add: grantable(method(NoteV1, Id)) } });
+export const NotesV2 = evolve(NotesV1, (e) => e.state("notes", arr(NoteV2)).args("add", NoteV2));
 
 const accepted = checkAccepts(NotesV2, {
-  1: { state: { editor: { notes: (current) => current.map(toV1) } }, methods: { add: { args: (old) => toV2(old) } } },
+  1: { state: { notes: (current) => current.map(toV1) }, methods: { add: { args: (old) => toV2(old) } } },
 });
 ```
 
 - A history starts with a base written in full with an explicit version (`remote()` / `local()`; `local` has flat
-  `members` and no variants). `evolve(prev, (e) => …)` always continues it with structured edits: `state`,
-  `addState`, `removeState`, `args`, `result`, `method(name, args, result)`, `addMethod`, `removeMethod` (local: no
-  variant argument), for a local contract's keyed members `keyed`, `addKeyed`, `removeKeyed` (slice 7b; owner,
+  `members`). `evolve(prev, (e) => …)` always continues it with structured edits, the same for both kinds: `state`,
+  `addState`, `removeState`, `args`, `result`, `method(name, args, result)`, `addMethod`, `removeMethod` (a remote
+  contract's `add…` edits take `grantable(...)` for a new grantable member: `addMethod(name, grantable(method(a, r)))`),
+  for a local contract's keyed members `keyed`, `addKeyed`, `removeKeyed` (slice 7b; owner,
   2026-10-26: keyed members' versions are mapped per key), and for event members `event`, `addEvent`, `removeEvent`
-  (decision "Events: fire-and-forget members"; local: no variant argument). Every version is materialized and fingerprinted at declaration, so an old plugin's own copy of
+  (decision "Events: fire-and-forget members"). Every version is materialized and fingerprinted at declaration, so an old plugin's own copy of
   v1 computes the same fingerprint; no build step, no generated files, no hand-copied fingerprints.
-- **A new history base** (a params change or a change of the variant set) is a new `remote()`/`local()` with an
-  explicit version and no accepts for older versions: old plugins get `contract_mismatch` and must update.
+- **A new history base** (a params change, a member that becomes grantable or plain, a flag added or removed, slice
+  15 §1.1) is a new `remote()`/`local()` with an explicit version and no accepts for older versions: old plugins get
+  `contract_mismatch` and must update. Contracts declared with variants before slice 15 continue as such a base.
 - **Mappings live with the provider,** never in the contract: the pure `checkAccepts(contract, accepts)` (called by
   the objects layer) requires, at type level and again at runtime, a mapping for every member that exists in the old
   version and changed or was removed since: changed state `(currentMember) => oldMember`, removed state `(current
-  variant state) => oldMember` or `"refuse"`, `args: (old) => current`, `result: (current) => old`, removed methods
+  state) => oldMember` or `"refuse"` (the state the instance's caller was granted), `args: (old) => current`, `result: (current) => old`, removed methods
   `{ call }` or `"refuse"`, changed keyed members `(current document) => old document` or `"refuse"` (mapped per key
   for an older local consumer), removed keyed members `"refuse"`, changed event members `(current value) => old
-  value` or `"refuse"` (section `events`, by variant then member for a remote contract, flat for a local one: `{ 1: {
-  events: { player: { paddle: (current) => old } } } }`; `"refuse"` refuses that version's binding, as a refused state
+  value` or `"refuse"` (section `events`, flat as every section: `{ 1: {
+  events: { paddle: (current) => old } } }`; `"refuse"` refuses that version's binding, as a refused state
   member does); added members need nothing, and neither does a removed event member (the exception to the rule above:
   an older consumer binds and receives none of it; an event has no value to hydrate). No-op edits need identity
   mappings. Untyped JavaScript providers fail at declaration naming the member; unknown keys and wrong shapes are

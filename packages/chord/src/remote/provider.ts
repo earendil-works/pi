@@ -225,7 +225,7 @@ export class ProviderSide implements EventSender {
 	 * A message from upstream link `from` for this origin's relayed holds, forwarded with this origin: `bound` and
 	 * `state` join the window's senders (their `ack` goes back to `from`), a reply ends its call (after this host's own
 	 * waiting state: `reply`), `gone` forgets its hold. A hold's calls still waiting for the upstream window are rejected
-	 * before its `loading` (`unavailable`: they carry the old variant's method indexes; its forwarded ones are kept),
+	 * before its `loading` (`unavailable`: they carry the old binding's method indexes; its forwarded ones are kept),
 	 * `failed` or `gone` (with that cause) is forwarded. A link answers only for what was relayed over it: an entry, a
 	 * notice or a reply naming a hold (or a call) this origin did not relay over `from` is dropped (Q1); a `bound` or
 	 * `state` left without entries is acknowledged to `from` at once. Parts travel unchecked and unparsed: the end that
@@ -396,7 +396,7 @@ export class ProviderSide implements EventSender {
 	}
 
 	/**
-	 * An event flush's entry for served hold `hold`'s event member `member` (an index into its bound variant's). While
+	 * An event flush's entry for served hold `hold`'s event member `member` (an index into its binding's). While
 	 * this host's event window is full for this origin it is dropped as visited (counted), before anything is encoded:
 	 * nothing waits for a slow consumer, and no value is encoded only to be dropped (the window cannot change during a
 	 * flush: acks arrive in other turns, and this side sends one message per flush). Otherwise it is queued for this
@@ -555,7 +555,7 @@ export class ProviderSide implements EventSender {
 	 * arguments from a child (clients never compress) are protocol errors. On a relayed hold it is forwarded, its
 	 * arguments checked against this link's part limit first (the bytes are here). On a served hold that is not callable
 	 * (not bound yet, nor rebinding by the names its consumer still has after a `loading`) it is
-	 * refused `not_ready`; its method is an index into the bound variant (one outside it is a protocol error) and its
+	 * refused `not_ready`; its method is an index into the binding's methods (one outside them is a protocol error) and its
 	 * arguments are opened and parsed here within the hold's limits (past one the call fails `too_large/part`; a
 	 * malformed part is a protocol error), absent ones `null`. Arguments this host must inflate asynchronously are
 	 * inflated first, then the call is handled again.

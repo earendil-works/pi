@@ -1,13 +1,13 @@
-// Remote objects over one link: a server and a client host, a remote contract with two variants, a factory choosing
-// the variant per principal over a shared local store, and the client's replicas following the server's commits.
+// Remote objects over one link: a server and a client host, a remote contract with grantable members, an admission
+// granting them per principal over a shared local store, and the client's replicas following the server's commits.
 // Run from packages/chord:
 //   node --conditions=source --experimental-strip-types test/examples/08-remote.ts
 import { BACKGROUND_CONTEXT } from "../../src/context/index.ts";
-import { arr, hostKind, int, local, method, obj, remote, str } from "../../src/contracts/index.ts";
+import { arr, grantable, hostKind, int, local, method, obj, remote, str } from "../../src/contracts/index.ts";
 import { defineState } from "../../src/documents/index.ts";
-import { createHost, defineFacet } from "../../src/host/index.ts";
+import { allow, createHost, defineFacet } from "../../src/host/index.ts";
 import { memoryLinkPair } from "../../src/link/index.ts";
-import { mapShared } from "../../src/state/index.ts";
+import { constant, mapShared } from "../../src/state/index.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -20,15 +20,14 @@ const PublicNote = obj({ text: str() });
 // The server's host kind: every remote contract names the address of the host serving its objects.
 const Server = hostKind("server");
 
-// A remote contract: one object per (type, params, principal key), in the variant its factory chooses.
+// A remote contract: one object per (type, params, principal key). Everyone admitted reads the notes without their
+// authors and the count; a caller granted them also gets the authored notes and `add`.
 const Notes = remote("example.notes", {
 	version: 1,
 	params: { session: str() },
 	hostAddress: () => Server(),
-	variants: {
-		editor: { state: { notes: arr(Note), count: int() }, methods: { add: method(obj({ text: str() })) } },
-		reader: { state: { notes: arr(PublicNote), count: int() } },
-	},
+	state: { notes: arr(PublicNote), count: int(), authored: grantable(arr(Note)) },
+	methods: { add: grantable(method(obj({ text: str() }))) },
 });
 
 // The shared store: the notes of a session once, behind per-principal views (design §6). Local types never cross a link.
@@ -54,22 +53,24 @@ const facet = defineFacet<P>((host) => {
 			},
 		};
 	});
-	// A remote factory gets the principal its object is for and returns one variant with exactly its members.
-	host.serve(Notes, ({ session }, principal, self) => {
-		const store = self.get(NoteStore, { session });
-		const count = self.derive([store.notes], ([n]) => n.length);
-		if (principal.kind === "guest") {
-			return { variant: "reader", members: { notes: self.derive([store.notes], ([n]) => redact(n)), count } };
-		}
-		return {
-			variant: "editor",
-			members: {
-				notes: store.notes,
-				count,
+	// A remote factory gets the principal its object is for and returns every member: a grantable state member as a
+	// builder, called only if granted. The admission decides what each caller is granted: guests nothing.
+	host.serve(
+		Notes,
+		({ session }, principal, _admitted, self) => {
+			const store = self.get(NoteStore, { session });
+			return {
+				notes: self.derive([store.notes], ([n]) => redact(n)),
+				count: self.derive([store.notes], ([n]) => n.length),
+				authored: () => store.notes,
 				add: async ({ text }, ctx) => store.add({ text, author: principal.kind }, ctx),
-			},
-		};
-	});
+			};
+		},
+		{
+			admit: (_params, principal) =>
+				constant(principal.kind === "guest" ? allow({}) : allow({ granted: ["authored", "add"] })),
+		},
+	);
 });
 
 // 1. The server, at its address: it acts as `server` for its own requests.
@@ -90,9 +91,10 @@ await client.load([], context);
 
 // 3. The server writes as an editor; the guest reads the redacted view over the link.
 const own = await server.get(Notes, { session: "S1" }, context);
-if (own.variant === "editor") await own.add({ text: "hello" }, context);
+await own.add?.({ text: "hello" }, context);
+console.log("server granted:", [...own.granted], "authored:", JSON.stringify(own.authored?.value));
 const notes = await client.get(Notes, { session: "S1" }, context);
-console.log("guest variant:", notes.variant);
+console.log("guest granted:", [...notes.granted]);
 console.log("guest notes:", JSON.stringify(notes.notes.value), "count:", notes.count.value);
 
 // 4. A commit on the server reaches the client as one state message: both members change in the same batch.
@@ -100,15 +102,17 @@ const watch = await notes.notes.watch(context);
 watch.start(async (call) => {
 	if (call.kind === "value") console.log("frame:", JSON.stringify(call.value), "ops:", JSON.stringify(call.ops));
 });
-if (own.variant === "editor") await own.add({ text: "world" }, context);
+await own.add?.({ text: "world" }, context);
 await new Promise((resolve) => setTimeout(resolve, 10));
 console.log("count after the commit:", notes.count.value);
 
-// 5. TypeScript narrows on `variant`: a reader has no `add` (a forged call would fail `invalid/member` at the server).
-if (notes.variant === "reader") {
-	// @ts-expect-error: `add` is not a member of the reader variant
-	void notes.add;
-}
+// 5. A grantable member is optional in the types and absent unless granted: the guest has no `add` (a forged call
+// would fail `forbidden` at the server).
+console.log("guest add:", notes.add, "authored:", notes.authored);
+const unchecked = () =>
+	// @ts-expect-error: `add` may not be granted: call it only after a check
+	notes.add({ text: "x" }, context);
+void unchecked;
 
 // 6. Closing the server closes its links first: the client's reference goes loading and keeps its last values until
 // a new link holds it again (10-drops.ts). Closing the client releases it and ends its watches.

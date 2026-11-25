@@ -2,10 +2,22 @@ import { createHook } from "node:async_hooks";
 import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { type Context, BACKGROUND_CONTEXT as context, withCancel, withTelemetry } from "../../src/context/index.ts";
-import { arr, int, local, method, obj, opt, remote, str } from "../../src/contracts/index.ts";
+import {
+	arr,
+	type GrantableName,
+	grantable,
+	int,
+	local,
+	method,
+	obj,
+	opt,
+	remote,
+	str,
+} from "../../src/contracts/index.ts";
 import { broken, ChordError, isChordError } from "../../src/data/index.ts";
 import { defineState, type SingletonHandle } from "../../src/documents/index.ts";
 import {
+	allow,
 	createHost,
 	defineFacet,
 	type HostError,
@@ -35,6 +47,7 @@ import {
 	rejection,
 	Server,
 	tableOwner,
+	waitLive,
 } from "../support.ts";
 
 const objects = instancesOf(ChordObject, "attempt");
@@ -577,45 +590,141 @@ describe("the call path's cost", () => {
 	});
 });
 
-describe("remote variants", () => {
+describe("grantable members (slice 15 §1.3)", () => {
 	const Two = remote("app.two", {
 		version: 1,
 		params: {},
 		hostAddress: () => Server(),
-		variants: { full: { state: { n: int() }, methods: { bump: method() } }, view: { state: { n: int() } } },
+		state: { n: int(), secret: grantable(int()) },
+		events: { pinged: grantable(int()) },
+		methods: { bump: grantable(method()), read: method() },
+		flags: { export: "Export" },
 	});
 	const owner = { kind: "owner" } as const;
 
-	/** A host acting as `owner` whose factory for `Two` returns `implementation`. */
-	async function two(implementation: unknown) {
+	/** A host acting as `owner` whose factory for `Two` returns `implementation`; its admission grants `granted`. */
+	async function two(implementation: () => unknown, granted: GrantableName<typeof Two>[]) {
 		const errors: HostError[] = [];
 		const host = createHost<typeof owner>({
 			address: Server(),
 			principal: owner,
 			onError: (error) => errors.push(error),
 		});
-		const facet = defineFacet<typeof owner>((h) => h.serve(Two, () => implementation as never));
+		const facet = defineFacet<typeof owner>((h) =>
+			h.serve(Two, () => implementation() as never, { admit: () => constant(allow({ granted })) }),
+		);
 		await host.load([{ name: "@test/app", facet }], context);
 		return { host, errors };
 	}
 
-	it("the factory chooses one; the reference narrows on its variant", async () => {
-		const { host } = await two({ variant: "view", members: { n: constant(1) } });
+	/** An implementation of every member, counting the builders it runs. */
+	function counting(built: string[]) {
+		return () => ({
+			n: constant(1),
+			secret: () => {
+				built.push("secret");
+				return constant(2);
+			},
+			pinged: () => {
+				built.push("pinged");
+				return constant(0) as never;
+			},
+			bump: async () => null,
+			read: async () => null,
+		});
+	}
+
+	it("a builder nobody was granted is never called; the reference has the plain members only", async () => {
+		const built: string[] = [];
+		const { host } = await two(counting(built), ["export"]);
 		const ref = await host.get(Two, {}, context);
-		expect(ref.variant).toBe("view");
-		if (ref.variant === "view") expect(ref.n.value).toBe(1);
+		expect(built).toEqual([]);
+		expect([ref.n.value, ref.secret, ref.pinged, ref.bump, typeof ref.read]).toEqual([
+			1,
+			undefined,
+			undefined,
+			undefined,
+			"function",
+		]);
+		expect([...ref.granted]).toEqual(["export"]);
+	});
+
+	it("a granted member is built and there; the factory gets the names as a set", async () => {
+		let seen: ReadonlySet<string> | undefined;
+		const built: string[] = [];
+		const errors: HostError[] = [];
+		const host = createHost<typeof owner>({ address: Server(), principal: owner, onError: (e) => errors.push(e) });
+		const facet = defineFacet<typeof owner>((h) =>
+			h.serve(
+				Two,
+				(_params, _principal, { granted }, self) => {
+					seen = granted;
+					const pinged = self.events<number>();
+					return { ...counting(built)(), pinged: () => pinged };
+				},
+				{ admit: () => constant(allow({ granted: ["secret", "pinged", "bump"] })) },
+			),
+		);
+		await host.load([{ name: "@test/app", facet }], context);
+		const ref = await host.get(Two, {}, context);
+		expect([...seen!]).toEqual(["bump", "pinged", "secret"]);
+		expect(built).toEqual(["secret"]);
+		expect(ref.secret?.value).toBe(2);
+		expect(await ref.bump?.(context)).toBe(null);
+		expect(errors).toEqual([]);
+	});
+
+	it("a call to a grantable method no longer granted fails forbidden, not invalid/member", async () => {
+		const Grants = local("app.grants", {
+			version: 1,
+			params: {},
+			members: { names: arr(str()), set: method(arr(str())) },
+		});
+		const host = createHost<typeof owner>({ address: Server(), principal: owner, onError: () => {} });
+		const facet = defineFacet<typeof owner>((h) => {
+			h.serve(Grants, (_params, self) => {
+				const names = self.writable<string[]>(["bump"]);
+				return {
+					names: self.derive([names], ([value]) => value),
+					set: async (next) => {
+						names.set(next);
+						return null;
+					},
+				};
+			});
+			h.serve(Two, counting([]), {
+				admit: (_params, _principal, self) =>
+					self.derive([self.get(Grants, {}).names], ([names]) =>
+						allow({ granted: names as GrantableName<typeof Two>[] }),
+					),
+			});
+		});
+		await host.load([{ name: "@test/app", facet }], context);
+		const ref = await host.get(Two, {}, context);
+		const bump = ref.bump!;
+		const grants = await host.get(Grants, {}, context);
+		await grants.set([], context);
+		await waitLive(ref);
+		expect(ref.bump).toBe(undefined);
+		// A function taken while it was granted is refused by the rebuilt object.
+		expect(await rejection(bump(context))).toEqual({ code: "forbidden", message: 'app.two has not granted "bump"' });
+		await host.close(context);
 	});
 
 	it.each([
-		["an unknown variant", { variant: "other", members: {} }, 'variant "other": not a variant of app.two'],
-		["a missing member", { variant: "full", members: { n: constant(1) } }, "bump: a method is a function"],
 		[
-			"an extra member",
-			{ variant: "view", members: { n: constant(1), bump: async () => null } },
-			"bump: not a member",
+			"a missing plain member",
+			() => ({ n: constant(1), secret: () => constant(2), pinged: () => constant(0), bump: async () => null }),
+			"read: a method is a function",
+		],
+		["an extra member", () => ({ ...counting([])(), other: constant(1) }), "other: not a member"],
+		[
+			"a grantable state member that is no builder",
+			() => ({ ...counting([])(), secret: constant(2) }),
+			"secret: a grantable member is a function (a builder of its state or events)",
 		],
 	])("%s fails the activation broken", async (_, implementation, message) => {
-		const { host, errors } = await two(implementation);
+		const { host, errors } = await two(implementation, ["secret"]);
 		expect(await rejection(host.get(Two, {}, context))).toEqual({
 			code: "unavailable",
 			message: `app.two: ${message}`,
@@ -623,14 +732,16 @@ describe("remote variants", () => {
 		expect(failures(errors)).toEqual(["app.two: broken"]);
 	});
 
-	it("a member outside the bound variant fails invalid/member", async () => {
-		const { host } = await two({ variant: "view", members: { n: constant(1) } });
-		const ref = (await host.get(Two, {}, context)) as unknown as { bump(ctx: Context): Promise<null> };
-		expect(await rejection(ref.bump(context))).toEqual({
-			code: "invalid",
-			reason: "member",
-			message: 'app.two (variant view) has no method "bump"',
-		});
+	it("granted names the contract lacks, or a plain member, break the attempt naming them", async () => {
+		for (const name of ["missing", "read"]) {
+			const { host, errors } = await two(counting([]), [name as "export"]);
+			const failed = await rejection(host.get(Two, {}, context));
+			expect(failed).toMatchObject({ code: "unavailable" });
+			expect(String((failed as { message: string }).message)).toContain(
+				`app.two: its admission granted "${name}": no grantable member or flag of its contract`,
+			);
+			expect(failures(errors)).toEqual(["app.two: broken"]);
+		}
 	});
 });
 

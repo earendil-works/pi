@@ -67,16 +67,14 @@ describe("a watch store", () => {
 			version: 1,
 			params: {},
 			hostAddress: () => Server(),
-			variants: { main: { state: { text: str() } } },
+			state: { text: str() },
 		});
 		const server = createHost({ address: Server(), principal: { kind: "server" }, onError: () => {} });
 		await server.load(
 			[
 				{
 					name: "@test/greeting",
-					facet: defineFacet((h) =>
-						h.serve(Greeting, () => ({ variant: "main", members: { text: constant("hi") } })),
-					),
+					facet: defineFacet((h) => h.serve(Greeting, () => ({ text: constant("hi") }))),
 				},
 			],
 			context,

@@ -7,7 +7,7 @@ import {
 	withTelemetry,
 } from "../../src/context/index.ts";
 import { hostKind, int, method, remote, str } from "../../src/contracts/index.ts";
-import { createHost, defineFacet, type Held, type Host } from "../../src/host/index.ts";
+import { createHost, defineFacet, type Host, type Reference } from "../../src/host/index.ts";
 import { memoryLinkPair } from "../../src/link/index.ts";
 import { jsonPart } from "../../src/link/internal.ts";
 import {
@@ -18,6 +18,8 @@ import {
 	fakeTimers,
 	flushed,
 	forEachCodec,
+	grantOf,
+	NOTES_EDITOR,
 	PlacedNotes,
 	type RawPeer,
 	rawWorkers,
@@ -63,9 +65,9 @@ forEachCodec(() => {
 				message: "session|S2: not authorized",
 			});
 			expect(guest.resolves).toEqual([]);
-			expect((await guest.tab.get(PlacedNotes, { session: "S1" }, context)).variant).toBe("reader");
+			expect(grantOf(await guest.tab.get(PlacedNotes, { session: "S1" }, context))).toEqual([]);
 			const owner = await relayed({ authorize });
-			expect((await owner.tab.get(PlacedNotes, { session: "S2" }, context)).variant).toBe("editor");
+			expect(grantOf(await owner.tab.get(PlacedNotes, { session: "S2" }, context))).toEqual(NOTES_EDITOR);
 		});
 
 		it("ref.retry() holds a refused hold again: authorize admitting it later, over a link and on this host (audit)", async () => {
@@ -119,7 +121,7 @@ forEachCodec(() => {
 				params: { n: int() },
 				// An address of the right kind with params of the wrong type, as a buggy `hostAddress` could compute.
 				hostAddress: ({ n }) => ({ kind: "session", params: { id: n }, key: "" }) as never,
-				variants: { v: { state: { n: int() } } },
+				state: { n: int() },
 			});
 			const { tab, resolves } = await relayed();
 			expect(await rejection(tab.get(Misplaced, { n: 1 }, context))).toMatchObject({
@@ -387,7 +389,7 @@ forEachCodec(() => {
 				version: 1,
 				params: {},
 				hostAddress: () => Server(),
-				variants: { v: { methods: { app: method(undefined, str()) } } },
+				methods: { app: method(undefined, str()) },
 			});
 			const resolved: (string | undefined)[] = [];
 			let worker: Host<TestPrincipal> | undefined;
@@ -424,7 +426,7 @@ forEachCodec(() => {
 				withContextValue(App, "the app's", context),
 			);
 			const facet = defineFacet<TestPrincipal>((h) =>
-				h.serve(Who, () => ({ variant: "v", members: { app: async (ctx) => ctx.value(App) ?? "none" } })),
+				h.serve(Who, () => ({ app: async (ctx) => ctx.value(App) ?? "none" })),
 			);
 			await server.load([{ name: "@test/server", facet }], context);
 			server.hold(PlacedNotes, { session: "S1" }, context);
@@ -443,7 +445,7 @@ forEachCodec(() => {
 				version: 1,
 				params: {},
 				hostAddress: () => Server(),
-				variants: { v: { methods: { incarnation: method(undefined, str()) } } },
+				methods: { incarnation: method(undefined, str()) },
 			});
 			const events: string[] = [];
 			let worker: Host<TestPrincipal> | undefined;
@@ -478,12 +480,9 @@ forEachCodec(() => {
 			);
 			const facet = defineFacet<TestPrincipal>((h) =>
 				h.serve(Who, () => ({
-					variant: "v",
-					members: {
-						incarnation: async (ctx) => {
-							events.push(`handled ${ctx.incarnation}`);
-							return ctx.incarnation;
-						},
+					incarnation: async (ctx) => {
+						events.push(`handled ${ctx.incarnation}`);
+						return ctx.incarnation;
 					},
 				})),
 			);
@@ -647,7 +646,7 @@ describe('routes and references sharing one wire hold (decision "References shar
 	});
 
 	it("a resolver re-entering for the same key finds the stored object: one hold; its own reference released there is not the last", async () => {
-		const inner: Held<typeof PlacedNotes>[] = [];
+		const inner: Reference<typeof PlacedNotes>[] = [];
 		const { server, workers } = await relayed({
 			resolve: async (_address, made) => {
 				const joined = server.hold(PlacedNotes, S1, context);
@@ -664,7 +663,7 @@ describe('routes and references sharing one wire hold (decision "References shar
 	});
 
 	it("a resolver that fails after re-entering fails both references waiting; the next request resolves again", async () => {
-		const inner: Held<typeof PlacedNotes>[] = [];
+		const inner: Reference<typeof PlacedNotes>[] = [];
 		const fail = { now: true };
 		const { server, workers } = await relayed({
 			resolve: async (_address, made) => {
@@ -687,7 +686,7 @@ describe('routes and references sharing one wire hold (decision "References shar
 	it("too_large/part: A1 retrying alone re-enters the resolver, which finds C's new entry; A2 and C release in any order", async () => {
 		const peers: RawPeer[] = [];
 		const workers = rawWorkers(peers, { limits: { part: 64 } });
-		const reentered: Held<typeof PlacedNotes>[] = [];
+		const reentered: Reference<typeof PlacedNotes>[] = [];
 		const step = { reenter: false, fail: false };
 		const { server } = await relayed({
 			resolve: async (address) => {

@@ -103,32 +103,30 @@ describe("a component's scope", () => {
 	});
 });
 
-describe('a scope\'s reference in one variant (decision "C15 stands; the UI bindings follow the variant")', () => {
-	it("reads it narrowed while live in the variant; a change of its variant calls changed, once per state", async () => {
+describe("a scope's live reference (slice 15 §1.5)", () => {
+	it("reads it while live and while it rebinds; a change of its grant calls changed, once per state", async () => {
 		const { client, admit } = await desk();
 		let changes = 0;
 		const scope = new TuiScope(client, () => changes++);
 		const held = scope.hold(Desk, {});
-		const editor = scope.variant(held, "editor");
-		const reader = scope.variant(held, "reader");
-		expect(reader()).toBeUndefined();
-		await until(() => reader() === held);
-		expect(editor()).toBeUndefined();
+		const live = scope.live(held);
+		expect(live()).toBeUndefined();
+		await until(() => live() === held);
+		expect(held.write).toBeUndefined();
 		await new Promise((resolve) => setTimeout(resolve, 20));
 		const before = changes;
-		// Another allowed value while it is held: loading, then live in the other variant.
+		// Another allowed value while it is held: loading (still read: it was live), then live with `write`.
 		await admit("editor");
-		await until(() => editor() === held);
-		await editor()!.write("edited", context);
-		expect(reader()).toBeUndefined();
+		await until(() => live()?.write !== undefined);
+		await live()!.write!("edited", context);
 		await new Promise((resolve) => setTimeout(resolve, 20));
 		// One watch of the reference's state, whoever asked for it: a redraw per state.
 		expect(changes - before).toBe(2);
 		await admit("none");
 		await until(() => held.state.value.kind === "failed");
-		expect(editor()).toBeUndefined();
+		expect(live()).toBeUndefined();
 		scope.dispose();
-		expect(editor()).toBeUndefined();
+		expect(live()).toBeUndefined();
 	});
 
 	it("follows a reference the scope does not hold, until dispose", async () => {
@@ -136,18 +134,18 @@ describe('a scope\'s reference in one variant (decision "C15 stands; the UI bind
 		let changes = 0;
 		const scope = new TuiScope(client, () => changes++);
 		const held = client.hold(Desk, {}, context);
-		const editor = scope.variant(held, "editor");
+		const live = scope.live(held);
 		await until(() => held.state.value.kind === "live");
 		const before = changes;
 		await admit("editor");
-		await until(() => editor() === held && changes > before);
+		await until(() => live()?.write !== undefined && changes > before);
 		scope.dispose();
 		const after = changes;
 		await admit("reader");
-		await until(() => held.variant === "reader" && held.state.value.kind === "live");
+		await until(() => held.write === undefined && held.state.value.kind === "live");
 		expect(changes).toBe(after);
-		expect(editor()).toBeUndefined();
 		held.release();
+		expect(live()).toBeUndefined();
 	});
 
 	it("keeps no reference its holder released, while the scope lives (GC)", async () => {
@@ -155,8 +153,8 @@ describe('a scope\'s reference in one variant (decision "C15 stands; the UI bind
 		const scope = new TuiScope(client, () => {});
 		const released = await (async () => {
 			const held = client.hold(Desk, {}, context);
-			const reader = scope.variant(held, "reader");
-			await until(() => reader() === held);
+			const live = scope.live(held);
+			await until(() => live() === held);
 			held.release();
 			return new WeakRef(held);
 		})();

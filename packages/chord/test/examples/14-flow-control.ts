@@ -29,7 +29,7 @@ const View = remote("example.view", {
 	version: 1,
 	params: { session: str() },
 	hostAddress: ({ session }) => Session({ id: session }),
-	variants: { owner: { state: { reply: obj({ text: str() }) } } },
+	state: { reply: obj({ text: str() }) },
 });
 
 const ReplyDoc = defineState("reply", { schema: obj({ text: str() }), version: 1, initial: () => ({ text: "" }) });
@@ -47,10 +47,7 @@ const workerFacet = defineFacet<P>((host) => {
 			},
 		};
 	});
-	host.serve(View, (_params, _principal, self) => ({
-		variant: "owner",
-		members: { reply: self.get(Reply, {}).reply },
-	}));
+	host.serve(View, (_params, _principal, self) => ({ reply: self.get(Reply, {}).reply }));
 });
 
 /** A worker for `id`, loaded. */

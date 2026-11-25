@@ -202,7 +202,8 @@ describe("a worker's batches", () => {
 		const worker = { kind: "worker", key: "project|p1" };
 		const { client, batches } = await ingesting(worker, { [JSON.stringify(worker)]: "project|p1" });
 		const held = await client.get(WorkerTelemetry, {}, context);
-		if (held.variant !== "worker") throw new Error("expected the worker variant");
+		const { ingest } = held;
+		if (ingest === undefined) throw new Error("expected ingest granted to a worker");
 		const own = { ...span(client, 1), id: "w:1", traceId: "w:1", attributes: { tags: ["a", "b"] } };
 		const metric = {
 			intervalMs: 10_000,
@@ -214,12 +215,12 @@ describe("a worker's batches", () => {
 			min: 4,
 			max: 6,
 		} as const;
-		expect(await held.ingest({ spans: [own], metrics: [metric] }, context)).toEqual({ written: 1, dropped: 0 });
+		expect(await ingest({ spans: [own], metrics: [metric] }, context)).toEqual({ written: 1, dropped: 0 });
 		expect(batches[0]).toEqual({
 			spans: [{ ...own, attributes: { tags: ["a", "b"], "chord.host": "project|p1" } }],
 			metrics: [metric],
 		});
 		const { client: page } = await ingesting({ kind: "owner" });
-		expect((await page.get(WorkerTelemetry, {}, context)).variant).toBe("other");
+		expect((await page.get(WorkerTelemetry, {}, context)).ingest).toBe(undefined);
 	});
 });

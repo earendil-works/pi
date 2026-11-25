@@ -9,7 +9,19 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { awaitWithContext, BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
-import { evolve, int, local, map, method, obj, oneOf, queries, remote, str } from "../../src/contracts/index.ts";
+import {
+	evolve,
+	grantable,
+	int,
+	local,
+	map,
+	method,
+	obj,
+	oneOf,
+	queries,
+	remote,
+	str,
+} from "../../src/contracts/index.ts";
 import { broken, ChordError } from "../../src/data/index.ts";
 import { defineState } from "../../src/documents/index.ts";
 import { Decision } from "../../src/host/admission.ts";
@@ -85,17 +97,24 @@ const Missing = local("test.missing", { version: 1, params: {}, members: { n: in
 
 const Mode = obj({ mode: oneOf("read", "write") });
 
-/** The admitted type: a reader or a writer variant by the admitted mode. */
+/** The admitted type: everyone admitted reads its text; the admitted mode `write` grants `write`. */
 const Doc = remote("test.doc", {
 	version: 1,
 	params: { id: str() },
 	hostAddress: () => Server(),
 	admission: Mode,
-	variants: {
-		reader: { state: { text: str() } },
-		writer: { state: { text: str() }, methods: { write: method(str(), str()) } },
-	},
+	state: { text: str() },
+	methods: { write: grantable(method(str(), str())) },
 });
+
+/** How a document's reference was admitted: `writer` granted `write`, `reader` live without it, else `undefined`. */
+function role(doc: {
+	readonly granted: ReadonlySet<string>;
+	readonly state: { readonly value: { readonly kind: string } };
+}) {
+	if (doc.granted.has("write")) return "writer";
+	return doc.state.value.kind === "live" ? "reader" : undefined;
+}
 
 /** `Doc` with another admission schema (the same wire fingerprint): a reload does not rehearse across it. */
 const DocV2 = evolve(Doc, (e) => e.admission(obj({ mode: oneOf("read", "write"), since: int() })));
@@ -174,7 +193,8 @@ declare function stateOf(): {
 /** What a mode means to the admission. */
 function decide(mode: string | undefined) {
 	if (mode === "throw") throw new Error("the rule threw");
-	return mode === "read" || mode === "write" ? allow({ mode }) : deny("no access");
+	if (mode === "read") return allow({ mode });
+	return mode === "write" ? allow({ mode, granted: ["write"] }) : deny("no access");
 }
 
 /** The admission of `Doc`: the caller's mode in `Access`; with `share`, its per-document source too. */
@@ -238,7 +258,6 @@ function docFacet(
 					);
 				}
 				const shown = self.derive([text], ([t]) => t.text);
-				if (admitted.mode === "read") return { variant: "reader", members: { text: shown } };
 				const write = async (next: string, ctx: Parameters<typeof text.change>[1]) => {
 					// As a handler waits: its caller's cancellation and its attempt's seal end the wait.
 					await awaitWithContext(code.gate ?? Promise.resolve(), ctx);
@@ -248,7 +267,7 @@ function docFacet(
 					}, ctx);
 					return `${admitted.mode}:${next}`;
 				};
-				return { variant: "writer", members: { text: shown, write } };
+				return { text: shown, write };
 			},
 			{ admit: code.admit ?? admitBy(), linger: code.linger },
 		);
@@ -317,7 +336,7 @@ function reports(errors: readonly HostError[]): string[] {
 }
 
 describe("deny, then allow", () => {
-	it("a direct hold shows failed { denied } with the reason, then binds the variant the value selects", async () => {
+	it("a direct hold shows failed { denied } with the reason, then binds with what the value grants", async () => {
 		const built: string[] = [];
 		const { h, errors, set } = await served({ built });
 		const doc = h.hold(Doc, { id: "a" }, context);
@@ -332,7 +351,7 @@ describe("deny, then allow", () => {
 		expect(built).toEqual([]);
 		await set("read");
 		await delivered();
-		expect([doc.state.value.kind, doc.variant, doc.text.value]).toEqual(["live", "reader", "t"]);
+		expect([doc.state.value.kind, role(doc), doc.text.value]).toEqual(["live", "reader", "t"]);
 		expect(built).toEqual(["a:read"]);
 		expect(states).toEqual(["failed: no access", "loading", "live"]);
 		expect(errors).toEqual([]);
@@ -347,7 +366,7 @@ describe("deny, then allow", () => {
 		});
 		await set("write");
 		const doc = await h.get(Doc, { id: "a" }, context);
-		expect(doc.variant).toBe("writer");
+		expect(role(doc)).toBe("writer");
 		await h.close(context);
 	});
 
@@ -375,7 +394,7 @@ describe("the watch table (2.2)", () => {
 		const { h, set } = await served({ built, gate: gate.promise }, { mode: "write" });
 		const doc = await h.get(Doc, { id: "a" }, context);
 		const states = statesOf(await doc.state.watch(context));
-		const writing = doc.variant === "writer" ? doc.write("x", context) : undefined;
+		const writing = doc.write ? doc.write("x", context) : undefined;
 		// Another person's mode changes the source's value, not this caller's decision.
 		await set("read", "guest");
 		await set("write");
@@ -387,20 +406,20 @@ describe("the watch table (2.2)", () => {
 		await h.close(context);
 	});
 
-	it("another allowed value seals the attempt: its calls reject unavailable, its holders see loading, then the new variant", async () => {
+	it("another allowed value seals the attempt: its calls reject unavailable, its holders see loading, then the new grant", async () => {
 		const built: string[] = [];
 		const { h, errors, set } = await served({ built, gate: new Promise<void>(() => {}) }, { mode: "write" });
 		const doc = await h.get(Doc, { id: "a" }, context);
 		const states = statesOf(await doc.state.watch(context));
 		const frames = changesOf(await doc.text.watch(context));
-		const writing = rejection(doc.variant === "writer" ? doc.write("x", context) : Promise.resolve());
+		const writing = rejection(doc.write ? doc.write("x", context) : Promise.resolve());
 		await set("read");
 		// In the flush of the change: sealed, and loading with the last value readable.
 		expect(doc.state.value.kind).toBe("loading");
 		expect(doc.text.value).toBe("t");
 		expect(told(await writing)).toEqual({ code: "unavailable", message: "test.doc(a): its admission changed" });
 		await delivered();
-		expect([doc.state.value.kind, doc.variant]).toEqual(["live", "reader"]);
+		expect([doc.state.value.kind, role(doc)]).toEqual(["live", "reader"]);
 		expect(built).toEqual(["a:write", "a:read"]);
 		expect(states).toEqual(["loading", "live"]);
 		// The same text on the new instance: no frame.
@@ -414,7 +433,7 @@ describe("the watch table (2.2)", () => {
 		const { h, set } = await served({ built, gate: new Promise<void>(() => {}) }, { mode: "write" });
 		const doc = await h.get(Doc, { id: "a" }, context);
 		const states = statesOf(await doc.state.watch(context));
-		const writing = rejection(doc.variant === "writer" ? doc.write("x", context) : Promise.resolve());
+		const writing = rejection(doc.write ? doc.write("x", context) : Promise.resolve());
 		await set("none");
 		expect(doc.state.value).toMatchObject({ kind: "failed", cause: { kind: "denied" } });
 		expect(told(await writing)).toEqual({
@@ -433,7 +452,7 @@ describe("the watch table (2.2)", () => {
 		const built: string[] = [];
 		const { h, set } = await served({ built, gate: new Promise<void>(() => {}) }, { mode: "write" });
 		const doc = await h.get(Doc, { id: "a" }, context);
-		const writing = rejection(doc.variant === "writer" ? doc.write("x", context) : Promise.resolve());
+		const writing = rejection(doc.write ? doc.write("x", context) : Promise.resolve());
 		await set("throw");
 		expect(((await writing) as ChordError).code).toBe("unavailable");
 		await delivered();
@@ -475,14 +494,13 @@ describe("the watch table (2.2)", () => {
 	it("a call that crossed a seal runs on the next attempt under its value", async () => {
 		const { h, set } = await served({ built: [] }, { mode: "write" });
 		const doc = await h.get(Doc, { id: "a" }, context);
-		const writer = doc as unknown as { write(text: string, ctx: typeof context): Promise<string> };
+		const writer = { write: doc.write! };
 		await set("read");
 		// Made while the new attempt admits (the reference is loading): it waits at the gate, never `not_ready`, and
 		// meets the reader the new value selects, not the writer it was sent to.
 		expect(told(await rejection(writer.write("y", context)))).toEqual({
-			code: "invalid",
-			reason: "member",
-			message: 'test.doc(a) (variant reader) has no method "write"',
+			code: "forbidden",
+			message: 'test.doc(a) has not granted "write"',
 		});
 		await set("write");
 		expect(await writer.write("z", context)).toBe("write:z");
@@ -504,7 +522,7 @@ describe("what a denial removes", () => {
 			code: "forbidden",
 			message: "no access",
 		});
-		expect(doc.variant).toBe(undefined);
+		expect(role(doc)).toBe(undefined);
 		expect(valuesOf(frames)).toEqual([{ failed: "no access" }]);
 		// Data already delivered to application code is not retracted.
 		expect(watch.value).toBe("t");
@@ -564,7 +582,7 @@ describe("a failed admitted object", () => {
 			retryAt: undefined,
 		});
 		expect(() => doc.text.value).toThrow("no access");
-		expect([doc.variant, present.value]).toEqual([undefined, []]);
+		expect([role(doc), present.value]).toEqual([undefined, []]);
 		await delivered();
 		expect([built, decisions.length - made]).toEqual([["a:read"], 0]);
 		// Allowed again: another decision than the denial, so the object is retried.
@@ -591,7 +609,7 @@ describe("a failed admitted object", () => {
 		expect([doc.state.value, built]).toMatchObject([{ kind: "failed", cause: { kind: "broken" } }, ["a:write"]]);
 		await set("read");
 		await delivered();
-		expect([doc.state.value.kind, doc.variant, built]).toEqual(["live", "reader", ["a:write", "a:read"]]);
+		expect([doc.state.value.kind, role(doc), built]).toEqual(["live", "reader", ["a:write", "a:read"]]);
 		doc.release();
 		await h.close(context);
 	});
@@ -810,16 +828,16 @@ describe("declaration errors", () => {
 			version: 1,
 			params: {},
 			hostAddress: () => Server(),
-			variants: { only: { state: { n: int() } } },
+			state: { n: int() },
 		});
 		const serve = (facet: FacetHost<TestPrincipal>) => facet.serve as (...args: unknown[]) => void;
-		const factory = () => ({ variant: "only", members: { n: constant(1) } });
+		const factory = () => ({ n: constant(1) });
 		const admit = () => constant(allow({ mode: "read" }));
 		expect(await refused((facet) => serve(facet)(Doc, factory))).toEqual([
-			'plugin "@test/app": test.doc: its contract declares an admission: serve it with admit',
+			'plugin "@test/app": test.doc: its contract takes an admission (its admission, grantable members or flags): serve it with admit',
 		]);
 		expect(await refused((facet) => serve(facet)(Plain, factory, { admit }))).toEqual([
-			'plugin "@test/app": test.plain: admit needs the contract to declare its admission',
+			'plugin "@test/app": test.plain: admit needs an admission, grantable members or flags in the contract',
 		]);
 		expect(await refused((facet) => serve(facet)(Share, () => ({ open: constant("yes") }), { admit }))).toEqual([
 			'plugin "@test/app": test.share: only a remote type takes an admission (admit)',
@@ -890,11 +908,11 @@ describe("over a link", () => {
 		});
 		await set("write");
 		await delivered();
-		expect([doc.state.value.kind, doc.variant, doc.text.value]).toEqual(["live", "writer", "t"]);
+		expect([doc.state.value.kind, role(doc), doc.text.value]).toEqual(["live", "writer", "t"]);
 		const frames = changesOf(await doc.text.watch(context));
 		await set("none");
 		await delivered();
-		expect(doc.variant).toBe(undefined);
+		expect(role(doc)).toBe(undefined);
 		expect(told(await rejection((async () => doc.text.value)()))).toEqual({
 			code: "forbidden",
 			message: "no access",
@@ -902,7 +920,7 @@ describe("over a link", () => {
 		expect(valuesOf(frames)).toEqual([{ failed: "no access" }]);
 		await set("read");
 		await delivered();
-		expect([doc.state.value.kind, doc.variant, doc.text.value]).toEqual(["live", "reader", "t"]);
+		expect([doc.state.value.kind, role(doc), doc.text.value]).toEqual(["live", "reader", "t"]);
 		expect(valuesOf(frames)).toEqual([{ failed: "no access" }, "t"]);
 		expect(states).toEqual(["failed: no access", "loading", "live", "failed: no access", "loading", "live"]);
 		doc.release();
@@ -914,13 +932,13 @@ describe("over a link", () => {
 		const { server, client, set } = await overLink({ built: [], gate: new Promise<void>(() => {}) });
 		await set("write");
 		const doc = await client.get(Doc, { id: "a" }, context);
-		const first = rejection(doc.variant === "writer" ? doc.write("x", context) : Promise.resolve());
+		const first = rejection(doc.write ? doc.write("x", context) : Promise.resolve());
 		await delivered();
 		await set("none");
 		expect(told(await first)).toMatchObject({ code: "forbidden", reason: "revoked" });
 		await set("write");
 		await delivered();
-		const second = rejection(doc.variant === "writer" ? doc.write("x", context) : Promise.resolve());
+		const second = rejection(doc.write ? doc.write("x", context) : Promise.resolve());
 		await delivered();
 		await set("read");
 		expect(told(await second)).toMatchObject({ code: "unavailable" });
@@ -950,7 +968,7 @@ describe("over a link", () => {
 		const access = await server.get(Access, {}, context);
 		await access.set({ who: "owner", mode: "write" }, context);
 		const doc = await client.get(Doc, { id: "a" }, context);
-		const writer = doc as unknown as { write(text: string, ctx: typeof context): Promise<string> };
+		const writer = { write: doc.write! };
 		// The server announced a window of one call: the others wait at the consumer. The running call's answer frees
 		// its slot, so the second is sent and crosses the `failed` on the wire; the third still waits when it arrives.
 		const running = rejection(writer.write("running", context));
@@ -1030,7 +1048,7 @@ describe("a reload of an admission's source (test 20)", () => {
 		const { h, errors, reload } = await served(code, { mode: "write" });
 		const doc = await h.get(Doc, { id: "a" }, context);
 		const states = statesOf(await doc.state.watch(context));
-		const writing = doc.variant === "writer" ? doc.write("x", context) : undefined;
+		const writing = doc.write ? doc.write("x", context) : undefined;
 		// The source's successor stays loading until its native opens: the last decision is kept meanwhile.
 		const report = await reload({ access: accessFacet({ opened: opened.promise }) });
 		expect(report.objects).toEqual([{ object: "test.access", kind: "restarted" }]);
@@ -1205,7 +1223,7 @@ describe("a reload of the admitted type (2.5, test 20)", () => {
 		const gate = Promise.withResolvers<void>();
 		const { h, errors, set, reload } = await served({ built: [], gate: gate.promise }, { mode: "write" });
 		const doc = await h.get(Doc, { id: "a" }, context);
-		const writing = rejection(doc.variant === "writer" ? doc.write("x", context) : Promise.resolve());
+		const writing = rejection(doc.write ? doc.write("x", context) : Promise.resolve());
 		await reload({ doc: docFacet({ built }) });
 		// The old attempt drains its call; its successor waits for it.
 		expect(doc.state.value.kind).toBe("live");
@@ -1230,7 +1248,7 @@ describe("a reload of the admitted type (2.5, test 20)", () => {
 		const gate = Promise.withResolvers<void>();
 		const { h, set, reload } = await served({ built: [], gate: gate.promise }, { mode: "write" });
 		const doc = await h.get(Doc, { id: "a" }, context);
-		const writing = rejection(doc.variant === "writer" ? doc.write("x", context) : Promise.resolve());
+		const writing = rejection(doc.write ? doc.write("x", context) : Promise.resolve());
 		// The new admission also needs a type nobody serves: the successor parks on it and decides nothing.
 		const waits: Admit<typeof Doc, TestPrincipal> = (params, principal, self) => {
 			self.get(Missing, {});
@@ -1253,14 +1271,14 @@ describe("a reload of the admitted type (2.5, test 20)", () => {
 		const gate = Promise.withResolvers<void>();
 		const { h, errors, set, reload } = await served({ built: [], gate: gate.promise }, { mode: "write" });
 		const doc = await h.get(Doc, { id: "a" }, context);
-		const writing = rejection(doc.variant === "writer" ? doc.write("x", context) : Promise.resolve());
+		const writing = rejection(doc.write ? doc.write("x", context) : Promise.resolve());
 		await reload({ doc: docFacet({ built }) });
 		await set("read");
 		expect([doc.state.value.kind, doc.text.value]).toEqual(["loading", "t"]);
 		expect(told(await writing)).toMatchObject({ code: "unavailable" });
 		gate.resolve();
 		await delivered();
-		expect([doc.state.value.kind, doc.variant]).toEqual(["live", "reader"]);
+		expect([doc.state.value.kind, role(doc)]).toEqual(["live", "reader"]);
 		expect(errors).toEqual([]);
 		await h.close(context);
 	});
@@ -1298,17 +1316,17 @@ describe("an admission that reads a named query", () => {
 		version: 1,
 		params: {},
 		hostAddress: () => Server(),
-		admission: str(),
-		variants: { one: { state: { label: str() } } },
+		admission: obj({ shelf: str() }),
+		state: { label: str() },
 	});
 
 	/** A facet serving `Reader`, whose admission reads the shelf's items live. */
 	const readerFacet = () =>
 		defineFacet<TestPrincipal>((facet) =>
-			facet.serve(Reader, () => ({ variant: "one", members: { label: constant("x") } }), {
+			facet.serve(Reader, () => ({ label: constant("x") }), {
 				admit: (_params, _principal, self) => {
 					const items = self.liveQuery(self.get(Shelf, {}).items.all, {}, { first: 3 });
-					return self.derive([items], () => allow("yes"));
+					return self.derive([items], () => allow({ shelf: "yes" }));
 				},
 			}),
 		);
@@ -1399,7 +1417,7 @@ describe("a commit in flight at the cut", () => {
 		const doc = await h.get(Doc, { id: "a" }, context);
 		const frames = changesOf(await doc.text.watch(context));
 		const held = holdNextCommit(store);
-		const writing = rejection(doc.variant === "writer" ? doc.write("kept", context) : Promise.resolve());
+		const writing = rejection(doc.write ? doc.write("kept", context) : Promise.resolve());
 		await held.entered;
 		// The cut, with the journal's commit admitted and its step running.
 		await access.set({ who: "server", mode: "none" }, context);

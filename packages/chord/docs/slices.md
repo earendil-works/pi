@@ -76,6 +76,13 @@ slice spec's section citations are for orientation, not a reading limit (owner, 
   (`remote/hold.ts`), a route's admission (`host/route-admission.ts`, the gated path and its fence in
   `remote/path.ts`, `Channel.fence`, `createWorkers`' `admit`), `deleteHostData(address, ctx, { plugin })`; example
   69.
+- **Slice 15, grantable members and flags** (built 2026-11-25, `slice-15.md` §1): `grantable(...)` and `flags` in
+  remote contracts (`contracts/declare.ts`, `schema.ts`; members, grantable names and flags in `VersionData`, the
+  shape a grant leaves in `grantedMembers`), `GrantableName`, `allow({ granted })` read against the contract
+  (`host/admission.ts`), builders called for granted members only (`host/members.ts`), references with optional
+  grantable members and `granted` (`host/reference.ts`), `granted` indexes on the wire's `bound`, `useLive` and
+  `TuiScope.live` (`surfaces/live.ts`); variants removed everywhere (contracts, `evolve`, `accepts`, factories,
+  references, wire, React and TUI bindings); example 77.
 - **Chord's shared code** (upstream pi): `src/watch.ts` (`Watch`, `NativeWatch`, `WatchHandle`, `WatchEnd`,
   `NativeWatchable`), Delta (`track`, `diffRevisions`, `applyImmutable`, encoders, `PendingOps`, `appendText`),
   context, JSON, output, SQLite drivers.
@@ -107,6 +114,7 @@ telemetry last, since it instruments the app kit too; 2026-11-01: the plugin mod
 | 11 | **Web and TUI** | `chord/web` (page host), `chord/react` (React hooks), `chord/tui` with `chord/tui/launcher` (sandbox, launcher) and `chord/surfaces` (their server side), from p2's code |
 | 9 | **Telemetry** | spans, events, metrics across hosts |
 | 14 | **Admission, named live queries, lists, joins by key** | admission with a typed value, route admission, named queries read live by any object on the store's host with a skip test and a keyed probe, counts, lists, column sets with `exists` and a one-to-one join, conditions as data (`slice-14.md`; built in parts, see "What exists" and "Carry-over") |
+| 15 | **Grantable members and flags, denials with a message, the commit index, stale holders, lazy queries** | variants replaced by grantable members and flags, `deny(reason, message?)`, an index of open reads by equality and kept keys for the commit step, holders never left live and stale after a stall, a reference's named queries built on first use (`slice-15.md`) |
 
 The playground (`apps/chord-playground`) moves to the new code once slice 4 exists. Round-3 cuts (C3-C16) and
 carry-over entries are decided in the slice that first needs them.
@@ -136,7 +144,8 @@ pattern, no code. Decided cuts are noted where they apply.
 | 4 | revocation (`revokedBy`, `host.revoke`, propagation to children) | 4b |
 | 5 | `local` types: params, members, checked arguments (Q15), results unchecked | 1 |
 | 5 | version and fingerprint match at acquisition; reserved member names (`then`, `release`, `state`, `retry`) | 1 |
-| 5 | `remote` types, variants chosen by the factory (`{ variant, members }`), identity with principal key, calls checked against the binding's variant | 3a |
+| 5 | `remote` types, identity with principal key, calls checked against the binding | 3a |
+| 5 | grantable members and flags (`grantable`, `flags`, `GrantableName`), `allow({ granted })`, builders called only if granted, `forbidden` for a member not granted; variants removed | 15 |
 | 5 | `accepts` mappings at runtime (old consumers), keyed members per key, `contract_mismatch` | 7b |
 | 5 | event members (remote `events`, local `event(schema)`), `EventMember`/`EventSource`/`EventSubscription`, the member check for event members | events |
 | 6 | lifecycle, one object per identity, lifetime from kind and params (Q-A), factory, activation, ending | 1 |
@@ -151,7 +160,7 @@ pattern, no code. Decided cuts are noted where they apply.
 | 7 | `ctx.get` (call-scoped references) | 3a |
 | 7 | `ref.state` (tagged), `ref.retry()`, `host.hold`, calls parking, failed references | 3b |
 | 7 | getters wait through `waiting`; `host.hold` throws only for invalid params | 7a |
-| 7 | `ref.variant` as discriminant, `RefIn` (C15: no `inVariant`/`expectVariant`) | 3a |
+| 7 | a reference's grantable members (optional, there while granted or before it was first live) and `granted` | 15 |
 | 7 | `state: false` (C8: cut) | - |
 | 7 | remote references of one host sharing one wire hold (sharing key per path, seen members, a non-final release cancelling its own calls newest first, the private retry after `too_large/part`, the hold span as shared work; spec `shared-holds/design.md`) | shared holds |
 | 7 | optional dependencies as registries | doc (8) |
@@ -201,7 +210,7 @@ pattern, no code. Decided cuts are noted where they apply.
 | 22 | trace carriers (R5) | 9 |
 | 22 | the `event` message, `ack.events`, both codecs, part limits and compression for event values | events |
 | 23 | `useEvents` (`chord/react`), `TuiScope.on` | events |
-| 23 | `useVariant` (`chord/react`), `TuiScope.variant`: a reference read in one variant (decision "C15 stands; the UI bindings follow the variant") | after 14 (2026-11-15) |
+| 23 | `useLive` (`chord/react`), `TuiScope.live`: a reference read while live, following its `granted` (replace `useVariant` and `TuiScope.variant`) | 15 |
 | 23 | workers: a worker's exit published after its link's work ended, its incarnation in `WorkerState`; a route's `opened(incarnation)` (§3) | after 14 (2026-11-15) |
 | 27 | event edits (`event`, `addEvent`, `removeEvent`), `accepts.events`, one mapping per emit per older version (`event_mapping_failed`) | events |
 | 23 | HTTP (routes, wraps, responses as descriptions, request bodies, plugin sockets), workers; channels and chunked transfers stay owner patterns until a second user | 10 |
@@ -264,8 +273,8 @@ deleted (the slice's spec and code are the record). Moved here from `carry-over.
   other host's answer; build it when a case reports through a relay.
 - **p2 keeps its hand-written generation checks** (its principal's `generation`, the checks in its report methods)
   until it is ported: it passes `store` to `createWorkers` now, so they are redundant, not wrong.
-- **`useVariant`'s snapshot** (the narrowed reference, so two `live` states in different variants differ to React)
-  is tested through the page (a variant change while mounted), not with a forced coalesced render.
+- **`useLive`'s snapshot** (the reference's `granted`, so two `live` states with different grants differ to React) is
+  tested through the page (a grant change while mounted), not with a forced coalesced render.
 
 ### Later: reload (when a case needs it)
 

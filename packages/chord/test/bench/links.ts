@@ -40,7 +40,7 @@ const View = remote("bench.view", {
 	version: 1,
 	params: { name: str() },
 	hostAddress: () => Server(),
-	variants: { owner: { state: { doc: Shape } } },
+	state: { doc: Shape },
 });
 
 /** A file service: a call with a small argument, and one with bytes. */
@@ -48,9 +48,7 @@ const Files = remote("bench.files", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
-	variants: {
-		owner: { methods: { ping: method(obj({ n: int() }), int()), put: method(obj({ data: bytes() }), int()) } },
-	},
+	methods: { ping: method(obj({ n: int() }), int()), put: method(obj({ data: bytes() }), int()) },
 });
 
 const Doc = defineState("doc", { schema: Shape, version: 1, initial: () => ({ entries: [] }) });
@@ -79,19 +77,13 @@ const facet = defineFacet<P>((host) => {
 				}, ctx),
 		};
 	});
-	host.serve(View, ({ name }, _principal, self) => ({
-		variant: "owner",
-		members: { doc: self.get(Store, { name }).doc },
-	}));
+	host.serve(View, ({ name }, _principal, self) => ({ doc: self.get(Store, { name }).doc }));
 	host.serve(Files, () => ({
-		variant: "owner",
-		members: {
-			ping: async ({ n }) => {
-				pings.push(n);
-				return n + 1;
-			},
-			put: async ({ data }) => data.byteLength,
+		ping: async ({ n }) => {
+			pings.push(n);
+			return n + 1;
 		},
+		put: async ({ data }) => data.byteLength,
 	}));
 });
 

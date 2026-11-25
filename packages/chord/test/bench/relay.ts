@@ -40,7 +40,8 @@ const View = remote("bench.view", {
 	version: 1,
 	params: { session: str() },
 	hostAddress: ({ session }) => Session({ id: session }),
-	variants: { owner: { state: { doc: Shape }, methods: { stream: method(str()), ping: method(int(), int()) } } },
+	state: { doc: Shape },
+	methods: { stream: method(str()), ping: method(int(), int()) },
 });
 
 /** The start data a worker gets in its start message: its session and the payload its store begins with. */
@@ -79,10 +80,7 @@ function workerFacet(start: Start) {
 		});
 		host.serve(View, (_params, _principal, self) => {
 			const store = self.get(Store, {});
-			return {
-				variant: "owner",
-				members: { doc: store.doc, stream: (token, ctx) => store.stream(token, ctx), ping: async (n) => n + 1 },
-			};
+			return { doc: store.doc, stream: (token, ctx) => store.stream(token, ctx), ping: async (n) => n + 1 };
 		});
 	});
 }

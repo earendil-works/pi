@@ -15,14 +15,11 @@ workerMain(
 			facet.serve(Probe, (_params, _principal, self) => {
 				const reports = self.get(Reports, {});
 				return {
-					variant: "main",
-					members: {
-						report: async (text, ctx) => reports.report(text, ctx),
-						// The report is sent, and the process is gone before the server has handled it.
-						reportAndExit: async (text) => {
-							reports.report(text, BACKGROUND_CONTEXT).catch(() => {});
-							process.exit(1);
-						},
+					report: async (text, ctx) => reports.report(text, ctx),
+					// The report is sent, and the process is gone before the server has handled it.
+					reportAndExit: async (text) => {
+						reports.report(text, BACKGROUND_CONTEXT).catch(() => {});
+						process.exit(1);
 					},
 				};
 			}),

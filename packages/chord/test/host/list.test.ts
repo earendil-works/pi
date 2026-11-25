@@ -67,7 +67,8 @@ const Board = remote("app.board", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
-	variants: { main: { state: { list: obj({ rows: arr(Item), moreAfter: bool() }) }, methods: { more: method() } } },
+	state: { list: obj({ rows: arr(Item), moreAfter: bool() }) },
+	methods: { more: method() },
 });
 
 /** What the tests count: how often the screen's factory ran. */
@@ -306,7 +307,7 @@ describe("pages", () => {
 			h.serve(Board, (_params, _principal, self) => {
 				const args = self.derive([self.writable("a")], ([group]) => ({ group }));
 				const list = self.list("rows", [[self.get(Store, {}).rows.ofGroup, args]], { first: 3 });
-				return { variant: "main", members: { list: list.value, more: (ctx) => list.more(ctx) } };
+				return { list: list.value, more: (ctx) => list.more(ctx) };
 			}),
 		);
 		await server.load([storePlugin(), { name: "@test/board", facet: board }], context);

@@ -28,18 +28,18 @@ const Match = remote("bench.match", {
 	version: 1,
 	params: { id: str() },
 	hostAddress: () => Server(),
-	variants: { player: { events: { paddle: Paddle } } },
+	events: { paddle: Paddle },
 });
 
 /** The paddle gains a velocity; version 1 consumers get it mapped away. */
-const MatchV2 = evolve(Match, (e) => e.event("player", "paddle", obj({ peer: str(), t: num(), y: num(), v: num() })));
+const MatchV2 = evolve(Match, (e) => e.event("paddle", obj({ peer: str(), t: num(), y: num(), v: num() })));
 
 /** The same object placed on a worker (a session), reached through the server's relay. */
 const Placed = remote("bench.placed", {
 	version: 1,
 	params: { id: str() },
 	hostAddress: ({ id }) => Session({ id }),
-	variants: { player: { events: { paddle: Paddle } } },
+	events: { paddle: Paddle },
 });
 
 /** What a run measures: holders of the current version, of an older one, or through a relay. */
@@ -58,14 +58,14 @@ async function provider(
 			(_, _principal, self) => {
 				const paddle = self.events<{ peer: string; t: number; y: number; v: number }>();
 				sources.push(paddle);
-				return { variant: "player", members: { paddle } };
+				return { paddle };
 			},
-			{ accepts: { 1: { events: { player: { paddle: ({ peer, t, y }) => ({ peer, t, y }) } } } } },
+			{ accepts: { 1: { events: { paddle: ({ peer, t, y }) => ({ peer, t, y }) } } } },
 		);
 		h.serve(Placed, (_, _principal, self) => {
 			const paddle = self.events<{ peer: string; t: number; y: number }>();
 			sources.push(paddle);
-			return { variant: "player", members: { paddle } };
+			return { paddle };
 		});
 	});
 	return { host, sources, facet };

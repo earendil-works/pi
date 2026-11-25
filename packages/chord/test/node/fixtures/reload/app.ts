@@ -123,15 +123,11 @@ const Control = remote("reload.control", {
 	version: 1,
 	params: { id: str() },
 	hostAddress: ({ id }) => hostKind("project", { id: str() })({ id }),
-	variants: {
-		main: {
-			state: {},
-			methods: {
-				entered: method(str(), bool()),
-				open: method(str()),
-				natives: method(undefined, obj({ opens: arr(str()), closes: arr(str()) })),
-			},
-		},
+	state: {},
+	methods: {
+		entered: method(str(), bool()),
+		open: method(str()),
+		natives: method(undefined, obj({ opens: arr(str()), closes: arr(str()) })),
 	},
 });
 

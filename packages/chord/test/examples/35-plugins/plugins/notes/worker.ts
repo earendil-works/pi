@@ -10,16 +10,13 @@ export default defineFacet((host) =>
 	host.serve(Notes, (_params, _principal, self) => {
 		const count = self.state(Count);
 		return {
-			variant: "main",
-			members: {
-				label: constant(label),
-				count: self.derive([count], ([value]) => value.n),
-				add: async (ctx) => {
-					await count.change((draft) => {
-						draft.n += 1;
-					}, ctx);
-					return count.value.n;
-				},
+			label: constant(label),
+			count: self.derive([count], ([value]) => value.n),
+			add: async (ctx) => {
+				await count.change((draft) => {
+					draft.n += 1;
+				}, ctx);
+				return count.value.n;
 			},
 		};
 	}),

@@ -4,7 +4,21 @@
 // child, generous), and the two remote objects on the server that take them, `PageTelemetry` and `WorkerTelemetry`.
 
 import type { AttributeValue, StoredMetric, StoredSpan } from "@earendil-works/pi-telemetry";
-import { arr, hostKind, int, lit, method, num, obj, opt, remote, type Schema, str, union } from "../contracts/index.ts";
+import {
+	arr,
+	grantable,
+	hostKind,
+	int,
+	lit,
+	method,
+	num,
+	obj,
+	opt,
+	remote,
+	type Schema,
+	str,
+	union,
+} from "../contracts/index.ts";
 
 /** At most this many spans in a page's batch. */
 export const PAGE_BATCH_SPANS = 100;
@@ -121,16 +135,16 @@ export const PageTelemetry = remote("chord.telemetry.page", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
-	variants: { main: { methods: { ingest: method(PageBatch, RECEIPT) } } },
+	methods: { ingest: method(PageBatch, RECEIPT) },
 });
 
 /**
- * The server's telemetry object for workers: `worker` for a worker's principal (its batches written as they are),
- * `other` for everyone else (nothing to call).
+ * The server's telemetry object for workers: `ingest` is granted to a worker's principal (its batches written as they
+ * are), to nobody else.
  */
 export const WorkerTelemetry = remote("chord.telemetry.worker", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
-	variants: { worker: { methods: { ingest: method(WorkerBatch, RECEIPT) } }, other: {} },
+	methods: { ingest: grantable(method(WorkerBatch, RECEIPT)) },
 });

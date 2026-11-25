@@ -15,7 +15,7 @@
 import type { TelemetryContext } from "@earendil-works/pi-telemetry";
 import { awaitWithContext, type Context } from "../context/index.ts";
 import type { Contract, ParamsOf } from "../contracts/index.ts";
-import type { ContractShape } from "../contracts/internal.ts";
+import { type ContractShape, NO_GRANTS } from "../contracts/internal.ts";
 import { ChordError, type FailureCause, type Principal } from "../data/index.ts";
 import { asChordError, binds, invalid, type Provider, sameCause } from "../data/internal.ts";
 import { Documents, type KeyedSlot } from "../documents/internal.ts";
@@ -28,7 +28,7 @@ import type { DeriveSource } from "../state/internal.ts";
 import type { TableDefinition } from "../store/table.ts";
 import { chordMetrics } from "../telemetry.ts";
 import { refusal } from "./adapted.ts";
-import { type AdmitSelf, revoked, type Verdict } from "./admission.ts";
+import { type AdmitSelf, type AdmittedValue, type Allowed, revoked, type Verdict } from "./admission.ts";
 import { Attempt, type PinnedKey, type Self } from "./attempt.ts";
 import type { Caller } from "./ctx.ts";
 import type { Dependency } from "./dependencies.ts";
@@ -74,7 +74,7 @@ export type Served =
 			readonly factory: (
 				params: ParamsOf<Contract>,
 				principal: Principal,
-				...rest: [self: Self] | [admitted: JsonValue, self: Self]
+				...rest: [self: Self] | [admitted: AdmittedValue, self: Self]
 			) => unknown;
 			/** Its admission, when its contract declares one. */
 			readonly admission: ServedAdmission | undefined;
@@ -295,6 +295,8 @@ export class ChordObject implements Target {
 	 * for a type without an admission.
 	 */
 	#allowed: boolean;
+	/** What its last live attempt was granted (slice 15 §1.4): kept while it loads or failed, none once denied. */
+	#granted: ReadonlySet<string> = NO_GRANTS;
 
 	constructor(
 		host: AnyHost,
@@ -435,20 +437,21 @@ export class ChordObject implements Target {
 	 * What its live attempt's admission allowed, with the fingerprint of the admission schema it was decided under: a
 	 * reload's staging rehearses its new factory with it (slice 14 §2.5); `undefined` without one.
 	 */
-	get admitted(): { readonly value: JsonValue; readonly fingerprint: string } | undefined {
+	get admitted(): { readonly allowed: Allowed; readonly fingerprint: string } | undefined {
 		const state = this.#state;
 		if (state.kind !== "live") return undefined;
 		const { admitted, served } = state.attempt;
 		if (admitted === undefined || served.kind !== "remote" || served.admission === undefined) return undefined;
-		return { value: admitted.value, fingerprint: served.admission.fingerprint };
+		return { allowed: admitted, fingerprint: served.admission.fingerprint };
 	}
 
 	/**
-	 * The variant a live remote object's factory chose (a restart's open old attempt's meanwhile); `undefined` for a
-	 * local object and before it is live.
+	 * The names a live remote object's admission granted (a restart's open old attempt's meanwhile, slice 15 §1.2); while
+	 * it loads or failed the last live attempt's; none for a local object, before it is live and while denied.
 	 */
-	get variant(): string | undefined {
-		return this.#state.kind === "live" ? this.#state.attempt.variant : this.openOldAttempt?.variant;
+	get granted(): ReadonlySet<string> {
+		const attempt = this.#state.kind === "live" ? this.#state.attempt : this.openOldAttempt;
+		return attempt?.granted ?? this.#granted;
 	}
 
 	/** The live object's state members, as Chord follows them. */
@@ -1009,6 +1012,7 @@ export class ChordObject implements Target {
 
 	/** An admitted object is denied: presence lists its holders no more, until its next allow (§19). */
 	#disallow(): void {
+		this.#granted = NO_GRANTS;
 		if (!this.#allowed) return;
 		this.host.unreferenced(this, this.#holders, this.#context);
 		this.#allowed = false;
@@ -1327,6 +1331,7 @@ export class ChordObject implements Target {
 		// which their references take from the instance shown so far.
 		const unbound = this.#unbindUnfit(attempt);
 		this.#state = { kind: "live", attempt };
+		this.#granted = attempt.granted;
 		this.#exposed = attempt;
 		this.#following = true;
 		if (!this.#allowed) {
@@ -1410,7 +1415,7 @@ export class ChordObject implements Target {
 		const { contract, provider } = this.served;
 		const { version, fingerprint } = holder.contract;
 		if (version === contract.version && fingerprint === contract.fingerprint) return undefined;
-		if (binds(provider, version, fingerprint)) return refusal(this.served, version, attempt.variant);
+		if (binds(provider, version, fingerprint)) return refusal(this.served, version, attempt.granted);
 		return new ChordError({ code: "contract_mismatch", message: `${contract.name} v${version} is not served here` });
 	}
 

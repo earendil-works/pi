@@ -1061,7 +1061,7 @@ describe("keep-alive", () => {
 			version: 1,
 			params: {},
 			hostAddress: () => Server(),
-			variants: { v: { state: { running: arr(unknown()) } } },
+			state: { running: arr(unknown()) },
 		});
 		let job: JobHandle<{ text: string }, string, undefined> | undefined;
 		let ran = false;
@@ -1075,7 +1075,7 @@ describe("keep-alive", () => {
 					},
 				});
 				// The running list as a state member, so the start's commit sends a state message.
-				return { variant: "v", members: { running: job.running as never } };
+				return { running: job.running as never };
 			}),
 		);
 		await server.load([{ name: "@test/app", facet }], context);
@@ -1165,7 +1165,7 @@ describe("object end", () => {
 		version: 1,
 		params: {},
 		hostAddress: () => Server(),
-		variants: { v: { state: {} } },
+		state: {},
 	});
 
 	it("revocation (R11): runs' signals fire with the end's error, the drain waits for them, no finish", async () => {
@@ -1190,7 +1190,7 @@ describe("object end", () => {
 					},
 					finish: async () => void finished.push("finish"),
 				});
-				return { variant: "v", members: {} };
+				return {};
 			}),
 		);
 		await server.load([{ name: "@test/app", facet }], context);
@@ -1238,7 +1238,7 @@ describe("object end", () => {
 						return text;
 					},
 				});
-				return { variant: "v", members: {} };
+				return {};
 			}),
 		);
 		await server.load([{ name: "@test/app", facet }], context);

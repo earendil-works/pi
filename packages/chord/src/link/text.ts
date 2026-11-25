@@ -146,10 +146,10 @@ function json(value: unknown): string {
 	return JSON.stringify(value);
 }
 
-/** `[hold, variant, [[member, value]…], failed?]`. */
-function boundEntry({ hold, variant, members, failed }: BoundEntry): string {
+/** `[hold, [granted…], [[member, value]…], failed?]`. */
+function boundEntry({ hold, granted, members, failed }: BoundEntry): string {
 	const pairs = members.map(({ member, value }) => `[${member},${partText(value)}]`).join(",");
-	return `[${hold},${variant},[${pairs}]${failedField(failed)}]`;
+	return `[${hold},[${granted.join(",")}],[${pairs}]${failedField(failed)}]`;
 }
 
 /** `[hold, [[member, ops]…], failed?, retired?]`; `failed` is `[]` when only `retired` follows. */
@@ -261,10 +261,10 @@ function fromFields(fields: unknown[], rest: Uint8Array): Message {
 					if (fields.length !== 3 && fields.length !== 4) {
 						throw new Error(`text: a bound entry with ${fields.length} fields`);
 					}
-					const [hold, variant, members, failed] = fields;
+					const [hold, granted, members, failed] = fields;
 					return {
 						hold: hold as number,
-						variant: variant as number,
+						granted: list(granted) as number[],
 						members: pairs(members).map(([member, value]) => ({
 							member: member as number,
 							value: textPart(value),

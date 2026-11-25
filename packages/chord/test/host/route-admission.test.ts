@@ -29,7 +29,9 @@ import type { Watchable } from "../../src/watch.ts";
 import {
 	EDITOR,
 	expectCollected,
+	grantOf,
 	instancesOf,
+	NOTES_EDITOR,
 	PlacedNotes,
 	RawPeer,
 	rawWorkers,
@@ -254,7 +256,7 @@ describe("a denial", () => {
 		const notes = await tab.get(PlacedNotes, { session: "S1" }, context);
 		const worker = workers.get("session|S1")!;
 		expect(worker.activity.value.references).toBe(1);
-		const waiting = rejection(notes.variant === "editor" ? notes.wait(context) : Promise.resolve());
+		const waiting = rejection(notes.wait(context));
 		await transported();
 		await set("no");
 		expect(told(await waiting)).toMatchObject({ code: "forbidden", reason: "revoked" });
@@ -264,7 +266,7 @@ describe("a denial", () => {
 			code: "forbidden",
 			message: "no access",
 		});
-		expect(notes.variant).toBe(undefined);
+		expect([grantOf(notes), notes.add]).toEqual([[], undefined]);
 		expect(worker.activity.value.references).toBe(0);
 		// Allowed again: `loading` at once, not "no access" until the hold is bound; then forwarded behind the fence (the
 		// worker answers the `ping`), under the tab's hold.
@@ -284,7 +286,7 @@ describe("a denial", () => {
 		const guest = await tabOf(server, { kind: "guest", session: "S1" });
 		const owners = await tab.get(PlacedNotes, { session: "S1" }, context);
 		const guests = await guest.get(PlacedNotes, { session: "S1" }, context);
-		expect([owners.variant, guests.variant]).toEqual(["editor", "reader"]);
+		expect([grantOf(owners), grantOf(guests)]).toEqual([NOTES_EDITOR, []]);
 		await set("no", "guest");
 		await transported();
 		expect(guests.state.value).toMatchObject({ kind: "failed", cause: { kind: "denied" } });
@@ -302,10 +304,11 @@ describe("one decision per principal and address", () => {
 		const before = decisions.length;
 		const a = await tab.get(PlacedNotes, { session: "S1" }, context);
 		const b = await second.get(PlacedNotes, { session: "S1" }, context);
-		// Two holds of one principal on one address: one decision. Another address: another.
-		expect(decisions.length - before).toBe(1);
-		const other = await tab.get(PlacedNotes, { session: "S2" }, context);
+		// Two holds of one principal on one address: one decision of the route (and one of its object's admission,
+		// slice 15). Another address: another of each.
 		expect(decisions.length - before).toBe(2);
+		const other = await tab.get(PlacedNotes, { session: "S2" }, context);
+		expect(decisions.length - before).toBe(4);
 		a.release();
 		await transported();
 		// Still held by the second tab: denied with it.
@@ -443,7 +446,7 @@ function bound(held: Held, count: number): Message {
 	return {
 		kind: "bound",
 		origin: held.origin,
-		holds: [{ hold: held.hold, variant: EDITOR.variant, members, failed: [] }],
+		holds: [{ hold: held.hold, granted: EDITOR.granted, members, failed: [] }],
 	};
 }
 
@@ -624,7 +627,7 @@ describe("across reloads (test 21)", () => {
 		await set("yes");
 		const notes = await tab.get(PlacedNotes, { session: "S1" }, context);
 		const worker = workers.get("session|S1")!;
-		const adding = notes.variant === "editor" ? notes.add({ text: "x" }, context) : undefined;
+		const adding = notes.add ? notes.add({ text: "x" }, context) : undefined;
 		await server.reload(again(), context);
 		await transported();
 		expect(await adding).toBe(1);
@@ -694,7 +697,8 @@ describe("across reloads (test 21)", () => {
 			context,
 		);
 		await transported();
-		expect([notes.state.value.kind, decisions.length - before, resolves]).toEqual(["live", 0, ["session|S1"]]);
+		// The route's decision is not asked again; the object's own admission runs in its new attempt (slice 15).
+		expect([notes.state.value.kind, decisions.length - before, resolves]).toEqual(["live", 1, ["session|S1"]]);
 		await server.close(context);
 	});
 });

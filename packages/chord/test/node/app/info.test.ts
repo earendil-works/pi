@@ -14,16 +14,16 @@ const Shown = remote("test.shown", {
 	version: 1,
 	params: { id: str() },
 	hostAddress: ({ id }) => Project({ id }),
-	variants: { main: { state: { address: unknown(), start: unknown() } } },
+	state: { address: unknown(), start: unknown() },
 });
 
 const WORKER = [
 	'import { defineFacet, hostKind, remote, str, unknown, WorkerInfo } from "@test/app/v1";',
 	'const Project = hostKind("project", { id: str() });',
-	'const Shown = remote("test.shown", { version: 1, params: { id: str() }, hostAddress: ({ id }) => Project({ id }), variants: { main: { state: { address: unknown(), start: unknown() } } } });',
+	'const Shown = remote("test.shown", { version: 1, params: { id: str() }, hostAddress: ({ id }) => Project({ id }), state: { address: unknown(), start: unknown() } });',
 	"export default defineFacet((host) => host.serve(Shown, (_params, _principal, self) => {",
 	"\tconst info = self.get(WorkerInfo, {});",
-	'\treturn { variant: "main", members: { address: self.derive([info.address], ([v]) => v), start: self.derive([info.start], ([v]) => v) } };',
+	"\treturn { address: self.derive([info.address], ([v]) => v), start: self.derive([info.start], ([v]) => v) };",
 	"}));",
 ].join("\n");
 

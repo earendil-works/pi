@@ -200,15 +200,15 @@ describe("workers", () => {
 			version: 1,
 			params: { id: str() },
 			hostAddress: ({ id }) => Team({ id }),
-			variants: { main: { state: { start: unknown() } } },
+			state: { start: unknown() },
 		});
 		const team = [
 			'import { defineFacet, hostKind, remote, str, unknown, WorkerInfo } from "@test/app/v1";',
 			'const Team = hostKind("team", { id: str() });',
-			'const Members = remote("test.members", { version: 1, params: { id: str() }, hostAddress: ({ id }) => Team({ id }), variants: { main: { state: { start: unknown() } } } });',
+			'const Members = remote("test.members", { version: 1, params: { id: str() }, hostAddress: ({ id }) => Team({ id }), state: { start: unknown() } });',
 			"export default defineFacet((host) => host.serve(Members, (_params, _principal, self) => {",
 			"\tconst info = self.get(WorkerInfo, {});",
-			'\treturn { variant: "main", members: { start: self.derive([info.start], ([value]) => value) } };',
+			"\treturn { start: self.derive([info.start], ([value]) => value) };",
 			"}));",
 		].join("\n");
 		const base = await tempDir();

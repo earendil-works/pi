@@ -57,7 +57,8 @@ const Counter = remote("bench.counter", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
-	variants: { owner: { state: { n: int() }, methods: { bump: method(), add: method(int(), int()) } } },
+	state: { n: int() },
+	methods: { bump: method(), add: method(int(), int()) },
 });
 
 const Count = defineState("bench.count", { schema: obj({ n: int() }), version: 1, initial: () => ({ n: 0 }) });
@@ -78,16 +79,13 @@ async function linked(telemetry: InMemoryTelemetryContext | undefined) {
 					h.serve(Counter, (_params, _principal, self) => {
 						const count = self.state(Count);
 						return {
-							variant: "owner",
-							members: {
-								n: self.derive([count], ([c]) => c.n),
-								bump: async () => null,
-								add: async (n, ctx) => {
-									await count.change((draft) => {
-										draft.n += n;
-									}, ctx);
-									return count.value.n;
-								},
+							n: self.derive([count], ([c]) => c.n),
+							bump: async () => null,
+							add: async (n, ctx) => {
+								await count.change((draft) => {
+									draft.n += n;
+								}, ctx);
+								return count.value.n;
 							},
 						};
 					}),

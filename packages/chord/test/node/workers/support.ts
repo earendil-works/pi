@@ -27,7 +27,7 @@ export const Notes = remote("test.notes", {
 	version: 1,
 	params: { id: str() },
 	hostAddress: ({ id }) => Session({ id }),
-	variants: { main: { state: { label: str() } } },
+	state: { label: str() },
 });
 
 /** The principals of these tests. */

@@ -88,17 +88,14 @@ function reporting(
 		facet.serve(Reports, (_params, _principal, self) => {
 			const journal = self.get(Journal, {});
 			return {
-				variant: "main",
-				members: {
-					report: async (text, ctx) => {
-						log.received.push(options.seen === undefined ? text : `${text} ${options.seen(ctx.incarnation)}`);
-						await options.before;
-						await journal.append(text, ctx).then(
-							() => log.outcomes.push(`${text} committed`),
-							(error: unknown) => log.outcomes.push(`${text} ${isChordError(error) ? error.code : "threw"}`),
-						);
-						return null;
-					},
+				report: async (text, ctx) => {
+					log.received.push(options.seen === undefined ? text : `${text} ${options.seen(ctx.incarnation)}`);
+					await options.before;
+					await journal.append(text, ctx).then(
+						() => log.outcomes.push(`${text} committed`),
+						(error: unknown) => log.outcomes.push(`${text} ${isChordError(error) ? error.code : "threw"}`),
+					);
+					return null;
 				},
 			};
 		});

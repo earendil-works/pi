@@ -5,6 +5,7 @@ import {
 	arr,
 	bytes,
 	evolve,
+	grantable,
 	int,
 	local,
 	method,
@@ -24,12 +25,11 @@ const NotesV1 = remote("notes", {
 	version: 1,
 	params: { session: str() },
 	hostAddress: () => Server(),
-	variants: {
-		editor: {
-			state: { notes: arr(Note) },
-			methods: { add: method(Note, str()), clear: method(), attach: method(obj({ data: bytes({ max: 4 }) })) },
-		},
-		reader: { state: { notes: arr(Note) } },
+	state: { notes: arr(Note) },
+	methods: {
+		add: grantable(method(Note, str())),
+		clear: grantable(method()),
+		attach: grantable(method(obj({ data: bytes({ max: 4 }) }))),
 	},
 });
 const NotesV2 = evolve(NotesV1, (e) => e.args("add", NoteV2).result("add", int()));

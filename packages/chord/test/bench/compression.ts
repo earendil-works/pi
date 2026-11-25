@@ -26,7 +26,8 @@ const View = remote("bench.view", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
-	variants: { owner: { state: { doc: obj({ entries: arr(Entry) }) }, methods: { export: method(undefined, str()) } } },
+	state: { doc: obj({ entries: arr(Entry) }) },
+	methods: { export: method(undefined, str()) },
 });
 
 /** Words that make text compress like prose and code (about 3x at level 1), not like a repeated string. */
@@ -59,10 +60,7 @@ const Doc = defineState("doc", { schema: obj({ entries: arr(Entry) }), version: 
 
 const facet = defineFacet<P>((host) => {
 	host.serve(Store, (_, self) => ({ doc: self.state(Doc) }));
-	host.serve(View, (_, _principal, self) => ({
-		variant: "owner",
-		members: { doc: self.get(Store, {}).doc, export: async () => RESULT },
-	}));
+	host.serve(View, (_, _principal, self) => ({ doc: self.get(Store, {}).doc, export: async () => RESULT }));
 });
 
 /** A link end counting the bytes its host receives. */

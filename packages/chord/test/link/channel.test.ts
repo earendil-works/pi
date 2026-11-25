@@ -31,7 +31,7 @@ const Thing = remote("app.thing", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
-	variants: { only: { state: { n: int() } } },
+	state: { n: int() },
 });
 
 const hold = {

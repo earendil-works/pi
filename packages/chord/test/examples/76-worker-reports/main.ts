@@ -47,15 +47,12 @@ const facet = defineFacet<{ kind: string; session?: string }>((host) => {
 	host.serve(Reports, (_params, principal, self) => {
 		const journal = self.get(Journal, {});
 		return {
-			variant: "main",
-			members: {
-				// No check that the worker still runs: a report of a worker that exited never gets this far, or is
-				// aborted before its transaction (under `ctx`) commits.
-				report: async (text, ctx) => {
-					await sleep(50);
-					await journal.record({ session: principal.session ?? "", text, incarnation: ctx.incarnation }, ctx);
-					return null;
-				},
+			// No check that the worker still runs: a report of a worker that exited never gets this far, or is
+			// aborted before its transaction (under `ctx`) commits.
+			report: async (text, ctx) => {
+				await sleep(50);
+				await journal.record({ session: principal.session ?? "", text, incarnation: ctx.incarnation }, ctx);
+				return null;
 			},
 		};
 	});

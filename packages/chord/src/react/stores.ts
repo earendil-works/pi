@@ -1,7 +1,7 @@
 // External stores over Chord's watchables (slice 11 §3): what React's `useSyncExternalStore` reads. A store's snapshot
 // is the watchable's current value (`undefined` while it has none: a reference not bound yet, ended, or a member its
-// variant lacks; nothing throws during a render); subscribing starts a watch whose every call notifies React, and the
-// unsubscribe ends it.
+// binding lacks (not granted); nothing throws during a render); subscribing starts a watch whose every call notifies
+// React, and the unsubscribe ends it.
 
 import { BACKGROUND_CONTEXT, withAbortSignal } from "../context/index.ts";
 import type { NativeWatchable, Watchable } from "../watch.ts";

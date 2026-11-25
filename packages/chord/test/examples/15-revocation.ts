@@ -34,9 +34,8 @@ const Notes = remote("example.notes", {
 	version: 1,
 	params: { session: str() },
 	hostAddress: ({ session }) => Session({ id: session }),
-	variants: {
-		all: { state: { notes: arr(str()) }, methods: { add: method(obj({ text: str() })), follow: method() } },
-	},
+	state: { notes: arr(str()) },
+	methods: { add: method(obj({ text: str() })), follow: method() },
 });
 
 const NotesDoc = defineState("notes", { schema: obj({ list: arr(str()) }), version: 1, initial: () => ({ list: [] }) });
@@ -46,20 +45,17 @@ const notesFacet = defineFacet<P>((host) => {
 		const doc = self.state(NotesDoc);
 		console.log(`  worker: Notes for ${principal.kind}${principal.kind === "guest" ? ` ${principal.grant}` : ""}`);
 		return {
-			variant: "all",
-			members: {
-				notes: self.derive([doc], ([d]) => d.list),
-				add: async ({ text }, ctx) => {
-					await doc.change((draft) => void draft.list.push(text), ctx);
-					return null;
-				},
-				// A long-running call: it ends when its context is aborted, and says why.
-				follow: async (ctx) => {
-					await new Promise((resolve) => ctx.abortSignal?.addEventListener("abort", resolve));
-					const { code, reason } = ctx.abortSignal!.reason as ChordError;
-					console.log(`  worker: ${principal.kind}'s follow aborted: ${code}/${reason}`);
-					return null;
-				},
+			notes: self.derive([doc], ([d]) => d.list),
+			add: async ({ text }, ctx) => {
+				await doc.change((draft) => void draft.list.push(text), ctx);
+				return null;
+			},
+			// A long-running call: it ends when its context is aborted, and says why.
+			follow: async (ctx) => {
+				await new Promise((resolve) => ctx.abortSignal?.addEventListener("abort", resolve));
+				const { code, reason } = ctx.abortSignal!.reason as ChordError;
+				console.log(`  worker: ${principal.kind}'s follow aborted: ${code}/${reason}`);
+				return null;
 			},
 		};
 	});

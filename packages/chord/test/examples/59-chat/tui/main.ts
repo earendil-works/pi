@@ -3,7 +3,7 @@
 // messages a page at a time), and a line to type into. Enter posts; `/attach <path>` asks the launcher for a file of
 // this machine (it asks the user) and shares it in chunks; Ctrl-C quits.
 
-import type { Held } from "../../../../src/index.ts";
+import type { Reference } from "../../../../src/index.ts";
 import { type AttachedFile, startTerminalRuntime, TuiScope } from "../../../../src/tui/index.ts";
 import * as v1 from "../app/v1.ts";
 
@@ -13,7 +13,7 @@ const { BACKGROUND_CONTEXT: context, Channels, Room } = v1;
 const CHUNK = 256 * 1024;
 
 /** Shares `file` in `room`, in chunks. */
-async function share(room: Held<typeof Room>, file: AttachedFile): Promise<void> {
+async function share(room: Reference<typeof Room>, file: AttachedFile): Promise<void> {
 	const mime = /\.(png|jpe?g|gif|webp)$/i.test(file.name)
 		? `image/${file.name.split(".").pop()!.toLowerCase()}`
 		: "application/octet-stream";
@@ -44,7 +44,7 @@ void startTerminalRuntime({
 		const channels = scope.watch(scope.hold(Channels, {}).names);
 		// Each channel's room held once, on first view, with the older messages loaded so far.
 		type Viewed = {
-			room: Held<typeof Room>;
+			room: Reference<typeof Room>;
 			live: () => readonly v1.Message[] | undefined;
 			older: readonly v1.Message[];
 		};

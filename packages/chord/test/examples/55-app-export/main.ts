@@ -18,15 +18,11 @@ const Notes = remote("notes.notes", {
 	version: 1,
 	params: { id: str() },
 	hostAddress: ({ id }) => Project({ id }),
-	variants: {
-		main: {
-			state: { text: str(), start: str() },
-			methods: {
-				write: method(str()),
-				attach: method(obj({ name: str(), body: str() }), str()),
-				attachment: method(str(), str()),
-			},
-		},
+	state: { text: str(), start: str() },
+	methods: {
+		write: method(str()),
+		attach: method(obj({ name: str(), body: str() }), str()),
+		attachment: method(str(), str()),
 	},
 });
 

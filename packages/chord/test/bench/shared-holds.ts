@@ -31,10 +31,11 @@ const Counter = remote("bench.shared-counter", {
 	version: 1,
 	params: { id: str() },
 	hostAddress: () => Server(),
-	variants: { v: { state: { count: int() }, methods: { bump: method() } } },
+	state: { count: int() },
+	methods: { bump: method() },
 });
 
-type Live = Extract<Reference<typeof Counter>, { readonly variant: "v" }>;
+type Live = Reference<typeof Counter>;
 
 const Count = defineState("count", { schema: obj({ n: int() }), version: 1, initial: () => ({ n: 0 }) });
 
@@ -42,13 +43,10 @@ const facet = defineFacet<P>((host) =>
 	host.serve(Counter, (_, _principal, self) => {
 		const count = self.state(Count);
 		return {
-			variant: "v",
-			members: {
-				count: self.derive([count], ([doc]) => doc.n),
-				bump: async (ctx) => {
-					await count.change((draft) => void draft.n++, ctx);
-					return null;
-				},
+			count: self.derive([count], ([doc]) => doc.n),
+			bump: async (ctx) => {
+				await count.change((draft) => void draft.n++, ctx);
+				return null;
 			},
 		};
 	}),

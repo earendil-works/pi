@@ -1,7 +1,7 @@
 # host
 
 Hosts, facets, objects, natives and references: hosts serving `local` and `remote` types, with failures and retries,
-principals and variants, links to children, to a parent and over routes to addressable hosts (with relays between
+principals, grantable members and flags, links to children, to a parent and over routes to addressable hosts (with relays between
 them), the heartbeat, the `ctx` of method handlers, (slice 4b) revocation, cycles across hosts, presence,
 keep-alive counts, size limits per part and compression at the origin, (slice 5) routines and the objects' jobs
 (declared here, built in `jobs/`), (slice 6a) the host's store: tables, persisted documents and eager table
@@ -49,11 +49,10 @@ const facet = defineFacet<AppPrincipal>((host) => {     // a facet declares only
 		const store = self.get(Notes, {});                  // live before this object is
 		return { summary: self.derive([store.count], ([c]) => `${conversation}: ${c}`) };
 	});
-	host.serve(NotesView, (_, principal, self) => {       // remote: one object per principal key, one variant
+	host.serve(NotesView, (_, _principal, _admitted, self) => {   // remote: one object per principal key
 		const store = self.get(Notes, {});
-		if (principal.kind === "guest") return { variant: "reader", members: { count: store.count } };
-		return { variant: "editor", members: { count: store.count, add: (args, ctx) => store.add(args, ctx) } };
-	});
+		return { count: store.count, add: (args, ctx) => store.add(args, ctx) };   // `add` grantable: owners only
+	}, { admit: (_, principal) => constant(principal.kind === "guest" ? allow({}) : allow({ granted: ["add"] })) });
 });
 
 const host = createHost<AppPrincipal>({
@@ -80,7 +79,7 @@ Addressable hosts and routes (slice 4a): a server routes holds of worker types t
 export const Server = hostKind("server");
 export const Session = hostKind("session", { id: str() });
 export const Notes = remote("notes", { version: 1, params: { session: str() },
-	hostAddress: ({ session }) => Session({ id: session }), variants: { … } });
+	hostAddress: ({ session }) => Session({ id: session }), state: { … }, methods: { … } });
 
 const server = createHost<P>({ address: Server(), principal: { kind: "server" }, onError });
 server.route(Session, {                                   // before load, one route per kind
@@ -293,8 +292,8 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
   close (`reload`) and the successor runs its factory. Consumers whose version the old attempt binds see the object
   `live` meanwhile. A wait of old work that its own old attempt blocks fails at once with `unavailable/reload_cycle`.
   A root opened inside a method takes the method's `ctx` (`withoutAbortSignal(ctx)`), so its calls are old work too.
-- `host.hold(Type, params, ctx, { readyTimeout? })`: a reference at once (`Held<C>`: its `variant` is `undefined` until
-  its first binding), which follows its object until released and never rejects: `loading`
+- `host.hold(Type, params, ctx, { readyTimeout? })`: a reference at once (`Reference<C>`: its `granted` is empty and its
+  grantable members are all there until its first binding), which follows its object until released and never rejects: `loading`
   while the object activates, retries or is parked on dependencies under way, while there is no parent link or it is
   down; `failed` while the object is failed and no attempt runs, or while nothing fits it (`waiting`: not served where
   it goes, another version; bound when a publication serves it) or its object is parked on a failed dependency;
@@ -423,8 +422,8 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
   reject at once, dependents show the denial and heal with it, no `parked_long`). From its allow on it follows the
   decision in the flush of the batch that changed it: an equal value (canonical JSON) changes nothing, a source that
   only loads keeps the last decision, another value seals the attempt (calls `unavailable`) and a new one admits, a
-  denial seals it (calls `forbidden/revoked`, no value kept: reads throw `forbidden`, `ref.variant` is
-  `undefined`), a failed source or a decision that throws seals it and the new attempt parks `failed { waiting }`.
+  denial seals it (calls `forbidden/revoked`, no value kept: reads throw `forbidden`, `ref.granted` is
+  empty), a failed source or a decision that throws seals it and the new attempt parks `failed { waiting }`.
   A rebuild keeps the admission's requests until the next attempt's bound. A failed admitted object still follows
   a denial (`failed { denied }` in place of its failure, no value, out of presence, its factory not run) and is
   retried by another allowed value. `self.job` is refused in an admitted factory. Presence lists a holder from its first allow until a denial; a lingering object whose decision changes
@@ -445,8 +444,10 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
   writes with `self.tx`. It runs once per attempt. The implementation has exactly the contract's members: state
   members are JSON watchables (document handles, derives, reference members, constants), methods `(args, ctx) =>
   Promise<result>`, or `(ctx) => Promise<result>` for a method without arguments (the reference omits them too:
-  `notes.clear(ctx)`). A remote factory `(params, principal, self) => ({ variant, members })` gets the principal its
-  object is for and returns one variant with exactly that variant's members.
+  `notes.clear(ctx)`). A remote factory `(params, principal, self)` (`(params, principal, admitted, self)` with an
+  admission) gets the principal its object is for and returns every member, a grantable state or event member as a
+  builder `() => …`, called right after the factory only if granted; a grantable method is exposed only if granted
+  (slice 15 §1.3).
 - **Routines** (§14): `self.on(source, fn)` and `self.onLive(fn)` start right after the object went live, in the same
   turn (a method call admitted in that turn may run before the first `on` call), and stop when it ends: their ctx is
   aborted with the end's error and the drain waits for their running calls (each admitted before its handler runs: a
@@ -487,10 +488,10 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
   aborted when the attempt is abandoned; `close(value, reason, ctx)` gets `{ kind: "end" | "close" | "reload" }` (end:
   last reference gone or a failed attempt; close: `host.close`; reload: slice 7) and a context aborted at its
   `closeTimeout`. Throw `broken(error)` from an open when retrying is pointless.
-- A reference has the contract's members, `state`, `retry()` and `release()`. A remote reference has `variant`, its
-  discriminant (`RefIn<C, V>` narrows the type), `undefined` before its first binding and the last bound variant while
-  loading or failed; at runtime it carries every member of every variant, and one outside the bound variant fails
-  `invalid/member`.
+- A reference has the contract's members, `state`, `retry()` and `release()`. A remote reference has its plain members,
+  its grantable ones while its binding granted them (optional in the types; every one until it was first live) and
+  `granted` (the names given, empty before the first binding and while denied, the last binding's while loading or
+  failed). A member it lacks fails: `forbidden` when not granted, else `invalid/member`.
 - `ref.state` (a `NativeWatchable<RefState>`, made on first access): `{ kind: "loading" } | { kind: "live" } | { kind:
   "failed"; cause; retryAt }` (`retryAt`: when the object's backoff window ends, `undefined` for a `broken` or
   `waiting` cause) `|
@@ -508,14 +509,14 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
 
   Calls made after the reference went live never overtake queued ones (a call a handler makes while they are sent
   queues behind them). A parked call is checked against its deadline when it is about to be sent, and against the
-  variant it is sent on; it also leaves the queue when its caller cancels (rejected with the reason), the reference
+  binding it is sent on; it also leaves the queue when its caller cancels (rejected with the reason), the reference
   fails (the cause's error) or is released (`released`).
 - References are the only indirection (decision of 2026-10-29): a consumer's watches and derives over `ref.member`
   attach through the reference's member (`reference-source.ts`), which passes them straight to the object instance's
   own document or derive. When the reference's target changes (a new instance after a reload, retry or restart; a new
-  object after removal and re-serving; another variant) it moves them there and sends one frame (a diff from the last
+  object after removal and re-serving; another grant) it moves them there and sends one frame (a diff from the last
   value, whole after a failure). While it points at nothing it keeps its last values: no call while loading, one
-  `failed` call while failed; a member the new variant lacks fails `invalid/member`. A failed live instance's members
+  `failed` call while failed; a member the new binding lacks fails (`forbidden` when not granted). A failed live instance's members
   (its own and re-exposed ones) are followed until the commits it admitted published, then all hold (audit A10), as a
   restart's drained instance's. The keys a reference holds on a keyed member (`at(key)`, `watch(key)`) are its own
   (`reference-keys.ts`): they follow the instance they are pinned on as long as the object does (members' rule), are
@@ -535,7 +536,7 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
   reason). One rule: emits wait in the host's list for the event flush, a microtask the first queues; commits flush
   synchronously, so the state published before the flush is sent first. Each binding takes the host's emit counter when
   it is made (a hold over a link at its `bound`, a reference when it binds to an instance and shows it live) and gets
-  only later entries while it stays that binding: none while loading, failed or bound to a variant without the member,
+  only later entries while it stays that binding: none while loading, failed or bound to an instance without the member,
   nothing replayed on a new instance (its subscriptions move there), nothing for a binding made after the emit (also in
   the same turn). The flush sends one `event` message per link and origin (`remote/`), then calls the listeners outside
   the reentrancy fence, in entry order, then subscription order; what they emit goes into the next flush; a throwing
@@ -602,7 +603,8 @@ Rules:
   (each up to its `closeTimeout`; a throw never stops the others), the documents (readable until then) dropped, the
   derives detached, the references released, every watch on its members ended (`ended`). A new instance or attempt
   for the identity starts only after that; gets wait.
-- Calls check the method against the bound variant first (`invalid/member`), then the arguments against the provider's
+- Calls check the method against the binding first (`forbidden` for a grantable one not granted, else
+  `invalid/member`), then the arguments against the provider's
   current version (`invalid/member`, `invalid/args`); on one host arguments and results pass by reference.
 - **Release** rejects the calls made through the reference with `released` and aborts their handlers' contexts, on one
   host as over a link. A get needs the provider's version and fingerprint (`contract_mismatch`, `waiting`); an
@@ -633,7 +635,7 @@ references, calls, lifetimes), `02-documents.ts` (singleton and keyed documents,
 listener, retire, cancellation, release), `05-errors.ts` (invalid arguments and params, unknown members, contract mismatch, released references,
 cycles, throwing factories), `06-natives.ts` (opening in order, `not_ready`, close reasons, throwing and slow closes),
 `07-failures.ts` (transient and broken failures, backoff, dependency recovery, `readyTimeout`, the start barrier),
-`08-remote.ts` (two hosts, variants per principal over a shared store, replicas), `09-calls.ts` (calls over a link,
+`08-remote.ts` (two hosts, grantable members per principal over a shared store, replicas), `09-calls.ts` (calls over a link,
 bytes, errors, `ctx.principal`, cancellation, release), `10-drops.ts` (a hold before any link, `ref.state`, parked
 calls, a drop and the re-hold), `11-linger-and-retry.ts` (`linger`, failed references, `ref.retry()`),
 `12-routes.ts` (addresses, host addresses, a route to an in-process worker, a guest's `ctx.get` through it),
@@ -702,6 +704,7 @@ re-exposing nodes tapped on the instance it points at), `ParkedCalls` (a referen
 each), `ReferenceState` (`ref.state`, a native source: its native watches, told of each change; derives over it
 marked), `CallContext` (a handler's or a root scope's `ctx`), `withLinkedAbortSignal` (a call's or a get's context aborted by the caller and by a long-lived signal, its
 reference's or its attempt's, linked only until it settles: `AbortSignal.any` keeps cleanup entries per call while its
-sources live before Node 24.16.0), `checkImplementation` (the variant and member check), `setUp` (runs one facet's setup),
+sources live before Node 24.16.0), `grantedImplementation` (what a remote factory's return exposes for a grant), `checkImplementation` (the member
+check), `setUp` (runs one facet's setup),
 `resolveWatchable` (the member check, Q14), `contributionOf` (a contribution as Chord follows it, the cycle check), and `nextDelay` (the 1 s to 60 s doubling every backoff shares). Cycle checks follow the waits of activating objects with a visited set,
 linear in the waits.

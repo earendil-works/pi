@@ -820,7 +820,7 @@ const Near = remote("app.near", {
 	version: 1,
 	params: { session: str() },
 	hostAddress: () => Server(),
-	variants: { v: { state: { n: int() } } },
+	state: { n: int() },
 });
 
 /** On the session's worker: its activation holds `Near` back on the server, or, with `local`, `Middle`. */
@@ -828,7 +828,7 @@ const Far = remote("app.far", {
 	version: 1,
 	params: { session: str() },
 	hostAddress: ({ session }) => Session({ id: session }),
-	variants: { v: { state: { n: int() } } },
+	state: { n: int() },
 });
 
 /** On the server, held by `Far`: its activation holds `Hub` on its own host (a cycle closed on one host). */
@@ -836,7 +836,7 @@ const Middle = remote("app.middle", {
 	version: 1,
 	params: { session: str() },
 	hostAddress: () => Server(),
-	variants: { v: { state: { n: int() } } },
+	state: { n: int() },
 });
 
 /** On the server, a local type (no principal in its identity): its activation holds `Far` as the host. */
@@ -847,7 +847,7 @@ const Loop = remote("app.loop", {
 	version: 1,
 	params: { here: str(), there: str() },
 	hostAddress: ({ here }) => Session({ id: here }),
-	variants: { v: { state: { n: int() } } },
+	state: { n: int() },
 });
 
 /** A tab, a server and its workers over trusted route links, serving the cycle types (`Far` holds `back`). */
@@ -855,25 +855,15 @@ async function cyclic(back: "near" | "middle" = "near", trusted = true) {
 	return relayed({
 		trusted,
 		server: (h) => {
-			h.serve(Near, ({ session }, _principal, self) => ({
-				variant: "v",
-				members: { n: self.get(Far, { session }).n },
-			}));
-			h.serve(Middle, ({ session }, _principal, self) => ({
-				variant: "v",
-				members: { n: self.get(Hub, { session }).n },
-			}));
+			h.serve(Near, ({ session }, _principal, self) => ({ n: self.get(Far, { session }).n }));
+			h.serve(Middle, ({ session }, _principal, self) => ({ n: self.get(Hub, { session }).n }));
 			h.serve(Hub, ({ session }, self) => ({ n: self.get(Far, { session }).n }));
 		},
 		worker: (h) => {
 			h.serve(Far, ({ session }, _principal, self) => ({
-				variant: "v",
-				members: { n: back === "near" ? self.get(Near, { session }).n : self.get(Middle, { session }).n },
+				n: back === "near" ? self.get(Near, { session }).n : self.get(Middle, { session }).n,
 			}));
-			h.serve(Loop, ({ here, there }, _principal, self) => ({
-				variant: "v",
-				members: { n: self.get(Loop, { here: there, there: here }).n },
-			}));
+			h.serve(Loop, ({ here, there }, _principal, self) => ({ n: self.get(Loop, { here: there, there: here }).n }));
 		},
 	});
 }
@@ -1001,11 +991,7 @@ async function nearBehindRawWorker() {
 	const workers: RawPeer[] = [];
 	const relay = await relayed({
 		resolve: rawWorkers(workers, { trusted: true }),
-		server: (h) =>
-			h.serve(Near, ({ session }, _principal, self) => ({
-				variant: "v",
-				members: { n: self.get(Far, { session }).n },
-			})),
+		server: (h) => h.serve(Near, ({ session }, _principal, self) => ({ n: self.get(Far, { session }).n })),
 	});
 	relay.tab.hold(Far, { session: "S1" }, context);
 	const worker = await (async () => {

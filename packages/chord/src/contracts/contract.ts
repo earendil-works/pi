@@ -3,20 +3,17 @@
 
 import type { Context } from "../context/index.ts";
 import type { Watchable, WatchHandle } from "../watch.ts";
-import type { Change, CurrentStep, History, VariantShape } from "./history.ts";
+import type { Change, CurrentStep, History, MembersShape } from "./history.ts";
 import type { Address, KindShape } from "./host-kind.ts";
 import type { Params, ParamsData } from "./params.ts";
-import type { Method, NullSchema, QueriesMember, Schema, Static } from "./schema.ts";
+import type { Grantable, Method, NullSchema, QueriesMember, Schema, Static, Ungranted } from "./schema.ts";
 import type { Snapshot } from "./snapshot.ts";
 
 export type Kind = "remote" | "local";
 
-/** The variant name of a local contract's members. */
-export const LOCAL = "members";
-
 /**
  * Everything the types know about a contract: kind, name, params, the whole history and, for a remote contract that
- * declares one, the schema of its admission's value.
+ * declares them, the schema of its admission's data and its flags (rights that are no member, slice 15 §1).
  */
 export type ContractShape = {
 	readonly kind: Kind;
@@ -24,6 +21,7 @@ export type ContractShape = {
 	readonly params: Params;
 	readonly history: History;
 	readonly admission?: Schema;
+	readonly flags?: { readonly [flag: string]: string };
 };
 
 /** A declared contract: a branded handle, immutable by convention. Spread or hand-built copies are refused. */
@@ -38,62 +36,112 @@ export interface Contract<S extends ContractShape = ContractShape> {
 
 export type ShapeOf<C extends Contract> = NonNullable<C["~shape"]>;
 
-/** The variants of a contract's current version. */
-export type CurrentVariants<C extends Contract> = CurrentStep<ShapeOf<C>["history"]>["variants"];
+/** The members of a contract's current version. */
+export type CurrentMembers<C extends Contract> = CurrentStep<ShapeOf<C>["history"]>["members"];
 
 /**
- * The value a contract's admission hands its factory (slice 14 §2.1): what its `admission` schema describes; `never`
- * for a contract without one.
+ * The names an admission may grant on `C` (slice 15 §1.2): its grantable members and its flags; `never` for a contract
+ * without any.
  */
-export type AdmittedOf<C extends Contract> = ShapeOf<C> extends { readonly admission: infer A extends Schema }
+export type GrantableName<C extends Contract> =
+	| GrantableIn<CurrentMembers<C>>
+	| (ShapeOf<C> extends { readonly flags: infer F } ? keyof F & string : never);
+
+/** The grantable members of a members shape, by name. */
+type GrantableIn<S extends MembersShape> =
+	| { [M in keyof S["state"]]: S["state"][M] extends Grantable ? M : never }[keyof S["state"]]
+	| { [M in keyof S["methods"]]: S["methods"][M] extends Grantable ? M : never }[keyof S["methods"]]
+	| {
+			[M in keyof NonNullable<S["events"]>]: NonNullable<S["events"]>[M] extends Grantable ? M : never;
+	  }[keyof NonNullable<S["events"]>];
+
+/**
+ * The value a contract's admission hands its factory (slice 14 §2.1, slice 15 §1.2): the data its `admission` schema
+ * describes and the names granted to the caller; `never` for a contract that takes no admission.
+ */
+export type AdmittedOf<C extends Contract> = [TakesAdmission<C>] extends [never]
+	? never
+	: AdmittedData<C> & { readonly granted: ReadonlySet<GrantableName<C>> };
+
+/**
+ * The value an admission allows (`allow(value)`): the data its `admission` schema describes, and the grantable names
+ * the caller gets (none when left out).
+ */
+export type AllowedOf<C extends Contract> = [TakesAdmission<C>] extends [never]
+	? never
+	: AdmittedData<C> & { readonly granted?: readonly GrantableName<C>[] };
+
+/** `true` for a contract served with `admit`: one declaring an `admission`, grantable members or flags. */
+type TakesAdmission<C extends Contract> = ShapeOf<C> extends { readonly admission: Schema }
+	? true
+	: [GrantableName<C>] extends [never]
+		? never
+		: true;
+
+/** The data an admission hands its factory besides `granted`: what the contract's `admission` schema declares. */
+type AdmittedData<C extends Contract> = ShapeOf<C> extends { readonly admission: infer A extends Schema }
 	? Static<A>
-	: never;
+	: unknown;
 
 /** The params object of a contract. */
 export type ParamsOf<C extends Contract> = { [F in keyof ShapeOf<C>["params"]]: Static<ShapeOf<C>["params"][F]> };
 
 /**
- * What a factory returns: for `local`, a `Watchable` per state member and a function per method, `(args, context)`,
- * or `(context)` when the method takes no arguments; for `remote`, one variant `{ variant, members }` with exactly
- * that variant's members. `X` is the context the methods get.
+ * What a factory returns: a `Watchable` per state member, a function per method, `(args, context)`, or `(context)`
+ * when the method takes no arguments, an event member per event member; a remote contract's grantable state and event
+ * members as builders, `() => watchable`, called only if granted (slice 15 §1.3). `X` is the context the methods get.
  */
-export type Implementation<C extends Contract, X extends Context = Context> = ImplementationOf<
-	ShapeOf<C>["kind"],
-	CurrentVariants<C>,
-	X
->;
-
-type ImplementationOf<
-	K extends Kind,
-	V extends { readonly [variant: string]: VariantShape },
-	X extends Context,
-> = K extends "local"
-	? VariantImplementation<V[typeof LOCAL], X>
-	: { [N in keyof V]: { readonly variant: N; readonly members: VariantImplementation<V[N], X> } }[keyof V];
+export type Implementation<C extends Contract, X extends Context = Context> = ShapeOf<C>["kind"] extends "local"
+	? MembersImplementation<CurrentMembers<C>, X>
+	: RemoteImplementation<CurrentMembers<C>, X>;
 
 /**
- * One variant's members: a `Watchable` per state member, a function per method, an `EventMember` per event member (an
- * object's own `EventSource`, or a reference's member it re-exposes) and, in a local contract, a `KeyedWatchable` per
- * keyed member and the named queries of a `queries` member.
+ * Members: a `Watchable` per state member, a function per method, an `EventMember` per event member (an object's own
+ * `EventSource`, or a reference's member it re-exposes) and, in a local contract, a `KeyedWatchable` per keyed member
+ * and the named queries of a `queries` member. A grantable member is typed as the member it marks.
  */
-export type VariantImplementation<V extends VariantShape, X extends Context = Context> = {
+export type MembersImplementation<V extends MembersShape, X extends Context = Context> = {
 	[M in
 		| keyof V["state"]
 		| keyof V["methods"]
 		| keyof NonNullable<V["keyed"]>
 		| keyof NonNullable<V["events"]>
 		| keyof NonNullable<V["queries"]>]: M extends keyof V["methods"]
-		? MethodFunction<V["methods"][M], X>
+		? MethodFunction<Ungranted<V["methods"][M]>, X>
 		: M extends keyof V["state"]
-			? Watchable<Static<V["state"][M]>>
+			? Watchable<Static<Ungranted<V["state"][M]>>>
 			: M extends keyof NonNullable<V["keyed"]>
 				? KeyedWatchable<Static<NonNullable<V["keyed"]>[M]>, KeyOfMember<NonNullable<V["keyed"]>[M]>>
 				: M extends keyof NonNullable<V["events"]>
-					? EventMember<Static<NonNullable<V["events"]>[M]>>
+					? EventMember<Static<Ungranted<NonNullable<V["events"]>[M]>>>
 					: M extends keyof NonNullable<V["queries"]>
 						? NamedQueriesOf<NonNullable<V["queries"]>[M]>
 						: never;
 };
+
+/** A remote factory's members: as `MembersImplementation`, with grantable state and event members as builders. */
+type RemoteImplementation<V extends MembersShape, X extends Context> = {
+	[M in keyof MembersImplementation<V, X>]: M extends keyof V["methods"]
+		? MembersImplementation<V, X>[M]
+		: IsGrantable<V, M> extends true
+			? () => MembersImplementation<V, X>[M]
+			: MembersImplementation<V, X>[M];
+};
+
+/** Whether member `M` of `V` is `grantable(...)`. */
+export type IsGrantable<V extends MembersShape, M> = M extends keyof V["state"]
+	? V["state"][M] extends Grantable
+		? true
+		: false
+	: M extends keyof V["methods"]
+		? V["methods"][M] extends Grantable
+			? true
+			: false
+		: M extends keyof NonNullable<V["events"]>
+			? NonNullable<V["events"]>[M] extends Grantable
+				? true
+				: false
+			: false;
 
 /** The named queries of a `queries` member declaration: one per listed name, typed by its item and arguments. */
 export type NamedQueriesOf<Q> = Q extends QueriesMember<infer I, infer A>
@@ -125,7 +173,7 @@ export interface EventSubscription {
 
 /**
  * An event member as its readers have it (decision "Events: fire-and-forget members"): a reference's, which receives
- * the values its object emits while it is bound to an instance whose variant has the member, never one emitted before
+ * the values its object emits while it is bound to an instance that has the member (granted it), never one emitted before
  * it bound, never replayed. Not a `Watchable`: no value, no derive or routine source.
  */
 export interface EventMember<T> {
@@ -190,10 +238,12 @@ export type ContractData = {
 	readonly kinds: ReadonlyMap<string, MemberKind>;
 	/** A remote contract's admission, as its current version declares it; none without one, and for local. */
 	readonly admission: AdmissionData | undefined;
+	/** A remote contract's flags (slice 15 §1.1): rights that are no member, each with its label; fixed for its history. */
+	readonly flags: ReadonlyMap<string, string>;
 };
 
 /**
- * A contract's admission (slice 14 §2.1): the schema of the value its factory is handed, and that schema's
+ * A contract's admission (slice 14 §2.1): the schema of the data its factory is handed, and that schema's
  * fingerprint. Never part of the contract's fingerprint; a reload's staging compares it (the value is never checked).
  */
 export type AdmissionData = { readonly schema: Snapshot; readonly fingerprint: string };
@@ -206,12 +256,17 @@ export type HostAddress = (params: ParamsOf<Contract>) => Address;
 export type VersionData = {
 	readonly version: number;
 	readonly fingerprint: string;
-	readonly variants: ReadonlyMap<string, VariantData>;
+	readonly members: MembersData;
+	/** Its grantable members (slice 15 §1): a remote contract's; a caller has one only if its admission granted it. */
+	readonly grantable: ReadonlySet<string>;
+	/** The names an admission may grant at this version, sorted: its grantable members and the flags (the wire's indexes). */
+	readonly grants: readonly string[];
 	/** The changes that produced this version; empty for a base. */
 	readonly changes: readonly Change[];
 };
 
-export type VariantData = {
+/** A contract version's members, or the part of them one binding was granted. */
+export type MembersData = {
 	readonly state: ReadonlyMap<string, Snapshot>;
 	readonly methods: ReadonlyMap<string, MethodData>;
 	/** Keyed state members (slice 6a §12): only a local contract has any. */
@@ -248,12 +303,17 @@ export function takesNoArgs(method: MethodData): boolean {
 	return normal.type === "null" && Object.keys(normal).length === 1;
 }
 
-/** The variants of a contract's current version; a local contract has the one variant `LOCAL`. */
-export function currentVariants(contract: Contract): ReadonlyMap<string, VariantData> {
-	return contractData(contract).versions.at(-1)!.variants;
+/** A contract's current version. */
+export function currentVersion(contract: Contract): VersionData {
+	return contractData(contract).versions.at(-1)!;
 }
 
-/** The member names of one variant of a contract, by kind. */
+/** The members of a contract's current version. */
+export function currentMembers(contract: Contract): MembersData {
+	return currentVersion(contract).members;
+}
+
+/** The member names of a contract, by kind. */
 export type MemberNames = {
 	readonly state: readonly string[];
 	readonly methods: readonly string[];
@@ -261,43 +321,77 @@ export type MemberNames = {
 };
 
 /**
- * The names of the state members, methods and event members of `variant` of a contract's current version (a local
- * contract has one variant: leave `variant` out), in the order declared: for code that fills an implementation from
- * another object's members. A local contract's keyed and `queries` members are not among them.
+ * The names of the state members, methods and event members of a contract's current version, grantable ones included,
+ * in the order declared: for code that fills an implementation from another object's members. A local contract's keyed
+ * and `queries` members are not among them.
  */
-export function memberNames(contract: Contract, variant: string = LOCAL): MemberNames {
-	const found = currentVariants(contract).get(variant);
-	if (found === undefined) throw new Error(`${contract.name}: no variant "${variant}"`);
-	return { state: [...found.state.keys()], methods: [...found.methods.keys()], events: [...found.events.keys()] };
+export function memberNames(contract: Contract): MemberNames {
+	const { state, methods, events } = currentMembers(contract);
+	return { state: [...state.keys()], methods: [...methods.keys()], events: [...events.keys()] };
 }
 
-/** The variants of version `version` of a contract's history (an older consumer's binding, Q10). */
-export function variantsAt(contract: Contract, version: number): ReadonlyMap<string, VariantData> {
+/** Version `version` of a contract's history (an older consumer's binding, Q10). */
+export function versionAt(contract: Contract, version: number): VersionData {
 	// Callers name a version the provider binds (`binds`): its history has it.
-	return contractData(contract).versions.find((data) => data.version === version)!.variants;
+	return contractData(contract).versions.find((data) => data.version === version)!;
 }
 
-/** A variant's names as links index them (2b): its state members, its methods and its event members, each sorted. */
-export type VariantNames = {
+/** Granted nothing: the shared empty set (a contract without grantable members, a denied or unbound reference). */
+export const NO_GRANTS: ReadonlySet<string> = new Set();
+
+/**
+ * The members of `version` a binding granted `granted` has: its plain members and the granted ones. Shared per version
+ * and set of granted members (a `WeakMap` keyed by the version: gone with its contract).
+ */
+export function grantedMembers(version: VersionData, granted: ReadonlySet<string>): MembersData {
+	if (version.grantable.size === 0) return version.members;
+	const kept = [...version.grantable].filter((member) => granted.has(member)).sort();
+	const key = JSON.stringify(kept);
+	let byGrant = grantedShapes.get(version);
+	if (byGrant === undefined) {
+		byGrant = new Map();
+		grantedShapes.set(version, byGrant);
+	}
+	let members = byGrant.get(key);
+	if (members === undefined) {
+		const plain = <T>(entries: ReadonlyMap<string, T>): ReadonlyMap<string, T> =>
+			new Map([...entries].filter(([member]) => !version.grantable.has(member) || granted.has(member)));
+		const { state, methods, keyed, events, queries } = version.members;
+		members = { state: plain(state), methods: plain(methods), keyed, events: plain(events), queries };
+		byGrant.set(key, members);
+	}
+	return members;
+}
+
+const grantedShapes = new WeakMap<VersionData, Map<string, MembersData>>();
+
+/** The names of `granted` as the wire carries them: indexes into `version.grants` (names it lacks are left out). */
+export function grantIndexes(version: VersionData, granted: ReadonlySet<string>): number[] {
+	if (granted.size === 0) return NO_INDEXES;
+	const indexes: number[] = [];
+	for (const [index, name] of version.grants.entries()) if (granted.has(name)) indexes.push(index);
+	return indexes;
+}
+
+/** No indexes: shared (a message's lists are never written once made). */
+const NO_INDEXES: number[] = [];
+
+/** A binding's members' names in the order links index them (2b): its state members, methods and event members. */
+export type MemberOrder = {
 	readonly state: readonly string[];
 	readonly methods: readonly string[];
 	readonly events: readonly string[];
 };
 
-/** The current version's variant names in the order links index them: sorted. */
-export function variantOrder(contract: Contract): readonly string[] {
-	return [...currentVariants(contract).keys()].sort();
-}
-
 /**
- * A variant's state members, methods and event members in the order links index them: each sorted; a variant without
- * event members shares one empty list (contracts without events pay nothing for them per binding).
+ * Members' names in the order links index them: each kind sorted; members without event members share one empty list
+ * (contracts without events pay nothing for them per binding).
  */
-export function variantNames(variant: VariantData): VariantNames {
+export function memberOrder(members: MembersData): MemberOrder {
 	return {
-		state: [...variant.state.keys()].sort(),
-		methods: [...variant.methods.keys()].sort(),
-		events: variant.events.size === 0 ? NO_NAMES : [...variant.events.keys()].sort(),
+		state: [...members.state.keys()].sort(),
+		methods: [...members.methods.keys()].sort(),
+		events: members.events.size === 0 ? NO_NAMES : [...members.events.keys()].sort(),
 	};
 }
 

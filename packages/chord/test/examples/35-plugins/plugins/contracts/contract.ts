@@ -11,7 +11,8 @@ export const Notes = remote("example.notes", {
 	version: 1,
 	params: {},
 	hostAddress: () => Worker(),
-	variants: { main: { state: { label: str(), count: int() }, methods: { add: method(undefined, int()) } } },
+	state: { label: str(), count: int() },
+	methods: { add: method(undefined, int()) },
 });
 
 /** The notes' label as the server shows it. */

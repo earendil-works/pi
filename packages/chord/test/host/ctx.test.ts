@@ -126,7 +126,7 @@ describe("ctx", () => {
 			version: 1,
 			params: {},
 			hostAddress: () => Server(),
-			variants: { v: { state: { n: int() } } },
+			state: { n: int() },
 		});
 		const Starter = local("app.starter", { version: 1, params: {}, members: { start: method() } });
 		let pending: Promise<unknown> | undefined;
@@ -196,17 +196,14 @@ describe("local handlers act as the host (§4, audit)", () => {
 			version: 1,
 			params: {},
 			hostAddress: () => Server(),
-			variants: { v: { methods: { who: method(undefined, str()), through: method(undefined, str()) } } },
+			methods: { who: method(undefined, str()), through: method(undefined, str()) },
 		});
 		const who = (ctx: Ctx<TestPrincipal>) => `${ctx.principal?.kind ?? "none"} ${ctx.incarnation}`;
 		const { server, client } = await linked((h) => {
 			h.serve(Store, () => ({ who: async (ctx) => who(ctx) }));
 			h.serve(Gate, () => ({
-				variant: "v",
-				members: {
-					who: async (ctx) => who(ctx),
-					through: async (ctx) => (await ctx.get(Store, {})).who(ctx),
-				},
+				who: async (ctx) => who(ctx),
+				through: async (ctx) => (await ctx.get(Store, {})).who(ctx),
 			}));
 		});
 		const gate = await client.get(Gate, {}, context);

@@ -160,16 +160,12 @@ export const Notes = remote("test.notes", {
 	version: 1,
 	params: { id: str() },
 	hostAddress: ({ id }) => Project({ id }),
-	variants: {
-		main: {
-			state: { text: str(), start: unknown() },
-			methods: {
-				write: method(str()),
-				visit: method(str(), int()),
-				attach: method(str(), str()),
-				file: method(str(), str()),
-			},
-		},
+	state: { text: str(), start: unknown() },
+	methods: {
+		write: method(str()),
+		visit: method(str(), int()),
+		attach: method(str(), str()),
+		file: method(str(), str()),
 	},
 });
 
@@ -185,9 +181,10 @@ export const NOTES_PLUGIN: Readonly<Record<string, string>> = {
 		"\tversion: 1,",
 		"\tparams: { id: str() },",
 		"\thostAddress: ({ id }) => Project({ id }),",
-		"\tvariants: { main: { state: { text: str(), start: unknown() }, methods: {",
+		"\tstate: { text: str(), start: unknown() },",
+		"\tmethods: {",
 		"\t\twrite: method(str()), visit: method(str(), int()), attach: method(str(), str()), file: method(str(), str()),",
-		"\t} } },",
+		"\t},",
 		"});",
 	].join("\n"),
 	"worker.ts": [
@@ -211,14 +208,14 @@ export const NOTES_PLUGIN: Readonly<Record<string, string>> = {
 		"\t\tconst info = self.get(WorkerInfo, {});",
 		"\t\tconst files = self.get(Files, {});",
 		"\t\tconst decoder = new TextDecoder();",
-		'\t\treturn { variant: "main", members: {',
+		"\t\treturn {",
 		"\t\t\ttext: self.derive([store.text], ([value]) => value),",
 		"\t\t\tstart: self.derive([info.start], ([value]) => value),",
 		"\t\t\twrite: (next, ctx) => store.write(next, ctx),",
 		"\t\t\tvisit: (page, ctx) => store.visit(page, ctx),",
 		'\t\t\tattach: async (body, ctx) => (await files.put({ space: "notes", path: "note.txt", mime: "text/plain", source: "test", bytes: new TextEncoder().encode(body) }, ctx)).id,',
 		"\t\t\tfile: async (id, ctx) => decoder.decode(await files.read({ id, offset: 0, length: 1024 }, ctx)),",
-		"\t\t} };",
+		"\t\t};",
 		"\t});",
 		"});",
 	].join("\n"),

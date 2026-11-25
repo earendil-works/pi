@@ -14,7 +14,7 @@ export const Reports = remote("test.reports", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
-	variants: { main: { methods: { report: method(str()) } } },
+	methods: { report: method(str()) },
 });
 
 /** What the fixture worker does on request, at its own address. */
@@ -22,21 +22,17 @@ export const Control = remote("test.control", {
 	version: 1,
 	params: { id: str() },
 	hostAddress: ({ id }) => Session({ id }),
-	variants: {
-		main: {
-			methods: {
-				crash: method(int()),
-				fatal: method(str()),
-				block: method(int()),
-				blockThenCrash: method(int()),
-				busy: method(int()),
-				localCalls: method(int(), int()),
-				/** Sends the server a report and returns without waiting for its answer. */
-				report: method(str()),
-				/** Sends the server a report and exits (code 7) in the same turn. */
-				reportAndExit: method(str()),
-			},
-		},
+	methods: {
+		crash: method(int()),
+		fatal: method(str()),
+		block: method(int()),
+		blockThenCrash: method(int()),
+		busy: method(int()),
+		localCalls: method(int(), int()),
+		/** Sends the server a report and returns without waiting for its answer. */
+		report: method(str()),
+		/** Sends the server a report and exits (code 7) in the same turn. */
+		reportAndExit: method(str()),
 	},
 });
 

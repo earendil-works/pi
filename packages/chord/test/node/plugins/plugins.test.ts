@@ -48,7 +48,8 @@ const Notes = remote("test.notes", {
 	version: 1,
 	params: {},
 	hostAddress: () => Worker(),
-	variants: { main: { state: { label: str(), count: int() }, methods: { add: method(undefined, int()) } } },
+	state: { label: str(), count: int() },
+	methods: { add: method(undefined, int()) },
 });
 const Index = local("test.index", { version: 1, params: {}, members: { label: str() } });
 const Item = local("test.item", { version: 1, params: {}, members: { label: str() } });

@@ -75,30 +75,27 @@ export default defineFacet((host) => {
 		const files = self.get(Files, {});
 		const author = (principal as { readonly name?: string }).name ?? principal.kind;
 		return {
-			variant: "main",
-			members: {
-				messages: self.derive([store.messages], ([messages]) => messages),
-				history: (page, ctx) => store.history(page, ctx),
-				post: (text, ctx) => store.add({ author, text }, ctx),
-				// Each attachment is a file of the space `attachments`, at its name (a name sent twice is a new version).
-				begin: async ({ name, mime }, ctx) => {
-					const path = name.replaceAll("/", "_");
-					const begun = await files.begin({ space: "attachments", path, mime, source: author }, ctx);
-					// Without a key a begin always starts an upload.
-					return begun.kind === "upload" ? begun.upload : "";
-				},
-				append: (chunk, ctx) => files.append(chunk, ctx),
-				share: async ({ upload, text }, ctx) => {
-					const file = await files.finish(upload, ctx);
-					return store.add({ author, text, file: attachment(file) }, ctx);
-				},
-				attachment: async (id, ctx) => {
-					const file = await files.file(id, ctx);
-					if (file === null) throw new Error(`no file ${id}`);
-					return attachment(file);
-				},
-				read: (range, ctx) => files.read(range, ctx),
+			messages: self.derive([store.messages], ([messages]) => messages),
+			history: (page, ctx) => store.history(page, ctx),
+			post: (text, ctx) => store.add({ author, text }, ctx),
+			// Each attachment is a file of the space `attachments`, at its name (a name sent twice is a new version).
+			begin: async ({ name, mime }, ctx) => {
+				const path = name.replaceAll("/", "_");
+				const begun = await files.begin({ space: "attachments", path, mime, source: author }, ctx);
+				// Without a key a begin always starts an upload.
+				return begun.kind === "upload" ? begun.upload : "";
 			},
+			append: (chunk, ctx) => files.append(chunk, ctx),
+			share: async ({ upload, text }, ctx) => {
+				const file = await files.finish(upload, ctx);
+				return store.add({ author, text, file: attachment(file) }, ctx);
+			},
+			attachment: async (id, ctx) => {
+				const file = await files.file(id, ctx);
+				if (file === null) throw new Error(`no file ${id}`);
+				return attachment(file);
+			},
+			read: (range, ctx) => files.read(range, ctx),
 		};
 	});
 });

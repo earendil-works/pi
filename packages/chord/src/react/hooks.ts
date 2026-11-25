@@ -1,6 +1,6 @@
 // React bindings (slice 11 §3, decision "Slice 11, P7"; p2's `useObject`, `useReadable`, `useRegistry`): a host in
-// context, references held for a component's life, watchables read with `useSyncExternalStore`, a reference read in
-// one variant, event members subscribed while mounted, page state kept for the host's life, and a plugin's messages
+// context, references held for a component's life, watchables read with `useSyncExternalStore`, a reference read
+// while it is live (`useLive`), event members subscribed while mounted, page state kept for the host's life, and a plugin's messages
 // in the host's language. A component unmounted by a reload has not left (design §21): its releases are plain
 // releases, presence is the app's. A component of a reloaded plugin is a new function and remounts, its `useState`
 // starting over; what must survive is page state (decision "Tutorial gaps" (1)).
@@ -22,11 +22,11 @@ import { BACKGROUND_CONTEXT, withAbortSignal } from "../context/index.ts";
 import type { Contract, EventMember, ParamsOf } from "../contracts/index.ts";
 import type { Principal } from "../data/index.ts";
 import { canonicalJson } from "../data/principal.ts";
-import type { Held, Host, RefState } from "../host/index.ts";
+import type { Host, Reference, RefState } from "../host/index.ts";
 import type { Registry } from "../registries/index.ts";
 import { hostLanguage, type Messages, type Translator } from "../surfaces/index.ts";
+import { type LiveRef, liveGrant } from "../surfaces/live.ts";
 import { pageState } from "../surfaces/page-state.ts";
-import { type InVariant, liveIn, type VariantOf, type VariantRef } from "../surfaces/variant.ts";
 import type { NativeWatchable, Watchable } from "../watch.ts";
 import { watchStore } from "./stores.ts";
 
@@ -50,10 +50,10 @@ export function useHost<P extends Principal = Principal>(): Host<P> {
  * A reference to `Type` with `params`, held while the component is mounted and released when it unmounts or its params
  * change (compared by value); `undefined` before its first hold (the first render).
  */
-export function useHold<C extends Contract>(Type: C, params: ParamsOf<C>): Held<C> | undefined {
+export function useHold<C extends Contract>(Type: C, params: ParamsOf<C>): Reference<C> | undefined {
 	const host = useHost();
 	const key = canonicalJson(params as never, BACKGROUND_CONTEXT);
-	const [held, setHeld] = useState<{ readonly key: string; readonly ref: Held<C> } | undefined>(undefined);
+	const [held, setHeld] = useState<{ readonly key: string; readonly ref: Reference<C> } | undefined>(undefined);
 	// biome-ignore lint/correctness/useExhaustiveDependencies: `key` is `params` by value: an inline object must not re-hold.
 	useEffect(() => {
 		const ref = host.hold(Type, params, BACKGROUND_CONTEXT);
@@ -111,21 +111,24 @@ export function useRefState(ref: { readonly state: NativeWatchable<RefState> } |
 }
 
 /**
- * `ref` narrowed to `variant` while it is live in it, else `undefined` (no reference, loading, failed or denied,
- * ended, another variant), re-rendering when that changes: a reference held while mounted binds later and may bind
- * another variant (an admission's other allowed value), and it keeps its last variant while it loads. The UI's
- * way to read a variant (decision "C15 stands; the UI bindings follow the variant"); `useRefState` says why there is
- * none. True of the render that read it: a call made after an `await` may find another variant.
+ * `ref` while it is live, and while it loads again after it was live (a rebind for another `granted`, a link drop: the
+ * tools stay up, calls park); else `undefined` (no reference, its first load, failed or denied, ended). Re-renders
+ * when that changes and when its `granted` changes (slice 15 §1.5): grantable members come and go with it, in the
+ * same render. `useRefState` says why there is none. True of the render that read it: a call made after an `await`
+ * may find another grant.
  */
-export function useVariant<R extends VariantRef, const V extends VariantOf<R>>(
-	ref: R | undefined,
-	variant: V,
-): InVariant<R, V> | undefined {
+export function useLive<R extends LiveRef>(ref: R | undefined): R | undefined {
 	const store = useMemo(() => watchStore(ref?.state), [ref]);
-	// The snapshot is the narrowing, not the state: live in one variant, then live in another, is one `live` to React
-	// when the loading between them was never rendered.
-	const snapshot = (): InVariant<R, V> | undefined => liveIn(ref, variant);
-	return useSyncExternalStore(store.subscribe, snapshot, snapshot);
+	const was = useRef<{ readonly ref: R | undefined; readonly live: boolean }>({ ref: undefined, live: false });
+	// The snapshot is the grant, not the state: live with one grant, then live with another, is one `live` to React
+	// when the loading between them was never rendered. It remembers whether `ref` was live, per reference.
+	const snapshot = (): ReadonlySet<string> | undefined => {
+		const granted = liveGrant(ref, was.current.ref === ref && was.current.live);
+		was.current = { ref, live: granted !== undefined };
+		return granted;
+	};
+	const granted = useSyncExternalStore(store.subscribe, snapshot, snapshot);
+	return granted === undefined ? undefined : ref;
 }
 
 /**

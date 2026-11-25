@@ -5,13 +5,10 @@ import { Process } from "./contract.ts";
 
 export default defineFacet((host) =>
 	host.serve(Process, () => ({
-		variant: "main",
-		members: {
-			pid: constant(process.pid),
-			crash: async () => {
-				setTimeout(() => process.exit(13), 10);
-				return null;
-			},
+		pid: constant(process.pid),
+		crash: async () => {
+			setTimeout(() => process.exit(13), 10);
+			return null;
 		},
 	})),
 );

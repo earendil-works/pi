@@ -3,8 +3,8 @@
 // in-place reload keeps), a counter held while shown (`useHold`, `useWatch`, `useRefState`), and a note in page state
 // (`usePageState`) whose component the "remount" button replaces by another function, as a plugin reload does, a
 // greeting in the page's language (`useMessages`), the core facet contributing its catalogs, the page's beats subscribed
-// while shown (`useEvents`, its member and label switchable), the server's desk in the variant the page is admitted to
-// (`useVariant`, shown on request), and the plugins' parts (components). The page's reports and its client's stop are
+// while shown (`useEvents`, its member and label switchable), the server's desk as the page is admitted to it
+// (`useLive`, shown on request), and the plugins' parts (components). The page's reports and its client's stop are
 // left on `globalThis` for the tests.
 
 import * as React from "react";
@@ -17,11 +17,11 @@ import {
 	HostProvider,
 	useEvents,
 	useHold,
+	useLive,
 	useMessages,
 	usePageState,
 	useRefState,
 	useRegistry,
-	useVariant,
 	useWatch,
 } from "../../../../src/react/index.ts";
 import { startPage } from "../../../../src/web/index.ts";
@@ -126,22 +126,20 @@ function Beats() {
 }
 
 /**
- * The server's desk in the variant it is live in: its text, the variant read, and a click that writes through the
- * editor's reference (nothing for a reader).
+ * The server's desk while it is live: its text, whether `write` is granted, and a click that writes when it is
+ * (nothing for a reader).
  */
 function Desk() {
-	const ref = useHold(webApi.Desk, {});
-	const editor = useVariant(ref, "editor");
-	const reader = useVariant(ref, "reader");
-	const text = useWatch((editor ?? reader)?.text);
+	const live = useLive(useHold(webApi.Desk, {}));
+	const text = useWatch(live?.text);
 	return h(
 		"button",
 		{
 			type: "button",
 			id: "desk",
-			// Which hook returned it, not what the reference says.
-			"data-variant": editor !== undefined ? "editor" : reader !== undefined ? "reader" : "none",
-			onClick: () => void editor?.write("edited", BACKGROUND_CONTEXT),
+			// What `useLive` returned, in this render.
+			"data-mode": live === undefined ? "none" : live.write !== undefined ? "editor" : "reader",
+			onClick: () => void live?.write?.("edited", BACKGROUND_CONTEXT),
 		},
 		text ?? "",
 	);

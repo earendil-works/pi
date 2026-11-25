@@ -6,13 +6,24 @@
 // Run from packages/chord:
 //   node --conditions=source --experimental-strip-types test/examples/19-jobs.ts
 import { BACKGROUND_CONTEXT, type Context } from "../../src/context/index.ts";
-import { arr, hostKind, int, local, method, obj, remote, type Static, str } from "../../src/contracts/index.ts";
+import {
+	arr,
+	grantable,
+	hostKind,
+	int,
+	local,
+	method,
+	obj,
+	remote,
+	type Static,
+	str,
+} from "../../src/contracts/index.ts";
 import { defineState } from "../../src/documents/index.ts";
-import { createHost, defineFacet, sleep } from "../../src/host/index.ts";
+import { allow, createHost, defineFacet, sleep } from "../../src/host/index.ts";
 import { defineJob } from "../../src/jobs/index.ts";
 import { memoryLinkPair } from "../../src/link/index.ts";
 import { OutputBuffer, Progress } from "../../src/output.ts";
-import { mapShared } from "../../src/state/index.ts";
+import { constant, mapShared } from "../../src/state/index.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -59,20 +70,15 @@ const ChatStore = local("example.chat-store", {
 // The server's host kind: a remote contract's `hostAddress` names the host serving its objects.
 const Server = hostKind("server");
 
-/** Per-principal views: the owner runs shells and sees their output, a guest sees which shells run. */
+/** Per-principal views: everyone sees which shells run; the owner is granted their output and running them. */
 const Chat = remote("example.chat", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
-	variants: {
-		owner: {
-			state: { entries: arr(str()), shells: arr(Shell) },
-			methods: {
-				runShell: method(obj({ command: str(), lines: int(), requestId: str() }), str()),
-				abortShell: method(obj({ id: str() })),
-			},
-		},
-		guest: { state: { entries: arr(str()), shells: arr(GuestShell) } },
+	state: { entries: arr(str()), shells: arr(GuestShell), outputs: grantable(arr(Shell)) },
+	methods: {
+		runShell: grantable(method(obj({ command: str(), lines: int(), requestId: str() }), str())),
+		abortShell: grantable(method(obj({ id: str() }))),
 	},
 });
 
@@ -149,28 +155,29 @@ const facet = defineFacet<P>((host) => {
 			},
 		};
 	});
-	host.serve(Chat, (_, principal, self) => {
-		const store = self.get(ChatStore, {});
-		if (principal.kind !== "owner") {
-			// A guest sees no output: the view drops it (computed once per variant in a real store, §12).
+	host.serve(
+		Chat,
+		(_, _principal, _admitted, self) => {
+			const store = self.get(ChatStore, {});
+			// Everyone's view drops the output (computed once per caller here; once per store in a real one, §12).
 			const strip = mapShared(
 				(s: Static<typeof Shell>): Static<typeof GuestShell> => ({ id: s.id, phase: s.phase, command: s.command }),
 			);
 			return {
-				variant: "guest",
-				members: { entries: store.entries, shells: self.derive([store.shells], ([list]) => strip(list)) },
-			};
-		}
-		return {
-			variant: "owner",
-			members: {
 				entries: store.entries,
-				shells: store.shells,
+				shells: self.derive([store.shells], ([list]) => strip(list)),
+				outputs: () => store.shells,
 				runShell: (args, ctx) => store.runShell(args, ctx),
 				abortShell: (args, ctx) => store.abortShell(args, ctx),
-			},
-		};
-	});
+			};
+		},
+		{
+			admit: (_params, principal) =>
+				constant(
+					principal.kind === "owner" ? allow({ granted: ["outputs", "runShell", "abortShell"] }) : allow({}),
+				),
+		},
+	);
 });
 
 // 2. A server and two tabs, the owner's and a guest's.
@@ -190,19 +197,21 @@ async function tab(principal: P) {
 }
 const owner = await tab({ kind: "owner" });
 const guest = await tab({ kind: "guest" });
-if (owner.variant !== "owner") throw new Error("expected the owner's variant");
+const { runShell, abortShell, outputs } = owner;
+if (runShell === undefined || abortShell === undefined || outputs === undefined)
+	throw new Error("expected the owner's grant");
 
 // 3. The owner runs a command; its request id dedupes a resent request (the same run comes back).
-const id = await owner.runShell({ command: "npm test", lines: 5, requestId: "r1" }, context);
-const again = await owner.runShell({ command: "npm test", lines: 5, requestId: "r1" }, context);
+const id = await runShell({ command: "npm test", lines: 5, requestId: "r1" }, context);
+const again = await runShell({ command: "npm test", lines: 5, requestId: "r1" }, context);
 console.log("a resent request returns the same run:", again === id);
 await sleep(100, context);
-console.log("owner sees:", owner.shells.value);
+console.log("owner sees:", outputs.value);
 console.log("guest sees:", guest.shells.value);
 
 // 4. One run at a time: a second command is refused while the first runs.
 try {
-	await owner.runShell({ command: "npm run build", lines: 1, requestId: "r2" }, context);
+	await runShell({ command: "npm run build", lines: 1, requestId: "r2" }, context);
 } catch (error) {
 	console.log("second run refused:", (error as Error).message);
 }
@@ -210,10 +219,10 @@ await sleep(300, context);
 console.log("entries after the first run:", owner.entries.value);
 
 // 5. Abort is a request: the run stops at its next `sleep`, its last output is flushed, `finish` records it.
-const long = await owner.runShell({ command: "tail -f log", lines: 100, requestId: "r3" }, context);
+const long = await runShell({ command: "tail -f log", lines: 100, requestId: "r3" }, context);
 await sleep(100, context);
-await owner.abortShell({ id: long }, context);
+await abortShell({ id: long }, context);
 await sleep(100, context);
 console.log("entries after the abort:", owner.entries.value);
-console.log("running now:", owner.shells.value);
+console.log("running now:", outputs.value);
 await server.close(context);

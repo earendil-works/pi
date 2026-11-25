@@ -35,7 +35,8 @@ const Sessions = remote("example.sessions", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
-	variants: { all: { state: { titles: map(str()) }, methods: { report: method(Report) } } },
+	state: { titles: map(str()) },
+	methods: { report: method(Report) },
 });
 
 /** A session, on its worker: its title, and the method that changes it. */
@@ -43,7 +44,8 @@ const SessionTitle = remote("example.session-title", {
 	version: 1,
 	params: { id: str() },
 	hostAddress: ({ id }) => Session({ id }),
-	variants: { owner: { state: { title: str() }, methods: { rename: method(str()) } } },
+	state: { title: str() },
+	methods: { rename: method(str()) },
 });
 
 const IndexDoc = defineState("index", {
@@ -69,7 +71,7 @@ const serverFacet = defineFacet<P>((host) => {
 	});
 	host.serve(Sessions, (_params, _principal, self) => {
 		const index = self.get(SessionIndex, {});
-		return { variant: "all", members: { titles: index.titles, report: (report, ctx) => index.report(report, ctx) } };
+		return { titles: index.titles, report: (report, ctx) => index.report(report, ctx) };
 	});
 });
 
@@ -78,17 +80,14 @@ const workerFacet = defineFacet<P>((host) => {
 		const doc = self.state(TitleDoc);
 		const sessions = self.get(Sessions, {});
 		return {
-			variant: "owner",
-			members: {
-				title: self.derive([doc], ([current]) => current.title),
-				// The rule for a method that should feel instant: it awaits its own changes, the push to the server included.
-				rename: async (title, ctx) => {
-					await doc.change((draft) => {
-						draft.title = title;
-					}, ctx);
-					await sessions.report({ id, title }, ctx);
-					return null;
-				},
+			title: self.derive([doc], ([current]) => current.title),
+			// The rule for a method that should feel instant: it awaits its own changes, the push to the server included.
+			rename: async (title, ctx) => {
+				await doc.change((draft) => {
+					draft.title = title;
+				}, ctx);
+				await sessions.report({ id, title }, ctx);
+				return null;
 			},
 		};
 	});

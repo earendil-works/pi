@@ -155,7 +155,7 @@ const DECLARATIONS = {
 
 const EVERY_MEMBER_KIND = `
 import * as chord from "@earendil-works/chord";
-const { arr, bool, bytes, event, hostKind, int, keyed, lit, local, map, method, nul, num, obj, oneOf, opt, queries, remote, str, union, unknown } = chord;
+const { arr, bool, bytes, event, grantable, hostKind, int, keyed, lit, local, map, method, nul, num, obj, oneOf, opt, queries, remote, str, union, unknown } = chord;
 
 export const Home = hostKind("home", { id: str() });
 const item = obj({ id: str(), kind: oneOf("a", "b"), size: opt(int()), tags: arr(str()), blob: bytes() });
@@ -178,6 +178,9 @@ export const Served = remote("fixture.served", {
 	params: { id: str() },
 	hostAddress: (params) => Home(params),
 	admission: obj({ role: oneOf("editor", "reader") }),
-	variants: { editor: { state, methods, events: { changed: item } }, reader: { state } },
+	state,
+	methods: { plain: methods.plain, put: grantable(methods.put) },
+	events: { changed: grantable(item) },
+	flags: { export: "Export" },
 });
 `;

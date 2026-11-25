@@ -26,7 +26,8 @@ const Notes = remote("example.notes", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
-	variants: { editor: { state: { list: arr(str()) }, methods: { add: method(obj({ text: str() })) } } },
+	state: { list: arr(str()) },
+	methods: { add: method(obj({ text: str() })) },
 });
 
 /** A panel in the tab: a local object over the server's notes. */
@@ -47,13 +48,10 @@ const notesPlugin = defineFacet<Principal>((host) => {
 	host.serve(Notes, (_params, _principal, self) => {
 		const list = self.state(List);
 		return {
-			variant: "editor",
-			members: {
-				list: self.derive([list], ([l]) => l.list),
-				add: async ({ text }, ctx) => {
-					await list.change((draft) => void draft.list.push(text), ctx);
-					return null;
-				},
+			list: self.derive([list], ([l]) => l.list),
+			add: async ({ text }, ctx) => {
+				await list.change((draft) => void draft.list.push(text), ctx);
+				return null;
 			},
 		};
 	});

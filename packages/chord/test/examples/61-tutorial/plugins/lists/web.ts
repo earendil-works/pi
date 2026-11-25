@@ -4,7 +4,7 @@
 // texts are in the page's language (`useMessages`), and its catalogs are its contribution to the page's `Translations`.
 
 import { BACKGROUND_CONTEXT as context, defineFacet, Translations } from "@todo/app/v1";
-import { Panels, useHold, useHost, useMessages, usePageState, useWatch } from "@todo/app/v1/web";
+import { Panels, useHold, useHost, useLive, useMessages, usePageState, useWatch } from "@todo/app/v1/web";
 import { createElement as h } from "react";
 import { Todos } from "./contract.ts";
 import { messages } from "./messages.ts";
@@ -14,7 +14,8 @@ function TodoList() {
 	const { t } = useMessages(messages);
 	const host = useHost();
 	const list = location.hash.slice(1) || "groceries";
-	const todos = useHold(Todos, { list });
+	// Live or nothing: `clear` comes and goes with what the list's admission grants, in the same render.
+	const todos = useLive(useHold(Todos, { list }));
 	const items = useWatch(todos?.items) ?? [];
 	const notice = useWatch(todos?.notice);
 	// Kept by the page, not the component: the new code's component finds the half-typed todo.
@@ -57,9 +58,9 @@ function TodoList() {
 				onChange: (event: { target: { value: string } }) => setText(event.target.value),
 			}),
 		),
-		todos?.variant === "owner"
-			? h("button", { type: "button", onClick: () => void todos.clear(context) }, t("clearDone"))
-			: null,
+		todos?.clear === undefined
+			? null
+			: h("button", { type: "button", onClick: () => void todos.clear?.(context) }, t("clearDone")),
 		notice === undefined || notice === null ? null : h("p", { className: "lists-notice" }, t.render(notice)),
 	);
 }

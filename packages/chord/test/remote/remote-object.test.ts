@@ -1,7 +1,7 @@
 import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context, withCancel, withTelemetry } from "../../src/context/index.ts";
-import { hostKind, int, local, method, obj, remote, str } from "../../src/contracts/index.ts";
+import { grantable, hostKind, int, local, method, obj, remote, str } from "../../src/contracts/index.ts";
 import { ChordError, PluginError } from "../../src/data/index.ts";
 import { defineState } from "../../src/documents/index.ts";
 import {
@@ -11,7 +11,6 @@ import {
 	type Host,
 	type HostError,
 	type Reference,
-	type RefIn,
 } from "../../src/host/index.ts";
 import { resolveWatchable } from "../../src/host/reference.ts";
 import { type Link, memoryLinkPair } from "../../src/link/index.ts";
@@ -31,8 +30,10 @@ import {
 	fakeTimers,
 	forEachCodec,
 	framesOf,
+	grantOf,
 	instancesOf,
 	linked,
+	MATCH_PLAYER,
 	Match,
 	Notes,
 	PlacedNotes,
@@ -64,7 +65,7 @@ forEachCodec(() => {
 				version: 1,
 				params: {},
 				hostAddress: () => Server(),
-				variants: { v: { state: { n: int() } } },
+				state: { n: int() },
 			});
 			const { client } = await linked((h) =>
 				h.serve(Broken, () => {
@@ -184,7 +185,7 @@ forEachCodec(() => {
 
 	describe("a snapshot", () => {
 		it.each([
-			["misses a member", [{ member: EDITOR.state.notes!, value: "[]" }], EDITOR.variant],
+			["misses a member", [{ member: EDITOR.state.notes!, value: "[]" }], EDITOR.granted],
 			[
 				"names a member twice",
 				[
@@ -192,20 +193,20 @@ forEachCodec(() => {
 					{ member: EDITOR.state.notes!, value: "[]" },
 					{ member: EDITOR.state.count!, value: "0" },
 				],
-				EDITOR.variant,
+				EDITOR.granted,
 			],
-			["names a member outside the variant", [{ member: 7, value: "0" }], EDITOR.variant],
-			["names a variant outside the version", [], 5],
-		])("that %s closes the link; the reference stays loading", async (_, members, variant) => {
+			["names a member outside the binding", [{ member: 7, value: "0" }], EDITOR.granted],
+			["grants a name outside the version", [], [5]],
+		])("that %s closes the link; the reference stays loading", async (_, members, granted) => {
 			const { client, peer, errors } = await rawProvider();
 			const notes = client.hold(Notes, { session: "S1" }, context);
 			const { hold } = await peer.next("hold");
-			peer.send({ kind: "bound", holds: [{ hold, variant, members, failed: [] }] });
+			peer.send({ kind: "bound", holds: [{ hold, granted, members, failed: [] }] });
 			await transported();
 			expect(peer.closed).toBe(true);
 			expect(errors.map(({ kind }) => kind)).toEqual(["protocol_error"]);
 			expect(notes.state.value).toEqual({ kind: "loading" });
-			expect(notes.variant).toBeUndefined();
+			expect(grantOf(notes)).toEqual([]);
 		});
 	});
 
@@ -217,7 +218,7 @@ forEachCodec(() => {
 				version: 1,
 				params: { id: int() },
 				hostAddress: () => Server(),
-				variants: { v: { state: { n: int() } } },
+				state: { n: int() },
 			});
 			const opens: string[] = [];
 			const { client } = await linked((h) =>
@@ -231,7 +232,7 @@ forEachCodec(() => {
 						},
 						() => {},
 					);
-					return { variant: "v", members: { n: constant(id) } };
+					return { n: constant(id) };
 				}),
 			);
 			const got = rejection(client.get(Flaky, { id: 1 }, context, { readyTimeout: 1_500 }));
@@ -271,25 +272,23 @@ forEachCodec(() => {
 				version: 1,
 				params: {},
 				hostAddress: () => Server(),
-				variants: { v: { state: { half: int() }, methods: { set: method(int()) } } },
+				state: { half: int() },
+				methods: { set: method(int()) },
 			});
 			const { server, client } = await linked((h) =>
 				h.serve(Halves, (_, _principal, self) => {
 					const doc = self.state(Counter);
 					return {
-						variant: "v",
-						members: {
-							half: self.derive([doc], ([{ n }]) => {
-								// A fresh error: its stack's frames would keep what threw it.
-								if (n === 2) throw new Error("half threw");
-								return n / 2;
-							}),
-							set: async (value, ctx) => {
-								await doc.change((draft) => {
-									draft.n = value;
-								}, ctx);
-								return null;
-							},
+						half: self.derive([doc], ([{ n }]) => {
+							// A fresh error: its stack's frames would keep what threw it.
+							if (n === 2) throw new Error("half threw");
+							return n / 2;
+						}),
+						set: async (value, ctx) => {
+							await doc.change((draft) => {
+								draft.n = value;
+							}, ctx);
+							return null;
 						},
 					};
 				}),
@@ -298,7 +297,6 @@ forEachCodec(() => {
 			const refs = await (async () => {
 				const made = remoteObjects.length;
 				const halves = await client.get(Halves, {}, context);
-				if (halves.variant !== "v") throw new Error("expected variant v");
 				const refs: WeakRef<object>[] = [new WeakRef(resolveWatchable(halves.half)!), ...remoteObjects.slice(made)];
 				(await halves.half.watch(context)).start(async (call) => {
 					if (call.kind === "failed") kept.push(call.error);
@@ -387,7 +385,7 @@ forEachCodec(() => {
 				version: 1,
 				params: {},
 				hostAddress: () => Server(),
-				variants: { v: { state: { n: int() } } },
+				state: { n: int() },
 			});
 			const View = local("app.view", { version: 1, params: {}, members: { n: int() } });
 			const { server, client: first } = await linked((h) =>
@@ -398,7 +396,7 @@ forEachCodec(() => {
 						},
 						() => {},
 					);
-					return { variant: "v", members: { n: constant(1) } };
+					return { n: constant(1) };
 				}),
 			);
 			// The first client's get makes the object fail; it stays failed for its backoff window.
@@ -423,15 +421,13 @@ forEachCodec(() => {
 	});
 });
 
-/** A remote type whose variants share `y`: `a` has `x` and a method, `b` has `z`. */
+/** A remote type with `y` for everyone; `x` and a method one grant (`A`), `z` another (`B`). */
 const Shifting = remote("app.shifting", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
-	variants: {
-		a: { state: { x: int(), y: int() }, methods: { m: method() } },
-		b: { state: { y: int(), z: int() } },
-	},
+	state: { x: grantable(int()), y: int(), z: grantable(int()) },
+	methods: { m: grantable(method()) },
 });
 
 /** A client whose `View` derives `x`+`y` of a `Shifting` reference, connected to a raw provider; `View` is bound. */
@@ -445,22 +441,23 @@ async function shifting() {
 		h.serve(View, (_, self) => {
 			const ref = self.get(Shifting, {});
 			held = ref;
-			const { x, y } = ref as RefIn<typeof Shifting, "a">;
+			// Before it binds, every member of the reference is there (slice 15 §1.4).
+			const { x, y } = ref;
 			return {
-				sum: self.derive([x, y], ([x, y]) => x + y),
-				// Reads the reference's variant when `y` changes.
-				label: self.derive([y], ([y]) => `${ref.variant}:${y}`),
+				sum: self.derive([x!, y], ([x, y]) => x + y),
+				// Reads what the reference was granted when `y` changes.
+				label: self.derive([y], ([y]) => `${[...ref.granted].join(",")}:${y}`),
 			};
 		}),
 	);
 	const loading = client.load([{ name: "@test/view", facet }], context);
-	const A = wireNames(Shifting, "a");
+	const A = wireNames(Shifting, ["x", "m"]);
 	const { hold } = await peer.next("hold");
 	const members = [
 		{ member: A.state.x!, value: "1" },
 		{ member: A.state.y!, value: "2" },
 	];
-	peer.send({ kind: "bound", holds: [{ hold, variant: A.variant, members, failed: [] }] });
+	peer.send({ kind: "bound", holds: [{ hold, granted: A.granted, members, failed: [] }] });
 	await loading;
 	const view = await client.get(View, {}, context);
 	return { client, peer, view, ref: held!, errors };
@@ -515,20 +512,21 @@ forEachCodec(() => {
 			await transported();
 			const next = await rawParent(client);
 			const { hold } = await next.next("hold");
-			const A = wireNames(Shifting, "a");
+			const A = wireNames(Shifting, ["x", "m"]);
 			const members = [
 				{ member: A.state.x!, value: "10" },
 				{ member: A.state.y!, value: "20" },
 			];
-			next.send({ kind: "bound", holds: [{ hold, variant: A.variant, members, failed: [] }] });
+			next.send({ kind: "bound", holds: [{ hold, granted: A.granted, members, failed: [] }] });
 			await transported();
 			expect(sums.map(([sum]) => sum)).toEqual([30]);
 		});
 
-		it("another variant: vanished members fail (watches stay open), derives over them fail, new members get values, parked calls are checked (race 14)", async () => {
+		it("another grant: vanished members fail (watches stay open), derives over them fail, new members get values, parked calls are checked (race 14)", async () => {
 			const { client, peer, view, ref } = await shifting();
 			expect(view.sum.value).toBe(3);
-			const a = ref as RefIn<typeof Shifting, "a">;
+			// Taken before the rebind: a reference that was live has a grantable member only while granted.
+			const a = { x: ref.x!, y: ref.y, m: ref.m! };
 			const x = changesOf(await a.x.watch(context));
 			const y = framesOf(await a.y.watch(context));
 			const sum = changesOf(await view.sum.watch(context));
@@ -538,38 +536,35 @@ forEachCodec(() => {
 			const parked = rejection(a.m(context));
 			const next = await rawParent(client);
 			const { hold } = await next.next("hold");
-			const B = wireNames(Shifting, "b");
+			const B = wireNames(Shifting, ["z"]);
 			const members = [
 				{ member: B.state.y!, value: "20" },
 				{ member: B.state.z!, value: "30" },
 			];
-			next.send({ kind: "bound", holds: [{ hold, variant: B.variant, members, failed: [] }] });
+			next.send({ kind: "bound", holds: [{ hold, granted: B.granted, members, failed: [] }] });
 			await transported();
-			expect(ref.variant).toBe("b");
-			const vanished = { kind: "failed", error: expect.objectContaining({ code: "invalid", reason: "member" }) };
+			expect([...ref.granted]).toEqual(["z"]);
+			expect([ref.x, ref.m]).toEqual([undefined, undefined]);
+			const vanished = { kind: "failed", error: expect.objectContaining({ code: "forbidden" }) };
 			expect(x).toEqual([vanished]);
 			expect(sum).toEqual([vanished]);
 			expect(y).toEqual([[20, [["r", 20]]]]);
-			// The variant changed in the same batch: the derive recomputed with the new one.
-			expect(labels.map(([label]) => label)).toEqual(["b:20"]);
-			expect((ref as RefIn<typeof Shifting, "b">).z.value).toBe(30);
-			expect(() => a.x.value).toThrow('app.shifting (variant b) has no state member "x"');
-			expect(await parked).toEqual({
-				code: "invalid",
-				reason: "member",
-				message: 'app.shifting (variant b) has no method "m"',
-			});
-			// A later binding of the variant that has `x` brings it back in the same watches; the derive heals.
+			// The grant changed in the same batch: the derive recomputed with the new one.
+			expect(labels.map(([label]) => label)).toEqual(["z:20"]);
+			expect(ref.z?.value).toBe(30);
+			expect(() => a.x.value).toThrow('app.shifting has not granted "x"');
+			expect(await parked).toEqual({ code: "forbidden", message: 'app.shifting has not granted "m"' });
+			// A later binding granted `x` brings it back in the same watches; the derive heals.
 			next.close();
 			await transported();
 			const third = await rawParent(client);
 			const again = (await third.next("hold")).hold;
-			const A = wireNames(Shifting, "a");
+			const A = wireNames(Shifting, ["x", "m"]);
 			const back = [
 				{ member: A.state.x!, value: "5" },
 				{ member: A.state.y!, value: "6" },
 			];
-			third.send({ kind: "bound", holds: [{ hold: again, variant: A.variant, members: back, failed: [] }] });
+			third.send({ kind: "bound", holds: [{ hold: again, granted: A.granted, members: back, failed: [] }] });
 			await transported();
 			expect(x.at(-1)).toEqual({ kind: "value", value: 5, ops: [["r", 5]], retired: false });
 			expect(view.sum.value).toBe(11);
@@ -616,7 +611,7 @@ forEachCodec(() => {
 				version: 2,
 				params: { session: str() },
 				hostAddress: () => Server(),
-				variants: { editor: { state: { count: int() } } },
+				state: { count: int() },
 			});
 			const { server, client, links } = await linked((h) => void serveNotes(h));
 			const upgraded = createHost<TestPrincipal>({
@@ -624,9 +619,7 @@ forEachCodec(() => {
 				principal: { kind: "server" },
 				onError: () => {},
 			});
-			const facet = defineFacet<TestPrincipal>((h) =>
-				h.serve(NotesV2, () => ({ variant: "editor", members: { count: constant(0) } })),
-			);
+			const facet = defineFacet<TestPrincipal>((h) => h.serve(NotesV2, () => ({ count: constant(0) })));
 			await upgraded.load([{ name: "@test/app", facet }], context);
 			const notes = await client.get(Notes, { session: "S1" }, context);
 			/** Drops the client's link and connects it to `to`. */
@@ -673,13 +666,14 @@ forEachCodec(() => {
 				version: 1,
 				params: {},
 				hostAddress: () => Server(),
-				variants: { only: { state: {}, methods: { ping: method() } } },
+				state: {},
+				methods: { ping: method() },
 			});
 			let factories = 0;
 			const { client } = await linked((h) =>
 				h.serve(Flaky, () => {
 					if (++factories === 1) throw new Error("bad factory");
-					return { variant: "only", members: { ping: async () => null } };
+					return { ping: async () => null };
 				}),
 			);
 			const one = client.hold(Flaky, {}, context);
@@ -872,7 +866,7 @@ describe("consumer spans (slice 9)", () => {
 			const held = await peer.next("hold");
 			bindHold(peer, held.hold);
 			const notes = await getting;
-			const calling = (notes as RefIn<typeof Notes, "editor">).add({ text: "a" }, traced);
+			const calling = notes.add!({ text: "a" }, traced);
 			const call = await peer.next("call");
 			peer.send({ kind: "error", call: call.call, error: wireError(new PluginError("quota", "full")) });
 			await rejection(calling);
@@ -898,10 +892,10 @@ describe("consumer spans (slice 9)", () => {
 		const { client, peer } = await rawProvider({ telemetry });
 		const getting = client.get(Notes, { session: "S1" }, context);
 		bindHold(peer, (await peer.next("hold")).hold);
-		const notes = (await getting) as RefIn<typeof Notes, "editor">;
+		const notes = (await getting) as Reference<typeof Notes>;
 		const { context: cancellable, cancel } = withCancel(context);
 		await telemetry.startSpan({ name: "view" }, async (span) => {
-			const calling = notes.add({ text: "a" }, withTelemetry(span, cancellable));
+			const calling = notes.add!({ text: "a" }, withTelemetry(span, cancellable));
 			await peer.next("call");
 			cancel();
 			await rejection(calling);
@@ -933,20 +927,18 @@ function taken(peer: RawPeer, kind: "hold" | "release" | "call" | "abort" | "ret
 	return count;
 }
 
-/** A remote panel whose variants differ in their state members: `wide` has `x`, `y` and `poke`, `narrow` only `x`. */
+/** A remote panel: `x` for everyone; `y` and `poke` granted to a wide panel, not to a narrow one. */
 const Panel = remote("app.panel", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
-	variants: {
-		wide: { state: { x: int(), y: int() }, methods: { poke: method(str(), int()) } },
-		narrow: { state: { x: int() }, methods: {} },
-	},
+	state: { x: int(), y: grantable(int()) },
+	methods: { poke: grantable(method(str(), int())) },
 });
 
-const WIDE = wireNames(Panel, "wide");
+const WIDE = wireNames(Panel, ["y", "poke"]);
 
-const NARROW = wireNames(Panel, "narrow");
+const NARROW = wireNames(Panel);
 
 /** Binds `hold` of `Panel` in `variant` with `values` (absent members failed with `failure`). */
 function bindPanel(
@@ -964,7 +956,7 @@ function bindPanel(
 		if (value === undefined) failed.push({ member: index, error: wireError(new PluginError("derive", failure)) });
 		else members.push({ member: index, value: jsonPart(value) });
 	}
-	peer.send({ kind: "bound", holds: [{ hold, variant: names.variant, members, failed }] });
+	peer.send({ kind: "bound", holds: [{ hold, granted: names.granted, members, failed }] });
 }
 
 /** Sends a `state` message setting `x` of `Panel`'s hold (bound `wide` or `narrow`), or failing it. */
@@ -1096,9 +1088,9 @@ describe('references sharing one wire hold (decision "References share one wire 
 
 		it("calls through two references are both answered; calls parked per reference go in order once live", async () => {
 			const { client, peer } = await rawProvider();
-			const first = client.hold(Notes, { session: "S1" }, context) as unknown as RefIn<typeof Notes, "editor">;
-			const second = client.hold(Notes, { session: "S1" }, context) as unknown as RefIn<typeof Notes, "editor">;
-			const parked = [first.add({ text: "a" }, context), second.add({ text: "b" }, context)];
+			const first = client.hold(Notes, { session: "S1" }, context) as unknown as Reference<typeof Notes>;
+			const second = client.hold(Notes, { session: "S1" }, context) as unknown as Reference<typeof Notes>;
+			const parked = [first.add!({ text: "a" }, context), second.add!({ text: "b" }, context)];
 			const hold = await bindNext(peer);
 			const calls = [await peer.next("call"), await peer.next("call")];
 			expect(calls.map(({ hold: held, args }) => [held, partValue(args!)])).toEqual([
@@ -1112,30 +1104,31 @@ describe('references sharing one wire hold (decision "References share one wire 
 	});
 
 	describe("state changes", () => {
-		it("a rebind to another variant moves every binding in one batch; a member the new variant lacks fails for all", async () => {
+		it("a rebind with another grant moves every binding in one batch; a member no longer granted fails for all", async () => {
 			const { client, peer } = await rawProvider();
-			const first = client.hold(Panel, {}, context) as unknown as RefIn<typeof Panel, "wide">;
-			const second = client.hold(Panel, {}, context) as unknown as RefIn<typeof Panel, "wide">;
+			const first = client.hold(Panel, {}, context);
+			const second = client.hold(Panel, {}, context);
 			const { hold } = await peer.next("hold");
 			bindPanel(peer, hold, "wide", { x: 1, y: 2 });
 			await waitLive(second);
-			const calls = [changesOf(await first.y.watch(context)), changesOf(await second.y.watch(context))];
+			const y = second.y!;
+			const calls = [changesOf(await first.y!.watch(context)), changesOf(await y.watch(context))];
 			peer.send({ kind: "loading", hold });
 			bindPanel(peer, hold, "narrow", { x: 3 });
 			await delivered();
-			expect([first.variant, second.variant]).toEqual(["narrow", "narrow"]);
+			expect([grantOf(first), grantOf(second), first.y, second.y]).toEqual([[], [], undefined, undefined]);
 			expect(calls.map((each) => each.map(({ kind }) => kind))).toEqual([["failed"], ["failed"]]);
-			expect(() => second.y.value).toThrow('has no state member "y"');
+			expect(() => y.value).toThrow('app.panel has not granted "y"');
 		});
 
 		it("gone and the host's close end every binding exactly once (watches, subscriptions and calls too); a later reference holds anew", async () => {
 			const { client, peer } = await rawProvider();
-			const first = client.hold(Notes, { session: "S1" }, context) as unknown as RefIn<typeof Notes, "editor">;
-			const second = client.hold(Notes, { session: "S1" }, context) as unknown as RefIn<typeof Notes, "editor">;
+			const first = client.hold(Notes, { session: "S1" }, context) as unknown as Reference<typeof Notes>;
+			const second = client.hold(Notes, { session: "S1" }, context) as unknown as Reference<typeof Notes>;
 			const hold = await bindNext(peer);
 			await waitLive(second);
 			const watches = [await first.count.watch(context), await second.count.watch(context)];
-			const call = rejection(second.add({ text: "a" }, context));
+			const call = rejection(second.add!({ text: "a" }, context));
 			await peer.next("call");
 			const error = {
 				kind: "chord",
@@ -1263,21 +1256,22 @@ describe('references sharing one wire hold (decision "References share one wire 
 				if (throws.now) throw new Error("no address");
 				return Server();
 			},
-			variants: { v: { state: { text: str() }, methods: {} } },
+			state: { text: str() },
+			methods: {},
 		});
-		const PLACED = wireNames(Placed, "v");
+		const PLACED = wireNames(Placed);
 
 		/** Binds `hold` of `Placed` with `text`. */
 		const bindText = (peer: RawPeer, hold: number, text: string): void => {
 			const members = [{ member: PLACED.state.text!, value: jsonPart(text) }];
-			peer.send({ kind: "bound", holds: [{ hold, variant: PLACED.variant, members, failed: [] }] });
+			peer.send({ kind: "bound", holds: [{ hold, granted: PLACED.granted, members, failed: [] }] });
 		};
 
 		it("fails every binding broken; a new reference holds anew; a retry moves only its binding, keeping its last value", async () => {
 			throws.now = false;
 			const { client, peer } = await rawProvider({ limits: { part: 64 } });
-			const a1 = client.hold(Placed, {}, context) as unknown as RefIn<typeof Placed, "v">;
-			const a2 = client.hold(Placed, {}, context) as unknown as RefIn<typeof Placed, "v">;
+			const a1 = client.hold(Placed, {}, context) as unknown as Reference<typeof Placed>;
+			const a2 = client.hold(Placed, {}, context) as unknown as Reference<typeof Placed>;
 			const { hold } = await peer.next("hold");
 			bindText(peer, hold, "short");
 			await waitLive(a2);
@@ -1315,7 +1309,7 @@ describe('references sharing one wire hold (decision "References share one wire 
 			// D joins C's entry, not A1's private object.
 			bindText(peer, held.hold, "c");
 			await waitLive(c);
-			const d = client.hold(Placed, {}, context) as unknown as RefIn<typeof Placed, "v">;
+			const d = client.hold(Placed, {}, context) as unknown as Reference<typeof Placed>;
 			expect([d.state.value.kind, d.text.value, taken(peer, "hold")]).toEqual(["live", "c", 0]);
 			// The old object's last binding leaves: nothing more is sent for it.
 			a2.release();
@@ -1364,50 +1358,53 @@ describe('references sharing one wire hold (decision "References share one wire 
 	describe("seen members", () => {
 		it("a join to a live object with a failed member: its watch rejects with the error, no last value, until a value arrives", async () => {
 			const { client, peer } = await rawProvider();
-			const a = client.hold(Panel, {}, context) as unknown as RefIn<typeof Panel, "wide">;
+			const a = client.hold(Panel, {}, context) as unknown as Reference<typeof Panel>;
 			const { hold } = await peer.next("hold");
 			bindPanel(peer, hold, "wide", { x: 7, y: 1 });
 			await waitLive(a);
 			setX(peer, hold, undefined);
 			await delivered();
-			const b = client.hold(Panel, {}, context) as unknown as RefIn<typeof Panel, "wide">;
+			const b = client.hold(Panel, {}, context) as unknown as Reference<typeof Panel>;
 			expect([await opened(a.x), await opened(b.x)]).toEqual([{ opened: 7 }, { rejected: "x threw" }]);
 			setX(peer, hold, 8);
 			await delivered();
 			expect(await opened(b.x)).toEqual({ opened: 8 });
 		});
 
-		it("a member missing from the bound variant at the join: likewise, also across variants (missing, present, missing)", async () => {
+		it("a member not granted at the join: likewise, also across grants (missing, present, missing)", async () => {
 			const { client, peer } = await rawProvider();
-			const a = client.hold(Panel, {}, context) as unknown as RefIn<typeof Panel, "wide">;
+			const a = client.hold(Panel, {}, context);
 			const { hold } = await peer.next("hold");
 			bindPanel(peer, hold, "wide", { x: 1, y: 2 });
 			await waitLive(a);
+			// Taken while granted: a reference that was live has a grantable member only while granted.
+			const ay = a.y!;
 			peer.send({ kind: "loading", hold });
 			bindPanel(peer, hold, "narrow", { x: 3 });
 			await delivered();
-			const b = client.hold(Panel, {}, context) as unknown as RefIn<typeof Panel, "wide">;
-			expect((await opened(a.y)).opened).toBe(2);
-			expect((await opened(b.y)).rejected).toMatch('has no state member "y"');
+			const b = client.hold(Panel, {}, context);
+			expect((await opened(ay)).opened).toBe(2);
+			expect([a.y, b.y]).toEqual([undefined, undefined]);
 			peer.send({ kind: "loading", hold });
 			bindPanel(peer, hold, "wide", { x: 4, y: 5 });
 			await delivered();
+			const by = b.y!;
 			peer.send({ kind: "loading", hold });
 			bindPanel(peer, hold, "narrow", { x: 6 });
 			await delivered();
 			// Seen while present: its own last value now.
-			expect((await opened(b.y)).opened).toBe(5);
+			expect((await opened(by)).opened).toBe(5);
 		});
 
 		it("a join while loading sees nothing of before: the reconnect's snapshot with x failed rejects its watch; the old one starts at 7", async () => {
 			const { client, peer } = await rawProvider();
-			const a = client.hold(Panel, {}, context) as unknown as RefIn<typeof Panel, "wide">;
+			const a = client.hold(Panel, {}, context) as unknown as Reference<typeof Panel>;
 			bindPanel(peer, (await peer.next("hold")).hold, "wide", { x: 7, y: 1 });
 			await waitLive(a);
 			expect(a.x.value).toBe(7);
 			peer.close();
 			await transported();
-			const b = client.hold(Panel, {}, context) as unknown as RefIn<typeof Panel, "wide">;
+			const b = client.hold(Panel, {}, context) as unknown as Reference<typeof Panel>;
 			const next = await rawParent(client);
 			bindPanel(next, (await next.next("hold")).hold, "wide", { y: 2 });
 			await waitLive(b);
@@ -1416,13 +1413,13 @@ describe('references sharing one wire hold (decision "References share one wire 
 
 		it("failed, then good, then failed again before the joiner's first read: the joiner keeps that value as its own", async () => {
 			const { client, peer } = await rawProvider();
-			const a = client.hold(Panel, {}, context) as unknown as RefIn<typeof Panel, "wide">;
+			const a = client.hold(Panel, {}, context) as unknown as Reference<typeof Panel>;
 			const { hold } = await peer.next("hold");
 			bindPanel(peer, hold, "wide", { x: 7, y: 1 });
 			await waitLive(a);
 			setX(peer, hold, undefined);
 			await delivered();
-			const b = client.hold(Panel, {}, context) as unknown as RefIn<typeof Panel, "wide">;
+			const b = client.hold(Panel, {}, context) as unknown as Reference<typeof Panel>;
 			setX(peer, hold, 9);
 			setX(peer, hold, undefined);
 			await delivered();
@@ -1431,14 +1428,14 @@ describe('references sharing one wire hold (decision "References share one wire 
 
 		it("unseen members and own last values survive the retry alone after too_large/part", async () => {
 			const { client, peer } = await rawProvider({ limits: { part: 64 } });
-			const a = client.hold(Panel, {}, context) as unknown as RefIn<typeof Panel, "wide">;
+			const a = client.hold(Panel, {}, context) as unknown as Reference<typeof Panel>;
 			const { hold } = await peer.next("hold");
 			bindPanel(peer, hold, "wide", { x: 7, y: 1 });
 			await waitLive(a);
 			setX(peer, hold, undefined);
 			await delivered();
-			const b = client.hold(Panel, {}, context) as unknown as RefIn<typeof Panel, "wide">;
-			expect((await opened(b.y)).opened).toBe(1);
+			const b = client.hold(Panel, {}, context) as unknown as Reference<typeof Panel>;
+			expect((await opened(b.y!)).opened).toBe(1);
 			const y = WIDE.state.y!;
 			peer.send({
 				kind: "state",
@@ -1498,7 +1495,7 @@ describe('references sharing one wire hold (decision "References share one wire 
 
 		it("part limits apply to received parts: a value grown past the limit by deltas does not fail a joiner; an oversized call result fails only its call", async () => {
 			const { client, peer } = await rawProvider({ limits: { part: 64 } });
-			const a = client.hold(Notes, { session: "S1" }, context) as unknown as RefIn<typeof Notes, "editor">;
+			const a = client.hold(Notes, { session: "S1" }, context) as unknown as Reference<typeof Notes>;
 			const hold = await bindNext(peer);
 			await waitLive(a);
 			for (let n = 0; n < 6; n++) {
@@ -1510,9 +1507,9 @@ describe('references sharing one wire hold (decision "References share one wire 
 			}
 			await delivered();
 			expect(JSON.stringify(a.notes.value).length).toBeGreaterThan(64);
-			const b = client.hold(Notes, { session: "S1" }, context) as unknown as RefIn<typeof Notes, "editor">;
+			const b = client.hold(Notes, { session: "S1" }, context) as unknown as Reference<typeof Notes>;
 			expect(b.state.value).toEqual({ kind: "live" });
-			const calling = rejection(b.add({ text: "x" }, context));
+			const calling = rejection(b.add!({ text: "x" }, context));
 			const { call } = await peer.next("call");
 			peer.send({ kind: "result", call, value: jsonPart("y".repeat(100)) });
 			expect(await calling).toMatchObject({ code: "too_large" });
@@ -1553,7 +1550,7 @@ describe('references sharing one wire hold (decision "References share one wire 
 	});
 
 	describe("events", () => {
-		const PLAYER = wireNames(Match, "player");
+		const PLAYER = wireNames(Match, MATCH_PLAYER);
 
 		/** An `event` message of `Match`'s paddle for `hold` with `y`. */
 		const paddle = (peer: RawPeer, hold: number, ...ys: number[]): void =>
@@ -1565,18 +1562,18 @@ describe('references sharing one wire hold (decision "References share one wire 
 		/** `Match` bound as a player over a raw provider: two references to it. */
 		const match = async () => {
 			const { client, peer } = await rawProvider();
-			const a = client.hold(Match, { id: 1 }, context) as unknown as RefIn<typeof Match, "player">;
+			const a = client.hold(Match, { id: 1 }, context) as unknown as Reference<typeof Match>;
 			const { hold } = await peer.next("hold");
 			const members = [{ member: PLAYER.state.score!, value: jsonPart(0) }];
-			peer.send({ kind: "bound", holds: [{ hold, variant: PLAYER.variant, members, failed: [] }] });
+			peer.send({ kind: "bound", holds: [{ hold, granted: PLAYER.granted, members, failed: [] }] });
 			await waitLive(a);
 			return { client, peer, hold, a };
 		};
 
 		it("a subscription survives its reference's retry alone after too_large/part: the private hold's events reach it", async () => {
 			const { client, peer } = await rawProvider({ limits: { part: 64 } });
-			const a1 = client.hold(Match, { id: 1 }, context) as unknown as RefIn<typeof Match, "player">;
-			const a2 = client.hold(Match, { id: 1 }, context) as unknown as RefIn<typeof Match, "player">;
+			const a1 = client.hold(Match, { id: 1 }, context) as unknown as Reference<typeof Match>;
+			const a2 = client.hold(Match, { id: 1 }, context) as unknown as Reference<typeof Match>;
 			const { hold } = await peer.next("hold");
 			const bound = (id: number): void =>
 				peer.send({
@@ -1584,7 +1581,7 @@ describe('references sharing one wire hold (decision "References share one wire 
 					holds: [
 						{
 							hold: id,
-							variant: PLAYER.variant,
+							granted: PLAYER.granted,
 							members: [{ member: PLAYER.state.score!, value: jsonPart(0) }],
 							failed: [],
 						},
@@ -1593,8 +1590,8 @@ describe('references sharing one wire hold (decision "References share one wire 
 			bound(hold);
 			await waitLive(a1);
 			const heard: string[] = [];
-			await a1.paddle.on(({ value }) => void heard.push(`a1:${value.y}`), context);
-			await a2.paddle.on(({ value }) => void heard.push(`a2:${value.y}`), context);
+			await a1.paddle!.on(({ value }) => void heard.push(`a1:${value.y}`), context);
+			await a2.paddle!.on(({ value }) => void heard.push(`a2:${value.y}`), context);
 			const ops = jsonPart([["r", "x".repeat(100)]]);
 			peer.send({
 				kind: "state",
@@ -1621,13 +1618,13 @@ describe('references sharing one wire hold (decision "References share one wire 
 				await client.load([], context);
 				const peer = await rawParent(client);
 				// Two references of a guest's scope (revocation ends a revoked principal's, never the host's own).
-				const refs: RefIn<typeof Match, "player">[] = [];
+				const refs: Reference<typeof Match>[] = [];
 				const ready = Promise.withResolvers<void>();
 				const scope = client
 					.root(
 						async (ctx) => {
 							for (let n = 0; n < 2; n++)
-								refs.push((await ctx.get(Match, { id: 1 })) as RefIn<typeof Match, "player">);
+								refs.push((await ctx.get(Match, { id: 1 })) as Reference<typeof Match>);
 							ready.resolve();
 							await new Promise(() => {});
 						},
@@ -1637,15 +1634,17 @@ describe('references sharing one wire hold (decision "References share one wire 
 					.catch(() => {});
 				const { hold } = await peer.next("hold");
 				const members = [{ member: PLAYER.state.score!, value: jsonPart(0) }];
-				peer.send({ kind: "bound", holds: [{ hold, variant: PLAYER.variant, members, failed: [] }] });
+				peer.send({ kind: "bound", holds: [{ hold, granted: PLAYER.granted, members, failed: [] }] });
 				await ready.promise;
 				const states = await Promise.all(refs.map(async (ref) => statesOf(await ref.state.watch(context))));
 				const watches = await Promise.all(refs.map((ref) => ref.score.watch(context)));
 				const heard: string[] = [];
-				for (const [index, ref] of refs.entries()) {
-					await ref.paddle.on(({ value }) => void heard.push(`${index}:${value.y}`), context);
+				// Taken while granted: an ended reference's members throw when read.
+				const paddles = refs.map((ref) => ref.paddle!);
+				for (const [index, member] of paddles.entries()) {
+					await member.on(({ value }) => void heard.push(`${index}:${value.y}`), context);
 				}
-				const calls = refs.map((ref) => rejection(ref.bump(context)));
+				const calls = refs.map((ref) => rejection(ref.bump!(context)));
 				await peer.next("call");
 				await peer.next("call");
 				paddle(peer, hold, 1);
@@ -1674,7 +1673,7 @@ describe('references sharing one wire hold (decision "References share one wire 
 				const called = terminal === "the host's close" ? "unavailable" : code;
 				expect((await Promise.all(calls)).map((error) => (error as ChordError).code)).toEqual([called, called]);
 				// Their subscriptions ended: a new one is refused, and nothing more reaches the old listeners.
-				expect(await rejection(refs[0]!.paddle.on(() => {}, context))).toMatchObject({ code });
+				expect(await rejection(paddles[0]!.on(() => {}, context))).toMatchObject({ code });
 				if (!peer.closed) paddle(peer, hold, 2);
 				await delivered();
 				expect(heard).toEqual(["0:1", "1:1"]);
@@ -1685,10 +1684,10 @@ describe('references sharing one wire hold (decision "References share one wire 
 
 		it("two references subscribed to one member each get every event once; stopping one leaves the other's", async () => {
 			const { client, peer, hold, a } = await match();
-			const b = client.hold(Match, { id: 1 }, context) as unknown as RefIn<typeof Match, "player">;
+			const b = client.hold(Match, { id: 1 }, context) as unknown as Reference<typeof Match>;
 			const seen: string[] = [];
-			const stopA = await a.paddle.on(({ value }) => void seen.push(`a${value.y}`), context);
-			await b.paddle.on(({ value }) => void seen.push(`b${value.y}`), context);
+			const stopA = await a.paddle!.on(({ value }) => void seen.push(`a${value.y}`), context);
+			await b.paddle!.on(({ value }) => void seen.push(`b${value.y}`), context);
 			paddle(peer, hold, 1);
 			await delivered();
 			stopA.stop();
@@ -1702,16 +1701,16 @@ describe('references sharing one wire hold (decision "References share one wire 
 			const seen: string[] = [];
 			// In transit: sent before B joins, delivered after.
 			paddle(peer, hold, 1);
-			const b = client.hold(Match, { id: 1 }, context) as unknown as RefIn<typeof Match, "player">;
-			await b.paddle.on(({ value }) => void seen.push(`b${value.y}`), context);
+			const b = client.hold(Match, { id: 1 }, context) as unknown as Reference<typeof Match>;
+			await b.paddle!.on(({ value }) => void seen.push(`b${value.y}`), context);
 			await delivered();
 			expect(seen).toEqual(["b1"]);
 			// Queued for the flush: C joins in A's listener of the first of two entries; it gets neither.
-			let c: RefIn<typeof Match, "player"> | undefined;
-			await a.paddle.on(({ value }) => {
+			let c: Reference<typeof Match> | undefined;
+			await a.paddle!.on(({ value }) => {
 				if (value.y !== 2 || c !== undefined) return;
-				c = client.hold(Match, { id: 1 }, context) as unknown as RefIn<typeof Match, "player">;
-				void c.paddle.on(({ value: later }) => void seen.push(`c${later.y}`), context);
+				c = client.hold(Match, { id: 1 }, context) as unknown as Reference<typeof Match>;
+				void c.paddle!.on(({ value: later }) => void seen.push(`c${later.y}`), context);
 			}, context);
 			paddle(peer, hold, 2, 3);
 			await delivered();
@@ -1723,7 +1722,7 @@ describe('references sharing one wire hold (decision "References share one wire 
 		it("a binding's event cutoff stays when another binding joins", async () => {
 			const { client, peer, hold, a } = await match();
 			const seen: number[] = [];
-			await a.paddle.on(({ value }) => void seen.push(value.y), context);
+			await a.paddle!.on(({ value }) => void seen.push(value.y), context);
 			paddle(peer, hold, 1);
 			client.hold(Match, { id: 1 }, context);
 			await delivered();
@@ -1737,8 +1736,8 @@ describe('references sharing one wire hold (decision "References share one wire 
 			const { client } = await linked((h) => {
 				probe = serveNotes(h);
 			});
-			const a = (await client.get(Notes, { session: "S1" }, context)) as RefIn<typeof Notes, "editor">;
-			const b = (await client.get(Notes, { session: "S1" }, context)) as RefIn<typeof Notes, "editor">;
+			const a = (await client.get(Notes, { session: "S1" }, context)) as Reference<typeof Notes>;
+			const b = (await client.get(Notes, { session: "S1" }, context)) as Reference<typeof Notes>;
 			const aCall = rejection(a.wait(context));
 			const bCall = rejection(b.wait(context));
 			await transported();
@@ -1761,28 +1760,26 @@ describe('references sharing one wire hold (decision "References share one wire 
 			version: 1,
 			params: { session: str() },
 			hostAddress: ({ session }) => Session({ id: session }),
-			variants: { v: { state: { n: int() }, methods: { wait: method(str()) } } },
+			state: { n: int() },
+			methods: { wait: method(str()) },
 		});
 
 		/** Serves `Waiter`, recording each call's tag in `seen`. */
 		const serveWaiter = (h: FacetHost<TestPrincipal>, seen: string[]): void =>
 			h.serve(Waiter, () => ({
-				variant: "v",
-				members: {
-					n: constant(0),
-					wait: async (tag, ctx) => {
-						seen.push(tag);
-						await new Promise((resolve) => ctx.abortSignal?.addEventListener("abort", resolve));
-						return null;
-					},
+				n: constant(0),
+				wait: async (tag, ctx) => {
+					seen.push(tag);
+					await new Promise((resolve) => ctx.abortSignal?.addEventListener("abort", resolve));
+					return null;
 				},
 			}));
 
 		it("through a relay with an upstream window of 1 (A1 running, A2 and B1 queued there): the worker sees A1 and B1, never A2", async () => {
 			const seen: string[] = [];
 			const { tab } = await relayed({ workerCallWindow: 1, worker: (h) => serveWaiter(h, seen) });
-			const a = (await tab.get(Waiter, { session: "S1" }, context)) as RefIn<typeof Waiter, "v">;
-			const b = (await tab.get(Waiter, { session: "S1" }, context)) as RefIn<typeof Waiter, "v">;
+			const a = (await tab.get(Waiter, { session: "S1" }, context)) as Reference<typeof Waiter>;
+			const b = (await tab.get(Waiter, { session: "S1" }, context)) as Reference<typeof Waiter>;
 			const calls = [rejection(a.wait("A1", context)), rejection(a.wait("A2", context))];
 			const sibling = rejection(b.wait("B1", context));
 			await transported();
@@ -1801,7 +1798,8 @@ describe('references sharing one wire hold (decision "References share one wire 
 				version: 1,
 				params: {},
 				hostAddress: () => Deep(),
-				variants: { v: { state: { n: int() }, methods: { wait: method(str()) } } },
+				state: { n: int() },
+				methods: { wait: method(str()) },
 			});
 			const seen: string[] = [];
 			const provider = createHost<TestPrincipal>({
@@ -1816,14 +1814,11 @@ describe('references sharing one wire hold (decision "References share one wire 
 						name: "@test/deep",
 						facet: defineFacet<TestPrincipal>((h) =>
 							h.serve(DeepWaiter, () => ({
-								variant: "v",
-								members: {
-									n: constant(0),
-									wait: async (tag, ctx) => {
-										seen.push(tag);
-										await new Promise((resolve) => ctx.abortSignal?.addEventListener("abort", resolve));
-										return null;
-									},
+								n: constant(0),
+								wait: async (tag, ctx) => {
+									seen.push(tag);
+									await new Promise((resolve) => ctx.abortSignal?.addEventListener("abort", resolve));
+									return null;
 								},
 							})),
 						),
@@ -1862,8 +1857,8 @@ describe('references sharing one wire hold (decision "References share one wire 
 			const [near, far] = memoryLinkPair();
 			outer.accept(far, { principal: { kind: "owner" }, codec: testCodec() }, context);
 			tab.connect(near, { principal: { kind: "server" }, codec: testCodec() }, context);
-			const a = (await tab.get(DeepWaiter, {}, context)) as RefIn<typeof DeepWaiter, "v">;
-			const b = (await tab.get(DeepWaiter, {}, context)) as RefIn<typeof DeepWaiter, "v">;
+			const a = (await tab.get(DeepWaiter, {}, context)) as Reference<typeof DeepWaiter>;
+			const b = (await tab.get(DeepWaiter, {}, context)) as Reference<typeof DeepWaiter>;
 			// The tab's window (2) sends A1 and A2, the outer relay forwards both (2), the inner one runs A1 (1) and queues
 			// A2; B1 and B2 wait in the tab.
 			const calls = [
@@ -1919,8 +1914,8 @@ describe('references sharing one wire hold (decision "References share one wire 
 		it("two references, one hold: one encode per commit", async () => {
 			const telemetry = new InMemoryTelemetryContext();
 			const { client } = await linked((h) => void serveNotes(h), { telemetry });
-			const a = (await client.get(Notes, { session: "S1" }, context)) as RefIn<typeof Notes, "editor">;
-			const b = (await client.get(Notes, { session: "S1" }, context)) as RefIn<typeof Notes, "editor">;
+			const a = (await client.get(Notes, { session: "S1" }, context)) as Reference<typeof Notes>;
+			const b = (await client.get(Notes, { session: "S1" }, context)) as Reference<typeof Notes>;
 			await transported();
 			const encodes = () =>
 				telemetry
@@ -1928,8 +1923,8 @@ describe('references sharing one wire hold (decision "References share one wire 
 					.filter(({ name }) => name === "chord.link.encodes")
 					.reduce((sum, { value }) => sum + (value as number), 0);
 			const before = encodes();
-			await a.add({ text: "x" }, context);
-			await b.add({ text: "y" }, context);
+			await a.add!({ text: "x" }, context);
+			await b.add!({ text: "y" }, context);
 			await transported();
 			expect(encodes() - before).toBe(2);
 			expect([a.count.value, b.count.value]).toEqual([2, 2]);
@@ -2015,9 +2010,9 @@ describe('references sharing one wire hold (decision "References share one wire 
 			const { server, client } = await linked((h) => {
 				probe = serveNotes(h);
 			});
-			const b = (await client.get(Notes, { session: "S1" }, context)) as RefIn<typeof Notes, "editor">;
+			const b = (await client.get(Notes, { session: "S1" }, context)) as Reference<typeof Notes>;
 			const refs = await (async () => {
-				const a = (await client.get(Notes, { session: "S1" }, context)) as RefIn<typeof Notes, "editor">;
+				const a = (await client.get(Notes, { session: "S1" }, context)) as Reference<typeof Notes>;
 				const call = rejection(a.wait(context));
 				(await a.count.watch(context)).start(async () => {});
 				await transported();
@@ -2038,18 +2033,18 @@ describe('references sharing one wire hold (decision "References share one wire 
 			client.connect(near, { principal: { kind: "server" }, codec: testCodec() }, context);
 			const peer = new RawPeer(far, { calls: 1 });
 			await peer.next("hello");
-			const b = client.hold(Panel, {}, context) as unknown as RefIn<typeof Panel, "wide">;
+			const b = client.hold(Panel, {}, context) as unknown as Reference<typeof Panel>;
 			const { hold } = await peer.next("hold");
 			bindPanel(peer, hold, "wide", { x: 7, y: 1 });
 			await waitLive(b);
 			setX(peer, hold, undefined);
 			await delivered();
 			// B's call takes the window's one slot: A's calls wait in its queue.
-			const sibling = b.poke("B1", context);
+			const sibling = b.poke!("B1", context);
 			const refs = await (async () => {
-				const a = client.hold(Panel, {}, context) as unknown as RefIn<typeof Panel, "wide">;
+				const a = client.hold(Panel, {}, context) as unknown as Reference<typeof Panel>;
 				expect(await opened(a.x)).toEqual({ rejected: "x threw" });
-				const queued = [rejection(a.poke("A1", context)), rejection(a.poke("A2", context))];
+				const queued = [rejection(a.poke!("A1", context)), rejection(a.poke!("A2", context))];
 				const refs = [new WeakRef(a), new WeakRef(resolveWatchable(a.x)!)];
 				a.release();
 				await Promise.all(queued);

@@ -21,7 +21,8 @@ export function preferenceContract<const N extends string, T>(name: N, pick: Sch
 		version: 1,
 		params: {},
 		hostAddress: () => hostKind("server")(),
-		variants: { main: { state: { pick }, methods: { choose: method(pick) } } },
+		state: { pick },
+		methods: { choose: method(pick) },
 	});
 }
 
@@ -72,12 +73,9 @@ export function preferenceFacet<P extends Principal>(
 			const picks = self.get(PickStore, {});
 			const key = principalKey(principal, BACKGROUND_CONTEXT);
 			return {
-				variant: "main",
-				members: {
-					// A key that is a principal's canonical JSON: `Object.hasOwn`, no inherited member is a pick.
-					pick: self.derive([picks.picks], ([all]) => (Object.hasOwn(all, key) ? all[key]! : none)),
-					choose: (next, ctx) => picks.set({ key, pick: next }, ctx),
-				},
+				// A key that is a principal's canonical JSON: `Object.hasOwn`, no inherited member is a pick.
+				pick: self.derive([picks.picks], ([all]) => (Object.hasOwn(all, key) ? all[key]! : none)),
+				choose: (next, ctx) => picks.set({ key, pick: next }, ctx),
 			};
 		});
 	});

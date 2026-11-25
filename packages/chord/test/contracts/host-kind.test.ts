@@ -55,20 +55,20 @@ describe("host kinds", () => {
 });
 
 describe("hostAddress", () => {
-	const variants = { v: { state: { n: int() } } };
+	const members = { state: { n: int() } };
 
 	it("is not part of the fingerprint and is carried by evolve", () => {
 		const hostAddress = ({ session }: { session: string }) => Session({ id: session });
-		const onSession = remote("app.placed", { version: 1, params: { session: str() }, hostAddress, variants });
+		const onSession = remote("app.placed", { version: 1, params: { session: str() }, hostAddress, ...members });
 		const onServer = remote("app.placed", {
 			version: 1,
 			params: { session: str() },
 			hostAddress: () => Server(),
-			variants,
+			...members,
 		});
 		expect(onSession.fingerprint).toBe(onServer.fingerprint);
 		expect(contractData(onSession).hostAddress).toBe(hostAddress);
-		const next = evolve(onSession, (v) => v.addState("v", "m", int()));
+		const next = evolve(onSession, (v) => v.addState("m", int()));
 		expect(contractData(next).hostAddress).toBe(hostAddress);
 	});
 
@@ -78,7 +78,7 @@ describe("hostAddress", () => {
 			params: { session: str() },
 			// @ts-expect-error: the params have no `id`
 			hostAddress: ({ id }) => Session({ id }),
-			variants,
+			...members,
 		});
 	});
 });

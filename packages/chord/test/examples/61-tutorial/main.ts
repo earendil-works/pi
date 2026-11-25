@@ -63,7 +63,7 @@ await app.host.root(
 		await todos.add("eggs", ctx);
 		await todos.tick({ id: 1, done: true }, ctx);
 		await until(() => todos.items.value[0]?.done === true);
-		console.log("2. as the owner:", todos.variant, "|", show(todos.items.value));
+		console.log("2. as the owner: granted", [...todos.granted], "|", show(todos.items.value));
 	},
 	context,
 	{ principal: OWNER },
@@ -72,7 +72,7 @@ await app.host.root(async (ctx) => {
 	const todos = await ctx.get(Todos, { list: "groceries" });
 	await todos.add("bread", ctx);
 	await until(() => todos.items.value.length === 3);
-	console.log("   as the server:", todos.variant, "|", show(todos.items.value.slice(-1)));
+	console.log("   as the server: granted", [...todos.granted], "|", show(todos.items.value.slice(-1)));
 }, context);
 const workers = join(dataDir, "workers", "list");
 const [groceriesDir] = await readdir(workers);
@@ -170,12 +170,12 @@ const socket = new WebSocket(`${url.replace(/^http/, "ws")}/chord`, { headers: {
 ada.connect(webSocketLink(socket as unknown as WebSocketLike), { principal: { kind: "server" } }, context);
 const adas = await ada.get(Todos, { list: "groceries" }, context);
 await adas.add("coffee", context);
-console.log("   ada's variant:", adas.variant);
-if (adas.variant === "member") {
-	// @ts-expect-error `clear` is the owner's: TypeScript refuses it, and so does the worker.
-	const clearing: Promise<null> = adas.clear(context);
-	await clearing.catch((error: ChordError) => console.log("   ada's clear:", `${error.code}/${error.reason}`));
-}
+console.log("   ada is granted:", [...adas.granted], "| her clear:", adas.clear);
+// `clear` is grantable: TypeScript makes a caller check for it, and a forged call is refused `forbidden` by the worker.
+const unchecked = () =>
+	// @ts-expect-error `clear` may not be granted
+	adas.clear(context);
+void unchecked;
 await until(() => groceries.items.value.some(({ by }) => by === "ada"));
 console.log("   the server's reference sees:", show(groceries.items.value.slice(-1)));
 
@@ -199,7 +199,7 @@ adasChoice.release();
 await app.host.root(
 	async (ctx) => {
 		const todos = await ctx.get(Todos, { list: "groceries" });
-		if (todos.variant === "owner") await todos.clear(ctx);
+		await todos.clear?.(ctx);
 	},
 	context,
 	{ principal: OWNER },

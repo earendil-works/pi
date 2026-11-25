@@ -20,7 +20,7 @@ export const HostData = remote("chord.app.data", {
 	params: { address: str() },
 	// The address a worker has: the server names it (`addressParam`); only its kind and params place the object.
 	hostAddress: ({ address }) => JSON.parse(address) as Address,
-	variants: { main: { methods: { exportTo: method(obj({ path: str(), manifest: str(), server: str() })) } } },
+	methods: { exportTo: method(obj({ path: str(), manifest: str(), server: str() })) },
 });
 
 /** `address` as `HostData`'s param. */
@@ -39,13 +39,10 @@ export function hostDataFacet<P extends Principal>(store: Store, files: string, 
 				throw forbidden("chord.app.data: the server's only");
 			}
 			return {
-				variant: "main",
-				members: {
-					exportTo: async ({ path, manifest, server }, ctx) => {
-						// The server's own manifest for this address.
-						await packStore(store, files, JSON.parse(manifest) as ArchiveManifest, server, path, ctx);
-						return null;
-					},
+				exportTo: async ({ path, manifest, server }, ctx) => {
+					// The server's own manifest for this address.
+					await packStore(store, files, JSON.parse(manifest) as ArchiveManifest, server, path, ctx);
+					return null;
 				},
 			};
 		}),

@@ -37,7 +37,8 @@ const Conversation = remote("example.conversation", {
 	version: 1,
 	params: { id: str() },
 	hostAddress: () => Server(),
-	variants: { v: { state: { entries: arr(Entry) }, methods: { append: method(Entry) } } },
+	state: { entries: arr(Entry) },
+	methods: { append: method(Entry) },
 });
 
 const Entries = defineState("entries", {
@@ -59,7 +60,7 @@ const facet = defineFacet<P>((host) => {
 	});
 	host.serve(Conversation, ({ id }, _principal, self) => {
 		const store = self.get(Store, { id });
-		return { variant: "v", members: { entries: store.entries, append: (entry, ctx) => store.append(entry, ctx) } };
+		return { entries: store.entries, append: (entry, ctx) => store.append(entry, ctx) };
 	});
 });
 

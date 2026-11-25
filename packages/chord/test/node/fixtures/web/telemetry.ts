@@ -14,16 +14,12 @@ const Notes = remote("test.notes", {
 	version: 1,
 	params: { id: str() },
 	hostAddress: ({ id }) => hostKind("project", { id: str() })({ id }),
-	variants: {
-		main: {
-			state: { text: str(), start: unknown() },
-			methods: {
-				write: method(str()),
-				visit: method(str(), int()),
-				attach: method(str(), str()),
-				file: method(str(), str()),
-			},
-		},
+	state: { text: str(), start: unknown() },
+	methods: {
+		write: method(str()),
+		visit: method(str(), int()),
+		attach: method(str(), str()),
+		file: method(str(), str()),
 	},
 });
 

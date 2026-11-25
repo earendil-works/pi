@@ -31,9 +31,8 @@ const Notes = remote("example.notes", {
 	version: 1,
 	params: { session: str() },
 	hostAddress: ({ session }) => Session({ id: session }),
-	variants: {
-		owner: { state: { info: Init, notes: arr(str()) }, methods: { add: method(obj({ text: str() }), int()) } },
-	},
+	state: { info: Init, notes: arr(str()) },
+	methods: { add: method(obj({ text: str() }), int()) },
 });
 
 /** What the server sends a worker it forked: the app's own message, not the link's. */
@@ -53,14 +52,11 @@ const notesFacet = defineFacet<P>((host) => {
 		const doc = self.state(NotesDoc);
 		const info = self.get(SessionInfo, {});
 		return {
-			variant: "owner",
-			members: {
-				info: info.init,
-				notes: self.derive([doc], ([d]) => d.list),
-				add: async ({ text }, ctx) => {
-					await doc.change((draft) => void draft.list.push(text), ctx);
-					return doc.value.list.length;
-				},
+			info: info.init,
+			notes: self.derive([doc], ([d]) => d.list),
+			add: async ({ text }, ctx) => {
+				await doc.change((draft) => void draft.list.push(text), ctx);
+				return doc.value.list.length;
 			},
 		};
 	});

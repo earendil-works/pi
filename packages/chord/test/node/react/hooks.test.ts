@@ -3,7 +3,7 @@
 // reference's state, `useRegistry` the registry (the panels), `usePageState` keeps a value across a remount by another
 // component function and starts a new key fresh, `useMessages` re-renders in a language chosen while the page runs,
 // half-typed inputs kept, `useEvents` calls the latest listener (also between a commit and its passive effects),
-// follows a member change and stops at unmount, `useVariant` follows a reference's variant while mounted.
+// follows a member change and stops at unmount, `useLive` follows a reference's grant while mounted.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
@@ -17,23 +17,21 @@ const DeskMode = local("test.desk.mode", { version: 1, params: {}, members: { mo
 /** A server plugin serving the fixture's `Desk`: a reader or an editor by `DeskMode` (`reader` at first), else denied. */
 const DESK_PLUGIN: Readonly<Record<string, string>> = {
 	"server.ts": [
-		'import { allow, defineFacet, deny, hostKind, local, method, oneOf, remote, str } from "@test/app/v1";',
+		'import { allow, defineFacet, deny, grantable, hostKind, local, method, remote, str } from "@test/app/v1";',
 		'const DeskMode = local("test.desk.mode", { version: 1, params: {}, members: { mode: str(), set: method(str()) } });',
-		"const text = { state: { text: str() } };",
-		'const Desk = remote("test.desk", { version: 1, params: {}, hostAddress: () => hostKind("server")(), admission: oneOf("reader", "editor"), variants: { reader: text, editor: { ...text, methods: { write: method(str()) } } } });',
+		'const Desk = remote("test.desk", { version: 1, params: {}, hostAddress: () => hostKind("server")(), state: { text: str() }, methods: { write: grantable(method(str())) } });',
 		"export default defineFacet((h) => {",
 		"	h.serve(DeskMode, (_params, self) => {",
 		'		const mode = self.writable("reader");',
 		"		return { mode: self.derive([mode], ([value]) => value), set: async (next) => { mode.set(next); return null; } };",
 		"	});",
-		"	h.serve(Desk, (_params, _principal, mode, self) => {",
+		"	h.serve(Desk, (_params, _principal, _admitted, self) => {",
 		'		const text = self.writable("a desk");',
 		"		const shown = self.derive([text], ([value]) => value);",
-		'		if (mode === "reader") return { variant: "reader", members: { text: shown } };',
-		'		return { variant: "editor", members: { text: shown, write: async (next) => { text.set(next); return null; } } };',
+		"		return { text: shown, write: async (next) => { text.set(next); return null; } };",
 		"	}, {",
 		"		admit: (_params, _principal, self) => self.derive([self.get(DeskMode, {}).mode], ([mode]) =>",
-		'			mode === "reader" || mode === "editor" ? allow(mode) : deny("no access")),',
+		'			mode === "reader" ? allow({}) : mode === "editor" ? allow({ granted: ["write"] }) : deny("no access")),',
 		"	});",
 		"});",
 	].join("\n"),
@@ -154,28 +152,28 @@ describe.skipIf(CHROMIUM === undefined)("React bindings", () => {
 		}
 	}, 120_000);
 
-	it("reads a reference in the variant it is live in, following a change of its variant while mounted", async () => {
+	it("reads a reference while it is live, following a change of its grant while mounted (useLive)", async () => {
 		const { app } = await webApp(await versionedEntry("1"), await freePort(), { plugins: { desk: DESK_PLUGIN } });
 		const admit = (mode: string) =>
 			app.host.root(async (ctx) => (await ctx.get(DeskMode, {})).set(mode, ctx), context);
-		const variant = (name: string) => `document.getElementById("desk")?.dataset.variant === "${name}"`;
+		const mode = (name: string) => `document.getElementById("desk")?.dataset.mode === "${name}"`;
 		try {
 			await signIn(browser, app.ownerLink());
 			await browser.evaluate("globalThis.showDesk()");
-			await browser.wait(variant("reader"));
+			await browser.wait(mode("reader"));
 			// A reader's reference is no editor's: the click writes nothing.
 			await browser.evaluate('document.getElementById("desk").click()');
-			// Another allowed value while the component is mounted: the same reference, now the editor's.
+			// Another allowed value while the component is mounted: the same reference, now granted `write`.
 			await admit("editor");
-			await browser.wait(variant("editor"));
+			await browser.wait(mode("editor"));
 			expect(await browser.evaluate<string>('document.getElementById("desk").textContent')).toBe("a desk");
 			await browser.evaluate('document.getElementById("desk").click()');
 			await browser.wait('document.getElementById("desk").textContent === "edited"');
-			// Denied: no variant is live. Allowed again as a reader: the reader's.
+			// Denied: nothing is live. Allowed again as a reader: no `write`.
 			await admit("none");
-			await browser.wait(variant("none"));
+			await browser.wait(mode("none"));
 			await admit("reader");
-			await browser.wait(variant("reader"));
+			await browser.wait(mode("reader"));
 		} finally {
 			await app.close(context);
 		}

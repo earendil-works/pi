@@ -9,6 +9,8 @@ import {
 	type EventMember,
 	event,
 	evolve,
+	type GrantableName,
+	grantable,
 	hostKind,
 	type Implementation,
 	int,
@@ -21,6 +23,7 @@ import {
 	type Static,
 	str,
 } from "../../src/contracts/index.ts";
+import type { Ungranted } from "../../src/contracts/internal.ts";
 
 const Server = hostKind("server");
 
@@ -30,99 +33,98 @@ const NotesV1 = remote("notes", {
 	version: 1,
 	params: { session: str() },
 	hostAddress: () => Server(),
-	variants: {
-		editor: { state: { notes: arr(Note), count: int() }, methods: { add: method(Note, str()), clear: method() } },
-		reader: { state: { notes: arr(Note) }, methods: { add: method(Note, str()) } },
-	},
+	state: { notes: arr(Note), count: grantable(int()) },
+	methods: { add: method(Note, str()), clear: grantable(method()) },
 });
 
 const InfoV1 = local("info", { version: 1, params: {}, members: { title: str(), clear: method() } });
 
-/** The current members of a contract's variant, as Chord holds them. */
-function current(contract: Contract, variant: string) {
+/** The current members of a contract, as Chord holds them. */
+function current(contract: Contract) {
 	const data = contractData(contract);
-	const members = data.versions.at(-1)!.variants.get(variant)!;
-	return { state: [...members.state.keys()], methods: [...members.methods.keys()], data };
+	const { members, grantable } = data.versions.at(-1)!;
+	return { state: [...members.state.keys()], methods: [...members.methods.keys()], grantable, data };
 }
 
 /** The current version of a contract's type-level history. */
 type VersionOf<C extends Contract> = CurrentStep<ShapeOf<C>["history"]>["version"];
 
-/** The members of one variant of a remote implementation. */
-type Members<C extends Contract, V extends string> = Extract<Implementation<C>, { readonly variant: V }>["members"];
+/** The members of a remote implementation. */
+type Members<C extends Contract> = Implementation<C>;
 
 describe("edits", () => {
-	it("state changes one state member of one variant", () => {
-		const v2 = evolve(NotesV1, (e) => e.state("editor", "count", str()));
+	it("state changes one state member, and keeps whether it is grantable", () => {
+		const v2 = evolve(NotesV1, (e) => e.state("count", str()));
 		expect(v2.version).toBe(2);
-		expectTypeOf<Members<typeof v2, "editor">["count"]["value"]>().toEqualTypeOf<string>();
-		expectTypeOf<Members<typeof v2, "reader">["notes"]["value"]>().toEqualTypeOf<{ text: string }[]>();
-		// @ts-expect-error: `missing` is not a state member of editor
-		expect(() => evolve(NotesV1, (e) => e.state("editor", "missing", str()))).toThrow(
-			"notes v2.editor.state.missing: no such state member",
+		expectTypeOf<ReturnType<Members<typeof v2>["count"]>["value"]>().toEqualTypeOf<string>();
+		expectTypeOf<Members<typeof v2>["notes"]["value"]>().toEqualTypeOf<{ text: string }[]>();
+		expect(current(v2).grantable.has("count")).toBe(true);
+		// @ts-expect-error: `missing` is not a state member
+		expect(() => evolve(NotesV1, (e) => e.state("missing", str()))).toThrow(
+			"notes v2.state.missing: no such state member",
 		);
 	});
 
-	it("addState adds a state member", () => {
-		const v2 = evolve(NotesV1, (e) => e.addState("reader", "count", int()));
-		expect(current(v2, "reader").state).toEqual(["notes", "count"]);
-		expectTypeOf<Members<typeof v2, "reader">["count"]["value"]>().toEqualTypeOf<number>();
-		expect(() => evolve(NotesV1, (e) => e.addState("reader", "notes", int()))).toThrow(
-			"notes v2.reader.state.notes: already declared",
+	it("addState adds a state member, a grantable one when marked", () => {
+		const v2 = evolve(NotesV1, (e) => e.addState("total", int()).addState("hidden", grantable(int())));
+		expect(current(v2).state).toEqual(["notes", "count", "total", "hidden"]);
+		expect([...current(v2).grantable].sort()).toEqual(["clear", "count", "hidden"]);
+		expectTypeOf<Members<typeof v2>["total"]["value"]>().toEqualTypeOf<number>();
+		expect(() => evolve(NotesV1, (e) => e.addState("notes", int()))).toThrow(
+			"notes v2.state.notes: already declared",
 		);
 	});
 
 	it("removeState removes a state member", () => {
-		const v2 = evolve(NotesV1, (e) => e.removeState("editor", "count"));
-		expect(current(v2, "editor").state).toEqual(["notes"]);
-		expectTypeOf<keyof Members<typeof v2, "editor">>().toEqualTypeOf<"notes" | "add" | "clear">();
+		const v2 = evolve(NotesV1, (e) => e.removeState("count"));
+		expect(current(v2).state).toEqual(["notes"]);
+		expect(current(v2).grantable.has("count")).toBe(false);
+		expectTypeOf<keyof Members<typeof v2>>().toEqualTypeOf<"notes" | "add" | "clear">();
 	});
 
-	it("args and result change one side of a method in every variant that has it", () => {
+	it("args and result change one side of a method", () => {
 		const v2 = evolve(NotesV1, (e) => e.args("add", obj({ text: str(), tag: str() })).result("add", int()));
-		const { data } = current(v2, "editor");
-		const editor = data.versions[1]!.variants.get("editor")!.methods.get("add")!;
-		const reader = data.versions[1]!.variants.get("reader")!.methods.get("add")!;
-		expect(editor).toEqual(reader);
-		expect(data.versions[1]!.changes).toEqual([
-			["editor", "add", "args"],
-			["reader", "add", "args"],
-			["editor", "add", "result"],
-			["reader", "add", "result"],
+		expect(current(v2).data.versions[1]!.changes).toEqual([
+			["add", "args"],
+			["add", "result"],
 		]);
-		type Add = Members<typeof v2, "reader">["add"];
+		type Add = Members<typeof v2>["add"];
 		expectTypeOf<Parameters<Add>[0]>().toEqualTypeOf<{ text: string; tag: string }>();
 		expectTypeOf<Awaited<ReturnType<Add>>>().toEqualTypeOf<number>();
 	});
 
 	it("method replaces both sides", () => {
 		const v2 = evolve(NotesV1, (e) => e.method("clear", obj({ all: bool() }), bool()));
-		type Clear = Members<typeof v2, "editor">["clear"];
+		type Clear = Members<typeof v2>["clear"];
 		expectTypeOf<Parameters<Clear>[0]>().toEqualTypeOf<{ all: boolean }>();
 		expectTypeOf<Awaited<ReturnType<Clear>>>().toEqualTypeOf<boolean>();
+		expect(current(v2).grantable.has("clear")).toBe(true);
 		// @ts-expect-error: no method `missing`
 		expect(() => evolve(NotesV1, (e) => e.method("missing", nul(), nul()))).toThrow('notes v2: no method "missing"');
 	});
 
-	it("addMethod adds a method; to another variant only with the same signature", () => {
-		const v2 = evolve(NotesV1, (e) => e.addMethod("reader", "clear", nul(), nul()));
-		expect(current(v2, "reader").methods).toEqual(["add", "clear"]);
-		expect(() => evolve(NotesV1, (e) => e.addMethod("reader", "clear", str(), nul()))).toThrow(
-			"notes v2.reader.methods.clear: a method has the same signature in every variant",
+	it("addMethod adds a method, a grantable one with grantable(method(...))", () => {
+		const v2 = evolve(NotesV1, (e) => e.addMethod("reset", nul(), nul()).addMethod("lock", grantable(method(str()))));
+		expect(current(v2).methods).toEqual(["add", "clear", "reset", "lock"]);
+		expect(current(v2).grantable.has("lock")).toBe(true);
+		expectTypeOf<Parameters<Members<typeof v2>["lock"]>[0]>().toEqualTypeOf<string>();
+		expect(() => evolve(NotesV1, (e) => e.addMethod("add", nul(), nul()))).toThrow(
+			"notes v2.methods.add: already declared",
 		);
-		expect(() => evolve(NotesV1, (e) => e.addMethod("reader", "add", nul(), nul()))).toThrow(
-			"notes v2.reader.methods.add: already declared",
-		);
+		expect(() =>
+			evolve(InfoV1, (e) =>
+				(e as never as { addMethod: (...args: unknown[]) => typeof e }).addMethod("m", grantable(method())),
+			),
+		).toThrow("info v2.members.m: only a remote contract has grantable members");
 	});
 
-	it("removeMethod removes a method from every variant", () => {
+	it("removeMethod removes a method", () => {
 		const v2 = evolve(NotesV1, (e) => e.removeMethod("add"));
-		expect(current(v2, "editor").methods).toEqual(["clear"]);
-		expect(current(v2, "reader").methods).toEqual([]);
-		expectTypeOf<keyof Members<typeof v2, "reader">>().toEqualTypeOf<"notes">();
+		expect(current(v2).methods).toEqual(["clear"]);
+		expectTypeOf<keyof Members<typeof v2>>().toEqualTypeOf<"notes" | "count" | "clear">();
 	});
 
-	it("local edits take no variant", () => {
+	it("local edits are the same", () => {
 		const v2 = evolve(InfoV1, (e) =>
 			e
 				.state("title", int())
@@ -130,7 +132,7 @@ describe("edits", () => {
 				.addMethod("save", obj({ force: bool() }), nul())
 				.removeMethod("clear"),
 		);
-		expect(current(v2, "members")).toMatchObject({ state: ["title", "body"], methods: ["save"] });
+		expect(current(v2)).toMatchObject({ state: ["title", "body"], methods: ["save"] });
 		expectTypeOf<keyof Implementation<typeof v2>>().toEqualTypeOf<"title" | "body" | "save">();
 		const v3 = evolve(v2, (e) => e.removeState("body").args("save", nul()));
 		// Arguments changed to `null`: the method omits them now.
@@ -139,17 +141,15 @@ describe("edits", () => {
 
 	it("checks every edit: closed arguments and the vocabulary", () => {
 		expect(() => evolve(NotesV1, (e) => e.args("add", { type: "object", properties: { text: str() } }))).toThrow(
-			"notes v2.editor.methods.add.args: argument objects must be closed",
+			"notes v2.methods.add.args: argument objects must be closed",
 		);
 		expect(() => evolve(InfoV1, (e) => e.addMethod("m", { type: "object", properties: {} }, nul()))).toThrow(
 			"info v2.members.m.args: argument objects must be closed",
 		);
-		expect(() => evolve(NotesV1, (e) => e.state("editor", "count", { not: {} } as never))).toThrow(
-			'notes v2.editor.state.count: unsupported keyword "not"',
+		expect(() => evolve(NotesV1, (e) => e.state("count", { not: {} } as never))).toThrow(
+			'notes v2.state.count: unsupported keyword "not"',
 		);
-		expect(() =>
-			evolve(NotesV1, (e) => e.state("editor", "count", { type: "object", properties: {} })),
-		).not.toThrow();
+		expect(() => evolve(NotesV1, (e) => e.state("count", { type: "object", properties: {} }))).not.toThrow();
 	});
 });
 
@@ -160,14 +160,14 @@ describe("keyed edits (slice 7b)", () => {
 		const V2 = evolve(Store, (e) => e.keyed("notes", obj({ text: str(), tag: str() })).addKeyed("drafts", Note));
 		const V3 = evolve(V2, (e) => e.removeKeyed("drafts"));
 		const versions = contractData(V3).versions;
-		expect(versions.map(({ variants }) => [...variants.get("members")!.keyed.keys()])).toEqual([
+		expect(versions.map(({ members }) => [...members.keyed.keys()])).toEqual([
 			["notes"],
 			["notes", "drafts"],
 			["notes"],
 		]);
 		expect(versions[1]!.changes).toEqual([
-			["members", "notes", "keyed"],
-			["members", "drafts", "keyed"],
+			["notes", "keyed"],
+			["drafts", "keyed"],
 		]);
 		expect(new Set(versions.map(({ fingerprint }) => fingerprint)).size).toBe(3);
 		// The same edits elsewhere give the same fingerprint (an old plugin's copy).
@@ -184,20 +184,28 @@ describe("keyed edits (slice 7b)", () => {
 
 describe("kinds and fixed parts", () => {
 	it("a member's kind never changes, also not after a removal and re-add", () => {
-		expect(() =>
-			evolve(NotesV1, (e) => e.removeState("editor", "count").addMethod("editor", "count", nul(), nul())),
-		).toThrow('notes v2.editor.methods.count: "count" is a state member; its kind never changes');
+		expect(() => evolve(NotesV1, (e) => e.removeState("count").addMethod("count", nul(), nul()))).toThrow(
+			'notes v2.methods.count: "count" is a state member; its kind never changes',
+		);
 		const v2 = evolve(NotesV1, (e) => e.removeMethod("clear"));
-		const v3 = evolve(v2, (e) => e.state("editor", "count", str()));
-		expect(() => evolve(v3, (e) => e.addState("reader", "clear", str()))).toThrow(
-			'notes v4.reader.state.clear: "clear" is a method member; its kind never changes',
+		const v3 = evolve(v2, (e) => e.state("count", str()));
+		expect(() => evolve(v3, (e) => e.addState("clear", str()))).toThrow(
+			'notes v4.state.clear: "clear" is a method member; its kind never changes',
 		);
 	});
 
-	it("the variant set never changes", () => {
-		// @ts-expect-error: no variant `admin`
-		expect(() => evolve(NotesV1, (e) => e.addState("admin", "x", str()))).toThrow(
-			"notes v2.admin: unknown variant (the variant set never changes)",
+	it("the flags never change, and a flag's name is never a new member's", () => {
+		const Flagged = remote("doc", {
+			version: 1,
+			params: {},
+			hostAddress: () => Server(),
+			flags: { export: "Export" },
+		});
+		const V2 = evolve(Flagged, (e) => e.addState("n", int()));
+		expect([...contractData(V2).flags.keys()]).toEqual(["export"]);
+		expectTypeOf<GrantableName<typeof V2>>().toEqualTypeOf<"export">();
+		expect(() => evolve(Flagged, (e) => e.addState("export", int()))).toThrow(
+			"doc v2.state.export: already declared",
 		);
 	});
 
@@ -206,7 +214,6 @@ describe("kinds and fixed parts", () => {
 			version: 5,
 			params: { session: str(), tenant: str() },
 			hostAddress: () => Server(),
-			variants: { editor: {} },
 		});
 		expect(contractData(base).versions.map(({ version }) => version)).toEqual([5]);
 		expect(evolve(base, (e) => e).version).toBe(6);
@@ -226,8 +233,8 @@ describe("kinds and fixed parts", () => {
 	});
 
 	it("leaves the previous contract untouched", () => {
-		evolve(NotesV1, (e) => e.removeState("editor", "count").removeMethod("add"));
-		expect(current(NotesV1, "editor")).toMatchObject({ state: ["notes", "count"], methods: ["add", "clear"] });
+		evolve(NotesV1, (e) => e.removeState("count").removeMethod("add"));
+		expect(current(NotesV1)).toMatchObject({ state: ["notes", "count"], methods: ["add", "clear"] });
 	});
 });
 
@@ -249,13 +256,11 @@ describe("long histories", () => {
 	});
 
 	it("the types track every step with its changes", () => {
-		const v2 = evolve(NotesV1, (e) => e.state("editor", "count", str()).addMethod("reader", "clear", nul(), nul()));
+		const v2 = evolve(NotesV1, (e) => e.state("count", str()).addMethod("reset", nul(), nul()));
 		type History = ShapeOf<typeof v2>["history"];
 		expectTypeOf<History["length"]>().toEqualTypeOf<2>();
-		expectTypeOf<History[1]["changes"]>().toEqualTypeOf<
-			["editor", "count", "state"] | ["reader", "clear", "args" | "result"]
-		>();
-		expectTypeOf<Static<History[0]["variants"]["editor"]["state"]["count"]>>().toEqualTypeOf<number>();
+		expectTypeOf<History[1]["changes"]>().toEqualTypeOf<["count", "state"] | ["reset", "args" | "result"]>();
+		expectTypeOf<Static<Ungranted<History[0]["members"]["state"]["count"]>>>().toEqualTypeOf<number>();
 	});
 });
 
@@ -265,34 +270,33 @@ describe('event edits (decision "Events: fire-and-forget members")', () => {
 		version: 1,
 		params: {},
 		hostAddress: () => Server(),
-		variants: { player: { events: { paddle: Sample } }, watcher: { state: { score: int() } } },
+		state: { score: int() },
+		events: { paddle: grantable(Sample) },
 	});
 
-	it("change, add and remove an event member of a variant, each a change of its own kind, typed", () => {
-		const V2 = evolve(Match, (e) =>
-			e.event("player", "paddle", obj({ y: int(), t: int() })).addEvent("watcher", "ball", Sample),
-		);
-		const V3 = evolve(V2, (e) => e.removeEvent("player", "paddle"));
+	it("change, add and remove an event member, each a change of its own kind, typed", () => {
+		const V2 = evolve(Match, (e) => e.event("paddle", obj({ y: int(), t: int() })).addEvent("ball", Sample));
+		const V3 = evolve(V2, (e) => e.removeEvent("paddle"));
 		const versions = contractData(V3).versions;
-		expect(versions.map(({ variants }) => [...variants.get("player")!.events.keys()])).toEqual([
+		expect(versions.map(({ members }) => [...members.events.keys()])).toEqual([
 			["paddle"],
-			["paddle"],
-			[],
+			["paddle", "ball"],
+			["ball"],
 		]);
 		expect(versions[1]!.changes).toEqual([
-			["player", "paddle", "event"],
-			["watcher", "ball", "event"],
+			["paddle", "event"],
+			["ball", "event"],
 		]);
 		expect(new Set(versions.map(({ fingerprint }) => fingerprint)).size).toBe(3);
-		expectTypeOf<Members<typeof V2, "player">["paddle"]>().toEqualTypeOf<EventMember<{ y: number; t: number }>>();
-		expectTypeOf<Members<typeof V2, "watcher">["ball"]>().toEqualTypeOf<EventMember<{ y: number }>>();
+		expectTypeOf<Members<typeof V2>["paddle"]>().toEqualTypeOf<() => EventMember<{ y: number; t: number }>>();
+		expectTypeOf<Members<typeof V2>["ball"]>().toEqualTypeOf<EventMember<{ y: number }>>();
 	});
 
-	it("take no variant in a local contract", () => {
+	it("are the same in a local contract", () => {
 		const Store = local("store", { version: 1, params: {}, members: { paddle: event(Sample) } });
 		const V2 = evolve(Store, (e) => e.event("paddle", obj({ y: int(), t: int() })).addEvent("ball", Sample));
 		const V3 = evolve(V2, (e) => e.removeEvent("ball"));
-		expect(contractData(V3).versions.map(({ variants }) => [...variants.get("members")!.events.keys()])).toEqual([
+		expect(contractData(V3).versions.map(({ members }) => [...members.events.keys()])).toEqual([
 			["paddle"],
 			["paddle", "ball"],
 			["paddle"],
@@ -300,14 +304,10 @@ describe('event edits (decision "Events: fire-and-forget members")', () => {
 	});
 
 	it("refuse an unknown event member, one declared already, and bytes", () => {
-		expect(() => evolve(Match, (e) => e.event("player", "missing" as "paddle", Sample))).toThrow(
-			"no such event member",
-		);
-		expect(() => evolve(Match, (e) => e.addEvent("watcher", "score", Sample))).toThrow("already declared");
-		expect(() => evolve(Match, (e) => e.removeEvent("player", "missing" as "paddle"))).toThrow(
-			"no such event member",
-		);
-		expect(() => evolve(Match, (e) => e.addEvent("player", "frame", obj({ data: bytes() })))).toThrow(
+		expect(() => evolve(Match, (e) => e.event("missing" as "paddle", Sample))).toThrow("no such event member");
+		expect(() => evolve(Match, (e) => e.addEvent("score", Sample))).toThrow("already declared");
+		expect(() => evolve(Match, (e) => e.removeEvent("missing" as "paddle"))).toThrow("no such event member");
+		expect(() => evolve(Match, (e) => e.addEvent("frame", obj({ data: bytes() })))).toThrow(
 			"an event's values are JSON only",
 		);
 	});

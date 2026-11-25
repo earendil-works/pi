@@ -8,7 +8,8 @@
 import type { SpanAttributes, StoredSpan } from "@earendil-works/pi-telemetry";
 import type { Static } from "../contracts/index.ts";
 import { forbidden, type Principal } from "../data/index.ts";
-import { defineFacet, type Facet } from "../host/index.ts";
+import { allow, defineFacet, type Facet } from "../host/index.ts";
+import { constant } from "../state/index.ts";
 import { type PageBatch, PageTelemetry, WorkerTelemetry } from "./batch.ts";
 import type { TelemetryBatch } from "./recorder.ts";
 
@@ -48,14 +49,11 @@ export function telemetryIngestFacet<P extends Principal>(options: TelemetryInge
 				const who = () => options.principalAttributes(principal);
 				const budgets = new PageBudgets();
 				return {
-					variant: "main",
-					members: {
-						ingest: async (batch, ctx) => {
-							const budget = budgets.of(ctx.incarnation, Date.now());
-							const accepted = pageSpans(batch, `browser:${ctx.incarnation}:`, who, budget);
-							const written = options.target.ingest({ spans: accepted, metrics: [] });
-							return { written, dropped: batch.spans.length - written };
-						},
+					ingest: async (batch, ctx) => {
+						const budget = budgets.of(ctx.incarnation, Date.now());
+						const accepted = pageSpans(batch, `browser:${ctx.incarnation}:`, who, budget);
+						const written = options.target.ingest({ spans: accepted, metrics: [] });
+						return { written, dropped: batch.spans.length - written };
 					},
 				};
 			},
@@ -65,23 +63,24 @@ export function telemetryIngestFacet<P extends Principal>(options: TelemetryInge
 		host.serve(
 			WorkerTelemetry,
 			(_params, principal) => {
-				const worker = options.workerHost(principal);
-				if (worker === undefined) return { variant: "other", members: {} };
+				// Granted to a worker's principal only (its admission): its host stamps its spans.
+				const worker = options.workerHost(principal)!;
 				return {
-					variant: "worker",
-					members: {
-						ingest: async ({ spans, metrics }, _ctx) => {
-							const stamped = spans.map((span) => ({
-								...span,
-								attributes: { ...span.attributes, "chord.host": worker },
-							}));
-							const written = options.target.ingest({ spans: stamped, metrics });
-							return { written, dropped: spans.length - written };
-						},
+					ingest: async ({ spans, metrics }, _ctx) => {
+						const stamped = spans.map((span) => ({
+							...span,
+							attributes: { ...span.attributes, "chord.host": worker },
+						}));
+						const written = options.target.ingest({ spans: stamped, metrics });
+						return { written, dropped: spans.length - written };
 					},
 				};
 			},
-			{ untraced: true },
+			{
+				untraced: true,
+				admit: (_params, principal) =>
+					constant(options.workerHost(principal) === undefined ? allow({}) : allow({ granted: ["ingest"] })),
+			},
 		);
 	});
 }

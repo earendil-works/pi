@@ -23,11 +23,12 @@ const NotesV1 = remote("example.notes", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
-	variants: { editor: { state: { notes: arr(str()) }, methods: { add: method(obj({ text: str() }), int()) } } },
+	state: { notes: arr(str()) },
+	methods: { add: method(obj({ text: str() }), int()) },
 });
 const NotesV2 = evolve(NotesV1, (e) =>
 	e
-		.state("editor", "notes", arr(obj({ text: str(), tag: str() })))
+		.state("notes", arr(obj({ text: str(), tag: str() })))
 		.method("add", obj({ text: str(), tag: str() }), obj({ count: int() })),
 );
 
@@ -44,20 +45,17 @@ function serveV2(host: FacetHost<Principal>): void {
 		(_, _principal, self) => {
 			const list = self.state(List);
 			return {
-				variant: "editor",
-				members: {
-					notes: self.derive([list], ([value]) => value.notes),
-					add: async ({ text, tag }, ctx) => {
-						await list.change((draft) => void draft.notes.push({ text, tag }), ctx);
-						return { count: list.value.notes.length };
-					},
+				notes: self.derive([list], ([value]) => value.notes),
+				add: async ({ text, tag }, ctx) => {
+					await list.change((draft) => void draft.notes.push({ text, tag }), ctx);
+					return { count: list.value.notes.length };
 				},
 			};
 		},
 		{
 			accepts: {
 				1: {
-					state: { editor: { notes: (current) => current.map(({ text }) => text) } },
+					state: { notes: (current) => current.map(({ text }) => text) },
 					methods: { add: { args: (old) => ({ ...old, tag: "untagged" }), result: (current) => current.count } },
 				},
 			},
@@ -70,13 +68,10 @@ function serveV1(host: FacetHost<Principal>): void {
 	host.serve(NotesV1, (_, _principal, self) => {
 		const list = self.state(List);
 		return {
-			variant: "editor",
-			members: {
-				notes: self.derive([list], ([value]) => value.notes.map(({ text }) => text)),
-				add: async ({ text }, ctx) => {
-					await list.change((draft) => void draft.notes.push({ text, tag: "" }), ctx);
-					return list.value.notes.length;
-				},
+			notes: self.derive([list], ([value]) => value.notes.map(({ text }) => text)),
+			add: async ({ text }, ctx) => {
+				await list.change((draft) => void draft.notes.push({ text, tag: "" }), ctx);
+				return list.value.notes.length;
 			},
 		};
 	});

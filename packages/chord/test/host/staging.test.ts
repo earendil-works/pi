@@ -106,11 +106,11 @@ describe("staging: a throw keeps the plugin on its old code, reported", () => {
 			version: 1,
 			params: {},
 			hostAddress: () => Server(),
-			variants: { v: { state: { n: int() } } },
+			state: { n: int() },
 		});
 		const host = createHost({ principal: { kind: "server" }, onError: () => {} });
 		await host.load([], context);
-		const facet = defineFacet((h) => h.serve(Remote, () => ({ variant: "v", members: { n: constant(1) } })));
+		const facet = defineFacet((h) => h.serve(Remote, () => ({ n: constant(1) })));
 		expect((await failedReload(host, [{ name: "@test/app", facet }])).message).toContain(
 			"a host without an address serves only local types",
 		);
@@ -422,7 +422,7 @@ describe("staging per plugin (slice 7c §4)", () => {
 				version: 1,
 				params: { id: int() },
 				hostAddress: ({ id }) => (only && id !== 1 ? Elsewhere() : Here()),
-				variants: { main: { state: { n: int() } } },
+				state: { n: int() },
 			});
 		const Consumer = local("app.consumer", { version: 1, params: {}, members: { n: int() } });
 		const consumer = (id: number) =>
@@ -435,9 +435,7 @@ describe("staging per plugin (slice 7c §4)", () => {
 				// The provider's own code places every id but 1 on another host.
 				{
 					name: "@test/provider",
-					facet: defineFacet((h) =>
-						h.serve(placed(true), ({ id }) => ({ variant: "main", members: { n: constant(id) } })),
-					),
+					facet: defineFacet((h) => h.serve(placed(true), ({ id }) => ({ n: constant(id) }))),
 				},
 				{ name: "@test/consumer", facet: consumer(1) },
 			],

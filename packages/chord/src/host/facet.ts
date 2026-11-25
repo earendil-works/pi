@@ -2,8 +2,7 @@
 // registries it serves, its contributions to registries (slice 8) and the host's presence lists; it has no documents,
 // routines or natives, so a facet cannot fail after `load`.
 
-import type { AcceptsTable, Contract, Schema } from "../contracts/index.ts";
-import type { ShapeOf } from "../contracts/internal.ts";
+import type { AcceptsTable, AdmittedOf, Contract } from "../contracts/index.ts";
 import type { Principal } from "../data/index.ts";
 import type { Contribution, Registry, RegistryProvider } from "../registries/index.ts";
 import type { Watchable } from "../watch.ts";
@@ -16,8 +15,8 @@ export interface FacetHost<P extends Principal = Principal> {
 	/**
 	 * Serves a type on this host with `factory`; a remote type's factory gets the principal its object is for.
 	 * `options.accepts` maps the older versions it still serves (checked here: a declaration error rejects the load or
-	 * the reload). A remote type whose contract declares an `admission` takes `options.admit` (required), and its
-	 * factory the admitted value (slice 14 §2.1).
+	 * the reload). A remote type whose contract declares an `admission`, grantable members or flags takes
+	 * `options.admit` (required), and its factory the admitted value (slice 14 §2.1, slice 15 §1.2).
 	 */
 	serve<C extends Contract>(Type: C, factory: Factory<C, P>, ...options: ServeArguments<C, P>): void;
 	/**
@@ -30,21 +29,20 @@ export interface FacetHost<P extends Principal = Principal> {
 }
 
 /**
- * `host.serve`'s options argument: required, with `admit`, for a contract that declares an `admission`; optional
- * otherwise.
+ * `host.serve`'s options argument: required, with `admit`, for a contract that takes an admission (it declares an
+ * `admission`, grantable members or flags, slice 15 §1.2); optional otherwise.
  */
-export type ServeArguments<C extends Contract, P extends Principal = Principal> = ShapeOf<C> extends {
-	readonly admission: Schema;
-}
-	? [options: ServeOptions<C, P> & { readonly admit: Admit<C, P> }]
-	: [options?: ServeOptions<C, P>];
+export type ServeArguments<C extends Contract, P extends Principal = Principal> = [AdmittedOf<C>] extends [never]
+	? [options?: ServeOptions<C, P>]
+	: [options: ServeOptions<C, P> & { readonly admit: Admit<C, P> }];
 
 /** What `host.serve` takes besides the type and the factory. */
 export type ServeOptions<C extends Contract = Contract, P extends Principal = Principal> = {
 	/**
-	 * The type's admission (slice 14 §2.1; remote types whose contract declares an `admission`, and only those: either
-	 * without the other, or on a `local` type, is a declaration error): run first in every attempt, it reads data about
-	 * the caller and returns a watchable of `allow(value)` or `deny(reason)`; the factory is handed the value.
+	 * The type's admission (slice 14 §2.1; remote types whose contract declares an `admission`, grantable members or
+	 * flags, and only those: either without the other, or on a `local` type, is a declaration error): run first in every
+	 * attempt, it reads data about the caller and returns a watchable of `allow(value)` or `deny(reason)`; the factory is
+	 * handed the value, with `granted`.
 	 */
 	readonly admit?: Admit<C, P>;
 	/**

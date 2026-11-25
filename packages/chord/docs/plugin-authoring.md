@@ -147,36 +147,41 @@ await store.sessions.visible.page(args, 100, ctx, { after })    // not live: for
 
 A factory is synchronous: it cannot read rows about its caller before it builds the caller's object. A remote type
 whose access depends on data declares an **admission** (slice 14): the contract names the value, `admit` reads the
-data and decides, and the factory is handed the value.
+data and decides, and the factory is handed the value. What a caller may do is said by **grantable members** and
+**flags** (slice 15): one shape for everyone, a `grantable(...)` member there only for a caller its admission granted
+it, a flag a right that is no member.
 
 ```ts
 // contract.ts
 export const Transcript = remote("notes.transcript", { version: 1, params: { session: str() },
 	hostAddress: ({ session }) => Session({ id: session }),
 	admission: obj({ mode: oneOf("read", "write") }),
-	variants: { viewer: { … }, participant: { … } } });
+	state: { title: str(), history: grantable(arr(Change)) },        // `history`: only for writers
+	methods: { say: grantable(method(str(), str())) },
+	flags: { export: "Export the transcript" } });
 // worker.ts: `PersonHere` is a local object on the worker that follows the server's answer for this person (it
 // holds a remote object of the server, in a contract the app's API owns)
-host.serve(Transcript, (params, principal, admitted, self) =>
-	admitted.mode === "read" ? { variant: "viewer", members: … } : { variant: "participant", members: … },
-	{ admit: ({ session }, principal, self) =>
+host.serve(Transcript, (params, principal, { mode, granted }, self) => ({
+	title, history: () => self.liveQuery(...), say,                  // a grantable state member is a builder
+}), { admit: ({ session }, principal, self) =>
 		self.derive([self.get(PersonHere, { session, person: principal.id }).mode], ([mode]) =>
-			mode === "none" ? deny("no access") : allow({ mode })) });
+			mode === "none" ? deny("no access")
+				: mode === "read" ? allow({ mode }) : allow({ mode, granted: ["history", "say", "export"] })) });
 ```
 
 - `admit` declares only `self.get` (and `at(key)`), `self.registry`, `self.derive` and `self.liveQuery`, and returns
   a watchable of `allow(value)` or `deny(reason)`. It runs first in every attempt; the reason is shown to the person.
-- **The value is small and changes rarely** (a mode, a role). It selects the variant and the members. Another value
+- **The value is small and changes rarely** (a mode, a role, the names it grants). Chord builds and sends only the
+  granted grantable members; a call to one not granted fails `forbidden`. Another value
   rebuilds the person's object; an equal one changes nothing. What a list shows is not in it: a list's condition is
   an argument of its named query.
 - A denial shows `failed { denied }` and keeps no value: reads throw `forbidden`, running calls reject
   `forbidden/revoked`. What your UI already rendered is yours to hide: watch `ref.state`. An object that had failed
   shows the denial too; when the person is allowed again it is retried.
-- **In a component, read the variant with `useVariant(ref, "participant")`** (a terminal: `scope.variant(ref,
-  "participant")`), not with `ref.variant === "participant"`: it returns the reference narrowed to that variant
-  while it is live in it and `undefined` otherwise, and re-renders when the person's value changes. The variant of
-  a held reference is `undefined` before it binds, changes while your component is mounted, and stays the last one
-  while the reference loads, so the comparison alone keeps a participant's controls up for a viewer.
+- **In a component, read the reference with `useLive(ref)`** (a terminal: `scope.live(ref)`) and ask for the right
+  you need: `ref?.say && <Send />`, `useWatch(ref?.history)`, `ref?.granted.has("export")`. `useLive` gives the
+  reference while it is live (and while it rebinds after it was), `undefined` otherwise, and re-renders when the
+  person's grant changes, so a writer's controls come and go in the same render as the grant.
 - **No `self.job` in an admitted type.** Work for a person lives in a `local` store, carries the person in its
   arguments, and asks the person's access again on every run.
 - **The objects an admission reads `accept` their previous version.** A reader whose version is refused is sealed

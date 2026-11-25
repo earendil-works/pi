@@ -41,21 +41,17 @@ export function counterContract(placement: Placement, version: ContractVersion):
 	version: 1,
 	params: { id: str() },
 	hostAddress: at,
-	variants: {
-		main: {
-			state: { label: str(), count: int() },
-			methods: {
-				add: method(int(), str()),
-				slow: method(str(), str()),
-				slowAdd: method(str(), str()),
-				code: method(undefined, str()),
-				visits: method(undefined, int()),
-			},
-		},
+	state: { label: str(), count: int() },
+	methods: {
+		add: method(int(), str()),
+		slow: method(str(), str()),
+		slowAdd: method(str(), str()),
+		code: method(undefined, str()),
+		visits: method(undefined, int()),
 	},
 });`;
 	const v2 = `export const CounterV2 = evolve(CounterV1, (e) =>
-	e.state("main", "label", obj({ text: str(), code: str() })).method("add", obj({ n: int() }), obj({ text: str() })),
+	e.state("label", obj({ text: str(), code: str() })).method("add", obj({ n: int() }), obj({ text: str() })),
 );`;
 	return [
 		"// The counter's contract.",
@@ -103,7 +99,7 @@ function counterFacet(code: CounterCode, contract: ContractVersion): string {
 			: "add: (n, ctx) => store.add(n, ctx),";
 	const accepts =
 		contract === "v2" && code.accepts === true
-			? `, { accepts: { 1: { state: { main: { label: (current) => current.text } }, methods: { add: { args: (old) => ({ n: old }), result: (current) => current.text } } } } }`
+			? `, { accepts: { 1: { state: { label: (current) => current.text }, methods: { add: { args: (old) => ({ n: old }), result: (current) => current.text } } } } }`
 			: "";
 	const native =
 		code.native === true
@@ -138,7 +134,7 @@ function counterFacet(code: CounterCode, contract: ContractVersion): string {
 		"\thost.serve(Counter, (_params, _principal, self) => {",
 		native,
 		"\t\tconst store = self.get(Store, {});",
-		'\t\treturn { variant: "main", members: {',
+		"\t\treturn {",
 		`\t\t\tlabel: self.derive([store.count], ([n]) => ${label}),`,
 		"\t\t\tcount: self.derive([store.count], ([n]) => n),",
 		`\t\t\t${add}`,
@@ -146,7 +142,7 @@ function counterFacet(code: CounterCode, contract: ContractVersion): string {
 		"\t\t\tslowAdd: async (name, ctx) => { const held = latch(name); held.entered.resolve(); await held.open.promise; return store.add(10, ctx); },",
 		`\t\t\tcode: async () => ${v},`,
 		"\t\t\tvisits: (ctx) => store.visits(ctx),",
-		"\t\t} };",
+		"\t\t};",
 		`\t}${accepts});`,
 		"});",
 	].join("\n");
@@ -159,14 +155,14 @@ export const LATCH_PLUGIN: Readonly<Record<string, string>> = {
 		'import { arr, bool, defineFacet, hostKind, method, obj, remote, str } from "@test/app/v1";',
 		LATCH,
 		'const Project = hostKind("project", { id: str() });',
-		'const Control = remote("reload.control", { version: 1, params: { id: str() }, hostAddress: ({ id }) => Project({ id }), variants: { main: { state: {}, methods: {',
+		'const Control = remote("reload.control", { version: 1, params: { id: str() }, hostAddress: ({ id }) => Project({ id }), methods: {',
 		"\tentered: method(str(), bool()), open: method(str()), natives: method(undefined, obj({ opens: arr(str()), closes: arr(str()) })),",
-		"} } } });",
-		'export default defineFacet((host) => host.serve(Control, () => ({ variant: "main", members: {',
+		"} });",
+		"export default defineFacet((host) => host.serve(Control, () => ({",
 		"\tentered: async (name) => { await latch(name).entered.promise; return true; },",
 		"\topen: async (name) => { latch(name).open.resolve(); return null; },",
 		"\tnatives: async () => ({ opens: [...natives.opens], closes: [...natives.closes] }),",
-		"} })));",
+		"})));",
 	].join("\n"),
 };
 
@@ -250,7 +246,8 @@ export const Summary = remote("reload.summary", {
 	version: 1,
 	params: { id: str() },
 	hostAddress: () => Server(),
-	variants: { main: { state: { label: str(), count: int() }, methods: { code: method(undefined, str()) } } },
+	state: { label: str(), count: int() },
+	methods: { code: method(undefined, str()) },
 });`;
 
 /**
@@ -268,11 +265,11 @@ export function summaryPlugin(code: string): Record<string, string> {
 			'import { Summary } from "./contract.ts";',
 			"export default defineFacet((host) => host.serve(Summary, ({ id }, _principal, self) => {",
 			"\tconst counter = self.get(Counter, { id });",
-			'\treturn { variant: "main", members: {',
+			"\treturn {",
 			`\t\tlabel: self.derive([counter.count], ([count]) => \`${code}(\${count})\`),`,
 			"\t\tcount: self.derive([counter.count], ([count]) => count),",
 			`\t\tcode: async () => ${JSON.stringify(code)},`,
-			"\t} };",
+			"\t};",
 			"}));",
 		].join("\n"),
 	};
@@ -286,7 +283,8 @@ export const Tasks = remote("reload.tasks", {
 	version: 1,
 	params: { id: str() },
 	hostAddress: ({ id }) => Project({ id }),
-	variants: { main: { state: { entries: arr(str()), running: int() }, methods: { start: method(str(), str()) } } },
+	state: { entries: arr(str()), running: int() },
+	methods: { start: method(str(), str()) },
 });`;
 
 /**
@@ -333,7 +331,7 @@ export function tasksPlugin(code: string, native = false): Record<string, string
 			"\t});",
 			"\thost.serve(Tasks, (_params, _principal, self) => {",
 			"\t\tconst runner = self.get(Runner, {});",
-			'\t\treturn { variant: "main", members: { entries: runner.entries, running: runner.running, start: (name, ctx) => runner.start(name, ctx) } };',
+			"\t\treturn { entries: runner.entries, running: runner.running, start: (name, ctx) => runner.start(name, ctx) };",
 			"\t});",
 			"});",
 		].join("\n"),
