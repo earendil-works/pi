@@ -246,3 +246,11 @@ Pi reports its state with the [Program Status Protocol (OSC 7501)](https://www.s
 | `idle` | Pi started, or you cancelled the run. |
 
 Reports never contain prompts or model output. Pi sends them only after the terminal answers the protocol's support query; tmux and screen do not forward them. Set `PI_PROGRAM_STATUS=1` to send reports without asking, or `PI_PROGRAM_STATUS=0` to turn them off.
+
+## Program resume
+
+Pi tells the terminal how to bring the session back after the terminal restarts, with the [Program Resume Protocol (OSC 7577)](https://www.superlogical.com/rex/docs/build/program-resume). Terminals that support it set `OSC7577_TOKEN` in the environment; Pi reports only when it is set.
+
+The command is the one Pi prints when you quit, such as `pi --session <id>`, to run in the session's directory. Pi updates it when you start, resume, or fork a session, and once a new session has its first message. A new session without messages has nothing to resume, so Pi removes the command until then. Quitting with `Ctrl+D`, `Ctrl+C` twice, or `/quit` removes it too; when the terminal itself closes or restarts, Pi keeps it.
+
+Pi removes `OSC7577_TOKEN` from its own environment at startup, so shells, editors, and extension processes it starts cannot replace its command or register commands of their own. Whether and when the terminal resumes a command is up to the terminal.
