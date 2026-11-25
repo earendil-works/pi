@@ -9,17 +9,19 @@ import {
 	type EventSource,
 	event,
 	evolve,
+	grantable,
 	int,
 	keyed,
 	local,
 	method,
 	obj,
+	remote,
 	str,
 } from "../../src/contracts/index.ts";
 import { defineState } from "../../src/documents/index.ts";
 import { AdaptedMembers } from "../../src/host/adapted.ts";
 import { EventNode } from "../../src/host/events.ts";
-import { createHost, defineFacet, type FacetHost, type Host, type HostError } from "../../src/host/index.ts";
+import { allow, createHost, defineFacet, type FacetHost, type Host, type HostError } from "../../src/host/index.ts";
 import { constant } from "../../src/state/index.ts";
 import {
 	changesOf,
@@ -29,7 +31,9 @@ import {
 	instancesOf,
 	metered,
 	rejection,
+	Server,
 	valuesOf,
+	waitLive,
 } from "../support.ts";
 
 /** v1: a list of texts, `add` taking a text and returning the count, `clear`, keyed notes of a title. */
@@ -1642,3 +1646,79 @@ describe('events of an older consumer (decision "Events: fire-and-forget members
 
 /** Every event node cleared in this file (a mapping dropped, an instance ended), weakly. */
 const clearedNodes = instancesOf(EventNode, "clear");
+
+describe("an older consumer of grantable members not granted (review round 1, Astra 3)", () => {
+	/** v1: a plain title, a grantable history and a grantable `add`; v2 changes both grantable members. */
+	const BoardV1 = remote("app.board", {
+		version: 1,
+		params: {},
+		hostAddress: () => Server(),
+		state: { title: str(), history: grantable(arr(str())) },
+		methods: { add: grantable(method(str(), int())) },
+	});
+	const BoardV2 = evolve(BoardV1, (e) =>
+		e.state("history", arr(obj({ text: str() }))).args("add", obj({ text: str() })),
+	);
+
+	/** A host serving v2 to v1 consumers, granting nothing; what the v1 mapping and replacement were asked. */
+	async function board() {
+		const asked: string[] = [];
+		const host = createHost({ address: Server(), principal: { kind: "server" }, onError: () => {} });
+		const facet = defineFacet((h) =>
+			h.serve(
+				BoardV2,
+				() => ({
+					title: constant("board"),
+					history: () => constant([{ text: "a" }]),
+					add: async () => 1,
+				}),
+				{
+					admit: () => constant(allow({})),
+					accepts: {
+						1: {
+							state: {
+								history: (current) => {
+									asked.push("history");
+									return current.map(({ text }) => text);
+								},
+							},
+							methods: {
+								add: {
+									call: async () => {
+										asked.push("add");
+										return 0;
+									},
+								},
+							},
+						},
+					},
+				},
+			),
+		);
+		await host.load([{ name: "@test/board", facet }], context);
+		return { host, asked };
+	}
+
+	it("a call of a method not granted is refused forbidden before the provider's replacement runs", async () => {
+		const { host, asked } = await board();
+		// Taken before the reference was live: every grantable member is there until then.
+		const old = host.hold(BoardV1, {}, context);
+		const add = old.add!;
+		await waitLive(old);
+		expect(old.granted).toEqual(new Set());
+		expect(await rejection(add("x", context))).toMatchObject({ code: "forbidden" });
+		expect(asked).toEqual([]);
+		await host.close(context);
+	});
+
+	it("a state member not granted is refused, not mapped as a removed one", async () => {
+		const { host, asked } = await board();
+		const old = host.hold(BoardV1, {}, context);
+		const history = old.history!;
+		await waitLive(old);
+		expect(() => history.value).toThrow(expect.objectContaining({ code: "forbidden" }));
+		expect(old.title.value).toBe("board");
+		expect(asked).toEqual([]);
+		await host.close(context);
+	});
+});

@@ -432,8 +432,8 @@ function grantedOf(
 	if (typeof value !== "object" || value === null || Array.isArray(value)) {
 		return broken("its admission's value is an object (allow({ granted, ...data }))");
 	}
-	const listed = value.granted;
-	if (listed === undefined) return { kind: "read", normal: value, granted: NO_GRANTS };
+	const { granted: listed, ...data } = value;
+	if (listed === undefined) return { kind: "read", normal: data, granted: NO_GRANTS };
 	if (!Array.isArray(listed)) return broken("its admission's granted is a list of names");
 	for (const name of listed) {
 		if (typeof name !== "string" || !grants.includes(name)) {
@@ -441,8 +441,9 @@ function grantedOf(
 		}
 	}
 	const names = [...new Set(listed as string[])].sort();
-	const granted = names.length === 0 ? NO_GRANTS : new Set(names);
-	return { kind: "read", normal: { ...value, granted: names }, granted };
+	// No names is no grant: `allow({})` and `allow({ granted: [] })` are one decision.
+	if (names.length === 0) return { kind: "read", normal: data, granted: NO_GRANTS };
+	return { kind: "read", normal: { ...data, granted: names }, granted: new Set(names) };
 }
 
 /**

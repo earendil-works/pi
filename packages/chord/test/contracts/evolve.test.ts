@@ -194,6 +194,19 @@ describe("kinds and fixed parts", () => {
 		);
 	});
 
+	it("whether a member is grantable never changes, also not after a removal and re-add (review round 1, Astra 4)", () => {
+		const never = "whether it is grantable never changes across a history";
+		expect(() => evolve(NotesV1, (e) => e.removeState("notes").addState("notes", grantable(arr(Note))))).toThrow(
+			`notes v2.state.notes: ${never}`,
+		);
+		const v2 = evolve(NotesV1, (e) => e.removeMethod("clear").removeState("count"));
+		expect(() => evolve(v2, (e) => e.addMethod("clear", nul(), nul()))).toThrow(`notes v3.methods.clear: ${never}`);
+		expect(() => evolve(v2, (e) => e.addState("count", int()))).toThrow(`notes v3.state.count: ${never}`);
+		// Back with its mark, it is the member it was.
+		const v3 = evolve(v2, (e) => e.addMethod("clear", grantable(method())).addState("count", grantable(int())));
+		expect([...current(v3).grantable].sort()).toEqual(["clear", "count"]);
+	});
+
 	it("the flags never change, and a flag's name is never a new member's", () => {
 		const Flagged = remote("doc", {
 			version: 1,

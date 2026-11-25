@@ -313,6 +313,8 @@ export class Binding implements Holder, UnboundRequest {
 	#unseen: Map<string, number> | undefined;
 	/** Whether it was ever seen live: from then on its grantable members are there only while granted (`#exposes`). */
 	#wasLive = false;
+	/** What its object granted it when it left it (`removed`): its grant while it waits unbound. */
+	#lastGranted: ReadonlySet<string> = NO_GRANTS;
 	/** Who reads its object's named queries: each told when another instance is live (`followInstance`). */
 	#instanceFollowers: Set<() => void> | undefined;
 	/** The instance its followers were told of last, held weakly: an ended instance is kept by nothing here. */
@@ -548,6 +550,8 @@ export class Binding implements Holder, UnboundRequest {
 			events.at = undefined;
 			events.taps?.retarget(undefined);
 		}
+		// Waiting, it keeps its grant as it keeps its values: its members stay until a binding says otherwise.
+		this.#lastGranted = state.target.granted;
 		this.#state = { kind: "unbound", batch: state.batch, dependent: state.dependent };
 		removal.host.rewait(this, this.contract, removal.params, removal.cause, removal.context);
 	}
@@ -1024,11 +1028,11 @@ export class Binding implements Holder, UnboundRequest {
 		return this.#wasLive ? granted.has(member) : true;
 	}
 
-	/** What its target granted it last (none while it is not bound); throws once released. */
+	/** What its target granted it, or what it had when its object left it (none before a binding); throws once released. */
 	#granted(): ReadonlySet<string> {
 		const state = this.#state;
 		if (state.kind === "released") throw state.state.error;
-		return state.kind === "bound" ? state.target.granted : NO_GRANTS;
+		return state.kind === "bound" ? state.target.granted : this.#lastGranted;
 	}
 
 	/** The error of this reference's release by its holder (`released`, no reason). */

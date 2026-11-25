@@ -1179,7 +1179,10 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 			// Its own served type: an old attempt answers old work by the contract it was made with.
 			const served = this.#served;
 			const own = this.#members!.methods.get(method);
-			if (own === undefined && version === served.contract.version) throw this.#noMethod(method);
+			// A grantable method not granted is refused at every version, before any mapping or replacement runs.
+			const current = version === served.contract.version;
+			if (own === undefined && (current || currentVersion(served.contract).grantable.has(method)))
+				throw this.#noMethod(method);
 			checked = checkArgs(served.provider, method, args, version, context);
 			const call = checked.kind === "call" ? checked.call : undefined;
 			handler = call !== undefined ? (callArgs, ctx) => call(callArgs as Value, ctx) : own;

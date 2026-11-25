@@ -3443,8 +3443,8 @@ const accepted = checkAccepts(NotesV2, {
   2026-10-26: keyed members' versions are mapped per key), and for event members `event`, `addEvent`, `removeEvent`
   (decision "Events: fire-and-forget members"). Every version is materialized and fingerprinted at declaration, so an old plugin's own copy of
   v1 computes the same fingerprint; no build step, no generated files, no hand-copied fingerprints.
-- **A new history base** (a params change, a member that becomes grantable or plain, a flag added or removed, slice
-  15 §1.1) is a new `remote()`/`local()` with an explicit version and no accepts for older versions: old plugins get
+- **A new history base** (a params change, a member that becomes grantable or plain, also through a removal and a
+  re-add, a flag added or removed, slice 15 §1.1) is a new `remote()`/`local()` with an explicit version and no accepts for older versions: old plugins get
   `contract_mismatch` and must update. Contracts declared with variants before slice 15 continue as such a base.
 - **Mappings live with the provider,** never in the contract: the pure `checkAccepts(contract, accepts)` (called by
   the objects layer) requires, at type level and again at runtime, a mapping for every member that exists in the old

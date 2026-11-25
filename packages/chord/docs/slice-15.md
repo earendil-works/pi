@@ -57,8 +57,9 @@ type Names = GrantableName<typeof Canvas>; // "history" | "reported" | "add" | "
 - **`evolve`**: the remote editor is the local one without keyed members (no variant argument): `state(member, s)`,
   `addState`, `removeState`, `addMethod`, `args`, `result`, `method`, `removeMethod`, `event`, `addEvent`,
   `removeEvent`, `admission`. An `add…` edit takes `grantable(...)` for a new grantable member. **Whether a member is
-  grantable, and the flags, never change across a history (B)**: an older consumer's reference type says which members
-  are always there, and a member that became grantable would vanish under it; a change of either is a new base.
+  grantable, and the flags, never change across a history (B)**, also not through a removal and a re-add (review round
+  1): an older consumer's reference type says which members are always there, and a member that became grantable
+  would vanish under it; a change of either is a new base.
 - **`accepts`** for a remote contract is flat, as a local one's: `state: { member: mapping }`, `events`, `methods`.
 
 ### 1.2 Admission hands the factory `granted`

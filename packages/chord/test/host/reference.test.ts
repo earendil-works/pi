@@ -5,7 +5,7 @@ import {
 	BACKGROUND_CONTEXT as context,
 	withAbortSignal,
 } from "../../src/context/index.ts";
-import { grantable, int, keyed, local, method, obj, remote, str } from "../../src/contracts/index.ts";
+import { arr, grantable, int, keyed, local, method, obj, remote, str } from "../../src/contracts/index.ts";
 import { broken, type ChordError } from "../../src/data/index.ts";
 import { defineState, type KeyedHandle } from "../../src/documents/index.ts";
 import { allow, createHost, defineFacet, type Reference, type RefState, type Self } from "../../src/host/index.ts";
@@ -742,6 +742,39 @@ describe("a binding released while it binds (fix round 5)", () => {
 		expect(ref.state.value.kind).toBe("ended");
 		ref = undefined as never;
 		await expectCollected(released);
+		await host.close(context);
+	});
+});
+
+describe("a reference's grant while it waits (review round 1, Astra 5)", () => {
+	const Board = remote("test.waiting-board", {
+		version: 1,
+		params: {},
+		hostAddress: () => Server(),
+		state: { title: str(), history: grantable(arr(str())) },
+	});
+	/** The board's plugin, granting every holder `granted`. */
+	const serving = (granted: "history"[]) =>
+		defineFacet((h) =>
+			h.serve(Board, () => ({ title: constant("t"), history: () => constant(["a"]) }), {
+				admit: () => constant(allow({ granted })),
+			}),
+		);
+
+	it("keeps its last grant and its members while its provider is removed; a new binding replaces the grant", async () => {
+		const host = createHost({ address: Server(), principal: { kind: "server" }, onError: () => {} });
+		await host.load([{ name: "@test/board", facet: serving(["history"]) }], context);
+		const board = await host.get(Board, {}, context);
+		expect(board.history?.value).toEqual(["a"]);
+		await host.reload([], context);
+		await flushed();
+		expect(board.state.value).toMatchObject({ kind: "failed", cause: { kind: "waiting" } });
+		// Waiting, it keeps its grant with its values: `history` is still there, with its last value.
+		expect([...board.granted]).toEqual(["history"]);
+		expect(board.history?.value).toEqual(["a"]);
+		await host.reload([{ name: "@test/board", facet: serving([]) }], context);
+		await waitLive(board);
+		expect([board.granted.size, board.history]).toEqual([0, undefined]);
 		await host.close(context);
 	});
 });

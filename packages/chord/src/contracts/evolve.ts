@@ -362,7 +362,12 @@ class Draft {
 
 	/** A new member's declaration without its mark, which a remote contract records (a local one refuses it). */
 	#unmarked<T>(member: string, declared: T | Grantable, kind: MemberKind): T {
-		if (!(declared instanceof Grantable)) return declared;
+		const marked = declared instanceof Grantable;
+		const known = this.#data.kinds.get(member) === kind;
+		// Also not through a removal (slice 15 §1.1): an older consumer's types say which members are always there.
+		if (known && marked !== this.#data.versions.some(({ grantable }) => grantable.has(member)))
+			throw new Error(`${this.#path(member, kind)}: whether it is grantable never changes across a history`);
+		if (!marked) return declared as T;
 		if (this.kind === "local") {
 			throw new Error(`${this.#path(member, kind)}: only a remote contract has grantable members`);
 		}

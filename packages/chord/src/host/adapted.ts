@@ -16,6 +16,7 @@ import type { Batch } from "../state/batch.ts";
 import { Derive, type DeriveSource } from "../state/internal.ts";
 import type { ChordMetrics } from "../telemetry.ts";
 import { type EventEntry, type EventFlush, EventNode, type Tap } from "./events.ts";
+import { lacking } from "./members.ts";
 import type { Served } from "./object.ts";
 
 /** A state mapping as an accepts table holds it (checked by `checkAccepts`). */
@@ -225,9 +226,13 @@ export class AdaptedMembers {
 			// The provider's mapping, typed by its contract; its result is the old member's shape (not validated).
 			return mapping(value as never) as JsonValue;
 		};
-		const current = grantedMembers(currentVersion(this.#contract), granted);
-		// The member when the current version has it, else the whole current state granted (a removed member).
+		const version = currentVersion(this.#contract);
+		const current = grantedMembers(version, granted);
+		// The member when the current version has it, else the whole current state granted (a removed member); a
+		// grantable one not granted is refused, never mapped as removed.
 		const kept = current.state.has(member);
+		if (!kept && version.grantable.has(member))
+			throw lacking(this.#instance.label, this.#contract, member, "state member");
 		const names = kept ? [member] : [...current.state.keys()];
 		const sources = names.map((name) => instance.member(name));
 		const derive = kept

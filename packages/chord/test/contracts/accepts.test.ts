@@ -90,7 +90,7 @@ describe("state mappings", () => {
 		expect(() => checkAccepts(noop, { 1: { state: { notes: (current) => current } } })).not.toThrow();
 		const reverted = evolve(v2, (e) => e.state("notes", arr(Note)));
 		expect(() => checkAccepts(reverted, { 1: { state: { notes: (current) => current } } })).not.toThrow();
-		const readded = evolve(NotesV1, (e) => e.removeState("count").addState("count", int()));
+		const readded = evolve(NotesV1, (e) => e.removeState("count").addState("count", grantable(int())));
 		expect(() => checkAccepts(readded, { 1: { state: { count: (current) => current } } })).not.toThrow();
 	});
 });
@@ -310,7 +310,7 @@ describe('event mappings (decision "Events: fire-and-forget members")', () => {
 		expect(() => checkUntyped(removed, { 1: { events: { ball: () => null } } })).toThrow(
 			"match accepts[1].events.ball: unnecessary mapping",
 		);
-		const readded = evolve(removed, (e) => e.addEvent("ball", Timed));
+		const readded = evolve(removed, (e) => e.addEvent("ball", grantable(Timed)));
 		expect(() => checkUntyped(readded, { 1: {} })).toThrow("match accepts[1].events.ball: missing mapping");
 		expect(checkAccepts(readded, { 1: { events: { ball: ({ y }) => ({ y }) } } }).versions).toHaveLength(1);
 	});

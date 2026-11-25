@@ -416,6 +416,24 @@ describe("a denial's message (slice 15 §2)", () => {
 	});
 });
 
+describe("an empty grant (review round 1, Astra 6)", () => {
+	it("allow without granted and with an empty list are one decision: switching between them rebuilds nothing", async () => {
+		const built: string[] = [];
+		const admit: Admit<typeof Doc, TestPrincipal> = (_params, principal, self) =>
+			self.derive([self.get(Access, {}).modes], ([all]) =>
+				all[principal.kind] === "listed" ? allow({ mode: "read", granted: [] }) : allow({ mode: "read" }),
+			);
+		const { h, set } = await served({ built, admit }, { mode: "unlisted" });
+		const doc = await h.get(Doc, { id: "a" }, context);
+		const started = decisions.length;
+		await set("listed");
+		await set("unlisted");
+		await delivered();
+		expect([built, decisions.length - started, doc.state.value.kind]).toEqual([["a:read"], 0, "live"]);
+		await h.close(context);
+	});
+});
+
 describe("deny, then allow", () => {
 	it("a direct hold shows failed { denied } with the reason, then binds with what the value grants", async () => {
 		const built: string[] = [];
