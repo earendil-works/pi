@@ -429,6 +429,7 @@ describe("installs through the component", () => {
 			},
 			context,
 		);
+		await settleFileEvents();
 		await plugins.build([], context);
 		await writeFile(
 			join(root, "a", "package.json"),
@@ -810,6 +811,7 @@ describe("fix round 1", () => {
 			},
 			context,
 		);
+		await settleFileEvents();
 		expect((await plugins.build([], context)).facets.map(({ kind }) => kind)).toEqual(["script"]);
 		await writeFiles(dir, {
 			"package.json": JSON.stringify({ name: "@test/a", type: "module", dependencies: { "new-dep": "1.0.0" } }),
