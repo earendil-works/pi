@@ -141,6 +141,43 @@ describe("candidates", () => {
 		expect(await costOf(entries, batch, meter, deleted)).toEqual({ runs: 1, probes: 0, skips: 0, statements: 3 });
 	});
 
+	it("a value filed by one read or several: candidates in the order filed, a closed one gone (hot-path pass)", async () => {
+		// One read under a value is kept without a set (152 B), a second makes one: either way the step tests the reads
+		// in the order they were filed, which is the order they run and adopt in.
+		store = await memoryStore();
+		const entries = await tableIn(store, Entries);
+		const batch = new Batch(() => {}, undefined);
+		const log: number[] = [];
+		const open = async (index: number) => {
+			const spec = {
+				query: query(Entries).where((e) => eq(e.session, "s0")),
+				table: entries.sql.table,
+				projection: {},
+				owner: {},
+			};
+			const opened = new OpenQuery({ store: store!, batch }, spec, "rows", () => {}, BACKGROUND_CONTEXT);
+			await opened.read({ kind: "rows", range: { limit: 20 } }, { adopt: () => void log.push(index) }).load();
+			return opened;
+		};
+		const meter = await metered();
+		const put = (id: number) => (changes: TableChanges) => changes.put({ session: "s0", id, kind: "note", text: "" });
+		const first = await open(0);
+		log.length = 0;
+		await costOf(entries, batch, meter, put(1));
+		expect(log).toEqual([0]);
+		const [second, third] = [await open(1), await open(2)];
+		first.close();
+		const fourth = await open(3);
+		log.length = 0;
+		// Filed under the bucket s0 in the order 1, 2, 3; the key (s0, 1) is kept by every one of them.
+		await costOf(entries, batch, meter, (changes) => changes.update({ session: "s0", id: 1 }, { text: "x" }));
+		expect(log).toEqual([1, 2, 3]);
+		for (const each of [second, third, fourth]) each.close();
+		log.length = 0;
+		await costOf(entries, batch, meter, put(2));
+		expect(log).toEqual([]);
+	});
+
 	it("an `in` files a read once per value, up to 32 combinations; a column past that is left out of its bucket", async () => {
 		store = await memoryStore();
 		const entries = await tableIn(store, Entries);

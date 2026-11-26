@@ -11,8 +11,15 @@ import type { KeyedChange } from "./skip.ts";
 import { quote } from "./sql.ts";
 import type { Step } from "./step.ts";
 
+/**
+ * The reads filed under one value: the read itself while it is the only one, a set of them from the second on. Most
+ * values are filed by one read (a session's bucket, its rows' keys), and a set of one costs 152 B: a read of 100 rows
+ * filed by its kept keys made 100 of them at each run.
+ */
+type Filed = Read | Set<Read>;
+
 /** The reads of one bucket shape on a table: by the identity of their columns' values. */
-type Group = { readonly columns: readonly string[]; readonly byValues: Map<unknown, Set<Read>> };
+type Group = { readonly columns: readonly string[]; readonly byValues: Map<unknown, Filed> };
 
 /** A filed read's entries: its table's index, its group and value identities there, the key sets it is filed by. */
 type Filing = {
@@ -104,7 +111,7 @@ export class ReadIndex implements KeptKeysWatcher {
 		const after = new Map<unknown, RowValues | undefined>();
 		for (const change of changes) {
 			const id = identityOf(key.map((name) => change.key[name]!));
-			for (const read of index.kept.get(id) ?? NO_READS) addChange(into, read, change);
+			addChanges(into, index.kept.get(id), change);
 			if (change.kind === "delete" || index.groups.size === 0) continue;
 			let row = after.get(id);
 			if (!after.has(id)) {
@@ -116,10 +123,8 @@ export class ReadIndex implements KeptKeysWatcher {
 				after.set(id, row);
 			}
 			if (row === undefined) continue;
-			for (const group of index.groups.values()) {
-				for (const read of group.byValues.get(identity(group.columns, row)) ?? NO_READS)
-					addChange(into, read, change);
-			}
+			for (const group of index.groups.values())
+				addChanges(into, group.byValues.get(identity(group.columns, row)), change);
 		}
 		return index.unindexed;
 	}
@@ -147,7 +152,7 @@ class TableIndex {
 	readonly unindexed = new Set<Read>();
 	/** The groups by their columns, joined. */
 	readonly groups = new Map<string, Group>();
-	readonly kept = new Map<unknown, Set<Read>>();
+	readonly kept = new Map<unknown, Filed>();
 	/** The statement reading the buckets' columns back by key, for the groups it was rendered for. */
 	#lookup: { readonly groups: string; readonly sql: string | undefined } | undefined;
 
@@ -205,6 +210,13 @@ function bucketOf(read: Read): { readonly columns: string[]; readonly identities
 	return { columns, identities: [...new Set(combinations.map(identityOf))] };
 }
 
+/** Adds `change` to each read `filed` holds, in the order they were filed. */
+function addChanges(into: Map<Read, KeyedChange[]>, filed: Filed | undefined, change: KeyedChange): void {
+	if (filed === undefined) return;
+	if (filed instanceof Set) for (const read of filed) addChange(into, read, change);
+	else addChange(into, filed, change);
+}
+
 function addChange(into: Map<Read, KeyedChange[]>, read: Read, change: KeyedChange): void {
 	const changes = into.get(read);
 	if (changes === undefined) into.set(read, [change]);
@@ -212,15 +224,18 @@ function addChange(into: Map<Read, KeyedChange[]>, read: Read, change: KeyedChan
 	else if (changes.at(-1) !== change) changes.push(change);
 }
 
-function addTo<K>(map: Map<K, Set<Read>>, key: K, read: Read): void {
-	const reads = map.get(key);
-	if (reads === undefined) map.set(key, new Set([read]));
-	else reads.add(read);
+function addTo<K>(map: Map<K, Filed>, key: K, read: Read): void {
+	const filed = map.get(key);
+	if (filed === undefined) map.set(key, read);
+	else if (filed instanceof Set) filed.add(read);
+	else if (filed !== read) map.set(key, new Set([filed, read]));
 }
 
-function removeFrom<K>(map: Map<K, Set<Read>>, key: K, read: Read): void {
-	const reads = map.get(key);
-	if (reads === undefined) return;
-	reads.delete(read);
-	if (reads.size === 0) map.delete(key);
+function removeFrom<K>(map: Map<K, Filed>, key: K, read: Read): void {
+	const filed = map.get(key);
+	if (filed === undefined) return;
+	if (filed instanceof Set) {
+		filed.delete(read);
+		if (filed.size === 0) map.delete(key);
+	} else if (filed === read) map.delete(key);
 }
