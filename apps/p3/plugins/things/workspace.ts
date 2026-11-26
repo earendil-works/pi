@@ -8,6 +8,7 @@ import {
 	arr,
 	bool,
 	grantable,
+	int,
 	lit,
 	MessageSchema,
 	map,
@@ -88,7 +89,7 @@ export const Workspace = remote("things.workspace", {
 				obj({
 					name: str(),
 					as: oneOf("member", "guest"),
-					expires: opt(str()),
+					expires: opt(int()),
 					uses: opt(InviteUses),
 					group: opt(str()),
 				}),

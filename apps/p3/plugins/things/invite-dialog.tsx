@@ -22,6 +22,9 @@ import styles from "./things.module.css";
 import { useErrorText, usePartyName } from "./use-page.ts";
 import { type PartyInfo, Workspace } from "./workspace.ts";
 
+/** A day in milliseconds: how `expires` counts. */
+const DAY = 24 * 60 * 60 * 1000;
+
 /** How long a new link lasts, in days, as the dialog offers it. */
 const EXPIRIES = [1, 7, 30] as const;
 
@@ -118,7 +121,7 @@ function ByLink(props: { readonly workspace: string }) {
 	const errorText = useErrorText();
 	const make = () => {
 		setFailure(undefined);
-		ref?.inviteLink({ name: "", as, expires: `${days}d`, uses }, BACKGROUND_CONTEXT).then(
+		ref?.inviteLink({ name: "", as, expires: days * DAY, uses }, BACKGROUND_CONTEXT).then(
 			({ url }) => setLink(new URL(url, location.origin).href),
 			(error: unknown) => setFailure(errorText(error)),
 		);
