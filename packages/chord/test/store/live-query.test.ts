@@ -411,6 +411,26 @@ describe("decoded rows", () => {
 			expect(rows.decode([row("3", "c")], target, context)[0]).toEqual({ id: "3", title: "c" });
 		});
 	}
+	it("does not compare a list's row with itself: a page handed again costs no column read (hot-path pass)", () => {
+		const Docs = defineTable("docs", { version: 1, columns: { id: str(), title: str() }, key: ["id"] });
+		const target: LiveTarget = {
+			spec: { query: query(Docs), table: "docs", projection: {}, owner: Docs },
+			decode: (stored) => ({ id: stored.id as string, title: stored.title as string }),
+		};
+		let reads = 0;
+		const kept: StoredRead = Object.freeze({
+			id: "1",
+			get title() {
+				reads++;
+				return "a";
+			},
+		});
+		const rows = new DecodedRows();
+		const [shown] = rows.decode([kept, { id: "2", title: "b" }], target, context);
+		const before = reads;
+		expect(rows.decode([kept, { id: "2", title: "b" }], target, context)[0]).toBe(shown);
+		expect(reads).toBe(before);
+	});
 });
 
 describe("a refresh applied again", () => {

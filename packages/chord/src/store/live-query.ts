@@ -259,6 +259,10 @@ export class DecodedRows {
 		const entry =
 			before instanceof Map ? getRow(before, key, stored) : holdsKey(before, key, stored) ? before : undefined;
 		if (entry instanceof KeptRow) {
+			// The same stored row (a list's page that did not run again hands its rows again): unchanged, a row being
+			// plain data the backend does not change (`sqliteBackend`); no comparison of its columns (1,000 loaded rows
+			// per frame of a list).
+			if (entry.stored === stored) return entry;
 			return new KeptRow(stored, sameRow(entry.stored, stored) ? entry.row : target.decode(stored, context));
 		}
 		if (entry !== undefined && sameStored(entry, stored)) return entry;
