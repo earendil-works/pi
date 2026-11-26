@@ -2285,6 +2285,62 @@ describe("what a decision keeps (hold memory)", () => {
 		await h.close(context);
 	});
 
+	// Found by the wire builder's review (2026-11-26): the registry's holdings named the version's table, so a set an
+	// app kept kept the table and its entries after the version was gone.
+	it("a version gone keeps no table or entry of its granted sets, while an app keeps every set", async () => {
+		const tables: WeakRef<object>[] = [];
+		const entries: WeakRef<object>[] = [];
+		const set = Map.prototype.set;
+		// Watches the insertions into the version's table only: it keeps neither the table nor its entries.
+		Map.prototype.set = function (this: Map<unknown, unknown>, key: unknown, value: unknown) {
+			const first: unknown = Array.isArray(value) ? value[0] : undefined;
+			const held = first instanceof WeakRef ? first.deref() : undefined;
+			if (typeof key === "number" && held instanceof Set && [...held].some((name) => `${name}`.startsWith("kept"))) {
+				tables.push(new WeakRef(this));
+				entries.push(new WeakRef(value as object), new WeakRef(first as object));
+			}
+			return set.call(this, key, value);
+		};
+		let kept: { readonly version: WeakRef<object>; readonly sets: ReadonlySet<string>[] };
+		try {
+			kept = await (async () => {
+				const flags = ["kept0", "kept1", "kept2", "kept3", "kept4"] as const;
+				const Kept = remote("heap.kept-sets", {
+					version: 1,
+					params: { n: int() },
+					hostAddress: () => Server(),
+					state: { name: str() },
+					flags: { kept0: "0", kept1: "1", kept2: "2", kept3: "3", kept4: "4" },
+				});
+				const h = createHost<TestPrincipal>({
+					address: Server(),
+					principal: { kind: "server" },
+					onError: () => {},
+				});
+				const facet = defineFacet<TestPrincipal>((host) =>
+					host.serve(Kept, () => ({ name: constant("n") }), {
+						admit: ({ n }) => constant(allow({ granted: flags.filter((_, index) => (n & (1 << index)) !== 0) })),
+					}),
+				);
+				await h.load([{ name: "@test/kept", facet }], context);
+				const sets: ReadonlySet<string>[] = [];
+				for (let n = 1; n < 32; n++) {
+					const reference = await h.get(Kept, { n }, context);
+					sets.push(reference.granted);
+					reference.release();
+				}
+				await h.close(context);
+				return { version: new WeakRef(currentVersion(Kept)), sets };
+			})();
+		} finally {
+			Map.prototype.set = set;
+		}
+		expect(tables.length).toBeGreaterThan(0);
+		await expectCollected(kept.version);
+		await expectCollected(...tables, ...entries);
+		expect(kept.sets.at(-1)!.size).toBe(5);
+	});
+
 	it("sets of names whose hashes collide (more than 31 grants) are told apart name by name", async () => {
 		const names = Array.from({ length: 40 }, (_, index) => `g${String(index).padStart(2, "0")}`);
 		const Many = remote("heap.many", {

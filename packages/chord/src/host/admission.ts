@@ -805,13 +805,25 @@ type Decided = DecidedAllow | DecidedDeny | { readonly kind: "released"; readonl
 function grantedSet(grants: readonly string[], names: readonly string[]): ReadonlySet<string> {
 	let sets = grantedSets.get(grants);
 	if (sets === undefined) {
-		sets = new Map();
+		const buckets: Buckets = new Map();
+		// Drops the entry of a collected set (its bucket with it when it was the last).
+		const collected = new FinalizationRegistry<{ readonly hash: number; readonly ref: WeakRef<ReadonlySet<string>> }>(
+			({ hash, ref }) => {
+				const bucket = buckets.get(hash);
+				if (bucket === undefined) return;
+				const index = bucket.indexOf(ref);
+				if (index >= 0) bucket.splice(index, 1);
+				if (bucket.length === 0) buckets.delete(hash);
+			},
+		);
+		sets = { buckets, collected };
 		grantedSets.set(grants, sets);
 	}
+	const { buckets } = sets;
 	// A bit per index (modulo 31): exact up to 31 grants, compared name by name beyond.
 	let hash = 0;
 	for (let index = 0; index < names.length; index++) hash |= 1 << (grants.indexOf(names[index]!) % 31);
-	const bucket = sets.get(hash);
+	const bucket = buckets.get(hash);
 	if (bucket !== undefined) {
 		for (let index = 0; index < bucket.length; index++) {
 			const granted = bucket[index]!.deref();
@@ -823,9 +835,9 @@ function grantedSet(grants: readonly string[], names: readonly string[]): Readon
 	const granted: ReadonlySet<string> = new Set(names);
 	setNames.set(granted, names);
 	const ref = new WeakRef(granted);
-	if (bucket === undefined) sets.set(hash, [ref]);
+	if (bucket === undefined) buckets.set(hash, [ref]);
 	else bucket.push(ref);
-	collectedSets.register(granted, { sets, hash, ref });
+	sets.collected.register(granted, { hash, ref });
 	return granted;
 }
 
@@ -840,22 +852,20 @@ function namesOf(granted: ReadonlySet<string>): readonly string[] {
 const setNames = new WeakMap<ReadonlySet<string>, readonly string[]>();
 
 /** A version's granted sets by the hash of their names, each while a decision has it. */
-type GrantedSets = Map<number, WeakRef<ReadonlySet<string>>[]>;
+type Buckets = Map<number, WeakRef<ReadonlySet<string>>[]>;
 
+/**
+ * A version's buckets and the registry that drops a collected set's entry: owned by the version's entry alone (its
+ * holdings name no table), so a set an app keeps keeps neither the buckets nor their registrations once the version is
+ * gone.
+ */
+type GrantedSets = {
+	readonly buckets: Buckets;
+	readonly collected: FinalizationRegistry<{ readonly hash: number; readonly ref: WeakRef<ReadonlySet<string>> }>;
+};
+
+/** The granted sets of each version, by its grants: gone with the version. */
 const grantedSets = new WeakMap<readonly string[], GrantedSets>();
-
-/** Drops the entry of a collected set (its bucket with it when it was the last). */
-const collectedSets = new FinalizationRegistry<{
-	readonly sets: GrantedSets;
-	readonly hash: number;
-	readonly ref: WeakRef<ReadonlySet<string>>;
-}>(({ sets, hash, ref }) => {
-	const bucket = sets.get(hash);
-	if (bucket === undefined) return;
-	const index = bucket.indexOf(ref);
-	if (index >= 0) bucket.splice(index, 1);
-	if (bucket.length === 0) sets.delete(hash);
-});
 
 /**
  * Refuses `self.job` in an admitted type's factory (slice 14 §2.1), in an attempt and in staging: work for a person
