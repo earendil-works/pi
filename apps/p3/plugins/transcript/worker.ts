@@ -60,8 +60,10 @@ export default defineFacet((host) => {
 		(_params, _principal, _admitted, self) => {
 			const harness = self.registry(SessionHarness);
 			const facts = self.get(SessionFacts, {});
-			const open = (): OpenHarness => {
-				const value = harness.value;
+			// The harness may still be opening when a call comes (a worker just started): the call waits for it, as long as
+			// its caller's context lets it, without following the conversation (Astra, round 2: Send alone holds no reader).
+			const open = async (ctx: Context): Promise<OpenHarness> => {
+				const value = await until(harness, (found) => found !== undefined, ctx);
 				if (value === undefined) throw invalid("args", "transcript: the session's harness is not open");
 				return value;
 			};
@@ -72,17 +74,17 @@ export default defineFacet((host) => {
 				entries: async (
 					query: { minEntryId?: number; maxEntryId?: number; order?: string; limit: number },
 					ctx: Context,
-				) => entriesOf(open(), query, ctx),
+				) => entriesOf(await open(ctx), query, ctx),
 				// The admission carries no identity, so the request id is scoped by itself alone: two writers who pick the
 				// same id send once. Clients choose random ids.
 				send: async ({ text, requestId }, ctx) => {
-					await open().submit(undefined, { text, requestId: `transcript:${requestId}` }, ctx);
+					await (await open(ctx)).submit(undefined, { text, requestId: `transcript:${requestId}` }, ctx);
 					return null;
 				},
 				stop: async (ctx) => {
 					// An abort runs the aborted tasks' handlers: work, which an archived session's worker never does.
 					if (facts.session.value?.archivedAt !== null) throw forbidden("transcript: the session is archived");
-					const root = await open().durable.root(ctx);
+					const root = await (await open(ctx)).durable.root(ctx);
 					await root.abort(ctx);
 					return null;
 				},

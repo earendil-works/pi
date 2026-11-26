@@ -201,6 +201,23 @@ describe("the transcript plugin on a worker", () => {
 		assert.deepEqual(followers, []);
 	});
 
+	// Astra, round 2 (must 2).
+	it("lets Send alone wait for a harness that is not open yet, without a reader", async () => {
+		server.ticks("person:alice", ["send"]);
+		await t.root(
+			async (ctx) => {
+				const writer = withGranted(await ctx.get(Transcript, { session: SESSION }), "send")!;
+				assert.equal(
+					await writer.send({ text: "hi", requestId: "cold-send" }, within("the harness", ctx, 5000)),
+					null,
+				);
+			},
+			context,
+			{ principal: ALICE },
+		);
+		assert.equal(counts.observers, 0);
+	});
+
 	it("follows a conversation once for two readers", async () => {
 		await t.root(
 			async (ctx) => {

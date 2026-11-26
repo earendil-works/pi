@@ -110,12 +110,24 @@ export default defineFacet((host, facet) => {
 		self.on(held, () => apply());
 		self.on(parts, () => apply());
 		// The work a previous worker left runs once the registry has what the agent holds, never for an archived session.
+		// An archive stops the run under way as Stop does (decision 122; Astra, round 2): a tool already running may
+		// finish, no next model call is made. A restore resumes nothing by itself: the next send does.
+		let seen = false;
 		self.on(archived, async ({ value }, ctx) => {
-			if (value) return;
+			const { durable } = opened.value;
+			const first = !seen;
+			seen = true;
+			if (value) {
+				// Only a scheduler that runs has a run to stop: an abort would enable a paused one (the cut-off run of an
+				// archived session's fresh worker).
+				if ((await durable.inspect(ctx)).scheduling === "running") await (await durable.root(ctx)).abort(ctx);
+				return;
+			}
+			if (!first) return;
 			await ready(ctx);
 			// An archive seen while the holding got ready (Astra, round 1): nothing resumes.
 			if (archived.value) return;
-			opened.value.durable.resume();
+			durable.resume();
 		});
 		const harness: OpenHarness = {
 			get durable() {

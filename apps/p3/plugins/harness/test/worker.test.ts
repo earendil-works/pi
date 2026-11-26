@@ -537,4 +537,15 @@ describe("the harness plugin on a worker", () => {
 		await new Promise((resolve) => setImmediate(resolve));
 		assert.equal((await open.durable.inspect(context)).scheduling, "paused");
 	});
+
+	// Decision 122 (round 2): a restore resumes nothing by itself; the next send does.
+	it("resumes nothing when an archived session is restored", async () => {
+		const server = await start([], { archivedAt: 5 });
+		const open = await harness();
+		server.row({ archivedAt: null });
+		const facts = await tested().host.get(SessionFacts, {}, context);
+		await until(facts.session, (row) => row?.archivedAt === null, within("the restore on the worker", context));
+		await new Promise((resolve) => setImmediate(resolve));
+		assert.equal((await open.durable.inspect(context)).scheduling, "paused");
+	});
 });

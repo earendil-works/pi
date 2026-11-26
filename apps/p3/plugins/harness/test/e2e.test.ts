@@ -207,6 +207,34 @@ describe("the harness end to end", () => {
 		assert.deepEqual(t.errors, []);
 	});
 
+	// Astra, round 2 (must 1): an archive stops the run under way (decision 122).
+	it("makes no next model call once the session is archived while a tool runs", async () => {
+		const folder = await directory("p3-harness-e2e-");
+		const t = await start();
+		const id = await session(t, folder, [
+			{ when: "@go", reply: [{ kind: "tool", name: "bash", args: JSON.stringify({ command: GATED }) }] },
+			{ when: "", reply: [{ kind: "text", text: "after-archive" }] },
+		]);
+		const client = await t.client(context);
+		await send(client, id, "@go");
+		await eventually(() => existsSync(join(folder, "started")), Boolean);
+		await client.root(async (ctx) => {
+			const held = await ctx.get(SessionObject, { workspace: id, thing: id });
+			await withGranted(held, "archive")!.archive(ctx);
+			await until(held.row, (row) => row.archivedAt !== null, within("archived", ctx));
+			// Confirm this very worker has observed the archive before letting the tool finish.
+			const transcript = withGranted(await ctx.get(Transcript, { session: id }), "stop")!;
+			await assert.rejects(transcript.stop(ctx), /archived/);
+			const probe = await ctx.get(FauxRequests, { session: id });
+			await writeFile(join(folder, "gate"), "");
+			await new Promise((resolve) => setTimeout(resolve, 500));
+			assert.ok(
+				!probe.requests.value.some((request) => request.last.includes(folder)),
+				"archived session scheduled a new model request with the gated tool's result",
+			);
+		}, context);
+	});
+
 	it("schedules nothing for an archived session whose run was cut off", async () => {
 		const folder = await directory("p3-harness-e2e-");
 		const first = await start();
