@@ -93,7 +93,7 @@ export function originPart(json: string, compression: Compression | undefined, c
  * above `limit`; `undefined` within it. Nothing is parsed or inflated.
  */
 export function oversized(part: Part, limit: number): ChordError | undefined {
-	if (limit === Number.POSITIVE_INFINITY) return undefined;
+	if (limit === Number.POSITIVE_INFINITY || within(part, limit)) return undefined;
 	const size = sizeOf(part);
 	return size > limit ? tooLarge(size, limit, "wire") : undefined;
 }
@@ -115,7 +115,7 @@ export function openPart(
 	if (wire !== undefined) throw wire;
 	if (!(part instanceof DeflatedPart)) {
 		// Not deflated: its decoded size is its size.
-		const size = limits.decoded === Number.POSITIVE_INFINITY ? 0 : sizeOf(part);
+		const size = limits.decoded === Number.POSITIVE_INFINITY || within(part, limits.decoded) ? 0 : sizeOf(part);
 		if (size > limits.decoded) throw tooLarge(size, limits.decoded, "decoded");
 		return part;
 	}
@@ -182,6 +182,14 @@ export async function inflateAsync(
 		offset += chunk.byteLength;
 	}
 	part.inflated = { kind: "bytes", bytes };
+}
+
+/**
+ * Whether text is within `limit` by its length alone: a UTF-16 unit is at most three UTF-8 bytes, so a text up to a
+ * third of the limit is not walked (a served hold's params text is checked again at each placement).
+ */
+function within(part: Part, limit: number): boolean {
+	return typeof part === "string" && part.length * 3 <= limit;
 }
 
 /** A part's size on the wire: its UTF-8 bytes (counted for text, without encoding it). */
