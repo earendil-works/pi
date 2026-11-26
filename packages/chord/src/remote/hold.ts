@@ -505,7 +505,9 @@ export class Hold implements Holder, UnboundRequest {
 		const failed: FailedMember[] = [];
 		const { version } = this.contract;
 		const current = version === contract.version;
-		for (const [index, member] of state.names.state.entries()) {
+		const names = state.names.state;
+		for (let index = 0; index < names.length; index++) {
+			const member = names[index]!;
 			// An older version's members are its instance's mapping (its refusals unbound it before: `ChordObject`).
 			const source = current ? object.stateMembers.get(member)! : object.liveMember(member, version);
 			let value: JsonValue;
