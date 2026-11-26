@@ -19,6 +19,17 @@ import { defineTable } from "../../src/store/table.ts";
 import { TableChanges } from "../../src/store/table-changes.ts";
 import type { TableHandle } from "../../src/store/table-handle.ts";
 import { expectCollected, memoryStore, tableIn } from "../support.ts";
+import {
+	closeWorld,
+	commit as commitWorld,
+	opened as openedWorld,
+	openRead,
+	random,
+	randomWrite,
+	staleReads,
+	SessionColumns as WorldSessionColumns,
+	Sessions as WorldSessions,
+} from "./read-world.ts";
 
 const Session = hostKind("session", { id: str() });
 const TagSet = defineColumns("tags.columns", { columns: { note: int(), tag: str() }, key: ["note", "tag"] });
@@ -325,4 +336,105 @@ describe("the index and the refresh", () => {
 		// The binding changes without a watcher left to tell.
 		store.reads.unbind(TagSet.name, tags);
 	});
+});
+
+describe("calls into a condition's lists, by phase (hot-path review guard)", () => {
+	// The second reviewer's count (opus-calls): a read whose condition is built of lists that count their method
+	// calls and iterations, opened, run through 150 random commits, checked and closed. The counts are the store's as
+	// of this pass: a change that calls a list's method more often, or in another phase, fails here and must say why.
+	const METHODS = [
+		"map",
+		"slice",
+		"join",
+		"every",
+		"some",
+		"filter",
+		"forEach",
+		"indexOf",
+		"includes",
+		"entries",
+		"flatMap",
+		"concat",
+		"find",
+		"findIndex",
+		"reduce",
+		"keys",
+		"values",
+		"at",
+		"sort",
+		"toSorted",
+		"flat",
+		"lastIndexOf",
+	] as const;
+
+	it("opens, refreshes and closes a read with the calls of this pass", async () => {
+		const calls = new Map<string, number>();
+		let phase = "setup";
+		const counted = <T>(name: string, items: T[]): T[] => {
+			const count = (what: string): void => {
+				const key = `${phase} ${name}.${what}`;
+				calls.set(key, (calls.get(key) ?? 0) + 1);
+			};
+			class Counted extends Array<T> {}
+			for (const method of METHODS) {
+				const original = (Array.prototype as unknown as Record<string, (...args: unknown[]) => unknown>)[method]!;
+				Object.defineProperty(Counted.prototype, method, {
+					value(this: unknown, ...args: unknown[]) {
+						count(method);
+						return original.apply(this, args);
+					},
+				});
+			}
+			Object.defineProperty(Counted.prototype, Symbol.iterator, {
+				value(this: unknown) {
+					count("iterator");
+					return Array.prototype[Symbol.iterator].call(this as unknown[]);
+				},
+			});
+			return Counted.from(items) as T[];
+		};
+		const w = await openedWorld(context, []);
+		try {
+			const node = {
+				and: [
+					{ inArray: ["app", counted("apps", ["club", "family"])] },
+					{ inArray: ["state", counted("states", ["working", "idle"])] },
+					{ exists: ["club.team-sessions", counted("pairs", [counted("pair", ["session", "id"])]), null] },
+				],
+			};
+			phase = "open";
+			const q = query(WorldSessions).whereNode(WorldSessionColumns, node);
+			const what = { kind: "rows", range: { limit: 5 } } as const;
+			const read = await openRead(w, { name: "counted", query: q, table: WorldSessions, what }, context);
+			phase = "commits";
+			const next = random(7);
+			for (let clock = 1; clock <= 150; clock++) {
+				await commitWorld(w, context, (changes) => randomWrite(next, changes, clock));
+			}
+			phase = "check";
+			expect(await staleReads(w, context)).toEqual([]);
+			phase = "close";
+			read.query.close();
+		} finally {
+			phase = "teardown";
+			await closeWorld();
+		}
+		expect(Object.fromEntries([...calls].sort(([a], [b]) => (a < b ? -1 : 1)))).toEqual({
+			"commits pairs.every": 40,
+			"commits pairs.iterator": 23,
+			"commits pairs.join": 1,
+			"commits pairs.map": 24,
+			"commits pairs.slice": 1,
+			"open apps.iterator": 1,
+			"open apps.map": 3,
+			"open pair.iterator": 5,
+			"open pairs.every": 2,
+			"open pairs.includes": 3,
+			"open pairs.iterator": 4,
+			"open pairs.join": 1,
+			"open pairs.map": 5,
+			"open states.iterator": 1,
+			"open states.map": 4,
+		});
+	}, 60_000);
 });
