@@ -111,7 +111,7 @@ function grantedSet(version: VersionData, indexes: readonly number[]): ReadonlyS
 		set = namedSet(version, indexes);
 		const ref = new WeakRef(set);
 		sets.set(bits, ref);
-		collectedSets.register(set, { sets, bits, ref });
+		collectedSets.register(set, { sets: new WeakRef(sets), bits, ref });
 	}
 	return set;
 }
@@ -127,13 +127,17 @@ type GrantedSets = Map<number, WeakRef<ReadonlySet<string>>>;
 /** The granted sets of each version (`grantedSet`): gone with the version. */
 const grantedSets = new WeakMap<VersionData, GrantedSets>();
 
-/** Drops the slot of a collected set, unless it holds another set of the same grants made since. */
+/**
+ * Drops the slot of a collected set, unless it holds another set of the same grants made since. Its table is held
+ * weakly: a set an app keeps must not keep the table of a version gone meanwhile.
+ */
 const collectedSets = new FinalizationRegistry<{
-	readonly sets: GrantedSets;
+	readonly sets: WeakRef<GrantedSets>;
 	readonly bits: number;
 	readonly ref: WeakRef<ReadonlySet<string>>;
 }>(({ sets, bits, ref }) => {
-	if (sets.get(bits) === ref) sets.delete(bits);
+	const table = sets.deref();
+	if (table?.get(bits) === ref) table.delete(bits);
 });
 
 /**

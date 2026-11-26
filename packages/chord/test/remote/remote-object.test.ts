@@ -2,6 +2,7 @@ import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context, withCancel, withTelemetry } from "../../src/context/index.ts";
 import { grantable, hostKind, int, local, method, obj, remote, str } from "../../src/contracts/index.ts";
+import { currentVersion } from "../../src/contracts/internal.ts";
 import { ChordError, PluginError } from "../../src/data/index.ts";
 import { defineState } from "../../src/documents/index.ts";
 import {
@@ -239,6 +240,49 @@ forEachCodec(() => {
 				return set;
 			})();
 			await expectCollected(set);
+		});
+
+		it("keep no table of a version gone meanwhile when an app keeps a set (review of d806bd7a4)", async () => {
+			// Watches the insertions into the version's table only: it keeps neither the table nor its slots.
+			const tables: WeakRef<object>[] = [];
+			const set = Map.prototype.set;
+			Map.prototype.set = function (this: Map<unknown, unknown>, key: unknown, value: unknown) {
+				const held = value instanceof WeakRef ? value.deref() : undefined;
+				if (typeof key === "number" && held instanceof Set && held.has("home")) tables.push(new WeakRef(this));
+				return set.call(this, key, value);
+			};
+			let kept: { readonly version: WeakRef<object>; readonly granted: ReadonlySet<string> };
+			try {
+				kept = await (async () => {
+					const Homed = remote("app.released-version", {
+						version: 1,
+						params: {},
+						hostAddress: () => Server(),
+						state: { n: int() },
+						flags: { home: "Home" },
+					});
+					const version = new WeakRef(currentVersion(Homed));
+					const { client, peer } = await rawProvider();
+					const ref = client.hold(Homed, {}, context);
+					const { hold } = await peer.next("hold");
+					peer.send({
+						kind: "bound",
+						holds: [{ hold, granted: [0], members: [{ member: 0, value: "1" }], failed: [] }],
+					});
+					await waitLive(ref);
+					const granted = ref.granted;
+					ref.release();
+					await transported();
+					await client.close(context);
+					return { version, granted };
+				})();
+			} finally {
+				Map.prototype.set = set;
+			}
+			expect(tables).toHaveLength(1);
+			await expectCollected(kept.version);
+			await expectCollected(...tables);
+			expect([...kept.granted]).toEqual(["home"]);
 		});
 
 		it("leave no slot of a collected set while the version lives (review of 9b548ea93)", async () => {
