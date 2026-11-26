@@ -161,6 +161,10 @@
           "path": "environment-variables.md"
         },
         {
+          "title": "Telemetry",
+          "path": "telemetry.md"
+        },
+        {
           "title": "Keybindings",
           "path": "keybindings.md"
         },
