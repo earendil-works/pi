@@ -101,11 +101,13 @@ function canonical(value: JsonValue[] | { readonly [key: string]: JsonValue }, p
 }
 
 /**
- * Whether `b` is the plain JSON `a` is, decided without making text (AGENTS.md: never compare by serializing). `a` is
- * plain JSON (`isPlainJson`); for `b` it says `equal` (the same canonical JSON: keys in any order, `-0` as `0`),
- * `different`, or `odd`: `b` is no plain JSON within the bounds (what is no JSON, a non-finite number, an exotic
- * prototype; deeper than 16 or over 256 values), which only canonical JSON's text compares. A part of `b` that is the
- * same object as `a`'s is equal at once. `skip` names a key of the outer objects left out of both. Counts nothing.
+ * Whether `b` has the canonical JSON of `a`, decided without making text (AGENTS.md: never compare by serializing).
+ * `a` is Chord's own copy of plain JSON (`copyPlainJson`); for `b` it says `equal` (keys in any order, `-0` as `0`),
+ * `different`, or `odd`: `b` is no plain JSON within the bounds, which only canonical JSON's text compares. Plain JSON
+ * is what canonical JSON writes without running anyone's code: finite numbers, strings, booleans, `null`, lists of
+ * `Array.prototype` without an own `entries` (canonical JSON calls it) and objects of `Object.prototype` or none; at
+ * most 16 deep and 256 values. It reads `b`'s own enumerable string keys and its lists' items, calls no method of
+ * `b`'s and counts nothing. `skip` names a key of the outer objects left out of both.
  */
 export function samePlainJson(a: unknown, b: unknown, skip?: string): PlainComparison {
 	budget = PLAIN_VALUES;
@@ -120,27 +122,27 @@ const PLAIN_DEPTH = 16;
 
 const PLAIN_VALUES = 256;
 
-/** The values a comparison may still visit (one comparison at a time: it calls no code of anyone's). */
+/** The values a walk may still visit (one walk at a time: it calls no code of anyone's). */
 let budget = 0;
 
 function comparePlain(a: unknown, b: unknown, depth: number, skip: string | undefined): PlainComparison {
 	if (--budget < 0) return "odd";
-	if (a === b) return "equal";
 	switch (typeof b) {
 		case "string":
 		case "boolean":
-			return "different";
+			return a === b ? "equal" : "different";
 		case "number":
-			return Number.isFinite(b) ? "different" : "odd";
+			if (!Number.isFinite(b)) return "odd";
+			return a === b ? "equal" : "different";
 		case "object":
 			break;
 		default:
 			return "odd";
 	}
-	if (b === null) return "different";
+	if (b === null) return a === null ? "equal" : "different";
 	if (depth === 0) return "odd";
 	if (Array.isArray(b)) {
-		if (Object.getPrototypeOf(b) !== Array.prototype) return "odd";
+		if (!plainList(b)) return "odd";
 		if (!Array.isArray(a) || a.length !== b.length) return "different";
 		// Indexed: a for-of allocates an iterator per list.
 		for (let index = 0; index < b.length; index++) {
@@ -168,45 +170,65 @@ function comparePlain(a: unknown, b: unknown, depth: number, skip: string | unde
 
 const isEnumerable = Object.prototype.propertyIsEnumerable;
 
+/** A list canonical JSON walks as Chord does: `Array.prototype`'s, its `entries` not its own. */
+function plainList(list: readonly unknown[]): boolean {
+	return Object.getPrototypeOf(list) === Array.prototype && !Object.hasOwn(list, "entries");
+}
+
 function plainPrototype(value: object): boolean {
 	const prototype = Object.getPrototypeOf(value);
 	return prototype === Object.prototype || prototype === null;
 }
 
 /**
- * Whether `value` is plain JSON within `samePlainJson`'s bounds: finite numbers, strings, booleans, `null`, plain
- * lists and plain objects, at most 16 deep and 256 values. Only such a value is kept to be compared directly; any other
- * is compared by its canonical JSON text, made when it is read.
+ * Chord's own copy of `value` when it is plain JSON (`samePlainJson`'s), else `undefined`: what a decision keeps to
+ * compare later reads with, so nothing of the plugin's value is kept or read again. Objects are copied without a
+ * prototype (an own `__proto__` key stays a key).
  */
-export function isPlainJson(value: unknown): boolean {
+export function copyPlainJson(value: unknown): unknown {
 	budget = PLAIN_VALUES;
-	return plain(value, PLAIN_DEPTH);
+	const copy = copied(value, PLAIN_DEPTH);
+	return copy === NOT_PLAIN ? undefined : copy;
 }
 
-function plain(value: unknown, depth: number): boolean {
-	if (--budget < 0) return false;
+/** No plain JSON: `copied`'s answer, never a value of JSON. */
+const NOT_PLAIN: unique symbol = Symbol("not plain");
+
+function copied(value: unknown, depth: number): unknown {
+	if (--budget < 0) return NOT_PLAIN;
 	switch (typeof value) {
 		case "string":
 		case "boolean":
-			return true;
+			return value;
 		case "number":
-			return Number.isFinite(value);
+			return Number.isFinite(value) ? value : NOT_PLAIN;
 		case "object":
 			break;
 		default:
-			return false;
+			return NOT_PLAIN;
 	}
-	if (value === null) return true;
-	if (depth === 0) return false;
+	if (value === null) return null;
+	if (depth === 0) return NOT_PLAIN;
 	if (Array.isArray(value)) {
-		if (Object.getPrototypeOf(value) !== Array.prototype) return false;
-		for (let index = 0; index < value.length; index++) if (!plain(value[index], depth - 1)) return false;
-		return true;
+		if (!plainList(value)) return NOT_PLAIN;
+		const list: unknown[] = [];
+		for (let index = 0; index < value.length; index++) {
+			const item = copied(value[index], depth - 1);
+			if (item === NOT_PLAIN) return NOT_PLAIN;
+			list.push(item);
+		}
+		return list;
 	}
-	if (!plainPrototype(value)) return false;
+	if (!plainPrototype(value)) return NOT_PLAIN;
 	const fields = value as { readonly [key: string]: unknown };
-	for (const key in fields) if (isEnumerable.call(fields, key) && !plain(fields[key], depth - 1)) return false;
-	return true;
+	const copy: { [key: string]: unknown } = Object.create(null);
+	for (const key in fields) {
+		if (!isEnumerable.call(fields, key)) continue;
+		const field = copied(fields[key], depth - 1);
+		if (field === NOT_PLAIN) return NOT_PLAIN;
+		copy[key] = field;
+	}
+	return copy;
 }
 
 /**

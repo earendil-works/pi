@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT } from "../../src/context/index.ts";
 import {
 	canonicalJson,
-	isPlainJson,
+	copyPlainJson,
 	principalJson,
 	principalKey,
 	samePlainJson,
@@ -37,8 +37,10 @@ describe("canonicalJson", () => {
 	});
 });
 
-describe("samePlainJson", () => {
+describe("samePlainJson and copyPlainJson", () => {
 	const text = (value: unknown) => canonicalJson(value as never, BACKGROUND_CONTEXT);
+	/** Whether `value` is plain JSON: whether it has a plain copy. */
+	const isPlainJson = (value: unknown) => copyPlainJson(value) !== undefined;
 
 	/** A random value of few distinct parts; with `odd`, what plugin code may hand over as JSON too. */
 	function random(next: () => number, depth: number, odd: boolean): unknown {
@@ -130,6 +132,8 @@ describe("samePlainJson", () => {
 			new Point(),
 			new (class extends Array {})(),
 			[, 1],
+			// Canonical JSON calls a list's `entries`: an own one is no plain list.
+			Object.assign([1], { entries: 0 }),
 			{ toJSON: () => 1 },
 			deep(17),
 			Array.from({ length: 256 }, () => 1),
@@ -147,6 +151,15 @@ describe("samePlainJson", () => {
 			samePlainJson([0], [-0]),
 			samePlainJson({ a: 1, b: 2 }, { b: 2, a: 1 }),
 		]).toEqual(["equal", "equal", "equal"]);
+	});
+
+	it("copies plain JSON as Chord's own: other objects, an own __proto__ key kept, later changes not seen", () => {
+		const value = JSON.parse('{"__proto__":1,"list":[{"n":-0}],"o":{"x":"y"}}');
+		const copy = copyPlainJson(value) as { list: { n: number }[]; o: object };
+		expect([copy === value, copy.list === value.list, copy.o === value.o]).toEqual([false, false, false]);
+		expect([Object.keys(copy), samePlainJson(copy, value)]).toEqual([["__proto__", "list", "o"], "equal"]);
+		value.list[0].n = 1;
+		expect([copy.list[0]!.n, samePlainJson(copy, value)]).toEqual([-0, "different"]);
 	});
 
 	it("calls no code: a toJSON or getter of the kept value is never run again", () => {

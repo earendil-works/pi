@@ -15,7 +15,7 @@ export { checkAddress, checkParams, identityKey } from "./params.ts";
 export {
 	canonicalJson,
 	canonicalText,
-	isPlainJson,
+	copyPlainJson,
 	type PlainComparison,
 	principalJson,
 	principalKey,

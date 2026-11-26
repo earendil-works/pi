@@ -670,6 +670,131 @@ describe("a re-read of a value that is no plain JSON", () => {
 	});
 });
 
+// The second review of the hot-path pass (Astra, 2026-11-26): what a decision keeps is Chord's own, made when the
+// decision changes; a read is always compared; the grant list is read and iterated as before the pass.
+describe("what a decision compares a read with", () => {
+	function read(decision: ReturnType<typeof reading>, wrapped: unknown) {
+		decision.source.next = wrapped;
+		return decision.decision.now(context);
+	}
+	const allowing = (value: unknown) => ({ kind: "allow", value });
+
+	it("a plain value changed in place under a new allow is a new decision with the new role", () => {
+		const s = reading();
+		const value = { role: "old" };
+		const first = read(s, allowing(value));
+		value.role = "new";
+		const next = read(s, allowing(value));
+		expect(next).toMatchObject({ kind: "allow", value: { role: "new" } });
+		expect(next).not.toBe(first);
+	});
+
+	it("the same object changed in place is a new decision too", () => {
+		const s = reading();
+		const decision = allowing({ role: "old" });
+		const first = read(s, decision);
+		(decision.value as { role: string }).role = "new";
+		expect(read(s, decision)).not.toBe(first);
+	});
+
+	it("a new outer value sharing a changed child rebuilds", () => {
+		const s = reading();
+		const child = { n: 1 };
+		const first = read(s, allowing({ child }));
+		child.n = 2;
+		expect(read(s, allowing({ child }))).not.toBe(first);
+	});
+
+	it("a new denial whose message's params changed is a new verdict", () => {
+		const s = reading();
+		const message = { key: "k", namespace: "n", params: [1] };
+		const first = read(s, { kind: "deny", reason: "later", message });
+		expect(first.kind).toBe("deny");
+		message.params[0] = 2;
+		expect(read(s, { kind: "deny", reason: "later", message })).not.toBe(first);
+	});
+
+	it("a retired value changed afterwards is not read again by a later odd read", () => {
+		const s = reading();
+		const old: { n: unknown } = { n: 1 };
+		read(s, allowing(old));
+		old.n = 1n;
+		expect(read(s, allowing({ n: Number.NaN }))).toMatchObject({ kind: "allow" });
+	});
+
+	it("a list with an own entries that is no function throws in canonical JSON's walk, as before", () => {
+		const s = reading();
+		const list = Object.assign([1], { entries: 0 });
+		expect(() => read(s, allowing({ list }))).toThrow(TypeError);
+	});
+
+	it("a grant list's own includes or indexOf is never called", () => {
+		const s = reading();
+		const granted = Object.assign(["a"], { includes: 0 });
+		const verdict = read(s, allowing({ granted }));
+		expect(verdict.kind === "allow" && [...verdict.granted]).toEqual(["a"]);
+		const first = read(reading(), allowing({ granted: ["a"] }));
+		const t = reading();
+		const kept = read(t, allowing({ granted: ["a"] }));
+		expect(read(t, allowing({ granted: Object.assign(["a"], { indexOf: null }) }))).toBe(kept);
+		expect(first.kind).toBe("allow");
+	});
+
+	it("a grant list is iterated by its own iterator", () => {
+		const s = reading();
+		const granted = Object.assign(["b"], {
+			*[Symbol.iterator]() {
+				yield "a";
+			},
+		});
+		const verdict = read(s, allowing({ granted }));
+		expect(verdict.kind === "allow" && [...verdict.granted]).toEqual(["a"]);
+	});
+
+	it("a granted that is no enumerable field, an Array subclass, is read as before: the same decision", () => {
+		const s = reading();
+		const first = read(s, allowing({ granted: ["a"] }));
+		const value = Object.defineProperty({}, "granted", { value: new (class extends Array<string> {})("a") });
+		expect(read(s, allowing(value))).toBe(first);
+	});
+
+	it("the first list and object are collected after an equal read of others while the decision stays", async () => {
+		const s = reading();
+		const refs = (() => {
+			const list = Array(64).fill("a");
+			const raw = { granted: list };
+			read(s, allowing(raw));
+			return [new WeakRef(list), new WeakRef(raw)];
+		})();
+		read(s, allowing({ granted: ["a"] }));
+		await expectCollected(...refs);
+		expect(s.decision.now(context).kind).toBe("allow");
+	});
+
+	it("equal plain, odd and plain again; holes; extra list fields; -0; prototypes; frozen data; the bounds", () => {
+		const deep = (depth: number) => {
+			let value: unknown = 1;
+			for (let level = 0; level < depth; level++) value = { value };
+			return value;
+		};
+		const pairs: unknown[][] = [
+			[{ x: null }, { x: Number.NaN }, { x: null }],
+			[{ a: [] }, { a: Array(1) }, { a: [] }],
+			[{ a: [1] }, { a: Object.assign([1], { extra: 2 }) }],
+			[{ v: -0 }, { v: 0 }],
+			[JSON.parse('{"__proto__":1}'), Object.assign(Object.create(null), JSON.parse('{"__proto__":1}'))],
+			[Object.seal({ x: 2 }), Object.freeze({ x: 2 })],
+			...[14, 15, 16, 17].map((depth) => [deep(depth), deep(depth)]),
+			...[253, 254, 255, 256, 257].map((length) => [{ v: Array(length).fill("a") }, { v: Array(length).fill("a") }]),
+		];
+		for (const pair of pairs) {
+			const s = reading();
+			const first = read(s, allowing(pair[0]));
+			for (const value of pair.slice(1)) expect(read(s, allowing(value))).toBe(first);
+		}
+	});
+});
+
 describe("a decision's settle (hot-path pass: no async frames where nothing waits)", () => {
 	it("answers in the turns it took as an async function throughout, without keys to load or live queries", async () => {
 		const { decision, source } = reading();
