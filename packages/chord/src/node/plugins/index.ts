@@ -1,10 +1,10 @@
 // Chord v2's plugins component (`@earendil-works/chord/plugins`; slices 7c, 12): plugin directories and single-file
 // plugins found, built into scripts checked against the app's API, evaluated, loaded and reloaded per plugin, watched,
 // rolled out and installed, and a plugin tested alone. Node-only (`fs`, esbuild, `vm`); esbuild is an optional peer
-// dependency, imported only here. `build` is esbuild's, counted: an app that loads Chord builds through it, since
-// Chord stops esbuild's one service of the process once idle.
+// dependency, imported only here. `esbuildBuild` is esbuild's `build`, counted: an app that loads Chord builds through
+// it, since Chord stops esbuild's one service of the process once idle.
 
-export { build } from "../esbuild.ts";
+export { esbuildBuild } from "../esbuild.ts";
 export type { BaseInputs } from "./base-inputs.ts";
 export { type AppApi, type BuildInput, type BuildOptions, type BuiltFacet, buildFacet } from "./build.ts";
 export {

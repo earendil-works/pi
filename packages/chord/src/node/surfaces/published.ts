@@ -47,6 +47,8 @@ export class PublishedScripts<P extends Principal> {
 	#set: ScriptSet | undefined;
 	/** The set last pushed to the surface's current-scripts object: a push that failed is retried by the next. */
 	#pushed: ScriptSet | undefined;
+	/** The published script of each plugin in the set last pushed: what a step reports its changes against. */
+	#pushedScripts: ReadonlyMap<string, Published> = new Map();
 
 	constructor(surface: SurfaceName, kind: string, prefix: string, base: string, plugins: Plugins, host: Host<P>) {
 		this.#surface = surface;
@@ -76,6 +78,7 @@ export class PublishedScripts<P extends Principal> {
 		if (set === this.#pushed) return;
 		await publishTo(this.#host, this.#surface, set, context);
 		this.#pushed = set;
+		this.#pushedScripts = new Map(this.#current);
 	}
 
 	/** A published file by its path, from the last few sets. */
@@ -96,7 +99,8 @@ export class PublishedScripts<P extends Principal> {
 			name,
 			kinds: [this.#kind],
 			reload: async (_built: Built, context: Context) => {
-				const before = new Map(this.#current);
+				// Against the set clients last got: an apply retrying a failed push reports what that push carries.
+				const before = this.#pushedScripts;
 				const failed = this.#publish(this.#plugins.current(this.#kind) ?? []);
 				await this.push(context);
 				const after = [...this.#current];
@@ -156,7 +160,7 @@ export class PublishedScripts<P extends Principal> {
 			files.set(`${stem}.js`, { mime: JAVASCRIPT, bytes: new TextEncoder().encode(text) });
 			if (css === undefined) entries.push({ name, digest, url: `${stem}.js` });
 			else {
-				// Named by its own content too: a change of only the CSS keeps the script's digest.
+				// Named by its own content too.
 				const style = `${stem}.${createHash("sha256").update(css).digest("hex").slice(0, 16)}.css`;
 				files.set(style, { mime: CSS, bytes: new TextEncoder().encode(css) });
 				entries.push({ name, digest, url: `${stem}.js`, css: style });

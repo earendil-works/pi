@@ -278,6 +278,8 @@ describe("a rollout publishes only what changed (ERNDL-1064)", () => {
 		const scripts = await app.host.get(WebScripts, {}, context);
 		const before = scripts.set.value;
 		const watch = await heard(scripts);
+		// Nothing pushed: the surface's current-scripts object is never fetched (Opus).
+		const gets = vi.spyOn(app.host, "get");
 		for (let round = 0; round < 5; round++) {
 			await edit(app, root, plugin("a"));
 			expect(webReport(await app.applyChanges(context))).toEqual({
@@ -287,13 +289,15 @@ describe("a rollout publishes only what changed (ERNDL-1064)", () => {
 			});
 		}
 		expect(scripts.set.value).toBe(before);
+		expect(gets.mock.calls.filter(([type]) => type.name === "chord.web.current")).toEqual([]);
+		gets.mockRestore();
 		expect(watch.calls).toEqual([]);
 		await watch.stop();
 		scripts.release();
 		await app.close(context);
 	});
 
-	it("publishes a change of one byte, in the script or only in its stylesheet, and reports the plugin changed", async () => {
+	it("publishes a change of one byte, in the script or in its stylesheet, and reports the plugin changed", async () => {
 		const { app, root } = await webApp({ plugins: { notes: plugin("a") } });
 		const scripts = await app.host.get(WebScripts, {}, context);
 		const first = scripts.set.value;
@@ -333,12 +337,15 @@ describe("a rollout publishes only what changed (ERNDL-1064)", () => {
 		const before = scripts.set.value;
 		const watch = await heard(scripts);
 		await edit(app, root, { "web.ts": "export default {" }, "other");
+		const gets = vi.spyOn(app.host, "get");
 		for (let round = 0; round < 2; round++) {
 			const report = webReport(await app.applyChanges(context));
 			expect(report.plugins).toEqual({ added: [], changed: [], removed: [] });
 			expect(report.failed.map(({ plugin }) => plugin)).toEqual(["@test/other"]);
 		}
 		expect(scripts.set.value).toBe(before);
+		expect(gets.mock.calls.filter(([type]) => type.name === "chord.web.current")).toEqual([]);
+		gets.mockRestore();
 		expect(watch.calls).toEqual([]);
 		await watch.stop();
 		scripts.release();
@@ -376,8 +383,11 @@ describe("a rollout publishes only what changed (ERNDL-1064)", () => {
 		spy.mockRestore();
 		expect(first.stopped?.step).toBe("web");
 		expect(scripts.set.value).toBe(old);
-		// The plugin stays dirty: the next apply builds the same script, so its set is no new one, and pushes it.
-		expect((await app.applyChanges(context)).stopped).toBeUndefined();
+		// The plugin stays dirty: the next apply builds the same script, so its set is no new one, and pushes it; its
+		// report is against the set pages last got (Opus).
+		const retry = await app.applyChanges(context);
+		expect(retry.stopped).toBeUndefined();
+		expect(webReport(retry).plugins.changed).toEqual(["@test/notes"]);
 		expect(scripts.set.value).not.toBe(old);
 		expect(scripts.set.value.plugins[0]!.digest).not.toBe(old.plugins[0]!.digest);
 		expect((await send(port, "GET", "/")).body.toString()).not.toContain(old.combined);

@@ -12,7 +12,7 @@ import { isBuiltin } from "node:module";
 import { basename, dirname, extname, isAbsolute, join, relative, sep } from "node:path";
 import type { BuildFailure, Plugin as EsbuildPlugin, Loader, Message, OnLoadResult } from "esbuild";
 import type { Context } from "../../context/index.ts";
-import { build } from "../esbuild.ts";
+import { esbuildBuild } from "../esbuild.ts";
 import { SCOPED_CSS, scopeCssModule } from "./css-modules.ts";
 import { discoverPackage, type Plugin } from "./discover.ts";
 import { PLUGINS_SPECIFIER, packageName } from "./evaluate.ts";
@@ -99,9 +99,9 @@ export async function buildFacet(
 	const wrongEntry = rules.checkEntry(named, entry);
 	if (wrongEntry !== undefined) return failed([wrongEntry]);
 	const browser = options.platform === "browser";
-	let result: Awaited<ReturnType<typeof build>>;
+	let result: Awaited<ReturnType<typeof esbuildBuild>>;
 	try {
-		result = await build({
+		result = await esbuildBuild({
 			entryPoints: [entry],
 			absWorkingDir: plugin.dir,
 			// Nothing is written: the directory only makes the source map's paths relative to the plugin.

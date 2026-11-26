@@ -12,7 +12,7 @@ import { fork } from "node:child_process";
 import { createHash } from "node:crypto";
 import { basename, dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { build } from "../esbuild.ts";
+import { esbuildBuild } from "../esbuild.ts";
 import { type BaseInputs, recordedSources } from "../plugins/base-inputs.ts";
 import { ASSET_EXTENSIONS, CSS, JAVASCRIPT, mimeOf, type ServedFile } from "./served.ts";
 
@@ -113,7 +113,7 @@ export async function buildHere(request: BaseRequest): Promise<BaseBundle> {
 	const { entry, platform, prefix, resolution } = request;
 	const browser = platform === "browser";
 	const inputs = new Map<string, string>();
-	const result = await build({
+	const result = await esbuildBuild({
 		entryPoints: [entry],
 		outdir: "/",
 		entryNames: "base",
