@@ -30,6 +30,7 @@ import { eventually, within } from "../../../test/until.ts";
 import { SignIns } from "../../sign-in/contract.ts";
 import { Gives, OwnerSeeds, ThingsStore } from "../contract.server.ts";
 import { Group, type Party, type Source } from "../contract.ts";
+import { Workspace } from "../workspace.ts";
 import { BOARD_PLUGIN, Board } from "./kinds.ts";
 import { signInsStub, storedRows, THINGS, type World, world } from "./world.ts";
 
@@ -717,5 +718,58 @@ describe("round 1's reproductions (Opus, Astra, Fable)", () => {
 		await store.removeGroup({ group: f.parents }, context);
 		assert.ok(!storedRows(w.path, "group-managers").some((row) => row.partyKey === `group/${f.parents}`));
 		assert.equal(await store.redeemInvite({ secret: link }, context), null);
+	});
+});
+
+describe("sign-outs", () => {
+	it("a removed person's sign-ins that could not end are ended at the next start (Opus S7)", async (t) => {
+		t.mock.method(console, "error", () => {});
+		await w.host.root(
+			async (ctx) =>
+				(await ctx.get(SignIns, {})).issue({ principal: principal(f.kim), label: "phone", kind: "browser" }, ctx),
+			context,
+		);
+		signIns.failing = true;
+		await store.removePerson({ person: f.kim }, context);
+		await eventually(
+			() => w.rows("sign-outs").length,
+			(n) => n === 1,
+		);
+		signIns.failing = false;
+		await w.reload("@earendil-works/p3-things", context);
+		await eventually(
+			() => w.rows("sign-outs").length,
+			(n) => n === 0,
+		);
+		assert.equal(signIns.revoked.length, 1);
+	});
+});
+
+describe("Manage people on a workspace (slice 2's Workspace, slice 3's calls)", () => {
+	it("its maker picks, makes a group put in there, writes an invite link; a stranger is not put in", async () => {
+		const club = await store.createWorkspace(
+			{ kind: "things.workspace", name: "Club", parent: f.family, by: { kind: "person", person: f.anna } },
+			context,
+		);
+		const stranger = await store.createPerson({ name: "Stranger", madeBy: ADMIN }, context);
+		await as(f.anna, async (ctx) => {
+			const held = await ctx.get(Workspace, { workspace: club });
+			const names = (await held.picker!({ query: "" }, ctx)).map(({ name }) => name);
+			assert.ok(names.includes("Kim") && !names.includes("Stranger"), JSON.stringify(names));
+			const made = await held.makeGroup!({ name: "coaches" }, ctx);
+			const { url } = await held.inviteLink!({ name: "Coach", as: "member", group: made }, ctx);
+			assert.match(url, /^\/_p3\/invite#[0-9a-f-]+\./);
+			await assert.rejects(
+				held.putParty!({ party: person(stranger) }, ctx),
+				(error: Error & { details?: { message?: { key: string } } }) =>
+					error.details?.message?.key === "notOffered",
+			);
+			const coach = await store.redeemInvite({ secret: url.slice(url.indexOf("#") + 1) }, context);
+			const groups = (await store.groupMembers.ofPerson.page({ person: coach!.person }, 10, context)).items;
+			assert.deepEqual(
+				groups.map(({ group: g }) => g),
+				[made],
+			);
+		});
 	});
 });

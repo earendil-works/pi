@@ -60,6 +60,20 @@ async function withSession(idleMs?: number) {
 	return { t, owner, make, archive, rename, id, pi };
 }
 
+/**
+ * Until the things store has adopted the people plugin's owner as its owner: a reload of things while the first
+ * start's adoption still commits cancels it (a one-time window at a Pi's first start).
+ */
+async function ownerAdopted(t: Topology): Promise<void> {
+	const id = t.owner.kind === "person" ? t.owner.id : "";
+	const owners = () =>
+		t.server.root(
+			async (ctx) => (await (await ctx.get(ThingsStore, {})).persons.owners.page({}, 10, ctx)).items,
+			context,
+		);
+	await eventually(owners, (items) => items.some(({ person }) => person === id));
+}
+
 /** Whether `promise` rejects with a ChordError of `code`. */
 async function refused(promise: Promise<unknown>, code: string): Promise<void> {
 	await assert.rejects(promise, (error: unknown) => isChordError(error) && error.code === code);
@@ -96,6 +110,7 @@ describe("reloads while in use", () => {
 
 	it("the people, environments, things and sessions plugins: a person's objects and the owner's go on", async () => {
 		const { t, owner, id, pi } = await withSession();
+		await ownerAdopted(t);
 		const ann = await t.server.root(
 			async (ctx) => (await ctx.get(PeopleStore, {})).createPerson({ name: "Ann" }, ctx),
 			context,
@@ -125,6 +140,20 @@ describe("reloads while in use", () => {
 		);
 		assert.deepEqual(t.errors, []);
 	});
+
+	for (const order of [
+		["people", "sign-in", "things"],
+		["people", "environments", "things", "sessions"],
+	]) {
+		it(`the ${order.join(", ")} plugins reloaded in that order (the owner bridge, ERNDL-1144): nothing reported`, async () => {
+			const { t, owner } = await withSession();
+			const me = await owner.get(Me, {}, context);
+			await ownerAdopted(t);
+			for (const plugin of order) await t.reload(`@earendil-works/p3-${plugin}`);
+			await until(me.me, (value) => value.kind === "person" && value.owner, within("still the owner", context));
+			assert.deepEqual(t.errors, []);
+		});
+	}
 
 	it("the sign-in plugin: issued sign-ins stay valid", async () => {
 		const { t } = await withSession();

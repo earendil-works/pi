@@ -22,7 +22,7 @@ import {
 } from "@earendil-works/p3/v1";
 import { ServerRuntime } from "@earendil-works/p3/v1/server";
 import { SignIns } from "../sign-in/contract.ts";
-import { OwnerSeeds } from "../things/contract.server.ts";
+import { type OwnerSeed, OwnerSeeds } from "../things/contract.server.ts";
 import { PeopleStore } from "./contract.server.ts";
 import { admitOwner, Me, OwnerAccess, People, PeopleList } from "./contract.ts";
 import { Invites, serveInviteRoutes } from "./invites.ts";
@@ -83,14 +83,24 @@ export default defineFacet((host) => {
 		};
 		const runtime = self.registry(ServerRuntime);
 		// Opened before the store goes live: from the first start on, the owner's person exists, once.
+		// The owner's person handed to the things plugin, which makes the same person its owner: a bridge until this
+		// plugin goes (ERNDL-1144 push B removes it, and this). Contributed by this object itself, so a reload ends it
+		// with the object, never as a failure.
+		const seed = self.writable<OwnerSeed>(null);
+		self.contribute(OwnerSeeds, seed);
 		self.open(
-			(ctx) =>
-				self.tx(async (tx) => {
+			async (ctx) => {
+				const found = await self.tx(async (tx) => {
 					const owner = query(Persons).where((p) => eq(p.owner, 1));
-					if ((await tx.page(persons, owner, 1)).items.length > 0) return null;
-					tx.put(persons, { id: crypto.randomUUID(), name: ownerName(runtime.value.machine.user), owner: 1 });
-					return null;
-				}, ctx),
+					const [row] = (await tx.page(persons, owner, 1)).items;
+					if (row !== undefined) return row;
+					const made = { id: crypto.randomUUID(), name: ownerName(runtime.value.machine.user), owner: 1 };
+					tx.put(persons, made);
+					return made;
+				}, ctx);
+				seed.set({ person: found.id, name: found.name });
+				return null;
+			},
 			() => {},
 		);
 		const removePerson = ({ person }: { readonly person: string }, ctx: Ctx) =>
@@ -305,18 +315,9 @@ export default defineFacet((host) => {
 	);
 
 	serveInviteRoutes(host, invites);
-	// The owner's person handed to the things plugin, which makes the same person its owner: a bridge until this
-	// plugin goes (ERNDL-1144 push B removes it, and this).
-	contribute(host, "people.owner-seed", (self) => {
-		const found = self.liveQuery(self.get(PeopleStore, {}).persons.owner, {}, { first: 1 });
-		self.contribute(
-			OwnerSeeds,
-			self.derive([found], ([{ rows }]) => {
-				const owner = rows[0];
-				return owner === undefined ? null : { person: owner.id, name: owner.name };
-			}),
-		);
-	});
+	// Holds the store from the start, so its owner reaches the things plugin before anyone asks for a person (the
+	// bridge, ERNDL-1144 push B removes it).
+	contribute(host, "people.owner-seed", (self) => void self.get(PeopleStore, {}));
 });
 
 /** The owner's person's first name: their OS user's (`user`), capitalised (the owner renames it later). */
