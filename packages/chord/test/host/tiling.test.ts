@@ -9,8 +9,10 @@ import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
 import { arr, bool, int, local, method, obj, opt, queries, str } from "../../src/contracts/index.ts";
 import { createHost, defineFacet, type Host } from "../../src/host/index.ts";
+import { openNodeSqliteDatabase } from "../../src/sqlite/node.ts";
 import { defineColumns } from "../../src/store/column-set.ts";
 import { add, eq, exists } from "../../src/store/expression.ts";
+import { openStore, sqliteBackend } from "../../src/store/index.ts";
 import { query } from "../../src/store/query.ts";
 import type { ChordStore } from "../../src/store/store.ts";
 import { defineTable } from "../../src/store/table.ts";
@@ -759,4 +761,63 @@ describe("the invariant, with two owners and commit groups", () => {
 			await close();
 		});
 	}
+});
+
+// Found by the review of the pass (first reviewer, 2026-11-26): joining pages spread a page into `push`, which overflows
+// the stack past ~120,000 rows (on the base at a list's first page, since its only page is handed on at its next).
+describe("a page of more rows than a call takes arguments", () => {
+	it("a first page of 150,000 rows and the next are joined", async () => {
+		const Items = defineTable("items", { version: 1, columns: { id: int() }, key: ["id"] });
+		const Item = obj({ id: int() });
+		const Owner = local("large.owner", {
+			version: 1,
+			params: {},
+			members: { rows: queries(Item, { all: obj({}) }) },
+		});
+		const Screen = local("large.screen", {
+			version: 1,
+			params: { instance: int() },
+			members: { view: obj({ rows: arr(Item), moreAfter: bool() }), more: method() },
+		});
+		const n = 150_000;
+		const db = await openNodeSqliteDatabase(":memory:");
+		const store = await openStore(sqliteBackend(db), context);
+		const host = createHost({ store, onError: () => {} });
+		const facet = defineFacet((h) => {
+			h.serve(Owner, (_, self) => {
+				const table = self.table(Items);
+				return {
+					rows: self.queries(
+						table,
+						{ map: (row) => ({ id: row.id }) },
+						{ all: (_args: Record<string, never>) => query(Items) },
+					),
+				};
+			});
+			h.serve(Screen, (_, self) => {
+				const list = self.list("all", [[self.get(Owner, {}).rows.all, {}]], { first: n });
+				return { view: list.value, more: (ctx) => list.more(ctx) };
+			});
+		});
+		await host.load([{ name: "@test/large", facet }], context);
+		const owner = await host.get(Owner, {}, context);
+		try {
+			const tables = await db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type='table'");
+			const name = tables.find((table) => table.name.includes("large.owner"))!.name;
+			await db.exec(
+				`WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < ${n + 1}) ` +
+					`INSERT INTO "${name}" (id, "$v") SELECT n, 1 FROM seq`,
+			);
+			const screen = await host.get(Screen, { instance: 1 }, context);
+			await expect.poll(() => screen.view.value.rows.length).toBe(n);
+			expect(screen.view.value.moreAfter).toBe(true);
+			await screen.more(context);
+			await expect.poll(() => screen.view.value.rows.length).toBe(n + 1);
+			screen.release();
+		} finally {
+			owner.release();
+			await host.close(context);
+			await store.close(context);
+		}
+	}, 15_000);
 });

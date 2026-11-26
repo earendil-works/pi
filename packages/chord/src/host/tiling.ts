@@ -111,10 +111,21 @@ export class Tiling {
 		const pages = this.#pages;
 		const first = pages[0]?.rows;
 		if (first !== undefined && (pages.length === 1 || pages[1]!.rows === undefined)) return first;
-		const rows: StoredRead[] = [];
-		for (const page of this.#pages) {
-			if (page.rows === undefined) break;
-			rows.push(...page.rows);
+		// Counted first and copied by index: a page spread into `push` overflowed the stack past ~120,000 rows; this is
+		// also faster (2 pages of 50 rows: 110 ns against 235 ns, 20 pages: 1.0 us against 2.3 us).
+		let count = 0;
+		let loaded = 0;
+		for (; loaded < pages.length; loaded++) {
+			const rows = pages[loaded]!.rows;
+			if (rows === undefined) break;
+			count += rows.length;
+		}
+		const rows: StoredRead[] = new Array(count);
+		let at = 0;
+		for (let index = 0; index < loaded; index++) {
+			// The first `loaded` pages have rows (counted above).
+			const page = pages[index]!.rows!;
+			for (let row = 0; row < page.length; row++) rows[at++] = page[row]!;
 		}
 		return rows;
 	}
