@@ -10,7 +10,7 @@ import type { ScriptSet } from "../../surfaces/index.ts";
 import type { HttpResponse } from "../http/index.ts";
 import type { BaseInputs, Built, Plugins, RolloutStep } from "../plugins/index.ts";
 import { type BaseBundle, type BasePlatform, type BaseResolution, buildBase } from "./bundle.ts";
-import { publishTo, type SurfaceName } from "./current.ts";
+import type { SurfaceName } from "./current.ts";
 import { PublishedScripts } from "./published.ts";
 import { served } from "./served.ts";
 
@@ -130,7 +130,7 @@ export class SurfaceBuild<P extends Principal> {
 			const published = new PublishedScripts(this.#surface, kind, this.#prefix, base.hash, plugins, this.#server);
 			await published.start(context);
 			this.#published = published;
-			await publishTo(this.#server, this.#surface, published.set, context);
+			await published.push(context);
 			return { kind: "built", base, published };
 		} catch (error) {
 			return { kind: "failed", error };

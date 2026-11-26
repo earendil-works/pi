@@ -2,9 +2,9 @@
 // kind's plugins, as files under the surface's prefix, and the set its scripts object shows. Each plugin's facet is a
 // script that registers itself (`<prefix>plugin/<plugin>.<digest>.js`, its stylesheet beside it), the whole set one
 // combined file named by its hash (`<prefix>plugins.<hash>.js`), assets under `<prefix>assets/`; all named by their
-// content, served forever. A rollout shipping the kind publishes a new set (a plugin whose new build failed keeps its
-// last script) without waiting for clients; the files of the last few sets stay served for clients that still load
-// them.
+// content, served forever. A rollout shipping the kind publishes a new set when a plugin's script or stylesheet changed
+// (a plugin whose new build failed keeps its last script) without waiting for clients; the files of the last few sets
+// stay served for clients that still load them.
 
 import { createHash } from "node:crypto";
 import type { Context } from "../../context/index.ts";
@@ -45,6 +45,8 @@ export class PublishedScripts<P extends Principal> {
 	/** The files of the last `KEPT_SETS` sets, newest last, each by path. */
 	readonly #sets: ReadonlyMap<string, ServedFile>[] = [];
 	#set: ScriptSet | undefined;
+	/** The set last pushed to the surface's current-scripts object: a push that failed is retried by the next. */
+	#pushed: ScriptSet | undefined;
 
 	constructor(surface: SurfaceName, kind: string, prefix: string, base: string, plugins: Plugins, host: Host<P>) {
 		this.#surface = surface;
@@ -65,7 +67,15 @@ export class PublishedScripts<P extends Principal> {
 	 * server's load (the surface's build publishes it). The plugins whose build failed.
 	 */
 	async start(context: Context): Promise<readonly PluginFailure[]> {
-		return this.#publish(await this.#plugins.scripts(this.#kind, context)).failed;
+		return this.#publish(await this.#plugins.scripts(this.#kind, context));
+	}
+
+	/** Pushes the current set to the surface's current-scripts object, unless that one was pushed already. */
+	async push(context: Context): Promise<void> {
+		const set = this.set;
+		if (set === this.#pushed) return;
+		await publishTo(this.#host, this.#surface, set, context);
+		this.#pushed = set;
 	}
 
 	/** A published file by its path, from the last few sets. */
@@ -86,15 +96,14 @@ export class PublishedScripts<P extends Principal> {
 			name,
 			kinds: [this.#kind],
 			reload: async (_built: Built, context: Context) => {
-				const before = new Map([...this.#current].map(([plugin, { digest }]) => [plugin, digest]));
-				const { failed, changed } = this.#publish(this.#plugins.current(this.#kind) ?? []);
-				// A set equal to the current one is no new set: nothing to push, no copy of its files kept.
-				if (changed) await publishTo(this.#host, this.#surface, this.set, context);
+				const before = new Map(this.#current);
+				const failed = this.#publish(this.#plugins.current(this.#kind) ?? []);
+				await this.push(context);
 				const after = [...this.#current];
 				const plugins = {
 					added: after.filter(([plugin]) => !before.has(plugin)).map(([plugin]) => plugin),
 					changed: after
-						.filter(([plugin, { digest }]) => before.has(plugin) && before.get(plugin) !== digest)
+						.filter(([plugin, now]) => before.has(plugin) && !samePublished(before.get(plugin)!, now))
 						.map(([plugin]) => plugin),
 					removed: [...before.keys()].filter((plugin) => !this.#current.has(plugin)),
 				};
@@ -105,13 +114,10 @@ export class PublishedScripts<P extends Principal> {
 
 	/**
 	 * Takes `scripts` (the kind's complete set) as the current one: a failed build keeps its plugin's last script; its
-	 * files kept with the last few sets'. The plugins whose build failed, and whether the set changed: one whose every
-	 * plugin publishes what it published (the same digest, stylesheet and assets) keeps the current set and its files.
+	 * files kept with the last few sets'. A set whose every plugin publishes what it published (the same digest and
+	 * stylesheet) keeps the current set and its files. The plugins whose build failed.
 	 */
-	#publish(scripts: readonly PluginScript[]): {
-		readonly failed: readonly PluginFailure[];
-		readonly changed: boolean;
-	} {
+	#publish(scripts: readonly PluginScript[]): readonly PluginFailure[] {
 		const failed: PluginFailure[] = [];
 		const next = new Map<string, Published>();
 		for (const { plugin, built } of scripts) {
@@ -124,7 +130,7 @@ export class PublishedScripts<P extends Principal> {
 			const kept = this.#current.get(plugin.name);
 			if (kept !== undefined) next.set(plugin.name, kept);
 		}
-		if (this.#set !== undefined && sameScripts(this.#current, next)) return { failed, changed: false };
+		if (this.#set !== undefined && sameScripts(this.#current, next)) return failed;
 		this.#current.clear();
 		for (const [name, each] of [...next].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
 			this.#current.set(name, each);
@@ -132,7 +138,7 @@ export class PublishedScripts<P extends Principal> {
 		this.#sets.push(files);
 		if (this.#sets.length > KEPT_SETS) this.#sets.shift();
 		this.#set = set;
-		return { failed, changed: true };
+		return failed;
 	}
 
 	/**
@@ -168,14 +174,20 @@ export class PublishedScripts<P extends Principal> {
 	}
 }
 
-/** Whether `next` publishes the plugins `current` does, each the same: its digest, stylesheet and assets' names. */
+/** Whether `next` publishes the plugins `current` does, each the same. */
 function sameScripts(current: ReadonlyMap<string, Published>, next: ReadonlyMap<string, Published>): boolean {
 	if (current.size !== next.size) return false;
 	for (const [name, now] of next) {
 		const was = current.get(name);
-		if (was === undefined || was.digest !== now.digest || was.css !== now.css) return false;
-		// Assets are named by their content.
-		if (was.assets.map(({ name }) => name).join("\n") !== now.assets.map(({ name }) => name).join("\n")) return false;
+		if (was === undefined || !samePublished(was, now)) return false;
 	}
 	return true;
+}
+
+/**
+ * Whether two published scripts are the same: their digest (of the source and its inline map) and stylesheet. Assets
+ * need no comparison: they are named by their content inside the script or the stylesheet.
+ */
+function samePublished(was: Published, now: Published): boolean {
+	return was.digest === now.digest && was.css === now.css;
 }

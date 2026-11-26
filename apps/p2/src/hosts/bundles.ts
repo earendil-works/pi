@@ -1,10 +1,12 @@
 // Downloaded code: the TUI is one esbuild build of the selected plugins' facets, named by content (the web is Chord's
-// web surface, server.ts). Test component fixtures compile as browser scripts (`buildBrowserScript`).
+// web surface, server.ts). Test component fixtures compile as browser scripts (`buildBrowserScript`). Both build through
+// Chord's counted `build`: Chord stops esbuild's one service of the process once idle, a direct build would stop with it.
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { dirname, extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { type BuildOptions, build, type Loader, type Plugin } from "esbuild";
+import { build } from "@earendil-works/chord/plugins";
+import type { BuildOptions, Loader, Plugin } from "esbuild";
 import { type FacetKind, listRoots } from "./plugins.ts";
 import { MAX_TUI_BUNDLE } from "./tui-sandbox.ts";
 

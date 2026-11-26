@@ -1,8 +1,9 @@
-// esbuild's service, stopped while idle: every build of Chord's goes through `build`, which counts the builds under
-// way; once none ran for `IDLE_MS`, the service process (a Go child holding its heap, 61 MiB after a first apply) is
-// stopped. The next build starts it again (a few milliseconds).
+// esbuild's service, stopped while idle: every build in a process that loads Chord goes through `build`, which counts
+// the builds under way; once none ran for `IDLE_MS`, the service process (a Go child holding its heap, 57 MiB after a
+// first apply) is stopped. The next build starts it again (a few milliseconds). The service is one per process: a build
+// calling esbuild directly while the timer fires is stopped with it, so the app's own builds use this `build` too.
 
-import { type BuildOptions, type BuildResult, build as esbuild, stop } from "esbuild";
+import { build as esbuild, stop } from "esbuild";
 
 /** How long the service stays after the last build ended: a batch's builds follow each other within it. */
 const IDLE_MS = 2000;
@@ -15,23 +16,13 @@ let running = 0;
 let idle: NodeJS.Timeout | undefined;
 
 /** esbuild's `build`, counted: the service stops once no build ran for `IDLE_MS`. */
-export async function build<T extends BuildOptions>(options: T & BuildOptions): Promise<BuildResult<T>> {
+export const build: typeof esbuild = async (options) => {
 	running++;
 	clearTimeout(idle);
-	idle = undefined;
 	try {
-		return await esbuild(options as Parameters<typeof esbuild<T>>[0]);
+		return await esbuild(options);
 	} finally {
-		if (--running === 0) {
-			idle = setTimeout(stopIdle, IDLE_MS);
-			// The process may end meanwhile: the timer keeps nothing alive.
-			idle.unref();
-		}
+		// The process may end meanwhile: the timer keeps nothing alive.
+		if (--running === 0) idle = setTimeout(stop, IDLE_MS).unref();
 	}
-}
-
-/** Stops the service unless a build started since the timer was set. */
-function stopIdle(): void {
-	idle = undefined;
-	if (running === 0) void stop();
-}
+};
