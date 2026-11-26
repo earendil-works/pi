@@ -1723,9 +1723,15 @@ export class ChordObject implements Target {
 		return failures;
 	}
 
-	/** Reports the close failures of a teardown nobody waits for. */
-	async #reported(closing: Promise<CloseFailed[]>): Promise<void> {
-		for (const failure of await closing) this.host.report(failure);
+	/**
+	 * Reports the close failures of a teardown nobody waits for. A reaction to `closing` in place of awaiting it in an
+	 * async function: the same turn (successors wait for it), without the async frame (about 0.5 KiB per teardown).
+	 */
+	#reported(closing: Promise<CloseFailed[]>): Promise<void> {
+		return closing.then((failures) => {
+			// Indexed: most teardowns have none, and a for-of allocates an iterator per list.
+			for (let index = 0; index < failures.length; index++) this.host.report(failures[index]!);
+		});
 	}
 
 	/**
