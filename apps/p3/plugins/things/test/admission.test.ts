@@ -313,23 +313,7 @@ describe("the kinds registry", () => {
 		);
 		// Its rows' ticks are no kind's ticks now: they let nobody in.
 		await until(gives.answers, (answers) => answers[thing] === undefined, within("the removal", context));
-		await w.reload(
-			BOARD_PLUGIN,
-			context,
-			defineFacet((host) =>
-				serveThing(host, Board, {
-					implement: () => ({
-						title: { kind: "constant" } as never,
-						read: async () => "",
-						write: async () => null,
-						draw: async () => null,
-						moderate: async () => null,
-						bash: async () => null,
-						look: async () => null,
-					}),
-				}),
-			),
-		);
+		await w.reload(BOARD_PLUGIN, context, BOARD.facet);
 		await until(gives.answers, (answers) => answers[thing]?.ticks.length === 1, within("the return", context));
 		gives.release();
 	});

@@ -42,6 +42,7 @@ describe("the things plugin on the server", () => {
 			"draw",
 			"look",
 			"moderate",
+			"notes",
 			"read",
 			"write",
 		]);

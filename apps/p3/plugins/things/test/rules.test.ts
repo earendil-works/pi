@@ -214,6 +214,20 @@ describe("below a link only less", () => {
 		assert.deepEqual(await ticks(c.club, c.plan, `person:${c.jo}`), ["draw", "write"]);
 	});
 
+	it("a tick withheld from one session's agent is withheld from it by every route, the agents' too (106)", async () => {
+		for (const session of ["setup", "other"]) {
+			await store.putParty({ workspace: c.team, party: { kind: "agent", session }, source: MARIO }, context);
+		}
+		assert.deepEqual(await ticks(c.team, c.sketch, "worker:setup"), ["draw"]);
+		// The agents party gives Draw; withheld from the setup agent by name, it loses it there; the other keeps it.
+		await withhold(c.team, c.sketch, { kind: "agent", session: "setup" }, ["draw"]);
+		assert.deepEqual(await ticks(c.team, c.sketch, "worker:setup"), []);
+		assert.deepEqual(await ticks(c.team, c.sketch, "worker:other"), ["draw"]);
+		// `OPEN` withheld from it keeps it out.
+		await withhold(c.team, c.sketch, { kind: "agent", session: "setup" }, [OPEN]);
+		assert.equal(await ticks(c.team, c.sketch, "worker:setup"), undefined);
+	});
+
 	it("`OPEN` withheld from a person keeps them out by every route; from a group, only that group's way in (113)", async () => {
 		// The Plan in Club: coaches Write and Draw, players and everyone let in with no tick.
 		await withhold(c.club, c.plan, person(c.kim), [OPEN]);

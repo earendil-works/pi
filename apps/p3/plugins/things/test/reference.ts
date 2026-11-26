@@ -126,8 +126,10 @@ export function answerFrom(
 		const forPeople = [...(kinds.get(state.kind) ?? [])].filter(([, forWhom]) => forWhom !== "agents");
 		return { ticks: forPeople.map(([tick]) => tick).sort() };
 	}
-	// A tick withheld from the caller's person applies whatever route they count by (item 106); `@open`: denied.
-	const taken = caller.kind === "person" ? (state.taken.get(`person/${caller.person}`) ?? []) : [];
+	// A tick withheld from the caller's person or session agent applies whatever route they count by (item 106);
+	// `@open`: denied.
+	const named = caller.kind === "person" ? `person/${caller.person}` : `agent/${caller.session}`;
+	const taken = state.taken.get(named) ?? [];
 	if (taken.includes("@open")) return undefined;
 	const parties = counted(all, caller, state);
 	let ticks: string[] | undefined;
@@ -191,7 +193,7 @@ function walk(all: Everything, kinds: KindTicks, workspace: string, thing: strin
 						grant.party,
 						has.filter((tick) => tick !== grant.tick),
 					);
-				if (grant.party.startsWith("person/")) {
+				if (grant.party.startsWith("person/") || grant.party.startsWith("agent/")) {
 					state.taken.set(grant.party, [...(state.taken.get(grant.party) ?? []), grant.tick]);
 				}
 			}

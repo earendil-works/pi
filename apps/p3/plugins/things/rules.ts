@@ -1,10 +1,10 @@
 // The rules of access, without any state: what a workspace ends up with, from what the workspace above ends up with
 // and its own entries (rules 1 to 3), who a caller counts as there (rule 4), and their answer for one thing (rule 5),
 // as ERNDL-1142 states them, over grant rows of one tick each (item 112; `OPEN` lets in with no tick, item 113). Ticks
-// add up over every party a caller counts as (item 106: no precedence). Two rules keep one person from something, each
-// one function: a tick withheld from a person (`OPEN` too) is withheld by every route (`takenFromPerson`), and a
-// people switch naming a person hides them by every route (`hiddenHere`). The index (`access.ts`) computes with these
-// and nothing else.
+// add up over every party a caller counts as (item 106: no precedence). Two rules keep one caller from something, each
+// one function: a tick withheld from a person or one session's agent (`OPEN` too) is withheld from them by every route
+// (`takenFromNamed`), and a people switch naming a person hides them by every route (`hiddenHere`). The index
+// (`access.ts`) computes with these and nothing else.
 
 import { OPEN } from "./contract.ts";
 import type { TickFor } from "./kind.ts";
@@ -52,15 +52,16 @@ export type WorkspaceEntries = {
 
 /**
  * What one thing available in a workspace gives: its kind, the parties let in with their ticks (perhaps none), and
- * what is withheld from persons.
+ * what is withheld from persons and named agents.
  */
 export type ThingHere = {
 	readonly kind: string;
 	readonly ticks: ReadonlyMap<PartyKey, ReadonlySet<string>>;
 	/**
-	 * The ticks rows at or below the link withhold from a person by every route (item 106); `OPEN` among them: denied.
+	 * The ticks rows at or below the link withhold from a person or a named agent by every route (item 106); `OPEN`
+	 * among them: denied.
 	 */
-	readonly takenFromPersons: ReadonlyMap<PartyKey, ReadonlySet<string>>;
+	readonly takenFromNamed: ReadonlyMap<PartyKey, ReadonlySet<string>>;
 };
 
 /** What a workspace ends up with: the things available, the parties present, the persons hidden by every route. */
@@ -83,10 +84,10 @@ export type PersonEntries = {
 };
 
 /**
- * Whom a caller counts as in a workspace: their counted parties, and a person caller's own person (the take-aways
- * naming them apply whatever route they are counted by).
+ * Whom a caller counts as in a workspace: their counted parties, and their own named party, a person's person or an
+ * agent's session agent (the ticks withheld from it apply whatever route they are counted by).
  */
-export type Counted = { readonly parties: readonly PartyKey[]; readonly person: PartyKey | undefined };
+export type Counted = { readonly parties: readonly PartyKey[]; readonly named: PartyKey | undefined };
 
 /** What a caller gets for one thing: its ticks, sorted (perhaps none: here without ticks, R10). */
 export type Answer = { readonly ticks: string[] };
@@ -95,7 +96,7 @@ export type Answer = { readonly ticks: string[] };
 export const ABOVE_THE_ROOT: WorkspaceAccess = { things: new Map(), present: new Set(), hidden: new Set() };
 
 /** Counts as nothing. */
-export const NOBODY: Counted = { parties: [], person: undefined };
+export const NOBODY: Counted = { parties: [], named: undefined };
 
 const EVERYONE = "everyone";
 const AGENTS = "agents";
@@ -158,7 +159,7 @@ function linkedHere(kind: string, grants: readonly GrantEntry[], kinds: KindsLoo
 		if (!open) own.add(grant.tick);
 		ticks.set(grant.party, own);
 	}
-	return { kind, ticks: ticks.size === 0 ? NO_TICKS : ticks, takenFromPersons: NO_TICKS };
+	return { kind, ticks: ticks.size === 0 ? NO_TICKS : ticks, takenFromNamed: NO_TICKS };
 }
 
 /** Whether a tick for `forWhom` counts for a party of `audience` (an unknown tick counts for nobody). */
@@ -181,18 +182,18 @@ function withheld(given: ThingHere, grant: GrantEntry): ThingHere {
 	} else if (before?.has(tick) === true) {
 		ticks = new Map(ticks).set(party, new Set([...before].filter((each) => each !== tick)));
 	}
-	const takenFromPersons = takenFromPerson(given.takenFromPersons, grant);
-	if (ticks === given.ticks && takenFromPersons === given.takenFromPersons) return given;
-	return { kind: given.kind, ticks, takenFromPersons };
+	const takenFromNamed = withheldFromNamed(given.takenFromNamed, grant);
+	if (ticks === given.ticks && takenFromNamed === given.takenFromNamed) return given;
+	return { kind: given.kind, ticks, takenFromNamed };
 }
 
 /**
  * Item 106: a tick withheld from a person is withheld from them by every route (their own entry, their groups',
- * everyone's), whether or not they are put in by name. Returning `taken` as it is would withhold it from the person's
- * own entry only.
+ * everyone's), whether or not they are put in by name; one withheld from one session's agent likewise (its own entry,
+ * the agents'). Returning `taken` as it is would withhold it from their own entry only.
  */
-function takenFromPerson(taken: ThingHere["takenFromPersons"], grant: GrantEntry): ThingHere["takenFromPersons"] {
-	if (!grant.party.startsWith("person/")) return taken;
+function withheldFromNamed(taken: ThingHere["takenFromNamed"], grant: GrantEntry): ThingHere["takenFromNamed"] {
+	if (!grant.party.startsWith("person/") && !grant.party.startsWith("agent/")) return taken;
 	const before = taken.get(grant.party);
 	if (before?.has(grant.tick) === true) return taken;
 	return new Map(taken).set(grant.party, new Set([...(before ?? []), grant.tick]));
@@ -236,20 +237,20 @@ export function personCounts(access: WorkspaceAccess, person: PartyKey, entries:
 		if (!group.outside) partOfEveryone = true;
 	}
 	if (partOfEveryone) parties.push(EVERYONE);
-	return parties.length === 0 ? NOBODY : { parties, person };
+	return parties.length === 0 ? NOBODY : { parties, named: person };
 }
 
 /** Rule 4 for an agent: its named party and the agents, if its named party is present. */
 export function agentCounts(access: WorkspaceAccess, agent: PartyKey): Counted {
-	return access.present.has(agent) ? { parties: [agent, AGENTS], person: undefined } : NOBODY;
+	return access.present.has(agent) ? { parties: [agent, AGENTS], named: agent } : NOBODY;
 }
 
 /**
  * Rule 5 (not for an owner): the union of the ticks of every counted party let in here, less what is withheld from
- * the caller's person; `undefined` when no counted party is let in, or `OPEN` is withheld from their person.
+ * the caller's named party; `undefined` when no counted party is let in, or `OPEN` is withheld from their named party.
  */
 export function answerOf(given: ThingHere, counted: Counted): Answer | undefined {
-	const taken = counted.person === undefined ? undefined : given.takenFromPersons.get(counted.person);
+	const taken = counted.named === undefined ? undefined : given.takenFromNamed.get(counted.named);
 	if (taken?.has(OPEN) === true) return undefined;
 	let union: Set<string> | undefined;
 	for (const party of counted.parties) {

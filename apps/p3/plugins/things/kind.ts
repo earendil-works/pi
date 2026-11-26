@@ -107,7 +107,7 @@ type GivenBy<T extends Ticks> =
 	| FlagTicks<T>;
 
 /** Members `D` with those named in `G` marked grantable. */
-type Marked<D, G> = { [K in keyof D]: K extends G ? Grantable<D[K] & (Schema | Method)> : D[K] };
+type Marked<D, G> = { [K in keyof D]: K extends G ? Grantable<Extract<D[K], Schema | Method>> : D[K] };
 
 /** The remote contract `defineThing` makes for kind `N`. */
 type ThingContract<

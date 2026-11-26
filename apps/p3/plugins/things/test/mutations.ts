@@ -71,8 +71,8 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "an agent that is not present counts as the agents",
 		file: "rules.ts",
-		find: "return access.present.has(agent) ? { parties: [agent, AGENTS], person: undefined } : NOBODY;",
-		put: "return { parties: [agent, AGENTS], person: undefined };",
+		find: "return access.present.has(agent) ? { parties: [agent, AGENTS], named: agent } : NOBODY;",
+		put: "return { parties: [agent, AGENTS], named: agent };",
 	},
 	{
 		name: "a tick for the other audience, or one the kind lacks, counts",
@@ -90,18 +90,24 @@ const MUTATIONS: readonly Mutation[] = [
 		name: "a person's own grant replaces what groups and everyone give (precedence, gone with item 106)",
 		file: "rules.ts",
 		find: "for (const party of counted.parties) {",
-		put: "for (const party of counted.person !== undefined && given.ticks.has(counted.person) ? [counted.person] : counted.parties) {",
+		put: "for (const party of counted.named !== undefined && given.ticks.has(counted.named) ? [counted.named] : counted.parties) {",
 	},
 	{
 		name: "a tick withheld from a person is withheld from their own entry only (106)",
 		file: "rules.ts",
-		find: 'if (!grant.party.startsWith("person/")) return taken;',
-		put: "return taken;",
+		find: 'if (!grant.party.startsWith("person/") && !grant.party.startsWith("agent/")) return taken;',
+		put: 'if (!grant.party.startsWith("agent/")) return taken;',
+	},
+	{
+		name: "a tick withheld from one session's agent is withheld from its own entry only (106)",
+		file: "rules.ts",
+		find: 'if (!grant.party.startsWith("person/") && !grant.party.startsWith("agent/")) return taken;',
+		put: 'if (!grant.party.startsWith("person/")) return taken;',
 	},
 	{
 		name: "a tick withheld from a person is not withheld from their answer (106)",
 		file: "rules.ts",
-		find: "const taken = counted.person === undefined ? undefined : given.takenFromPersons.get(counted.person);",
+		find: "const taken = counted.named === undefined ? undefined : given.takenFromNamed.get(counted.named);",
 		put: "const taken = undefined as ReadonlySet<string> | undefined;",
 	},
 	{

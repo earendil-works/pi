@@ -302,11 +302,13 @@ async function changes(
 		await things.setGrants({ source, grants: [grant] }, context);
 		const write = performance.now() - t0;
 		for (const ref of holders) await until(ref.state, (state) => state.kind === "live" && done(ref), context);
+		const last = performance.now() - t0;
+		// After the clock stopped: reading the metrics copies every measurement so far.
 		return {
 			write,
 			commit: recorded("things.store.commit", since),
 			adopt: recorded("things.access.adopt", since),
-			last: performance.now() - t0,
+			last,
 		};
 	};
 	const median = (values: number[]) => values.toSorted((a, b) => a - b)[Math.floor(values.length / 2)]!;
