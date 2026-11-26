@@ -1,6 +1,6 @@
 # Telemetry
 
-Pi contains no analytics or crash-reporting SDK and creates no identifier for you or your installation by default. Its only automatic telemetry is an install-and-update ping to `pi.dev`. Pi also contacts `pi.dev` for a version check and model catalog updates, and adds attribution headers to requests for some AI providers. It sends a bug report only when you run `/bug`.
+Pi sends an install-and-update ping to `pi.dev` after it is installed or updated. It also contacts `pi.dev` for a version check and model catalog updates, adds attribution headers to requests for some AI providers, and sends a bug report when you run `/bug`. Pi contains no analytics or crash-reporting SDK and creates no identifier for you or your installation by default.
 
 ## Requests to pi.dev
 
