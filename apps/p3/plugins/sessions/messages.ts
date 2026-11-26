@@ -12,7 +12,6 @@ export const messages = defineMessages("sessions", {
 		tickManage: "Manage",
 		tickUseDefaults: "Use",
 		notInSession: "You have no access to this session.",
-		archived: "This session is archived.",
 		noMachine: (machine: string) => `There is no machine ${machine} here.`,
 		machine: "Machine",
 		folder: "Folder",

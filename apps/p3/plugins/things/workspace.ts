@@ -24,6 +24,7 @@ import {
 	unknown,
 } from "@earendil-works/p3/v1";
 import { Party, Source } from "./contract.ts";
+import { TickFor } from "./kind.ts";
 
 /** Where something comes from, as the caller may see it: here, a workspace above they are present in, or above. */
 export const Origin = union([
@@ -209,9 +210,6 @@ export const Cell = obj({
 
 /** One checkbox (see `Cell`). */
 export type Cell = Static<typeof Cell>;
-
-/** Whom a tick is for (item 91). */
-export const TickFor = oneOf("agents", "people", "all");
 
 /**
  * Who may do what with a thing here: the kind's own ticks, where its grants are written, and per party the `@open`

@@ -164,8 +164,8 @@ export const SessionFacts = remote("sessions.facts", {
 /**
  * What a session's workspace gives its agent, for its worker, which holds it as itself: each thing the agent gets
  * anything for there, its kind and how far above the session it is linked (`depth`: 0 in the session, 1 its parent),
- * by thing id, live (the session's workspace is the session's id). The worker holds a reference to each one whose kind
- * has a harness part there (`HeldThings`).
+ * nearest last (the farthest first, then by thing id), live (the session's workspace is the session's id). The worker
+ * holds a reference to each one whose kind has a harness part there (`HeldThings`), in this order.
  */
 export const AgentThings = remote("sessions.agent-things", {
 	version: 1,
@@ -194,13 +194,16 @@ export const SessionWorker = remote("sessions.worker", {
 	state: { session: union([SessionRow, nul()]) },
 });
 
+/** The session kind's own ticks, by name. */
+export type SessionTick = "read" | "send" | "stop" | "manage";
+
 /**
  * The admission of a session's object on its worker (params with `session`): the caller's answer on the session
- * workspace (`MyAnswer`, live; asked as the worker, about the caller); nothing given denies; else `grants` turns the
- * answer's ticks into the object's granted members (none without it).
+ * workspace (`MyAnswer`, live; asked as the worker, about the caller); nothing given denies; else the caller is
+ * granted the object's members `gives` names for each of the session's ticks they have (none without it).
  */
 export function followSession<const G extends string = never>(
-	grants: (ticks: ReadonlySet<string>) => readonly G[] = () => [],
+	gives: { readonly [T in SessionTick]?: readonly G[] } = {},
 ) {
 	return (
 		params: { readonly session: string },
@@ -210,7 +213,10 @@ export function followSession<const G extends string = never>(
 		const { session } = params;
 		const mine = self.get(MyAnswer, { workspace: session, thing: session, caller: callerKey(principal) });
 		return self.derive([mine.answer], ([answer]) =>
-			answer === null ? NOT_IN_SESSION : allow({ granted: [...grants(new Set(answer.ticks))] }),
+			// The answer's other ticks (the workspace's: Link, Configure) give nothing of a worker's object.
+			answer === null
+				? NOT_IN_SESSION
+				: allow({ granted: answer.ticks.flatMap((tick) => gives[tick as SessionTick] ?? []) }),
 		);
 	};
 }

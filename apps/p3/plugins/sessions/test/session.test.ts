@@ -26,6 +26,7 @@ import { eventually, within } from "../../../test/until.ts";
 import environmentsServer from "../../environments/server.ts";
 import { Gives, ThingsStore } from "../../things/contract.server.ts";
 import { makeTick, type Party, type Source } from "../../things/contract.ts";
+import { Board } from "../../things/test/kinds.ts";
 import { type World, world } from "../../things/test/world.ts";
 import { Workspace } from "../../things/workspace.ts";
 import { WorkspaceKind } from "../../things/workspaces.ts";
@@ -233,5 +234,23 @@ describe("the session defaults", () => {
 		const nearer = await makeSession(leo, robot, "nearer");
 		assert.equal((await store.workspaces.one.page({ workspace: nearer }, 1, context)).items[0]?.showsPeople, false);
 		assert.equal((await sessions.sessions.one.page({ id: nearer }, 1, context)).items[0]?.model, null);
+	});
+	// Fable, round 1: `nearestDefaults` read at most 1000 links per workspace (by thing id) and fell back to shared.
+	it("applies a private default linked beside more than 1000 other things", { timeout: 120_000 }, async () => {
+		const { leo, fam } = await family();
+		const anna = await person("Anna");
+		await put(fam, anna);
+		let defaults = await defaultsIn(fam, PRIVATE);
+		// An id in the upper quarter, so 1000 things sorting before it come quickly.
+		while (defaults < "c") {
+			await store.unlink({ workspace: fam, thing: defaults }, context);
+			defaults = await defaultsIn(fam, PRIVATE);
+		}
+		for (let before = 0; before < 1000; ) {
+			const board = await store.create({ kind: Board.name, name: "b", workspace: fam, by: BY }, context);
+			if (board < defaults) before++;
+		}
+		const session = await makeSession(leo, fam, "private");
+		assert.equal(await answerOn(session, `person:${anna.id}`), undefined);
 	});
 });

@@ -13,9 +13,9 @@ export function serveAgentThings(host: FacetHost<P3Principal>): void {
 		const gives = self.get(Gives, { workspace: principal.session, caller: callerKey(principal) });
 		return {
 			things: self.derive([gives.answers], ([answers]) =>
-				// By id (each once): the order the worker holds them in, the same at every change.
+				// Nearest last (the farthest first, then by id): the order the worker lists them in, the same at every change.
 				Object.entries(answers)
-					.sort(([a], [b]) => (a < b ? -1 : 1))
+					.sort(([a, one], [b, other]) => other.depth - one.depth || (a < b ? -1 : 1))
 					.map(([thing, { kind, depth }]) => ({ thing, kind, depth })),
 			),
 		};

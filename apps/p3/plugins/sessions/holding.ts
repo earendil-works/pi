@@ -216,11 +216,7 @@ class Holding {
 		const lists = new Map<string, readonly HeldThing[]>();
 		for (const [kind, ofKind] of Map.groupBy(entries, (entry) => entry.part.kind.name)) {
 			const list = due.has(kind)
-				? ofKind
-						.filter((entry) => entry.granted !== undefined)
-						.map((entry) => entry.held)
-						// Nearest last: the farthest first, then by id (`AgentThings`' order).
-						.toSorted((a, b) => b.depth - a.depth)
+				? ofKind.filter((entry) => entry.granted !== undefined).map((entry) => entry.held)
 				: last?.get(kind);
 			if (list !== undefined && list.length > 0) lists.set(kind, list);
 		}

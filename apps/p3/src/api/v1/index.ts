@@ -58,8 +58,6 @@ export * from "../../../plugins/things/contract.ts";
 export { Group } from "../../../plugins/things/contract.ts";
 export * from "../../../plugins/things/kind.ts";
 export * from "../../../plugins/things/workspace.ts";
-// `kind.ts`'s type and `workspace.ts`'s schema share the name: /v1 gives the schema (the type is `Static` of it).
-export { TickFor } from "../../../plugins/things/workspace.ts";
 export * from "../../../plugins/transcript/contract.ts";
 export { callerKey, P3Principal } from "../../app.ts";
 export { forward } from "./forward.ts";

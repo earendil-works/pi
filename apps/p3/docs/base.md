@@ -65,11 +65,11 @@ serveThing(host, CanvasKind, {
 ```
 
 **A session's objects on its worker** (the session's worker object, the transcript, a plugin's own) are admitted by
-`followSession(grants)`: the caller's answer on the session workspace (`MyAnswer`, live); nothing given denies, else
-`grants` turns the ticks into the object's granted members:
+`followSession(gives)`: the caller's answer on the session workspace (`MyAnswer`, live); nothing given denies, else
+the caller is granted the members `gives` names for each of the session's ticks they have:
 
 ```ts
-host.serve(Transcript, factory, { admit: followSession(transcriptGrants) });   // read → view, entries; send; stop
+host.serve(Transcript, factory, { admit: followSession(TRANSCRIPT_GRANTS) });   // read → view, entries; send; stop
 ```
 
 A view reads a grant live: `withGranted(useLive(ref), "send")` is the reference with `send`, or `undefined`.

@@ -22,7 +22,7 @@ import {
 	ROOT_CONVERSATION_ID,
 	SessionHarness,
 } from "@earendil-works/p3/v1/worker";
-import { Transcript, transcriptGrants } from "./contract.ts";
+import { TRANSCRIPT_GRANTS, Transcript } from "./contract.ts";
 
 /** One conversation's view, followed once for every reader of it; `conversation` is its Durable id. */
 const Followed = local("transcript.followed", {
@@ -66,7 +66,7 @@ export default defineFacet((host) => {
 				if (value === undefined) throw invalid("args", "transcript: the session's harness is not open");
 				return value;
 			};
-			// Each member is granted by its tick (`transcriptGrants`): a call without it is refused before it runs.
+			// Each member is granted by its tick (`TRANSCRIPT_GRANTS`): a call without it is refused before it runs.
 			return {
 				view: () => followed.view,
 				entries: async (
@@ -88,7 +88,7 @@ export default defineFacet((host) => {
 				},
 			};
 		},
-		{ admit: followSession(transcriptGrants) },
+		{ admit: followSession(TRANSCRIPT_GRANTS) },
 	);
 });
 

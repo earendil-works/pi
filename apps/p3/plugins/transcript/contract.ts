@@ -37,10 +37,5 @@ export const Transcript = remote("transcript.transcript", {
 	},
 });
 
-/** What each of the session kind's ticks grants of its transcript. */
+/** What each of the session kind's ticks grants of its transcript (`followSession`'s table). */
 export const TRANSCRIPT_GRANTS = { read: ["view", "entries"], send: ["send"], stop: ["stop"] } as const;
-
-/** The members of `Transcript` the session's `ticks` grant (see `TRANSCRIPT_GRANTS`). */
-export function transcriptGrants(ticks: ReadonlySet<string>): ("view" | "entries" | "send" | "stop")[] {
-	return Object.entries(TRANSCRIPT_GRANTS).flatMap(([tick, members]) => (ticks.has(tick) ? [...members] : []));
-}

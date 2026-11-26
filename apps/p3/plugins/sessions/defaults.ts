@@ -1,10 +1,10 @@
 // The session defaults kind on the server (`SessionDefaultsKind`, 09): its settings (model, shared or private, the view
 // a new session opens with) stored by thing, set by Configure, seeded once in Pi; and `nearestDefaults`, what a new
-// session made somewhere starts with: the nearest defaults thing its maker sees there (the index answers only the
-// nearest of a `stacking: "nearest"` kind), else the plugin's own.
+// session made somewhere starts with: the nearest defaults thing its maker is given there (one read of `Gives`), else
+// the plugin's own.
 
 import type { Ctx, FacetHost, P3Principal } from "@earendil-works/p3/v1";
-import { ThingsStore } from "../things/contract.server.ts";
+import { Gives } from "../things/contract.server.ts";
 import type { Source } from "../things/contract.ts";
 import { serveThing } from "../things/serve.ts";
 import { SessionsStore } from "./contract.server.ts";
@@ -33,27 +33,19 @@ export function serveDefaultsKind(host: FacetHost<P3Principal>): void {
 /** What a session starts with where no defaults thing applies, and a defaults thing nobody configured yet. */
 export const DEFAULTS: SessionDefaults = { model: null, shared: true, opensWith: null };
 
-/** How many things linked in one workspace the lookup reads, at most: more are not looked at (fails to the plugin's). */
-const LINKS_READ = 1000;
-
 /**
- * What a session made in `workspace` by `by` starts with: the settings of the nearest defaults thing `by` sees there
- * (nearest first along the workspace's path; the first with an answer), else `DEFAULTS`.
+ * What a session made in `workspace` by `by` starts with: the settings of the defaults thing `by` is given there (the
+ * index answers only the nearest of a `stacking: "nearest"` kind, decision 75; of two linked together the first by id),
+ * else `DEFAULTS`.
  */
 export async function nearestDefaults(workspace: string, by: Source, ctx: Ctx<P3Principal>): Promise<SessionDefaults> {
-	const things = await ctx.get(ThingsStore, {});
-	const line = (await things.workspaces.one.page({ workspace }, 1, ctx)).items[0];
-	const caller = callerOf(by);
-	for (const above of (line?.path ?? []).toReversed()) {
-		const here = (await things.links.here.page({ workspace: above }, LINKS_READ, ctx)).items;
-		for (const { thing, of } of here) {
-			if (of !== SessionDefaultsKind.name) continue;
-			if ((await things.answerOf({ workspace, thing, caller }, ctx)) === null) continue;
-			const set = (await (await ctx.get(SessionsStore, {})).defaults.one.page({ thing }, 1, ctx)).items[0];
-			return set?.defaults ?? DEFAULTS;
-		}
-	}
-	return DEFAULTS;
+	const given = (await ctx.get(Gives, { workspace, caller: callerOf(by) })).answers.value;
+	const [thing] = Object.keys(given)
+		.filter((id) => given[id]?.kind === SessionDefaultsKind.name)
+		.sort();
+	if (thing === undefined) return DEFAULTS;
+	const set = (await (await ctx.get(SessionsStore, {})).defaults.one.page({ thing }, 1, ctx)).items[0];
+	return set?.defaults ?? DEFAULTS;
 }
 
 /** The caller key of `by` (`callerKey`'s texts): a person, a session's agent, else the server (plugins' code). */
