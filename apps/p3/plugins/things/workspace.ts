@@ -8,6 +8,7 @@ import {
 	arr,
 	bool,
 	grantable,
+	int,
 	lit,
 	MessageSchema,
 	map,
@@ -97,12 +98,16 @@ export const Workspace = remote("things.workspace", {
 		setShowsThings: grantable(method(obj({ shown: bool() }))),
 		configure: grantable(method(obj({ thing: str(), name: opt(str()), view: opt(str()), settings: opt(unknown()) }))),
 		picker: grantable(method(obj({ query: str() }), arr(PartyInfo))),
+		/**
+		 * Manage people: an invite link to this workspace, as a member or a guest; valid for `expires` milliseconds
+		 * (7 days when left out), for one use or several, joining `group` too if given (slice 3).
+		 */
 		inviteLink: grantable(
 			method(
 				obj({
 					name: str(),
 					as: oneOf("member", "guest"),
-					expires: opt(str()),
+					expires: opt(int()),
 					uses: opt(InviteUses),
 					group: opt(str()),
 				}),
