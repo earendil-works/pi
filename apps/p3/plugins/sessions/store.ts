@@ -3,7 +3,7 @@
 // party; their named queries, and every write. Session data is keyed by the session's address (so a session's export,
 // import and delete carry it); the things are the Pi's. The writes check what they are given (a trust boundary: the
 // owner's and persons' wire input through the plugin's objects, and apps' server code): the app is installed, the
-// environment, persons and groups exist, a kind is installed, its input and options pass their schemas. A thing nobody
+// machine, persons and groups exist, a kind is installed, its input and options pass their schemas. A thing nobody
 // owns lives in the sessions that use it and is deleted with its last link; a kind's `create` runs after the commit
 // that made its thing (a throw deletes the thing again), its `delete` after the one that removed it.
 
@@ -41,7 +41,6 @@ import {
 	type StoreSelf,
 	str,
 	type TableOf,
-	THIS_DEVICE,
 	type ThingOwner,
 	type ThingUse,
 	type Tx,
@@ -49,13 +48,14 @@ import {
 } from "@earendil-works/p3/v1";
 import {
 	Apps,
-	EnvironmentsStore,
 	PeopleStore,
 	ServerRuntime,
 	SessionsStore,
 	type ThingKindEntry,
 	ThingKinds,
 } from "@earendil-works/p3/v1/server";
+import { MACHINE_KIND } from "../environments/contract.ts";
+import { OneThing } from "../things/contract.server.ts";
 import { followedOwners } from "./follow.ts";
 
 /**
@@ -192,7 +192,6 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		const options = self.table(Options);
 		const counts = self.table(LinkCounts);
 		const people = self.get(PeopleStore, {});
-		const environments = self.get(EnvironmentsStore, {});
 		const apps = self.registry(Apps);
 		const kinds = self.registry(ThingKinds);
 		const runtime = self.registry(ServerRuntime);
@@ -379,10 +378,16 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				.orderBy((l) => l.position, "desc");
 			return after((await tx.page(links, order, 1)).items[0]);
 		};
-		/** Throws unless `location`'s environment exists. */
-		const environmentMustExist = async (location: Location, ctx: Ctx<P3Principal>) => {
-			const found = await environments.environments.one.page({ id: location.environment }, 1, ctx);
-			if (found.items.length === 0) throw invalid("args", `sessions: no environment ${location.environment}`);
+		/**
+		 * This device's machine, the only one until SSH machines come (ERNDL-1172): held for the call, so the store
+		 * starts without the things plugin.
+		 */
+		const thisDevice = async (ctx: Ctx<P3Principal>) => (await ctx.get(OneThing, { kind: MACHINE_KIND })).thing.value;
+		/** Throws unless `location` names a machine (`device`, this device's). */
+		const machineMustExist = (location: Location, device: string) => {
+			if (location.environment !== device) {
+				throw invalid("args", `sessions: no machine ${location.environment}`);
+			}
 		};
 		/**
 		 * Deletes member `member` of session `id`, the options set for it, and the links of the things it owns (a
@@ -459,8 +464,12 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			create: async ({ app, title, location, members: given, things: used, by, follows }, ctx) => {
 				if (!apps.value.has(app)) throw invalid("args", `sessions: no app ${app}`);
 				const id = crypto.randomUUID();
-				const where = location ?? { environment: THIS_DEVICE, folder: join(runtime.value.dataDir, "folders", id) };
-				if (location !== undefined) await environmentMustExist(location, ctx);
+				const device = await thisDevice(ctx);
+				const where = location ?? {
+					environment: device,
+					folder: join(runtime.value.dataDir, "folders", id),
+				};
+				if (location !== undefined) machineMustExist(location, device);
 				const parties = new Map<string, Member>();
 				for (const member of given ?? []) {
 					await partyMustExist(member, ctx);

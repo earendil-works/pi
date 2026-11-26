@@ -156,7 +156,6 @@ describe("making a thing", () => {
 				(await ctx.get(Sessions, {})).create(
 					{
 						app: "coding",
-						location: { environment: "this-device", folder: "/tmp" },
 						things: [thingOf(Boards, { name: "Sketch" }), usingThing(pis, { color: "blue" })],
 						follows: null,
 					},
@@ -182,26 +181,16 @@ describe("making a thing", () => {
 
 	it("makes only content, owned by nobody, in the owner's create; any kind and owner through the store", async () => {
 		const owner = w.owner();
-		const location = { environment: "this-device", folder: "/tmp" };
 		const make = (things: ThingUse[]) =>
-			w
-				.t()
-				.root(
-					async (ctx) => (await ctx.get(Sessions, {})).create({ app: "coding", location, things }, ctx),
-					context,
-					{
-						principal: owner,
-					},
-				);
+			w.t().root(async (ctx) => (await ctx.get(Sessions, {})).create({ app: "coding", things }, ctx), context, {
+				principal: owner,
+			});
 		await w.refused(make([thingOf(Notes)]));
 		await w.refused(make([thingOf(Logins)]));
 		await w.refused(make([{ use: "new", kind: Boards.name, owner: { kind: "pi" } }]));
 		await make([{ use: "new", kind: Boards.name, owner: { kind: "none" } }]);
 		const id = await w.asServer((store, ctx) =>
-			store.create(
-				{ app: "coding", location, things: [{ use: "new", kind: Notes.name, owner: { kind: "pi" } }] },
-				ctx,
-			),
+			store.create({ app: "coding", things: [{ use: "new", kind: Notes.name, owner: { kind: "pi" } }] }, ctx),
 		);
 		assert.deepEqual(
 			(await w.linksOf(id)).map(({ owner: o }) => o),
@@ -213,11 +202,10 @@ describe("making a thing", () => {
 describe("a session's size", () => {
 	it("holds 1000 things: a write that links a 1001st is refused before it commits; a removal makes room", async () => {
 		const ann = await w.person("Ann");
-		const location = { environment: "this-device", folder: "/tmp" };
 		const full = Array.from({ length: 1000 }, () => thingOf(Boards));
 		const holds = /a session holds 1000 things/;
 		await assert.rejects(
-			w.asServer((store, ctx) => store.create({ app: "coding", location, things: [...full, thingOf(Boards)] }, ctx)),
+			w.asServer((store, ctx) => store.create({ app: "coding", things: [...full, thingOf(Boards)] }, ctx)),
 			holds,
 		);
 		const mail = await w.asMine(ann, (mine, ctx) =>
@@ -227,7 +215,6 @@ describe("a session's size", () => {
 			store.create(
 				{
 					app: "coding",
-					location,
 					members: [{ kind: "person", id: ann.id, access: "write" }],
 					things: full,
 					follows: { kind: "person", id: ann.id },

@@ -269,7 +269,8 @@ export const Sessions = remote("sessions.sessions", {
 			obj({
 				app: str(),
 				title: opt(Title),
-				location: Location,
+				/** Left out: this device's machine, in a folder of the session's own. */
+				location: opt(Location),
 				members: opt(arr(Member)),
 				/** New things for the session (its content unless owned), and existing ones. */
 				things: opt(arr(ThingUse)),

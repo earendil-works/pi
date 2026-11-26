@@ -1,65 +1,74 @@
-// The environments plugin on the server: the environments, one table (`EnvironmentsStore`), and the owner's view of
-// them (`Environments`). This device is written when the store opens and finds it missing, so it exists from the
-// server's first start on, once.
+// The environments plugin on the server: the machine kind (`serveThing`: the things plugin admits every caller,
+// registers the kind and makes this device's machine in Pi once, its one thing), its host for server code
+// (`MachineHosts`: Node's environment on this device, Pi's data folder hidden), the owner's list of machines
+// (`Environments`) and this device's id for everyone signed in and every worker (`ThisDevice`).
 
-import { admitOwner, defineFacet, defineTable, type Environment, eq, query, str } from "@earendil-works/p3/v1";
-import { ServerRuntime } from "@earendil-works/p3/v1/server";
-import { EnvironmentsStore } from "./contract.server.ts";
-import { Environments, THIS_DEVICE } from "./contract.ts";
+import { homedir, hostname } from "node:os";
+import { admitOwner, contribute, defineFacet, forbidden, type Self } from "@earendil-works/p3/v1";
+import { NodeExecutionEnv, ServerRuntime } from "@earendil-works/p3/v1/server";
+import { OneThing, ThingsStore } from "../things/contract.server.ts";
+import { serveThing } from "../things/serve.ts";
+import { type MachineHost, MachineHosts } from "./contract.server.ts";
+import { Environments, ThisDevice } from "./contract.ts";
+import { MachineKind } from "./kind.ts";
+import { messages } from "./messages.ts";
 
-/** Every environment, by id; by name for the lists. */
-const Rows = defineTable("environments.rows", {
-	version: 1,
-	columns: { id: str(), name: str(), kind: str() },
-	key: ["id"],
-	indexes: { by_name: ["name"] },
-});
-
-/**
- * How many environments the owner's view reads at most: a Pi has a few. One more fails the view (closed, visible)
- * rather than leaving an environment out unseen.
- */
-const SHOWN = 1000;
+/** This device's machine: the machine kind's one thing. */
+const THIS_DEVICE = { kind: MachineKind.name };
 
 export default defineFacet((host) => {
-	host.serve(EnvironmentsStore, (_params, self) => {
-		const rows = self.table(Rows);
+	host.serve(MachineHosts, {
+		compose: (table) => (machine) => {
+			for (const { value } of table) {
+				const found = value(machine);
+				if (found !== undefined) return found;
+			}
+			return undefined;
+		},
+	});
+
+	serveThing(host, MachineKind, {
+		one: { name: hostname() },
+		implement: ({ thing }, _admitted, self) => ({ info: infoOf(thing, self) }),
+	});
+
+	contribute(host, "environments.this-device-host", (self) => {
+		const device = self.get(OneThing, THIS_DEVICE);
 		const runtime = self.registry(ServerRuntime);
-		// Opened before the store goes live: nobody reads the environments before this device is among them.
-		self.open(
-			(ctx) =>
-				self.tx(async (tx) => {
-					if ((await tx.get(rows, { id: THIS_DEVICE })) !== undefined) return null;
-					tx.put(rows, { id: THIS_DEVICE, name: runtime.value.machine.hostname, kind: "local" });
-					return null;
-				}, ctx),
-			() => {},
-		);
-		return {
-			environments: self.queries(
-				rows,
-				// `kind` holds only what this plugin wrote: an environment's kind.
-				{ map: (row) => ({ ...row, kind: row.kind as Environment["kind"] }) },
-				{
-					// Index `by_name`, then the key.
-					all: (_args: Record<never, never>) => query(Rows).orderBy((e) => e.name, "asc"),
-					// The key.
-					one: ({ id }: { id: string }) => query(Rows).where((e) => eq(e.id, id)),
-				},
-			),
+		const local: MachineHost = {
+			env: new NodeExecutionEnv({ cwd: homedir() }),
+			hidden: [runtime.value.dataDir],
+			// The PTY of this device is pending a decision (pi-env's daemon, node-pty or a helper): one implementation.
+			openPty: async () => {
+				throw forbidden("environments: this device has no terminals yet", {
+					message: messages.message("noTerminals"),
+				});
+			},
 		};
+		// Read at each call: this object is live, so this device's machine exists.
+		self.contribute(MachineHosts, (machine) => (machine === device.thing.value ? local : undefined));
 	});
 
 	host.serve(
 		Environments,
 		(_params, _principal, _admitted, self) => {
-			const all = self.liveQuery(self.get(EnvironmentsStore, {}).environments.all, {}, { first: SHOWN });
-			const environments = self.derive([all], ([{ rows, more }]) => {
-				if (more) throw new Error(`environments: more than ${SHOWN} environments`);
-				return rows;
-			});
+			const device = self.get(OneThing, THIS_DEVICE);
+			const thing = self.derive([device.thing], ([id]) => ({ thing: id }));
+			const named = self.liveQuery(self.get(ThingsStore, {}).things.one, thing, { first: 1 });
+			// Only this device's machine exists until SSH machines come.
+			const environments = self.derive([device.thing, named], ([id, { rows }]) => [
+				{ id, name: rows[0]?.name ?? "", kind: "local" as const },
+			]);
 			return { environments };
 		},
 		{ admit: admitOwner },
 	);
+
+	host.serve(ThisDevice, (_params, _principal, self) => ({ machine: self.get(OneThing, THIS_DEVICE).thing }));
 });
+
+/** A machine's info: its thing's name, live, and its kind. */
+function infoOf(thing: string, self: Self) {
+	const named = self.liveQuery(self.get(ThingsStore, {}).things.one, { thing }, { first: 1 });
+	return self.derive([named], ([{ rows }]) => ({ name: rows[0]?.name ?? "", kind: "local" as const }));
+}

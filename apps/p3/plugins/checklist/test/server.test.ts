@@ -16,7 +16,6 @@ import {
 	type Reference,
 	SESSION_THINGS_WRITES,
 	SessionThings,
-	THIS_DEVICE,
 	until,
 	type With,
 } from "@earendil-works/p3/v1";
@@ -30,6 +29,7 @@ import environmentsServer from "../../environments/server.ts";
 import peopleServer from "../../people/server.ts";
 import sessionsServer from "../../sessions/server.ts";
 import signInServer from "../../sign-in/server.ts";
+import thingsServer from "../../things/server.ts";
 import { CHECKLIST_CHECKS, Checklist, ChecklistKind } from "../contract.ts";
 import { ChecklistStore } from "../server.ts";
 
@@ -41,9 +41,6 @@ type ChecklistRef = Reference<typeof Checklist>;
 
 /** The owner's person in this test's Pi (made at its first start). */
 let OWNER: Person;
-
-/** Where the tests' sessions work. */
-const HERE = { environment: THIS_DEVICE, folder: "/tmp/p3-checklist-test" };
 
 let t: TestedPlugin<P3Principal>;
 
@@ -59,6 +56,7 @@ beforeEach(async () => {
 				{ name: "@earendil-works/p3-people", facet: peopleServer },
 				{ name: "@earendil-works/p3-sessions", facet: sessionsServer },
 				{ name: "@earendil-works/p3-sign-in", facet: signInServer },
+				{ name: "@earendil-works/p3-things", facet: thingsServer },
 			],
 		},
 		context,
@@ -89,7 +87,7 @@ async function setup() {
 		{ kind: "person", id: cleo.id, access: "write" },
 	];
 	const id = await t.root(
-		async (ctx) => (await ctx.get(SessionsStore, {})).create({ app: "coding", location: HERE, members }, ctx),
+		async (ctx) => (await ctx.get(SessionsStore, {})).create({ app: "coding", members }, ctx),
 		context,
 	);
 	const thing = await managing(ann, id, (things, ctx) =>

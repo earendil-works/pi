@@ -35,6 +35,9 @@ export {
 	/** Takes the lock of a name (a session's), owned by the kernel for the holder's life; waits while another holds it. */
 	processLock,
 } from "@earendil-works/chord/workers/child";
+// A machine's files and commands, for the machine plugins' server facets (this device's host) and Files.
+export type { ExecutionEnv, FileError, FileInfo, Result } from "@earendil-works/pi-durable/env";
+export { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 export * from "../../../plugins/apps/contract.server.ts";
 export * from "../../../plugins/environments/contract.server.ts";
 export * from "../../../plugins/people/contract.server.ts";

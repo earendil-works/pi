@@ -24,7 +24,6 @@ import {
 	Sessions,
 	SessionsList,
 	SessionThings,
-	THIS_DEVICE,
 	TRANSCRIPT_WRITES,
 	Transcript,
 	until,
@@ -33,7 +32,7 @@ import { SessionsStore } from "@earendil-works/p3/v1/server";
 import { type TestServer, type TestServerOptions, testServer } from "@earendil-works/p3/v1/testing";
 import { assertGranted } from "../../../test/granted.ts";
 import { type FauxRequest, FauxRequests, type Step } from "../../../test/plugins/faux-login/contract.ts";
-import { scriptFaux } from "../../../test/support.ts";
+import { scriptFaux, thisDevice } from "../../../test/support.ts";
 import { eventually, within } from "../../../test/until.ts";
 import { Notes, NotesKind } from "../../notes/contract.ts";
 
@@ -67,7 +66,7 @@ async function session(t: TestServer, folder: string, script: Step[]): Promise<s
 	const owner = await t.client(context);
 	const sessions = await owner.get(Sessions, {}, context);
 	const id = await sessions.create(
-		{ app: "coding", title: "s", location: { environment: THIS_DEVICE, folder } },
+		{ app: "coding", title: "s", location: { environment: await thisDevice(owner, context), folder } },
 		context,
 	);
 	await scriptFaux(owner, id, script, context);
@@ -230,7 +229,7 @@ describe("the harness end to end", () => {
 		const owner = await t.client(context);
 		const sessions = await owner.get(Sessions, {}, context);
 		const id = await sessions.create(
-			{ app: "coding", title: "things", location: { environment: THIS_DEVICE, folder } },
+			{ app: "coding", title: "things", location: { environment: await thisDevice(owner, context), folder } },
 			context,
 		);
 		const things = await owner.get(SessionThings, { session: id }, context);

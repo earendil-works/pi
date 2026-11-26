@@ -26,7 +26,7 @@ import {
 	type P3Principal,
 	type SessionState,
 	SessionsList,
-	THIS_DEVICE,
+	ThisDevice,
 	TRANSCRIPT_WRITES,
 	Transcript,
 	until,
@@ -97,12 +97,13 @@ try {
 		const starts: number[] = [];
 		const ids: string[] = [];
 		const held: { release(): void }[] = [];
+		const machine = (await client.get(ThisDevice, {}, context)).machine.value;
 		for (let i = 0; i <= RUNS; i++) {
 			const folder = join(root, `folder-${i}`);
 			await mkdir(folder);
 			// The session follows the owner, so it has the Pi's coding tools and faux login ("in all my sessions").
 			const id = await sessions.create(
-				{ app: "coding", title: `s${i}`, location: { environment: THIS_DEVICE, folder } },
+				{ app: "coding", title: `s${i}`, location: { environment: machine, folder } },
 				context,
 			);
 			await scriptFaux(client, id, SCRIPT, context);

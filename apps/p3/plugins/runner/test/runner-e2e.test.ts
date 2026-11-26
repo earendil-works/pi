@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { BACKGROUND_CONTEXT as context, Sessions, THIS_DEVICE, until } from "@earendil-works/p3/v1";
+import { BACKGROUND_CONTEXT as context, Sessions, until } from "@earendil-works/p3/v1";
 import { type PluginScript, processLock, ServerRuntime, WorkerRunners } from "@earendil-works/p3/v1/server";
 import { type TestServer, testServer } from "@earendil-works/p3/v1/testing";
 import { Probe } from "../../../test/plugins/probe/contract.ts";
@@ -68,10 +68,7 @@ async function editableServer(): Promise<EditableServer> {
 /** A new session's id and an owner's client. */
 async function newSession(t: TestServer) {
 	const client = await t.client(context);
-	const id = await (await client.get(Sessions, {}, context)).create(
-		{ app: "coding", title: "one", location: { environment: THIS_DEVICE, folder: tmpdir() } },
-		context,
-	);
+	const id = await (await client.get(Sessions, {}, context)).create({ app: "coding", title: "one" }, context);
 	return { client, id };
 }
 

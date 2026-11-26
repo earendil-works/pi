@@ -34,6 +34,7 @@ import environmentsServer from "../../environments/server.ts";
 import peopleServer from "../../people/server.ts";
 import sessionsServer from "../../sessions/server.ts";
 import signInServer from "../../sign-in/server.ts";
+import thingsServer from "../../things/server.ts";
 import { AppEntered } from "../entered.ts";
 
 /** The owner's person in this test's Pi (made at its first start). */
@@ -77,6 +78,7 @@ describe("the apps plugin on the server", () => {
 					{ name: "@earendil-works/p3-people", facet: peopleServer },
 					{ name: "@earendil-works/p3-sessions", facet: sessionsServer },
 					{ name: "@earendil-works/p3-sign-in", facet: signInServer },
+					{ name: "@earendil-works/p3-things", facet: thingsServer },
 					{ name: "p3-test-club", facet: clubServer },
 				],
 			},

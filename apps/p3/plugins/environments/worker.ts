@@ -1,11 +1,16 @@
 // The environments plugin on a session's worker: `ExecutionEnvironments`, which gives a session's tools the
 // environment of its location (the contributions tried in plugin order, the first that answers wins), and this
-// device's resolver: the session's folder on the machine the worker runs on.
+// device's resolver: the session's folder on the machine the worker runs on, when the location names this device's
+// machine (`ThisDevice`); and the machine kind's harness part (harness-part.ts). The resolver goes once the harness
+// takes environments only from the kinds' parts (ERNDL-704, ERNDL-1172).
 
-import { type Context, defineFacet, reportError, THIS_DEVICE } from "@earendil-works/p3/v1";
+import { type Context, contribute, defineFacet, reportError, ThisDevice } from "@earendil-works/p3/v1";
 import { type EnvironmentResolver, ExecutionEnvironments, NodeExecutionEnv } from "@earendil-works/p3/v1/worker";
+import { ThingHarnessParts } from "../things/contract.worker.ts";
+import { machinePart } from "./harness-part.ts";
 
 export default defineFacet((host, self) => {
+	self.contribute(ThingHarnessParts, machinePart);
 	host.serve(ExecutionEnvironments, {
 		compose: (table) => (location, context) => {
 			for (const { plugin, value } of table) {
@@ -15,9 +20,13 @@ export default defineFacet((host, self) => {
 			return undefined;
 		},
 	});
-	self.contribute(ExecutionEnvironments, (location) =>
-		location.environment === THIS_DEVICE ? new NodeExecutionEnv({ cwd: location.folder }) : undefined,
-	);
+	contribute(host, "environments.this-device", (self) => {
+		const device = self.get(ThisDevice, {});
+		// Read at each use: the object is live, so the server answered.
+		self.contribute(ExecutionEnvironments, (location) =>
+			location.environment === device.machine.value ? new NodeExecutionEnv({ cwd: location.folder }) : undefined,
+		);
+	});
 });
 
 /**

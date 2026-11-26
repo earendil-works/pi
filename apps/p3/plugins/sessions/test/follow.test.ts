@@ -11,8 +11,8 @@ import {
 	BACKGROUND_CONTEXT as context,
 	SessionInfo,
 	Sessions,
-	THIS_DEVICE,
 	ThingAccess,
+	ThisDevice,
 } from "@earendil-works/p3/v1";
 import { Boards, Logins } from "./stubs.ts";
 import { type Person, world } from "./world.ts";
@@ -84,19 +84,23 @@ describe("following a person", () => {
 
 	it("the owner brings the Pi's things too, in every session they follow, archived or not", async () => {
 		const owner = w.owner();
-		const id = await w
-			.t()
-			.root(
-				async (ctx) =>
-					(await ctx.get(Sessions, {})).create(
-						{ app: "coding", location: { environment: THIS_DEVICE, folder: "/tmp/p3-follow-test" } },
-						ctx,
-					),
-				context,
-				{
-					principal: owner,
-				},
-			);
+		const id = await w.t().root(
+			async (ctx) =>
+				(await ctx.get(Sessions, {})).create(
+					{
+						app: "coding",
+						location: {
+							environment: (await ctx.get(ThisDevice, {})).machine.value,
+							folder: "/tmp/p3-follow-test",
+						},
+					},
+					ctx,
+				),
+			context,
+			{
+				principal: owner,
+			},
+		);
 		const tools = await w.asServer(
 			async (store, ctx) =>
 				(await store.things.ofKind.page({ owner: "pi", kind: CodingTools.name }, 1, ctx)).items[0]!.id,

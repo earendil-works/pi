@@ -6,7 +6,6 @@
 
 import { type ChildProcess, spawn } from "node:child_process";
 import { readdir, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -21,7 +20,7 @@ import {
 	SessionsList,
 	SessionThings,
 	str,
-	THIS_DEVICE,
+	ThisDevice,
 	TRANSCRIPT_WRITES,
 	Transcript,
 	until,
@@ -78,7 +77,7 @@ export async function gatedSession(
 	];
 	const sessions = await client.get(Sessions, {}, context);
 	const session = await sessions.create(
-		{ app: "coding", title, location: { environment: THIS_DEVICE, folder } },
+		{ app: "coding", title, location: { environment: await thisDevice(client, context), folder } },
 		context,
 	);
 	await scriptFaux(client, session, script, context);
@@ -104,9 +103,14 @@ export async function startRun(client: Host<P3Principal>, session: string, conte
 	}, context);
 }
 
-/** What the owner's `Sessions.create` takes for a new coding session titled `title` (on this device, in `/tmp`). */
+/** What the owner's `Sessions.create` takes for a new coding session `title` (on this device, in its own folder). */
 export function coding(title: string) {
-	return { app: "coding", title, location: { environment: THIS_DEVICE, folder: tmpdir() } };
+	return { app: "coding", title };
+}
+
+/** This device's machine, as `client` reads it: what a location on it names. */
+export async function thisDevice(client: Host<P3Principal>, context: Context): Promise<string> {
+	return (await client.get(ThisDevice, {}, context)).machine.value;
 }
 
 /** Whether process `pid` lives. */

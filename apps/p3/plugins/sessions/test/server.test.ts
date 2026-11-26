@@ -23,8 +23,8 @@ import {
 	Sessions,
 	SessionsList,
 	SessionThings,
-	THIS_DEVICE,
 	ThingAccess,
+	ThisDevice,
 	thingOf,
 	until,
 	usingThing,
@@ -40,8 +40,8 @@ import { Boards, NOTES, Notes, notesAt, STUBS, setNotes } from "./stubs.ts";
 let OWNER: Extract<P3Principal, { kind: "person" }>;
 let OWNER_KEY: string;
 
-/** Where the tests' sessions work. */
-const HERE = { environment: THIS_DEVICE, folder: "/tmp/p3-sessions-test" };
+/** Where the tests' sessions work: this device's machine (made at the Pi's first start), in a folder. */
+let HERE: { environment: string; folder: string };
 
 let t: TestedPlugin<P3Principal>;
 
@@ -53,6 +53,7 @@ beforeEach(async () => {
 	);
 	OWNER = { kind: "person", id: owner!.id, name: owner!.name };
 	OWNER_KEY = `person:${owner!.id}`;
+	HERE = { environment: (await t.host.get(ThisDevice, {}, context)).machine.value, folder: "/tmp/p3-sessions-test" };
 });
 
 afterEach(() => t.close(context));
@@ -185,7 +186,7 @@ describe("making a session", () => {
 	it("works in a private folder of the data directory on this device without a location", async () => {
 		const id = await asServer((ctx, store) => store.create({ app: "coding" }, ctx));
 		const row = await asServer(async (ctx, store) => (await store.sessions.one.page({ id }, 1, ctx)).items[0]);
-		assert.equal(row?.location.environment, THIS_DEVICE);
+		assert.equal(row?.location.environment, HERE.environment);
 		assert.match(row!.location.folder, new RegExp(`/folders/${id}$`));
 		assert.equal((await stat(row!.location.folder)).mode & 0o777, 0o700);
 	});

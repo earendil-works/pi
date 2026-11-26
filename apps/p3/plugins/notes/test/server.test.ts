@@ -19,7 +19,6 @@ import {
 	SESSION_THINGS_WRITES,
 	SessionFacts,
 	SessionThings,
-	THIS_DEVICE,
 	until,
 	type With,
 } from "@earendil-works/p3/v1";
@@ -33,14 +32,12 @@ import environmentsServer from "../../environments/server.ts";
 import peopleServer from "../../people/server.ts";
 import sessionsServer from "../../sessions/server.ts";
 import signInServer from "../../sign-in/server.ts";
+import thingsServer from "../../things/server.ts";
 import { NOTES_EDITS, Notes, NotesKind } from "../contract.ts";
 import { NotesStore } from "../store.ts";
 
 /** The owner's person in this test's Pi (made at its first start). */
 let OWNER: Person;
-
-/** Where the tests' sessions work. */
-const HERE = { environment: THIS_DEVICE, folder: "/tmp/p3-notes-test" };
 
 /** A person's principal. */
 type Person = Extract<P3Principal, { kind: "person" }>;
@@ -62,6 +59,7 @@ beforeEach(async () => {
 				{ name: "@earendil-works/p3-people", facet: peopleServer },
 				{ name: "@earendil-works/p3-sessions", facet: sessionsServer },
 				{ name: "@earendil-works/p3-sign-in", facet: signInServer },
+				{ name: "@earendil-works/p3-things", facet: thingsServer },
 			],
 		},
 		context,
@@ -83,10 +81,7 @@ async function person(name: string): Promise<Person> {
 
 /** Makes a coding session with `members`, following nobody; its id. */
 function session(members: Member[]): Promise<string> {
-	return t.root(
-		async (ctx) => (await ctx.get(SessionsStore, {})).create({ app: "coding", location: HERE, members }, ctx),
-		context,
-	);
+	return t.root(async (ctx) => (await ctx.get(SessionsStore, {})).create({ app: "coding", members }, ctx), context);
 }
 
 /** Runs `fn` with `principal`'s writer of session `id`'s things, failing the test for a reader. */

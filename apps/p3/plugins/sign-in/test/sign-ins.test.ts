@@ -17,7 +17,6 @@ import {
 	createHost,
 	isChordError,
 	type P3Principal,
-	THIS_DEVICE,
 	until,
 	webSocketLink,
 } from "@earendil-works/p3/v1";
@@ -48,9 +47,9 @@ async function ownerOf(host: TestServer["host"]): Promise<P3Principal> {
 }
 const MAX: P3Principal = { kind: "person", id: "max", name: "Max" };
 
-/** A new coding session titled `title`, as the owner makes it. */
+/** A new coding session titled `title`, as the owner makes it (on this device, in its own folder). */
 function coding(title: string) {
-	return { app: "coding", title, location: { environment: THIS_DEVICE, folder: tmpdir() } };
+	return { app: "coding", title };
 }
 
 /** The sign-in plugin's directory. */

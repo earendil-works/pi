@@ -16,8 +16,8 @@ import {
 	SESSION_THINGS_WRITES,
 	SessionFacts,
 	SessionThings,
-	THIS_DEVICE,
 	type ThingKeeper,
+	ThisDevice,
 	type With,
 } from "@earendil-works/p3/v1";
 import { PeopleStore, SessionsStore } from "@earendil-works/p3/v1/server";
@@ -37,13 +37,12 @@ export type Mine = Reference<typeof MyThings>;
 /** `SessionFacts`, as a session's worker holds it. */
 export type Facts = Reference<typeof SessionFacts>;
 
-/** Where the tests' sessions work. */
-const HERE = { environment: THIS_DEVICE, folder: "/tmp/p3-things-test" };
-
 /** Sets up a fresh world for each case of the file calling it; answers its helpers. */
 export function world() {
 	let tested: TestedPlugin<P3Principal> | undefined;
 	let owner: Person | undefined;
+	// Where the cases' sessions work: this device's machine (made at the Pi's first start), in a folder.
+	let here: { environment: string; folder: string } | undefined;
 	beforeEach(async () => {
 		HOOKS.length = 0;
 		tested = await testPlugin(
@@ -56,6 +55,8 @@ export function world() {
 			context,
 		);
 		owner = { kind: "person", id: found!.id, name: found!.name };
+		const machine = (await tested.host.get(ThisDevice, {}, context)).machine.value;
+		here = { environment: machine, folder: "/tmp/p3-things-test" };
 	});
 	afterEach(() => tested?.close(context));
 	const t = () => tested!;
@@ -106,7 +107,7 @@ export function world() {
 			const all = [...writers.map(({ id }) => ({ kind: "person", id, access: "write" }) as const), ...members];
 			const followed = follows === null ? null : { kind: follows.kind, id: follows.id };
 			return asServer((store, ctx) =>
-				store.create({ app: "coding", location: HERE, members: all, follows: followed }, ctx),
+				store.create({ app: "coding", location: here!, members: all, follows: followed }, ctx),
 			);
 		},
 		/** A board `who` makes into session `id` (content, owned by nobody); its id. */

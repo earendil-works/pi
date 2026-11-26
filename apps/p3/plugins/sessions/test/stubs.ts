@@ -1,5 +1,5 @@
 // What the sessions plugin's plugin-tier tests load beside it: the real server facets of the plugins its store reads
-// (people, environments, apps, the coding app, sign-in) and the tools plugin (the Pi's coding tools, "in all my
+// (people, environments, things, apps, the coding app, sign-in) and the tools plugin (the Pi's coding tools, "in all my
 // sessions"); a test kind of thing whose entry a test changes live (`setNotes`: its version, its migration), as a
 // reload of its plugin would; a kind of content served with `serveThing` (`Boards`: hooks recorded in `HOOKS`, an
 // object admitted by `admitThing`); and a kind a person makes (`Logins`: input, hooks).
@@ -26,6 +26,7 @@ import codingServer from "../../coding/server.ts";
 import environmentsServer from "../../environments/server.ts";
 import peopleServer from "../../people/server.ts";
 import signInServer from "../../sign-in/server.ts";
+import thingsServer from "../../things/server.ts";
 import toolsServer from "../../tools/server.ts";
 
 /** The test's kind of thing: notes in a colour. */
@@ -128,6 +129,7 @@ export const STUBS: readonly PluginFacet<P3Principal>[] = [
 	{ name: "@earendil-works/p3-environments", facet: environmentsServer },
 	{ name: "@earendil-works/p3-people", facet: peopleServer },
 	{ name: "@earendil-works/p3-sign-in", facet: signInServer },
+	{ name: "@earendil-works/p3-things", facet: thingsServer },
 	{ name: "@earendil-works/p3-tools", facet: toolsServer },
 	{ name: "p3-test-kind", facet: testKindServer },
 	{ name: "p3-test-boards", facet: boardsServer },
