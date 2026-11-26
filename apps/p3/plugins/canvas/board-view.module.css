@@ -95,12 +95,6 @@
 	white-space: nowrap;
 }
 
-.options {
-	display: flex;
-	align-items: center;
-	gap: var(--semantic-dimension-space-gap-small);
-}
-
 .title {
 	display: flex;
 	align-items: baseline;

@@ -1,5 +1,5 @@
 // The canvas store on the server (`CanvasStore`): every canvas's committed shapes, keyed by the canvas's thing id (a
-// canvas is a thing, made and owned through the sessions plugin; its shapes are this plugin's), their named query, and
+// canvas is a thing, made and linked through the things plugin; its shapes are this plugin's), their named query, and
 // every write. Server code of this plugin only: it checks no caller (`Canvas` admits them).
 
 import {
@@ -13,6 +13,7 @@ import {
 	local,
 	method,
 	obj,
+	opt,
 	type P3Principal,
 	queries,
 	query,
@@ -31,7 +32,8 @@ export const CanvasStore = local("canvas.store", {
 		}),
 		/** Adds `shapes` to `canvas`, in order, drawn by `author`; answers their ids. */
 		add: method(obj({ canvas: str(), shapes: arr(Shape), author: str() }), arr(str())),
-		remove: method(obj({ canvas: str(), id: str() })),
+		/** Removes shape `id` of `canvas`; with `author`, only a shape they drew (`invalid` otherwise). */
+		remove: method(obj({ canvas: str(), id: str(), author: opt(str()) })),
 		/** Removes every shape of `canvas` (cleared, or the canvas deleted). */
 		clear: method(obj({ canvas: str() })),
 	},
@@ -80,10 +82,12 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				}, ctx);
 				return ids;
 			},
-			remove: ({ canvas, id }, ctx) =>
+			remove: ({ canvas, id, author }, ctx) =>
 				self.tx(async (tx) => {
-					if ((await tx.get(shapes, { canvas, id })) === undefined) {
-						throw invalid("args", `canvas: ${canvas} has no shape ${id}`);
+					const found = await tx.get(shapes, { canvas, id });
+					if (found === undefined) throw invalid("args", `canvas: ${canvas} has no shape ${id}`);
+					if (author !== undefined && found.author !== author) {
+						throw invalid("args", `canvas: shape ${id} was drawn by someone else`);
 					}
 					tx.delete(shapes, { canvas, id });
 					return null;

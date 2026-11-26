@@ -1,11 +1,14 @@
-// The canvas plugin on a session's worker: what the session's `canvas.board` things give the agent. `canvas_list` (the
+// The canvas plugin on a session's worker: what the session's `canvas.board` things give the agent. Out of scope until
+// slice 5 (ERNDL-704, sessions as session workspaces): the harness still hands it the session's things of the old
+// sessions layer (`LegacyCanvas`, the old kind's options `draw`), and the tools hold the board in the workspace named by
+// the session's id, where the things plugin admits the agent by its own answer. `canvas_list` (the
 // session's boards: id, name, whether the agent may draw there) and `canvas_read({ canvas })` (a board's shapes as
 // JSON) always; `canvas_draw({ canvas, shapes })` when the agent may draw on at least one board, refused with an
 // error naming the board on the others. The tools take a board's id from `canvas_list`, so their descriptions stay
 // fixed whatever boards the session has. Both reach the board's `Canvas` on the server through the agent's `call`, as
 // the session's worker, so the server admits the agent with its own options there too.
 
-import { arr, type Ctx, defineFacet, obj, type P3Principal, str } from "@earendil-works/p3/v1";
+import { arr, bool, type Ctx, defineFacet, defineThing, obj, type P3Principal, str } from "@earendil-works/p3/v1";
 import {
 	type Agent,
 	type AgentThing,
@@ -16,10 +19,17 @@ import {
 } from "@earendil-works/p3/v1/worker";
 import { BOARD_HEIGHT, BOARD_WIDTH, Canvas, CanvasKind, Shape } from "./contract.ts";
 
+/** The board kind as the harness's old sessions layer knows it, until slice 5: its options say whether the agent draws. */
+const LegacyCanvas = defineThing(CanvasKind.name, {
+	version: 1,
+	options: obj({ draw: bool() }),
+	initial: { draw: true },
+});
+
 export default defineFacet((_host, self) => {
 	self.contribute(
 		ThingExtensions,
-		thingExtension(CanvasKind, (things, agent) => {
+		thingExtension(LegacyCanvas, (things, agent) => {
 			const tools = [listTool(things), readTool(things, agent)];
 			return {
 				extension: defineExtension({
@@ -112,5 +122,5 @@ function described({ thing, name }: Board): string {
 
 /** The board of `thing` as the session's worker gets it. */
 function board(thing: Board, agent: Agent, ctx: Ctx<P3Principal>) {
-	return ctx.get(Canvas, { session: agent.session, thing: thing.thing });
+	return ctx.get(Canvas, { workspace: agent.session, thing: thing.thing });
 }
