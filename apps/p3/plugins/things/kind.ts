@@ -35,12 +35,15 @@ import { kindOfMakeTick, RESERVED, THING_PARAMS, ThingAdmission } from "./contra
 import { messages } from "./messages.ts";
 
 /**
- * Whom a tick can be given (item 91): the agents (the agents party, one session's agent), people (everyone, groups,
- * persons), or both.
+ * Whom a tick can be given: the agents (the agents party, one session's agent), people (everyone, groups, persons), or
+ * both.
  */
 export const TickFor = oneOf("agents", "people", "all");
 
-/** Whom a tick can be given (see `TickFor`). */
+/**
+ * Whom a tick can be given: the agents (the agents party, one session's agent), people (everyone, groups, persons), or
+ * both.
+ */
 export type TickFor = Static<typeof TickFor>;
 
 /**

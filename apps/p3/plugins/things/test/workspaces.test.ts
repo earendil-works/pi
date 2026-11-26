@@ -398,9 +398,11 @@ describe("makes (114)", () => {
 		);
 	});
 
-	it("a Make tick for a kind that is not registered is refused at the write", async () => {
+	it("a Make tick for a kind no plugin registers is kept and ignored (82, 91, 114); one for whom its kind's makers exclude is refused", async () => {
 		const { leo, fam } = await family();
-		await assert.rejects(own(fam, party(leo), ["@make:nobody.nothing"]), /no tick/);
+		await own(fam, party(leo), ["@make:nobody.nothing"]);
+		assert.ok(w.rows("grants").some((row) => row.tick === "@make:nobody.nothing"));
+		assert.deepEqual((await answers(fam, `person:${leo.id}`))[fam]?.makes, []);
 		await assert.rejects(
 			store.setGrants(
 				{
@@ -1263,5 +1265,173 @@ describe("round 1: nits", () => {
 			store.createWorkspace({ kind: TestSession.name, name: "s", parent: fam, by: BY }, context),
 			/cannot be given to agents/,
 		);
+	});
+});
+
+describe("round 2: Astra's cases", () => {
+	it("astra2: held Roots learns about a workspace made for the person outside their existing tree", async () => {
+		const p = await person("P");
+		const parent = await space(pi, "parent");
+		await as(p, async (ctx) => {
+			const roots = await ctx.get(Roots, { view: "held" });
+			assert.deepEqual(roots.list.value.rows, []);
+			const made = await space(parent, "child", source(p));
+			const fresh = await ctx.get(Roots, { view: "new" });
+			assert.deepEqual(
+				fresh.list.value.rows.map((r) => r.workspace),
+				[made],
+			);
+			assert.deepEqual(roots.list.value.rows, fresh.list.value.rows);
+		});
+	});
+	it("astra2: a person taken out locally is not displayed as present locally or below", async () => {
+		const { anna, leo, fam, robot } = await family();
+		await own(fam, party(anna), ["@open"], false);
+		await as(leo, async (ctx) => {
+			for (const workspace of [fam, robot]) {
+				const people = await ctx.get(WorkspacePeople, { workspace, view: "v" });
+				const shown = people.list.value.rows.filter((r) => !r.hidden).map((r) => r.name);
+				assert.ok(!shown.includes("Anna"), JSON.stringify(shown));
+			}
+		});
+	});
+	it("astra2: a leaf workspace wildcard for the agents does not mean they can make logins or workspaces", async () => {
+		const { leo, robot } = await family();
+		const kinds = (await answers(robot, `worker:${robot}`))[robot]!.makes!;
+		assert.ok(!kinds.includes(Login.name));
+		await as(leo, async (ctx) => {
+			const who = await ctx.get(WhoMay, { workspace: robot, thing: robot });
+			const agents = who.table.value.rows.find((r) => r.party.kind === "agents")!;
+			assert.equal(agents.ticks[makeTick(Login)]?.has, false);
+			assert.equal(agents.ticks[makeTick(WorkspaceKind)]?.has, false);
+		});
+	});
+	it("astra2: the owner does not see Make workspace under an unregistered parent kind", async () => {
+		const { leo, robot } = await family();
+		await store.setOwner({ person: leo.id, owner: true }, context);
+		await w.reload(
+			SPACES.name,
+			context,
+			defineFacet(() => {}),
+		);
+		const offered = (await answers(robot, `person:${leo.id}`))[robot]?.makes;
+		assert.ok(!offered?.includes(WorkspaceKind.name), JSON.stringify(offered));
+	});
+});
+
+describe("round 2: Opus's cases and the decisions", () => {
+	it("S1: a workspace kind's default Make tick for a kind whose plugin is gone does not refuse new workspaces", async () => {
+		const { leo, fam } = await family();
+		SESSION.answer = { defaultGrants: { agents: [makeTick(Board)] } };
+		await store.createWorkspace({ kind: TestSession.name, name: "ok", parent: fam, by: source(leo) }, context);
+		await w.reload(
+			BOARD_PLUGIN,
+			context,
+			defineFacet(() => undefined),
+		);
+		const after = await store.createWorkspace(
+			{ kind: TestSession.name, name: "after", parent: fam, by: source(leo) },
+			context,
+		);
+		// Kept, and ignored while the kind is gone.
+		assert.ok(w.rows("grants").some((row) => row.thing === after && row.tick === makeTick(Board)));
+	});
+
+	it("No access for everyone or the agents on a workspace's own thing is refused: that is the people switches", async () => {
+		const { fam } = await family();
+		for (const who of [{ kind: "everyone" }, { kind: "agents" }] as const) {
+			await assert.rejects(own(fam, who, ["@open"], false), /No access/);
+		}
+	});
+
+	it("S2: No access for a group or a named agent on a workspace's own thing takes that way in out", async () => {
+		const { fam, robot } = await family();
+		const sub = await space(fam, "sub");
+		const group = await store.makeGroup(
+			{ name: "kids", managedBy: { kind: "plugin", plugin: "test" }, outside: false },
+			context,
+		);
+		const kim = await person("Kim");
+		await store.addToGroup({ group, person: kim.id, source: BY }, context);
+		await store.putParty({ workspace: fam, party: { kind: "group", group }, source: BY }, context);
+		assert.ok((await answers(sub, `person:${kim.id}`))[sub]);
+		await own(sub, { kind: "group", group }, ["@open"], false);
+		assert.equal((await answers(sub, `person:${kim.id}`))[sub], undefined);
+		// The robot's agent is put in its own session; No access takes it out there.
+		assert.ok((await answers(robot, `worker:${robot}`))[robot]);
+		await own(robot, { kind: "agent", session: robot }, ["@open"], false);
+		assert.deepEqual(await answers(robot, `worker:${robot}`), {});
+	});
+
+	it("a removal takes the rows other workspaces wrote naming the removed one as a thing", async () => {
+		const { fam, robot } = await family();
+		await store.setGrants(
+			{
+				source: BY,
+				grants: [{ workspace: pi, thing: robot, party: { kind: "everyone" }, tick: "@open", gives: false }],
+			},
+			context,
+		);
+		assert.ok(w.rows("grants").some((row) => row.workspace === pi && row.thing === robot));
+		await store.removeWorkspace({ workspace: fam }, context);
+		await eventually(
+			() => w.rows("removing").length,
+			(left) => left === 0,
+		);
+		assert.equal(w.rows("grants").filter((row) => row.thing === robot).length, 0);
+	});
+
+	it("People and Children are not asked again after a commit that changed no presence (a board made)", async () => {
+		const { anna, fam } = await family();
+		await as(anna, async (ctx) => {
+			await ctx.get(WorkspacePeople, { workspace: fam, view: "v" });
+			await ctx.get(WorkspaceChildren, { workspace: fam, view: "v" });
+			const reads = w.count("things.access.reads");
+			await store.create({ kind: Board.name, name: "b", workspace: fam, by: BY }, context);
+			// Only the index's own re-read of Family (its five entry reads): neither list read anything.
+			assert.equal(w.count("things.access.reads") - reads, 5);
+		});
+	});
+});
+
+describe("round 3: Astra's cases", () => {
+	it("astra3: owner Roots follows the displayed Pi name", async () => {
+		const p = await person("Owner");
+		await store.setOwner({ person: p.id, owner: true }, context);
+		await as(p, async (ctx) => {
+			const held = await ctx.get(Roots, { view: "held" });
+			await store.rename({ thing: pi, name: "My Pi" }, context);
+			const fresh = await ctx.get(Roots, { view: "fresh" });
+			assert.equal(fresh.list.value.rows[0]?.name, "My Pi");
+			assert.deepEqual(held.list.value.rows, fresh.list.value.rows);
+		});
+	});
+	it("astra3: People follows the displayed name of the workspace where someone joined", async () => {
+		const { leo, fam, robot } = await family();
+		await as(leo, async (ctx) => {
+			const held = await ctx.get(WorkspacePeople, { workspace: robot, view: "held" });
+			await store.rename({ thing: fam, name: "Renamed Family" }, context);
+			const fresh = await ctx.get(WorkspacePeople, { workspace: robot, view: "fresh" });
+			assert.ok(fresh.list.value.rows.some((r) => r.from.kind === "above" && r.from.name === "Renamed Family"));
+			assert.deepEqual(held.list.value.rows, fresh.list.value.rows);
+		});
+	});
+	it("astra3: removing a leaf updates the People list where its named agent had been put", async () => {
+		const { leo, robot } = await family();
+		const other = await space(pi, "Other");
+		await put(other, leo);
+		await store.putParty({ workspace: other, party: { kind: "agent", session: robot }, source: BY }, context);
+		await as(leo, async (ctx) => {
+			const held = await ctx.get(WorkspacePeople, { workspace: other, view: "held" });
+			assert.ok(held.list.value.rows.some((r) => r.party.kind === "agent"));
+			await store.removeWorkspace({ workspace: robot }, context);
+			await eventually(
+				() => w.rows("removing").length,
+				(left) => left === 0,
+			);
+			const fresh = await ctx.get(WorkspacePeople, { workspace: other, view: "fresh" });
+			assert.ok(!fresh.list.value.rows.some((r) => r.party.kind === "agent"));
+			assert.deepEqual(held.list.value.rows, fresh.list.value.rows);
+		});
 	});
 });

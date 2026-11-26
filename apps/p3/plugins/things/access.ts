@@ -54,6 +54,8 @@ export type Touched = {
 	readonly things: Set<string>;
 	readonly lines: Set<string>;
 	readonly members: Set<string>;
+	/** Of `workspaces`, those where who is present may have changed (members, people switches and defaults, No access). */
+	readonly presence: Set<string>;
 };
 
 /** An attached watcher: the answers now, and how to stop. */
@@ -92,6 +94,11 @@ export type Load = {
 export type Probe<T extends JsonValue> = {
 	readonly workspace: string;
 	readonly caller: Caller;
+	/**
+	 * `presence`: the value depends only on who is present where (and the names it notes), so a commit that changed no
+	 * presence (a thing made, a grant) does not ask it again; `everything` (the default): on all of a workspace.
+	 */
+	readonly reads?: "presence" | "everything";
 	compute(look: Look, load: Load, context: Context): Promise<T>;
 };
 
@@ -241,6 +248,7 @@ export class AccessIndex {
 				things: new Set(),
 				lines: new Set(),
 				members: new Set(),
+				presence: new Set(),
 			};
 			const started = performance.now();
 			this.#context.telemetry.metrics?.histogram("things.store.wait").record(started - queued);
@@ -270,17 +278,35 @@ export class AccessIndex {
 	}
 
 	/**
-	 * The parties present in each of `workspaces` (rule 3), persons hidden there by every route left out (item 106):
-	 * loaded as a question loads them, one operation in the queue.
+	 * What the picker offers `person` (R18, decision 106): the parties present in `workspace` (if any) and in every one
+	 * of `candidates` where the person counts as present (put in, through a group, or shown from above; a person hidden
+	 * by every route counts nowhere), persons hidden there left out. One operation in the queue; what it loaded beyond
+	 * the budget is forgotten again (no watcher keeps it).
 	 */
-	parties(workspaces: readonly string[], context: Context): Promise<ReadonlyMap<string, ReadonlySet<string>>> {
+	offered(
+		workspace: string | undefined,
+		candidates: Iterable<string>,
+		person: string,
+		context: Context,
+	): Promise<ReadonlySet<string>> {
 		return this.#run(async () => {
-			const parties = new Map<string, ReadonlySet<string>>();
-			for (const workspace of workspaces) {
+			await this.#ensurePerson(person, context);
+			const entries = this.#persons.get(person)!;
+			const key = partyKey({ kind: "person", person });
+			const parties = new Set<string>();
+			const add = (access: WorkspaceAccess) => {
+				for (const party of access.present) if (!access.hidden.has(party)) parties.add(party);
+			};
+			if (workspace !== undefined) {
 				await this.#ensure(workspace, context);
-				const { present, hidden } = this.#accessOf(workspace, context);
-				parties.set(workspace, hidden.size === 0 ? present : new Set([...present].filter((p) => !hidden.has(p))));
+				add(this.#accessOf(workspace, context));
 			}
+			for (const at of candidates) {
+				await this.#ensure(at, context);
+				const access = this.#accessOf(at, context);
+				if (personCounts(access, key, entries) !== NOBODY) add(access);
+			}
+			if (this.#workspaces.size + this.#persons.size > this.#forgetWhenAbove) this.forgetUnwatched();
 			return parties;
 		});
 	}
@@ -337,7 +363,8 @@ export class AccessIndex {
 			touched.persons.size === 0 &&
 			touched.things.size === 0 &&
 			touched.lines.size === 0 &&
-			touched.members.size === 0;
+			touched.members.size === 0 &&
+			touched.presence.size === 0;
 		if (this.#closed || nothing) return;
 		const loaded = new Set([...touched.workspaces].filter((id) => this.#workspaces.has(id)));
 		if (!(await this.#reread(loaded, touched.persons))) return;
@@ -362,10 +389,10 @@ export class AccessIndex {
 		for (const id of touched.things) if (view.things.has(id)) return true;
 		for (const key of touched.members) if (view.parties.has(key)) return true;
 		for (const id of touched.lines) if (view.workspaces.has(id)) return true;
-		if (touched.workspaces.size === 0) return false;
-		for (const id of view.workspaces)
-			if (this.#workspaces.has(id) && this.#isAtOrBelow(id, touched.workspaces)) return true;
-		for (const id of touched.workspaces) if (view.workspaces.has(id)) return true;
+		const workspaces = view.probe.reads === "presence" ? touched.presence : touched.workspaces;
+		if (workspaces.size === 0) return false;
+		for (const id of view.workspaces) if (this.#workspaces.has(id) && this.#isAtOrBelow(id, workspaces)) return true;
+		for (const id of workspaces) if (view.workspaces.has(id)) return true;
 		return false;
 	}
 

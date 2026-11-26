@@ -310,7 +310,8 @@ ${chalk.bold("Options:")}
   --session <path|id>            Open a session by file path or full/partial ID
   --session-id <id>              Use the current directory's existing session with the ID, creating it otherwise
   --fork <path|id>               Fork a session by file path or full/partial ID into the current directory
-  --session-dir <dir>            Directory for session storage and lookup
+  --session-dir <dir>            Directory for session storage and lookup (overrides ${ENV_SESSION_DIR} and the sessionDir setting)
+  --agent-dir <dir>              Config directory for settings, auth, and resources (overrides ${ENV_AGENT_DIR})
   --no-session                   Don't save session (ephemeral)
   --name, -n <name>              Set session display name
   --models <patterns>            Comma-separated model patterns for Ctrl+P cycling
@@ -461,7 +462,7 @@ ${chalk.bold("Environment Variables:")}
   AWS_SECRET_ACCESS_KEY            - AWS secret key for Amazon Bedrock
   AWS_BEARER_TOKEN_BEDROCK         - Bedrock API key (bearer token)
   AWS_REGION                       - AWS region for Amazon Bedrock (e.g., us-east-1)
-  ${ENV_AGENT_DIR.padEnd(32)} - Config directory (default: ~/${CONFIG_DIR_NAME}/agent)
+  ${ENV_AGENT_DIR.padEnd(32)} - Config directory (default: ~/${CONFIG_DIR_NAME}/agent, overridden by --agent-dir)
   ${ENV_SESSION_DIR.padEnd(32)} - Session storage directory (overridden by --session-dir)
   PI_PACKAGE_DIR                   - Override package directory (for Nix/Guix store paths)
   PI_OFFLINE                       - Disable startup network operations when set to 1/true/yes

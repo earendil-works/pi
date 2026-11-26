@@ -208,6 +208,7 @@ function rootsProbe(store: Store, caller: Caller): Probe<WorkspaceItem[]> {
 	return {
 		workspace: "",
 		caller,
+		reads: "presence",
 		compute: async (look, load, ctx) => {
 			const root = (await readAll(store.workspaces.children, { parent: "" }, ctx))[0]?.workspace ?? "";
 			const keys = [partyKey(caller.kind === "server" ? { kind: "everyone" } : caller)];
@@ -224,12 +225,16 @@ function rootsProbe(store: Store, caller: Caller): Probe<WorkspaceItem[]> {
 			for (const workspace of [root, ...candidates]) await load.workspace(workspace);
 			const everything =
 				caller.kind === "server" || (caller.kind === "person" && look.person(caller.person)?.owner === true);
-			if (everything) return root === "" ? [] : [itemOf(look, root)];
+			if (everything) {
+				load.things([root]);
+				return root === "" ? [] : [itemOf(look, root)];
+			}
 			const roots = [...candidates].filter((workspace) => {
 				const answer = look.answer(workspace, workspace, caller);
 				const parent = look.entries(workspace)?.parent ?? "";
 				return answer !== undefined && !(answer.above ?? []).includes(parent);
 			});
+			load.things(roots);
 			return roots.map((workspace) => itemOf(look, workspace)).sort(byName);
 		},
 	};
@@ -240,9 +245,11 @@ function childrenProbe(store: Store, workspace: string, caller: Caller): Probe<W
 	return {
 		workspace,
 		caller,
+		reads: "presence",
 		compute: async (look, load, ctx) => {
 			const children = await readAll(store.workspaces.children, { parent: workspace }, ctx);
 			for (const child of children) await load.workspace(child.workspace);
+			load.things(children.map((child) => child.workspace));
 			return children
 				.filter((child) => look.answer(child.workspace, child.workspace, caller) !== undefined)
 				.map((child) => itemOf(look, child.workspace))
@@ -290,14 +297,20 @@ function peopleProbe(workspace: string, caller: Caller): Probe<PartyItem[]> {
 	return {
 		workspace,
 		caller,
-		compute: async (look) => {
+		reads: "presence",
+		compute: async (look, load) => {
 			const above = aboveOf(look, workspace, caller);
 			const entries = look.entries(workspace);
 			const present = look.access(workspace).present;
 			const rows: PartyItem[] = [];
+			// The workspaces it names (where each party was put in): a rename of one asks it again.
+			const named = new Set<string>();
 			const putIn = (key: string): Origin => {
 				for (let at = workspace; at !== ""; at = look.entries(at)?.parent ?? "") {
-					if (look.entries(at)?.members.has(key) === true) return originOf(look, workspace, at, above);
+					if (look.entries(at)?.members.has(key) === true) {
+						named.add(at);
+						return originOf(look, workspace, at, above);
+					}
 				}
 				return { kind: "aboveUnnamed" };
 			};
@@ -307,6 +320,7 @@ function peopleProbe(workspace: string, caller: Caller): Probe<PartyItem[]> {
 					if (!present.has(key)) rows.push({ party: partyOf(key), from: putIn(key), hidden: true });
 				}
 			}
+			load.things([...named]);
 			return rows.sort(
 				(a, b) => Number(a.hidden) - Number(b.hidden) || partyKey(a.party).localeCompare(partyKey(b.party)),
 			);
@@ -475,6 +489,10 @@ function hasTick(
 	const withheld = (given as Partial<OwnHere>).makesWithheld?.get(key);
 	const any = ticks?.has(MAKE_ANY) === true && withheld?.has(MAKE_ANY) !== true;
 	if (made === "*") return any;
+	// The one Make ceiling (main session, round 2): the kind's makers for the party's audience and the workspace's.
+	const maker = party.kind === "agents" ? "agent" : "person";
+	const value = kinds.get(made)?.value;
+	if (value === undefined || !makerMay(value, maker) || !mayHoldHere(look, workspace, kinds, made)) return false;
 	return (ticks?.has(tick) === true || any) && withheld?.has(tick) !== true;
 }
 
@@ -483,7 +501,10 @@ function makerMay(kind: KindInfo, maker: "person" | "agent"): boolean {
 	return kind.makers === "anyone" || (kind.makers === "people" && maker === "person");
 }
 
-/** Whether a thing of kind `name` may be made in `workspace` at all: a leaf holds no workspace kinds (decision 13). */
+/**
+ * Whether a thing of kind `name` may be made in `workspace` at all: only a plain workspace of a registered kind holds
+ * workspaces (decision 13; `makeable`'s ceiling).
+ */
 function mayHoldHere(
 	look: Look,
 	workspace: string,
@@ -491,11 +512,17 @@ function mayHoldHere(
 	name: string,
 ): boolean {
 	const here = look.entries(workspace)?.kind;
-	return !(kinds.get(here ?? "")?.value.workspace === "leaf" && kinds.get(name)?.value.workspace !== "no");
+	return kinds.get(name)?.value.workspace === "no" || kinds.get(here ?? "")?.value.workspace === "plain";
 }
 
-/** `probe` with each row's thing named: the names are read at each computation (a rename asks every probe again). */
-function named<T extends { readonly thing: string }>(store: Store, probe: Probe<T[]>): Probe<(T & { name: string })[]> {
+/**
+ * `probe` with each row's thing named and the rows in reading order: the names are read at each computation (a rename
+ * of a thing it shows asks it again).
+ */
+function named<T extends { readonly thing: string; readonly hidden?: boolean }>(
+	store: Store,
+	probe: Probe<T[]>,
+): Probe<(T & { name: string })[]> {
 	return {
 		...probe,
 		compute: async (look, load, ctx) => {
@@ -505,7 +532,15 @@ function named<T extends { readonly thing: string }>(store: Store, probe: Probe<
 			const names = new Map(
 				(await readWhole(store.things.ofIds, { things }, ctx)).map(({ thing, name }) => [thing, name]),
 			);
-			return rows.map((row) => ({ ...row, name: names.get(row.thing) ?? "" }));
+			// In the order a person reads them: what is here before what is hidden, then by name (then id).
+			return rows
+				.map((row) => ({ ...row, name: names.get(row.thing) ?? "" }))
+				.sort(
+					(a, b) =>
+						Number(a.hidden === true) - Number(b.hidden === true) ||
+						a.name.localeCompare(b.name) ||
+						a.thing.localeCompare(b.thing),
+				);
 		},
 	};
 }

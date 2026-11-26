@@ -98,6 +98,10 @@ export const Workspace = remote("things.workspace", {
 		setShowsThings: grantable(method(obj({ shown: bool() }))),
 		configure: grantable(method(obj({ thing: str(), name: opt(str()), view: opt(str()), settings: opt(unknown()) }))),
 		picker: grantable(method(obj({ query: str() }), arr(PartyInfo))),
+		/**
+		 * Manage people: an invite link to this workspace, as a member or a guest; valid for `expires` milliseconds
+		 * (7 days when left out), for one use or several, joining `group` too if given (slice 3).
+		 */
 		inviteLink: grantable(
 			method(
 				obj({
@@ -210,6 +214,9 @@ export const Cell = obj({
 
 /** One checkbox (see `Cell`). */
 export type Cell = Static<typeof Cell>;
+
+/** Whom a tick is for (item 91): the one schema, `kind.ts`'s. */
+export { TickFor };
 
 /**
  * Who may do what with a thing here: the kind's own ticks, where its grants are written, and per party the `@open`

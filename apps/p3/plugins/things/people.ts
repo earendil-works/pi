@@ -4,6 +4,7 @@
 // transactions (`PeopleWrites`); what goes with a source when it goes is the store's cleanup (`store.ts`).
 
 import {
+	and,
 	bool,
 	type Ctx,
 	defineColumns,
@@ -33,6 +34,9 @@ import {
 } from "./contract.ts";
 import { messages } from "./messages.ts";
 
+/** The source of what the things plugin itself writes: Pi, the first start's owner, a workspace's Guests group. */
+export const THINGS: Source = { kind: "plugin", plugin: "@earendil-works/p3-things" };
+
 /** A person's id and name, joined to their memberships' rows (a group's members, with names). */
 export const PersonColumns = defineColumns("things.person-columns", {
 	columns: { person: str(), name: str() },
@@ -53,8 +57,8 @@ const PersonsV1 = defineTable("things.persons", {
 });
 
 /**
- * Every person: name, the owner flag (1: an owner; an index column, so an int), who made them. By name (the picker);
- * by maker (the persons a source made go with it when nothing else is left of them).
+ * Every person: name, the owner flag (1: an owner; an index column, so an int), who made them. By maker (the persons a
+ * source made go with it when nothing else is left of them).
  */
 export const Persons = evolveTable(
 	PersonsV1,
@@ -62,7 +66,6 @@ export const Persons = evolveTable(
 		t
 			.add("madeByKey", str({ default: "" }))
 			.rows((row) => ({ madeByKey: sourceKey(row.madeBy) }))
-			.index("by_name", ["name"])
 			.index("by_maker", ["madeByKey"]),
 	{ exposes: PersonColumns },
 );
@@ -123,7 +126,7 @@ export const Invites = defineTable("things.invites", {
 		byKey: str(),
 	},
 	key: ["invite"],
-	indexes: { by_expiry: ["expires"], by_maker: ["byKey"] },
+	indexes: { by_expiry: ["expires"], by_maker: ["byKey"], by_group: ["group"] },
 });
 
 /** A removed person whose sign-ins have not ended yet: written in the commit that removed them, ended after it. */
@@ -131,6 +134,16 @@ export const SignOuts = defineTable("things.sign-outs", {
 	version: 1,
 	columns: { person: str() },
 	key: ["person"],
+});
+
+/**
+ * Whether the people plugin's owner was adopted (the bridge, ERNDL-1144 push B removes it): once, durably, so a
+ * handover of the owner flag here or a new name there never sets the flag back.
+ */
+export const Adopted = defineTable("things.owner-adopted", {
+	version: 1,
+	columns: { bridge: str(), person: str() },
+	key: ["bridge"],
 });
 
 /** The people tables, as the store's factory opened them. */
@@ -141,6 +154,7 @@ export type PeopleTables = {
 	readonly groupManagers: TableOf<typeof GroupManagers>;
 	readonly invites: TableOf<typeof Invites>;
 	readonly signOuts: TableOf<typeof SignOuts>;
+	readonly adopted: TableOf<typeof Adopted>;
 };
 
 /** The people tables, opened on `self` (the store's factory). */
@@ -152,6 +166,7 @@ export function openPeopleTables(self: StoreSelf<P3Principal>): PeopleTables {
 		groupManagers: self.table(GroupManagers),
 		invites: self.table(Invites),
 		signOuts: self.table(SignOuts),
+		adopted: self.table(Adopted),
 	};
 }
 
@@ -164,7 +179,7 @@ export class PeopleWrites {
 	}
 
 	/** Makes a person (no owner flag), made by `madeBy`; answers their id. */
-	createPerson(tx: Tx, { name, madeBy }: { name: string; madeBy: Source }): string {
+	async createPerson(tx: Tx, { name, madeBy }: { name: string; madeBy: Source }): Promise<string> {
 		const person = crypto.randomUUID();
 		tx.put(this.#t.persons, { person, name, owner: 0, madeBy, madeByKey: sourceKey(madeBy) });
 		return person;
@@ -174,77 +189,83 @@ export class PeopleWrites {
 	 * The owner's person, made once, at the store's first start, named "Owner" (people rename it; the people plugin's
 	 * owner replaces it meanwhile: `adoptOwner`).
 	 */
-	async ensureOwner(tx: Tx): Promise<void> {
-		const owners = await tx.page(
-			this.#t.persons,
-			query(Persons).where((p) => eq(p.owner, 1)),
-			1,
-		);
-		if (owners.items.length > 0) return;
-		const by: Source = { kind: "plugin", plugin: "@earendil-works/p3-things" };
-		tx.put(this.#t.persons, {
-			person: crypto.randomUUID(),
-			name: "Owner",
-			owner: 1,
-			madeBy: by,
-			madeByKey: sourceKey(by),
-		});
+	async ensureOwner(tx: Tx): Promise<null> {
+		const owners = await this.#owners(tx, 1);
+		if (owners.items.length > 0) return null;
+		const person = crypto.randomUUID();
+		tx.put(this.#t.persons, { person, name: "Owner", owner: 1, madeBy: THINGS, madeByKey: sourceKey(THINGS) });
+		return null;
 	}
 
 	/**
-	 * The people plugin's owner made the owner here, with the same id (a bridge, ERNDL-1144 push B removes it): their
-	 * person is made or given the flag, and the owner the first start made of its own, unless it got anything, goes.
+	 * The people plugin's owner made the owner here, with the same id, once (a bridge, ERNDL-1144 push B removes it):
+	 * their person is made or given the flag; the placeholder the first start made goes only while nothing names it
+	 * (`empty`: of the persons given, those of whom something is left). Never again once done: a later handover of the
+	 * flag stands.
 	 */
-	async adoptOwner(tx: Tx, touched: Touched, { person, name }: { person: string; name: string }): Promise<null> {
+	async adoptOwner(
+		tx: Tx,
+		touched: Touched,
+		{ person, name }: { person: string; name: string },
+		somethingLeft: (persons: readonly string[]) => Promise<ReadonlySet<string>>,
+	): Promise<null> {
+		if ((await tx.get(this.#t.adopted, { bridge: "owner" })) !== undefined) return null;
+		tx.put(this.#t.adopted, { bridge: "owner", person });
 		const row = await tx.get(this.#t.persons, { person });
-		if (row?.owner === 1) return null;
 		const by: Source = { kind: "plugin", plugin: "@earendil-works/p3-people" };
 		if (row === undefined) tx.put(this.#t.persons, { person, name, owner: 1, madeBy: by, madeByKey: sourceKey(by) });
-		else tx.update(this.#t.persons, { person }, { owner: 1 });
+		else if (row.owner === 0) tx.update(this.#t.persons, { person }, { owner: 1 });
 		touched.persons.add(person);
-		const own = sourceKey({ kind: "plugin", plugin: "@earendil-works/p3-things" });
-		for await (const ghost of tx.rows(
+		const own = sourceKey(THINGS);
+		const placeholders = [];
+		for await (const owner of tx.rows(
 			this.#t.persons,
 			query(Persons).where((p) => eq(p.owner, 1)),
 		)) {
-			if (ghost.person !== person && ghost.madeByKey === own) {
-				tx.delete(this.#t.persons, { person: ghost.person });
-				touched.persons.add(ghost.person);
-			}
+			if (owner.person !== person && owner.madeByKey === own && owner.name === "Owner")
+				placeholders.push(owner.person);
+		}
+		const used = await somethingLeft(placeholders);
+		for (const placeholder of placeholders) {
+			if (used.has(placeholder)) continue;
+			tx.delete(this.#t.persons, { person: placeholder });
+			touched.persons.add(placeholder);
 		}
 		return null;
 	}
 
 	/** Renames person `person`. */
-	async renamePerson(tx: Tx, person: string, name: string): Promise<void> {
+	async renamePerson(tx: Tx, person: string, name: string): Promise<null> {
 		await this.#mustBePerson(tx, person);
 		tx.update(this.#t.persons, { person }, { name });
+		return null;
 	}
 
 	/** Gives or takes the owner flag; the last owner keeps it. */
-	async setOwner(tx: Tx, touched: Touched, { person, owner }: { person: string; owner: boolean }): Promise<void> {
+	async setOwner(tx: Tx, touched: Touched, { person, owner }: { person: string; owner: boolean }): Promise<null> {
 		const row = await tx.get(this.#t.persons, { person });
 		if (row === undefined) throw invalid("args", `things: no person ${person}`);
-		if (!owner && row.owner === 1 && !(await this.#twoOwners(tx))) {
+		if (!owner && row.owner === 1 && (await this.#owners(tx, 2)).items.length < 2) {
 			throw invalid("args", "things: a Pi needs at least one owner", { message: messages.message("lastOwner") });
 		}
 		tx.update(this.#t.persons, { person }, { owner: owner ? 1 : 0 });
 		touched.persons.add(person);
+		return null;
 	}
 
 	/**
 	 * Makes a group managed by `managedBy`, outside or not; `managers` get its own tick (its maker, for a group people
 	 * manage). Answers its id.
 	 */
-	makeGroup(
+	async makeGroup(
 		tx: Tx,
 		{
 			name,
 			managedBy,
 			outside,
-			managers,
-		}: { name: string; managedBy: ManagedBy; outside: boolean; managers: Party[] },
-	): string {
+			managers = [],
+		}: { name: string; managedBy: ManagedBy; outside: boolean; managers?: Party[] },
+	): Promise<string> {
 		const group = crypto.randomUUID();
 		tx.put(this.#t.groups, { group, name, managedBy, managedByKey: managedByKey(managedBy), outside });
 		for (const party of managers) tx.put(this.#t.groupManagers, { group, partyKey: partyKey(party), party });
@@ -252,16 +273,18 @@ export class PeopleWrites {
 	}
 
 	/** Renames group `group`. */
-	async renameGroup(tx: Tx, group: string, name: string): Promise<void> {
+	async renameGroup(tx: Tx, group: string, name: string): Promise<null> {
 		await this.#mustBeGroup(tx, group);
 		tx.update(this.#t.groups, { group }, { name });
+		return null;
 	}
 
 	/** Replaces who has group `group`'s own tick with `parties` (none: only server code changes it then). */
-	async setGroupManagers(tx: Tx, group: string, parties: readonly Party[]): Promise<void> {
+	async setGroupManagers(tx: Tx, group: string, parties: readonly Party[]): Promise<null> {
 		await this.#mustBeGroup(tx, group);
 		tx.deleteWhere(this.#t.groupManagers, (m) => eq(m.group, group));
 		for (const party of parties) tx.put(this.#t.groupManagers, { group, partyKey: partyKey(party), party });
+		return null;
 	}
 
 	/** Puts `person` into `group` as `source` did (a second source: a second row). */
@@ -269,31 +292,41 @@ export class PeopleWrites {
 		tx: Tx,
 		touched: Touched,
 		{ group, person, source }: { group: string; person: string; source: Source },
-	): Promise<void> {
+	): Promise<null> {
 		await this.#mustBeGroup(tx, group);
 		await this.#mustBePerson(tx, person);
 		tx.put(this.#t.groupMembers, { group, person, source, sourceKey: sourceKey(source) });
 		touched.persons.add(person);
+		return null;
+	}
+
+	/** Takes `person` out of `group`: every row of theirs there but a provider's and a share's (theirs to rewrite). */
+	async removeMember(tx: Tx, touched: Touched, { group, person }: { group: string; person: string }): Promise<null> {
+		const rows = query(GroupMembers).where((m) => and(eq(m.group, group), eq(m.person, person)));
+		for await (const row of tx.rows(this.#t.groupMembers, rows)) {
+			if (row.source.kind !== "identity" && row.source.kind !== "thing") {
+				tx.delete(this.#t.groupMembers, { group, person, sourceKey: row.sourceKey });
+			}
+		}
+		touched.persons.add(person);
+		return null;
 	}
 
 	/** Takes `source`'s row of `person` in `group` away (another source's row keeps them in). */
-	removeFromGroup(
+	async removeFromGroup(
 		tx: Tx,
 		touched: Touched,
 		{ group, person, source }: { group: string; person: string; source: Source },
-	): void {
+	): Promise<null> {
 		tx.delete(this.#t.groupMembers, { group, person, sourceKey: sourceKey(source) });
 		touched.persons.add(person);
+		return null;
 	}
 
-	/** Whether at least two persons have the owner flag (one of them may give it up). */
-	async #twoOwners(tx: Tx): Promise<boolean> {
-		const owners = await tx.page(
-			this.#t.persons,
-			query(Persons).where((p) => eq(p.owner, 1)),
-			2,
-		);
-		return owners.items.length > 1;
+	/** The first `count` persons with the owner flag (index `by_owner`). */
+	#owners(tx: Tx, count: number) {
+		const owners = query(Persons).where((p) => eq(p.owner, 1));
+		return tx.page(this.#t.persons, owners, count);
 	}
 
 	/** Throws (`invalid`) unless person `person` exists. */

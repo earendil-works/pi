@@ -187,10 +187,11 @@ export function managedByKey(by: ManagedBy): string {
 }
 
 /**
- * A group as its members and managers hold it (decision 68): its info and members for both; its calls only with the
- * group's own tick (a manager: a person named, or a person in a group named), and only on a group people manage (a
- * share's, a provider's, a plugin's or a workspace's group is changed by its manager alone). A member added must be
- * one the picker offers the caller (present where they are present).
+ * A group as anyone it is present for holds it (1141 §7, decision 68): its info and members for all of them (its
+ * members, its managers, the owners, and whoever it is present for where they are present); its calls only with the
+ * group's own tick (a manager: a person named, or a person in a group named) or the owner flag, and only on a group
+ * people manage (a share's, a provider's, a plugin's or a workspace's group is changed by its manager alone). A member
+ * a person adds must be one the picker offers them (present where they are present; the owner: anyone).
  */
 export const Group = remote("things.group", {
 	version: 1,
@@ -199,10 +200,13 @@ export const Group = remote("things.group", {
 	admission: obj({}),
 	state: {
 		info: obj({ group: str(), name: str(), outside: bool(), managedBy: ManagedBy }),
-		members: arr(obj({ person: str(), name: str(), source: Source })),
+		/** The members, a page at a time (`more`): a provider's company group may be large. */
+		members: obj({ rows: arr(obj({ person: str(), name: str(), source: Source })), moreAfter: bool() }),
 		managers: arr(Party),
 	},
 	methods: {
+		/** The next page of `members`. */
+		more: method(),
 		addMember: grantable(method(obj({ person: str() }))),
 		/** Takes the person out of the group: every row but a provider's and a share's (theirs to rewrite). */
 		removeMember: grantable(method(obj({ person: str() }))),

@@ -337,8 +337,8 @@ function takenOut(own: WorkspaceEntries): readonly PartyKey[] {
 }
 
 /**
- * Rule 3: the parties present here: its members, and those present above that are shown here; less the groups and
- * named agents taken out here (`out`; a person taken out is hidden, `hiddenHere`).
+ * Rule 3: the parties present here: its members, and those present above that are shown here; less those taken out
+ * here (`out`; a person taken out is also hidden by every route, `hiddenHere`).
  */
 function partiesHere(
 	above: ReadonlySet<PartyKey>,
@@ -348,7 +348,7 @@ function partiesHere(
 	if (own.showsPeople && own.members.size === 0 && own.switches.size === 0 && out.length === 0) return above;
 	const here = new Set(own.members);
 	for (const party of above) if (own.switches.get(party) ?? own.showsPeople) here.add(party);
-	for (const party of out) if (!party.startsWith("person/")) here.delete(party);
+	for (const party of out) here.delete(party);
 	return here;
 }
 
@@ -476,11 +476,13 @@ function madeWith(tick: string, kinds: KindsLookup): readonly string[] {
 
 /**
  * The Make ceiling (item 114): whether `maker` may make a thing of `kind` in a workspace of kind `workspace`: its
- * `makers` lets them (anyone: people and agents; people: people; plugin: nobody through a workspace), and a leaf holds
- * no workspaces (decision 13).
+ * `makers` lets them (anyone: people and agents; people: people; plugin: nobody through a workspace), and only a plain
+ * workspace of a registered kind holds workspaces (decision 13: a leaf never). Answers, WhoMay's cells and the store's
+ * writes use this one ceiling.
  */
 export function makeable(kind: string, workspace: string, maker: Maker, kinds: KindsLookup): boolean {
-	if (kinds.sortOf(workspace) === "leaf" && kinds.sortOf(kind) !== "no") return false;
+	// Only a plain workspace of a registered kind holds workspaces (a leaf never; one whose kind is gone may be one).
+	if (kinds.sortOf(kind) !== "no" && kinds.sortOf(workspace) !== "plain") return false;
 	const makers = kinds.makersOf(kind);
 	return makers === "anyone" || (makers === "people" && maker === "person");
 }

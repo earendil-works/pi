@@ -201,8 +201,8 @@ export function ownFrom(all: Everything, kinds: KindTicks, workspace: string, ca
 	const kind = all.workspaceKinds.get(workspace)!;
 	const ticksOf = kinds.get(kind)?.ticks ?? new Map();
 	const makeable = (made: string) => {
-		// A leaf holds no workspaces (decision 13).
-		if (kinds.get(kind)?.workspace === "leaf" && kinds.get(made)?.workspace !== "no") return false;
+		// Only a plain workspace of a registered kind holds workspaces (a leaf never, decision 13).
+		if (kinds.get(made)?.workspace !== "no" && kinds.get(kind)?.workspace !== "plain") return false;
 		const makers = kinds.get(made)?.makers;
 		return makers === "anyone" || (makers === "people" && caller.kind === "person");
 	};
@@ -380,7 +380,7 @@ function walk(all: Everything, kinds: KindTicks, workspace: string, thing: strin
 			.filter((g) => g.workspace === here.id && g.thing === here.id && g.tick === "@open" && !g.gives)
 			.map((g) => g.party);
 		state.hidden = [...state.hidden, ...out.filter((party) => party.startsWith("person/"))];
-		state.present = state.present.filter((party) => party.startsWith("person/") || !out.includes(party));
+		state.present = state.present.filter((party) => !out.includes(party));
 	}
 	return state;
 }
