@@ -6,14 +6,13 @@ import { defineMessages } from "@earendil-works/p3/v1";
 /** The files plugin's messages, by key. */
 export const messages = defineMessages("files", {
 	en: {
-		tickRead: "Read",
-		tickWrite: "Write",
+		tickBrowse: "Browse",
+		tickEdit: "Edit",
 		notAbsolute: "A path starts at the machine's root (/).",
 		notFound: "This file or folder does not exist.",
 		hidden: "Pi's own data folder is not shown, and nothing that holds it is changed.",
 		root: "The machine's root folder cannot be removed or moved.",
 		failed: (reason: string) => `The machine refused: ${reason}`,
-		uploadOutOfOrder: "The upload lost a piece; start it again.",
 		pane: "Files",
 		up: "Up",
 		search: "Search",
@@ -33,5 +32,6 @@ export const messages = defineMessages("files", {
 		denied: "You may not browse files here.",
 		unavailable: "Files cannot be shown now.",
 		uploading: (name: string) => `Uploading ${name}…`,
+		uploadFailed: (status: number) => `The upload failed (${status}).`,
 	},
 });

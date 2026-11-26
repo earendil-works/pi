@@ -1,18 +1,10 @@
 // The Files pane: one folder of a machine through a workspace's Files, folders first, a page at a time; a search below
-// the folder; downloads; and, with Write, uploads (in pieces of `CHUNK`), renames and removals. A component until
+// the folder; downloads; and, with Edit, uploads (one request per file), renames and removals. A component until
 // slice 4's `Views` registers panes; what it opens on (the workspace, its Files, the machine and the folder) is its
-// props. The pane follows the reference live: Read or Write withheld takes their controls away at once.
+// props. The pane follows the reference live: Browse or Edit withheld takes their controls away at once.
 
 import { Button, IconButton, Input } from "@earendil-works/elanor-react";
-import {
-	BACKGROUND_CONTEXT,
-	type Context,
-	isChordError,
-	type MessageData,
-	type Reference,
-	type With,
-	withGranted,
-} from "@earendil-works/p3/v1";
+import { BACKGROUND_CONTEXT, type Context, type Reference, type With, withGranted } from "@earendil-works/p3/v1";
 import {
 	DeleteIcon,
 	DescriptionIcon,
@@ -26,7 +18,8 @@ import {
 } from "@earendil-works/p3/v1/web";
 import { type ChangeEvent, useCallback, useEffect, useState } from "react";
 import { messages as machineMessages } from "../environments/messages.ts";
-import { CHUNK, type Entry, Files, type Hit } from "./contract.ts";
+import { refusalText } from "../environments/refusal.ts";
+import { type Entry, Files, type Hit } from "./contract.ts";
 import styles from "./files-pane.module.css";
 import { messages } from "./messages.ts";
 
@@ -38,10 +31,10 @@ export type FilesPaneProps = {
 	readonly folder: string;
 };
 
-/** Files with Read, as the pane calls it. */
-type Reader = With<Reference<typeof Files>, "entries" | "search" | "download">;
+/** Files with Browse, as the pane calls it. */
+type Reader = With<Reference<typeof Files>, "entries" | "search" | "open">;
 
-/** Files with Write. */
+/** Files with Edit. */
 type Writer = With<Reference<typeof Files>, "upload" | "rename" | "remove">;
 
 /** The pane on `props.folder` of `props.machine`; the person moves between folders in it. */
@@ -50,7 +43,7 @@ export function FilesPane(props: FilesPaneProps) {
 	const ref = useHold(Files, { workspace: props.workspace, thing: props.thing });
 	const live = useLive(ref);
 	const state = useRefState(ref);
-	const reader = withGranted(live, "entries", "search", "download");
+	const reader = withGranted(live, "entries", "search", "open");
 	const writer = withGranted(live, "upload", "rename", "remove");
 	const [folder, setFolder] = useState(props.folder);
 	// A change (upload, rename, removal) shows the folder anew: `changes` counts them.
@@ -211,7 +204,7 @@ function EntryItem(props: {
 	const folder = entry.kind === "directory";
 	const download = () =>
 		action.run(async (ctx) => {
-			window.location.assign(await reader.download({ machine, path: entry.path }, ctx));
+			window.location.assign((await reader.open({ machine, path: entry.path }, ctx)).url);
 		});
 	if (renaming !== undefined && writer !== undefined) {
 		const at = entry.path.slice(0, entry.path.lastIndexOf("/") + 1);
@@ -315,7 +308,7 @@ function Hits(props: {
 	);
 }
 
-/** The upload button: the picked file goes into `folder` in pieces of `CHUNK`, the last one putting it in place. */
+/** The upload button: the picked file goes into `folder` in one request, landing whole once all of it came. */
 function Upload(props: {
 	readonly folder: string;
 	readonly machine: string;
@@ -333,12 +326,9 @@ function Upload(props: {
 		setUploading(file.name);
 		props.action.run(async (ctx) => {
 			try {
-				// An empty file is one empty last piece.
-				for (let offset = 0; offset === 0 || offset < file.size; offset += CHUNK) {
-					const bytes = new Uint8Array(await file.slice(offset, offset + CHUNK).arrayBuffer());
-					const last = offset + CHUNK >= file.size;
-					await props.writer.upload({ machine: props.machine, path, offset, data: base64(bytes), last }, ctx);
-				}
+				const { url } = await props.writer.upload({ machine: props.machine, path }, ctx);
+				const response = await fetch(url, { method: "PUT", body: file });
+				if (!response.ok) throw new Error(t("uploadFailed", response.status));
 				props.onDone();
 			} finally {
 				setUploading(undefined);
@@ -351,13 +341,6 @@ function Upload(props: {
 			<span>{uploading === undefined ? t("upload") : t("uploading", uploading)}</span>
 		</label>
 	);
-}
-
-/** `bytes` as base64, built in slices: one `String.fromCharCode` over a whole piece would overflow the stack. */
-function base64(bytes: Uint8Array): string {
-	let text = "";
-	for (let at = 0; at < bytes.length; at += 0x8000) text += String.fromCharCode(...bytes.subarray(at, at + 0x8000));
-	return btoa(text);
 }
 
 /** A size in bytes as people read it. */
@@ -379,7 +362,7 @@ type Action = {
 /** The pane's call state and its `run`. */
 function useAction(): Action {
 	const files = useMessages(messages).t;
-	const machines = useMessages(machineMessages).t;
+	const environments = useMessages(machineMessages).t;
 	const [pending, setPending] = useState(false);
 	const [error, setError] = useState<string | undefined>(undefined);
 	const run = useCallback(
@@ -387,28 +370,10 @@ function useAction(): Action {
 			setPending(true);
 			setError(undefined);
 			call(BACKGROUND_CONTEXT)
-				.catch((failure: unknown) => {
-					const message = isChordError(failure) ? messageIn(failure.details) : undefined;
-					if (message === undefined) setError(failure instanceof Error ? failure.message : String(failure));
-					else setError(message.namespace === "environments" ? machines.render(message) : files.render(message));
-				})
+				.catch((failure: unknown) => setError(refusalText(failure, { files, environments })))
 				.finally(() => setPending(false));
 		},
-		[files, machines],
+		[files, environments],
 	);
 	return { pending, error, run };
-}
-
-/**
- * The message a refusal's details carry (`{ message }`, as the files and environments plugins refuse), if any. A trust
- * boundary: the details came over the wire.
- */
-function messageIn(details: unknown): MessageData | undefined {
-	if (details === null || typeof details !== "object" || !("message" in details)) return undefined;
-	const { message } = details;
-	if (message === null || typeof message !== "object") return undefined;
-	if (!("namespace" in message && "key" in message && "params" in message)) return undefined;
-	const { namespace, key, params } = message;
-	if (typeof namespace !== "string" || typeof key !== "string" || !Array.isArray(params)) return undefined;
-	return { namespace, key, params };
 }
