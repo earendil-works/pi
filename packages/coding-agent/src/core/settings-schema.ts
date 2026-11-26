@@ -317,12 +317,6 @@ export const SettingsSchema = Type.Object(
 				default: SETTINGS_DEFAULTS.collapseChangelog,
 			}),
 		),
-		enableInstallTelemetry: Type.Optional(
-			Type.Boolean({
-				description: "Send an anonymous version and update ping after changelog-detected updates.",
-				default: SETTINGS_DEFAULTS.enableInstallTelemetry,
-			}),
-		),
 		enableAnalytics: Type.Optional(
 			Type.Boolean({
 				description: "Opt in to analytics data sharing.",

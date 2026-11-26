@@ -20,7 +20,6 @@ export function smokeTestCodingAgent(directory, runtime = process.execPath) {
 		XDG_CACHE_HOME: home,
 		PI_CODING_AGENT_DIR: join(home, ".pi", "agent"),
 		PI_OFFLINE: "1",
-		PI_TELEMETRY: "0",
 	};
 	for (const name of ["SystemRoot", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT"]) {
 		if (process.env[name]) env[name] = process.env[name];

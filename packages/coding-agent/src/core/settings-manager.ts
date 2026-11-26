@@ -1064,16 +1064,6 @@ export class SettingsManager {
 		this.save();
 	}
 
-	getEnableInstallTelemetry(): boolean {
-		return this.settings.enableInstallTelemetry ?? SETTINGS_DEFAULTS.enableInstallTelemetry;
-	}
-
-	setEnableInstallTelemetry(enabled: boolean): void {
-		this.globalSettings.enableInstallTelemetry = enabled;
-		this.markModified("enableInstallTelemetry");
-		this.save();
-	}
-
 	getEnableAnalytics(): boolean {
 		return this.settings.enableAnalytics ?? SETTINGS_DEFAULTS.enableAnalytics;
 	}
