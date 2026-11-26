@@ -62,6 +62,15 @@
 	overflow-y: auto;
 }
 
+/*
+ * A whole-page view draws in a stacking context of its own (decision 64): whatever it layers inside (a fixed overlay,
+ * a high z-index) stays below the corner button, which no view can cover.
+ */
+.frame[data-area="page"] .main {
+	z-index: 0;
+	isolation: isolate;
+}
+
 .frame[data-screen="navigator"] .main,
 .frame[data-screen="main"] .navigator {
 	display: none;
@@ -153,6 +162,7 @@
 .corner {
 	position: fixed;
 	z-index: var(--semantic-number-layer-sticky);
+	/* Above the whole-page view's own stacking context (z-index 0). */
 	inset-block-start: var(--semantic-dimension-space-padding-small);
 	inset-inline-end: var(--semantic-dimension-space-padding-small);
 	background: var(--semantic-color-background-surface);

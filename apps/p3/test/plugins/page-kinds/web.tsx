@@ -22,15 +22,19 @@ export default defineFacet((_host, self) => {
 	]);
 });
 
-/** The wall: a whole page of its own, with the thing's id on it; it counts its mounts for the page's test. */
+/**
+ * The wall: a whole page of its own (a fixed overlay over everything it can reach), with the thing's id on it; it counts
+ * its mounts for the page's test.
+ */
 function Wall(props: ThingViewProps) {
 	useEffect(() => {
 		const counted = window as unknown as { wallMounts?: number };
 		counted.wallMounts = (counted.wallMounts ?? 0) + 1;
 	}, []);
+	// A fixed, full-viewport overlay high above sticky things: the corner button must stay on top of it (decision 64).
 	return (
-		<p data-wall={props.thing} style={{ margin: 0, padding: "4rem 2rem" }}>
+		<div data-wall={props.thing} style={{ position: "fixed", inset: 0, zIndex: 10000, padding: "4rem 2rem" }}>
 			Wall
-		</p>
+		</div>
 	);
 }

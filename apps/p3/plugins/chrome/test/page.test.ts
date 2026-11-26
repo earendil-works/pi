@@ -97,6 +97,19 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		);
 	}
 
+	/** Asserts the page idles: the main thread busy under 0.2 s of one second with no input (no render loop). */
+	async function idles(): Promise<void> {
+		await browser.call("Performance.enable");
+		const busy = async () =>
+			(
+				(await browser.call("Performance.getMetrics")) as { metrics: { name: string; value: number }[] }
+			).metrics.find((metric) => metric.name === "TaskDuration")!.value;
+		const first = await busy();
+		await new Promise((resolve) => setTimeout(resolve, 1000));
+		const spent = (await busy()) - first;
+		assert.ok(spent < 0.2, `the idle page was busy ${spent} s of 1 s`);
+	}
+
 	/** Makes a thing of `offer` (`make:<kind>`) named `name` through the add-thing picker of the open Settings view. */
 	async function add(offer: string, name: string, untick: readonly string[] = []): Promise<void> {
 		await press('[data-settings-tab="what"]');
@@ -120,6 +133,8 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 			`document.querySelector('[data-settings="${pi}"] [data-settings-title]')?.textContent === "Pi"`,
 		);
 		await browser.wait(`document.querySelector('[data-connection="connected"]')`);
+		// The navigator's path settles: an idle page does no work (review round 1: a render loop kept it busy).
+		await idles();
 		// Going back leaves the page: `/` was replaced, not pushed.
 		assert.equal(await browser.evaluate("history.length"), 2);
 		await shots("01-pi-settings-desktop");
@@ -222,6 +237,8 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await press(`[data-here-thing="${plans}"] [data-switch]`);
 		await browser.wait(`document.querySelector("[data-nav-hidden]")?.textContent === "1 hidden"`);
 		await shots("07-family-desktop");
+		// Below the root too, the path settles.
+		await idles();
 		// Below the link (a thing hidden here gives nothing here, so the Sketch): everyone's Draw is inherited; unticking it
 		// withholds it here, ticking it again resets the cell; an empty box (everyone's Moderate) is disabled.
 		const sketch = await browser.evaluate<string>(
@@ -276,6 +293,11 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		assert.equal(await browser.evaluate(`document.querySelector("[data-navigator]")`), null);
 		// The chrome learns the view's area from the view itself: giving it the page must not mount it a second time.
 		assert.equal(await browser.evaluate("window.wallMounts"), 1);
+		// The wall lays a fixed overlay over everything it can reach; the corner button stays on top (decision 64).
+		const onTop = await browser.evaluate<boolean>(
+			`(() => { const e = document.querySelector("[data-corner-menu]"); const r = e.getBoundingClientRect(); const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return hit !== null && (e === hit || e.contains(hit)); })()`,
+		);
+		assert.equal(onTop, true, "the whole-page view covers the corner button");
 		await press("[data-corner-menu]");
 		await press("[data-corner-navigator]");
 		await browser.settled("[data-corner-drawer]");
@@ -387,6 +409,47 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await shots("18-reader-desktop");
 		await browser.signOut();
 		await browser.signIn(origin, await t.cookie(context));
+	});
+
+	it("on a phone, reaches a plain workspace's Settings from the navigator, and goes back from a session and /me", async () => {
+		await browser.size(PHONE);
+		await browser.open(`${origin}/w/${pi}`);
+		await browser.wait(`document.querySelector("[data-navigator]")?.offsetParent !== null`);
+		const length = await browser.evaluate<number>("history.length");
+		// Tapping the open workspace brings its Settings view forward, at the same address.
+		await press(`[data-nav-workspace="${pi}"]`);
+		await browser.wait(`document.querySelector('[data-settings="${pi}"]')?.offsetParent !== null`);
+		assert.equal(await browser.evaluate("history.length"), length, "a duplicate address was pushed");
+		await shots("19-pi-settings-phone");
+		await press("[data-back]");
+		await browser.wait(`document.querySelector("[data-navigator]")?.offsetParent !== null`);
+		// A session (a workspace with its own view): Back shows its navigator.
+		await browser.open(`${origin}/w/${session}`);
+		await browser.wait(`document.querySelector('[data-session-view="${session}"]')?.offsetParent !== null`);
+		await press("[data-back]");
+		await browser.wait(`document.querySelector("[data-navigator]")?.offsetParent !== null`);
+		assert.equal(await browser.evaluate("location.pathname"), `/w/${session}`);
+		await press(`[data-nav-workspace="${session}"]`);
+		await browser.wait(`document.querySelector('[data-session-view="${session}"]')?.offsetParent !== null`);
+		// `/me` has a way back too.
+		await browser.open(`${origin}/me`);
+		await browser.wait(`document.querySelector("[data-me]")?.offsetParent !== null`);
+		await press("[data-back]");
+		await browser.wait(`location.pathname.startsWith("/w/")`);
+		await browser.size(DESKTOP);
+	});
+
+	it("opens a workspace made without a name, named by its kind", async () => {
+		await browser.open(`${origin}/w/${pi}/settings`);
+		await browser.wait(`document.querySelector('[data-settings="${pi}"]')`);
+		await add("make:things.workspace", "");
+		const entry = `[...document.querySelectorAll('[data-nav-group="sessions"] [data-nav-workspace]')].find((e) => e.textContent === "Workspace")`;
+		await browser.wait(`${entry} !== undefined`);
+		const id = await browser.evaluate<string>(`${entry}.dataset.navWorkspace`);
+		await browser.open(`${origin}/w/${id}`);
+		await browser.wait(
+			`document.querySelector('[data-settings="${id}"] [data-settings-title]')?.textContent === "Workspace"`,
+		);
 	});
 
 	it("keeps the open page through a reload of the chrome plugin", async () => {
