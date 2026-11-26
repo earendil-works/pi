@@ -2,8 +2,9 @@
 // adds once it is live, for the shapes an app's objects are made of. On the server: a local object with its reference;
 // with one derive; with a reference to a store; with one live query. Held over a link by a client in another process
 // (so the server's heap is the server's alone): a remote object without an admission; with a constant admission
-// granting members; with an admission that derives from one reference; for these the client's heap per held reference
-// too (its references, remote objects and replicas). 1,000 objects per case after a warm-up of 1,000
+// granting members; with an admission that derives from one reference; with three state members derived from its
+// document (each followed by its hold); for these the client's heap per held reference too (its references, remote
+// objects and replicas). 1,000 objects per case after a warm-up of 1,000
 // (code, its feedback and caches the first objects make are no object's; after 200 they still grew), the heap read
 // after collections, on a SQLite `:memory:` store. Each case runs in a server process of its own: in one process,
 // what an earlier case left to collect was freed during a later one and counted for it.
@@ -11,7 +12,20 @@
 //   node --conditions=source --experimental-strip-types --expose-gc test/bench/hold-heap.ts
 import { fork, spawnSync } from "node:child_process";
 import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
-import { arr, bool, grantable, hostKind, local, method, obj, queries, remote, str } from "../../src/contracts/index.ts";
+import {
+	arr,
+	bool,
+	grantable,
+	hostKind,
+	int,
+	local,
+	method,
+	obj,
+	queries,
+	remote,
+	str,
+} from "../../src/contracts/index.ts";
+import { defineState } from "../../src/documents/index.ts";
 import { allow, createHost, defineFacet } from "../../src/host/index.ts";
 import { ipcLink } from "../../src/link/index.ts";
 import { openNodeSqliteDatabase } from "../../src/sqlite/node.ts";
@@ -32,6 +46,7 @@ const Store = local("bench.store", {
 	members: { rows: queries(Item, { one: obj({ id: str() }) }), seed: method(arr(Item)) },
 });
 const Roles = local("bench.roles", { version: 1, params: {}, members: { names: arr(str()) } });
+const Count = defineState("count", { schema: obj({ n: int() }), version: 1, initial: () => ({ n: 0 }) });
 
 const thing = {
 	version: 1,
@@ -50,7 +65,14 @@ const Bare = remote("bench.bare", {
 });
 const Granted = remote("bench.granted", thing);
 const Admitted = remote("bench.admitted", thing);
-const HELD = { Bare, Granted, Admitted } as const;
+const Followed = remote("bench.followed", {
+	version: 1,
+	params: { id: str() },
+	hostAddress: () => Server(),
+	state: { a: int(), b: int(), c: int() },
+	methods: { use: method(str(), str()) },
+});
+const HELD = { Bare, Granted, Admitted, Followed } as const;
 
 const Plain = local("bench.plain", { version: 1, params: { id: str() }, members: { v: str() } });
 const Derived = local("bench.derived", { version: 1, params: { id: str() }, members: { v: str() } });
@@ -62,7 +84,7 @@ const Reading = local("bench.reading", {
 });
 const LOCAL = { Plain, Derived, Referring, Reading } as const;
 
-const CASES = 7;
+const CASES = 8;
 
 if (process.argv[2] === "client") await client();
 else if (process.argv[2] === "case") await server(Number(process.argv[3]));
@@ -127,6 +149,15 @@ async function server(number: number): Promise<void> {
 		h.serve(Roles, () => ({ names: constant(NAMES) }));
 		h.serve(Bare, ({ id }) => ({ name: constant(id), use: async (text) => text }));
 		h.serve(Granted, ({ id }) => made(id), { admit: () => constant(allow({ granted: ["add", "export"] })) });
+		h.serve(Followed, (_params, _principal, self) => {
+			const count = self.state(Count);
+			return {
+				a: self.derive([count], ([{ n }]) => n),
+				b: self.derive([count], ([{ n }]) => n + 1),
+				c: self.derive([count], ([{ n }]) => n + 2),
+				use: async (text) => text,
+			};
+		});
 		h.serve(Admitted, ({ id }) => made(id), {
 			admit: (_params, _principal, self) =>
 				self.derive([self.get(Roles, {}).names], () => allow({ granted: ["add", "export"] })),
@@ -198,6 +229,7 @@ async function server(number: number): Promise<void> {
 		["a remote object held over a link, no admission", held("Bare")],
 		["the same, a constant admission granting two names", held("Granted")],
 		["the same, its admission a derive over one reference", held("Admitted")],
+		["a remote object held over a link, three state members derived from its document", held("Followed")],
 	];
 	const [title, make] = cases[number - 1]!;
 	console.log(`${number}. ${title}: ${await perObject(make)}`);
