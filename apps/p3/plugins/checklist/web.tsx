@@ -1,9 +1,9 @@
 // The checklist on the page: its view of one checklist (`ThingViews`): its name and items; a caller granted Tick ticks
-// them, one granted Add adds them, anyone else let in reads. Who may do what is the things plugin's grants, edited in
-// its Settings view.
+// them, one granted Add adds them, anyone else let in reads; and the plugin's catalogs (`Translations`). Who may do
+// what is the things plugin's grants, edited in its Settings view.
 
 import { Button, Checkbox, Input, SelectionControlAndLabel } from "@earendil-works/elanor-react";
-import { BACKGROUND_CONTEXT, type Context, defineFacet } from "@earendil-works/p3/v1";
+import { BACKGROUND_CONTEXT, type Context, defineFacet, Translations } from "@earendil-works/p3/v1";
 import {
 	CheckIcon,
 	type ThingViewProps,
@@ -19,13 +19,10 @@ import { Checklist, ChecklistKind } from "./contract.ts";
 import { messages } from "./messages.ts";
 import styles from "./web.module.css";
 
-export default defineFacet((_host, self) =>
-	self.contribute(ThingViews, {
-		kind: ChecklistKind.name,
-		Icon: CheckIcon,
-		View: ChecklistView,
-	}),
-);
+export default defineFacet((_host, self) => {
+	self.contribute(ThingViews, { kind: ChecklistKind.name, Icon: CheckIcon, View: ChecklistView });
+	self.contribute(Translations, messages.translations);
+});
 
 /** Checklist `thing`, as the viewer's admission allows: Tick ticks items, Add adds them. */
 function ChecklistView(props: ThingViewProps) {
@@ -37,14 +34,7 @@ function ChecklistView(props: ThingViewProps) {
 	const items = useWatch(live?.items);
 	const { t } = useMessages(messages);
 	const [text, setText] = useState("");
-	const [error, setError] = useState<string | undefined>(undefined);
-	/** Runs `call`, keeping its failure to show. */
-	const run = (call: (context: Context) => Promise<unknown>) => {
-		setError(undefined);
-		call(BACKGROUND_CONTEXT).catch((failure: unknown) =>
-			setError(failure instanceof Error ? failure.message : String(failure)),
-		);
-	};
+	const action = useAction();
 	if (state?.kind === "failed" && state.cause.kind === "denied") return <p className={styles.note}>{t("denied")}</p>;
 	if (state?.kind === "failed" || state?.kind === "ended") return <p className={styles.note}>{t("unavailable")}</p>;
 	const addItem = live?.addItem;
@@ -52,7 +42,7 @@ function ChecklistView(props: ThingViewProps) {
 	const add = () => {
 		const item = text.trim();
 		if (addItem === undefined || item === "") return;
-		run(async (ctx) => {
+		action.run(async (ctx) => {
 			await addItem({ text: item }, ctx);
 			setText("");
 		});
@@ -81,7 +71,7 @@ function ChecklistView(props: ThingViewProps) {
 										checked={item.done}
 										disabled={setDone === undefined}
 										onCheckedChange={(done: boolean) =>
-											setDone && run((ctx) => setDone({ id: item.id, done }, ctx))
+											setDone && action.run((ctx) => setDone({ id: item.id, done }, ctx))
 										}
 									>
 										<Checkbox.Indicator />
@@ -110,12 +100,48 @@ function ChecklistView(props: ThingViewProps) {
 						placeholder={t("newItemPlaceholder")}
 						value={text}
 					/>
-					<Button data-item-add="" disabled={text.trim() === ""} hierarchy="secondary" type="submit">
+					<Button
+						data-item-add=""
+						disabled={text.trim() === ""}
+						hierarchy="secondary"
+						pending={action.pending}
+						type="submit"
+					>
 						{t("add")}
 					</Button>
 				</form>
 			)}
-			{error === undefined ? null : <p className={styles.error}>{error}</p>}
+			{action.error === undefined ? null : <p className={styles.error}>{action.error}</p>}
 		</section>
 	);
+}
+
+/** A change the view makes (an add, a tick): whether one runs and why the last one failed. */
+type Action = {
+	readonly pending: boolean;
+	readonly error: string | undefined;
+	/** Runs `call` unless one runs already; its failure is kept as `error`, never thrown. */
+	run(call: (context: Context) => Promise<unknown>): void;
+};
+
+/** The view's change state and its `run`. */
+function useAction(): Action {
+	const [pending, setPending] = useState(false);
+	const [error, setError] = useState<string | undefined>(undefined);
+	return {
+		pending,
+		error,
+		run: (call) => {
+			if (pending) return;
+			setPending(true);
+			setError(undefined);
+			call(BACKGROUND_CONTEXT).then(
+				() => setPending(false),
+				(failure: unknown) => {
+					setPending(false);
+					setError(failure instanceof Error ? failure.message : String(failure));
+				},
+			);
+		},
+	};
 }

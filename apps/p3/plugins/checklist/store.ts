@@ -18,10 +18,12 @@ import {
 	str,
 	type Tx,
 } from "@earendil-works/p3/v1";
-import { ITEMS, Item } from "./contract.ts";
+import { Item, MAX_ITEMS } from "./contract.ts";
 
-/** The items of every checklist, and their writes; a checklist is its thing's id. Server code of this plugin only: it
- * checks no caller (`Checklist` admits them). */
+/**
+ * The items of every checklist, and their writes; a checklist is its thing's id. Server code of this plugin only: it
+ * checks no caller (`Checklist` admits them).
+ */
 export const ChecklistStore = local("checklist.store", {
 	version: 1,
 	params: {},
@@ -30,7 +32,7 @@ export const ChecklistStore = local("checklist.store", {
 			/** Checklist `checklist`'s items, in the order they were added. */
 			of: obj({ checklist: str() }),
 		}),
-		/** Adds an item, not done; answers its id. Refused once the checklist holds `ITEMS` items. */
+		/** Adds an item, not done; answers its id. Refused once the checklist holds `MAX_ITEMS` items. */
 		add: method(obj({ checklist: str(), text: str() }), str()),
 		/** Marks item `id` done or not; refused for an item the checklist does not have. */
 		tick: method(obj({ checklist: str(), id: str(), done: bool() })),
@@ -76,9 +78,9 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			add: async ({ checklist, text }, ctx) => {
 				const id = crypto.randomUUID();
 				await self.tx(async (tx) => {
-					// A full checklist refuses, so its readers, which read `ITEMS` items, never miss one.
+					// A full checklist refuses, so its readers, which read `MAX_ITEMS` items, never miss one.
 					const held = await count(tx, checklist);
-					if (held >= ITEMS) throw invalid("args", `checklist: a checklist holds ${ITEMS} items`);
+					if (held >= MAX_ITEMS) throw invalid("args", `checklist: a checklist holds ${MAX_ITEMS} items`);
 					tx.put(items, { checklist, id, text, done: false, seq: held + 1 });
 					return null;
 				}, ctx);

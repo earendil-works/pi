@@ -17,10 +17,10 @@ export const Item = obj({ id: str(), text: ItemText, done: bool() });
 export type Item = Static<typeof Item>;
 
 /** How many items a checklist holds at most: its readers read them whole. */
-export const ITEMS = 500;
+export const MAX_ITEMS = 500;
 
 /**
- * A checklist: its name (its thing's, "" while it has none) and its items (at most `ITEMS`, in the order they were
+ * A checklist: its name (its thing's, "" while it has none) and its items (at most `MAX_ITEMS`, in the order they were
  * added), both for everyone let in. Add gives `addItem`, Tick gives `setDone`. A new link starts with both for everyone
  * there and Tick for the agents; a Read share's guests read.
  */
@@ -29,7 +29,7 @@ export const ChecklistKind = defineThing("checklist.checklist", {
 	makers: "anyone",
 	state: { name: str(), items: arr(Item) },
 	methods: {
-		/** Adds an item, not done; answers its id. Refused once the checklist holds `ITEMS` items. */
+		/** Adds an item, not done; answers its id. Refused once the checklist holds `MAX_ITEMS` items. */
 		addItem: method(obj({ text: ItemText }), str()),
 		/** Marks item `id` done or not; refused for an item the checklist does not have. */
 		setDone: method(obj({ id: str(), done: bool() })),

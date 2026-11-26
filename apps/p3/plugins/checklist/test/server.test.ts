@@ -4,26 +4,19 @@
 // `@open` alone, or a tick withheld, leaves a reader on the same hold, live; the owner gets both without being put in;
 // a checklist hidden in a workspace, or a caller removed, is denied), items keyed by the checklist (the same in every
 // workspace it is linked in), ticks live for every holder, refusals and the limit of 500 items. The cost of the one
-// shared read, whoever holds the checklist, is counted on a host with telemetry (`world`).
+// shared read, whoever holds the checklist, is counted (`chord.query.runs`), and so is its release with the last
+// holder.
 
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import {
-	type Ctx,
-	BACKGROUND_CONTEXT as context,
-	isChordError,
-	type P3Principal,
-	type Reference,
-	until,
-} from "@earendil-works/p3/v1";
+import { BACKGROUND_CONTEXT as context, isChordError, type P3Principal, until } from "@earendil-works/p3/v1";
 import { collected, eventually, within } from "../../../test/until.ts";
-import { ThingHooks, ThingsStore } from "../../things/contract.server.ts";
+import { ThingHooks } from "../../things/contract.server.ts";
 import { OPEN } from "../../things/contract.ts";
 import { ThingKinds } from "../../things/kind.ts";
 import { BY, type KindServer, kindServer } from "../../things/test/kind-server.ts";
-import { world } from "../../things/test/world.ts";
-import { Checklist, ChecklistKind } from "../contract.ts";
+import { type Checklist, ChecklistKind } from "../contract.ts";
 import checklistServer from "../server.ts";
 import { ChecklistStore } from "../store.ts";
 
@@ -36,7 +29,11 @@ const AGENT: P3Principal = { kind: "worker", session: "s1" };
 let c: KindServer<typeof Checklist>;
 
 beforeEach(async () => {
-	c = await kindServer(ROOT, ChecklistKind, context);
+	c = await kindServer(
+		{ name: "@earendil-works/p3-checklist", root: ROOT, server: checklistServer },
+		ChecklistKind,
+		context,
+	);
 });
 
 afterEach(() => c.close());
@@ -52,7 +49,7 @@ async function refused(promise: Promise<unknown>, code = "forbidden"): Promise<v
 
 describe("the kind", () => {
 	it("is registered by the checklist plugin, made by anyone", async () => {
-		const entry = (await c.t.host.registry(ThingKinds, context)).value.get(ChecklistKind.name);
+		const entry = (await c.host.registry(ThingKinds, context)).value.get(ChecklistKind.name);
 		assert.deepEqual([entry?.plugin, entry?.value.makers], ["@earendil-works/p3-checklist", "anyone"]);
 	});
 
@@ -73,15 +70,15 @@ describe("the kind", () => {
 		await c.holding(ann, c.pi, kept, (list, ctx) => list.addItem!({ text: "kept" }, ctx));
 		await c.things.unlink({ workspace: c.pi, thing: gone }, context);
 		const stored = async (checklist: string) =>
-			(await (await c.t.host.get(ChecklistStore, {}, context)).items.of.page({ checklist }, 10, context)).items;
+			(await (await c.host.get(ChecklistStore, {}, context)).items.of.page({ checklist }, 10, context)).items;
 		await eventually(
 			() => stored(gone),
 			(rows) => rows.length === 0,
 			2000,
 		);
 		// The things plugin runs a delete again after a failure or a restart: a second run finds nothing and succeeds.
-		const hook = (await c.t.host.registry(ThingHooks, context)).value.get(ChecklistKind.name)?.value.delete;
-		await c.t.root((ctx) => hook!(gone, ctx), context);
+		const hook = (await c.host.registry(ThingHooks, context)).value.get(ChecklistKind.name)?.value.delete;
+		await c.host.root((ctx) => hook!(gone, ctx), context);
 		assert.deepEqual(
 			(await stored(kept)).map(({ text }) => text),
 			["kept"],
@@ -227,55 +224,53 @@ describe("a checklist's items", () => {
 
 describe("the cost of a checklist's read", () => {
 	it("is one run of its items per tick, however many hold it", async () => {
-		const w = await world(context, [{ name: "@earendil-works/p3-checklist", facet: checklistServer }]);
+		const persons = [await c.person("Ann"), await c.person("Ben"), await c.person("Cy")];
+		const thing = await c.thingIn(c.pi);
+		const holders = await c.holders(persons, c.pi, thing);
 		try {
-			const things = await w.host.get(ThingsStore, {}, context);
-			const pi = (await things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
-			const principals: P3Principal[] = [];
-			for (const name of ["Ann", "Ben", "Cy"]) {
-				const id = await things.createPerson({ name, madeBy: BY }, context);
-				await things.putParty({ workspace: pi, party: { kind: "person", person: id }, source: BY }, context);
-				principals.push({ kind: "person", id, name });
-			}
-			const thing = await things.create({ kind: ChecklistKind.name, name: "", workspace: pi, by: BY }, context);
-			const held: { list: Reference<typeof Checklist>; ctx: Ctx<P3Principal> }[] = [];
-			const released = Promise.withResolvers<void>();
-			const holds = principals.map((principal) =>
-				w.host.root(
-					async (ctx) => {
-						held.push({ list: await ctx.get(Checklist, { workspace: pi, thing }), ctx });
-						await released.promise;
-					},
-					context,
-					{ principal },
-				),
-			);
-			await eventually(
-				async () => held.length,
-				(count) => count === 3,
-				2000,
-			);
-			const [ann] = held;
-			const id = await ann!.list.addItem!({ text: "tent" }, ann!.ctx);
+			const [ann] = holders.held;
+			const id = await ann!.ref.addItem!({ text: "tent" }, ann!.ctx);
 			const all = (done: boolean) =>
 				Promise.all(
-					held.map(({ list, ctx }) => until(list.items, (items) => items[0]?.done === done, within("", ctx))),
+					holders.held.map(({ ref, ctx }) =>
+						until(ref.items, (items) => items[0]?.done === done, within(`done: ${done}`, ctx)),
+					),
 				);
 			await all(false);
-			const before = w.count("chord.query.runs");
-			await ann!.list.setDone!({ id, done: true }, ann!.ctx);
+			const before = c.count("chord.query.runs");
+			await ann!.ref.setDone!({ id, done: true }, ann!.ctx);
 			await all(true);
-			assert.equal(w.count("chord.query.runs") - before, 1);
-			released.resolve();
-			await Promise.all(holds);
+			assert.equal(c.count("chord.query.runs") - before, 1);
 		} finally {
-			await w.close(context);
+			await holders.release();
 		}
 	});
 });
 
 describe("a released checklist", () => {
-	it("is collected with its shared read", async () => {
+	it("releases its shared read with its last holder: the next holder opens it again", async () => {
+		const [ann, ben] = [await c.person("Ann"), await c.person("Ben")];
+		const thing = await c.thingIn(c.pi);
+		const first = await c.holders([ann, ben], c.pi, thing);
+		// Another holder joins the open shared read: it reads nothing.
+		const joined = c.count("chord.query.runs");
+		const third = await c.holders([await c.person("Cy")], c.pi, thing);
+		assert.equal(c.count("chord.query.runs"), joined);
+		await third.release();
+		await first.release();
+		// With every holder gone the shared read closes (its object ends); a new holder opens it again.
+		await eventually(
+			async () => {
+				const before = c.count("chord.query.runs");
+				await c.holding(ann, c.pi, thing, async (list) => list.items.value);
+				return c.count("chord.query.runs") - before;
+			},
+			(runs) => runs > 0,
+			5000,
+		);
+	});
+
+	it("is collected", async () => {
 		const ann = await c.person("Ann");
 		const thing = await c.thingIn(c.pi);
 		const refs: WeakRef<object>[] = [];
