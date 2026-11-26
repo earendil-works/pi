@@ -5,11 +5,12 @@
  * createAgentSession() options. The SDK does the heavy lifting.
  */
 
+import { resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { type ImageContent, modelsAreEqual } from "@earendil-works/pi-ai";
 import { setCapabilityOverrides, takeProgramResumeToken } from "@earendil-works/pi-tui";
 import chalk from "chalk";
-import { type Args, type Mode, normalizeSessionName, parseArgs, printHelp } from "./cli/args.ts";
+import { type Args, type Mode, normalizeSessionName, parseArgs, printHelp, takeAgentDirArg } from "./cli/args.ts";
 import {
 	type AuthCheckResult,
 	checkProviderAuth,
@@ -36,7 +37,15 @@ import { listModels } from "./cli/list-models.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
 import { selectSession } from "./cli/session-picker.ts";
 import { shouldRunFirstTimeSetup, showFirstTimeSetup, showStartupSelector } from "./cli/startup-ui.ts";
-import { APP_NAME, ENV_SESSION_DIR, expandTildePath, getAgentDir, getPackageDir, VERSION } from "./config.ts";
+import {
+	APP_NAME,
+	ENV_AGENT_DIR,
+	ENV_SESSION_DIR,
+	expandTildePath,
+	getAgentDir,
+	getPackageDir,
+	VERSION,
+} from "./config.ts";
 import { type CreateAgentSessionRuntimeFactory, createAgentSessionRuntime } from "./core/agent-session-runtime.ts";
 import {
 	type AgentSessionRuntimeDiagnostic,
@@ -602,8 +611,20 @@ export interface MainOptions {
 	extensionFactories?: InlineExtension[];
 }
 
-export async function main(args: string[], options?: MainOptions) {
+export async function main(cliArgs: string[], options?: MainOptions) {
 	resetTimings();
+	const agentDirArg = takeAgentDirArg(cliArgs);
+	if (agentDirArg.kind === "error") {
+		console.error(chalk.red(`Error: ${agentDirArg.message}`));
+		process.exit(1);
+	}
+	const args = agentDirArg.args;
+	if (agentDirArg.agentDir) {
+		// Through the environment, like --offline: everything reads the agent dir from there, and child processes
+		// (bash tool, extensions, a pi started by the agent) use the same config as with PI_CODING_AGENT_DIR. Absolute,
+		// so the resume command pi reports does not depend on the directory it is run in.
+		process.env[ENV_AGENT_DIR] = resolve(expandTildePath(agentDirArg.agentDir));
+	}
 	// Taken in every mode, before anything starts a child process: pi reports its own resume command, and
 	// shells, editors and extension processes it starts must not replace it or register commands that later
 	// run with the user's rights (OSC 7577).

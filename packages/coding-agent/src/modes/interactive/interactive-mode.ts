@@ -65,6 +65,7 @@ import {
 	getAuthPath,
 	getDebugLogPath,
 	getDocsPath,
+	usesDefaultAgentDir,
 	VERSION,
 } from "../../config.ts";
 import { type AgentSession, type AgentSessionEvent, parseSkillBlock } from "../../core/agent-session.ts";
@@ -136,7 +137,7 @@ import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipb
 import { flushStdout } from "../../utils/flush-stdout.ts";
 import { parseGitUrl } from "../../utils/git.ts";
 import { ensurePngTranscoder } from "../../utils/image-convert.ts";
-import { getCwdRelativePath, shortenHomePath } from "../../utils/paths.ts";
+import { getCwdRelativePath, resolvePath, shortenHomePath } from "../../utils/paths.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { loadAllHighlightLanguages } from "../../utils/syntax-highlight.ts";
 import { stripBom } from "../../utils/text.ts";
@@ -358,6 +359,11 @@ function getResumeArgs(sessionManager: SessionManager): string[] | undefined {
 	if (!sessionFile || !fs.existsSync(sessionFile)) return undefined;
 
 	const args = [APP_NAME];
+	// A config dir set with PI_CODING_AGENT_DIR would be lost: a terminal resumes the command without the environment
+	// pi was started with (OSC 7577), and a user copying the command may run it in another shell.
+	if (!usesDefaultAgentDir()) {
+		args.push("--agent-dir", resolvePath(getAgentDir()));
+	}
 	if (!sessionManager.usesDefaultSessionDir()) {
 		args.push("--session-dir", sessionManager.getSessionDir());
 	}
