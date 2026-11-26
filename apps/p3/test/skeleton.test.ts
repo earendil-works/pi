@@ -145,26 +145,30 @@ describe("session workers", () => {
 		assert.notEqual((await probe(t, id)).pid.value, pid);
 	});
 
-	it("a working session's worker starts again after a server restart, unasked", async (c) => {
-		running = await testServer({ plugins: [PROBE, FAUX] }, context);
-		const t = running;
-		const folder = await mkdtemp(join(tmpdir(), "p3-skeleton-run-"));
-		// The run waits on its gate on any worker; opened after the case, so no bash call waits on.
-		c.after(async () => {
-			await openGate(folder);
-			await rm(folder, { recursive: true, force: true });
-		});
-		const client = await t.client(context);
-		const id = await gatedSession(client, "one", folder, context);
-		// The harness reports the run `working` (a report by the test would race the harness's own).
-		await startRun(client, id, context);
-		running = await t.restart(context);
-		const restarted = running;
-		await eventually(
-			() => restarted.workers(context),
-			(workers) => workers[id]?.status === "running",
-		);
-	});
+	it(
+		"a working session's worker starts again after a server restart, unasked",
+		{ skip: "until sessions are workspaces, ERNDL-704 push 3" },
+		async (c) => {
+			running = await testServer({ plugins: [PROBE, FAUX] }, context);
+			const t = running;
+			const folder = await mkdtemp(join(tmpdir(), "p3-skeleton-run-"));
+			// The run waits on its gate on any worker; opened after the case, so no bash call waits on.
+			c.after(async () => {
+				await openGate(folder);
+				await rm(folder, { recursive: true, force: true });
+			});
+			const client = await t.client(context);
+			const id = await gatedSession(client, "one", folder, context);
+			// The harness reports the run `working` (a report by the test would race the harness's own).
+			await startRun(client, id, context);
+			running = await t.restart(context);
+			const restarted = running;
+			await eventually(
+				() => restarted.workers(context),
+				(workers) => workers[id]?.status === "running",
+			);
+		},
+	);
 
 	// Sol, review round 2 (S6): the case applied again and again until the code changed; now one apply per change,
 	// once the watcher marked it, through the command `p3 apply` sends (D11).

@@ -13,7 +13,7 @@ the builders were told not to make any of it worse.
   `tools.coding` with `shell: true`. Settled: a kind says how its things come to exist (`content`, `person`,
   `plugin`); the store refuses the rest.
 - **The agent making things for people, and keeping them** (Fable 4, Astra 1): gone. The agent makes only content,
-  with one tool of the harness, `thing_create`. Each kind keeps its own list tool (decided).
+  with one tool (now the things plugin's `make_thing`). Each kind keeps its own list tool (decided).
 - **Apps could not name "the Pi's coding tools"** (Fable 6): `ensureThing`, `things.ofKind`, and following.
 - **Adding a thing by knowing its id** (Astra 4): `add` takes only a thing the caller manages; a second add of the
   same thing is refused, so it cannot change who linked it or its options.

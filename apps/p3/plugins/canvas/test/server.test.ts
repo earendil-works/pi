@@ -365,3 +365,21 @@ describe("a canvas's motion", () => {
 		assert.deepEqual(elsewhere, []);
 	});
 });
+
+describe("a page read now", () => {
+	it("reads every shape page by page and keeps the holder's loaded pages as they were (Astra, round 1)", async () => {
+		const where = await workspace("s1");
+		const thing = await canvasIn(where);
+		const principal = { kind: "worker", session: "s1" } as const;
+		await holding(principal, where, thing, async (canvas, ctx) => {
+			for (let i = 0; i < 6; i++) await canvas.add!({ shapes: Array(100).fill(BOX) }, ctx);
+			assert.equal(canvas.shapes.value.rows.length, 500);
+			const first = await canvas.page({}, ctx);
+			assert.equal(first.rows.length, 500);
+			assert.ok(first.next !== undefined);
+			const second = await canvas.page({ after: first.next }, ctx);
+			assert.deepEqual([second.rows.length, second.next], [100, undefined]);
+			assert.equal(canvas.shapes.value.rows.length, 500, "the holder keeps its first page only");
+		});
+	});
+});
