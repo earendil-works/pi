@@ -19,6 +19,7 @@ export {
 	type PlainComparison,
 	principalJson,
 	principalKey,
+	samePlainFields,
 	samePlainJson,
 	samePrincipal,
 } from "./principal.ts";

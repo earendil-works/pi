@@ -18,6 +18,7 @@ import {
 	copyPlainJson,
 	isMessageData,
 	type PlainComparison,
+	samePlainFields,
 	samePlainJson,
 	stackless,
 } from "../data/internal.ts";
@@ -165,6 +166,8 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 	#decided: Decided | undefined;
 	/** Whether a change of its source waits for the current batch's flush: one check per batch. */
 	#flushing = false;
+	/** The pairs of a read's top-level fields, reused by the next read (`#takeFields`); made by the first with fields. */
+	#scratch: unknown[] | undefined;
 	/** Follows a live query it waits on: its next adoption checks again. Made by the first settle with live queries. */
 	#readerWake: Dependent | undefined;
 	#released = false;
@@ -460,32 +463,72 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 	}
 
 	/**
-	 * An object's allowed value: as before the hot-path pass, an object whose `granted` (read once, a property read
-	 * whatever its enumerability) is none or a list of the contract's grants, checked in the list's own iteration
-	 * before anything else (a refused value is broken and counts no walk). Then compared with what the last allow
-	 * kept, Chord's own copy: an equal one is that decision, read without allocating (the names against the kept ones,
-	 * the other fields against the copy, plain JSON only); anything else goes `#adoptAllow`'s way.
+	 * An object's allowed value, read in the order it was before the hot-path pass (`{ granted, ...data } = value`, the
+	 * names checked in the list's own iteration and deduped in a second one, then the walk counted, then the data
+	 * walked): its `granted` (a property read, whatever its enumerability), its top-level fields, the names checked (a
+	 * refused value is broken and counts no walk) and taken, the walk counted (telemetry runs code of anyone's: what it
+	 * changes of the value now is not this read's), then the data compared. Against a last allow kept plain, an equal
+	 * read allocates nothing: the fields go into the decision's scratch list, the names are compared with the kept ones
+	 * in their second pass; anything else is `#adoptAllow`'s.
 	 */
 	#allowObject(value: JsonValue, grants: readonly string[], label: string, context: Context): Verdict {
 		if (typeof value !== "object" || value === null || Array.isArray(value)) {
 			return brokenRead("its admission's value is an object (allow({ granted, ...data }))", label);
 		}
 		const listed: unknown = value.granted;
-		if (listed !== undefined) {
-			if (!Array.isArray(listed)) return brokenRead("its admission's granted is a list of names", label);
-			const refused = refusedNames(listed, grants, label);
-			if (refused !== undefined) return refused;
-		}
-		countWalk(context);
 		const last = this.#lastAllow();
-		if (
-			last?.kind === "allowPlain" &&
-			sameNames(listed as readonly unknown[] | undefined, namesOf(last.verdict.granted)) === "equal" &&
-			samePlainJson(last.data, value, "granted") === "equal"
-		) {
-			return last.verdict;
+		const fields = last?.kind === "allowPlain" ? this.#takeFields(value) : undefined;
+		try {
+			// No plain last allow, or more fields than a scratch list holds: the data as a rest copy made it.
+			const data = fields === undefined ? dataOf(value) : undefined;
+			if (listed !== undefined) {
+				if (!Array.isArray(listed)) return brokenRead("its admission's granted is a list of names", label);
+				const refused = refusedNames(listed, grants, label);
+				if (refused !== undefined) return refused;
+			}
+			const kept = last === undefined ? NO_ITEMS : namesOf(last.verdict.granted);
+			const sameGrants =
+				last?.kind === "allowPlain" && sameNames(listed as readonly unknown[] | undefined, kept) === "equal";
+			// The second pass over the names, as `[...new Set(listed)].sort()` made it (a list's iterator may throw).
+			const names = sameGrants ? kept : listed === undefined ? NO_ITEMS : [...new Set(listed as string[])].sort();
+			countWalk(context);
+			if (last?.kind === "allowPlain" && fields !== undefined) {
+				if (sameGrants && samePlainFields(last.data, fields.list, fields.count) === "equal") return last.verdict;
+				return this.#adoptAllow(fieldsData(value, fields), names, grants, last);
+			}
+			// Taken above when no plain allow was kept.
+			return this.#adoptAllow(data!, names, grants, last);
+		} finally {
+			if (fields !== undefined) this.#giveFields(fields);
 		}
-		return this.#adoptAllow(value, listed as readonly string[] | undefined, grants, last);
+	}
+
+	/**
+	 * `value`'s own enumerable string-keyed fields but `granted`, as key and value pairs in the decision's scratch list
+	 * (taken: a read nested in this one makes its own); `undefined` for more than 128 (the caller copies them then).
+	 */
+	#takeFields(value: { readonly [field: string]: JsonValue }): Fields | undefined {
+		let list = this.#scratch;
+		this.#scratch = undefined;
+		let count = 0;
+		for (const key in value) {
+			if (key === "granted" || !isEnumerable.call(value, key)) continue;
+			if (count === 256) {
+				if (list !== undefined) this.#giveFields({ list, count });
+				return undefined;
+			}
+			list ??= [];
+			list[count++] = key;
+			list[count++] = value[key];
+		}
+		return { list: list ?? NO_ITEMS, count };
+	}
+
+	/** Puts the scratch list back, its pairs cleared: it keeps nothing of a plugin's value between reads. */
+	#giveFields({ list, count }: Fields): void {
+		if (list.length === 0) return;
+		(list as unknown[]).fill(undefined, 0, count);
+		this.#scratch = list as unknown[];
 	}
 
 	/** The last decision when it was an allow. */
@@ -513,19 +556,17 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 	}
 
 	/**
-	 * An object's allow that is not the last one's plain value, read as before the hot-path pass: its data copied (its
-	 * own enumerable fields but `granted`), its names deduped and sorted (a second iteration of the list, as before),
-	 * and compared with the last allow: by Chord's copies when both are plain JSON, else by canonical JSON's text, made
-	 * now (it throws where it threw) and kept. Equal, the last verdict; else a new one, its copy or text kept.
+	 * An object's allow that is not the last one's plain value: its `data` (own enumerable fields but `granted`, taken
+	 * before the walk was counted) and its `names` (sorted, without duplicates) compared with the last allow by Chord's
+	 * copies when both are plain JSON, else by canonical JSON's text, made now (it throws where it threw) and kept.
+	 * Equal, the last verdict; else a new one, its copy or text kept.
 	 */
 	#adoptAllow(
-		value: { readonly [field: string]: JsonValue },
-		listed: readonly string[] | undefined,
+		data: { readonly [field: string]: JsonValue },
+		names: readonly string[],
 		grants: readonly string[],
 		last: DecidedAllow | undefined,
 	): Allowed {
-		const data = dataOf(value);
-		const names = listed === undefined ? NO_ITEMS : sortedNames(listed, grants);
 		const copy = copyPlainJson(data);
 		let key: string | undefined;
 		if (copy !== undefined && last?.kind !== "allowText") {
@@ -655,7 +696,8 @@ function sameNames(listed: readonly unknown[] | undefined, kept: readonly string
 		if (at < 0) return "different";
 		seen |= 1 << at;
 	}
-	return seen === (1 << kept.length) - 1 ? "equal" : "different";
+	// 2 ** 31 - 1, not (1 << 31) - 1: a shift by 31 is negative.
+	return seen === 2 ** kept.length - 1 ? "equal" : "different";
 }
 
 /** Whether two of Chord's sorted name lists are the same. */
@@ -666,26 +708,6 @@ function sameList(a: readonly string[], b: readonly string[]): boolean {
 }
 
 /**
- * The names a checked `listed` grants, sorted and without duplicates, as `[...new Set(listed)].sort()` made them
- * before the hot-path pass (its second iteration of the list): for a list that iterates as an index walk, the grants
- * it lists, in the grants' order (sorted, `fingerprint.ts`), with no set made.
- */
-function sortedNames(listed: readonly string[], grants: readonly string[]): readonly string[] {
-	if (!plainIteration(listed)) return [...new Set(listed)].sort();
-	const names: string[] = [];
-	for (let at = 0; at < grants.length; at++) {
-		const grant = grants[at]!;
-		for (let index = 0; index < listed.length; index++) {
-			if (listed[index] === grant) {
-				names.push(grant);
-				break;
-			}
-		}
-	}
-	return names;
-}
-
-/**
  * The data of an allowed value as before the hot-path pass (`{ granted, ...data } = value`, without its second read
  * of `granted`): its own enumerable fields but `granted`, symbols too, in their order.
  */
@@ -693,13 +715,32 @@ function dataOf(value: { readonly [field: string]: JsonValue }): { readonly [fie
 	const data: { [field: string | symbol]: unknown } = {};
 	for (const key of Reflect.ownKeys(value)) {
 		if (key === "granted" || !isEnumerable.call(value, key)) continue;
-		const field = (value as { readonly [field: string | symbol]: unknown })[key];
-		// A data property of its own, as a rest copy makes it (an assignment of `__proto__` sets the prototype).
-		if (key === "__proto__")
-			Object.defineProperty(data, key, { value: field, enumerable: true, configurable: true, writable: true });
-		else data[key] = field;
+		putField(data, key, (value as { readonly [field: string | symbol]: unknown })[key]);
 	}
 	return data as { readonly [field: string]: JsonValue };
+}
+
+/** The pairs of a read's top-level fields taken into a scratch list (`#takeFields`): `count` entries of `list`. */
+type Fields = { readonly list: readonly unknown[]; readonly count: number };
+
+/**
+ * The data `dataOf` makes, from fields taken before the walk was counted (in `Object.keys` order, which is their
+ * order among the own keys) and the value's own enumerable symbol-keyed ones after them.
+ */
+function fieldsData(value: object, { list, count }: Fields): { readonly [field: string]: JsonValue } {
+	const data: { [field: string | symbol]: unknown } = {};
+	for (let index = 0; index < count; index += 2) putField(data, list[index] as string, list[index + 1]);
+	for (const symbol of Object.getOwnPropertySymbols(value)) {
+		if (isEnumerable.call(value, symbol)) data[symbol] = (value as { readonly [field: symbol]: unknown })[symbol];
+	}
+	return data as { readonly [field: string]: JsonValue };
+}
+
+/** A data property of its own, as a rest copy makes it (an assignment of `__proto__` would set the prototype). */
+function putField(data: { [field: string | symbol]: unknown }, key: string | symbol, field: unknown): void {
+	if (key === "__proto__") {
+		Object.defineProperty(data, key, { value: field, enumerable: true, configurable: true, writable: true });
+	} else data[key] = field;
 }
 
 const isEnumerable = Object.prototype.propertyIsEnumerable;

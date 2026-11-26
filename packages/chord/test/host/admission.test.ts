@@ -7,8 +7,16 @@
 // contract bumped with and without `accepts`), of the admitted type itself (rehearsal by fingerprint, an unrehearsed
 // factory's error at its activation, a decision change while its old attempt drains or its successor opens a native).
 
+import { performance } from "node:perf_hooks";
+import { NOOP_TELEMETRY_CONTEXT, NOOP_TELEMETRY_METRICS } from "@earendil-works/pi-telemetry";
 import { describe, expect, it, vi } from "vitest";
-import { awaitWithContext, BACKGROUND_CONTEXT as context, withCancel } from "../../src/context/index.ts";
+import {
+	awaitWithContext,
+	type Context,
+	BACKGROUND_CONTEXT as context,
+	withCancel,
+	withTelemetry,
+} from "../../src/context/index.ts";
 import {
 	evolve,
 	grantable,
@@ -22,9 +30,10 @@ import {
 	remote,
 	str,
 } from "../../src/contracts/index.ts";
+import { currentVersion } from "../../src/contracts/internal.ts";
 import { broken, ChordError } from "../../src/data/index.ts";
 import { defineState } from "../../src/documents/index.ts";
-import { Decision } from "../../src/host/admission.ts";
+import { type Allowed, Decision } from "../../src/host/admission.ts";
 import { ChordHost } from "../../src/host/host.ts";
 import {
 	type Admit,
@@ -792,6 +801,144 @@ describe("what a decision compares a read with", () => {
 			const first = read(s, allowing(pair[0]));
 			for (const value of pair.slice(1)) expect(read(s, allowing(value))).toBe(first);
 		}
+	});
+});
+
+// The third review of the hot-path pass (Astra, 2026-11-26): the walk is counted where it was, after the names and
+// the top-level fields were taken (telemetry runs application code); 31 names compare as fast as 30; a changed read
+// walks the listed names, not every grant of the contract.
+describe("the order of a read", () => {
+	/** A decision granting `grants`, read with an allow of `value` under `under`. */
+	function reader(grants: readonly string[]) {
+		const host = new ChordHost<TestPrincipal>({
+			address: Server(),
+			principal: { kind: "server" },
+			onError: () => {},
+		});
+		const source = new (class extends Source {
+			next: unknown;
+			get value(): never {
+				return this.next as never;
+			}
+			deliver() {}
+		})(host.batch);
+		const caller = { principal: host.principal, incarnation: host.incarnation };
+		const decision = new Decision({ host, label: "doc", dependent: undefined, caller, grants, moved() {} });
+		decision.declare(() => source, context);
+		return (value: unknown, under: Context = context) => {
+			source.next = { kind: "allow", value };
+			return decision.now(under) as Allowed;
+		};
+	}
+
+	it("what telemetry changes of the value while the walk is counted is not this read's", () => {
+		const value = { granted: ["a"], role: "reader" };
+		const read = reader(["a", "b"]);
+		let hits = 0;
+		const metrics = {
+			...NOOP_TELEMETRY_METRICS,
+			counter: (name: string) => ({
+				add: () => {
+					if (name !== "chord.data.walks") return;
+					hits++;
+					value.granted[0] = "b";
+					value.role = "other";
+				},
+			}),
+		};
+		const verdict = read(value, withTelemetry({ ...NOOP_TELEMETRY_CONTEXT, metrics } as never, context));
+		expect([hits, [...verdict.granted], (verdict.value as { role: string }).role]).toEqual([1, ["a"], "reader"]);
+		expect([...read(value).granted]).toEqual(["b"]);
+	});
+
+	it("a grant list whose second iteration throws has counted no walk", async () => {
+		const read = reader(["a"]);
+		let pass = 0;
+		const names = Object.assign(["a"], {
+			*[Symbol.iterator]() {
+				if (++pass === 2) throw new Error("unable to enumerate grants");
+				yield "a";
+			},
+		});
+		const counts = await counted((counting) => {
+			expect(() => read({ granted: names }, counting)).toThrow("unable to enumerate grants");
+		});
+		expect([pass, counts.walks]).toEqual([2, 0]);
+	});
+
+	it("equal reads stay one verdict and changes rebuild, from 30 to 33 names", () => {
+		for (const n of [30, 31, 32, 33]) {
+			const names = Array.from({ length: n }, (_, index) => `f${String(index).padStart(3, "0")}`);
+			const read = reader(names);
+			const raw = { granted: names.slice(), v: { a: [{ b: 1 }] } };
+			const first = read(raw);
+			expect([...first.granted]).toEqual(names);
+			expect(read({ ...raw, granted: [...names].reverse().concat(names[0]!) })).toBe(first);
+			const minus = names.slice(1).concat(names[1]!);
+			const next = read({ ...raw, granted: minus });
+			expect(next).not.toBe(first);
+			expect([...next.granted]).toEqual(names.slice(1));
+			(next.value as { v: { a: { b: number }[] } }).v.a[0]!.b = 9;
+			const reverted = read({ ...raw, granted: minus });
+			expect(reverted).not.toBe(next);
+			expect((reverted.value as { v: { a: { b: number }[] } }).v.a[0]!.b).toBe(9);
+			const changed = read({ ...raw, granted: minus, v: new Date(0) });
+			expect(read({ ...raw, granted: minus, v: {} })).toBe(changed);
+		}
+	});
+
+	it("the admitted value has the rest copy's own keys in their order, its symbols and its prototype", () => {
+		const read = reader(["a"]);
+		const symbol = Symbol("s");
+		const value = Object.assign(
+			Object.create(null),
+			JSON.parse('{"v":"data","__proto__":{},"granted":["a"],"3":"i","tail":1}'),
+			{ [symbol]: true },
+		);
+		const admitted = read(value).value as object;
+		expect(Reflect.ownKeys(admitted)).toEqual(["3", "v", "__proto__", "tail", "granted", symbol]);
+		expect([Object.getPrototypeOf(admitted), Object.hasOwn(admitted, "__proto__")]).toEqual([Object.prototype, true]);
+	});
+
+	/** A decision over a contract of `n` flags granting the first `listed`, read `runs` times: its time. */
+	function flags(n: number, listed: number, change: boolean) {
+		const codes = Array.from({ length: n }, (_, index) => `f${String(index).padStart(4, "0")}`);
+		const Flagged = remote(`app.flags${n}`, {
+			version: 1,
+			params: {},
+			hostAddress: () => Server(),
+			state: {},
+			flags: Object.fromEntries(codes.map((flag) => [flag, flag])),
+		});
+		const read = reader(currentVersion(Flagged).grants);
+		const granted = codes.slice(0, listed);
+		const values = [0, 1].map((role) => ({ granted, role: change ? role : 0 }));
+		return (runs: number): number => {
+			let sum = 0;
+			const start = performance.now();
+			for (let run = 0; run < runs; run++) sum += (read(values[run % 2]).value as { role: number }).role;
+			const duration = performance.now() - start;
+			expect(sum).toBe(change ? runs / 2 : 0);
+			return duration;
+		};
+	}
+
+	const median = (list: number[]) => list.sort((a, b) => a - b)[Math.floor(list.length / 2)]!;
+
+	it("a changed role granting the first of 4,096 flags walks the listed names, not every flag", () => {
+		const [small, big] = [flags(1, 1, true), flags(4096, 1, true)];
+		small(2000);
+		big(2000);
+		const ratios = Array.from({ length: 7 }, () => big(6000) / small(6000));
+		expect(median(ratios)).toBeLessThan(4);
+	});
+
+	it("31 kept names of 2,048 flags compare as fast as 30", () => {
+		const [thirty, thirtyOne] = [flags(2048, 30, false), flags(2048, 31, false)];
+		thirty(100);
+		thirtyOne(100);
+		const ratios = Array.from({ length: 7 }, () => thirtyOne(400) / thirty(400));
+		expect(median(ratios)).toBeLessThan(3);
 	});
 });
 

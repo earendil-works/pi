@@ -114,6 +114,27 @@ export function samePlainJson(a: unknown, b: unknown, skip?: string): PlainCompa
 	return comparePlain(a, b, PLAIN_DEPTH, skip);
 }
 
+/**
+ * `samePlainJson` of an object `a` (Chord's copy) and an object whose own enumerable string-keyed fields were taken
+ * as `count` entries of key and value pairs in `pairs` (in their order): the fields compared, nothing read of the
+ * object itself. The same bounds, the object counting as the first level.
+ */
+export function samePlainFields(a: unknown, pairs: readonly unknown[], count: number): PlainComparison {
+	if (typeof a !== "object" || a === null || Array.isArray(a)) return "different";
+	budget = PLAIN_VALUES - 1;
+	const left = a as { readonly [key: string]: unknown };
+	let keys = 0;
+	for (let index = 0; index < count; index += 2) {
+		const key = pairs[index] as string;
+		if (!isEnumerable.call(left, key)) return "different";
+		const field = comparePlain(left[key], pairs[index + 1], PLAIN_DEPTH - 1, undefined);
+		if (field !== "equal") return field;
+		keys++;
+	}
+	for (const key in left) if (isEnumerable.call(left, key)) keys--;
+	return keys === 0 ? "equal" : "different";
+}
+
 /** What `samePlainJson` found for its second value. */
 export type PlainComparison = "equal" | "different" | "odd";
 
