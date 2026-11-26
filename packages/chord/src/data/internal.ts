@@ -1,6 +1,5 @@
 // Data for Chord's layers: per-call checks of params and arguments, principal keys, and errors on the wire.
 
-export { isMessageData } from "../contracts/message.ts";
 export { bindProvider, binds, type CheckedArgs, checkArgs, type Provider, type Value } from "./args.ts";
 export {
 	asChordError,

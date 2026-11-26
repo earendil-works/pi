@@ -48,7 +48,6 @@ try {
 - `principalKey(principal, context, customKey?)`, `canonicalJson(value, context)`.
 - `sameJson(kept, value, skip?)`: whether a plain JSON value is one read before (as canonical JSON's texts were the
   same), without making text.
-- `isMessageData(value)`: whether plugin code handed a message as data (declared in `contracts/message.ts`).
 - `invalid`, `asChordError`, `chordErrorFromJson`, `PROTOCOL_VERSION`, `CHORD_ERROR_REASONS`;
   `openFailure(thrown, label)`.
 
