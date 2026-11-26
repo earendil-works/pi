@@ -202,7 +202,7 @@ export const TickFor = oneOf("agents", "people", "all");
 /**
  * Who may do what with a thing here: the kind's own ticks, where its grants are written, and per party the `@open`
  * cell and one cell per tick. On a workspace `ticks` also has cells `@make:*` and `@make:<kind>` (item 114). Admitted
- * by Manage access here (R40).
+ * for anyone present here, read-only (decided against R40): changing a cell is `Workspace.setTick`, Manage access.
  */
 export const WhoMay = remote("things.who-may", {
 	version: 1,
