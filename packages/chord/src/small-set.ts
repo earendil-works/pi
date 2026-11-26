@@ -82,6 +82,14 @@ export class SmallSet<T> implements Iterable<T> {
 		}
 	}
 
+	/** Whether `test` holds for a member, for a test that changes no members (no generator, no list). */
+	some(test: (member: T) => boolean): boolean {
+		const several = this.#several;
+		if (several === undefined) return this.#only !== undefined && test(this.#only);
+		for (const member of several) if (test(member)) return true;
+		return false;
+	}
+
 	/** Its members now, as a list: what spreading a set made (no generator). */
 	snapshot(): readonly T[] {
 		if (this.#several !== undefined) return [...this.#several];

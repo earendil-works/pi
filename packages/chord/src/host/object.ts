@@ -1501,8 +1501,7 @@ export class ChordObject implements Target {
 
 	/** Whether a holder of `version` holds it. */
 	#heldAt(version: number): boolean {
-		for (const holder of this.#holders) if (holder.contract.version === version) return true;
-		return false;
+		return this.#holders.some((holder) => holder.contract.version === version);
 	}
 
 	/**

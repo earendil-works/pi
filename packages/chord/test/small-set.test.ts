@@ -93,8 +93,12 @@ describe("a small set", () => {
 		members.add("a");
 		expect([members.size, [...members]]).toEqual([2, ["a", "b"]]);
 		expect([members.delete("a"), members.delete("a"), [...members]]).toEqual([true, false, ["b"]]);
+		expect([members.some((member) => member === "b"), members.some((member) => member === "a")]).toEqual([
+			true,
+			false,
+		]);
 		members.clear();
-		expect([members.size, [...members]]).toEqual([0, []]);
+		expect([members.size, [...members], members.some(() => true)]).toEqual([0, [], false]);
 	});
 
 	it("yields a member added during an iteration of one, and the next one after the only one is replaced", () => {
