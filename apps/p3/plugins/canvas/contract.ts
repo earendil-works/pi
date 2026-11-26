@@ -9,6 +9,7 @@ import {
 	arr,
 	bool,
 	defineThing,
+	grantable,
 	lit,
 	method,
 	nul,
@@ -103,23 +104,6 @@ export const Motion = union([
 export type Motion = Static<typeof Motion>;
 
 /**
- * The viewer's members: the canvas's name (its thing's; "Canvas" while it has none), its shapes loaded so far, oldest
- * first, and `more` for the next page; everyone's motion in the session as events; `point` and `leave`, which show the
- * caller's own pointer to the others.
- */
-const viewer = {
-	state: { name: str(), shapes: obj({ rows: arr(PlacedShape), moreAfter: bool() }) },
-	methods: {
-		more: method(),
-		/** Shows the caller's pointer at `x`, `y` to everyone on the board (a viewer's draft is dropped). */
-		point: method(Pointer),
-		/** Takes the caller's pointer off the board. */
-		leave: method(),
-	},
-	events: { motion: Motion },
-};
-
-/**
  * One board of a session (`thing`, a thing of `CanvasKind`), for its members and its agent: a viewer sees the shapes
  * and everyone's pointers; a drawer (who writes in the session and whose options say `draw`) also adds and removes
  * shapes and clears the board. `thing` is the canvas's id, its shapes' key.
@@ -129,19 +113,24 @@ export const Canvas = remote("canvas.board", {
 	params: { session: str(), thing: str() },
 	hostAddress: () => Server(),
 	admission: thingAdmission(CanvasKind),
-	variants: {
-		viewer,
-		drawer: {
-			state: viewer.state,
-			methods: {
-				...viewer.methods,
-				/** Adds shapes, drawn now by the caller, in order; answers their ids. */
-				add: method(obj({ shapes: arr(Shape, { min: 1, max: 100 }) }), arr(str())),
-				remove: method(obj({ id: str() })),
-				/** Removes every shape of the board. */
-				clear: method(),
-			},
-			events: viewer.events,
-		},
+	// The canvas's name (its thing's; "Canvas" while it has none), its shapes loaded so far, oldest first, and `more`
+	// for the next page; everyone's motion in the session as events; `point` and `leave`, which show the caller's own
+	// pointer to the others. A drawer is also granted `add`, `remove` and `clear` (`CANVAS_DRAWS`).
+	state: { name: str(), shapes: obj({ rows: arr(PlacedShape), moreAfter: bool() }) },
+	methods: {
+		more: method(),
+		/** Shows the caller's pointer at `x`, `y` to everyone on the board (a viewer's draft is dropped). */
+		point: method(Pointer),
+		/** Takes the caller's pointer off the board. */
+		leave: method(),
+		/** Adds shapes, drawn now by the caller, in order; answers their ids. */
+		add: grantable(method(obj({ shapes: arr(Shape, { min: 1, max: 100 }) }), arr(str()))),
+		remove: grantable(method(obj({ id: str() }))),
+		/** Removes every shape of the board. */
+		clear: grantable(method()),
 	},
+	events: { motion: Motion },
 });
+
+/** What a drawer of a board is granted. */
+export const CANVAS_DRAWS = ["add", "remove", "clear"] as const;

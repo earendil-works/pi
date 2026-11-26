@@ -238,7 +238,7 @@ export default defineFacet((host) => {
 
 	host.serve(Me, (_params, principal, self) => {
 		if (principal.kind === "worker") {
-			return { variant: "me", members: { me: constant({ kind: "agent", session: principal.session }) } };
+			return { me: constant({ kind: "agent", session: principal.session }) };
 		}
 		if (principal.kind !== "person") throw forbidden("people: persons' and agents'");
 		const found = self.liveQuery(self.get(PeopleStore, {}).persons.one, { id: principal.id }, { first: 1 });
@@ -258,7 +258,7 @@ export default defineFacet((host) => {
 				owner: row?.owner ?? false,
 			}),
 		);
-		return { variant: "me", members: { me } };
+		return { me };
 	});
 
 	host.serve(OwnerAccess, ({ caller }, principal, self) => {
@@ -267,10 +267,10 @@ export default defineFacet((host) => {
 		if (asker !== "server" && !asker.startsWith("worker:") && asker !== caller) {
 			throw forbidden("people: an answer about the caller only");
 		}
-		if (!caller.startsWith("person:")) return { variant: "answer", members: { owner: constant(false) } };
+		if (!caller.startsWith("person:")) return { owner: constant(false) };
 		const store = self.get(PeopleStore, {});
 		const found = self.liveQuery(store.persons.one, { id: caller.slice("person:".length) }, { first: 1 });
-		return { variant: "answer", members: { owner: self.derive([found], ([{ rows }]) => rows[0]?.owner === true) } };
+		return { owner: self.derive([found], ([{ rows }]) => rows[0]?.owner === true) };
 	});
 
 	host.serve(
@@ -285,16 +285,13 @@ export default defineFacet((host) => {
 				return invites.renew(person);
 			};
 			return {
-				variant: "owner",
-				members: {
-					invite: async ({ name }, ctx) => {
-						const person = await store.createPerson({ name }, ctx);
-						return { person, link: await link({ person }, ctx) };
-					},
-					link,
-					rename: ({ person, name }, ctx) => store.renamePerson({ person, name }, ctx),
-					remove: ({ person }, ctx) => store.removePerson({ person }, ctx),
+				invite: async ({ name }, ctx) => {
+					const person = await store.createPerson({ name }, ctx);
+					return { person, link: await link({ person }, ctx) };
 				},
+				link,
+				rename: ({ person, name }, ctx) => store.renamePerson({ person, name }, ctx),
+				remove: ({ person }, ctx) => store.removePerson({ person }, ctx),
 			};
 		},
 		{ admit: admitOwner },
@@ -304,7 +301,7 @@ export default defineFacet((host) => {
 		PeopleList,
 		(_params, _principal, _admitted, self) => {
 			const list = self.list("people", [[self.get(PeopleStore, {}).persons.all, {}]], { first: PAGE });
-			return { variant: "owner", members: { list: list.value, more: (ctx) => list.more(ctx) } };
+			return { list: list.value, more: (ctx) => list.more(ctx) };
 		},
 		{ admit: admitOwner },
 	);

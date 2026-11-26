@@ -4,28 +4,27 @@
 // reader's at once.
 
 import { Button, TextArea } from "@earendil-works/elanor-react";
-import { BACKGROUND_CONTEXT, type Context, Me, type Reference } from "@earendil-works/p3/v1";
-import { useHold, useRefState, useVariant, useWatch } from "@earendil-works/p3/v1/web";
+import { BACKGROUND_CONTEXT, type Context, Me, type Reference, type With, withGranted } from "@earendil-works/p3/v1";
+import { useHold, useLive, useRefState, useWatch } from "@earendil-works/p3/v1/web";
 import { useState } from "react";
-import { type Author, type Note, Notes } from "./contract.ts";
+import { type Author, NOTES_EDITS, type Note, Notes } from "./contract.ts";
 import styles from "./notes-view.module.css";
 
 /** Who is looking: a person (the owner among them) by id, or nobody known yet. */
 type Viewer = { readonly id: string } | undefined;
 
 /** The editor's methods, as the view calls them. */
-type Editor = Extract<Reference<typeof Notes>, { readonly variant: "editor" }>;
+type Editor = With<Reference<typeof Notes>, (typeof NOTES_EDITS)[number]>;
 
 /** Notebook `thing` of session `session`, as the viewer's admission allows. */
 export function NotesView(props: { readonly session: string; readonly thing: string }) {
 	const ref = useHold(Notes, { session: props.session, thing: props.thing });
-	const editor = useVariant(ref, "editor");
-	const reader = useVariant(ref, "reader");
+	const live = useLive(ref);
+	const editor = withGranted(live, ...NOTES_EDITS);
 	const state = useRefState(ref);
-	const live = editor ?? reader;
 	const list = useWatch(live?.list);
 	const name = useWatch(live?.name);
-	const me = useWatch(useVariant(useHold(Me, {}), "me")?.me);
+	const me = useWatch(useLive(useHold(Me, {}))?.me);
 	const action = useAction();
 	const viewer: Viewer = me?.kind === "person" ? { id: me.id } : undefined;
 	if (state?.kind === "failed" && state.cause.kind === "denied") {
@@ -35,10 +34,14 @@ export function NotesView(props: { readonly session: string; readonly thing: str
 		return <p className={styles.note}>These notes cannot be shown now.</p>;
 	}
 	return (
-		<section aria-label="Notes" className={styles.notes} data-notes={live?.variant ?? "loading"}>
+		<section
+			aria-label="Notes"
+			className={styles.notes}
+			data-notes={live === undefined ? "loading" : editor === undefined ? "reader" : "editor"}
+		>
 			<p className={styles.title} data-notes-name="">
 				{name ?? "Notes"}
-				{live?.variant === "reader" ? <span className={styles.readOnly}>Read only</span> : null}
+				{live !== undefined && editor === undefined ? <span className={styles.readOnly}>Read only</span> : null}
 			</p>
 			{editor === undefined ? null : <AddNote action={action} editor={editor} />}
 			{list === undefined ? (

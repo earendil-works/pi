@@ -62,8 +62,8 @@ describe("reloads while in use", () => {
 		const { t, owner, sessions, id } = await withSession();
 		const list = await owner.get(SessionsList, { app: "coding", set: "active", view: "v1" }, context);
 		const worker = await owner.get(SessionWorker, { session: id }, context);
-		assert.equal(list.variant, "sessions");
-		assert.equal(worker.variant, "view");
+		assert.equal(list.state.value.kind, "live");
+		assert.equal(worker.state.value.kind, "live");
 		await t.reload("@earendil-works/p3-sessions");
 		const second = await sessions.create(one("two"), context);
 		await until(list.list, (value) => value.rows.some((row) => row.id === second), within("the second row", context));
@@ -215,7 +215,6 @@ describe("access", () => {
 		const other = await sessions.create(one("other"), context);
 		const worker = await t.client({ kind: "worker", session: id });
 		const facts = await worker.get(SessionFacts, {}, context);
-		if (facts.variant !== "worker") return assert.fail(facts.variant);
 		assert.equal(facts.session.value?.id, id);
 		await assert.rejects(worker.get(SessionWorker, { session: other }, context, { readyTimeout: 1000 }));
 		assert.equal(t.workers.has(other), false, "no worker started for a refused principal");
@@ -242,7 +241,6 @@ describe("counted work", () => {
 		const list = await owner.get(SessionsList, { app: "coding", set: "active", view: "v" }, context);
 		await owner.get(SessionWorker, { session: b }, context);
 		const probe = await owner.get(Probe, { session: a }, context);
-		if (probe.variant !== "owner") return assert.fail(probe.variant);
 		const before = [t.count("chord.query.runs"), t.count("chord.query.probes")];
 		await probe.report({ state: "working" }, context);
 		// As a rename: the list's page and session A's two reads (its worker's row and its route's); B's not.

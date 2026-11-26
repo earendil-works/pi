@@ -17,7 +17,7 @@ import {
 } from "@earendil-works/p3/v1";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
 import { type Agent, type Extension, ThingExtensions } from "@earendil-works/p3/v1/worker";
-import { Checklist, type Item } from "../contract.ts";
+import { CHECKLIST_CHECKS, Checklist, type Item } from "../contract.ts";
 
 const SESSION = "s1";
 
@@ -32,29 +32,31 @@ const holders: P3Principal["kind"][] = [];
 const standIn = defineFacet((host) => {
 	host.serve(
 		Checklist,
-		(_params, principal, { access, options }, self) => {
+		(_params, principal, _admitted, self) => {
 			holders.push(principal.kind);
 			const shown = self.writable(items);
-			const reader = { items: self.derive([shown], ([value]) => [...value]) };
-			if (access === "read" || !options.check) return { variant: "reader", members: reader };
 			return {
-				variant: "checker",
-				members: {
-					...reader,
-					add: async ({ text }) => {
-						items = [...items, { id: "i9", text, done: false }];
-						shown.set(items);
-						return "i9";
-					},
-					tick: async ({ id, done }) => {
-						items = items.map((item) => (item.id === id ? { ...item, done } : item));
-						shown.set(items);
-						return null;
-					},
+				items: self.derive([shown], ([value]) => [...value]),
+				add: async ({ text }) => {
+					items = [...items, { id: "i9", text, done: false }];
+					shown.set(items);
+					return "i9";
+				},
+				tick: async ({ id, done }) => {
+					items = items.map((item) => (item.id === id ? { ...item, done } : item));
+					shown.set(items);
+					return null;
 				},
 			};
 		},
-		{ admit: () => constant(allow(admitted)) },
+		{
+			admit: () => {
+				const { access, options } = admitted;
+				return constant(
+					allow({ ...admitted, granted: access === "write" && options.check ? [...CHECKLIST_CHECKS] : [] }),
+				);
+			},
+		},
 	);
 });
 

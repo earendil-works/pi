@@ -8,17 +8,13 @@ export const Probe = remote("probe.probe", {
 	params: { session: str() },
 	hostAddress: ({ session }) => Session({ id: session }),
 	admission: OwnerAdmission,
-	variants: {
-		owner: {
-			state: { pid: num() },
-			methods: {
-				/** Reports the session's state to the server, as the harness does. */
-				report: method(obj({ state: SessionState })),
-				/** Sets the probe's `WorkerBusy` count. */
-				busy: method(num()),
-				/** Exits the worker with code 1. */
-				crash: method(),
-			},
-		},
+	state: { pid: num() },
+	methods: {
+		/** Reports the session's state to the server, as the harness does. */
+		report: method(obj({ state: SessionState })),
+		/** Sets the probe's `WorkerBusy` count. */
+		busy: method(num()),
+		/** Exits the worker with code 1. */
+		crash: method(),
 	},
 });

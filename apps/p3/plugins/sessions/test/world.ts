@@ -13,20 +13,23 @@ import {
 	MyThings,
 	type P3Principal,
 	type Reference,
+	SESSION_THINGS_WRITES,
 	SessionFacts,
 	SessionThings,
 	THIS_DEVICE,
 	type ThingKeeper,
+	type With,
 } from "@earendil-works/p3/v1";
 import { PeopleStore, SessionsStore } from "@earendil-works/p3/v1/server";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
+import { assertGranted } from "../../../test/granted.ts";
 import { Boards, HOOKS, STUBS } from "./stubs.ts";
 
 /** A person's principal. */
 export type Person = Extract<P3Principal, { kind: "person" }>;
 
 /** `SessionThings`' writer, as a test holds it. */
-export type Writer = Extract<Reference<typeof SessionThings>, { readonly variant: "writer" }>;
+export type Writer = With<Reference<typeof SessionThings>, (typeof SESSION_THINGS_WRITES)[number]>;
 
 /** `MyThings`, as a test holds it. */
 export type Mine = Reference<typeof MyThings>;
@@ -62,7 +65,8 @@ export function world() {
 		t().root(
 			async (ctx) => {
 				const things = await ctx.get(SessionThings, { session: id });
-				return things.variant === "writer" ? fn(things, ctx) : assert.fail(`a ${things.variant}`);
+				assertGranted(things, ...SESSION_THINGS_WRITES);
+				return fn(things, ctx);
 			},
 			context,
 			{ principal: who },

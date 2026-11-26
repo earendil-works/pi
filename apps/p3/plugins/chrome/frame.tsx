@@ -3,15 +3,7 @@
 // and below it the app's page inside a boundary that shows the app's error and keeps the bar.
 
 import { AppCatalog, type AppInfo, type ConnectionState, Me } from "@earendil-works/p3/v1";
-import {
-	PageConnection,
-	redirect,
-	useHold,
-	useRegistry,
-	useRoute,
-	useVariant,
-	useWatch,
-} from "@earendil-works/p3/v1/web";
+import { PageConnection, redirect, useHold, useLive, useRegistry, useRoute, useWatch } from "@earendil-works/p3/v1/web";
 import { useEffect, useState } from "react";
 // Other plugins' web contracts by path, never through `/v1/web`: a plugin applied to a running server meets the base
 // its page started with, whose `/v1/web` may not have a newer contract yet (a view token would be `undefined`).
@@ -41,8 +33,8 @@ export type ChromeProps = {
 /** The frame: the chrome and the route's app page. */
 export function Frame() {
 	const route = useRoute();
-	const apps = useWatch(useVariant(useHold(AppCatalog, {}), "catalog")?.apps);
-	const me = useWatch(useVariant(useHold(Me, {}), "me")?.me);
+	const apps = useWatch(useLive(useHold(AppCatalog, {}))?.apps);
+	const me = useWatch(useLive(useHold(Me, {}))?.me);
 	// A page is never a session's worker: `Me` answers it the owner or a person.
 	const caller = me?.kind === "agent" ? undefined : me;
 	const connection = useRegistry(PageConnection) ?? "connecting";

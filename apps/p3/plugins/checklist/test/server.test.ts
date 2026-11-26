@@ -14,12 +14,15 @@ import {
 	type Member,
 	type P3Principal,
 	type Reference,
+	SESSION_THINGS_WRITES,
 	SessionThings,
 	THIS_DEVICE,
 	until,
+	type With,
 } from "@earendil-works/p3/v1";
 import { PeopleStore, SessionsStore } from "@earendil-works/p3/v1/server";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
+import { assertGranted } from "../../../test/granted.ts";
 import { within } from "../../../test/until.ts";
 import appsServer from "../../apps/server.ts";
 import codingServer from "../../coding/server.ts";
@@ -27,7 +30,7 @@ import environmentsServer from "../../environments/server.ts";
 import peopleServer from "../../people/server.ts";
 import sessionsServer from "../../sessions/server.ts";
 import signInServer from "../../sign-in/server.ts";
-import { Checklist, ChecklistKind } from "../contract.ts";
+import { CHECKLIST_CHECKS, Checklist, ChecklistKind } from "../contract.ts";
 import { ChecklistStore } from "../server.ts";
 
 /** A person's principal. */
@@ -99,12 +102,15 @@ async function setup() {
 function managing<T>(
 	principal: P3Principal,
 	id: string,
-	fn: (things: Extract<Reference<typeof SessionThings>, { variant: "writer" }>, ctx: Ctx<P3Principal>) => Promise<T>,
+	fn: (
+		things: With<Reference<typeof SessionThings>, (typeof SESSION_THINGS_WRITES)[number]>,
+		ctx: Ctx<P3Principal>,
+	) => Promise<T>,
 ): Promise<T> {
 	return t.root(
 		async (ctx) => {
 			const things = await ctx.get(SessionThings, { session: id });
-			if (things.variant !== "writer") return assert.fail(things.variant);
+			assertGranted(things, ...SESSION_THINGS_WRITES);
 			return fn(things, ctx);
 		},
 		context,
@@ -124,13 +130,13 @@ function holding<T>(
 
 /** The checker of `list`, failing the test for a reader. */
 function checkerOf(list: ChecklistRef) {
-	if (list.variant !== "checker") return assert.fail(`a ${list.variant}`);
+	assertGranted(list, ...CHECKLIST_CHECKS);
 	return list;
 }
 
 /** `list`'s variant now (a reference's variant changes with its admission). */
 function variantOf(list: ChecklistRef): string {
-	return list.variant;
+	return list.granted.has("add") ? "checker" : "reader";
 }
 
 /** Whether `promise` rejects with a ChordError of `code`. */
@@ -152,7 +158,12 @@ describe("a checklist", () => {
 			return added;
 		});
 		for (const reader of [ben, cleo]) {
-			const seen = await holding(reader, id, thing, async (list) => [list.variant, list.items.value] as const);
+			const seen = await holding(
+				reader,
+				id,
+				thing,
+				async (list) => [list.granted.has("add") ? "checker" : "reader", list.items.value] as const,
+			);
 			assert.deepEqual(seen[0], "reader");
 			assert.deepEqual(
 				seen[1].map(({ id: item, text, done }) => [item === milk, text, done]),
@@ -186,7 +197,7 @@ describe("a checklist", () => {
 	it("turns a holder into a reader the moment its options say no check", async () => {
 		const { ann, id, thing } = await setup();
 		await holding(ann, id, thing, async (list, ctx) => {
-			assert.equal(list.variant, "checker");
+			assert.equal(list.granted.has("add") ? "checker" : "reader", "checker");
 			await managing(OWNER, id, (things, inner) =>
 				things.setOptions({ thing, for: { kind: "everyone" }, options: { check: false } }, inner),
 			);

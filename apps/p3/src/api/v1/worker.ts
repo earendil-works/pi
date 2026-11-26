@@ -7,6 +7,17 @@
 import { type ChordStore, defineRegistry, type Host } from "@earendil-works/chord";
 import type { P3Principal } from "../../app.ts";
 
+// Chord's sync layer, for the backup plugin's worker facet: uploads from a store's outbox.
+export {
+	FileSyncStateStore,
+	FlushScheduler,
+	type PutBatchResult,
+	type SessionSyncUploader,
+	type SyncBody,
+	type SyncFileSystem,
+	type UploadResult,
+	uploadSession,
+} from "@earendil-works/chord/sync";
 export {
 	createModels,
 	createProvider,
@@ -46,18 +57,6 @@ export { StoreStorage } from "@earendil-works/pi-durable/storage/store";
 export { createCodingTools } from "@earendil-works/pi-durable/tools";
 export * from "../../../plugins/environments/contract.worker.ts";
 export * from "../../../plugins/harness/contract.worker.ts";
-
-// Chord's sync layer, for the backup plugin's worker facet: uploads from a store's outbox.
-export {
-	FileSyncStateStore,
-	FlushScheduler,
-	type PutBatchResult,
-	type SessionSyncUploader,
-	type SyncBody,
-	type SyncFileSystem,
-	type UploadResult,
-	uploadSession,
-} from "@earendil-works/chord/sync";
 
 /**
  * The file, relative to a worker's `dir`, whose presence opens the session's store with an outbox (each commit's

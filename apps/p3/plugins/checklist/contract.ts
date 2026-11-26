@@ -5,6 +5,7 @@ import {
 	arr,
 	bool,
 	defineThing,
+	grantable,
 	method,
 	obj,
 	remote,
@@ -39,16 +40,15 @@ export const Checklist = remote("checklist.checklist", {
 	params: { session: str(), thing: str() },
 	hostAddress: () => Server(),
 	admission: thingAdmission(ChecklistKind),
-	variants: {
-		reader: { state: { items: arr(Item) } },
-		checker: {
-			state: { items: arr(Item) },
-			methods: {
-				/** Adds an item, not done; answers its id. Refused once the checklist holds 500 items. */
-				add: method(obj({ text: ItemText }), str()),
-				/** Marks item `id` done or not. */
-				tick: method(obj({ id: str(), done: bool() })),
-			},
-		},
+	state: { items: arr(Item) },
+	// A checker's (`CHECKLIST_CHECKS`).
+	methods: {
+		/** Adds an item, not done; answers its id. Refused once the checklist holds 500 items. */
+		add: grantable(method(obj({ text: ItemText }), str())),
+		/** Marks item `id` done or not. */
+		tick: grantable(method(obj({ id: str(), done: bool() }))),
 	},
 });
+
+/** What a checker of a checklist is granted. */
+export const CHECKLIST_CHECKS = ["add", "tick"] as const;

@@ -6,7 +6,7 @@
 
 import { type Ctx, defineFacet, Me, type P3Principal, type Self, type Watchable } from "@earendil-works/p3/v1";
 import { PeopleStore, SessionsStore, serveThing } from "@earendil-works/p3/v1/server";
-import { type Author, type Note, Notes, NotesKind } from "./contract.ts";
+import { type Author, NOTES_EDITS, type Note, Notes, NotesKind } from "./contract.ts";
 import { NotesStore, serveStore } from "./store.ts";
 
 /** How many notes a page of a notebook holds. */
@@ -33,26 +33,20 @@ export default defineFacet((host) => {
 		},
 		object: {
 			contract: Notes,
-			factory: ({ thing }, { access, options }, self) => {
+			// An editor writes in the session and its options say `edit`.
+			grants: ({ access, options }) => (access === "write" && options.edit ? NOTES_EDITS : []),
+			factory: ({ thing }, _admitted, self) => {
 				const notebook = thing;
 				const store = self.get(NotesStore, {});
 				const named = self.liveQuery(self.get(SessionsStore, {}).things.one, { id: thing }, { first: 1 });
 				const list = self.list("notes", [[store.notes.of, { notebook }]], { first: PAGE });
-				const reader = {
+				return {
 					name: self.derive([named], ([{ rows }]) => rows[0]?.name || TITLE),
 					list: shown(list.value, self),
 					more: (ctx: Ctx<P3Principal>) => list.more(ctx),
-				};
-				if (access === "read" || !options.edit) return { variant: "reader", members: reader };
-				return {
-					variant: "editor",
-					members: {
-						...reader,
-						add: async ({ text }, ctx) => store.add({ notebook, text, author: await authorKey(ctx) }, ctx),
-						edit: async ({ id, text }, ctx) =>
-							store.edit({ notebook, id, text, author: await authorKey(ctx) }, ctx),
-						remove: ({ id }, ctx) => store.remove({ notebook, id }, ctx),
-					},
+					add: async ({ text }, ctx) => store.add({ notebook, text, author: await authorKey(ctx) }, ctx),
+					edit: async ({ id, text }, ctx) => store.edit({ notebook, id, text, author: await authorKey(ctx) }, ctx),
+					remove: ({ id }, ctx) => store.remove({ notebook, id }, ctx),
 				};
 			},
 		},

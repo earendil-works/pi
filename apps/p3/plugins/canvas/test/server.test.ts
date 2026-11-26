@@ -17,12 +17,15 @@ import {
 	type OptionsFor,
 	type P3Principal,
 	type Reference,
+	SESSION_THINGS_WRITES,
 	SessionThings,
 	THIS_DEVICE,
 	until,
+	type With,
 } from "@earendil-works/p3/v1";
 import { PeopleStore, SessionsStore } from "@earendil-works/p3/v1/server";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
+import { assertGranted } from "../../../test/granted.ts";
 import { eventually, within } from "../../../test/until.ts";
 import appsServer from "../../apps/server.ts";
 import codingServer from "../../coding/server.ts";
@@ -30,7 +33,7 @@ import environmentsServer from "../../environments/server.ts";
 import peopleServer from "../../people/server.ts";
 import sessionsServer from "../../sessions/server.ts";
 import signInServer from "../../sign-in/server.ts";
-import { Canvas, CanvasKind, type Motion, type Shape } from "../contract.ts";
+import { CANVAS_DRAWS, Canvas, CanvasKind, type Motion, type Shape } from "../contract.ts";
 import { CanvasStore } from "../store.ts";
 
 /** Where the tests' sessions work. */
@@ -43,7 +46,7 @@ type Person = Extract<P3Principal, { kind: "person" }>;
 type CanvasRef = Reference<typeof Canvas>;
 
 /** `SessionThings`' writer, as a test holds it. */
-type Writer = Extract<Reference<typeof SessionThings>, { readonly variant: "writer" }>;
+type Writer = With<Reference<typeof SessionThings>, (typeof SESSION_THINGS_WRITES)[number]>;
 
 /** A short red stroke. */
 const STROKE: Shape = { kind: "line", color: "#cf222e", width: 6, points: [10, 10, 20, 20, 30, 10] };
@@ -101,7 +104,7 @@ function managing<T>(principal: P3Principal, id: string, fn: (things: Writer, ct
 	return t.root(
 		async (ctx) => {
 			const things = await ctx.get(SessionThings, { session: id });
-			if (things.variant !== "writer") return assert.fail(things.variant);
+			assertGranted(things, ...SESSION_THINGS_WRITES);
 			return fn(things, ctx);
 		},
 		context,
@@ -146,18 +149,18 @@ function holding<T>(
 
 /** The drawer of `canvas`, failing the test for a viewer. */
 function drawerOf(canvas: CanvasRef) {
-	if (canvas.variant !== "drawer") return assert.fail(`a ${canvas.variant}`);
+	assertGranted(canvas, ...CANVAS_DRAWS);
 	return canvas;
 }
 
 /** `canvas`' variant now (a reference's variant changes with its admission). */
 function variantOf(canvas: CanvasRef): string {
-	return canvas.variant;
+	return canvas.granted.has("add") ? "drawer" : "viewer";
 }
 
 /** The variant `principal` gets of canvas `thing` in session `id`. */
 function variant(principal: P3Principal, id: string, thing: string): Promise<string> {
-	return holding(principal, id, thing, async (canvas) => canvas.variant);
+	return holding(principal, id, thing, async (canvas) => (canvas.granted.has("add") ? "drawer" : "viewer"));
 }
 
 /** The shapes of canvas `thing` as `principal` sees them in session `id`. */
@@ -226,7 +229,7 @@ describe("who may do what on a canvas", () => {
 		assert.equal(await variant(cleo, id, board), "viewer");
 		// The default turned to no draw: Ann, without options of her own, looks only, at once.
 		await holding(ann, id, board, async (canvas, ctx) => {
-			assert.equal(canvas.variant, "drawer");
+			assert.equal(canvas.granted.has("add") ? "drawer" : "viewer", "drawer");
 			await setOptions(id, board, { kind: "everyone" }, false);
 			await until(
 				canvas.state,
@@ -254,7 +257,7 @@ describe("who may do what on a canvas", () => {
 		await denied(OWNER, id, elsewhere);
 		await denied(OWNER, id, "no-such-thing");
 		await holding(ben, id, board, async (canvas, ctx) => {
-			assert.equal(canvas.variant, "viewer");
+			assert.equal(canvas.granted.has("add") ? "drawer" : "viewer", "viewer");
 			await t.root(
 				async (server) =>
 					(await server.get(SessionsStore, {})).removeMember(
@@ -290,7 +293,7 @@ describe("a canvas's shapes", () => {
 			drawerOf(canvas).add({ shapes: [STROKE] }, ctx),
 		);
 		await holding(ann, second, shared, async (canvas) => {
-			assert.equal(canvas.variant, "viewer");
+			assert.equal(canvas.granted.has("add") ? "drawer" : "viewer", "viewer");
 			assert.equal(canvas.name.value, "Shared");
 			assert.deepEqual(canvas.shapes.value.rows, [{ id: stroke, author: `person:${ann.id}`, shape: STROKE }]);
 		});
@@ -324,7 +327,7 @@ describe("a canvas's shapes", () => {
 		const { ann, ben, id, board, other } = await setup();
 		await holding(OWNER, id, other, (canvas, ctx) => drawerOf(canvas).add({ shapes: [BOX] }, ctx));
 		await holding(ben, id, board, async (watching, ctx) => {
-			assert.equal(watching.variant, "viewer");
+			assert.equal(watching.granted.has("add") ? "drawer" : "viewer", "viewer");
 			await holding(ann, id, board, async (canvas, inner) => {
 				const drawer = drawerOf(canvas);
 				const [first, second, third] = await drawer.add({ shapes: [STROKE, BOX, STROKE] }, inner);

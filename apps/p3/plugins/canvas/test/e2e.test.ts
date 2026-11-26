@@ -16,14 +16,17 @@ import {
 	type Host,
 	type P3Principal,
 	type Reference,
+	SESSION_THINGS_WRITES,
 	SessionThings,
 	THIS_DEVICE,
+	TRANSCRIPT_WRITES,
 	Transcript,
 	thingOf,
 	until,
 } from "@earendil-works/p3/v1";
 import { PeopleStore, SessionsStore } from "@earendil-works/p3/v1/server";
 import { type TestServer, testServer } from "@earendil-works/p3/v1/testing";
+import { assertGranted } from "../../../test/granted.ts";
 import { FauxLogin, FauxRequests, type Step } from "../../../test/plugins/faux-login/contract.ts";
 import { eventually, within } from "../../../test/until.ts";
 import { Canvas, CanvasKind, type Motion, type Shape } from "../contract.ts";
@@ -105,7 +108,7 @@ describe("the canvas end to end", () => {
 	async function ask(text: string, answer: string): Promise<void> {
 		await owner.root(async (ctx) => {
 			const transcript = await ctx.get(Transcript, { session });
-			if (transcript.variant !== "writer") return assert.fail(transcript.variant);
+			assertGranted(transcript, ...TRANSCRIPT_WRITES);
 			await transcript.send({ text, requestId: `${text} ${Date.now()}` }, ctx);
 			await until(
 				transcript.view,
@@ -116,7 +119,7 @@ describe("the canvas end to end", () => {
 	}
 
 	it("shows the shape the agent draws in the open board, by the agent", async () => {
-		assert.equal(canvas.variant, "drawer");
+		assert.equal(canvas.granted.has("add") ? "drawer" : "viewer", "drawer");
 		await ask("@draw", "Drawn.");
 		await until(canvas.shapes, (list) => list.rows.length === 1, within("the agent's box", context, 10_000));
 		assert.deepEqual(
@@ -137,7 +140,7 @@ describe("the canvas end to end", () => {
 
 	it("offers the model no canvas_draw while the agent's draw is off", async () => {
 		const things = await owner.get(SessionThings, { session }, context);
-		if (things.variant !== "writer") return assert.fail(things.variant);
+		assertGranted(things, ...SESSION_THINGS_WRITES);
 		await things.setOptions({ thing: board, for: { kind: "agent" }, options: { draw: false } }, context);
 		await ask("@hello", "Hello.");
 		const requests = await owner.root(
@@ -148,7 +151,7 @@ describe("the canvas end to end", () => {
 		assert.equal(last.tools.includes("canvas_read"), true);
 		assert.equal(last.tools.includes("canvas_draw"), false);
 		// The members' own board is unchanged: the owner still draws.
-		assert.equal(canvas.variant, "drawer");
+		assert.equal(canvas.granted.has("add") ? "drawer" : "viewer", "drawer");
 		await things.setOptions({ thing: board, for: { kind: "agent" }, options: null }, context);
 	});
 

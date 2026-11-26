@@ -10,9 +10,9 @@ import {
 	ArrowBackIcon,
 	navigate,
 	useHold,
+	useLive,
 	usePageState,
 	useRoute,
-	useVariant,
 	useView,
 	useWatch,
 } from "@earendil-works/p3/v1/web";
@@ -36,7 +36,7 @@ function CodingPage() {
 	const [creating, setCreating] = usePageState("coding.creating", false);
 	const SessionList = useView(SessionListView);
 	// Only the owner makes sessions through the base; a person works in the ones they are a member of.
-	const me = useWatch(useVariant(useHold(Me, {}), "me")?.me);
+	const me = useWatch(useLive(useHold(Me, {}))?.me);
 	const owner = me?.kind === "person" && me.owner;
 	const screen = session !== undefined || creating ? "main" : "list";
 	return (

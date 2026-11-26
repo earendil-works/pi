@@ -22,7 +22,7 @@ import {
 	ROOT_CONVERSATION_ID,
 	SessionHarness,
 } from "@earendil-works/p3/v1/worker";
-import { Transcript } from "./contract.ts";
+import { TRANSCRIPT_WRITES, Transcript } from "./contract.ts";
 
 /** One conversation's view, followed once for every reader of it; `conversation` is its Durable id. */
 const Followed = local("transcript.followed", {
@@ -57,7 +57,7 @@ export default defineFacet((host) => {
 	});
 	host.serve(
 		Transcript,
-		(_params, _principal, { access }, self) => {
+		(_params, _principal, _admitted, self) => {
 			const followed = self.get(Followed, { conversation: ROOT });
 			const harness = self.registry(SessionHarness);
 			const facts = self.get(SessionFacts, {});
@@ -66,35 +66,29 @@ export default defineFacet((host) => {
 				if (value === undefined) throw invalid("args", "transcript: the session's harness is not open");
 				return value;
 			};
-			const reader = {
+			// `send` and `stop` are a writer's (`TRANSCRIPT_WRITES`): a reader's call is refused before it runs.
+			return {
 				view: followed.view,
 				entries: async (
 					query: { minEntryId?: number; maxEntryId?: number; order?: string; limit: number },
 					ctx: Context,
 				) => entriesOf(open(), query, ctx),
-			};
-			if (access === "read") return { variant: "reader", members: reader };
-			return {
-				variant: "writer",
-				members: {
-					...reader,
-					// The admission carries no identity, so the request id is scoped by itself alone: two writers who pick the
-					// same id send once. Clients choose random ids.
-					send: async ({ text, requestId }, ctx) => {
-						await open().submit(undefined, { text, requestId: `transcript:${requestId}` }, ctx);
-						return null;
-					},
-					stop: async (ctx) => {
-						// An abort runs the aborted tasks' handlers: work, which an archived session's worker never does.
-						if (facts.session.value?.archivedAt !== null) throw forbidden("transcript: the session is archived");
-						const root = await open().durable.root(ctx);
-						await root.abort(ctx);
-						return null;
-					},
+				// The admission carries no identity, so the request id is scoped by itself alone: two writers who pick the
+				// same id send once. Clients choose random ids.
+				send: async ({ text, requestId }, ctx) => {
+					await open().submit(undefined, { text, requestId: `transcript:${requestId}` }, ctx);
+					return null;
+				},
+				stop: async (ctx) => {
+					// An abort runs the aborted tasks' handlers: work, which an archived session's worker never does.
+					if (facts.session.value?.archivedAt !== null) throw forbidden("transcript: the session is archived");
+					const root = await open().durable.root(ctx);
+					await root.abort(ctx);
+					return null;
 				},
 			};
 		},
-		{ admit: admitSession },
+		{ admit: admitSession(TRANSCRIPT_WRITES) },
 	);
 });
 

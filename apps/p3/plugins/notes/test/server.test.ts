@@ -16,13 +16,16 @@ import {
 	type OptionsFor,
 	type P3Principal,
 	type Reference,
+	SESSION_THINGS_WRITES,
 	SessionFacts,
 	SessionThings,
 	THIS_DEVICE,
 	until,
+	type With,
 } from "@earendil-works/p3/v1";
 import { PeopleStore, SessionsStore } from "@earendil-works/p3/v1/server";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
+import { assertGranted } from "../../../test/granted.ts";
 import { within } from "../../../test/until.ts";
 import appsServer from "../../apps/server.ts";
 import codingServer from "../../coding/server.ts";
@@ -30,7 +33,7 @@ import environmentsServer from "../../environments/server.ts";
 import peopleServer from "../../people/server.ts";
 import sessionsServer from "../../sessions/server.ts";
 import signInServer from "../../sign-in/server.ts";
-import { Notes, NotesKind } from "../contract.ts";
+import { NOTES_EDITS, Notes, NotesKind } from "../contract.ts";
 import { NotesStore } from "../store.ts";
 
 /** The owner's person in this test's Pi (made at its first start). */
@@ -90,12 +93,15 @@ function session(members: Member[]): Promise<string> {
 function managing<T>(
 	principal: P3Principal,
 	id: string,
-	fn: (things: Extract<Reference<typeof SessionThings>, { variant: "writer" }>, ctx: Ctx<P3Principal>) => Promise<T>,
+	fn: (
+		things: With<Reference<typeof SessionThings>, (typeof SESSION_THINGS_WRITES)[number]>,
+		ctx: Ctx<P3Principal>,
+	) => Promise<T>,
 ): Promise<T> {
 	return t.root(
 		async (ctx) => {
 			const things = await ctx.get(SessionThings, { session: id });
-			if (things.variant !== "writer") return assert.fail(things.variant);
+			assertGranted(things, ...SESSION_THINGS_WRITES);
 			return fn(things, ctx);
 		},
 		context,
@@ -134,13 +140,13 @@ function texts(who: P3Principal, id: string, thing: string): Promise<string[]> {
 
 /** The editor of `notes`, failing the test for a reader. */
 function editorOf(notes: NotesRef) {
-	if (notes.variant !== "editor") return assert.fail(`a ${notes.variant}`);
+	assertGranted(notes, ...NOTES_EDITS);
 	return notes;
 }
 
 /** `notes`' variant now (a reference's variant changes with its admission). */
 function variantOf(notes: NotesRef): string {
-	return notes.variant;
+	return notes.granted.has("add") ? "editor" : "reader";
 }
 
 /** Whether `promise` rejects with a ChordError of `code`. */
@@ -169,9 +175,14 @@ describe("making notebooks", () => {
 		assert.equal(await holding(ben, id, work, async (notes) => notes.name.value), "Work");
 		assert.equal(await holding(ben, id, home, async (notes) => notes.name.value), "Notes");
 		assert.equal(
-			await t.root(async (ctx) => (await ctx.get(SessionThings, { session: id })).variant, context, {
-				principal: ben,
-			}),
+			await t.root(
+				async (ctx) =>
+					(await ctx.get(SessionThings, { session: id })).granted.has("create") ? "writer" : "reader",
+				context,
+				{
+					principal: ben,
+				},
+			),
 			"reader",
 		);
 	});
@@ -265,8 +276,14 @@ describe("who may do what in a notebook", () => {
 	it("gives a reader and a writer whose options say no edit the reader; an editor adds, edits and removes", async () => {
 		const { ann, ben, cleo, id, thing } = await setup();
 		await setOptions(id, thing, { kind: "person", id: cleo.id }, false);
-		assert.equal(await holding(ben, id, thing, async (notes) => notes.variant), "reader");
-		assert.equal(await holding(cleo, id, thing, async (notes) => notes.variant), "reader");
+		assert.equal(
+			await holding(ben, id, thing, async (notes) => (notes.granted.has("add") ? "editor" : "reader")),
+			"reader",
+		);
+		assert.equal(
+			await holding(cleo, id, thing, async (notes) => (notes.granted.has("add") ? "editor" : "reader")),
+			"reader",
+		);
 		await holding(ann, id, thing, async (notes, ctx) => {
 			const editor = editorOf(notes);
 			const first = await editor.add({ text: "one" }, ctx);
@@ -290,7 +307,7 @@ describe("who may do what in a notebook", () => {
 		});
 		// The default turned to no edit: Ann, without options of her own, reads only, at once.
 		await holding(ann, id, thing, async (notes, ctx) => {
-			assert.equal(notes.variant, "editor");
+			assert.equal(notes.granted.has("add") ? "editor" : "reader", "editor");
 			await setOptions(id, thing, { kind: "everyone" }, false);
 			// The reference's variant follows its object's new admission.
 			await until(
@@ -331,9 +348,15 @@ describe("who may do what in a notebook", () => {
 	it("gives the agent the editor or the reader as its own options say", async () => {
 		const { id, thing } = await setup();
 		const agent: P3Principal = { kind: "worker", session: id };
-		assert.equal(await holding(agent, id, thing, async (notes) => notes.variant), "editor");
+		assert.equal(
+			await holding(agent, id, thing, async (notes) => (notes.granted.has("add") ? "editor" : "reader")),
+			"editor",
+		);
 		await setOptions(id, thing, { kind: "agent" }, false);
-		assert.equal(await holding(agent, id, thing, async (notes) => notes.variant), "reader");
+		assert.equal(
+			await holding(agent, id, thing, async (notes) => (notes.granted.has("add") ? "editor" : "reader")),
+			"reader",
+		);
 		// Another session's worker has no access.
 		await refused(
 			t.root(async (ctx) => ctx.get(Notes, { session: id, thing }, { readyTimeout: 500 }), context, {
@@ -351,7 +374,7 @@ describe("who may do what in a notebook", () => {
 			}),
 		);
 		await holding(ben, id, thing, async (notes, ctx) => {
-			assert.equal(notes.variant, "reader");
+			assert.equal(notes.granted.has("add") ? "editor" : "reader", "reader");
 			await t.root(
 				async (server) =>
 					(await server.get(SessionsStore, {})).removeMember(
@@ -375,6 +398,9 @@ describe("who may do what in a notebook", () => {
 				),
 			context,
 		);
-		assert.equal(await holding(OWNER, id, thing, async (notes) => notes.variant), "editor");
+		assert.equal(
+			await holding(OWNER, id, thing, async (notes) => (notes.granted.has("add") ? "editor" : "reader")),
+			"editor",
+		);
 	});
 });

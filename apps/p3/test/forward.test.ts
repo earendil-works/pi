@@ -11,6 +11,7 @@ import {
 	defineState,
 	forward,
 	int,
+	keyed,
 	local,
 	method,
 	obj,
@@ -35,12 +36,8 @@ const View = remote("test.view", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
-	variants: {
-		user: {
-			state: { count: int() },
-			methods: { add: method(int(), int()), reset: method(), who: method(undefined, str()) },
-		},
-	},
+	state: { count: int() },
+	methods: { add: method(int(), int()), reset: method(), who: method(undefined, str()) },
 });
 
 const facet = defineFacet((host) => {
@@ -63,7 +60,7 @@ const facet = defineFacet((host) => {
 		};
 	});
 	host.serve(View, (_params, principal, self) =>
-		forward(self.get(Store, {}), View, "user", { who: async () => principal.kind }),
+		forward(self.get(Store, {}), View, { who: async () => principal.kind }),
 	);
 });
 
@@ -72,33 +69,42 @@ const Facts = remote("test.facts", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
-	variants: { worker: { state: { text: str() } } },
+	state: { text: str() },
 });
 const Mirror = remote("test.mirror", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
-	variants: { owner: { state: { text: str() } } },
+	state: { text: str() },
 });
 
+/** A local contract with a keyed member: `forward` takes remote views only. */
+const Keyed = local("test.forward-keyed", { version: 1, params: {}, members: { rows: keyed(str()) } });
+
 /** Never called: what the types of `forward` accept and refuse. */
-function typed(store: Reference<typeof Store>, facts: Reference<typeof Facts>): void {
+function typed(
+	store: Reference<typeof Store>,
+	facts: Reference<typeof Facts>,
+	keyedRows: Reference<typeof Keyed>["rows"],
+): void {
+	// @ts-expect-error a local target, whose keyed members it would drop, is no view `forward` fills (Sol 6, slice 15)
+	forward({ rows: keyedRows }, Keyed);
 	const who = async () => "someone";
-	forward(store, View, "user", { who });
+	forward(store, View, { who });
 	// @ts-expect-error `who` is neither the store's nor the view's own
-	forward(store, View, "user");
+	forward(store, View);
 	// @ts-expect-error the store lacks `count`, `add` and `reset`
-	forward({}, View, "user", { who });
+	forward({}, View, { who });
 	// @ts-expect-error the store's `count` has another type
-	forward({ ...store, count: constant("text") }, View, "user", { who });
+	forward({ ...store, count: constant("text") }, View, { who });
 	// @ts-expect-error the view's own `who` has another type
-	forward(store, View, "user", { who: async () => 1 });
+	forward(store, View, { who: async () => 1 });
 	// Without `own`, a remote reference forwarded whole.
-	forward(facts, Mirror, "owner");
+	forward(facts, Mirror);
 	// @ts-expect-error without `own`, a missing member
-	forward({}, Mirror, "owner");
+	forward({}, Mirror);
 	// @ts-expect-error without `own`, a member of another type
-	forward({ text: constant(1) }, Mirror, "owner");
+	forward({ text: constant(1) }, Mirror);
 }
 
 describe("forward", () => {

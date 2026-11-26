@@ -12,6 +12,7 @@ import {
 	contribute,
 	defineRegistry,
 	type FacetHost,
+	type GrantableName,
 	type Implementation,
 	type JsonValue,
 	local,
@@ -236,10 +237,12 @@ export type ThingObject<O extends JsonValue, C extends Contract> = {
 			? C
 			: never
 		: never;
-	/** The object for a caller the thing's admission let in: their access and the options that apply to them. */
+	/** What a caller the thing's admission let in is granted of the object's grantable members (none without it). */
+	readonly grants?: (admitted: { readonly access: Access; readonly options: O }) => readonly GrantableName<C>[];
+	/** The object for a caller the thing's admission let in: their access, the options that apply to them, the grant. */
 	readonly factory: (
 		params: ParamsOf<C>,
-		admitted: { readonly access: Access; readonly options: O },
+		admitted: { readonly access: Access; readonly options: O; readonly granted: ReadonlySet<GrantableName<C>> },
 		self: Self<P3Principal>,
 	) => Implementation<C, Ctx<P3Principal>>;
 };
@@ -258,10 +261,19 @@ export function serveThing<O extends JsonValue, C extends Contract = never>(
 	contribute(host, `${kind.name}.kind`, (self) => self.contribute(ThingKinds, { ...entry, kind } as ThingKindEntry));
 	if (object === undefined) return;
 	const factory = (params: ParamsOf<C>, _principal: P3Principal, admitted: AdmittedOf<C>, self: Self<P3Principal>) =>
-		// The contract's admission is `thingAdmission(kind)`, as its type says: the value is the caller's access and options.
-		object.factory(params, admitted as unknown as { access: Access; options: O }, self);
+		// The contract's admission is `thingAdmission(kind)`, as its type says: the value is the caller's access, options
+		// and grant.
+		object.factory(
+			params,
+			admitted as unknown as { access: Access; options: O; granted: ReadonlySet<GrantableName<C>> },
+			self,
+		);
 	// `C` is generic here: Chord's factory and option types cannot be resolved for it, the call is checked at `ThingObject`.
 	(host.serve as (type: Contract, factory: unknown, options: unknown) => void)(object.contract, factory, {
-		admit: admitThing(kind),
+		// `GrantableName<C>` is a string for every contract; `C` generic here, TypeScript cannot see it.
+		admit: admitThing(
+			kind,
+			object.grants as ((admitted: { access: Access; options: O }) => readonly string[]) | undefined,
+		),
 	});
 }

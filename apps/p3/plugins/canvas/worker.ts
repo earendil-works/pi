@@ -89,7 +89,7 @@ function drawTool(things: readonly Board[], agent: Agent) {
 			const ids = await agent.call(async (ctx) => {
 				const canvas = await board(thing, agent, ctx);
 				// The server admits the agent with its own options: a `draw` taken back meanwhile leaves it a viewer.
-				if (canvas.variant !== "drawer") throw new Error(`canvas: you may not draw on ${described(thing)} now`);
+				if (canvas.add === undefined) throw new Error(`canvas: you may not draw on ${described(thing)} now`);
 				return canvas.add({ shapes }, ctx);
 			}, context);
 			return { output: [{ type: "text", text: `drew ${ids.length} shape(s): ${ids.join(", ")}` }] };

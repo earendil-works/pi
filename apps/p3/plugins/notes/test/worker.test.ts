@@ -17,7 +17,7 @@ import {
 } from "@earendil-works/p3/v1";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
 import { type Agent, type Extension, ThingExtensions } from "@earendil-works/p3/v1/worker";
-import { type Note, Notes } from "../contract.ts";
+import { NOTES_EDITS, type Note, Notes } from "../contract.ts";
 
 const SESSION = "s1";
 
@@ -32,31 +32,31 @@ const holders: P3Principal["kind"][] = [];
 const standIn = defineFacet((host) => {
 	host.serve(
 		Notes,
-		(_params, principal, { access, options }, self) => {
+		(_params, principal, _admitted, self) => {
 			holders.push(principal.kind);
 			const rows = (): Note[] => added.map((text, at) => ({ id: `n${at}`, text, at, author: { kind: "agent" } }));
 			const list = self.writable({ rows: rows(), moreAfter: false });
-			const reader = {
+			return {
 				name: constant("Ideas"),
 				list: self.derive([list], ([value]) => value),
 				more: async () => null,
-			};
-			if (access === "read" || !options.edit) return { variant: "reader", members: reader };
-			return {
-				variant: "editor",
-				members: {
-					...reader,
-					add: async ({ text }) => {
-						added.push(text);
-						list.set({ rows: rows(), moreAfter: false });
-						return `n${added.length - 1}`;
-					},
-					edit: async () => null,
-					remove: async () => null,
+				add: async ({ text }) => {
+					added.push(text);
+					list.set({ rows: rows(), moreAfter: false });
+					return `n${added.length - 1}`;
 				},
+				edit: async () => null,
+				remove: async () => null,
 			};
 		},
-		{ admit: () => constant(allow(admitted)) },
+		{
+			admit: () => {
+				const { access, options } = admitted;
+				return constant(
+					allow({ ...admitted, granted: access === "write" && options.edit ? [...NOTES_EDITS] : [] }),
+				);
+			},
+		},
 	);
 });
 

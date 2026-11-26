@@ -60,7 +60,12 @@ describe("the plans of the stores' queries", () => {
 		const store = await openStore(sqliteBackend(new NodeSqliteDatabase(database)), context);
 		const onError = (error: { readonly kind: string }) => assert.fail(error.kind);
 		const host = createHost<P3Principal>({ address: Server(), principal: { kind: "server" }, store, onError });
-		const runtime = { dataDir: "/tmp", host, store } as unknown as ServerRuntime;
+		const runtime = {
+			dataDir: "/tmp",
+			host,
+			store,
+			machine: { user: "owner", hostname: "test" },
+		} as unknown as ServerRuntime;
 		try {
 			await host.load(
 				[

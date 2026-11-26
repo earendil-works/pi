@@ -14,7 +14,6 @@ import {
 	deny,
 	lit,
 	method,
-	nul,
 	obj,
 	type P3Principal,
 	remote,
@@ -41,22 +40,18 @@ export const Group = obj({ id: str(), app: str(), name: str({ max: 200 }) });
 export type Group = Static<typeof Group>;
 
 /** The admission value of the owner's objects: none (the owner is admitted, anyone else denied). */
-export const OwnerAdmission = nul();
+export const OwnerAdmission = obj({});
 
 /** Who the caller is: a person (`owner`: the owner, read live from their row), or a session's agent (its worker). */
 export const Me = remote("people.me", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
-	variants: {
-		me: {
-			state: {
-				me: union([
-					obj({ kind: lit("person"), id: str(), name: str(), owner: bool() }),
-					obj({ kind: lit("agent"), session: str() }),
-				]),
-			},
-		},
+	state: {
+		me: union([
+			obj({ kind: lit("person"), id: str(), name: str(), owner: bool() }),
+			obj({ kind: lit("agent"), session: str() }),
+		]),
 	},
 });
 
@@ -69,16 +64,12 @@ export const People = remote("people.people", {
 	params: {},
 	hostAddress: () => Server(),
 	admission: OwnerAdmission,
-	variants: {
-		owner: {
-			methods: {
-				invite: method(obj({ name: str({ min: 1, max: 200 }) }), obj({ person: str(), link: str() })),
-				/** A fresh invite link for an existing person (the previous one no longer valid). */
-				link: method(obj({ person: str() }), str()),
-				rename: method(obj({ person: str(), name: str({ min: 1, max: 200 }) })),
-				remove: method(obj({ person: str() })),
-			},
-		},
+	methods: {
+		invite: method(obj({ name: str({ min: 1, max: 200 }) }), obj({ person: str(), link: str() })),
+		/** A fresh invite link for an existing person (the previous one no longer valid). */
+		link: method(obj({ person: str() }), str()),
+		rename: method(obj({ person: str(), name: str({ min: 1, max: 200 }) })),
+		remove: method(obj({ person: str() })),
 	},
 });
 
@@ -88,7 +79,8 @@ export const PeopleList = remote("people.list", {
 	params: { view: str() },
 	hostAddress: () => Server(),
 	admission: OwnerAdmission,
-	variants: { owner: { state: { list: obj({ rows: arr(Person), moreAfter: bool() }) }, methods: { more: method() } } },
+	state: { list: obj({ rows: arr(Person), moreAfter: bool() }) },
+	methods: { more: method() },
 });
 
 /**
@@ -99,14 +91,18 @@ export const OwnerAccess = remote("people.owner-access", {
 	version: 1,
 	params: { caller: str() },
 	hostAddress: () => Server(),
-	variants: { answer: { state: { owner: bool() } } },
+	state: { owner: bool() },
 });
 
 /**
  * The admission of an object for the owner only (`admission: OwnerAdmission`), on the server or a worker: allowed
  * while the caller is the owner (`OwnerAccess`, live), denied for anyone else.
  */
-export function admitOwner(_params: unknown, principal: P3Principal, self: AdmitSelf): Watchable<Admission<null>> {
+export function admitOwner(
+	_params: unknown,
+	principal: P3Principal,
+	self: AdmitSelf,
+): Watchable<Admission<Record<string, never>>> {
 	const answer = self.get(OwnerAccess, { caller: callerKey(principal) });
-	return self.derive([answer.owner], ([owner]) => (owner ? allow(null) : deny("the owner's only")));
+	return self.derive([answer.owner], ([owner]) => (owner ? allow({}) : deny("the owner's only")));
 }

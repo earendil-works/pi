@@ -7,7 +7,7 @@
 
 import { Button, Field, IconButton, Input, SelectionControlAndLabel, Switch } from "@earendil-works/elanor-react";
 import { type Context, Me, MyThings, type Reference, type Static, type TitledThing } from "@earendil-works/p3/v1";
-import { SearchIcon, useHold, useVariant, useWatch } from "@earendil-works/p3/v1/web";
+import { SearchIcon, useHold, useLive, useWatch } from "@earendil-works/p3/v1/web";
 import { type ReactNode, useState } from "react";
 import { type Action, useAction } from "./action.ts";
 import { GivePanel, keepersOf, type OwnerChoice, ownerKey } from "./give-thing.tsx";
@@ -26,8 +26,8 @@ export function MyThingsList() {
 	const [prefix, setPrefix] = useState("");
 	const [searching, setSearching] = useState(false);
 	const [making, setMaking] = useState(false);
-	const mine = useVariant(useHold(MyThings, { view: useViewId(), prefix: prefix.trim() }), "mine");
-	const me = useWatch(useVariant(useHold(Me, {}), "me")?.me);
+	const mine = useLive(useHold(MyThings, { view: useViewId(), prefix: prefix.trim() }));
+	const me = useWatch(useLive(useHold(Me, {}))?.me);
 	const list = useWatch(mine?.list);
 	const kinds = useWatch(mine?.kinds) ?? [];
 	const owners = useWatch(mine?.owners) ?? [];
@@ -95,7 +95,7 @@ export function MyThingsList() {
 }
 
 /** The caller's `MyThings`, as a row calls it. */
-type Mine = Extract<Reference<typeof MyThings>, { readonly variant: "mine" }>;
+type Mine = Reference<typeof MyThings>;
 
 /** What a row's action opened under it. */
 type Panel = "rename" | "give" | "uses" | "delete";

@@ -12,6 +12,7 @@ import {
 	bool,
 	callerKey,
 	deny,
+	grantable,
 	type JsonValue,
 	lit,
 	method,
@@ -261,37 +262,33 @@ export const Sessions = remote("sessions.sessions", {
 	params: {},
 	hostAddress: () => Server(),
 	// The owner's only (`admitOwner`, the people plugin's; its value `OwnerAdmission`, none).
-	admission: nul(),
-	variants: {
-		owner: {
-			methods: {
-				/** Makes a session with its members and things, in one commit; answers its id. */
-				create: method(
-					obj({
-						app: str(),
-						title: opt(Title),
-						location: Location,
-						members: opt(arr(Member)),
-						/** New things for the session (its content unless owned), and existing ones. */
-						things: opt(arr(ThingUse)),
-						/** Whom it follows; left out: the owner who makes it; `null`: nobody. */
-						follows: opt(union([Party, nul()])),
-					}),
-					str(),
-				),
-				/**
-				 * Makes the session follow `follows` (`null`: nobody). With `keep` (the default), the things it had from
-				 * whom it followed until now are linked to it, so stopping to follow takes nothing away until removed.
-				 */
-				follow: method(obj({ session: str(), follows: union([Party, nul()]), keep: opt(bool()) })),
-				rename: method(obj({ session: str(), title: Title })),
-				archive: method(obj({ session: str() })),
-				restore: method(obj({ session: str() })),
-				/** Adds a member, or changes its access. */
-				addMember: method(obj({ session: str(), member: Member })),
-				removeMember: method(obj({ session: str(), party: Party })),
-			},
-		},
+	admission: obj({}),
+	methods: {
+		/** Makes a session with its members and things, in one commit; answers its id. */
+		create: method(
+			obj({
+				app: str(),
+				title: opt(Title),
+				location: Location,
+				members: opt(arr(Member)),
+				/** New things for the session (its content unless owned), and existing ones. */
+				things: opt(arr(ThingUse)),
+				/** Whom it follows; left out: the owner who makes it; `null`: nobody. */
+				follows: opt(union([Party, nul()])),
+			}),
+			str(),
+		),
+		/**
+		 * Makes the session follow `follows` (`null`: nobody). With `keep` (the default), the things it had from
+		 * whom it followed until now are linked to it, so stopping to follow takes nothing away until removed.
+		 */
+		follow: method(obj({ session: str(), follows: union([Party, nul()]), keep: opt(bool()) })),
+		rename: method(obj({ session: str(), title: Title })),
+		archive: method(obj({ session: str() })),
+		restore: method(obj({ session: str() })),
+		/** Adds a member, or changes its access. */
+		addMember: method(obj({ session: str(), member: Member })),
+		removeMember: method(obj({ session: str(), party: Party })),
 	},
 });
 
@@ -306,12 +303,8 @@ export const SessionsList = remote("sessions.list", {
 	params: { app: str(), set: oneOf("active", "archived"), view: str() },
 	hostAddress: () => Server(),
 	admission: obj({ every: bool() }),
-	variants: {
-		sessions: {
-			state: { list: obj({ rows: arr(SessionRow), moreAfter: bool() }) },
-			methods: { more: method() },
-		},
-	},
+	state: { list: obj({ rows: arr(SessionRow), moreAfter: bool() }) },
+	methods: { more: method() },
 });
 
 /**
@@ -325,25 +318,30 @@ export const SessionAccess = remote("sessions.access", {
 	version: 1,
 	params: { session: str(), caller: str() },
 	hostAddress: () => Server(),
-	variants: { answer: { state: { access: oneOf("none", "read", "write") } } },
+	state: { access: oneOf("none", "read", "write") },
 });
 
 /** The admission value of every session object: how the caller works in the session. */
 export const SessionAdmission = obj({ access: Access });
 
 /**
- * The admission of a session object (params with `session`): denied without access, else the caller's access. The
- * one place besides the base that reads a principal, so no plugin has to.
+ * The admission of a session object (params with `session`): denied without access, else the caller's access, a
+ * writer granted `writes` (its contract's grantable members a writer gets). The one place besides the base that
+ * reads a principal, so no plugin has to.
  */
-export function admitSession(
-	params: { readonly session: string },
-	principal: P3Principal,
-	self: AdmitSelf,
-): Watchable<Admission<{ access: Access }>> {
-	const answer = self.get(SessionAccess, { session: params.session, caller: callerKey(principal) });
-	return self.derive([answer.access], ([access]) =>
-		access === "none" ? deny("no access to this session") : allow({ access }),
-	);
+export function admitSession<const G extends string = never>(writes: readonly G[] = []) {
+	return (
+		params: { readonly session: string },
+		principal: P3Principal,
+		self: AdmitSelf,
+	): Watchable<Admission<{ access: Access; granted: G[] }>> => {
+		const answer = self.get(SessionAccess, { session: params.session, caller: callerKey(principal) });
+		return self.derive([answer.access], ([access]) =>
+			access === "none"
+				? deny("no access to this session")
+				: allow({ access, granted: access === "write" ? [...writes] : [] }),
+		);
+	};
 }
 
 /**
@@ -355,15 +353,11 @@ export const ThingAccess = remote("sessions.thing-access", {
 	version: 1,
 	params: { session: str(), thing: str(), caller: str() },
 	hostAddress: () => Server(),
-	variants: {
-		answer: {
-			state: {
-				answer: union([
-					obj({ access: lit("none") }),
-					obj({ access: Access, kind: str(), version: num(), options: unknown() }),
-				]),
-			},
-		},
+	state: {
+		answer: union([
+			obj({ access: lit("none") }),
+			obj({ access: Access, kind: str(), version: num(), options: unknown() }),
+		]),
 	},
 });
 
@@ -378,21 +372,25 @@ export function thingAdmission<O extends JsonValue>(kind: ThingKind<O>) {
 /**
  * The admission of a thing's object (params with `session` and `thing`) of `kind`: denied without access, for a
  * thing of another kind, and for options written at another version (never the defaults instead); else the caller's
- * access and options.
+ * access and options, and what `grants` gives them of the object's grantable members (none without it).
  */
-export function admitThing<O extends JsonValue>(kind: ThingKind<O>) {
+export function admitThing<O extends JsonValue, const G extends string = never>(
+	kind: ThingKind<O>,
+	grants?: (admitted: { readonly access: Access; readonly options: O }) => readonly G[],
+) {
 	return (
 		params: { readonly session: string; readonly thing: string },
 		principal: P3Principal,
 		self: AdmitSelf,
-	): Watchable<Admission<{ access: Access; options: O }>> => {
+	): Watchable<Admission<{ access: Access; options: O; granted: G[] }>> => {
 		const answer = self.get(ThingAccess, { ...params, caller: callerKey(principal) });
 		return self.derive([answer.answer], ([found]) => {
 			if (found.access === "none") return deny("no access to this thing");
 			if (found.kind !== kind.name) return deny(`not a thing of ${kind.name}`);
 			if (found.version !== kind.version) return deny(`its options are of version ${found.version}`);
 			// The options were checked against the kind's schema when they were written, at this version.
-			return allow({ access: found.access, options: found.options as O });
+			const admitted = { access: found.access, options: found.options as O };
+			return allow({ ...admitted, granted: [...(grants?.(admitted) ?? [])] });
 		});
 	};
 }
@@ -414,31 +412,40 @@ export const SessionThings = remote("sessions.things", {
 	params: { session: str() },
 	hostAddress: () => Server(),
 	admission: SessionAdmission,
-	variants: {
-		reader: {},
-		writer: {
-			state: {
-				kinds: arr(obj({ kind: str(), title: str() })),
-				owners: arr(ThingOwnerChoice),
-			},
-			methods: {
-				/** Makes content of `kind` (owned by nobody) and links it here; answers its id. */
-				create: method(obj({ kind: str(), name: opt(ThingName), options: opt(unknown()) }), str()),
-				/** Links an owned thing the caller manages (theirs, their group's, the Pi's for the owner) here. */
-				add: method(obj({ thing: str(), options: opt(unknown()) })),
-				/** Unlinks a thing; one nobody owns is deleted with its last link. */
-				remove: method(obj({ thing: str() })),
-				/** Gives a thing an owner (from nobody, or away); it stays linked. */
-				keep: method(obj({ thing: str(), owner: ThingKeeper })),
-				rename: method(obj({ thing: str(), name: ThingName })),
-				/** Deletes a thing everywhere, with its content. */
-				delete: method(obj({ thing: str() })),
-				/** Sets whose options for a thing here; `null` removes a member's or the agent's (they get the default again). */
-				setOptions: method(obj({ thing: str(), for: OptionsFor, options: unknown() })),
-			},
-		},
+	// Every member is a writer's (`SESSION_THINGS_WRITES`).
+	state: {
+		kinds: grantable(arr(obj({ kind: str(), title: str() }))),
+		owners: grantable(arr(ThingOwnerChoice)),
+	},
+	methods: {
+		/** Makes content of `kind` (owned by nobody) and links it here; answers its id. */
+		create: grantable(method(obj({ kind: str(), name: opt(ThingName), options: opt(unknown()) }), str())),
+		/** Links an owned thing the caller manages (theirs, their group's, the Pi's for the owner) here. */
+		add: grantable(method(obj({ thing: str(), options: opt(unknown()) }))),
+		/** Unlinks a thing; one nobody owns is deleted with its last link. */
+		remove: grantable(method(obj({ thing: str() }))),
+		/** Gives a thing an owner (from nobody, or away); it stays linked. */
+		keep: grantable(method(obj({ thing: str(), owner: ThingKeeper }))),
+		rename: grantable(method(obj({ thing: str(), name: ThingName }))),
+		/** Deletes a thing everywhere, with its content. */
+		delete: grantable(method(obj({ thing: str() }))),
+		/** Sets whose options for a thing here; `null` removes a member's or the agent's (they get the default again). */
+		setOptions: grantable(method(obj({ thing: str(), for: OptionsFor, options: unknown() }))),
 	},
 });
+
+/** What a writer of a session is granted of `SessionThings`: all of it. */
+export const SESSION_THINGS_WRITES = [
+	"kinds",
+	"owners",
+	"create",
+	"add",
+	"remove",
+	"keep",
+	"rename",
+	"delete",
+	"setOptions",
+] as const;
 
 /**
  * One screen's list of the things a person manages outside sessions: their own, their groups', and for the owner the
@@ -452,33 +459,29 @@ export const MyThings = remote("sessions.my-things", {
 	version: 1,
 	params: { view: str(), prefix: ThingName },
 	hostAddress: () => Server(),
-	variants: {
-		mine: {
-			state: {
-				list: obj({ rows: arr(TitledThing), moreAfter: bool() }),
-				kinds: arr(obj({ kind: str(), title: str() })),
-				owners: arr(ThingOwnerChoice),
-			},
-			methods: {
-				more: method(),
-				/** Makes a thing of `kind` for `owner`, with the `input` its kind's creation view collected; answers its id. */
-				create: method(
-					obj({
-						kind: str(),
-						name: opt(ThingName),
-						owner: ThingKeeper,
-						input: opt(unknown()),
-						everywhere: opt(bool()),
-					}),
-					str(),
-				),
-				/** Whether every session that follows the thing's owner has it ("in all my sessions"). */
-				setEverywhere: method(obj({ thing: str(), everywhere: bool() })),
-				rename: method(obj({ thing: str(), name: ThingName })),
-				keep: method(obj({ thing: str(), owner: ThingKeeper })),
-				delete: method(obj({ thing: str() })),
-			},
-		},
+	state: {
+		list: obj({ rows: arr(TitledThing), moreAfter: bool() }),
+		kinds: arr(obj({ kind: str(), title: str() })),
+		owners: arr(ThingOwnerChoice),
+	},
+	methods: {
+		more: method(),
+		/** Makes a thing of `kind` for `owner`, with the `input` its kind's creation view collected; answers its id. */
+		create: method(
+			obj({
+				kind: str(),
+				name: opt(ThingName),
+				owner: ThingKeeper,
+				input: opt(unknown()),
+				everywhere: opt(bool()),
+			}),
+			str(),
+		),
+		/** Whether every session that follows the thing's owner has it ("in all my sessions"). */
+		setEverywhere: method(obj({ thing: str(), everywhere: bool() })),
+		rename: method(obj({ thing: str(), name: ThingName })),
+		keep: method(obj({ thing: str(), owner: ThingKeeper })),
+		delete: method(obj({ thing: str() })),
 	},
 });
 
@@ -490,13 +493,10 @@ export const ThingUses = remote("sessions.thing-uses", {
 	version: 1,
 	params: { thing: str(), view: str() },
 	hostAddress: () => Server(),
-	admission: nul(),
-	variants: {
-		uses: {
-			state: { list: obj({ rows: arr(obj({ session: str(), by: Bringer })), moreAfter: bool() }) },
-			methods: { more: method() },
-		},
-	},
+	// Nothing but the decision (`admitManager`).
+	admission: obj({}),
+	state: { list: obj({ rows: arr(obj({ session: str(), by: Bringer })), moreAfter: bool() }) },
+	methods: { more: method() },
 });
 
 /**
@@ -508,38 +508,34 @@ export const SessionInfo = remote("sessions.info", {
 	params: { session: str() },
 	hostAddress: () => Server(),
 	admission: SessionAdmission,
-	variants: {
-		info: {
-			state: {
-				session: SessionRow,
-				access: Access,
-				/** The name of whom it follows now (a person's, a group's; `""` for nobody). */
-				followsName: str(),
-				/**
-				 * Each thing with its name, its kind's title (the kind's name while no plugin serves it), its owner and
-				 * their name now (`ownerName`: a person's, a group's, `""` for the Pi and nobody), who linked it and
-				 * their name now (`byName`; `""` for the app and the agent), its default options here and its
-				 * `overrides`: the options set for the agent and for members, in the order of whom they are for.
-				 * Options are as the kind reads them now: `null` when it cannot (no plugin, another version).
-				 */
-				things: arr(
-					obj({
-						thing: str(),
-						kind: str(),
-						name: ThingName,
-						owner: ThingOwner,
-						ownerName: str(),
-						by: Bringer,
-						byName: str(),
-						options: unknown(),
-						overrides: arr(obj({ for: OptionsFor, options: unknown() })),
-						title: str(),
-					}),
-				),
-				/** Each member with its name (a person's, a group's). */
-				members: arr(obj({ kind: oneOf("person", "group"), id: str(), access: Access, name: str() })),
-			},
-		},
+	state: {
+		session: SessionRow,
+		access: Access,
+		/** The name of whom it follows now (a person's, a group's; `""` for nobody). */
+		followsName: str(),
+		/**
+		 * Each thing with its name, its kind's title (the kind's name while no plugin serves it), its owner and
+		 * their name now (`ownerName`: a person's, a group's, `""` for the Pi and nobody), who linked it and
+		 * their name now (`byName`; `""` for the app and the agent), its default options here and its
+		 * `overrides`: the options set for the agent and for members, in the order of whom they are for.
+		 * Options are as the kind reads them now: `null` when it cannot (no plugin, another version).
+		 */
+		things: arr(
+			obj({
+				thing: str(),
+				kind: str(),
+				name: ThingName,
+				owner: ThingOwner,
+				ownerName: str(),
+				by: Bringer,
+				byName: str(),
+				options: unknown(),
+				overrides: arr(obj({ for: OptionsFor, options: unknown() })),
+				title: str(),
+			}),
+		),
+		/** Each member with its name (a person's, a group's). */
+		members: arr(obj({ kind: oneOf("person", "group"), id: str(), access: Access, name: str() })),
 	},
 });
 
@@ -555,19 +551,15 @@ export const SessionFacts = remote("sessions.facts", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
-	variants: {
-		worker: {
-			state: {
-				session: union([SessionRow, nul()]),
-				things: arr(obj({ thing: str(), kind: str(), name: ThingName, version: num(), options: unknown() })),
-				kinds: arr(obj({ kind: str(), title: str() })),
-			},
-			methods: {
-				report: method(obj({ state: SessionState })),
-				/** Makes content of one of `kinds` (owned by nobody) and links it here (by the agent); answers its id. */
-				create: method(obj({ kind: str(), name: opt(ThingName) }), str()),
-			},
-		},
+	state: {
+		session: union([SessionRow, nul()]),
+		things: arr(obj({ thing: str(), kind: str(), name: ThingName, version: num(), options: unknown() })),
+		kinds: arr(obj({ kind: str(), title: str() })),
+	},
+	methods: {
+		report: method(obj({ state: SessionState })),
+		/** Makes content of one of `kinds` (owned by nobody) and links it here (by the agent); answers its id. */
+		create: method(obj({ kind: str(), name: opt(ThingName) }), str()),
 	},
 });
 
@@ -579,7 +571,7 @@ export const SessionStart = remote("sessions.start", {
 	version: 1,
 	params: { session: str() },
 	hostAddress: ({ session }) => Session({ id: session }),
-	variants: { server: { state: { session: str() } } },
+	state: { session: str() },
 });
 
 /** A session's worker as its members see it: the row it follows from the server (`null` before it arrived). */
@@ -588,5 +580,5 @@ export const SessionWorker = remote("sessions.worker", {
 	params: { session: str() },
 	hostAddress: ({ session }) => Session({ id: session }),
 	admission: SessionAdmission,
-	variants: { view: { state: { session: union([SessionRow, nul()]) } } },
+	state: { session: union([SessionRow, nul()]) },
 });

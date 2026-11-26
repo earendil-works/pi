@@ -54,7 +54,7 @@ export function serveAccess(host: FacetHost<P3Principal>): void {
 	host.serve(SessionAccess, ({ session, caller }, principal, self) => {
 		mayAsk(principal, session, caller);
 		const { standing } = self.get(SessionStanding, { session, caller });
-		return { variant: "answer", members: { access: self.derive([standing], ([found]) => found.access) } };
+		return { access: self.derive([standing], ([found]) => found.access) };
 	});
 
 	host.serve(ThingAccess, ({ session, thing, caller }, principal, self) => {
@@ -83,7 +83,7 @@ export function serveAccess(host: FacetHost<P3Principal>): void {
 			if (answered === undefined) return NO_ANSWER;
 			return { access: theirs.access, kind: row.kind, ...answered };
 		});
-		return { variant: "answer", members: { answer } };
+		return { answer };
 	});
 }
 

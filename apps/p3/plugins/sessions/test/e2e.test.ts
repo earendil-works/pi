@@ -78,7 +78,7 @@ describe("persons and session workers", () => {
 		const client = await t.client(context, ann);
 		const worker = await client.get(SessionWorker, { session: id }, context);
 		const info = await client.get(SessionInfo, { session: id }, context);
-		assert.equal(worker.variant, "view");
+		assert.equal(worker.state.value.kind, "live");
 		await until(worker.session, (row) => row?.id === id, within("the worker's row", context));
 		assert.deepEqual([info.access.value, (await t.workers(context))[id]?.status], ["read", "running"]);
 		await asServer(t, (ctx, store) =>

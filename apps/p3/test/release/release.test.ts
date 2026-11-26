@@ -74,7 +74,7 @@ describe("the installed release", () => {
 			const client = await ownerClient(server.dataDir, server.port, context, 30_000);
 			const id = await (await client.get(Sessions, {}, context)).create(coding("one"), context);
 			const worker = await client.get(SessionWorker, { session: id }, context);
-			assert.equal(worker.variant, "view");
+			assert.equal(worker.state.value.kind, "live");
 			// Besides the worker, the server has esbuild's service as a child (it builds the plugins).
 			const children = await eventually(
 				() => childrenOf(server.pid),
@@ -159,7 +159,8 @@ const HELLO = {
 		'	params: { tone: oneOf("plain", "loud") },',
 		"	hostAddress: () => Server(),",
 		"	admission: OwnerAdmission,",
-		"	variants: { owner: { state: { text: str() }, methods: { greet: method(obj({ name: str() }), str()) } } },",
+		"	state: { text: str() },",
+		"	methods: { greet: method(obj({ name: str() }), str()) },",
 		"});",
 		"",
 		"/** The session whose worker serves it, as that worker's runtime says, for whoever works in the session. */",
@@ -168,7 +169,7 @@ const HELLO = {
 		"	params: { session: str() },",
 		"	hostAddress: ({ session }) => Session({ id: session }),",
 		"	admission: SessionAdmission,",
-		"	variants: { owner: { state: { session: str() } } },",
+		"	state: { session: str() },",
 		"});",
 	].join("\n"),
 	"server.ts": [
@@ -180,10 +181,7 @@ const HELLO = {
 		"		Hello,",
 		"		({ tone }) => {",
 		'			const said = (text: string): string => (tone === "loud" ? text.toUpperCase() : text);',
-		"			return {",
-		'				variant: "owner",',
-		'				members: { text: constant(said("hello")), greet: async ({ name }) => said("hello, " + name) },',
-		"			};",
+		'			return { text: constant(said("hello")), greet: async ({ name }) => said("hello, " + name) };',
 		"		},",
 		"		{ admit: admitOwner },",
 		"	);",
@@ -197,11 +195,8 @@ const HELLO = {
 		"export default defineFacet((host) => {",
 		"	host.serve(",
 		"		Where,",
-		"		(_params, _principal, _admitted, self) => ({",
-		'			variant: "owner",',
-		"			members: { session: constant(self.registry(WorkerRuntime).value.session) },",
-		"		}),",
-		"		{ admit: admitSession },",
+		"		(_params, _principal, _admitted, self) => ({ session: constant(self.registry(WorkerRuntime).value.session) }),",
+		"		{ admit: admitSession() },",
 		"	);",
 		"});",
 	].join("\n"),
@@ -218,10 +213,7 @@ const HELLO = {
 		"/** Who the owner is, as the people plugin answers `admitOwner`: a stand-in, Olga. */",
 		'const OWNER = { kind: "person", id: "o", name: "Olga" } as const;',
 		"const owner = defineFacet((host) =>",
-		"	host.serve(OwnerAccess, ({ caller }) => ({",
-		'		variant: "answer",',
-		'		members: { owner: constant(caller === "person:o") },',
-		"	})),",
+		'	host.serve(OwnerAccess, ({ caller }) => ({ owner: constant(caller === "person:o") })),',
 		");",
 		"",
 		'it("greets the owner, loud", async () => {',
@@ -264,8 +256,7 @@ const HELLO = {
 		"		const location = { environment: THIS_DEVICE, folder: t.dataDir };",
 		'		const session = await (await client.get(Sessions, {}, context)).create({ app: "coding", title: "one", location }, context);',
 		"		const where = await client.get(Where, { session }, context);",
-		'		assert.equal(where.variant, "owner");',
-		'		assert.equal(where.variant === "owner" && where.session.value, session);',
+		"		assert.equal(where.session.value, session);",
 		'		assert.equal((await t.workers(context))[session]?.status, "running");',
 		"		assert.deepEqual(t.errors, []);",
 		"	} finally {",

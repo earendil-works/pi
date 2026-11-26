@@ -52,5 +52,5 @@ export const FauxRequests = remote("faux.requests", {
 	params: { session: str() },
 	hostAddress: ({ session }) => Session({ id: session }),
 	admission: SessionAdmission,
-	variants: { log: { state: { requests: arr(FauxRequest) } } },
+	state: { requests: arr(FauxRequest) },
 });

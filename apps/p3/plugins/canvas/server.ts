@@ -16,7 +16,7 @@ import {
 	str,
 } from "@earendil-works/p3/v1";
 import { SessionsStore, serveThing } from "@earendil-works/p3/v1/server";
-import { Canvas, CanvasKind, Motion, type Pointer } from "./contract.ts";
+import { CANVAS_DRAWS, Canvas, CanvasKind, Motion, type Pointer } from "./contract.ts";
 import { CanvasStore, serveStore } from "./store.ts";
 
 /** How many shapes a page of a canvas's list holds. */
@@ -59,7 +59,9 @@ export default defineFacet((host) => {
 		},
 		object: {
 			contract: Canvas,
-			factory: ({ session, thing }, { access, options }, self) => {
+			// A drawer writes in the session and its options say `draw`.
+			grants: ({ access, options }) => (access === "write" && options.draw ? CANVAS_DRAWS : []),
+			factory: ({ session, thing }, { granted }, self) => {
 				const store = self.get(CanvasStore, {});
 				const board = self.get(BoardMotion, { session, thing });
 				const named = self.liveQuery(self.get(SessionsStore, {}).things.one, { id: thing }, { first: 1 });
@@ -69,7 +71,7 @@ export default defineFacet((host) => {
 					await board.send({ kind: "point", who, name, ...pointer }, ctx);
 					return null;
 				};
-				const viewer = {
+				return {
 					name: self.derive([named], ([{ rows }]) => rows[0]?.name || CANVAS),
 					shapes: list.value,
 					more: (ctx: Context) => list.more(ctx),
@@ -78,24 +80,12 @@ export default defineFacet((host) => {
 						return null;
 					},
 					motion: board.motion,
-				};
-				if (access !== "write" || !options.draw) {
 					// A viewer shows where it looks, never a shape it could not commit.
-					return {
-						variant: "viewer",
-						members: { ...viewer, point: (pointer, ctx) => point({ ...pointer, draft: null }, ctx) },
-					};
-				}
-				return {
-					variant: "drawer",
-					members: {
-						...viewer,
-						point,
-						add: async ({ shapes }, ctx) =>
-							store.add({ canvas: thing, shapes, author: (await caller(ctx)).who }, ctx),
-						remove: ({ id }, ctx) => store.remove({ canvas: thing, id }, ctx),
-						clear: (ctx) => store.clear({ canvas: thing }, ctx),
-					},
+					point: granted.has("add") ? point : (pointer, ctx) => point({ ...pointer, draft: null }, ctx),
+					add: async ({ shapes }, ctx) =>
+						store.add({ canvas: thing, shapes, author: (await caller(ctx)).who }, ctx),
+					remove: ({ id }, ctx) => store.remove({ canvas: thing, id }, ctx),
+					clear: (ctx) => store.clear({ canvas: thing }, ctx),
 				};
 			},
 		},

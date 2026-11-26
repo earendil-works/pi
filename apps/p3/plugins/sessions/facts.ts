@@ -39,20 +39,14 @@ export function serveFacts(host: FacetHost<P3Principal>): void {
 			});
 		});
 		return {
-			variant: "worker",
-			members: {
-				session: row,
-				things,
-				kinds: self.derive([kinds], ([table]) => contentKinds(table)),
-				report: ({ state }, ctx) => store.report({ session, state }, ctx),
-				create: async ({ kind, name }, ctx) => {
-					mustBeContent(kinds.value, kind);
-					const owner = { kind: "none" } as const;
-					return store.createThing(
-						{ kind, ...(name === undefined ? {} : { name }), owner, session, by: AGENT },
-						ctx,
-					);
-				},
+			session: row,
+			things,
+			kinds: self.derive([kinds], ([table]) => contentKinds(table)),
+			report: ({ state }, ctx) => store.report({ session, state }, ctx),
+			create: async ({ kind, name }, ctx) => {
+				mustBeContent(kinds.value, kind);
+				const owner = { kind: "none" } as const;
+				return store.createThing({ kind, ...(name === undefined ? {} : { name }), owner, session, by: AGENT }, ctx);
 			},
 		};
 	});

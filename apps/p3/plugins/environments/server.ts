@@ -58,7 +58,7 @@ export default defineFacet((host) => {
 				if (more) throw new Error(`environments: more than ${SHOWN} environments`);
 				return rows;
 			});
-			return { variant: "owner", members: { environments } };
+			return { environments };
 		},
 		{ admit: admitOwner },
 	);

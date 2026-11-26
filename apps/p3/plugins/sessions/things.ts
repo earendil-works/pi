@@ -20,6 +20,7 @@ import {
 	invalid,
 	MyThings,
 	type P3Principal,
+	SESSION_THINGS_WRITES,
 	type Self,
 	type SessionThing,
 	SessionThings,
@@ -49,9 +50,9 @@ const PAGE = 50;
 export function serveThings(host: FacetHost<P3Principal>): void {
 	host.serve(
 		SessionThings,
-		({ session }, principal, { access }, self) => {
-			if (access === "read") return { variant: "reader", members: {} };
-			// A writer through `admitSession`: a person; a session's worker manages through `SessionFacts`.
+		({ session }, principal, _admitted, self) => {
+			// A person (only persons read a session; a session's worker manages through `SessionFacts`); a reader is
+			// granted none of it.
 			if (principal.kind !== "person") throw forbidden("sessions: persons manage a session's things");
 			const me = followPerson(principal.id, self);
 			const store = self.get(SessionsStore, {});
@@ -67,49 +68,45 @@ export function serveThings(host: FacetHost<P3Principal>): void {
 				return found;
 			};
 			return {
-				variant: "writer",
-				members: {
-					kinds: self.derive([kinds], ([table]) => contentKinds(table)),
-					owners: self.derive([me.watched], () => keepersOf(me.value())),
-					create: async (thing, ctx) => {
-						mustBeContent(kinds.value, thing.kind);
-						return store.createThing({ ...thing, owner: NOBODY, session, by }, ctx);
-					},
-					add: async ({ thing, options }, ctx) => {
-						const [found] = (await store.things.one.page({ id: thing }, 1, ctx)).items;
-						if (found === undefined) throw invalid("args", `sessions: no thing ${thing}`);
-						// What nobody owns stays with the sessions that use it: only its manager there links it on.
-						if (!manages(me.value(), found.owner, false))
-							throw forbidden("sessions: a thing someone else manages");
-						return store.addThing({ session, thing, by, ...(options === undefined ? {} : { options }) }, ctx);
-					},
-					remove: async ({ thing }, ctx) => {
-						if (ours(thing).by.kind === "followed") {
-							throw invalid("args", "sessions: it comes from whom the session follows");
-						}
-						return store.removeThing({ session, thing }, ctx);
-					},
-					keep: async ({ thing, owner }, ctx) => {
-						ours(thing);
-						mayKeepFor(me.value(), owner);
-						return store.keepThing({ thing, owner }, ctx);
-					},
-					rename: async ({ thing, name }, ctx) => {
-						ours(thing);
-						return store.renameThing({ thing, name }, ctx);
-					},
-					delete: async ({ thing }, ctx) => {
-						ours(thing);
-						return store.deleteThing({ thing }, ctx);
-					},
-					setOptions: async (args, ctx) => {
-						ours(args.thing);
-						return store.setOptions({ session, ...args }, ctx);
-					},
+				kinds: () => self.derive([kinds], ([table]) => contentKinds(table)),
+				owners: () => self.derive([me.watched], () => keepersOf(me.value())),
+				create: async (thing, ctx) => {
+					mustBeContent(kinds.value, thing.kind);
+					return store.createThing({ ...thing, owner: NOBODY, session, by }, ctx);
+				},
+				add: async ({ thing, options }, ctx) => {
+					const [found] = (await store.things.one.page({ id: thing }, 1, ctx)).items;
+					if (found === undefined) throw invalid("args", `sessions: no thing ${thing}`);
+					// What nobody owns stays with the sessions that use it: only its manager there links it on.
+					if (!manages(me.value(), found.owner, false)) throw forbidden("sessions: a thing someone else manages");
+					return store.addThing({ session, thing, by, ...(options === undefined ? {} : { options }) }, ctx);
+				},
+				remove: async ({ thing }, ctx) => {
+					if (ours(thing).by.kind === "followed") {
+						throw invalid("args", "sessions: it comes from whom the session follows");
+					}
+					return store.removeThing({ session, thing }, ctx);
+				},
+				keep: async ({ thing, owner }, ctx) => {
+					ours(thing);
+					mayKeepFor(me.value(), owner);
+					return store.keepThing({ thing, owner }, ctx);
+				},
+				rename: async ({ thing, name }, ctx) => {
+					ours(thing);
+					return store.renameThing({ thing, name }, ctx);
+				},
+				delete: async ({ thing }, ctx) => {
+					ours(thing);
+					return store.deleteThing({ thing }, ctx);
+				},
+				setOptions: async (args, ctx) => {
+					ours(args.thing);
+					return store.setOptions({ session, ...args }, ctx);
 				},
 			};
 		},
-		{ admit: admitSession },
+		{ admit: admitSession(SESSION_THINGS_WRITES) },
 	);
 
 	host.serve(MyThings, ({ prefix }, principal, self) => {
@@ -127,40 +124,37 @@ export function serveThings(host: FacetHost<P3Principal>): void {
 			return found;
 		};
 		return {
-			variant: "mine",
-			members: {
-				// Each with its kind's title; the kind's name while no plugin serves it.
-				list: self.derive([list.value, kinds], ([{ rows, moreAfter }, table]) => ({
-					rows: rows.map((thing) => ({ ...thing, title: table.get(thing.kind)?.value.title ?? thing.kind })),
-					moreAfter,
-				})),
-				kinds: self.derive([kinds], ([table]) => kindsOf(table, "person")),
-				owners: self.derive([me.watched], () => keepersOf(me.value())),
-				more: (ctx) => list.more(ctx),
-				create: async ({ kind, owner, ...thing }, ctx) => {
-					if (creationOf(kinds.value, kind) !== "person") {
-						throw forbidden(`sessions: a thing of ${kind} is not made by a person`);
-					}
-					mayKeepFor(me.value(), owner);
-					return store.createThing({ ...thing, kind, owner }, ctx);
-				},
-				setEverywhere: async ({ thing, everywhere }, ctx) => {
-					await managed(thing, ctx);
-					return store.setEverywhere({ thing, everywhere }, ctx);
-				},
-				rename: async ({ thing, name }, ctx) => {
-					await managed(thing, ctx);
-					return store.renameThing({ thing, name }, ctx);
-				},
-				keep: async ({ thing, owner }, ctx) => {
-					await managed(thing, ctx);
-					mayKeepFor(me.value(), owner);
-					return store.keepThing({ thing, owner }, ctx);
-				},
-				delete: async ({ thing }, ctx) => {
-					await managed(thing, ctx);
-					return store.deleteThing({ thing }, ctx);
-				},
+			// Each with its kind's title; the kind's name while no plugin serves it.
+			list: self.derive([list.value, kinds], ([{ rows, moreAfter }, table]) => ({
+				rows: rows.map((thing) => ({ ...thing, title: table.get(thing.kind)?.value.title ?? thing.kind })),
+				moreAfter,
+			})),
+			kinds: self.derive([kinds], ([table]) => kindsOf(table, "person")),
+			owners: self.derive([me.watched], () => keepersOf(me.value())),
+			more: (ctx) => list.more(ctx),
+			create: async ({ kind, owner, ...thing }, ctx) => {
+				if (creationOf(kinds.value, kind) !== "person") {
+					throw forbidden(`sessions: a thing of ${kind} is not made by a person`);
+				}
+				mayKeepFor(me.value(), owner);
+				return store.createThing({ ...thing, kind, owner }, ctx);
+			},
+			setEverywhere: async ({ thing, everywhere }, ctx) => {
+				await managed(thing, ctx);
+				return store.setEverywhere({ thing, everywhere }, ctx);
+			},
+			rename: async ({ thing, name }, ctx) => {
+				await managed(thing, ctx);
+				return store.renameThing({ thing, name }, ctx);
+			},
+			keep: async ({ thing, owner }, ctx) => {
+				await managed(thing, ctx);
+				mayKeepFor(me.value(), owner);
+				return store.keepThing({ thing, owner }, ctx);
+			},
+			delete: async ({ thing }, ctx) => {
+				await managed(thing, ctx);
+				return store.deleteThing({ thing }, ctx);
 			},
 		};
 	});
@@ -173,7 +167,7 @@ export function serveThings(host: FacetHost<P3Principal>): void {
 				rows: rows.map(({ session, by }) => ({ session, by })),
 				moreAfter,
 			}));
-			return { variant: "uses", members: { list: uses, more: (ctx) => list.more(ctx) } };
+			return { list: uses, more: (ctx) => list.more(ctx) };
 		},
 		{ admit: admitManager },
 	);
@@ -277,11 +271,11 @@ function admitManager(
 	params: { readonly thing: string },
 	principal: P3Principal,
 	self: AdmitSelf,
-): Watchable<Admission<null>> {
+): Watchable<Admission<Record<string, never>>> {
 	if (principal.kind !== "person") return constant(deny("sessions: a person's things"));
 	const me = followPerson(principal.id, self);
 	const found = self.liveQuery(self.get(SessionsStore, {}).things.one, { id: params.thing }, { first: 1 });
 	return self.derive([me.watched, found], ([person, { rows }]) =>
-		rows[0] !== undefined && manages(person, rows[0].owner, false) ? allow(null) : deny("sessions: not your thing"),
+		rows[0] !== undefined && manages(person, rows[0].owner, false) ? allow({}) : deny("sessions: not your thing"),
 	);
 }

@@ -1,7 +1,7 @@
 // p3's API, version 1, for every host kind (`@earendil-works/p3/v1`): Chord's plugin surface re-exported once (so a
 // plugin that needs one more of Chord's exports never forces an API change), `defineFacet` typed with p3's
-// principals, p3's host kinds, and the helpers for plugins: `forward` (`forward.ts`), `contribute`, `until` and
-// `reportError`. Plugins import this module, never Chord: their builds leave it out and each process passes its own
+// principals, p3's host kinds, and the helpers for plugins: `forward` (`forward.ts`), `withGranted` (`granted.ts`),
+// `contribute`, `until` and `reportError`. Plugins import this module, never Chord: their builds leave it out and each process passes its own
 // instance in. Browser-safe: no Node module.
 
 import {
@@ -42,6 +42,7 @@ export * from "../../../plugins/tools/contract.ts";
 export * from "../../../plugins/transcript/contract.ts";
 export { callerKey, P3Principal } from "../../app.ts";
 export { forward } from "./forward.ts";
+export { type With, withGranted } from "./granted.ts";
 
 /** Defines a facet of p3: its factories get p3's principals. */
 export function defineFacet(setup: (host: FacetHost<P3Principal>, self: FacetSelf) => void) {

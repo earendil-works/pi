@@ -14,6 +14,7 @@ import {
 	type Host,
 	type P3Principal,
 	remote,
+	SESSION_THINGS_WRITES,
 	Session,
 	SessionInfo,
 	Sessions,
@@ -21,9 +22,11 @@ import {
 	SessionThings,
 	str,
 	THIS_DEVICE,
+	TRANSCRIPT_WRITES,
 	Transcript,
 	until,
 } from "@earendil-works/p3/v1";
+import { assertGranted } from "./granted.ts";
 import { FauxLogin, type Step } from "./plugins/faux-login/contract.ts";
 
 /** The probe (`test/plugins/probe/`): a test server's plugin under test (`testServer({ plugins: [PROBE] })`). */
@@ -51,7 +54,7 @@ export async function scriptFaux(
 		const faux = things.find(({ kind }) => kind === FauxLogin.name)!;
 		const options = { provider: "faux", script, tool: false };
 		const manage = await ctx.get(SessionThings, { session });
-		if (manage.variant !== "writer") throw new Error(`scriptFaux: the owner is a ${manage.variant}`);
+		assertGranted(manage, ...SESSION_THINGS_WRITES);
 		await manage.setOptions({ thing: faux.thing, for: { kind: "everyone" }, options }, ctx);
 	}, context);
 }
@@ -94,7 +97,7 @@ export function openGate(folder: string): Promise<void> {
 export async function startRun(client: Host<P3Principal>, session: string, context: Context): Promise<void> {
 	await client.root(async (ctx) => {
 		const transcript = await ctx.get(Transcript, { session });
-		if (transcript.variant !== "writer") throw new Error(`startRun: the owner is a ${transcript.variant}`);
+		assertGranted(transcript, ...TRANSCRIPT_WRITES);
 		await transcript.send({ text: "go", requestId: "go" }, ctx);
 		const list = await ctx.get(SessionsList, { app: "coding", set: "active", view: `run-${session}` });
 		await until(list.list, (value) => value.rows.some((row) => row.id === session && row.state === "working"), ctx);
@@ -201,7 +204,7 @@ export function constantContract(name: string) {
 		version: 1,
 		params: { session: str() },
 		hostAddress: ({ session }) => Session({ id: session }),
-		variants: { owner: { state: { value: str() } } },
+		state: { value: str() },
 	});
 }
 
@@ -215,10 +218,10 @@ const Constant = remote(${JSON.stringify(`${name}.${name}`)}, {
 	version: 1,
 	params: { session: str() },
 	hostAddress: ({ session }) => Session({ id: session }),
-	variants: { owner: { state: { value: str() } } },
+	state: { value: str() },
 });
 export default defineFacet((host) => {
-	host.serve(Constant, () => ({ variant: "owner", members: { value: constant(${JSON.stringify(value)}) } }));
+	host.serve(Constant, () => ({ value: constant(${JSON.stringify(value)}) }));
 });
 `;
 }

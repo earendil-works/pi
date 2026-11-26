@@ -89,7 +89,7 @@ describe("testServer", () => {
 		);
 		assert.equal(dataDir, t.dataDir);
 		// A built-in plugin's object, through a client signed in as the owner.
-		assert.equal((await (await t.client(context)).get(Sessions, {}, context)).variant, "owner");
+		assert.equal((await (await t.client(context)).get(Sessions, {}, context)).state.value.kind, "live");
 		await t.stop(context);
 		assert.ok(await exists(join(dataDir, "server", "store.sqlite")));
 		const again = await t.restart(context);
@@ -132,7 +132,7 @@ describe("testServer", () => {
 		try {
 			await t.close(context);
 			assert.ok(await exists(join(next.dataDir, "server", "store.sqlite")));
-			assert.equal((await (await next.client(context)).get(Sessions, {}, context)).variant, "owner");
+			assert.equal((await (await next.client(context)).get(Sessions, {}, context)).state.value.kind, "live");
 		} finally {
 			await next.close(context);
 		}

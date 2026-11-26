@@ -46,7 +46,7 @@ export default defineFacet((host) => {
 		mayAsk(principal, caller);
 		const apps = self.registry(Apps);
 		// The server and the workers are no one in an app; anything else that is no person neither.
-		if (!caller.startsWith("person:")) return { variant: "answer", members: { answer: constant(NONE) } };
+		if (!caller.startsWith("person:")) return { answer: constant(NONE) };
 		const person = caller.slice("person:".length);
 		const people = self.get(PeopleStore, {});
 		const found = self.liveQuery(people.persons.one, { id: person }, { first: 1 });
@@ -60,14 +60,14 @@ export default defineFacet((host) => {
 			if (!row.owner && names.length === 0 && !inSession) return NONE;
 			return { kind: "person" as const, id: person, owner: row.owner, groups: names } satisfies AppAdmission;
 		});
-		return { variant: "answer", members: { answer } };
+		return { answer };
 	});
 
 	host.serve(AppCatalog, (_params, principal, self) => {
 		const apps = self.registry(Apps);
 		const caller = callerKey(principal);
 		// A session's agent and the server enter no app.
-		if (!caller.startsWith("person:")) return { variant: "catalog", members: { apps: constant([]) } };
+		if (!caller.startsWith("person:")) return { apps: constant([]) };
 		const person = caller.slice("person:".length);
 		const people = self.get(PeopleStore, {});
 		const found = self.liveQuery(people.persons.one, { id: person }, { first: 1 });
@@ -79,7 +79,7 @@ export default defineFacet((host) => {
 			const ofGroups = new Set(theirs.more ? [] : theirs.rows.map(({ app }) => app));
 			return byTitle(table, (id) => ofGroups.has(id) || inSessions.has(id));
 		});
-		return { variant: "catalog", members: { apps: shown } };
+		return { apps: shown };
 	});
 });
 

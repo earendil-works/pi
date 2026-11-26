@@ -17,14 +17,11 @@ import {
 export default defineFacet((host) => {
 	host.serve(
 		SessionWorker,
-		(_params, _principal, _admitted, self) => ({
-			variant: "view",
-			members: { session: self.get(SessionFacts, {}).session },
-		}),
-		{ admit: admitSession },
+		(_params, _principal, _admitted, self) => ({ session: self.get(SessionFacts, {}).session }),
+		{ admit: admitSession() },
 	);
 	host.serve(SessionStart, ({ session }, principal) => {
 		if (principal.kind !== "server") throw forbidden("sessions: the server's waker only");
-		return { variant: "server", members: { session: constant(session) } };
+		return { session: constant(session) };
 	});
 });

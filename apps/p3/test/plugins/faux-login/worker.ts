@@ -34,14 +34,9 @@ export default defineFacet((host) => {
 		);
 		return { requests: self.derive([log], ([value]) => [...value]) };
 	});
-	host.serve(
-		FauxRequests,
-		(_params, _principal, _admitted, self) => ({
-			variant: "log",
-			members: { requests: self.get(Log, {}).requests },
-		}),
-		{ admit: admitSession },
-	);
+	host.serve(FauxRequests, (_params, _principal, _admitted, self) => ({ requests: self.get(Log, {}).requests }), {
+		admit: admitSession(),
+	});
 });
 
 /** A faux provider `provider` answering from `script`, recording each request. */

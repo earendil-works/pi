@@ -2,19 +2,19 @@
 // checker, shown to a reader) and its options form in the session sheet (one switch, "May tick").
 
 import { Button, Checkbox, Input, SelectionControlAndLabel, Switch } from "@earendil-works/elanor-react";
-import { BACKGROUND_CONTEXT, type Context, defineFacet, type OptionsOf } from "@earendil-works/p3/v1";
+import { BACKGROUND_CONTEXT, type Context, defineFacet, type OptionsOf, withGranted } from "@earendil-works/p3/v1";
 import {
 	CheckIcon,
 	type ThingOptionsProps,
 	type ThingViewProps,
 	ThingViews,
 	useHold,
+	useLive,
 	useRefState,
-	useVariant,
 	useWatch,
 } from "@earendil-works/p3/v1/web";
 import { useState } from "react";
-import { Checklist, ChecklistKind } from "./contract.ts";
+import { CHECKLIST_CHECKS, Checklist, ChecklistKind } from "./contract.ts";
 import styles from "./web.module.css";
 
 export default defineFacet((_host, self) =>
@@ -29,10 +29,10 @@ export default defineFacet((_host, self) =>
 /** Checklist `thing` of session `session`, as the viewer's admission allows: a checker ticks and adds. */
 function ChecklistView(props: ThingViewProps) {
 	const ref = useHold(Checklist, { session: props.session, thing: props.thing });
-	const checker = useVariant(ref, "checker");
-	const reader = useVariant(ref, "reader");
+	const live = useLive(ref);
+	const checker = withGranted(live, ...CHECKLIST_CHECKS);
 	const state = useRefState(ref);
-	const items = useWatch((checker ?? reader)?.items);
+	const items = useWatch(live?.items);
 	const [text, setText] = useState("");
 	const [error, setError] = useState<string | undefined>(undefined);
 	/** Runs `call`, keeping its failure to show. */

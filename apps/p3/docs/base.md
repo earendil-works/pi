@@ -58,15 +58,18 @@ they are in (their roles); a person who may not enter the app is denied. The own
 ## One question for every object: `admitSession`
 
 A plugin never reads a principal. An object of a session (not of one thing) declares the admission value
-`SessionAdmission` (`{ access: "read" | "write" }`) and `admitSession` as its admission; its factory gets the
-caller's access:
+`SessionAdmission` (`{ access: "read" | "write" }`) and `admitSession(writes)` as its admission: a writer is granted
+`writes`, the contract's `grantable(...)` members a writer gets (Chord slice 15); its factory gets the caller's access
+and returns every member, Chord keeping the ungranted ones from the caller:
 
 ```ts
 export const Pad = remote("pad.pad", { version: 1, params: { session: str() },
 	hostAddress: ({ session }) => Session({ id: session }), admission: SessionAdmission,
-	variants: { reader: { … }, writer: { … } } });
-host.serve(Pad, (params, _principal, { access }, self) => (access === "write" ? writer : reader), { admit: admitSession });
+	state: { text: str() }, methods: { write: grantable(method(str())) } });
+host.serve(Pad, (params, _principal, _admitted, self) => ({ text, write }), { admit: admitSession(["write"]) });
 ```
+
+A view reads the grant live: `withGranted(useLive(ref), "write")` is the reference with `write`, or `undefined`.
 
 The sessions plugin answers it (`SessionAccess`, live). A member removed, a group changed, a session archived: the
 caller's object is rebuilt or denied at once (Chord's admission).
@@ -327,19 +330,18 @@ export const Checklist = remote("checklist.checklist", {
 	params: { session: str(), thing: str() },
 	hostAddress: () => Server(),
 	admission: thingAdmission(ChecklistKind),
-	variants: {
-		reader: { state: { items: arr(Item) } },
-		checker: {
-			state: { items: arr(Item) },
-			methods: {
-				/** Adds an item, not done; answers its id. Refused once the checklist holds 500 items. */
-				add: method(obj({ text: ItemText }), str()),
-				/** Marks item `id` done or not. */
-				tick: method(obj({ id: str(), done: bool() })),
-			},
-		},
+	state: { items: arr(Item) },
+	// A checker's (`CHECKLIST_CHECKS`).
+	methods: {
+		/** Adds an item, not done; answers its id. Refused once the checklist holds 500 items. */
+		add: grantable(method(obj({ text: ItemText }), str())),
+		/** Marks item `id` done or not. */
+		tick: grantable(method(obj({ id: str(), done: bool() }))),
 	},
 });
+
+/** What a checker of a checklist is granted. */
+export const CHECKLIST_CHECKS = ["add", "tick"] as const;
 ```
 
 `server.ts`:
@@ -409,19 +411,15 @@ export default defineFacet((host) => {
 		},
 		object: {
 			contract: Checklist,
-			factory: ({ thing }, { access, options }, self) => {
+			// The kind's one rule: a reader only reads; a writer ticks (and adds) only if the option allows it.
+			grants: ({ access, options }) => (access === "write" && options.check ? CHECKLIST_CHECKS : []),
+			factory: ({ thing }, _admitted, self) => {
 				const store = self.get(ChecklistStore, {});
 				const found = self.liveQuery(store.items.of, { checklist: thing }, { first: LIMIT });
-				const reader = { items: self.derive([found], ([{ rows }]) => rows) };
-				// The kind's one rule: a reader only reads; a writer ticks (and adds) only if the option allows it.
-				if (access === "read" || !options.check) return { variant: "reader", members: reader };
 				return {
-					variant: "checker",
-					members: {
-						...reader,
-						add: ({ text }, ctx) => store.add({ checklist: thing, text }, ctx),
-						tick: ({ id, done }, ctx) => store.tick({ checklist: thing, id, done }, ctx),
-					},
+					items: self.derive([found], ([{ rows }]) => rows),
+					add: ({ text }, ctx) => store.add({ checklist: thing, text }, ctx),
+					tick: ({ id, done }, ctx) => store.tick({ checklist: thing, id, done }, ctx),
 				};
 			},
 		},
@@ -589,7 +587,7 @@ async function change(
 	if (!found.options.check) throw forbidden(`checklist: you may not change ${described(found)}`);
 	return agent.call(async (ctx) => {
 		const at = await ctx.get(Checklist, { session: agent.session, thing: found.thing });
-		if (at.variant !== "checker") throw forbidden(`checklist: you may not change ${described(found)} now`);
+		if (at.add === undefined || at.tick === undefined) throw forbidden(`checklist: you may not change ${described(found)} now`);
 		switch (change.kind) {
 			case "add":
 				return at.add({ text: change.text }, ctx);
@@ -777,10 +775,10 @@ sessions" (the club's login) is in every chat.
 ```ts
 // club/contract.ts
 export const Club = remote("club.club", { version: 1, params: {}, hostAddress: () => Server(), admission: AppAdmission,
-	variants: { club: { methods: { startChat: method(obj({}), str()) } } } });
+	methods: { startChat: method(obj({}), str()) } });
 // club/server.ts
 self.contribute(Apps, { id: "club", title: "Club", chrome: "bar" });
-host.serve(Club, (_params, _principal, who, self) => ({ variant: "club", members: {
+host.serve(Club, (_params, _principal, who, self) => ({
 	startChat: async (_args, ctx) => {
 		if (!who.groups.includes("players")) throw forbidden("club: players start chats");
 		const store = self.get(SessionsStore, {});
@@ -793,7 +791,7 @@ host.serve(Club, (_params, _principal, who, self) => ({ variant: "club", members
 			things: [usingThing(plan, { check: false })] }, ctx);
 		await store.setOptions({ session, thing: plan, for: group, options: { check: true } }, ctx);
 		return session;
-	} } }), { admit: admitApp("club") });
+	} }), { admit: admitApp("club") });
 // club/web.tsx: self.contribute(AppPages, { app: "club", Page: ClubPage }): ClubPage shows TranscriptView and <ThingView>.
 ```
 

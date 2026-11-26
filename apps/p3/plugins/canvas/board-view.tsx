@@ -5,15 +5,15 @@
 // pointer shown. The view follows the admission live: `draw` taken back turns it into the viewer's at once.
 
 import { Button, Input, SegmentedControl } from "@earendil-works/elanor-react";
-import { BACKGROUND_CONTEXT, type Context, Me, type Reference } from "@earendil-works/p3/v1";
-import { useHold, useRefState, useVariant, useWatch } from "@earendil-works/p3/v1/web";
+import { BACKGROUND_CONTEXT, type Context, Me, type Reference, type With, withGranted } from "@earendil-works/p3/v1";
+import { useHold, useLive, useRefState, useWatch } from "@earendil-works/p3/v1/web";
 import { type PointerEvent, useEffect, useRef, useState } from "react";
 import styles from "./board-view.module.css";
-import { BOARD_HEIGHT, BOARD_WIDTH, Canvas, type PlacedShape, type Shape } from "./contract.ts";
+import { BOARD_HEIGHT, BOARD_WIDTH, CANVAS_DRAWS, Canvas, type PlacedShape, type Shape } from "./contract.ts";
 import { type Other, useMotionSender, useOthers } from "./motion.ts";
 
 /** The drawer's members, as the view calls them. */
-type Drawer = Extract<Reference<typeof Canvas>, { readonly variant: "drawer" }>;
+type Drawer = With<Reference<typeof Canvas>, (typeof CANVAS_DRAWS)[number]>;
 
 /** A shape the drawer sent, with its id once the add answered. */
 type Sending = { readonly shape: Shape; readonly id: string | undefined };
@@ -33,13 +33,12 @@ const COLORS = [
 /** Board `thing` of session `session`, as the viewer's admission allows. */
 export function BoardView(props: { readonly session: string; readonly thing: string }) {
 	const ref = useHold(Canvas, { session: props.session, thing: props.thing });
-	const drawer = useVariant(ref, "drawer");
-	const viewer = useVariant(ref, "viewer");
+	const live = useLive(ref);
+	const drawer = withGranted(live, ...CANVAS_DRAWS);
 	const state = useRefState(ref);
-	const live = drawer ?? viewer;
 	const shapes = useWatch(live?.shapes);
 	const name = useWatch(live?.name);
-	const me = useWatch(useVariant(useHold(Me, {}), "me")?.me);
+	const me = useWatch(useLive(useHold(Me, {}))?.me);
 	const myKey = me === undefined ? undefined : me.kind === "person" ? `person:${me.id}` : me.kind;
 	const others = useOthers(live?.motion, myKey);
 	const [failure, setFailure] = useState<string | undefined>(undefined);
@@ -59,7 +58,11 @@ export function BoardView(props: { readonly session: string; readonly thing: str
 		return <p className={styles.note}>This canvas cannot be shown now.</p>;
 	}
 	return (
-		<section aria-label="Canvas" className={styles.board} data-canvas={live?.variant ?? "loading"}>
+		<section
+			aria-label="Canvas"
+			className={styles.board}
+			data-canvas={live === undefined ? "loading" : drawer === undefined ? "viewer" : "drawer"}
+		>
 			<p className={styles.title} data-canvas-name="">
 				{name ?? "Canvas"}
 				{live === undefined ? (

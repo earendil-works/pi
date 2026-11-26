@@ -65,7 +65,7 @@ export default defineFacet((host) => {
 			const kinds = self.registry(ThingKinds);
 			// What the owner adds is the owner's person's; a session they make follows them unless they say otherwise.
 			const by = { kind: "person", id: principal.id } as const;
-			return forward(store, Sessions, "owner", {
+			return forward(store, Sessions, {
 				create: ({ follows, ...args }, ctx) => {
 					// A page makes content only, owned by nobody; other things are server code's (`SessionsStore`).
 					for (const use of args.things ?? []) {
@@ -89,7 +89,7 @@ export default defineFacet((host) => {
 			const store = self.get(SessionsStore, {});
 			if (every) {
 				const list = self.list("sessions", [[store.sessions[set], { app }]], { first: PAGE });
-				return { variant: "sessions", members: { list: list.value, more: (ctx) => list.more(ctx) } };
+				return { list: list.value, more: (ctx) => list.more(ctx) };
 			}
 			// Admitted: a person (`admitList`).
 			if (principal.kind !== "person") throw forbidden("sessions: persons'");
@@ -101,7 +101,7 @@ export default defineFacet((host) => {
 				members: [`person:${person}`, ...(more ? [] : rows.map(({ id }) => `group:${id}`))],
 			}));
 			const list = self.list("memberships", [[store.memberships[set], args]], { first: PAGE });
-			return { variant: "sessions", members: { list: onceEach(list.value, self), more: (ctx) => list.more(ctx) } };
+			return { list: onceEach(list.value, self), more: (ctx) => list.more(ctx) };
 		},
 		{ admit: admitList },
 	);
@@ -151,57 +151,51 @@ export default defineFacet((host) => {
 				namesOf(ofPersons.rows, ofGroups.rows),
 			);
 			return {
-				variant: "info",
-				members: {
-					// Admitted: the session exists (its access is none otherwise).
-					session: self.derive([found], ([row]) => row ?? fail(`no session ${session}`)),
-					access: constant(access),
-					// One who left shows their id, as a member does.
-					followsName: self.derive([found, names], ([row, named]) =>
-						row === null || row.follows === null ? "" : nameOf(named, row.follows),
-					),
-					things: self.derive([things, set, kinds, names], ([of, written, table, named]) => {
-						if (written.more) fail(`session ${session} has more than ${READ_WHOLE} options`);
-						const byThing = Map.groupBy(written.rows, (row) => row.thing);
-						return of.map(({ thing, kind, name, owner, by }) => {
-							const entry = table.get(kind)?.value;
-							const read = (row: StoredOptions) => currentOptions(entry, row)?.options ?? null;
-							const rows = byThing.get(thing) ?? [];
-							const everyone = rows.find((row) => row.for === "everyone");
-							const overrides = rows
-								.filter((row) => row.for !== "everyone")
-								.map((row) => ({ for: optionsForOf(row.for), options: read(row) }));
-							// The kind's title; its name while no plugin serves it.
-							const title = entry?.title ?? kind;
-							return {
-								thing,
-								kind,
-								name,
-								owner,
-								// The owner's and the linker's names now; one who left shows their id.
-								ownerName: owner.kind === "person" || owner.kind === "group" ? nameOf(named, owner) : "",
-								by,
-								byName: by.kind === "person" ? nameOf(named, by) : "",
-								// None set (a followed thing): its kind's initial.
-								options: everyone === undefined ? (unset(entry)?.options ?? null) : read(everyone),
-								overrides,
-								title,
-							};
-						});
-					}),
-					members: self.derive(
-						[members, persons, groups, names],
-						([{ rows, more }, ofPersons, ofGroups, named]) => {
-							if (more || ofPersons.more || ofGroups.more)
-								fail(`session ${session} has more than ${READ_WHOLE} members`);
-							// A member whose person or group is gone (until its row goes too) shows its id.
-							return rows.map((member) => ({ ...member, name: nameOf(named, member) }));
-						},
-					),
-				},
+				// Admitted: the session exists (its access is none otherwise).
+				session: self.derive([found], ([row]) => row ?? fail(`no session ${session}`)),
+				access: constant(access),
+				// One who left shows their id, as a member does.
+				followsName: self.derive([found, names], ([row, named]) =>
+					row === null || row.follows === null ? "" : nameOf(named, row.follows),
+				),
+				things: self.derive([things, set, kinds, names], ([of, written, table, named]) => {
+					if (written.more) fail(`session ${session} has more than ${READ_WHOLE} options`);
+					const byThing = Map.groupBy(written.rows, (row) => row.thing);
+					return of.map(({ thing, kind, name, owner, by }) => {
+						const entry = table.get(kind)?.value;
+						const read = (row: StoredOptions) => currentOptions(entry, row)?.options ?? null;
+						const rows = byThing.get(thing) ?? [];
+						const everyone = rows.find((row) => row.for === "everyone");
+						const overrides = rows
+							.filter((row) => row.for !== "everyone")
+							.map((row) => ({ for: optionsForOf(row.for), options: read(row) }));
+						// The kind's title; its name while no plugin serves it.
+						const title = entry?.title ?? kind;
+						return {
+							thing,
+							kind,
+							name,
+							owner,
+							// The owner's and the linker's names now; one who left shows their id.
+							ownerName: owner.kind === "person" || owner.kind === "group" ? nameOf(named, owner) : "",
+							by,
+							byName: by.kind === "person" ? nameOf(named, by) : "",
+							// None set (a followed thing): its kind's initial.
+							options: everyone === undefined ? (unset(entry)?.options ?? null) : read(everyone),
+							overrides,
+							title,
+						};
+					});
+				}),
+				members: self.derive([members, persons, groups, names], ([{ rows, more }, ofPersons, ofGroups, named]) => {
+					if (more || ofPersons.more || ofGroups.more)
+						fail(`session ${session} has more than ${READ_WHOLE} members`);
+					// A member whose person or group is gone (until its row goes too) shows its id.
+					return rows.map((member) => ({ ...member, name: nameOf(named, member) }));
+				}),
 			};
 		},
-		{ admit: admitSession },
+		{ admit: admitSession() },
 	);
 });
 

@@ -102,33 +102,27 @@ export function standIns(
 			lists.add(list);
 			kindLists.add(kinds);
 			return {
-				variant: "worker",
-				members: {
-					session: self.derive([session], ([value]) => value),
-					things: self.derive([list], ([value]) => [...value]),
-					kinds: self.derive([kinds], ([value]) => [...value]),
-					create: async ({ kind, name }) => {
-						const id = `made-${created.length + 1}`;
-						created.push({ kind, name: name ?? "" });
-						server.things([...thingsValue, { thing: id, kind, name: name ?? "", version: 1, options: {} }]);
-						return id;
-					},
-					report: async ({ state }) => {
-						await held;
-						reports.push(state);
-						server.row({ state });
-						return null;
-					},
+				session: self.derive([session], ([value]) => value),
+				things: self.derive([list], ([value]) => [...value]),
+				kinds: self.derive([kinds], ([value]) => [...value]),
+				create: async ({ kind, name }) => {
+					const id = `made-${created.length + 1}`;
+					created.push({ kind, name: name ?? "" });
+					server.things([...thingsValue, { thing: id, kind, name: name ?? "", version: 1, options: {} }]);
+					return id;
+				},
+				report: async ({ state }) => {
+					await held;
+					reports.push(state);
+					server.row({ state });
+					return null;
 				},
 			};
 		});
 		host.serve(SessionAccess, ({ caller }, _principal, self) => {
 			const access = self.writable(accesses.get(caller) ?? "none");
 			answers.add({ caller, access });
-			return {
-				variant: "answer",
-				members: { access: self.derive([access], ([value]) => value as "none" | "read" | "write") },
-			};
+			return { access: self.derive([access], ([value]) => value as "none" | "read" | "write") };
 		});
 	});
 	const device = defineFacet((host, self) => {

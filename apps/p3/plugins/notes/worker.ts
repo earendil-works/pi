@@ -67,7 +67,7 @@ function notesExtension(things: readonly Notebook[], agent: Agent): Extension {
 			if (!thing.options.edit) throw forbidden(`notes: you may not write in ${described(thing)}`);
 			const added = await agent.call(async (ctx) => {
 				const notebook = await ctx.get(Notes, { session: agent.session, thing: thing.thing });
-				if (notebook.variant !== "editor") throw forbidden(`notes: you may not write in ${described(thing)} now`);
+				if (notebook.add === undefined) throw forbidden(`notes: you may not write in ${described(thing)} now`);
 				return notebook.add({ text }, ctx);
 			}, context);
 			return { output: [{ type: "text", text: `Added note ${added}.` }] };

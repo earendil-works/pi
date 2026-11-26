@@ -3,7 +3,7 @@
 
 import { Button, Field, Form, Heading, Input } from "@earendil-works/elanor-react";
 import { Environments, Sessions, THIS_DEVICE, type ThingUse } from "@earendil-works/p3/v1";
-import { useHold, useRefState, useVariant, useWatch } from "@earendil-works/p3/v1/web";
+import { useHold, useLive, useRefState, useWatch } from "@earendil-works/p3/v1/web";
 import { useState } from "react";
 import { useAction } from "./action.ts";
 import { Choice } from "./choice.tsx";
@@ -16,9 +16,9 @@ export function NewSession(props: {
 	readonly onCreated: (session: string) => void;
 }) {
 	const sessionsRef = useHold(Sessions, {});
-	const sessions = useVariant(sessionsRef, "owner");
+	const sessions = useLive(sessionsRef);
 	const refused = useRefState(sessionsRef)?.kind === "failed";
-	const environments = useWatch(useVariant(useHold(Environments, {}), "owner")?.environments);
+	const environments = useWatch(useLive(useHold(Environments, {}))?.environments);
 	const [title, setTitle] = useState("");
 	const [folder, setFolder] = useState("");
 	const [chosen, setChosen] = useState<string | undefined>(undefined);

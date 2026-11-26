@@ -25,13 +25,16 @@ import {
 	type Host,
 	Me,
 	type P3Principal,
+	SESSION_THINGS_WRITES,
 	SessionInfo,
 	Sessions,
 	SessionThings,
+	TRANSCRIPT_WRITES,
 	Transcript,
 	until,
 } from "@earendil-works/p3/v1";
 import { type TestServer, testServer } from "@earendil-works/p3/v1/testing";
+import { assertGranted } from "../../../test/granted.ts";
 import { FauxInboxStore } from "../../../test/plugins/faux-inbox/contract.ts";
 import { FauxLogin, type Step } from "../../../test/plugins/faux-login/contract.ts";
 import { eventually, within } from "../../../test/until.ts";
@@ -211,7 +214,6 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		// The faux login is the Pi's, in all its sessions: the session has it from following its owner; its script is
 		// this session's options for it.
 		const info = await owner.get(SessionInfo, { session }, context);
-		if (info.variant !== "info") return assert.fail(info.variant);
 		const things = await until(
 			info.things,
 			(list) => list.some((thing) => thing.kind === FauxLogin.name),
@@ -617,7 +619,7 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 			context,
 		);
 		const transcript = await owner.get(Transcript, { session }, context);
-		if (transcript.variant !== "writer") return assert.fail(transcript.variant);
+		assertGranted(transcript, ...TRANSCRIPT_WRITES);
 		await transcript.send({ text: "@note", requestId: "page-note" }, context);
 		await browser.wait(
 			`[...document.querySelectorAll('${pane} [data-note]')].some((e) => e.textContent.includes("Coffee is on the list.") && e.textContent.includes("The agent"))`,
@@ -975,6 +977,6 @@ function appPage(id: string, body: string): string {
 /** `client`'s writer of session `session`'s things. */
 async function writerOf(client: Host<P3Principal>, session: string) {
 	const things = await client.get(SessionThings, { session }, context);
-	if (things.variant !== "writer") throw new Error(`a ${things.variant} of the session's things`);
+	assertGranted(things, ...SESSION_THINGS_WRITES);
 	return things;
 }

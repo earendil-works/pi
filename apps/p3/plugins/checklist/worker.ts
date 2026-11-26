@@ -100,7 +100,8 @@ async function change(
 	if (!found.options.check) throw forbidden(`checklist: you may not change ${described(found)}`);
 	return agent.call(async (ctx) => {
 		const at = await ctx.get(Checklist, { session: agent.session, thing: found.thing });
-		if (at.variant !== "checker") throw forbidden(`checklist: you may not change ${described(found)} now`);
+		if (at.add === undefined || at.tick === undefined)
+			throw forbidden(`checklist: you may not change ${described(found)} now`);
 		switch (change.kind) {
 			case "add":
 				return at.add({ text: change.text }, ctx);

@@ -16,6 +16,7 @@ import {
 	type P3Principal,
 	People,
 	type Reference,
+	SESSION_THINGS_WRITES,
 	SessionAccess,
 	SessionFacts,
 	SessionInfo,
@@ -27,9 +28,11 @@ import {
 	thingOf,
 	until,
 	usingThing,
+	type With,
 } from "@earendil-works/p3/v1";
 import { PeopleStore, SessionsStore } from "@earendil-works/p3/v1/server";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
+import { assertGranted } from "../../../test/granted.ts";
 import { within } from "../../../test/until.ts";
 import { Boards, NOTES, Notes, notesAt, STUBS, setNotes } from "./stubs.ts";
 
@@ -86,7 +89,7 @@ function session(members: Member[] = [], things = [thingOf(Notes)]): Promise<str
 }
 
 /** `SessionThings`' writer, as a test holds it. */
-type Writer = Extract<Reference<typeof SessionThings>, { readonly variant: "writer" }>;
+type Writer = With<Reference<typeof SessionThings>, (typeof SESSION_THINGS_WRITES)[number]>;
 
 /** Runs `fn` with `principal`'s writer of session `id`'s things (failing the test for a reader). */
 function asWriter<T>(
@@ -97,7 +100,8 @@ function asWriter<T>(
 	return t.root(
 		async (ctx) => {
 			const things = await ctx.get(SessionThings, { session: id });
-			return things.variant === "writer" ? fn(things, ctx) : assert.fail(`a ${things.variant}`);
+			assertGranted(things, ...SESSION_THINGS_WRITES);
+			return fn(things, ctx);
 		},
 		context,
 		{ principal },
@@ -493,7 +497,7 @@ describe("SessionInfo's options", () => {
 			async (ctx) => {
 				const info = await ctx.get(SessionInfo, { session: id });
 				const sessions = await ctx.get(SessionThings, { session: id });
-				if (sessions.variant !== "writer") return assert.fail(sessions.variant);
+				assertGranted(sessions, ...SESSION_THINGS_WRITES);
 				const shown = () => info.things.value.map(({ options, overrides }) => ({ options, overrides }));
 				assert.deepEqual(shown(), [{ options: { color: "red" }, overrides: [] }]);
 				await sessions.setOptions({ thing, for: { kind: "person", id: ann.id }, options: { color: "black" } }, ctx);
@@ -668,8 +672,8 @@ describe("the owner's person", () => {
 	it("is the only person admitted to the owner's objects", async () => {
 		const ann = await person("Ann");
 		assert.equal(
-			await t.root(async (ctx) => (await ctx.get(Sessions, {})).variant, context, { principal: OWNER }),
-			"owner",
+			await t.root(async (ctx) => (await ctx.get(Sessions, {})).state.value.kind, context, { principal: OWNER }),
+			"live",
 		);
 		await refused(t.root(async (ctx) => ctx.get(Sessions, {}, { readyTimeout: 500 }), context, { principal: ann }));
 	});

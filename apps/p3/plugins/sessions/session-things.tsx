@@ -13,13 +13,16 @@ import {
 	type Member,
 	type Party,
 	type Reference,
+	SESSION_THINGS_WRITES,
 	SessionInfo,
 	type SessionRow,
 	Sessions,
 	type SessionThing,
 	SessionThings as SessionThingsObject,
+	type With,
+	withGranted,
 } from "@earendil-works/p3/v1";
-import { AddIcon, useHold, useRefState, useRegistry, useVariant, useWatch } from "@earendil-works/p3/v1/web";
+import { AddIcon, useHold, useLive, useRefState, useRegistry, useWatch } from "@earendil-works/p3/v1/web";
 import { type ReactNode, useState } from "react";
 import { type Action, useAction } from "./action.ts";
 import { AddExistingDialog } from "./add-existing.tsx";
@@ -55,9 +58,9 @@ type Sheet = {
 /** Session `session`'s sheet; writers make and manage things, the owner also whom it follows. */
 export function SessionThings(props: { readonly session: string; readonly onOpen?: (thing: string) => void }) {
 	const infoRef = useHold(SessionInfo, { session: props.session });
-	const info = useVariant(infoRef, "info");
+	const info = useLive(infoRef);
 	const state = useRefState(infoRef);
-	const me = useWatch(useVariant(useHold(Me, {}), "me")?.me);
+	const me = useWatch(useLive(useHold(Me, {}))?.me);
 	const row = useWatch(info?.session);
 	const things = useWatch(info?.things);
 	const members = useWatch(info?.members);
@@ -98,7 +101,7 @@ export function SessionThings(props: { readonly session: string; readonly onOpen
 /** The owner's line of whom the session follows, with its change (`Sessions.follow`, keeping what it had). */
 function OwnerFollowing(props: { readonly sheet: Sheet }) {
 	const { sheet } = props;
-	const sessions = useVariant(useHold(Sessions, {}), "owner");
+	const sessions = useLive(useHold(Sessions, {}));
 	const you: FollowChoice = { party: { kind: "person", id: sheet.me.id }, name: "You" };
 	const members = sheet.members
 		.filter((member) => !(member.kind === "person" && member.id === sheet.me.id))
@@ -127,7 +130,10 @@ type Panel = { readonly thing: string; readonly kind: "rename" | "options" | "ke
 function SheetThings(props: { readonly sheet: Sheet }) {
 	const { sheet } = props;
 	const { action } = sheet;
-	const writer = useVariant(useHold(SessionThingsObject, { session: sheet.row.id }), "writer");
+	const writer = withGranted(
+		useLive(useHold(SessionThingsObject, { session: sheet.row.id })),
+		...SESSION_THINGS_WRITES,
+	);
 	const kinds = useWatch(writer?.kinds) ?? [];
 	const owners = useWatch(writer?.owners) ?? [];
 	const [panel, setPanel] = useState<Panel | undefined>(undefined);
@@ -178,7 +184,7 @@ function SheetThings(props: { readonly sheet: Sheet }) {
 }
 
 /** The writer's `SessionThings` as rows call it (`undefined`: a reader). */
-type Writer = Extract<Reference<typeof SessionThingsObject>, { readonly variant: "writer" }> | undefined;
+type Writer = With<Reference<typeof SessionThingsObject>, (typeof SESSION_THINGS_WRITES)[number]> | undefined;
 
 /** One thing's row: its line, its actions (those the viewer may take) and the panel one of them opened. */
 function SheetThing(props: {

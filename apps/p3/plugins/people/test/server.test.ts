@@ -84,8 +84,8 @@ describe("the people plugin on the server", () => {
 		const ann = await store((people, ctx) => people.createPerson({ name: "Ann" }, ctx));
 		const annP: P3Principal = { kind: "person", id: ann, name: "Ann" };
 		assert.equal(
-			await t.root(async (ctx) => (await ctx.get(People, {})).variant, context, { principal: me }),
-			"owner",
+			await t.root(async (ctx) => (await ctx.get(People, {})).state.value.kind, context, { principal: me }),
+			"live",
 		);
 		const ask = (principal: P3Principal, caller: string) =>
 			t.root(async (ctx) => (await ctx.get(OwnerAccess, { caller })).owner.value, context, { principal });

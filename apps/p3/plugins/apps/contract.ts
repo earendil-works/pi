@@ -40,7 +40,7 @@ export const AppCatalog = remote("apps.catalog", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
-	variants: { catalog: { state: { apps: arr(AppInfo) } } },
+	state: { apps: arr(AppInfo) },
 });
 
 /**
@@ -61,7 +61,7 @@ export const AppAccess = remote("apps.access", {
 	version: 1,
 	params: { app: str(), caller: str() },
 	hostAddress: () => Server(),
-	variants: { answer: { state: { answer: union([obj({ kind: lit("none") }), AppAdmission]) } } },
+	state: { answer: union([obj({ kind: lit("none") }), AppAdmission]) },
 });
 
 /**

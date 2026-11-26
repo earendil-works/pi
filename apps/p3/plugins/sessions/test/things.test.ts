@@ -41,9 +41,14 @@ describe("making a thing", () => {
 		// Its object admits by the thing's id: a writer whose options say draw is a drawer.
 		const variant = await w
 			.t()
-			.root(async (ctx) => (await ctx.get(Board, { session: id, thing: board })).variant, context, {
-				principal: ann,
-			});
+			.root(
+				async (ctx) =>
+					(await ctx.get(Board, { session: id, thing: board })).granted.has("draw") ? "drawer" : "viewer",
+				context,
+				{
+					principal: ann,
+				},
+			);
 		assert.equal(variant, "drawer");
 	});
 
@@ -135,7 +140,12 @@ describe("making a thing", () => {
 		const id = await w.session([], [{ kind: "person", id: ann.id, access: "read" }]);
 		const variant = await w
 			.t()
-			.root(async (ctx) => (await ctx.get(SessionThings, { session: id })).variant, context, { principal: ann });
+			.root(
+				async (ctx) =>
+					(await ctx.get(SessionThings, { session: id })).granted.has("create") ? "writer" : "reader",
+				context,
+				{ principal: ann },
+			);
 		assert.equal(variant, "reader");
 	});
 

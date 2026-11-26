@@ -16,9 +16,9 @@ import {
 	PersonAddIcon,
 	redirect,
 	useHold,
+	useLive,
 	usePageState,
 	useRegistry,
-	useVariant,
 	useView,
 	useWatch,
 } from "@earendil-works/p3/v1/web";
@@ -46,7 +46,7 @@ const TRANSCRIPT = "transcript";
 
 /** Session `session` of app `app`, with `active` the thing the route focuses (none: the transcript). */
 export function OpenSession(props: { readonly app: string; readonly session: string; readonly active?: string }) {
-	const me = useWatch(useVariant(useHold(Me, {}), "me")?.me);
+	const me = useWatch(useLive(useHold(Me, {}))?.me);
 	// The layout is the person's: it waits for who they are.
 	return me?.kind === "person" ? <SessionPanes {...props} person={me.id} /> : null;
 }
@@ -61,7 +61,7 @@ function SessionPanes(props: {
 	const { app, session } = props;
 	const Transcript = useView(TranscriptView);
 	const Layout = useView(PaneLayoutView);
-	const info = useVariant(useHold(SessionInfo, { session }), "info");
+	const info = useLive(useHold(SessionInfo, { session }));
 	const row = useWatch(info?.session);
 	const things = useWatch(info?.things);
 	const [tree, setTree] = useLayout(session, props.person);

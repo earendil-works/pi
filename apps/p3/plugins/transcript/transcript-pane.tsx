@@ -3,9 +3,9 @@
 // answer after it, and for writers the composer. Kept at the bottom while the reader is there.
 
 import { Button } from "@earendil-works/elanor-react";
-import { type RefState, Transcript } from "@earendil-works/p3/v1";
+import { type RefState, TRANSCRIPT_WRITES, Transcript, withGranted } from "@earendil-works/p3/v1";
 import type { ConversationView, LiveState } from "@earendil-works/p3/v1/web";
-import { useHold, useRefState, useVariant, useWatch } from "@earendil-works/p3/v1/web";
+import { useHold, useLive, useRefState, useWatch } from "@earendil-works/p3/v1/web";
 import { useLayoutEffect, useMemo, useRef } from "react";
 import { Composer } from "./composer.tsx";
 import { type EntriesReader, useEarlier } from "./earlier.ts";
@@ -15,10 +15,9 @@ import styles from "./transcript-pane.module.css";
 /** Session `session`'s conversation, as the caller may see it (readers) and write to it (writers). */
 export function TranscriptPane(props: { readonly session: string }) {
 	const ref = useHold(Transcript, { session: props.session });
-	const writer = useVariant(ref, "writer");
-	const reader = useVariant(ref, "reader");
+	const live = useLive(ref);
+	const writer = withGranted(live, ...TRANSCRIPT_WRITES);
 	const state = useRefState(ref);
-	const live = writer ?? reader;
 	// The worker sends Durable's conversation view as it is (`null` until it arrived).
 	const view = (useWatch(live?.view) ?? undefined) as ConversationView | null | undefined;
 	// Its items are Durable's entries, as the worker read them.
@@ -35,7 +34,10 @@ export function TranscriptPane(props: { readonly session: string }) {
 	// The window's documents are Durable's built-in ones; `pi.live` is the live state.
 	const liveState = (view?.docs["pi.live"] ?? {}) as LiveState;
 	return (
-		<div className={styles.pane} data-transcript={live?.variant ?? "loading"}>
+		<div
+			className={styles.pane}
+			data-transcript={live === undefined ? "loading" : writer === undefined ? "reader" : "writer"}
+		>
 			<div className={styles.scroll} onScroll={scroller.onScroll} ref={scroller.ref}>
 				{earlier.more ? (
 					<Button

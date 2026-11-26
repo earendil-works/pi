@@ -86,7 +86,6 @@ async function workingSession(t: TestServer): Promise<{ readonly id: string; rea
 	const client = await t.client(context);
 	const id = await gatedSession(client, "one", folder, context);
 	const held = await client.get(Probe, { session: id }, context);
-	if (held.variant !== "owner") return assert.fail(held.variant);
 	const pid = held.pid.value;
 	await startRun(client, id, context);
 	held.release();
@@ -141,7 +140,6 @@ describe("a reload of the runner plugin", () => {
 		const { t } = editable;
 		const { client, id } = await newSession(t);
 		const held = await client.get(Probe, { session: id }, context);
-		if (held.variant !== "owner") return assert.fail(held.variant);
 		const pid = held.pid.value;
 		await reloadRunner(editable);
 		await until(held.pid, (now) => now !== pid, within("the new worker's pid", context, 10_000));
@@ -179,7 +177,7 @@ describe("a reload of the runner plugin", () => {
 			gate.resolve();
 		}
 		const held = await holding;
-		assert.equal(held.variant, "owner");
+		assert.equal(held.state.value.kind, "live");
 		await held.busy(0, context);
 		assert.deepEqual(t.errors, []);
 	});
@@ -206,7 +204,7 @@ describe("a reload of the runner plugin", () => {
 			await lock.release();
 		}
 		const held = await holding;
-		assert.equal(held.variant, "owner");
+		assert.equal(held.state.value.kind, "live");
 		await held.busy(0, context);
 	});
 
@@ -219,7 +217,6 @@ describe("a reload of the runner plugin", () => {
 		// A plugin no discovery knew yet marks the set; one it knew, itself.
 		await reloadRunner(editable, ({ dirty, set }) => set || dirty.includes(MARKED));
 		const held = await (await t.client(context)).get(Marked, { session: id }, context);
-		if (held.variant !== "owner") return assert.fail(held.variant);
 		await until(held.value, (value) => value === "2", within("the new worker script's value", context));
 	});
 });
@@ -230,7 +227,6 @@ describe("a stop of a held session", () => {
 		running = t;
 		const { client, id } = await newSession(t);
 		const held = await client.get(Probe, { session: id }, context);
-		if (held.variant !== "owner") return assert.fail(held.variant);
 		const pid = held.pid.value;
 		const runner = (await t.host.registry(WorkerRunners, context)).value;
 		if (runner === undefined) return assert.fail("no runner");

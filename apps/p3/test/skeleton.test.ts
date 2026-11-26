@@ -3,14 +3,16 @@
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { BACKGROUND_CONTEXT as context, until } from "@earendil-works/p3/v1";
 import { WorkerRunners } from "@earendil-works/p3/v1/server";
 import { type TestServer, testServer } from "@earendil-works/p3/v1/testing";
+import { BACKUP_MARKER } from "@earendil-works/p3/v1/worker";
 import { Sessions, SessionWorker } from "../plugins/sessions/contract.ts";
 import { askServer } from "../src/local-socket.ts";
 import { Probe } from "./plugins/probe/contract.ts";
@@ -45,19 +47,29 @@ async function withSession(): Promise<{ readonly t: TestServer; readonly id: str
 	return { t: running, id: await sessions.create(coding("one"), context) };
 }
 
+/** Whether the session store in worker directory `dir` records an outbox (Chord's `chord_meta.outbox`), read aside. */
+function outboxOf(dir: string): number {
+	const db = new DatabaseSync(join(dir, "store.sqlite"), { readOnly: true });
+	try {
+		return (db.prepare("SELECT outbox FROM chord_meta WHERE singleton = 1").get() as { outbox: number }).outbox;
+	} finally {
+		db.close();
+	}
+}
+
 /** The probe on session `id`'s worker, held by a new owner client until `release`. */
 async function probe(t: TestServer, id: string) {
 	const client = await t.client(context);
 	const held = await client.get(Probe, { session: id }, context);
-	assert.equal(held.variant, "owner");
-	return held as Extract<typeof held, { readonly variant: "owner" }>;
+	assert.equal(held.state.value.kind, "live");
+	return held;
 }
 
 describe("session workers", () => {
 	it("a worker starts on the first hold, as a process of its own, and follows its session's row", async () => {
 		const { t, id } = await withSession();
 		const worker = await (await t.client(context)).get(SessionWorker, { session: id }, context);
-		assert.equal(worker.variant, "view");
+		assert.equal(worker.state.value.kind, "live");
 		const pid = (await probe(t, id)).pid.value;
 		assert.notEqual(pid, process.pid);
 		assert.ok(alive(pid));
@@ -95,6 +107,25 @@ describe("session workers", () => {
 			async () => alive(pid),
 			(lives) => !lives,
 		);
+	});
+
+	it("a worker opens its session's store with an outbox exactly while the backup marker is there", async () => {
+		const { t, id } = await withSession();
+		const dir = join(t.dataDir, "workers", id);
+		await mkdir(dirname(join(dir, BACKUP_MARKER)), { recursive: true });
+		await writeFile(join(dir, BACKUP_MARKER), "");
+		const held = await probe(t, id);
+		assert.equal(outboxOf(dir), 1);
+		const pid = held.pid.value;
+		held.release();
+		await eventually(
+			async () => alive(pid),
+			(lives) => !lives,
+		);
+		// Backup stopped for good: the next start opens the store without its outbox.
+		await rm(join(dir, BACKUP_MARKER));
+		await probe(t, id);
+		assert.equal(outboxOf(dir), 0);
 	});
 
 	it("a worker that crashes fails its session until retry", async () => {
@@ -143,8 +174,7 @@ describe("session workers", () => {
 		await writeFile(file, constantPlugin("versioned", "1"));
 		await applied(t, (marks) => marks.set);
 		const held = await client.get(Versioned, { session: id }, context);
-		assert.equal(held.variant, "owner");
-		if (held.variant !== "owner") return;
+		assert.equal(held.state.value.kind, "live");
 		assert.equal(held.value.value, "1");
 		await writeFile(file, constantPlugin("versioned", "2"));
 		await applied(t, (marks) => marks.dirty.length > 0);

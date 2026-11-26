@@ -14,16 +14,19 @@ import {
 	BACKGROUND_CONTEXT as context,
 	type Host,
 	type P3Principal,
+	SESSION_THINGS_WRITES,
 	SessionThings,
+	TRANSCRIPT_WRITES,
 	Transcript,
 	thingOf,
 	until,
 } from "@earendil-works/p3/v1";
 import { PeopleStore, SessionsStore } from "@earendil-works/p3/v1/server";
 import { type TestServer, testServer } from "@earendil-works/p3/v1/testing";
+import { assertGranted } from "../../../test/granted.ts";
 import { FauxLogin, FauxRequests, type Step } from "../../../test/plugins/faux-login/contract.ts";
 import { within } from "../../../test/until.ts";
-import { Checklist, ChecklistKind } from "../contract.ts";
+import { CHECKLIST_CHECKS, Checklist, ChecklistKind } from "../contract.ts";
 
 /** The faux login plugin, a plugin under test of a root of its own. */
 const FAUX = fileURLToPath(new URL("../../../test/plugins/faux-login/", import.meta.url));
@@ -50,7 +53,7 @@ function script(checklist: string, item: string): Step[] {
 async function send(client: Host<P3Principal>, session: string, text: string): Promise<void> {
 	await client.root(async (ctx) => {
 		const transcript = await ctx.get(Transcript, { session });
-		if (transcript.variant !== "writer") return assert.fail(transcript.variant);
+		assertGranted(transcript, ...TRANSCRIPT_WRITES);
 		await transcript.send({ text, requestId: text }, ctx);
 	}, context);
 }
@@ -79,10 +82,10 @@ describe("the checklist end to end", () => {
 		// Ann makes a checklist, adds an item and keeps it open.
 		const client = await t.client(context, { kind: "person", id: ann, name: "Ann" });
 		const things = await client.get(SessionThings, { session }, context);
-		if (things.variant !== "writer") return assert.fail(things.variant);
+		assertGranted(things, ...SESSION_THINGS_WRITES);
 		const checklist = await things.create({ kind: ChecklistKind.name, name: "Groceries" }, context);
 		const list = await client.get(Checklist, { session, thing: checklist }, context);
-		if (list.variant !== "checker") return assert.fail(list.variant);
+		assertGranted(list, ...CHECKLIST_CHECKS);
 		const milk = await list.add({ text: "milk" }, context);
 		// The login's script, which needs the checklist's and the item's ids.
 		await t.host.root(async (ctx) => {
@@ -101,7 +104,7 @@ describe("the checklist end to end", () => {
 		);
 		// The agent's own options: no check. Its next request offers no ticking.
 		const managed = await owner.get(SessionThings, { session }, context);
-		if (managed.variant !== "writer") return assert.fail(managed.variant);
+		assertGranted(managed, ...SESSION_THINGS_WRITES);
 		await managed.setOptions({ thing: checklist, for: { kind: "agent" }, options: { check: false } }, context);
 		await send(owner, session, "plain");
 		const requests = await owner.get(FauxRequests, { session }, context);
@@ -114,7 +117,7 @@ describe("the checklist end to end", () => {
 		assert.ok(plain.tools.includes("checklist_read"), plain.tools.join());
 		assert.ok(!plain.tools.includes("checklist_tick"), plain.tools.join());
 		assert.ok(seen.find(({ last }) => last === "@tick")?.tools.includes("checklist_tick"));
-		assert.equal(list.variant, "checker", "Ann's own options stay the default");
+		assert.equal(list.granted.has("add") ? "checker" : "reader", "checker", "Ann's own options stay the default");
 		assert.deepEqual(t.errors, []);
 	});
 
@@ -131,10 +134,10 @@ describe("the checklist end to end", () => {
 			context,
 		);
 		const things = await owner.get(SessionThings, { session }, context);
-		if (things.variant !== "writer") return assert.fail(things.variant);
+		assertGranted(things, ...SESSION_THINGS_WRITES);
 		const checklist = await things.create({ kind: ChecklistKind.name }, context);
 		const list = await owner.get(Checklist, { session, thing: checklist }, context);
-		if (list.variant !== "checker") return assert.fail(list.variant);
+		assertGranted(list, ...CHECKLIST_CHECKS);
 		await list.add({ text: "before" }, context);
 		// Real edits of both facets, applied as `p3 apply` does once the watcher saw them.
 		for (const facet of ["server.ts", "worker.ts"]) {

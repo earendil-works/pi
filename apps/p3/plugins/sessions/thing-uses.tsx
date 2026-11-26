@@ -4,7 +4,7 @@
 
 import { Button } from "@earendil-works/elanor-react";
 import { type Bringer, SessionInfo, ThingUses } from "@earendil-works/p3/v1";
-import { useHold, useVariant, useWatch } from "@earendil-works/p3/v1/web";
+import { useHold, useLive, useWatch } from "@earendil-works/p3/v1/web";
 import type { Action } from "./action.ts";
 import { useViewId } from "./session-list.tsx";
 import styles from "./session-things.module.css";
@@ -18,7 +18,7 @@ export function ThingUsesList(props: {
 	readonly followers: string | undefined;
 	readonly action: Action;
 }) {
-	const uses = useVariant(useHold(ThingUses, { thing: props.thing, view: useViewId() }), "uses");
+	const uses = useLive(useHold(ThingUses, { thing: props.thing, view: useViewId() }));
 	const list = useWatch(uses?.list);
 	if (list === undefined) return <p className={styles.note}>Loading…</p>;
 	const linked = list.rows.length > 0;
@@ -60,6 +60,6 @@ const BY_LABELS: Readonly<Record<Bringer["kind"], string>> = {
 
 /** Session `session`'s title (else "New session"), as its info gives it to the viewer. */
 function SessionTitle(props: { readonly session: string }) {
-	const row = useWatch(useVariant(useHold(SessionInfo, { session: props.session }), "info")?.session);
+	const row = useWatch(useLive(useHold(SessionInfo, { session: props.session }))?.session);
 	return <span className={styles.grow}>{row === undefined ? "…" : row.title === "" ? "New session" : row.title}</span>;
 }

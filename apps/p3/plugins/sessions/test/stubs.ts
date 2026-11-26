@@ -61,13 +61,14 @@ export const Boards = defineThing("test.boards", {
 	initial: { draw: true },
 });
 
-/** One board of a session as `admitThing` admits its caller: a viewer, or a drawer (writes, and `draw`). */
+/** One board of a session as `admitThing` admits its caller: a viewer, or a drawer (writes, and `draw`: granted). */
 export const Board = remote("test.board", {
 	version: 1,
 	params: { session: str(), thing: str() },
 	hostAddress: () => Server(),
 	admission: thingAdmission(Boards),
-	variants: { viewer: { state: { thing: str() } }, drawer: { state: { thing: str() } } },
+	state: { thing: str() },
+	flags: { draw: "Draws on the board" },
 });
 
 /** What the boards' hooks were called with, in order (`create` with the thing and its input; `delete` with its id). */
@@ -95,10 +96,8 @@ const boardsServer = defineFacet((host) => {
 		},
 		object: {
 			contract: Board,
-			factory: ({ thing }, { access, options }) => ({
-				variant: access === "write" && options.draw ? "drawer" : "viewer",
-				members: { thing: constant(thing) },
-			}),
+			grants: ({ access, options }) => (access === "write" && options.draw ? ["draw"] : []),
+			factory: ({ thing }) => ({ thing: constant(thing) }),
 		},
 	});
 });

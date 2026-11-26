@@ -17,17 +17,20 @@ import {
 	BACKGROUND_CONTEXT as context,
 	type Host,
 	type P3Principal,
+	SESSION_THINGS_WRITES,
 	SessionInfo,
 	type SessionState,
 	Sessions,
 	SessionsList,
 	SessionThings,
 	THIS_DEVICE,
+	TRANSCRIPT_WRITES,
 	Transcript,
 	until,
 } from "@earendil-works/p3/v1";
 import { SessionsStore } from "@earendil-works/p3/v1/server";
 import { type TestServer, type TestServerOptions, testServer } from "@earendil-works/p3/v1/testing";
+import { assertGranted } from "../../../test/granted.ts";
 import { type FauxRequest, FauxRequests, type Step } from "../../../test/plugins/faux-login/contract.ts";
 import { scriptFaux } from "../../../test/support.ts";
 import { eventually, within } from "../../../test/until.ts";
@@ -75,8 +78,8 @@ async function session(t: TestServer, folder: string, script: Step[]): Promise<s
 async function send(client: Host<P3Principal>, session: string, text: string): Promise<void> {
 	await client.root(async (ctx) => {
 		const transcript = await ctx.get(Transcript, { session });
-		assert.equal(transcript.variant, "writer");
-		if (transcript.variant === "writer") await transcript.send({ text, requestId: text }, ctx);
+		assertGranted(transcript, ...TRANSCRIPT_WRITES);
+		await transcript.send({ text, requestId: text }, ctx);
 	}, context);
 }
 
@@ -202,8 +205,8 @@ describe("the harness end to end", () => {
 		]);
 		const client = await t.client(context);
 		const transcript = await client.get(Transcript, { session: id }, context);
-		assert.equal(transcript.variant, "writer");
-		if (transcript.variant !== "writer") return;
+		assert.equal(transcript.granted.has("send") ? "writer" : "reader", "writer");
+		assertGranted(transcript, ...TRANSCRIPT_WRITES);
 		await transcript.send({ text: "@go", requestId: "go" }, context);
 		await eventually(() => existsSync(join(folder, "started")), Boolean);
 		const file = join(built, "harness", "worker.ts");
@@ -231,7 +234,7 @@ describe("the harness end to end", () => {
 			context,
 		);
 		const things = await owner.get(SessionThings, { session: id }, context);
-		if (things.variant !== "writer") return assert.fail(things.variant);
+		assertGranted(things, ...SESSION_THINGS_WRITES);
 		const [plan, sketches, ideas, log] = [
 			await things.create({ kind: CanvasKind.name, name: "Plan" }, context),
 			await things.create({ kind: CanvasKind.name, name: "Sketches" }, context),

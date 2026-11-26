@@ -15,13 +15,16 @@ import {
 	type Host,
 	type P3Principal,
 	type Reference,
+	SESSION_THINGS_WRITES,
 	SessionThings,
+	TRANSCRIPT_WRITES,
 	Transcript,
 	thingOf,
 	until,
 } from "@earendil-works/p3/v1";
 import { PeopleStore, SessionsStore } from "@earendil-works/p3/v1/server";
 import { type TestServer, type TestServerOptions, testServer } from "@earendil-works/p3/v1/testing";
+import { assertGranted } from "../../../test/granted.ts";
 import { FauxLogin, FauxRequests, type Step } from "../../../test/plugins/faux-login/contract.ts";
 import { within } from "../../../test/until.ts";
 import { Notes, NotesKind } from "../contract.ts";
@@ -89,10 +92,10 @@ async function annsNotebook(t: TestServer) {
 	);
 	const client = await t.client(context, { kind: "person", id, name: "Ann" });
 	const things = await client.get(SessionThings, { session }, context);
-	if (things.variant !== "writer") return assert.fail(things.variant);
+	assertGranted(things, ...SESSION_THINGS_WRITES);
 	const thing = await things.create({ kind: NotesKind.name, name: "Ann's notebook" }, context);
 	const notes = await client.get(Notes, { session, thing }, context);
-	assert.equal(notes.variant, "editor");
+	assert.equal(notes.granted.has("add") ? "editor" : "reader", "editor");
 	await t.host.root(async (ctx) => {
 		const store = await ctx.get(SessionsStore, {});
 		const links = (await store.links.of.page({ session }, 10, ctx)).items;
@@ -107,7 +110,7 @@ async function annsNotebook(t: TestServer) {
 async function send(client: Host<P3Principal>, session: string, text: string): Promise<void> {
 	await client.root(async (ctx) => {
 		const transcript = await ctx.get(Transcript, { session });
-		if (transcript.variant !== "writer") return assert.fail(transcript.variant);
+		assertGranted(transcript, ...TRANSCRIPT_WRITES);
 		await transcript.send({ text, requestId: text }, ctx);
 	}, context);
 }
@@ -130,7 +133,7 @@ describe("the notes end to end", () => {
 		await written(notes, "first");
 		// The agent's own options: no edit. Its next request offers reading only.
 		const managed = await owner.get(SessionThings, { session }, context);
-		if (managed.variant !== "writer") return assert.fail(managed.variant);
+		assertGranted(managed, ...SESSION_THINGS_WRITES);
 		await managed.setOptions({ thing, for: { kind: "agent" }, options: { edit: false } }, context);
 		await send(owner, session, "plain");
 		const requests = await owner.get(FauxRequests, { session }, context);
@@ -143,7 +146,11 @@ describe("the notes end to end", () => {
 		assert.ok(plain.tools.includes("notes_read"), plain.tools.join());
 		assert.ok(!plain.tools.includes("notes_write"), plain.tools.join());
 		assert.ok(last.find((request) => request.last === "@first")?.tools.includes("notes_write"));
-		assert.equal(notes.variant, "editor", "Ann's own access stays as the default says");
+		assert.equal(
+			notes.granted.has("add") ? "editor" : "reader",
+			"editor",
+			"Ann's own access stays as the default says",
+		);
 		assert.deepEqual(t.errors, []);
 	});
 

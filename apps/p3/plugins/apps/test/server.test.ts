@@ -45,7 +45,7 @@ const Board = remote("club.board", {
 	params: {},
 	hostAddress: () => Server(),
 	admission: AppAdmission,
-	variants: { owner: { state: { who: str() } }, person: { state: { who: str() } } },
+	state: { who: str() },
 });
 
 /** The test app: its entry in `Apps`, and its object admitted by `admitApp`. */
@@ -54,9 +54,7 @@ const clubServer = defineFacet((host, self) => {
 	host.serve(
 		Board,
 		(_params, _principal, admitted) =>
-			admitted.owner
-				? { variant: "owner", members: { who: constant("owner") } }
-				: { variant: "person", members: { who: constant(admitted.groups.join(",")) } },
+			admitted.owner ? { who: constant("owner") } : { who: constant(admitted.groups.join(",")) },
 		{ admit: admitApp("club") },
 	);
 });
@@ -165,7 +163,7 @@ describe("the apps plugin on the server", () => {
 		await t.root(
 			async (ctx) => {
 				const board = await ctx.get(Board, {});
-				assert.deepEqual([board.variant, board.who.value], ["person", "coaches"]);
+				assert.equal(board.who.value, "coaches");
 				await asServer(({ people }, server) => people.removeFromGroup({ group: coaches, person: ann }, server));
 				await until(board.state, (state) => state.kind === "failed", within("her board denied", context));
 			},

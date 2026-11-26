@@ -3,7 +3,7 @@
 // stop. One object per session's conversation on the worker follows Durable once, however many people watch.
 // `/v1` re-exports it.
 
-import { arr, bool, int, method, obj, opt, remote, Session, str, unknown } from "@earendil-works/p3/v1";
+import { arr, bool, grantable, int, method, obj, opt, remote, Session, str, unknown } from "@earendil-works/p3/v1";
 import { SessionAdmission } from "../sessions/contract.ts";
 
 /** A page of entries before (or between) what a view holds: Durable's entries, newest last, and whether more lie before. */
@@ -20,23 +20,18 @@ export const EntriesQuery = obj({
 /** A message to send: its text and a client-chosen id (a retried send with the same id is taken once). */
 export const Send = obj({ text: str({ min: 1, max: 1_000_000 }), requestId: str({ min: 1, max: 200 }) });
 
-/** The reader's members: Durable's conversation view (`null` until it arrived) and older entries. */
-const reader = {
-	state: { view: unknown() },
-	methods: { entries: method(EntriesQuery, EntriesPage) },
-};
-
-/** A session's main conversation, for its members: readers see it, writers also send and stop. */
+/**
+ * A session's main conversation, for its members: Durable's conversation view (`null` until it arrived) and older
+ * entries; writers are also granted `send` and `stop` (`TRANSCRIPT_WRITES`).
+ */
 export const Transcript = remote("transcript.transcript", {
 	version: 1,
 	params: { session: str() },
 	hostAddress: ({ session }) => Session({ id: session }),
 	admission: SessionAdmission,
-	variants: {
-		reader,
-		writer: {
-			state: reader.state,
-			methods: { ...reader.methods, send: method(Send), stop: method() },
-		},
-	},
+	state: { view: unknown() },
+	methods: { entries: method(EntriesQuery, EntriesPage), send: grantable(method(Send)), stop: grantable(method()) },
 });
+
+/** What a writer of a session is granted of its transcript. */
+export const TRANSCRIPT_WRITES = ["send", "stop"] as const;

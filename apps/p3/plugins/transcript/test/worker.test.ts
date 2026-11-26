@@ -12,6 +12,7 @@ import {
 	defineFacet,
 	isChordError,
 	type P3Principal,
+	TRANSCRIPT_WRITES,
 	Transcript,
 	until,
 } from "@earendil-works/p3/v1";
@@ -28,6 +29,7 @@ import {
 	StoreStorage,
 	WorkerRuntime,
 } from "@earendil-works/p3/v1/worker";
+import { assertGranted } from "../../../test/granted.ts";
 import { within } from "../../../test/until.ts";
 import { sessionRow, standIns } from "../../harness/test/stubs.ts";
 
@@ -125,8 +127,8 @@ describe("the transcript plugin on a worker", () => {
 		await t.root(
 			async (ctx) => {
 				const writer = await ctx.get(Transcript, { session: SESSION });
-				assert.equal(writer.variant, "writer");
-				if (writer.variant !== "writer") return;
+				assert.equal(writer.granted.has("send") ? "writer" : "reader", "writer");
+				assertGranted(writer, ...TRANSCRIPT_WRITES);
 				await writer.send({ text: "hello", requestId: "r1" }, ctx);
 				await until(writer.view, (view) => texts(view).includes("ok: hello"), within("the answer", ctx));
 			},
@@ -136,14 +138,9 @@ describe("the transcript plugin on a worker", () => {
 		await t.root(
 			async (ctx) => {
 				const reader = await ctx.get(Transcript, { session: SESSION });
-				assert.equal(reader.variant, "reader");
-				// The reference is typed by its variant; a client's call of `send` anyway is refused by the object.
-				const send: unknown = Reflect.get(reader, "send");
-				assert.ok(typeof send === "function");
-				await assert.rejects(
-					async () => Reflect.apply(send, reader, [{ text: "x", requestId: "r2" }, ctx]),
-					(error) => isChordError(error) && error.code === "invalid",
-				);
+				assert.equal(reader.granted.has("send") ? "writer" : "reader", "reader");
+				// Not granted `send`: the reference has none (a call over the wire anyway is refused `forbidden` by Chord).
+				assert.equal(reader.send, undefined);
 				assert.deepEqual(texts(reader.view.value), ["hello", "ok: hello"]);
 				const page = await reader.entries({ limit: 1 }, ctx);
 				assert.equal(page.items.length, 1);
@@ -159,7 +156,7 @@ describe("the transcript plugin on a worker", () => {
 		await t.root(
 			async (ctx) => {
 				const writer = await ctx.get(Transcript, { session: SESSION });
-				if (writer.variant !== "writer") return assert.fail("the owner writes");
+				assertGranted(writer, ...TRANSCRIPT_WRITES);
 				assert.equal(await writer.stop(ctx), null);
 				server.row({ archivedAt: 5 });
 				await until(writer.state, (state) => state.kind === "live", within("the writer", ctx));
@@ -209,7 +206,7 @@ describe("the transcript plugin on a worker", () => {
 		await t.root(
 			async (ctx) => {
 				const transcript = await ctx.get(Transcript, { session: SESSION });
-				assert.equal(transcript.variant, "reader");
+				assert.equal(transcript.granted.has("send") ? "writer" : "reader", "reader");
 				server.access("person:alice", "none");
 				const state = await until(transcript.state, (value) => value.kind === "failed", within("the denial", ctx));
 				assert.ok(state.kind === "failed" && state.cause.kind === "denied");

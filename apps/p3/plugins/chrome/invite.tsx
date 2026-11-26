@@ -3,7 +3,7 @@
 
 import { Button, CopyButton, Field, IconButton, Input, Modal, Stack } from "@earendil-works/elanor-react";
 import { BACKGROUND_CONTEXT, People } from "@earendil-works/p3/v1";
-import { CloseIcon, useHold, useVariant } from "@earendil-works/p3/v1/web";
+import { CloseIcon, useHold, useLive } from "@earendil-works/p3/v1/web";
 import { useState } from "react";
 import styles from "./frame.module.css";
 
@@ -42,7 +42,7 @@ type Invite =
 
 /** The form: a name, then the person's link. Holds `People` while the dialog is open. */
 function InviteForm() {
-	const people = useVariant(useHold(People, {}), "owner");
+	const people = useLive(useHold(People, {}));
 	const [name, setName] = useState("");
 	const [invite, setInvite] = useState<Invite>({ kind: "editing", error: undefined });
 	if (invite.kind === "invited") {

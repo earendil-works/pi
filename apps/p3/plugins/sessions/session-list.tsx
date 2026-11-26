@@ -4,7 +4,7 @@
 
 import { Button } from "@earendil-works/elanor-react";
 import { type SessionRow, type SessionState, SessionsList } from "@earendil-works/p3/v1";
-import { useHold, useRefState, useVariant, useWatch } from "@earendil-works/p3/v1/web";
+import { useHold, useLive, useRefState, useWatch } from "@earendil-works/p3/v1/web";
 import { useState } from "react";
 import { useAction } from "./action.ts";
 import styles from "./session-list.module.css";
@@ -17,7 +17,7 @@ export function SessionList(props: {
 }) {
 	const view = useViewId();
 	const list = useHold(SessionsList, { app: props.app, set: "active", view });
-	const sessions = useVariant(list, "sessions");
+	const sessions = useLive(list);
 	const state = useRefState(list);
 	const value = useWatch(sessions?.list);
 	const more = useAction();

@@ -20,7 +20,7 @@ import {
 	type Tx,
 } from "@earendil-works/p3/v1";
 import { serveThing } from "@earendil-works/p3/v1/server";
-import { Checklist, ChecklistKind, Item } from "./contract.ts";
+import { CHECKLIST_CHECKS, Checklist, ChecklistKind, Item } from "./contract.ts";
 
 /** How many items a checklist holds at most: its object reads them whole. */
 const LIMIT = 500;
@@ -62,19 +62,15 @@ export default defineFacet((host) => {
 		},
 		object: {
 			contract: Checklist,
-			factory: ({ thing }, { access, options }, self) => {
+			// The kind's one rule: a reader only reads; a writer ticks (and adds) only if the option allows it.
+			grants: ({ access, options }) => (access === "write" && options.check ? CHECKLIST_CHECKS : []),
+			factory: ({ thing }, _admitted, self) => {
 				const store = self.get(ChecklistStore, {});
 				const found = self.liveQuery(store.items.of, { checklist: thing }, { first: LIMIT });
-				const reader = { items: self.derive([found], ([{ rows }]) => rows) };
-				// The kind's one rule: a reader only reads; a writer ticks (and adds) only if the option allows it.
-				if (access === "read" || !options.check) return { variant: "reader", members: reader };
 				return {
-					variant: "checker",
-					members: {
-						...reader,
-						add: ({ text }, ctx) => store.add({ checklist: thing, text }, ctx),
-						tick: ({ id, done }, ctx) => store.tick({ checklist: thing, id, done }, ctx),
-					},
+					items: self.derive([found], ([{ rows }]) => rows),
+					add: ({ text }, ctx) => store.add({ checklist: thing, text }, ctx),
+					tick: ({ id, done }, ctx) => store.tick({ checklist: thing, id, done }, ctx),
 				};
 			},
 		},

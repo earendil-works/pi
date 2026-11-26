@@ -7,6 +7,7 @@ import {
 	arr,
 	bool,
 	defineThing,
+	grantable,
 	lit,
 	method,
 	num,
@@ -45,15 +46,6 @@ export const Note = obj({ id: str(), text: str(), at: num(), author: Author });
 export type Note = Static<typeof Note>;
 
 /**
- * The reader's members: the notebook's name (its thing's; none: its kind's title), its notes loaded so far, the last
- * written first, and `more` for the next page.
- */
-const reader = {
-	state: { name: str(), list: obj({ rows: arr(Note), moreAfter: bool() }) },
-	methods: { more: method() },
-};
-
-/**
  * One notebook of a session (`thing`: the thing's id, a thing of `NotesKind` the session has), for its members and its
  * agent: the notes, and for an editor (who writes in the session and whose options say `edit`) adding, editing and
  * removing them.
@@ -63,18 +55,18 @@ export const Notes = remote("notes.notes", {
 	params: { session: str(), thing: str() },
 	hostAddress: () => Server(),
 	admission: thingAdmission(NotesKind),
-	variants: {
-		reader,
-		editor: {
-			state: reader.state,
-			methods: {
-				...reader.methods,
-				/** Adds a note; answers its id. */
-				add: method(obj({ text: NoteText }), str()),
-				/** Replaces a note's text: it is written now, by the caller. */
-				edit: method(obj({ id: str(), text: NoteText })),
-				remove: method(obj({ id: str() })),
-			},
-		},
+	// The notebook's name (its thing's; none: its kind's title), its notes loaded so far, the last written first, and
+	// `more` for the next page; an editor is also granted `add`, `edit` and `remove` (`NOTES_EDITS`).
+	state: { name: str(), list: obj({ rows: arr(Note), moreAfter: bool() }) },
+	methods: {
+		more: method(),
+		/** Adds a note; answers its id. */
+		add: grantable(method(obj({ text: NoteText }), str())),
+		/** Replaces a note's text: it is written now, by the caller. */
+		edit: grantable(method(obj({ id: str(), text: NoteText }))),
+		remove: grantable(method(obj({ id: str() }))),
 	},
 });
+
+/** What an editor of a notebook is granted. */
+export const NOTES_EDITS = ["add", "edit", "remove"] as const;

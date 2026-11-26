@@ -4,7 +4,7 @@
 
 import { Button, Heading } from "@earendil-works/elanor-react";
 import { type Access, type Context, Me, type Member, PeopleList, SessionInfo, Sessions } from "@earendil-works/p3/v1";
-import { useHold, useRefState, useVariant, useWatch } from "@earendil-works/p3/v1/web";
+import { useHold, useLive, useRefState, useWatch } from "@earendil-works/p3/v1/web";
 import { useState } from "react";
 import { type Action, useAction } from "./action.ts";
 import { Choice } from "./choice.tsx";
@@ -18,8 +18,8 @@ type ShownMember = Member & { readonly name: string };
 export function SessionMembers(props: { readonly session: string }) {
 	const infoRef = useHold(SessionInfo, { session: props.session });
 	const state = useRefState(infoRef);
-	const members = useWatch(useVariant(infoRef, "info")?.members);
-	const me = useWatch(useVariant(useHold(Me, {}), "me")?.me);
+	const members = useWatch(useLive(infoRef)?.members);
+	const me = useWatch(useLive(useHold(Me, {}))?.me);
 	const action = useAction();
 	if (state?.kind === "failed" && state.cause.kind === "denied") {
 		return <p className={styles.note}>You have no access to this session.</p>;
@@ -47,8 +47,8 @@ function ManagedMembers(props: {
 	readonly action: Action;
 }) {
 	const { session, action } = props;
-	const sessions = useVariant(useHold(Sessions, {}), "owner");
-	const peopleRef = useVariant(useHold(PeopleList, { view: useViewId() }), "owner");
+	const sessions = useLive(useHold(Sessions, {}));
+	const peopleRef = useLive(useHold(PeopleList, { view: useViewId() }));
 	const people = useWatch(peopleRef?.list);
 	const manage = (call: (owner: NonNullable<typeof sessions>, context: Context) => Promise<unknown>) => {
 		if (sessions !== undefined) action.run((ctx) => call(sessions, ctx));

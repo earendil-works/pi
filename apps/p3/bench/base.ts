@@ -27,12 +27,14 @@ import {
 	type SessionState,
 	SessionsList,
 	THIS_DEVICE,
+	TRANSCRIPT_WRITES,
 	Transcript,
 	until,
 } from "@earendil-works/p3/v1";
 import { ownerClient, ownerCookie } from "@earendil-works/p3/v1/testing";
 import { Sessions, SessionWorker } from "../plugins/sessions/contract.ts";
 import { COMMAND } from "../src/install.ts";
+import { assertGranted } from "../test/granted.ts";
 import { FauxRequests, type Step } from "../test/plugins/faux-login/contract.ts";
 import { childrenOf, scriptFaux } from "../test/support.ts";
 import { within } from "../test/until.ts";
@@ -177,7 +179,7 @@ function files(html: string): [string, string][] {
 async function send(client: Host<P3Principal>, session: string, text: string): Promise<void> {
 	await client.root(async (ctx) => {
 		const transcript = await ctx.get(Transcript, { session });
-		if (transcript.variant !== "writer") throw new Error("bench: the owner does not write");
+		assertGranted(transcript, ...TRANSCRIPT_WRITES);
 		await transcript.send({ text, requestId: text }, ctx);
 	}, context);
 }

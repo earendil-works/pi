@@ -5,7 +5,7 @@
 
 import { Button, Field, IconButton, Input, Modal, Stack } from "@earendil-works/elanor-react";
 import { MyThings } from "@earendil-works/p3/v1";
-import { CloseIcon, useHold, useVariant, useWatch } from "@earendil-works/p3/v1/web";
+import { CloseIcon, useHold, useLive, useWatch } from "@earendil-works/p3/v1/web";
 import { useState } from "react";
 import type { Action } from "./action.ts";
 import { choiceName, ownerKey } from "./give-thing.tsx";
@@ -62,7 +62,7 @@ function Search(props: {
 	readonly action: Action;
 }) {
 	const [prefix, setPrefix] = useState("");
-	const mine = useVariant(useHold(MyThings, { view: useViewId(), prefix: prefix.trim() }), "mine");
+	const mine = useLive(useHold(MyThings, { view: useViewId(), prefix: prefix.trim() }));
 	const list = useWatch(mine?.list);
 	const owners = useWatch(mine?.owners) ?? [];
 	const names = new Map(owners.map((choice) => [ownerKey(choice.owner), choiceName(choice)] as const));
