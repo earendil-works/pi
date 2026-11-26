@@ -1,8 +1,8 @@
-// A pane layout's tree (`PaneLayoutView`; apps reach part of it through `contract.web.tsx`): plain JSON an app keeps (in page state, in the browser's storage)
-// and changes only through these functions. A node is a split (a row or a column of nodes, each with its share of the
-// size) or a group (tabs of panes by id, one of them active). Every change keeps the tree tidy: a group that loses its
-// last pane goes, a split left with one node becomes that node, a split inside a split of its direction merges into
-// it, and shares always add up to 1.
+// A pane layout's tree (`PaneLayout`; views reach part of it through `contract.web.tsx`): plain JSON a view keeps (in
+// page state, in the browser's storage) and changes only through these functions. A node is a split (a row or a column
+// of nodes, each with its share of the size) or a group (tabs of panes by id, one of them active). Every change keeps
+// the tree tidy: a group that loses its last pane goes, a split left with one node becomes that node, a split inside a
+// split of its direction merges into it, and shares always add up to 1.
 
 /** A split: `children` side by side (`row`) or stacked (`column`), each with its share of the size in `sizes`. */
 export type PaneSplit = {
@@ -130,6 +130,27 @@ export function keepPanes(tree: PaneNode, keep: (pane: string) => boolean): Pane
 		return { ...group, tabs, active };
 	});
 	return tidy(pruned) ?? null;
+}
+
+/** Whether `a` and `b` are the same tree, compared field by field (a view sets a new tree only when it changed). */
+export function sameTree(a: PaneNode, b: PaneNode): boolean {
+	if (a === b) return true;
+	if (a.kind === "group" || b.kind === "group") {
+		return (
+			a.kind === "group" &&
+			b.kind === "group" &&
+			a.id === b.id &&
+			a.active === b.active &&
+			a.tabs.length === b.tabs.length &&
+			a.tabs.every((tab, index) => tab === b.tabs[index])
+		);
+	}
+	return (
+		a.direction === b.direction &&
+		a.children.length === b.children.length &&
+		a.sizes.every((size, index) => size === b.sizes[index]) &&
+		a.children.every((child, index) => sameTree(child, b.children[index]!))
+	);
 }
 
 /**

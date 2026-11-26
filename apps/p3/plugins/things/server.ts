@@ -25,7 +25,7 @@ export default defineFacet((host) => {
 	// Every kind's data for workers and pages, following the registry.
 	host.serve(ThingKindsView, (_params, _principal, self) => ({
 		kinds: self.derive([self.registry(ThingKinds)], ([table]) =>
-			Object.fromEntries([...table].map(([name, { value }]) => [name, kindView(value)])),
+			Object.fromEntries([...table].map(([name, { value, plugin }]) => [name, kindView(value, plugin)])),
 		),
 	}));
 	serveStore(host);

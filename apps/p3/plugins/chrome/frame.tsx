@@ -1,79 +1,191 @@
-// The page's frame, the chrome's `PageRoot`: the route's app (the path's first segment; none, or one the caller may
-// not enter: the first app of their catalog) with its chrome, the full top bar or one corner button as the app chose,
-// and below it the app's page inside a boundary that shows the app's error and keeps the bar.
+// The page's frame, the chrome's `PageRoot` (decisions 59, 64, 66, 74): the top bar, the navigator slot (the things
+// plugin's `Navigator`, or another plugin's) and the main area with the route's target in its view, the gear opening
+// its Settings view. A view that takes the whole page (`area: "page"`) gets it; the chrome keeps one corner button
+// with the navigator and the gear. On a phone one screen at a time: a workspace with no view of its own shows the
+// navigator first; everything else fills the screen with a back button. `/` goes to the person's first topmost
+// workspace; `/me` is the person's own page.
 
-import { AppCatalog, type AppInfo, type ConnectionState, Me } from "@earendil-works/p3/v1";
-import { PageConnection, redirect, useHold, useLive, useRegistry, useRoute, useWatch } from "@earendil-works/p3/v1/web";
-import { useEffect, useState } from "react";
+import { IconButton } from "@earendil-works/elanor-react";
+import { type ConnectionState, Me } from "@earendil-works/p3/v1";
+import {
+	ArrowBackIcon,
+	navigate,
+	PageConnection,
+	type Route,
+	redirect,
+	SettingsIcon,
+	type Target,
+	targetPath,
+	useComponent,
+	useHold,
+	useLive,
+	useMessages,
+	useRegistry,
+	useRoute,
+	useWatch,
+} from "@earendil-works/p3/v1/web";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 // Other plugins' web contracts by path, never through `/v1/web`: a plugin applied to a running server meets the base
 // its page started with, whose `/v1/web` may not have a newer contract yet (a component token would be `undefined`).
-import { AppPages } from "../apps/contract.web.ts";
-import { AppBoundary } from "./app-boundary.tsx";
+import { Navigator, Settings, type Shown, TargetView } from "../things/contract.web.tsx";
+import { Roots } from "../things/workspace.ts";
 import { CornerMenu } from "./corner-menu.tsx";
 import styles from "./frame.module.css";
-import { InviteDialog } from "./invite.tsx";
-import { MyThingsDialog } from "./my-things-dialog.tsx";
+import { MePage } from "./me-page.tsx";
+import { messages } from "./messages.ts";
 import { TopBar } from "./top-bar.tsx";
+import { ViewBoundary } from "./view-boundary.tsx";
 
 /** Who the caller is, as `Me` answers: a person (the owner among them), or a session's agent (never a page). */
 export type Caller =
 	| { readonly kind: "person"; readonly id: string; readonly name: string; readonly owner: boolean }
 	| { readonly kind: "agent"; readonly session: string };
 
-/** What the bar and the corner button show: the apps (`current` the route's), the connection and the caller. */
+/** What the bar and the corner button show: the route's target, the connection and the caller. */
 export type ChromeProps = {
-	readonly apps: readonly AppInfo[];
-	readonly current: AppInfo | undefined;
+	readonly target: Target | undefined;
+	readonly settings: boolean;
 	readonly connection: ConnectionState;
 	readonly caller: Caller | undefined;
-	readonly onInvite: () => void;
-	readonly onMyThings: () => void;
 };
 
-/** The frame: the chrome and the route's app page. */
+/** The frame: the chrome around the route. */
 export function Frame() {
 	const route = useRoute();
-	const apps = useWatch(useLive(useHold(AppCatalog, {}))?.apps);
 	const me = useWatch(useLive(useHold(Me, {}))?.me);
-	// A page is never a session's worker: `Me` answers it the owner or a person.
+	// A page is never a session's worker: `Me` answers it a person.
 	const caller = me?.kind === "agent" ? undefined : me;
 	const connection = useRegistry(PageConnection) ?? "connecting";
-	const [inviting, setInviting] = useState(false);
-	const current = apps?.find((app) => app.id === route.app);
-	const first = apps?.[0]?.id;
+	const target = route.kind === "target" ? route.target : undefined;
+	const settings = route.kind === "target" && route.settings;
+	const chrome: ChromeProps = { target, settings, connection, caller };
+	switch (route.kind) {
+		case "landing":
+			return <Shell chrome={chrome} main={<Landing />} screen="main" />;
+		case "unknown":
+			return <Shell chrome={chrome} main={<Note text="notFound" />} screen="main" />;
+		case "me":
+			return <Shell chrome={chrome} main={<MePage />} screen="main" />;
+		case "target":
+			return <TargetFrame chrome={chrome} route={route} />;
+	}
+}
+
+/** `/`: the person's first topmost workspace, in place of `/` (a redirect); with none, says so. */
+function Landing() {
+	const [view] = useState(randomId);
+	const roots = useWatch(useLive(useHold(Roots, { view }))?.list);
+	const first = roots?.rows[0]?.workspace;
 	useEffect(() => {
-		if (current === undefined && first !== undefined) redirect(`/${first}`);
-	}, [current, first]);
-	const [mine, setMine] = useState(false);
-	const chrome: ChromeProps = {
-		apps: apps ?? [],
-		current,
-		connection,
-		caller,
-		onInvite: () => setInviting(true),
-		onMyThings: () => setMine(true),
-	};
+		if (first !== undefined) redirect(targetPath({ kind: "workspace", workspace: first }));
+	}, [first]);
+	return roots !== undefined && first === undefined ? <Note text="nothingYet" /> : null;
+}
+
+/** A target: in its view, or its Settings view at `/settings`; the view's area decides the frame. */
+function TargetFrame(props: {
+	readonly chrome: ChromeProps;
+	readonly route: Extract<Route, { readonly kind: "target" }>;
+}) {
+	const { route } = props;
+	const { t } = useMessages(messages);
+	const View = useComponent(TargetView);
+	const SettingsView = useComponent(Settings);
+	const [shown, setShown] = useState<Shown | undefined>(undefined);
+	const onShown = useCallback((next: Shown) => setShown(next), []);
+	const at = targetPath(route.target, route.view === undefined ? {} : { view: route.view });
+	const main = route.settings ? (
+		SettingsView === undefined ? null : (
+			<SettingsView target={route.target} />
+		)
+	) : View === undefined ? null : (
+		<View onShown={onShown} target={route.target} {...(route.view === undefined ? {} : { view: route.view })} />
+	);
+	const framed = (
+		<ViewBoundary at={route.settings ? `${at}/settings` : at} title={t("stopped")}>
+			{main}
+		</ViewBoundary>
+	);
+	if (!route.settings && shown === "page") {
+		return (
+			<div className={styles.frame} data-area="page">
+				<main className={styles.page}>{framed}</main>
+				<CornerMenu {...props.chrome} />
+			</div>
+		);
+	}
+	// On a phone, a workspace with no view of its own opens as its navigator; its Settings view is one step on.
+	const navigatorFirst = route.target.kind === "workspace" && !route.settings && shown === "settings";
+	return <Shell chrome={props.chrome} main={framed} screen={navigatorFirst ? "navigator" : "main"} />;
+}
+
+/** The bar, the navigator and the main area; `screen` says which a phone shows. */
+function Shell(props: {
+	readonly chrome: ChromeProps;
+	readonly main: ReactNode;
+	readonly screen: "navigator" | "main";
+}) {
+	const NavigatorView = useComponent(Navigator);
+	const { target, settings } = props.chrome;
 	return (
-		<div className={styles.frame} data-chrome={current?.chrome ?? "bar"}>
-			{current?.chrome === "button" ? <CornerMenu {...chrome} /> : <TopBar {...chrome} />}
-			<main className={styles.page}>
-				<AppPage apps={apps} current={current} />
-			</main>
-			{caller?.kind === "person" && caller.owner ? (
-				<InviteDialog onClose={() => setInviting(false)} open={inviting} />
-			) : null}
-			{caller?.kind === "person" ? <MyThingsDialog onClose={() => setMine(false)} open={mine} /> : null}
+		<div className={styles.frame} data-area="main" data-screen={props.screen}>
+			<TopBar {...props.chrome} />
+			<div className={styles.body}>
+				<aside className={styles.navigator}>
+					{NavigatorView === undefined ? null : (
+						<NavigatorView
+							onMe={() => navigate("/me")}
+							onOpen={(next) => navigate(targetPath(next))}
+							target={target}
+						/>
+					)}
+				</aside>
+				<main className={styles.main}>
+					<MainHead settings={settings} target={target} />
+					{props.main}
+				</main>
+			</div>
 		</div>
 	);
 }
 
-/** The route's app page in its boundary, or why there is none. */
-function AppPage(props: { readonly apps: readonly AppInfo[] | undefined; readonly current: AppInfo | undefined }) {
-	const pages = useRegistry(AppPages);
-	if (props.apps === undefined || pages === undefined) return null;
-	if (props.apps.length === 0) return <p className={styles.empty}>There is no app for you on this Pi yet.</p>;
-	if (props.current === undefined) return null;
-	const Page = pages.get(props.current.id)?.value.Page;
-	if (Page === undefined) return <p className={styles.empty}>{props.current.title} has no page on this Pi.</p>;
-	return <AppBoundary Page={Page} title={props.current.title} />;
+/** Above the main area: on a phone the way back; the gear to the target's Settings view (or back from it). */
+function MainHead(props: { readonly target: Target | undefined; readonly settings: boolean }) {
+	const { t } = useMessages(messages);
+	const { target, settings } = props;
+	if (target === undefined) return null;
+	const workspace: Target = { kind: "workspace", workspace: target.workspace };
+	const back = settings ? targetPath(target) : targetPath(workspace);
+	return (
+		<div className={styles.mainHead}>
+			<IconButton aria-label={t("back")} className={styles.back} data-back="" onClick={() => navigate(back)}>
+				<ArrowBackIcon />
+			</IconButton>
+			<span className={styles.grow} />
+			{settings ? null : (
+				<IconButton
+					aria-label={t("settings")}
+					data-gear=""
+					onClick={() => navigate(targetPath(target, { settings: true }))}
+				>
+					<SettingsIcon />
+				</IconButton>
+			)}
+		</div>
+	);
+}
+
+/** A line the chrome says in the main area. */
+function Note(props: { readonly text: "nothingYet" | "notFound" }) {
+	const { t } = useMessages(messages);
+	return (
+		<p className={styles.empty} data-empty="">
+			{t(props.text)}
+		</p>
+	);
+}
+
+/** A fresh id for one mounted list (its `view`): two pages of one person never share it. */
+function randomId(): string {
+	return Array.from(crypto.getRandomValues(new Uint8Array(12)), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }

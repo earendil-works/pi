@@ -1,4 +1,4 @@
-// The layout plugin's contract for web facets: the pane layout an app places (`PaneLayoutView`: the app's panes and
+// The layout plugin's contract for web facets: the pane layout a view places (`PaneLayout`: a view's panes and
 // a tree of splits and tab groups the app keeps as JSON), and what an app does with that tree itself (plain data and
 // pure functions: make one, open or activate a pane, keep only known panes, read one back from storage). Dragging,
 // resizing and closing are the component's. `/v1/web` re-exports this file for third-party apps.
@@ -19,6 +19,7 @@ export {
 	panesOf,
 	paneTree,
 	parsePaneTree,
+	sameTree,
 } from "./tree.ts";
 
 /** A pane: its id (as the tree names it), its tab's title, whether the person may close it, and its content. */
@@ -46,4 +47,4 @@ export type PaneLayoutProps = {
  * The pane layout (decision ERNDL-696): from 48rem splits the person resizes and tabs they reorder, move and split by
  * dragging; on a phone one pane at a time under a row of chips, a swipe to the neighbour. Both show the same tree.
  */
-export const PaneLayoutView = defineComponent<PaneLayoutProps>("layout.panes");
+export const PaneLayout = defineComponent<PaneLayoutProps>("layout.panes");

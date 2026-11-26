@@ -1,6 +1,6 @@
-// The view `TranscriptView`: a session's conversation. It holds the session's `Transcript` (the worker's one object
-// per conversation, starting the worker), shows the window of entries with "Load earlier" before it and the running
-// answer after it, and for writers the composer. Kept at the bottom while the reader is there.
+// The transcript pane of a session's view: a session's conversation. It holds the session's `Transcript` (the worker's
+// one object per conversation, starting the worker), shows the window of entries with "Load earlier" before it and the
+// running answer after it, and for writers the composer. Kept at the bottom while the reader is there.
 
 import { Button } from "@earendil-works/elanor-react";
 import { type RefState, TRANSCRIPT_WRITES, Transcript, withGranted } from "@earendil-works/p3/v1";

@@ -38,6 +38,7 @@ export * from "../../../plugins/apps/contract.ts";
 export * from "../../../plugins/environments/contract.ts";
 export * from "../../../plugins/people/contract.ts";
 export * from "../../../plugins/sessions/contract.ts";
+export * from "../../../plugins/things/workspace.ts";
 export * from "../../../plugins/tools/contract.ts";
 export * from "../../../plugins/transcript/contract.ts";
 export { callerKey, P3Principal } from "../../app.ts";

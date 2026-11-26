@@ -1,4 +1,4 @@
-// The pane layout (`PaneLayoutView`, the layout plugin's view; decision ERNDL-696): the app's panes by id, and a tree
+// The pane layout (`PaneLayout`, the layout plugin's component; decision ERNDL-696): the app's panes by id, and a tree
 // (`tree.ts`) of splits and tab groups that says where each one is, which the app keeps as JSON (`onChange`).
 // From 48rem the person resizes splits, reorders tabs, moves them between groups and splits groups by dragging
 // (`pane-splits.tsx`); on a phone each pane fills the screen under a row of chips, one per open pane, and a swipe goes

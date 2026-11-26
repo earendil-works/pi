@@ -1,7 +1,8 @@
 /*
- * The page's frame: the bar (or the corner button) and below it the app's page filling the rest of the window. The
- * app scrolls inside its page, so the bar stays. The bar is Inkling's app header: Elanor's top navigation with a
- * border below; the connection's light green, amber while connecting, red while offline.
+ * The page's frame: the bar, and below it the navigator beside the main area (on a phone one of them at a time), or
+ * a whole-page view with the corner button. The main area scrolls inside itself, so the bar stays. The bar is
+ * Inkling's app header: Elanor's top navigation with a border below; the connection's light green, amber while
+ * connecting, red while offline.
  */
 
 .frame {
@@ -46,8 +47,70 @@
 	font: var(--semantic-typography-heading-app-6);
 }
 
-.switcher {
+.body {
+	display: flex;
+	min-block-size: 0;
+	flex: 1 1 auto;
+}
+
+.navigator {
+	min-block-size: 0;
+	flex: 1 1 auto;
+	overflow-y: auto;
+	background: var(--semantic-color-background-surface);
+}
+
+.main {
+	position: relative;
+	display: flex;
 	min-inline-size: 0;
+	min-block-size: 0;
+	flex: 1 1 auto;
+	flex-direction: column;
+	overflow-y: auto;
+}
+
+.frame[data-screen="navigator"] .main,
+.frame[data-screen="main"] .navigator {
+	display: none;
+}
+
+.mainHead {
+	display: flex;
+	flex: none;
+	align-items: center;
+	padding-inline: var(--semantic-dimension-space-padding-small);
+}
+
+.grow {
+	flex: 1 1 auto;
+}
+
+.crumbs {
+	display: flex;
+	min-inline-size: 0;
+	align-items: center;
+	gap: var(--semantic-dimension-space-gap-x-small);
+	overflow: hidden;
+	color: var(--semantic-color-text-secondary);
+	white-space: nowrap;
+}
+
+.crumb {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.drawer {
+	padding: var(--semantic-dimension-space-padding-medium);
+	overflow-y: auto;
+}
+
+.me {
+	display: flex;
+	flex-direction: column;
+	gap: var(--semantic-dimension-space-flow-large);
+	padding: var(--semantic-dimension-space-padding-large);
 }
 
 .person {
@@ -132,23 +195,6 @@
 	font: var(--semantic-typography-code-secondary);
 }
 
-/* Elanor's popup has the canvas's colour, as the page has: in dark mode only its border sets it apart. */
-.dialog {
-	border-color: var(--semantic-color-border-secondary);
-}
-
-.inviteForm,
-.inviteLink {
-	display: flex;
-	flex-direction: column;
-	gap: var(--semantic-dimension-space-flow-medium);
-}
-
-.linkField {
-	flex: 1 1 auto;
-	min-inline-size: 0;
-}
-
 .error {
 	margin: 0;
 	color: var(--semantic-color-text-negative);
@@ -158,6 +204,23 @@
 @keyframes pulse {
 	to {
 		opacity: var(--semantic-number-opacity-pulse);
+	}
+}
+
+@media (min-width: 48rem) {
+	.navigator {
+		flex: none;
+		inline-size: 18rem;
+		border-inline-end: var(--semantic-dimension-border-width-small) solid var(--semantic-color-border-secondary);
+	}
+
+	.frame[data-screen] .main,
+	.frame[data-screen] .navigator {
+		display: flex;
+	}
+
+	.back {
+		display: none;
 	}
 }
 

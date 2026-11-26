@@ -118,6 +118,8 @@ export const KindView = obj({
 	),
 	defaultGrants: obj({ everyone: opt(arr(str())), agents: opt(arr(str())), guests: opt(arr(str())) }),
 	settings: arr(str()),
+	/** The plugin that registered the kind (`TableItem.plugin`): the add-thing picker groups by it. */
+	plugin: str(),
 	ticksVersion: num(),
 });
 
@@ -136,7 +138,7 @@ export const ThingKindsView = remote("things.kinds", {
 });
 
 /** `info` as worker and page read it: its plain data (copied once per registry change: Chord's are mutable types). */
-export function kindView(info: KindInfo): KindView {
+export function kindView(info: KindInfo, plugin: string): KindView {
 	const { name, workspaces, makers, stacking, ticks, defaultGrants, settings, ticksVersion } = info;
 	return {
 		name,
@@ -155,6 +157,7 @@ export function kindView(info: KindInfo): KindView {
 		},
 		settings: [...settings],
 		ticksVersion,
+		plugin,
 	};
 }
 
