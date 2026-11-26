@@ -96,7 +96,7 @@ archived. An archived session starts for the owner only.
 
 | `creation` | Who makes one, where | For whom |
 | --- | --- | --- |
-| `content` (a canvas, notes, a checklist) | a writer of a session, or its agent, in that session (`SessionThings.create`, the agent's `thing_create`) | nobody |
+| `content` (a canvas, notes, a checklist) | a writer of a session, or its agent, in that session (`SessionThings.create`, the agent's `make_thing`) | nobody |
 | `person` (a login, an inbox, an MCP server) | a person, in "My things" (`MyThings.create`), with the input the kind's `Create` view collected (a sign-in) | themselves, one of their groups, or (the owner) the Pi |
 | `plugin` (the coding tools; the default) | only server code: `SessionsStore.ensureThing({ kind, owner })` gives the one thing of that kind and owner, made if there is none | whom the code says |
 
@@ -159,7 +159,8 @@ made the tools for the Pi at its start (`ensureThing`, everywhere), and the sess
 - On the server, one `serveThing(host, Kind, { title, creation, create?, delete?, object })`: the base makes every
   thing and its id; `create` prepares what is in a new thing (most kinds need none), `delete` drops it; the object's
   factory gets the caller's `{ access, options }`.
-- On the worker, `thingExtension(Kind, (things, agent) => …)`: the agent's tools.
+- On the worker, `thingHarnessPart(Kind, (things, session) => …)` contributed to `ThingHarnessParts`: the agent's
+  tools, prompt sections, providers and environment from the things of the kind it holds.
 - On the page, `ThingViews`: its view of one thing, its options form, and for a `person` kind its `Create` view.
 
 ## What admission confines, and what it does not (Mario, 2026-11-23)
@@ -179,30 +180,29 @@ and that is decided, not a gap:
 
 ## What the agent gets
 
-The agent is Durable's harness in the session's worker (plugin `harness`). **It gets exactly its session's things**,
-linked and followed, with the agent's options:
+The agent is Durable's harness in the session's worker (plugin `harness`). **It gets exactly the things it holds**:
+the session's worker holds a reference to each thing available to its agent (`HeldThings`, the things plugin's
+`contract.worker.ts`), and the harness calls each kind's harness part with them:
 
-- **One extension per kind**, for all the session's things of it: `thingExtension(Kind, (things, agent) => ({
-  extension, providers }))`, called again whenever they change, never with none. Its tools take a thing's id; a list
-  tool names the things (`checklist_list`), so descriptions stay fixed text. A tool that writes is there only while
-  some thing allows it, and the thing's object refuses the others.
-- **`agent.call(fn, context)`** runs `fn` as the session's worker, so a tool reaches its plugin's object, the same
-  one people use, and the base answers it with the agent's options.
-- **`thing_create({ kind, name })`**, the harness's own tool: the agent makes content of one of the session's
-  content kinds, owned by nobody. It is there while the Pi has content kinds.
-- **The agent makes only content.** It never makes an owned thing, never gives a thing an owner, never changes
-  options: it works for every writer of its session, so what it could do for one of them, any of them could have it
-  do.
-- Installing a plugin gives no session anything; there is no global tools registry. A session without a login
-  thing has no model.
+- **One part per kind**, for all the things of it the agent holds: `thingHarnessPart(Kind, (things, session) => ({
+  extension, providers, prompt, env }))`, contributed to `ThingHarnessParts`, called again whenever that kind's list
+  changes (a thing added, let go of, or granted anew), never with none. Each entry is `{ thing, workspace, ref }`. Its
+  tools take a thing's id; a list tool names the things (`canvas_list`), so descriptions stay fixed text. A tool is
+  offered only while its tick is granted on some thing (`ref.add`, `ref.granted.has("bash")`).
+- **A tool acts as the agent**: through the held reference, or `session.call(fn, context)`, which runs `fn` as the
+  session's worker with references of its own, released when `fn` settles.
+- **A part's environment** is a function of the conversation's location (`{ machine, folder }`), answered by the
+  machine kind for the machines the agent may work on.
+- **The agent makes things** with the things plugin's own part (`make_thing`, over the session workspace's `make`).
+- Installing a plugin gives no session anything; there is no global tools registry. An agent that holds no login has
+  no model.
 
-The selection is applied before the harness resumes and before every submit: work starts only through the harness
-(`SessionHarness.submit`), which waits until the agent's tools match what the server last said. A thing removed
-while a tool call runs: that call finishes; no task phase that starts after the worker applied the removal sees the
-tool (Durable resolves tools per task phase). A worker whose kind's plugin is of another version than the stored
-options gives that thing nothing (no tools, no providers) until they agree. A session's location never changes while
-a tool call runs. An archived session's worker opens its transcript without scheduling any work. The session is
-reported `working` before Durable accepts an input, so a crash in between leaves it for the waker.
+The things are applied before the harness resumes and before every submit: work starts only through the harness
+(`SessionHarness.submit`). A tick withheld or a thing let go of while a tool call runs: that call finishes; no task
+phase that starts after the worker applied the change sees the tool (Durable resolves tools per task phase). A
+session's location never changes while a tool call runs. An archived session's worker opens its transcript without
+scheduling any work. The session is reported `working` before Durable accepts an input, so a crash in between leaves
+it for the waker.
 
 ## Apps and the page
 
@@ -234,7 +234,8 @@ reported `working` before Durable accepts an input, so a crash in between leaves
 | --- | --- | --- |
 | `Apps` | server | each app |
 | `ThingKinds` | server | each kind's plugin, through `serveThing`: its title, how its things come to exist, its `create` and `delete` hooks |
-| `ThingExtensions` | worker | each kind's plugin: one extension (and providers) for all the session's things of the kind |
+| `ThingHarnessParts` | worker | each kind's plugin: its harness part, for all the things of the kind the agent holds |
+| `HeldThings` | worker | the things plugin's holding: the things the worker holds as the agent, by kind |
 | `ExecutionEnvironments` | worker | the environments plugin: an `ExecutionEnv` for a location |
 | `SessionHarness` | worker | the harness: the open Durable harness and `submit`, for the transcript and others |
 | `AppPages` | page | each app |
@@ -252,9 +253,9 @@ reported `working` before Durable accepts an input, so a crash in between leaves
 | `environments` | environments; this device; `ExecutionEnvironments` |
 | `sessions` | sessions (app, title, location, state, whom each follows), their members; the things, their owners, links and options; `SessionAccess`, `ThingAccess`; the waker |
 | `apps` | `Apps`, `AppCatalog`, `AppAccess` |
-| `harness` | Durable in the worker, `ThingExtensions`, `thing_create`, the activity report |
+| `harness` | Durable in the worker over the kinds' harness parts, the activity report; the subagents kind (`harness.subagents`) |
 | `transcript` | a session's conversation as people see it; its view |
-| `tools` | the coding tools: a `plugin` kind (`tools.coding`, options `{ shell: boolean }`), one thing, the Pi's, everywhere |
+| `tools` | the coding tools: a kind made by its plugin (`tools.coding`), four flag ticks for the agents (Read, Write, Edit, Bash), one thing in Pi |
 | `notes`, `canvas`, `checklist` | three kinds of content: notebooks, a shared drawing board, and the small example below |
 | `chrome` | the page's frame: the top bar and the chosen app's page |
 | `layout` | the pane layout (`PaneLayoutView`): splits, tabs, dragging; chips and swipes on a phone |
@@ -483,138 +484,50 @@ function serveStore(host: FacetHost<P3Principal>): void {
 }
 ```
 
-`worker.ts`:
+`worker.ts` (a sketch of its harness part, `ThingHarnessParts`; `plugins/canvas/worker.ts` is the built model):
 
 ```ts
-// The checklist on a session's worker: what the session's checklists give its agent, one set of tools for all of
-// them. `checklist_list` (each checklist's id, name and whether the agent may tick there) and `checklist_read` (a
-// checklist's items with their ids) always; `checklist_add` and `checklist_tick` only while at least one checklist
-// lets the agent tick (the option covers adding too), refused with an error naming the checklist on the others. The tools take a checklist's id from `checklist_list`, so
-// their descriptions stay fixed whatever checklists the session has. They reach the checklist on the server
-// (`Checklist`) through `agent.call`, as the session's worker, so `admitThing` answers for the agent: options changed
-// while a call runs refuse the tick there too.
+// The checklist on a session's worker: the harness part of its kind, one set of tools for every checklist the agent
+// holds. `checklist_list` and `checklist_read` always; `checklist_tick` only while Tick is granted on one of them
+// (`ref.tick`), refused naming the checklist on the others. The tools take a checklist's id from `checklist_list`,
+// so their descriptions stay fixed whatever checklists the agent holds.
 
-import { bool, type Context, defineFacet, forbidden, obj, str } from "@earendil-works/p3/v1";
-import {
-	type Agent,
-	type AgentThing,
-	defineExtension,
-	defineTool,
-	type Extension,
-	ThingExtensions,
-	thingExtension,
-} from "@earendil-works/p3/v1/worker";
-import { Checklist, ChecklistKind, ItemText } from "./contract.ts";
+import { defineFacet, obj, str } from "@earendil-works/p3/v1";
+import { defineExtension, defineTool } from "@earendil-works/p3/v1/worker";
+import { type HeldThing, ThingHarnessParts, thingHarnessPart } from "../things/contract.worker.ts";
+import { type Checklist, ChecklistKind } from "./contract.ts";
 
 export default defineFacet((_host, self) => {
+	// Called with every checklist the agent holds (nearest last), again whenever that list changes, never with none.
 	self.contribute(
-		ThingExtensions,
-		// Called with every checklist of the session, again whenever they change.
-		thingExtension(ChecklistKind, (lists, agent) => ({ extension: checklistExtension(lists, agent) })),
+		ThingHarnessParts,
+		thingHarnessPart(ChecklistKind, (lists) => ({ extension: checklistExtension(lists) })),
 	);
 });
 
-/** A checklist of the session as the tools get it. */
-type List = AgentThing<{ check: boolean }>;
+/** A checklist the agent holds: its id, the workspace it is held in, the agent's reference. */
+type List = HeldThing<typeof Checklist>;
 
-/** The tools of the session's checklists: listing and reading, and ticking while one of them allows it. */
-function checklistExtension(lists: readonly List[], agent: Agent): Extension {
-	const list = defineTool({
-		name: "checklist_list",
-		description:
-			"Lists the session's checklists as JSON: each one's `id` (what the other checklist tools take), its `name` " +
-			"and whether you may `tick` its items.",
-		parameters: obj({}),
-		execute: async () => {
-			const shown = lists.map(({ thing, name, options }) => ({ id: thing, name, tick: options.check }));
-			return { output: [{ type: "text", text: JSON.stringify(shown) }] };
-		},
-	});
-	const read = defineTool({
-		name: "checklist_read",
-		description:
-			"Reads one of the session's checklists (`checklist`: its id from `checklist_list`): its items as JSON, each " +
-			"with its `id` (what checklist_tick takes), `text` and whether it is `done`.",
-		parameters: obj({ checklist: str() }),
-		execute: async ({ checklist }, _api, context) => {
-			const at = { session: agent.session, thing: listOf(lists, checklist).thing };
-			const items = await agent.call(async (ctx) => (await ctx.get(Checklist, at)).items.value, context);
-			return { output: [{ type: "text", text: JSON.stringify(items) }] };
-		},
-	});
-	const add = defineTool({
-		name: "checklist_add",
-		description:
-			"Adds an item (`text`) at the end of one of the session's checklists (`checklist`: its id from " +
-			"`checklist_list`, one you may tick); answers the new item's id.",
-		parameters: obj({ checklist: str(), text: ItemText }),
-		execute: async ({ checklist, text }, _api, context) => {
-			const id = await change(lists, checklist, { kind: "add", text }, agent, context);
-			return { output: [{ type: "text", text: `Added ${id}.` }] };
-		},
-	});
+function checklistExtension(lists: readonly List[]) {
 	const tick = defineTool({
 		name: "checklist_tick",
-		description:
-			"Ticks (`done: true`) or unticks an item (`item`: its id from checklist_read) of one of the session's " +
-			"checklists (`checklist`: its id from `checklist_list`, one you may tick).",
-		parameters: obj({ checklist: str(), item: str(), done: bool() }),
-		execute: async ({ checklist, item, done }, _api, context) => {
-			await change(lists, checklist, { kind: "tick", item, done }, agent, context);
-			return { output: [{ type: "text", text: `${done ? "Ticked" : "Unticked"} ${item}.` }] };
+		description: "Ticks the item `item` of the checklist `checklist` (its id from `checklist_list`).",
+		parameters: obj({ checklist: str(), item: str() }),
+		execute: async ({ checklist, item }, _api, context) => {
+			const list = lists.find(({ thing }) => thing === checklist);
+			// The held reference's `tick` is there while Tick is granted: withheld since, it is gone.
+			if (list?.ref.tick === undefined) throw new Error(`checklist: you may not tick ${checklist}`);
+			await list.ref.tick({ id: item }, context);
+			return { output: [{ type: "text", text: "ticked" }] };
 		},
 	});
-	return defineExtension({
-		name: "checklist",
-		tools: lists.some(({ options }) => options.check) ? [list, read, add, tick] : [list, read],
-	});
-}
-
-/** A change the agent makes to a checklist. */
-type Change = { kind: "add"; text: string } | { kind: "tick"; item: string; done: boolean };
-
-/**
- * Makes `change` on checklist `id` as the agent, through the object people use: refused when the agent may not tick
- * there (its options now, which also cover adding). Answers the new item's id for an add.
- */
-async function change(
-	lists: readonly List[],
-	id: string,
-	change: Change,
-	agent: Agent,
-	context: Context,
-): Promise<string | null> {
-	const found = listOf(lists, id);
-	if (!found.options.check) throw forbidden(`checklist: you may not change ${described(found)}`);
-	return agent.call(async (ctx) => {
-		const at = await ctx.get(Checklist, { session: agent.session, thing: found.thing });
-		if (at.add === undefined || at.tick === undefined) throw forbidden(`checklist: you may not change ${described(found)} now`);
-		switch (change.kind) {
-			case "add":
-				return at.add({ text: change.text }, ctx);
-			case "tick":
-				return at.tick({ id: change.item, done: change.done }, ctx);
-		}
-	}, context);
-}
-
-/** The session's checklist `id`; an id that is none of them is the model's mistake, answered as its error result. */
-function listOf(lists: readonly List[], id: string): List {
-	const found = lists.find(({ thing }) => thing === id);
-	if (found === undefined) {
-		throw new Error(`checklist: the session has no checklist ${JSON.stringify(id)} (see checklist_list)`);
-	}
-	return found;
-}
-
-/** A checklist as an error names it: its name and id. */
-function described({ thing, name }: List): string {
-	return name === "" ? `the checklist ${thing}` : `the checklist "${name}" (${thing})`;
+	const tools = lists.some(({ ref }) => ref.granted.has("tick")) ? [tick] : [];
+	return defineExtension({ name: "checklist", tools: [/* checklist_list, checklist_read, */ ...tools] });
 }
 ```
 
-The agent makes a new checklist with the harness's `thing_create({ kind: "checklist.checklist", name })`: the kind
-writes no tool for it.
+The agent makes a new checklist with the things plugin's own part (`make_thing`, over the session workspace's
+`make`), not with a tool of the kind.
 
 `web.tsx`:
 
@@ -817,7 +730,7 @@ removes one person, and restarts the server mid-call. A base edit or a plugin-sp
 - The sign-in reload gap is closed: the link hook reads the request's token itself; a signed-in link no sign-in
   tracks is closed at once (Astra).
 - The waker skips archived sessions and starts at most four workers at once (Astra).
-- `admitApp` for an app's own objects; `thingExtension(Kind, give)` typed, with `agent.call`; the location optional
+- `admitApp` for an app's own objects; a kind's typed gift to the agent (now `thingHarnessPart`); the location optional
   for apps; `thingOf(Kind, { name?, owner?, options? })`; a kind's `migrate`; one `Party` for who a member is;
   `Harness`, `StoreStorage`, `createRegistry`, `createModels` in `/v1/worker` are p3's own and outside the promise
   (Fable).
@@ -839,8 +752,8 @@ party")
 - Everyone in a session reads every thing; options only limit writers.
 - The agent gets one extension per kind with all the session's things of it; tools take the thing's id; list tools.
 - How things of a kind come to exist: `content`, `person`, or `plugin` (the default).
-- The agent makes only content, with the harness's `thing_create`; it never makes an owned thing, never keeps,
-  never changes options.
+- The agent makes only content (since replaced: the things plugin's `make_thing`); it never makes an owned thing, never
+  keeps, never changes options.
 - "In all my sessions" (`everywhere`), and a session follows one party or nobody. The coding app's sessions follow
   the owner who made them; the coding tools are the Pi's, made by the tools plugin (`ensureThing`).
 - From the reviews of that round (Fable, Astra): a session holds at most 1000 things; the owner's

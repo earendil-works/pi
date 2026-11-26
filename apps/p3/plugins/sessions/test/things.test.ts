@@ -7,7 +7,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
-	CodingTools,
 	BACKGROUND_CONTEXT as context,
 	SessionInfo,
 	Sessions,
@@ -52,17 +51,15 @@ describe("making a thing", () => {
 		assert.equal(variant, "drawer");
 	});
 
-	it("refuses in a session what is not content: a person's kind, a plugin's (the coding tools)", async () => {
+	it("refuses in a session what is not content: a person's kind", async () => {
 		const ann = await w.person("Ann");
 		const id = await w.session([ann]);
 		await w.asWriter(ann, id, async (things, ctx) => {
 			await w.refused(things.create({ kind: Logins.name }, ctx));
-			await w.refused(things.create({ kind: CodingTools.name }, ctx));
 			await w.refused(things.create({ kind: Notes.name }, ctx));
 			await w.refused(things.create({ kind: "no.kind" }, ctx), "invalid");
 		});
 		await w.asMine(ann, async (mine, ctx) => {
-			await w.refused(mine.create({ kind: CodingTools.name, owner: { kind: "person", id: ann.id } }, ctx));
 			await w.refused(mine.create({ kind: Boards.name, owner: { kind: "person", id: ann.id } }, ctx));
 		});
 		assert.deepEqual(await w.linksOf(id), []);
@@ -125,14 +122,6 @@ describe("making a thing", () => {
 		assert.equal((await w.thingRow(first))?.everywhere, true);
 		const made = await w.asServer((store, ctx) => store.createThing({ kind: Notes.name, owner: pi }, ctx));
 		assert.equal((await w.thingRow(made))?.everywhere, true);
-		// The tools plugin made the Pi's coding tools at its start.
-		const tools = await w.asServer(
-			async (store, ctx) => (await store.things.ofKind.page({ owner: "pi", kind: CodingTools.name }, 10, ctx)).items,
-		);
-		assert.deepEqual(
-			tools.map(({ name, everywhere }) => [name, everywhere]),
-			[["Coding tools", true]],
-		);
 	});
 
 	it("gives a reader no writer", async () => {
@@ -242,10 +231,6 @@ describe("a session's size", () => {
 			await assert.rejects(things.create({ kind: Boards.name }, ctx), holds);
 			await assert.rejects(things.add({ thing: other }, ctx), holds);
 		});
-		await assert.rejects(
-			w.asAgent(id, (facts, ctx) => facts.create({ kind: Boards.name }, ctx)),
-			holds,
-		);
 		await assert.rejects(
 			w.asServer((store, ctx) => store.createThing({ kind: Notes.name, session: id, owner: { kind: "pi" } }, ctx)),
 			holds,
@@ -383,10 +368,6 @@ describe("the same thing in two sessions", () => {
 			context,
 			{ principal: ann },
 		);
-		const agentSees = await w.asAgent(second, async (facts) => facts.things.value);
-		assert.deepEqual(agentSees, [
-			{ thing: board, kind: Boards.name, name: "Renamed", version: 1, options: { draw: false } },
-		]);
 		await w.asWriter(ann, first, (things, ctx) => things.remove({ thing: board }, ctx));
 		assert.notEqual(await w.thingRow(board), undefined, "an owned thing outlives its links");
 		await w.asWriter(ann, second, (things, ctx) => things.delete({ thing: board }, ctx));
@@ -474,39 +455,6 @@ describe("a person's own things", () => {
 				principal: ben,
 			}),
 		);
-	});
-});
-
-describe("the agent's things", () => {
-	it("makes content only: owned by nobody, linked by the agent; never a person's kind or a plugin's", async () => {
-		const ann = await w.person("Ann");
-		const id = await w.session([ann]);
-		await w.asAgent(id, async (facts, ctx) => {
-			assert.deepEqual(facts.kinds.value, [{ kind: Boards.name, title: "Board" }]);
-			await facts.create({ kind: Boards.name, name: "Sketch" }, ctx);
-			await w.refused(facts.create({ kind: Logins.name }, ctx));
-			await w.refused(facts.create({ kind: CodingTools.name }, ctx));
-		});
-		assert.deepEqual(
-			(await w.linksOf(id)).map(({ name, owner, by }) => [name, owner.kind, by.kind]),
-			[["Sketch", "none", "agent"]],
-		);
-	});
-
-	// The deployment's "Packing": the agent's checklist kept by the owner showed "in all my sessions" on.
-	it("content the agent made, kept by the owner in the session, is not in all their sessions", async () => {
-		const owner = w.owner();
-		const id = await w.session([owner], [], { kind: "person", id: owner.id, access: "write" });
-		const packing = await w.asAgent(id, (facts, ctx) => facts.create({ kind: Boards.name, name: "Packing" }, ctx));
-		await w.asWriter(owner, id, (things, ctx) =>
-			things.keep({ thing: packing, owner: { kind: "person", id: owner.id } }, ctx),
-		);
-		const row = await w.asMine(owner, async (mine) => mine.list.value.rows.find(({ id: each }) => each === packing));
-		assert.deepEqual([row?.owner, row?.everywhere], [{ kind: "person", id: owner.id }, false]);
-		// Kept to the Pi alike.
-		const other = await w.asAgent(id, (facts, ctx) => facts.create({ kind: Boards.name, name: "Spare" }, ctx));
-		await w.asWriter(owner, id, (things, ctx) => things.keep({ thing: other, owner: { kind: "pi" } }, ctx));
-		assert.equal((await w.thingRow(other))?.everywhere, false);
 	});
 });
 

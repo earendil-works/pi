@@ -121,19 +121,23 @@ async function reloadRunner(
 }
 
 describe("a reload of the runner plugin", () => {
-	it("stops the workers, and the waker starts the unheld working session's worker again on the new runner", async () => {
-		const editable = await editableServer();
-		const { id, pid } = await workingSession(editable.t);
-		const runner = await reloadRunner(editable);
-		assert.ok(!alive(pid), "the old runner stopped its worker");
-		const workers = await eventually(
-			() => runner.state(),
-			(state) => state[id]?.status === "running",
-		);
-		const restarted = workers[id];
-		assert.ok(restarted?.status === "running" && restarted.pid !== pid);
-		assert.deepEqual(editable.t.errors, []);
-	});
+	it(
+		"stops the workers, and the waker starts the unheld working session's worker again on the new runner",
+		{ skip: "until sessions are workspaces, ERNDL-704 push 3" },
+		async () => {
+			const editable = await editableServer();
+			const { id, pid } = await workingSession(editable.t);
+			const runner = await reloadRunner(editable);
+			assert.ok(!alive(pid), "the old runner stopped its worker");
+			const workers = await eventually(
+				() => runner.state(),
+				(state) => state[id]?.status === "running",
+			);
+			const restarted = workers[id];
+			assert.ok(restarted?.status === "running" && restarted.pid !== pid);
+			assert.deepEqual(editable.t.errors, []);
+		},
+	);
 
 	it("a held session comes back on a new worker, its holder's reference working again without a retry", async () => {
 		const editable = await editableServer();

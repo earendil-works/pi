@@ -17,7 +17,6 @@ import {
 	type P3Principal,
 	type Reference,
 	SESSION_THINGS_WRITES,
-	SessionFacts,
 	SessionThings,
 	THIS_DEVICE,
 	until,
@@ -185,20 +184,6 @@ describe("making notebooks", () => {
 			),
 			"reader",
 		);
-	});
-
-	it("is the agent's too, as content of its session", async () => {
-		const ann = await person("Ann");
-		const id = await session([{ kind: "person", id: ann.id, access: "write" }]);
-		const thing = await t.root(
-			async (ctx) => (await ctx.get(SessionFacts, {})).create({ kind: NotesKind.name, name: "Agent's" }, ctx),
-			context,
-			{ principal: { kind: "worker", session: id } },
-		);
-		await holding(ann, id, thing, async (notes, ctx) => {
-			assert.equal(notes.name.value, "Agent's");
-			await editorOf(notes).add({ text: "for the agent" }, ctx);
-		});
 	});
 
 	it("renames live, and shows the same notes in a second session once kept and added there", async () => {

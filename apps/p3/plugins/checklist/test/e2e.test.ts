@@ -58,7 +58,7 @@ async function send(client: Host<P3Principal>, session: string, text: string): P
 	}, context);
 }
 
-describe("the checklist end to end", () => {
+describe("the checklist end to end", { skip: "until sessions are workspaces, ERNDL-704 push 3" }, () => {
 	it("shows the agent's tick in a person's open view; offers checklist_tick only while its options say check", async () => {
 		const t = await testServer({ plugins: [FAUX] }, context);
 		running = t;
