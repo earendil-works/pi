@@ -484,6 +484,7 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				write(async (tx, touched) => {
 					tx.delete(t.workspaceMembers, { workspace, partyKey: partyKey(party) });
 					touched.workspaces.add(workspace);
+					touched.members.add(partyKey(party));
 					return null;
 				}, ctx),
 			createPerson: ({ name, madeBy }, ctx) =>
@@ -880,6 +881,7 @@ class Writes {
 		}
 		this.#defaults(tx, thing, thing, item, args.defaultGrants ?? item.value.defaultGrants, args.defaults);
 		touched.workspaces.add(thing);
+		touched.lines.add(parent);
 		return null;
 	}
 
@@ -894,6 +896,7 @@ class Writes {
 		tx.delete(this.#t.workspaces, { workspace });
 		tx.put(this.#t.removing, { workspace, pathText: line.pathText });
 		touched.workspaces.add(workspace);
+		touched.lines.add(line.parent);
 		return line.pathText;
 	}
 
@@ -1240,6 +1243,7 @@ class Writes {
 		await this.#mustBeWorkspace(tx, workspace);
 		this.#member(tx, workspace, party, source);
 		touched.workspaces.add(workspace);
+		touched.members.add(partyKey(party));
 		return null;
 	}
 

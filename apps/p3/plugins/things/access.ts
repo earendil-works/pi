@@ -44,10 +44,17 @@ export type Reader = {
 };
 
 /**
- * What one commit wrote to: the workspaces and persons whose entries on disk differ now, and the things renamed (no
- * access changes; the probes that show names are asked again).
+ * What one commit wrote to: the workspaces and persons whose entries on disk differ now; the things renamed (no access
+ * changes); the workspaces whose children changed (a line added or cut under them); the parties put in or taken out
+ * somewhere (by key). The last three only decide which probes are asked again.
  */
-export type Touched = { readonly workspaces: Set<string>; readonly persons: Set<string>; readonly things: Set<string> };
+export type Touched = {
+	readonly workspaces: Set<string>;
+	readonly persons: Set<string>;
+	readonly things: Set<string>;
+	readonly lines: Set<string>;
+	readonly members: Set<string>;
+};
 
 /** An attached watcher: the answers now, and how to stop. */
 export type Attachment = { readonly value: Answers; detach(): void };
@@ -68,18 +75,22 @@ export type Look = {
 export type Load = {
 	workspace(id: string): Promise<void>;
 	person(id: string): Promise<void>;
+	/** Notes that the value shows these things' names (a rename asks the probe again). */
+	things(ids: readonly string[]): void;
+	/** Notes that the value depends on where these parties are put in (a member row of one asks it again). */
+	parties(keys: readonly string[]): void;
 };
 
 /**
- * A value computed over the index, followed (a list of a workspace's contents, a caller's roots): asked again after
- * every commit that touched `workspace` or a workspace above it (`scope: "here"`), or anything (`"any"`: what depends
- * on workspaces below or elsewhere), and after any person, a thing's name or the kinds changed. `compute` loads what
- * it reads beyond `workspace`, its ancestors and `caller` (a person), which the index loads for it, and answers a new
- * value; what it loaded stays loaded while the probe is attached. Only a value that differs is told.
+ * A value computed over the index, followed (a list of a workspace's contents, a caller's roots). `compute` loads what
+ * it reads beyond `workspace`, its ancestors and `caller` (a person), which the index loads for it, and notes the names
+ * and parties it shows (`Load`); what it loaded stays loaded while the probe is attached. It is asked again only after
+ * a commit that can change it: one that touched a workspace it loaded or one above them, a child line of one of them, a
+ * person it loaded, a thing whose name it shows, a party whose member rows it read; and after the kinds changed. Only a
+ * value that differs is told.
  */
 export type Probe<T extends JsonValue> = {
 	readonly workspace: string;
-	readonly scope: "here" | "any";
 	readonly caller: Caller;
 	compute(look: Look, load: Load, context: Context): Promise<T>;
 };
@@ -94,6 +105,8 @@ type ProbeView = {
 	last: JsonValue;
 	workspaces: Set<string>;
 	persons: Set<string>;
+	things: Set<string>;
+	parties: Set<string>;
 };
 
 /** A workspace in memory: its entries (`undefined`: it does not exist) and its result once computed. */
@@ -196,7 +209,15 @@ export class AccessIndex {
 		if (!this.open) return Promise.resolve(undefined);
 		return this.#run(async () => {
 			if (!this.open) return undefined;
-			const view: ProbeView = { probe, observer, last: null, workspaces: new Set(), persons: new Set() };
+			const view: ProbeView = {
+				probe,
+				observer,
+				last: null,
+				workspaces: new Set(),
+				persons: new Set(),
+				things: new Set(),
+				parties: new Set(),
+			};
 			view.last = await this.#compute(view, context);
 			if (this.#closed) return undefined;
 			this.#probes.add(view);
@@ -214,7 +235,13 @@ export class AccessIndex {
 	commit<R>(transaction: (touched: Touched) => Promise<R>): Promise<R> {
 		const queued = performance.now();
 		return this.#run(async () => {
-			const touched: Touched = { workspaces: new Set(), persons: new Set(), things: new Set() };
+			const touched: Touched = {
+				workspaces: new Set(),
+				persons: new Set(),
+				things: new Set(),
+				lines: new Set(),
+				members: new Set(),
+			};
 			const started = performance.now();
 			this.#context.telemetry.metrics?.histogram("things.store.wait").record(started - queued);
 			const result = await transaction(touched);
@@ -289,8 +316,13 @@ export class AccessIndex {
 
 	/** Follows a commit that wrote `touched` (see `commit`); nothing once closed (no view is left to tell). */
 	async #adopt(touched: Touched): Promise<void> {
-		if (this.#closed || (touched.workspaces.size === 0 && touched.persons.size === 0 && touched.things.size === 0))
-			return;
+		const nothing =
+			touched.workspaces.size === 0 &&
+			touched.persons.size === 0 &&
+			touched.things.size === 0 &&
+			touched.lines.size === 0 &&
+			touched.members.size === 0;
+		if (this.#closed || nothing) return;
 		const loaded = new Set([...touched.workspaces].filter((id) => this.#workspaces.has(id)));
 		if (!(await this.#reread(loaded, touched.persons))) return;
 		const asked = new Set<View>();
@@ -304,12 +336,21 @@ export class AccessIndex {
 		for (const id of touched.persons) for (const view of this.#viewsOf.get(id) ?? []) asked.add(view);
 		this.#ask(asked);
 		const probes = new Set<ProbeView>();
-		for (const view of this.#probes) {
-			const { workspace, scope } = view.probe;
-			const here = this.#workspaces.has(workspace) && this.#isAtOrBelow(workspace, touched.workspaces);
-			if (scope === "any" || here || touched.persons.size > 0 || touched.things.size > 0) probes.add(view);
-		}
+		for (const view of this.#probes) if (this.#concerns(view, touched)) probes.add(view);
 		await this.#askProbes(probes);
+	}
+
+	/** Whether a commit that wrote `touched` can change `view`'s value (see `Probe`). */
+	#concerns(view: ProbeView, touched: Touched): boolean {
+		for (const id of touched.persons) if (view.persons.has(id)) return true;
+		for (const id of touched.things) if (view.things.has(id)) return true;
+		for (const key of touched.members) if (view.parties.has(key)) return true;
+		for (const id of touched.lines) if (view.workspaces.has(id)) return true;
+		if (touched.workspaces.size === 0) return false;
+		for (const id of view.workspaces)
+			if (this.#workspaces.has(id) && this.#isAtOrBelow(id, touched.workspaces)) return true;
+		for (const id of touched.workspaces) if (view.workspaces.has(id)) return true;
+		return false;
 	}
 
 	/**
@@ -352,7 +393,15 @@ export class AccessIndex {
 		const { workspace, caller } = view.probe;
 		const workspaces = new Set<string>();
 		const persons = new Set<string>();
+		const things = new Set<string>();
+		const parties = new Set<string>();
 		const load: Load = {
+			things: (ids) => {
+				for (const id of ids) things.add(id);
+			},
+			parties: (keys) => {
+				for (const key of keys) parties.add(key);
+			},
 			workspace: (id) => {
 				workspaces.add(id);
 				return this.#ensure(id, context);
@@ -366,6 +415,8 @@ export class AccessIndex {
 		if (caller.kind === "person") await load.person(caller.person);
 		view.workspaces = workspaces;
 		view.persons = persons;
+		view.things = things;
+		view.parties = parties;
 		return view.probe.compute(this.#look(context), load, context);
 	}
 

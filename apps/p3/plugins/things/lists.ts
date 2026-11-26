@@ -207,7 +207,6 @@ function byName(a: WorkspaceItem, b: WorkspaceItem): number {
 function rootsProbe(store: Store, caller: Caller): Probe<WorkspaceItem[]> {
 	return {
 		workspace: "",
-		scope: "any",
 		caller,
 		compute: async (look, load, ctx) => {
 			const root = (await readAll(store.workspaces.children, { parent: "" }, ctx))[0]?.workspace ?? "";
@@ -216,6 +215,7 @@ function rootsProbe(store: Store, caller: Caller): Probe<WorkspaceItem[]> {
 				for (const { group } of await readAll(store.groupMembers.ofPerson, { person: caller.person }, ctx))
 					keys.push(partyKey({ kind: "group", group }));
 			}
+			load.parties(keys);
 			const candidates = new Set<string>();
 			for (const key of keys) {
 				for (const { workspace } of await readAll(store.workspaceMembers.where, { partyKey: key }, ctx))
@@ -239,7 +239,6 @@ function rootsProbe(store: Store, caller: Caller): Probe<WorkspaceItem[]> {
 function childrenProbe(store: Store, workspace: string, caller: Caller): Probe<WorkspaceItem[]> {
 	return {
 		workspace,
-		scope: "any",
 		caller,
 		compute: async (look, load, ctx) => {
 			const children = await readAll(store.workspaces.children, { parent: workspace }, ctx);
@@ -259,7 +258,6 @@ function childrenProbe(store: Store, workspace: string, caller: Caller): Probe<W
 function contentsProbe(workspace: string, caller: Caller): Probe<ThingItem[]> {
 	return {
 		workspace,
-		scope: "here",
 		caller,
 		compute: async (look) => {
 			const above = aboveOf(look, workspace, caller);
@@ -291,7 +289,6 @@ function contentsProbe(workspace: string, caller: Caller): Probe<ThingItem[]> {
 function peopleProbe(workspace: string, caller: Caller): Probe<PartyItem[]> {
 	return {
 		workspace,
-		scope: "here",
 		caller,
 		compute: async (look) => {
 			const above = aboveOf(look, workspace, caller);
@@ -324,7 +321,6 @@ function peopleProbe(workspace: string, caller: Caller): Probe<PartyItem[]> {
 function linkableProbe(workspace: string, caller: Caller): Probe<Omit<ThingItem, "hidden">[]> {
 	return {
 		workspace,
-		scope: "here",
 		caller,
 		compute: async (look) => {
 			const above = aboveOf(look, workspace, caller);
@@ -346,7 +342,6 @@ function linkableProbe(workspace: string, caller: Caller): Probe<Omit<ThingItem,
 function thingProbe(workspace: string, thing: string, caller: Caller): Probe<{ kind: string; from: Origin } | null> {
 	return {
 		workspace,
-		scope: "here",
 		caller,
 		compute: async (look) => {
 			const access = look.access(workspace);
@@ -383,7 +378,6 @@ function whoMayProbe(
 ): Probe<WhoMayValue> {
 	return {
 		workspace,
-		scope: "here",
 		caller,
 		compute: async (look, load) => {
 			const kinds = kindTable();
@@ -507,6 +501,7 @@ function named<T extends { readonly thing: string }>(store: Store, probe: Probe<
 		compute: async (look, load, ctx) => {
 			const rows = await probe.compute(look, load, ctx);
 			const things = rows.map(({ thing }) => thing);
+			load.things(things);
 			const names = new Map(
 				(await readWhole(store.things.ofIds, { things }, ctx)).map(({ thing, name }) => [thing, name]),
 			);

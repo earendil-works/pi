@@ -1204,3 +1204,25 @@ describe("round 1: Opus's cases and the decisions", () => {
 		});
 	});
 });
+
+describe("round 1: what open lists cost a commit", () => {
+	it("a list is asked again only after a commit that can change it: a rename or a grant elsewhere reads nothing", async () => {
+		const { anna, fam } = await family();
+		const other = await space(pi, "Other");
+		const elsewhere = await store.create({ kind: Board.name, name: "x", workspace: other, by: BY }, context);
+		const mine = await store.create({ kind: Board.name, name: "mine", workspace: fam, by: BY }, context);
+		await as(anna, async (ctx) => {
+			const contents = await ctx.get(WorkspaceContents, { workspace: fam, view: "v" });
+			const reads = w.count("things.access.reads");
+			await store.rename({ thing: elsewhere, name: "y" }, context);
+			await store.setTick(
+				{ workspace: other, thing: elsewhere, party: { kind: "everyone" }, tick: "write", gives: true, source: BY },
+				context,
+			);
+			assert.equal(w.count("things.access.reads") - reads, 0);
+			// A rename of a thing it shows is told.
+			await store.rename({ thing: mine, name: "Mine" }, context);
+			await until(contents.list, (list) => list.rows.some((row) => row.name === "Mine"), within("renamed", context));
+		});
+	});
+});
