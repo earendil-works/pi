@@ -524,7 +524,7 @@ function namedQueries(self: StoreSelf<P3Principal>, t: Tables) {
 			{
 				// The key.
 				one: ({ person }: { person: string }) => query(Persons).where((p) => eq(p.person, person)),
-				// The key, IN: the persons of a list (a notebook's authors, a board's pointers).
+				// The key, IN: the persons of a list (the notes plugin reads its notes' authors' names with it).
 				ofIds: ({ persons }: { persons: string[] }) => query(Persons).where((p) => inArray(p.person, persons)),
 			},
 		),
@@ -864,6 +864,8 @@ class Writes {
 			for (const row of group)
 				tx.delete(this.#t.grants, { workspace, thing, partyKey: party, tick: row.tick, sourceKey: source });
 			for (const tick of [...now, ...reserved]) {
+				// A row already at the version now beats a migrated withheld one; both exist only after a write-back
+				// failed for this group earlier (its migration threw then): accepted.
 				if (current.has(tick)) continue;
 				current.add(tick);
 				tx.put(this.#t.grants, { ...first, tick, ticksVersion: info.ticksVersion });

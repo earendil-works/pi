@@ -94,6 +94,7 @@ export const ThingsStore = local("things.store", {
 		workspaceMembers: queries(WorkspaceMemberRow, { here: obj({ workspace: str() }) }),
 		switches: queries(SwitchRow, { here: obj({ workspace: str() }) }),
 		grants: queries(GrantRow, { here: obj({ workspace: str() }) }),
+		// `ofIds`: the persons of a list in one read (the notes plugin reads its notes' authors' names with it).
 		persons: queries(PersonRow, { one: obj({ person: str() }), ofIds: obj({ persons: arr(str()) }) }),
 		groupMembers: queries(GroupMemberRow, { ofPerson: obj({ person: str() }) }),
 		/**
