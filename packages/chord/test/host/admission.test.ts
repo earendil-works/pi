@@ -722,6 +722,26 @@ describe("the order of a read", () => {
 		});
 	});
 
+	// Found by the review of the pass (first reviewer, 2026-11-26): the first allow of a version made the version's
+	// index of its grants (115 KB at 4,096 flags) though no decision listed a name.
+	it("a version whose decisions grant no name keeps no index of its grants (heap guard, 4,096 flags)", async () => {
+		const host = readerHost();
+		const versions = Array.from({ length: 48 }, (_, at) => {
+			const grants = Array.from({ length: 4_096 }, (_, index) => `v${at}f${index}`);
+			return { grants, read: reader(grants, host) };
+		});
+		const before = await settledHeap();
+		for (const { read } of versions) {
+			read({});
+			read({ n: 1, granted: [] });
+		}
+		const each = ((await settledHeap()) - before) / versions.length;
+		expect(versions.every(({ read }) => read({ n: 1 }).granted.size === 0)).toBe(true);
+		// Measured: 191 B per version on the base, 115,379 B with the index made at the first allow (116,690 B here),
+		// under 1.5 KB now.
+		expect(each).toBeLessThan(8 * 1024);
+	}, 60_000);
+
 	// Found by the review of the pass (first reviewer, 2026-11-26): a reused scratch list kept the size of the widest
 	// value a decision ever read (2,735 B per decision); a decision keeps only what its last read needs.
 	it("a short-lived wide value leaves no storage per decision once a small value replaces it (heap guard)", async () => {
