@@ -832,9 +832,9 @@ const MUTATIONS: readonly Mutation[] = [
 	},
 	{
 		name: "the people plugin's owner is not adopted (the bridge)",
-		file: "store.ts",
-		find: 'if ((await t.adopted.get({ bridge: "owner" }, ctx)) !== undefined) return;',
-		put: "return;",
+		file: "owner-bridge.ts",
+		find: "if (seed !== null) await store.adoptOwner(seed, ctx);",
+		put: "",
 	},
 	{
 		name: "a thing's last unlink leaves what it wrote and made",

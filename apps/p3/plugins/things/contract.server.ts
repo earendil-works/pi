@@ -313,6 +313,11 @@ export const ThingsStore = local("things.store", {
 		 */
 		removeMember: method(obj({ group: str(), person: str() })),
 		/**
+		 * The people plugin's owner made the owner here, with the same id, once (the bridge, ERNDL-1144 push B removes
+		 * it): `owner-bridge.ts` calls it with the people plugin's seed.
+		 */
+		adoptOwner: method(obj({ person: str(), name: str() })),
+		/**
 		 * The cleanup when a source goes, one commit: what `source` wrote (grants, group members, workspace members), the
 		 * groups it manages with all naming them, and the persons it made of whom nothing else is left.
 		 */
@@ -439,13 +444,13 @@ export const OneThing = local("things.one", {
 	members: { thing: str() },
 });
 
-/** The people plugin's owner as it hands it over (see `OwnerSeeds`). */
+/** The people plugin's owner as it hands it over (see `OwnerSeeds`): their person, `null` while there is none. */
 export type OwnerSeed = { readonly person: string; readonly name: string } | null;
 
 /**
  * A bridge until the people plugin goes (ERNDL-1144's push B removes it): the people plugin contributes its owner's
  * person, and the things store makes that person, with the same id, its owner, so the owner the owner link signs in
- * as has the owner flag in the access index. Composed: the first contribution, `null` while there is none.
+ * as has the owner flag in the access index. Composed: the people plugin's contribution, `null` without one.
  */
 export const OwnerSeeds = defineRegistry<OwnerSeed, OwnerSeed>("things.owner-seed", { version: 1 });
 

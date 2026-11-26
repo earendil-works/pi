@@ -29,14 +29,7 @@ import {
 import { AccessIndex, type Touched } from "./access.ts";
 import { callerOfKey } from "./admission.ts";
 import { Cleanup, deleteTold } from "./cleanup.ts";
-import {
-	AccessHandles,
-	type CreateAnswer,
-	type GrantInput,
-	OwnerSeeds,
-	ThingHooks,
-	ThingsStore,
-} from "./contract.server.ts";
+import { AccessHandles, type CreateAnswer, type GrantInput, ThingHooks, ThingsStore } from "./contract.server.ts";
 import {
 	type Item,
 	itemKey,
@@ -187,14 +180,13 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		const lifecycle = new Lifecycle({
 			table: pending,
 			write: (fn, ctx) => write((tx) => fn(tx), ctx),
-			pending: (ctx) =>
-				self.tx(async (tx) => {
-					const rows = [];
-					// The whole table: what waits for a delete hook is few rows, read at the start and when the hooks
-					// change.
-					for await (const row of tx.rows(pending, query(Pending))) rows.push(row);
-					return rows;
-				}, ctx),
+			pending: async (ctx) => {
+				const rows = [];
+				// The whole table, outside a transaction (a store ending meanwhile leaves none to cancel): what waits for
+				// a delete hook is few rows, read at the start and when the hooks change.
+				for await (const row of pending.rows(query(Pending), ctx)) rows.push(row);
+				return rows;
+			},
 			hooks: () => hooks.value,
 		});
 		/**
@@ -246,9 +238,12 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				const entry = hooks.value.get(kind);
 				if (entry?.value.one === undefined) throw invalid("args", `things: ${kind} has no seeded thing`);
 				const by: Source = { kind: "plugin", plugin: entry.plugin };
-				const found = await self.tx((tx) => writes.one(tx, kind, by), ctx);
+				// Read outside a transaction: at the start the seed is there already but on the first one.
+				const mine = query(Things).where((r) => and(eq(r.madeByKey, sourceKey(by)), eq(r.kind, kind)));
+				const found = (await t.things.page(mine, 1, ctx)).items[0]?.thing;
 				if (found !== undefined) return found;
-				const workspace = (await self.tx((tx) => rootOf(tx, t), ctx))!;
+				const root = query(Workspaces).where((w) => eq(w.parent, ""));
+				const workspace = (await t.workspaces.page(root, 1, ctx)).items[0]!.workspace;
 				const args = { kind, name: entry.value.one.name, workspace, by };
 				return make(args, (tx, changes, thing) => writes.makeOne(tx, changes, { ...args, thing }), ctx);
 			})();
@@ -296,15 +291,14 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			await Promise.all([lifecycle.serve(ctx), removal.serve(ctx), seed(ctx), startPeople(ctx)]);
 		});
 		/**
-		 * What the store does about people at its start: the sign-outs still to end are ended, and the people plugin's
-		 * owner adopted. Read outside a transaction: a store that ends meanwhile leaves no transaction to drain.
+		 * What the store does about people at its start: the sign-outs still to end are ended. Read outside a
+		 * transaction: a store that ends meanwhile leaves no transaction to drain.
 		 */
 		const startPeople = async (ctx: Ctx<P3Principal>): Promise<void> => {
 			// The whole table: removed persons whose sign-ins are still to end are few, read at the start only.
 			const left: string[] = [];
 			for await (const { person } of t.signOuts.rows(query(SignOuts), ctx)) left.push(person);
 			if (left.length > 0) void signOut(left, ctx);
-			await adopt(ctx);
 		};
 		// A plugin loaded, reloaded or removed: the new kinds are installed in the index's queue, ticks expand and
 		// migrate anew, every loaded workspace is read again; a kind's hooks back, its waiting deletes run.
@@ -322,23 +316,6 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			await lifecycle.resume(ctx);
 			await removal.resume(ctx);
 			if (live !== undefined) await seed(live);
-		});
-		// The people plugin's owner made the things owner, with the same id (a bridge: push B of ERNDL-1144 removes it).
-		const owners = self.registry(OwnerSeeds);
-		const adopt = async (ctx: Ctx<P3Principal>) => {
-			const owner = owners.value;
-			if (owner === null) return;
-			// Adopted already (every start but the first, every reload): no write, so a reload ending the store meanwhile
-			// leaves no transaction behind.
-			if ((await t.adopted.get({ bridge: "owner" }, ctx)) !== undefined) return;
-			await write(
-				(tx, touched) =>
-					people.adoptOwner(tx, touched, owner, (persons) => cleanup.somethingLeftOf(tx, persons, "", new Set())),
-				ctx,
-			);
-		};
-		self.on(owners, async () => {
-			if (live !== undefined) await adopt(live);
 		});
 		return {
 			...q,
@@ -432,6 +409,17 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			addToGroup: (args, ctx) => write((tx, touched) => people.addToGroup(tx, touched, args), ctx),
 			removeFromGroup: (args, ctx) => write((tx, touched) => people.removeFromGroup(tx, touched, args), ctx),
 			removeMember: (args, ctx) => write((tx, touched) => people.removeMember(tx, touched, args), ctx),
+			adoptOwner: async (seed, ctx) => {
+				// Adopted already (every start but the first, every reload): no write, so nothing a reload could cancel.
+				if ((await t.adopted.get({ bridge: "owner" }, ctx)) !== undefined) return null;
+				return write(
+					(tx, touched) =>
+						people.adoptOwner(tx, touched, seed, (persons) =>
+							cleanup.somethingLeftOf(tx, persons, "", new Set()),
+						),
+					ctx,
+				);
+			},
 			picker: async ({ workspace, person, query: text }, ctx) => {
 				const offered = await offeredTo(q, index!, { workspace, person }, ctx);
 				return namesOf(q, offered, text, ctx);

@@ -21,6 +21,7 @@ import {
 } from "@earendil-works/p3/v1";
 import { PeopleStore, ServerCommands, SessionsStore } from "@earendil-works/p3/v1/server";
 import { SignIns } from "../plugins/sign-in/contract.ts";
+import { ThingsStore } from "../plugins/things/contract.server.ts";
 import { Probe } from "./plugins/probe/contract.ts";
 import { type Topology, topology } from "./topology.ts";
 import { eventually, within } from "./until.ts";
@@ -103,7 +104,7 @@ describe("reloads while in use", () => {
 		assert.deepEqual(t.errors, []);
 	});
 
-	it("the people, apps and environments plugins: a person's objects and the owner's go on", async () => {
+	it("the people, apps, environments, sessions and things plugins, reloaded in that order: a person's objects and the owner's go on", async () => {
 		const { t, owner, sessions, id } = await withSession();
 		const ann = await t.server.root(
 			async (ctx) => (await ctx.get(PeopleStore, {})).createPerson({ name: "Ann" }, ctx),
@@ -117,7 +118,7 @@ describe("reloads while in use", () => {
 		const environments = await owner.get(Environments, {}, context);
 		const coding = (apps: readonly { readonly id: string }[]) => apps.some(({ id: app }) => app === "coding");
 		await until(catalog.apps, coding, within("her catalog", context));
-		for (const plugin of ["people", "apps", "environments", "sessions"])
+		for (const plugin of ["people", "apps", "environments", "sessions", "things"])
 			await t.reload(`@earendil-works/p3-${plugin}`);
 		await t.server.root(
 			async (ctx) => (await ctx.get(PeopleStore, {})).renamePerson({ person: ann, name: "Anna" }, ctx),
@@ -132,6 +133,27 @@ describe("reloads while in use", () => {
 		);
 		assert.deepEqual(t.errors, []);
 	});
+
+	for (const order of [
+		["people", "apps", "things"],
+		["people", "environments", "things", "sessions"],
+	]) {
+		it(`the ${order.join(", ")} plugins reloaded in that order (the owner bridge, ERNDL-1144): nothing reported`, async () => {
+			const { t, owner } = await withSession();
+			const me = await owner.get(Me, {}, context);
+			// The first start's adoption of the people plugin's owner has committed.
+			const id = t.owner.kind === "person" ? t.owner.id : "";
+			const owners = () =>
+				t.server.root(
+					async (ctx) => (await (await ctx.get(ThingsStore, {})).persons.owners.page({}, 10, ctx)).items,
+					context,
+				);
+			await eventually(owners, (items) => items.some(({ person }) => person === id));
+			for (const plugin of order) await t.reload(`@earendil-works/p3-${plugin}`);
+			await until(me.me, (value) => value.kind === "person" && value.owner, within("still the owner", context));
+			assert.deepEqual(t.errors, []);
+		});
+	}
 
 	it("the sign-in plugin: issued sign-ins stay valid", async () => {
 		const { t } = await withSession();
