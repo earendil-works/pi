@@ -2162,7 +2162,7 @@ describe("what a decision keeps (hold memory)", () => {
 		expect(kept.sets.at(-1)!.size).toBe(5);
 	});
 
-	it("sets of names whose hashes collide (more than 31 grants) are told apart name by name", async () => {
+	it("sets of a contract with more than 31 grants are told apart and shared", async () => {
 		const names = Array.from({ length: 40 }, (_, index) => `g${String(index).padStart(2, "0")}`);
 		const Many = remote("heap.many", {
 			version: 1,
@@ -2172,7 +2172,7 @@ describe("what a decision keeps (hold memory)", () => {
 			// Typed by a template: a plain record of strings would claim every name, `name` too.
 			flags: Object.fromEntries(names.map((name) => [name, name])) as Record<`g${number}`, string>,
 		});
-		// g00 and g31 are indexes 0 and 31 of the sorted grants: one hash.
+		// g00 and g31 are indexes 0 and 31 of the sorted grants (one hash when it was a bit per index modulo 31).
 		const lists: `g${number}`[][] = [["g00"], ["g31"], ["g31", "g00"], ["g00", "g31", "g00"], ["g31"]];
 		const h = createHost<TestPrincipal>({ address: Server(), principal: { kind: "server" }, onError: () => {} });
 		const facet = defineFacet<TestPrincipal>((host) =>
@@ -2196,6 +2196,55 @@ describe("what a decision keeps (hold memory)", () => {
 		for (const reference of held) reference.release();
 		await h.close(context);
 	});
+
+	// Found by the review of the hot-path pass (astra2, 2026-11-26): a hash of index bits modulo 31 put the 4,096 roles
+	// of a contract with 43 flags, 31 of them granted to all, into one bucket.
+	it("re-acquiring a known set of names costs as much among 4,096 cached roles as among 256 (ratio guard)", async () => {
+		const names = Array.from({ length: 43 }, (_, index) => `g${String(index).padStart(2, "0")}`);
+		const Roles = remote("heap.roles", {
+			version: 1,
+			params: { id: int(), mask: int() },
+			hostAddress: () => Server(),
+			state: {},
+			flags: Object.fromEntries(names.map((name) => [name, name])) as Record<`g${number}`, string>,
+		});
+		const selections = Array.from({ length: 4096 }, (_, mask) =>
+			names.filter((_, index) => index < 31 || ((1 << (index - 31)) & mask) !== 0),
+		) as `g${number}`[][];
+		const h = createHost<TestPrincipal>({ address: Server(), principal: { kind: "server" }, onError: () => {} });
+		const facet = defineFacet<TestPrincipal>((host) =>
+			host.serve(Roles, () => ({}), { admit: ({ mask }) => constant(allow({ granted: selections[mask]! })) }),
+		);
+		await h.load([{ name: "@test/roles", facet }], context);
+		const kept: ReadonlySet<string>[] = [];
+		let id = 0;
+		const median: number[] = [];
+		try {
+			for (const size of [256, 4096]) {
+				for (let mask = kept.length; mask < size; mask++) {
+					const held = await h.get(Roles, { id: id++, mask }, context);
+					kept.push(held.granted);
+					held.release();
+				}
+				const hot = size - (1 << Math.floor(Math.log2(size) / 2));
+				const times: number[] = [];
+				for (let round = 0; round < 6; round++) {
+					const start = performance.now();
+					for (let call = 0; call < 200; call++) {
+						const held = await h.get(Roles, { id: id++, mask: hot }, context);
+						expect(held.granted).toBe(kept[hot]);
+						held.release();
+					}
+					times.push(performance.now() - start);
+				}
+				median.push(times.slice(1).sort((a, b) => a - b)[2]!);
+			}
+		} finally {
+			await h.close(context);
+		}
+		// Measured 0.8 on the base of the pass, 4.75 with the saturated hash.
+		expect(median[1]! / median[0]!).toBeLessThan(2);
+	}, 60_000);
 
 	it("an admitted object held over a link, its admission reading one reference: under 14 KiB at both ends", async () => {
 		const { server, client } = await linked(things, { child: { kind: "owner" } });

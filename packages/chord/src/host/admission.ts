@@ -668,9 +668,13 @@ function grantedSet(grants: readonly string[], names: readonly string[]): Readon
 		grantedSets.set(grants, sets);
 	}
 	const { buckets } = sets;
-	// A bit per index (modulo 31): exact up to 31 grants, compared name by name beyond.
-	let hash = 0;
-	for (let index = 0; index < names.length; index++) hash |= 1 << (grants.indexOf(names[index]!) % 31);
+	// Every index mixed in, in the names' (sorted) order (FNV-1a over 32 bits): an OR of index bits modulo 31 put every
+	// combination of a contract with more than 31 grants that shares 31 of them into one bucket. Collisions are told
+	// apart name by name.
+	let hash = 0x811c9dc5;
+	for (let index = 0; index < names.length; index++) {
+		hash = Math.imul(hash ^ (grants.indexOf(names[index]!) + 1), 0x01000193);
+	}
 	const bucket = buckets.get(hash);
 	if (bucket !== undefined) {
 		for (let index = 0; index < bucket.length; index++) {
