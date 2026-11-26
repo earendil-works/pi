@@ -13,7 +13,11 @@ export class Backend {
 	}
 }
 
-/** A backend over a SQLite database (`openNodeSqliteDatabase(path)`, a Durable Object's storage, `:memory:` in tests). */
+/**
+ * A backend over a SQLite database (`openNodeSqliteDatabase(path)`, a Durable Object's storage, `:memory:` in tests).
+ * The store deletes rows and revisions; the bytes of freed pages and of the WAL are the connection's: an app that must
+ * erase opens it with `PRAGMA secure_delete = ON` and checkpoints the WAL; Durable Objects own their storage.
+ */
 export function sqliteBackend(db: SqliteDatabase): Backend {
 	return new Backend(db);
 }

@@ -1,20 +1,20 @@
 // The store for adapters (slice 6b §2.1, D1, D2): what an owner outside Chord's objects (Durable's `StoreStorage`) uses
 // to keep its data in the store as declared tables and engine documents: its tables declared and prepared under its
-// owner name (claimed, the path `self.table` takes), rows encoded at staging and written in a step with what only the
-// step knows, and its reads. Internal for adapters; apps use `openStore` and objects.
+// owner name (claimed, the path `self.table` takes), rows and keys encoded at staging and written or deleted in a step
+// with what only the step knows, and its reads. Internal for adapters; apps use `openStore` and objects.
 
 import type { Context } from "../context/index.ts";
 import { checkName } from "../contracts/internal.ts";
 import type { SqliteExecutor, SqliteValue } from "../sqlite/index.ts";
 import type { Claimant } from "./claims.ts";
 import type { WhereNode } from "./expression.ts";
-import type { EncodedRow } from "./rows.ts";
+import type { EncodedKey, EncodedRow } from "./rows.ts";
 import { type Order, TableSql, tableSqlName } from "./sql.ts";
 import type { Step } from "./step.ts";
 import type { ChordStore } from "./store.ts";
 import type { TableDefinition } from "./table.ts";
 import { prepareTables } from "./table-migration.ts";
-import type { TableWrite } from "./table-writes.ts";
+import { applyCounted, type TableWrite } from "./table-writes.ts";
 
 /** A stored row as reads decode it. */
 export type DecodedRow = { readonly [column: string]: unknown };
@@ -53,7 +53,7 @@ export class StoreOwnerTables {
 	}
 }
 
-/** One declared table of an owner: its rows encoded and written in a step, its reads by key and by query. */
+/** One declared table of an owner: its rows encoded, written and deleted in a step, its reads by key and by query. */
 export class OwnerTable {
 	readonly definition: TableDefinition;
 	readonly sql: TableSql;
@@ -83,6 +83,32 @@ export class OwnerTable {
 		params[this.definition.rows.physical.indexOf(stamp)] = step.seq;
 		await step.run(this.sql.put, ...params);
 		return { kind: "put", table, row: { ...encoded.row, [stamp]: step.seq }, version, columns: encoded.columns };
+	}
+
+	/** `key` (an object of exactly the key columns) checked and encoded for a `delete`, at staging as `encode`. */
+	encodeKey(key: unknown): EncodedKey {
+		return this.definition.rows.key(key, "delete");
+	}
+
+	/** Deletes the row with `encoded` in `step` and returns the `delete` as recorded, with its count (0 when absent). */
+	delete(step: Step, encoded: EncodedKey): Promise<TableWrite> {
+		const table = this.sql.table;
+		return applyCounted(step, this.sql.delete, encoded.params, (count) => ({
+			kind: "delete",
+			table,
+			key: encoded.key,
+			count,
+		}));
+	}
+
+	/**
+	 * Deletes the rows `where` matches in `step` and returns the `deleteWhere` as recorded, with its count. `where` is
+	 * the store's query vocabulary over this table's scalar columns, with its values (the adapter's own: unchecked).
+	 */
+	deleteWhere(step: Step, where: WhereNode): Promise<TableWrite> {
+		const table = this.sql.table;
+		const { sql, params } = this.sql.deleteWhere(where);
+		return applyCounted(step, sql, params, (count) => ({ kind: "deleteWhere", table, where, count }));
 	}
 
 	/** The row with the key `params` (in key order), decoded. */

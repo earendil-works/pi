@@ -1109,7 +1109,7 @@ repeated call is harmless.
 1. **Closing.** One commit checks the set and refuses with `DeletionRefused`,
    whose `refusal` says why, before anything is aborted or written:
    - `unsupported`: the Storage does not set `deletesConversations`
-     (section 10), as JSONL and the Chord store do not;
+     (section 10), as JSONL does not;
    - `root`: the root conversation, which `root()` would create again with its
      reserved ID;
    - `owner`: a conversation whose owner task, outside the set, is live.
@@ -7205,9 +7205,15 @@ so `deleteConversations()` refuses with `unsupported` before it aborts anything.
 
 ### 11.4 Chord store
 
-The store backend (`StoreStorage`) does not delete conversations yet
-(`deletesConversations` is unset): `deleteConversations()` refuses with
-`unsupported`.
+The store backend (`StoreStorage`) deletes the table rows and purges the
+documents, their revisions included whatever their history, with writes the
+store's outbox carries (Chord's `document.purge`, outbox format 2), so a
+replica applies the deletion too. With the outbox on, the commits stored before
+it keep their writes, the deleted data included, until the outbox is trimmed
+past the deletion: the sync layer trims once the remote acknowledged, and
+without sync the app does. Freed pages and the WAL are the store connection's
+to erase, as for SQLite. Its conversations table is at version 2, which adds
+the parent column.
 
 ## 12. API footguns
 

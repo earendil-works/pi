@@ -950,7 +950,7 @@ What is erased depends on the backend:
 | Memory, IndexedDB | The records are removed. |
 | SQLite | The rows are removed. SQLite keeps their bytes in free pages and the WAL until reused; open with `{ secureDelete: true }` to overwrite every freed page (`secure_delete` on the connection, which costs some writes on every commit) and truncate the WAL after each deletion. |
 | Cloudflare Durable Object | The rows are removed; Durable Objects manage their storage, and refuse the SQLite pragmas. |
-| Chord store (`StoreStorage`) | Not supported yet (`unsupported`). |
+| Chord store (`StoreStorage`) | The rows and documents are removed by writes its outbox carries, so replicas delete them too. With the outbox on, the commits stored before the deletion keep their writes, the deleted data included, until the outbox is trimmed past it (the sync layer's, once the remote acknowledged; without sync, the app's). Freed pages and the WAL are the store connection's to erase. |
 | JSONL | Not supported (`unsupported`): `main.jsonl` is append-only. |
 
 Files and other effects of the conversation's tools stay, and so does what a provider retained.

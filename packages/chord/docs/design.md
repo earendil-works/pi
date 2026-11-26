@@ -1538,8 +1538,20 @@ host.serve(DraftStore, (_, self) => {               // local, empty params: may 
   metadata (turning it on starts sync from an archive at the current `lastSeq`); a table in the store's backend,
   written in the commit step's transaction (atomic for one `INSERT`); exposed as `store.outbox.read(afterSeq, limit,
   ctx)` -> `{ seq, writes }[]` and `store.outbox.trim(throughSeq, ctx)`, no pluggable encoding; versioned by the store's
-  schema migrations (its layout) and a `format` per outbox commit (the write vocabulary, the archive's `format`; older
-  formats stepped forward on read, newer ones refused).
+  schema migrations (its layout) and a `format` per outbox commit (the write vocabulary; older formats stepped forward
+  on read, newer ones refused). Format 2 adds `document.purge` (format 1 reads unchanged, a subset), and every commit
+  is recorded in it; the archive's `format` stays 1, since an archive holds the state and a purged record is simply
+  absent from it; sync batches carry no format yet (decision "Erasure in the store").
+- **Erasure (built for Durable's conversation deletion, 2026-11-26; decision "Erasure in the store"):** an adapter erases what it keeps in
+  one commit: `purgeDocuments(step, owner, namespace)` deletes every record of the namespace, live or retired, with
+  all its revisions whatever its history (`rewindable` included), recorded as one `document.purge` per record with its revision, and
+  `OwnerTable.delete`/`deleteWhere` delete rows, recorded as counted `delete`/`deleteWhere`. The deletion travels as
+  writes: a replica applying the batch erases the same (a purge of a record it does not hold at that revision is a divergence, S17),
+  and an export after it holds nothing of it. Commits stored before the deletion keep their payloads in the outbox
+  (and peers may already have them; a sync log is never rewritten): erasure in the store is complete once
+  `outbox.trim` passed the deletion. The bytes of freed pages and of the WAL are the backend connection's: an app
+  that must erase opens it with `PRAGMA secure_delete = ON` and checkpoints the WAL; Durable Objects own their
+  storage.
 - **Writes, commits, batches, archives (owner, 2026-10-26):** a *write* (`StoreWrite`, tagged by `kind`) is one change
   of the store (`put`, `update`, `updateWhere`, `table`, `index`, `document.create`, …); a *commit* the writes of one
   seq in the outbox; a *batch* the commits `from..to` that sync uploads and a replica applies; an *archive* a manifest,
