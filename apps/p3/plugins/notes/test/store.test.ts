@@ -1,6 +1,7 @@
 // The notes store (`NotesStore`) on its own: a note's `at` is unique in its notebook and the last written is the
-// newest, also for writes within one millisecond and with the clock gone back (the notebook's pages are bounded by
-// `at`); an edit makes a note the last written, by its editor; `clear` removes one notebook's notes only.
+// newest, also for writes within one millisecond and with the clock gone back (the list's order is `at`: the last
+// written stays first); an edit makes a note the last written, by its editor; `clear` removes one notebook's notes
+// only.
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";

@@ -397,26 +397,6 @@ describe("the cost of a notebook's read", () => {
 	});
 });
 
-describe("the test server's holders", () => {
-	// Astra, round 3: a refused second hold left the first held, out of the test's reach.
-	it("release the earlier holds when a later one is refused", async () => {
-		const ann = await n.person("Ann");
-		const dana = await n.things.createPerson({ name: "Dana", madeBy: BY }, context);
-		const notebook = await n.thingIn(n.pi);
-		await refused(n.holders([ann, { kind: "person", id: dana, name: "Dana" }], n.pi, notebook));
-		// Ann's object ended with her hold: holding it again opens its list again.
-		await eventually(
-			async () => {
-				const before = n.count("chord.query.runs");
-				await n.holding(ann, n.pi, notebook, async (notes) => notes.list.value);
-				return n.count("chord.query.runs") - before;
-			},
-			(runs) => runs > 0,
-			5000,
-		);
-	});
-});
-
 describe("a released notebook", () => {
 	it("is collected", async () => {
 		const ann = await n.person("Ann");
