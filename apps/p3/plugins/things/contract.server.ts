@@ -26,12 +26,11 @@ import {
 import type { Attachment } from "./access.ts";
 import { type Caller, Item, ManagedBy, Party, Source } from "./contract.ts";
 
-/** A thing: its id, kind, name, its own default view (none: its kind's), who made it and when. */
+/** A thing: its id, kind, name, who made it and when. */
 export const ThingRow = obj({
 	thing: str(),
 	kind: str(),
 	name: str(),
-	view: opt(str()),
 	madeBy: Source,
 	madeAt: num(),
 });
@@ -49,7 +48,7 @@ export const WorkspaceRow = obj({
 export const LinkRow = obj({ workspace: str(), thing: str(), of: str() });
 
 /** A party put into a workspace, and who put it there. */
-export const MemberRow = obj({ workspace: str(), party: Party, source: Source });
+export const WorkspaceMemberRow = obj({ workspace: str(), party: Party, source: Source });
 
 /** A thing or party from above, shown or hidden in a workspace by hand. */
 export const SwitchRow = obj({ workspace: str(), item: Item, shown: bool() });
@@ -93,7 +92,7 @@ export const GroupRow = obj({ group: str(), name: str(), managedBy: ManagedBy, o
 export const GroupManagerRow = obj({ group: str(), party: Party });
 
 /** A person in a group, as one source put them there, with whether the group is outside. */
-export const MembershipRow = obj({ group: str(), person: str(), source: Source, outside: bool() });
+export const GroupMemberRow = obj({ group: str(), person: str(), source: Source, outside: bool() });
 
 /** The things plugin's store: every table's rows as named queries (each a key or index search), and every write. */
 export const ThingsStore = local("things.store", {
@@ -112,7 +111,7 @@ export const ThingsStore = local("things.store", {
 			under: obj({ pathPrefix: str() }),
 		}),
 		links: queries(LinkRow, { here: obj({ workspace: str() }), where: obj({ thing: str() }) }),
-		members: queries(MemberRow, {
+		workspaceMembers: queries(WorkspaceMemberRow, {
 			here: obj({ workspace: str() }),
 			where: obj({ partyKey: str() }),
 			ofParties: obj({ workspaces: arr(str()), partyKeys: arr(str()) }),
@@ -134,7 +133,7 @@ export const ThingsStore = local("things.store", {
 		}),
 		groups: queries(GroupRow, { one: obj({ group: str() }), ofIds: obj({ groups: arr(str()) }) }),
 		groupManagers: queries(GroupManagerRow, { of: obj({ group: str() }) }),
-		memberships: queries(MembershipRow, { ofPerson: obj({ person: str() }), ofGroup: obj({ group: str() }) }),
+		groupMembers: queries(GroupMemberRow, { ofPerson: obj({ person: str() }), ofGroup: obj({ group: str() }) }),
 		/**
 		 * Makes a thing of `kind` in `workspace`, in one commit: the thing, its link, the kind's default grants, and every
 		 * tick for its maker (`by`, a person or a session's agent; item 90); then the kind's `create` hook. Answers its id.
@@ -147,7 +146,6 @@ export const ThingsStore = local("things.store", {
 		/** Unlinks a thing and what the workspace wrote for it (R15); with its last link the thing goes. */
 		unlink: method(obj({ workspace: str(), thing: str() })),
 		rename: method(obj({ thing: str(), name: str() })),
-		setView: method(obj({ thing: str(), view: opt(str()) })),
 		/** Makes a workspace of `kind` under `parent`; answers its id. */
 		createWorkspace: method(
 			obj({ kind: str(), name: str(), parent: str(), by: Source, showsPeople: opt(bool()) }),
@@ -167,7 +165,7 @@ export const ThingsStore = local("things.store", {
 		addToGroup: method(obj({ group: str(), person: str(), source: Source })),
 		removeFromGroup: method(obj({ group: str(), person: str(), source: Source })),
 		setGroupManagers: method(obj({ group: str(), parties: arr(Party) })),
-		/** Removes what `source` wrote (grants, memberships, members) and the groups it manages, with all naming them. */
+		/** Removes what `source` wrote (grants, group members, workspace members) and the groups it manages, with all naming them. */
 		deleteEverythingFrom: method(obj({ source: Source })),
 	},
 });

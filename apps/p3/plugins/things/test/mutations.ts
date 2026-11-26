@@ -217,20 +217,20 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "a tick is given to whom it is not for",
 		file: "store.ts",
-		find: "if (!isFor(info.ticks.find(({ name }) => name === tick)!.for, party)) {",
+		find: "if (!isFor(info.ticks.find(({ name }) => name === tick)!.for, audienceOf(party.kind))) {",
 		put: "if (false) {",
 	},
 	{
 		name: "deleteEverythingFrom does not say which workspaces its grants were in",
 		file: "store.ts",
-		find: "query(Grants).where((r) => eq(r.sourceKey, key)),\n\t\t)) {\n\t\t\ttouched.workspaces.add(g.workspace);",
-		put: "query(Grants).where((r) => eq(r.sourceKey, key)),\n\t\t)) {\n\t\t\tvoid g;",
+		find: 'await deleteTold(tx, t.grants, Grants, (r) => eq(r.sourceKey, key), touched.workspaces, "workspace");',
+		put: 'await deleteTold(tx, t.grants, Grants, (r) => eq(r.sourceKey, key), new Set(), "workspace");',
 	},
 	{
 		name: "deleteEverythingFrom does not say which persons it touched",
 		file: "store.ts",
-		find: "query(Memberships).where((r) => eq(r.sourceKey, key)),\n\t\t)) {\n\t\t\ttouched.persons.add(m.person);",
-		put: "query(Memberships).where((r) => eq(r.sourceKey, key)),\n\t\t)) {\n\t\t\tvoid m;",
+		find: 'await deleteTold(tx, t.memberships, Memberships, (r) => eq(r.sourceKey, key), touched.persons, "person");',
+		put: 'await deleteTold(tx, t.memberships, Memberships, (r) => eq(r.sourceKey, key), new Set(), "person");',
 	},
 	{
 		name: "a grant of an older kind version is read as it is",

@@ -68,7 +68,7 @@ export function readEverything(path: string): Everything {
 		})),
 		things: all("things").map((r) => ({ thing: String(r.thing), kind: String(r.kind) })),
 		links: all("links").map((r) => ({ workspace: String(r.workspace), thing: String(r.thing), of: String(r.of) })),
-		members: all("members").map((r) => ({ workspace: String(r.workspace), party: keyOf(parsed(r.party)) })),
+		members: all("workspace_members").map((r) => ({ workspace: String(r.workspace), party: keyOf(parsed(r.party)) })),
 		switches: all("switches").map((r) => {
 			const item = parsed(r.item);
 			const party = item.party as Json | undefined;
@@ -92,7 +92,7 @@ export function readEverything(path: string): Everything {
 			};
 		}),
 		groups: all("groups").map((r) => ({ id: String(r.group), outside: r.outside === 1 })),
-		memberships: all("memberships").map((r) => ({ group: String(r.group), person: String(r.person) })),
+		memberships: all("group_members").map((r) => ({ group: String(r.group), person: String(r.person) })),
 		persons: all("persons").map((r) => ({ id: String(r.person), owner: r.owner === 1 })),
 	};
 	db.close();

@@ -9,7 +9,6 @@
 import assert from "node:assert/strict";
 import { describe, it, type TestContext } from "node:test";
 import {
-	type Context,
 	BACKGROUND_CONTEXT as context,
 	type FollowObserver,
 	isChordError,
@@ -17,8 +16,8 @@ import {
 } from "@earendil-works/p3/v1";
 import { AccessIndex, type Answers, type Reader } from "../access.ts";
 import { Gives, ThingsStore } from "../contract.server.ts";
-import { itemKey, type Party, partyKey, type Source } from "../contract.ts";
-import type { GrantEntry, KindsLookup } from "../rules.ts";
+import type { Party, Source } from "../contract.ts";
+import { lookupOf, readerOf } from "../reader.ts";
 import { BOARD_PLUGIN, Board } from "./kinds.ts";
 import { answersFrom, type Caller, type Everything, type KindTicks, readEverything } from "./reference.ts";
 import { type World, world } from "./world.ts";
@@ -382,7 +381,12 @@ class SecondIndex {
 
 	constructor(r: Run) {
 		this.#r = r;
-		this.#index = new AccessIndex(storeReader(r.store), () => LOOKUP, 2);
+		this.#index = new AccessIndex(
+			readerOf(r.store, () => LOOKUP, new Set()),
+			() => LOOKUP,
+			context,
+			2,
+		);
 	}
 
 	async start(count: number): Promise<void> {
@@ -408,10 +412,7 @@ class SecondIndex {
 	}
 
 	async changed(): Promise<void> {
-		await this.#index.changed(
-			{ workspaces: new Set(this.#r.workspaces), persons: new Set(this.#r.persons) },
-			context,
-		);
+		await this.#index.changed({ workspaces: new Set(this.#r.workspaces), persons: new Set(this.#r.persons) });
 		this.#index.forgetUnwatched();
 	}
 
@@ -431,55 +432,8 @@ class SecondIndex {
 	}
 }
 
-/** The test kind's ticks as the rules look them up. */
-const LOOKUP: KindsLookup = {
-	tickFor: (kind, tick) => KINDS.get(kind)?.get(tick),
-	ticksOf: (kind) => [...(KINDS.get(kind)?.keys() ?? [])],
-};
-
-/** A reader over the store's named queries, as the store's own reads them (a set read whole: the tests' are small). */
-function storeReader(store: Reference<typeof ThingsStore>): Reader {
-	const all = async <T, A>(
-		named: { page(args: A, limit: number, context: Context): Promise<{ items: T[] }> },
-		args: A,
-	) => (await named.page(args, 10_000, context)).items;
-	return {
-		workspace: async (id) => {
-			const [row] = await all(store.workspaces.one, { workspace: id });
-			if (row === undefined) return undefined;
-			const switches = await all(store.switches.here, { workspace: id });
-			return {
-				parent: row.parent,
-				showsThings: row.showsThings,
-				showsPeople: row.showsPeople,
-				links: new Map((await all(store.links.here, { workspace: id })).map(({ thing, of }) => [thing, of])),
-				members: new Set((await all(store.members.here, { workspace: id })).map(({ party }) => partyKey(party))),
-				switches: new Map(switches.map(({ item, shown }) => [itemKey(item), shown])),
-				hides: new Set(
-					switches
-						.filter(({ item, shown }) => !shown && item.kind === "party" && item.party.kind === "person")
-						.map(({ item }) => itemKey(item)),
-				),
-				grants: (await all(store.grants.here, { workspace: id })).map(
-					({ thing, party, gives, ticks, takenAway }): GrantEntry => ({
-						thing,
-						party: partyKey(party),
-						audience: party.kind === "agents" || party.kind === "agent" ? "agents" : "people",
-						gives,
-						ticks,
-						takenAway,
-					}),
-				),
-			};
-		},
-		person: async (id) => {
-			const [row] = await all(store.persons.one, { person: id });
-			const groups = await all(store.memberships.ofPerson, { person: id });
-			const unique = new Map(groups.map(({ group, outside }) => [partyKey({ kind: "group", group }), outside]));
-			return { owner: row?.owner === true, groups: [...unique].map(([party, outside]) => ({ party, outside })) };
-		},
-	};
-}
+/** The test kind as the store's index looks kinds up. */
+const LOOKUP = lookupOf(new Map([[Board.name, { plugin: BOARD_PLUGIN, value: Board.info }]]));
 
 describe("the index against the reference", () => {
 	for (const seed of [1, 2, 3, 4, 5, 6]) {
@@ -531,19 +485,19 @@ describe("the index's own mechanics", () => {
 			["pi", { parent: "", members: [] as string[] }],
 			["team", { parent: "pi", members: [] as string[] }],
 		]);
-		const index = new AccessIndex(reader(workspaces), () => LOOKUP);
+		const index = new AccessIndex(reader(workspaces), () => LOOKUP, context);
 		const told: Answers[] = [];
 		const ada = { kind: "person", person: "ada" } as const;
 		const attached = await index.attach("later", ada, observer(told), context);
 		assert.deepEqual(attached?.value, {});
 		workspaces.set("later", { parent: "team", members: ["person/ada"] });
-		await index.changed({ workspaces: new Set(["later"]), persons: new Set() }, context);
+		await index.changed({ workspaces: new Set(["later"]), persons: new Set() });
 		assert.deepEqual(told, [{ sketch: { ticks: ["read"] } }]);
 		assert.deepEqual(index.loaded().workspaces, 3);
 	});
 
 	it("once closed it ends its watchers and attaches nothing", async () => {
-		const index = new AccessIndex(reader(new Map([["pi", { parent: "", members: [] }]])), () => LOOKUP);
+		const index = new AccessIndex(reader(new Map([["pi", { parent: "", members: [] }]])), () => LOOKUP, context);
 		const ended: string[] = [];
 		await index.attach(
 			"pi",

@@ -23,7 +23,7 @@ import { type AccessHandle, AccessHandles, Gives, ThingsStore } from "../contrac
 import type { Party, Source } from "../contract.ts";
 import { defineThing } from "../kind.ts";
 import { serveThing } from "../serve.ts";
-import { BOARD_PLUGIN, Board, BUILDS } from "./kinds.ts";
+import { BOARD, BOARD_PLUGIN, Board, BUILDS } from "./kinds.ts";
 import { type World, world } from "./world.ts";
 
 const BY: Source = { kind: "plugin", plugin: "test" };
@@ -197,7 +197,7 @@ describe("the kinds registry", () => {
 			serveThing(host, kind, { implement: () => ({ read: async () => null, paint: async () => null }) }),
 		);
 
-	it("a kind's new version migrates older ticks on load; without a migration they count for nothing", async () => {
+	it("a kind's new version migrates older ticks on load; without a migration they read as written (open item 27)", async (t) => {
 		const ada = await person("Ada");
 		await put(pi, { kind: "person", person: ada.id });
 		const thing = await board(pi);
@@ -212,11 +212,20 @@ describe("the kinds registry", () => {
 		);
 		assert.deepEqual(gives.answers.value[thing], { ticks: ["paint", "read"] });
 		await w.reload(BOARD_PLUGIN, context, facetOf(v2(false)));
-		// Ada's own grant is refused (version 1, no migration): she counts as everyone, whose default grant is refused too.
-		await until(gives.answers, (answers) => answers[thing] === undefined, within("the refusal", context));
+		// Ada's own grant (version 1, no migration) reads as written: `draw` is no tick of version 2 and is ignored.
+		await until(gives.answers, (answers) => answers[thing]?.ticks.join() === "read", within("as written", context));
 		// A grant written now is at version 2, and counts.
 		await grant(pi, thing, { kind: "person", person: ada.id }, ["paint"]);
 		assert.deepEqual(gives.answers.value[thing], { ticks: ["paint"] });
+		// Back at version 1 (the plugin went back): a grant of version 2 counts for nothing, reported once per grant and
+		// version however often it is read.
+		const reported = t.mock.method(console, "error", () => {});
+		await w.reload(BOARD_PLUGIN, context, BOARD.facet);
+		await until(gives.answers, (answers) => answers[thing]?.ticks.join() === "read", within("refused", context));
+		await w.reload(BOARD_PLUGIN, context);
+		await grant(pi, thing, { kind: "person", person: "nobody" }, ["read"]);
+		const lines = reported.mock.calls.filter((call) => String(call.arguments[0]).includes("newer than the kind's"));
+		assert.equal(lines.length, 1);
 		gives.release();
 	});
 
