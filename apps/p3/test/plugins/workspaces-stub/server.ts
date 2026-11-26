@@ -101,69 +101,94 @@ export default defineFacet((host, self) => {
 			return pi === undefined ? [] : [await workspaceRow(store, pi.workspace, ctx)];
 		}),
 	);
-	host.serve(WorkspaceChildren, ({ workspace }, principal, self) =>
-		listOf(self, principal, async (store, ctx) => {
-			const children = await all(store.workspaces.children, { parent: workspace }, ctx);
-			return Promise.all(children.map((child) => workspaceRow(store, child.workspace, ctx)));
-		}),
+	host.serve(
+		WorkspaceChildren,
+		({ workspace }, principal, _admitted, self) =>
+			listOf(self, principal, async (store, ctx) => {
+				const children = await all(store.workspaces.children, { parent: workspace }, ctx);
+				return Promise.all(children.map((child) => workspaceRow(store, child.workspace, ctx)));
+			}),
+		{ admit: personsOnly },
 	);
-	host.serve(WorkspaceContents, ({ workspace }, principal, self) =>
-		listOf(self, principal, async (store, ctx) => {
-			const hidden = await hiddenHere(store, workspace, ctx);
-			return (await reachable(store, workspace, ctx)).map((row) => ({
-				...row,
-				hidden: hidden.has(`thing/${row.thing}`),
-			}));
-		}),
+	host.serve(
+		WorkspaceContents,
+		({ workspace }, principal, _admitted, self) =>
+			listOf(self, principal, async (store, ctx) => {
+				const hidden = await hiddenHere(store, workspace, ctx);
+				return (await reachable(store, workspace, ctx)).map((row) => ({
+					...row,
+					hidden: hidden.has(`thing/${row.thing}`),
+				}));
+			}),
+		{ admit: personsOnly },
 	);
-	host.serve(WorkspacePeople, ({ workspace }, principal, self) =>
-		listOf(self, principal, async (store, ctx) => {
-			const hidden = await hiddenHere(store, workspace, ctx);
-			const rows = [];
-			for (const { workspace: at, from } of await path(store, workspace, ctx)) {
-				for (const { party } of await all(store.workspaceMembers.here, { workspace: at }, ctx)) {
-					const name = await partyName(store, party, ctx);
-					rows.push({ party, name, from, hidden: hidden.has(partyKeyOf(party)), outside: false });
+	host.serve(
+		WorkspacePeople,
+		({ workspace }, principal, _admitted, self) =>
+			listOf(self, principal, async (store, ctx) => {
+				const hidden = await hiddenHere(store, workspace, ctx);
+				const rows = [];
+				for (const { workspace: at, from } of await path(store, workspace, ctx)) {
+					for (const { party } of await all(store.workspaceMembers.here, { workspace: at }, ctx)) {
+						const name = await partyName(store, party, ctx);
+						rows.push({ party, name, from, hidden: hidden.has(partyKeyOf(party)), outside: false });
+					}
 				}
-			}
-			return rows;
-		}),
+				return rows;
+			}),
+		{ admit: personsOnly },
 	);
-	host.serve(Linkable, ({ workspace, query }, principal, self) =>
-		listOf(self, principal, async (store, ctx) => {
-			const here = new Set((await all(store.links.here, { workspace }, ctx)).map(({ thing }) => thing));
-			const everything = await everywhere(store, ctx);
-			return everything
-				.filter(({ thing, name }) => !here.has(thing) && name.toLowerCase().startsWith(query.toLowerCase()))
-				.map(({ thing, kind, name, from }) => ({ thing, kind, name, from }));
-		}),
+	host.serve(
+		Linkable,
+		({ workspace, query }, principal, _admitted, self) =>
+			listOf(self, principal, async (store, ctx) => {
+				const here = new Set((await all(store.links.here, { workspace }, ctx)).map(({ thing }) => thing));
+				const everything = await everywhere(store, ctx);
+				return everything
+					.filter(({ thing, name }) => !here.has(thing) && name.toLowerCase().startsWith(query.toLowerCase()))
+					.map(({ thing, kind, name, from }) => ({ thing, kind, name, from }));
+			}),
+		{ admit: personsOnly },
 	);
-	host.serve(ThingInfo, ({ workspace, thing }, principal, self) => {
-		const store = self.get(ThingsStore, {});
-		const info = self.writable<{ thing: string; kind: string; name: string; from: Origin }>({
-			thing,
-			kind: "",
-			name: "",
-			from: { kind: "here" },
-		});
-		only(principal);
-		follow(self, async (ctx) => {
-			const found = (await reachable(store, workspace, ctx)).find((row) => row.thing === thing);
-			if (found !== undefined) info.set({ thing, kind: found.kind, name: found.name, from: found.from });
-		});
-		return { info: self.derive([info], ([value]) => value) };
-	});
-	host.serve(WhoMay, ({ workspace, thing }, principal, self) => {
-		const store = self.get(ThingsStore, {});
-		const kinds = self.get(ThingKindsView, {});
-		const table = self.writable<WhoMayTable>({ ticks: [], linkedIn: { kind: "here" }, rows: [] });
-		only(principal);
-		follow(self, async (ctx) =>
-			table.set(await whoMay(store, Object.values(kinds.kinds.value), workspace, thing, ctx)),
-		);
-		return { table: self.derive([table], ([value]) => value) };
-	});
+	host.serve(
+		ThingInfo,
+		({ workspace, thing }, principal, _admitted, self) => {
+			const store = self.get(ThingsStore, {});
+			const info = self.writable<{ thing: string; kind: string; name: string; from: Origin }>({
+				thing,
+				kind: "",
+				name: "",
+				from: { kind: "here" },
+			});
+			only(principal);
+			follow(self, async (ctx) => {
+				const found = (await reachable(store, workspace, ctx)).find((row) => row.thing === thing);
+				if (found !== undefined) info.set({ thing, kind: found.kind, name: found.name, from: found.from });
+			});
+			return { info: self.derive([info], ([value]) => value) };
+		},
+		{ admit: personsOnly },
+	);
+	host.serve(
+		WhoMay,
+		({ workspace, thing }, principal, _admitted, self) => {
+			const store = self.get(ThingsStore, {});
+			const kinds = self.get(ThingKindsView, {});
+			const table = self.writable<WhoMayTable>({ ticks: [], linkedIn: { kind: "here" }, rows: [] });
+			only(principal);
+			follow(self, async (ctx) =>
+				table.set(await whoMay(store, Object.values(kinds.kinds.value), workspace, thing, ctx)),
+			);
+			return { table: self.derive([table], ([value]) => value) };
+		},
+		{ admit: personsOnly },
+	);
 });
+
+/** The admission of the stub's admitted objects: every person (the stub has no index to ask). */
+function personsOnly(_params: unknown, principal: P3Principal) {
+	return constant(principal.kind === "person" ? allow({}) : deny("workspaces stub: persons only"));
+}
 
 /** The who-may table, as `whoMay` builds it. */
 type WhoMayTable = Awaited<ReturnType<typeof whoMay>>;
@@ -499,15 +524,14 @@ async function infoOf(store: Store, workspace: string, ctx: Ctx<P3Principal>) {
 async function partyName(store: Store, party: Party, ctx: Ctx<P3Principal>): Promise<string> {
 	switch (party.kind) {
 		case "everyone":
-			return "everyone here";
 		case "agents":
-			return "agents";
+			return "";
 		case "person":
 			return (await one(store.persons.one, { person: party.person }, ctx))?.name ?? party.person;
 		case "group":
 			return `group ${party.group.slice(0, 8)}`;
 		case "agent":
-			return `agent of ${party.session.slice(0, 8)}`;
+			return "";
 	}
 }
 

@@ -29,7 +29,7 @@ import { PluginTitles, ThingParts } from "./contract.web.tsx";
 import type { KindView } from "./kind.ts";
 import { page } from "./page-messages.ts";
 import styles from "./things.module.css";
-import { useKinds, useMessageText, useScreenId } from "./use-page.ts";
+import { useErrorText, useKinds, useMessageText, useScreenId } from "./use-page.ts";
 import { type DefaultsChoice, Linkable, Workspace } from "./workspace.ts";
 
 /** What the picker offers: a kind to make, or an existing thing to link. */
@@ -170,6 +170,7 @@ function Confirm(props: {
 		agents: [...(grants.agents ?? [])],
 	});
 	const [failure, setFailure] = useState<string | undefined>(undefined);
+	const errorText = useErrorText();
 	const labelOf = (tick: string) => {
 		const found = offer.thingKind.ticks.find((each) => each.name === tick);
 		return found === undefined ? tick : text(found.label);
@@ -191,7 +192,7 @@ function Confirm(props: {
 						BACKGROUND_CONTEXT,
 					)
 				: linker?.link({ thing: offer.thing, defaults: kept }, BACKGROUND_CONTEXT).then(() => offer.thing);
-		done?.then(props.onAdded, (error: unknown) => setFailure(error instanceof Error ? error.message : String(error)));
+		done?.then(props.onAdded, (error: unknown) => setFailure(errorText(error)));
 	};
 	return (
 		<div className={styles.picker} data-add-confirm={offerKey(offer)}>

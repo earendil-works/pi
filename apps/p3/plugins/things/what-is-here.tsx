@@ -20,7 +20,7 @@ import { useState } from "react";
 import { AddThing, ThingParts } from "./contract.web.tsx";
 import { page } from "./page-messages.ts";
 import styles from "./things.module.css";
-import { useFromText, useScreenId } from "./use-page.ts";
+import { useErrorText, useFromText, useScreenId } from "./use-page.ts";
 import { Workspace, WorkspaceContents } from "./workspace.ts";
 
 /** What is here in `workspace`, with its switches and the picker. */
@@ -34,6 +34,8 @@ export function WhatIsHere(props: { readonly workspace: string }) {
 	const mayAdd = withGranted(ref, "make") !== undefined || withGranted(ref, "link") !== undefined;
 	const parts = useRegistry(ThingParts);
 	const fromText = useFromText();
+	const errorText = useErrorText();
+	const [failure, setFailure] = useState<string | undefined>(undefined);
 	const Picker = useComponent(AddThing);
 	const [adding, setAdding] = useState(false);
 	return (
@@ -46,6 +48,7 @@ export function WhatIsHere(props: { readonly workspace: string }) {
 					</Button>
 				) : null}
 			</div>
+			{failure === undefined ? null : <p className={styles.error}>{t("failed", failure)}</p>}
 			<ul className={styles.rows}>
 				{(contents?.rows ?? []).map((row) => {
 					const Icon = parts?.get(row.kind)?.value.Icon ?? DescriptionIcon;
@@ -67,7 +70,9 @@ export function WhatIsHere(props: { readonly workspace: string }) {
 											data-switch={row.thing}
 											disabled={hider === undefined}
 											onCheckedChange={(shown) =>
-												hider?.hide({ thing: row.thing, shown }, BACKGROUND_CONTEXT).catch(() => undefined)
+												hider
+													?.hide({ thing: row.thing, shown }, BACKGROUND_CONTEXT)
+													.catch((error: unknown) => setFailure(errorText(error)))
 											}
 										>
 											<Switch.Thumb />

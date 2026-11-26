@@ -19,6 +19,7 @@ import { useState } from "react";
 import { partyKey } from "./contract.ts";
 import { page } from "./page-messages.ts";
 import styles from "./things.module.css";
+import { useErrorText, usePartyName } from "./use-page.ts";
 import { type PartyInfo, Workspace } from "./workspace.ts";
 
 /** How long a new link lasts, in days, as the dialog offers it. */
@@ -61,17 +62,19 @@ function Existing(props: { readonly workspace: string; readonly name: string }) 
 	const [query, setQuery] = useState("");
 	const [found, setFound] = useState<readonly PartyInfo[] | undefined>(undefined);
 	const [chosen, setChosen] = useState<PartyInfo | undefined>(undefined);
+	const [failure, setFailure] = useState<string | undefined>(undefined);
+	const errorText = useErrorText();
+	const nameOf = usePartyName();
+	const failed = (error: unknown) => setFailure(errorText(error));
 	const search = (next: string) => {
 		setQuery(next);
-		ref?.picker({ query: next.trim() }, BACKGROUND_CONTEXT).then(setFound, () => setFound([]));
+		setFailure(undefined);
+		ref?.picker({ query: next.trim() }, BACKGROUND_CONTEXT).then(setFound, failed);
 	};
 	const put = () =>
 		chosen === undefined
 			? undefined
-			: ref?.putParty({ party: chosen.party }, BACKGROUND_CONTEXT).then(
-					() => setChosen(undefined),
-					() => undefined,
-				);
+			: ref?.putParty({ party: chosen.party }, BACKGROUND_CONTEXT).then(() => setChosen(undefined), failed);
 	return (
 		<section className={styles.invitePart} data-invite-existing="">
 			<h3 className={styles.pickerTitle}>{t("inviteExisting")}</h3>
@@ -85,13 +88,14 @@ function Existing(props: { readonly workspace: string; readonly name: string }) 
 							hierarchy={chosen?.party === party.party ? "secondary" : "tertiary"}
 							onClick={() => setChosen(party)}
 						>
-							{party.name}
+							{nameOf(party.party, party.name)}
 						</Button>
 					</li>
 				))}
 				{found !== undefined && found.length === 0 ? <li className={styles.hint}>{t("nobodyFound")}</li> : null}
 			</ul>
 			<p className={styles.hint}>{t("inviteExistingHint", props.name)}</p>
+			{failure === undefined ? null : <p className={styles.error}>{t("failed", failure)}</p>}
 			<Stack align="center" direction="row" gap="auto">
 				<span>{t("putIn", props.name)}</span>
 				<Button data-invite-add="" disabled={chosen === undefined} hierarchy="primary" onClick={put}>
@@ -110,11 +114,15 @@ function ByLink(props: { readonly workspace: string }) {
 	const [days, setDays] = useState<(typeof EXPIRIES)[number]>(7);
 	const [uses, setUses] = useState<"one" | "several">("one");
 	const [link, setLink] = useState<string | undefined>(undefined);
-	const make = () =>
+	const [failure, setFailure] = useState<string | undefined>(undefined);
+	const errorText = useErrorText();
+	const make = () => {
+		setFailure(undefined);
 		ref?.inviteLink({ name: "", as, expires: `${days}d`, uses }, BACKGROUND_CONTEXT).then(
 			({ url }) => setLink(new URL(url, location.origin).href),
-			() => undefined,
+			(error: unknown) => setFailure(errorText(error)),
 		);
+	};
 	return (
 		<section className={styles.invitePart} data-invite-link-part="">
 			<h3 className={styles.pickerTitle}>{t("inviteNew")}</h3>
@@ -164,6 +172,11 @@ function ByLink(props: { readonly workspace: string }) {
 			<Button data-invite-create="" hierarchy="secondary" onClick={make}>
 				{t("createLink")}
 			</Button>
+			{failure === undefined ? null : (
+				<p className={styles.error} data-invite-failure="">
+					{t("failed", failure)}
+				</p>
+			)}
 			{link === undefined ? null : (
 				<Stack align="center" direction="row" gap="small">
 					<Input className={styles.grow} data-invite-url="" readOnly value={link} />

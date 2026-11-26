@@ -13,10 +13,11 @@ import {
 	useMessages,
 	useWatch,
 } from "@earendil-works/p3/v1/web";
+import { useState } from "react";
 import { partyKey } from "./contract.ts";
 import { page } from "./page-messages.ts";
 import styles from "./things.module.css";
-import { useFromText, useScreenId } from "./use-page.ts";
+import { useErrorText, useFromText, usePartyName, useScreenId } from "./use-page.ts";
 import { Workspace, WorkspacePeople } from "./workspace.ts";
 
 /** Who is here in `workspace`, with its switches; `onInvite` opens the invite dialog (none: no Manage people). */
@@ -29,6 +30,10 @@ export function WhoIsHere(props: { readonly workspace: string; readonly onInvite
 	const hider = withGranted(ref, "hideParty");
 	const remover = withGranted(ref, "removeParty");
 	const fromText = useFromText();
+	const nameOf = usePartyName();
+	const errorText = useErrorText();
+	const [failure, setFailure] = useState<string | undefined>(undefined);
+	const report = (error: unknown) => setFailure(errorText(error));
 	return (
 		<section className={styles.part} data-who-is-here="">
 			<div className={styles.partHead}>
@@ -39,6 +44,7 @@ export function WhoIsHere(props: { readonly workspace: string; readonly onInvite
 					</Button>
 				)}
 			</div>
+			{failure === undefined ? null : <p className={styles.error}>{t("failed", failure)}</p>}
 			<ul className={styles.rows}>
 				{(people?.rows ?? []).map((row) => {
 					const key = partyKey(row.party);
@@ -47,7 +53,7 @@ export function WhoIsHere(props: { readonly workspace: string; readonly onInvite
 					return (
 						<li className={styles.row} data-here-party={key} data-hidden={row.hidden} key={key}>
 							<Icon />
-							<span className={row.hidden ? styles.struck : styles.rowName}>{row.name}</span>
+							<span className={row.hidden ? styles.struck : styles.rowName}>{nameOf(row.party, row.name)}</span>
 							<span className={styles.from}>{from ?? ""}</span>
 							{from === undefined ? (
 								remover === undefined ? null : (
@@ -57,7 +63,7 @@ export function WhoIsHere(props: { readonly workspace: string; readonly onInvite
 										hierarchy="tertiary"
 										iconStart={<PersonRemoveIcon />}
 										onClick={() =>
-											remover.removeParty({ party: row.party }, BACKGROUND_CONTEXT).catch(() => undefined)
+											remover.removeParty({ party: row.party }, BACKGROUND_CONTEXT).catch(report)
 										}
 									/>
 								)
@@ -68,9 +74,7 @@ export function WhoIsHere(props: { readonly workspace: string; readonly onInvite
 											checked={!row.hidden}
 											disabled={hider === undefined}
 											onCheckedChange={(shown) =>
-												hider
-													?.hideParty({ party: row.party, shown }, BACKGROUND_CONTEXT)
-													.catch(() => undefined)
+												hider?.hideParty({ party: row.party, shown }, BACKGROUND_CONTEXT).catch(report)
 											}
 										>
 											<Switch.Thumb />

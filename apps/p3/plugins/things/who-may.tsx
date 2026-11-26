@@ -14,6 +14,7 @@ import {
 	useHold,
 	useLive,
 	useMessages,
+	useRefState,
 	useWatch,
 } from "@earendil-works/p3/v1/web";
 import { useState } from "react";
@@ -21,7 +22,7 @@ import { type Party, partyKey } from "./contract.ts";
 import type { KindView } from "./kind.ts";
 import { page } from "./page-messages.ts";
 import styles from "./things.module.css";
-import { useKinds, useMessageText } from "./use-page.ts";
+import { useErrorText, useKinds, useMessageText, usePartyName } from "./use-page.ts";
 import { type Cell, WhoMay, Workspace } from "./workspace.ts";
 
 /** The reserved tick that lets a party in with no tick, or keeps it out ("No access", item 113). */
@@ -68,12 +69,24 @@ type Row = {
 /** Who may do what with `thing` in `workspace` (`thing === workspace`: the workspace's own ticks). */
 export function WhoMayTable(props: { readonly workspace: string; readonly thing: string; readonly name: string }) {
 	const { t } = useMessages(page);
-	const table = useWatch(useLive(useHold(WhoMay, { workspace: props.workspace, thing: props.thing }))?.table);
+	const whoRef = useHold(WhoMay, { workspace: props.workspace, thing: props.thing });
+	const table = useWatch(useLive(whoRef)?.table);
+	const state = useRefState(whoRef);
+	const nameOf = usePartyName();
+	const errorText = useErrorText();
 	const ref = useLive(useHold(Workspace, { workspace: props.workspace }));
 	const setter = withGranted(ref, "setTick");
 	const kinds = useKinds();
 	const text = useMessageText();
 	const [failure, setFailure] = useState<string | undefined>(undefined);
+	// Who may is shown to those with Manage access here (its admission, R40): anyone else reads why.
+	if (state?.kind === "failed" && state.cause.kind === "denied") {
+		return (
+			<p className={styles.hint} data-who-may-hidden="">
+				{t("whoMayHidden")}
+			</p>
+		);
+	}
 	if (table === undefined || kinds === undefined) return null;
 	const isWorkspace = props.thing === props.workspace;
 	const linkedHere = table.linkedIn.kind === "here";
@@ -81,10 +94,10 @@ export function WhoMayTable(props: { readonly workspace: string; readonly thing:
 		setFailure(undefined);
 		setter
 			?.setTick({ thing: props.thing, party, tick, ...(gives === undefined ? {} : { gives }) }, BACKGROUND_CONTEXT)
-			.catch((error: unknown) => setFailure(error instanceof Error ? error.message : String(error)));
+			.catch((error: unknown) => setFailure(errorText(error)));
 	};
 	const cellProps = (row: Row) => ({
-		row,
+		row: { ...row, name: nameOf(row.party, row.name) },
 		linkedHere,
 		belowLink: linkedHere
 			? undefined
@@ -122,7 +135,7 @@ export function WhoMayTable(props: { readonly workspace: string; readonly thing:
 						{table.rows.map((row) => (
 							<Table.Row data-who-may-row={partyKey(row.party)} key={partyKey(row.party)}>
 								<Table.Cell>
-									<Table.CellPrimary>{row.name}</Table.CellPrimary>
+									<Table.CellPrimary>{nameOf(row.party, row.name)}</Table.CellPrimary>
 								</Table.Cell>
 								<Table.Cell>
 									<AccessChoice {...cellProps(row)} />
@@ -145,7 +158,7 @@ export function WhoMayTable(props: { readonly workspace: string; readonly thing:
 			<ul className={styles.cards}>
 				{table.rows.map((row) => (
 					<li className={styles.card} data-who-may-card={partyKey(row.party)} key={partyKey(row.party)}>
-						<strong>{row.name}</strong>
+						<strong>{nameOf(row.party, row.name)}</strong>
 						<AccessChoice {...cellProps(row)} />
 						{isWorkspace ? <MakeChoice {...cellProps(row)} kinds={kinds} /> : null}
 						{ticksFor(row).map((tick) => (

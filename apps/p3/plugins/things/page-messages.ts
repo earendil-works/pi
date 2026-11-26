@@ -54,6 +54,8 @@ export const page = defineMessages("things.page", {
 		peopleOnly: "People only, the kind says so:",
 		everyoneHere: "everyone here",
 		agents: "agents",
+		agentOf: (session: string) => `the agent of ${session}`,
+		whoMayHidden: "Who may do what here is shown to those with Manage access.",
 		addThing: "Add a thing",
 		addToWorkspace: (name: string) => `Add to ${name}`,
 		search: "Search",

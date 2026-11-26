@@ -1,5 +1,5 @@
 // What the things plugin's page parts share: a list's screen id, every registered kind by name, a message of any
-// plugin as text, how a "from" reads, and what a party opens.
+// plugin as text, how a "from" reads, what a party opens, how a party is named, and what a failed call says.
 
 import { type MessageData, Translations } from "@earendil-works/p3/v1";
 import { type Target, useHold, useLive, useMessages, useRegistry, useWatch } from "@earendil-works/p3/v1/web";
@@ -67,5 +67,41 @@ export function useMessageText(): (message: MessageData) => string {
 		if (value === undefined) return key;
 		// A catalog's value is a text or a function of the message's params (`defineMessages`).
 		return typeof value === "string" ? value : (value as (...args: readonly unknown[]) => string)(...params);
+	};
+}
+
+/** How the page names a party: its name, else (everyone here, the agents, one session's agent have none) its kind. */
+export function usePartyName(): (party: Party, name: string) => string {
+	const { t } = useMessages(page);
+	return (party, name) => {
+		if (name !== "") return name;
+		switch (party.kind) {
+			case "everyone":
+				return t("everyoneHere");
+			case "agents":
+				return t("agents");
+			case "agent":
+				return t("agentOf", party.session.slice(0, 8));
+			default:
+				return name;
+		}
+	};
+}
+
+/**
+ * What a failed call says to the person: the message the server sent with it (`details.message`, as data), else the
+ * error's own text (a trust boundary: an error from the server).
+ */
+export function useErrorText(): (error: unknown) => string {
+	const text = useMessageText();
+	return (error) => {
+		const details: unknown =
+			typeof error === "object" && error !== null && "details" in error ? error.details : undefined;
+		const message =
+			typeof details === "object" && details !== null && "message" in details ? details.message : undefined;
+		if (typeof message === "object" && message !== null && "namespace" in message && "key" in message) {
+			return text(message as MessageData);
+		}
+		return error instanceof Error ? error.message : String(error);
 	};
 }

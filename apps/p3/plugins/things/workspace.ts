@@ -114,20 +114,25 @@ export const Roots = remote("things.roots", {
 	methods: { more: method() },
 });
 
-/** The sub-workspaces of a workspace the caller is present in (sessions among them). */
+/** The sub-workspaces of a workspace the caller is present in (sessions among them); held by anyone present. */
 export const WorkspaceChildren = remote("things.children", {
 	version: 1,
 	params: { workspace: str(), view: str() },
 	hostAddress: () => Server(),
+	admission: obj({}),
 	state: { list: obj({ rows: arr(obj({ workspace: str(), kind: str(), name: str() })), moreAfter: bool() }) },
 	methods: { more: method() },
 });
 
-/** What is here: things linked here, and things from above with whether a switch hides them here. */
+/**
+ * What is here, for anyone present: the things they get anything for here (linked here, or from above), and for whoever
+ * has Hide here the things from above a switch or the default hides here.
+ */
 export const WorkspaceContents = remote("things.contents", {
 	version: 1,
 	params: { workspace: str(), view: str() },
 	hostAddress: () => Server(),
+	admission: obj({}),
 	state: {
 		list: obj({
 			rows: arr(obj({ thing: str(), kind: str(), name: str(), from: Origin, hidden: bool() })),
@@ -137,11 +142,12 @@ export const WorkspaceContents = remote("things.contents", {
 	methods: { more: method() },
 });
 
-/** Who is here: parties put in here, and those from above with whether a switch hides them here. */
+/** Who is here, for anyone present: parties put in here, and those from above with whether a switch hides them here. */
 export const WorkspacePeople = remote("things.people", {
 	version: 1,
 	params: { workspace: str(), view: str() },
 	hostAddress: () => Server(),
+	admission: obj({}),
 	state: {
 		list: obj({
 			rows: arr(obj({ party: Party, name: str(), from: Origin, hidden: bool(), outside: bool() })),
@@ -151,22 +157,30 @@ export const WorkspacePeople = remote("things.people", {
 	methods: { more: method() },
 });
 
-/** The things the caller may link here (Link where each is linked now), by a name prefix. */
+/**
+ * The things the caller may link here (Link where each is linked now: in the workspaces above where they have Link), by
+ * a name prefix; held by anyone with Link here.
+ */
 export const Linkable = remote("things.linkable", {
 	version: 1,
 	params: { workspace: str(), query: str(), view: str() },
 	hostAddress: () => Server(),
+	admission: obj({}),
 	state: {
 		list: obj({ rows: arr(obj({ thing: str(), kind: str(), name: str(), from: Origin })), moreAfter: bool() }),
 	},
 	methods: { more: method() },
 });
 
-/** One thing as it is available here: its kind, name, own default view and where it is linked. Admitted by its answer. */
+/**
+ * One thing as it is available here: its kind, name, own default view and where it is linked. Admitted by the caller's
+ * answer on it (any answer, one with no tick too).
+ */
 export const ThingInfo = remote("things.thing-info", {
 	version: 1,
 	params: { workspace: str(), thing: str() },
 	hostAddress: () => Server(),
+	admission: obj({}),
 	state: { info: obj({ thing: str(), kind: str(), name: str(), view: opt(str()), from: Origin }) },
 });
 
@@ -187,12 +201,14 @@ export const TickFor = oneOf("agents", "people", "all");
 
 /**
  * Who may do what with a thing here: the kind's own ticks, where its grants are written, and per party the `@open`
- * cell and one cell per tick. On a workspace `ticks` also has cells `@make:*` and `@make:<kind>` (item 114).
+ * cell and one cell per tick. On a workspace `ticks` also has cells `@make:*` and `@make:<kind>` (item 114). Admitted
+ * by Manage access here (R40).
  */
 export const WhoMay = remote("things.who-may", {
 	version: 1,
 	params: { workspace: str(), thing: str() },
 	hostAddress: () => Server(),
+	admission: obj({}),
 	state: {
 		table: obj({
 			ticks: arr(obj({ name: str(), label: MessageSchema, for: TickFor })),
