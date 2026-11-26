@@ -170,8 +170,11 @@ export class PeopleWrites {
 		return person;
 	}
 
-	/** The owner's person, made once, at the store's first start (named after the machine's user). */
-	async ensureOwner(tx: Tx, name: string): Promise<void> {
+	/**
+	 * The owner's person, made once, at the store's first start, named "Owner" (people rename it; the people plugin's
+	 * owner replaces it meanwhile: `adoptOwner`).
+	 */
+	async ensureOwner(tx: Tx): Promise<void> {
 		const owners = await tx.page(
 			this.#t.persons,
 			query(Persons).where((p) => eq(p.owner, 1)),
@@ -179,7 +182,13 @@ export class PeopleWrites {
 		);
 		if (owners.items.length > 0) return;
 		const by: Source = { kind: "plugin", plugin: "@earendil-works/p3-things" };
-		tx.put(this.#t.persons, { person: crypto.randomUUID(), name, owner: 1, madeBy: by, madeByKey: sourceKey(by) });
+		tx.put(this.#t.persons, {
+			person: crypto.randomUUID(),
+			name: "Owner",
+			owner: 1,
+			madeBy: by,
+			madeByKey: sourceKey(by),
+		});
 	}
 
 	/**
@@ -297,11 +306,6 @@ export class PeopleWrites {
 	async #mustBeGroup(tx: Tx, group: string): Promise<void> {
 		if ((await tx.get(this.#t.groups, { group })) === undefined) throw invalid("args", `things: no group ${group}`);
 	}
-}
-
-/** The owner's person's first name: their OS user's (`user`), capitalised (the owner renames it later). */
-export function ownerName(user: string): string {
-	return user === "" ? "Owner" : `${user[0]!.toUpperCase()}${user.slice(1)}`;
 }
 
 /** Ends every sign-in of the persons `persons` (they were removed): each one's open links close at once. */

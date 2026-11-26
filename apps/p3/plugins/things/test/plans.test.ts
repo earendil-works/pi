@@ -19,7 +19,7 @@ import {
 import { ThingsStore } from "../contract.server.ts";
 import type { Source } from "../contract.ts";
 import { BOARD, Board } from "./kinds.ts";
-import { RUNTIME, THINGS } from "./world.ts";
+import { THINGS } from "./world.ts";
 
 /** A query's pages, read once each. */
 type Read = () => Promise<unknown>;
@@ -57,7 +57,7 @@ describe("the plans of the things store's queries", () => {
 			onError: (e) => assert.fail(e.kind),
 		});
 		try {
-			await host.load([RUNTIME, THINGS, BOARD], context);
+			await host.load([THINGS, BOARD], context);
 			const things = await host.get(ThingsStore, {}, context);
 			const by: Source = { kind: "plugin", plugin: "test" };
 			const pi = (await things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;

@@ -38,7 +38,6 @@ import {
 	type TableOf,
 	type Tx,
 } from "@earendil-works/p3/v1";
-import { ServerRuntime } from "@earendil-works/p3/v1/server";
 import { AccessIndex, type Touched } from "./access.ts";
 import { AccessHandles, type GrantInput, OwnerSeeds, ThingHooks, ThingsStore } from "./contract.server.ts";
 import {
@@ -64,7 +63,6 @@ import {
 	GroupMembers,
 	Groups,
 	openPeopleTables,
-	ownerName,
 	type PeopleTables,
 	PeopleWrites,
 	PersonColumns,
@@ -182,7 +180,6 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		const hooks = self.registry(ThingHooks);
 		const q = namedQueries(self, t);
 		const people = new PeopleWrites(t);
-		const runtime = self.registry(ServerRuntime);
 		// The kinds as the store's index and writes see them: one snapshot, installed inside the index's queue when the
 		// registry changes (`kindsChanged`), so an operation never mixes two generations of a kind.
 		let installed: ReadonlyMap<string, TableItem<KindInfo>> | undefined;
@@ -203,7 +200,7 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		self.open(
 			async (ctx) => {
 				await self.tx(async (tx) => {
-					await people.ensureOwner(tx, ownerName(runtime.value.machine.user));
+					await people.ensureOwner(tx);
 					return ensurePi(tx, t);
 				}, ctx);
 				index = new AccessIndex(readerOf(q, kindsNow, reported), kindsNow, ctx);

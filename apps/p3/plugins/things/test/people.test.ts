@@ -31,7 +31,7 @@ import { SignIns } from "../../sign-in/contract.ts";
 import { Gives, OwnerSeeds, ThingsStore } from "../contract.server.ts";
 import { Group, type Party, type Source } from "../contract.ts";
 import { Board } from "./kinds.ts";
-import { RUNTIME, signInsStub, storedRows, THINGS, type World, world } from "./world.ts";
+import { signInsStub, storedRows, THINGS, type World, world } from "./world.ts";
 
 const ADMIN: Source = { kind: "plugin", plugin: "admin" };
 
@@ -106,11 +106,11 @@ function as<T>(id: string, fn: (ctx: Ctx<P3Principal>) => Promise<T>): Promise<T
 }
 
 describe("persons and the owner", () => {
-	it("the owner's person is made at the first start, named after the machine's user, once", async () => {
+	it("the owner's person is made at the first start, named Owner, once", async () => {
 		const owners = (await store.persons.owners.page({}, 10, context)).items;
 		assert.deepEqual(
 			owners.map(({ name, owner }) => [name, owner]),
-			[["Ann", true]],
+			[["Owner", true]],
 		);
 		// A start on the same disk (a copy of the committed file, opened by a host of its own) makes no second one.
 		const copy = `${w.path}.copy`;
@@ -125,7 +125,7 @@ describe("persons and the owner", () => {
 			onError: (error) => assert.fail(`host error ${error.kind}`),
 		});
 		try {
-			await host.load([RUNTIME, THINGS], context);
+			await host.load([THINGS], context);
 			const again = await host.get(ThingsStore, {}, context);
 			assert.deepEqual(
 				(await again.persons.owners.page({}, 10, context)).items.map(({ person: id }) => id),
