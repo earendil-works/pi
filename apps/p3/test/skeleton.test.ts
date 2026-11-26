@@ -158,7 +158,7 @@ describe("session workers", () => {
 				await rm(folder, { recursive: true, force: true });
 			});
 			const client = await t.client(context);
-			const id = await gatedSession(client, "one", folder, context);
+			const id = await gatedSession(t.host, client, "one", folder, context);
 			// The harness reports the run `working` (a report by the test would race the harness's own).
 			await startRun(client, id, context);
 			running = await t.restart(context);
