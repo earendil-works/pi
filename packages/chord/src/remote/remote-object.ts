@@ -560,39 +560,60 @@ export class RemoteObject implements Target {
 		const granted = this.#grantedFrom(entry);
 		const data = grantedMembers(currentVersion(this.contract), granted);
 		const names = memberOrder(data);
-		const members = new Map<string, MemberSnapshot>();
+		// The snapshot by member index, applied in the entry's order (values, then failures); a list and no map of
+		// names, which cost 0.5 KiB per binding with its iteration.
+		const snapshots: (MemberSnapshot | undefined)[] = new Array(names.state.length);
+		const order: number[] = [];
 		const add = (index: number, state: MemberSnapshot): void => {
-			const member = names.state[index];
-			if (member === undefined || members.has(member))
+			if (names.state[index] === undefined || snapshots[index] !== undefined) {
 				throw new Error(`hold ${entry.hold}: member ${index} in bound`);
-			members.set(member, state);
+			}
+			snapshots[index] = state;
+			order.push(index);
 		};
 		// Fresh JSON from the link: state is JSON and never validated (§30).
 		for (const { member, value } of entry.members) {
 			add(member, { kind: "value", value: parsePart(link.openPart(value, link.limits, link.context)) as JsonValue });
 		}
 		for (const { member, error } of entry.failed) add(member, { kind: "failed", error: errorFromWire(error) });
-		if (members.size !== names.state.length) throw new Error(`hold ${entry.hold}: the snapshot misses a member`);
-		return () => {
-			const previous = this.#bound?.replicas;
-			const replicas = new Map<string, Replica>();
-			// First: a derive recomputing in this batch reads the new binding through its reference.
-			this.#bound = { granted, methods: data.methods, names, replicas, eventNode: eventNodes(names.events) };
-			for (const [member, state] of members) {
-				const replica = previous?.get(member);
-				if (replica === undefined) {
-					replicas.set(member, new Replica(this.#host.batch, state));
-				} else {
-					replica.reset(state);
-					replicas.set(member, replica);
-				}
-			}
-			for (const [member, replica] of previous ?? []) {
-				if (members.has(member)) continue;
-				replica.vanish(lacking(this.label, this.contract, member, "state member"));
+		if (order.length !== names.state.length) throw new Error(`hold ${entry.hold}: the snapshot misses a member`);
+		return () => this.#adoptBound(granted, data.methods, names, snapshots, order);
+	}
+
+	/**
+	 * Applies a prepared `bound` entry inside the batch of its message: a member it had gets the snapshot (`reset`), a
+	 * new one its first value, in the entry's `order`; a member no longer granted fails (its replica stays).
+	 */
+	#adoptBound(
+		granted: ReadonlySet<string>,
+		methods: ReadonlyMap<string, MethodData>,
+		names: MemberNames,
+		snapshots: readonly (MemberSnapshot | undefined)[],
+		order: readonly number[],
+	): void {
+		const previous = this.#bound?.replicas;
+		const replicas = new Map<string, Replica>();
+		// First: a derive recomputing in this batch reads the new binding through its reference.
+		this.#bound = { granted, methods, names, replicas, eventNode: eventNodes(names.events) };
+		for (const index of order) {
+			const member = names.state[index]!;
+			// Prepared: every index of the order has its snapshot.
+			const state = snapshots[index]!;
+			const replica = previous?.get(member);
+			if (replica === undefined) {
+				replicas.set(member, new Replica(this.#host.batch, state));
+			} else {
+				replica.reset(state);
 				replicas.set(member, replica);
 			}
-		};
+		}
+		if (previous === undefined) return;
+		// The replicas set above are the snapshot's members: the others are no longer granted.
+		previous.forEach((replica, member) => {
+			if (replicas.has(member)) return;
+			replica.vanish(lacking(this.label, this.contract, member, "state member"));
+			replicas.set(member, replica);
+		});
 	}
 
 	/**
@@ -789,7 +810,9 @@ export class RemoteObject implements Target {
 		this.#state = state;
 		if (this.#bindings.size === 0) return;
 		const bindings = [...this.#bindings];
-		if (bindings.some((binding) => binding.following)) {
+		let following = false;
+		for (const binding of bindings) following ||= binding.following;
+		if (following) {
 			this.#host.batch.within(() => {
 				for (const binding of bindings) binding.retarget();
 			}, BACKGROUND_CONTEXT);
