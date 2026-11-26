@@ -385,14 +385,20 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "a retired seeded thing is not made again",
 		file: "store.ts",
-		find: "if (hooks.value.get(kind)?.value.one !== undefined && live !== undefined) void seedKind(kind, live);",
-		put: "",
+		find: "if (hooks.value.get(kind)?.value.one !== undefined && live !== undefined) {",
+		put: "if (false) {",
 	},
 	{
 		name: "a given output wins over a withheld one at one tick on write-back",
 		file: "store.ts",
 		find: "if (before === undefined || (before.gives && !first.gives))",
 		put: "if (before === undefined || (!before.gives && first.gives))",
+	},
+	{
+		name: "a row at the version now stays under a migrated withheld one on write-back",
+		file: "store.ts",
+		find: "if (there !== undefined && (row.gives || !there.gives)) continue;",
+		put: "if (there !== undefined) continue;",
 	},
 	{
 		name: "a group of reserved ticks only goes through the migration on write-back",
