@@ -715,6 +715,19 @@ describe("the binary codec", () => {
 		expect(allocated / 20).toBeLessThan(3 * length);
 	});
 
+	it("allocates about one frame for a frame of many small parts (review of adcbac474)", () => {
+		const gc = runInNewContext("gc") as () => void;
+		const value = new TextEncoder().encode(`"${"x".repeat(510)}"`);
+		const members = Array.from({ length: 2048 }, (_, member) => ({ member, value }));
+		const frame: Message = { kind: "bound", holds: [{ hold: 0, granted: [], members, failed: [] }] };
+		const length = binaryCodec.encode(frame).byteLength;
+		gc();
+		const before = process.memoryUsage().arrayBuffers;
+		for (let index = 0; index < 8; index++) binaryCodec.encode(frame);
+		// Estimated by its parts alone, it fell short by its fields and doubled: four frames.
+		expect((process.memoryUsage().arrayBuffers - before) / 8).toBeLessThan(1.5 * length);
+	});
+
 	it("refuses invalid UTF-8 in strings", () => {
 		expect(() => binaryCodec.decode(new Uint8Array([1, 0, 1, 0xff]))).toThrow();
 	});

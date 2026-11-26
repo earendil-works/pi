@@ -520,7 +520,10 @@ class Writer {
 			const done = UTF8.encodeInto(rest, this.#buffer.subarray(this.#length));
 			read += done.read;
 			this.#length += done.written;
-			if (read < text.length) this.#reserve(Math.max((text.length - read) * 2, 4));
+			// The rest at the bytes per unit seen so far, at most three (a text whose UTF-8 is longer than its units grows
+			// about once); a short guess grows again, by a quarter at least.
+			const perUnit = read > 0 ? Math.min(3, (this.#length - slot - LENGTH_SLOT) / read) : 3;
+			if (read < text.length) this.#reserve(Math.max(Math.ceil((text.length - read) * perUnit), 4));
 		}
 		let length = (this.#length - slot - LENGTH_SLOT) * scale;
 		for (let index = 0; index < LENGTH_SLOT; index++) {
@@ -625,7 +628,9 @@ class Writer {
 		const buffer = this.#buffer;
 		const length = this.#length;
 		if (buffer === this.#kept) return buffer.slice(0, length);
-		return buffer.byteLength - length <= SPARE ? buffer.subarray(0, length) : buffer.slice(0, length);
+		// Within the larger of `SPARE` and an eighth of the message (an estimate over, a text grown): no second copy.
+		const spare = buffer.byteLength - length;
+		return spare <= Math.max(SPARE, length / 8) ? buffer.subarray(0, length) : buffer.slice(0, length);
 	}
 
 	/** Ready for the next message: empty, in its kept buffer (a buffer of a message past it is that message's). */
@@ -635,12 +640,12 @@ class Writer {
 	}
 
 	/**
-	 * A message whose parts take `bytes` (their lengths: a text's in units, its UTF-8 may be longer) starts in a buffer
-	 * of its own of that size and room for its other fields when it cannot fit the kept one: a frame of many parts
+	 * A message that takes about `bytes` (`partsLength`: exact for its parts but a text's UTF-8, a bound for the fields
+	 * around them) starts in a buffer of its own of that size when it cannot fit the kept one: a frame of many parts
 	 * past `KEPT` allocates one buffer, never regrowing by doublings, whatever frame came before it.
 	 */
 	expect(bytes: number): void {
-		if (bytes + SPARE > KEPT) this.#buffer = new Uint8Array(bytes + SPARE);
+		if (bytes > KEPT) this.#buffer = new Uint8Array(bytes);
 	}
 
 	/** Grows the buffer to fit `bytes` more: doubled, or for a large chunk to its end plus room for the small fields after it. */
@@ -649,8 +654,11 @@ class Writer {
 		if (needed <= this.#buffer.byteLength) return;
 		const kept = this.#buffer === this.#kept;
 		let size = Math.max(this.#buffer.byteLength * 2, needed + SPARE);
-		// Leaving the kept buffer: what it needs and room for its small fields (`expect` sized a frame of large parts).
+		// Leaving the kept buffer: what it needs and room for its small fields (`expect` sized a frame of large parts);
+		// a buffer of its own that falls short (a text's UTF-8 longer than its units) grows by a quarter, still
+		// amortized, not doubled: it is about a frame's size already.
 		if (kept && size > KEPT) size = needed + SPARE;
+		else if (!kept) size = Math.max(needed + SPARE, this.#buffer.byteLength + (this.#buffer.byteLength >> 2));
 		const grown = new Uint8Array(size);
 		grown.set(this.#buffer.subarray(0, this.#length));
 		this.#buffer = grown;
@@ -660,38 +668,55 @@ class Writer {
 
 /** What the parts of `message` take, by their lengths (`Writer.expect`); 0 for a kind without parts. */
 function partsLength(message: Message): number {
-	let bytes = 0;
+	// The message's own fields by a bound, each hold's exactly (a failure's JSON by a bound: they are rare).
+	let bytes = 64;
 	switch (message.kind) {
 		case "bound":
-			for (const { members } of message.holds) for (const { value } of members) bytes += partLength(value);
+			for (const { hold, granted, members, failed } of message.holds) {
+				bytes += varintBytes(hold) + varintBytes(granted.length) + varintBytes(members.length) + failures(failed);
+				for (const index of granted) bytes += varintBytes(index);
+				for (const { member, value } of members) bytes += varintBytes(member) + partLength(value);
+			}
 			return bytes;
 		case "state":
-			for (const { members } of message.holds) for (const { ops } of members) bytes += partLength(ops);
+			for (const { hold, members, failed, retired } of message.holds) {
+				bytes += varintBytes(hold) + varintBytes(members.length) + failures(failed) + varintBytes(retired.length);
+				for (const index of retired) bytes += varintBytes(index);
+				for (const { member, ops } of members) bytes += varintBytes(member) + partLength(ops);
+			}
 			return bytes;
 		case "event":
-			for (const { value } of message.events) bytes += partLength(value);
+			// An event's hold, member and stamp: three varints of at most 8 bytes.
+			for (const { value } of message.events) bytes += 24 + partLength(value);
 			return bytes;
+		case "hold":
+			return bytes + message.type.length * 3 + partLength(message.params);
 		case "call":
-			return partLength(message.args) + segmentsLength(message.segments);
+			return bytes + partLength(message.args) + segmentsLength(message.segments);
 		case "result":
-			return partLength(message.value) + segmentsLength(message.segments);
+			return bytes + partLength(message.value) + segmentsLength(message.segments);
 		default:
-			return 0;
+			return bytes;
 	}
 }
 
+/** What a hold's failed members take, by a bound: their count, and per failure its index and its error's JSON. */
+function failures(failed: readonly FailedMember[]): number {
+	return varintBytes(failed.length * 2 + 1) + failed.length * 256;
+}
+
+/** What a part takes on the wire with its length prefix (a text by its units: exact for ASCII, its UTF-8 may be longer). */
 function partLength(part: Part | undefined): number {
 	if (part === undefined) return 0;
-	return typeof part === "string"
-		? part.length
-		: part instanceof DeflatedPart
-			? part.bytes.byteLength
-			: part.byteLength;
+	if (typeof part === "string") return part.length + (part.length < LONG ? varintBytes(part.length * 2) : LENGTH_SLOT);
+	const length = part instanceof DeflatedPart ? part.bytes.byteLength : part.byteLength;
+	return length + varintBytes(length * 2 + 1);
 }
 
 function segmentsLength(segments: readonly Uint8Array[] | undefined): number {
 	let bytes = 0;
-	for (const segment of segments ?? NO_SEGMENTS) bytes += segment.byteLength;
+	// A count and a length varint per segment, then its bytes.
+	for (const segment of segments ?? NO_SEGMENTS) bytes += 8 + segment.byteLength;
 	return bytes;
 }
 
