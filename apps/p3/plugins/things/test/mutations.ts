@@ -634,8 +634,8 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "the start's seed runs before the lifecycle serves",
 		file: "store.ts",
-		find: "await Promise.all([lifecycle.serve(ctx), removal.serve(ctx), seed(ctx)]);",
-		put: "await seed(ctx);\n\t\t\tawait Promise.all([lifecycle.serve(ctx), removal.serve(ctx)]);",
+		find: "await Promise.all([lifecycle.serve(ctx), removal.serve(ctx), seed(ctx), startPeople(ctx)]);",
+		put: "await seed(ctx);\n\t\t\tawait Promise.all([lifecycle.serve(ctx), removal.serve(ctx), startPeople(ctx)]);",
 	},
 	{
 		name: "a withheld row of a tick the kind lacks is written",
@@ -745,12 +745,184 @@ const MUTATIONS: readonly Mutation[] = [
 		find: "if (mine.ticksVersion !== Kind.info.ticksVersion) return CATCHING_UP;",
 		put: "",
 	},
+	// ---- people (ERNDL-1144) ----
+	{
+		name: "the picker offers only the workspace it is used in",
+		file: "picker.ts",
+		find: "for (const entry of await readAll(q.workspaceMembers.where, { partyKey: party }, context)) {",
+		put: "for (const entry of [] as { workspace: string }[]) {",
+	},
+	{
+		name: "the cleanup takes the persons a source made even if something else is left of them",
+		file: "store.ts",
+		find: "for (const person of made) if (!left.has(person)) this.#forget(tx, touched, person);",
+		put: "for (const person of made) this.#forget(tx, touched, person);",
+	},
+	{
+		name: "the cleanup leaves the persons a source made",
+		file: "store.ts",
+		find: "for (const person of made) if (!left.has(person)) this.#forget(tx, touched, person);",
+		put: "",
+	},
+	{
+		name: "a member of a group gets its calls",
+		file: "group.ts",
+		find: 'if ((manager || owner) && managedBy.kind === "people") return MANAGES;',
+		put: 'if (managedBy.kind === "people") return MANAGES;',
+	},
+	{
+		name: "a group a share manages gives its manager calls",
+		file: "group.ts",
+		find: 'if ((manager || owner) && managedBy.kind === "people") return MANAGES;',
+		put: "if (manager || owner) return MANAGES;",
+	},
+	{
+		name: "addMember skips the picker",
+		file: "group.ts",
+		find: "if (!(await store.offers({ person: principal.id, party }, ctx))) {",
+		put: "if (false) {",
+	},
+	{
+		name: "removeMember takes a provider's row too",
+		file: "people.ts",
+		find: 'if (row.source.kind !== "identity" && row.source.kind !== "thing") {',
+		put: "if (true) {",
+	},
+	{
+		name: "a guest's link puts them in as a member",
+		file: "invites.ts",
+		find: 'if (row.as === "member") {',
+		put: "if (true) {",
+	},
+	{
+		name: "a link for one use is used again",
+		file: "invites.ts",
+		find: "if (!row.several) tx.delete(this.#t.invites, { invite });",
+		put: "",
+	},
+	{
+		name: "an expired link is redeemed",
+		file: "invites.ts",
+		find: "const gone = row.expires <= now || !(await this.#places.isWorkspace(tx, workspace));",
+		put: "const gone = !(await this.#places.isWorkspace(tx, workspace));",
+	},
+	{
+		name: "a link's secret is not checked",
+		file: "invites.ts",
+		find: "if (row === undefined || !matchesHash(link.slice(dot + 1), row.hash)) return null;",
+		put: "if (row === undefined) return null;",
+	},
+	{
+		name: "a person with the owner flag is removed",
+		file: "store.ts",
+		find: 'if (row.owner === 1) throw invalid("args", "things: an owner is removed once the owner flag is taken");',
+		put: "",
+	},
+	{
+		name: "a removed person's sign-ins do not end",
+		file: "store.ts",
+		find: "if (signedOut.length > 0 && live !== undefined) void signOut(signedOut, live);",
+		put: "",
+	},
+	{
+		name: "a removed group leaves its managers",
+		file: "store.ts",
+		find: "		tx.deleteWhere(t.groupManagers, (m) => eq(m.group, group));\n",
+		put: "",
+	},
+	{
+		name: "the people plugin's owner is not adopted (the bridge)",
+		file: "store.ts",
+		find: 'if ((await t.adopted.get({ bridge: "owner" }, ctx)) !== undefined) return;',
+		put: "return;",
+	},
+	{
+		name: "a thing's last unlink leaves what it wrote and made",
+		file: "store.ts",
+		find: 'await this.deleteEverythingFrom(tx, touched, sourceKey({ kind: "thing", thing }));',
+		put: "",
+	},
+	{
+		name: "a source's cleanup leaves its invite links",
+		file: "store.ts",
+		find: "tx.deleteWhere(t.invites, (r) => eq(r.byKey, key));",
+		put: "",
+	},
+	{
+		name: "a person who made someone goes with the source's cleanup",
+		file: "store.ts",
+		find: "for (const rows of makers) for await (const row of rows) left.add(personOf.get(row.madeByKey)!);",
+		put: "",
+	},
+	{
+		name: "the adoption takes a placeholder that got something",
+		file: "people.ts",
+		find: "if (used.has(placeholder)) continue;",
+		put: "",
+	},
+	{
+		name: "the picker offers nothing below where the caller is put in",
+		file: "picker.ts",
+		find: "for (const below of await readAll(q.workspaces.under, { pathPrefix: row.pathText }, context)) {",
+		put: "for (const below of [] as { workspace: string }[]) {",
+	},
+	{
+		name: "the picker offers what is present where the caller is hidden",
+		file: "access.ts",
+		find: "if (personCounts(access, key, entries) !== NOBODY) add(access);",
+		put: "add(access);",
+	},
+	{
+		name: "the owner's picker is the caller's presence only",
+		file: "picker.ts",
+		find: "if (me?.owner === true) return everyone(q, context);",
+		put: "",
+	},
+	{
+		name: "a redeemed link replaces an entry there already",
+		file: "invites.ts",
+		find: "if (!(await this.#places.isPutIn(tx, workspace, party)))",
+		put: "if (true)",
+	},
+	{
+		name: "a link's group is taken without its own tick",
+		file: "invites.ts",
+		find: "if (!(await this.#places.mayChange(tx, args.group, args.by))) {",
+		put: "if (false) {",
+	},
+	{
+		name: "a removed group stays a manager of others",
+		file: "store.ts",
+		find: 'tx.deleteWhere(t.groupManagers, (m) => eq(m.partyKey, partyKey({ kind: "group", group })));',
+		put: "",
+	},
+	{
+		name: "a group is held only by its members and managers",
+		file: "group.ts",
+		find: "return manager || owner || membership.rows.length > 0 || here ? SEES : DENIED;",
+		put: "return manager || owner || membership.rows.length > 0 ? SEES : DENIED;",
+	},
+	{
+		name: "every start makes another owner",
+		file: "people.ts",
+		find: "if (owners.items.length > 0) return null;",
+		put: "",
+	},
 ];
 
 /** The plugin's tests every mutation runs. */
-const TESTS = ["access", "rules", "admission", "store", "kind", "plans", "server", "migration", "workspaces"].map(
-	(name) => `plugins/things/test/${name}.test.ts`,
-);
+const TESTS = [
+	"access",
+	"rules",
+	"admission",
+	"store",
+	"kind",
+	"plans",
+	"server",
+	"migration",
+	"workspaces",
+	"people",
+].map((name) => `plugins/things/test/${name}.test.ts`);
 
 const P3 = resolve(import.meta.dirname, "../../..");
 const REPOSITORY = resolve(P3, "../..");

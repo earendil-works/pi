@@ -1,0 +1,351 @@
+// Who is who (data model F, decisions 68, 102, 110): persons with the owner flag, global groups with their own
+// managers (the group's own tick: changing its members needs it, no workspace tick is enough, scenario 18), and who is
+// in which group from which source. The tables, and the writes on persons and groups the store runs inside its
+// transactions (`PeopleWrites`); what goes with a source when it goes is the store's cleanup (`store.ts`).
+
+import {
+	and,
+	bool,
+	type Ctx,
+	defineColumns,
+	defineTable,
+	eq,
+	evolveTable,
+	int,
+	invalid,
+	json,
+	type P3Principal,
+	query,
+	type StoreSelf,
+	str,
+	type TableOf,
+	type Tx,
+} from "@earendil-works/p3/v1";
+import { SignIns } from "../sign-in/contract.ts";
+import type { Touched } from "./access.ts";
+import {
+	ManagedBy,
+	managedByKey,
+	Party,
+	partyKey,
+	type Source,
+	Source as SourceSchema,
+	sourceKey,
+} from "./contract.ts";
+import { messages } from "./messages.ts";
+
+/** The source of what the things plugin itself writes: Pi, the first start's owner, a workspace's Guests group. */
+export const THINGS: Source = { kind: "plugin", plugin: "@earendil-works/p3-things" };
+
+/** A person's id and name, joined to their memberships' rows (a group's members, with names). */
+export const PersonColumns = defineColumns("things.person-columns", {
+	columns: { person: str(), name: str() },
+	key: ["person"],
+});
+
+/** Every person as slice 1 wrote them (the base of the history). */
+const PersonsV1 = defineTable("things.persons", {
+	version: 1,
+	columns: {
+		person: str(),
+		name: str(),
+		owner: int(),
+		madeBy: json(SourceSchema, { version: 1 }),
+	},
+	key: ["person"],
+	indexes: { by_owner: ["owner"] },
+});
+
+/**
+ * Every person: name, the owner flag (1: an owner; an index column, so an int), who made them. By maker (the persons a
+ * source made go with it when nothing else is left of them).
+ */
+export const Persons = evolveTable(
+	PersonsV1,
+	(t) =>
+		t
+			.add("madeByKey", str({ default: "" }))
+			.rows((row) => ({ madeByKey: sourceKey(row.madeBy) }))
+			.index("by_maker", ["madeByKey"]),
+	{ exposes: PersonColumns },
+);
+
+/** A group's id and whether it is outside, joined to its members' rows. */
+export const GroupColumns = defineColumns("things.group-columns", {
+	columns: { group: str(), outside: bool() },
+	key: ["group"],
+});
+
+/** Every group: name, who changes its members, whether it is outside. By manager (its cleanup). */
+export const Groups = defineTable("things.groups", {
+	version: 1,
+	columns: {
+		group: str(),
+		name: str(),
+		managedBy: json(ManagedBy, { version: 1 }),
+		managedByKey: str(),
+		outside: bool(),
+	},
+	key: ["group"],
+	indexes: { by_manager: ["managedByKey"] },
+	exposes: GroupColumns,
+});
+
+/** A person in a group, as one source put them there (two sources: two rows). By person; by source. */
+export const GroupMembers = defineTable("things.group-members", {
+	version: 1,
+	columns: { group: str(), person: str(), source: json(SourceSchema, { version: 1 }), sourceKey: str() },
+	key: ["group", "person", "sourceKey"],
+	indexes: { by_person: ["person"], by_source: ["sourceKey"] },
+});
+
+/** Who has a group's own tick (decision 68): its maker, then whom they name. By party: a removed person's. */
+export const GroupManagers = defineTable("things.group-managers", {
+	version: 1,
+	columns: { group: str(), partyKey: str(), party: json(Party, { version: 1 }) },
+	key: ["group", "partyKey"],
+	indexes: { by_party: ["partyKey"] },
+});
+
+/**
+ * An invite link (R39), kept hashed: whose secret it is, into which workspace as what, until when, how often, into
+ * which group too, and who made it (the persons it makes are theirs). By expiry: the ones gone are swept.
+ */
+export const Invites = defineTable("things.invites", {
+	version: 1,
+	columns: {
+		invite: str(),
+		hash: str(),
+		workspace: str(),
+		as: str(),
+		name: str(),
+		expires: int(),
+		several: bool(),
+		group: str(),
+		by: json(SourceSchema, { version: 1 }),
+		byKey: str(),
+	},
+	key: ["invite"],
+	indexes: { by_expiry: ["expires"], by_maker: ["byKey"], by_group: ["group"] },
+});
+
+/** A removed person whose sign-ins have not ended yet: written in the commit that removed them, ended after it. */
+export const SignOuts = defineTable("things.sign-outs", {
+	version: 1,
+	columns: { person: str() },
+	key: ["person"],
+});
+
+/**
+ * Whether the people plugin's owner was adopted (the bridge, ERNDL-1144 push B removes it): once, durably, so a
+ * handover of the owner flag here or a new name there never sets the flag back.
+ */
+export const Adopted = defineTable("things.owner-adopted", {
+	version: 1,
+	columns: { bridge: str(), person: str() },
+	key: ["bridge"],
+});
+
+/** The people tables, as the store's factory opened them. */
+export type PeopleTables = {
+	readonly persons: TableOf<typeof Persons>;
+	readonly groups: TableOf<typeof Groups>;
+	readonly groupMembers: TableOf<typeof GroupMembers>;
+	readonly groupManagers: TableOf<typeof GroupManagers>;
+	readonly invites: TableOf<typeof Invites>;
+	readonly signOuts: TableOf<typeof SignOuts>;
+	readonly adopted: TableOf<typeof Adopted>;
+};
+
+/** The people tables, opened on `self` (the store's factory). */
+export function openPeopleTables(self: StoreSelf<P3Principal>): PeopleTables {
+	return {
+		persons: self.table(Persons),
+		groups: self.table(Groups),
+		groupMembers: self.table(GroupMembers),
+		groupManagers: self.table(GroupManagers),
+		invites: self.table(Invites),
+		signOuts: self.table(SignOuts),
+		adopted: self.table(Adopted),
+	};
+}
+
+/** The writes on persons and groups inside a store transaction: each says whom it touched; none checks a caller. */
+export class PeopleWrites {
+	readonly #t: PeopleTables;
+
+	constructor(t: PeopleTables) {
+		this.#t = t;
+	}
+
+	/** Makes a person (no owner flag), made by `madeBy`; answers their id. */
+	async createPerson(tx: Tx, { name, madeBy }: { name: string; madeBy: Source }): Promise<string> {
+		const person = crypto.randomUUID();
+		tx.put(this.#t.persons, { person, name, owner: 0, madeBy, madeByKey: sourceKey(madeBy) });
+		return person;
+	}
+
+	/**
+	 * The owner's person, made once, at the store's first start, named "Owner" (people rename it; the people plugin's
+	 * owner replaces it meanwhile: `adoptOwner`).
+	 */
+	async ensureOwner(tx: Tx): Promise<null> {
+		const owners = await this.#owners(tx, 1);
+		if (owners.items.length > 0) return null;
+		const person = crypto.randomUUID();
+		tx.put(this.#t.persons, { person, name: "Owner", owner: 1, madeBy: THINGS, madeByKey: sourceKey(THINGS) });
+		return null;
+	}
+
+	/**
+	 * The people plugin's owner made the owner here, with the same id, once (a bridge, ERNDL-1144 push B removes it):
+	 * their person is made or given the flag; the placeholder the first start made goes only while nothing names it
+	 * (`empty`: of the persons given, those of whom something is left). Never again once done: a later handover of the
+	 * flag stands.
+	 */
+	async adoptOwner(
+		tx: Tx,
+		touched: Touched,
+		{ person, name }: { person: string; name: string },
+		somethingLeft: (persons: readonly string[]) => Promise<ReadonlySet<string>>,
+	): Promise<null> {
+		if ((await tx.get(this.#t.adopted, { bridge: "owner" })) !== undefined) return null;
+		tx.put(this.#t.adopted, { bridge: "owner", person });
+		const row = await tx.get(this.#t.persons, { person });
+		const by: Source = { kind: "plugin", plugin: "@earendil-works/p3-people" };
+		if (row === undefined) tx.put(this.#t.persons, { person, name, owner: 1, madeBy: by, madeByKey: sourceKey(by) });
+		else if (row.owner === 0) tx.update(this.#t.persons, { person }, { owner: 1 });
+		touched.persons.add(person);
+		const own = sourceKey(THINGS);
+		const placeholders = [];
+		for await (const owner of tx.rows(
+			this.#t.persons,
+			query(Persons).where((p) => eq(p.owner, 1)),
+		)) {
+			if (owner.person !== person && owner.madeByKey === own && owner.name === "Owner")
+				placeholders.push(owner.person);
+		}
+		const used = await somethingLeft(placeholders);
+		for (const placeholder of placeholders) {
+			if (used.has(placeholder)) continue;
+			tx.delete(this.#t.persons, { person: placeholder });
+			touched.persons.add(placeholder);
+		}
+		return null;
+	}
+
+	/** Renames person `person`. */
+	async renamePerson(tx: Tx, person: string, name: string): Promise<null> {
+		await this.#mustBePerson(tx, person);
+		tx.update(this.#t.persons, { person }, { name });
+		return null;
+	}
+
+	/** Gives or takes the owner flag; the last owner keeps it. */
+	async setOwner(tx: Tx, touched: Touched, { person, owner }: { person: string; owner: boolean }): Promise<null> {
+		const row = await tx.get(this.#t.persons, { person });
+		if (row === undefined) throw invalid("args", `things: no person ${person}`);
+		if (!owner && row.owner === 1 && (await this.#owners(tx, 2)).items.length < 2) {
+			throw invalid("args", "things: a Pi needs at least one owner", { message: messages.message("lastOwner") });
+		}
+		tx.update(this.#t.persons, { person }, { owner: owner ? 1 : 0 });
+		touched.persons.add(person);
+		return null;
+	}
+
+	/**
+	 * Makes a group managed by `managedBy`, outside or not; `managers` get its own tick (its maker, for a group people
+	 * manage). Answers its id.
+	 */
+	async makeGroup(
+		tx: Tx,
+		{
+			name,
+			managedBy,
+			outside,
+			managers = [],
+		}: { name: string; managedBy: ManagedBy; outside: boolean; managers?: Party[] },
+	): Promise<string> {
+		const group = crypto.randomUUID();
+		tx.put(this.#t.groups, { group, name, managedBy, managedByKey: managedByKey(managedBy), outside });
+		for (const party of managers) tx.put(this.#t.groupManagers, { group, partyKey: partyKey(party), party });
+		return group;
+	}
+
+	/** Renames group `group`. */
+	async renameGroup(tx: Tx, group: string, name: string): Promise<null> {
+		await this.#mustBeGroup(tx, group);
+		tx.update(this.#t.groups, { group }, { name });
+		return null;
+	}
+
+	/** Replaces who has group `group`'s own tick with `parties` (none: only server code changes it then). */
+	async setGroupManagers(tx: Tx, group: string, parties: readonly Party[]): Promise<null> {
+		await this.#mustBeGroup(tx, group);
+		tx.deleteWhere(this.#t.groupManagers, (m) => eq(m.group, group));
+		for (const party of parties) tx.put(this.#t.groupManagers, { group, partyKey: partyKey(party), party });
+		return null;
+	}
+
+	/** Puts `person` into `group` as `source` did (a second source: a second row). */
+	async addToGroup(
+		tx: Tx,
+		touched: Touched,
+		{ group, person, source }: { group: string; person: string; source: Source },
+	): Promise<null> {
+		await this.#mustBeGroup(tx, group);
+		await this.#mustBePerson(tx, person);
+		tx.put(this.#t.groupMembers, { group, person, source, sourceKey: sourceKey(source) });
+		touched.persons.add(person);
+		return null;
+	}
+
+	/** Takes `person` out of `group`: every row of theirs there but a provider's and a share's (theirs to rewrite). */
+	async removeMember(tx: Tx, touched: Touched, { group, person }: { group: string; person: string }): Promise<null> {
+		const rows = query(GroupMembers).where((m) => and(eq(m.group, group), eq(m.person, person)));
+		for await (const row of tx.rows(this.#t.groupMembers, rows)) {
+			if (row.source.kind !== "identity" && row.source.kind !== "thing") {
+				tx.delete(this.#t.groupMembers, { group, person, sourceKey: row.sourceKey });
+			}
+		}
+		touched.persons.add(person);
+		return null;
+	}
+
+	/** Takes `source`'s row of `person` in `group` away (another source's row keeps them in). */
+	async removeFromGroup(
+		tx: Tx,
+		touched: Touched,
+		{ group, person, source }: { group: string; person: string; source: Source },
+	): Promise<null> {
+		tx.delete(this.#t.groupMembers, { group, person, sourceKey: sourceKey(source) });
+		touched.persons.add(person);
+		return null;
+	}
+
+	/** The first `count` persons with the owner flag (index `by_owner`). */
+	#owners(tx: Tx, count: number) {
+		const owners = query(Persons).where((p) => eq(p.owner, 1));
+		return tx.page(this.#t.persons, owners, count);
+	}
+
+	/** Throws (`invalid`) unless person `person` exists. */
+	async #mustBePerson(tx: Tx, person: string): Promise<void> {
+		if ((await tx.get(this.#t.persons, { person })) === undefined)
+			throw invalid("args", `things: no person ${person}`);
+	}
+
+	/** Throws (`invalid`) unless group `group` exists. */
+	async #mustBeGroup(tx: Tx, group: string): Promise<void> {
+		if ((await tx.get(this.#t.groups, { group })) === undefined) throw invalid("args", `things: no group ${group}`);
+	}
+}
+
+/** Ends every sign-in of the persons `persons` (they were removed): each one's open links close at once. */
+export async function endSignIns(persons: readonly string[], ctx: Ctx<P3Principal>): Promise<void> {
+	const gone = new Set(persons);
+	const signIns = await ctx.get(SignIns, {});
+	for (const signIn of signIns.list.value) {
+		if (signIn.principal.kind === "person" && gone.has(signIn.principal.id)) await signIns.revoke(signIn.id, ctx);
+	}
+}

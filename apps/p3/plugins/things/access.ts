@@ -277,6 +277,40 @@ export class AccessIndex {
 		});
 	}
 
+	/**
+	 * What the picker offers `person` (R18, decision 106): the parties present in `workspace` (if any) and in every one
+	 * of `candidates` where the person counts as present (put in, through a group, or shown from above; a person hidden
+	 * by every route counts nowhere), persons hidden there left out. One operation in the queue; what it loaded beyond
+	 * the budget is forgotten again (no watcher keeps it).
+	 */
+	offered(
+		workspace: string | undefined,
+		candidates: Iterable<string>,
+		person: string,
+		context: Context,
+	): Promise<ReadonlySet<string>> {
+		return this.#run(async () => {
+			await this.#ensurePerson(person, context);
+			const entries = this.#persons.get(person)!;
+			const key = partyKey({ kind: "person", person });
+			const parties = new Set<string>();
+			const add = (access: WorkspaceAccess) => {
+				for (const party of access.present) if (!access.hidden.has(party)) parties.add(party);
+			};
+			if (workspace !== undefined) {
+				await this.#ensure(workspace, context);
+				add(this.#accessOf(workspace, context));
+			}
+			for (const at of candidates) {
+				await this.#ensure(at, context);
+				const access = this.#accessOf(at, context);
+				if (personCounts(access, key, entries) !== NOBODY) add(access);
+			}
+			if (this.#workspaces.size + this.#persons.size > this.#forgetWhenAbove) this.forgetUnwatched();
+			return parties;
+		});
+	}
+
 	/** Drops every workspace with no view at or below it and every person nobody watches as. */
 	forgetUnwatched(): void {
 		const keep = new Set<string>();

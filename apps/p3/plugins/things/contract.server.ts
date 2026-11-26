@@ -18,6 +18,7 @@ import {
 	nul,
 	num,
 	obj,
+	oneOf,
 	opt,
 	type P3Principal,
 	queries,
@@ -103,8 +104,11 @@ export type GrantInput = Static<typeof GrantInput>;
 /** A person: their id, name, whether they have the owner flag, and who made them. */
 export const PersonRow = obj({ person: str(), name: str(), owner: bool(), madeBy: Source });
 
-/** A group: its id, name, and whether it is outside (its members never count as everyone here). */
-export const GroupRow = obj({ group: str(), name: str(), outside: bool() });
+/** A group: its id, name, who changes its members, and whether it is outside. */
+export const GroupRow = obj({ group: str(), name: str(), managedBy: ManagedBy, outside: bool() });
+
+/** A party with a group's own tick. */
+export const GroupManagerRow = obj({ group: str(), party: Party });
 
 /** A person in a group, as one source put them there, with whether the group is outside. */
 export const GroupMemberRow = obj({ group: str(), person: str(), source: Source, outside: bool() });
@@ -122,6 +126,32 @@ export const Answer = obj({
 	makes: opt(arr(str())),
 	above: opt(arr(str())),
 });
+
+/** A person or group the picker offers: the party and its name. */
+export const PartyInfo = obj({ party: Party, name: str() });
+
+/**
+ * What an invite link is made with (R39): into `workspace`, made by `by`, `as` a member or a guest, valid `expires`
+ * milliseconds (7 days by default), spent by its first use unless `uses` is `several`, its redeemer also put into
+ * `group`.
+ */
+export const InviteInput = obj({
+	workspace: str(),
+	name: str({ min: 1, max: 200 }),
+	as: oneOf("member", "guest"),
+	expires: opt(int({ min: 1 })),
+	uses: opt(oneOf("one", "several")),
+	group: opt(str()),
+	by: Source,
+});
+export type InviteInput = Static<typeof InviteInput>;
+
+/** Whom a redeemed invite link signs in. */
+export const Invited = obj({ person: str(), name: str() });
+export type Invited = Static<typeof Invited>;
+
+/** A person in a group as the group's page lists them: with their name. */
+export const GroupMemberNameRow = obj({ group: str(), person: str(), name: str(), source: Source });
 
 /** The things plugin's store: every table's rows as named queries (each a key or index search), and every write. */
 export const ThingsStore = local("things.store", {
@@ -146,9 +176,22 @@ export const ThingsStore = local("things.store", {
 		switches: queries(SwitchRow, { here: obj({ workspace: str() }) }),
 		grants: queries(GrantRow, { here: obj({ workspace: str() }) }),
 		// `ofIds`: the persons of a list in one read (the notes plugin reads its notes' authors' names with it).
-		persons: queries(PersonRow, { one: obj({ person: str() }), ofIds: obj({ persons: arr(str()) }) }),
-		groupMembers: queries(GroupMemberRow, { ofPerson: obj({ person: str() }) }),
-		groups: queries(GroupRow, { ofIds: obj({ groups: arr(str()) }) }),
+		persons: queries(PersonRow, {
+			one: obj({ person: str() }),
+			ofIds: obj({ persons: arr(str()) }),
+			owners: obj({}),
+			all: obj({}),
+		}),
+		groups: queries(GroupRow, { one: obj({ group: str() }), ofIds: obj({ groups: arr(str()) }), all: obj({}) }),
+		groupManagers: queries(GroupManagerRow, {
+			of: obj({ group: str() }),
+			among: obj({ group: str(), partyKeys: arr(str()) }),
+		}),
+		groupMembers: queries(GroupMemberRow, {
+			ofPerson: obj({ person: str() }),
+			of: obj({ group: str(), person: str() }),
+		}),
+		groupMembersNamed: queries(GroupMemberNameRow, { ofGroup: obj({ group: str() }) }),
 		/**
 		 * Makes a thing of `kind` in `workspace`: the kind's `create` hook first, with the new id (item 34), then one
 		 * commit: the thing, its link, the kind's default grants, and every tick for its maker (`by`, a person or a
@@ -231,15 +274,50 @@ export const ThingsStore = local("things.store", {
 		),
 		putParty: method(obj({ workspace: str(), party: Party, source: Source })),
 		removeParty: method(obj({ workspace: str(), party: Party })),
+		/** Makes a person (no owner flag), made by `madeBy` (the cleanup of that source takes them, step 3). */
 		createPerson: method(obj({ name: str(), madeBy: Source }), str()),
+		renamePerson: method(obj({ person: str(), name: str() })),
 		/** Gives or takes the owner flag; refuses taking it from the last owner. */
 		setOwner: method(obj({ person: str(), owner: bool() })),
-		makeGroup: method(obj({ name: str(), managedBy: ManagedBy, outside: bool() }), str()),
+		/**
+		 * Removes a person, never one with the owner flag: the cleanup of their source, everything naming them, their
+		 * row; their sign-ins end right after the commit (retried until done).
+		 */
+		removePerson: method(obj({ person: str() })),
+		/** Makes a global group; `managers` get its own tick (its maker, as `Workspace.makeGroup` writes it). */
+		makeGroup: method(obj({ name: str(), managedBy: ManagedBy, outside: bool(), managers: opt(arr(Party)) }), str()),
+		renameGroup: method(obj({ group: str(), name: str() })),
+		/** Replaces who has the group's own tick (changing its members, renaming, removing it: decision 68). */
+		setGroupManagers: method(obj({ group: str(), parties: arr(Party) })),
+		/** Removes a group: its members, managers, every entry, grant and switch naming it, whoever wrote them. */
+		removeGroup: method(obj({ group: str() })),
 		addToGroup: method(obj({ group: str(), person: str(), source: Source })),
+		/**
+		 * What Manage people's picker offers `person` in `workspace` (R18): the persons and groups present there and in
+		 * every workspace where they are present, whose name has `query` in it (any case).
+		 */
+		picker: method(obj({ workspace: opt(str()), person: str(), query: str() }), arr(PartyInfo)),
+		/** Whether the picker offers `person` the party `party` in `workspace` (what `putParty` and `addMember` check). */
+		offers: method(obj({ workspace: opt(str()), person: str(), party: Party }), bool()),
+		/**
+		 * Writes an invite link; answers its secret (kept hashed only); `invalid` for a workspace or group that does not
+		 * exist.
+		 */
+		createInvite: method(InviteInput, str()),
+		/**
+		 * Redeems an invite link's secret for `person` (signed in already) or, left out, a new person named as the link
+		 * says, made by its maker; answers whom to sign in, `null` for a secret used up, expired or unknown.
+		 */
+		redeemInvite: method(obj({ secret: str(), person: opt(str()) }), union([Invited, nul()])),
 		removeFromGroup: method(obj({ group: str(), person: str(), source: Source })),
 		/**
-		 * Removes what `source` wrote (grants, group members, workspace members) and the groups it manages, with all
-		 * naming them.
+		 * Takes `person` out of `group` in one commit: every row of theirs there but a provider's and a share's (theirs
+		 * to rewrite: they would come back).
+		 */
+		removeMember: method(obj({ group: str(), person: str() })),
+		/**
+		 * The cleanup when a source goes, one commit: what `source` wrote (grants, group members, workspace members), the
+		 * groups it manages with all naming them, and the persons it made of whom nothing else is left.
 		 */
 		deleteEverythingFrom: method(obj({ source: Source })),
 		/**
@@ -362,4 +440,24 @@ export const OneThing = local("things.one", {
 	version: 1,
 	params: { kind: str() },
 	members: { thing: str() },
+});
+
+/** The people plugin's owner as it hands it over (see `OwnerSeeds`). */
+export type OwnerSeed = { readonly person: string; readonly name: string } | null;
+
+/**
+ * A bridge until the people plugin goes (ERNDL-1144's push B removes it): the people plugin contributes its owner's
+ * person, and the things store makes that person, with the same id, its owner, so the owner the owner link signs in
+ * as has the owner flag in the access index. Composed: the first contribution, `null` while there is none.
+ */
+export const OwnerSeeds = defineRegistry<OwnerSeed, OwnerSeed>("things.owner-seed", { version: 1 });
+
+/**
+ * Whether group `group` is present for person `person`: present where they are present (the picker's rule, R18), so
+ * they may hold the group's object (1141 §7). Read when held; a change of presence meanwhile is not followed.
+ */
+export const GroupPresence = local("things.group-presence", {
+	version: 1,
+	params: { group: str(), person: str() },
+	members: { present: bool() },
 });
