@@ -1,6 +1,7 @@
 /**
  * `--agent-dir <dir>`, the command-line form of PI_CODING_AGENT_DIR. The flag is applied by setting the variable,
  * because pi, extensions (through the exported `getAgentDir()`) and child processes all read the agent dir from it.
+ * main() applies it after all modules loaded: never cache the agent dir at module load (see config.ts).
  */
 
 import { resolve } from "node:path";

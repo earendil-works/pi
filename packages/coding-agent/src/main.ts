@@ -605,8 +605,8 @@ export interface MainOptions {
 
 export async function main(cliArgs: string[], options?: MainOptions) {
 	resetTimings();
-	// Entry points already applied --agent-dir before the modules that read it loaded (cli/agent-dir-setup.ts). Again for
-	// callers of the exported main(), and to take the flag out before subcommands are recognized.
+	// First, before anything reads the agent dir, and before subcommands are recognized so the flag works with them.
+	// Modules have already loaded at this point: a value they cached from getAgentDir() at load ignores the flag.
 	const agentDirArg = applyAgentDirArg(cliArgs);
 	if (agentDirArg.kind === "error") {
 		console.error(chalk.red(`Error: ${agentDirArg.message}`));

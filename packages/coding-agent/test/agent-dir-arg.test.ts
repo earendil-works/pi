@@ -8,7 +8,6 @@ import { applyAgentDirArg } from "../src/cli/agent-dir-arg.ts";
 import { ENV_AGENT_DIR, ENV_SESSION_DIR } from "../src/config.ts";
 
 const cliPath = resolve(__dirname, "../src/cli.ts");
-const loadOrderEntryPath = resolve(__dirname, "fixtures/agent-dir-load-order/entry.ts");
 // --import takes a module specifier, not a filesystem path.
 const sourceResolverUrl = pathToFileURL(resolve(__dirname, "../src/experimental/source-resolver.ts")).href;
 const originalAgentDir = process.env[ENV_AGENT_DIR];
@@ -116,14 +115,6 @@ describe("applyAgentDirArg", () => {
 });
 
 describe("--agent-dir at startup", () => {
-	it("is set before modules that read the agent dir when they load", async () => {
-		const dir = createTempDir();
-
-		const { stdout } = await runNode(loadOrderEntryPath, ["--agent-dir", "agent"], dir);
-
-		expect(stdout).toBe(join(dir, "agent"));
-	}, 60_000);
-
 	it("makes the CLI read models.json from that directory", async () => {
 		const dir = createTempDir();
 		mkdirSync(join(dir, "agent"));

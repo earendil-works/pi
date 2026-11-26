@@ -624,8 +624,10 @@ export function getShareViewerUrl(gistId: string): string {
 
 // =============================================================================
 // User Config Paths (~/.pi/agent/*)
-// Read these when needed, never into a module-level constant: callers of the exported main() apply --agent-dir
-// only when main() runs, after their modules loaded.
+// Read these when needed, never into a module-level constant. main() applies --agent-dir by setting
+// PI_CODING_AGENT_DIR after every module has loaded, so a value cached at load silently keeps ~/.pi/agent with the
+// flag, and pi mixes two profiles (for example credentials from the wrong auth.json). With the variable set before
+// pi starts it works, so tests that only set the variable do not catch it.
 // =============================================================================
 
 /**
