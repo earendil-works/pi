@@ -1,48 +1,42 @@
-// The harness plugin's worker facet alone (`testPlugin`), beside stand-ins for the server (`stubs.ts`) and the real
-// tools and faux login plugins: the agent gets exactly the session's things (tools offered, removed between requests
-// and during a call, without bash, nothing for options of another version), a login's model by default and a set model
-// kept, `no_model` without a login, the activity reports (working before Durable takes the input, one per transition),
-// `WorkerBusy` while working, an archived session that schedules nothing, and a tool's `Agent.call` reaching the server.
+// The harness plugin's worker facet alone (`testPlugin`), beside stand-ins for the server, the holding and a scripted
+// login (`stubs.ts`) and the real things and tools plugins: the agent gets exactly what it holds (the coding tools,
+// Bash withheld, the tools let go of between requests and during a call; a kind no part here serves gives nothing),
+// a kind's part is called again only when its list changed, a part's prompt section and environment reach the agent,
+// a login's model by default and a set model kept, `no_model` without a login, the activity reports (working before
+// Durable takes the input, one per transition), `WorkerBusy` while working, an archived session that schedules
+// nothing, and a tool's `session.call` reaching the server.
 
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import {
-	BACKGROUND_CONTEXT as context,
-	isChordError,
-	type P3Principal,
-	SessionFacts,
-	until,
-} from "@earendil-works/p3/v1";
+import { BACKGROUND_CONTEXT as context, isChordError, type P3Principal, until } from "@earendil-works/p3/v1";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
 import {
 	LiveDoc,
+	NodeExecutionEnv,
 	type OpenHarness,
 	ROOT_CONVERSATION_ID,
 	SessionHarness,
 	WorkerBusy,
 } from "@earendil-works/p3/v1/worker";
-import { type FauxRequest, FauxRequests, type Step } from "../../../test/plugins/faux-login/contract.ts";
 import { eventually, within } from "../../../test/until.ts";
-import { type Server, sessionRow, standIns, type Thing } from "./stubs.ts";
+import {
+	coding,
+	type Extra,
+	type Holding,
+	login,
+	other,
+	type Server,
+	type Step,
+	sessionRow,
+	standIns,
+} from "./stubs.ts";
 
 const SESSION = "s1";
-/** The owner, as the stand-ins answer for them (a person who writes). */
-const OWNER: P3Principal = { kind: "person", id: "owner", name: "Owner" };
-
-/** A faux login thing `thing` of provider `provider` answering from `script`. */
-function login(thing: string, provider: string, script: Step[], tool = false): Thing {
-	return { thing, kind: "faux.login", name: "", version: 1, options: { provider, script, tool } };
-}
-
-/** The coding tools thing. */
-function coding(shell = true): Thing {
-	return { thing: "tools", kind: "tools.coding", name: "", version: 1, options: { shell } };
-}
 
 /** A scripted step answering `when` with text. */
 function says(when: string, text: string): Step {
@@ -67,6 +61,7 @@ async function reported(server: Server, states: string[]): Promise<void> {
 describe("the harness plugin on a worker", () => {
 	let folder: string;
 	let t: TestedPlugin<P3Principal> | undefined;
+	let harnessControl: Server | undefined;
 
 	beforeEach(async () => {
 		folder = await realpath(await mkdtemp(join(tmpdir(), "p3-harness-")));
@@ -78,9 +73,14 @@ describe("the harness plugin on a worker", () => {
 		await rm(folder, { recursive: true, force: true });
 	});
 
-	/** Loads the harness with the session's `things` (and the row's `change`); answers the server's controls. */
-	async function start(things: Thing[], change: Partial<ReturnType<typeof sessionRow>> = {}): Promise<Server> {
-		const { stubs, server, control } = standIns({ ...sessionRow(SESSION, folder), ...change }, things);
+	/** Loads the harness holding `held` (and the row's `change`, the `extras` parts); answers the stand-ins' controls. */
+	async function start(
+		held: Holding[],
+		change: Partial<ReturnType<typeof sessionRow>> = {},
+		extras: Extra[] = [],
+	): Promise<Server> {
+		const { stubs, server, control } = standIns({ ...sessionRow(SESSION, folder), ...change }, held, extras);
+		harnessControl = control;
 		t = await testPlugin(
 			fileURLToPath(new URL("../", import.meta.url)),
 			{ kind: "worker", session: SESSION, stubs, server },
@@ -109,19 +109,10 @@ describe("the harness plugin on a worker", () => {
 		await open.durable.waitForIdle(context);
 	}
 
-	/** Waits until the worker has facts from the server that pass `done` (a change made there travels to it). */
-	async function arrived(done: (facts: { kinds: readonly unknown[] }) => boolean): Promise<void> {
-		await tested().root(async (ctx) => {
-			const facts = await ctx.get(SessionFacts, {});
-			await until(facts.kinds, (kinds) => done({ kinds }), within("the facts", ctx));
-		}, context);
-	}
-
-	/** What the faux logins received so far. */
-	async function requests(): Promise<FauxRequest[]> {
-		return tested().root(async (ctx) => (await ctx.get(FauxRequests, { session: SESSION })).requests.value, context, {
-			principal: OWNER,
-		});
+	/** What the scripted logins received so far. */
+	function requests() {
+		assert.ok(harnessControl !== undefined);
+		return harnessControl.requests;
 	}
 
 	/** The root conversation's `pi.live` document. */
@@ -132,27 +123,28 @@ describe("the harness plugin on a worker", () => {
 	it("answers a scripted request; the tool call runs in the session's folder", async () => {
 		const server = await start([login("login", "faux", [runs("hi", "pwd"), says(folder, "done")]), coding()]);
 		await ask("hi");
-		const [first, second] = await requests();
+		const [first, second] = requests();
 		assert.deepEqual(first?.tools, ["bash", "edit", "read", "write"]);
 		assert.ok(second?.last.includes(folder), `the tool ran in the session's folder: ${second?.last}`);
-		assert.equal((await requests()).length, 2);
+		assert.equal(requests().length, 2);
 		await reported(server, ["working", "settled"]);
 		assert.deepEqual(tested().errors, []);
 	});
 
-	it("leaves bash out with shell off", async () => {
-		await start([login("login", "faux", [says("hi", "hello")]), coding(false)]);
+	it("leaves bash out with Bash withheld", async () => {
+		await start([login("login", "faux", [says("hi", "hello")]), coding("tools", ["read", "write", "edit"])]);
 		await ask("hi");
-		assert.deepEqual((await requests())[0]?.tools, ["edit", "read", "write"]);
+		assert.deepEqual(requests()[0]?.tools, ["edit", "read", "write"]);
 	});
 
-	it("offers no tools to the next request once the tools left the session", async () => {
-		const server = await start([login("login", "faux", [says("", "ok")]), coding()]);
+	it("offers no tools to the next request once the agent let go of the tools", async () => {
+		const held = [login("login", "faux", [says("", "ok")]), coding()];
+		const server = await start(held);
 		await ask("one");
-		server.things([login("login", "faux", [says("", "ok")])]);
+		server.hold([held[0]!]);
 		await ask("two");
 		assert.deepEqual(
-			(await requests()).map((request) => request.tools),
+			requests().map((request) => request.tools),
 			[["bash", "edit", "read", "write"], []],
 		);
 	});
@@ -163,35 +155,24 @@ describe("the harness plugin on a worker", () => {
 			runs("first", "echo second > second.txt"),
 			says("", "end"),
 		];
-		const server = await start([login("login", "faux", script), coding()]);
+		const held = [login("login", "faux", script), coding()];
+		const server = await start(held);
 		const open = await harness();
 		await open.submit(undefined, { text: "go", requestId: "go" }, context);
 		await eventually(() => existsSync(join(folder, "started")), Boolean);
-		server.things([login("login", "faux", script)]);
+		server.hold([held[0]!]);
 		await writeFile(join(folder, "gate"), "");
 		await open.durable.waitForIdle(context);
-		const [, second, third] = await requests();
+		const [, second, third] = requests();
 		assert.ok(second?.last.includes("first"), "the running call finished");
 		assert.deepEqual(second?.tools, [], "the next request offered no tools");
 		assert.ok(third !== undefined && !existsSync(join(folder, "second.txt")), "no later call ran");
 	});
 
-	it("gives a thing whose options are of another version than its kind on this worker nothing", async () => {
-		const server = await start([{ ...login("login", "faux", [says("", "ok")]), version: 2 }, coding()]);
+	it("gives a held thing whose kind has no part here nothing, and the others theirs", async () => {
+		await start([other("elsewhere.kind", "x"), login("login", "faux", [says("", "ok")]), coding()]);
 		await ask("hi");
-		assert.deepEqual(await requests(), []);
-		assert.equal((await live())?.runFailure?.reason, "no_model");
-		await reported(server, ["working", "failed"]);
-	});
-
-	it("gives a thing whose kind no plugin on the worker serves nothing, and the others theirs", async () => {
-		await start([
-			{ thing: "x", kind: "elsewhere.kind", name: "", version: 1, options: {} },
-			login("login", "faux", [says("", "ok")]),
-			coding(),
-		]);
-		await ask("hi");
-		assert.deepEqual((await requests())[0]?.tools, ["bash", "edit", "read", "write"]);
+		assert.deepEqual(requests()[0]?.tools, ["bash", "edit", "read", "write"]);
 	});
 
 	it("fails no_model visibly without a login", async () => {
@@ -208,13 +189,13 @@ describe("the harness plugin on a worker", () => {
 		await ask("one");
 		const root = await (await harness()).durable.root(context);
 		await root.configure({ model: { provider: "faux-b", modelId: "faux-b-model" } }, context);
-		server.things([a, b, login("c", "faux-c", [says("", "from c")])]);
+		server.hold([a, b, login("c", "faux-c", [says("", "from c")])]);
 		await ask("two");
 		// The set model is no longer offered: the first login's again.
-		server.things([a]);
+		server.hold([a]);
 		await ask("three");
 		assert.deepEqual(
-			(await requests()).map((request) => request.provider),
+			requests().map((request) => request.provider),
 			["faux-a", "faux-b", "faux-a"],
 		);
 	});
@@ -223,7 +204,7 @@ describe("the harness plugin on a worker", () => {
 		const server = await start([login("login", "faux", [says("", "ok")])]);
 		const open = await harness();
 		const release = Promise.withResolvers<void>();
-		server.hold(release.promise);
+		server.slow(release.promise);
 		const submitted = open.submit(undefined, { text: "hi", requestId: "hi" }, context);
 		await new Promise((resolve) => setTimeout(resolve, 50));
 		const root = await open.durable.root(context);
@@ -232,7 +213,7 @@ describe("the harness plugin on a worker", () => {
 			[],
 			"no input taken while the report waits",
 		);
-		assert.deepEqual(await requests(), []);
+		assert.deepEqual(requests(), []);
 		release.resolve();
 		await submitted;
 		await open.durable.waitForIdle(context);
@@ -262,64 +243,61 @@ describe("the harness plugin on a worker", () => {
 		assert.equal((await open.durable.inspect(context)).scheduling, "paused");
 	});
 
-	it("gives a thing's tool the agent, whose call reaches the server as the worker", async () => {
+	it("gives a part's tool the session, whose call reaches the server as the worker", async () => {
 		await start([
 			login(
 				"login",
 				"faux",
-				[{ when: "who", reply: [{ kind: "tool", name: "faux_session", args: "{}" }] }, says("", "ok")],
+				[{ when: "who", reply: [{ kind: "tool", name: "test_session", args: "{}" }] }, says("", "ok")],
 				true,
 			),
 		]);
 		await ask("who");
-		assert.equal((await requests())[1]?.last, "title: Test session");
+		assert.equal(requests()[1]?.last, "title: Test session");
 	});
 
-	it("gives the tools of two coding tools things once, bash when one of them has shell on", async () => {
-		await start([
-			login("login", "faux", [says("", "ok")]),
-			{ ...coding(false), thing: "tools-a" },
-			{ ...coding(true), thing: "tools-b" },
-		]);
-		await ask("hi");
-		assert.deepEqual((await requests())[0]?.tools, ["bash", "edit", "read", "write"]);
+	it("calls a kind's part again only when its list changed", async () => {
+		const held = [login("login", "faux", [says("", "ok")]), coding()];
+		const server = await start(held);
+		await ask("one");
+		const before = server.given.get("test.login");
+		// The coding tools let go of: the login's list is the same array, its part is not called again.
+		server.hold([held[0]!]);
+		await ask("two");
+		assert.equal(server.given.get("test.login"), before);
+		// Another login: the login's list is new.
+		server.hold([held[0]!, login("other", "faux-b", [says("", "ok")])]);
+		await ask("three");
+		assert.equal(server.given.get("test.login"), (before ?? 0) + 1);
 	});
 
-	it("offers thing_create only while the session has content kinds, and makes content there through the server", async () => {
-		const make = {
-			kind: "tool" as const,
-			name: "thing_create",
-			args: JSON.stringify({ kind: "test.board", name: "Plan" }),
-		};
-		const odd = {
-			kind: "tool" as const,
-			name: "thing_create",
-			args: JSON.stringify({ kind: "test.other", name: "X" }),
-		};
-		const server = await start([
-			login("login", "faux", [{ when: "@make", reply: [make] }, { when: "@odd", reply: [odd] }, says("", "ok")]),
-		]);
-		await ask("plain");
-		server.kinds([{ kind: "test.board", title: "Board" }]);
-		await arrived((facts) => facts.kinds.length === 1);
-		await ask("@make");
-		await ask("@odd");
-		server.kinds([]);
-		await arrived((facts) => facts.kinds.length === 0);
-		await ask("again");
-		const seen = await requests();
+	it("puts a part's prompt sections into the agent's prompt, and drops them with the thing", async () => {
+		const held = [login("login", "faux", [says("", "ok")]), other("test.prompted", "p")];
+		const server = await start(held, {}, [{ kind: "test.prompted", prompt: "Always answer in rhymes." }]);
+		await ask("one");
+		server.hold([held[0]!]);
+		await ask("two");
 		assert.deepEqual(
-			seen.map(({ last, tools }) => [last, tools.includes("thing_create")]),
-			[
-				["plain", false],
-				["@make", true],
-				['Made Board "Plan": id made-1.', true],
-				["@odd", true],
-				[seen[4]?.last, true],
-				["again", false],
-			],
+			requests().map(({ prompt }) => prompt.includes("Always answer in rhymes.")),
+			[true, false],
 		);
-		assert.match(seen[4]?.last ?? "", /no kind test\.other; its kinds: `test\.board` \(Board\)/);
-		assert.deepEqual(server.created, [{ kind: "test.board", name: "Plan" }]);
+	});
+
+	it("runs the tools in the environment a part gives, else at the session's location", async () => {
+		const elsewhere = join(folder, "machine");
+		await mkdir(elsewhere);
+		const script = [runs("where", "pwd"), says("", "done")];
+		const held = [login("login", "faux", script), coding(), other("test.machine", "m")];
+		const server = await start(held, {}, [
+			{ kind: "test.machine", env: () => new NodeExecutionEnv({ cwd: elsewhere }) },
+		]);
+		await ask("where");
+		server.hold([held[0]!, held[1]!]);
+		await ask("where now");
+		const results = requests().filter(({ last }) => last.startsWith("/"));
+		assert.deepEqual(
+			results.map(({ last }) => last.trim()),
+			[elsewhere, folder],
+		);
 	});
 });

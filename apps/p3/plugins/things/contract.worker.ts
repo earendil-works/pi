@@ -1,0 +1,89 @@
+// The things plugin's contract for worker facets: what a session's agent gets from the things it holds. The session's
+// worker holds a reference to each thing available to its agent (`HeldThings`, contributed by the holding, slice 5), of
+// the kinds with a harness part on that worker; the harness calls each kind's part (`ThingHarnessParts`) with every
+// reference of the kind it holds and installs what the part gives: a Durable extension (tools, prompt sections,
+// hooks), an execution environment, model providers, prompt sections. Installing a plugin gives no session anything:
+// the agent gets exactly the things it holds.
+
+import {
+	type Context,
+	type Contract,
+	type Ctx,
+	defineRegistry,
+	type P3Principal,
+	type Reference,
+	type Registry,
+	type TableItem,
+} from "@earendil-works/p3/v1";
+import type { ExecutionEnv, Extension, PromptSection, Provider } from "@earendil-works/p3/v1/worker";
+import type { ThingKind } from "./kind.ts";
+
+/**
+ * One thing the agent holds: its id, the workspace it is held in, and the agent's reference to it (a reference has no
+ * params, so a part names a thing to its tools by `thing`).
+ */
+export type HeldThing<C extends Contract = Contract> = {
+	readonly thing: string;
+	readonly workspace: string;
+	readonly ref: Reference<C>;
+};
+
+/**
+ * What a kind's part has of the session's agent: the session's id, the workspace the agent holds its things in (the
+ * session's workspace; a part never assumes it equals the session's id), and `call`, which runs `fn` as the session's
+ * worker (a tool reaches its plugin's objects with it, on the worker or the server), its references released when
+ * `fn` settles. `context` is the tool's (Durable's), so cancelling the tool cancels the call.
+ */
+export type HarnessSession = {
+	readonly session: string;
+	readonly workspace: string;
+	call<T>(fn: (ctx: Ctx<P3Principal>) => Promise<T>, context: Context): Promise<T>;
+};
+
+/**
+ * What the things of one kind give the agent together: a Durable extension (its tools take the thing they act on as an
+ * argument, and a list tool names the things, so descriptions stay fixed text), the execution environment the agent's
+ * tools run in (a machine's), model providers (a login's, one per thing) and system prompt sections.
+ */
+export type HarnessContribution = {
+	readonly extension?: Extension;
+	readonly env?: ExecutionEnv;
+	readonly providers?: readonly Provider[];
+	readonly prompt?: readonly PromptSection[];
+};
+
+/**
+ * A kind's harness part: the kind, and what every thing of it the agent holds gives. `part` is called with the
+ * held things in the session's order (nearest last), again whenever that list changes (a reference added, removed or
+ * granted anew), and never with none. State a part reads at use (a setting in a prompt section) is read there, live.
+ */
+export type ThingHarnessPart = {
+	readonly kind: ThingKind;
+	readonly part: (things: readonly HeldThing[], session: HarnessSession) => HarnessContribution;
+};
+
+/** The kinds' harness parts by kind name (the first by plugin name wins a kind; a second is reported). */
+export const ThingHarnessParts = defineRegistry<ThingHarnessPart, ReadonlyMap<string, TableItem<ThingHarnessPart>>>(
+	"things.harness-parts",
+	{ version: 1 },
+);
+
+/** The harness part of `Kind`: `part` gets the things of it the agent holds, typed by the kind's contract. */
+export function thingHarnessPart<C extends Contract>(
+	Kind: ThingKind<C>,
+	part: (things: readonly HeldThing<C>[], session: HarnessSession) => HarnessContribution,
+): ThingHarnessPart {
+	// The holding gives a kind's part only things of that kind, which are of its contract.
+	return { kind: Kind as unknown as ThingKind, part: part as unknown as ThingHarnessPart["part"] };
+}
+
+/**
+ * What the session's worker holds as its agent, by kind name: one entry per thing available to the agent, in the
+ * session's order (nearest last), only of kinds with a part in `ThingHarnessParts` here. A new map whenever a list
+ * changes; a kind whose list did not change keeps the same array, so the harness gives only kinds whose array is new
+ * (a reference granted anew makes its kind's array new). One contributor, the holding (slice 5); read by the harness.
+ */
+export const HeldThings: Registry<Held, Held> = defineRegistry<Held, Held>("things.held", { version: 1 });
+
+/** The things held, by kind name (`HeldThings`' contribution and value). */
+export type Held = ReadonlyMap<string, readonly HeldThing[]>;

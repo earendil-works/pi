@@ -6,14 +6,7 @@
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import {
-	CodingTools,
-	BACKGROUND_CONTEXT as context,
-	SessionInfo,
-	Sessions,
-	THIS_DEVICE,
-	ThingAccess,
-} from "@earendil-works/p3/v1";
+import { BACKGROUND_CONTEXT as context, SessionInfo, Sessions, ThingAccess } from "@earendil-works/p3/v1";
 import { Boards, Logins } from "./stubs.ts";
 import { type Person, world } from "./world.ts";
 
@@ -82,39 +75,6 @@ describe("following a person", () => {
 		});
 	});
 
-	it("the owner brings the Pi's things too, in every session they follow, archived or not", async () => {
-		const owner = w.owner();
-		const id = await w
-			.t()
-			.root(
-				async (ctx) =>
-					(await ctx.get(Sessions, {})).create(
-						{ app: "coding", location: { environment: THIS_DEVICE, folder: "/tmp/p3-follow-test" } },
-						ctx,
-					),
-				context,
-				{
-					principal: owner,
-				},
-			);
-		const tools = await w.asServer(
-			async (store, ctx) =>
-				(await store.things.ofKind.page({ owner: "pi", kind: CodingTools.name }, 1, ctx)).items[0]!.id,
-		);
-		await withInfo(id, async (things) => {
-			// A session the owner makes follows the owner: it has the Pi's coding tools.
-			assert.deepEqual(things(), [[tools, "followed"]]);
-			await w.asServer((store, inner) => store.archive({ session: id }, inner));
-			// Give a change time to show (none should): the owner writes an archived session too.
-			await new Promise((resolve) => setTimeout(resolve, 100));
-			assert.deepEqual(things(), [[tools, "followed"]], "archived");
-			await w.asServer((store, inner) => store.restore({ session: id }, inner));
-			await eventually(things, [[tools, "followed"]], "after the archive");
-		});
-		const row = await w.asServer(async (store, ctx) => (await store.sessions.one.page({ id }, 1, ctx)).items[0]);
-		assert.deepEqual(row?.follows, { kind: "person", id: owner.id });
-	});
-
 	it("loses their things when they stop writing, and an archive takes a person's away", async () => {
 		const ann = await w.person("Ann");
 		const mail = await login(ann, ann);
@@ -176,7 +136,7 @@ describe("following a group", () => {
 });
 
 describe("a followed thing in its session", () => {
-	it("cannot be removed there, but its options can be set; the agent and the access answer see it", async () => {
+	it("cannot be removed there, but its options can be set; the access answer sees it", async () => {
 		const ann = await w.person("Ann");
 		const board = await w.asServer((store, ctx) =>
 			store.createThing({ kind: Boards.name, owner: { kind: "person", id: ann.id } }, ctx),
@@ -194,8 +154,6 @@ describe("a followed thing in its session", () => {
 			await things.setOptions({ thing: board, for: { kind: "everyone" }, options: { draw: false } }, ctx);
 		});
 		assert.equal(await draws(), false);
-		const facts = await w.asAgent(id, async (of) => of.things.value);
-		assert.deepEqual(facts, [{ thing: board, kind: Boards.name, name: "", version: 1, options: { draw: false } }]);
 		assert.deepEqual(await w.linksOf(id), [], "still not linked");
 		// Linked too, without options: the options set here stay; unlinked again, they stay with the followed thing.
 		await w.asWriter(ann, id, (things, ctx) => things.add({ thing: board }, ctx));

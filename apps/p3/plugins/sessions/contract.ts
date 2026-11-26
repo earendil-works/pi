@@ -541,26 +541,15 @@ export const SessionInfo = remote("sessions.info", {
 
 /**
  * A session's own facts for its worker, which holds it as itself: its row (`null` for a session the server does not
- * know), its things (linked, and from whom it follows) with the options the agent gets (a thing whose options are
- * not of its kind's current version shows with `options: null`; the harness gives it nothing), `kinds`, the kinds of
- * content the agent may make, `report`, which says what its agent is doing now, and `create`. The agent makes only
- * content, owned by nobody: it works for everyone who writes in the session, so what it could make for someone, any
- * writer could. It never sets options and never gives a thing an owner.
+ * know), and `report`, which says what its agent is doing now. What the agent gets is the things plugin's (the things
+ * the worker holds as the agent).
  */
 export const SessionFacts = remote("sessions.facts", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
-	state: {
-		session: union([SessionRow, nul()]),
-		things: arr(obj({ thing: str(), kind: str(), name: ThingName, version: num(), options: unknown() })),
-		kinds: arr(obj({ kind: str(), title: str() })),
-	},
-	methods: {
-		report: method(obj({ state: SessionState })),
-		/** Makes content of one of `kinds` (owned by nobody) and links it here (by the agent); answers its id. */
-		create: method(obj({ kind: str(), name: opt(ThingName) }), str()),
-	},
+	state: { session: union([SessionRow, nul()]) },
+	methods: { report: method(obj({ state: SessionState })) },
 });
 
 /**

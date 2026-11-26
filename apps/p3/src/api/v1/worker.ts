@@ -2,7 +2,7 @@
 // what keeps it alive (`WorkerBusy`), both served by the base; the built-in plugins' worker contracts p3 promises; and
 // the parts of Durable and pi-ai worker plugins build on (one instance per worker, the versions p3 ships: a plugin
 // inlines neither). `Harness`, `StoreStorage`, `createRegistry` and `createModels` are for p3's own harness plugin and
-// outside v1's promise: a plugin gives the agent tools only through a thing (`ThingExtensions`).
+// outside v1's promise: a plugin gives the agent tools only through a thing (the things plugin's `ThingHarnessParts`).
 
 import { type ChordStore, defineRegistry, type Host } from "@earendil-works/chord";
 import type { P3Principal } from "../../app.ts";
@@ -46,6 +46,7 @@ export {
 	hook,
 	LiveDoc,
 	type LiveState,
+	type PromptSection,
 	type Registry,
 	ROOT_CONVERSATION_ID,
 	section,
