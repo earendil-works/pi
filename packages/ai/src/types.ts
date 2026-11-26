@@ -3,6 +3,7 @@ import type { AnthropicOptions } from "./api/anthropic-messages.ts";
 import type { AzureOpenAIResponsesOptions } from "./api/azure-openai-responses.ts";
 import type { BedrockOptions } from "./api/bedrock-converse-stream.ts";
 import type { GoogleOptions } from "./api/google-generative-ai.ts";
+import type { GoogleInteractionsOptions } from "./api/google-interactions.ts";
 import type { GoogleVertexOptions } from "./api/google-vertex.ts";
 import type { MistralOptions } from "./api/mistral-conversations.ts";
 import type { OpenAICodexResponsesOptions } from "./api/openai-codex-responses.ts";
@@ -73,6 +74,7 @@ export type KnownApi =
 	| "bedrock-converse-stream"
 	| "google-generative-ai"
 	| "google-vertex"
+	| "google-interactions"
 	| "pi-messages";
 
 export type Api = KnownApi | (string & {});
@@ -95,6 +97,7 @@ export type KnownProvider =
 	| "ant-ling"
 	| "anthropic"
 	| "google"
+	| "google-ai-plan"
 	| "google-vertex"
 	| "openai"
 	| "azure"
@@ -309,6 +312,7 @@ export interface ApiOptionsMap {
 	"azure-openai-responses": AzureOpenAIResponsesOptions;
 	"google-generative-ai": GoogleOptions;
 	"google-vertex": GoogleVertexOptions;
+	"google-interactions": GoogleInteractionsOptions;
 	"mistral-conversations": MistralOptions;
 	"bedrock-converse-stream": BedrockOptions;
 	"pi-messages": PiMessagesOptions;

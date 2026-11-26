@@ -1812,8 +1812,17 @@ Several providers support OAuth authentication instead of static API keys:
 - **OpenAI Codex** (ChatGPT Plus/Pro subscription, access to GPT-5.x Codex models)
 - **GitHub Copilot** (Copilot subscription)
 - **OpenRouter** (OAuth PKCE that mints a user-controlled API key)
+- **Google AI Ultra plan** (needs your app's own Google client, see below)
 
 Each of these providers carries an `OAuthAuth` on `provider.auth.oauth` with three operations: `login(interaction)` uses the provider-neutral `AuthInteraction.prompt()`/`notify()` protocol and returns a credential, `refresh(credential, signal)` refreshes expiring credentials when applicable, and `toAuth(credential)` derives request auth (GitHub Copilot's per-account base URL comes from here). Provider login interactions and refresh calls always carry a concrete abort signal. Refresh is automatic: `models.getAuth(providerId)` and request paths refresh expired tokens under a credential-store lock, so concurrent requests and processes cannot double-refresh. OpenRouter's OAuth flow instead returns a permanent API key, so its refresh operation is a no-op.
+
+The Google AI Ultra plan provider is not part of `builtinProviders()`. Google approves each app's OAuth client separately and does not allow apps to share one, so pi-ai ships none. Register a `Desktop app` client in your own Google Cloud project, have Google approve it, and add the provider with it. Google also identifies apps by `User-Agent` (`<app>/<version>`), so set your app's identity (see [Client identity](#client-identity)):
+
+```typescript
+import { googleAiPlanProvider } from '@earendil-works/pi-ai/providers/google-ai-plan';
+
+models.setProvider(googleAiPlanProvider({ clientId: '<your client id>', clientSecret: '<your client secret>' }));
+```
 
 ```typescript
 import { createModels } from '@earendil-works/pi-ai';

@@ -32,6 +32,12 @@ const NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN = buildProviderErrorPattern([
 	// Zhipu/Z.ai (open.bigmodel.cn) error code 1308: the plan's usage limit is
 	// reached, sent as HTTP 429. It resets after hours, not seconds (#11537).
 	'"code"\\s*:\\s*"?1308(?![0-9])',
+
+	// Google AI Ultra plan: a model's daily limit, which resets at midnight Pacific time, and a model the plan
+	// does not include (a 429 with a daily limit of zero). api/google-interactions-errors.ts adds these hints to
+	// Google's text, which may read "429 ... rate limit exceeded".
+	"Daily limit reached for",
+	"is not available on the Google AI Ultra plan",
 ]);
 
 const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([

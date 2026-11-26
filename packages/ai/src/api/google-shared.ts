@@ -30,7 +30,7 @@ import { collapseSystemMessages, withoutInitialSystemMessage } from "../utils/tr
 import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import { transformMessages } from "./transform-messages.ts";
 
-type GoogleApiType = "google-generative-ai" | "google-vertex";
+type GoogleApiType = "google-generative-ai" | "google-vertex" | "google-interactions";
 
 /**
  * Thinking level for Gemini models that use `thinkingLevel` instead of `thinkingBudget`.

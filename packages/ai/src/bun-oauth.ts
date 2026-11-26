@@ -1,5 +1,6 @@
 import { anthropicOAuth } from "./auth/oauth/anthropic.ts";
 import { githubCopilotOAuth } from "./auth/oauth/github-copilot.ts";
+import { createGoogleAiPlanOAuth } from "./auth/oauth/google-ai-plan.ts";
 import { kimiCodingOAuth } from "./auth/oauth/kimi-coding.ts";
 import { registerBundledOAuthFlowLoaders } from "./auth/oauth/load.ts";
 import { metaOAuth } from "./auth/oauth/meta.ts";
@@ -16,6 +17,7 @@ export function registerBunOAuthFlows(): void {
 		openaiCodex: () => openaiCodexOAuth,
 		openaiChatGPT: () => openaiChatGPTOAuth,
 		githubCopilot: () => githubCopilotOAuth,
+		googleAiPlan: createGoogleAiPlanOAuth,
 		openrouter: () => openRouterOAuth,
 		kimiCoding: () => kimiCodingOAuth,
 		meta: () => metaOAuth,
