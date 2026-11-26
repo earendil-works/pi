@@ -183,27 +183,32 @@ function checkMembers(
 	// Own properties only: an inherited `toString` is no implementation of a member named so.
 	const own = (member: string): unknown =>
 		Object.hasOwn(implementation, member) ? implementation[member] : undefined;
-	// A map per kind of member the contract has: an object without any of a kind shares the empty one.
-	const checked = {
-		methods: methods.size === 0 ? NO_METHODS : new Map<string, Method>(),
-		state: state.size === 0 ? NO_STATE : new Map<string, DeriveSource>(),
-		keyed: keyed.size === 0 ? NO_KEYED : new Map<string, KeyedBinding>(),
-		events: NO_EVENTS,
-		queries: NO_QUERIES,
-	};
+	// Methods and state members are the contract's names with the object's values (a map of each per object kept
+	// 216 B for names every object of the version shares); keyed members, rare, a map per object that has some.
+	// Of their exact length: a list's first push reserves room for 16 more.
+	const calls: Method[] = new Array(methods.size);
+	let at = 0;
 	for (const [member, data] of methods) {
 		const method = own(member);
 		if (typeof method !== "function") throw new Error(`${member}: a method is a function`);
 		// A method with arguments is called as it is (no wrapper per object and method): plugin code, called with its
 		// arguments and a context, whatever it returns made a promise by its caller.
-		const call = takesNoArgs(data) ? (_args: unknown, context: Context) => method(context) : (method as Method);
-		checked.methods.set(member, call);
+		calls[at++] = takesNoArgs(data) ? (_args: unknown, context: Context) => method(context) : (method as Method);
 	}
+	const watched: DeriveSource[] = new Array(state.size);
+	at = 0;
 	for (const member of state.keys()) {
 		const source = resolveWatchable(own(member));
 		if (source === undefined) throw new Error(`${member}: a state member is a JSON watchable`);
-		checked.state.set(member, source);
+		watched[at++] = source;
 	}
+	const checked = {
+		methods: methods.size === 0 ? NO_METHODS : new MemberValues(indexesOf(methods), calls),
+		state: state.size === 0 ? NO_STATE : new MemberValues(indexesOf(state), watched),
+		keyed: keyed.size === 0 ? NO_KEYED : new Map<string, KeyedBinding>(),
+		events: NO_EVENTS,
+		queries: NO_QUERIES,
+	};
 	for (const [member, { key }] of keyed) {
 		const resolved = resolveKeyed(own(member));
 		if (resolved === undefined) throw new Error(`${member}: a keyed member is a keyed document handle`);
@@ -219,6 +224,66 @@ function checkMembers(
 	if (queries.size > 0) checked.queries = checkQueries(queries, own);
 	return checked;
 }
+
+/**
+ * One kind of a checked implementation's members as a map: the names its contract's version declares, shared by every
+ * object of the version (`indexesOf`), and the values of this object, in the same order. Never written once made.
+ */
+class MemberValues<V> implements ReadonlyMap<string, V> {
+	readonly #indexes: ReadonlyMap<string, number>;
+	readonly #values: readonly V[];
+
+	constructor(indexes: ReadonlyMap<string, number>, values: readonly V[]) {
+		this.#indexes = indexes;
+		this.#values = values;
+	}
+
+	get size(): number {
+		return this.#values.length;
+	}
+
+	get(member: string): V | undefined {
+		const index = this.#indexes.get(member);
+		return index === undefined ? undefined : this.#values[index];
+	}
+
+	has(member: string): boolean {
+		return this.#indexes.has(member);
+	}
+
+	forEach(callback: (value: V, member: string, map: ReadonlyMap<string, V>) => void, thisArg?: unknown): void {
+		for (const [member, index] of this.#indexes) callback.call(thisArg, this.#values[index]!, member, this);
+	}
+
+	*entries(): MapIterator<[string, V]> {
+		for (const [member, index] of this.#indexes) yield [member, this.#values[index]!];
+	}
+
+	keys(): MapIterator<string> {
+		return this.#indexes.keys();
+	}
+
+	values(): MapIterator<V> {
+		return this.#values.values();
+	}
+
+	[Symbol.iterator](): MapIterator<[string, V]> {
+		return this.entries();
+	}
+}
+
+/** The position of each name of a version's members of one kind, in their order: one map per version and kind. */
+function indexesOf(members: ReadonlyMap<string, unknown>): ReadonlyMap<string, number> {
+	let indexes = memberIndexes.get(members);
+	if (indexes === undefined) {
+		indexes = new Map([...members.keys()].map((member, index) => [member, index]));
+		memberIndexes.set(members, indexes);
+	}
+	return indexes;
+}
+
+/** The positions of a version's members of one kind (its `MembersData` map, granted or not), gone with the version. */
+const memberIndexes = new WeakMap<ReadonlyMap<string, unknown>, ReadonlyMap<string, number>>();
 
 /**
  * Checks event members: each is the attempt's own source (owned by `sources`) or a reference's event member, re-exposed

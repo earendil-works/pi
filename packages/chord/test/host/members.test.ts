@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
 import { type EventSource, event, int, keyed, local, method, obj, remote, str } from "../../src/contracts/index.ts";
+import { NO_GRANTS } from "../../src/contracts/internal.ts";
 import { defineState } from "../../src/documents/index.ts";
+import { checkImplementation } from "../../src/host/members.ts";
 import { constant } from "../../src/state/index.ts";
-import { linked, loaded, rejection, Server, Session } from "../support.ts";
+import { expectCollected, linked, loaded, rejection, Server, Session } from "../support.ts";
 
 describe("the member check (Q14)", () => {
 	it("refuses an inherited property for a member", async () => {
@@ -29,6 +31,51 @@ describe("the member check (Q14)", () => {
 		await expect(host.get(Named, { n: 2 }, context)).rejects.toThrow(
 			"app.named(2): derive #1: source 0 is not a Chord watchable",
 		);
+	});
+});
+
+describe("a checked implementation's methods and state members (hot-path pass)", () => {
+	const Pair = local("app.pair", {
+		version: 1,
+		params: {},
+		members: { b: str(), a: int(), go: method(), add: method(int(), int()) },
+	});
+	const implementation = () => ({
+		a: constant(1),
+		b: constant("b"),
+		go: async () => null,
+		add: async (n: number) => n + 1,
+	});
+
+	it("are maps in the contract's order: get, has, size, keys, values, entries, forEach", () => {
+		const { state, methods } = checkImplementation(Pair, implementation(), undefined, NO_GRANTS);
+		expect([state.size, [...state.keys()], state.has("a"), state.has("go"), state.get("x")]).toEqual([
+			2,
+			["b", "a"],
+			true,
+			false,
+			undefined,
+		]);
+		expect([...state.values()]).toEqual([state.get("b"), state.get("a")]);
+		expect([...state.entries()]).toEqual([...state]);
+		expect([...state].map(([member]) => member)).toEqual(["b", "a"]);
+		const seen: string[] = [];
+		methods.forEach((call, member, map) => {
+			expect([typeof call, map]).toEqual(["function", methods]);
+			seen.push(member);
+		});
+		expect(seen).toEqual(["go", "add"]);
+	});
+
+	it("keep their contract's names for every object of the version, collected with the contract", async () => {
+		const refs = (() => {
+			const Short = local("app.short", { version: 1, params: {}, members: { a: int(), go: method() } });
+			const make = () => checkImplementation(Short, { a: constant(1), go: async () => null }, undefined, NO_GRANTS);
+			const [first, second] = [make(), make()];
+			expect([[...first.methods.keys()], [...second.state.keys()]]).toEqual([["go"], ["a"]]);
+			return [new WeakRef(Short), new WeakRef(first.state)];
+		})();
+		await expectCollected(...refs);
 	});
 });
 
