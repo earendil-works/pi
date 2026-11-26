@@ -16,7 +16,9 @@ import { NodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
 import {
 	type Ctx,
 	BACKGROUND_CONTEXT as context,
+	contribute,
 	createHost,
+	defineFacet,
 	openStore,
 	type P3Principal,
 	type Reference,
@@ -24,9 +26,9 @@ import {
 	sqliteBackend,
 	until,
 } from "@earendil-works/p3/v1";
-import { within } from "../../../test/until.ts";
+import { eventually, within } from "../../../test/until.ts";
 import { SignIns } from "../../sign-in/contract.ts";
-import { Gives, ThingsStore } from "../contract.server.ts";
+import { Gives, OwnerSeeds, ThingsStore } from "../contract.server.ts";
 import { Group, type Party, type Source } from "../contract.ts";
 import { Board } from "./kinds.ts";
 import { RUNTIME, signInsStub, storedRows, THINGS, type World, world } from "./world.ts";
@@ -132,6 +134,33 @@ describe("persons and the owner", () => {
 		} finally {
 			await host.close(context);
 			await reopened.close(context);
+		}
+	});
+
+	it("the people plugin's owner becomes the owner here, with the same id; the first start's own goes (the bridge)", async () => {
+		const seeded = await world(context, [
+			{
+				name: "@earendil-works/p3-people",
+				facet: defineFacet((host) =>
+					contribute(host, "test.owner-seed", (self) =>
+						self.contribute(OwnerSeeds, { person: "people-owner", name: "Mario" }),
+					),
+				),
+			},
+		]);
+		try {
+			const things = await seeded.host.get(ThingsStore, {}, context);
+			// Adopted once the store is live: what no watchable shows, polled.
+			const owners = await eventually(
+				async () => (await things.persons.owners.page({}, 10, context)).items,
+				(items) => items.length === 1 && items[0]!.person === "people-owner",
+			);
+			assert.deepEqual(
+				owners.map(({ person: id, name }) => [id, name]),
+				[["people-owner", "Mario"]],
+			);
+		} finally {
+			await seeded.close(context);
 		}
 	});
 

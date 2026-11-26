@@ -5,7 +5,7 @@
 
 import { defineFacet, keyedEntries } from "@earendil-works/p3/v1";
 import { serveGives } from "./admission.ts";
-import { AccessHandles, ThingHooks } from "./contract.server.ts";
+import { AccessHandles, OwnerSeeds, ThingHooks } from "./contract.server.ts";
 import { serveGroup } from "./group.ts";
 import { kindView, ThingKinds, ThingKindsView } from "./kind.ts";
 import { serveOne } from "./one.ts";
@@ -22,6 +22,8 @@ export default defineFacet((host) => {
 		compose: (table, { report }) => keyedEntries(table, (hook) => ({ [hook.kind]: hook }), report),
 	});
 	// Only the things plugin's own store contributes the index admissions read; any other contribution is ignored.
+	// The people plugin's owner, until push B (ERNDL-1144) removes the people plugin.
+	host.serve(OwnerSeeds, { compose: (table) => table[0]?.value ?? null });
 	host.serve(AccessHandles, { compose: (table) => table.find(({ plugin }) => plugin === THINGS_PLUGIN)?.value });
 	// Every kind's data for workers and pages, following the registry.
 	host.serve(ThingKindsView, (_params, _principal, self) => ({

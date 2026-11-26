@@ -182,6 +182,30 @@ export class PeopleWrites {
 		tx.put(this.#t.persons, { person: crypto.randomUUID(), name, owner: 1, madeBy: by, madeByKey: sourceKey(by) });
 	}
 
+	/**
+	 * The people plugin's owner made the owner here, with the same id (a bridge, ERNDL-1144 push B removes it): their
+	 * person is made or given the flag, and the owner the first start made of its own, unless it got anything, goes.
+	 */
+	async adoptOwner(tx: Tx, touched: Touched, { person, name }: { person: string; name: string }): Promise<null> {
+		const row = await tx.get(this.#t.persons, { person });
+		if (row?.owner === 1) return null;
+		const by: Source = { kind: "plugin", plugin: "@earendil-works/p3-people" };
+		if (row === undefined) tx.put(this.#t.persons, { person, name, owner: 1, madeBy: by, madeByKey: sourceKey(by) });
+		else tx.update(this.#t.persons, { person }, { owner: 1 });
+		touched.persons.add(person);
+		const own = sourceKey({ kind: "plugin", plugin: "@earendil-works/p3-things" });
+		for await (const ghost of tx.rows(
+			this.#t.persons,
+			query(Persons).where((p) => eq(p.owner, 1)),
+		)) {
+			if (ghost.person !== person && ghost.madeByKey === own) {
+				tx.delete(this.#t.persons, { person: ghost.person });
+				touched.persons.add(ghost.person);
+			}
+		}
+		return null;
+	}
+
 	/** Renames person `person`. */
 	async renamePerson(tx: Tx, person: string, name: string): Promise<void> {
 		await this.#mustBePerson(tx, person);

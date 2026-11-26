@@ -630,6 +630,12 @@ const MUTATIONS: readonly Mutation[] = [
 		put: "		tx.delete(t.groups, { group });",
 	},
 	{
+		name: "the people plugin's owner is not adopted (the bridge)",
+		file: "store.ts",
+		find: "if (owner !== null) await write((tx, touched) => people.adoptOwner(tx, touched, owner), ctx);",
+		put: "",
+	},
+	{
 		name: "every start makes another owner",
 		file: "people.ts",
 		find: "if (owners.items.length > 0) return;",

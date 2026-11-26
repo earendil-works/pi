@@ -40,7 +40,7 @@ import {
 } from "@earendil-works/p3/v1";
 import { ServerRuntime } from "@earendil-works/p3/v1/server";
 import { AccessIndex, type Touched } from "./access.ts";
-import { AccessHandles, type GrantInput, ThingHooks, ThingsStore } from "./contract.server.ts";
+import { AccessHandles, type GrantInput, OwnerSeeds, ThingHooks, ThingsStore } from "./contract.server.ts";
 import {
 	Item,
 	itemKey,
@@ -360,6 +360,7 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				return persons;
 			}, ctx);
 			if (left.length > 0) void signOut(left, ctx);
+			await adopt(ctx);
 			await Promise.all([lifecycle.serve(ctx), seed(ctx)]);
 		});
 		// A plugin loaded, reloaded or removed: the new kinds are installed in the index's queue, ticks expand and
@@ -377,6 +378,15 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		self.on(hooks, async () => {
 			await lifecycle.resume();
 			if (live !== undefined) await seed(live);
+		});
+		// The people plugin's owner made the things owner, with the same id (a bridge: push B of ERNDL-1144 removes it).
+		const owners = self.registry(OwnerSeeds);
+		const adopt = async (ctx: Ctx<P3Principal>) => {
+			const owner = owners.value;
+			if (owner !== null) await write((tx, touched) => people.adoptOwner(tx, touched, owner), ctx);
+		};
+		self.on(owners, async () => {
+			if (live !== undefined) await adopt(live);
 		});
 		return {
 			...q,

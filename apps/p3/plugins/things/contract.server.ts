@@ -300,3 +300,13 @@ export const OneThing = local("things.one", {
 	params: { kind: str() },
 	members: { thing: str() },
 });
+
+/** The people plugin's owner as it hands it over (see `OwnerSeeds`). */
+export type OwnerSeed = { readonly person: string; readonly name: string } | null;
+
+/**
+ * A bridge until the people plugin goes (ERNDL-1144's push B removes it): the people plugin contributes its owner's
+ * person, and the things store makes that person, with the same id, its owner, so the owner the owner link signs in
+ * as has the owner flag in the access index. Composed: the first contribution, `null` while there is none.
+ */
+export const OwnerSeeds = defineRegistry<OwnerSeed, OwnerSeed>("things.owner-seed", { version: 1 });
