@@ -177,6 +177,10 @@
           "path": "compaction.md"
         },
         {
+          "title": "Telemetry",
+          "path": "telemetry.md"
+        },
+        {
           "title": "JSON Event Stream",
           "path": "json.md"
         },
