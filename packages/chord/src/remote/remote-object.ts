@@ -147,8 +147,8 @@ export class RemoteObject implements Target {
 	readonly label: string;
 	readonly contract: Contract;
 	readonly #host: AnyHost;
-	/** What its holds ask for: the params as a part (checked by L1 when the reference was made), the address. */
-	readonly request: HoldRequest;
+	/** The address its holds name (its host's, as its type's `hostAddress` computed it). */
+	readonly #address: WireAddress;
 	/** Whom its reference acts for: named on route links (`actingFor`). */
 	readonly caller: Caller;
 	/** Its params as L1 checked them, for placing it anew (a private retry after a part past the limits). */
@@ -197,7 +197,7 @@ export class RemoteObject implements Target {
 		this.contract = contract;
 		// One join: a flat string (a template keeps the tree of its concatenations, 96 B per object).
 		this.label = params.key === "" ? contract.name : [contract.name, "(", params.key, ")"].join("");
-		const { name: type, version, fingerprint } = contract;
+		const { name: type } = contract;
 		// Its hold is shared work (decision "Shared work"): a root on the host's adapter whatever its first getter's
 		// context, linked to that getter's span when traced; its first hold carries the span's carrier (`#holdTrace`).
 		if (!untraced(host.telemetry)) {
@@ -210,7 +210,7 @@ export class RemoteObject implements Target {
 			if (!untraced(trigger)) this.#holding.span.addLink({ context: trigger });
 			this.#firstHold = carrierOf(this.#holding.span);
 		}
-		this.request = { type, version, fingerprint, params: jsonPart(params.params), address };
+		this.#address = address;
 		this.caller = caller;
 		this.#params = params;
 		this.#path = path;
@@ -225,6 +225,15 @@ export class RemoteObject implements Target {
 
 	get state(): RefState {
 		return this.#state;
+	}
+
+	/**
+	 * What its holds ask for: the params as a part (checked by L1 when the reference was made), the address. Made for
+	 * each hold (a first one, a re-hold): kept, it cost 96 B per object for one message per link.
+	 */
+	get request(): HoldRequest {
+		const { name: type, version, fingerprint } = this.contract;
+		return { type, version, fingerprint, params: jsonPart(this.#params.params), address: this.#address };
 	}
 
 	/** Over a link the provider decides what each version sees: its state as it is. */
@@ -345,7 +354,7 @@ export class RemoteObject implements Target {
 			"chord.host": this.#host.spanHost,
 			type: this.contract.name,
 			object: capped(this.label),
-			"address.kind": this.request.address.kind,
+			"address.kind": this.#address.kind,
 		};
 		this.#holding = new OpenSpan(adapter, "chord.hold", attributes);
 		this.#holding.span.addLink({ context: parentOf(this.#firstHold, adapter) });
@@ -409,7 +418,7 @@ export class RemoteObject implements Target {
 			type: this.contract.name,
 			member: method,
 			object: capped(this.label),
-			"address.kind": this.request.address.kind,
+			"address.kind": this.#address.kind,
 			...this.#host.principalAttributes(this.caller.principal, context),
 		};
 		return chordSpans(parent)("chord.call", attributes, async (span) => {
@@ -524,7 +533,7 @@ export class RemoteObject implements Target {
 			this.#host,
 			this.contract,
 			this.#params,
-			this.request.address,
+			this.#address,
 			this.caller,
 			unplaced,
 			this.#dependent,
