@@ -394,7 +394,7 @@ describe("TUI Kitty image cleanup", () => {
 		}
 	});
 
-	it("falls back to full redraw when Kitty image pre-clear would scroll", async () => {
+	it("falls back to full redraw when a Kitty image is taller than the screen", async () => {
 		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
 		setCellDimensions({ widthPx: 10, heightPx: 10 });
 		try {
@@ -420,7 +420,7 @@ describe("TUI Kitty image cleanup", () => {
 			tui.requestRender();
 			await terminal.waitForRender();
 
-			assert.ok(tui.fullRedraws > redrawsBeforeImage, "unsafe image pre-clear should force a full redraw");
+			assert.ok(tui.fullRedraws > redrawsBeforeImage, "an image taller than the screen should force a full redraw");
 			assert.ok(terminal.getWrites().includes("\x1b[2J"), "fallback should clear and fully redraw");
 
 			tui.stop();
@@ -430,7 +430,8 @@ describe("TUI Kitty image cleanup", () => {
 		}
 	});
 
-	it("reserves Kitty image rows before drawing during full redraw fallbacks", async () => {
+	// #12548
+	it("appends Kitty images that scroll the screen without a full redraw", async () => {
 		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
 		setCellDimensions({ widthPx: 10, heightPx: 10 });
 		try {
@@ -459,7 +460,61 @@ describe("TUI Kitty image cleanup", () => {
 			await terminal.waitForRender();
 
 			const writes = terminal.getWrites();
-			assert.ok(tui.fullRedraws > redrawsBeforeImage, "scrolling image append should force a full redraw");
+			assert.strictEqual(tui.fullRedraws, redrawsBeforeImage, "appended image should stay differential");
+			assert.ok(!writes.includes("\x1b[2J"), "appended image must not clear the screen");
+			assert.ok(!writes.includes("\x1b[3J"), "appended image must not clear the scrollback");
+			assert.ok(
+				writes.includes(`\x1b[2K\r\n\x1b[2K\r\n\x1b[2K\x1b[2A${imageSequence}\x1b[2B`),
+				"reserved rows should scroll into view before the image placement is drawn",
+			);
+
+			const viewport = terminal.getViewport();
+			assert.strictEqual(viewport[0]?.trim(), "l4");
+			assert.strictEqual(viewport[4]?.trim(), "after");
+
+			component.lines = [...component.lines, "more"];
+			tui.requestRender();
+			await terminal.waitForRender();
+			assert.strictEqual(tui.fullRedraws, redrawsBeforeImage, "later output should stay differential");
+			assert.strictEqual(terminal.getViewport()[4]?.trim(), "more");
+
+			tui.stop();
+		} finally {
+			resetCapabilitiesCache();
+			setCellDimensions({ widthPx: 9, heightPx: 18 });
+		}
+	});
+
+	it("reserves Kitty image rows before drawing during full redraws", async () => {
+		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
+		setCellDimensions({ widthPx: 10, heightPx: 10 });
+		try {
+			const terminal = new LoggingVirtualTerminal(40, 5);
+			const tui: TUI = new TuiMainScreen(terminal);
+			const component = new TestComponent();
+			tui.addChild(component);
+
+			component.lines = ["l0", "l1", "l2", "l3", "l4"];
+			tui.start();
+			await terminal.waitForRender();
+			const redrawsBeforeImage = tui.fullRedraws;
+			terminal.clearWrites();
+
+			const image = new Image(
+				"AAAA",
+				"image/png",
+				{ fallbackColor: (value) => value },
+				{ maxWidthCells: 3 },
+				{ widthPx: 30, heightPx: 30 },
+			);
+			const imageLines = image.render(40);
+			const imageSequence = imageLines[0];
+			component.lines = ["l0", "l1", "l2", "l3", "l4", ...imageLines, "after"];
+			tui.requestRender(true);
+			await terminal.waitForRender();
+
+			const writes = terminal.getWrites();
+			assert.ok(tui.fullRedraws > redrawsBeforeImage, "forced render should be a full redraw");
 			assert.ok(
 				writes.includes(`\r\n\r\n\x1b[2A${imageSequence}\x1b[2B`),
 				"full redraw should reserve visible image rows before drawing the placement",

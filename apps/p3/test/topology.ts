@@ -149,6 +149,8 @@ export async function topology(context: Context, idleMs = 60_000): Promise<Topol
 		sessions,
 		worker: { entry: "", execArgv: [] },
 		workerIdleMs: idleMs,
+		// No catalog request leaves a test.
+		catalogBaseUrl: undefined,
 		workerScripts: async () => [],
 		listening: () => undefined,
 		apply: () => Promise.reject(new Error("topology: no apply")),
