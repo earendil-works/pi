@@ -252,8 +252,7 @@ class PlanShape {
 			this.where === other.where &&
 			this.order.direction === other.order.direction &&
 			sameList(this.order.columns, other.order.columns) &&
-			this.uses.length === other.uses.length &&
-			this.uses.every((use, at) => sameUse(use, other.uses[at]!))
+			sameUses(this.uses, other.uses)
 		);
 	}
 
@@ -268,8 +267,7 @@ class PlanShape {
 		const first = this.#first;
 		if (first !== undefined && renders(first, kind, after, through, columns)) return first.text;
 		for (const each of this.#texts ?? NO_TEXTS) if (renders(each, kind, after, through, columns)) return each.text;
-		// The columns copied: the shape keeps strings, never a caller's list.
-		const rendered = { kind, after, through, columns: columns.slice(), text: render(this.#filter(range)) };
+		const rendered = { kind, after, through, columns: copied(columns), text: render(this.#filter(range)) };
 		if (first === undefined) this.#first = rendered;
 		else if (this.#texts === undefined) this.#texts = [rendered];
 		else this.#texts.push(rendered);
@@ -328,8 +326,31 @@ function sameUse(a: Use, b: Use): boolean {
 	);
 }
 
+/**
+ * Whether two lists hold the same names in the same order. By index: the lists may be of plugin code's making (a
+ * condition as data, and `map` keeps an `Array` subclass), whose methods must not run inside a commit's step.
+ */
 function sameList(a: readonly string[], b: readonly string[]): boolean {
-	return a.length === b.length && a.every((name, at) => name === b[at]);
+	if (a.length !== b.length) return false;
+	for (let at = 0; at < a.length; at++) if (a[at] !== b[at]) return false;
+	return true;
+}
+
+/** Whether two lists of uses are the same, use by use (by index, as `sameList`). */
+function sameUses(a: readonly Use[], b: readonly Use[]): boolean {
+	if (a.length !== b.length) return false;
+	for (let at = 0; at < a.length; at++) if (!sameUse(a[at]!, b[at]!)) return false;
+	return true;
+}
+
+/**
+ * `columns` in an ordinary list of their own, copied by index: the shape keeps strings, never a caller's list (no
+ * method of it runs: it may be an `Array` subclass of plugin code's making, see `sameList`).
+ */
+function copied(columns: readonly string[]): string[] {
+	const copy = new Array<string>(columns.length);
+	for (let at = 0; at < columns.length; at++) copy[at] = columns[at]!;
+	return copy;
 }
 
 function sameSet(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
