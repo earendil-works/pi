@@ -60,6 +60,8 @@ const LONGEST = 60_000;
 export class Removal {
 	readonly #store: RemovalStore;
 	readonly #live = Promise.withResolvers<Ctx<P3Principal>>();
+	/** The store's own context once it serves. */
+	#serving: Ctx<P3Principal> | undefined;
 	/** The removals and tellings running, by workspace, so none runs twice at once. */
 	readonly #running = new Map<string, Promise<void>>();
 
@@ -72,15 +74,22 @@ export class Removal {
 	 * attempt ends, it ends after the work it started (the next attempt's resume never overlaps it).
 	 */
 	async serve(ctx: Ctx<P3Principal>): Promise<void> {
+		this.#serving = ctx;
 		this.#live.resolve(ctx);
-		await this.resume();
+		await this.resume(ctx);
 		await untilAborted(ctx);
 		await Promise.all(this.#running.values());
 	}
 
-	/** Every removal and telling due, started again: at the start, and whenever the kinds' hooks change. */
-	async resume(): Promise<void> {
-		const ctx = await this.#live.promise;
+	/**
+	 * Every removal and telling due, started again: at the start, and whenever the kinds' hooks change. It ends with
+	 * `routine` (the caller's context) when the store never got to serve (its `onLive` failed first), so a close never
+	 * waits for it (ERNDL-1187).
+	 */
+	async resume(routine: Ctx<P3Principal>): Promise<void> {
+		const ctx =
+			this.#serving ?? (await Promise.race([this.#live.promise, untilAborted(routine).then(() => undefined)]));
+		if (ctx === undefined) return;
 		const { removing, gone } = await this.#store.read(async (tx) => {
 			const removing = [];
 			const gone = [];

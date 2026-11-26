@@ -402,9 +402,9 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			else await index.kindsChanged(install);
 			if (live !== undefined) await seed(live);
 		});
-		self.on(hooks, async () => {
-			await lifecycle.resume();
-			await removal.resume();
+		self.on(hooks, async (_value, ctx) => {
+			await lifecycle.resume(ctx);
+			await removal.resume(ctx);
 			if (live !== undefined) await seed(live);
 		});
 		return {
