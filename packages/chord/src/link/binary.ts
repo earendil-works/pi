@@ -78,7 +78,7 @@ export const binaryCodec: Codec = {
 	name: "binary",
 	encode(message) {
 		try {
-			WRITER.expect(partsLength(message));
+			WRITER.expect(message);
 			encodeMessage(message, WRITER);
 			return WRITER.finish();
 		} finally {
@@ -409,6 +409,9 @@ class Writer {
 	/** The buffer it keeps across messages, grown up to `KEPT`; a message past it gets a buffer of its own. */
 	#kept = this.#buffer;
 	#length = 0;
+	/** The message being encoded (`expect`), and whether a text of it fell short already (`#shortOfText`). */
+	#message: Message | undefined;
+	#sized = false;
 
 	byte(byte: number): void {
 		this.#reserve(1);
@@ -512,7 +515,7 @@ class Writer {
 		}
 		const slot = this.#length;
 		// At least one byte per UTF-16 unit; more room is made when the text is not all ASCII.
-		this.#reserve(LENGTH_SLOT + text.length);
+		this.#room(LENGTH_SLOT + text.length);
 		this.#length += LENGTH_SLOT;
 		let read = 0;
 		let rest = text;
@@ -524,7 +527,7 @@ class Writer {
 			rest = text.slice(read);
 			// Its UTF-8 is longer than its units: it falls short once, then the rest fits (its exact bytes where Node's
 			// `Buffer` counts them natively, else three a unit, the most; `finish` hands the buffer off or copies it).
-			this.#exactly(NATIVE?.byteLength(rest, "utf8") ?? rest.length * 3);
+			this.#shortOfText(utf8(rest));
 		}
 		let length = (this.#length - slot - LENGTH_SLOT) * scale;
 		for (let index = 0; index < LENGTH_SLOT; index++) {
@@ -542,7 +545,7 @@ class Writer {
 		const room = varintBytes(text.length * 3 * scale);
 		const start = this.#length;
 		// Room for one byte per unit first (ASCII, most JSON): a text that is not gets more room for its rest.
-		this.#reserve(room + text.length);
+		this.#room(room + text.length);
 		this.#length += room;
 		let read = 0;
 		while (read < text.length) {
@@ -550,7 +553,7 @@ class Writer {
 			const done = UTF8.encodeInto(rest, this.#buffer.subarray(this.#length));
 			read += done.read;
 			this.#length += done.written;
-			if (read < text.length) this.#reserve((text.length - read) * 3);
+			if (read < text.length) this.#shortOfText((text.length - read) * 3);
 		}
 		const buffer = this.#buffer;
 		const written = this.#length - start - room;
@@ -638,6 +641,7 @@ class Writer {
 	reset(): void {
 		this.#length = 0;
 		this.#buffer = this.#kept;
+		this.#message = undefined;
 	}
 
 	/**
@@ -645,8 +649,37 @@ class Writer {
 	 * around them) starts in a buffer of its own of that size when it cannot fit the kept one: a frame of many parts
 	 * past `KEPT` allocates one buffer, never regrowing by doublings, whatever frame came before it.
 	 */
-	expect(bytes: number): void {
+	expect(message: Message): void {
+		this.#message = message;
+		this.#sized = false;
+		const bytes = partsLength(message, units);
 		if (bytes > KEPT) this.#buffer = new Uint8Array(bytes);
+	}
+
+	/**
+	 * A text did not fit (its UTF-8 is longer than its units): at the message's first such shortfall the whole message
+	 * is sized once, every text at its exact UTF-8 (Node's `Buffer`) or else at three bytes a unit, so no later text
+	 * of it falls short again; after that, `bytes` more as asked.
+	 */
+	#shortOfText(bytes: number): void {
+		const message = this.#message;
+		if (!this.#sized && message !== undefined) {
+			this.#sized = true;
+			// The texts already written are in the total: the buffer holds the whole message.
+			this.#exactly(Math.max(bytes, partsLength(message, utf8) - this.#length));
+			return;
+		}
+		this.#exactly(bytes);
+	}
+
+	/**
+	 * Room for a text's `bytes` by its units: past a buffer of its own (earlier texts' UTF-8 took more than their
+	 * units), a shortfall of text (`#shortOfText`), which sizes the message once; else grown as any field.
+	 */
+	#room(bytes: number): void {
+		if (this.#length + bytes <= this.#buffer.byteLength) return;
+		if (this.#buffer === this.#kept) this.#reserve(bytes);
+		else this.#shortOfText(bytes);
 	}
 
 	/** Grows the buffer to fit exactly `bytes` more and room for the small fields after them. */
@@ -677,7 +710,7 @@ class Writer {
 }
 
 /** What the parts of `message` take, by their lengths (`Writer.expect`); 0 for a kind without parts. */
-function partsLength(message: Message): number {
+function partsLength(message: Message, count: (text: string) => number): number {
 	// The message's own fields by a bound, each hold's exactly (a failure's JSON by a bound: they are rare).
 	let bytes = 64;
 	switch (message.kind) {
@@ -685,26 +718,26 @@ function partsLength(message: Message): number {
 			for (const { hold, granted, members, failed } of message.holds) {
 				bytes += varintBytes(hold) + varintBytes(granted.length) + varintBytes(members.length) + failures(failed);
 				for (const index of granted) bytes += varintBytes(index);
-				for (const { member, value } of members) bytes += varintBytes(member) + partLength(value);
+				for (const { member, value } of members) bytes += varintBytes(member) + partLength(value, count);
 			}
 			return bytes;
 		case "state":
 			for (const { hold, members, failed, retired } of message.holds) {
 				bytes += varintBytes(hold) + varintBytes(members.length) + failures(failed) + varintBytes(retired.length);
 				for (const index of retired) bytes += varintBytes(index);
-				for (const { member, ops } of members) bytes += varintBytes(member) + partLength(ops);
+				for (const { member, ops } of members) bytes += varintBytes(member) + partLength(ops, count);
 			}
 			return bytes;
 		case "event":
 			// An event's hold, member and stamp: three varints of at most 8 bytes.
-			for (const { value } of message.events) bytes += 24 + partLength(value);
+			for (const { value } of message.events) bytes += 24 + partLength(value, count);
 			return bytes;
 		case "hold":
-			return bytes + message.type.length * 3 + partLength(message.params);
+			return bytes + message.type.length * 3 + partLength(message.params, count);
 		case "call":
-			return bytes + partLength(message.args) + segmentsLength(message.segments);
+			return bytes + partLength(message.args, count) + segmentsLength(message.segments);
 		case "result":
-			return bytes + partLength(message.value) + segmentsLength(message.segments);
+			return bytes + partLength(message.value, count) + segmentsLength(message.segments);
 		default:
 			return bytes;
 	}
@@ -716,9 +749,12 @@ function failures(failed: readonly FailedMember[]): number {
 }
 
 /** What a part takes on the wire with its length prefix (a text by its units: exact for ASCII, its UTF-8 may be longer). */
-function partLength(part: Part | undefined): number {
+function partLength(part: Part | undefined, count: (text: string) => number): number {
 	if (part === undefined) return 0;
-	if (typeof part === "string") return part.length + (part.length < LONG ? varintBytes(part.length * 2) : LENGTH_SLOT);
+	if (typeof part === "string") {
+		const bytes = count(part);
+		return bytes + (part.length < LONG ? varintBytes(bytes * 2) : LENGTH_SLOT);
+	}
 	const length = part instanceof DeflatedPart ? part.bytes.byteLength : part.byteLength;
 	return length + varintBytes(length * 2 + 1);
 }
@@ -737,6 +773,12 @@ const NO_SEGMENTS: readonly Uint8Array[] = [];
  * `globalThis`, not imported, so this file loads in browsers and workerd too.
  */
 const NATIVE = (globalThis as { Buffer?: { byteLength(text: string, encoding: "utf8"): number } }).Buffer;
+
+/** A text by its units: exact for ASCII (the estimate before any text fell short). */
+const units = (text: string): number => text.length;
+
+/** A text by its UTF-8 bytes: exact where Node's `Buffer` counts them, else at three a unit, the most. */
+const utf8 = (text: string): number => NATIVE?.byteLength(text, "utf8") ?? text.length * 3;
 
 /** How many bytes the varint of `value` takes. */
 function varintBytes(value: number): number {
