@@ -253,7 +253,9 @@ function decodeFields(kind: (typeof KINDS)[number], reader: Reader): Message {
 	// The message schema establishes the types of what is read here (JSON fields are checked by it).
 	switch (kind) {
 		case "hello": {
-			const [protocol, incarnation, calls] = [reader.varint(), uuid(reader.raw(16)), reader.varint()];
+			const protocol = reader.varint();
+			const incarnation = uuid(reader.raw(16));
+			const calls = reader.varint();
 			return { kind, protocol, incarnation, ...(calls === 0 ? {} : { calls }) };
 		}
 		case "hold": {
@@ -265,11 +267,8 @@ function decodeFields(kind: (typeof KINDS)[number], reader: Reader): Message {
 			const address = { kind: reader.string(), params: reader.json() };
 			const flags = reader.byte();
 			if (flags > (PRINCIPAL | INCARNATION | CHAIN | LIMIT)) throw new Error("binary: unknown hold flags");
-			const principal = flags & PRINCIPAL ? { principal: reader.json() as { kind: string } } : {};
-			const incarnation = flags & INCARNATION ? { incarnation: uuid(reader.raw(16)) } : {};
-			const chain = flags & CHAIN ? { chain: reader.list(() => uuid(reader.raw(16))) } : {};
-			const limit = flags & LIMIT ? { limit: reader.varint() } : {};
-			return {
+			// The optional fields set in place, in their order: no object per absent field to spread.
+			const message: Writable<Extract<Message, { kind: "hold" }>> = {
 				kind,
 				hold,
 				type,
@@ -277,11 +276,12 @@ function decodeFields(kind: (typeof KINDS)[number], reader: Reader): Message {
 				fingerprint,
 				params,
 				address,
-				...principal,
-				...incarnation,
-				...chain,
-				...limit,
 			};
+			if (flags & PRINCIPAL) message.principal = reader.json() as { kind: string };
+			if (flags & INCARNATION) message.incarnation = uuid(reader.raw(16));
+			if (flags & CHAIN) message.chain = reader.list(readUuid);
+			if (flags & LIMIT) message.limit = reader.varint();
+			return message;
 		}
 		case "release":
 		case "loading":
@@ -289,30 +289,23 @@ function decodeFields(kind: (typeof KINDS)[number], reader: Reader): Message {
 		case "retry":
 			return { kind, hold: reader.varint(), hops: reader.varint() };
 		case "call": {
-			const [call, hold, method] = [reader.varint(), reader.varint(), reader.varint()];
-			return { kind, call, hold, method, ...reader.payload("args") };
+			const message: Writable<Extract<Message, { kind: "call" }>> = {
+				kind,
+				call: reader.varint(),
+				hold: reader.varint(),
+				method: reader.varint(),
+			};
+			reader.payload(message, "args");
+			return message;
 		}
 		case "abort":
 			return { kind, call: reader.varint() };
 		case "bound": {
-			const holds = reader.list((): BoundEntry => {
-				const hold = reader.varint();
-				const granted = reader.list(() => reader.varint());
-				const members = reader.list(() => ({ member: reader.varint(), value: reader.part() }));
-				return { hold, granted, members, failed: reader.failed() };
-			});
+			const holds = reader.list(readBoundEntry);
 			return { kind, holds };
 		}
 		case "state": {
-			const holds = reader.list((): StateEntry => {
-				const hold = reader.varint();
-				const members = reader.list(() => ({ member: reader.varint(), ops: reader.part() }));
-				// The failure count times two, plus one when retirements follow.
-				const flags = reader.varint();
-				const failed = reader.failedEntries(Math.floor(flags / 2));
-				const retired = flags % 2 === 0 ? NO_RETIRED : reader.list(() => reader.varint());
-				return { hold, members, failed, retired };
-			});
+			const holds = reader.list(readStateEntry);
 			return { kind, holds };
 		}
 		case "failed": {
@@ -322,15 +315,15 @@ function decodeFields(kind: (typeof KINDS)[number], reader: Reader): Message {
 			// The schema check after decoding establishes the wire error.
 			const error = reader.json() as Extract<Message, { kind: "error" }>["error"];
 			const retryIn = reader.varint();
-			return {
-				kind,
-				hold,
-				cause: { kind: cause, error },
-				...(retryIn === 0 ? {} : { retryIn: retryIn - 1 }),
-			};
+			const message: Writable<Extract<Message, { kind: "failed" }>> = { kind, hold, cause: { kind: cause, error } };
+			if (retryIn !== 0) message.retryIn = retryIn - 1;
+			return message;
 		}
-		case "result":
-			return { kind, call: reader.varint(), ...reader.payload("value") };
+		case "result": {
+			const message: Writable<Extract<Message, { kind: "result" }>> = { kind, call: reader.varint() };
+			reader.payload(message, "value");
+			return message;
+		}
 		case "error":
 			return { kind, call: reader.varint(), error: reader.json() as Extract<Message, { kind: "error" }>["error"] };
 		case "gone":
@@ -338,10 +331,12 @@ function decodeFields(kind: (typeof KINDS)[number], reader: Reader): Message {
 		case "revoke":
 			return { kind, revocation: reader.json() };
 		case "event": {
-			const events = reader.list(() => {
-				const [hold, member, at] = [reader.varint(), reader.varint(), reader.varint()];
-				return { hold, member, at, value: reader.part() };
-			});
+			const events = reader.list((reader) => ({
+				hold: reader.varint(),
+				member: reader.varint(),
+				at: reader.varint(),
+				value: reader.part(),
+			}));
 			return { kind, events };
 		}
 		case "ack":
@@ -352,6 +347,51 @@ function decodeFields(kind: (typeof KINDS)[number], reader: Reader): Message {
 			// Its origin is the kind byte's; 0 without one, which the message schema refuses.
 			return { kind, origin: 0 };
 	}
+}
+
+/** A message's fields, set while it is decoded. */
+type Writable<T> = { -readonly [K in keyof T]: T[K] };
+
+/**
+ * The readers of a list's elements: module functions taking the reader, so a list costs no closure per decode (lists
+ * are read for every `bound`, `state` and `event`).
+ */
+function readVarint(reader: Reader): number {
+	return reader.varint();
+}
+
+function readUuid(reader: Reader): string {
+	return uuid(reader.raw(16));
+}
+
+function readBoundEntry(reader: Reader): BoundEntry {
+	const hold = reader.varint();
+	const granted = reader.list(readVarint);
+	const members = reader.list(readBoundMember);
+	return { hold, granted, members, failed: reader.failed() };
+}
+
+function readBoundMember(reader: Reader): BoundEntry["members"][number] {
+	return { member: reader.varint(), value: reader.part() };
+}
+
+function readStateEntry(reader: Reader): StateEntry {
+	const hold = reader.varint();
+	const members = reader.list(readStateMember);
+	// The failure count times two, plus one when retirements follow.
+	const flags = reader.varint();
+	const failed = reader.failedEntries(Math.floor(flags / 2));
+	const retired = flags % 2 === 0 ? NO_RETIRED : reader.list(readVarint);
+	return { hold, members, failed, retired };
+}
+
+function readStateMember(reader: Reader): StateEntry["members"][number] {
+	return { member: reader.varint(), ops: reader.part() };
+}
+
+function readFailedMember(reader: Reader): FailedMember {
+	// The message schema checks each error's shape.
+	return { member: reader.varint(), error: reader.json() as FailedMember["error"] };
 }
 
 /** Up to this many UTF-16 units a string takes at most 126 bytes, so its length is one varint byte. */
@@ -641,22 +681,34 @@ class Reader {
 	}
 
 	/** A list: its count (each element takes at least a byte, so it cannot pass the message's end), then its elements. */
-	list<T>(read: () => T): T[] {
-		const count = this.varint();
-		if (count > this.#bytes.byteLength - this.#offset) throw new Error("binary: a count does not fit");
-		return Array.from({ length: count }, read);
+	list<T>(read: (reader: Reader) => T): T[] {
+		return this.#elements(this.varint(), read);
 	}
 
-	/** A payload part under `key`, absent when not present, with its segments when marked as carrying them. */
-	payload<K extends string>(key: K): { [P in K]?: Part } & { segments?: Uint8Array[] } {
+	/**
+	 * `count` elements, pushed: a packed list as `Array.from` made it (a list made at its length has holes to its
+	 * readers' code), without its array-like and its calls.
+	 */
+	#elements<T>(count: number, read: (reader: Reader) => T): T[] {
+		if (count > this.#bytes.byteLength - this.#offset) throw new Error("binary: a count does not fit");
+		const list: T[] = [];
+		for (let index = 0; index < count; index++) list.push(read(this));
+		return list;
+	}
+
+	/**
+	 * A payload part set on `message` under `key`, left absent when not present, with its segments when marked as
+	 * carrying them.
+	 */
+	payload<K extends string>(message: { [P in K]?: Part } & { segments?: readonly Uint8Array[] }, key: K): void {
 		const flags = this.varint();
-		if (flags === 0) return {};
+		if (flags === 0) return;
 		if (flags !== PRESENT && flags !== (PRESENT | SEGMENTS)) throw new Error("binary: unknown payload flags");
-		const part = this.part();
-		if (flags === PRESENT) return { [key]: part } as { [P in K]?: Part };
-		const lengths = this.list(() => this.varint());
-		const segments = lengths.map((length) => this.raw(length));
-		return { [key]: part, segments } as { [P in K]?: Part } & { segments: Uint8Array[] };
+		// A key of the message's own payload field.
+		(message as Record<K, Part>)[key] = this.part();
+		if (flags === PRESENT) return;
+		const lengths = this.list(readVarint);
+		message.segments = lengths.map((length) => this.raw(length));
 	}
 
 	failed(): FailedMember[] {
@@ -665,12 +717,7 @@ class Reader {
 
 	/** `count` failed members, as `Writer.failed` writes them after their count. */
 	failedEntries(count: number): FailedMember[] {
-		if (count > this.#bytes.byteLength - this.#offset) throw new Error("binary: a count does not fit");
-		// The message schema checks each error's shape.
-		return Array.from({ length: count }, () => ({
-			member: this.varint(),
-			error: this.json() as Extract<Message, { kind: "error" }>["error"],
-		}));
+		return this.#elements(count, readFailedMember);
 	}
 
 	/** The message is consumed exactly. */
@@ -690,12 +737,37 @@ function notHex(length: number): Error {
 	return new Error(`binary: not ${length} bytes of hex`);
 }
 
+/** The ASCII of the lowercase hex digits. */
+const DIGITS = UTF8.encode("0123456789abcdef");
+
+/**
+ * Where decoded hex is spelled out before it is read as one string (a flat one: no array, join or concatenation per
+ * fingerprint or incarnation); one decode at a time uses them.
+ */
+const FINGERPRINT_TEXT = new Uint8Array(16);
+
+const UUID_TEXT = UTF8.encode("00000000-0000-0000-0000-000000000000");
+
+/** 8 bytes (a fingerprint) as lowercase hex. */
 function hexText(bytes: Uint8Array): string {
-	return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+	for (let index = 0; index < 8; index++) {
+		const byte = bytes[index]!;
+		FINGERPRINT_TEXT[index * 2] = DIGITS[byte >> 4]!;
+		FINGERPRINT_TEXT[index * 2 + 1] = DIGITS[byte & 15]!;
+	}
+	return readUtf8(FINGERPRINT_TEXT);
 }
+
+/** Where each of a UUID's 16 bytes is spelled in its text: two digits, after its dashes. */
+const UUID_AT = [0, 2, 4, 6, 9, 11, 14, 16, 19, 21, 24, 26, 28, 30, 32, 34];
 
 /** 16 bytes as a UUID's text. */
 function uuid(bytes: Uint8Array): string {
-	const text = hexText(bytes);
-	return `${text.slice(0, 8)}-${text.slice(8, 12)}-${text.slice(12, 16)}-${text.slice(16, 20)}-${text.slice(20)}`;
+	for (let index = 0; index < 16; index++) {
+		const byte = bytes[index]!;
+		const at = UUID_AT[index]!;
+		UUID_TEXT[at] = DIGITS[byte >> 4]!;
+		UUID_TEXT[at + 1] = DIGITS[byte & 15]!;
+	}
+	return readUtf8(UUID_TEXT);
 }

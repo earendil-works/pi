@@ -621,6 +621,53 @@ describe("the binary codec", () => {
 		}
 	});
 
+	it("decodes optional fields in their order and leaves absent ones unset (no key of `undefined`)", () => {
+		const incarnation = "0192f5e2-7c3a-7def-8abc-0123456789ab";
+		const keys = (message: Message) => Object.keys(binaryCodec.decode(binaryCodec.encode(message)));
+		const hold = {
+			kind: "hold",
+			hold: 0,
+			type: "t",
+			version: 1,
+			fingerprint: "0123456789abcdef",
+			params: "{}",
+			address: server,
+		} as const;
+		expect(keys(hold)).toEqual(["kind", "hold", "type", "version", "fingerprint", "params", "address"]);
+		expect(
+			keys({ ...hold, principal: { kind: "p" }, incarnation, chain: [incarnation], limit: 3, trace: { a: "b" } }),
+		).toEqual([
+			"kind",
+			"hold",
+			"type",
+			"version",
+			"fingerprint",
+			"params",
+			"address",
+			"principal",
+			"incarnation",
+			"chain",
+			"limit",
+			"trace",
+		]);
+		expect(keys({ kind: "call", call: 0, hold: 0, method: 0 })).toEqual(["kind", "call", "hold", "method"]);
+		const segments = [new Uint8Array([1])];
+		expect(keys({ kind: "call", call: 0, hold: 0, method: 0, args: "[]", segments, old: true })).toEqual([
+			"kind",
+			"call",
+			"hold",
+			"method",
+			"args",
+			"segments",
+			"old",
+		]);
+		expect(keys({ kind: "result", call: 0 })).toEqual(["kind", "call"]);
+		expect(keys({ kind: "result", call: 0, value: "1", origin: 2 })).toEqual(["kind", "call", "value", "origin"]);
+		const cause = { kind: "broken", error: { kind: "chord", error: { code: "released", message: "" } } } as const;
+		expect(keys({ kind: "failed", hold: 0, cause })).toEqual(["kind", "hold", "cause"]);
+		expect(keys({ kind: "failed", hold: 0, cause, retryIn: 0 })).toEqual(["kind", "hold", "cause", "retryIn"]);
+	});
+
 	it("refuses invalid UTF-8 in strings", () => {
 		expect(() => binaryCodec.decode(new Uint8Array([1, 0, 1, 0xff]))).toThrow();
 	});
