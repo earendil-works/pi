@@ -76,6 +76,18 @@ const Notes = defineDoc<{ text: string }>({
 	checkpointWhen: () => true,
 });
 
+/** The Harness `DeleteOwn` deletes through. */
+let deleting: Harness | undefined;
+
+/** Deletes its own conversation, as a retention job running inside it would; its abort mark ends its wait. */
+const DeleteOwn = defineTask<null, { phase: "delete" }, null>({
+	name: "test.delete-own",
+	version: 1,
+	initial: () => ({ phase: "delete" }),
+	phases: { delete: (task, _runtime, ctx) => deleting!.deleteConversations([task.conversationId], ctx) },
+	abort: (_task, runtime, ctx) => runtime.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), ctx),
+});
+
 const directories = new Set<string>();
 afterEach(async () => {
 	abortGates.clear();
@@ -95,7 +107,7 @@ const storages: Record<string, () => Promise<Storage>> = {
 };
 
 async function open(storage: Storage): Promise<Harness> {
-	const { harness } = await openTasks(storage, [Hold, Waiter]);
+	const { harness } = await openTasks(storage, [Hold, Waiter, DeleteOwn]);
 	harness.resume();
 	return harness;
 }
@@ -235,26 +247,17 @@ describe("Harness.deleteConversations", () => {
 		await harness.close(context);
 	});
 
-	it("refuses the root, a live owner, and a fork left behind, aborting nothing", async () => {
+	it("refuses the root and a live owner elsewhere, aborting nothing", async () => {
 		const harness = await open(new MemoryStorage());
 		await harness.root(context);
 		expect(await refusal(harness.deleteConversations([ROOT_CONVERSATION_ID], context))).toEqual({ kind: "root" });
 
-		const parent = await ownerless(harness);
-		const entry = await parent.commit(
-			(tx) => tx.appendEntry(parent.id, { kind: "message", model: [user("shared")] }),
-			context,
-		);
-		const fork = await parent.fork(entry.id, { ownership: { kind: "ownerless" } }, context);
-		const live = await parent.commit(
+		const owner = await ownerless(harness);
+		const live = await owner.commit(
 			(tx) => tx.createTask(Hold, {}, { ownership: { kind: "conversation" } }),
 			context,
 		);
-		expect(await refusal(harness.deleteConversations([parent.id], context))).toEqual({
-			kind: "fork",
-			forkId: fork.id,
-		});
-		const owned = await parent.commit(
+		const owned = await owner.commit(
 			(tx) => tx.createConversation({ ownership: { kind: "task", taskId: live } }),
 			context,
 		);
@@ -262,13 +265,56 @@ describe("Harness.deleteConversations", () => {
 		// Nothing was aborted, nor closed.
 		expect(await status(harness, live)).toBe("running");
 		expect((await harness.getTask(live, context))?.abortRequested).toBe(false);
-		await parent.submit({ type: "write", entry: { kind: "note" } }, context);
+		await (await harness.conversation(owned.id, context))!.submit(
+			{ type: "write", entry: { kind: "note" } },
+			context,
+		);
+		await harness.close(context);
+	});
 
-		// The fork goes with its parent, and the owned conversation with its owner's.
-		await harness.deleteConversations([parent.id, fork.id], context);
-		for (const id of [parent.id, fork.id, owned.id]) {
+	it("deletes the forks with their parent, and theirs, with the conversations their tasks own", async () => {
+		const harness = await open(new MemoryStorage());
+		const parent = await ownerless(harness);
+		const elsewhere = await ownerless(harness);
+		const entry = await parent.commit(
+			(tx) => tx.appendEntry(parent.id, { kind: "message", model: [user("shared")] }),
+			context,
+		);
+		const fork = await parent.fork(entry.id, { ownership: { kind: "ownerless" } }, context);
+		const forkEntry = await fork.commit(
+			(tx) => tx.appendEntry(fork.id, { kind: "message", model: [user("branch")] }),
+			context,
+		);
+		const nested = await fork.fork(forkEntry.id, { ownership: { kind: "ownerless" } }, context);
+		const live = await nested.commit(
+			(tx) => tx.createTask(Hold, {}, { ownership: { kind: "conversation" } }),
+			context,
+		);
+		const owned = await nested.commit(
+			(tx) => tx.createConversation({ ownership: { kind: "task", taskId: live } }),
+			context,
+		);
+
+		await harness.deleteConversations([parent.id], context);
+		for (const id of [parent.id, fork.id, nested.id, owned.id]) {
 			expect(await harness.conversation(id, context)).toBeUndefined();
 		}
+		expect(await status(harness, live)).toBeUndefined();
+		expect(await harness.conversation(elsewhere.id, context)).toBeDefined();
+		await harness.close(context);
+	});
+
+	it("deletes the conversation of the task that asked for it: its abort mark ends its wait", async () => {
+		const harness = await open(new MemoryStorage());
+		deleting = harness;
+		const conversation = await ownerless(harness);
+		const task = await conversation.commit(
+			(tx) => tx.createTask(DeleteOwn, null, { ownership: { kind: "conversation" } }),
+			context,
+		);
+		await eventually(async () => (await harness.conversation(conversation.id, context)) === undefined);
+		expect(await status(harness, task)).toBeUndefined();
+		deleting = undefined;
 		await harness.close(context);
 	});
 

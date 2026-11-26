@@ -1101,8 +1101,10 @@ A reset deletes nothing: the older entries stay in storage.
 
 `deleteConversations(ids)` removes conversations for good, in two commits
 with a durable closing state between them. The set it deletes is the given
-conversations and, transitively, every conversation a task of one of them owns;
-unknown IDs are skipped, so a repeated call is harmless.
+conversations and, transitively, their forks, whose history reads the parent's
+entries (found through the `parentConversationId` index), and every
+conversation a task of one of them owns; unknown IDs are skipped, so a
+repeated call is harmless.
 
 1. **Closing.** One commit checks the set and refuses with `DeletionRefused`,
    whose `refusal` says why, before anything is aborted or written:
@@ -1110,10 +1112,7 @@ unknown IDs are skipped, so a repeated call is harmless.
      (section 10), as JSONL and the Chord store do not;
    - `root`: the root conversation, which `root()` would create again with its
      reserved ID;
-   - `owner`: a conversation whose owner task, outside the set, is live;
-   - `fork`: a conversation with a fork outside the set, whose history reads
-     the parent's entries; forks are found through the `parentConversationId`
-     index.
+   - `owner`: a conversation whose owner task, outside the set, is live.
 
    Otherwise the commit adds the set to the built-in session document
    `pi.deletions` (below), settles every item of their inboxes `unanswered`

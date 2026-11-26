@@ -933,7 +933,7 @@ The examples show both patterns as product code:
 await harness.deleteConversations([conversation.id], context);
 ```
 
-Deletion is for good. It takes the conversations and the conversations their tasks own, such as subagents. One commit closes them: from then on they take no new submission, task, or fork (`ConversationDeleting`), their queued submissions settle `unanswered` with reason `deleted`, and their live tasks, background ones included, are aborted. Once that work has ended, a second commit removes their entries, tasks, submissions, and documents, and ends their views. The Harness finishes that second commit itself: cancelling the call stops only the wait for it. A crash or close in between leaves them closed; the reopened Harness finishes the deletion once it schedules. Unknown IDs are skipped, so a call repeated after restoring a backup is harmless; IDs are never reused. If finishing fails, the Harness reports `deletion_failed` and the conversations stay closed; `inspect().deleting` lists them, and a later call or the next open finishes them. A task elsewhere that waited on one of their tasks reads its outcome as `orphaned` with reason `deleted` once it is gone. Like `submit()`, the call enables scheduling, so that the aborted tasks' handlers run. `usage()` sums the conversations that remain, so its total drops.
+Deletion is for good. It takes the conversations, their forks (whose history reads theirs), and the conversations their tasks own, such as subagents, and so on for those. One commit closes them: from then on they take no new submission, task, or fork (`ConversationDeleting`), their queued submissions settle `unanswered` with reason `deleted`, and their live tasks, background ones included, are aborted. Once that work has ended, a second commit removes their entries, tasks, submissions, and documents, and ends their views. The Harness finishes that second commit itself: cancelling the call stops only the wait for it. A crash or close in between leaves them closed; the reopened Harness finishes the deletion once it schedules. Unknown IDs are skipped, so a call repeated after restoring a backup is harmless; IDs are never reused. If finishing fails, the Harness reports `deletion_failed` and the conversations stay closed; `inspect().deleting` lists them, and a later call or the next open finishes them. A task elsewhere that waited on one of their tasks reads its outcome as `orphaned` with reason `deleted` once it is gone. Like `submit()`, the call enables scheduling, so that the aborted tasks' handlers run. `usage()` sums the conversations that remain, so its total drops.
 
 It refuses with `DeletionRefused` before it aborts anything; `error.refusal.kind` says why:
 
@@ -942,7 +942,6 @@ It refuses with `DeletionRefused` before it aborts anything; `error.refusal.kind
 | `unsupported` | The storage cannot erase a conversation (JSONL) |
 | `root` | The root conversation |
 | `owner` | A live task of another conversation owns it; delete that conversation too, or end the task |
-| `fork` | A fork that is not deleted with it reads its history; pass the forks in the same call |
 
 What is erased depends on the backend:
 

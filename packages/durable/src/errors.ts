@@ -97,13 +97,12 @@ export class ConversationDeleting extends Error {
 
 /**
  * Why `Harness.deleteConversations()` refused a conversation: the Storage cannot delete; it is the root conversation;
- * a live task outside the deleted set owns it; a fork outside the set reads its history.
+ * a live task outside the deleted set owns it.
  */
 export type DeletionRefusal =
 	| { readonly kind: "unsupported" }
 	| { readonly kind: "root" }
-	| { readonly kind: "owner"; readonly taskId: TaskId }
-	| { readonly kind: "fork"; readonly forkId: ConversationId };
+	| { readonly kind: "owner"; readonly taskId: TaskId };
 
 /** `Harness.deleteConversations()` refused, before it aborted or deleted anything. */
 export class DeletionRefused extends Error {
@@ -126,7 +125,5 @@ function refusalText(refusal: DeletionRefusal): string {
 			return "it is the root conversation";
 		case "owner":
 			return `live task ${refusal.taskId} owns it`;
-		case "fork":
-			return `fork ${refusal.forkId} is not deleted with it`;
 	}
 }
