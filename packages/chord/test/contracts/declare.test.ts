@@ -96,52 +96,6 @@ describe("declaration checks", () => {
 			"n.flags.export: expected its label as a message ({ namespace, key, params })",
 		],
 		[
-			"a flag label whose parameter is no plain value",
-			"n",
-			{ version: 1, params: {}, hostAddress, flags: { export: { namespace: "n", key: "k", params: [{}] } } },
-			"n.flags.export: expected its label as a message ({ namespace, key, params })",
-		],
-		// Review of the flag labels, Sol: values `MessageSchema` refuses and JSON would change.
-		[
-			"a flag label with NaN among its parameters",
-			"n",
-			{ version: 1, params: {}, hostAddress, flags: { export: { namespace: "n", key: "k", params: [Number.NaN] } } },
-			"n.flags.export: expected its label as a message ({ namespace, key, params })",
-		],
-		[
-			"a flag label with an infinite number among its parameters",
-			"n",
-			{
-				version: 1,
-				params: {},
-				hostAddress,
-				flags: { export: { namespace: "n", key: "k", params: [Number.POSITIVE_INFINITY] } },
-			},
-			"n.flags.export: expected its label as a message ({ namespace, key, params })",
-		],
-		[
-			"a flag label with a hole among its parameters",
-			"n",
-			{
-				version: 1,
-				params: {},
-				hostAddress,
-				flags: { export: { namespace: "n", key: "k", params: new Array<null>(1) } },
-			},
-			"n.flags.export: expected its label as a message ({ namespace, key, params })",
-		],
-		[
-			"a flag label with a key a message has not",
-			"n",
-			{
-				version: 1,
-				params: {},
-				hostAddress,
-				flags: { export: { namespace: "n", key: "k", params: [], text: "x" } },
-			},
-			"n.flags.export: expected its label as a message ({ namespace, key, params })",
-		],
-		[
 			"a schema under methods",
 			"n",
 			{ version: 1, params: {}, hostAddress, methods: { m: str() } },
@@ -320,6 +274,15 @@ describe("grantable members and flags (slice 15 §1.1)", () => {
 		expectTypeOf(messages.message("flagExport")).toEqualTypeOf<MessageData<"canvas", "flagExport">>();
 		// @ts-expect-error a key the catalog has not
 		messages.message("flagImport");
+		const labelledByText = () =>
+			remote("canvas.text", {
+				version: 1,
+				params: {},
+				hostAddress,
+				// @ts-expect-error a label is a message, not its text
+				flags: { export: "Export as image" },
+			});
+		expect(labelledByText).toThrow("canvas.text.flags.export: expected its label as a message");
 	});
 
 	it("put grantability and the flag names in the fingerprint, not the labels", () => {

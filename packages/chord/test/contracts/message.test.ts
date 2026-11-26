@@ -28,6 +28,13 @@ const CASES: readonly (readonly [name: string, value: unknown, message: boolean]
 	["a text", "Export", false],
 	["null", null, false],
 	["the three values in a list", ["n", "k", []], false],
+	// Round 2 (Astra): JSON sends a list or bytes as a list, whatever fields they carry.
+	["a list carrying the three fields", Object.assign([], { namespace: "n", key: "k", params: [] }), false],
+	[
+		"bytes carrying the three fields",
+		Object.assign(new Uint8Array(0), { namespace: "n", key: "k", params: [] }),
+		false,
+	],
 	["no parameters", { namespace: "n", key: "k" }, false],
 	["a field more", { namespace: "n", key: "k", params: [], text: "x" }, false],
 	["a field more, undefined", { namespace: "n", key: "k", params: [], text: undefined }, false],
@@ -51,7 +58,10 @@ describe("isMessageData", () => {
 		expect(schema.check(value)).toBe(message);
 	});
 
-	it("refuses an inherited field and an accessor, which the compiled schema reads (stricter: a label is data)", () => {
+	it("refuses an inherited field, an accessor and an inherited parameter, which the compiled schema reads (stricter)", () => {
+		// A parameter only the prototype has (round 2, Astra): the slot is a hole of its own.
+		const slots: unknown[] = new Array(1);
+		Object.setPrototypeOf(slots, Object.assign(Object.create(Array.prototype), { 0: "x" }));
 		const accessor = {
 			key: "k",
 			params: [],
@@ -59,7 +69,7 @@ describe("isMessageData", () => {
 				return "n";
 			},
 		};
-		for (const value of [inherited, accessor]) {
+		for (const value of [inherited, accessor, { namespace: "n", key: "k", params: slots }]) {
 			expect(schema.check(value)).toBe(true);
 			expect(isMessageData(value)).toBe(false);
 		}

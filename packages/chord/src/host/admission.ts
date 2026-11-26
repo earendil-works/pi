@@ -9,9 +9,9 @@
 
 import type { Context } from "../context/index.ts";
 import type { AllowedOf, Contract, NamedQuery, ParamsOf } from "../contracts/index.ts";
-import { NO_GRANTS } from "../contracts/internal.ts";
+import { isMessageData, NO_GRANTS } from "../contracts/internal.ts";
 import { ChordError, forbidden, type MessageData, type Principal } from "../data/index.ts";
-import { asChordError, checkParams, isMessageData, sameJson, stackless } from "../data/internal.ts";
+import { asChordError, checkParams, sameJson, stackless } from "../data/internal.ts";
 import type { JsonValue } from "../json.ts";
 import { appended, NO_ITEMS } from "../lists.ts";
 import type { Registry, RegistryValue } from "../registries/index.ts";

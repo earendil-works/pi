@@ -1,6 +1,6 @@
 // Tests of the plugins component (slice 7c §4, §5, §7): per plugin at startup and reload (a failing build, evaluation,
 // setup; unchanged plugins untouched; added and removed plugins; the closure rule through builds), `rollout` (order,
-// stopping at a rejecting step, marks), installs through the component, the app's API and required roots (slice 12), GC
+// stopping at a rejecting step, marks), `apply` (one at a time, a queued caller leaving), installs through the component, the app's API and required roots (slice 12), GC
 // over 200 reloads, and end to end a server and a worker loading plugin directories, an edit rolled out, a broken edit
 // kept old on both hosts.
 
@@ -398,6 +398,61 @@ describe("rollout", () => {
 			await plugins.rollout([step("server", [], { report: report([]) })], later, context);
 			expect(plugins.state.value).toMatchObject({ dirty: ["@test/a"] });
 		});
+		plugins.close();
+	});
+});
+
+describe("apply (round 2 of the perf pass, ERNDL-1060)", () => {
+	/** A step that waits for `held` once it began (`began` resolves), then reloads no host. */
+	const heldStep = (began: () => void, held: Promise<void>): RolloutStep => ({
+		name: "held",
+		kinds: ["worker"],
+		reload: async () => {
+			began();
+			await held;
+			return { hosts: [] };
+		},
+	});
+
+	it("builds and rolls out one apply at a time: a call starts its build once the previous apply ended", async () => {
+		const root = await tempRoot();
+		await itemPlugin(root, "a", "a1");
+		const { plugins } = await component(root);
+		const began = Promise.withResolvers<void>();
+		const held = Promise.withResolvers<void>();
+		const first = plugins.apply([heldStep(began.resolve, held.promise)], context);
+		await began.promise;
+		const build = vi.spyOn(plugins, "build");
+		const second = plugins.apply([], context);
+		await new Promise((resolve) => setImmediate(resolve));
+		expect(build).not.toHaveBeenCalled();
+		held.resolve();
+		expect((await first).stopped).toBeUndefined();
+		expect((await second).stopped).toBeUndefined();
+		expect(build).toHaveBeenCalledTimes(1);
+		plugins.close();
+	});
+
+	it("lets a queued caller stop waiting (Astra): its apply builds nothing, the next one waits for the first", async () => {
+		const root = await tempRoot();
+		await itemPlugin(root, "a", "a1");
+		const { plugins } = await component(root);
+		const began = Promise.withResolvers<void>();
+		const held = Promise.withResolvers<void>();
+		const first = plugins.apply([heldStep(began.resolve, held.promise)], context);
+		await began.promise;
+		const build = vi.spyOn(plugins, "build");
+		const controller = new AbortController();
+		const second = plugins.apply([], withAbortSignal(controller.signal, context));
+		controller.abort(new Error("the caller left"));
+		expect(await rejection(second)).toMatchObject({ message: "the caller left" });
+		const third = plugins.apply([], context);
+		await new Promise((resolve) => setImmediate(resolve));
+		expect(build).not.toHaveBeenCalled();
+		held.resolve();
+		await first;
+		expect((await third).stopped).toBeUndefined();
+		expect(build).toHaveBeenCalledTimes(1);
 		plugins.close();
 	});
 });

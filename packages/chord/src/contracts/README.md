@@ -108,6 +108,7 @@ Rules:
 - A method's `args.bytes` and `result.bytes`: whether the schema has a `bytes()` leaf, decided once at declaration (a
   link then encodes the method's values with byte segments).
 - `kindParams(kind)`: a declared host kind's `ParamsData` (a route checks addresses with it).
+- `isMessageData(value)`: whether plugin code handed a message as data (a flag's label, a denial's message).
 - `NORMAL_FORM_VERSION`: changing the normal form changes it and the fingerprints; it is a link-protocol change.
   Fingerprints are a portable hash, not a security boundary. Each member is a node of its kind (`{ state }`, `{ args,
   result }`, `{ keyed }`, `{ event }`): a contract without keyed or event members keeps its fingerprint.
