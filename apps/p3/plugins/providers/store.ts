@@ -41,7 +41,8 @@ import {
 } from "@earendil-works/p3/v1";
 import { createModels, ModelsError, ServerRuntime } from "@earendil-works/p3/v1/server";
 import { type LoginChange, LoginStore } from "./contract.server.ts";
-import { type RequestAuth, SignInMethod } from "./contract.ts";
+import { SignInMethod } from "./contract.ts";
+import type { RequestAuth } from "./kind.ts";
 import { LoginProviders } from "./login-providers.ts";
 import { Turns } from "./turns.ts";
 

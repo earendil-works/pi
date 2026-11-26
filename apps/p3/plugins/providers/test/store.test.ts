@@ -271,7 +271,7 @@ describe("a rotation", () => {
 		assert.deepEqual(JSON.parse(String(row.models)), ["m"]);
 	});
 
-	it("is stored, and nothing of the provider's error logged, when that error's name is private or throws (Astra)", async (t) => {
+	it("is stored, nothing of its error logged, when the error's name is private or throws (Astra)", async (t) => {
 		const base = fauxProvider({ provider: "named", api: "named", models: [{ id: "m" }] }).provider;
 		let throws = false;
 		const named = {
@@ -386,7 +386,7 @@ describe("a reload while a refresh runs", () => {
 		assert.equal((await next).auth.apiKey, "rotated");
 	});
 
-	it("lets a refresh that read an older credential and failed refuse nothing its predecessor's rotation wrote", async (t) => {
+	it("lets a refresh of an older credential that failed refuse nothing the rotation wrote", async (t) => {
 		// Each refresh waits for its own gate; the first rotates the token, the second (the spent token) is refused.
 		const gates = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
 		const entered = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
@@ -480,7 +480,7 @@ describe("the lease of a refresh", () => {
 		}
 	});
 
-	it("of a refresh still running is never taken: a request waiting for it a minute fails, sending nothing (Astra)", async (t) => {
+	it("of a running refresh is never taken: a request waiting a minute fails, sending nothing (Astra)", async (t) => {
 		const { entered, release, plugin } = gated();
 		const host = await served(t, [plugin]);
 		const older = await host.store();

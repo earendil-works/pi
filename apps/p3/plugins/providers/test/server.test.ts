@@ -29,7 +29,8 @@ import { ThingsStore } from "../../things/contract.server.ts";
 import type { Source } from "../../things/contract.ts";
 import thingsServer from "../../things/server.ts";
 import { LoginStore, SignIns } from "../contract.server.ts";
-import { Login, LoginKind, SignIn } from "../contract.ts";
+import { SignIn } from "../contract.ts";
+import { Login, LoginKind } from "../kind.ts";
 import { ensureLogin, makeLogin, setCredential } from "../logins.ts";
 
 /** A person's principal. */
@@ -624,7 +625,7 @@ describe("who gets the request auth", () => {
 		assert.equal(oauth.refreshes, 1, "no second refresh of a refused credential");
 	});
 
-	it("keeps its models after a failed refresh, so a request a while later tries again and works (Opus, Astra)", async () => {
+	it("keeps its models after a failed refresh, and a later request works (Opus, Astra)", async () => {
 		const { workspace, agent } = await session("s1");
 		const thing = await serverLogin(workspace, "oauth-test", {
 			type: "oauth",

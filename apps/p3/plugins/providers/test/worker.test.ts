@@ -29,7 +29,7 @@ import fauxWorker from "../../../test/plugins/faux-login/worker.ts";
 import { within } from "../../../test/until.ts";
 import { type HarnessSession, type HeldThing, ThingHarnessParts } from "../../things/contract.worker.ts";
 import thingsWorker from "../../things/worker.ts";
-import { type Login, type LoginInfo, LoginKind, type RequestAuth } from "../contract.ts";
+import { type Login, type LoginInfo, LoginKind, type RequestAuth } from "../kind.ts";
 import providersWorker from "../worker.ts";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));

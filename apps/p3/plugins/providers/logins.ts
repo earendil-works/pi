@@ -7,7 +7,7 @@ import { type Ctx, callerKey, type P3Principal } from "@earendil-works/p3/v1";
 import { ThingsStore } from "../things/contract.server.ts";
 import type { Source } from "../things/contract.ts";
 import { LoginStore, SignIns } from "./contract.server.ts";
-import { LoginKind } from "./contract.ts";
+import { LoginKind } from "./kind.ts";
 
 /**
  * What a login made by server code is: its name, where it is linked (`ensureLogin`: Pi when left out), who made it,

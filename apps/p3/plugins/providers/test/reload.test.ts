@@ -18,7 +18,8 @@ import { within } from "../../../test/until.ts";
 import { ThingsStore } from "../../things/contract.server.ts";
 import type { Source } from "../../things/contract.ts";
 import type { World } from "../../things/test/world.ts";
-import { Login, SignIn } from "../contract.ts";
+import { SignIn } from "../contract.ts";
+import { Login } from "../kind.ts";
 import { makeLogin } from "../logins.ts";
 import { PROVIDERS, providersWorld } from "./hosts.ts";
 

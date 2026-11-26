@@ -19,7 +19,8 @@ import {
 	unknown,
 } from "@earendil-works/p3/v1";
 import { Source } from "../things/contract.ts";
-import { Attempt, RequestAuth, SignInMethod } from "./contract.ts";
+import { Attempt, SignInMethod } from "./contract.ts";
+import { RequestAuth } from "./kind.ts";
 
 /**
  * A login as its store has it, without its credential: its provider, how it signs in, whether it works

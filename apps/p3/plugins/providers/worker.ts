@@ -16,7 +16,7 @@ import {
 } from "@earendil-works/p3/v1";
 import { lazyStream, loadProvider } from "@earendil-works/p3/v1/worker";
 import { type HeldThing, ThingHarnessParts, thingHarnessPart } from "../things/contract.worker.ts";
-import { type Login, LoginKind } from "./contract.ts";
+import { type Login, LoginKind } from "./kind.ts";
 import { LoginProviders, type ProviderMap, serveLoginProviders } from "./login-providers.ts";
 
 export default defineFacet((host) => {

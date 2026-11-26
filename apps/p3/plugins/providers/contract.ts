@@ -1,15 +1,12 @@
-// The providers plugin's contract: logins at model providers as a kind of thing (`providers.login`: one sign-in, OAuth
-// or an API key; made by people only, never an agent, so a credential is always a person's decision) and the sign-in a
-// person runs on their page before a login exists (`SignIn`). Who may do what is the things plugin's: Use (agents)
-// gives `authorize`, the request auth for one model request, and `catalog`, the login's models. The credential itself
-// never appears in any state, argument or result but `authorize`'s, which only the session's worker gets.
+// The providers plugin's contract, for every plugin that shows a sign-in (this plugin's page, later the model
+// picker): how a login signs in (`SignInMethod`) and the sign-in a person runs on their own page before a login exists
+// (`SignIn`: the providers there are, the person's current attempt, its questions and notices). A finished sign-in's
+// credential stays on the server; only its attempt id reaches a login's create step. The login kind is `kind.ts`.
 
 import {
 	arr,
-	bool,
 	lit,
 	MessageSchema,
-	map,
 	method,
 	nul,
 	num,
@@ -22,73 +19,13 @@ import {
 	type Static,
 	str,
 	union,
-	unknown,
 } from "@earendil-works/p3/v1";
-import { defineThing } from "../things/kind.ts";
-import { messages } from "./messages.ts";
 
 /** How a login signs in: an API key (perhaps with provider settings) or OAuth. */
 export const SignInMethod = oneOf("api_key", "oauth");
 
 /** How a login signs in (see `SignInMethod`). */
 export type SignInMethod = Static<typeof SignInMethod>;
-
-/** One of a login's models, as pickers and the Settings view show it. */
-export const ModelInfo = obj({ id: str(), name: str(), reasoning: bool(), contextWindow: num() });
-
-/** One of a login's models (see `ModelInfo`). */
-export type ModelInfo = Static<typeof ModelInfo>;
-
-/**
- * A login as everyone admitted sees it: its provider (id and name), how it signs in, whether its credential works
- * (`signInAgain`: its last refresh failed, refused or not reached; shown only, a request a while later tries again),
- * and the models its account has.
- */
-export const LoginInfo = obj({
-	provider: str(),
-	providerName: str(),
-	method: SignInMethod,
-	status: oneOf("signedIn", "signInAgain"),
-	models: arr(ModelInfo),
-});
-
-/** A login as everyone admitted sees it (see `LoginInfo`). */
-export type LoginInfo = Static<typeof LoginInfo>;
-
-/**
- * The request auth of one model request (pi-ai's `AuthResult`): an API key, headers or a base address, provider
- * settings (`env`) and a label for status lines.
- */
-export const RequestAuth = obj({
-	auth: obj({ apiKey: opt(str()), headers: opt(map(union([str(), nul()]))), baseUrl: opt(str()) }),
-	env: opt(map(str())),
-	source: opt(str()),
-});
-
-/** The request auth of one model request (see `RequestAuth`). */
-export type RequestAuth = Static<typeof RequestAuth>;
-
-/**
- * A login (`providers.login`): its `login` for everyone admitted (`null` while its credential is not stored: made a
- * moment ago, or deleted); Use, for agents, gives `authorize` (the request auth of the login's provider, refreshed on
- * the server when it expired) and `catalog` (the models its account has, as pi-ai's `Model` definitions: plain data,
- * what a worker's requests need; the worker loads no catalog of its own; whatever the status says: after a failed
- * refresh a request tries again, which needs a model). Logins have no model or money limits (decision 89). A new link
- * gives the agents Use, nobody else anything; its maker gets every tick (item 90). Its create step hands over
- * `{ attempt }`: a sign-in its maker finished, never a secret.
- */
-export const LoginKind = defineThing("providers.login", {
-	version: 1,
-	makers: "people",
-	state: { login: union([LoginInfo, nul()]), catalog: arr(unknown()) },
-	methods: { authorize: method(obj({}), RequestAuth) },
-	ticks: { use: { label: messages.message("tickUse"), for: "agents", gives: ["authorize", "catalog"] } },
-	defaultGrants: { agents: ["use"] },
-	create: { input: obj({ attempt: str() }) },
-});
-
-/** One login held in a workspace: `LoginKind`'s contract. */
-export const Login = LoginKind.contract;
 
 /** A provider a person may sign in to, and how. */
 export const ProviderChoice = obj({
