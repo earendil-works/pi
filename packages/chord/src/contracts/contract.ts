@@ -318,37 +318,64 @@ export const NO_GRANTS: ReadonlySet<string> = new Set();
 
 /**
  * The members of `version` a binding granted `granted` has: its plain members and the granted ones. Shared per version
- * and set of granted members (a `WeakMap` keyed by the version: gone with its contract).
+ * and set of granted members (a `WeakMap` keyed by the version: gone with its contract), and found by the set itself
+ * first: granted sets are shared (`grantedSet` in `host/admission.ts`), so a bind makes no key (0.95 KiB per bind).
  */
 export function grantedMembers(version: VersionData, granted: ReadonlySet<string>): MembersData {
 	if (version.grantable.size === 0) return version.members;
+	let shapes = grantedShapes.get(version);
+	if (shapes === undefined) {
+		shapes = { bySet: new WeakMap(), byNames: new Map() };
+		grantedShapes.set(version, shapes);
+	}
+	let members = shapes.bySet.get(granted);
+	if (members !== undefined) return members;
+	// Another set of the same names (a consumer's, a test's) shares the members of its names' key.
 	const kept = [...version.grantable].filter((member) => granted.has(member)).sort();
 	const key = JSON.stringify(kept);
-	let byGrant = grantedShapes.get(version);
-	if (byGrant === undefined) {
-		byGrant = new Map();
-		grantedShapes.set(version, byGrant);
-	}
-	let members = byGrant.get(key);
+	members = shapes.byNames.get(key);
 	if (members === undefined) {
 		const plain = <T>(entries: ReadonlyMap<string, T>): ReadonlyMap<string, T> =>
 			new Map([...entries].filter(([member]) => !version.grantable.has(member) || granted.has(member)));
 		const { state, methods, keyed, events, queries } = version.members;
 		members = { state: plain(state), methods: plain(methods), keyed, events: plain(events), queries };
-		byGrant.set(key, members);
+		shapes.byNames.set(key, members);
 	}
+	shapes.bySet.set(granted, members);
 	return members;
 }
 
-const grantedShapes = new WeakMap<VersionData, Map<string, MembersData>>();
+/** A version's granted members: by the granted set (while it lives), and by the granted members' names. */
+type GrantedShapes = {
+	readonly bySet: WeakMap<ReadonlySet<string>, MembersData>;
+	readonly byNames: Map<string, MembersData>;
+};
 
-/** The names of `granted` as the wire carries them: indexes into `version.grants` (names it lacks are left out). */
+const grantedShapes = new WeakMap<VersionData, GrantedShapes>();
+
+/**
+ * The names of `granted` as the wire carries them: indexes into `version.grants` (names it lacks are left out). One
+ * list per version and granted set, kept while both live (a message's lists are never written once made): a bind
+ * walks nothing (0.37 KiB per bind).
+ */
 export function grantIndexes(version: VersionData, granted: ReadonlySet<string>): number[] {
 	if (granted.size === 0) return NO_INDEXES;
-	const indexes: number[] = [];
-	for (const [index, name] of version.grants.entries()) if (granted.has(name)) indexes.push(index);
+	let lists = grantIndexLists.get(version);
+	if (lists === undefined) {
+		lists = new WeakMap();
+		grantIndexLists.set(version, lists);
+	}
+	let indexes = lists.get(granted);
+	if (indexes === undefined) {
+		indexes = [];
+		const { grants } = version;
+		for (let index = 0; index < grants.length; index++) if (granted.has(grants[index]!)) indexes.push(index);
+		lists.set(granted, indexes);
+	}
 	return indexes;
 }
+
+const grantIndexLists = new WeakMap<VersionData, WeakMap<ReadonlySet<string>, number[]>>();
 
 /** No indexes: shared (a message's lists are never written once made). */
 const NO_INDEXES: number[] = [];

@@ -26,6 +26,7 @@ import {
 	currentMembers,
 	currentVersion,
 	grantedMembers,
+	grantIndexes,
 	memberOrder,
 	takesNoArgs,
 } from "../../src/contracts/internal.ts";
@@ -89,6 +90,52 @@ describe("member names", () => {
 
 	it("refuses a copy of a contract", () => {
 		expect(() => memberNames({ ...Notes })).toThrow("not a declared contract");
+	});
+});
+
+describe("granted members and indexes", () => {
+	it("are the same for an equal set of other objects: the same members, the same indexes in the grants' order", () => {
+		const version = currentVersion(Notes);
+		const granted = new Set(["clear", "add"]);
+		const members = grantedMembers(version, granted);
+		expect([...members.methods.keys()]).toEqual(["add", "clear"]);
+		expect(grantedMembers(version, granted)).toBe(members);
+		expect(grantedMembers(version, new Set(["add", "clear"]))).toBe(members);
+		expect([...grantedMembers(version, new Set(["clear"])).methods.keys()]).toEqual(["clear"]);
+		const indexes = grantIndexes(version, granted);
+		expect(indexes).toEqual([0, 1]);
+		expect(grantIndexes(version, granted)).toBe(indexes);
+		expect(grantIndexes(version, new Set(["clear", "add"]))).toEqual([0, 1]);
+		expect(grantIndexes(version, new Set(["clear", "other"]))).toEqual([1]);
+	});
+
+	it("keep no granted set, and are collected with their contract", async () => {
+		const held: { contract?: object } = {};
+		const { sets, kept } = (() => {
+			const contract = remote("gc.granted", {
+				version: 1,
+				params: {},
+				hostAddress: () => Server(),
+				state: { n: int() },
+				methods: { go: grantable(method()) },
+			});
+			held.contract = contract;
+			const version = currentVersion(contract);
+			const granted = new Set(["go"]);
+			const members = grantedMembers(version, granted);
+			grantIndexes(version, granted);
+			// Another set of the same names shares the members; neither set is kept by the caches.
+			const other = new Set(["go"]);
+			expect(grantedMembers(version, other)).toBe(members);
+			grantIndexes(version, other);
+			return {
+				sets: [new WeakRef(granted), new WeakRef(other)],
+				kept: [new WeakRef(contract), new WeakRef(members)],
+			};
+		})();
+		await expectCollected(...sets);
+		held.contract = undefined;
+		await expectCollected(...kept);
 	});
 });
 
