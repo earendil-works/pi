@@ -677,12 +677,7 @@ describe("what a decision compares a read with", () => {
 // read walks the listed names, not every grant of the contract.
 describe("the order of a read", () => {
 	/** A decision granting `grants`, read with an allow of `value` under `under`. */
-	function reader(grants: readonly string[]) {
-		const host = new ChordHost<TestPrincipal>({
-			address: Server(),
-			principal: { kind: "server" },
-			onError: () => {},
-		});
+	function reader(grants: readonly string[], host = readerHost()) {
 		const source = new (class extends Source {
 			next: unknown;
 			get value(): never {
@@ -698,6 +693,33 @@ describe("the order of a read", () => {
 			return decision.now(under) as Allowed;
 		};
 	}
+
+	function readerHost() {
+		return new ChordHost<TestPrincipal>({ address: Server(), principal: { kind: "server" }, onError: () => {} });
+	}
+
+	// Found by the review of the pass (first reviewer, 2026-11-26): a reused scratch list kept the size of the widest
+	// value a decision ever read (2,735 B per decision); a decision keeps only what its last read needs.
+	it("a short-lived wide value leaves no storage per decision once a small value replaces it (heap guard)", async () => {
+		const host = readerHost();
+		const reads = Array.from({ length: 6_000 }, () => reader([], host));
+		const small = { n: 1 };
+		const wide = Object.fromEntries(Array.from({ length: 128 }, (_, n) => [`f${n}`, n]));
+		for (const read of reads) {
+			read(small);
+			read(small);
+		}
+		const before = await settledHeap();
+		for (const read of reads) {
+			read(wide);
+			read(small);
+			read(small);
+		}
+		const each = ((await settledHeap()) - before) / reads.length;
+		expect(reads[400]!(small).value).toMatchObject({ n: 1 });
+		// Measured: under 1 B on the base, 2,735 B with the scratch list, under 3 B now.
+		expect(each).toBeLessThan(512);
+	}, 60_000);
 
 	it("equal reads stay one verdict and changes rebuild, from 30 to 33 names", () => {
 		for (const n of [30, 31, 32, 33]) {
