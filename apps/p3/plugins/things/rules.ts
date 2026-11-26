@@ -6,7 +6,7 @@
 // (`takenFromNamed`), and a people switch naming a person hides them by every route (`hiddenHere`). The index
 // (`access.ts`) computes with these and nothing else.
 
-import { isReserved, kindOfMakeTick, MAKE_ANY, OPEN } from "./contract.ts";
+import { isReserved, kindOfMakeTick, MAKE_ANY, OPEN, type Party, type Source } from "./contract.ts";
 import type { Makers, Stacking, TickFor, WorkspaceSort } from "./kind.ts";
 
 /** A party's key (`partyKey`), as the maps in memory are keyed. */
@@ -27,6 +27,9 @@ export function audienceOf(kind: "everyone" | "agents" | "person" | "group" | "a
 export type GrantEntry = {
 	readonly thing: string;
 	readonly party: PartyKey;
+	/** Its party and source as written (what the Settings view shows of a row). */
+	readonly who: Party;
+	readonly source: Source;
 	readonly audience: Audience;
 	readonly tick: string;
 	/** Given (counts where the thing is linked), or withheld (there and below). */
@@ -39,6 +42,8 @@ export type WorkspaceEntries = {
 	readonly id: string;
 	/** Its own thing's kind (a workspace kind). */
 	readonly kind: string;
+	/** Its own thing's name. */
+	readonly name: string;
 	/** The workspace above (`""`: none, the root). */
 	readonly parent: string;
 	readonly showsThings: boolean;
@@ -61,6 +66,8 @@ export type WorkspaceEntries = {
  */
 export type ThingHere = {
 	readonly kind: string;
+	/** The workspace it is linked in, whose grants apply (the nearest link at or above). */
+	readonly at: string;
 	readonly ticks: ReadonlyMap<PartyKey, ReadonlySet<string>>;
 	/**
 	 * The ticks rows at or below the link withhold from a person or a named agent by every route (item 106); `OPEN`
@@ -194,7 +201,7 @@ function thingsHere(
 		if (list === undefined) giving.set(thing, [grant]);
 		else list.push(grant);
 	}
-	for (const [thing, kind] of own.links) here.set(thing, linkedHere(kind, giving.get(thing) ?? [], kinds));
+	for (const [thing, kind] of own.links) here.set(thing, linkedHere(kind, own.id, giving.get(thing) ?? [], kinds));
 	dropFarther(here, own, kinds);
 	// The withheld rows of each thing applied at once: one copy per thing, however many rows (a wide workspace).
 	const withholding = new Map<string, GrantEntry[]>();
@@ -226,6 +233,7 @@ function ownHere(own: WorkspaceEntries, kinds: KindsLookup): OwnHere {
 	const rows = own.ownGrants;
 	const given = linkedHere(
 		own.kind,
+		own.id,
 		rows.filter((row) => row.gives),
 		kinds,
 	);
@@ -258,7 +266,7 @@ function makeTickFor(tick: string, kinds: KindsLookup): TickFor | undefined {
  * A thing linked here: the parties its giving rows written here (`grants`) let in, each with its ticks (nothing below
  * a link adds). `OPEN` lets its party in with no tick; a tick that counts lets it in with that tick (item 113).
  */
-function linkedHere(kind: string, grants: readonly GrantEntry[], kinds: KindsLookup): ThingHere {
+function linkedHere(kind: string, at: string, grants: readonly GrantEntry[], kinds: KindsLookup): ThingHere {
 	const ticks = new Map<PartyKey, Set<string>>();
 	for (const grant of grants) {
 		const open = grant.tick === OPEN;
@@ -273,7 +281,7 @@ function linkedHere(kind: string, grants: readonly GrantEntry[], kinds: KindsLoo
 		if (!open) own.add(grant.tick);
 		ticks.set(grant.party, own);
 	}
-	return { kind, ticks: ticks.size === 0 ? NO_TICKS : ticks, takenFromNamed: NO_TICKS };
+	return { kind, at, ticks: ticks.size === 0 ? NO_TICKS : ticks, takenFromNamed: NO_TICKS };
 }
 
 /** Whether a tick for `forWhom` counts for a party of `audience` (an unknown tick counts for nobody). */
@@ -306,7 +314,7 @@ function withheld(given: ThingHere, rows: readonly GrantEntry[]): ThingHere {
 		}
 	}
 	if (ticks === undefined && named === undefined) return given;
-	return { kind: given.kind, ticks: ticks ?? given.ticks, takenFromNamed: named ?? given.takenFromNamed };
+	return { ...given, ticks: ticks ?? given.ticks, takenFromNamed: named ?? given.takenFromNamed };
 }
 
 /**

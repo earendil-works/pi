@@ -73,7 +73,7 @@ const CATCHING_UP: Decision = deny("things: the kind's grants are being read aga
 const SERVER: Caller = { kind: "server" };
 
 /** Who `principal` is as a caller: a person, a session's agent (its worker), the server. */
-function callerOf(principal: P3Principal): Caller {
+export function callerOf(principal: P3Principal): Caller {
 	switch (principal.kind) {
 		case "person":
 			return { kind: "person", person: principal.id };

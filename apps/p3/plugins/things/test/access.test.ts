@@ -499,6 +499,7 @@ describe("the index's own mechanics", () => {
 			return {
 				id,
 				kind: "things.workspace",
+				name: "w",
 				ownGrants: [],
 				parent: found.parent,
 				showsThings: true,
@@ -512,6 +513,8 @@ describe("the index's own mechanics", () => {
 								{
 									thing: "sketch",
 									party: "everyone",
+									who: { kind: "everyone" } as const,
+									source: { kind: "plugin", plugin: "test" } as const,
 									audience: "people",
 									tick: "read",
 									gives: true,
@@ -581,6 +584,7 @@ describe("the index under races, failures and load", () => {
 	const rows = (...ids: string[]) => ({
 		id: "w",
 		kind: "things.workspace",
+		name: "w",
 		ownGrants: [],
 		parent: "",
 		showsThings: true,
@@ -695,6 +699,8 @@ describe("the index under races, failures and load", () => {
 				return id;
 			},
 			party: "everyone",
+			who: { kind: "everyone" } as const,
+			source: { kind: "plugin", plugin: "test" } as const,
 			audience: "people" as const,
 			tick: "a",
 			gives: true,
@@ -717,6 +723,8 @@ describe("the index under races, failures and load", () => {
 		const n = 128;
 		const grants = Array.from({ length: n }, (_, i) => ({
 			thing: "board",
+			who: { kind: "everyone" } as const,
+			source: { kind: "plugin", plugin: "test" } as const,
 			audience: "people" as const,
 			party: `person/${i}`,
 			tick: "a",

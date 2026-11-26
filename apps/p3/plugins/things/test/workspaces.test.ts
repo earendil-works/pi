@@ -18,7 +18,16 @@ import {
 import { eventually, within } from "../../../test/until.ts";
 import { Gives, ThingsStore } from "../contract.server.ts";
 import { MAKE_ANY, makeTick, type Party, type Source } from "../contract.ts";
-import { Workspace } from "../workspace.ts";
+import {
+	Linkable,
+	Roots,
+	ThingInfo,
+	WhoMay,
+	Workspace,
+	WorkspaceChildren,
+	WorkspaceContents,
+	WorkspacePeople,
+} from "../workspace.ts";
 import { WorkspaceKind } from "../workspaces.ts";
 import { BOARD, BOARD_PLUGIN, Board, Defaults, Login, SESSION, SPACES, TestSession } from "./kinds.ts";
 import { type World, world } from "./world.ts";
@@ -507,3 +516,190 @@ describe("configure (86)", () => {
 		);
 	});
 });
+
+describe("the lists (R34 to R38)", () => {
+	/** The rows of list `List` for `principal`, held for `fn`. */
+	const listOf = async <T>(principal: P3Principal, fn: (ctx: Ctx<P3Principal>) => Promise<T>) => as(principal, fn);
+
+	it("roots: the topmost workspaces present in; an owner's is Pi; live", async () => {
+		const { leo, fam } = await family();
+		const owner = await person("Mario");
+		await store.setOwner({ person: owner.id, owner: true }, context);
+		await listOf(owner, async (ctx) => {
+			const roots = await ctx.get(Roots, { view: "v" });
+			assert.deepEqual(
+				roots.list.value.rows.map((row) => row.workspace),
+				[pi],
+			);
+		});
+		await listOf(leo, async (ctx) => {
+			const roots = await ctx.get(Roots, { view: "v" });
+			assert.deepEqual(roots.list.value.rows, [{ workspace: fam, kind: WorkspaceKind.name, name: "Family" }]);
+			await put(pi, leo);
+			await until(roots.list, (list) => list.rows[0]?.workspace === pi, within("Leo's root moves up", context));
+			assert.equal(roots.list.value.rows.length, 1);
+		});
+	});
+
+	it("children: those the caller is present in, live", async () => {
+		const { anna, leo, fam, robot } = await family();
+		await listOf(anna, async (ctx) => {
+			const children = await ctx.get(WorkspaceChildren, { workspace: fam, view: "v" });
+			assert.deepEqual(
+				children.list.value.rows.map((row) => row.workspace),
+				[robot],
+			);
+			const mine = await store.createWorkspace(
+				{ kind: WorkspaceKind.name, name: "Leo's", parent: fam, by: source(leo), showsPeople: false },
+				context,
+			);
+			const open = await store.createWorkspace(
+				{ kind: WorkspaceKind.name, name: "A open", parent: fam, by: BY },
+				context,
+			);
+			await until(children.list, (list) => list.rows.length === 2, within("a new child", context));
+			assert.deepEqual(
+				children.list.value.rows.map((row) => row.workspace),
+				[open, robot],
+			);
+			void mine;
+		});
+	});
+
+	it("contents: what is here with where it is linked as the caller may see it (96), and what is hidden here", async () => {
+		const { anna, fam } = await family();
+		const tools = await store.create({ kind: Board.name, name: "tools", workspace: pi, by: BY }, context);
+		const sketch = await store.create({ kind: Board.name, name: "sketch", workspace: fam, by: BY }, context);
+		await own(fam, party(anna), ["hide"]);
+		await listOf(anna, async (ctx) => {
+			const contents = await ctx.get(WorkspaceContents, { workspace: fam, view: "v" });
+			const rows = () => Object.fromEntries(contents.list.value.rows.map((row) => [row.name, row]));
+			assert.deepEqual(rows().tools, {
+				thing: tools,
+				kind: Board.name,
+				name: "tools",
+				from: { kind: "aboveUnnamed" },
+				hidden: false,
+			});
+			assert.deepEqual(rows().sketch?.from, { kind: "here" });
+			await (await ctx.get(Workspace, { workspace: fam })).hide!({ thing: tools, shown: false }, ctx);
+			await until(contents.list, (list) => list.rows.some((row) => row.hidden), within("hidden", context));
+			assert.equal(rows().tools?.hidden, true);
+			await store.rename({ thing: sketch, name: "Sketch" }, context);
+			await until(
+				contents.list,
+				(list) => list.rows.some((row) => row.name === "Sketch"),
+				within("renamed", context),
+			);
+		});
+		await put(pi, anna);
+		await listOf(anna, async (ctx) => {
+			const contents = await ctx.get(WorkspaceContents, { workspace: fam, view: "v" });
+			assert.deepEqual(contents.list.value.rows.find((row) => row.thing === tools)?.from, {
+				kind: "above",
+				workspace: pi,
+				name: "Pi",
+			});
+		});
+	});
+
+	it("people: who is here and from where; a person not present is denied the list", async () => {
+		const { anna, leo, fam, robot } = await family();
+		await listOf(leo, async (ctx) => {
+			const people = await ctx.get(WorkspacePeople, { workspace: robot, view: "v" });
+			const rows = Object.fromEntries(people.list.value.rows.map((row) => [partyKeyOf(row.party), row]));
+			assert.deepEqual(rows[`person/${anna.id}`], {
+				party: party(anna),
+				name: "Anna",
+				from: { kind: "above", workspace: fam, name: "Family" },
+				hidden: false,
+				outside: false,
+			});
+			assert.deepEqual(rows[`person/${leo.id}`]?.from, { kind: "here" });
+			assert.deepEqual(rows[`agent/${robot}`]?.from, { kind: "here" });
+		});
+		const kim = await person("Kim");
+		await as(kim, (ctx) =>
+			assert.rejects(ctx.get(WorkspacePeople, { workspace: fam, view: "v" }, { readyTimeout: 200 })),
+		);
+	});
+
+	it("linkable: things linked above where the caller has Link, by a name prefix", async () => {
+		const { leo, fam, robot } = await family();
+		const tools = await store.create({ kind: Board.name, name: "tools", workspace: pi, by: BY }, context);
+		await store.create({ kind: Board.name, name: "other", workspace: fam, by: BY }, context);
+		await put(pi, leo);
+		await own(pi, party(leo), ["link"]);
+		await listOf(leo, async (ctx) => {
+			const linkable = await ctx.get(Linkable, { workspace: robot, query: "to", view: "v" });
+			assert.deepEqual(linkable.list.value.rows, [
+				{ thing: tools, kind: Board.name, name: "tools", from: { kind: "above", workspace: pi, name: "Pi" } },
+			]);
+		});
+	});
+
+	it("thing info: its kind, name, view and where it is linked; denied without an answer", async () => {
+		const { anna, fam } = await family();
+		const sketch = await store.create({ kind: Board.name, name: "sketch", workspace: fam, by: BY }, context);
+		await listOf(anna, async (ctx) => {
+			const info = await ctx.get(ThingInfo, { workspace: fam, thing: sketch });
+			assert.deepEqual(info.info.value, { thing: sketch, kind: Board.name, name: "sketch", from: { kind: "here" } });
+			const ownInfo = await ctx.get(ThingInfo, { workspace: fam, thing: fam });
+			assert.equal(ownInfo.info.value.kind, WorkspaceKind.name);
+		});
+		const kim = await person("Kim");
+		await as(kim, (ctx) =>
+			assert.rejects(ctx.get(ThingInfo, { workspace: fam, thing: sketch }, { readyTimeout: 200 })),
+		);
+	});
+
+	it("who may: the kind's ticks, its rows here with their sources, who has what; Make cells on a workspace", async () => {
+		const { anna, leo, fam } = await family();
+		const sketch = await store.create({ kind: Board.name, name: "sketch", workspace: fam, by: BY }, context);
+		await own(fam, party(anna), ["manageAccess"]);
+		await holding(leo, fam, async () => undefined);
+		await as(leo, (ctx) => assert.rejects(ctx.get(WhoMay, { workspace: fam, thing: sketch }, { readyTimeout: 200 })));
+		await listOf(anna, async (ctx) => {
+			const who = await ctx.get(WhoMay, { workspace: fam, thing: sketch });
+			const table = who.table.value;
+			assert.deepEqual(
+				table.ticks.map((tick) => tick.name),
+				["read", "write", "draw", "moderate", "bash", "look"],
+			);
+			const everyone = table.rows.find((row) => row.party.kind === "everyone")!;
+			assert.deepEqual(everyone.ticks.read, {
+				here: [
+					{ gives: true, source: { kind: "plugin", plugin: BOARD_PLUGIN }, kindDefault: true, inEffect: true },
+				],
+				has: true,
+			});
+			const leoRow = table.rows.find((row) => row.party.kind === "person" && row.party.person === leo.id)!;
+			assert.equal(leoRow.name, "Leo");
+			assert.deepEqual(leoRow.ticks.read, { here: [], has: true });
+			assert.deepEqual(leoRow.ticks.draw, { here: [], has: false });
+			await (await ctx.get(Workspace, { workspace: fam })).setTick!(
+				{ thing: sketch, party: party(leo), tick: "draw", gives: true },
+				ctx,
+			);
+			await until(
+				who.table,
+				(t) => t.rows.some((row) => row.name === "Leo" && row.ticks.draw?.has === true),
+				within("Leo draws", context),
+			);
+			const ws = await ctx.get(WhoMay, { workspace: fam, thing: fam });
+			const cells = Object.keys(ws.table.value.rows[0]!.ticks);
+			assert.ok(cells.includes(MAKE_ANY) && cells.includes(makeTick(Board)) && cells.includes("manageAccess"));
+		});
+	});
+});
+
+/** A party's key, as the tests compare them. */
+function partyKeyOf(party: Party): string {
+	return party.kind === "everyone" || party.kind === "agents"
+		? party.kind
+		: party.kind === "person"
+			? `person/${party.person}`
+			: party.kind === "group"
+				? `group/${party.group}`
+				: `agent/${party.session}`;
+}

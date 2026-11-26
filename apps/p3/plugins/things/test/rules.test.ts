@@ -379,6 +379,7 @@ describe("the rules alone", () => {
 	const entries = (own: Partial<WorkspaceEntries>): WorkspaceEntries => ({
 		id: "w",
 		kind: "things.workspace",
+		name: "w",
 		ownGrants: [],
 		parent: "",
 		showsThings: true,
@@ -402,6 +403,8 @@ describe("the rules alone", () => {
 	const grantOf = (own: Partial<GrantEntry>): GrantEntry => ({
 		thing: "sketch",
 		party: "everyone",
+		who: { kind: "everyone" } as const,
+		source: { kind: "plugin", plugin: "test" } as const,
 		audience: "people",
 		tick: OPEN,
 		gives: true,

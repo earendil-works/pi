@@ -7,6 +7,7 @@ import { defineFacet, keyedEntries } from "@earendil-works/p3/v1";
 import { serveGives } from "./admission.ts";
 import { AccessHandles, ThingHooks } from "./contract.server.ts";
 import { kindView, ThingKinds, ThingKindsView } from "./kind.ts";
+import { serveLists } from "./lists.ts";
 import { serveOne } from "./one.ts";
 import { serveStore } from "./store.ts";
 import { serveWorkspace } from "./workspace-object.ts";
@@ -32,4 +33,5 @@ export default defineFacet((host) => {
 	serveOne(host);
 	serveWorkspaceKind(host);
 	serveWorkspace(host);
+	serveLists(host);
 });

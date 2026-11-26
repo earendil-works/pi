@@ -53,6 +53,7 @@ export function readerOf(q: Read, kinds: () => Kinds, reported: Set<string>): Re
 			return {
 				id,
 				kind: row.kind,
+				name: row.name,
 				parent: row.parent,
 				showsThings: row.showsThings,
 				showsPeople: row.showsPeople,
@@ -79,7 +80,7 @@ export function readerOf(q: Read, kinds: () => Kinds, reported: Set<string>): Re
 const PAGE = 1000;
 
 /** Every item of `named` for `args`, page after page (a set that decides access is read whole), each page counted. */
-async function readAll<T, A>(named: NamedQuery<T, A>, args: A, context: Context): Promise<T[]> {
+export async function readAll<T, A>(named: NamedQuery<T, A>, args: A, context: Context): Promise<T[]> {
 	const items: T[] = [];
 	let after: string | undefined;
 	do {
@@ -143,6 +144,6 @@ function grantEntries(
 }
 
 /** `grant`'s row read as `tick`. */
-function entryOf({ thing, party, gives }: GrantItem, tick: string): GrantEntry {
-	return { thing, party: partyKey(party), audience: audienceOf(party.kind), tick, gives };
+function entryOf({ thing, party, source, gives }: GrantItem, tick: string): GrantEntry {
+	return { thing, party: partyKey(party), who: party, source, audience: audienceOf(party.kind), tick, gives };
 }

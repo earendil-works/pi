@@ -256,6 +256,7 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			},
 			attach: async (workspace, caller, observer, ctx) => index?.attach(workspace, caller, observer, ctx),
 			answer: async (workspace, thing, caller, ctx) => index?.answer(workspace, thing, caller, ctx),
+			probe: async (probe, observer, ctx) => index?.probe(probe, observer, ctx),
 		});
 		/**
 		 * One write: its transaction under `ctx`, one at a time with the index's work (`AccessIndex.commit`), which
@@ -436,7 +437,7 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 					throw invalid("args", `things: ${row.kind} has no settings to configure`);
 				}
 				if (name !== undefined || view !== undefined)
-					await write(async (tx) => writes.configure(tx, thing, name, view), ctx);
+					await write(async (tx, touched) => writes.configure(tx, touched, thing, name, view), ctx);
 				if (checked !== undefined) await configure!(thing, checked, ctx);
 				return null;
 			},
@@ -459,7 +460,8 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			ensure: ({ kind }, ctx) => seedKind(kind, ctx),
 			link: (args, ctx) => write((tx, touched) => writes.link(tx, touched, args), ctx),
 			unlink: (args, ctx) => write((tx, touched) => writes.unlink(tx, touched, args), ctx),
-			rename: ({ thing, name }, ctx) => write(async (tx) => writes.configure(tx, thing, name, undefined), ctx),
+			rename: ({ thing, name }, ctx) =>
+				write(async (tx, touched) => writes.configure(tx, touched, thing, name, undefined), ctx),
 			setSwitch: (args, ctx) => write((tx, touched) => writes.setSwitch(tx, touched, args), ctx),
 			setDefaults: (args, ctx) => write((tx, touched) => writes.setDefaults(tx, touched, args), ctx),
 			setGrants: (args, ctx) => write((tx, touched) => writes.setGrants(tx, touched, args), ctx),
@@ -597,6 +599,17 @@ function namedQueries(self: StoreSelf<P3Principal>, t: Tables) {
 				// The key's prefix.
 				here: ({ workspace }: { workspace: string }) =>
 					query(WorkspaceMembers).where((m) => eq(m.workspace, workspace)),
+				// Index `by_party`: where a party is put in (a caller's roots).
+				where: ({ partyKey }: { partyKey: string }) =>
+					query(WorkspaceMembers).where((m) => eq(m.partyKey, partyKey)),
+			},
+		),
+		groups: self.queries(
+			t.groups,
+			{ map: ({ group, name, outside }) => ({ group, name, outside }) },
+			{
+				// The key, IN: the groups of a list (their names).
+				ofIds: ({ groups }: { groups: string[] }) => query(Groups).where((g) => inArray(g.group, groups)),
 			},
 		),
 		switches: self.queries(
@@ -991,9 +1004,21 @@ class Writes {
 		return null;
 	}
 
-	/** Changes a thing's name and its own default view (`""`: the kind's); no access changes: nothing touched. */
-	async configure(tx: Tx, thing: string, name: string | undefined, view: string | undefined): Promise<null> {
+	/**
+	 * Changes a thing's name and its own default view (`""`: the kind's); a workspace renamed is touched (the index
+	 * keeps its name for the lists), nothing else.
+	 */
+	async configure(
+		tx: Tx,
+		touched: Touched,
+		thing: string,
+		name: string | undefined,
+		view: string | undefined,
+	): Promise<null> {
 		if ((await tx.get(this.#t.things, { thing })) === undefined) throw invalid("args", `things: no thing ${thing}`);
+		if (name !== undefined) touched.things.add(thing);
+		if (name !== undefined && (await tx.get(this.#t.workspaces, { workspace: thing })) !== undefined)
+			touched.workspaces.add(thing);
 		tx.update(
 			this.#t.things,
 			{ thing },

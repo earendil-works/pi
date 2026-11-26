@@ -120,6 +120,21 @@ export function partyKey(party: Party): string {
 	}
 }
 
+/** The party whose key (`partyKey`) is `key`: its inverse, for what the index keeps by key. */
+export function partyOf(key: string): Party {
+	if (key === "everyone" || key === "agents") return { kind: key };
+	const at = key.indexOf("/");
+	const id = key.slice(at + 1);
+	switch (key.slice(0, at)) {
+		case "person":
+			return { kind: "person", person: id };
+		case "group":
+			return { kind: "group", group: id };
+		default:
+			return { kind: "agent", session: id };
+	}
+}
+
 /**
  * The key of `source`; a thing's, a provider's and a plugin's are the same texts as `managedByKey` makes (the cleanup
  * matches them).

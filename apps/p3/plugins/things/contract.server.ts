@@ -25,7 +25,7 @@ import {
 	union,
 	unknown,
 } from "@earendil-works/p3/v1";
-import type { Attachment } from "./access.ts";
+import type { Attachment, Probe, ProbeAttachment } from "./access.ts";
 import { type Caller, Item, ManagedBy, Party, Source } from "./contract.ts";
 import type { DefaultGrants } from "./kind.ts";
 import type { Answer as Answered } from "./rules.ts";
@@ -101,6 +101,9 @@ export type GrantInput = Static<typeof GrantInput>;
 /** A person: their id, name, whether they have the owner flag, and who made them. */
 export const PersonRow = obj({ person: str(), name: str(), owner: bool(), madeBy: Source });
 
+/** A group: its id, name, and whether it is outside (its members never count as everyone here). */
+export const GroupRow = obj({ group: str(), name: str(), outside: bool() });
+
 /** A person in a group, as one source put them there, with whether the group is outside. */
 export const GroupMemberRow = obj({ group: str(), person: str(), source: Source, outside: bool() });
 
@@ -133,12 +136,16 @@ export const ThingsStore = local("things.store", {
 			under: obj({ pathPrefix: str() }),
 		}),
 		links: queries(LinkRow, { here: obj({ workspace: str() }), where: obj({ thing: str() }) }),
-		workspaceMembers: queries(WorkspaceMemberRow, { here: obj({ workspace: str() }) }),
+		workspaceMembers: queries(WorkspaceMemberRow, {
+			here: obj({ workspace: str() }),
+			where: obj({ partyKey: str() }),
+		}),
 		switches: queries(SwitchRow, { here: obj({ workspace: str() }) }),
 		grants: queries(GrantRow, { here: obj({ workspace: str() }) }),
 		// `ofIds`: the persons of a list in one read (the notes plugin reads its notes' authors' names with it).
 		persons: queries(PersonRow, { one: obj({ person: str() }), ofIds: obj({ persons: arr(str()) }) }),
 		groupMembers: queries(GroupMemberRow, { ofPerson: obj({ person: str() }) }),
+		groups: queries(GroupRow, { ofIds: obj({ groups: arr(str()) }) }),
 		/**
 		 * Makes a thing of `kind` in `workspace`: the kind's `create` hook first, with the new id (item 34), then one
 		 * commit: the thing, its link, the kind's default grants, and every tick for its maker (`by`, a person or a
@@ -263,6 +270,12 @@ export type AccessHandle = {
 		observer: FollowObserver<unknown>,
 		context: Context,
 	): Promise<Attachment | undefined>;
+	/** Attaches `observer` to a probe over the index (a list's rows, live); `undefined` once the index closed. */
+	probe<T>(
+		probe: Probe<T>,
+		observer: FollowObserver<unknown>,
+		context: Context,
+	): Promise<ProbeAttachment<T> | undefined>;
 	/** The answer `caller` gets for `thing` in `workspace` now (`undefined`: nothing, or the store ended). Not live. */
 	answer(workspace: string, thing: string, caller: Caller, context: Context): Promise<Answered | undefined>;
 };
