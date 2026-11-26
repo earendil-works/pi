@@ -1,7 +1,7 @@
 // The things plugin's contracts for server facets only: the store (`ThingsStore`: every table's rows as named
 // queries, and every write; trusted server code, it checks no caller), `Gives` (what a workspace gives one caller,
 // what every thing's admission derives from), the registry the store hands its access index to admissions through
-// (`AccessHandles`), and the kinds' hooks (`ThingHooks`).
+// (`AccessHandles`), the kinds' hooks (`ThingHooks`), and a kind's seeded thing (`OneThing`).
 
 import {
 	arr,
@@ -94,7 +94,7 @@ export const ThingsStore = local("things.store", {
 		workspaceMembers: queries(WorkspaceMemberRow, { here: obj({ workspace: str() }) }),
 		switches: queries(SwitchRow, { here: obj({ workspace: str() }) }),
 		grants: queries(GrantRow, { here: obj({ workspace: str() }) }),
-		persons: queries(PersonRow, { one: obj({ person: str() }) }),
+		persons: queries(PersonRow, { one: obj({ person: str() }), ofIds: obj({ persons: arr(str()) }) }),
 		groupMembers: queries(GroupMemberRow, { ofPerson: obj({ person: str() }) }),
 		/**
 		 * Makes a thing of `kind` in `workspace`: the kind's `create` hook first, with the new id (item 34), then one
@@ -102,6 +102,11 @@ export const ThingsStore = local("things.store", {
 		 * session's agent; item 90). Answers its id.
 		 */
 		create: method(obj({ kind: str(), name: str(), workspace: str(), by: Source, input: opt(unknown()) }), str()),
+		/**
+		 * Plugin `plugin`'s one thing of `kind`: the one it made, else one made in `workspace` through the create path
+		 * (the kind's hook first, as `create`, by the plugin). Answers its id.
+		 */
+		ensure: method(obj({ kind: str(), name: str(), workspace: str(), plugin: str(), input: opt(unknown()) }), str()),
 		/** Links a thing into a workspace, with its kind's default grants there. */
 		link: method(obj({ workspace: str(), thing: str(), by: Source })),
 		/** Unlinks a thing and what the workspace wrote for it (R15); with its last link the thing goes. */
@@ -170,21 +175,47 @@ export type AccessHandle = {
  */
 export const AccessHandles = defineRegistry<AccessHandle, AccessHandle | undefined>("things.access", { version: 1 });
 
-/** A kind's hooks on the server: what is in a new thing (`create`), and clearing it when it goes (`delete`). */
+/**
+ * A kind's hooks on the server: what is in a new thing (`create`), its settings changed (`configure`), clearing it
+ * when it goes (`delete`); and the plugin's one thing in Pi it asks for (`one`, `serveThing`'s).
+ */
 export type ThingHook = {
 	readonly kind: string;
 	/**
-	 * Prepares what is in a new thing from `input`, before the commit that makes it (item 34): a throw makes nothing.
+	 * Prepares what is in a new thing from `input`, made by `by`, before the commit that makes it (item 34): a throw
+	 * makes nothing (a kind refuses there what its maker may not use, as a login another person's sign-in).
 	 */
-	readonly create?: (thing: string, input: unknown, ctx: Ctx<P3Principal>) => Promise<void>;
+	readonly create?: (thing: string, input: unknown, by: Source, ctx: Ctx<P3Principal>) => Promise<void>;
+	/**
+	 * Sets `settings`, some of the kind's settings (`KindInfo.settings`: state members), on `thing`; `Workspace.configure`
+	 * calls it (slice 2) with values checked against their state members' schemas.
+	 */
+	readonly configure?: (
+		thing: string,
+		settings: Readonly<Record<string, unknown>>,
+		ctx: Ctx<P3Principal>,
+	) => Promise<void>;
 	/**
 	 * Clears what is in a deleted thing, or in one whose commit failed after `create`; for a deleted thing tried again,
 	 * with backoff and at every start, until it succeeds.
 	 */
 	readonly delete?: (thing: string, ctx: Ctx<P3Principal>) => Promise<void>;
+	/** The plugin's one thing of the kind, named `name`: made in Pi once the kind is registered (`ensure`). */
+	readonly one?: { readonly name: string };
 };
 
 /** The kinds' hooks, by kind name (the first by plugin name wins a kind). */
 export const ThingHooks = defineRegistry<ThingHook, ReadonlyMap<string, TableItem<ThingHook>>>("things.hooks", {
 	version: 1,
+});
+
+/**
+ * The seeded thing of a kind (`serveThing`'s `one`) for server code of any plugin: `thing` its id, once it exists (the
+ * session's default location is the machine's). Its value is the id it had when first held: a seeded thing someone
+ * deleted is made again at the next start, and a holder sees the new one after attaching again.
+ */
+export const OneThing = local("things.one", {
+	version: 1,
+	params: { kind: str() },
+	members: { thing: str() },
 });

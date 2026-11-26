@@ -32,7 +32,13 @@ export type ThingImplementation<C extends Contract> = {
 		self: Self<P3Principal>,
 	) => Implementation<C, Ctx<P3Principal>>;
 	readonly create?: ThingHook["create"];
+	readonly configure?: ThingHook["configure"];
 	readonly delete?: ThingHook["delete"];
+	/**
+	 * The plugin's one thing of the kind, seeded in Pi once the kind is registered (any kind: `makers` says only who
+	 * else makes more); server code reads its id through `OneThing`.
+	 */
+	readonly one?: ThingHook["one"];
 };
 
 /** Serves kind `Kind` on `host`: registers it with its hooks and serves its object with the one admission. */

@@ -121,6 +121,7 @@ describe("the plans of the things store's queries", () => {
 				["switches.here", pages(things.switches.here, { workspace: team }), undefined],
 				["grants.here", pages(things.grants.here, { workspace: team }), undefined],
 				["persons.one", pages(things.persons.one, { person: ann }), undefined],
+				["persons.ofIds", pages(things.persons.ofIds, { persons: [ann, "none"] }), undefined],
 				[
 					"groupMembers.ofPerson",
 					pages(things.groupMembers.ofPerson, { person: ann }),

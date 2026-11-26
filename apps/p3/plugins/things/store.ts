@@ -11,16 +11,19 @@ import {
 	type Columns,
 	type Condition,
 	type Context,
+	type Ctx,
 	defineColumns,
 	defineTable,
 	eq,
 	type FacetHost,
+	inArray,
 	int,
 	invalid,
 	json,
 	type P3Principal,
 	query,
 	type RowOf,
+	reportError,
 	type StoreSelf,
 	str,
 	type Table,
@@ -67,6 +70,8 @@ const Things = defineTable("things.things", {
 		madeAt: int(),
 	},
 	key: ["thing"],
+	// A plugin's one thing of a kind (`ensure`).
+	indexes: { by_maker: ["madeByKey", "kind"] },
 	exposes: ThingColumns,
 });
 
@@ -248,30 +253,86 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				}, ctx),
 			hooks: () => hooks.value,
 		});
-		self.onLive((ctx) => lifecycle.serve(ctx));
+		/**
+		 * Makes a thing through the create path: the kind's create hook first, under the new id, then one commit (item
+		 * 34); `commit` writes it and answers the id that stands (another one's, for a plugin's one thing made
+		 * meanwhile: this hook's work is undone).
+		 */
+		const make = async (
+			args: { kind: string; name: string; workspace: string; by: Source; input?: unknown },
+			commit: (tx: Tx, changes: Changes, thing: string) => Promise<string>,
+			ctx: Ctx<P3Principal>,
+		): Promise<string> => {
+			const thing = crypto.randomUUID();
+			// A hook that throws leaves nothing, as no row names the thing yet. A crash between the hook and the commit
+			// leaves the kind's content under an id nobody knows (accepted: nothing can reach it).
+			await hooks.value.get(args.kind)?.value.create?.(thing, args.input, args.by, ctx);
+			let made: string;
+			try {
+				made = await write((tx, changes) => commit(tx, changes, thing), ctx);
+			} catch (error) {
+				await lifecycle.undo(thing, args.kind);
+				throw error;
+			}
+			if (made !== thing) await lifecycle.undo(thing, args.kind);
+			return made;
+		};
+		/** Plugin `plugin`'s one thing of `kind`: the one it has, else one made in `workspace` (see `make`). */
+		const ensure = async (
+			args: { kind: string; name: string; workspace: string; plugin: string; input?: unknown },
+			ctx: Ctx<P3Principal>,
+		): Promise<string> => {
+			const { plugin, ...rest } = args;
+			const made = { ...rest, by: { kind: "plugin", plugin } as const };
+			const found = await self.tx((tx) => writes.one(tx, made.kind, made.by), ctx);
+			if (found !== undefined) return found;
+			return make(made, (tx, changes, thing) => writes.makeOne(tx, changes, { ...made, thing }), ctx);
+		};
+		/**
+		 * The seeded things (`serveThing`'s `one`): each kind that asks for one has it in Pi, made by its plugin, once
+		 * its kind is registered. A failure is reported; the next start, or the registries changing, tries again.
+		 */
+		const seed = async (ctx: Ctx<P3Principal>): Promise<void> => {
+			const pi = await self.tx((tx) => rootOf(tx, t), ctx);
+			for (const [kind, { plugin, value }] of hooks.value) {
+				if (value.one === undefined || !kinds.value.has(kind)) continue;
+				try {
+					await ensure({ kind, name: value.one.name, workspace: pi!, plugin }, ctx);
+				} catch (error) {
+					reportError(`things: the seeded thing of ${kind}`, error, ctx);
+				}
+			}
+		};
+		// The store's own context while it is live: what seeding after a registry change runs under.
+		let live: Ctx<P3Principal> | undefined;
+		self.onLive(async (ctx) => {
+			live = ctx;
+			await seed(ctx);
+			await lifecycle.serve(ctx);
+		});
 		// A plugin loaded, reloaded or removed: ticks expand and migrate anew, every loaded workspace is read again; a
 		// kind's hooks back, its waiting deletes run.
 		self.on(kinds, async () => {
 			lookup = undefined;
 			await index?.kindsChanged();
+			if (live !== undefined) await seed(live);
 		});
-		self.on(hooks, () => lifecycle.resume());
+		self.on(hooks, async () => {
+			await lifecycle.resume();
+			if (live !== undefined) await seed(live);
+		});
 		return {
 			...q,
-			create: async (args, ctx) => {
-				const thing = crypto.randomUUID();
-				// The kind prepares what is in it first, under the new id (item 34): a hook that throws leaves nothing, as
-				// no row names the thing yet. A crash between the hook and the commit leaves the kind's content under an id
-				// nobody knows (accepted: nothing can reach it).
-				await hooks.value.get(args.kind)?.value.create?.(thing, args.input, ctx);
-				try {
-					await write((tx, changes) => writes.make(tx, changes, { ...args, thing }), ctx);
-				} catch (error) {
-					await lifecycle.undo(thing, args.kind);
-					throw error;
-				}
-				return thing;
-			},
+			create: (args, ctx) =>
+				make(
+					args,
+					async (tx, changes, thing) => {
+						await writes.make(tx, changes, { ...args, thing });
+						return thing;
+					},
+					ctx,
+				),
+			ensure,
 			link: (args, ctx) => write((tx, touched) => writes.link(tx, touched, args), ctx),
 			unlink: (args, ctx) => write((tx, touched) => writes.unlink(tx, touched, args), ctx),
 			rename: ({ thing, name }, ctx) => write(async (tx) => writes.rename(tx, thing, name), ctx),
@@ -416,6 +477,8 @@ function namedQueries(self: StoreSelf<P3Principal>, t: Tables) {
 			{
 				// The key.
 				one: ({ person }: { person: string }) => query(Persons).where((p) => eq(p.person, person)),
+				// The key, IN: the persons of a list (a notebook's authors, a board's pointers).
+				ofIds: ({ persons }: { persons: string[] }) => query(Persons).where((p) => inArray(p.person, persons)),
 			},
 		),
 		groupMembers: self.queries(
@@ -437,11 +500,16 @@ function namedQueries(self: StoreSelf<P3Principal>, t: Tables) {
 
 /** Makes Pi, the root workspace, unless it exists. */
 async function ensurePi(tx: Tx, t: Tables): Promise<null> {
-	const roots = query(Workspaces).where((w) => eq(w.parent, ""));
-	if ((await tx.page(t.workspaces, roots, 1)).items.length > 0) return null;
+	if ((await rootOf(tx, t)) !== undefined) return null;
 	const by: Source = { kind: "plugin", plugin: "@earendil-works/p3-things" };
 	putWorkspace(tx, t, { kind: WORKSPACE_KIND, name: "Pi", by, showsPeople: true }, "");
 	return null;
+}
+
+/** Pi, the root workspace (none only before the store first opened). */
+async function rootOf(tx: Tx, t: Tables): Promise<string | undefined> {
+	const roots = query(Workspaces).where((w) => eq(w.parent, ""));
+	return (await tx.page(t.workspaces, roots, 1)).items[0]?.workspace;
 }
 
 /** Puts a new workspace's thing row and line under `parent` (`""`: the root); answers its id. */
@@ -533,6 +601,25 @@ class Writes {
 		}
 		touched.workspaces.add(workspace);
 		return null;
+	}
+
+	/** The thing of `kind` that `by` made, if any (a plugin's one thing: `ensure`). */
+	async one(tx: Tx, kind: string, by: Source): Promise<string | undefined> {
+		const key = sourceKey(by);
+		const mine = query(Things).where((r) => and(eq(r.madeByKey, key), eq(r.kind, kind)));
+		return (await tx.page(this.#t.things, mine, 1)).items[0]?.thing;
+	}
+
+	/** `make`, unless `by` made a thing of `kind` meanwhile: answers the thing that stands. */
+	async makeOne(
+		tx: Tx,
+		touched: Touched,
+		args: { thing: string; kind: string; name: string; workspace: string; by: Source },
+	): Promise<string> {
+		const found = await this.one(tx, args.kind, args.by);
+		if (found !== undefined) return found;
+		await this.make(tx, touched, args);
+		return args.thing;
 	}
 
 	/**

@@ -319,8 +319,8 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "a commit that fails after the create hook leaves what the hook made (item 34)",
 		file: "store.ts",
-		find: "await lifecycle.undo(thing, args.kind);",
-		put: "",
+		find: "\t\t\t\tawait lifecycle.undo(thing, args.kind);\n\t\t\t\tthrow error;",
+		put: "\t\t\t\tthrow error;",
 	},
 	{
 		name: "an empty default grant lets nobody in (no `OPEN` row, 113)",
@@ -333,6 +333,30 @@ const MUTATIONS: readonly Mutation[] = [
 		file: "store.ts",
 		find: "if (gives !== undefined && tick !== OPEN && declared === undefined) {",
 		put: 'if (gives !== undefined && !tick.startsWith("@") && declared === undefined) {',
+	},
+	{
+		name: "a plugin's one thing is made again by every ensure",
+		file: "store.ts",
+		find: "return (await tx.page(this.#t.things, mine, 1)).items[0]?.thing;",
+		put: "return undefined;",
+	},
+	{
+		name: "a losing ensure's hook work is not undone",
+		file: "store.ts",
+		find: "if (made !== thing) await lifecycle.undo(thing, args.kind);",
+		put: "",
+	},
+	{
+		name: "a kind's `one` is not seeded",
+		file: "store.ts",
+		find: "if (value.one === undefined || !kinds.value.has(kind)) continue;",
+		put: "continue;",
+	},
+	{
+		name: "the create hook is not told who makes the thing",
+		file: "store.ts",
+		find: "create?.(thing, args.input, args.by, ctx);",
+		put: 'create?.(thing, args.input, { kind: "plugin", plugin: "?" }, ctx);',
 	},
 	// ---- the lifecycle ----
 	{

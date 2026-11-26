@@ -20,6 +20,7 @@ const Kind = defineThing("test.kind", {
 		export: { label: label("export") },
 	},
 	defaultGrants: { everyone: ["see"] },
+	settings: ["title"],
 });
 
 describe("a kind", () => {
@@ -44,6 +45,7 @@ describe("a kind", () => {
 				{ name: "export", label: label("export"), for: "all" },
 			],
 			defaultGrants: { everyone: ["see"] },
+			settings: ["title"],
 			ticksVersion: 1,
 		});
 	});
@@ -64,6 +66,7 @@ describe("a kind", () => {
 			() => declare({ ticks: { "@open": { label: label("open") } } }),
 			/names starting with @ are reserved/,
 		);
+		assert.throws(() => declare({ ticks: {}, settings: ["look"] }), /settings: "look" is no state member/);
 		// A tick gives members and flag ticks only, never a tick that gives of its own (decision 97).
 		assert.throws(
 			() =>
@@ -79,6 +82,14 @@ describe("a kind", () => {
 					defaultGrants: { everyone: ["bash"] },
 				}),
 			/defaultGrants.everyone: "bash" is no tick for everyone/,
+		);
+		assert.throws(
+			() =>
+				declare({
+					ticks: { bash: { label: label("bash"), for: "agents", gives: ["look"] } },
+					defaultGrants: { guests: ["bash"] },
+				}),
+			/defaultGrants.guests: "bash" is no tick for guests/,
 		);
 		// A member or flag tick in several ticks is fine; a member no tick gives is plain.
 		const both = defineThing("test.both", {
@@ -128,6 +139,15 @@ describe("a kind", () => {
 				version: 1,
 				// @ts-expect-error: tick names starting with `@` are reserved (item 113).
 				ticks: { "@mine": { label: label("mine") } },
+			}),
+		);
+		typed(() =>
+			defineThing("test.typed", {
+				version: 1,
+				methods: { look: method() },
+				ticks: {},
+				// @ts-expect-error: settings are state members.
+				settings: ["look"],
 			}),
 		);
 		const grantable: readonly ("change" | "export" | "secret")[] = Kind.all;

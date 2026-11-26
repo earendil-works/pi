@@ -1,6 +1,6 @@
 // Kinds of things: `defineThing` declares a kind (its members and ticks, flag ticks among them, who makes its things,
-// where they may be linked, how several reaching one workspace combine, what a new link starts with, how older ticks
-// read) and makes its remote contract, params `{ workspace, thing }`, on the server: a member no tick gives is there
+// where they may be linked, how several reaching one workspace combine, what a new link starts with, which state
+// members are its settings, how older ticks read) and makes its remote contract, params `{ workspace, thing }`, on the server: a member no tick gives is there
 // for everyone admitted, the others are grantable. `expand` turns tick names into the members and flags they give.
 // `ThingKinds` is the registry of every kind's data, which the things plugin's index and (later) the page read. Data
 // only: kinds' contract files import it.
@@ -46,12 +46,14 @@ export type Workspaces = "one" | "many";
 export type Stacking = "all" | "nearest";
 
 /**
- * What a new link of a thing of a kind starts with: the ticks of everyone here and of the agents; an empty list lets
- * the party open the thing with no ticks (`OPEN`, item 113).
+ * What a new link of a thing of a kind starts with: the ticks of everyone here and of the agents (an empty list lets
+ * the party open the thing with no ticks: `OPEN`, item 113); and what a share's guests get under Read (`guests`,
+ * decision 100: ticks that change nothing, the author's promise; never written per link, a share applies it, slice 8).
  */
 export type DefaultGrants<T extends string = string> = {
 	readonly everyone?: readonly T[];
 	readonly agents?: readonly T[];
+	readonly guests?: readonly T[];
 };
 
 /** A kind's data as every host reads it from `ThingKinds`: what the index, the Settings view and the picker need. */
@@ -63,6 +65,11 @@ export type KindInfo = {
 	readonly stacking: Stacking;
 	readonly ticks: readonly { readonly name: string; readonly label: MessageData; readonly for: TickFor }[];
 	readonly defaultGrants: DefaultGrants;
+	/**
+	 * The state members `Workspace.configure` may set where a thing is linked (items 86, 91; ordinary state members,
+	 * set through the kind's `configure` hook); none by default.
+	 */
+	readonly settings: readonly string[];
 	/**
 	 * The version of the ticks' meaning (item 105; 1 by default): bumped only when tick names change meaning, apart
 	 * from the contract's `version`. Grants record it.
@@ -137,7 +144,8 @@ type ThingContract<
  * tick gives members and flag ticks; a tick without `gives` is a flag of its own name, decision 97; a member no tick
  * gives is there for everyone admitted), whom its ticks are for, its default grants (its maker gets every tick, item
  * 90), who makes its things (`plugin` by default), in how many workspaces one may be linked (`many`), how several
- * combine (`all`), the version of its ticks' meaning (`ticksVersion`) and how older ticks read now (`migrateTicks`).
+ * combine (`all`), the state members `Workspace.configure` may set (`settings`), the version of its ticks' meaning
+ * (`ticksVersion`) and how older ticks read now (`migrateTicks`).
  */
 export function defineThing<
 	const N extends string,
@@ -159,6 +167,7 @@ export function defineThing<
 				: TickDeclaration<(keyof (S & M & E) & string) | FlagTicks<T>>;
 		};
 		readonly defaultGrants?: DefaultGrants<keyof T & string>;
+		readonly settings?: readonly (keyof NoInfer<S> & string)[];
 		readonly makers?: Makers;
 		readonly workspaces?: Workspaces;
 		readonly stacking?: Stacking;
@@ -199,6 +208,7 @@ export function defineThing<
 		stacking: declaration.stacking ?? "all",
 		ticks: ticks.map(([tick, { label, for: forWhom }]) => ({ name: tick, label, for: forWhom ?? "all" })),
 		defaultGrants: declaration.defaultGrants ?? {},
+		settings: declaration.settings ?? [],
 		ticksVersion: declaration.ticksVersion ?? 1,
 		...(declaration.migrateTicks === undefined ? {} : { migrateTicks: declaration.migrateTicks }),
 	};
@@ -216,7 +226,8 @@ export function defineThing<
 /**
  * Declaration policy the types state but JavaScript callers can skip (decisions 95, 97, 93, item 113): a tick gives
  * only the kind's members and its flag ticks; a flag tick is named unlike every member; no tick name is reserved; a
- * default grant names ticks for its party (`everyone`: people, `agents`: agents).
+ * default grant names ticks for its party (`everyone` and `guests`: people, `agents`: agents); a setting is a state
+ * member.
  */
 function checkTicks(
 	name: string,
@@ -226,11 +237,15 @@ function checkTicks(
 		readonly events?: States;
 		readonly ticks: Ticks;
 		readonly defaultGrants?: DefaultGrants;
+		readonly settings?: readonly string[];
 	},
 	given: ReadonlySet<string>,
 	flags: ReadonlySet<string>,
 ): void {
-	const { state, methods, events, ticks, defaultGrants } = declaration;
+	const { state, methods, events, ticks, defaultGrants, settings } = declaration;
+	for (const setting of settings ?? []) {
+		if (state?.[setting] === undefined) throw new Error(`${name}.settings: "${setting}" is no state member`);
+	}
 	const members = new Set([state, methods, events].flatMap((each) => Object.keys(each ?? {})));
 	for (const gives of given) {
 		if (!members.has(gives) && !flags.has(gives))
@@ -246,6 +261,7 @@ function checkTicks(
 	const audiences = [
 		["everyone", defaultGrants?.everyone, "people"],
 		["agents", defaultGrants?.agents, "agents"],
+		["guests", defaultGrants?.guests, "people"],
 	] as const;
 	for (const [party, named, audience] of audiences) {
 		for (const tick of named ?? []) {
