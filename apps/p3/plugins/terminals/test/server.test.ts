@@ -13,7 +13,6 @@ import { fileURLToPath } from "node:url";
 import {
 	type Ctx,
 	BACKGROUND_CONTEXT as context,
-	isChordError,
 	type P3Principal,
 	type Reference,
 	until,
@@ -30,6 +29,7 @@ import peopleServer from "../../people/server.ts";
 import { OneThing, ThingsStore } from "../../things/contract.server.ts";
 import type { Party, Source } from "../../things/contract.ts";
 import thingsServer from "../../things/server.ts";
+import { refused } from "../../things/test/kind-server.ts";
 import { ATTACH_PATH, Terminals, TerminalsKind } from "../kind.ts";
 
 /** A person's principal. */
@@ -128,17 +128,6 @@ async function attached(r: Reference<typeof Terminals>, id: string, ctx: Ctx<P3P
 		offset += bytes.length;
 		return Buffer.from(bytes).toString();
 	};
-}
-
-/** Whether `promise` rejects with a ChordError of `code` whose message is `key`. */
-async function refused(promise: Promise<unknown>, code: string, key?: string): Promise<void> {
-	await assert.rejects(
-		promise,
-		(error: unknown) =>
-			isChordError(error) &&
-			error.code === code &&
-			(key === undefined || JSON.stringify(error.details ?? null).includes(`"${key}"`)),
-	);
 }
 
 describe("Terminals and its ticks", () => {

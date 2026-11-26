@@ -16,7 +16,6 @@ import {
 	type Context,
 	type Ctx,
 	BACKGROUND_CONTEXT as context,
-	isChordError,
 	type P3Principal,
 	type Reference,
 	until,
@@ -39,6 +38,7 @@ import peopleServer from "../../people/server.ts";
 import { Gives, OneThing, ThingsStore } from "../../things/contract.server.ts";
 import { OPEN, type Party, type Source } from "../../things/contract.ts";
 import thingsServer from "../../things/server.ts";
+import { refused } from "../../things/test/kind-server.ts";
 import { DOWNLOAD_PATH, Files, FilesKind, UPLOAD_PATH } from "../kind.ts";
 import { must } from "../places.ts";
 import { StagingStore } from "../staging.ts";
@@ -149,17 +149,6 @@ function deadline<T>(promise: Promise<T>, ms = 5000): Promise<T> {
 		timer = setTimeout(() => reject(new Error(`still waiting after ${ms} ms`)), ms);
 	});
 	return Promise.race([promise, late]).finally(() => clearTimeout(timer));
-}
-
-/** Whether `promise` rejects with a ChordError of `code` whose message is `key`. */
-async function refused(promise: Promise<unknown>, code: string, key?: string): Promise<void> {
-	await assert.rejects(
-		promise,
-		(error: unknown) =>
-			isChordError(error) &&
-			error.code === code &&
-			(key === undefined || JSON.stringify(error.details ?? null).includes(`"${key}"`)),
-	);
 }
 
 describe("Files and its ticks", () => {
