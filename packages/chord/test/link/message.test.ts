@@ -576,6 +576,12 @@ describe("the binary codec", () => {
 		binaryCodec.encode({ kind: "result", call: 1, value: '"bbbbbbbb"' });
 		expect([...first]).toEqual(copy);
 		expect(first.buffer.byteLength).toBe(first.byteLength);
+		// A message that grew the kept buffer (5 KiB) is copied out of it too.
+		const grown = binaryCodec.encode({ kind: "result", call: 0, value: jsonPart("a".repeat(5_000)) });
+		const grownCopy = [...grown];
+		binaryCodec.encode({ kind: "result", call: 1, value: jsonPart("b".repeat(5_000)) });
+		expect([...grown]).toEqual(grownCopy);
+		expect(grown.buffer.byteLength).toBe(grown.byteLength);
 	});
 
 	it("encodes a message inside another's encode (a value's toJSON that sends) with a buffer of its own", () => {
@@ -881,6 +887,54 @@ describe("the binary codec's strings", () => {
 			const message: Message = { kind: "bound", holds: [{ hold: 1, granted: [], members, failed: [] }] };
 			expect(plain(binaryCodec.decode(binaryCodec.encode(message)))).toEqual(message);
 		}
+	});
+});
+
+describe("the binary codec's medium strings", () => {
+	/** A result message as bytes, built by hand: kind, call, payload flags, the part's doubled length, its UTF-8. */
+	const expected = (text: string): number[] => {
+		const bytes = new TextEncoder().encode(text);
+		const prefix: number[] = [];
+		for (let rest = bytes.byteLength * 2; ; rest = Math.floor(rest / 0x80)) {
+			if (rest < 0x80) {
+				prefix.push(rest);
+				break;
+			}
+			prefix.push((rest % 0x80) | 0x80);
+		}
+		return [8, 0, 1, ...prefix, ...bytes];
+	};
+
+	it("are written behind their minimal length, at every length around a prefix's growth and the ASCII bound", () => {
+		const lengths = [...Array.from({ length: 140 }, (_, index) => index), 4_094, 4_095];
+		const texts = [
+			...lengths.map((length) => "x".repeat(length)),
+			// Below `LONG` (4,096 units) with the "é": from there a fixed five-byte prefix.
+			...lengths.filter((length) => length < 4_095).map((length) => `${"x".repeat(length)}é`),
+			...[2_729, 2_730, 2_731, 2_732, 4_095].map((length) => "€".repeat(length)),
+			"\ud800 a lone surrogate",
+		];
+		for (const text of texts) {
+			expect([...binaryCodec.encode({ kind: "result", call: 0, value: text })]).toEqual(expected(text));
+		}
+	});
+
+	it("cost no more than a long one's per byte: 4,095 ASCII bytes take less than twice as long as 4,096", () => {
+		const encode = (bytes: number) => {
+			const message: Message = { kind: "result", call: 0, value: "a".repeat(bytes) };
+			const start = performance.now();
+			for (let index = 0; index < 2_000; index++) binaryCodec.encode(message);
+			return performance.now() - start;
+		};
+		const medium: number[] = [];
+		const long: number[] = [];
+		for (let round = 0; round < 11; round++) {
+			medium.push(encode(4_095));
+			long.push(encode(4_096));
+		}
+		const median = (list: number[]) => list.sort((a, b) => a - b)[5]!;
+		// Unit by unit (a loop over the text) this was 3 times as long; with an encoded copy 1.3 times.
+		expect(median(medium) / median(long)).toBeLessThan(2);
 	});
 });
 

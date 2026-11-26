@@ -394,11 +394,11 @@ function readFailedMember(reader: Reader): FailedMember {
 	return { member: reader.varint(), error: reader.json() as FailedMember["error"] };
 }
 
-/** Up to this many UTF-16 units a string takes at most 126 bytes, so its length is one varint byte. */
-const SHORT = 42;
-
-/** From this many UTF-16 units a string is encoded in place (below it, encoding on its own and copying is cheaper). */
+/** From this many UTF-16 units a string is encoded in chunks behind a fixed prefix. */
 const LONG = 4096;
+
+/** Up to this many UTF-16 units an ASCII text is written unit by unit: beyond (measured), `encodeInto` is faster. */
+const ASCII_UNITS = 32;
 
 /** The fixed length prefix of a long string: five varint bytes, up to 32 GiB (16 GiB for a part). */
 const LENGTH_SLOT = 5;
@@ -410,6 +410,9 @@ const DASH = 0x2d;
 
 /** The buffer a writer starts with and keeps across messages: most messages fit (a hold, a `bound`, a state change). */
 const BASE = 4096;
+
+/** The largest buffer a writer keeps once it grew; each message of up to this size is copied out of it. */
+const KEPT = 16 * 1024;
 
 /** Writes messages, one at a time, into one growing buffer; each right-sized at its end. */
 class Writer {
@@ -499,31 +502,21 @@ class Writer {
 	}
 
 	/**
-	 * Text behind its UTF-8 length times `scale` (2 for a part's prefix), encoded straight into the buffer where the
-	 * prefix is known in advance: a short text (its prefix fits one byte: at most 126 bytes, 42 UTF-16 units, divided
-	 * by `scale`) and a long one (a snapshot's JSON, behind a fixed five-byte prefix, a padded varint, which readers
-	 * accept). Others are encoded on their own and copied in. No text is encoded twice, and the largest value of a
-	 * message is never copied.
+	 * Text behind its UTF-8 length times `scale` (2 for a part's prefix), encoded straight into the buffer: a short
+	 * ASCII text unit by unit (`#ascii`); one below `LONG` units behind room for the longest prefix it may need, moved
+	 * back over the room it did not (`#medium`); a long one (a snapshot's JSON) behind a fixed five-byte prefix, a padded
+	 * varint, which readers accept. No text is encoded twice or on its own, and the largest value of a message is never
+	 * copied.
 	 */
 	#text(text: string, scale: 1 | 2): void {
-		if (text.length < LONG) {
-			// ASCII (most names and JSON) is its own UTF-8, its length known: written unit by unit.
+		if (text.length <= ASCII_UNITS) {
 			const start = this.#length;
 			this.varint(text.length * scale);
 			if (this.#ascii(text)) return;
 			this.#length = start;
 		}
-		if (text.length <= SHORT / scale) {
-			this.#reserve(1 + text.length * 3);
-			const { written } = UTF8.encodeInto(text, this.#buffer.subarray(this.#length + 1));
-			this.#buffer[this.#length] = written * scale;
-			this.#length += 1 + written;
-			return;
-		}
 		if (text.length < LONG) {
-			const bytes = UTF8.encode(text);
-			this.varint(bytes.byteLength * scale);
-			this.raw(bytes);
+			this.#medium(text, scale);
 			return;
 		}
 		const slot = this.#length;
@@ -546,8 +539,40 @@ class Writer {
 	}
 
 	/**
+	 * Text below `LONG` units: encoded with `encodeInto` behind room for the prefix of its most bytes (three per unit),
+	 * then moved back to its actual prefix's end (minimal, as the length of an encoded copy gave it): one encode and no
+	 * copy of its own (an encoded copy took 0.3 µs for any text; this 0.07 µs up to 1 KiB).
+	 */
+	#medium(text: string, scale: 1 | 2): void {
+		const room = varintBytes(text.length * 3 * scale);
+		const start = this.#length;
+		// Room for one byte per unit first (ASCII, most JSON): a text that is not gets more room for its rest.
+		this.#reserve(room + text.length);
+		this.#length += room;
+		let read = 0;
+		while (read < text.length) {
+			const rest = read === 0 ? text : text.slice(read);
+			const done = UTF8.encodeInto(rest, this.#buffer.subarray(this.#length));
+			read += done.read;
+			this.#length += done.written;
+			if (read < text.length) this.#reserve((text.length - read) * 3);
+		}
+		const buffer = this.#buffer;
+		const written = this.#length - start - room;
+		let length = written * scale;
+		const prefix = varintBytes(length);
+		if (prefix < room) buffer.copyWithin(start + prefix, start + room, start + room + written);
+		for (let index = start; index < start + prefix; index++) {
+			buffer[index] = index < start + prefix - 1 ? (length % 0x80) | 0x80 : length;
+			length = Math.floor(length / 0x80);
+		}
+		this.#length = start + prefix + written;
+	}
+
+	/**
 	 * `text`'s units as bytes when all are ASCII; otherwise nothing written (whatever it wrote is past the length) and
-	 * `false`. No view of the buffer per string, as `encodeInto` needs (0.5 KiB per held object).
+	 * `false`. No view of the buffer per string, as `encodeInto` needs; unit by unit is faster only for short text (2 ns
+	 * a unit against 65 ns an `encodeInto`), so only up to `ASCII_UNITS`.
 	 */
 	#ascii(text: string): boolean {
 		const units = text.length;
@@ -602,21 +627,24 @@ class Writer {
 	}
 
 	/**
-	 * The message: a right-sized copy, or for a message that grew the buffer and fills it but for a little (less than
-	 * 64 bytes or an eighth of the message) a view of it, handed off: a large message ends within its 4 KiB of room and
-	 * is not copied, and the writer takes a new buffer (`reset`).
+	 * The message: a right-sized copy, or for a message that grew the buffer past `KEPT` and fills it but for a little
+	 * (less than 64 bytes or an eighth of the message) a view of it, handed off: a large message ends within its 4 KiB
+	 * of room and is not copied, and the writer takes a new buffer (`reset`).
 	 */
 	finish(): Uint8Array {
 		const buffer = this.#buffer;
 		const spare = buffer.byteLength - this.#length;
-		if (buffer.byteLength === BASE || (spare >= 64 && spare * 8 > this.#length)) return buffer.slice(0, this.#length);
+		if (buffer.byteLength <= KEPT || (spare >= 64 && spare * 8 > this.#length)) return buffer.slice(0, this.#length);
 		return buffer.subarray(0, this.#length);
 	}
 
-	/** Ready for the next message: empty, with a base buffer again when this one grew (it is not kept past its message). */
+	/**
+	 * Ready for the next message: empty; a buffer grown past `KEPT` is not kept past its message (a base one again),
+	 * one up to it is: a stream of 5 KiB messages grows it once, not once per message.
+	 */
 	reset(): void {
 		this.#length = 0;
-		if (this.#buffer.byteLength !== BASE) this.#buffer = new Uint8Array(BASE);
+		if (this.#buffer.byteLength > KEPT) this.#buffer = new Uint8Array(BASE);
 	}
 
 	/** Grows the buffer to fit `bytes` more: doubled, or for a large chunk to its end plus room for the small fields after it. */
@@ -626,6 +654,13 @@ class Writer {
 		grown.set(this.#buffer.subarray(0, this.#length));
 		this.#buffer = grown;
 	}
+}
+
+/** How many bytes the varint of `value` takes. */
+function varintBytes(value: number): number {
+	let bytes = 1;
+	for (let rest = value; rest >= 0x80; rest = Math.floor(rest / 0x80)) bytes++;
+	return bytes;
 }
 
 /** Reads a message's bytes; every read is bounds-checked, segments are views of the message. */
