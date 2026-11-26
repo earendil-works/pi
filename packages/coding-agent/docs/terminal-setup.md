@@ -15,7 +15,7 @@ Pi uses extended-key protocols so terminals can distinguish combinations such as
 | Inline images or colors are not detected | [Override detected capabilities](#override-detected-capabilities) |
 | An IME candidate window appears in the wrong place | [WezTerm](#wezterm) or [IntelliJ IDEA](#intellij-idea-integrated-terminal) |
 | Modified keys fail only inside tmux | [Run Pi in tmux](tmux.md) |
-| After Pi exits, moving the mouse types text such as `[<35;12;5M` into the shell prompt | [Recover the terminal after Pi was killed](#recover-the-terminal-after-pi-was-killed) |
+| After Pi exits, moving the mouse or typing puts text such as `[<35;12;5M` or `[;;;129:3u` into the shell prompt | [Recover the terminal after Pi was killed](#recover-the-terminal-after-pi-was-killed) |
 
 Use `/hotkeys` to inspect Pi's active shortcuts. See [Keybindings](keybindings.md) to change them.
 
@@ -223,15 +223,40 @@ Only force a capability supported by the complete terminal path. Unsupported esc
 
 ## Recover the terminal after Pi was killed
 
-While it runs, Pi switches the terminal to the alternate screen, turns on mouse and focus reporting, and enables extended-key protocols. Pi turns them off when it exits, but it cannot do so when it is killed, for example with `kill -9`, from Task Manager, or when it runs out of memory. The terminal then keeps sending mouse reports and the shell types them into the prompt.
+While it runs, Pi turns on terminal modes: extended-key reporting and bracketed paste in both TUI modes, and the alternate screen and mouse and focus reporting in fullscreen mode. Pi turns them off when it exits, but not when it is killed, for example with `kill -9`, from Task Manager, or when it runs out of memory. The terminal then keeps sending key and mouse reports, and the shell types them into the prompt.
 
-To recover, run `pi` again and quit it with `Ctrl+D` or `/quit`. A clean exit turns all of these modes off and leaves the alternate screen.
+The real fix is to find what kills Pi and stop it. Look for `FATAL ERROR: ... JavaScript heap out of memory` in the terminal, and check whether a script, an IDE, or a job manager ends the process. Please [open an issue](https://github.com/earendil-works/pi/issues) with what you find.
 
-Keyboard input still reaches the shell, even if you cannot see what you type:
+### Reset the terminal
 
-1. Keep the mouse pointer off the terminal pane.
-2. Press `Ctrl+C` to clear the current line.
-3. Type `pi`, press `Enter`, then quit Pi.
+Running Pi again and quitting it is not enough: the terminal keeps key-reporting settings on a stack, and each killed run leaves one entry behind that a later clean exit does not remove. Run this in the affected pane instead.
+
+bash or zsh:
+
+```bash
+printf '\e[<16u\e[=0;1u\e[>4;0m\e[?2004l\e[?1000l\e[?1002l\e[?1003l\e[?1004l\e[?1006l\e[?7h\e[?25h'
+```
+
+PowerShell:
+
+```powershell
+$e = [char]27; [Console]::Write("$e[<16u$e[=0;1u$e[>4;0m$e[?2004l$e[?1000l$e[?1002l$e[?1003l$e[?1004l$e[?1006l$e[?7h$e[?25h")
+```
+
+`\e[<16u` removes the key-reporting entries of up to 16 killed runs and `\e[=0;1u` turns off whatever remains. The rest turns off modifyOtherKeys, bracketed paste, mouse and focus reporting, and restores line wrapping and the cursor.
+
+If the pane still shows Pi's last screen around the prompt, the alternate screen is still active. Also run `printf '\e[?1049l'` (bash or zsh) or `[Console]::Write("$([char]27)[?1049l")` (PowerShell). Run it only in that case: on the normal screen it moves the cursor and confuses the shell's line editor.
+
+### If you cannot type in the pane
+
+Key presses may arrive as text too, so the command above cannot be typed. Open a new terminal tab, start Pi, and ask it to fix the stuck one:
+
+```text
+My other terminal tab is stuck after Pi was killed: key presses turn into escape sequences.
+Find that tab's terminal and write the reset sequence from Pi's terminal-setup docs to it.
+```
+
+On Linux and macOS, Pi writes to that tab's terminal device, such as `/dev/pts/3`. On Windows, it attaches to that tab's console and writes there. Then press `Ctrl+C` in the stuck tab to clear the line.
 
 ## Program status
 
