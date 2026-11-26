@@ -16,6 +16,7 @@ export {
 	canonicalJson,
 	canonicalText,
 	copyPlainJson,
+	defineField,
 	type PlainComparison,
 	principalJson,
 	principalKey,

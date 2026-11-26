@@ -16,6 +16,7 @@ import {
 	canonicalText,
 	checkParams,
 	copyPlainJson,
+	defineField,
 	isMessageData,
 	type PlainComparison,
 	samePlainFields,
@@ -583,7 +584,7 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 		}
 		const granted = names.length === 0 ? NO_GRANTS : grantedSet(grants, names);
 		// What the factory is handed: the data's copy of its own (`dataOf`), with the set.
-		(data as { [field: string]: unknown }).granted = granted;
+		defineField(data, "granted", granted);
 		const verdict: Allowed = { kind: "allow", value: data as AdmittedValue, granted };
 		this.#decided =
 			key === undefined ? { kind: "allowPlain", verdict, data: copy } : { kind: "allowText", verdict, key };
@@ -715,7 +716,7 @@ function dataOf(value: { readonly [field: string]: JsonValue }): { readonly [fie
 	const data: { [field: string | symbol]: unknown } = {};
 	for (const key of Reflect.ownKeys(value)) {
 		if (key === "granted" || !isEnumerable.call(value, key)) continue;
-		putField(data, key, (value as { readonly [field: string | symbol]: unknown })[key]);
+		defineField(data, key, (value as { readonly [field: string | symbol]: unknown })[key]);
 	}
 	return data as { readonly [field: string]: JsonValue };
 }
@@ -729,18 +730,12 @@ type Fields = { readonly list: readonly unknown[]; readonly count: number };
  */
 function fieldsData(value: object, { list, count }: Fields): { readonly [field: string]: JsonValue } {
 	const data: { [field: string | symbol]: unknown } = {};
-	for (let index = 0; index < count; index += 2) putField(data, list[index] as string, list[index + 1]);
+	for (let index = 0; index < count; index += 2) defineField(data, list[index] as string, list[index + 1]);
 	for (const symbol of Object.getOwnPropertySymbols(value)) {
-		if (isEnumerable.call(value, symbol)) data[symbol] = (value as { readonly [field: symbol]: unknown })[symbol];
+		if (isEnumerable.call(value, symbol))
+			defineField(data, symbol, (value as { readonly [field: symbol]: unknown })[symbol]);
 	}
 	return data as { readonly [field: string]: JsonValue };
-}
-
-/** A data property of its own, as a rest copy makes it (an assignment of `__proto__` would set the prototype). */
-function putField(data: { [field: string | symbol]: unknown }, key: string | symbol, field: unknown): void {
-	if (key === "__proto__") {
-		Object.defineProperty(data, key, { value: field, enumerable: true, configurable: true, writable: true });
-	} else data[key] = field;
 }
 
 const isEnumerable = Object.prototype.propertyIsEnumerable;

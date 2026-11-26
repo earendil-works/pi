@@ -249,13 +249,30 @@ function copied(value: unknown, depth: number): unknown {
 		const field = copied(fields[key], depth - 1);
 		if (field === NOT_PLAIN) return NOT_PLAIN;
 		copy ??= {};
-		// A key of its own: an assignment of `__proto__` would set the copy's prototype.
-		if (key === "__proto__")
-			Object.defineProperty(copy, key, { value: field, enumerable: true, writable: true, configurable: true });
-		else copy[key] = field;
+		defineField(copy, key, field);
 	}
 	return copy ?? NO_FIELDS;
 }
+
+/**
+ * Defines `key` on `target` as a data property of its own, as a rest copy or a spread does (`CreateDataProperty`):
+ * never through the prototype chain, which an assignment walks (a `__proto__` key sets the prototype; a key that
+ * shadows a non-writable or setter property of `Object.prototype`, as frozen intrinsics have them, throws or calls
+ * it). One descriptor without a prototype, reused: no allocation per field.
+ */
+export function defineField(target: object, key: string | symbol, value: unknown): void {
+	FIELD.value = value;
+	Object.defineProperty(target, key, FIELD);
+	FIELD.value = undefined;
+}
+
+/** `defineField`'s descriptor: no prototype, so nothing inherited (a `get` on `Object.prototype`) is read from it. */
+const FIELD: PropertyDescriptor = Object.assign(Object.create(null), {
+	value: undefined,
+	writable: true,
+	enumerable: true,
+	configurable: true,
+});
 
 /** The copy of every object without fields: shared, never written. */
 const NO_FIELDS: { readonly [key: string]: unknown } = {};

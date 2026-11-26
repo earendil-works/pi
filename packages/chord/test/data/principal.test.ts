@@ -162,6 +162,21 @@ describe("samePlainJson and copyPlainJson", () => {
 		expect([copy.list[0]!.n, samePlainJson(copy, value)]).toEqual([-0, "different"]);
 	});
 
+	it("defines its keys: a key that shadows a setter or a non-writable field of Object.prototype is copied", () => {
+		let set = 0;
+		Object.defineProperty(Object.prototype, "trap", { set: () => void set++, configurable: true });
+		const previous = Object.getOwnPropertyDescriptor(Object.prototype, "valueOf")!;
+		Object.defineProperty(Object.prototype, "valueOf", { ...previous, writable: false });
+		let copy: unknown;
+		try {
+			copy = copyPlainJson(JSON.parse('{"trap":1,"valueOf":{"trap":2}}'));
+		} finally {
+			Object.defineProperty(Object.prototype, "valueOf", previous);
+			delete (Object.prototype as { trap?: unknown }).trap;
+		}
+		expect([set, JSON.stringify(copy)]).toEqual([0, '{"trap":1,"valueOf":{"trap":2}}']);
+	});
+
 	it("calls no code: a toJSON or getter of the kept value is never run again", () => {
 		let rendered = 0;
 		const kept = { x: 1 };

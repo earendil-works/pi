@@ -887,6 +887,22 @@ describe("the order of a read", () => {
 		}
 	});
 
+	// Found by the review of the hot-path pass (astra2, 2026-11-26): copies assigned their keys through the prototype.
+	it("a nested field that shadows a non-writable field of Object.prototype is allowed, as before", () => {
+		const read = reader([]);
+		const data = { nested: { toString: "json" } };
+		const previous = Object.getOwnPropertyDescriptor(Object.prototype, "toString")!;
+		// As a realm with frozen intrinsics has it; restored before the assertions.
+		Object.defineProperty(Object.prototype, "toString", { ...previous, writable: false });
+		let verdict: Allowed;
+		try {
+			verdict = read(data);
+		} finally {
+			Object.defineProperty(Object.prototype, "toString", previous);
+		}
+		expect(verdict).toMatchObject({ kind: "allow", value: data });
+	});
+
 	it("the admitted value has the rest copy's own keys in their order, its symbols and its prototype", () => {
 		const read = reader(["a"]);
 		const symbol = Symbol("s");
