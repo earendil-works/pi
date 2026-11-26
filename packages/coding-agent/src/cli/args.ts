@@ -310,7 +310,7 @@ ${chalk.bold("Options:")}
   --session <path|id>            Open a session by file path or full/partial ID
   --session-id <id>              Use the current directory's existing session with the ID, creating it otherwise
   --fork <path|id>               Fork a session by file path or full/partial ID into the current directory
-  --session-dir <dir>            Directory for session storage and lookup
+  --session-dir <dir>            Directory for session storage and lookup (overrides ${ENV_SESSION_DIR} and the sessionDir setting)
   --agent-dir <dir>              Config directory for settings, auth, and resources (overrides ${ENV_AGENT_DIR})
   --no-session                   Don't save session (ephemeral)
   --name, -n <name>              Set session display name
