@@ -6,7 +6,8 @@
 // The holding (`holding.ts`) holds the things the session's workspace gives the agent, for the harness.
 
 import { constant, defineFacet, forbidden } from "@earendil-works/p3/v1";
-import { followSession, SessionFacts, SessionStart, SessionWorker } from "./contract.ts";
+import { SessionFacts, SessionStart, SessionWorker } from "./contract.ts";
+import { followSession } from "./follow.ts";
 import { serveHolding } from "./holding.ts";
 
 export default defineFacet((host) => {

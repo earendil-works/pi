@@ -213,8 +213,8 @@ export const Group = remote("things.group", {
 });
 
 /**
- * Caller `caller`'s (a `callerKey`) answer for `thing` in `workspace`, live: the ticks they have there (`null`: given
- * nothing, so not let in). For admissions off the server (a session's objects on its worker, the route to a worker),
+ * Caller `caller`'s (a `callerKey`) answer for `thing` in `workspace`, live: the thing's kind and the ticks they have
+ * there (`null`: given nothing, so not let in). For admissions off the server (a session's objects on its worker, the route to a worker),
  * which cannot read the index. Asked by the server about anyone, by a session's worker about anyone in its own
  * session's workspace (its admissions ask as the worker), and by anyone else about themselves only.
  */
@@ -222,5 +222,5 @@ export const MyAnswer = remote("things.answer", {
 	version: 1,
 	params: { workspace: str(), thing: str(), caller: str() },
 	hostAddress: () => Server(),
-	state: { answer: union([obj({ ticks: arr(str()) }), nul()]) },
+	state: { answer: union([obj({ kind: str(), ticks: arr(str()) }), nul()]) },
 });

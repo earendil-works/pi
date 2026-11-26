@@ -268,7 +268,7 @@ describe("the harness plugin on a worker", () => {
 			),
 		]);
 		await ask("who");
-		assert.equal(requests()[1]?.last, "title: Test session");
+		assert.equal(requests()[1]?.last, `folder: ${folder}`);
 	});
 
 	it("calls a kind's part again only when its list changed", async () => {

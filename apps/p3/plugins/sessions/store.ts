@@ -1,7 +1,7 @@
 // The sessions store (`SessionsStore`): one row per session (its address, where it works, its state, its model, when
-// it was archived) and one per session defaults thing whose settings were set; their named queries, and every write.
-// A session's row is keyed by its address, so a session's export, import and delete carry it. Who may do what is the
-// things plugin's (the session's workspace); this store checks no caller and holds no members.
+// it was archived), its named query, and every write. A session's row is keyed by its address, so a session's export,
+// import and delete carry it. Who may do what is the things plugin's (the session's workspace); this store checks no
+// caller and holds no members.
 
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -28,7 +28,7 @@ import { ServerRuntime } from "@earendil-works/p3/v1/server";
 import { EnvironmentsStore } from "../environments/contract.server.ts";
 import { THIS_DEVICE } from "../environments/contract.ts";
 import { SessionsStore } from "./contract.server.ts";
-import { ModelChoice, SessionDefaults, type SessionState } from "./contract.ts";
+import { ModelChoice, type SessionState } from "./contract.ts";
 import { messages } from "./messages.ts";
 
 /**
@@ -54,18 +54,10 @@ const Rows = defineTable("sessions.sessions", {
 	indexes: { working: ["state", "archivedAt"] },
 });
 
-/** Each session defaults thing's settings, by thing (none set: `defaults.ts`'s own). */
-const Defaults = defineTable("sessions.defaults", {
-	version: 1,
-	columns: { thing: str(), defaults: json(SessionDefaults, { version: 1 }) },
-	key: ["thing"],
-});
-
 /** Serves `SessionsStore` on `host`. */
 export function serveStore(host: FacetHost<P3Principal>): void {
 	host.serve(SessionsStore, (_params, self) => {
 		const rows = self.table(Rows);
-		const defaults = self.table(Defaults);
 		const environments = self.get(EnvironmentsStore, {});
 		const runtime = self.registry(ServerRuntime);
 		/** Sets `change` on session `id`'s row: an `update`, so only the reads that depend on those columns run. */
@@ -83,14 +75,6 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				{
 					// The key.
 					one: ({ id }: { id: string }) => query(Rows).where((s) => eq(s.id, Session({ id }))),
-				},
-			),
-			defaults: self.queries(
-				defaults,
-				{ map: ({ thing, defaults: set }) => ({ thing, defaults: set as SessionDefaults }) },
-				{
-					// The key.
-					one: ({ thing }: { thing: string }) => query(Defaults).where((d) => eq(d.thing, thing)),
 				},
 			),
 			insert: async ({ id, location, model }, ctx) => {
@@ -126,7 +110,19 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			archive: ({ session }, ctx) => update(session, { archivedAt: Date.now() }, ctx),
 			restore: ({ session }, ctx) => update(session, { archivedAt: 0 }, ctx),
 			setModel: ({ session, model }, ctx) => update(session, { model }, ctx),
-			report: ({ session, state }, ctx) => update(session, { state, lastTouch: Date.now() }, ctx),
+			report: ({ session, state }, ctx) =>
+				self.tx(async (tx) => {
+					const key = { id: Session({ id: session }) };
+					const found = await tx.get(rows, key);
+					if (found === undefined) throw invalid("args", `sessions: no session ${session}`);
+					// The worker may see an archive after it decided to work (Astra, round 1): the row never says an
+					// archived session works, so the waker leaves it alone.
+					if (state === "working" && found.archivedAt !== 0) {
+						throw invalid("args", `sessions: ${session} is archived`, { message: messages.message("archived") });
+					}
+					tx.update(rows, key, { state, lastTouch: Date.now() });
+					return null;
+				}, ctx),
 			remove: ({ session }, ctx) =>
 				self.tx(async (tx) => {
 					tx.delete(rows, { id: Session({ id: session }) });
@@ -143,16 +139,6 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 						ids.push(row.id.params.id);
 					}
 					return ids;
-				}, ctx),
-			setDefaults: ({ thing, defaults: set }, ctx) =>
-				self.tx(async (tx) => {
-					tx.put(defaults, { thing, defaults: set });
-					return null;
-				}, ctx),
-			removeDefaults: ({ thing }, ctx) =>
-				self.tx(async (tx) => {
-					tx.delete(defaults, { thing });
-					return null;
 				}, ctx),
 		};
 	});

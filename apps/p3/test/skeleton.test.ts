@@ -12,7 +12,8 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { BACKGROUND_CONTEXT as context, until, withGranted } from "@earendil-works/p3/v1";
 import { WorkerRunners } from "@earendil-works/p3/v1/server";
 import { type TestServer, testServer } from "@earendil-works/p3/v1/testing";
-import { SessionObject, SessionWorker } from "../plugins/sessions/contract.ts";
+import { SessionWorker } from "../plugins/sessions/contract.ts";
+import { SessionObject } from "../plugins/sessions/kind.ts";
 import { askServer } from "../src/local-socket.ts";
 import { Probe } from "./plugins/probe/contract.ts";
 import {
@@ -73,8 +74,8 @@ describe("session workers", () => {
 		assert.notEqual(pid, process.pid);
 		assert.ok(alive(pid));
 		const session = await (await t.client(context)).get(SessionObject, { workspace: id, thing: id }, context);
-		await withGranted(session, "rename")!.rename({ title: "two" }, context);
-		await until(worker.session, (row) => row?.title === "two", within("the renamed row", context));
+		await withGranted(session, "archive")!.archive(context);
+		await until(worker.session, (row) => row?.archivedAt !== null, within("the archived row", context));
 	});
 
 	it("a worker nobody holds stops itself after its idle time, cleanly", async () => {

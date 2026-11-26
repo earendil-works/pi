@@ -22,6 +22,7 @@ import notesServer from "../plugins/notes/server.ts";
 import { NotesStore } from "../plugins/notes/store.ts";
 import peopleServer from "../plugins/people/server.ts";
 import { PromptStore, serveStore as servePrompt } from "../plugins/prompt/store.ts";
+import { DefaultsSettings } from "../plugins/sessions/defaults.ts";
 import sessionsServer from "../plugins/sessions/server.ts";
 import { serverCoreFacet } from "../src/server.ts";
 
@@ -42,7 +43,8 @@ describe("the plans of the stores' queries", () => {
 		const reads = new Set<string>();
 		database.prepare = (sql) => {
 			const statement = prepare(sql);
-			if (!sql.startsWith("SELECT ") || !sql.includes(".store:")) return statement;
+			// The stores' tables, and the session defaults' own (a local of the sessions plugin besides its store).
+			if (!sql.startsWith("SELECT ") || !/\.store:|sessions\.defaults-settings:/.test(sql)) return statement;
 			const all = statement.all.bind(statement);
 			const iterate = statement.iterate.bind(statement);
 			// Chord passes positional parameters only.
@@ -111,10 +113,8 @@ describe("the plans of the stores' queries", () => {
 				);
 				if (i % 2 === 0) await sessions.archive({ session: one }, context);
 			}
-			await sessions.setDefaults(
-				{ thing: "d1", defaults: { model: null, shared: false, opensWith: null } },
-				context,
-			);
+			const settings = await host.get(DefaultsSettings, {}, context);
+			await settings.set({ thing: "d1", defaults: { model: null, shared: false, opensWith: null } }, context);
 			const canvas = await host.get(CanvasStore, {}, context);
 			for (const board of ["b1", "b2"]) {
 				const rect = { kind: "rect", color: "#000000", x: 0, y: 0, w: 10, h: 10, fill: false } as const;
@@ -158,7 +158,7 @@ describe("the plans of the stores' queries", () => {
 			const K = "checklist.store:checklist";
 			const cases: readonly (readonly [string, readonly Read[], Expected])[] = [
 				["sessions.one", pages(sessions.sessions.one, { id: one }), {}],
-				["defaults.one", pages(sessions.defaults.one, { thing: "d1" }), {}],
+				["settings.of", pages(settings.settings.of, { thing: "d1" }), {}],
 				["working", [() => sessions.working({}, context)], { index: `${S}.sessions:working` }],
 				["persons.owner", pages(people.persons.owner, {}), { index: `${P}.persons:by_owner` }],
 				["groups.ofApp", pages(people.groups.ofApp, { app: "coding" }), { index: `${P}.groups:of_app` }],

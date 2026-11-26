@@ -13,7 +13,7 @@ export function serveMyAnswer(host: FacetHost<P3Principal>): void {
 		return {
 			answer: self.derive([gives], ([answers]) => {
 				const found = answers[thing];
-				return found === undefined ? null : { ticks: found.ticks };
+				return found === undefined ? null : { kind: found.kind, ticks: found.ticks };
 			}),
 		};
 	});

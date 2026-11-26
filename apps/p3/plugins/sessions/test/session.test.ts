@@ -26,12 +26,14 @@ import { eventually, within } from "../../../test/until.ts";
 import environmentsServer from "../../environments/server.ts";
 import { Gives, ThingsStore } from "../../things/contract.server.ts";
 import { makeTick, type Party, type Source } from "../../things/contract.ts";
-import { Board } from "../../things/test/kinds.ts";
+import { Board, SESSION, SPACES } from "../../things/test/kinds.ts";
 import { type World, world } from "../../things/test/world.ts";
 import { Workspace } from "../../things/workspace.ts";
 import { WorkspaceKind } from "../../things/workspaces.ts";
 import { SessionsStore } from "../contract.server.ts";
-import { type SessionDefaults, SessionDefaultsKind, SessionKind, SessionObject } from "../contract.ts";
+import type { SessionDefaults } from "../contract.ts";
+import { nearestDefaults } from "../defaults.ts";
+import { SessionDefaultsKind, SessionKind, SessionObject } from "../kind.ts";
 import sessionsServer from "../server.ts";
 
 const BY: Source = { kind: "plugin", plugin: "test" };
@@ -44,7 +46,11 @@ let dataDir: string;
 beforeEach(async () => {
 	dataDir = await mkdtemp(join(tmpdir(), "p3-sessions-"));
 	const runtime = { dataDir, machine: { user: "test", hostname: "test" } } as ServerRuntime;
+	SESSION.gone.length = 0;
+	SESSION.goneFails = 0;
 	w = await world(context, [
+		// A kind whose `workspaceGone` hook records: what a session's archive and unlink tell the kinds.
+		SPACES,
 		{
 			name: "p3.server",
 			facet: defineFacet((host) => host.serve(ServerRuntimeRegistry, { compose: () => runtime })),
@@ -146,14 +152,12 @@ describe("making a session (1)", () => {
 			"lastTouch",
 			"location",
 			"model",
-			"parent",
 			"state",
-			"title",
 		]);
-		assert.deepEqual(
-			[row.id, row.parent, row.title, row.state, row.archivedAt, row.model],
-			[session, fam, "one", "settled", null, null],
-		);
+		assert.deepEqual([row.id, row.state, row.archivedAt, row.model], [session, "settled", null, null]);
+		// Its name and place are its thing's (Fable, round 1).
+		const placed = (await store.workspaces.one.page({ workspace: session }, 1, context)).items[0];
+		assert.deepEqual([placed?.name, placed?.parent], ["one", fam]);
 		assert.deepEqual(row.location, { environment: THIS_DEVICE, folder: join(dataDir, "folders", session) });
 		assert.ok((await stat(row.location.folder)).isDirectory());
 		await assert.rejects(
@@ -172,7 +176,7 @@ describe("archiving and unlinking (2)", () => {
 		await as(kim, async (ctx) => {
 			const held = await ctx.get(SessionObject, { workspace: session, thing: session });
 			assert.equal(held.archive, undefined);
-			assert.equal(held.rename, undefined);
+			assert.equal(held.setModel, undefined);
 		});
 		await as(leo, async (ctx) => {
 			const held = withGranted(await ctx.get(SessionObject, { workspace: session, thing: session }), "archive")!;
@@ -186,10 +190,89 @@ describe("archiving and unlinking (2)", () => {
 			const workspace = withGranted(await ctx.get(Workspace, { workspace: fam }), "unlink")!;
 			await workspace.unlink({ thing: session }, ctx);
 		});
-		// The row goes with the workspace's thing (its delete hook, after the removal's commits).
+		// The row goes with the workspace's thing (its delete hook, after the removal's commits); the kinds are told once.
 		await eventually(
 			async () => (await sessions.sessions.one.page({ id: session }, 1, context)).items.length,
 			(rows) => rows === 0,
+		);
+		await eventually(
+			() => SESSION.gone.filter((gone) => gone === session).length,
+			(told) => told === 1,
+		);
+	});
+
+	// Astra, round 1 (must 4), as decided: an archive is one commit of the row; the kinds keep what they keep for the
+	// session (its terminals) until it is unlinked, so a restore is immediate and finds them.
+	it("archives and restores in one commit each, telling no kind; the model is set with Manage", async () => {
+		const { leo, fam } = await family();
+		const session = await makeSession(leo, fam, "one");
+		const model = { provider: "anthropic", model: "claude", thinking: "high" } as const;
+		await as(leo, async (ctx) => {
+			const held = withGranted(
+				await ctx.get(SessionObject, { workspace: session, thing: session }),
+				"archive",
+				"restore",
+				"setModel",
+			)!;
+			await held.archive(ctx);
+			await until(held.row, (row) => row.archivedAt !== null, within("the archive", ctx));
+			await held.restore(ctx);
+			await until(held.row, (row) => row.archivedAt === null, within("the restore", ctx));
+			await held.setModel({ model }, ctx);
+			await until(held.row, (row) => row.model?.model === "claude", within("the model", ctx));
+		});
+		assert.deepEqual(SESSION.gone, []);
+	});
+
+	// Astra, round 1.
+	it("denies a held session cleanly once it is removed", async () => {
+		const { leo, fam } = await family();
+		const session = await makeSession(leo, fam, "one");
+		await as(leo, async (ctx) => {
+			const held = await ctx.get(SessionObject, { workspace: session, thing: session });
+			await store.removeWorkspace({ workspace: session }, context);
+			await until(
+				held.state,
+				(state) => state.kind === "failed" && state.cause.kind === "denied",
+				within("the denial", ctx),
+			);
+		});
+		assert.deepEqual(w.errors, []);
+	});
+
+	it("refuses an archived session's report of working, so the waker leaves it", async () => {
+		const { leo, fam } = await family();
+		const session = await makeSession(leo, fam, "one");
+		const sessions = await w.host.get(SessionsStore, {}, context);
+		await sessions.archive({ session }, context);
+		await assert.rejects(sessions.report({ session, state: "working" }, context), /is archived/);
+		await sessions.report({ session, state: "settled" }, context);
+		assert.deepEqual(await sessions.working({}, context), []);
+		await assert.rejects(sessions.report({ session: "none", state: "settled" }, context), /no session none/);
+	});
+});
+
+describe("the owner and a private session (3)", () => {
+	it("the owner opens a private session someone else made, and a thing switched off in it is off for them", async () => {
+		const { leo, fam } = await family();
+		const owner = await person("Olga");
+		await store.setOwner({ person: owner.id, owner: true }, context);
+		await defaultsIn(fam, PRIVATE);
+		const session = await makeSession(leo, fam, "private");
+		const mine = await answerOn(session, `person:${owner.id}`);
+		for (const tick of ["read", "send", "stop", "manage"]) assert.ok(mine?.ticks.includes(tick), tick);
+		const board = await store.create({ kind: "test.board", name: "b", workspace: fam, by: BY }, context);
+		assert.notEqual(
+			(await w.host.get(Gives, { workspace: session, caller: `person:${owner.id}` }, context)).answers.value[board],
+			undefined,
+		);
+		await store.setSwitch({ workspace: session, item: { kind: "thing", thing: board }, shown: false }, context);
+		await eventually(
+			async () =>
+				(await w.host.get(Gives, { workspace: session, caller: `person:${owner.id}` }, context)).answers.value[
+					board
+				],
+			(answer) => answer === undefined,
 		);
 	});
 });
@@ -252,5 +335,70 @@ describe("the session defaults", () => {
 		}
 		const session = await makeSession(leo, fam, "private");
 		assert.equal(await answerOn(session, `person:${anna.id}`), undefined);
+	});
+
+	// Astra, round 1 (must 2): making a session in a private-by-default workspace with the add dialog untouched (it
+	// sends the kind's own defaults for everyone and the agents) works, and writes no grant for everyone.
+	it("makes a private session with the add dialog's untouched defaults, with no grant row for everyone", async () => {
+		const { leo, fam } = await family();
+		await defaultsIn(fam, PRIVATE);
+		const session = await as(leo, async (ctx) => {
+			const workspace = withGranted(await ctx.get(Workspace, { workspace: fam }), "make")!;
+			const defaults = { everyone: ["read", "send"], agents: ["@make:*"] };
+			return workspace.make({ kind: SessionKind.name, name: "one", input: {}, defaults }, ctx);
+		});
+		assert.equal((await store.workspaces.one.page({ workspace: session }, 1, context)).items[0]?.showsPeople, false);
+		assert.deepEqual(
+			w.rows("grants").filter((row) => row.workspace === session && row.partyKey === "everyone"),
+			[],
+		);
+	});
+
+	// Astra, round 1 (must 1): the defaults thing chosen is read while it is still the one.
+	it("reads the defaults that apply when the nearest one is taken away during the read", async () => {
+		const { fam } = await family();
+		const seeded = (await store.links.here.page({ workspace: pi }, 50, context)).items.find(
+			(link) => link.of === SessionDefaultsKind.name,
+		)!.thing;
+		const far = { shared: true, model: null, opensWith: "far" };
+		const near = { shared: true, model: null, opensWith: "near" };
+		await store.configure({ thing: seeded, settings: { defaults: far } }, context);
+		const target = await defaultsIn(fam, near);
+		await w.host.root(async (ctx) => {
+			assert.deepEqual(await nearestDefaults(fam, ctx), near);
+			// Right after the near defaults' settings were read, they are unlinked and gone: the lookup reads again.
+			let once = true;
+			const unlinked = async () => {
+				await store.unlink({ workspace: fam, thing: target }, ctx);
+				await eventually(
+					async () =>
+						(await w.host.get(Gives, { workspace: fam, caller: "server" }, context)).answers.value[target],
+					(answer) => answer === undefined,
+				);
+			};
+			const gate = new Proxy(ctx, {
+				get: (base, key) => {
+					const value = Reflect.get(base, key);
+					if (key !== "get") return typeof value === "function" ? value.bind(base) : value;
+					return async (type: { readonly name: string }, params: object) => {
+						// A test's stand-in for the store's reference: Chord's types cannot name the plugin's own local.
+						const got = (await ctx.get(type as never, params as never)) as unknown as {
+							settings: { of: { page: (...args: unknown[]) => Promise<unknown> } };
+						};
+						if (type.name !== "sessions.defaults-settings") return got;
+						const page = async (...args: unknown[]) => {
+							const read = await got.settings.of.page(...args);
+							if (once) {
+								once = false;
+								await unlinked();
+							}
+							return read;
+						};
+						return { ...got, settings: { of: { page } } };
+					};
+				},
+			});
+			assert.deepEqual(await nearestDefaults(fam, gate), far);
+		}, context);
 	});
 });

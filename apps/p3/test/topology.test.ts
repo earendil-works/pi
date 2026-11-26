@@ -11,7 +11,6 @@ import {
 	type P3Principal,
 	SessionFacts,
 	SessionObject,
-	SessionStart,
 	SessionWorker,
 	THIS_DEVICE,
 	until,
@@ -20,6 +19,7 @@ import {
 	withGranted,
 } from "@earendil-works/p3/v1";
 import { PeopleStore, ServerCommands, SessionsStore, ThingsStore } from "@earendil-works/p3/v1/server";
+import { SessionStart } from "../plugins/sessions/contract.ts";
 import { SignIns } from "../plugins/sign-in/contract.ts";
 import { Probe } from "./plugins/probe/contract.ts";
 import { newSession, piOf } from "./support.ts";
@@ -39,20 +39,25 @@ afterEach(async () => {
 });
 
 /**
- * A topology with one session and an owner client: the session's id, Pi's, `make` (a new session titled `title`) and
- * `rename` (a session, with the owner's Manage of it).
+ * A topology with one session and an owner client: the session's id, Pi's, `make` (a new session titled `title`),
+ * `archive` (a session, with the owner's Manage of it) and `rename` (with the owner's Configure in Pi).
  */
 async function withSession(idleMs?: number) {
 	const t = await topology(context, idleMs);
 	running = t;
 	const owner = await t.client(t.owner);
 	const make = (title: string) => newSession(owner, title, context, HERE);
-	const rename = async (session: string, title: string) => {
+	const archive = async (session: string) => {
 		const held = await owner.get(SessionObject, { workspace: session, thing: session }, context);
-		await withGranted(held, "rename")!.rename({ title }, context);
+		await withGranted(held, "archive")!.archive(context);
+	};
+	const pi = await piOf(owner, context);
+	const rename = async (session: string, name: string) => {
+		const workspace = await owner.get(Workspace, { workspace: pi }, context);
+		await withGranted(workspace, "configure")!.configure({ thing: session, name }, context);
 	};
 	const id = await make("one");
-	return { t, owner, make, rename, id, pi: await piOf(owner, context) };
+	return { t, owner, make, archive, rename, id, pi };
 }
 
 /** Whether `promise` rejects with a ChordError of `code`. */
@@ -62,7 +67,7 @@ async function refused(promise: Promise<unknown>, code: string): Promise<void> {
 
 describe("reloads while in use", () => {
 	it("the sessions plugin on the server: a session's object and a worker's row go on, a new session is listed", async () => {
-		const { t, owner, make, rename, id, pi } = await withSession();
+		const { t, owner, make, archive, id, pi } = await withSession();
 		const list = await owner.get(WorkspaceChildren, { workspace: pi, view: "v1" }, context);
 		const session = await owner.get(SessionObject, { workspace: id, thing: id }, context);
 		const worker = await owner.get(SessionWorker, { session: id }, context);
@@ -74,18 +79,18 @@ describe("reloads while in use", () => {
 			(value) => value.rows.some((row) => row.workspace === second),
 			within("the second row", context),
 		);
-		await rename(id, "renamed");
-		await until(worker.session, (row) => row?.title === "renamed", within("the renamed row", context));
-		await until(session.row, (row) => row.title === "renamed", within("the renamed object", context));
+		await archive(id);
+		await until(worker.session, (row) => row?.archivedAt !== null, within("the archived row", context));
+		await until(session.row, (row) => row.archivedAt !== null, within("the archived object", context));
 		assert.deepEqual(t.errors, []);
 	});
 
 	it("the sessions plugin on a worker: its row still follows the server", async () => {
-		const { t, owner, rename, id } = await withSession();
+		const { t, owner, archive, id } = await withSession();
 		const worker = await owner.get(SessionWorker, { session: id }, context);
 		await t.reload("@earendil-works/p3-sessions", id);
-		await rename(id, "renamed");
-		await until(worker.session, (row) => row?.title === "renamed", within("the renamed row", context));
+		await archive(id);
+		await until(worker.session, (row) => row?.archivedAt !== null, within("the archived row", context));
 		assert.deepEqual(t.errors, []);
 	});
 
@@ -113,7 +118,7 @@ describe("reloads while in use", () => {
 		);
 		await until(me.me, (value) => value.kind === "person" && value.name === "Anna", within("the new name", context));
 		await until(session.state, (state) => state.kind === "live", within("her session", context));
-		assert.equal(session.row.value.title, "one");
+		assert.equal(session.row.value.id, id);
 		assert.deepEqual(
 			environments.environments.value.map(({ id: environment }) => environment),
 			[THIS_DEVICE],
@@ -194,6 +199,22 @@ describe("access", () => {
 		await refused(owner.get(SessionStart, { session: id }, context), "forbidden");
 	});
 
+	// Astra, round 1 (must 3): a plain workspace answers on itself too, but has no worker.
+	it("no worker starts for a plain workspace", async () => {
+		const { t, owner, pi } = await withSession();
+		await refused(owner.get(SessionWorker, { session: pi }, context, { readyTimeout: 1000 }), "forbidden");
+		assert.equal(t.workers.has(pi), false);
+	});
+
+	// ERNDL-704 test 6 (Opus, round 1).
+	it("listing a workspace's sessions starts no worker", async () => {
+		const { t, owner, make, id, pi } = await withSession();
+		const other = await make("two");
+		const list = await owner.get(WorkspaceChildren, { workspace: pi, view: "v" }, context);
+		await until(list.list, (value) => value.rows.some((row) => row.workspace === other), within("the list", context));
+		assert.equal(t.workers.has(id) || t.workers.has(other), false);
+	});
+
 	it("no worker starts for a session that does not exist", async () => {
 		const { t, owner } = await withSession();
 		await assert.rejects(owner.get(SessionWorker, { session: "none" }, context, { readyTimeout: 1000 }));
@@ -212,7 +233,7 @@ describe("access", () => {
 });
 
 describe("counted work", () => {
-	it("a rename runs only the reads that show the renamed session", async () => {
+	it("a rename runs only the things plugin's reads of the renamed session", async () => {
 		const { t, owner, make, rename, id: a, pi } = await withSession();
 		const b = await make("B");
 		await owner.get(WorkspaceChildren, { workspace: pi, view: "v" }, context);
@@ -220,10 +241,11 @@ describe("counted work", () => {
 		await owner.get(SessionWorker, { session: a }, context);
 		const before = [t.count("chord.query.runs"), t.count("chord.query.probes")];
 		await rename(a, "A2");
-		// The children list's page and A's thing row (its worker's row and its object read it as one shared read,
-		// ERNDL-1176); B's not, and nothing is asked (the index answers the admissions).
-		assert.deepEqual([t.count("chord.query.runs") - before[0]!, t.count("chord.query.probes") - before[1]!], [2, 0]);
-		assert.equal(workerB.session.value?.title, "B");
+		// A session's name is its thing's (Configure in its parent): the things plugin's reads of the renamed thing and
+		// its line, the children list's page among them; no row of the sessions plugin and nothing of B's, and nothing
+		// is asked (the index answers the admissions).
+		assert.deepEqual([t.count("chord.query.runs") - before[0]!, t.count("chord.query.probes") - before[1]!], [3, 0]);
+		assert.equal(workerB.session.value?.id, b);
 	});
 
 	it("a worker's report runs only the reads that show its session", async () => {
@@ -241,8 +263,8 @@ describe("counted work", () => {
 	});
 
 	// The route's admission and the worker objects' (`followSession`) read the access index, no query; the worker's
-	// facts read its session's row, its thing and its line: three runs; a second hold shares them.
-	it("a hold of a session's worker costs three reads: its worker's row; a second hold none", async () => {
+	// facts read its session's row: one run; a second hold shares it.
+	it("a hold of a session's worker costs one read: its worker's row; a second hold none", async () => {
 		const { t, owner, id, pi } = await withSession();
 		await owner.get(WorkspaceChildren, { workspace: pi, view: "v" }, context);
 		const counted = () => [t.count("chord.query.runs"), t.count("chord.query.probes")];
@@ -253,7 +275,7 @@ describe("counted work", () => {
 		const after = counted();
 		assert.deepEqual(
 			[second[0]! - first[0]!, second[1]! - first[1]!, after[0]! - second[0]!, after[1]! - second[1]!],
-			[3, 0, 0, 0],
+			[1, 0, 0, 0],
 		);
 	});
 });

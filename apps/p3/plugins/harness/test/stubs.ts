@@ -3,7 +3,7 @@
 // session, as the test sets them); on the worker, this device's `ExecutionEnvironments` (a folder of
 // the test's), the holding (`HeldThings`: what the test says the agent holds, an unchanged kind's list kept by
 // identity) and a scripted login's kind (`test.login`: a pi-ai faux provider per thing answering from its script,
-// each request recorded, and with `tool` the tool `test_session`, which reads the session's title through the
+// each request recorded, and with `tool` the tool `test_session`, which reads the session's folder through the
 // session's `call`). The real things plugin's worker facet (the registries) and the tools plugin's (the coding tools'
 // part) load beside them, imported as modules.
 
@@ -20,6 +20,7 @@ import {
 	type P3Principal,
 	type PluginFacet,
 	SessionFacts,
+	SessionKind,
 	type SessionRow,
 	type SessionState,
 	type Static,
@@ -112,8 +113,6 @@ export type Server = {
 export function sessionRow(id: string, folder: string): SessionRow {
 	return {
 		id,
-		parent: "pi",
-		title: "Test session",
 		location: { environment: "this-device", folder },
 		createdAt: 1,
 		state: "settled",
@@ -168,10 +167,10 @@ export function standIns(
 	const rows = new Set<Writable<SessionRow>>();
 	const holdings = new Set<Writable<Held | undefined>>();
 	const given = new Map<string, readonly string[]>([["person:owner", ["read", "send", "stop", "manage"]]]);
-	const answers = new Set<{ caller: string; answer: Writable<{ ticks: string[] } | null> }>();
+	const answers = new Set<{ caller: string; answer: Writable<{ kind: string; ticks: string[] } | null> }>();
 	const answerOf = (caller: string) => {
 		const ticks = given.get(caller);
-		return ticks === undefined ? null : { ticks: [...ticks] };
+		return ticks === undefined ? null : { kind: SessionKind.name, ticks: [...ticks] };
 	};
 	const control: Server = {
 		reports: [],
@@ -238,14 +237,14 @@ export function standIns(
 				if (!all.some(({ ref }) => ref.tool.value)) return { providers };
 				const tool = defineTool({
 					name: "test_session",
-					description: "The session's title",
+					description: "The session's folder",
 					parameters: obj({}),
 					execute: async (_args, _api, context) => {
-						const title = await session.call(
-							async (ctx) => (await ctx.get(SessionFacts, {})).session.value?.title ?? "",
+						const folder = await session.call(
+							async (ctx) => (await ctx.get(SessionFacts, {})).session.value?.location.folder ?? "",
 							context,
 						);
-						return { output: [{ type: "text", text: `title: ${title}` }] };
+						return { output: [{ type: "text", text: `folder: ${folder}` }] };
 					},
 				});
 				return { providers, extension: { tools: [tool] } };

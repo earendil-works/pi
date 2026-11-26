@@ -15,7 +15,7 @@ import { testPlugin, testServer } from "@earendil-works/p3/v1/testing";
 import { within } from "../../../test/until.ts";
 import environmentsServer from "../../environments/server.ts";
 import peopleServer from "../../people/server.ts";
-import { SessionKind } from "../../sessions/contract.ts";
+import { SessionKind } from "../../sessions/kind.ts";
 import sessionsServer from "../../sessions/server.ts";
 import { ThingsStore } from "../../things/contract.server.ts";
 import { make } from "../../things/kind-server.ts";

@@ -39,7 +39,17 @@ export {
 export * from "../../../plugins/environments/contract.server.ts";
 export * from "../../../plugins/people/contract.server.ts";
 export * from "../../../plugins/sessions/contract.server.ts";
-export * from "../../../plugins/things/contract.server.ts";
+// The things plugin's store and what a kind's server side needs; the index's handles and the owner bridge stay out.
+export {
+	type CreateAnswer,
+	Gives,
+	type Made,
+	OneThing,
+	type ThingHook,
+	ThingRow,
+	ThingsStore,
+	WorkspaceRow,
+} from "../../../plugins/things/contract.server.ts";
 export { serveThing, type ThingCaller, type ThingImplementation } from "../../../plugins/things/serve.ts";
 export * from "./control.ts";
 
