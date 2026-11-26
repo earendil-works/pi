@@ -30,8 +30,8 @@ import { eventually, within } from "../../../test/until.ts";
 import { SignIns } from "../../sign-in/contract.ts";
 import { Gives, OwnerSeeds, ThingsStore } from "../contract.server.ts";
 import { Group, type Party, type Source } from "../contract.ts";
-import { Board } from "./kinds.ts";
-import { RUNTIME, signInsStub, storedRows, THINGS, type World, world } from "./world.ts";
+import { BOARD_PLUGIN, Board } from "./kinds.ts";
+import { signInsStub, storedRows, THINGS, type World, world } from "./world.ts";
 
 const ADMIN: Source = { kind: "plugin", plugin: "admin" };
 
@@ -106,11 +106,11 @@ function as<T>(id: string, fn: (ctx: Ctx<P3Principal>) => Promise<T>): Promise<T
 }
 
 describe("persons and the owner", () => {
-	it("the owner's person is made at the first start, named after the machine's user, once", async () => {
+	it("the owner's person is made at the first start, named Owner, once", async () => {
 		const owners = (await store.persons.owners.page({}, 10, context)).items;
 		assert.deepEqual(
 			owners.map(({ name, owner }) => [name, owner]),
-			[["Ann", true]],
+			[["Owner", true]],
 		);
 		// A start on the same disk (a copy of the committed file, opened by a host of its own) makes no second one.
 		const copy = `${w.path}.copy`;
@@ -125,14 +125,17 @@ describe("persons and the owner", () => {
 			onError: (error) => assert.fail(`host error ${error.kind}`),
 		});
 		try {
-			await host.load([RUNTIME, THINGS], context);
+			await host.load([THINGS], context);
 			const again = await host.get(ThingsStore, {}, context);
 			assert.deepEqual(
 				(await again.persons.owners.page({}, 10, context)).items.map(({ person: id }) => id),
 				owners.map(({ person: id }) => id),
 			);
 		} finally {
+			// A store closed right after its start leaves no transaction to drain (once held 30 s).
+			const closing = performance.now();
 			await host.close(context);
+			assert.ok(performance.now() - closing < 5000, "the close took too long");
 			await reopened.close(context);
 		}
 	});
@@ -159,6 +162,19 @@ describe("persons and the owner", () => {
 				owners.map(({ person: id, name }) => [id, name]),
 				[["people-owner", "Mario"]],
 			);
+			// Reloads in the order that once held the store's drain 30 s (the seed's plugin, another, then things):
+			// nothing is reported, and each is quick.
+			for (const plugin of ["@earendil-works/p3-people", BOARD_PLUGIN, "@earendil-works/p3-things"]) {
+				const started = performance.now();
+				await seeded.reload(plugin, context);
+				assert.ok(performance.now() - started < 5000, `the reload of ${plugin} took too long`);
+			}
+			const again = await seeded.host.get(ThingsStore, {}, context);
+			assert.deepEqual(
+				(await again.persons.owners.page({}, 10, context)).items.map(({ person: id }) => id),
+				["people-owner"],
+			);
+			assert.deepEqual(seeded.errors, []);
 		} finally {
 			await seeded.close(context);
 		}

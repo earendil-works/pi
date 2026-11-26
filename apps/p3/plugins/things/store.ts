@@ -40,7 +40,6 @@ import {
 	type TableOf,
 	type Tx,
 } from "@earendil-works/p3/v1";
-import { ServerRuntime } from "@earendil-works/p3/v1/server";
 import { AccessIndex, type Touched } from "./access.ts";
 import { callerOfKey } from "./admission.ts";
 import {
@@ -76,7 +75,6 @@ import {
 	GroupMembers,
 	Groups,
 	openPeopleTables,
-	ownerName,
 	type PeopleTables,
 	PeopleWrites,
 	PersonColumns,
@@ -206,7 +204,6 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		const hooks = self.registry(ThingHooks);
 		const q = namedQueries(self, t);
 		const people = new PeopleWrites(t);
-		const runtime = self.registry(ServerRuntime);
 		// The kinds as the store's index and writes see them: one snapshot, installed inside the index's queue when the
 		// registry changes (`kindsChanged`), so an operation never mixes two generations of a kind.
 		let installed: ReadonlyMap<string, TableItem<KindInfo>> | undefined;
@@ -227,7 +224,7 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		self.open(
 			async (ctx) => {
 				await self.tx(async (tx) => {
-					await people.ensureOwner(tx, ownerName(runtime.value.machine.user));
+					await people.ensureOwner(tx);
 					return ensurePi(tx, t);
 				}, ctx);
 				index = new AccessIndex(readerOf(q, kindsNow, reported), kindsNow, ctx);
@@ -394,16 +391,20 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		};
 		self.onLive(async (ctx) => {
 			live = ctx;
-			const left = await self.tx(async (tx) => {
-				const persons = [];
-				// The whole table: removed persons whose sign-ins are still to end are few, read at the start only.
-				for await (const { person } of tx.rows(t.signOuts, query(SignOuts))) persons.push(person);
-				return persons;
-			}, ctx);
+			// The people side starts beside the rest, never before it (it would hold the start of the others).
+			await Promise.all([lifecycle.serve(ctx), removal.serve(ctx), seed(ctx), startPeople(ctx)]);
+		});
+		/**
+		 * What the store does about people at its start: the sign-outs still to end are ended, and the people plugin's
+		 * owner adopted. Read outside a transaction: a store that ends meanwhile leaves no transaction to drain.
+		 */
+		const startPeople = async (ctx: Ctx<P3Principal>): Promise<void> => {
+			// The whole table: removed persons whose sign-ins are still to end are few, read at the start only.
+			const left: string[] = [];
+			for await (const { person } of t.signOuts.rows(query(SignOuts), ctx)) left.push(person);
 			if (left.length > 0) void signOut(left, ctx);
 			await adopt(ctx);
-			await Promise.all([lifecycle.serve(ctx), removal.serve(ctx), seed(ctx)]);
-		});
+		};
 		// A plugin loaded, reloaded or removed: the new kinds are installed in the index's queue, ticks expand and
 		// migrate anew, every loaded workspace is read again; a kind's hooks back, its waiting deletes run.
 		self.on(kinds, async () => {
@@ -425,7 +426,11 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		const owners = self.registry(OwnerSeeds);
 		const adopt = async (ctx: Ctx<P3Principal>) => {
 			const owner = owners.value;
-			if (owner !== null) await write((tx, touched) => people.adoptOwner(tx, touched, owner), ctx);
+			if (owner === null) return;
+			// Adopted already (every start but the first, every reload): no write, so a reload ending the store meanwhile
+			// leaves no transaction behind.
+			if ((await t.persons.get({ person: owner.person }, ctx))?.owner === 1) return;
+			await write((tx, touched) => people.adoptOwner(tx, touched, owner), ctx);
 		};
 		self.on(owners, async () => {
 			if (live !== undefined) await adopt(live);
