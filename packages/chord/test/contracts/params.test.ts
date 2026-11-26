@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { arr, bool, bytes, hostKind, int, num, obj, oneOf, opt, remote, str } from "../../src/contracts/index.ts";
+import { joinKey } from "../../src/contracts/params.ts";
 
 const Server = hostKind("server");
 
@@ -41,5 +42,15 @@ describe("params policy", () => {
 		expect(() => remote("n", { version: 1, params: { p: schema }, hostAddress: () => Server(), ...members })).toThrow(
 			"n.params.p: a param is",
 		);
+	});
+});
+
+describe("joinKey", () => {
+	it("joins parts with |, escaping \\ and | in a part: two part lists never join to one key", () => {
+		expect([joinKey([]), joinKey(["a"]), joinKey(["a", "b", ""])]).toEqual(["", "a", "a|b|"]);
+		expect(joinKey(["a|b", "c"])).toBe("a\\|b|c");
+		expect(joinKey(["a\\", "|b"])).toBe("a\\\\|\\|b");
+		expect(joinKey(["a|", "b"])).not.toBe(joinKey(["a", "|b"]));
+		expect(joinKey(["x", "a\\|b"])).toBe("x|a\\\\\\|b");
 	});
 });

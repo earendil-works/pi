@@ -334,32 +334,28 @@ describe("what a host retains after work came and went", () => {
 		Error.prepareStackTrace = prepare;
 	});
 
-	// Found by this test (2026-11-26): `grantedMembers` keeps one entry per combination of granted members ever seen
-	// for its contract version's life.
-	it.fails(
-		"returns to the heap it had after the warm-up, round after round (leaks: grantedMembers)",
-		async () => {
-			const heaps: number[] = [];
-			let peak = 0;
-			const last = WARM_UP + MEASURED - 1;
-			for (let index = 0; index <= last; index++) {
-				// The heap while a round's work is all held, once: each reading collects garbage five times.
-				const held = async () => {
-					peak = await settledHeap();
-				};
-				await round(next++, hosts, index === last ? held : undefined);
-				heaps.push(await dataHeap());
-			}
-			const base = heaps[WARM_UP - 1]!;
-			const kib = (bytes: number) => Math.round(bytes / 1024);
-			console.log(
-				`heap after warm-up ${kib(base)} KiB; after each round, from it: ${heaps.map((heap) => kib(heap - base)).join(" ")} KiB; a round's work at its peak: ${kib(peak - base)} KiB`,
-			);
-			expect([hosts.errors.server, hosts.errors.client]).toEqual([[], []]);
-			expect(heaps.at(-1)! - base).toBeLessThan(TOLERANCE);
-		},
-		60_000,
-	);
+	// Found by this test (2026-11-26): `grantedMembers` kept one entry per combination of granted members ever seen
+	// for its contract version's life (fixed: its table holds its members weakly).
+	it("returns to the heap it had after the warm-up, round after round", async () => {
+		const heaps: number[] = [];
+		let peak = 0;
+		const last = WARM_UP + MEASURED - 1;
+		for (let index = 0; index <= last; index++) {
+			// The heap while a round's work is all held, once: each reading collects garbage five times.
+			const held = async () => {
+				peak = await settledHeap();
+			};
+			await round(next++, hosts, index === last ? held : undefined);
+			heaps.push(await dataHeap());
+		}
+		const base = heaps[WARM_UP - 1]!;
+		const kib = (bytes: number) => Math.round(bytes / 1024);
+		console.log(
+			`heap after warm-up ${kib(base)} KiB; after each round, from it: ${heaps.map((heap) => kib(heap - base)).join(" ")} KiB; a round's work at its peak: ${kib(peak - base)} KiB`,
+		);
+		expect([hosts.errors.server, hosts.errors.client]).toEqual([[], []]);
+		expect(heaps.at(-1)! - base).toBeLessThan(TOLERANCE);
+	}, 60_000);
 
 	it("collects a round's server objects (with their attempts), decisions, served holds and lists", async () => {
 		const refs = await round(next++, hosts);
@@ -377,7 +373,7 @@ describe("what a host retains after work came and went", () => {
 	});
 
 	// Found by this test (2026-11-26), as above.
-	it.fails("collects the granted members of a round's grant combinations (leaks: grantedMembers)", async () => {
+	it("collects the granted members of a round's grant combinations", async () => {
 		const refs = await round(next++, hosts);
 		await expectCollected(...refs.members);
 	});

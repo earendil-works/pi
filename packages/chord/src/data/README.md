@@ -45,6 +45,8 @@ try {
   `check(validator, value, reason, context)` runs it (counted) and throws `invalid/<reason>` naming the path (a job's
   args, `jobs/`).
 - `principalKey(principal, context, customKey?)`, `canonicalJson(value, context)`.
+- `sameJson(kept, value, skip?)`: whether a plain JSON value is one read before (as canonical JSON's texts were the
+  same), without making text.
 - `isMessageData(value, context)`: whether plugin code handed a message as data (`MessageSchema`, compiled once).
 - `invalid`, `asChordError`, `chordErrorFromJson`, `PROTOCOL_VERSION`, `CHORD_ERROR_REASONS`;
   `openFailure(thrown, label)`.

@@ -183,27 +183,33 @@ function checkMembers(
 	// Own properties only: an inherited `toString` is no implementation of a member named so.
 	const own = (member: string): unknown =>
 		Object.hasOwn(implementation, member) ? implementation[member] : undefined;
-	// A map per kind of member the contract has: an object without any of a kind shares the empty one.
+	// Methods and state members are the contract's names with the object's values (a map of each per object kept
+	// 216 B for names every object of the version shares); keyed members, rare, a map per object that has some.
+	const calls =
+		methods.size === 0
+			? NO_METHODS
+			: memberValues(methods, (member, data): Method => {
+					const method = own(member);
+					if (typeof method !== "function") throw new Error(`${member}: a method is a function`);
+					// A method with arguments is called as it is (no wrapper per object and method): plugin code, called
+					// with its arguments and a context, whatever it returns made a promise by its caller.
+					return takesNoArgs(data) ? (_args: unknown, context: Context) => method(context) : (method as Method);
+				});
+	const watched =
+		state.size === 0
+			? NO_STATE
+			: memberValues(state, (member): DeriveSource => {
+					const source = resolveWatchable(own(member));
+					if (source === undefined) throw new Error(`${member}: a state member is a JSON watchable`);
+					return source;
+				});
 	const checked = {
-		methods: methods.size === 0 ? NO_METHODS : new Map<string, Method>(),
-		state: state.size === 0 ? NO_STATE : new Map<string, DeriveSource>(),
+		methods: calls,
+		state: watched,
 		keyed: keyed.size === 0 ? NO_KEYED : new Map<string, KeyedBinding>(),
 		events: NO_EVENTS,
 		queries: NO_QUERIES,
 	};
-	for (const [member, data] of methods) {
-		const method = own(member);
-		if (typeof method !== "function") throw new Error(`${member}: a method is a function`);
-		// A method with arguments is called as it is (no wrapper per object and method): plugin code, called with its
-		// arguments and a context, whatever it returns made a promise by its caller.
-		const call = takesNoArgs(data) ? (_args: unknown, context: Context) => method(context) : (method as Method);
-		checked.methods.set(member, call);
-	}
-	for (const member of state.keys()) {
-		const source = resolveWatchable(own(member));
-		if (source === undefined) throw new Error(`${member}: a state member is a JSON watchable`);
-		checked.state.set(member, source);
-	}
 	for (const [member, { key }] of keyed) {
 		const resolved = resolveKeyed(own(member));
 		if (resolved === undefined) throw new Error(`${member}: a keyed member is a keyed document handle`);
@@ -219,6 +225,92 @@ function checkMembers(
 	if (queries.size > 0) checked.queries = checkQueries(queries, own);
 	return checked;
 }
+
+/**
+ * One kind of a checked implementation's members as a map: the names its contract's version declares, shared by every
+ * object of the version (`memberValues`), and the values of this object, in the same order. Never written once made.
+ */
+class MemberValues<V> implements ReadonlyMap<string, V> {
+	readonly #indexes: ReadonlyMap<string, number>;
+	readonly #values: readonly V[];
+
+	constructor(indexes: ReadonlyMap<string, number>, values: readonly V[]) {
+		this.#indexes = indexes;
+		this.#values = values;
+	}
+
+	get size(): number {
+		return this.#values.length;
+	}
+
+	get(member: string): V | undefined {
+		const index = this.#indexes.get(member);
+		return index === undefined ? undefined : this.#values[index];
+	}
+
+	has(member: string): boolean {
+		return this.#indexes.has(member);
+	}
+
+	forEach(callback: (value: V, member: string, map: ReadonlyMap<string, V>) => void, thisArg?: unknown): void {
+		for (const [member, index] of this.#indexes) callback.call(thisArg, this.#values[index]!, member, this);
+	}
+
+	*entries(): MapIterator<[string, V]> {
+		for (const [member, index] of this.#indexes) yield [member, this.#values[index]!];
+	}
+
+	keys(): MapIterator<string> {
+		return this.#indexes.keys();
+	}
+
+	values(): MapIterator<V> {
+		return this.#values.values();
+	}
+
+	[Symbol.iterator](): MapIterator<[string, V]> {
+		return this.entries();
+	}
+}
+
+/**
+ * The values `valueFor` gives the members of `members` in the order this check iterates them, over their positions:
+ * the version's (one map per kind, `memberIndexes`) while they are that order, else made from this iteration's and
+ * kept in their place (a contract's members change while a kept `evolve` editor changes them: positions are never
+ * those of another order). The values in a list of their exact length (a list's first push reserves 16 more).
+ */
+function memberValues<D, V>(
+	members: ReadonlyMap<string, D>,
+	valueFor: (member: string, data: D) => V,
+): ReadonlyMap<string, V> {
+	const cached = memberIndexes.get(members);
+	const values: V[] = new Array(members.size);
+	let count = 0;
+	// The names as iterated, once they left the cached positions (or there are none).
+	let names: string[] | undefined;
+	for (const [member, data] of members) {
+		values[count] = valueFor(member, data);
+		if (names !== undefined) names.push(member);
+		else if (cached?.get(member) !== count) names = [...namesBefore(cached, count), member];
+		count++;
+	}
+	values.length = count;
+	if (names === undefined && cached !== undefined && cached.size === count) return new MemberValues(cached, values);
+	names ??= namesBefore(cached, count);
+	const indexes = new Map(names.map((member, index) => [member, index]));
+	memberIndexes.set(members, indexes);
+	return new MemberValues(indexes, values);
+}
+
+/** The names at the first `count` positions of `indexes`, in their order. */
+function namesBefore(indexes: ReadonlyMap<string, number> | undefined, count: number): string[] {
+	const names: string[] = new Array(count);
+	if (indexes !== undefined) for (const [member, index] of indexes) if (index < count) names[index] = member;
+	return names;
+}
+
+/** The positions of a version's members of one kind (its `MembersData` map, granted or not), gone with the version. */
+const memberIndexes = new WeakMap<ReadonlyMap<string, unknown>, ReadonlyMap<string, number>>();
 
 /**
  * Checks event members: each is the attempt's own source (owned by `sources`) or a reference's event member, re-exposed
@@ -252,9 +344,15 @@ export function attachDerives(
 	state: ReadonlyMap<string, DeriveSource>,
 	report: (member: string | undefined) => (error: unknown) => void,
 ): void {
-	const exposed = new Map<DeriveSource, string>([...state].map(([member, source]) => [source, member]));
+	// Made only when a derive may be exposed: an admission's derives (no state members) and an attempt without derives
+	// made a map and two lists for nothing (about 0.5 KiB per activation).
+	if (derives.length === 0) return;
+	const exposed =
+		state.size === 0
+			? undefined
+			: new Map<DeriveSource, string>([...state].map(([member, source]) => [source, member]));
 	derives.forEach((derive, position) => {
-		const member = exposed.get(derive);
+		const member = exposed?.get(derive);
 		const name = member ?? `derive #${position + 1}`;
 		const resolve = (source: unknown, index: number): DeriveInput => {
 			const resolved = resolveWatchable(source) ?? (source instanceof NativeSource ? source : undefined);

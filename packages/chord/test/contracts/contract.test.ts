@@ -26,12 +26,15 @@ import {
 	currentMembers,
 	currentVersion,
 	grantedMembers,
+	grantIndexes,
 	memberOrder,
 	takesNoArgs,
 } from "../../src/contracts/internal.ts";
 import { bindProvider, checkParams } from "../../src/data/internal.ts";
-import type { Watchable } from "../../src/state/index.ts";
-import { expectCollected, Server } from "../support.ts";
+import { allow, createHost, defineFacet } from "../../src/host/index.ts";
+import { binaryCodec, type Codec, memoryLinkPair } from "../../src/link/index.ts";
+import { constant, type Watchable } from "../../src/state/index.ts";
+import { expectCollected, Server, type TestPrincipal } from "../support.ts";
 
 const Notes = remote("notes", {
 	version: 1,
@@ -89,6 +92,54 @@ describe("member names", () => {
 
 	it("refuses a copy of a contract", () => {
 		expect(() => memberNames({ ...Notes })).toThrow("not a declared contract");
+	});
+});
+
+describe("granted members and indexes", () => {
+	it("are the same for an equal set of other objects: the same members, the same indexes in the grants' order", () => {
+		const version = currentVersion(Notes);
+		const granted = new Set(["clear", "add"]);
+		const members = grantedMembers(version, granted);
+		expect([...members.methods.keys()]).toEqual(["add", "clear"]);
+		expect(grantedMembers(version, granted)).toBe(members);
+		expect(grantedMembers(version, new Set(["add", "clear"]))).toBe(members);
+		expect([...grantedMembers(version, new Set(["clear"])).methods.keys()]).toEqual(["clear"]);
+		const indexes = grantIndexes(version, granted);
+		expect(indexes).toEqual([0, 1]);
+		// A list of the caller's own each time: a message's codec may write it.
+		const again = grantIndexes(version, granted);
+		expect([again, again === indexes]).toEqual([[0, 1], false]);
+		expect(grantIndexes(version, new Set(["clear", "add"]))).toEqual([0, 1]);
+		expect(grantIndexes(version, new Set(["clear", "other"]))).toEqual([1]);
+	});
+
+	it("keep no granted set, and are collected with their contract", async () => {
+		const held: { contract?: object } = {};
+		const { sets, kept } = (() => {
+			const contract = remote("gc.granted", {
+				version: 1,
+				params: {},
+				hostAddress: () => Server(),
+				state: { n: int() },
+				methods: { go: grantable(method()) },
+			});
+			held.contract = contract;
+			const version = currentVersion(contract);
+			const granted = new Set(["go"]);
+			const members = grantedMembers(version, granted);
+			grantIndexes(version, granted);
+			// Another set of the same names shares the members; neither set is kept by the caches.
+			const other = new Set(["go"]);
+			expect(grantedMembers(version, other)).toBe(members);
+			grantIndexes(version, other);
+			return {
+				sets: [new WeakRef(granted), new WeakRef(other)],
+				kept: [new WeakRef(contract), new WeakRef(members)],
+			};
+		})();
+		await expectCollected(...sets);
+		held.contract = undefined;
+		await expectCollected(...kept);
 	});
 });
 
@@ -166,5 +217,105 @@ describe("derived types", () => {
 
 	it("ParamsOf: the params object", () => {
 		expectTypeOf<ParamsOf<typeof Notes>>().toEqualTypeOf<{ readonly session: string; readonly page: number }>();
+	});
+});
+
+// Found by the review of the hot-path pass (2026-11-26): grantIndexes handed every bind of a set one shared list.
+// The owner's rule for caches (2026-11-26): a clear eviction rule, no ever-growing host memory.
+describe("granted members of combinations nothing grants any more", () => {
+	it("are collected with their order and their entry while the version lives; granted again, they work", async () => {
+		const Many = remote("gc.many-grants", {
+			version: 1,
+			params: {},
+			hostAddress: () => Server(),
+			state: { n: int() },
+			methods: { a: grantable(method()), b: grantable(method()), c: grantable(method()), d: grantable(method()) },
+		});
+		const version = currentVersion(Many);
+		const names = ["a", "b", "c", "d"];
+		const entries: WeakRef<object>[] = [];
+		const set = Map.prototype.set;
+		// Watches the insertions into the version's table by names only: it keeps neither the table nor its entries.
+		Map.prototype.set = function (this: Map<unknown, unknown>, key: unknown, value: unknown) {
+			if (typeof key === "string" && key.startsWith("[") && value instanceof WeakRef)
+				entries.push(new WeakRef(value));
+			return set.call(this, key, value);
+		};
+		let made: WeakRef<object>[];
+		try {
+			made = (() => {
+				const refs: WeakRef<object>[] = [];
+				for (let mask = 1; mask < 16; mask++) {
+					const granted = new Set(names.filter((_, index) => (mask & (1 << index)) !== 0));
+					const members = grantedMembers(version, granted);
+					refs.push(new WeakRef(members), new WeakRef(memberOrder(members)));
+				}
+				return refs;
+			})();
+		} finally {
+			Map.prototype.set = set;
+		}
+		expect(entries).toHaveLength(15);
+		await expectCollected(...made, ...entries);
+		const again = grantedMembers(version, new Set(["b", "d"]));
+		expect([[...again.methods.keys()], memberOrder(again).methods]).toEqual([
+			["b", "d"],
+			["b", "d"],
+		]);
+		expect(grantedMembers(version, new Set(["d", "b"]))).toBe(again);
+	});
+});
+
+describe("granted indexes in bound messages", () => {
+	it("a codec that clears the lists it sent does not change what later binds grant", async () => {
+		const Thing = remote("codec.granted", {
+			version: 1,
+			params: { n: int() },
+			hostAddress: () => Server(),
+			state: { name: str() },
+			flags: { export: "Export" },
+		});
+		const lists: unknown[] = [];
+		const clearing: Codec = {
+			name: binaryCodec.name,
+			encode(message) {
+				const bytes = binaryCodec.encode(message);
+				if (message.kind === "bound") {
+					for (const entry of message.holds) {
+						lists.push(entry.granted);
+						(entry.granted as number[]).length = 0;
+					}
+				}
+				return bytes;
+			},
+			decode: (bytes) => binaryCodec.decode(bytes),
+		};
+		const server = createHost<TestPrincipal>({ address: Server(), principal: { kind: "server" }, onError: () => {} });
+		await server.load(
+			[
+				{
+					name: "@test/codec",
+					facet: defineFacet<TestPrincipal>((host) =>
+						host.serve(Thing, () => ({ name: constant("n") }), {
+							admit: () => constant(allow({ granted: ["export"] })),
+						}),
+					),
+				},
+			],
+			BACKGROUND_CONTEXT,
+		);
+		const client = createHost<TestPrincipal>({ onError: () => {} });
+		await client.load([], BACKGROUND_CONTEXT);
+		const links = memoryLinkPair();
+		server.accept(links[0], { principal: { kind: "owner" }, codec: clearing }, BACKGROUND_CONTEXT);
+		client.connect(links[1], { principal: { kind: "server" }, codec: binaryCodec }, BACKGROUND_CONTEXT);
+		const first = await client.get(Thing, { n: 1 }, BACKGROUND_CONTEXT);
+		const second = await client.get(Thing, { n: 2 }, BACKGROUND_CONTEXT);
+		expect([...first.granted]).toEqual(["export"]);
+		expect([...second.granted]).toEqual(["export"]);
+		expect(lists.length).toBeGreaterThanOrEqual(2);
+		expect(lists[0]).not.toBe(lists[1]);
+		await client.close(BACKGROUND_CONTEXT);
+		await server.close(BACKGROUND_CONTEXT);
 	});
 });

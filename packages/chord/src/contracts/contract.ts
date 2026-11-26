@@ -318,39 +318,90 @@ export const NO_GRANTS: ReadonlySet<string> = new Set();
 
 /**
  * The members of `version` a binding granted `granted` has: its plain members and the granted ones. Shared per version
- * and set of granted members (a `WeakMap` keyed by the version: gone with its contract).
+ * and set of granted members while anything has them: found by the set itself first (granted sets are shared,
+ * `grantedSet` in `host/admission.ts`, so a bind makes no key), else by the granted members' names, whose entry holds
+ * its members weakly and goes with them (no ever-growing table of the combinations a version saw).
  */
 export function grantedMembers(version: VersionData, granted: ReadonlySet<string>): MembersData {
 	if (version.grantable.size === 0) return version.members;
+	const shapes = shapesOf(version);
+	let members = shapes.bySet.get(granted);
+	if (members !== undefined) return members;
+	// Another set of the same names (a consumer's, a test's) shares the members of its names' key.
 	const kept = [...version.grantable].filter((member) => granted.has(member)).sort();
 	const key = JSON.stringify(kept);
-	let byGrant = grantedShapes.get(version);
-	if (byGrant === undefined) {
-		byGrant = new Map();
-		grantedShapes.set(version, byGrant);
-	}
-	let members = byGrant.get(key);
+	members = shapes.byNames.get(key)?.deref();
 	if (members === undefined) {
 		const plain = <T>(entries: ReadonlyMap<string, T>): ReadonlyMap<string, T> =>
 			new Map([...entries].filter(([member]) => !version.grantable.has(member) || granted.has(member)));
 		const { state, methods, keyed, events, queries } = version.members;
 		members = { state: plain(state), methods: plain(methods), keyed, events: plain(events), queries };
-		byGrant.set(key, members);
+		const ref = new WeakRef(members);
+		shapes.byNames.set(key, ref);
+		shapes.collected.register(members, { key, ref });
 	}
+	shapes.bySet.set(granted, members);
 	return members;
 }
 
-const grantedShapes = new WeakMap<VersionData, Map<string, MembersData>>();
-
-/** The names of `granted` as the wire carries them: indexes into `version.grants` (names it lacks are left out). */
-export function grantIndexes(version: VersionData, granted: ReadonlySet<string>): number[] {
-	if (granted.size === 0) return NO_INDEXES;
-	const indexes: number[] = [];
-	for (const [index, name] of version.grants.entries()) if (granted.has(name)) indexes.push(index);
-	return indexes;
+/**
+ * `version`'s granted members, made by the first. A function of its own: the registry's callback closes over this
+ * function's variables alone (one made in `grantedMembers` kept the first set granted, and its members, alive).
+ */
+function shapesOf(version: VersionData): GrantedShapes {
+	let shapes = grantedShapes.get(version);
+	if (shapes === undefined) {
+		const byNames = new Map<string, WeakRef<MembersData>>();
+		// Drops the entry of collected members, unless it holds members of the same names made since.
+		const collected = new FinalizationRegistry<{ readonly key: string; readonly ref: WeakRef<MembersData> }>(
+			({ key, ref }) => {
+				if (byNames.get(key) === ref) byNames.delete(key);
+			},
+		);
+		shapes = { bySet: new WeakMap(), byNames, collected };
+		grantedShapes.set(version, shapes);
+	}
+	return shapes;
 }
 
-/** No indexes: shared (a message's lists are never written once made). */
+/**
+ * A version's granted members: by the granted set (while the set lives), and weakly by the granted members' names,
+ * with the registry that drops a collected entry: owned by the version's entry alone (its holdings name no table).
+ */
+type GrantedShapes = {
+	readonly bySet: WeakMap<ReadonlySet<string>, MembersData>;
+	readonly byNames: Map<string, WeakRef<MembersData>>;
+	readonly collected: FinalizationRegistry<{ readonly key: string; readonly ref: WeakRef<MembersData> }>;
+};
+
+const grantedShapes = new WeakMap<VersionData, GrantedShapes>();
+
+/**
+ * The names of `granted` as the wire carries them: indexes into `version.grants` (names it lacks are left out), in a
+ * list of the caller's own (a message's lists are its codec's to write, which may be user code). Computed once per
+ * version and granted set, kept while both live, and copied: a copy of 2 indexes allocates 35 B in 6 ns, a walk of
+ * the grants into a grown list 200 B in 36 ns.
+ */
+export function grantIndexes(version: VersionData, granted: ReadonlySet<string>): number[] {
+	if (granted.size === 0) return NO_INDEXES;
+	let lists = grantIndexLists.get(version);
+	if (lists === undefined) {
+		lists = new WeakMap();
+		grantIndexLists.set(version, lists);
+	}
+	let indexes = lists.get(granted);
+	if (indexes === undefined) {
+		indexes = [];
+		const { grants } = version;
+		for (let index = 0; index < grants.length; index++) if (granted.has(grants[index]!)) indexes.push(index);
+		lists.set(granted, indexes);
+	}
+	return indexes.slice();
+}
+
+const grantIndexLists = new WeakMap<VersionData, WeakMap<ReadonlySet<string>, number[]>>();
+
+/** No indexes: one shared empty list, as before the hot-path pass. */
 const NO_INDEXES: number[] = [];
 
 /**
