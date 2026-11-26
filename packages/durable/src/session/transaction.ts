@@ -151,6 +151,11 @@ export interface TransactionHost {
 	install(document: LoadedDocument): void;
 	/** Remove a retired incarnation if it is still the cached occupant of its address. */
 	evict(addressId: string, recordId: DocumentId): void;
+	/**
+	 * Whether a conversation is being deleted and takes no new work; `undefined` when the Session deletes none. A plain
+	 * Session never does.
+	 */
+	closing(conversationId: ConversationId): Promise<boolean> | undefined;
 	/** Stage writes that belong to every newly created or forked conversation, in its creating transaction. */
 	conversationCreated(tx: Transaction, record: ConversationRecord): Promise<void>;
 	/** The newest entry ID visible from a conversation, known from the Session's commits. */
@@ -465,15 +470,6 @@ export class Transaction implements Tx {
 			}
 			return [...set.values()];
 		});
-	}
-
-	/** Internal: mark conversations deleting (`conversation.deleting`); from then on they take no new work. */
-	markDeleting(records: readonly ConversationRecord[]): void {
-		this.#assertOpen();
-		this.#hasTableWrite = true;
-		for (const record of records) {
-			if (record.deleting !== true) this.#writes.push({ type: "conversation.deleting", id: record.id });
-		}
 	}
 
 	/**
@@ -1317,9 +1313,9 @@ export class Transaction implements Tx {
 	/** As `#requireConversation()`, and refuse one being deleted: new work, such as a task or a fork, needs an open one. */
 	async #requireOpenConversation(id: ConversationId): Promise<void> {
 		if (this.#createdConversationIds.has(id)) return;
-		const record = await this.#host.storage.conversation(id, this.#context);
-		if (record === undefined) throw new Error(`Conversation ${id} does not exist`);
-		if (record.deleting === true) throw new ConversationDeleting(id);
+		await this.#requireConversation(id);
+		const gate = this.#host.closing(id);
+		if (gate !== undefined && (await gate)) throw new ConversationDeleting(id);
 	}
 
 	/**

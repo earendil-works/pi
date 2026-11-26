@@ -100,7 +100,7 @@ slice spec's section citations are for orientation, not a reading limit (owner, 
 - **Erasure** (built 2026-11 for Durable's conversation deletion, pi #12562; design §10 "Erasure"): outbox format 2
   with `document.purge` (`store/engine.ts` `purgeDocuments`, `purgeDocument`; the applier and the batch write
   schema), `OwnerTable.encodeKey`, `delete` and `deleteWhere` (`store/adapter.ts`); Durable's `StoreStorage`
-  deletes conversations with it (its conversations table at version 2: `parent_conversation_id`, `deleting`);
+  deletes conversations with it (its conversations table at version 2: `parent_conversation_id`);
   example 79.
 - **Chord's shared code** (upstream pi): `src/watch.ts` (`Watch`, `NativeWatch`, `WatchHandle`, `WatchEnd`,
   `NativeWatchable`), Delta (`track`, `diffRevisions`, `applyImmutable`, encoders, `PendingOps`, `appendText`),

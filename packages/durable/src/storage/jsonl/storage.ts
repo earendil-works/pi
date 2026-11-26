@@ -341,9 +341,7 @@ export class JsonlStorage implements Storage {
 		try {
 			for (const writes of batches) {
 				// `main.jsonl` is never rewritten, so a deletion could not erase it: none is stored (`deletesConversations`).
-				if (
-					writes.some((write) => write.type === "conversation.deleting" || write.type === "conversation.delete")
-				) {
+				if (writes.some((write) => write.type === "conversation.delete")) {
 					refused = { error: new Error("JSONL storage does not delete conversations") };
 					break;
 				}

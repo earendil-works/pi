@@ -54,7 +54,6 @@ export const claimOf = (write: StorageWrite): { readonly id: Id<string>; readonl
 			return { id: write.record.id, table: "document" };
 		case "document.change":
 		case "document.retire":
-		case "conversation.deleting":
 		case "conversation.delete":
 			return undefined;
 	}
@@ -331,8 +330,6 @@ async function readCurrent(
 export class PendingWrites {
 	readonly #recordIds = new Map<number, TableName>();
 	readonly #conversations: Cell[][] = [];
-	/** Conversations marked deleting. */
-	readonly #deleting = new Set<number>();
 	readonly #entries: Cell[][] = [];
 	readonly #tasks = new Map<number, Cell[]>();
 	readonly #submissions = new Map<number, Cell[]>();
@@ -367,9 +364,7 @@ export class PendingWrites {
 					encodeJson(write.value),
 				]);
 				break;
-			case "conversation.deleting":
-				this.#deleting.add(write.id);
-				break;
+
 			case "entry":
 				this.#entries.push([
 					write.value.id,
@@ -441,12 +436,6 @@ export class PendingWrites {
 			["id", "owner_conversation_id", "owner_task_id", "parent_conversation_id", "record"],
 			this.#conversations,
 		);
-		await runForEach(
-			executor,
-			`UPDATE ${tables.conversations} SET deleting = 1, record = json_set(record, '$.deleting', json('true'))
-				WHERE deleting = 0 AND id IN (SELECT value FROM json_each(?))`,
-			[...this.#deleting],
-		);
 		await insertRows(
 			executor,
 			tables.entries,
@@ -491,7 +480,6 @@ export class PendingWrites {
 		);
 		this.#recordIds.clear();
 		this.#conversations.length = 0;
-		this.#deleting.clear();
 		this.#entries.length = 0;
 		this.#tasks.clear();
 		this.#submissions.clear();

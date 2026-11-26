@@ -391,7 +391,6 @@ async function deleted(storage: Storage) {
 	);
 	await commitWrites(storage, [delta("more secret")], context);
 	await commitWrites(storage, [delta("most secret"), { type: "document.retire", id: notes }], context);
-	await commitWrites(storage, [{ type: "conversation.deleting", id: doomed }], context);
 	await commitWrites(storage, [{ type: "conversation.delete", id: doomed }], context);
 	return { doomed, notes, taskNotes };
 }
@@ -470,19 +469,19 @@ describe("conversation deletion (real erasure)", () => {
 		for (const each of [copy, replica, store]) await each.close(context);
 	});
 
-	it("a store of the conversations table's version 1 opens migrated: fork and deleting queries find its rows", async () => {
+	it("a store of the conversations table's version 1 opens migrated: the fork query finds its rows", async () => {
 		const store = (await memoryStore()) as ChordStore;
 		const claimant = { label: "version 1" };
 		const tables = new StoreOwnerTables(store, "harness", claimant);
 		const conversations = tables.declare(ConversationsV1);
 		await tables.prepare(context);
 		const fork = idFromNumber<ConversationId>(10);
-		const closing = idFromNumber<ConversationId>(11);
+		const nested = idFromNumber<ConversationId>(11);
 		const at = idFromNumber<EntryId>(5);
 		const records = [
 			{ id: ROOT_CONVERSATION_ID },
 			{ id: fork, parent: { conversationId: ROOT_CONVERSATION_ID, at } },
-			{ id: closing, parent: { conversationId: fork, at }, deleting: true },
+			{ id: nested, parent: { conversationId: fork, at } },
 		];
 		const puts = records.map((record) => {
 			const row = conversations.encode({ id: record.id, owner_conversation_id: 0, owner_task_id: 0, record });
@@ -494,8 +493,7 @@ describe("conversation deletion (real erasure)", () => {
 		const ids = async (query: Parameters<Storage["scanConversations"]>[0]) =>
 			(await storage.scanConversations(query, 10, undefined, context)).items.map(({ id }) => id);
 		expect(await ids({ parentConversationId: ROOT_CONVERSATION_ID })).toEqual([fork]);
-		expect(await ids({ parentConversationId: fork })).toEqual([closing]);
-		expect(await ids({ deleting: true })).toEqual([closing]);
+		expect(await ids({ parentConversationId: fork })).toEqual([nested]);
 		expect(store.table("harness:conversations")).toMatchObject({ version: 2, state: "ready" });
 		await store.close(context);
 	});

@@ -360,6 +360,7 @@ export class SessionImpl implements Session {
 				if (this.#documents.get(id)?.record.id === recordId) this.#dropDocument(id);
 			},
 			conversationCreated: (tx, record) => this.conversationCreated(tx, record),
+			closing: (id) => this.closingConversation(id),
 			taskDocuments: (taskId) => this.#taskDocuments.get(taskId)?.values(),
 			latestEntryId: (conversationId, context) => this.latestEntryId(conversationId, context),
 			latestHeadMarker: (conversationId, context) => this.latestHeadMarker(conversationId, undefined, context),
@@ -846,6 +847,14 @@ export class SessionImpl implements Session {
 	 * listener. A plain Session drops them.
 	 */
 	report(_error: unknown, _info: ReportInfo = LISTENER, _context?: Context): void {}
+
+	/**
+	 * On the line: whether a conversation is being deleted (`Transaction`'s `closing`), `undefined` when none is. A plain
+	 * Session deletes none.
+	 */
+	protected closingConversation(_id: ConversationId): Promise<boolean> | undefined {
+		return undefined;
+	}
 
 	/**
 	 * Runs inside every transaction that creates or forks a conversation, after the conversation record is staged. A
@@ -1357,7 +1366,6 @@ export class SessionImpl implements Session {
 					break;
 				case "conversation":
 				case "task":
-				case "conversation.deleting":
 				case "conversation.delete":
 					changes?.push(write);
 			}

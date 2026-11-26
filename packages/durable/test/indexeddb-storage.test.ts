@@ -178,7 +178,6 @@ it("indexes the forks of a version 1 database from their records when it opens",
 			context,
 		);
 		expect(forks.items).toEqual([{ id: 3, parent: { conversationId: 1, at: 2 } }]);
-		expect((await storage.scanConversations({ deleting: true }, 10, undefined, context)).items).toEqual([]);
 	} finally {
 		await storage.close(context);
 	}

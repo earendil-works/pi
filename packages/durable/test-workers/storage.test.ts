@@ -59,6 +59,16 @@ describe("Durable Object SQLite schema", () => {
 	});
 });
 
+describe("Durable Object SQLite secure deletion", () => {
+	it("is refused when the storage opens, as Durable Objects refuse its pragma", async () => {
+		await runInDurableObject(fresh(), async (_instance, state) => {
+			await expect(
+				openDurableObjectSqliteStorage(state.storage, { prefix: "secure_", secureDelete: true }),
+			).rejects.toThrow("secureDelete: this database refuses PRAGMA secure_delete");
+		});
+	});
+});
+
 describe("Durable Object SQLite driver in workerd", () => {
 	// The cursor's `rowsWritten` counts index writes too (3 for this insert, 20 for the bulk update); `runCounted` must not.
 	it("reports the rows a statement changed, without index writes", async () => {

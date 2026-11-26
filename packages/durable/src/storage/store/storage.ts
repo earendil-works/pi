@@ -213,7 +213,6 @@ export class StoreStorage implements Storage {
 			if (query.parentConversationId !== undefined) {
 				conditions.push(["parent_conversation_id", "eq", query.parentConversationId]);
 			}
-			if (query.deleting === true) conditions.push(["deleting", "eq", 1]);
 			return this.#scan<ConversationRecord>(this.#queries.conversations, conditions, start, limit, context);
 		});
 	}

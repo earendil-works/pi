@@ -59,7 +59,6 @@ const INDEXES = {
 	conversationsByOwnerConversation: "conversations_by_owner_conversation",
 	conversationsByOwnerTask: "conversations_by_owner_task",
 	conversationsByParent: "conversations_by_parent",
-	conversationsDeleting: "conversations_deleting",
 	entriesByConversation: "entries_by_conversation",
 	entryHeadsByConversation: "entry_heads_by_conversation",
 	tasksByStatus: "tasks_by_status",
@@ -95,8 +94,6 @@ type ConversationRow = {
 	readonly ownerConversationId?: ConversationId;
 	readonly ownerTaskId?: TaskId;
 	readonly parentConversationId?: ConversationId;
-	/** Present only while deleting, so its index holds only those rows. */
-	readonly deleting?: 1;
 	readonly record: ConversationRecord;
 };
 type EntryRow = {
@@ -364,7 +361,6 @@ const writeId = (write: StorageWrite): Id<string> | undefined => {
 			return write.record.id;
 		case "document.change":
 		case "document.retire":
-		case "conversation.deleting":
 		case "conversation.delete":
 			return undefined;
 	}
@@ -413,13 +409,12 @@ function createSchema(database: IDBDatabase): void {
 }
 
 /**
- * Version 2: index forks by their parent and the conversations being deleted. An existing database's conversations get
- * their parent column from their record.
+ * Version 2: index forks by their parent. An existing database's conversations get their parent column from their
+ * record.
  */
 function indexDeletion(transaction: IDBTransaction, created: boolean): void {
 	const conversations = transaction.objectStore(STORES.conversations);
 	conversations.createIndex(INDEXES.conversationsByParent, ["parentConversationId", "id"]);
-	conversations.createIndex(INDEXES.conversationsDeleting, ["deleting", "id"]);
 	if (created) return;
 	const request = conversations.openCursor();
 	request.addEventListener("success", () => {
@@ -570,8 +565,7 @@ export class IndexedDbStorage implements Storage {
 			const store = transaction.objectStore(STORES.conversations);
 			const accept = (row: ConversationRow) =>
 				(query.ownerConversationId === undefined || row.ownerConversationId === query.ownerConversationId) &&
-				(query.parentConversationId === undefined || row.parentConversationId === query.parentConversationId) &&
-				(query.deleting === undefined || row.deleting === 1);
+				(query.parentConversationId === undefined || row.parentConversationId === query.parentConversationId);
 			let rows: ConversationRow[];
 			if (query.ownerTaskId !== undefined) {
 				rows = await scanCompoundRows(
@@ -597,8 +591,6 @@ export class IndexedDbStorage implements Storage {
 					limit + 1,
 					accept,
 				);
-			} else if (query.deleting === true) {
-				rows = await scanCompoundRows(store.index(INDEXES.conversationsDeleting), [1], start, limit + 1, accept);
 			} else {
 				rows = await cursorValues<ConversationRow>(
 					store,
@@ -1051,7 +1043,6 @@ export class IndexedDbStorage implements Storage {
 			if (
 				write.type === "document.change" ||
 				write.type === "document.retire" ||
-				write.type === "conversation.deleting" ||
 				write.type === "conversation.delete"
 			)
 				continue;
@@ -1191,19 +1182,6 @@ export class IndexedDbStorage implements Storage {
 					} satisfies ConversationRow),
 				);
 				break;
-			case "conversation.deleting": {
-				const conversations = transaction.objectStore(STORES.conversations);
-				const row = await requestResult(conversations.get(write.id) as IDBRequest<ConversationRow | undefined>);
-				if (row === undefined || row.deleting === 1) break;
-				await requestResult(
-					conversations.put({
-						...row,
-						deleting: 1,
-						record: { ...row.record, deleting: true },
-					} satisfies ConversationRow),
-				);
-				break;
-			}
 			case "entry":
 				await this.claimId(transaction, write.value.id, "entry");
 				await requestResult(

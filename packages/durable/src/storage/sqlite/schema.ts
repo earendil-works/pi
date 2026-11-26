@@ -22,7 +22,6 @@ const INDEX_NAMES = {
 	conversationsByOwnerConversation: "conversations_by_owner_conversation",
 	conversationsByOwnerTask: "conversations_by_owner_task",
 	conversationsByParent: "conversations_by_parent",
-	conversationsDeleting: "conversations_deleting",
 	entriesByConversation: "entries_by_conversation",
 	entryHeadsByConversation: "entry_heads_by_conversation",
 	tasksByStatus: "tasks_by_status",

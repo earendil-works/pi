@@ -1,8 +1,8 @@
 // One Durable commit as one commit of the store's series (slice 6b §2.3): staged before the queue (rows encoded,
 // contents serialized, explicit ids raising the store's allocator), then inside the series' transaction what
 // `SqliteStorage` does inside its own, with the step's reader: Durable's checks of ids and documents and the copies
-// resolved from their sources (its messages, a refusal), then its one composite write: the table puts and deleting
-// marks, the documents in two passes, existing ones first (their content, then their retirement, which frees the
+// resolved from their sources (its messages, a refusal), then its one composite write: the table puts, the documents in
+// two passes, existing ones first (their content, then their retirement, which frees the
 // addresses this commit's creations take), then the creations and copies, and last the conversation deletions.
 
 import {
@@ -29,7 +29,6 @@ import type { JsonValue } from "@earendil-works/chord/json";
 import { StorageRequestError } from "../../errors.ts";
 import type {
 	ConversationId,
-	ConversationRecord,
 	DocumentContent,
 	DocumentCopySource,
 	DocumentCreate,
@@ -57,15 +56,11 @@ export type CommitTables = {
 
 /** A table write of the commit: its record's id and type, its table and its row encoded at staging. */
 type RowWrite = {
-	readonly kind: "row";
 	readonly id: number;
 	readonly type: Exclude<RecordType, "document">;
 	readonly table: OwnerTable;
 	readonly row: EncodedRow;
 };
-
-/** The table writes of the commit in write order: rows, and conversations marked deleting. */
-type TableStep = RowWrite | { readonly kind: "deleting"; readonly id: ConversationId };
 
 /** A conversation deletion, staged: its row's key and the condition of its rows in the other tables. */
 type Deletion = { readonly id: ConversationId; readonly key: EncodedKey; readonly rows: WhereNode };
@@ -95,7 +90,7 @@ export class DurableCommit implements SeriesCommit, StagedWrite {
 	readonly #context: Context;
 	/** Every id a write claims, in write order (documents created or copied included), for the id checks. */
 	readonly #claims: { readonly id: number; readonly type: RecordType }[] = [];
-	readonly #rows: TableStep[] = [];
+	readonly #rows: RowWrite[] = [];
 	readonly #actions = new Map<DocumentId, DocumentAction>();
 	/** The conversations the commit deletes, after its other writes. */
 	readonly #deletions = new Map<ConversationId, Deletion>();
@@ -172,10 +167,6 @@ export class DurableCommit implements SeriesCommit, StagedWrite {
 		const recorded: StoreWrite[] = [];
 		const { claimed, existing } = this.#checked!;
 		for (const write of this.#rows) {
-			if (write.kind === "deleting") {
-				recorded.push(...(await this.#markDeleting(step, write.id)));
-				continue;
-			}
 			if (claimed.get(write.id) === undefined) recorded.push(await this.#claim(step, write.id, write.type));
 			claimed.set(write.id, write.type);
 			const stamp = write.table === this.#tables.entries ? "commit_seq" : undefined;
@@ -193,25 +184,13 @@ export class DurableCommit implements SeriesCommit, StagedWrite {
 		return recorded;
 	}
 
-	/** Marks a stored conversation deleting (its record and its column); an unknown or marked one writes nothing. */
-	async #markDeleting(step: Step, id: ConversationId): Promise<StoreWrite[]> {
-		const table = this.#tables.conversations;
-		const stored = await table.get(step, [id], this.#context);
-		// The cell holds a conversation record this storage wrote.
-		const record = stored?.record as ConversationRecord | undefined;
-		if (record === undefined || record.deleting === true) return [];
-		// Encoded in the step: the record is the one stored now, which only the step reads.
-		return [await table.put(step, table.encode(conversationRow({ ...record, deleting: true })))];
-	}
-
 	/**
-	 * Deletes a stored conversation for good: the documents of its scope and of its tasks' scopes with every revision,
-	 * then its tasks, entries, head markers and submissions, then its row; `record_ids` keeps its ids claimed. An
-	 * unknown one writes nothing.
+	 * Deletes a conversation for good: the documents of its scope and of its tasks' scopes with every revision, then its
+	 * tasks, entries, head markers and submissions, then its row, by its ID, as the other backends do, also when its row
+	 * is gone; `record_ids` keeps its ids claimed.
 	 */
 	async #delete(step: Step, deletion: Deletion): Promise<StoreWrite[]> {
 		const tables = this.#tables;
-		if ((await tables.conversations.get(step, deletion.key.params, this.#context)) === undefined) return [];
 		const writes: StoreWrite[] = [];
 		const owner = this.#owner;
 		const scope = { kind: "conversation", conversationId: deletion.id } as const;
@@ -241,7 +220,7 @@ export class DurableCommit implements SeriesCommit, StagedWrite {
 				// Its claim is the entry's: `apply` claims an id once.
 				if (head !== undefined) {
 					const row = tables.entryHeads.encode({ id, conversation_id: conversationId });
-					this.#rows.push({ kind: "row", id, type: write.type, table: tables.entryHeads, row });
+					this.#rows.push({ id, type: write.type, table: tables.entryHeads, row });
 				}
 				return;
 			}
@@ -281,9 +260,6 @@ export class DurableCommit implements SeriesCommit, StagedWrite {
 				action.retire = true;
 				return;
 			}
-			case "conversation.deleting":
-				this.#rows.push({ kind: "deleting", id: write.id });
-				return;
 			case "conversation.delete": {
 				const key = tables.conversations.encodeKey({ id: write.id });
 				this.#deletions.set(write.id, { id: write.id, key, rows: { eq: ["conversation_id", write.id] } });
@@ -294,7 +270,7 @@ export class DurableCommit implements SeriesCommit, StagedWrite {
 
 	#row(id: Id<string>, type: RowWrite["type"], table: OwnerTable, row: object, raise: (id: number) => void): void {
 		this.#claims.push({ id, type });
-		this.#rows.push({ kind: "row", id, type, table, row: table.encode(row) });
+		this.#rows.push({ id, type, table, row: table.encode(row) });
 		raise(id);
 	}
 

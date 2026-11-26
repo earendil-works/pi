@@ -19,6 +19,7 @@ import {
 import { ResetEntry } from "../entries.ts";
 import type { ExecutionEnv } from "../env/index.ts";
 import { DeletionRefused } from "../errors.ts";
+import { documentKey } from "../session/keys.ts";
 import { contained, SessionImpl } from "../session/session.ts";
 import type { Transaction } from "../session/transaction.ts";
 import type { SignalResult, SignalToken } from "../signals.ts";
@@ -51,7 +52,7 @@ import { InboxDoc, withdrawAbortedInputs, withdrawDeleted } from "./inbox.ts";
 import { LIMITS_RESTARTS, LiveDoc, settleSchedulerOutcome } from "./live.ts";
 import { ProviderDoc } from "./provider.ts";
 import { BUILTIN_TASKS } from "./registry.ts";
-import { type InvocationBinding, TaskScheduler } from "./scheduler.ts";
+import { DELETIONS_ADDRESS, type InvocationBinding, TaskScheduler } from "./scheduler.ts";
 import { Submissions } from "./submissions.ts";
 import { type TaskGraph, TaskGraphView, type TaskGraphWatch } from "./task-graph.ts";
 import { DURABLE_TELEMETRY_SCHEMA } from "./telemetry.ts";
@@ -262,6 +263,7 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 			settleOutcome: settleSchedulerOutcome,
 			withdrawInputs: withdrawAbortedInputs,
 			withdrawAll: withdrawDeleted,
+			deletes: rawStorage.deletesConversations === true,
 			conversation: async (id, binding, callContext) => {
 				const record = await this.readOnLine((line) => line.conversation(id, callContext));
 				return record === undefined ? undefined : boundConversation(id, binding, this.#submissions, this.#tasks);
@@ -443,6 +445,13 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 
 	override report(error: unknown, info: ReportInfo = { kind: "listener_error" }, context?: Context): void {
 		this.#report(error, info, context);
+	}
+
+	/** Whether a deletion closed a conversation, once a closing commit that may be unpublished is (`pi.deletions`). */
+	protected override closingConversation(id: ConversationId): Promise<boolean> | undefined {
+		const gate = this.touch(documentKey(DELETIONS_ADDRESS));
+		if (gate !== undefined) return gate.then(() => this.#tasks.deleting(id));
+		return this.#tasks.deleting(id) ? Promise.resolve(true) : undefined;
 	}
 
 	/** The ownership memberships a commit's task changes write, from the scheduler's index. */

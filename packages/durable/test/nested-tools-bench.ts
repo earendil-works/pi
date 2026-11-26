@@ -89,7 +89,6 @@ function noWrites(): Written {
 		"document.copy": 0,
 		"document.change": 0,
 		"document.retire": 0,
-		"conversation.deleting": 0,
 		"conversation.delete": 0,
 	};
 }

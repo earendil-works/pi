@@ -251,6 +251,20 @@ async function replacement(world: World, rng: Random, reference: MemoryStorage):
 	return rng.chance(0.5) ? pair : pair.reverse();
 }
 
+/**
+ * A conversation's deletion, at any place in its batch, which applies it after the batch's other writes: it leaves the
+ * pool, as the Session writes nothing to a deleted conversation; its records' IDs stay in theirs.
+ */
+function deletion(world: World, rng: Random): StorageWrite[] {
+	const doomed = world.conversations.filter((id) => id !== ROOT_CONVERSATION_ID);
+	if (doomed.length === 0) return [];
+	const id = rng.pick(doomed);
+	for (let index = world.conversations.length - 1; index >= 0; index--) {
+		if (world.conversations[index] === id) world.conversations.splice(index, 1);
+	}
+	return [{ type: "conversation.delete", id }];
+}
+
 /** One of `documents`, mostly a live one (as `reference` stores it). */
 async function pickDocument<T extends { readonly id: DocumentId }>(
 	rng: Random,
@@ -367,6 +381,8 @@ describe("SqliteStorage batch commits against the memory reference", () => {
 	for (const seed of [1, 2, 3, 4, 5, 6]) {
 		it(`agrees with MemoryStorage on random batch calls (seed ${seed})`, async () => {
 			const rng = random(seed);
+			// Deletions draw from their own sequence: the other writes are the ones the seed always generated.
+			const deletes = random(seed + 1000);
 			const reference = new MemoryStorage();
 			openStorages.add(reference);
 			const groupedDb = await openDatabase();
@@ -391,6 +407,7 @@ describe("SqliteStorage batch commits against the memory reference", () => {
 			let refusals = 0;
 			let prefixes = 0;
 			let groups = 0;
+			let deletions = 0;
 			for (let round = 0; round < 120; round++) {
 				const batches: StorageWrite[][] = [];
 				world.call.clear();
@@ -401,6 +418,11 @@ describe("SqliteStorage batch commits against the memory reference", () => {
 					const size = 1 + rng.int(4);
 					for (let write = 0; write < size; write++) writes.push(await randomWrite(world, rng, reference));
 					if (rng.chance(0.2)) writes.push(...(await replacement(world, rng, reference)));
+					if (deletes.chance(0.06)) {
+						const deleting = deletion(world, deletes);
+						deletions += deleting.length;
+						writes.splice(deletes.int(writes.length + 1), 0, ...deleting);
+					}
 					batches.push(writes);
 				}
 				const expected = await commitOutcome(reference, batches);
@@ -423,6 +445,7 @@ describe("SqliteStorage batch commits against the memory reference", () => {
 			expect(refusals).toBeGreaterThan(10);
 			expect(prefixes).toBeGreaterThan(10);
 			expect(groups).toBeGreaterThan(10);
+			expect(deletions).toBeGreaterThan(5);
 			// About 1.3 s alone; parallel test files on CI runners push it past the 5 s default.
 		}, 30_000);
 	}

@@ -130,8 +130,6 @@ type ConversationRecord = {
     readonly conversationId: ConversationId;
     readonly taskId: TaskId;
   };
-  /** Set by `deleteConversations()` (section 2.2) until the conversation is deleted. */
-  readonly deleting?: true;
 };
 ```
 
@@ -1117,29 +1115,46 @@ unknown IDs are skipped, so a repeated call is harmless.
      from such a wait and has not committed since (its `wake` names it): it
      reads the outcomes once it runs.
 
-   Otherwise the commit marks every conversation of the set `deleting`
-   (`conversation.deleting`, section 10), settles every item of their inboxes
-   `unanswered` with reason `deleted`, writes too, and abort-marks every live
-   task of the set, background ones included.
-2. **Closed.** A deleting conversation takes no new work: a submission, a task,
-   and a fork of it are refused with `ConversationDeleting`, and so is a wait of
-   a task outside the set on one of its tasks (section 5.5). A task inside may
-   still commit its abort handler's writes. The scheduler keeps the deleting
-   conversations in memory, read at open through the `deleting` query.
+   Otherwise the commit adds the set to the built-in session document
+   `pi.deletions` (below), settles every item of their inboxes `unanswered`
+   with reason `deleted`, writes too, and abort-marks every live task of the
+   set, background ones included.
+2. **Closed.** A conversation in `pi.deletions` takes no new work: a
+   submission, a task, and a fork of it are refused with `ConversationDeleting`,
+   and so is a wait of a task outside the set on one of its tasks (section
+   5.5). Each check touches the document's address on the Session line, so it
+   waits for an unpublished closing commit. A task inside may still commit its
+   abort handler's writes. The scheduler keeps the document's conversations in
+   memory, read at open.
 3. **Deleting.** Once every task of the set is terminal, one commit settles any
    queued or placed submission left `unanswered` with reason `deleted`, so their
    waits and `notify` signals resolve, retires every current document of the
    set, so watches and the document cache follow, and then writes one
-   `conversation.delete` per conversation, after its other writes. That write
-   names no single key: it is a barrier (section 4), so every read waits for
-   its publication. The publication drops the conversations from the Session's
+   `conversation.delete` per conversation, after its other writes, and removes
+   the set from `pi.deletions`. That write names no single key: it is a barrier
+   (section 4), so every read waits for its publication. The publication drops the conversations from the Session's
    record cache, in-flight reads included, the newest-entry index, and the
    kept contexts, and ends their conversation views `ended`.
 
 A crash or close between the two commits leaves the set closed. Reopening
-loads the deleting conversations, and the first `resume()` finishes their
-deletion as above. Every later write to a deleted conversation fails as for an
-unknown one. `usage()` no longer counts it.
+loads `pi.deletions`, and the first `resume()` finishes the deletion as above,
+as the scheduler's own work: a failure other than the Session's or its close
+fails the Session (section 10.1). Over a Storage without `deletesConversations`,
+such as one a session was copied to, the set stays closed. The wait for the
+set's tasks follows their abort handlers: one that never returns holds the
+deletion, as it holds `Conversation.abort()`. Every later write to a deleted
+conversation fails as for an unknown one. `usage()` no longer counts it.
+
+The built-in deletions document:
+
+| field | value |
+|---|---|
+| kind | `pi.deletions` |
+| version | `1` (no migration) |
+| scope | session |
+| schema | `{ conversations: ConversationId[] }` |
+| `initial()` | `{ conversations: [] }` |
+| checkpoint | complete base on every change |
 
 `abortTask()` commits `abortRequested`, then signals and joins the active run;
 the scheduler then starts the abort invocation and marks the foreground-owned
@@ -6671,7 +6686,6 @@ type ConversationQuery = {
   readonly ownerConversationId?: ConversationId;
   readonly ownerTaskId?: TaskId;
   readonly parentConversationId?: ConversationId; // the forks of a conversation
-  readonly deleting?: true; // the conversations being deleted
   readonly order?: ScanOrder; // default ascending
 };
 
@@ -6744,7 +6758,6 @@ type StorageWrite =
       readonly content: DocumentContent;
     }
   | { readonly type: "document.retire"; readonly id: DocumentId }
-  | { readonly type: "conversation.deleting"; readonly id: ConversationId }
   | { readonly type: "conversation.delete"; readonly id: ConversationId };
 
 /**
@@ -6893,19 +6906,18 @@ lifetime bounds with the batch sequence. Retire plus create at one logical
 address makes the new incarnation current at that sequence. Deltas cannot cross
 a stored version boundary; a version transition must be a base.
 
-A Storage that sets `deletesConversations` stores two more writes. A
-`conversation.deleting` sets `deleting: true` on the stored record, which the
-`deleting` query then finds. A `conversation.delete` applies after every other
-write of its batch. It removes the conversation record, its entries, tasks,
-and submissions, and every document incarnation scoped to the conversation or
-to one of its tasks, retired ones and all their content included, and erases
-them as its backend can (section 11). The IDs stay claimed, so no later write
-reuses one, and `mintId()` stays above them. An unknown conversation is no
-error for either. Storage trusts the Session to delete only conversations
-without live tasks and without forks outside the deletion. Commit observers
-get both writes in the publication (`TableCommitChange`), so a replica applies
-them too. The `parentConversationId` and `deleting` conversation filters are
-indexed, as the owner filters are.
+A Storage that sets `deletesConversations` stores `conversation.delete`. It
+applies after every other write of its batch, and removes, by the
+conversation's ID, its record, the entries, tasks, and submissions of the
+conversation, and every document incarnation scoped to it or to one of its
+tasks, retired ones and all their content included; an unknown conversation
+is no error. The batches after it in the same call are checked against the
+state it left: a change to a document it removed is refused. The IDs stay
+claimed, so no later write reuses one, and `mintId()` stays above them.
+Storage trusts the Session to delete only conversations without live tasks
+and without forks outside the deletion. Commit observers get the write in the
+publication (`TableCommitChange`), so a replica applies it too. Every Storage
+indexes the `parentConversationId` filter, as it does the owner filters.
 
 The semantic conformance suite covers memory, SQLite, and JSONL.
 
@@ -7092,16 +7104,18 @@ implementation choices validated by conformance, reopen, query-plan, and storage
 benchmarks.
 
 Schema version 3 adds the conversations' `parent_conversation_id` column,
-filled from the records, and their `deleting` flag, with an index each. A batch
-that deletes conversations is written first; the deletion then runs a few
-`DELETE` statements on the indexes, `record_ids` untouched, with
-`secure_delete` on, so the freed pages are overwritten, and the storage
-truncates the WAL (`wal_checkpoint(TRUNCATE)`) once the transaction committed;
-a busy checkpoint leaves the old frames to the next one. The option
-`secureDelete: false` turns both off; the Durable Object opener does so, as
-Durable Objects refuse these pragmas and own their storage. IndexedDB (database
-version 2) deletes the same records through its indexes; the browser reclaims
-the space.
+filled from the records, with an index. A batch that deletes conversations is
+written first; the deletion then runs a few `DELETE` statements on the
+indexes, `record_ids` untouched, and the batches after it are checked against
+the database again. SQLite keeps the deleted bytes in free pages and in the
+WAL until they are reused. The option `secureDelete: true` (opt-in) erases
+them: the deletion runs with `secure_delete` on, so the freed pages are
+overwritten, and the storage truncates the WAL (`wal_checkpoint(TRUNCATE)`)
+once the transaction committed; a busy checkpoint leaves the old frames to the
+next one. Opening with it refuses a database that refuses the pragma, such as a
+Durable Object's, which manages its storage itself. IndexedDB (database version
+2) deletes the same records through its indexes; the browser reclaims the
+space.
 
 ### 11.3 JSONL
 
@@ -7177,7 +7191,9 @@ The store backend (`StoreStorage`) deletes the table rows and purges the
 documents, their revisions included whatever their history, with writes the
 store's outbox carries, so a replica applies the deletion too. The commits
 stored before it keep their writes in the outbox until it is trimmed past the
-deletion: erasure is complete then.
+deletion. Freed pages and the WAL are the store connection's to erase, as for
+SQLite. Its conversations table is at version 2, which adds the parent
+column.
 
 ## 12. API footguns
 

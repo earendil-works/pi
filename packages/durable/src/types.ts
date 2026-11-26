@@ -459,8 +459,6 @@ export type ConversationRecord = {
 		readonly conversationId: ConversationId;
 		readonly taskId: TaskId;
 	};
-	/** Set by `Harness.deleteConversations()`: the conversation takes no new work and is deleted once its work ended. */
-	readonly deleting?: true;
 };
 
 /** An immutable override of one visible entry's contribution to model context. */
@@ -865,7 +863,6 @@ export type ConversationQuery = {
 	readonly ownerConversationId?: ConversationId;
 	readonly ownerTaskId?: TaskId;
 	readonly parentConversationId?: ConversationId;
-	readonly deleting?: true;
 	/** Default `ascending`; with a cursor, the cursor's order. */
 	readonly order?: ScanOrder;
 };
@@ -964,7 +961,6 @@ export type StorageWrite =
 			readonly content: DocumentContent;
 	  }
 	| { readonly type: "document.retire"; readonly id: DocumentId }
-	| { readonly type: "conversation.deleting"; readonly id: ConversationId }
 	| { readonly type: "conversation.delete"; readonly id: ConversationId };
 
 /**
@@ -1003,9 +999,7 @@ export type DocumentCommitChange =
 /** Complete table record committed without another publication copy. */
 export type TableCommitChange = Extract<
 	StorageWrite,
-	{
-		readonly type: "conversation" | "entry" | "task" | "submission" | "conversation.deleting" | "conversation.delete";
-	}
+	{ readonly type: "conversation" | "entry" | "task" | "submission" | "conversation.delete" }
 >;
 
 export type CommitChange = TableCommitChange | DocumentCommitChange;
@@ -1408,8 +1402,8 @@ export interface Storage {
 	publishing?(publish: () => void, context: Context): void;
 
 	/**
-	 * Set by a Storage that stores `conversation.deleting` and `conversation.delete` writes and erases what a deletion
-	 * removes; `Harness.deleteConversations()` refuses without it.
+	 * Set by a Storage that stores `conversation.delete` writes and erases what a deletion removes;
+	 * `Harness.deleteConversations()` refuses without it.
 	 */
 	readonly deletesConversations?: true;
 

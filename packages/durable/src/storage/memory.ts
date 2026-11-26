@@ -78,7 +78,6 @@ type State = {
 	conversationIdsByOwnerConversation: Map<ConversationId, ConversationId[]>;
 	conversationIdsByOwnerTask: Map<TaskId, ConversationId[]>;
 	conversationIdsByParent: Map<ConversationId, ConversationId[]>;
-	deletingConversationIds: ConversationId[];
 	entries: Map<EntryId, EntryRecord>;
 	entryIds: Map<ConversationId, EntryId[]>;
 	headEntryIds: Map<ConversationId, EntryId[]>;
@@ -254,7 +253,6 @@ export class MemoryStorage implements Storage {
 		conversationIdsByOwnerConversation: new Map(),
 		conversationIdsByOwnerTask: new Map(),
 		conversationIdsByParent: new Map(),
-		deletingConversationIds: [],
 		entries: new Map(),
 		entryIds: new Map(),
 		headEntryIds: new Map(),
@@ -393,13 +391,7 @@ export class MemoryStorage implements Storage {
 					this.nextId = Math.max(this.nextId, write.value.id + 1);
 					break;
 				}
-				case "conversation.deleting": {
-					const record = this.state.conversations.get(write.id);
-					if (record === undefined || record.deleting === true) break;
-					this.state.conversations.set(write.id, { ...record, deleting: true });
-					insertSorted(this.state.deletingConversationIds, write.id);
-					break;
-				}
+
 				case "entry": {
 					this.state.recordTypes.set(write.value.id, "entry");
 					this.state.entries.set(write.value.id, write.value);
@@ -484,18 +476,19 @@ export class MemoryStorage implements Storage {
 	private deleteConversation(id: ConversationId): void {
 		const state = this.state;
 		const conversation = state.conversations.get(id);
-		if (conversation === undefined) return;
-		state.conversations.delete(id);
-		removeSorted(state.conversationIds, id);
-		const owner = conversation.owner;
-		if (owner !== undefined) {
-			removeMapId(state.conversationIdsByOwnerConversation, owner.conversationId, id);
-			removeMapId(state.conversationIdsByOwnerTask, owner.taskId, id);
+		if (conversation !== undefined) {
+			state.conversations.delete(id);
+			removeSorted(state.conversationIds, id);
+			const owner = conversation.owner;
+			if (owner !== undefined) {
+				removeMapId(state.conversationIdsByOwnerConversation, owner.conversationId, id);
+				removeMapId(state.conversationIdsByOwnerTask, owner.taskId, id);
+			}
+			if (conversation.parent !== undefined) {
+				removeMapId(state.conversationIdsByParent, conversation.parent.conversationId, id);
+			}
 		}
-		if (conversation.parent !== undefined) {
-			removeMapId(state.conversationIdsByParent, conversation.parent.conversationId, id);
-		}
-		removeSorted(state.deletingConversationIds, id);
+		// Every record of the conversation goes, also without its record, as the other backends delete by its ID.
 		for (const entryId of state.entryIds.get(id) ?? []) {
 			state.entries.delete(entryId);
 			state.entryCommitSeqs.delete(entryId);
@@ -562,9 +555,7 @@ export class MemoryStorage implements Storage {
 					? (state.conversationIdsByOwnerConversation.get(query.ownerConversationId) ?? [])
 					: query.parentConversationId !== undefined
 						? (state.conversationIdsByParent.get(query.parentConversationId) ?? [])
-						: query.deleting === true
-							? state.deletingConversationIds
-							: state.conversationIds;
+						: state.conversationIds;
 		const start = scanStart(query.order, cursor, "ascending");
 		const values: ConversationRecord[] = [];
 		for (const index of scanIndexes(ids, start)) {
@@ -576,7 +567,6 @@ export class MemoryStorage implements Storage {
 			if (query.parentConversationId !== undefined && value.parent?.conversationId !== query.parentConversationId) {
 				continue;
 			}
-			if (query.deleting === true && value.deleting !== true) continue;
 			values.push(value);
 		}
 		return page(values, limit, start.order);
@@ -856,7 +846,6 @@ export class MemoryStorage implements Storage {
 			if (
 				write.type === "document.change" ||
 				write.type === "document.retire" ||
-				write.type === "conversation.deleting" ||
 				write.type === "conversation.delete"
 			)
 				continue;

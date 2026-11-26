@@ -105,10 +105,6 @@ export class CachedStorage implements Storage {
 					this.#wrote(write.value.id);
 					this.#submissions.set(write.value.id, freeze(write.value));
 					break;
-				case "conversation.deleting":
-					this.#wrote(write.id);
-					this.#conversations.delete(write.id);
-					break;
 				case "conversation.delete":
 					this.#forget(write.id);
 					break;

@@ -20,7 +20,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { openNodeJsonlStorage } from "../src/storage/jsonl/node.ts";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { user } from "./harness-support.ts";
-import { context } from "./session-support.ts";
+import { ControlledStorage, context } from "./session-support.ts";
 import { aborted, type Deferred, deferred, eventually, openTasks, settled } from "./task-support.ts";
 
 /** Gates of the abort handlers named by a task's input, which wait for them when set. */
@@ -192,6 +192,22 @@ describe("Harness.deleteConversations", () => {
 		await harness.close(context);
 	});
 
+	it("refuses new work admitted while the commit that closes the conversation is being stored", async () => {
+		const storage = new ControlledStorage();
+		const harness = await open(storage);
+		const doomed = await ownerless(harness);
+		const held = storage.holdCommits();
+		const deleting = harness.deleteConversations([doomed.id], context);
+		await held.entered;
+		const creating = doomed.commit((tx) => tx.createTask(Hold, {}, { ownership: { kind: "conversation" } }), context);
+		expect(await settled(creating)).toBe(false);
+		held.release();
+		await expect(creating).rejects.toBeInstanceOf(ConversationDeleting);
+		await deleting;
+		expect(await harness.conversation(doomed.id, context)).toBeUndefined();
+		await harness.close(context);
+	});
+
 	it("refuses the root, a live owner, a fork left behind, and a waiter elsewhere, aborting nothing", async () => {
 		const harness = await open(new MemoryStorage());
 		await harness.root(context);
@@ -273,16 +289,22 @@ describe("Harness.deleteConversations", () => {
 		const { harness: reopened } = await openTasks(await openNodeSqliteStorage(path), [Hold, Waiter]);
 		harness = reopened;
 		// Closed, not yet deleted: it takes no new work, and scheduling finishes it.
-		expect((await harness.commit((tx) => tx.conversation(doomed.id), context))?.deleting).toBe(true);
+		await expect(
+			harness.commit(
+				(tx) => tx.createTask(Hold, {}, { ownership: { kind: "conversation" }, conversationId: doomed.id }),
+				context,
+			),
+		).rejects.toBeInstanceOf(ConversationDeleting);
+		expect(await harness.conversation(doomed.id, context)).toBeDefined();
 		harness.resume();
 		await eventually(async () => (await harness.conversation(doomed.id, context)) === undefined);
 		expect(await status(harness, slow)).toBeUndefined();
 		await harness.close(context);
 	});
 
-	it("erases what SQLite deleted from the database file and the WAL", async () => {
+	it("erases what SQLite deleted from the database file and the WAL with secureDelete", async () => {
 		const folder = await directory();
-		const harness = await open(await openNodeSqliteStorage(join(folder, "session.sqlite")));
+		const harness = await open(await openNodeSqliteStorage(join(folder, "session.sqlite"), { secureDelete: true }));
 		const conversation = await ownerless(harness);
 		const secret = "secret-of-the-deleted-conversation-".repeat(200);
 		await conversation.commit(

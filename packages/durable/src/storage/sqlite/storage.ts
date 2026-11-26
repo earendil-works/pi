@@ -65,9 +65,9 @@ export type SqliteStorageOptions = {
 	 */
 	readonly prefix?: string;
 	/**
-	 * Erase what a conversation deletion removes: overwrite it (`secure_delete`) and truncate the WAL after the commit.
-	 * Default true. Durable Objects refuse these pragmas and own their storage; `openDurableObjectSqliteStorage()`
-	 * turns it off.
+	 * Erase what a conversation deletion removes from the database files: overwrite its freed pages (`secure_delete`)
+	 * and truncate the WAL after the commit. Default false: SQLite then keeps the bytes in free pages and the WAL until
+	 * they are reused. Opening refuses it on a database that refuses the pragma, such as a Durable Object's.
 	 */
 	readonly secureDelete?: boolean;
 };
@@ -154,7 +154,14 @@ export class SqliteStorage implements Storage {
 				`SELECT next_id, next_seq FROM ${schema.tables.durableMetadata} WHERE singleton = 1`,
 			);
 			if (metadata === undefined) throw new Error("Durable SQLite metadata is missing");
-			return new SqliteStorage(db, schema, options.secureDelete ?? true, Number(metadata.next_id));
+			const secureDelete = options.secureDelete === true;
+			// Here, not at the first deletion, whose failure would fail its Session.
+			if (secureDelete) {
+				await db.get("PRAGMA secure_delete").catch((error: unknown) => {
+					throw new Error("secureDelete: this database refuses PRAGMA secure_delete", { cause: error });
+				});
+			}
+			return new SqliteStorage(db, schema, secureDelete, Number(metadata.next_id));
 		} catch (error) {
 			try {
 				await db.close();
@@ -188,9 +195,9 @@ export class SqliteStorage implements Storage {
 			const metadata = await this.readMetadata(transaction);
 			let next = metadata.next_seq;
 			// A failure of the database rejects the call and rolls back the batches before it with the transaction.
-			const state = await CommitState.read(transaction, this.schema.tables, batches);
+			let state = await CommitState.read(transaction, this.schema.tables, batches);
 			const pending = new PendingWrites();
-			for (const writes of batches) {
+			for (const [index, writes] of batches.entries()) {
 				const checked = await this.checkBatch(transaction, state, pending, writes);
 				if (checked.kind === "refused") {
 					refused = { error: checked.refused };
@@ -205,6 +212,8 @@ export class SqliteStorage implements Storage {
 					await pending.flush(transaction, this.schema.tables);
 					await this.deleteConversations(transaction, deletions);
 					deleted = true;
+					// The state read up front still holds what the deletion removed: the later batches check against the database.
+					state = await CommitState.read(transaction, this.schema.tables, batches.slice(index + 1));
 				}
 				seqs.push(seq);
 				candidateNextId = Math.max(candidateNextId, this.candidateNextId(writes));
@@ -317,7 +326,6 @@ export class SqliteStorage implements Storage {
 			clauses.push("parent_conversation_id = ?");
 			params.push(query.parentConversationId);
 		}
-		if (query.deleting === true) clauses.push("deleting = 1");
 		params.push(limit + 1);
 		const rows = await this.db.all<JsonRow>(
 			`SELECT record FROM ${this.schema.tables.conversations} WHERE ${clauses.join(" AND ")} ORDER BY id ${scan.direction} LIMIT ?`,

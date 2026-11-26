@@ -102,7 +102,7 @@ describe("durable SQLite migrations", () => {
 		}
 	});
 
-	it("migrates a version 2 database to index forks and deleting conversations, from their records", async () => {
+	it("migrates a version 2 database to index forks by their parent, from their records", async () => {
 		const path = await databasePath();
 		const database = await openNodeSqliteDatabase(path);
 		await applySqliteMigrations(database, SQLITE_MIGRATIONS.slice(0, 2));
@@ -120,13 +120,7 @@ describe("durable SQLite migrations", () => {
 				undefined,
 				BACKGROUND_CONTEXT,
 			);
-			expect(forks.items.map(({ id }) => id)).toEqual([3]);
-			expect((await storage.scanConversations({ deleting: true }, 10, undefined, BACKGROUND_CONTEXT)).items).toEqual(
-				[],
-			);
-			await commitWrites(storage, [{ type: "conversation.deleting", id: idFromNumber(3) }], BACKGROUND_CONTEXT);
-			const deleting = await storage.scanConversations({ deleting: true }, 10, undefined, BACKGROUND_CONTEXT);
-			expect(deleting.items).toEqual([{ id: 3, parent: { conversationId: 1, at: 2 }, deleting: true }]);
+			expect(forks.items).toEqual([{ id: 3, parent: { conversationId: 1, at: 2 } }]);
 		} finally {
 			await storage.close(BACKGROUND_CONTEXT);
 		}

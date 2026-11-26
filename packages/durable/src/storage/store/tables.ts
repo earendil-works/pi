@@ -26,21 +26,16 @@ export const ConversationsV1 = defineTable("conversations", {
 	indexes: { by_owner_conversation: ["owner_conversation_id"], by_owner_task: ["owner_task_id"] },
 });
 
-/**
- * Version 2 indexes the forks of a conversation by their parent and the conversations being deleted (deletion's
- * reads), each existing row's columns taken from its record.
- */
+/** Version 2 indexes the forks of a conversation by their parent (a deletion's read), taken from each row's record. */
 export const Conversations = evolveTable(ConversationsV1, (t) =>
 	t
 		.add("parent_conversation_id", int({ default: 0 }))
-		.add("deleting", int({ default: 0 }))
 		.rows((row) => {
 			// The cell holds a conversation record this storage wrote.
 			const record = row.record as ConversationRecord;
-			return { parent_conversation_id: record.parent?.conversationId ?? 0, deleting: record.deleting ? 1 : 0 };
+			return { parent_conversation_id: record.parent?.conversationId ?? 0 };
 		})
-		.index("by_parent", ["parent_conversation_id"])
-		.index("by_deleting", ["deleting"]),
+		.index("by_parent", ["parent_conversation_id"]),
 );
 
 export const Entries = defineTable("entries", {
@@ -103,7 +98,6 @@ export function conversationRow(value: ConversationRecord): object {
 		owner_conversation_id: value.owner?.conversationId ?? 0,
 		owner_task_id: value.owner?.taskId ?? 0,
 		parent_conversation_id: value.parent?.conversationId ?? 0,
-		deleting: value.deleting ? 1 : 0,
 		record: value,
 	};
 }

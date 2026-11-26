@@ -950,7 +950,7 @@ What is erased depends on the backend:
 | Backend | Deletion |
 |---|---|
 | Memory, IndexedDB | The records are removed. |
-| SQLite | The rows are removed with `secure_delete` on, and the WAL is truncated after the commit, so the bytes leave the database files. |
+| SQLite | The rows are removed. SQLite keeps their bytes in free pages and the WAL until reused; open with `{ secureDelete: true }` to overwrite them and truncate the WAL after each deletion. |
 | Cloudflare Durable Object | The rows are removed; Durable Objects manage their storage, and refuse the SQLite pragmas. |
 | Chord store (`StoreStorage`) | The rows and documents are removed by writes its outbox carries, so replicas delete them too. Commits stored before keep their writes in the outbox until it is trimmed past the deletion. |
 | JSONL | Not supported (`unsupported`): `main.jsonl` is append-only. |
@@ -1074,8 +1074,7 @@ direct storage calls bypass the queue and may be rolled back with a Pi transacti
 
 ```typescript
 const database = new DurableObjectSqliteDatabase(ctx.storage);
-// Durable Objects refuse the pragmas a deletion erases with, and manage their storage themselves.
-const piStorage = await SqliteStorage.open(database, { prefix: "pi_", secureDelete: false });
+const piStorage = await SqliteStorage.open(database, { prefix: "pi_" });
 await database.exec("CREATE TABLE IF NOT EXISTS host_notes (text TEXT)");
 await database.run("INSERT INTO host_notes (text) VALUES (?)", text);
 ```
@@ -1091,7 +1090,7 @@ await database.transaction(async (transaction) => {
 });
 ```
 
-A custom backend's `commit(batches, receive, context)` stores `batches` in order, each as one atomic commit with its own seq, checked against the state the earlier ones left, in as few round trips as it can. It stops at the first batch its own checks refuse (global IDs, document actions, copy resolution): the batches before it stay stored, it and the later ones are not. Once they are durable it calls `receive(index, seq)` per stored batch, in order and synchronously, then resolves with `{ stored, refused? }`; it rejects for an unknown outcome (connection lost, a failed statement or `COMMIT`). `receive` is a durability receipt: the Session publishes each batch later, one at a time, so memory and every view never show a partial log. `receive` calls no Storage method and never throws. A backend that sets `deletesConversations` stores `conversation.deleting` (it sets `deleting: true` on the record) and `conversation.delete` (after the other writes of its batch, it removes the conversation with everything scoped to it, keeping its IDs claimed), and indexes the `parentConversationId` and `deleting` conversation filters. Custom backends can run the shared conformance suite, which checks this too, with any Vitest- or Jest-compatible runner:
+A custom backend's `commit(batches, receive, context)` stores `batches` in order, each as one atomic commit with its own seq, checked against the state the earlier ones left, in as few round trips as it can. It stops at the first batch its own checks refuse (global IDs, document actions, copy resolution): the batches before it stay stored, it and the later ones are not. Once they are durable it calls `receive(index, seq)` per stored batch, in order and synchronously, then resolves with `{ stored, refused? }`; it rejects for an unknown outcome (connection lost, a failed statement or `COMMIT`). `receive` is a durability receipt: the Session publishes each batch later, one at a time, so memory and every view never show a partial log. `receive` calls no Storage method and never throws. Every backend indexes the `parentConversationId` conversation filter. One that sets `deletesConversations` stores `conversation.delete`: after the other writes of its batch, it removes the conversation's record and everything of it or scoped to it, keeping its IDs claimed, and the later batches of the call are checked against what it left. Custom backends can run the shared conformance suite, which checks this too, with any Vitest- or Jest-compatible runner:
 
 ```typescript
 import { registerStorageConformance } from "@earendil-works/pi-durable/testing";

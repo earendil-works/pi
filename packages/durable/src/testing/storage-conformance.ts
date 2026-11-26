@@ -2176,7 +2176,7 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 
 		createCase(
 			options,
-			"marks a conversation deleting, then deletes it with everything in it, after the other writes of its batch",
+			"deletes a conversation with everything in it, after the other writes of its batch",
 			async (storage) => {
 				// The Harness deletes nothing on a Storage that does not say it can.
 				if (storage.deletesConversations !== true) return;
@@ -2240,11 +2240,6 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 					],
 					context,
 				);
-				await commitWrites(storage, [{ type: "conversation.deleting", id: doomed }], context);
-				expect(await storage.conversation(doomed, context)).toEqual({ id: doomed, deleting: true });
-				expect(
-					(await storage.scanConversations({ deleting: true }, 10, undefined, context)).items.map(({ id }) => id),
-				).toEqual([doomed]);
 				// What the Session writes before a deletion: the task's end, the submission's settlement, the retirements.
 				await commitWrites(
 					storage,
@@ -2281,7 +2276,6 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 				);
 
 				expect(await storage.conversation(doomed, context)).toBeUndefined();
-				expect((await storage.scanConversations({ deleting: true }, 10, undefined, context)).items).toEqual([]);
 				expect((await storage.scanConversations({}, 10, undefined, context)).items.map(({ id }) => id)).toEqual([
 					rootId,
 					kept,
@@ -2313,6 +2307,26 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 				await expect(
 					commitWrites(storage, [{ type: "conversation", value: { id: doomed } }], context),
 				).rejects.toThrow(`ID ${doomed} already belongs to conversation`);
+				// A later batch of the same call checks against what the deletion left: a change to its document is refused.
+				const closing = await storage.mintId<ConversationId>();
+				const closingNotes = await storage.mintId<DocumentId>();
+				await commitWrites(
+					storage,
+					[
+						{ type: "conversation", value: { id: closing } },
+						{ type: "document.create", record: notesRecord(closingNotes, closing), content: base({ text: "x" }) },
+					],
+					context,
+				);
+				const change = {
+					type: "document.change",
+					id: closingNotes,
+					content: { kind: "base", version: 1, value: { text: "y" } },
+				} as const;
+				expect(
+					await storage.commit([[{ type: "conversation.delete", id: closing }], [change]], () => {}, context),
+				).toMatchObject({ kind: "refused", stored: 1 });
+				expect(await storage.conversation(closing, context)).toBeUndefined();
 				// Deleting it again, or a conversation that never was, changes nothing.
 				await commitWrites(storage, [{ type: "conversation.delete", id: doomed }], context);
 				await commitWrites(
