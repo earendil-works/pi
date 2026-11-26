@@ -177,8 +177,7 @@ const MESSAGE = union([
 
 /**
  * A protocol message. `args` absent: a method without arguments; `value` absent: `null`. A `state` entry's `retired`
- * and `failed` lists are read-only (the schema's type is mutable): entries without retirements share `NO_RETIRED`, a
- * hold without failures sends the shared empty list.
+ * list is read-only (the schema's type is mutable): entries without retirements share `NO_RETIRED`.
  */
 export type Message =
 	| Exclude<WireMessage, WireState>
@@ -213,10 +212,7 @@ export type WireEvent = Extract<Message, { readonly kind: "event" }>["events"][n
 export type BoundEntry = Extract<Message, { readonly kind: "bound" }>["holds"][number];
 
 /** One hold's entry of a `state` message. */
-export type StateEntry = Omit<WireState["holds"][number], "retired" | "failed"> & {
-	readonly failed: readonly FailedMember[];
-	readonly retired: readonly number[];
-};
+export type StateEntry = Omit<WireState["holds"][number], "retired"> & { readonly retired: readonly number[] };
 
 /** The `retired` list of a state entry without retirements, shared (no allocation per message). */
 export const NO_RETIRED: readonly number[] = [];

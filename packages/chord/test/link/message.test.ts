@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
+import type { Message as PublicMessage } from "../../src/index.ts";
 import {
 	binaryCodec,
 	checkMessage,
@@ -666,6 +667,30 @@ describe("the binary codec", () => {
 		const cause = { kind: "broken", error: { kind: "chord", error: { code: "released", message: "" } } } as const;
 		expect(keys({ kind: "failed", hold: 0, cause })).toEqual(["kind", "hold", "cause"]);
 		expect(keys({ kind: "failed", hold: 0, cause, retryIn: 0 })).toEqual(["kind", "hold", "cause", "retryIn"]);
+	});
+
+	it("leaves a decoded message's lists its own: the public type keeps a state entry's failed list mutable", () => {
+		const error = { kind: "chord", error: { code: "unavailable", message: "m" } } as const;
+		const state: Message = {
+			kind: "state",
+			holds: [
+				{
+					hold: 0,
+					members: [],
+					failed: [
+						{ member: 2, error },
+						{ member: 1, error },
+					],
+					retired: [],
+				},
+			],
+		};
+		const decoded: PublicMessage = binaryCodec.decode(binaryCodec.encode(state));
+		// A tool's own sort of what it decoded compiles (a type test) and changes nothing of the codec's.
+		if (decoded.kind === "state") for (const entry of decoded.holds) entry.failed.sort((a, b) => a.member - b.member);
+		expect((decoded as Extract<Message, { kind: "state" }>).holds[0]!.failed.map(({ member }) => member)).toEqual([
+			1, 2,
+		]);
 	});
 
 	it("refuses invalid UTF-8 in strings", () => {

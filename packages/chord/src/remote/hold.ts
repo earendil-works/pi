@@ -724,7 +724,9 @@ export class Hold implements Holder, UnboundRequest {
 
 	/** A state entry with `members` and the failures and retirements since the last one; counts one encode. */
 	#entry(members: StateEntry["members"], context: Context): StateEntry {
-		const failed = this.#failed;
+		// A message's lists are its own (`Message` types them mutable): a fresh empty list, as before, or the hold's own
+		// list built by `appended`, handed off here and never written again (the hold starts from the shared one).
+		const failed = this.#failed.length === 0 ? [] : (this.#failed as FailedMember[]);
 		let retired = this.#retired;
 		this.#failed = NO_ITEMS;
 		this.#retired = NO_RETIRED;
