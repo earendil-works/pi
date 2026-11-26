@@ -31,6 +31,7 @@ const context = BACKGROUND_CONTEXT;
 type StoredTask = TaskRecord<JsonValue, JsonValue, JsonValue>;
 
 class ReopeningStorage implements Storage {
+	readonly deletesConversations = true;
 	private current: IndexedDbStorage;
 	private readonly name: string;
 	private readonly indexedDB: IDBFactory;
@@ -110,20 +111,25 @@ async function withStorage(use: (storage: Storage) => Promise<void>): Promise<vo
 	}
 }
 
-registerStorageConformance({ describe, expect, it }, "IndexedDbStorage", withStorage);
+registerStorageConformance({ describe, expect, it }, "IndexedDbStorage", withStorage, { deletesConversations: true });
 
-registerStorageConformance({ describe, expect, it }, "IndexedDbStorage across reopen", async (use) => {
-	const indexedDB = new IDBFactory();
-	const name = "reopening-conformance";
-	const created = await IndexedDbStorage.open(name, { indexedDB });
-	await created.close(context);
-	const storage = new ReopeningStorage(await IndexedDbStorage.open(name, { indexedDB }), name, indexedDB);
-	try {
-		await use(storage);
-	} finally {
-		await storage.close(context);
-	}
-});
+registerStorageConformance(
+	{ describe, expect, it },
+	"IndexedDbStorage across reopen",
+	async (use) => {
+		const indexedDB = new IDBFactory();
+		const name = "reopening-conformance";
+		const created = await IndexedDbStorage.open(name, { indexedDB });
+		await created.close(context);
+		const storage = new ReopeningStorage(await IndexedDbStorage.open(name, { indexedDB }), name, indexedDB);
+		try {
+			await use(storage);
+		} finally {
+			await storage.close(context);
+		}
+	},
+	{ deletesConversations: true },
+);
 
 function pendingTask(id: TaskId<JsonValue>, conversationId = ROOT_CONVERSATION_ID): StoredTask {
 	return {

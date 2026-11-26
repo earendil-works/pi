@@ -65,9 +65,9 @@ export type SqliteStorageOptions = {
 	 */
 	readonly prefix?: string;
 	/**
-	 * Erase what a conversation deletion removes from the database files: overwrite its freed pages (`secure_delete`)
-	 * and truncate the WAL after the commit. Default false: SQLite then keeps the bytes in free pages and the WAL until
-	 * they are reused. Opening refuses it on a database that refuses the pragma, such as a Durable Object's.
+	 * Erase what a conversation deletion removes from the database files: the connection runs with `secure_delete`, so
+	 * every freed page is overwritten, and the WAL is truncated after each deletion. Default false: SQLite then keeps the
+	 * bytes in free pages and the WAL until they are reused. Opening refuses it on a database that refuses the pragma, such as a Durable Object's.
 	 */
 	readonly secureDelete?: boolean;
 };
@@ -155,9 +155,11 @@ export class SqliteStorage implements Storage {
 			);
 			if (metadata === undefined) throw new Error("Durable SQLite metadata is missing");
 			const secureDelete = options.secureDelete === true;
-			// Here, not at the first deletion, whose failure would fail its Session.
+			// For the whole connection: a deletion's batch also frees pages before its `DELETE`s, retiring documents and
+			// replacing rows, and so do the commits before it. Here, not at the first deletion, whose failure would fail its
+			// Session.
 			if (secureDelete) {
-				await db.get("PRAGMA secure_delete").catch((error: unknown) => {
+				await db.exec("PRAGMA secure_delete = ON").catch((error: unknown) => {
 					throw new Error("secureDelete: this database refuses PRAGMA secure_delete", { cause: error });
 				});
 			}
@@ -206,11 +208,12 @@ export class SqliteStorage implements Storage {
 				const seq = seqFromNumber(next++);
 				state.apply(writes, checked.actions, seq);
 				pending.add(writes, checked.actions, seq, state);
-				const deletions = writes.flatMap((write) => (write.type === "conversation.delete" ? [write.id] : []));
+				const deletions: ConversationId[] = [];
+				for (const write of writes) if (write.type === "conversation.delete") deletions.push(write.id);
 				if (deletions.length > 0) {
 					// After every other write of the batch, which may settle or retire what the deletion removes.
 					await pending.flush(transaction, this.schema.tables);
-					await this.deleteConversations(transaction, deletions);
+					await deleteConversations(transaction, this.schema.tables, deletions);
 					deleted = true;
 					// The state read up front still holds what the deletion removed: the later batches check against the database.
 					state = await CommitState.read(transaction, this.schema.tables, batches.slice(index + 1));
@@ -224,22 +227,14 @@ export class SqliteStorage implements Storage {
 			}
 		});
 		this.nextId = Math.max(this.nextId, candidateNextId);
-		// The deleted content left the database file; its WAL frames go too. A busy checkpoint leaves them to the next one.
-		if (deleted && this.secureDelete) await this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
 		// `COMMIT` returned: the stored batches are durable.
 		for (const [index, seq] of seqs.entries()) receive(index, seq);
+		// The deleted content left the database file; its WAL frames go too. A busy checkpoint leaves them to the next one;
+		// a failing one rejects the call after its receipts, as a storage error after `COMMIT` does.
+		if (deleted && this.secureDelete) await this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
 		return refused === undefined
 			? { kind: "stored", stored: seqs.length }
 			: { kind: "refused", stored: seqs.length, refused: refused.error };
-	}
-
-	/** Delete conversations, their freed pages overwritten unless `secureDelete` is off, then restore the setting. */
-	private async deleteConversations(transaction: SqliteExecutor, ids: readonly ConversationId[]): Promise<void> {
-		if (!this.secureDelete) return deleteConversations(transaction, this.schema.tables, ids);
-		const previous = await transaction.get<{ readonly secure_delete: number }>("PRAGMA secure_delete");
-		await transaction.exec("PRAGMA secure_delete = ON");
-		await deleteConversations(transaction, this.schema.tables, ids);
-		await transaction.exec(`PRAGMA secure_delete = ${previous?.secure_delete ?? 0}`);
 	}
 
 	private async readMetadata(executor: SqliteExecutor): Promise<MetadataRow> {

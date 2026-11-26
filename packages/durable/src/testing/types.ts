@@ -15,6 +15,8 @@ export type StorageConformanceProvider = (use: (storage: Storage) => Promise<voi
 export interface StorageConformanceOptions {
 	readonly assertions: StorageConformanceAssertions;
 	readonly withStorage: StorageConformanceProvider;
+	/** Whether the Storage deletes conversations (`deletesConversations`), which the suite then checks; default false. */
+	readonly deletesConversations?: boolean;
 }
 
 export interface StorageConformanceCase {

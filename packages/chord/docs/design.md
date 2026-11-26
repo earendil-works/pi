@@ -1539,10 +1539,10 @@ host.serve(DraftStore, (_, self) => {               // local, empty params: may 
   written in the commit step's transaction (atomic for one `INSERT`); exposed as `store.outbox.read(afterSeq, limit,
   ctx)` -> `{ seq, writes }[]` and `store.outbox.trim(throughSeq, ctx)`, no pluggable encoding; versioned by the store's
   schema migrations (its layout) and a `format` per outbox commit (the write vocabulary; older formats stepped forward
-  on read, newer ones refused). Format 2 adds `document.purge` (format 1 reads unchanged, a subset); each commit is
-  recorded in the oldest format that holds it, so only a commit with a purge is format 2; the archive's
-  `format` stays 1, since an archive holds the state and a purged record is simply absent from it.
-- **Erasure (built for Durable's conversation deletion, 2026-11; no decision):** an adapter erases what it keeps in
+  on read, newer ones refused). Format 2 adds `document.purge` (format 1 reads unchanged, a subset), and every commit
+  is recorded in it; the archive's `format` stays 1, since an archive holds the state and a purged record is simply
+  absent from it; sync batches carry no format yet (decision "Erasure in the store").
+- **Erasure (built for Durable's conversation deletion, 2026-11; decision "Erasure in the store"):** an adapter erases what it keeps in
   one commit: `purgeDocuments(step, owner, namespace)` deletes every record of the namespace, live or retired, with
   all its revisions whatever its history (`rewindable` included), recorded as one `document.purge` per record, and
   `OwnerTable.delete`/`deleteWhere` delete rows, recorded as counted `delete`/`deleteWhere`. The deletion travels as

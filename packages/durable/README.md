@@ -933,7 +933,7 @@ The examples show both patterns as product code:
 await harness.deleteConversations([conversation.id], context);
 ```
 
-Deletion is for good. It takes the conversations and the conversations their tasks own, such as subagents. One commit closes them: from then on they take no new submission, task, or fork (`ConversationDeleting`), their queued submissions settle `unanswered` with reason `deleted`, and their live tasks, background ones included, are aborted. Once that work has ended, a second commit removes their entries, tasks, submissions, and documents, and ends their views. A crash or close in between leaves them closed; the reopened Harness finishes the deletion once it schedules. Unknown IDs are skipped, so a call repeated after restoring a backup is harmless; IDs are never reused. `usage()` sums the conversations that remain, so its total drops.
+Deletion is for good. It takes the conversations and the conversations their tasks own, such as subagents. One commit closes them: from then on they take no new submission, task, or fork (`ConversationDeleting`), their queued submissions settle `unanswered` with reason `deleted`, and their live tasks, background ones included, are aborted. Once that work has ended, a second commit removes their entries, tasks, submissions, and documents, and ends their views. The Harness finishes that second commit itself: cancelling the call stops only the wait for it. A crash or close in between leaves them closed; the reopened Harness finishes the deletion once it schedules. Unknown IDs are skipped, so a call repeated after restoring a backup is harmless; IDs are never reused. `usage()` sums the conversations that remain, so its total drops.
 
 It refuses with `DeletionRefused` before it aborts anything; `error.refusal.kind` says why:
 
@@ -950,7 +950,7 @@ What is erased depends on the backend:
 | Backend | Deletion |
 |---|---|
 | Memory, IndexedDB | The records are removed. |
-| SQLite | The rows are removed. SQLite keeps their bytes in free pages and the WAL until reused; open with `{ secureDelete: true }` to overwrite them and truncate the WAL after each deletion. |
+| SQLite | The rows are removed. SQLite keeps their bytes in free pages and the WAL until reused; open with `{ secureDelete: true }` to overwrite every freed page (`secure_delete` on the connection, which costs some writes on every commit) and truncate the WAL after each deletion. |
 | Cloudflare Durable Object | The rows are removed; Durable Objects manage their storage, and refuse the SQLite pragmas. |
 | Chord store (`StoreStorage`) | The rows and documents are removed by writes its outbox carries, so replicas delete them too. Commits stored before keep their writes in the outbox until it is trimmed past the deletion. |
 | JSONL | Not supported (`unsupported`): `main.jsonl` is append-only. |
@@ -1103,7 +1103,7 @@ registerStorageConformance({ describe, expect, it }, "My Storage", async (use) =
 	} finally {
 		await closeMyStorage(storage);
 	}
-});
+}, { deletesConversations: true }); // omit for a backend that does not delete
 ```
 
 The package root loads pi-schema, because the tool task validates arguments with pi-ai's `validateToolArguments()`.

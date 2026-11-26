@@ -113,26 +113,36 @@ class ReopeningStorage implements Storage {
 	}
 }
 
-registerStorageConformance({ describe, expect, it }, "StoreStorage", async (use) => {
-	const storage = await openStoreStorage(":memory:");
-	try {
-		await use(storage);
-	} finally {
-		await storage.close(context);
-	}
-});
+registerStorageConformance(
+	{ describe, expect, it },
+	"StoreStorage",
+	async (use) => {
+		const storage = await openStoreStorage(":memory:");
+		try {
+			await use(storage);
+		} finally {
+			await storage.close(context);
+		}
+	},
+	{ deletesConversations: true },
+);
 
-registerStorageConformance({ describe, expect, it }, "StoreStorage across reopen", async (use) => {
-	const directory = await mkdtemp(join(tmpdir(), "pi-durable-store-conformance-"));
-	const path = join(directory, "store.sqlite");
-	const storage = new ReopeningStorage(await openStoreStorage(path), path);
-	try {
-		await use(storage);
-	} finally {
-		await storage.close(context);
-		await rm(directory, { recursive: true, force: true });
-	}
-});
+registerStorageConformance(
+	{ describe, expect, it },
+	"StoreStorage across reopen",
+	async (use) => {
+		const directory = await mkdtemp(join(tmpdir(), "pi-durable-store-conformance-"));
+		const path = join(directory, "store.sqlite");
+		const storage = new ReopeningStorage(await openStoreStorage(path), path);
+		try {
+			await use(storage);
+		} finally {
+			await storage.close(context);
+			await rm(directory, { recursive: true, force: true });
+		}
+	},
+	{ deletesConversations: true },
+);
 
 /** A store on `:memory:`. */
 async function memoryStore() {

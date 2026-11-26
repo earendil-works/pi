@@ -2,12 +2,14 @@
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { withAbortSignal } from "@earendil-works/chord/context";
 import type { WatchEnd } from "@earendil-works/chord/watch";
 import {
 	ConversationDeleting,
 	type ConversationId,
 	type DeletionRefusal,
 	DeletionRefused,
+	defineDoc,
 	defineTask,
 	type Harness,
 	LiveDoc,
@@ -54,6 +56,17 @@ const Waiter = defineTask<{ on: TaskId[] }, { phase: "wait" } | { phase: "done" 
 			runtime.commit(() => ({ status: "terminal", outcome: { status: "completed", result: null } }), ctx),
 	},
 	abort: (_task, runtime, ctx) => runtime.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), ctx),
+});
+
+/** A latest conversation document that writes a complete base at each change. */
+const Notes = defineDoc<{ text: string }>({
+	kind: "test.notes",
+	version: 1,
+	scope: "conversation",
+	history: "latest",
+	fork: "initial",
+	initial: () => ({ text: "" }),
+	checkpointWhen: () => true,
 });
 
 const directories = new Set<string>();
@@ -269,6 +282,24 @@ describe("Harness.deleteConversations", () => {
 		await harness.close(context);
 	});
 
+	it("finishes the deletion when its caller stops waiting for it", async () => {
+		const harness = await open(new MemoryStorage());
+		const doomed = await ownerless(harness);
+		abortGates.set("slow", deferred());
+		const slow = await doomed.commit(
+			(tx) => tx.createTask(Hold, { name: "slow" }, { ownership: { kind: "conversation" } }),
+			context,
+		);
+		const caller = new AbortController();
+		const deleting = harness.deleteConversations([doomed.id], withAbortSignal(caller.signal, context));
+		await eventually(async () => (await harness.getTask(slow, context))?.abortRequested === true);
+		caller.abort();
+		await expect(deleting).rejects.toThrow("aborted");
+		abortGates.get("slow")!.resolve();
+		await eventually(async () => (await harness.conversation(doomed.id, context)) === undefined);
+		await harness.close(context);
+	});
+
 	it("finishes a deletion that a close interrupted once the reopened Harness schedules", async () => {
 		const path = join(await directory(), "session.sqlite");
 		let harness = await open(await openNodeSqliteStorage(path));
@@ -306,14 +337,21 @@ describe("Harness.deleteConversations", () => {
 		const folder = await directory();
 		const harness = await open(await openNodeSqliteStorage(join(folder, "session.sqlite"), { secureDelete: true }));
 		const conversation = await ownerless(harness);
-		const secret = "secret-of-the-deleted-conversation-".repeat(200);
-		await conversation.commit(
-			(tx) => tx.appendEntry(conversation.id, { kind: "message", model: [user(secret)] }),
-			context,
-		);
+		const secret = (what: string) => `secret-${what}-of-the-deleted-conversation-`.repeat(200);
+		await conversation.commit(async (tx) => {
+			await tx.appendEntry(conversation.id, { kind: "message", model: [user(secret("entry"))] });
+			(await tx.doc(Notes, conversation.id)).text = secret("replaced");
+		}, context);
+		// Its base replaces the first: a page this commit frees, before the deletion.
+		await conversation.commit(async (tx) => {
+			(await tx.doc(Notes, conversation.id)).text = secret("retired");
+		}, context);
+		// The deletion's batch retires the document, which drops its revisions before the deletion's own statements.
 		await harness.deleteConversations([conversation.id], context);
 		for (const file of await readdir(folder)) {
-			expect((await readFile(join(folder, file))).includes(secret.slice(0, 200))).toBe(false);
+			const bytes = await readFile(join(folder, file));
+			for (const what of ["entry", "replaced", "retired"])
+				expect(bytes.includes(secret(what).slice(0, 200))).toBe(false);
 		}
 		await harness.close(context);
 	});

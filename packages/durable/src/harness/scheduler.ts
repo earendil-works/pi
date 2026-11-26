@@ -568,13 +568,9 @@ export class TaskScheduler {
 		this.#kick();
 		if (this.#finishing) return;
 		this.#finishing = true;
-		// A Storage that cannot delete, such as one a closed session was copied to, keeps them closed.
-		if (this.#deleting.size === 0 || !this.#deletes) return;
-		// The deletions a crash or close interrupted, finished by the scheduler for itself: its failure, unless the
-		// Session's own or its close, fails the Session, as any of its own commits does.
-		this.deleteConversations([...this.#deleting], this.#context).catch((error: unknown) => {
-			if (!this.#closing && this.#session.failure === undefined) this.#session.fail(error);
-		});
+		// The deletions a crash or close interrupted. A Storage that cannot delete, such as one a closed session was copied
+		// to, keeps them closed.
+		if (this.#deleting.size > 0 && this.#deletes) void this.#finishDeletion(this.#deleting);
 	}
 
 	/**
@@ -771,7 +767,8 @@ export class TaskScheduler {
 
 	/**
 	 * `Harness.deleteConversations()` (spec §2.2): one commit marks the conversations deleting, withdraws their queued
-	 * items, and abort-marks their live tasks, background ones included; once those ended, one commit deletes them.
+	 * items, and abort-marks their live tasks, background ones included; once those ended, one commit deletes them, as
+	 * the scheduler's own work: cancelling the wait for it does not stop it.
 	 */
 	async deleteConversations(ids: readonly ConversationId[], context: Context): Promise<void> {
 		const set = await this.#session.commitWith(async (tx) => {
@@ -789,6 +786,23 @@ export class TaskScheduler {
 			return set;
 		}, context);
 		if (set.size === 0) return;
+		return awaitWithContext(this.#finishDeletion(set), context);
+	}
+
+	/**
+	 * Delete closed conversations once their tasks, abort-marked when they closed, ended. Its failure, unless the Session's
+	 * own or its close, fails the Session, as any of the scheduler's own commits does.
+	 */
+	#finishDeletion(set: ReadonlySet<ConversationId>): Promise<void> {
+		const finishing = this.#deleteClosed(set);
+		finishing.catch((error: unknown) => {
+			if (!this.#closing && this.#session.failure === undefined) this.#session.fail(error);
+		});
+		return finishing;
+	}
+
+	async #deleteClosed(set: ReadonlySet<ConversationId>): Promise<void> {
+		const context = this.#context;
 		for (;;) {
 			// A deleting conversation takes no new task, so this ends.
 			for (const live of [...this.#live.values()]) {

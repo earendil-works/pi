@@ -6,7 +6,9 @@ import { MemoryStorage } from "../src/storage/memory.ts";
 import { commitWrites } from "../src/testing/commit-writes.ts";
 import { type EntryId, ROOT_CONVERSATION_ID, type Seq, type StorageWrite } from "../src/types.ts";
 
-registerStorageConformance({ describe, expect, it }, "MemoryStorage", (use) => use(new MemoryStorage()));
+registerStorageConformance({ describe, expect, it }, "MemoryStorage", (use) => use(new MemoryStorage()), {
+	deletesConversations: true,
+});
 
 it("does not expose retained state through a prepared commit", async () => {
 	const storage = new MemoryStorage();

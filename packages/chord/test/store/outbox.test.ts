@@ -1,6 +1,6 @@
 // Tests of the outbox (slice 6a §2; decisions "The outbox is optional, internal and versioned", small items 3-4): on,
-// off and kept across opens, its commits in their recorded form, `trim` and its floor, and the formats (each commit in
-// the oldest that holds it, a newer one refused).
+// off and kept across opens, its commits in their recorded form, `trim` and its floor, and the formats (the current one
+// written, an older one read, a newer one refused).
 
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -149,11 +149,10 @@ describe("the outbox", () => {
 		await store.close(context);
 	});
 
-	it("records each commit in the oldest format that holds it: format 2 only for a purge, which format 1 lacks", async () => {
+	it("records every commit in the current format and reads a format 1 commit unchanged, a subset", async () => {
 		const open = await onFile();
 		let store = await open(true);
 		await created(store);
-		await created(store, "b");
 		const purge: StagedWrite = {
 			order: "write",
 			apply: (step) => purgeDocuments(step, ADDRESS.owner, ADDRESS.namespace),
@@ -162,18 +161,15 @@ describe("the outbox", () => {
 		await store.close(context);
 		const db = await openNodeSqliteDatabase(join(directory!, "store.sqlite"));
 		expect(await db.all(`SELECT format FROM ${TABLES.outbox} ORDER BY seq`)).toEqual([
-			{ format: 1 },
-			{ format: 1 },
+			{ format: OUTBOX_FORMAT },
 			{ format: OUTBOX_FORMAT },
 		]);
+		// As an older store recorded it.
+		await db.run(`UPDATE ${TABLES.outbox} SET format = 1 WHERE seq = 1`);
 		await db.close();
 		store = await open();
 		const commits = await store.outbox!.read(0, 10, context);
-		expect(commits.map(({ writes }) => writes[0]!.kind)).toEqual([
-			"document.create",
-			"document.create",
-			"document.purge",
-		]);
+		expect(commits.map(({ writes }) => writes[0]!.kind)).toEqual(["document.create", "document.purge"]);
 		await store.close(context);
 	});
 

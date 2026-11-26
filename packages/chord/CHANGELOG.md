@@ -18,7 +18,7 @@
 
 ### Changed
 
-- Outbox format 2 adds the `document.purge` write. Each commit is recorded in the oldest format that holds it, so only a commit with a purge is format 2: code that knows only format 1 refuses those (`unavailable`, data intact) and reads every other commit, and `applyBatch` of older code refuses a batch with a purge. Archives stay format 1.
+- Outbox format 2 adds the `document.purge` write, and every commit is recorded in it: code that knows only format 1 refuses such an outbox (`unavailable`, data intact), and `applyBatch` of older code refuses a batch with a purge. Format 1 commits read unchanged. Archives stay format 1.
 - A reference makes its named queries' handles on first use: a reference to a store with 23 named queries, none read, takes 1.3 KiB instead of 6.4 KiB.
 - A store commit skip-tests only the live reads its writes can concern (the commit index): reads are filed by the values their condition fixes with `eq`/`inArray` and by the keys of their last result. One write to one session's row with 10,000 open reads of other sessions now tests one read instead of 10,000; `chord.query.skips` counts only the reads tested.
 

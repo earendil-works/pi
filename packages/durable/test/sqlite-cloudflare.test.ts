@@ -9,8 +9,11 @@ import { CURRENT_SQLITE_SCHEMA_VERSION } from "../src/storage/sqlite/migrations.
 import { commitWrites } from "../src/testing/commit-writes.ts";
 import { type EntryId, ROOT_CONVERSATION_ID } from "../src/types.ts";
 
-registerStorageConformance({ describe, expect, it }, "SqliteStorage on a prefixed Durable Object", async (use) =>
-	use(await openDurableObjectSqliteStorage(durableObjectStorage(), { prefix: "pi_" })),
+registerStorageConformance(
+	{ describe, expect, it },
+	"SqliteStorage on a prefixed Durable Object",
+	async (use) => use(await openDurableObjectSqliteStorage(durableObjectStorage(), { prefix: "pi_" })),
+	{ deletesConversations: true },
 );
 
 describe("Durable Object SQLite adapter", () => {

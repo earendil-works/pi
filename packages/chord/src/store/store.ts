@@ -17,7 +17,7 @@ import type { Backend } from "./backend.ts";
 import { readCatalog, type TableRecord, writeCatalog } from "./catalog.ts";
 import { Claims } from "./claims.ts";
 import { StoreExport } from "./export.ts";
-import { Outbox, outboxFormat } from "./outbox.ts";
+import { OUTBOX_FORMAT, Outbox } from "./outbox.ts";
 import { Reads } from "./reads.ts";
 import { applyStoreSchema, type MetaRow, TABLES } from "./schema.ts";
 import { type StagedWrite, Step, type WriteOrder } from "./step.ts";
@@ -878,7 +878,7 @@ export class ChordStore implements Store {
 			await step.run(
 				`INSERT INTO ${TABLES.outbox} (seq, format, next_id, writes) VALUES (?, ?, ?, ?)`,
 				seq,
-				outboxFormat(recorded),
+				OUTBOX_FORMAT,
 				nextId,
 				JSON.stringify(recorded),
 			);

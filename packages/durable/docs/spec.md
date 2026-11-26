@@ -1136,14 +1136,17 @@ unknown IDs are skipped, so a repeated call is harmless.
    record cache, in-flight reads included, the newest-entry index, and the
    kept contexts, and ends their conversation views `ended`.
 
-A crash or close between the two commits leaves the set closed. Reopening
-loads `pi.deletions`, and the first `resume()` finishes the deletion as above,
-as the scheduler's own work: a failure other than the Session's or its close
-fails the Session (section 10.1). Over a Storage without `deletesConversations`,
-such as one a session was copied to, the set stays closed. The wait for the
-set's tasks follows their abort handlers: one that never returns holds the
-deletion, as it holds `Conversation.abort()`. Every later write to a deleted
-conversation fails as for an unknown one. `usage()` no longer counts it.
+Once the set is closed, waiting for its tasks and step 3 are the scheduler's
+own work, as for a deletion that reopening finds: cancelling the call stops
+only its wait, and a failure other than the Session's or its close fails the
+Session (section 10.1). A crash or close between the two commits leaves the set
+closed. Reopening loads `pi.deletions`, and the first `resume()` finishes the
+deletion from step 3, without the checks of step 1, which the set passed when
+it closed. Over a Storage without `deletesConversations`, such as one a session
+was copied to, the set stays closed. The wait for the set's tasks follows their
+abort handlers: one that never returns holds the deletion, as it holds
+`Conversation.abort()`. Every later write to a deleted conversation fails as
+for an unknown one. `usage()` no longer counts it.
 
 The built-in deletions document:
 
@@ -7109,10 +7112,12 @@ written first; the deletion then runs a few `DELETE` statements on the
 indexes, `record_ids` untouched, and the batches after it are checked against
 the database again. SQLite keeps the deleted bytes in free pages and in the
 WAL until they are reused. The option `secureDelete: true` (opt-in) erases
-them: the deletion runs with `secure_delete` on, so the freed pages are
-overwritten, and the storage truncates the WAL (`wal_checkpoint(TRUNCATE)`)
-once the transaction committed; a busy checkpoint leaves the old frames to the
-next one. Opening with it refuses a database that refuses the pragma, such as a
+them: the connection runs with `secure_delete` on, so every freed page is
+overwritten, also those a deletion's batch frees before its `DELETE`s
+(retired documents, replaced rows) and those of earlier commits, and the
+storage truncates the WAL (`wal_checkpoint(TRUNCATE)`) after a deletion's
+receipts; a busy checkpoint leaves the old frames to the next one, and a
+failing one rejects the call after its receipts. Opening with it refuses a database that refuses the pragma, such as a
 Durable Object's, which manages its storage itself. IndexedDB (database version
 2) deletes the same records through its indexes; the browser reclaims the
 space.

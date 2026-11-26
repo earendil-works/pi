@@ -4,7 +4,7 @@
 
 ### Breaking Changes
 
-- `StorageWrite` has a `conversation.delete` write, `TableCommitChange` (`observeCommits()`) carries it, and `ConversationQuery` has a `parentConversationId` filter. Migration: a custom Storage indexes the filter; one that supports deletion sets `deletesConversations` and stores the write (the conformance suite checks both); a commit observer that replicates stored state applies it.
+- `StorageWrite` has a `conversation.delete` write, `TableCommitChange` (`observeCommits()`) carries it, and `ConversationQuery` has a `parentConversationId` filter. Migration: a custom Storage indexes the filter; one that supports deletion sets `deletesConversations` and stores the write, and passes `{ deletesConversations: true }` to `registerStorageConformance()`, which then checks both; a commit observer that replicates stored state applies it.
 - SQLite storage migrates to schema version 3, IndexedDB storage to database version 2, and `StoreStorage`'s conversations table to version 2, which index forks by their parent. A database opened by this version is refused by an older one.
 
 ### Added

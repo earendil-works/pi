@@ -9,15 +9,10 @@ import type { ChordStore } from "./store.ts";
 import type { StoreWrite } from "./writes.ts";
 
 /**
- * The newest write vocabulary an outbox commit is stored in: 2 adds `document.purge` to format 1, whose commits read
+ * The write vocabulary's version an outbox commit is stored in: 2 adds `document.purge` to format 1, whose commits read
  * unchanged (a subset); a newer one is refused, data intact.
  */
 export const OUTBOX_FORMAT = 2;
-
-/** The oldest format that holds `writes`: a reader that knows only format 1 refuses only the commits that purge. */
-export function outboxFormat(writes: readonly StoreWrite[]): number {
-	return writes.some((write) => write.kind === "document.purge") ? 2 : 1;
-}
 
 /** One commit as the outbox gives it: its seq, the allocator's value it persisted (D3) and its writes in applied order. */
 export type OutboxCommit = { readonly seq: number; readonly nextId: number; readonly writes: readonly StoreWrite[] };

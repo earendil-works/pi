@@ -1,7 +1,12 @@
 import { createExpectAssertions, type ExpectLike } from "./assertions.ts";
 import { createEnvConformance } from "./env-conformance.ts";
 import { createStorageConformance } from "./storage-conformance.ts";
-import type { EnvConformanceOptions, EnvConformanceProvider, StorageConformanceProvider } from "./types.ts";
+import type {
+	EnvConformanceOptions,
+	EnvConformanceProvider,
+	StorageConformanceOptions,
+	StorageConformanceProvider,
+} from "./types.ts";
 
 export interface StorageConformanceRunner {
 	readonly describe: (name: string, suite: () => void) => unknown;
@@ -14,8 +19,10 @@ export function registerStorageConformance(
 	runner: StorageConformanceRunner,
 	name: string,
 	withStorage: StorageConformanceProvider,
+	options: Pick<StorageConformanceOptions, "deletesConversations"> = {},
 ): void {
 	const cases = createStorageConformance({
+		...options,
 		assertions: createExpectAssertions(runner.expect),
 		withStorage,
 	});

@@ -9,7 +9,7 @@ import { IdAllocator } from "./allocator.ts";
 import { applyWrite, Diverged } from "./applier.ts";
 import { checkWrite } from "./archive.ts";
 import { type TableRecord, writeCatalog } from "./catalog.ts";
-import { type OutboxCommit, outboxFormat } from "./outbox.ts";
+import { OUTBOX_FORMAT, type OutboxCommit } from "./outbox.ts";
 import { TABLES } from "./schema.ts";
 import { Step } from "./step.ts";
 import type { ChordStore, Replayed } from "./store.ts";
@@ -77,7 +77,7 @@ async function replay(
 			await executor.run(
 				`INSERT INTO ${TABLES.outbox} (seq, format, next_id, writes) VALUES (?, ?, ?, ?)`,
 				commit.seq,
-				outboxFormat(commit.writes),
+				OUTBOX_FORMAT,
 				commit.nextId,
 				JSON.stringify(commit.writes),
 			);

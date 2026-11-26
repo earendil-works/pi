@@ -18,8 +18,7 @@ registerStorageConformance({ describe, expect, it }, "SqliteStorage on Durable O
 	runInDurableObject(fresh(), async (_instance, state) => {
 		// Tables of their own, next to the ones the object's Harness opened.
 		await use(await openDurableObjectSqliteStorage(state.storage, { prefix: `conformance${suite++}_` }));
-	}),
-);
+	}), { deletesConversations: true });
 
 describe("Durable Object SQLite schema", () => {
 	it("migrates a version 1 schema to admit sleeping tasks, keeping tasks and indexes", async () => {

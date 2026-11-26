@@ -2179,7 +2179,8 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 			"deletes a conversation with everything in it, after the other writes of its batch",
 			async (storage) => {
 				// The Harness deletes nothing on a Storage that does not say it can.
-				if (storage.deletesConversations !== true) return;
+				expect(storage.deletesConversations === true).toBe(options.deletesConversations === true);
+				if (options.deletesConversations !== true) return;
 				const rootId = await createRoot(storage);
 				const doomed = await storage.mintId<ConversationId>();
 				const kept = await storage.mintId<ConversationId>();
