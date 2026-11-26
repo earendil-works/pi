@@ -1,13 +1,13 @@
 // The skills plugin on the server: its kind (`serveThing`: the things plugin admits every caller), the store of the
 // sets' folders (`store.ts`), each set's skills as read from its folder and watched (`set.ts`), and `read`, a skill's
-// text, read from the Pi's disk when it is asked for. `configure` refuses a folder outside the Pi's skills root.
+// text, read from the Pi's disk when it is asked for. The store refuses a folder outside the Pi's skills root.
 
 import { defineFacet } from "@earendil-works/p3/v1";
 import { ServerRuntime } from "@earendil-works/p3/v1/server";
 import { serveThing } from "../things/serve.ts";
 import { SkillsKind } from "./contract.ts";
-import { folderPath, readSkill } from "./folder.ts";
-import { SkillSet, serveSet, skillsRoot } from "./set.ts";
+import { readSkill, skillsRoot } from "./folder.ts";
+import { SkillSet, serveSet } from "./set.ts";
 import { SkillsStore, serveStore } from "./store.ts";
 
 export default defineFacet((host) => {
@@ -25,9 +25,8 @@ export default defineFacet((host) => {
 			};
 		},
 		configure: async (thing, { folder }, ctx) => {
-			const root = skillsRoot((await ctx.registry(ServerRuntime)).value.dataDir);
-			folderPath(root, folder);
-			await (await ctx.get(SkillsStore, {})).set({ thing, folder }, ctx);
+			// `Workspace.configure` checked the value against the state member's schema (`folder`: a string).
+			await (await ctx.get(SkillsStore, {})).set({ thing, folder: folder as string }, ctx);
 		},
 		delete: async (thing, ctx) => {
 			await (await ctx.get(SkillsStore, {})).clear({ thing }, ctx);

@@ -26,7 +26,11 @@ export default defineFacet((host) => {
 			};
 		},
 		configure: async (thing, settings, ctx) => {
-			await (await ctx.get(InstructionsStore, {})).set({ thing, ...settings }, ctx);
+			const store = await ctx.get(InstructionsStore, {});
+			const [stored] = (await store.settings.of.page({ thing }, 1, ctx)).items;
+			// `Workspace.configure` checked each value against its state member's schema (`text`, `language`).
+			const given = settings as Partial<InstructionsSettings>;
+			await store.set({ thing, ...(stored ?? DEFAULT), ...given }, ctx);
 		},
 		delete: async (thing, ctx) => {
 			await (await ctx.get(InstructionsStore, {})).clear({ thing }, ctx);

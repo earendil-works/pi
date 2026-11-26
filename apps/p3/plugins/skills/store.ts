@@ -14,6 +14,8 @@ import {
 	query,
 	str,
 } from "@earendil-works/p3/v1";
+import { ServerRuntime } from "@earendil-works/p3/v1/server";
+import { folderPath, skillsRoot } from "./folder.ts";
 
 /** The sets' folders, once per server: one set's as a named query, and the writes. */
 export const SkillsStore = local("skills.store", {
@@ -24,7 +26,7 @@ export const SkillsStore = local("skills.store", {
 			/** Set `thing`'s folder: one row, none before it was first set. */
 			of: obj({ thing: str() }),
 		}),
-		/** Sets set `thing`'s folder (relative to the skills root, checked by the caller). */
+		/** Sets set `thing`'s folder (relative to the Pi's skills root; `invalid` outside it). */
 		set: method(obj({ thing: str(), folder: str() })),
 		/** Removes set `thing`'s setting (the thing is gone). */
 		clear: method(obj({ thing: str() })),
@@ -42,6 +44,7 @@ const Rows = defineTable("skills.rows", {
 export function serveStore(host: FacetHost<P3Principal>): void {
 	host.serve(SkillsStore, (_params, self) => {
 		const rows = self.table(Rows);
+		const root = skillsRoot(self.registry(ServerRuntime).value.dataDir);
 		return {
 			settings: self.queries(
 				rows,
@@ -53,6 +56,8 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			),
 			set: ({ thing, folder }, ctx) =>
 				self.tx(async (tx) => {
+					// A setting people write: the one check that it stays under the root.
+					folderPath(root, folder);
 					tx.put(rows, { thing, folder });
 					return null;
 				}, ctx),

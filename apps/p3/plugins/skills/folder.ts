@@ -12,6 +12,11 @@ import type { Skill, SkillText } from "./contract.ts";
 /** A skill's file, in its folder. */
 const SKILL_FILE = "SKILL.md";
 
+/** The Pi's skills root: every set's folder is under it. */
+export function skillsRoot(dataDir: string): string {
+	return join(dataDir, "skills");
+}
+
 /**
  * Where `folder` (a setting: a path relative to the skills root `root`) is, or `invalid` when it leaves the root (an
  * absolute path, `..` above it). The empty folder is the root itself.

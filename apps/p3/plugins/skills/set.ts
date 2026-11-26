@@ -2,11 +2,10 @@
 // set: the skills root itself) and the skills in it, read again whenever anything under the folder changes, so every
 // holder sees a new skill without a reload. One watcher per set, not one per holder.
 
-import { join } from "node:path";
 import { arr, type FacetHost, local, type P3Principal, str } from "@earendil-works/p3/v1";
 import { ServerRuntime } from "@earendil-works/p3/v1/server";
 import { Skill } from "./contract.ts";
-import { FolderWatch, folderPath, readSkills } from "./folder.ts";
+import { FolderWatch, folderPath, readSkills, skillsRoot } from "./folder.ts";
 import { SkillsStore } from "./store.ts";
 
 /** Set `thing`: its folder's path on the Pi's disk and its skills. */
@@ -15,11 +14,6 @@ export const SkillSet = local("skills.set", {
 	params: { thing: str() },
 	members: { path: str(), skills: arr(Skill) },
 });
-
-/** The Pi's skills root: every set's folder is under it. */
-export function skillsRoot(dataDir: string): string {
-	return join(dataDir, "skills");
-}
 
 /** Serves `SkillSet` on `host`. */
 export function serveSet(host: FacetHost<P3Principal>): void {

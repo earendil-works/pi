@@ -16,7 +16,7 @@ import {
 } from "@earendil-works/p3/v1";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
 import { eventually, within } from "../../../test/until.ts";
-import { ThingsStore } from "../../things/contract.server.ts";
+import { OneThing, ThingHooks, ThingsStore } from "../../things/contract.server.ts";
 import { OPEN, type Source } from "../../things/contract.ts";
 import thingsServer from "../../things/server.ts";
 import { Instructions, InstructionsKind } from "../contract.ts";
@@ -95,5 +95,18 @@ describe("instructions", () => {
 			async () => (await store.settings.of.page({ thing }, 1, context)).items.length,
 			(count) => count === 0,
 		);
+	});
+
+	it("are seeded once in Pi with the default text, and configure sets some settings, keeping the others", async () => {
+		const seeded = await t.host.get(OneThing, { kind: InstructionsKind.name }, context);
+		const seed = await until(seeded.thing, (thing) => thing !== "", within("the seed", context));
+		await holding(AGENT, seed, async (instructions) => assert.match(instructions.text.value, /concise/));
+		const hook = (await t.host.registry(ThingHooks, context)).value.get(InstructionsKind.name)?.value;
+		assert.ok(hook?.configure !== undefined);
+		await t.root((ctx) => hook.configure!(seed, { language: "de" }, ctx), context);
+		await holding(AGENT, seed, async (instructions, ctx) => {
+			await until(instructions.language, (language) => language === "de", within("the language", ctx));
+			assert.match(instructions.text.value, /concise/, "the text kept");
+		});
 	});
 });

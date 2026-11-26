@@ -17,7 +17,7 @@ export const Language = oneOf("en", "de", "fr");
 /** A language instructions are written in (see `Language`). */
 export type Language = Static<typeof Language>;
 
-/** The settings of an instructions thing: its text and its language. */
+/** What an instructions thing's store keeps: its text and its language (its settings). */
 export const InstructionsSettings = obj({ text: InstructionsText, language: Language });
 
 /** The settings of an instructions thing (see `InstructionsSettings`). */
@@ -31,7 +31,7 @@ export const InstructionsKind = defineThing("prompt.instructions", {
 	state: { text: InstructionsText, language: Language },
 	ticks: { use: { label: messages.message("tickUse"), for: "agents" } },
 	defaultGrants: { agents: ["use"] },
-	settings: InstructionsSettings,
+	settings: ["text", "language"],
 });
 
 /** Instructions held in a workspace: `InstructionsKind`'s contract. */

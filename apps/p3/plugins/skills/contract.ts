@@ -32,7 +32,7 @@ export const SkillsKind = defineThing("prompt.skills", {
 	},
 	ticks: { use: { label: messages.message("tickUse"), for: "agents", gives: ["read"] } },
 	defaultGrants: { agents: ["use"] },
-	settings: obj({ folder: str() }),
+	settings: ["folder"],
 });
 
 /** A set of skills held in a workspace: `SkillsKind`'s contract. */

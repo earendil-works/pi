@@ -20,12 +20,12 @@ import {
 import { ServerRuntime } from "@earendil-works/p3/v1/server";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
 import { eventually, within } from "../../../test/until.ts";
-import { ThingsStore } from "../../things/contract.server.ts";
+import { ThingHooks, ThingsStore } from "../../things/contract.server.ts";
 import type { Source } from "../../things/contract.ts";
 import thingsServer from "../../things/server.ts";
 import { Skills, SkillsKind } from "../contract.ts";
-import { folderPath } from "../folder.ts";
-import { SkillSet, skillsRoot } from "../set.ts";
+import { folderPath, skillsRoot } from "../folder.ts";
+import { SkillSet } from "../set.ts";
 import { SkillsStore } from "../store.ts";
 
 /** Who sets things up in the tests. */
@@ -107,7 +107,18 @@ describe("a set of skills", () => {
 		await until(set.skills, (list) => list.length === 2, within("the new skill", context));
 	});
 
-	it("refuses a folder outside the skills root", () => {
+	it("refuses a folder outside the skills root, through configure too", async () => {
+		const thing = await setIn("coding");
+		const hook = (await t.host.registry(ThingHooks, context)).value.get(SkillsKind.name)?.value;
+		assert.ok(hook?.configure !== undefined);
+		await assert.rejects(
+			t.root((ctx) => hook.configure!(thing, { folder: "../elsewhere" }, ctx), context),
+			/outside the Pi's skills root/,
+		);
+		await t.root((ctx) => hook.configure!(thing, { folder: "family" }, ctx), context);
+		await holding(thing, async (skills, ctx) => {
+			await until(skills.folder, (folder) => folder === "family", within("the new folder", ctx));
+		});
 		assert.equal(folderPath(root, "coding"), join(root, "coding"));
 		assert.equal(folderPath(root, ""), root);
 		for (const outside of ["/etc", "..", "../other", "coding/../../x"]) {
