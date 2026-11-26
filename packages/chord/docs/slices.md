@@ -346,6 +346,10 @@ deleted (the slice's spec and code are the record). Moved here from `carry-over.
 - **A served hold placed again walks its params' text** when it is longer than a third of a link limit (`within` in
   `link/part.ts`; the base read the kept bytes' length): 1 MiB of params under 2 MiB limits 13.2 against 3.1 ms per
   republish. A kept byte length per served hold would end it.
+- **A long text encoded where no native UTF-8 count exists** (a browser: no `Buffer`; `Writer` in `link/binary.ts`)
+  reserves the rest of a text that did not fit at three bytes a unit and copies the frame right-sized: a text of 1 Mi
+  two-byte units 5.77 MB of buffers and 1,437 µs against 3.16 MB and 744 µs before the pass. On Node the rest is
+  counted exactly.
 - **Small items** (30 to 60 B each): an open query's compiled-plan wrapper, a given query's argument wrapper, a read
   plan's equality entries; a consumer's `#move` batch closure and list copy (about 0.3 KiB of garbage per move).
 

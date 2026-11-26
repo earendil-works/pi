@@ -1429,10 +1429,15 @@ ending +31, −35 and −9 KiB; a round's work peaks at 11 MiB). Every cache of 
   again (1 MiB under 2 MiB limits: 13.2 against 3.1 ms).
 - A factory that returns `null` for a contract without members, or with none granted to the caller, makes a live
   object (`Object.keys(null)` threw before; a contract with a member refuses it as before).
+- Frames past 16 KiB (the binary codec, pinned, buffers allocated and time per encode; before → after): 64 KiB in
+  1 KiB parts 219 KiB, 41 µs → 68 KiB, 6.5 µs; 1 MiB in 512 B parts 2.36 → 1.06 MB; a state of 100,000 ops of 1 to 8
+  bytes 3.06 → 0.83 MB; one text of 1 Mi three-byte units 11.56 MB, 3,129 µs → 4.20 MB, 1,204 µs; of two-byte units
+  3.16 MB, 754 µs → 3.15 MB, 752 µs. Without a native UTF-8 count (a browser) a long non-ASCII text that did not fit
+  costs more than before (two-byte units: 5.77 MB, 1,437 µs).
 - A list whose first page has more than about 120,000 rows loads, and its `more` too (the spread of a page into
   `push` overflowed the stack).
 - Internal types the package's declarations show changed shape: the store's `Read` (its constructor, its `sink` of
   two arguments, `latest`, `probed`), `ReadResult` (`kept`, `ids`), `ReadPlan.equalities`, `DecodedRows`, `QuerySpec.shapes`; an object's
   `holders` is an `Iterable`.
 
-Lines: `packages/chord/src` +2,636 −925.
+Lines: `packages/chord/src` +2,680 −928.
