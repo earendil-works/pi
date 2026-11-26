@@ -1,23 +1,27 @@
 // The providers plugin on a session's worker: what the logins the agent may use give it. Each login it holds with Use
-// gives one model provider of its own (`<provider>~<login>`: two logins of one provider are two providers, decision 7
-// of ERNDL-705), with the provider's chat models; each request's auth comes from the login's object on the server
-// (`authorize`, as the agent: a grant taken back refuses the next request). The providers' request code is the one of
-// `LoginProviders` on this worker: pi-ai's built-in ones, and what other plugins add.
+// gives one model provider of its own (`<provider>~<login>`: two logins of one provider are two providers), whose
+// models are the login's `catalog` (from the server: the worker loads no catalog) and whose requests take their auth
+// from the login's `authorize` (as the agent: a grant taken back refuses the next request). The request code is a
+// provider another plugin added (`LoginProviders`: a test's faux one) or pi-ai's built-in one, loaded on the first
+// request (`loadProvider`), so a worker holds only the providers it uses.
 
 import {
 	BACKGROUND_CONTEXT,
 	contribute,
 	defineFacet,
 	keyedEntries,
-	type Reference,
+	type RegistryValue,
 	type TableItem,
 } from "@earendil-works/p3/v1";
-import { builtinProviders, type Provider } from "@earendil-works/p3/v1/worker";
+import { type Api, lazyStream, loadProvider, type Model, type Provider } from "@earendil-works/p3/v1/worker";
 import { type HarnessSession, type HeldThing, ThingHarnessParts, thingHarnessPart } from "../things/contract.worker.ts";
 import { type Login, LoginKind } from "./contract.ts";
 import { LoginProviders } from "./login-providers.ts";
 
-export default defineFacet((host, self) => {
+/** The providers other plugins added, by id. */
+type Providers = ReadonlyMap<string, TableItem<Provider>>;
+
+export default defineFacet((host) => {
 	host.serve(LoginProviders, {
 		compose: (table, { report }) =>
 			keyedEntries(
@@ -26,48 +30,51 @@ export default defineFacet((host, self) => {
 				report,
 			),
 	});
-	self.contribute(LoginProviders, builtinProviders());
 	contribute(host, "providers.harness", (self) => {
-		const offered = self.registry(LoginProviders);
+		const added = self.registry(LoginProviders);
 		self.contribute(
 			ThingHarnessParts,
 			thingHarnessPart(LoginKind, (things, session) => ({
-				providers: things.flatMap((held) => {
-					const provider = held.ref.authorize === undefined ? undefined : offerOf(offered.value, held.ref);
-					return provider === undefined ? [] : [loginProvider(provider, held, session)];
-				}),
+				providers: things.flatMap((held) =>
+					held.ref.authorize === undefined ? [] : [loginProvider(held, added, session)],
+				),
 			})),
 		);
 	});
 });
 
-/** The provider of `login`, if a plugin on this worker offers it. */
-function offerOf(
-	offered: ReadonlyMap<string, TableItem<Provider>>,
-	login: Reference<typeof Login>,
-): Provider | undefined {
-	return offered.get(login.login.value.provider)?.value;
-}
-
 /** The separator of a login's provider id: `<provider>~<login thing>`. */
 const SEPARATOR = "~";
 
 /**
- * `base` as login `held`'s own provider: its id `<provider>~<thing>`, its chat models under that id, its requests made
- * by `base` with the model's provider restored (request code checks it: `anthropic`, `github-copilot`), its auth the
- * login's `authorize` on the server.
+ * Login `held`'s own provider: its id `<provider>~<thing>`, the login's catalog under that id, its requests made by the
+ * provider's request code with the model's provider restored (request code checks it: `anthropic`,
+ * `github-copilot`), its auth the login's `authorize` on the server.
  */
-function loginProvider(base: Provider, { thing, ref }: HeldThing<typeof Login>, session: HarnessSession): Provider {
-	const id = `${base.id}${SEPARATOR}${thing}`;
-	const restored = <M extends { readonly provider: string }>(model: M): M => ({ ...model, provider: base.id });
+function loginProvider(
+	{ thing, ref }: HeldThing<typeof Login>,
+	added: RegistryValue<Providers>,
+	session: HarnessSession,
+): Provider {
+	const { provider: base, providerName } = ref.login.value;
+	const id = `${base}${SEPARATOR}${thing}`;
+	let loaded: Promise<Provider> | undefined;
+	/** The request code: another plugin's provider of the id, else pi-ai's, loaded once, on the first request. */
+	const code = (): Promise<Provider> => {
+		loaded ??= (async () => {
+			const found = added.value.get(base)?.value ?? (await loadProvider(base));
+			if (found === undefined) throw new Error(`providers: no request code for the provider ${base}`);
+			return found;
+		})();
+		return loaded;
+	};
+	const restored = <M extends Model<Api>>(model: M): M => ({ ...model, provider: base });
 	return {
 		id,
-		name: base.name,
-		...(base.baseUrl === undefined ? {} : { baseUrl: base.baseUrl }),
-		...(base.headers === undefined ? {} : { headers: base.headers }),
+		name: providerName,
 		auth: {
 			apiKey: {
-				name: base.name,
+				name: providerName,
 				resolve: async () => {
 					const authorize = ref.authorize;
 					if (authorize === undefined) return undefined;
@@ -76,14 +83,22 @@ function loginProvider(base: Provider, { thing, ref }: HeldThing<typeof Login>, 
 				},
 			},
 		},
-		getModels: () => base.getModels().map((model) => ({ ...model, provider: id })),
-		stream: (model, context, options) => base.stream(restored(model), context, options),
-		streamSimple: (model, context, options) => base.streamSimple(restored(model), context, options),
-		...(base.fetchDeferred === undefined
-			? {}
-			: { fetchDeferred: (model, handle, options) => base.fetchDeferred!(restored(model), handle, options) }),
-		...(base.cancelDeferred === undefined
-			? {}
-			: { cancelDeferred: (model, handle, options) => base.cancelDeferred!(restored(model), handle, options) }),
+		// The server's catalog is pi-ai's own definitions of the provider's models.
+		getModels: () =>
+			((ref.catalog?.value ?? []) as unknown as Model<Api>[]).map((model) => ({ ...model, provider: id })),
+		stream: (model, context, options) =>
+			lazyStream(
+				model,
+				async () => (await code()).stream(restored(model), context, options),
+				undefined,
+				options?.signal,
+			),
+		streamSimple: (model, context, options) =>
+			lazyStream(
+				model,
+				async () => (await code()).streamSimple(restored(model), context, options),
+				undefined,
+				options?.signal,
+			),
 	};
 }

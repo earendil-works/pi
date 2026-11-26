@@ -2,7 +2,7 @@
 // sign-ins (`LoginStore`; this plugin's own server code only: it checks no caller). Credentials pass only between this
 // plugin's objects on the server; no remote contract carries one.
 
-import { local, method, obj, oneOf, queries, str, unknown } from "@earendil-works/p3/v1";
+import { local, method, obj, oneOf, queries, type Static, str, unknown } from "@earendil-works/p3/v1";
 import { AuthResult, Method } from "./contract.ts";
 
 /**
@@ -15,6 +15,9 @@ export const LoginRow = obj({
 	method: Method,
 	status: oneOf("signedIn", "signInAgain"),
 });
+
+/** A login as its store has it (see `LoginRow`). */
+export type LoginRow = Static<typeof LoginRow>;
 
 /** A finished sign-in's credential, given to the login it makes or signs in again: its provider and method too. */
 export const Claimed = obj({ provider: str(), method: Method, credential: unknown() });

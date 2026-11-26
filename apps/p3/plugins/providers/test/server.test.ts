@@ -252,13 +252,19 @@ describe("making a login", () => {
 });
 
 describe("who gets the request auth", () => {
-	it("gives the agents Use: authorize answers the login's key; no person, not its maker, not the owner", async () => {
+	it("gives the agents Use: authorize answers the login's key, catalog its models; no person, not its maker, not the owner", async () => {
 		const { workspace, agent } = await session("s1");
 		const ann = await person("Ann", workspace);
 		const thing = await create(ann, workspace, await signIn(ann));
 		const auth = await holding(agent, workspace, thing, (login, ctx) => login.authorize!({}, ctx));
 		assert.deepEqual(auth, { auth: { apiKey: keyOf(SCRIPT) }, source: "faux script" });
+		const catalog = await holding(agent, workspace, thing, async (login) => login.catalog!.value);
+		assert.deepEqual(
+			catalog.map((model) => (model as { id: string }).id),
+			[FAUX_MODEL],
+		);
 		assert.equal(await holding(ann, workspace, thing, async (login) => login.authorize), undefined);
+		assert.equal(await holding(ann, workspace, thing, async (login) => login.catalog), undefined);
 		await things.setOwner({ person: ann.id, owner: true }, context);
 		assert.equal(await holding(ann, workspace, thing, async (login) => login.authorize), undefined);
 	});

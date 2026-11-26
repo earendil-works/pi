@@ -7,6 +7,7 @@ import {
 	type Ctx,
 	defineFacet,
 	invalid,
+	type JsonValue,
 	keyedEntries,
 	type P3Principal,
 	type Reference,
@@ -15,14 +16,17 @@ import {
 	type TableItem,
 	type Watchable,
 } from "@earendil-works/p3/v1";
-import { builtinProviders, type Provider } from "@earendil-works/p3/v1/server";
+import { type Api, builtinProviders, type Model, type Provider } from "@earendil-works/p3/v1/server";
 import { serveThing } from "../things/serve.ts";
-import { LoginStore } from "./contract.server.ts";
+import { type LoginRow, LoginStore } from "./contract.server.ts";
 import { type LoginInfo, LoginKind } from "./contract.ts";
 import { LoginProviders } from "./login-providers.ts";
 import { ownerOf } from "./logins.ts";
 import { serveSignIn } from "./sign-in.ts";
 import { serveStore } from "./store.ts";
+
+/** The providers people may sign in to, by id. */
+type Providers = ReadonlyMap<string, TableItem<Provider>>;
 
 export default defineFacet((host, self) => {
 	host.serve(LoginProviders, {
@@ -48,8 +52,16 @@ export default defineFacet((host, self) => {
 		},
 		implement: ({ thing }, _admitted, self) => {
 			const store = self.get(LoginStore, {});
+			const providers = self.registry(LoginProviders);
+			const row = self.liveQuery(store.logins.one, { thing }, { first: 1 });
 			return {
-				login: loginOf(store, thing, self.registry(LoginProviders), self),
+				login: loginOf(row, providers, self),
+				// pi-ai's definitions are plain data: its catalogs are JSON.
+				catalog: () =>
+					self.derive(
+						[row, providers],
+						([{ rows }, offered]) => modelsOf(rows[0], offered) as unknown as JsonValue[],
+					),
 				authorize: (_args: Record<never, never>, ctx: Ctx<P3Principal>) => store.authorize({ thing }, ctx),
 			};
 		},
@@ -63,14 +75,12 @@ function signInOf(input: unknown): string {
 	return signIn;
 }
 
-/** Login `thing` as everyone admitted sees it, live: its row, and its provider's name and models. */
+/** A login as everyone admitted sees it, live: its row, and its provider's name and models. */
 function loginOf(
-	store: Reference<typeof LoginStore>,
-	thing: string,
-	providers: RegistryValue<ReadonlyMap<string, TableItem<Provider>>>,
+	row: Watchable<{ rows: LoginRow[] }>,
+	providers: RegistryValue<Providers>,
 	self: Self<P3Principal>,
 ): Watchable<LoginInfo> {
-	const row = self.liveQuery(store.logins.one, { thing }, { first: 1 });
 	return self.derive([row, providers], ([{ rows }, offered]): LoginInfo => {
 		const found = rows[0];
 		const provider = found === undefined ? undefined : offered.get(found.provider)?.value;
@@ -79,7 +89,7 @@ function loginOf(
 			providerName: provider?.name ?? found?.provider ?? "",
 			method: found?.method ?? "api_key",
 			status: found?.status ?? "signInAgain",
-			models: (provider?.getModels() ?? []).map(({ id, name, reasoning, contextWindow }) => ({
+			models: modelsOf(found, offered).map(({ id, name, reasoning, contextWindow }) => ({
 				id,
 				name,
 				reasoning,
@@ -87,4 +97,9 @@ function loginOf(
 			})),
 		};
 	});
+}
+
+/** The chat models of login `row`'s provider (none while no plugin offers it). */
+function modelsOf(row: LoginRow | undefined, offered: Providers): readonly Model<Api>[] {
+	return row === undefined ? [] : (offered.get(row.provider)?.value.getModels() ?? []);
 }

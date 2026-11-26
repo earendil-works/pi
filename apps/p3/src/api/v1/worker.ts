@@ -18,7 +18,10 @@ export {
 	type UploadResult,
 	uploadSession,
 } from "@earendil-works/chord/sync";
+// The built-in providers, for the providers plugin's worker facet: a login's requests (its auth comes from the server),
+// each provider loaded on its first use.
 export {
+	type Api,
 	createModels,
 	createProvider,
 	// pi-ai's faux provider, for plugins' tests: a model login that answers what the test scripts.
@@ -26,13 +29,13 @@ export {
 	fauxProvider,
 	fauxText,
 	fauxToolCall,
+	lazyStream,
 	type Message,
+	type Model,
 	type Models,
 	type MutableModels,
 	type Provider,
 } from "@earendil-works/pi-ai";
-// The built-in providers, for the providers plugin's worker facet: a login's requests (its auth comes from the server).
-export { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 export {
 	type Conversation,
 	type ConversationId,
@@ -57,6 +60,7 @@ export { StoreStorage } from "@earendil-works/pi-durable/storage/store";
 export { createCodingTools } from "@earendil-works/pi-durable/tools";
 export * from "../../../plugins/environments/contract.worker.ts";
 export * from "../../../plugins/harness/contract.worker.ts";
+export { loadProvider } from "./providers.ts";
 
 /** A session worker's process values, for plugins: what only the base has. */
 export type WorkerRuntime = {

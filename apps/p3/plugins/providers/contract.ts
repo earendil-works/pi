@@ -18,10 +18,12 @@ import {
 	oneOf,
 	opt,
 	remote,
+	type Schema,
 	Server,
 	type Static,
 	str,
 	union,
+	unknown,
 } from "@earendil-works/p3/v1";
 import { defineThing } from "../things/kind.ts";
 import { messages } from "./messages.ts";
@@ -51,6 +53,15 @@ export const LoginInfo = obj({
 	models: arr(ModelInfo),
 });
 
+/**
+ * One of a provider's models as pi-ai defines it (`Model`): plain data, what a worker's requests need. Unchecked:
+ * the server's own catalogs fill it.
+ */
+export const ModelDefinition: Schema<unknown> = unknown();
+
+/** A provider's models as pi-ai defines them (see `ModelDefinition`). */
+export const Catalog: Schema<unknown[]> = arr(ModelDefinition);
+
 /** A login as everyone admitted sees it (see `LoginInfo`). */
 export type LoginInfo = Static<typeof LoginInfo>;
 
@@ -75,15 +86,16 @@ export type LoginInput = Static<typeof LoginInput>;
 
 /**
  * A login (`providers.login`): its `login` for everyone admitted; Use, for agents, gives `authorize` (the request auth
- * of the login's provider, refreshed on the server when it expired). Logins have no model or money limits (decision
- * 89). A new link gives the agents Use; its maker gets every tick (item 90).
+ * of the login's provider, refreshed on the server when it expired) and `catalog` (the provider's chat models as
+ * pi-ai's `Model` definitions, what a worker's requests need: the worker loads no catalog of its own). Logins have no
+ * model or money limits (decision 89). A new link gives the agents Use; its maker gets every tick (item 90).
  */
 export const LoginKind = defineThing("providers.login", {
 	version: 1,
 	makers: "people",
-	state: { login: LoginInfo },
+	state: { login: LoginInfo, catalog: Catalog },
 	methods: { authorize: method(obj({}), AuthResult) },
-	ticks: { use: { label: messages.message("tickUse"), for: "agents", gives: ["authorize"] } },
+	ticks: { use: { label: messages.message("tickUse"), for: "agents", gives: ["authorize", "catalog"] } },
 	defaultGrants: { agents: ["use"] },
 });
 
