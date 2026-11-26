@@ -266,6 +266,45 @@ describe("a reload while a refresh runs", () => {
 		await first;
 		assert.equal((await next).auth.apiKey, "rotated");
 	});
+
+	it("lets a refresh that outlived its lease and failed refuse nothing its predecessor's rotation wrote", async (t) => {
+		// Each refresh waits for its own gate; the first rotates the token, the second (the spent token) is refused.
+		const gates = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+		const entered = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+		let refreshes = 0;
+		const slow = oauthProvider("slow", {
+			refresh: async (credential) => {
+				const call = refreshes++;
+				entered[call]!.resolve();
+				await gates[call]!.promise;
+				if (call > 0) throw new Error("invalid_grant");
+				return { ...credential, access: "rotated", refresh: "rotated", expires: Date.now() + 3_600_000 };
+			},
+			toAuth: async (credential) => ({ apiKey: credential.access }),
+		});
+		const host = await served(t, [slow]);
+		const older = await host.store();
+		await older.create({ thing: "t", provider: "slow", credential: OLD }, context);
+		const first = older.authorize({ thing: "t" }, context).catch(() => undefined);
+		await entered[0]!.promise;
+		await host.reload();
+		await new Promise((resolve) => setTimeout(resolve, 5_500));
+		// The first refresh outlives its lease (a minute): the next object's request refreshes the token it read too.
+		const now = Date.now;
+		Date.now = () => now() + 61_000;
+		try {
+			const next = (await host.store()).authorize({ thing: "t" }, context);
+			await entered[1]!.promise;
+			gates[0]!.resolve();
+			await first;
+			// Its refusal comes after the rotation was written: it read the older credential, so it marks nothing.
+			gates[1]!.resolve();
+			await assert.rejects(next, { code: "providers.signInAgain" });
+		} finally {
+			Date.now = now;
+		}
+		assert.equal((await (await host.store()).authorize({ thing: "t" }, context)).auth.apiKey, "rotated");
+	});
 });
 
 describe("a failed refresh", () => {
