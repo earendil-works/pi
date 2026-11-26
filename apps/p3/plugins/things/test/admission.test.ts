@@ -1,7 +1,7 @@
 // The one admission and what it derives from (`admitThing`, `Gives`, the store's handle in `AccessHandles`): a thing
 // held by a person or an agent has exactly the members its ticks give; a changed grant rebuilds that caller's object
 // once and its reference rebinds on the same hold, nobody else's; a denial carries its message; holding 40 things in
-// one workspace opens one `Gives` and no live query; the index's reads and computations are counted; the kinds
+// one workspace opens one `Gives` and no live query; a hold over a link (a client host's) is admitted alike; the index's reads and computations are counted; the kinds
 // registry changing (a kind's plugin reloaded) updates answers live, migrating older ticks or refusing them; reloads
 // of the things plugin and of a kind's plugin while things are held lose nothing; and the caches and handles let go of
 // what they were keyed by.
@@ -11,8 +11,10 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import {
 	type Ctx,
 	BACKGROUND_CONTEXT as context,
+	createHost,
 	defineFacet,
 	local,
+	memoryLinkPair,
 	method,
 	type P3Principal,
 	type Reference,
@@ -116,6 +118,29 @@ describe("a thing held by a person or an agent", () => {
 		await as(ada, async (ctx) =>
 			assert.deepEqual(members(await ctx.get(Board.contract, { workspace: pi, thing })), ["read"]),
 		);
+	});
+
+	it("held over a link from a host of its own (as a worker's and a page's): its members, and a change live", async () => {
+		const ada = await person("Ada");
+		await put(pi, { kind: "person", person: ada.id });
+		const thing = await board(pi);
+		const [toServer, fromClient] = memoryLinkPair();
+		const client = createHost<P3Principal>({ onError: (error) => assert.fail(`client error ${error.kind}`) });
+		w.host.accept(fromClient, { principal: ada }, context);
+		client.connect(toServer, { principal: { kind: "server" } }, context);
+		await client.load([], context);
+		try {
+			const ref = client.hold(Board.contract, { workspace: pi, thing }, context);
+			await until(ref.state, (state) => state.kind === "live", within("held over the link", context));
+			assert.deepEqual(members(ref), ["read"]);
+			await grant(pi, thing, { kind: "person", person: ada.id }, ["draw"]);
+			await until(ref.state, () => ref.draw !== undefined, within("the rebind over the link", context));
+			assert.deepEqual(members(ref), ["read", "draw"]);
+			assert.equal(await ref.read!(context), "person");
+			ref.release();
+		} finally {
+			await client.close(context);
+		}
 	});
 
 	it("the server is granted everything", async () => {

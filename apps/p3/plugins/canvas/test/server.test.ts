@@ -152,6 +152,34 @@ describe("who may do what on a canvas", () => {
 		await refused(grantedTo({ kind: "person", id: dana, name: "Dana" }, s1, board));
 	});
 
+	it("a flag tick given on its own grants its flag alone: Export without Draw", async () => {
+		const s1 = await workspace("s1");
+		const bo = await person("Bo", s1);
+		const board = await canvasIn(s1);
+		// Everyone's Draw taken from Bo, Export given to him (one grant row: a grant with a take-away).
+		await things.setGrants(
+			{
+				source: BY,
+				grants: [
+					{
+						workspace: s1,
+						thing: board,
+						party: { kind: "person", person: bo.id },
+						gives: true,
+						ticks: ["export"],
+						takenAway: ["draw"],
+					},
+				],
+			},
+			context,
+		);
+		await holding(bo, s1, board, async (canvas) => {
+			assert.ok(canvas.granted.has("export"));
+			assert.equal(canvas.add, undefined);
+			assert.deepEqual([...canvas.granted], ["export"]);
+		});
+	});
+
 	it("follows a change of the grants live, on the same hold: Draw taken from everyone leaves a viewer", async () => {
 		const ann = await person("Ann");
 		const board = await canvasIn(pi);

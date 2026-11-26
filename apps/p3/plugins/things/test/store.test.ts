@@ -163,6 +163,30 @@ describe("making and deleting a thing", () => {
 	});
 });
 
+describe("a refused write", () => {
+	it("leaves the disk as it was: of several grants refused for one, none is written", async () => {
+		const ada = await store.createPerson({ name: "Ada", madeBy: BY }, context);
+		const thing = await store.create({ kind: Board.name, name: "x", workspace: pi, by: BY }, context);
+		const party = { kind: "person", person: ada } as const;
+		const before = grantsOf(thing);
+		await assert.rejects(
+			store.setGrants(
+				{
+					source: BY,
+					grants: [
+						{ workspace: pi, thing, party, gives: true, ticks: ["read"], takenAway: [] },
+						{ workspace: pi, thing, party: { kind: "everyone" }, gives: false, ticks: [], takenAway: [] },
+						{ workspace: pi, thing, party, gives: true, ticks: ["fly"], takenAway: [] },
+					],
+				},
+				context,
+			),
+			/has no tick fly/,
+		);
+		assert.deepEqual(grantsOf(thing), before);
+	});
+});
+
 describe("linking", () => {
 	it("a link starts with the kind's default grants; linking again changes nothing", async () => {
 		const team = await store.createWorkspace({ kind: "things.workspace", name: "Team", parent: pi, by: BY }, context);
@@ -439,6 +463,26 @@ describe("round 1's reproductions (Astra, Sol)", () => {
 			() => at.w.rows("pending").length,
 			(count) => count === 0,
 		);
+	});
+
+	it("a failed delete hook is tried again after a while, in the same store object", async (t) => {
+		let attempts = 0;
+		const at = await markerWorld({
+			delete: async () => {
+				attempts++;
+				if (attempts === 1) throw new Error("offline");
+			},
+		});
+		t.after(() => at.w.close(context));
+		t.mock.method(console, "error", () => {});
+		const thing = await at.store.create({ kind: Marker.name, name: "one", workspace: at.pi, by: source }, context);
+		await at.store.unlink({ thing, workspace: at.pi }, context);
+		await eventually(
+			() => at.w.rows("pending").length,
+			(count) => count === 0,
+			3000,
+		);
+		assert.equal(attempts, 2);
 	});
 
 	it("Astra 5: a delete whose kind no plugin contributes waits for it, and runs once it is back", async (t) => {
