@@ -223,13 +223,11 @@ Only force a capability supported by the complete terminal path. Unsupported esc
 
 ## Recover the terminal after Pi was killed
 
-While it runs, Pi turns on terminal modes: extended-key reporting and bracketed paste in both TUI modes, and the alternate screen and mouse and focus reporting in fullscreen mode. Pi turns them off when it exits, but not when it is killed, for example with `kill -9`, from Task Manager, or when it runs out of memory. The terminal then keeps sending key and mouse reports, and the shell types them into the prompt.
+Pi turns on key, mouse, and paste reporting while it runs and turns it off when it exits. If Pi is killed (`kill -9`, Task Manager, out of memory), reporting stays on and the shell types the reports into the prompt.
 
-The real fix is to find what kills Pi and stop it. Look for `FATAL ERROR: ... JavaScript heap out of memory` in the terminal, and check whether a script, an IDE, or a job manager ends the process. Please [open an issue](https://github.com/earendil-works/pi/issues) with what you find.
+The real fix is to find what kills Pi and stop it. Look for `JavaScript heap out of memory` in the terminal, or a script or IDE that ends the process, and [open an issue](https://github.com/earendil-works/pi/issues) with what you find.
 
-### Reset the terminal
-
-Running Pi again and quitting it is not enough: the terminal keeps key-reporting settings on a stack, and each killed run leaves one entry behind that a later clean exit does not remove. Run this in the affected pane instead.
+To reset the terminal, run this in the affected pane. Starting and quitting Pi again is not enough.
 
 bash or zsh:
 
@@ -243,20 +241,9 @@ PowerShell:
 $e = [char]27; [Console]::Write("$e[<16u$e[=0;1u$e[>4;0m$e[?2004;1000;1002;1003;1004;1006l$e[?7;25h")
 ```
 
-`\e[<16u\e[=0;1u` clears key reporting left by up to 16 killed runs. The rest turns off the other modes and restores line wrapping and the cursor.
+If the prompt still shows Pi's last screen, also run `printf '\e[?1049l'` or `[Console]::Write("$([char]27)[?1049l")`. Only in that case: otherwise it confuses the shell's line editor.
 
-If the pane still shows Pi's last screen around the prompt, the alternate screen is still active. Also run `printf '\e[?1049l'` (bash or zsh) or `[Console]::Write("$([char]27)[?1049l")` (PowerShell). Run it only in that case: on the normal screen it moves the cursor and confuses the shell's line editor.
-
-### If you cannot type in the pane
-
-Key presses may arrive as text too, so the command above cannot be typed. Open a new terminal tab, start Pi, and ask it to fix the stuck one:
-
-```text
-My other terminal tab is stuck after Pi was killed: key presses turn into escape sequences.
-Find that tab's terminal and write the reset sequence from Pi's terminal-setup docs to it.
-```
-
-On Linux and macOS, Pi writes to that tab's terminal device, such as `/dev/pts/3`. On Windows, it attaches to that tab's console and writes there. Then press `Ctrl+C` in the stuck tab to clear the line.
+If you cannot type in the pane, start Pi in another tab and ask it: "Reset my other terminal tab with the reset sequence from Pi's terminal-setup docs." Then press `Ctrl+C` in the fixed tab to clear the line.
 
 ## Program status
 
