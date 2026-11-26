@@ -133,7 +133,12 @@ export class LiveQuery extends FramedSource {
 		// A count's read returns counts.
 		if (shape.kind !== "rows") return;
 		try {
-			this.set(shape.present(this.#rows.decode(result.rows, reading.target, reading.query.context), result.more));
+			this.set(
+				shape.present(
+					this.#rows.decode(result.rows, reading.target, reading.query.context, result.ids),
+					result.more,
+				),
+			);
 		} catch (error) {
 			this.failWith(error);
 		}
@@ -226,12 +231,15 @@ export class DecodedRows {
 		this.#keeps = keeps;
 	}
 
-	/** The rows of `stored` as `target` decodes them, unchanged ones reused; a row the code cannot read throws. */
-	decode(stored: readonly StoredRead[], target: LiveTarget, context: Context): JsonValue[] {
+	/**
+	 * The rows of `stored` as `target` decodes them, unchanged ones reused; a row the code cannot read throws. `ids`:
+	 * the identities of their keys when the run that fetched them made them already (`ReadResult.ids`).
+	 */
+	decode(stored: readonly StoredRead[], target: LiveTarget, context: Context, ids?: readonly unknown[]): JsonValue[] {
 		const key = target.spec.query.table.key;
 		if (stored.length === 1) {
 			const one = stored[0]!;
-			const id = identity(key, one);
+			const id = ids === undefined ? identity(key, one) : ids[0];
 			const entry = this.#reused(id, one, target, context);
 			this.#byKey = entry;
 			this.#oneId = id;
@@ -239,8 +247,8 @@ export class DecodedRows {
 		}
 		const byKey = new Map<unknown, Entry>();
 		// `map`: a list of exactly its rows (the value keeps it; one pushed to reserves room for 16 more).
-		const rows = stored.map((each) => {
-			const id = identity(key, each);
+		const rows = stored.map((each, at) => {
+			const id = ids === undefined ? identity(key, each) : ids[at];
 			const decoded = this.#reused(id, each, target, context);
 			byKey.set(id, decoded);
 			return decoded.row;

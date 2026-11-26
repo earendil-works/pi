@@ -16,6 +16,12 @@ export type ReadResult = {
 	readonly more: boolean;
 	/** What a read keeps of the run once adopted. */
 	readonly kept: KeptRows;
+	/**
+	 * The identity (`identity`) of each fetched row's key, in order, for a key of several columns: its JSON, made once
+	 * per row for the read and for whoever decodes the rows (`DecodedRows`). `undefined` for a key of one column (the
+	 * value itself: nothing to make).
+	 */
+	readonly ids: readonly unknown[] | undefined;
 };
 
 /**
@@ -180,6 +186,7 @@ export class Read {
 		const { plan } = this;
 		const keyColumns = plan.query.table.key;
 		const keys = new Set<unknown>();
+		const ids = keyColumns.length === 1 ? undefined : new Array<unknown>(stored.length);
 		// Made by the first use that pairs: a read of its own table alone (most reads) shares the empty map.
 		let paired: Map<Use, Set<unknown>> | undefined;
 		for (const use of plan.uses) {
@@ -187,14 +194,17 @@ export class Read {
 			paired ??= new Map();
 			paired.set(use, new Set());
 		}
-		for (const row of stored) {
-			keys.add(identity(keyColumns, row));
+		for (let at = 0; at < stored.length; at++) {
+			const row = stored[at]!;
+			const id = identity(keyColumns, row);
+			keys.add(id);
+			if (ids !== undefined) ids[at] = id;
 			if (paired !== undefined) for (const [use, values] of paired) values.add(identity(use.pairs!, row));
 		}
 		const more = stored.length > range.limit;
 		const past = more ? plan.order.columns.map((name) => stored[range.limit]![name]!) : undefined;
 		const kept: KeptRows = { kind: "rows", keys, paired: paired ?? NOTHING_PAIRED, past };
-		return { rows: more ? stored.slice(0, range.limit) : stored, more, kept };
+		return { rows: more ? stored.slice(0, range.limit) : stored, more, kept, ids };
 	}
 }
 
