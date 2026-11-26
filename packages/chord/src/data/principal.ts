@@ -96,6 +96,120 @@ function canonical(value: JsonValue[] | { readonly [key: string]: JsonValue }, p
 }
 
 /**
+ * Whether `b` has the canonical JSON of `a` (`canonicalJson`), decided without making text (AGENTS.md: never compare
+ * by serializing): keys in any order, `-0` as `0`, a non-finite number as `null`, what is no JSON as canonical JSON
+ * writes it (nothing in a list, `undefined` in an object). `a` was walked before (`canonicalJson` or `walkJson`): a
+ * part of `b` that is the same object is equal at once. Throws where canonical JSON of `b` would (a bigint). Counts
+ * nothing: its caller counts the walk. `skip` names a key of the outer objects left out of both.
+ */
+export function sameJson(a: unknown, b: unknown, skip?: string): boolean {
+	if (skip !== undefined && isObject(a) && isObject(b) && !Array.isArray(a) && !Array.isArray(b)) {
+		return sameFields(a, b, skip);
+	}
+	return sameAt(a, b, TOP);
+}
+
+/** Where a value is written: the text of what is no JSON depends on it (`canonicalJson`, `canonical`). */
+type Place = typeof TOP | typeof ITEM | typeof FIELD;
+
+const TOP = 0;
+
+const ITEM = 1;
+
+const FIELD = 2;
+
+function sameAt(a: unknown, b: unknown, place: Place): boolean {
+	if (a === b) return true;
+	if (isObject(a) && isObject(b)) {
+		if (Array.isArray(a)) return Array.isArray(b) && sameItems(a, b);
+		return !Array.isArray(b) && sameFields(a, b, undefined);
+	}
+	// A function's or bigint's text is what JSON.stringify makes of it (its toJSON, or a throw): compared as text.
+	if (byText(a) || byText(b)) return textAt(a, place) === textAt(b, place);
+	if (isObject(a) || isObject(b)) return false;
+	const kind = primitiveKind(a);
+	return kind !== VALUE && kind === primitiveKind(b);
+}
+
+function isObject(value: unknown): value is object {
+	return typeof value === "object" && value !== null;
+}
+
+function byText(value: unknown): boolean {
+	return typeof value === "function" || typeof value === "bigint";
+}
+
+/** A primitive other than an equal one with the same text: `null` (non-finite numbers too), or none (`undefined`). */
+function primitiveKind(value: unknown): typeof VALUE | typeof NULL | typeof NONE {
+	if (value === null || (typeof value === "number" && !Number.isFinite(value))) return NULL;
+	return value === undefined || typeof value === "symbol" ? NONE : VALUE;
+}
+
+const VALUE = 0;
+
+const NULL = 1;
+
+const NONE = 2;
+
+/** Lists: the same length and items, or no items against one item written as nothing (`[]` and `[undefined]`). */
+function sameItems(a: readonly unknown[], b: readonly unknown[]): boolean {
+	if (a.length !== b.length) {
+		if (a.length + b.length !== 1) return false;
+		const item = a.length === 1 ? a[0] : b[0];
+		return !isObject(item) && textAt(item, ITEM) === "";
+	}
+	// Indexed: a for-of allocates an iterator per list.
+	for (let index = 0; index < a.length; index++) if (!sameAt(a[index], b[index], ITEM)) return false;
+	return true;
+}
+
+/** Objects: the same own enumerable keys (`Object.keys`), each with the same value; `skip` left out. */
+function sameFields(a: object, b: object, skip: string | undefined): boolean {
+	const left = a as { readonly [key: string]: unknown };
+	const right = b as { readonly [key: string]: unknown };
+	let keys = 0;
+	// for-in with an own-enumerable filter: `Object.keys` allocates its list.
+	for (const key in right) {
+		if (key === skip || !isEnumerable.call(right, key)) continue;
+		if (!isEnumerable.call(left, key) || !sameAt(left[key], right[key], FIELD)) return false;
+		keys++;
+	}
+	for (const key in left) if (key !== skip && isEnumerable.call(left, key)) keys--;
+	return keys === 0;
+}
+
+const isEnumerable = Object.prototype.propertyIsEnumerable;
+
+/** The text canonical JSON writes for `value` at `place` (only for what `sameAt` cannot tell apart otherwise). */
+function textAt(value: unknown, place: Place): string | undefined {
+	if (isObject(value)) {
+		const parts: string[] = [];
+		canonical(value as JsonValue[] | { readonly [key: string]: JsonValue }, parts);
+		return parts.join("");
+	}
+	const text = JSON.stringify(value);
+	if (place === TOP) return text;
+	return place === ITEM ? (text ?? "") : `${text}`;
+}
+
+/**
+ * Walks `value` as `canonicalJson` does, making no text: it throws where that throws (a bigint, a cycle), for a value
+ * kept to be compared by `sameJson` later. Counts nothing: its caller counts the walk.
+ */
+export function walkJson(value: unknown): void {
+	if (!isObject(value)) {
+		if (byText(value)) JSON.stringify(value);
+		return;
+	}
+	if (Array.isArray(value)) {
+		for (let index = 0; index < value.length; index++) walkJson(value[index]);
+		return;
+	}
+	const fields = value as { readonly [key: string]: unknown };
+	for (const key in fields) if (isEnumerable.call(fields, key)) walkJson(fields[key]);
+}
+
+/**
  * Whether `principal` is `other`: the same default key (canonical JSON), each computed once per principal object; no
  * principal (`undefined`) is none.
  */

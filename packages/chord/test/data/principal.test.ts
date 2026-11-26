@@ -1,6 +1,14 @@
+import { GCProfiler, getHeapStatistics } from "node:v8";
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT } from "../../src/context/index.ts";
-import { canonicalJson, principalJson, principalKey, samePrincipal } from "../../src/data/internal.ts";
+import {
+	canonicalJson,
+	principalJson,
+	principalKey,
+	sameJson,
+	samePrincipal,
+	walkJson,
+} from "../../src/data/internal.ts";
 import { counted, expectCollected, metered } from "../support.ts";
 
 describe("canonicalJson", () => {
@@ -26,6 +34,108 @@ describe("canonicalJson", () => {
 			validations: 0,
 			compilations: 0,
 		});
+	});
+});
+
+describe("sameJson", () => {
+	const text = (value: unknown) => canonicalJson(value as never, BACKGROUND_CONTEXT);
+
+	/** A random value of few distinct parts, odd ones included (what plugin code may hand over as JSON). */
+	function random(next: () => number, depth: number): unknown {
+		const pick = Math.floor(next() * (depth > 2 ? 14 : 17));
+		const tokens = [0, -0, 1, "a", "", true, false, null, Number.NaN, Number.POSITIVE_INFINITY, undefined];
+		if (pick < tokens.length) return tokens[pick];
+		if (pick === 11) return Symbol("s");
+		if (pick === 12) return () => {};
+		if (pick === 13) return "b";
+		if (pick === 14) return Array.from({ length: Math.floor(next() * 3) }, () => random(next, depth + 1));
+		const object: Record<string, unknown> = pick === 15 ? {} : Object.create(null);
+		for (const key of ["a", "b", "granted"]) if (next() < 0.5) object[key] = random(next, depth + 1);
+		if (next() < 0.2) Object.defineProperty(object, "hidden", { value: 1, enumerable: false });
+		return object;
+	}
+
+	/** `value` built again: other objects, keys in another order, each part maybe one with the same text. */
+	function remix(value: unknown, next: () => number): unknown {
+		const same: unknown[][] = [
+			[0, -0],
+			[null, Number.NaN, Number.NEGATIVE_INFINITY],
+			[undefined, Symbol("t")],
+		];
+		const group = same.find((members) => members.some((member) => Object.is(member, value)));
+		if (group !== undefined) return group[Math.floor(next() * group.length)];
+		if (Array.isArray(value)) {
+			if (value.length === 0 && next() < 0.3) return [undefined];
+			return value.map((item) => remix(item, next));
+		}
+		if (typeof value !== "object" || value === null) return value;
+		const keys = Object.keys(value).sort(() => next() - 0.5);
+		const copy: Record<string, unknown> = {};
+		for (const key of keys)
+			copy[key] =
+				next() < 0.2
+					? (value as Record<string, unknown>)[key]
+					: remix((value as Record<string, unknown>)[key], next);
+		return copy;
+	}
+
+	it("says what equal canonical JSON says, for random values and their remixes, with and without a skipped key", () => {
+		let seed = 7;
+		const next = () => {
+			seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
+			return seed / 2_147_483_648;
+		};
+		const omit = (value: unknown) => {
+			if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
+			const { granted: _, ...rest } = value as Record<string, unknown>;
+			return rest;
+		};
+		let equal = 0;
+		for (let round = 0; round < 20_000; round++) {
+			const a = random(next, 0);
+			const b = next() < 0.6 ? remix(a, next) : random(next, 0);
+			const same = text(a) === text(b);
+			expect([round, sameJson(a, b)]).toEqual([round, same]);
+			if (same) equal++;
+			const object = (value: unknown) => typeof value === "object" && value !== null && !Array.isArray(value);
+			const skipped = object(a) && object(b) ? text(omit(a)) === text(omit(b)) : same;
+			expect([round, sameJson(a, b, "granted")]).toEqual([round, skipped]);
+		}
+		// Both answers are common: the test compares many equal values.
+		expect(equal).toBeGreaterThan(5_000);
+	});
+
+	it("throws where canonical JSON throws (a bigint); compares a function by what JSON.stringify makes of it", () => {
+		expect(() => sameJson({ a: 1 }, { a: 1n })).toThrow("BigInt");
+		expect(() => walkJson({ a: [1n] })).toThrow("BigInt");
+		const cyclic: Record<string, unknown> = {};
+		cyclic.self = cyclic;
+		expect(() => walkJson(cyclic)).toThrow(RangeError);
+		const json = Object.assign(() => {}, { toJSON: () => 5 });
+		expect([sameJson({ a: 5 }, { a: json }), sameJson([undefined], [() => {}]), sameJson([], [json])]).toEqual([
+			true,
+			true,
+			false,
+		]);
+	});
+
+	it("makes no text for equal values of other objects (cost guard)", () => {
+		const a = { mode: "write", level: 3, tags: ["x", "y"], nested: { on: true, at: [1, 2, 3] } };
+		const b = { nested: { at: [1, 2, 3], on: true }, tags: ["x", "y"], level: 3, mode: "write" };
+		for (let warm = 0; warm < 1_000; warm++) sameJson(a, b);
+		const profiler = new GCProfiler();
+		profiler.start();
+		const before = getHeapStatistics().used_heap_size;
+		let equal = 0;
+		for (let round = 0; round < 10_000; round++) if (sameJson(a, b, "granted")) equal++;
+		const after = getHeapStatistics().used_heap_size;
+		let freed = 0;
+		for (const collection of profiler.stop().statistics) {
+			freed += collection.beforeGC.heapStatistics.usedHeapSize - collection.afterGC.heapStatistics.usedHeapSize;
+		}
+		expect(equal).toBe(10_000);
+		// Measured about 50 B per comparison (V8's for-in over an object's keys), 7.5 KiB for two canonical texts.
+		expect(after - before + freed).toBeLessThan(10_000 * 500);
 	});
 });
 

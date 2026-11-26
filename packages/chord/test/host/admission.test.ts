@@ -452,6 +452,115 @@ describe("an empty grant (review round 1, Astra 6)", () => {
 	});
 });
 
+describe("an equal decision of another object (hot-path pass, 2026-11-26)", () => {
+	const Picked = remote("eq.thing", {
+		version: 1,
+		params: {},
+		hostAddress: () => Server(),
+		state: { name: str() },
+		methods: { add: grantable(method(str(), str())) },
+		flags: { export: "Export" },
+	});
+	const Picks = defineState("picks", { schema: obj({ pick: str() }), version: 1, initial: () => ({ pick: "first" }) });
+	const Pick = local("eq.pick", { version: 1, params: {}, members: { pick: str(), set: method(str()) } });
+	const message = { namespace: "docs", key: "noShare", params: [1, "a"] };
+	/** Each read makes its decision afresh: equal ones are other objects. */
+	const cases: Record<string, () => unknown> = {
+		first: () => allow({ level: 1, tags: ["x"], n: 0, granted: ["add", "export"] }),
+		reordered: () => allow({ granted: ["export", "add", "add"], n: -0, tags: ["x"], level: 1 }),
+		data: () => allow({ level: 2, tags: ["x"], n: 0, granted: ["add", "export"] }),
+		fewer: () => allow({ n: 0, tags: ["x"], level: 2, granted: ["add", "add"] }),
+		unknown: () => allow({ n: 0, tags: ["x"], level: 2, granted: ["add", "nope"] }),
+		denied: () => deny("no", message),
+		deniedAgain: () => deny("no", { params: [1, "a"], key: "noShare", namespace: "docs" }),
+		otherMessage: () => deny("no", { ...message, params: [2, "a"] }),
+	};
+
+	async function picked() {
+		const errors: HostError[] = [];
+		const built: unknown[] = [];
+		const h = createHost<TestPrincipal>({
+			address: Server(),
+			principal: { kind: "server" },
+			onError: (error) => errors.push(error),
+		});
+		const facet = defineFacet<TestPrincipal>((host) => {
+			host.serve(Pick, (_, self) => {
+				const state = self.state(Picks);
+				return {
+					pick: self.derive([state], ([s]) => s.pick),
+					set: async (pick, ctx) => {
+						await state.change((draft) => {
+							draft.pick = pick;
+						}, ctx);
+						return null;
+					},
+				};
+			});
+			host.serve(
+				Picked,
+				(_params, _principal, admitted) => {
+					built.push(admitted);
+					return { name: constant("n"), add: async (text: string) => text };
+				},
+				{ admit: (_p, _principal, self) => self.derive([self.get(Pick, {}).pick], ([p]) => cases[p]!() as never) },
+			);
+		});
+		await h.load([{ name: "@test/picked", facet }], context);
+		const pick = await h.get(Pick, {}, context);
+		const set = async (name: string) => {
+			await pick.set(name, context);
+			await delivered();
+		};
+		return { h, set, built, errors };
+	}
+
+	it("names in another order, repeated, and -0 for 0 are the same decision: no rebuild, the same granted set", async () => {
+		const { h, set, built } = await picked();
+		const thing = await h.get(Picked, {}, context);
+		const granted = thing.granted;
+		expect([...granted]).toEqual(["add", "export"]);
+		await set("reordered");
+		expect([built.length, thing.granted, thing.state.value.kind]).toEqual([1, granted, "live"]);
+		expect(thing.granted).toBe(granted);
+		// The factory's value is the first one's: an equal decision is that decision.
+		expect(built[0]).toMatchObject({ level: 1, tags: ["x"], n: 0 });
+		await set("data");
+		await vi.waitFor(() => expect(built).toHaveLength(2));
+		expect(built[1]).toMatchObject({ level: 2 });
+		await set("fewer");
+		await vi.waitFor(() => expect([...thing.granted]).toEqual(["add"]));
+		expect(built).toHaveLength(3);
+		await h.close(context);
+	});
+
+	it("a name that is no grant breaks even when the data and the other names are the last decision's", async () => {
+		const { h, set, errors } = await picked();
+		await set("fewer");
+		const thing = await h.get(Picked, {}, context);
+		await set("unknown");
+		await vi.waitFor(() => expect(thing.state.value).toMatchObject({ kind: "failed", cause: { kind: "broken" } }));
+		expect(reports(errors)).toEqual([
+			'activation_failed: eq.thing: its admission granted "nope": no grantable member or flag of its contract',
+		]);
+		await h.close(context);
+	});
+
+	it("an equal denial of another object is the same failure; another message is a new one", async () => {
+		const { h, set } = await picked();
+		await set("denied");
+		const thing = h.hold(Picked, {}, context);
+		await vi.waitFor(() => expect(thing.state.value).toMatchObject({ kind: "failed", cause: { kind: "denied" } }));
+		const shown = thing.state.value;
+		await set("deniedAgain");
+		expect(thing.state.value).toBe(shown);
+		await set("otherMessage");
+		await vi.waitFor(() => expect(thing.state.value).not.toBe(shown));
+		expect(thing.state.value).toMatchObject({ cause: { error: { details: { message: { params: [2, "a"] } } } } });
+		await h.close(context);
+	});
+});
+
 describe("deny, then allow", () => {
 	it("a direct hold shows failed { denied } with the reason, then binds with what the value grants", async () => {
 		const built: string[] = [];
