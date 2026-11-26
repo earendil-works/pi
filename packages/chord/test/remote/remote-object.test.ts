@@ -14,8 +14,8 @@ import {
 	type Reference,
 } from "../../src/host/index.ts";
 import { resolveWatchable } from "../../src/host/reference.ts";
-import { type Link, memoryLinkPair } from "../../src/link/index.ts";
-import { jsonPart, wireError } from "../../src/link/internal.ts";
+import { type Codec, type Link, memoryLinkPair } from "../../src/link/index.ts";
+import { binaryCodec, jsonPart, wireError } from "../../src/link/internal.ts";
 import { Path } from "../../src/remote/path.ts";
 import { RemoteObject } from "../../src/remote/remote-object.ts";
 import { constant } from "../../src/state/index.ts";
@@ -283,6 +283,110 @@ forEachCodec(() => {
 			await expectCollected(kept.version);
 			await expectCollected(...tables);
 			expect([...kept.granted]).toEqual(["home"]);
+		});
+
+		it("read a decoded entry's grants with one map, as ever: a codec's list is not iterated (review of b288f6ba4)", async () => {
+			const Colors = remote("app.colors", {
+				version: 1,
+				params: {},
+				hostAddress: () => Server(),
+				state: { n: int() },
+				flags: { blue: "Blue", red: "Red" },
+			});
+			let iterated = 0;
+			// A codec whose lists of grants throw when iterated: only an index walk or `map` reads them.
+			const codec: Codec = {
+				name: binaryCodec.name,
+				encode: (message) => binaryCodec.encode(message),
+				decode(bytes) {
+					const message = binaryCodec.decode(bytes);
+					if (message.kind !== "bound") return message;
+					for (const entry of message.holds) {
+						Object.defineProperty(entry.granted, Symbol.iterator, {
+							value() {
+								iterated++;
+								throw new Error("codec array iterator called");
+							},
+						});
+					}
+					return message;
+				},
+			};
+			const errors: HostError[] = [];
+			const client = createHost<TestPrincipal>({ onError: (error) => errors.push(error) });
+			await client.load([], context);
+			try {
+				const [near, far] = memoryLinkPair();
+				client.connect(near, { principal: { kind: "server" }, codec }, context);
+				const peer = new RawPeer(far, { codec: binaryCodec });
+				await peer.next("hello");
+				const ref = client.hold(Colors, {}, context);
+				const { hold } = await peer.next("hold");
+				peer.send({
+					kind: "bound",
+					holds: [{ hold, granted: [0], members: [{ member: 0, value: "1" }], failed: [] }],
+				});
+				await transported();
+				expect([ref.state.value.kind, grantOf(ref), iterated, errors]).toEqual(["live", ["blue"], 0, []]);
+			} finally {
+				await client.close(context);
+			}
+		});
+
+		it("keep no slot or registration of a version gone meanwhile, while an app keeps every set (review of 46aeaa1e0)", async () => {
+			const tables: WeakRef<object>[] = [];
+			const slots: WeakRef<object>[] = [];
+			const set = Map.prototype.set;
+			// Watches the insertions into the version's table only: it keeps neither the table nor its slots.
+			Map.prototype.set = function (this: Map<unknown, unknown>, key: unknown, value: unknown) {
+				const held = value instanceof WeakRef ? value.deref() : undefined;
+				if (
+					typeof key === "number" &&
+					held instanceof Set &&
+					[...held].some((name) => `${name}`.startsWith("kept"))
+				) {
+					tables.push(new WeakRef(this));
+					slots.push(new WeakRef(value as object));
+				}
+				return set.call(this, key, value);
+			};
+			let kept: { readonly version: WeakRef<object>; readonly sets: ReadonlySet<string>[] };
+			try {
+				kept = await (async () => {
+					const Kept = remote("app.kept-sets", {
+						version: 1,
+						params: {},
+						hostAddress: () => Server(),
+						state: { n: int() },
+						flags: { kept0: "0", kept1: "1", kept2: "2", kept3: "3", kept4: "4" },
+					});
+					const { client, peer } = await rawProvider();
+					const ref = client.hold(Kept, {}, context);
+					const { hold } = await peer.next("hold");
+					const sets: ReadonlySet<string>[] = [];
+					for (let mask = 1; mask < 32; mask++) {
+						const granted = [0, 1, 2, 3, 4].filter((index) => (mask & (1 << index)) !== 0);
+						peer.send({
+							kind: "bound",
+							holds: [{ hold, granted, members: [{ member: 0, value: "1" }], failed: [] }],
+						});
+						await transported();
+						await waitLive(ref);
+						sets.push(ref.granted);
+					}
+					ref.release();
+					await transported();
+					await client.close(context);
+					return { version: new WeakRef(currentVersion(Kept)), sets };
+				})();
+			} finally {
+				Map.prototype.set = set;
+			}
+			expect(slots).toHaveLength(31);
+			await expectCollected(kept.version);
+			await expectCollected(...tables);
+			await expectCollected(...slots);
+			expect(kept.sets.at(-1)!.size).toBe(5);
 		});
 
 		it("leave no slot of a collected set while the version lives (review of 9b548ea93)", async () => {

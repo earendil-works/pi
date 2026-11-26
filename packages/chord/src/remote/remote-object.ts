@@ -94,59 +94,47 @@ function replicaAt(bound: Bound, id: number, index: number): Replica {
 }
 
 /**
- * The set of `version`'s grants at `indexes`: one per version and grant while a binding has it, shared by
- * every remote object of the version granted the same, so the members granted it are found by the set's identity
- * (`grantedMembers`), not rebuilt per binding; its references' `granted` is that one set, read-only by convention (as
- * the provider's sets are shared per decision). Kept weakly: gone once no binding has it, its slot with it, all of
- * them with the version. Indexes as the provider sends them, ascending, into at most 30 grants (a bit set in a small integer);
- * others get a set of their own in their order, as before.
+ * The set `names` of `version`'s grants, `bits` the bit set of their indexes: one per version and grant while a
+ * binding has it, shared by every remote object of the version granted the same, so the members granted it are found
+ * by the set's identity (`grantedMembers`), not rebuilt per binding; its references' `granted` is that one set,
+ * read-only by convention (as the provider's sets are shared per decision). Kept weakly: gone once no binding has it,
+ * its slot with it, every slot and registration with the version (`GrantedSets`).
  */
-function grantedSet(version: VersionData, indexes: readonly number[]): ReadonlySet<string> {
-	if (version.grants.length > 30) return namedSet(version, indexes);
-	let bits = 0;
-	for (let at = 0; at < indexes.length; at++) {
-		const index = indexes[at]!;
-		if (at > 0 && index <= indexes[at - 1]!) return namedSet(version, indexes);
-		bits |= 1 << index;
-	}
+function grantedSet(version: VersionData, bits: number, names: readonly string[]): ReadonlySet<string> {
 	let sets = grantedSets.get(version);
 	if (sets === undefined) {
-		sets = new Map();
+		const slots = new Map<number, WeakRef<ReadonlySet<string>>>();
+		// Drops the slot of a collected set, unless it holds another set of the same grants made since.
+		const collected = new FinalizationRegistry<{ readonly bits: number; readonly ref: WeakRef<ReadonlySet<string>> }>(
+			({ bits, ref }) => {
+				if (slots.get(bits) === ref) slots.delete(bits);
+			},
+		);
+		sets = { slots, collected };
 		grantedSets.set(version, sets);
 	}
-	let set = sets.get(bits)?.deref();
+	let set = sets.slots.get(bits)?.deref();
 	if (set === undefined) {
-		set = namedSet(version, indexes);
+		set = new Set(names);
 		const ref = new WeakRef(set);
-		sets.set(bits, ref);
-		collectedSets.register(set, { sets: new WeakRef(sets), bits, ref });
+		sets.slots.set(bits, ref);
+		sets.collected.register(set, { bits, ref });
 	}
 	return set;
 }
 
-/** A new set of `version`'s grants at `indexes`, in their order (the caller checked that each names a grant). */
-function namedSet(version: VersionData, indexes: readonly number[]): Set<string> {
-	return new Set(indexes.map((index) => version.grants[index]!));
-}
-
-/** A version's granted sets by their indexes' bits, each while a binding has it. */
-type GrantedSets = Map<number, WeakRef<ReadonlySet<string>>>;
+/**
+ * A version's granted sets by their indexes' bits, each while a binding has it, and the registry that drops a
+ * collected one's slot: owned by the version's entry alone, so a set an app keeps keeps neither the slots nor their
+ * registrations once the version is gone.
+ */
+type GrantedSets = {
+	readonly slots: Map<number, WeakRef<ReadonlySet<string>>>;
+	readonly collected: FinalizationRegistry<{ readonly bits: number; readonly ref: WeakRef<ReadonlySet<string>> }>;
+};
 
 /** The granted sets of each version (`grantedSet`): gone with the version. */
 const grantedSets = new WeakMap<VersionData, GrantedSets>();
-
-/**
- * Drops the slot of a collected set, unless it holds another set of the same grants made since. Its table is held
- * weakly: a set an app keeps must not keep the table of a version gone meanwhile.
- */
-const collectedSets = new FinalizationRegistry<{
-	readonly sets: WeakRef<GrantedSets>;
-	readonly bits: number;
-	readonly ref: WeakRef<ReadonlySet<string>>;
-}>(({ sets, bits, ref }) => {
-	const table = sets.deref();
-	if (table?.get(bits) === ref) table.delete(bits);
-});
 
 /**
  * The object of the remote references with one sharing key, owned by its host across the links of its path (one held
@@ -668,20 +656,26 @@ export class RemoteObject implements Target {
 	 * last binding's set when equal, so a re-hold granted the same changes nothing a UI compares (`useLive`).
 	 */
 	#grantedFrom(entry: BoundEntry): ReadonlySet<string> {
-		const indexes = entry.granted;
-		if (indexes.length === 0) return NO_GRANTS;
+		if (entry.granted.length === 0) return NO_GRANTS;
 		const version = currentVersion(this.contract);
 		const { grants } = version;
-		for (const index of indexes) {
-			if (grants[index] === undefined) throw new Error(`hold ${entry.hold}: no grant ${index} in bound`);
-		}
+		// One `map` over the entry's list, as ever (a codec's list is read only so); with the bit set of its indexes
+		// while they ascend, as providers send them, into at most 30 grants (a small integer): other input gets a set
+		// of its own in its order.
+		let bits = 0;
+		let previous = -1;
+		let shared = grants.length <= 30;
+		const names = entry.granted.map((index) => {
+			const name = grants[index];
+			if (name === undefined) throw new Error(`hold ${entry.hold}: no grant ${index} in bound`);
+			if (index > previous) bits |= 1 << index;
+			else shared = false;
+			previous = index;
+			return name;
+		});
 		const last = this.#bound?.granted;
-		if (last !== undefined && last.size === indexes.length) {
-			let same = true;
-			for (const index of indexes) same &&= last.has(grants[index]!);
-			if (same) return last;
-		}
-		return grantedSet(version, indexes);
+		if (last !== undefined && last.size === names.length && names.every((name) => last.has(name))) return last;
+		return shared ? grantedSet(version, bits, names) : new Set(names);
 	}
 
 	/** After a `bound` message's batch: the reference goes live (its parked calls are sent, a parked dependent goes on). */
