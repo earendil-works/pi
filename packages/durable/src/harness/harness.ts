@@ -19,7 +19,6 @@ import {
 import { ResetEntry } from "../entries.ts";
 import type { ExecutionEnv } from "../env/index.ts";
 import { DeletionRefused } from "../errors.ts";
-import { documentKey } from "../session/keys.ts";
 import { contained, SessionImpl } from "../session/session.ts";
 import type { Transaction } from "../session/transaction.ts";
 import type { SignalResult, SignalToken } from "../signals.ts";
@@ -48,11 +47,12 @@ import { ROOT_CONVERSATION_ID } from "../types.ts";
 import { AgentDoc, configure, createAgent, resolveAgent, resolveSettings } from "./agent.ts";
 import { createCompaction } from "./compaction.ts";
 import { readContext } from "./context.ts";
+import { DELETIONS_KEY } from "./deletions.ts";
 import { InboxDoc, withdrawAbortedInputs, withdrawDeleted } from "./inbox.ts";
 import { LIMITS_RESTARTS, LiveDoc, settleSchedulerOutcome } from "./live.ts";
 import { ProviderDoc } from "./provider.ts";
 import { BUILTIN_TASKS } from "./registry.ts";
-import { DELETIONS_ADDRESS, type InvocationBinding, TaskScheduler } from "./scheduler.ts";
+import { type InvocationBinding, TaskScheduler } from "./scheduler.ts";
 import { Submissions } from "./submissions.ts";
 import { type TaskGraph, TaskGraphView, type TaskGraphWatch } from "./task-graph.ts";
 import { DURABLE_TELEMETRY_SCHEMA } from "./telemetry.ts";
@@ -341,11 +341,11 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 
 	inspect(context: Context): Promise<HarnessInspection> {
 		return this.readOnLine(async (storage) => {
-			const { scheduling, tasks } = await this.#tasks.inspect(this.#options.registry.snapshot());
+			const { scheduling, tasks, deleting } = await this.#tasks.inspect(this.#options.registry.snapshot());
 			const scan = (status: "queued" | "placed") =>
 				scanAll((cursor) => storage.scanSubmissions({ status }, SCAN_PAGE_SIZE, cursor, context));
 			const submissions = [...(await scan("queued")), ...(await scan("placed"))].sort((a, b) => a.id - b.id);
-			return { scheduling, tasks, submissions };
+			return { scheduling, tasks, submissions, deleting };
 		});
 	}
 
@@ -449,7 +449,7 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 
 	/** Whether a deletion closed a conversation, once a closing commit that may be unpublished is (`pi.deletions`). */
 	protected override closingConversation(id: ConversationId): Promise<boolean> | undefined {
-		const gate = this.touch(documentKey(DELETIONS_ADDRESS));
+		const gate = this.touch(DELETIONS_KEY);
 		if (gate !== undefined) return gate.then(() => this.#tasks.deleting(id));
 		return this.#tasks.deleting(id) ? Promise.resolve(true) : undefined;
 	}

@@ -83,8 +83,7 @@ export class ConversationIdle extends Error {
 }
 
 /**
- * The conversation is being deleted (`Harness.deleteConversations()`): it takes no new submission, task, or fork, and
- * no task elsewhere may start waiting on one of its tasks.
+ * The conversation is being deleted (`Harness.deleteConversations()`): it takes no new submission, task, or fork.
  */
 export class ConversationDeleting extends Error {
 	readonly conversationId: ConversationId;
@@ -98,15 +97,13 @@ export class ConversationDeleting extends Error {
 
 /**
  * Why `Harness.deleteConversations()` refused a conversation: the Storage cannot delete; it is the root conversation;
- * a live task outside the deleted set owns it; a fork outside the set reads its history; a live task outside the set
- * waits on one of its tasks.
+ * a live task outside the deleted set owns it; a fork outside the set reads its history.
  */
 export type DeletionRefusal =
 	| { readonly kind: "unsupported" }
 	| { readonly kind: "root" }
 	| { readonly kind: "owner"; readonly taskId: TaskId }
-	| { readonly kind: "fork"; readonly forkId: ConversationId }
-	| { readonly kind: "waiter"; readonly taskId: TaskId; readonly waiterId: TaskId };
+	| { readonly kind: "fork"; readonly forkId: ConversationId };
 
 /** `Harness.deleteConversations()` refused, before it aborted or deleted anything. */
 export class DeletionRefused extends Error {
@@ -131,7 +128,5 @@ function refusalText(refusal: DeletionRefusal): string {
 			return `live task ${refusal.taskId} owns it`;
 		case "fork":
 			return `fork ${refusal.forkId} is not deleted with it`;
-		case "waiter":
-			return `live task ${refusal.waiterId} waits on its task ${refusal.taskId}`;
 	}
 }

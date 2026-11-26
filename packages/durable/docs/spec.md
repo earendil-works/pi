@@ -712,7 +712,8 @@ type ReportInfo =
       readonly conversationId?: ConversationId;
     }
   | { readonly kind: "host_error"; readonly callback: HostCallback; readonly task?: ReportTask }
-  | { readonly kind: "listener_error" };
+  | { readonly kind: "listener_error" }
+  | { readonly kind: "deletion_failed" };
 /** One report: what it is about, and the error. */
 type Report = ReportInfo & { readonly error: unknown };
 
@@ -721,6 +722,8 @@ type HarnessInspection = {
   readonly tasks: readonly TaskInspection[];
   /** Queued and placed submissions in ID order. */
   readonly submissions: readonly SubmissionRecord[];
+  /** Conversations a deletion closed and has not deleted yet, in ID order. */
+  readonly deleting: readonly ConversationId[];
 };
 
 type ConversationWatch = WatchHandle<ConversationView>;
@@ -1110,22 +1113,18 @@ unknown IDs are skipped, so a repeated call is harmless.
    - `owner`: a conversation whose owner task, outside the set, is live;
    - `fork`: a conversation with a fork outside the set, whose history reads
      the parent's entries; forks are found through the `parentConversationId`
-     index;
-   - `waiter`: a live task outside the set waits on a task of the set, or woke
-     from such a wait and has not committed since (its `wake` names it): it
-     reads the outcomes once it runs.
+     index.
 
    Otherwise the commit adds the set to the built-in session document
    `pi.deletions` (below), settles every item of their inboxes `unanswered`
    with reason `deleted`, writes too, and abort-marks every live task of the
    set, background ones included.
 2. **Closed.** A conversation in `pi.deletions` takes no new work: a
-   submission, a task, and a fork of it are refused with `ConversationDeleting`,
-   and so is a wait of a task outside the set on one of its tasks (section
-   5.5). Each check touches the document's address on the Session line, so it
-   waits for an unpublished closing commit. A task inside may still commit its
-   abort handler's writes. The scheduler keeps the document's conversations in
-   memory, read at open.
+   submission, a task, and a fork of it are refused with `ConversationDeleting`.
+   Each check touches the document's address on the Session line, so it waits
+   for an unpublished closing commit. A task inside may still commit its abort
+   handler's writes. The scheduler keeps the document's conversations in
+   memory, read at open; `inspect()` lists them (`deleting`).
 3. **Deleting.** Once every task of the set is terminal, one commit settles any
    queued or placed submission left `unanswered` with reason `deleted`, so their
    waits and `notify` signals resolve, retires every current document of the
@@ -1134,19 +1133,27 @@ unknown IDs are skipped, so a repeated call is harmless.
    the set from `pi.deletions`. That write names no single key: it is a barrier
    (section 4), so every read waits for its publication. The publication drops the conversations from the Session's
    record cache, in-flight reads included, the newest-entry index, and the
-   kept contexts, and ends their conversation views `ended`.
+   kept contexts, and ends their conversation views `ended`. A document watch
+   of the set gets the retirement and stays open, as for any conversation
+   document retired for good (section 9.1).
 
 Once the set is closed, waiting for its tasks and step 3 are the scheduler's
 own work, as for a deletion that reopening finds: cancelling the call stops
-only its wait, and a failure other than the Session's or its close fails the
-Session (section 10.1). A crash or close between the two commits leaves the set
-closed. Reopening loads `pi.deletions`, and the first `resume()` finishes the
-deletion from step 3, without the checks of step 1, which the set passed when
-it closed. Over a Storage without `deletesConversations`, such as one a session
-was copied to, the set stays closed. The wait for the set's tasks follows their
-abort handlers: one that never returns holds the deletion, as it holds
+only its wait. A failure other than the Session's or its close is reported
+(`deletion_failed`) and leaves the set closed, for a later call or the next
+open to finish: failing the Session would fail every open after it too. A crash
+or close between the two commits leaves the set closed. Reopening loads
+`pi.deletions`, and the first `resume()` finishes the deletion from step 3,
+without the checks of step 1, which the set passed when it closed. Over a
+Storage without `deletesConversations`, such as one a session was copied to,
+the set stays closed. The wait for the set's tasks follows their abort
+handlers: one that never returns holds the deletion, as it holds
 `Conversation.abort()`. Every later write to a deleted conversation fails as
-for an unknown one. `usage()` no longer counts it.
+for an unknown one. `usage()` no longer counts it. A task elsewhere may wait on
+a task of the set like on any other; once the deletion removed it,
+`runtime.outcomes()` reads its outcome as `orphaned` with reason `deleted`
+(section 5.5). Like `submit()` and the waits, `deleteConversations()` enables
+scheduling: the set's abort handlers must run.
 
 The built-in deletions document:
 
@@ -2304,7 +2311,10 @@ interface TaskRuntime<I, S, R, H extends object> extends DocumentObserver, Docum
   abortOwned(id: TaskId, context: Context): Promise<void>;
   /** Live tasks this task owns directly, in ID order, whichever invocation created them; not those in its conversations. */
   ownedTasks(context: Context): Promise<TaskRecord<JsonValue, JsonValue, JsonValue>[]>;
-  /** Outcomes of terminal tasks, in order; rejects when one is not terminal. Used after a wait (section 5.5). */
+  /**
+   * Outcomes of terminal tasks, in order; rejects when one is not terminal. Used after a wait (section 5.5). A task a
+   * deletion removed reads `{ status: "orphaned", reason: "deleted" }` (section 2.2).
+   */
   outcomes<T>(ids: readonly TaskId<T>[], context: Context): Promise<TaskOutcome<T>[]>;
   /** Committed entry visible from the task's conversation. */
   entry(id: EntryId, context: Context): Promise<EntryRecord | undefined>;
@@ -2862,9 +2872,7 @@ finish.
 The task stops without an invocation and resumes at `checkpoint` once every task
 in `on` is terminal, or with `policy: "any"` once at least one is, possibly
 several; its `wake` names the terminal ones (section 5.6). `on` may name any
-tasks, including already terminal ones, except tasks of a conversation being
-deleted (`ConversationDeleting`, section 2.2) when the waiter's own
-conversation is not; tasks the waiting task does not own,
+tasks, including already terminal ones; tasks the waiting task does not own,
 whose `owner` is not the waiting task, require `allSettled` or `any`. `any`
 follows `allSettled`'s rules: nothing is abort-marked for it, an empty `on`
 resumes at the next scheduling pass, and the cycle check below applies
@@ -7061,7 +7069,9 @@ views keep it.
   a deferred response, `setTimer`, `onWake`, or `telemetry` for a telemetry
   adapter that threw while a commit was published; with the task that called it,
   if one did;
-- `listener_error`: a commit, close, watch, view, or document listener.
+- `listener_error`: a commit, close, watch, view, or document listener;
+- `deletion_failed`: finishing `deleteConversations()` failed; its conversations
+  stay closed until a later call or open finishes it (section 2.2).
 
 Every task report carries `task` (its ID, kind, and conversation). `extension`
 names the extension whose code failed, when known. A task report names the
@@ -7119,8 +7129,9 @@ them: the connection runs with `secure_delete` on, so every freed page is
 overwritten, also those a deletion's batch frees before its `DELETE`s
 (retired documents, replaced rows) and those of earlier commits, and the
 storage truncates the WAL (`wal_checkpoint(TRUNCATE)`) after a deletion's
-receipts; a busy checkpoint leaves the old frames to the next one, and a
-failing one rejects the call after its receipts. Opening with it refuses a database that refuses the pragma, such as a
+receipts; a busy checkpoint leaves the old frames to the next one, which also
+runs at open and at close, and a failing one rejects the call after its
+receipts. Opening with it refuses a database that refuses the pragma, such as a
 Durable Object's, which manages its storage itself. IndexedDB (database version
 2) deletes the same records through its indexes; the browser reclaims the
 space.

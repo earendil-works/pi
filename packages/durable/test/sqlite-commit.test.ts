@@ -73,6 +73,13 @@ type Random = ReturnType<typeof random>;
 type World = {
 	nextId: number;
 	readonly conversations: ConversationId[];
+	/** Conversations a batch deleted: the snapshot still reads them. */
+	readonly deleted: ConversationId[];
+	/**
+	 * Each fork's parent, kept also when its batch was refused: the Session deletes no parent without its forks, and a
+	 * fork's transcript reads the parent's, which may be any ID of the pool.
+	 */
+	readonly forks: Map<ConversationId, ConversationId>;
 	readonly entries: EntryId[];
 	readonly tasks: TaskId<JsonValue>[];
 	readonly submissions: SubmissionId[];
@@ -135,8 +142,18 @@ async function randomWrite(world: World, rng: Random, reference: MemoryStorage):
 			const id = rng.chance(0.85)
 				? idFromNumber<ConversationId>(fresh(world))
 				: (anyId(world, rng) as ConversationId);
+			// Some are forks or owned, so a deletion also leaves the parent and owner indexes.
+			const parent =
+				rng.chance(0.3) && world.entries.length > 0
+					? { parent: { conversationId: rng.pick(world.conversations), at: rng.pick(world.entries) } }
+					: {};
+			if (parent.parent !== undefined) world.forks.set(id, parent.parent.conversationId);
+			const owner =
+				rng.chance(0.3) && world.tasks.length > 0
+					? { owner: { conversationId: rng.pick(world.conversations), taskId: rng.pick(world.tasks) } }
+					: {};
 			world.conversations.push(id);
-			return { type: "conversation", value: { id } };
+			return { type: "conversation", value: { id, ...parent, ...owner } };
 		}
 		case 1:
 		case 2: {
@@ -256,12 +273,14 @@ async function replacement(world: World, rng: Random, reference: MemoryStorage):
  * pool, as the Session writes nothing to a deleted conversation; its records' IDs stay in theirs.
  */
 function deletion(world: World, rng: Random): StorageWrite[] {
-	const doomed = world.conversations.filter((id) => id !== ROOT_CONVERSATION_ID);
+	const parents = new Set(world.forks.values());
+	const doomed = world.conversations.filter((id) => id !== ROOT_CONVERSATION_ID && !parents.has(id));
 	if (doomed.length === 0) return [];
 	const id = rng.pick(doomed);
 	for (let index = world.conversations.length - 1; index >= 0; index--) {
 		if (world.conversations[index] === id) world.conversations.splice(index, 1);
 	}
+	world.deleted.push(id);
 	return [{ type: "conversation.delete", id }];
 }
 
@@ -292,23 +311,36 @@ async function settle(read: () => Promise<unknown>): Promise<unknown> {
 async function snapshot(storage: Storage, world: World, seqs: readonly Seq[]): Promise<unknown> {
 	const all = 10_000;
 	const documentIds = [...new Set(world.documents.map((document) => document.id))];
+	const conversationIds = [...new Set([...world.conversations, ...world.deleted])];
 	const scopes = [
 		{ kind: "session" } as const,
-		...world.conversations.map((conversationId) => ({ kind: "conversation", conversationId }) as const),
+		...conversationIds.map((conversationId) => ({ kind: "conversation", conversationId }) as const),
 		...world.tasks.map((taskId) => ({ kind: "task", taskId }) as const),
 	];
 	return {
 		conversations: (await storage.scanConversations({}, all, undefined, context)).items,
+		related: await Promise.all([
+			...conversationIds.flatMap((id) =>
+				[{ parentConversationId: id }, { ownerConversationId: id }].map((query) =>
+					storage.scanConversations(query, all, undefined, context),
+				),
+			),
+			...[...new Set(world.tasks)].map((ownerTaskId) =>
+				storage.scanConversations({ ownerTaskId }, all, undefined, context),
+			),
+		]),
 		entries: await Promise.all([...new Set(world.entries)].map((id) => settle(() => storage.entry(id, context)))),
 		transcripts: await Promise.all(
-			[...new Set(world.conversations)].map((conversationId) =>
-				settle(() => storage.scanEntries({ conversationId, order: "ascending" }, all, undefined, context)),
-			),
+			conversationIds
+				.filter((conversationId) => !world.forks.has(conversationId))
+				.map((conversationId) =>
+					settle(() => storage.scanEntries({ conversationId, order: "ascending" }, all, undefined, context)),
+				),
 		),
 		tasks: (await storage.scanTasks({}, all, undefined, context)).items,
 		submissions: (await storage.scanSubmissions({}, all, undefined, context)).items,
 		requests: await Promise.all(
-			[...new Set(world.conversations)].flatMap((conversationId) =>
+			conversationIds.flatMap((conversationId) =>
 				[...new Set(world.submissions)].map((id) =>
 					settle(() => storage.submissionByRequest(conversationId, `r${id}`, context)),
 				),
@@ -393,6 +425,8 @@ describe("SqliteStorage batch commits against the memory reference", () => {
 			const world: World = {
 				nextId: 2,
 				conversations: [ROOT_CONVERSATION_ID],
+				deleted: [],
+				forks: new Map(),
 				entries: [],
 				tasks: [],
 				submissions: [],

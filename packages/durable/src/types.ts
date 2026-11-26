@@ -170,6 +170,8 @@ export type HostCallback = "now" | "settings" | "registry" | "env" | "models" | 
  *   or, outside a task, the conversation whose agent was resolved.
  * - `host_error`: a host callback threw; with the task that called it, if one did.
  * - `listener_error`: a commit, close, watch, view, or document listener threw.
+ * - `deletion_failed`: finishing `Harness.deleteConversations()` failed; its conversations stay closed until a later
+ *   call or open finishes it.
  */
 export type ReportInfo =
 	| { readonly kind: "storage_failed" }
@@ -201,6 +203,7 @@ export type ReportInfo =
 			readonly conversationId?: ConversationId;
 	  }
 	| { readonly kind: "host_error"; readonly callback: HostCallback; readonly task?: ReportTask }
+	| { readonly kind: "deletion_failed" }
 	| { readonly kind: "listener_error" };
 
 /** One report to `HarnessOptions.onReport`: what it is about (`ReportInfo`, by `kind`) and the `error` reported. */
@@ -321,7 +324,10 @@ export interface TaskRuntime<I, S, R, H extends object> extends DocumentObserver
 	 * in conversations it owns are not included. Copies of the committed records.
 	 */
 	ownedTasks(context: Context): Promise<TaskRecord<JsonValue, JsonValue, JsonValue>[]>;
-	/** Outcomes of terminal tasks, in order; rejects when one is missing or not terminal. Used after a wait. */
+	/**
+	 * Outcomes of terminal tasks, in order; rejects when one is not terminal. Used after a wait. A missing task, which a
+	 * deletion removed (`Harness.deleteConversations()`), reads `{ status: "orphaned", reason: "deleted" }`.
+	 */
 	outcomes<T>(ids: readonly TaskId<T>[], context: Context): Promise<TaskOutcome<T>[]>;
 	/**
 	 * Invocation-bound handle of an existing conversation, for example one this task owns; `undefined` when absent. Its

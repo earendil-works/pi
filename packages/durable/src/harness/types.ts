@@ -898,6 +898,8 @@ export type HarnessInspection = {
 	readonly tasks: readonly TaskInspection[];
 	/** Queued and placed submissions, in ID order. */
 	readonly submissions: readonly SubmissionRecord[];
+	/** Conversations a deletion closed and has not deleted yet, in ID order (`deleteConversations()`). */
+	readonly deleting: readonly ConversationId[];
 };
 
 /** Raw active transcript and derived model context. */

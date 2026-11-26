@@ -66,8 +66,9 @@ export type SqliteStorageOptions = {
 	readonly prefix?: string;
 	/**
 	 * Erase what a conversation deletion removes from the database files: the connection runs with `secure_delete`, so
-	 * every freed page is overwritten, and the WAL is truncated after each deletion. Default false: SQLite then keeps the
-	 * bytes in free pages and the WAL until they are reused. Opening refuses it on a database that refuses the pragma, such as a Durable Object's.
+	 * every freed page is overwritten, and the WAL is truncated after each deletion, at open, and at close. Default
+	 * false: SQLite then keeps the bytes in free pages and the WAL until they are reused. Opening refuses it on a
+	 * database that refuses the pragma, such as a Durable Object's.
 	 */
 	readonly secureDelete?: boolean;
 };
@@ -162,6 +163,8 @@ export class SqliteStorage implements Storage {
 				await db.exec("PRAGMA secure_delete = ON").catch((error: unknown) => {
 					throw new Error("secureDelete: this database refuses PRAGMA secure_delete", { cause: error });
 				});
+				// Frames a busy checkpoint after a deletion left, also before a crash.
+				await db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
 			}
 			return new SqliteStorage(db, schema, secureDelete, Number(metadata.next_id));
 		} catch (error) {
@@ -678,7 +681,12 @@ export class SqliteStorage implements Storage {
 				this.readsDrained = resolve;
 			});
 		}
-		await this.db.close();
+		try {
+			// Frames a busy checkpoint after a deletion left.
+			if (this.secureDelete) await this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+		} finally {
+			await this.db.close();
+		}
 	}
 
 	/**

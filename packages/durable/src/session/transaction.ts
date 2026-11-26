@@ -21,7 +21,7 @@ import {
 	type ResolvedAddress,
 	resolveAddress,
 } from "../documents.ts";
-import { ConversationDeleting, DeletionRefused, ReadAfterWrite } from "../errors.ts";
+import { ConversationDeleting, ReadAfterWrite } from "../errors.ts";
 import type { SettledSubmissionRecord } from "../harness/types.ts";
 import { scanAll } from "../harness/util.ts";
 import { deliverSignal, isSettled, type SignalResult, type SignalToken, SubmissionSettled } from "../signals.ts";
@@ -432,44 +432,6 @@ export class Transaction implements Tx {
 		await this.#host.conversationCreated(this, record);
 		this.#assertOpen();
 		return record;
-	}
-
-	/**
-	 * Internal: the conversations a deletion of `ids` takes, the ones their tasks own included, transitively; unknown IDs
-	 * are skipped. A table read. Throws `DeletionRefused` for the root conversation, one owned by a live task outside the
-	 * set, and one with a fork outside it.
-	 */
-	deletionSet(ids: readonly ConversationId[]): Promise<ConversationRecord[]> {
-		return this.#read("deletionSet", async () => {
-			const storage = this.#host.storage;
-			const context = this.#context;
-			const scan = (query: ConversationQuery) =>
-				scanAll((cursor) => storage.scanConversations(query, INTERNAL_SCAN_PAGE_SIZE, cursor, context));
-			const set = new Map<ConversationId, ConversationRecord>();
-			for (const id of ids) {
-				const record = await storage.conversation(id, context);
-				if (record !== undefined) set.set(id, record);
-			}
-			// Also visits the entries added while it iterates: owned conversations of owned conversations.
-			for (const id of set.keys()) {
-				for (const owned of await scan({ ownerConversationId: id }))
-					if (!set.has(owned.id)) set.set(owned.id, owned);
-			}
-			for (const record of set.values()) {
-				if (record.id === ROOT_CONVERSATION_ID) throw new DeletionRefused(record.id, { kind: "root" });
-				const owner = record.owner;
-				if (owner !== undefined && !set.has(owner.conversationId)) {
-					const task = await this.#committedTask(owner.taskId);
-					if (task !== undefined && task.state.status !== "terminal") {
-						throw new DeletionRefused(record.id, { kind: "owner", taskId: owner.taskId });
-					}
-				}
-				for (const fork of await scan({ parentConversationId: record.id })) {
-					if (!set.has(fork.id)) throw new DeletionRefused(record.id, { kind: "fork", forkId: fork.id });
-				}
-			}
-			return [...set.values()];
-		});
 	}
 
 	/**

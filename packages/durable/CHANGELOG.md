@@ -6,10 +6,11 @@
 
 - `StorageWrite` has a `conversation.delete` write, `TableCommitChange` (`observeCommits()`) carries it, and `ConversationQuery` has a `parentConversationId` filter, which the Session uses only on a Storage that deletes. Migration: none for a custom Storage that does not delete; one that does sets `deletesConversations`, indexes the filter and stores the write, and passes `{ deletesConversations: true }` to `registerStorageConformance()`, which then checks both; a commit observer that replicates stored state applies it.
 - SQLite storage migrates to schema version 3 and IndexedDB storage to database version 2, which index forks by their parent. A database opened by this version is refused by an older one.
+- `HarnessInspection` has a required `deleting` field, and `ReportInfo` a `deletion_failed` kind: exhaustive switches over report kinds need a case.
 
 ### Added
 
-- Added `Harness.deleteConversations(ids, context)`, which closes conversations against new work, aborts their work, background work included, and then removes them for good with the conversations their tasks own; a close or crash in between is finished after reopen. It refuses with a typed `DeletionRefused` for the root conversation, a live owner or waiter outside the deletion, a fork left behind, or a storage that cannot delete (JSONL, `StoreStorage`). SQLite erases the freed pages and truncates the WAL with the opt-in `secureDelete` option ([#11026](https://github.com/earendil-works/pi/issues/11026))
+- Added `Harness.deleteConversations(ids, context)`, which closes conversations against new work, aborts their work, background work included, and then removes them for good with the conversations their tasks own; a close or crash in between is finished after reopen. It refuses with a typed `DeletionRefused` for the root conversation, a live owner outside the deletion, a fork left behind, or a storage that cannot delete (JSONL, `StoreStorage`). `inspect().deleting` lists conversations closed and not yet deleted, a failure to finish one is reported as `deletion_failed`, and `runtime.outcomes()` reads a deleted task as `orphaned` with reason `deleted`. SQLite erases the freed pages and truncates the WAL with the opt-in `secureDelete` option ([#11026](https://github.com/earendil-works/pi/issues/11026))
 - Added `ConversationDeleting`, rejected for new work in a conversation being deleted.
 
 ## [1.6.1] - 2026-11-25

@@ -41,8 +41,8 @@ const Hold = defineTask<{ name?: string }, { phase: "hold" }, null>({
 	},
 });
 
-/** Waits on the tasks in its input, then completes. */
-const Waiter = defineTask<{ on: TaskId[] }, { phase: "wait" } | { phase: "done" }, null>({
+/** Waits on the tasks in its input, then, once its gate opens if it has one, completes with their outcomes' statuses. */
+const Waiter = defineTask<{ on: TaskId[]; gate?: string }, { phase: "wait" } | { phase: "done" }, string[]>({
 	name: "test.waiter",
 	version: 1,
 	initial: () => ({ phase: "wait" }),
@@ -52,8 +52,15 @@ const Waiter = defineTask<{ on: TaskId[] }, { phase: "wait" } | { phase: "done" 
 				() => ({ status: "waiting", checkpoint: { phase: "done" }, on: task.input.on, policy: "allSettled" }),
 				ctx,
 			),
-		done: (_task, runtime, ctx) =>
-			runtime.commit(() => ({ status: "terminal", outcome: { status: "completed", result: null } }), ctx),
+		done: async (task, runtime, ctx) => {
+			const gate = task.input.gate === undefined ? undefined : abortGates.get(task.input.gate);
+			if (gate !== undefined) await gate.promise;
+			const outcomes = await runtime.outcomes(task.input.on, ctx);
+			const result = outcomes.map((outcome) =>
+				outcome.status === "orphaned" ? `orphaned: ${outcome.reason}` : outcome.status,
+			);
+			await runtime.commit(() => ({ status: "terminal", outcome: { status: "completed", result } }), ctx);
+		},
 	},
 	abort: (_task, runtime, ctx) => runtime.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), ctx),
 });
@@ -165,7 +172,7 @@ describe("Harness.deleteConversations", () => {
 		});
 	}
 
-	it("closes the conversations while their work ends: no new submission, task, fork, or wait elsewhere", async () => {
+	it("closes the conversations while their work ends: no new submission, task, or fork", async () => {
 		const harness = await open(new MemoryStorage());
 		const doomed = await ownerless(harness);
 		const elsewhere = await ownerless(harness);
@@ -181,6 +188,7 @@ describe("Harness.deleteConversations", () => {
 		const deleting = harness.deleteConversations([doomed.id], context);
 		await eventually(async () => (await harness.getTask(slow, context))?.abortRequested === true);
 		expect(await settled(deleting)).toBe(false);
+		expect((await harness.inspect(context)).deleting).toEqual([doomed.id]);
 
 		await expect(doomed.submit({ type: "input", content: "more" }, context)).rejects.toBeInstanceOf(
 			ConversationDeleting,
@@ -191,17 +199,23 @@ describe("Harness.deleteConversations", () => {
 		await expect(doomed.fork(entry.id, { ownership: { kind: "ownerless" } }, context)).rejects.toBeInstanceOf(
 			ConversationDeleting,
 		);
-		// A task elsewhere cannot start waiting on one of its tasks: their records go with it.
+		// A task elsewhere may still wait on one of its tasks; it reads the outcome of one deleted meanwhile as orphaned.
+		abortGates.set("read", deferred());
 		const waiter = await elsewhere.commit(
-			(tx) => tx.createTask(Waiter, { on: [slow] }, { ownership: { kind: "conversation" } }),
+			(tx) => tx.createTask(Waiter, { on: [slow], gate: "read" }, { ownership: { kind: "conversation" } }),
 			context,
 		);
-		await eventually(async () => (await status(harness, waiter)) === "terminal");
-		expect((await harness.getTask(waiter, context))?.state).toMatchObject({ outcome: { status: "faulted" } });
+		await eventually(async () => (await status(harness, waiter)) === "waiting");
 
 		abortGates.get("slow")!.resolve();
 		await deleting;
 		expect(await harness.conversation(doomed.id, context)).toBeUndefined();
+		expect((await harness.inspect(context)).deleting).toEqual([]);
+		abortGates.get("read")!.resolve();
+		await eventually(async () => (await status(harness, waiter)) === "terminal");
+		expect((await harness.getTask(waiter, context))?.state).toMatchObject({
+			outcome: { status: "completed", result: ["orphaned: deleted"] },
+		});
 		await harness.close(context);
 	});
 
@@ -221,7 +235,7 @@ describe("Harness.deleteConversations", () => {
 		await harness.close(context);
 	});
 
-	it("refuses the root, a live owner, a fork left behind, and a waiter elsewhere, aborting nothing", async () => {
+	it("refuses the root, a live owner, and a fork left behind, aborting nothing", async () => {
 		const harness = await open(new MemoryStorage());
 		await harness.root(context);
 		expect(await refusal(harness.deleteConversations([ROOT_CONVERSATION_ID], context))).toEqual({ kind: "root" });
@@ -245,26 +259,14 @@ describe("Harness.deleteConversations", () => {
 			context,
 		);
 		expect(await refusal(harness.deleteConversations([owned.id], context))).toEqual({ kind: "owner", taskId: live });
-
-		const elsewhere = await ownerless(harness);
-		const waiter = await elsewhere.commit(
-			(tx) => tx.createTask(Waiter, { on: [live] }, { ownership: { kind: "conversation" } }),
-			context,
-		);
-		await eventually(async () => (await status(harness, waiter)) === "waiting");
-		expect(await refusal(harness.deleteConversations([parent.id, fork.id], context))).toEqual({
-			kind: "waiter",
-			taskId: live,
-			waiterId: waiter,
-		});
 		// Nothing was aborted, nor closed.
 		expect(await status(harness, live)).toBe("running");
 		expect((await harness.getTask(live, context))?.abortRequested).toBe(false);
 		await parent.submit({ type: "write", entry: { kind: "note" } }, context);
 
-		// Deleting the waiter's conversation too lifts the refusal; the fork goes with its parent.
-		await harness.deleteConversations([parent.id, fork.id, elsewhere.id], context);
-		for (const id of [parent.id, fork.id, owned.id, elsewhere.id]) {
+		// The fork goes with its parent, and the owned conversation with its owner's.
+		await harness.deleteConversations([parent.id, fork.id], context);
+		for (const id of [parent.id, fork.id, owned.id]) {
 			expect(await harness.conversation(id, context)).toBeUndefined();
 		}
 		await harness.close(context);

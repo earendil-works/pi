@@ -1,7 +1,7 @@
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { Op } from "@earendil-works/chord/delta";
 import type { JsonValue } from "@earendil-works/chord/json";
-import { idFromNumber } from "../ids.ts";
+import { idFromNumber, seqFromNumber } from "../ids.ts";
 import {
 	type ConversationId,
 	type Cursor,
@@ -2338,6 +2338,114 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 					context,
 				);
 				expect((await storage.scanConversations({}, 10, undefined, context)).items).toHaveLength(2);
+			},
+		),
+
+		createCase(
+			options,
+			"deletes forks, owned conversations, and several conversations in one batch, with their indexes and history",
+			async (storage) => {
+				if (options.deletesConversations !== true) return;
+				await createRoot(storage);
+				const kept = await storage.mintId<ConversationId>();
+				const keptEntry = await storage.mintId<EntryId>();
+				const owner = await storage.mintId<TaskId<JsonValue>>();
+				const fork = await storage.mintId<ConversationId>();
+				const owned = await storage.mintId<ConversationId>();
+				const doomed = await storage.mintId<ConversationId>();
+				const marker = await storage.mintId<EntryId>();
+				const task = await storage.mintId<TaskId<JsonValue>>();
+				const submission = await storage.mintId<SubmissionId>();
+				const older = await storage.mintId<DocumentId>();
+				const newer = await storage.mintId<DocumentId>();
+				const notes = (id: DocumentId) =>
+					({
+						id,
+						kind: "conversation.notes",
+						scope: { kind: "conversation", conversationId: doomed },
+						history: "rewindable",
+						fork: "asOf",
+					}) satisfies DocumentCreate;
+				const base = (text: string) => ({ kind: "base", version: 1, value: { text } }) as const;
+				const terminal = (id: TaskId<JsonValue>, conversationId: ConversationId) =>
+					({
+						...pendingTask(id, conversationId),
+						state: { status: "terminal", outcome: { status: "aborted" } },
+					}) satisfies StoredTask;
+				await commitWrites(
+					storage,
+					[
+						{ type: "conversation", value: { id: kept } },
+						{ type: "entry", value: entry(keptEntry, kept) },
+						{ type: "task", value: terminal(owner, kept) },
+						{ type: "conversation", value: { id: fork, parent: { conversationId: kept, at: keptEntry } } },
+						{ type: "conversation", value: { id: owned, owner: { conversationId: kept, taskId: owner } } },
+						{ type: "conversation", value: { id: doomed } },
+						{ type: "entry", value: entry(marker, doomed, "summary", { head: marker }) },
+						{ type: "task", value: terminal(task, doomed) },
+						{
+							type: "submission",
+							value: { id: submission, conversationId: doomed, type: "write", status: "queued" },
+						},
+						{ type: "document.create", record: notes(older), content: base("older") },
+					],
+					context,
+				);
+				// A rewindable incarnation retired in an earlier commit, readable at a point before.
+				const before = await commitWrites(
+					storage,
+					[
+						{ type: "document.retire", id: older },
+						{ type: "document.create", record: notes(newer), content: base("newer") },
+					],
+					context,
+				);
+				expect((await storage.document(older, seqFromNumber(before - 1), context))?.value).toEqual({
+					text: "older",
+				});
+				// Three deletions in one batch, and a later batch of the same call that the state they left accepts.
+				const later = await storage.mintId<EntryId>();
+				const result = await storage.commit(
+					[
+						[
+							{ type: "conversation.delete", id: fork },
+							{ type: "conversation.delete", id: owned },
+							{ type: "conversation.delete", id: doomed },
+						],
+						[{ type: "entry", value: entry(later, kept) }],
+					],
+					() => {},
+					context,
+				);
+				expect(result).toEqual({ kind: "stored", stored: 2 });
+
+				for (const query of [
+					{ parentConversationId: kept },
+					{ ownerConversationId: kept },
+					{ ownerTaskId: owner },
+				]) {
+					expect((await storage.scanConversations(query, 10, undefined, context)).items).toEqual([]);
+				}
+				for (const id of [older, newer]) {
+					expect(await storage.document(id, seqFromNumber(before), context)).toBeUndefined();
+					expect(await storage.document(id, seqFromNumber(before - 1), context)).toBeUndefined();
+				}
+				const address = {
+					kind: "conversation.notes",
+					scope: { kind: "conversation", conversationId: doomed },
+				} as const;
+				expect(await storage.findDocument(address, seqFromNumber(before - 1), context)).toBeUndefined();
+				expect((await storage.scanTasks({ status: "terminal" }, 10, undefined, context)).items).toEqual([
+					terminal(owner, kept),
+				]);
+				expect((await storage.scanTasks({ kind: "test.task" }, 10, undefined, context)).items).toHaveLength(1);
+				expect((await storage.scanTasks({ background: false }, 10, undefined, context)).items).toHaveLength(1);
+				expect((await storage.scanSubmissions({ status: "queued" }, 10, undefined, context)).items).toEqual([]);
+				await expect(storage.findLatestHeadMarker(doomed, undefined, context)).rejects.toThrow(
+					"Unknown conversation",
+				);
+				expect((await storage.scanEntries({ conversationId: kept }, 10, undefined, context)).items).toHaveLength(2);
+				expect(await storage.mintId<EntryId>()).toBeGreaterThan(later);
 			},
 		),
 

@@ -15,11 +15,10 @@ import {
 	NOOP_TELEMETRY_METRICS,
 	type TelemetryCarrier,
 } from "@earendil-works/pi-telemetry";
-import { addressId, defineDoc } from "../documents.ts";
 import type { ExecutionEnv } from "../env/index.ts";
-import { ConversationDeleting, DeletionRefused, errorMessage, ReadOnlySession } from "../errors.ts";
+import { errorMessage, ReadOnlySession } from "../errors.ts";
 import { idFromNumber } from "../ids.ts";
-import { ALL_KEYS, conversationKey, documentKey, INTENT_KEY, ownedKey, ROOTS_KEY, taskKey } from "../session/keys.ts";
+import { ALL_KEYS, conversationKey, INTENT_KEY, ownedKey, ROOTS_KEY, taskKey } from "../session/keys.ts";
 import type { ObservedCommit, SessionImpl } from "../session/session.ts";
 import type { Transaction } from "../session/transaction.ts";
 import { checkSleep, readSignal, type SignalToken, sleepDue, sleepWake } from "../signals.ts";
@@ -50,6 +49,7 @@ import type {
 } from "../types.ts";
 import { agentHooks, DEFAULT_RESTART_LIMIT } from "./agent.ts";
 import { advanceRange, type ContextRange, rangeEntry, readContextFrom } from "./context.ts";
+import { DeletionsDoc, type DeletionsState, deletionSet } from "./deletions.ts";
 import { providerSessionsByRuntime } from "./provider.ts";
 import { DURABLE_TELEMETRY_SCHEMA } from "./telemetry.ts";
 import type {
@@ -222,23 +222,6 @@ function parentNode(node: TaskNode): Node {
 
 /** Where ordinary ownership traversal starts: one conversation, or every ownerless conversation. */
 type Scope = { readonly kind: "conversation"; readonly conversation: ConversationId } | { readonly kind: "roots" };
-
-/**
- * The conversations `Harness.deleteConversations()` closed and has not deleted yet, by ID, in a built-in session
- * document; each leaves in the commit that deletes it.
- */
-export type DeletionsState = { conversations: number[] };
-
-export const DeletionsDoc = defineDoc<DeletionsState>({
-	kind: "pi.deletions",
-	version: 1,
-	scope: "session",
-	initial: () => ({ conversations: [] }),
-	checkpointWhen: () => true,
-});
-
-/** The document's address, which a check of a conversation's closing touches on the Session line. */
-export const DELETIONS_ADDRESS = addressId({ kind: DeletionsDoc.definition.kind, scope: { kind: "session" } });
 
 export type TaskSchedulerOptions = {
 	readonly telemetry?: HarnessOptions["telemetry"];
@@ -773,9 +756,8 @@ export class TaskScheduler {
 	async deleteConversations(ids: readonly ConversationId[], context: Context): Promise<void> {
 		const set = await this.#session.commitWith(async (tx) => {
 			await this.#published();
-			const records = await tx.deletionSet(ids);
+			const records = await deletionSet(tx, ids);
 			const set = new Set(records.map(({ id }) => id));
-			await this.#refuseWaiters(set, context);
 			const deletions = (await tx.doc(DeletionsDoc)).conversations;
 			for (const id of set) if (!deletions.includes(id)) deletions.push(id);
 			for (const id of set) await this.#withdrawAll(tx, id);
@@ -790,13 +772,14 @@ export class TaskScheduler {
 	}
 
 	/**
-	 * Delete closed conversations once their tasks, abort-marked when they closed, ended. Its failure, unless the Session's
-	 * own or its close, fails the Session, as any of the scheduler's own commits does.
+	 * Delete closed conversations once their tasks, abort-marked when they closed, ended. A failure other than the
+	 * Session's or its close is reported and leaves them closed, for the next call or open to finish: failing the
+	 * Session would fail every open after it too.
 	 */
 	#finishDeletion(set: ReadonlySet<ConversationId>): Promise<void> {
 		const finishing = this.#deleteClosed(set);
 		finishing.catch((error: unknown) => {
-			if (!this.#closing && this.#session.failure === undefined) this.#session.fail(error);
+			if (!this.#closing && this.#session.failure === undefined) this.#report(error, DELETION);
 		});
 		return finishing;
 	}
@@ -823,32 +806,6 @@ export class TaskScheduler {
 	/** Whether a conversation is being deleted, as committed. */
 	deleting(id: ConversationId): boolean {
 		return this.#deleting.has(id);
-	}
-
-	/**
-	 * Refuse a deletion of `set` while a live task outside it waits on, or woke from a wait on, one of its tasks: it
-	 * reads their outcomes once it runs.
-	 */
-	async #refuseWaiters(set: ReadonlySet<ConversationId>, context: Context): Promise<void> {
-		for (const waiter of [...this.#live.values()]) {
-			if (set.has(waiter.conversationId)) continue;
-			const state = waiter.state;
-			const named =
-				state.status === "waiting"
-					? state.on
-					: (state.status === "pending" || state.status === "running") && state.wake?.reason === "tasks"
-						? state.wake.ended
-						: [];
-			for (const id of named) {
-				const conversationId =
-					this.#live.get(id)?.conversationId ??
-					this.#settled.get(id)?.conversationId ??
-					(await this.#session.lineStorage.task(id, context))?.conversationId;
-				if (conversationId !== undefined && set.has(conversationId)) {
-					throw new DeletionRefused(conversationId, { kind: "waiter", taskId: id, waiterId: waiter.id });
-				}
-			}
-		}
 	}
 
 	/**
@@ -2380,15 +2337,13 @@ export class TaskScheduler {
 	 * pending migration shows as `ready` with `migrates`, and only a migration the scheduler already tried, or one that
 	 * cannot exist, shows as failed.
 	 */
-	async inspect(
-		snapshot: RegistrySnapshot,
-	): Promise<{ scheduling: HarnessInspection["scheduling"]; tasks: TaskInspection[] }> {
+	async inspect(snapshot: RegistrySnapshot): Promise<Omit<HarnessInspection, "submissions">> {
 		await this.#published();
 		await this.#loadScopes(false);
 		const tasks: TaskInspection[] = [];
 		for (const record of this.#live.values()) tasks.push({ record, state: this.#inspectTask(record, snapshot) });
 		const scheduling = this.#closing ? "closing" : this.#enabled ? "running" : "paused";
-		return { scheduling, tasks };
+		return { scheduling, tasks, deleting: [...this.#deleting].sort((a, b) => a - b) };
 	}
 
 	#inspectTask(record: AnyTaskRecord, snapshot: RegistrySnapshot): TaskInspection["state"] {
@@ -2754,9 +2709,6 @@ export class TaskScheduler {
 		policy: string,
 	): Promise<void> {
 		if (invocation.mode === "abort") throw new Error(`Abort handler of task ${current.id} cannot wait`);
-		// A deletion that closes a conversation of `on` may be unpublished: its closing is checked below.
-		const closing = this.#session.touch(documentKey(DELETIONS_ADDRESS));
-		if (closing !== undefined) await closing;
 		// Owned work is found by walks down, which need the chains of every live task loaded.
 		await this.#loadScopes(false);
 		// Tasks in `on` that are not live, read from Storage: terminal, or missing.
@@ -2799,10 +2751,6 @@ export class TaskScheduler {
 				continue;
 			}
 			if (member === null) return { kind: "refused", error: new Error(`Task ${id} does not exist`) };
-			// Its records go with the deletion, before the waiter could read the outcome.
-			if (this.#deleting.has(member.conversationId) && !this.#deleting.has(current.conversationId)) {
-				return { kind: "refused", error: new ConversationDeleting(member.conversationId) };
-			}
 			if (policy === "failFast" && member.owner !== current.id) {
 				return {
 					kind: "refused",
@@ -3109,9 +3057,14 @@ export class TaskScheduler {
 					this.#session.readOnLine(async (storage) => {
 						const outcomes: TaskOutcome<JsonValue>[] = [];
 						for (const id of ids) {
-							const state = (await storage.task(id, context))?.state;
-							if (state?.status !== "terminal") throw new Error(`Task ${id} is not terminal`);
-							outcomes.push(state.outcome);
+							const record = await storage.task(id, context);
+							// Deleted with its conversation (`Harness.deleteConversations()`): IDs are never reused.
+							if (record === undefined) {
+								outcomes.push(DELETED_OUTCOME);
+								continue;
+							}
+							if (record.state.status !== "terminal") throw new Error(`Task ${id} is not terminal`);
+							outcomes.push(record.state.outcome);
 						}
 						return outcomes;
 					}),
@@ -3292,6 +3245,9 @@ export class TaskScheduler {
 	}
 }
 
+/** What `outcomes()` reads for a task whose record a deletion removed. */
+const DELETED_OUTCOME: TaskOutcome<JsonValue> = { status: "orphaned", reason: "deleted" };
+
 /** The signal of the Harness's close, by task runtime (`closeSignal()`). */
 const closeSignals = new WeakMap<object, AbortSignal>();
 
@@ -3307,6 +3263,7 @@ const REGISTRY: ReportInfo = { kind: "host_error", callback: "registry" };
 const SETTINGS: ReportInfo = { kind: "host_error", callback: "settings" };
 const ON_WAKE: ReportInfo = { kind: "host_error", callback: "onWake" };
 const TELEMETRY: ReportInfo = { kind: "host_error", callback: "telemetry" };
+const DELETION: ReportInfo = { kind: "deletion_failed" };
 
 /** The extension that installed `task` in `snapshot`, the last one that lists it; none for a built-in task. */
 function installerOf(snapshot: RegistrySnapshot, task: AnyTask | undefined): string | undefined {

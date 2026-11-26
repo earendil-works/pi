@@ -117,8 +117,10 @@ export class Writer {
 			done: false,
 			gate: Promise.withResolvers<void>(),
 		};
-		for (const key of spec.keys) this.#unpublished.set(key, part);
-		if (spec.keys.includes(ALL_KEYS)) this.#barrier = part;
+		for (const key of spec.keys) {
+			this.#unpublished.set(key, part);
+			if (key === ALL_KEYS) this.#barrier = part;
+		}
 		this.#newest = part;
 		this.#queue.push(part);
 		this.#pump();

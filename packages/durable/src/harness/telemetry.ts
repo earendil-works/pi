@@ -22,6 +22,7 @@ const reportAttributes = {
 			"extension_error",
 			"host_error",
 			"listener_error",
+			"deletion_failed",
 		],
 	},
 	reason: {
