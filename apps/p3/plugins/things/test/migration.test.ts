@@ -132,7 +132,12 @@ describe("reading stored ticks", () => {
 		// Ticks version 2: `draw` reads as `paint`, and nothing on disk changed.
 		await w.reload(BOARD_PLUGIN, context, facetOf(next(2, rename)));
 		await until(gives.answers, (answers) => answers[thing]?.ticksVersion === 2, within("the migration", context));
-		assert.deepEqual(gives.answers.value[thing], { kind: Board.name, ticksVersion: 2, ticks: ["paint", "read"] });
+		assert.deepEqual(gives.answers.value[thing], {
+			kind: Board.name,
+			ticksVersion: 2,
+			ticks: ["paint", "read"],
+			depth: 0,
+		});
 		assert.deepEqual(w.rows("grants"), before);
 		gives.release();
 	});
@@ -471,7 +476,8 @@ describe("a kind's new ticks version while it loads", () => {
 			(answers) => answers[a]?.ticks[0] === "blue" && answers[b]?.ticks[0] === "blue",
 			within("both blue", context),
 		);
-		assert.deepEqual(first[a], first[b]);
+		// One in the root, one in the leaf: alike but for how far above each is linked.
+		assert.deepEqual({ ...first[a], depth: 0 }, { ...first[b], depth: 0 });
 		gives.release();
 	});
 });

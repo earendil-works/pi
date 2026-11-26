@@ -10,7 +10,7 @@
 // and what a commit changed is read again before anything else is asked. A re-read that fails publishes nothing of
 // it: the index forgets everything and ends its watchers, which attach again and load what is on disk.
 
-import { ChordError, type Context, type FollowObserver, reportError } from "@earendil-works/p3/v1";
+import { ChordError, type Context, type FollowObserver, type JsonValue, reportError } from "@earendil-works/p3/v1";
 import { type Caller, partyKey } from "./contract.ts";
 import {
 	ABOVE_THE_ROOT,
@@ -328,7 +328,11 @@ export class AccessIndex {
 			if (view.probe.same(view.last, value)) continue;
 			view.last = value;
 			try {
-				view.observer.advance({ kind: "value", value, ops: [], retired: false }, this.#context);
+				// The whole value replaced: a holder over a link applies the ops, so an empty list would change nothing there.
+				view.observer.advance(
+					{ kind: "value", value, ops: [["r", value as JsonValue]], retired: false },
+					this.#context,
+				);
 			} catch (error) {
 				reportError("things: a probe's watcher of the access index failed", error, this.#context);
 			}

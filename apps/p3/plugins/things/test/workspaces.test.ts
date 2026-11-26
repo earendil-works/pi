@@ -11,8 +11,10 @@ import {
 	arr,
 	type Ctx,
 	BACKGROUND_CONTEXT as context,
+	createHost,
 	defineFacet,
 	local,
+	memoryLinkPair,
 	type P3Principal,
 	type PluginFacet,
 	type Reference,
@@ -257,6 +259,17 @@ describe("who may change who may (scenario 6)", () => {
 		// The cell set again by another source replaces the row; reset removes it.
 		await holding(anna, fam, (ref, ctx) => ref.setTick!({ thing: comic, party: party(kim), tick: "moderate" }, ctx));
 		assert.deepEqual((await answers(fam, `person:${kim.id}`))[comic]?.ticks, ["read"]);
+		// A cell with a row of another source (the kind's default for everyone) is replaced by the caller's one row.
+		await holding(anna, fam, (ref, ctx) =>
+			ref.setTick!({ thing: comic, party: { kind: "everyone" }, tick: "read", gives: false }, ctx),
+		);
+		const everyoneRead = w
+			.rows("grants")
+			.filter((row) => row.thing === comic && row.tick === "read" && String(row.party).includes("everyone"));
+		assert.deepEqual(
+			everyoneRead.map((row) => [row.gives, JSON.parse(String(row.source)).kind]),
+			[[0, "person"]],
+		);
 	});
 });
 
@@ -282,8 +295,18 @@ describe("unlinking and removing (scenario 7, test 9)", () => {
 		const owner = await person("Mario");
 		await store.setOwner({ person: owner.id, owner: true }, context);
 		await holding(owner, pi, (ref, ctx) => ref.unlink!({ thing: fam }, ctx));
-		// At once the subtree gives nothing.
+		// At once the subtree gives nothing, also to those put in below (Leo in his robot, its agent).
 		assert.deepEqual(await answers(robot, `person:${anna.id}`), {});
+		const { leo } = { leo: (await store.workspaceMembers.here.page({ workspace: robot }, 10, context)).items };
+		for (const { party: member } of leo) {
+			const caller =
+				member.kind === "person"
+					? `person:${member.person}`
+					: member.kind === "agent"
+						? `worker:${member.session}`
+						: "";
+			if (caller !== "") assert.deepEqual(await answers(robot, caller), {}, caller);
+		}
 		await eventually(
 			() => w.rows("workspaces").length + w.rows("removing").length,
 			(left) => left === 1,
@@ -583,7 +606,7 @@ describe("the lists (R34 to R38)", () => {
 	});
 
 	it("contents: what is here with where it is linked as the caller may see it (96), and what is hidden here", async () => {
-		const { anna, fam } = await family();
+		const { anna, leo, fam } = await family();
 		const tools = await store.create({ kind: Board.name, name: "tools", workspace: pi, by: BY }, context);
 		const sketch = await store.create({ kind: Board.name, name: "sketch", workspace: fam, by: BY }, context);
 		await own(fam, party(anna), ["hide"]);
@@ -601,6 +624,15 @@ describe("the lists (R34 to R38)", () => {
 			await (await ctx.get(Workspace, { workspace: fam })).hide!({ thing: tools, shown: false }, ctx);
 			await until(contents.list, (list) => list.rows.some((row) => row.hidden), within("hidden", context));
 			assert.equal(rows().tools?.hidden, true);
+			// Hidden things are listed only for whoever may show them again (Hide here).
+			const leos = await as(
+				leo,
+				async (lctx) => (await lctx.get(WorkspaceContents, { workspace: fam, view: "v" })).list.value.rows,
+			);
+			assert.equal(
+				leos.some((row) => row.thing === tools),
+				false,
+			);
 			await store.rename({ thing: sketch, name: "Sketch" }, context);
 			await until(
 				contents.list,
@@ -847,5 +879,63 @@ describe("depth: how far above a thing is linked", () => {
 		assert.notEqual(gives.answers.value[board], before);
 		assert.equal((await answers(pi, "server"))[board]?.depth, 0);
 		gives.release();
+	});
+});
+
+describe("setTick resets a cell (page builder's repro)", () => {
+	it("a kind's default row for everyone goes when its cell is reset, live in WhoMay and in a fresh hold", async () => {
+		const { anna, fam } = await family();
+		await own(fam, party(anna), ["manageAccess", makeTick(Board)]);
+		await as(anna, async (ctx) => {
+			const ref = await ctx.get(Workspace, { workspace: fam });
+			const made = await ref.make!({ kind: Board.name, name: "Plans" }, ctx);
+			const who = await ctx.get(WhoMay, { workspace: fam, thing: made });
+			const everyone = (table: typeof who.table.value) =>
+				table.rows.find((row) => row.party.kind === "everyone")!.ticks.read;
+			assert.equal(everyone(who.table.value)?.here.length, 1);
+			await ref.setTick!({ thing: made, party: { kind: "everyone" }, tick: "read" }, ctx);
+			assert.equal(
+				w.rows("grants").filter((row) => row.thing === made && String(row.party).includes("everyone")).length,
+				0,
+			);
+			await until(who.table, (table) => everyone(table)?.here.length === 0, within("the row gone, live", context));
+			const fresh = await ctx.get(WhoMay, { workspace: fam, thing: made });
+			assert.deepEqual(everyone(fresh.table.value), { here: [], has: false });
+		});
+	});
+});
+
+describe("lists held over a link (the page's)", () => {
+	it("a reset cell and a hidden thing reach a holder on another host (a probe's change is sent, not only kept)", async () => {
+		const { anna, fam } = await family();
+		await own(fam, party(anna), ["manageAccess", "hide"]);
+		const board = await store.create({ kind: Board.name, name: "b", workspace: fam, by: BY }, context);
+		const tools = await store.create({ kind: Board.name, name: "tools", workspace: pi, by: BY }, context);
+		const [toServer, fromClient] = memoryLinkPair();
+		const client = createHost<P3Principal>({ onError: (error) => assert.fail(`client error ${error.kind}`) });
+		w.host.accept(fromClient, { principal: anna }, context);
+		client.connect(toServer, { principal: { kind: "server" } }, context);
+		await client.load([], context);
+		try {
+			const who = client.hold(WhoMay, { workspace: fam, thing: board }, context);
+			const contents = client.hold(WorkspaceContents, { workspace: fam, view: "v" }, context);
+			const ref = client.hold(Workspace, { workspace: fam }, context);
+			for (const each of [who, contents, ref])
+				await until(each.state, (state) => state.kind === "live", within("live", context));
+			const everyone = () =>
+				who.table.value.rows.find((row) => row.party.kind === "everyone")?.ticks.read?.here.length;
+			assert.equal(everyone(), 1);
+			await ref.setTick!({ thing: board, party: { kind: "everyone" }, tick: "read" }, context);
+			await until(who.table, () => everyone() === 0, within("the reset over the link", context));
+			await ref.hide!({ thing: tools, shown: false }, context);
+			await until(
+				contents.list,
+				(list) => list.rows.some((row) => row.thing === tools && row.hidden),
+				within("hidden over the link", context),
+			);
+			for (const each of [who, contents, ref]) each.release();
+		} finally {
+			await client.close(context);
+		}
 	});
 });

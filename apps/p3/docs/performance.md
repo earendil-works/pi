@@ -69,7 +69,10 @@ tool: never compare the two.
   kinds change (a plugin with a kind loaded, reloaded or removed) reads every loaded workspace again, up to the
   forgetting budget (1,000 unwatched) plus the watched ones and their ancestors, in the index's queue: the writes and
   questions behind it wait for it. `bench/things.ts` times the root and leaf changes, one worker's start and the cold
-  first question; a kind's plugin reload under load is not timed yet.
+  first question; a kind's plugin reload under load is not timed yet. Since slice 2 (ERNDL-1143) a workspace's own thing is answered at
+  itself (its own grants, with `makes`, `above` and each answer's `depth`), and the page's lists are probes over the
+  index: a probe is asked again after every commit at or above its workspace (lists of children and roots: after every
+  commit), so a page holds few of them; each runs its `prepare` reads (names, children) when asked.
 - **Bytes on the wire:** none measured per action yet. A UI package sets a budget for its common actions (opening a
   session, switching conversations, a streamed answer) and measures it with `chord.link.bytes`. The page bundle starts
   at about 140 KB gzipped for Chord's web client alone.

@@ -14,7 +14,8 @@
 // - in `things`, a change at the root (a tick given to the agents on one of Pi's things, then taken back): the write
 //   as its caller waits for it, its wait in the queue (`things.store.wait`), its transaction (`things.store.commit`),
 //   the index's work after it (`things.access.adopt`), and the last of its holders rebound; the same at a leaf; a new
-//   session.
+//   session; a workspace made by a person (slice 2: its maker's ticks and membership in the same commit) and a
+//   removal's first commit (the line cut).
 // Run from apps/p3 with Node 26:
 //   node --expose-gc --conditions=source --disable-warning=ExperimentalWarning bench/things.ts
 
@@ -244,7 +245,7 @@ async function oneWorker(
 		const gives = await server.get(Gives, { workspace: session.id, caller: `worker:${session.id}` }, context);
 		questions.push(performance.now() - t0);
 		reads.push(counted() - before);
-		const mine = Object.keys(gives.answers.value);
+		const mine = boardsOf(gives.answers.value);
 		sizes.push(mine.length);
 		gives.release();
 		const [toServer, fromClient] = memoryLinkPair();
@@ -265,6 +266,13 @@ async function oneWorker(
 		workerStartMs: median(starts),
 		...(which === "things" ? { coldQuestionMs: median(questions), coldQuestionReads: median(reads) } : {}),
 	};
+}
+
+/** The boards among `answers` (a workspace's own answer is of its workspace kind). */
+function boardsOf(answers: Readonly<Record<string, { readonly kind: string }>>): string[] {
+	return Object.entries(answers)
+		.filter(([, answer]) => answer.kind === Board.name)
+		.map(([thing]) => thing);
 }
 
 /** S2, written through the store; who holds what. */
@@ -309,7 +317,8 @@ async function seed(server: Host<P3Principal>, things: Reference<typeof ThingsSt
 		holders.push({
 			principal: { kind: "worker", session: session.id },
 			workspace: session.id,
-			things: Object.keys(gives.answers.value),
+			// The boards it is given (the workspace's own answer is no board: slice 2).
+			things: boardsOf(gives.answers.value),
 		});
 		gives.release();
 	}
@@ -436,11 +445,31 @@ async function changes(
 			await things.create({ kind: Board.name, name: "t", workspace: id, by: bench }, context);
 		news.push(performance.now() - t0);
 	}
+	// Slice 2: a workspace made by a person under a project (one commit: its line and path, the maker's every tick and
+	// Make any kind, the maker put in), and a removal's first commit (the line cut; the rest runs in the background).
+	const maker = await things.createPerson({ name: "maker", madeBy: bench }, context);
+	const made: number[] = [];
+	const cuts: number[] = [];
+	for (let round = 0; round < 20; round++) {
+		const t0 = performance.now();
+		const id = await things.createWorkspace(
+			{ kind: "things.workspace", name: "made", parent: project, by: { kind: "person", person: maker } },
+			context,
+		);
+		made.push(performance.now() - t0);
+		const t1 = performance.now();
+		await things.removeWorkspace({ workspace: id }, context);
+		cuts.push(performance.now() - t1);
+	}
 	return {
 		rootHolders: affected.length,
 		...medians("root", roots),
 		...medians("leaf", leaves),
 		newSessionMs: median(news),
+		newWorkspaceMs: median(made),
+		newWorkspaceMaxMs: Math.max(...made),
+		removeCutMs: median(cuts),
+		removeCutMaxMs: Math.max(...cuts),
 	};
 }
 

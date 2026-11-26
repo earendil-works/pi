@@ -1102,7 +1102,12 @@ describe("races, failures and restarts", () => {
 		const first = gives.answers.value;
 		await update;
 		try {
-			assert.deepEqual(first[a], first[b], "the two boards changed in one transaction");
+			// One in the root, one in the leaf: alike but for how far above each is linked.
+			assert.deepEqual(
+				{ ...first[a], depth: 0 },
+				{ ...first[b], depth: 0 },
+				"the two boards changed in one transaction",
+			);
 			assert.deepEqual(gives.answers.value[a]?.ticks, ["read", "write"]);
 			assert.deepEqual(gives.answers.value[b]?.ticks, ["read", "write"]);
 		} finally {
