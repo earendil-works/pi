@@ -170,11 +170,17 @@ class Reading implements ReadSink {
  * own order. Not the stored row itself: node:sqlite returns a dictionary-mode object per row (256 B for two columns),
  * and a value keeps every row it shows.
  */
-type Decoded = {
+class Decoded {
 	readonly columns: readonly string[];
 	readonly values: readonly SqliteValue[];
 	readonly row: JsonValue;
-};
+
+	constructor(columns: readonly string[], values: readonly SqliteValue[], row: JsonValue) {
+		this.columns = columns;
+		this.values = values;
+		this.row = row;
+	}
+}
 
 /** No rows decoded yet: the shared empty map. */
 const NO_ROWS: TupleMap<Decoded> = new Map();
@@ -188,20 +194,23 @@ const NO_COLUMNS: readonly string[] = [];
  * removal, not a comparison of every row with every other).
  */
 export class DecodedRows {
-	/** By key, as tuples of the key's values. */
-	#byKey: TupleMap<Decoded> = NO_ROWS;
+	/** By key, as tuples of the key's values; the one row itself after a run of one row (a map of one costs 184 B). */
+	#byKey: TupleMap<Decoded> | Decoded = NO_ROWS;
 	/** The columns of the row decoded last: rows of one statement share them, so their entries share the list. */
 	#columns: readonly string[] = NO_COLUMNS;
 
 	/** The rows of `stored` as `target` decodes them, unchanged ones reused; a row the code cannot read throws. */
 	decode(stored: readonly StoredRead[], target: LiveTarget, context: Context): JsonValue[] {
 		const key = target.spec.query.table.key;
+		if (stored.length === 1) {
+			const one = this.#reused(key, stored[0]!, target, context);
+			this.#byKey = one;
+			return [one.row];
+		}
 		const byKey: TupleMap<Decoded> = new Map();
 		// `map`: a list of exactly its rows (the value keeps it; one pushed to reserves room for 16 more).
 		const rows = stored.map((each) => {
-			let decoded = getRow(this.#byKey, key, each);
-			// Unchanged: the entry is kept as it is (its values are the new row's in its columns).
-			if (decoded === undefined || !sameStored(decoded, each)) decoded = this.#decoded(each, target, context);
+			const decoded = this.#reused(key, each, target, context);
 			setRow(byKey, key, each, decoded);
 			return decoded.row;
 		});
@@ -214,10 +223,22 @@ export class DecodedRows {
 		this.#byKey = NO_ROWS;
 	}
 
+	/** The last value's entry of `stored`'s key when its stored columns are all the same (kept as it is), else a new one. */
+	#reused(key: readonly string[], stored: StoredRead, target: LiveTarget, context: Context): Decoded {
+		const before = this.#byKey;
+		const decoded =
+			before instanceof Decoded ? (holdsKey(before, key, stored) ? before : undefined) : getRow(before, key, stored);
+		return decoded !== undefined && sameStored(decoded, stored) ? decoded : this.#decoded(stored, target, context);
+	}
+
 	#decoded(stored: StoredRead, target: LiveTarget, context: Context): Decoded {
 		const row = target.decode(stored, context);
 		const columns = this.#columnsOf(stored);
-		return { columns, values: columns.map((column) => stored[column]!), row };
+		return new Decoded(
+			columns,
+			columns.map((column) => stored[column]!),
+			row,
+		);
 	}
 
 	/**
@@ -240,6 +261,20 @@ export class DecodedRows {
 		this.#columns = columns;
 		return columns;
 	}
+}
+
+/** Whether `decoded` came from a row of `stored`'s key: its values in the key columns are `stored`'s (as a map keys). */
+function holdsKey(decoded: Decoded, key: readonly string[], stored: StoredRead): boolean {
+	for (let index = 0; index < key.length; index++) {
+		const at = decoded.columns.indexOf(key[index]!);
+		if (at < 0) return false;
+		const a = decoded.values[at];
+		const b = stored[key[index]!];
+		// SameValueZero, as a map's keys: `NaN` is `NaN`.
+		// biome-ignore lint/suspicious/noSelfCompare: NaN is the one value unequal to itself.
+		if (!(a === b || (a !== a && b !== b))) return false;
+	}
+	return true;
 }
 
 /**

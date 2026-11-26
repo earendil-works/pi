@@ -391,6 +391,24 @@ describe("decoded rows", () => {
 		const shown = rows.decode([stored("two")], target, context)[0];
 		expect(rows.decode([stored("two")], target, context)[0]).toBe(shown);
 	});
+
+	it("reuses a row from a run of one row and of several, either way (hot-path pass)", () => {
+		// A run of one row keeps its entry without a map: a row of the same key and stored columns is the same object.
+		const Docs = defineTable("docs", { version: 1, columns: { id: str(), title: str() }, key: ["id"] });
+		const target: LiveTarget = {
+			spec: { query: query(Docs), table: "docs", projection: {}, owner: Docs },
+			decode: (stored) => ({ id: stored.id as string, title: stored.title as string }),
+		};
+		const row = (id: string, title: string): StoredRead => ({ id, title });
+		const rows = new DecodedRows();
+		const [one] = rows.decode([row("1", "a")], target, context);
+		const two = rows.decode([row("1", "a"), row("2", "b")], target, context);
+		expect(two[0]).toBe(one);
+		const [again] = rows.decode([row("2", "b")], target, context);
+		expect(again).toBe(two[1]);
+		expect(rows.decode([row("2", "c")], target, context)[0]).not.toBe(again);
+		expect(rows.decode([row("3", "c")], target, context)[0]).toEqual({ id: "3", title: "c" });
+	});
 });
 
 describe("a refresh applied again", () => {
