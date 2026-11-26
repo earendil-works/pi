@@ -5,7 +5,7 @@
 // machine's), and until a kind gives environments, the environments plugin's. It resumes the work left only for a session that is not archived. It
 // contributes the open harness (`SessionHarness`), whose `submit` is the one way to start work, reports the session's
 // state to the server on each transition (`activity.ts`) and keeps the worker alive while working (`WorkerBusy`).
-// It contributes the subagents' part (`subagents.ts`), whose tasks it installs always.
+// It contributes the subagents' part (`subagents.ts`), whose tasks (`reporter.ts`) it installs always.
 
 import {
 	BACKGROUND_CONTEXT,
@@ -40,7 +40,8 @@ import {
 import { type HarnessLocation, type Held, HeldThings, ThingHarnessParts } from "../things/contract.worker.ts";
 import { activityOf, serialized } from "./activity.ts";
 import { AgentParts, type Parts } from "./agent-parts.ts";
-import { SUBAGENT_TASKS, subagentsPart } from "./subagents.ts";
+import { SUBAGENT_TASKS } from "./reporter.ts";
+import { subagentsPart } from "./subagents.ts";
 
 /** The harness of the session, once per worker: no members, it only contributes. */
 const SessionAgent = local("harness.agent", { version: 1, params: {}, members: {} });

@@ -4,7 +4,7 @@
 // a kind's part is called again only when its list changed, a part's prompt section and environment reach the agent,
 // a login's model by default and a set model kept, `no_model` without a login, the activity reports (working before
 // Durable takes the input, one per transition), `WorkerBusy` while working, an archived session that schedules
-// nothing, and a tool's `session.call` reaching the server.
+// nothing, and a tool's `session.call` reaching the server. The subagents' part is `subagents.test.ts`'s.
 
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
@@ -12,15 +12,13 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import { BACKGROUND_CONTEXT as context, isChordError, type P3Principal, until } from "@earendil-works/p3/v1";
-import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
+import type { TestedPlugin } from "@earendil-works/p3/v1/testing";
 import {
 	LiveDoc,
 	NodeExecutionEnv,
 	type OpenHarness,
 	ROOT_CONVERSATION_ID,
-	SessionHarness,
 	WorkerBusy,
 } from "@earendil-works/p3/v1/worker";
 import { eventually, within } from "../../../test/until.ts";
@@ -28,27 +26,18 @@ import type { HarnessSession } from "../../things/contract.worker.ts";
 import {
 	coding,
 	type Extra,
+	type Harnessed,
 	type Holding,
+	harnessed,
 	login,
 	other,
+	runs,
 	type Server,
-	type Step,
+	says,
 	sessionRow,
-	standIns,
-	subagents,
 } from "./stubs.ts";
 
 const SESSION = "s1";
-
-/** A scripted step answering `when` with text. */
-function says(when: string, text: string): Step {
-	return { when, reply: [{ kind: "text", text }] };
-}
-
-/** A scripted step answering `when` with a bash call. */
-function runs(when: string, command: string): Step {
-	return { when, reply: [{ kind: "tool", name: "bash", args: JSON.stringify({ command }) }] };
-}
 
 /** Waits until the worker's reports are `states` (a routine reports after the commit that changed the state). */
 async function reported(server: Server, states: string[]): Promise<void> {
@@ -62,16 +51,15 @@ async function reported(server: Server, states: string[]): Promise<void> {
 
 describe("the harness plugin on a worker", () => {
 	let folder: string;
-	let t: TestedPlugin<P3Principal> | undefined;
-	let harnessControl: Server | undefined;
+	let loaded: Harnessed | undefined;
 
 	beforeEach(async () => {
 		folder = await realpath(await mkdtemp(join(tmpdir(), "p3-harness-")));
 	});
 
 	afterEach(async () => {
-		await t?.close(context);
-		t = undefined;
+		await loaded?.t.close(context);
+		loaded = undefined;
 		await rm(folder, { recursive: true, force: true });
 	});
 
@@ -82,40 +70,32 @@ describe("the harness plugin on a worker", () => {
 		extras: Extra[] = [],
 		options: { readonly ready?: boolean } = {},
 	): Promise<Server> {
-		const { stubs, server, control } = standIns({ ...sessionRow(SESSION, folder), ...change }, held, extras, options);
-		harnessControl = control;
-		t = await testPlugin(
-			fileURLToPath(new URL("../", import.meta.url)),
-			{ kind: "worker", session: SESSION, stubs, server },
-			context,
-		);
-		return control;
+		loaded = await harnessed({ ...sessionRow(SESSION, folder), ...change }, held, context, extras, options);
+		return loaded.control;
+	}
+
+	function current(): Harnessed {
+		assert.ok(loaded !== undefined);
+		return loaded;
 	}
 
 	/** The open harness, once contributed. */
-	async function harness(): Promise<OpenHarness> {
-		const registry = await tested().host.registry(SessionHarness, context);
-		const open = await until(registry, (value) => value !== undefined, within("the harness", context));
-		assert.ok(open !== undefined);
-		return open;
+	function harness(): Promise<OpenHarness> {
+		return current().harness();
 	}
 
 	function tested(): TestedPlugin<P3Principal> {
-		assert.ok(t !== undefined);
-		return t;
+		return current().t;
 	}
 
 	/** Submits `text` to the root conversation and waits until the session is idle again. */
-	async function ask(text: string): Promise<void> {
-		const open = await harness();
-		await open.submit(undefined, { text, requestId: text }, context);
-		await open.durable.waitForIdle(context);
+	function ask(text: string): Promise<void> {
+		return current().ask(text);
 	}
 
 	/** What the scripted logins received so far. */
 	function requests() {
-		assert.ok(harnessControl !== undefined);
-		return harnessControl.requests;
+		return current().control.requests;
 	}
 
 	/** The root conversation's `pi.live` document. */
@@ -339,128 +319,6 @@ describe("the harness plugin on a worker", () => {
 		);
 	});
 
-	it("starts a subagent, a copy without the subagent tools, whose answer comes back; Use withheld: no tools", async () => {
-		const tool = (name: string, args: object): Step => ({
-			when: "",
-			reply: [{ kind: "tool", name, args: JSON.stringify(args) }],
-		});
-		const script: Step[] = [
-			{ ...tool("subagent_spawn", { name: "reader", message: "Summarize the plan" }), when: "@spawn" },
-			says("Started reader.", "started"),
-			says("Summarize the plan", "the summary"),
-			says("[subagent reader answered] the summary", "noted"),
-			{ ...tool("subagent_list", {}), when: "@list" },
-			says("reader: idle", "listed"),
-			says("", "ok"),
-		];
-		const held = [login("login", "faux", script), coding(), subagents()];
-		const server = await start(held);
-		await ask("@spawn");
-		await eventually(
-			() => requests().map(({ last }) => last),
-			(lasts) => lasts.includes("[subagent reader answered] the summary"),
-			5000,
-		);
-		await (await harness()).durable.waitForIdle(context);
-		const child = requests().find(({ last }) => last === "Summarize the plan");
-		assert.deepEqual(child?.tools, ["bash", "edit", "read", "write"], "the subagent has no subagent tools");
-		assert.deepEqual(requests()[0]?.tools, [
-			"bash",
-			"edit",
-			"read",
-			"subagent_archive",
-			"subagent_list",
-			"subagent_send",
-			"subagent_spawn",
-			"write",
-		]);
-		await ask("@list");
-		assert.ok(requests().some(({ last }) => last === "reader: idle"));
-		server.hold([held[0]!, held[1]!, subagents(false)]);
-		await ask("after");
-		assert.deepEqual(requests().at(-1)?.tools, ["bash", "edit", "read", "write"]);
-	});
-
-	it("ends a queued message whose subagent's run then failed, and reports it (Astra, round 1)", async () => {
-		const tool = (when: string, name: string, args: object): Step => ({
-			when,
-			reply: [{ kind: "tool", name, args: JSON.stringify(args) }],
-		});
-		const script = [
-			tool("@spawn", "subagent_spawn", { name: "reader", message: "child-start" }),
-			runs("child-start", "touch started; until [ -e gate ]; do sleep 0.02; done; echo not-scripted"),
-			says("Started reader.", "ok"),
-			tool("@queue", "subagent_send", { name: "reader", message: "later", followUp: true }),
-			says("Sent to reader.", "ok"),
-			says("[subagent reader failed:", "noted"),
-		];
-		await start([login("l", "faux", script), coding(), subagents()]);
-		const open = await harness();
-		try {
-			await open.submit(undefined, { text: "@spawn", requestId: "spawn" }, context);
-			await eventually(() => existsSync(join(folder, "started")), Boolean);
-			await open.submit(undefined, { text: "@queue", requestId: "q" }, context);
-			await eventually(
-				() => open.durable.inspect(context),
-				(found) =>
-					found.submissions.some((s) => s.status === "queued" && s.requestId?.startsWith("subagent:") === true),
-			);
-			await writeFile(join(folder, "gate"), "");
-			await eventually(
-				() => requests(),
-				(seen) => seen.some((request) => request.last.startsWith("[subagent reader failed:")),
-				5000,
-			);
-			await eventually(
-				() => open.durable.inspect(context),
-				(found) => found.tasks.length === 0 && found.submissions.length === 0,
-				5000,
-			);
-		} finally {
-			await writeFile(join(folder, "gate"), "");
-		}
-	});
-
-	it("sends to a subagent, whose answer comes back once; archived, it is gone from the list (Opus, round 1)", async () => {
-		const tool = (when: string, name: string, args: object): Step => ({
-			when,
-			reply: [{ kind: "tool", name, args: JSON.stringify(args) }],
-		});
-		const script: Step[] = [
-			tool("@spawn", "subagent_spawn", { name: "reader", message: "first task" }),
-			says("Started reader.", "started"),
-			says("first task", "first answer"),
-			says("[subagent reader answered] first answer", "noted one"),
-			tool("@send", "subagent_send", { name: "reader", message: "second task" }),
-			says("Sent to reader.", "sent"),
-			says("second task", "second answer"),
-			says("[subagent reader answered] second answer", "noted two"),
-			tool("@archive", "subagent_archive", { name: "reader" }),
-			says("Archived reader.", "archived"),
-			tool("@list", "subagent_list", {}),
-			says("No subagents.", "none"),
-			says("", "ok"),
-		];
-		await start([login("login", "faux", script), coding(), subagents()]);
-		const answered = (text: string) =>
-			eventually(
-				() => requests().filter(({ last }) => last === `[subagent reader answered] ${text}`).length,
-				(count) => count === 1,
-				5000,
-			);
-		await ask("@spawn");
-		await answered("first answer");
-		await (await harness()).durable.waitForIdle(context);
-		await ask("@send");
-		await answered("second answer");
-		await (await harness()).durable.waitForIdle(context);
-		await ask("@archive");
-		await ask("@list");
-		assert.ok(requests().some(({ last }) => last === "No subagents."));
-		// Each answer reported once.
-		assert.equal(requests().filter(({ last }) => last.startsWith("[subagent reader answered]")).length, 2);
-	});
-
 	it("waits with the first submit until the holding is ready, which then gives the agent its tools", async () => {
 		const held = [login("login", "faux", [says("", "ok")]), coding()];
 		const server = await start([], {}, [], { ready: false });
@@ -473,35 +331,5 @@ describe("the harness plugin on a worker", () => {
 		await submitted;
 		await open.durable.waitForIdle(context);
 		assert.deepEqual(requests()[0]?.tools, ["bash", "edit", "read", "write"]);
-	});
-
-	it("gives a running subagent no new message once Use is withheld (ERNDL-1171, test 2)", async () => {
-		const tool = (when: string, name: string, args: object): Step => ({
-			when,
-			reply: [{ kind: "tool", name, args: JSON.stringify(args) }],
-		});
-		const script: Step[] = [
-			tool("@spawn", "subagent_spawn", { name: "reader", message: "child-start" }),
-			runs("child-start", "touch started; until [ -e gate ]; do sleep 0.02; done; echo first done"),
-			says("Started reader.", "ok"),
-			tool("@send", "subagent_send", { name: "reader", message: "a new message" }),
-			says("", "ok"),
-		];
-		const held = [login("login", "faux", script), coding(), subagents()];
-		const server = await start(held);
-		const open = await harness();
-		try {
-			await open.submit(undefined, { text: "@spawn", requestId: "spawn" }, context);
-			await eventually(() => existsSync(join(folder, "started")), Boolean);
-			server.hold([held[0]!, held[1]!, subagents(false)]);
-			await ask("@send");
-			const offered = requests().find(({ last }) => last === "@send")?.tools ?? [];
-			assert.ok(!offered.includes("subagent_send"), offered.join());
-		} finally {
-			await writeFile(join(folder, "gate"), "");
-		}
-		await open.durable.waitForIdle(context);
-		// The running subagent finished its step; it never got the new message.
-		assert.ok(!requests().some(({ last }) => last.includes("a new message")));
 	});
 });

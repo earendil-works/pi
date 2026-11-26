@@ -49,8 +49,21 @@ export type HarnessSession = {
 	location(conversation: ConversationId, context: Context): Promise<HarnessLocation | undefined>;
 };
 
-/** A kind's Durable extension (tools, prompt sections, hooks): the harness installs it under the kind's name. */
-export type HarnessExtension = Omit<Extension, "name">;
+/**
+ * Where a kind's tool works: `main`, only in the session's top-level conversations (a tool acting on the session itself,
+ * or one starting agents), never in a subagent's; `subagent`, only in subagents, which get it without choosing it.
+ * Unset: anywhere, and a subagent may be given it.
+ */
+export type ToolScope = "main" | "subagent";
+
+/** A Durable tool as a kind gives it: with the scope it works in. */
+export type HarnessTool = NonNullable<Extension["tools"]>[number] & { readonly scope?: ToolScope };
+
+/**
+ * A kind's Durable extension (tools, prompt sections, hooks): the harness installs it under the kind's name. A scoped
+ * tool refuses calls outside its scope; a `subagent` one is deferred, so a top-level conversation is not offered it.
+ */
+export type HarnessExtension = Omit<Extension, "name" | "tools"> & { readonly tools?: readonly HarnessTool[] };
 
 /**
  * What the things of one kind give the agent together: an extension (its tools take the thing they act on as an

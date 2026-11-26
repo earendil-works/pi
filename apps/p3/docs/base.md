@@ -192,6 +192,10 @@ the session's worker holds a reference to each thing available to its agent (`He
   offered only while its tick is granted on some thing (`ref.add`, `ref.granted.has("bash")`).
 - **A tool acts as the agent** through the held reference (decision 120.1); `session.call(fn, context)` runs `fn` as
   the session's worker with references of its own, released when `fn` settles, for a tool that needs one.
+- **A tool's scope** (`HarnessTool`'s `scope`): `main` works only in the session's top-level conversations (the
+  `subagent` tool: no subagent starts subagents), `subagent` only in subagents (deferred, so a top-level conversation
+  is not offered it). The harness installs scoped tools guarded (a call outside the scope is refused); the subagents
+  part leaves `main` tools out of a subagent's tools and loads the `subagent` ones.
 - **A part's environment** is a function of the conversation's location (`{ machine, folder }`), answered by the
   machine kind for the machines the agent may work on (`thingHarnessPart(…, { env: "gives" })`). Once such a part is
   registered, a machine withheld or let go of leaves no environment.

@@ -5,11 +5,14 @@
 // identity) and a scripted login's kind (`test.login`: a pi-ai faux provider per thing answering from its script,
 // each request recorded, and with `tool` the tool `test_session`, which reads the session's title through the
 // session's `call`). The real things plugin's worker facet (the registries) and the tools plugin's (the coding tools'
-// part) load beside them, imported as modules.
+// part) load beside them, imported as modules. `harnessed` loads the harness plugin beside them; `says`, `runs` and
+// `calls` write a script's steps.
 
+import { fileURLToPath } from "node:url";
 import {
 	arr,
 	bool,
+	type Context,
 	constant,
 	contribute,
 	defineFacet,
@@ -25,8 +28,10 @@ import {
 	type Static,
 	str,
 	union,
+	until,
 	type Writable,
 } from "@earendil-works/p3/v1";
+import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
 import {
 	defineTool,
 	type ExecutionEnv,
@@ -37,11 +42,15 @@ import {
 	fauxToolCall,
 	type Message,
 	NodeExecutionEnv,
+	type OpenHarness,
+	SessionHarness,
 	section,
 } from "@earendil-works/p3/v1/worker";
+import { within } from "../../../test/until.ts";
 import {
 	type HarnessLocation,
 	type HarnessSession,
+	type HarnessTool,
 	type Held,
 	type HeldThing,
 	HeldThings,
@@ -63,6 +72,21 @@ const Step = obj({ when: str(), reply: arr(Reply) });
 
 /** A scripted answer (see `Step`). */
 export type Step = Static<typeof Step>;
+
+/** A scripted step answering `when` with text. */
+export function says(when: string, text: string): Step {
+	return { when, reply: [{ kind: "text", text }] };
+}
+
+/** A scripted step answering `when` with a bash call. */
+export function runs(when: string, command: string): Step {
+	return calls(when, "bash", { command });
+}
+
+/** A scripted step answering `when` with a call of the tool `name`. */
+export function calls(when: string, name: string, args: object): Step {
+	return { when, reply: [{ kind: "tool", name, args: JSON.stringify(args) }] };
+}
 
 /** The stand-ins' tick labels. */
 const messages = defineMessages("test", { en: { use: "Use" } });
@@ -149,6 +173,7 @@ export type Extra = {
 	readonly kind: string;
 	readonly prompt?: string;
 	readonly env?: (location: HarnessLocation) => ExecutionEnv | undefined;
+	readonly tools?: readonly HarnessTool[];
 	/** Gets the session the part is called with. */
 	readonly seen?: (session: HarnessSession) => void;
 };
@@ -247,24 +272,28 @@ export function standIns(
 			}),
 		);
 	});
-	const extra = defineFacet((_host, self) => {
-		for (const { kind, prompt, env, seen } of extras) {
+	// One object per extra part: a facet contributes to a registry once.
+	const extra = defineFacet((host) => {
+		for (const { kind, prompt, env, tools: given, seen } of extras) {
 			const Kind = defineThing(kind, { version: 1, ticks: {} });
-			self.contribute(
-				ThingHarnessParts,
-				thingHarnessPart(
-					Kind,
-					(_things, session) => {
-						count(kind);
-						seen?.(session);
-						return {
-							...(prompt === undefined
-								? {}
-								: { extension: { sections: [section("test-extra", () => prompt)] } }),
-							...(env === undefined ? {} : { env }),
-						};
-					},
-					env === undefined ? {} : { env: "gives" },
+			contribute(host, `test.extra.${kind}`, (self) =>
+				self.contribute(
+					ThingHarnessParts,
+					thingHarnessPart(
+						Kind,
+						(_things, session) => {
+							count(kind);
+							seen?.(session);
+							const sections = prompt === undefined ? [] : [section("test-extra", () => prompt)];
+							return {
+								...(prompt === undefined && given === undefined
+									? {}
+									: { extension: { sections, tools: given ?? [] } }),
+								...(env === undefined ? {} : { env }),
+							};
+						},
+						env === undefined ? {} : { env: "gives" },
+					),
 				),
 			);
 		}
@@ -278,6 +307,44 @@ export function standIns(
 		{ name: "test.extra", facet: extra },
 	];
 	return { server: [{ name: "test.server", facet: server }], stubs, control };
+}
+
+/** The harness plugin on stand-ins: the loaded plugin, the stand-ins' controls, the open harness and a request. */
+export type Harnessed = {
+	readonly t: TestedPlugin<P3Principal>;
+	readonly control: Server;
+	/** The open harness, once contributed. */
+	harness(): Promise<OpenHarness>;
+	/** Submits `text` to the root conversation (its request id) and waits until the session is idle again. */
+	ask(text: string): Promise<void>;
+};
+
+/** Loads the harness plugin on worker `row.id` beside the stand-ins holding `held` (and the `extras` parts). */
+export async function harnessed(
+	row: SessionRow,
+	held: readonly Holding[],
+	context: Context,
+	extras: readonly Extra[] = [],
+	options: { readonly ready?: boolean } = {},
+): Promise<Harnessed> {
+	const { stubs, server, control } = standIns(row, held, extras, options);
+	const t = await testPlugin(
+		fileURLToPath(new URL("../", import.meta.url)),
+		{ kind: "worker", session: row.id, stubs, server },
+		context,
+	);
+	const harness = async (): Promise<OpenHarness> => {
+		const registry = await t.host.registry(SessionHarness, context);
+		const open = await until(registry, (value) => value !== undefined, within("the harness", context));
+		if (open === undefined) throw new Error("the harness did not open");
+		return open;
+	};
+	const ask = async (text: string): Promise<void> => {
+		const open = await harness();
+		await open.submit(undefined, { text, requestId: text }, context);
+		await open.durable.waitForIdle(context);
+	};
+	return { t, control, harness, ask };
 }
 
 /** `holdings` grouped by kind; a kind whose entries are those of `before`'s list, in order, keeps that list. */

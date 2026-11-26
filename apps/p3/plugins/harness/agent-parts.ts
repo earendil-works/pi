@@ -4,9 +4,10 @@
 // extension, installed under the kind's name, providers (a login's, one per thing),
 // composed into a new `Models` when they change, and an environment. A kind is given again only when its list of held
 // things (by identity: the holding keeps an unchanged kind's array) or its part changed; a kind no longer held is
-// uninstalled.
+// uninstalled. A tool with a scope (`ToolScope`) is installed guarded: it refuses calls outside its scope, and a
+// `subagent` one is deferred, so a top-level conversation is not offered it.
 
-import { BACKGROUND_CONTEXT, type Context, reportError, type TableItem } from "@earendil-works/p3/v1";
+import { BACKGROUND_CONTEXT, type Context, forbidden, reportError, type TableItem } from "@earendil-works/p3/v1";
 import {
 	createModels,
 	createRegistry,
@@ -18,8 +19,10 @@ import {
 } from "@earendil-works/p3/v1/worker";
 import type {
 	HarnessContribution,
+	HarnessExtension,
 	HarnessLocation,
 	HarnessSession,
+	HarnessTool,
 	Held,
 	HeldThing,
 	ThingHarnessPart,
@@ -124,7 +127,7 @@ export class AgentParts {
 			return {
 				things,
 				part,
-				extension: given.extension === undefined ? undefined : { ...given.extension, name: kind },
+				extension: given.extension === undefined ? undefined : named(kind, given.extension),
 				providers: given.providers ?? [],
 				env: given.env,
 			};
@@ -175,6 +178,35 @@ export class AgentParts {
 		this.#reported.add(key);
 		reportError(`p3 harness: session ${this.#session.session}: ${kind}`, error, BACKGROUND_CONTEXT);
 	}
+}
+
+/** `extension` as the harness installs it: under `kind`'s name, its scoped tools guarded. */
+function named(kind: string, extension: HarnessExtension): Extension {
+	const { tools } = extension;
+	if (tools === undefined || !tools.some((tool) => tool.scope !== undefined)) return { ...extension, name: kind };
+	return { ...extension, name: kind, tools: tools.map((tool) => (tool.scope === undefined ? tool : guarded(tool))) };
+}
+
+/**
+ * `tool` refusing calls outside its scope: a subagent's conversation is the one a task owns (its anchor's). The
+ * subagents part leaves a `main` tool out of a subagent's tools when it starts it; the guard also refuses one a kind
+ * gives later, which the subagent's tools then name nowhere. A `subagent` tool is deferred: a top-level conversation is
+ * not offered it, a subagent loads it.
+ */
+function guarded(tool: HarnessTool): HarnessTool {
+	const { scope } = tool;
+	return {
+		...tool,
+		...(scope === "subagent" ? { deferred: true } : {}),
+		execute: async (args, api, context) => {
+			const conversation = await api.commit((tx) => tx.conversation(api.conversationId), context);
+			const subagent = conversation?.owner !== undefined;
+			if (scope === "main" && subagent)
+				throw forbidden(`${tool.name} works only in the session's main conversation, not in a subagent`);
+			if (scope === "subagent" && !subagent) throw forbidden(`${tool.name} works only in subagents`);
+			return tool.execute(args, api, context);
+		},
+	};
 }
 
 /** Whether the providers differ between two applies: other kinds with providers, or other providers of one. */
