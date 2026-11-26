@@ -141,8 +141,12 @@ export class RemoteObject implements Target {
 	#state: RefState = LOADING;
 	/** The last binding, kept while loading or failed: members keep their last values and watches. */
 	#bound: Bound | undefined;
-	/** The hold on the path's link while one is open: that link's consumer side and this hold's id on it. */
-	#hold: { readonly side: ConsumerSide; readonly id: number } | undefined;
+	/**
+	 * The hold on the path's link while one is open: that link's consumer side and this hold's id on it (two fields, no
+	 * record per hold: 40 B per object).
+	 */
+	#side: ConsumerSide | undefined;
+	#holdId = 0;
 	/** Its references' bindings, in the order they joined; the hold ends with the last. */
 	readonly #bindings = new Bindings<Binding>();
 	/** Takes its entry out of its path's sharing table, once; none for a private object or once taken out. */
@@ -272,13 +276,13 @@ export class RemoteObject implements Target {
 	unhold(binding: Binding): void {
 		if (!this.#bindings.delete(binding)) return;
 		if (this.#bindings.size > 0) {
-			this.#hold?.side.cancelCalls(this.#hold.id, binding, this.label);
+			this.#side?.cancelCalls(this.#holdId, binding, this.label);
 			return;
 		}
 		const error = stackless({ code: "released", message: `${this.label}: released` });
 		// Out of the table before anything else runs: a reference made from here on holds anew.
 		this.#unpublish();
-		this.#hold?.side.release(this.#hold.id, error);
+		this.#side?.release(this.#holdId, error);
 		this.#end(error);
 	}
 
@@ -295,7 +299,9 @@ export class RemoteObject implements Target {
 	 */
 	attach(link: HostLink): void {
 		const chain = this.#dependent?.activationChain();
-		this.#hold = { side: link.consumer, id: link.consumer.attach(this, chain, this.#holdTrace()) };
+		const id = link.consumer.attach(this, chain, this.#holdTrace());
+		this.#side = link.consumer;
+		this.#holdId = id;
 	}
 
 	/**
@@ -338,10 +344,10 @@ export class RemoteObject implements Target {
 	 * It stays on its path: an allow holds it again.
 	 */
 	withheld(cause: FailureCause): void {
-		const hold = this.#hold;
-		this.#hold = undefined;
+		const side = this.#side;
+		this.#side = undefined;
 		const { error } = cause;
-		hold?.side.release(hold.id, cause.kind === "denied" ? revoked(this.label, error) : error);
+		side?.release(this.#holdId, cause.kind === "denied" ? revoked(this.label, error) : error);
 		this.#lastFailure = error;
 		this.#held("failed", error);
 		if (cause.kind === "denied") this.#bound = undefined;
@@ -355,7 +361,7 @@ export class RemoteObject implements Target {
 
 	/** The link dropped: loading until a new link's hold is bound (`#startOver`). */
 	dropped(_error: ChordError): void {
-		this.#hold = undefined;
+		this.#side = undefined;
 		this.#startOver();
 	}
 
@@ -365,13 +371,14 @@ export class RemoteObject implements Target {
 	 */
 	async call(method: string, args: unknown, binding: Binding, context: Context): Promise<unknown> {
 		const bound = this.#bound!;
-		const hold = this.#hold!;
+		const side = this.#side!;
+		const id = this.#holdId;
 		const data = bound.methods.get(method);
 		if (data === undefined) throw lacking(this.label, this.contract, method, "method");
 		const index = bound.names.methods.indexOf(method);
 		// Arguments are checked by the provider.
 		const parent = context.telemetry;
-		if (untraced(parent)) return hold.side.call(hold.id, index, data, args, binding, context);
+		if (untraced(parent)) return side.call(id, index, data, args, binding, context);
 		const attributes = {
 			"chord.host": this.#host.spanHost,
 			type: this.contract.name,
@@ -382,7 +389,7 @@ export class RemoteObject implements Target {
 		};
 		return chordSpans(parent)("chord.call", attributes, async (span) => {
 			try {
-				const result = await hold.side.call(hold.id, index, data, args, binding, withTelemetry(span, context));
+				const result = await side.call(id, index, data, args, binding, withTelemetry(span, context));
 				span.setAttributes({ outcome: "ok" });
 				return result;
 			} catch (error) {
@@ -477,7 +484,7 @@ export class RemoteObject implements Target {
 			this.#retryAlone(binding);
 			return;
 		}
-		if (walk.hops > 0) this.#hold?.side.retry(this.#hold.id, walk.hops);
+		if (walk.hops > 0) this.#side?.retry(this.#holdId, walk.hops);
 	}
 
 	/**
@@ -530,11 +537,11 @@ export class RemoteObject implements Target {
 	 * final: no link holds it again (a reconnect included); each binding's `retry` moves it alone (`#retryAlone`).
 	 */
 	tooLarge(error: ChordError): void {
-		const hold = this.#hold;
-		if (hold === undefined) return;
-		this.#hold = undefined;
+		const side = this.#side;
+		if (side === undefined) return;
+		this.#side = undefined;
 		this.#unpublish();
-		hold.side.release(hold.id, error);
+		side.release(this.#holdId, error);
 		this.#path.detach(this);
 		this.#path = this.#host.unplaced;
 		this.#path.attach(this);
@@ -748,10 +755,10 @@ export class RemoteObject implements Target {
 	 * with `error` as `lost` does; no later link holds it.
 	 */
 	revoke(error: ChordError): void {
-		const hold = this.#hold;
-		this.#hold = undefined;
+		const side = this.#side;
+		this.#side = undefined;
 		this.#unpublish();
-		hold?.side.release(hold.id, error);
+		side?.release(this.#holdId, error);
 		this.lost(error);
 	}
 
@@ -762,7 +769,7 @@ export class RemoteObject implements Target {
 	lost(error: ChordError): void {
 		const bindings = this.#bindings.list();
 		this.#unpublish();
-		this.#hold?.side.forget(this.#hold.id, error);
+		this.#side?.forget(this.#holdId, error);
 		this.#end(error);
 		for (const binding of bindings) binding.end(error);
 	}
@@ -775,7 +782,7 @@ export class RemoteObject implements Target {
 		this.#state = { kind: "ended", error };
 		this.#bindings.clear();
 		this.#dependent = undefined;
-		this.#hold = undefined;
+		this.#side = undefined;
 		this.#bound = undefined;
 		this.#path.detach(this);
 		for (const replica of bound?.replicas.values() ?? []) replica.end(error);
