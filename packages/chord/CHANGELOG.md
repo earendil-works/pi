@@ -32,6 +32,7 @@
 
 ### Fixed
 
+- A page or terminal reconnecting to a restarted server before its surface built no longer reloads: it took the scripts object's set with no base (shown until the first build) for another base. It skips that set and applies the first set that follows, so a plugin that kept its old code loads in place (`test/node/web/styles.test.ts`' reconnect case failed most runs).
 - A reference of an older version its provider refuses a member waits unbound (`failed { waiting }`, `contract_mismatch`) also when its object is denied (it showed the denial), and reads nothing from an instance that refuses its version: during a restart whose old attempt refuses it, it shows `loading` and its reads throw `not_ready` until the successor serves it (it showed `live` with the old attempt's values); its named queries throw `not_ready` meanwhile. A failed activation also leaves such holders waiting unbound (they showed the failure).
 - The plugins component's first uses of a kind at once (`scripts(kind)`, `load`, a rollout) share one making of its current set: each facet is built once, not once per caller (a server resuming many workers built every worker facet once per worker). A making that failed is forgotten, so the next use tries again.
 - The plugins component's shared first making of a kind's set runs in the component's own context (aborted by `close`), each caller waiting in its own: one caller going away (a worker's start whose hold ended) no longer fails every other first use waiting for the same build, and a waiter leaves no abort listener behind.
