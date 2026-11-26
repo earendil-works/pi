@@ -632,7 +632,7 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "the people plugin's owner is not adopted (the bridge)",
 		file: "store.ts",
-		find: "if (owner !== null) await write((tx, touched) => people.adoptOwner(tx, touched, owner), ctx);",
+		find: "await write((tx, touched) => people.adoptOwner(tx, touched, owner), ctx);",
 		put: "",
 	},
 	{
