@@ -60,6 +60,14 @@ function setOf(base: string, scripts: readonly RegisteredScript[]): ScriptSet {
 	};
 }
 
+/** The set a server still building its surface shows (`surface-build.ts`): no base. */
+const UNBUILT: ScriptSet = { base: "", combined: "", plugins: [] };
+
+/** The set the test's server shows first: `scripts` under base B1, or the unbuilt one. */
+function shownSet(scripts: readonly RegisteredScript[] | "unbuilt"): ScriptSet {
+	return scripts === "unbuilt" ? UNBUILT : setOf("B1", scripts);
+}
+
 /** A timer of the client's environment the test fires itself: its pause and its callback. */
 type ManualTimer = { readonly ms: number; readonly fire: () => void };
 
@@ -77,8 +85,8 @@ async function setup(
 		readonly follow?: false;
 		/** The server never answers: the client's sockets never open. */
 		readonly offline?: true;
-		/** The set the server shows from the start (default: `initial`'s). */
-		readonly shown?: readonly RegisteredScript[];
+		/** The set the server shows from the start (default: `initial`'s); `unbuilt`: the one with no base. */
+		readonly shown?: readonly RegisteredScript[] | "unbuilt";
 		/** Holds the server's base answers until it settles (a slow network). */
 		readonly baseAnswers?: Promise<void>;
 		readonly limits?: chordNext.PartLimits;
@@ -91,7 +99,7 @@ async function setup(
 		onError: () => {},
 	});
 	await server.load(
-		[{ name: "chord.web", facet: scriptsFacet<TestPrincipal>("web", { set: setOf("B1", more.shown ?? initial) }) }],
+		[{ name: "chord.web", facet: scriptsFacet<TestPrincipal>("web", { set: shownSet(more.shown ?? initial) }) }],
 		context,
 	);
 	const fetched: string[] = [];
@@ -390,6 +398,45 @@ describe("outdated clients", () => {
 		gate.resolve();
 		await until(() => outdated.length === 1);
 		expect(outdated).toEqual(["outdated (waiting)"]);
+		await client.stop(context);
+		await server.close(context);
+	});
+});
+
+describe("a server still building its surface", () => {
+	// styles.test.ts' reconnect case failed when the page reconnected before the restarted server's build: the page took
+	// the set with no base for another base and reloaded, losing the state it had.
+	it("skips the set with no base it shows first, and applies the first set that follows", async () => {
+		const a1 = script("@test/a", "d1", "hello");
+		const a2 = script("@test/a", "d2", "hello again");
+		const { client, server, outdated } = await setup([a1], [a2], { shown: "unbuilt" });
+		const greeting = await client.host.get(Greeting, {}, context);
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		expect([greeting.text.value, outdated]).toEqual(["hello", []]);
+		await publishTo(server, "web", setOf("B1", [a2]), context);
+		await until(() => greeting.text.value === "hello again");
+		expect(outdated).toEqual([]);
+		await client.stop(context);
+		await server.close(context);
+	});
+
+	it("a reconnect finding the set with no base calls no outdated; a plugin that kept its old code loads with the first set", async () => {
+		const a1 = script("@test/a", "d1", "hello");
+		const a2 = script("@test/a", "d2", "hello again", 1);
+		const { client, server, outdated, errors, sockets } = await setup([a1], [a2]);
+		const greeting = await client.host.get(Greeting, {}, context);
+		await publishTo(server, "web", setOf("B1", [a2]), context);
+		await until(() => errors.some(({ kind }) => kind === "plugins"));
+		expect(greeting.text.value).toBe("hello");
+		// The server restarts: its scripts object shows the set with no base until its build publishes the first set.
+		await publishTo(server, "web", UNBUILT, context);
+		sockets[0]!.link.close();
+		await until(() => sockets.length === 2);
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		expect(outdated).toEqual([]);
+		await publishTo(server, "web", setOf("B1", [a2]), context);
+		await until(() => greeting.text.value === "hello again");
+		expect(outdated).toEqual([]);
 		await client.stop(context);
 		await server.close(context);
 	});

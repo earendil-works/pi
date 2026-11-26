@@ -479,6 +479,11 @@ Left by the first part itself:
 
 ### After slice 11
 
+- **A tagged "building" state for the scripts object** (review of f86677f79, Opus, 2026-11-26): before its surface
+  built, the scripts object shows `ScriptSet` with `base: ""`, which clients skip (`surfaces/client.ts`). A tagged
+  value (`{ kind: "building" } | { kind: "built", set }`) would say it in the type instead of a sentinel. With it, decide
+  what a client that reconnected during the build shows when the first push then fails: today it keeps its old code
+  silently until the next step's push sends the set.
 - **Small examples** (owner, 2026-10-30: the 7c examples are complete but complex): once HTTP, workers, web and TUI
   exist, a pass of small, easy-to-read examples, each showing one thing a plugin author or app does.
 
