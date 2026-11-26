@@ -1,8 +1,8 @@
 // What the things plugin's page parts share: every registered kind by name, a message of any plugin as text, how a
 // "from" reads, what a party opens, how a party, a kind and a thing are named, and what a failed call or a denial says.
 
-import { type MessageData, Translations } from "@earendil-works/p3/v1";
-import { type Target, useHold, useLive, useMessages, useRegistry, useWatch } from "@earendil-works/p3/v1/web";
+import type { MessageData } from "@earendil-works/p3/v1";
+import { type Target, useHold, useLive, useMessages, useWatch } from "@earendil-works/p3/v1/web";
 import { useMemo } from "react";
 import type { Party } from "./contract.ts";
 import { useMessageText } from "./contract.web.tsx";

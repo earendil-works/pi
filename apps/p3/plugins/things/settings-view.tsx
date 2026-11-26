@@ -15,7 +15,6 @@ import {
 	useHold,
 	useLive,
 	useMessages,
-	useRegistry,
 	useWatch,
 } from "@earendil-works/p3/v1/web";
 import { useState } from "react";
