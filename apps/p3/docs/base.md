@@ -205,8 +205,11 @@ the session's worker holds a reference to each thing available to its agent (`He
   no model.
 
 The things are applied before the harness resumes and before every submit: work starts only through the harness
-(`SessionHarness.submit`). A tick withheld or a thing let go of while a tool call runs: that call finishes; no task
-phase that starts after the worker applied the change sees the tool (Durable resolves tools per task phase). A
+(`SessionHarness.submit`). A tick withheld or a thing let go of while a tool call runs: a call that does not go through
+the held reference (the coding tools) finishes; a call under way through it (`canvas_draw`, `canvas_read`,
+`skills_read`) fails `unavailable`, since Chord seals the admitted object on the regrant, until ERNDL-1182 (a regrant
+lets calls under way finish). No task phase that starts after the worker applied the change sees the tool (Durable
+resolves tools per task phase). A
 session's location never changes while a tool call runs. An archived session's worker opens its transcript without
 scheduling any work. The session is reported `working` before Durable accepts an input, so a crash in between leaves
 it for the waker.
