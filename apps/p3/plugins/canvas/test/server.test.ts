@@ -19,7 +19,7 @@ import {
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
 import { eventually, within } from "../../../test/until.ts";
 import { ThingsStore } from "../../things/contract.server.ts";
-import type { Party, Source } from "../../things/contract.ts";
+import { OPEN, type Party, type Source } from "../../things/contract.ts";
 import thingsServer from "../../things/server.ts";
 import { Canvas, CanvasKind, type Motion, type Shape } from "../contract.ts";
 import { CanvasStore } from "../store.ts";
@@ -79,7 +79,7 @@ const canvasIn = (where: string, name = "") =>
 /** Gives `party` the ticks `ticks` on `thing` where it is linked, `where`. */
 const grant = (where: string, thing: string, party: Party, ticks: string[]) =>
 	things.setGrants(
-		{ source: BY, grants: [{ workspace: where, thing, party, gives: true, ticks, takenAway: [] }] },
+		{ source: BY, grants: ticks.map((tick) => ({ workspace: where, thing, party, tick, gives: true })) },
 		context,
 	);
 
@@ -156,19 +156,14 @@ describe("who may do what on a canvas", () => {
 		const s1 = await workspace("s1");
 		const bo = await person("Bo", s1);
 		const board = await canvasIn(s1);
-		// Everyone's Draw taken from Bo, Export given to him (one grant row: a grant with a take-away).
+		// Everyone's Draw withheld from Bo, Export given to him: two rows (item 112).
+		const party = { kind: "person", person: bo.id } as const;
 		await things.setGrants(
 			{
 				source: BY,
 				grants: [
-					{
-						workspace: s1,
-						thing: board,
-						party: { kind: "person", person: bo.id },
-						gives: true,
-						ticks: ["export"],
-						takenAway: ["draw"],
-					},
+					{ workspace: s1, thing: board, party, tick: "export", gives: true },
+					{ workspace: s1, thing: board, party, tick: "draw", gives: false },
 				],
 			},
 			context,
@@ -188,8 +183,10 @@ describe("who may do what on a canvas", () => {
 			await things.setGrants(
 				{
 					source: CANVAS_PLUGIN,
+					// The kind's Draw row removed, one of no tick (`OPEN`) instead.
 					grants: [
-						{ workspace: pi, thing: board, party: { kind: "everyone" }, gives: true, ticks: [], takenAway: [] },
+						{ workspace: pi, thing: board, party: { kind: "everyone" }, tick: "draw" },
+						{ workspace: pi, thing: board, party: { kind: "everyone" }, tick: OPEN, gives: true },
 					],
 				},
 				context,
@@ -222,8 +219,10 @@ describe("a canvas's shapes", () => {
 		await things.setGrants(
 			{
 				source: CANVAS_PLUGIN,
+				// The kind's Draw row removed, one of no tick (`OPEN`) instead.
 				grants: [
-					{ workspace: s2, thing: shared, party: { kind: "everyone" }, gives: true, ticks: [], takenAway: [] },
+					{ workspace: s2, thing: shared, party: { kind: "everyone" }, tick: "draw" },
+					{ workspace: s2, thing: shared, party: { kind: "everyone" }, tick: OPEN, gives: true },
 				],
 			},
 			context,
@@ -323,19 +322,12 @@ describe("a canvas's motion", () => {
 		const [board, other] = [await canvasIn(s1), await canvasIn(s1)];
 		await things.link({ workspace: pi, thing: board, by: BY }, context);
 		await things.putParty({ workspace: pi, party: { kind: "person", person: ann.id }, source: BY }, context);
-		// Ben keeps a viewer: a take-away naming him removes everyone's Draw from him (item 106).
+		// Ben keeps a viewer: Draw withheld from him removes everyone's Draw from him (item 106).
 		await things.setGrants(
 			{
 				source: BY,
 				grants: [
-					{
-						workspace: s1,
-						thing: board,
-						party: { kind: "person", person: ben.id },
-						gives: false,
-						ticks: [],
-						takenAway: ["draw"],
-					},
+					{ workspace: s1, thing: board, party: { kind: "person", person: ben.id }, tick: "draw", gives: false },
 				],
 			},
 			context,

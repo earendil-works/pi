@@ -17,7 +17,7 @@ import {
 	Server,
 	type TableItem,
 } from "@earendil-works/p3/v1";
-import { THING_PARAMS, ThingAdmission } from "./contract.ts";
+import { RESERVED, THING_PARAMS, ThingAdmission } from "./contract.ts";
 
 /** Whom a tick can be given: the agents (the agents party, one session's agent), people (everyone, groups, persons), or both. */
 export type TickFor = "agents" | "people" | "all";
@@ -41,7 +41,10 @@ export type Workspaces = "one" | "many";
 /** How several things of a kind reaching one workspace combine (decision 75): all apply, or only the nearest. */
 export type Stacking = "all" | "nearest";
 
-/** What a new link of a thing of a kind starts with: the ticks of everyone here and of the agents. */
+/**
+ * What a new link of a thing of a kind starts with: the ticks of everyone here and of the agents; an empty list lets
+ * the party open the thing with no ticks (`OPEN`, item 113).
+ */
 export type DefaultGrants<T extends string = string> = {
 	readonly everyone?: readonly T[];
 	readonly agents?: readonly T[];
@@ -147,7 +150,9 @@ export function defineThing<
 		readonly methods?: M;
 		readonly events?: E;
 		readonly ticks: T & {
-			readonly [K in keyof T]: TickDeclaration<(keyof (S & M & E) & string) | FlagTicks<T>>;
+			readonly [K in keyof T]: K extends `${typeof RESERVED}${string}`
+				? never
+				: TickDeclaration<(keyof (S & M & E) & string) | FlagTicks<T>>;
 		};
 		readonly defaultGrants?: DefaultGrants<keyof T & string>;
 		readonly makers?: Makers;
@@ -205,9 +210,9 @@ export function defineThing<
 }
 
 /**
- * Declaration policy the types state but JavaScript callers can skip (decisions 95, 97, 93): a tick gives only the
- * kind's members and its flag ticks; a flag tick is named unlike every member; a default grant names ticks for its
- * party (`everyone`: people, `agents`: agents).
+ * Declaration policy the types state but JavaScript callers can skip (decisions 95, 97, 93, item 113): a tick gives
+ * only the kind's members and its flag ticks; a flag tick is named unlike every member; no tick name is reserved; a
+ * default grant names ticks for its party (`everyone`: people, `agents`: agents).
  */
 function checkTicks(
 	name: string,
@@ -229,6 +234,10 @@ function checkTicks(
 	}
 	for (const flag of flags) {
 		if (members.has(flag)) throw new Error(`${name}.ticks.${flag}: a flag tick is named like a member`);
+	}
+	for (const tick of Object.keys(ticks)) {
+		if (tick.startsWith(RESERVED))
+			throw new Error(`${name}.ticks.${tick}: names starting with ${RESERVED} are reserved`);
 	}
 	const audiences = [
 		["everyone", defaultGrants?.everyone, "people"],

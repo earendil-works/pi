@@ -13,6 +13,7 @@ import {
 	BACKGROUND_CONTEXT as context,
 	createHost,
 	defineFacet,
+	method,
 	openStore,
 	type P3Principal,
 	type Reference,
@@ -22,7 +23,7 @@ import {
 } from "@earendil-works/p3/v1";
 import { eventually } from "../../../test/until.ts";
 import { Gives, type ThingHook, ThingsStore } from "../contract.server.ts";
-import type { Source } from "../contract.ts";
+import { OPEN, type Source } from "../contract.ts";
 import { defineThing } from "../kind.ts";
 import { serveThing } from "../serve.ts";
 import { BOARD, BOARD_PLUGIN, Board, FAIL, HOOKS } from "./kinds.ts";
@@ -44,7 +45,7 @@ beforeEach(async () => {
 
 afterEach(() => w.close(context));
 
-/** The grants on disk of `thing` (in `workspace`, if given): party, source and ticks parsed. */
+/** The grant rows on disk of `thing` (in `workspace`, if given): party and source parsed. */
 function grantsOf(thing: string, workspace?: string) {
 	return w
 		.rows("grants")
@@ -53,7 +54,8 @@ function grantsOf(thing: string, workspace?: string) {
 			workspace: String(row.workspace),
 			party: JSON.parse(String(row.party)) as { kind: string },
 			source: JSON.parse(String(row.source)) as Source,
-			ticks: JSON.parse(String(row.ticks)) as string[],
+			tick: String(row.tick),
+			gives: row.gives === 1,
 			ticksVersion: Number(row.ticksVersion),
 		}));
 }
@@ -94,13 +96,18 @@ describe("making and deleting a thing", () => {
 			{ workspace: pi, thing, of: Board.name },
 		]);
 		const grants = grantsOf(thing, pi);
-		const summary = grants.map(({ party, source, ticks }) => [party.kind, source.kind, ticks]).sort();
+		// One row per tick (item 112).
+		const summary = grants.map(({ party, source, tick }) => `${party.kind} ${source.kind} ${tick}`).sort();
 		assert.deepEqual(summary, [
-			["agents", "plugin", ["read"]],
-			["everyone", "plugin", ["read"]],
-			["person", "person", ["read", "write", "draw", "moderate", "look"]],
+			"agents plugin read",
+			"everyone plugin read",
+			"person person draw",
+			"person person look",
+			"person person moderate",
+			"person person read",
+			"person person write",
 		]);
-		assert.ok(grants.every(({ ticksVersion }) => ticksVersion === 1));
+		assert.ok(grants.every(({ ticksVersion, gives }) => ticksVersion === 1 && gives));
 		assert.deepEqual(grants.find(({ party }) => party.kind === "everyone")?.source, {
 			kind: "plugin",
 			plugin: BOARD_PLUGIN,
@@ -174,9 +181,9 @@ describe("a refused write", () => {
 				{
 					source: BY,
 					grants: [
-						{ workspace: pi, thing, party, gives: true, ticks: ["read"], takenAway: [] },
-						{ workspace: pi, thing, party: { kind: "everyone" }, gives: false, ticks: [], takenAway: [] },
-						{ workspace: pi, thing, party, gives: true, ticks: ["fly"], takenAway: [] },
+						{ workspace: pi, thing, party, tick: "read", gives: true },
+						{ workspace: pi, thing, party: { kind: "everyone" }, tick: "read" },
+						{ workspace: pi, thing, party, tick: "fly", gives: true },
 					],
 				},
 				context,
@@ -184,6 +191,58 @@ describe("a refused write", () => {
 			/has no tick fly/,
 		);
 		assert.deepEqual(grantsOf(thing), before);
+	});
+});
+
+describe("grant rows (item 112)", () => {
+	it("a row per tick: given only where linked, withheld anywhere, removed with `gives` left out; reserved ticks but `OPEN` refused", async () => {
+		const team = await store.createWorkspace({ kind: "things.workspace", name: "Team", parent: pi, by: BY }, context);
+		const thing = await store.create({ kind: Board.name, name: "x", workspace: pi, by: BY }, context);
+		const party = { kind: "group", group: "g" } as const;
+		const write = (workspace: string, tick: string, gives?: boolean) =>
+			store.setGrants(
+				{ source: BY, grants: [{ workspace, thing, party, tick, ...(gives === undefined ? {} : { gives }) }] },
+				context,
+			);
+		await write(pi, "draw", true);
+		await write(pi, OPEN, true);
+		await write(team, "draw", false);
+		await assert.rejects(write(team, "draw", true), /not linked in/);
+		await assert.rejects(write(pi, "@make:*", true), /has no tick @make:\*/);
+		const mine = () =>
+			grantsOf(thing)
+				.filter(({ party: { kind } }) => kind === "group")
+				.map(({ workspace, tick, gives }) => `${workspace === pi ? "pi" : "team"} ${tick} ${gives}`)
+				.sort();
+		assert.deepEqual(mine(), ["pi @open true", "pi draw true", "team draw false"]);
+		await write(pi, "draw");
+		await write(team, "draw");
+		assert.deepEqual(mine(), ["pi @open true"]);
+	});
+
+	it("a kind's empty default grant lets its party in with no tick: one `OPEN` row", async (t) => {
+		const label = { namespace: "test", key: "use", params: [] };
+		const Quiet = defineThing("test.quiet", {
+			version: 1,
+			methods: { use: method() },
+			ticks: { use: { label, gives: ["use"] } },
+			defaultGrants: { everyone: [] },
+		});
+		const at = await world(context, [
+			{
+				name: "quiet",
+				facet: defineFacet((host) => serveThing(host, Quiet, { implement: () => ({ use: async () => null }) })),
+			},
+		]);
+		t.after(() => at.close(context));
+		const things = await at.host.get(ThingsStore, {}, context);
+		const root = (await things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
+		const thing = await things.create({ kind: Quiet.name, name: "q", workspace: root, by: BY }, context);
+		assert.deepEqual(
+			at.rows("grants").map(({ partyKey, tick }) => `${partyKey} ${tick}`),
+			[`everyone ${OPEN}`],
+		);
+		assert.equal(thing.length > 0, true);
 	});
 });
 
@@ -253,9 +312,8 @@ describe("people", () => {
 						workspace: pi,
 						thing,
 						party: { kind: "group", group: guests },
+						tick: "read",
 						gives: true,
-						ticks: ["read"],
-						takenAway: [],
 					},
 				],
 			},
@@ -593,7 +651,7 @@ describe("round 1's reproductions (Astra, Sol)", () => {
 		const grants = [
 			{ thing: a, workspace: root },
 			{ thing: b, workspace: leaf },
-		].map((at) => ({ ...at, party, ticks: ["read", "write"], gives: true, takenAway: [] }));
+		].flatMap((at) => ["read", "write"].map((tick) => ({ ...at, party, tick, gives: true })));
 		const update = s.setGrants({ source: BY, grants }, context);
 		await new Promise((resolve) => setTimeout(resolve, 20));
 		resume.resolve();

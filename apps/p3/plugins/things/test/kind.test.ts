@@ -48,7 +48,7 @@ describe("a kind", () => {
 		});
 	});
 
-	it("refuses a tick giving what the kind lacks, a flag tick named like a member, a default grant for the wrong party", () => {
+	it("refuses a tick giving what the kind lacks, a flag tick named like a member, a reserved name, a default grant for the wrong party", () => {
 		const declare = (declaration: object) =>
 			(defineThing as (name: string, declaration: object) => unknown)("test.bad", {
 				version: 1,
@@ -60,6 +60,10 @@ describe("a kind", () => {
 			/"peek" is no member or flag tick/,
 		);
 		assert.throws(() => declare({ ticks: { look: { label: label("look") } } }), /a flag tick is named like a member/);
+		assert.throws(
+			() => declare({ ticks: { "@open": { label: label("open") } } }),
+			/names starting with @ are reserved/,
+		);
 		// A tick gives members and flag ticks only, never a tick that gives of its own (decision 97).
 		assert.throws(
 			() =>
@@ -117,6 +121,13 @@ describe("a kind", () => {
 				ticks: { see: { label: label("see"), gives: ["look"] } },
 				// @ts-expect-error: "fly" is no tick of the kind.
 				defaultGrants: { everyone: ["fly"] },
+			}),
+		);
+		typed(() =>
+			defineThing("test.typed", {
+				version: 1,
+				// @ts-expect-error: tick names starting with `@` are reserved (item 113).
+				ticks: { "@mine": { label: label("mine") } },
 			}),
 		);
 		const grantable: readonly ("change" | "export" | "secret")[] = Kind.all;

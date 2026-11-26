@@ -28,9 +28,8 @@ export type Everything = {
 		thing: string;
 		party: string;
 		agents: boolean;
+		tick: string;
 		gives: boolean;
-		ticks: string[];
-		takenAway: string[];
 	}[];
 	readonly groups: { id: string; outside: boolean }[];
 	readonly memberships: { group: string; person: string }[];
@@ -86,9 +85,8 @@ export function readEverything(path: string): Everything {
 				thing: String(r.thing),
 				party: keyOf(party),
 				agents: party.kind === "agents" || party.kind === "agent",
+				tick: String(r.tick),
 				gives: r.gives === 1,
-				ticks: JSON.parse(String(r.ticks)) as string[],
-				takenAway: JSON.parse(String(r.takenAway)) as string[],
 			};
 		}),
 		groups: all("groups").map((r) => ({ id: String(r.group), outside: r.outside === 1 })),
@@ -128,6 +126,9 @@ export function answerFrom(
 		const forPeople = [...(kinds.get(state.kind) ?? [])].filter(([, forWhom]) => forWhom !== "agents");
 		return { ticks: forPeople.map(([tick]) => tick).sort() };
 	}
+	// A tick withheld from the caller's person applies whatever route they count by (item 106); `@open`: denied.
+	const taken = caller.kind === "person" ? (state.taken.get(`person/${caller.person}`) ?? []) : [];
+	if (taken.includes("@open")) return undefined;
 	const parties = counted(all, caller, state);
 	let ticks: string[] | undefined;
 	for (const party of parties) {
@@ -135,12 +136,13 @@ export function answerFrom(
 		if (own !== undefined) ticks = [...(ticks ?? []), ...own.filter((tick) => !(ticks ?? []).includes(tick))];
 	}
 	if (ticks === undefined) return undefined;
-	// A take-away naming the caller's person applies whatever route they count by (item 106).
-	const taken = caller.kind === "person" ? (state.taken.get(`person/${caller.person}`) ?? []) : [];
 	return { ticks: ticks.filter((tick) => !taken.includes(tick)).sort() };
 }
 
-/** What one thing is at `workspace`: its kind if available, ticks per party, take-aways from persons; who is present and hidden. */
+/**
+ * What one thing is at `workspace`: its kind if available, the parties let in with their ticks, what is withheld
+ * from persons; who is present and hidden.
+ */
 type State = {
 	kind: string | undefined;
 	ticks: Map<string, string[]>;
@@ -168,25 +170,29 @@ function walk(all: Everything, kinds: KindTicks, workspace: string, thing: strin
 			state.ticks = new Map();
 			state.taken = new Map();
 			for (const grant of grantsHere.filter((g) => g.gives)) {
-				const allowed = grant.ticks.filter((tick) => {
-					const forWhom = kinds.get(link.of)?.get(tick);
-					return forWhom === "all" || forWhom === (grant.agents ? "agents" : "people");
-				});
-				state.ticks.set(grant.party, [...new Set([...(state.ticks.get(grant.party) ?? []), ...allowed])]);
+				const forWhom = kinds.get(link.of)?.get(grant.tick);
+				const counts = forWhom === "all" || forWhom === (grant.agents ? "agents" : "people");
+				if (grant.tick !== "@open" && !counts) continue;
+				const had = state.ticks.get(grant.party) ?? [];
+				state.ticks.set(
+					grant.party,
+					grant.tick === "@open" || had.includes(grant.tick) ? had : [...had, grant.tick],
+				);
 			}
 		} else if (state.kind !== undefined && !(switchFor(`thing/${thing}`) ?? here.showsThings)) {
 			state.kind = undefined;
 		}
 		if (state.kind !== undefined) {
-			for (const grant of grantsHere) {
+			for (const grant of grantsHere.filter((g) => !g.gives)) {
 				const has = state.ticks.get(grant.party);
-				if (has)
+				if (has && grant.tick === "@open") state.ticks.delete(grant.party);
+				else if (has)
 					state.ticks.set(
 						grant.party,
-						has.filter((tick) => !grant.takenAway.includes(tick)),
+						has.filter((tick) => tick !== grant.tick),
 					);
-				if (grant.party.startsWith("person/") && grant.takenAway.length > 0) {
-					state.taken.set(grant.party, [...(state.taken.get(grant.party) ?? []), ...grant.takenAway]);
+				if (grant.party.startsWith("person/")) {
+					state.taken.set(grant.party, [...(state.taken.get(grant.party) ?? []), grant.tick]);
 				}
 			}
 		}

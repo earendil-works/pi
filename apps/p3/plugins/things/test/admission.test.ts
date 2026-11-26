@@ -43,9 +43,9 @@ async function person(name: string): Promise<Extract<P3Principal, { kind: "perso
 /** Puts `party` into `workspace`. */
 const put = (workspace: string, party: Party) => store.putParty({ workspace, party, source: BY }, context);
 
-/** Writes one giving grant (source: the test). */
+/** Gives `party` `ticks` on `thing` in `workspace`, one row each (source: the test). */
 const grant = (workspace: string, thing: string, party: Party, ticks: string[], source: Source = BY) =>
-	store.setGrants({ source, grants: [{ workspace, thing, party, gives: true, ticks, takenAway: [] }] }, context);
+	store.setGrants({ source, grants: ticks.map((tick) => ({ workspace, thing, party, tick, gives: true })) }, context);
 
 /** A board made in `workspace` by a plugin: the kind's default grants only (everyone and the agents: read). */
 const board = (workspace: string, name = "b") => store.create({ kind: Board.name, name, workspace, by: BY }, context);
@@ -246,7 +246,7 @@ describe("the kinds registry", () => {
 		assert.deepEqual(gives.answers.value[thing], { ticks: ["paint", "read"] });
 		// A grant written now records ticks version 2.
 		await grant(pi, thing, { kind: "person", person: ada.id }, ["paint"]);
-		const mine = w.rows("grants").find(({ party }) => String(party).includes(ada.id));
+		const mine = w.rows("grants").find(({ party, tick }) => String(party).includes(ada.id) && tick === "paint");
 		assert.equal(mine?.ticksVersion, 2);
 		gives.release();
 	});
@@ -289,8 +289,10 @@ describe("the kinds registry", () => {
 		const gives = await w.host.get(Gives, { workspace: pi, caller: `person:${ada.id}` }, context);
 		await w.reload(BOARD_PLUGIN, context, facetOf(next(2, rename)));
 		await until(gives.answers, (answers) => answers[thing]?.ticks.includes("paint") === true, context);
-		// Rewritten at ticks version 2.
-		await grant(pi, thing, { kind: "person", person: ada.id }, ["paint"]);
+		// Rewritten at ticks version 2: her row of `draw` removed, one of `paint` written.
+		const party = { kind: "person", person: ada.id } as const;
+		await store.setGrants({ source: BY, grants: [{ workspace: pi, thing, party, tick: "draw" }] }, context);
+		await grant(pi, thing, party, ["paint"]);
 		const reported = t.mock.method(console, "error", () => {});
 		await w.reload(BOARD_PLUGIN, context, BOARD.facet);
 		await until(gives.answers, (answers) => answers[thing]?.ticks.join() === "read", within("refused", context));
@@ -309,7 +311,8 @@ describe("the kinds registry", () => {
 			context,
 			defineFacet(() => {}),
 		);
-		await until(gives.answers, (answers) => answers[thing]?.ticks.length === 0, within("the removal", context));
+		// Its rows' ticks are no kind's ticks now: they let nobody in.
+		await until(gives.answers, (answers) => answers[thing] === undefined, within("the removal", context));
 		await w.reload(
 			BOARD_PLUGIN,
 			context,
@@ -351,7 +354,8 @@ describe("reloads while things are held", () => {
 				{
 					source: KIND_PLUGIN,
 					grants: [
-						{ workspace: pi, thing, party: { kind: "everyone" }, gives: true, ticks: ["write"], takenAway: [] },
+						{ workspace: pi, thing, party: { kind: "everyone" }, tick: "read" },
+						{ workspace: pi, thing, party: { kind: "everyone" }, tick: "write", gives: true },
 					],
 				},
 				context,

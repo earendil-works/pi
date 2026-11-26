@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT as context, type Reference } from "@earendil-works/p3/v1";
 import { Gives, ThingsStore } from "../contract.server.ts";
-import type { Party, Source } from "../contract.ts";
+import { OPEN, type Party, type Source } from "../contract.ts";
 import { accessHere, answerOf, type GrantEntry, personCounts, type WorkspaceEntries } from "../rules.ts";
 import { BOARD_PLUGIN, Board } from "./kinds.ts";
 import { type World, world } from "./world.ts";
@@ -45,20 +45,21 @@ let c: Cast;
 /** A person party. */
 const person = (id: string): Party => ({ kind: "person", person: id });
 
-/** Writes one grant of `source`. */
+/** Gives `party` `ticks` (none: `OPEN`) on `thing` in `workspace`, one row each, as `source`. */
 function grant(workspace: string, thing: string, party: Party, ticks: string[], source: Source = MARIO) {
-	return store.setGrants(
-		{ source, grants: [{ workspace, thing, party, gives: true, ticks, takenAway: [] }] },
-		context,
-	);
+	const grants = (ticks.length === 0 ? [OPEN] : ticks).map((tick) => ({ workspace, thing, party, tick, gives: true }));
+	return store.setGrants({ source, grants }, context);
 }
 
-/** Writes one take-away of `source`. */
-function takeAway(workspace: string, thing: string, party: Party, ticks: string[], source: Source = MARIO) {
-	return store.setGrants(
-		{ source, grants: [{ workspace, thing, party, gives: false, ticks: [], takenAway: ticks }] },
-		context,
-	);
+/** Withholds `ticks` from `party` on `thing` in `workspace`, as `source`. */
+function withhold(workspace: string, thing: string, party: Party, ticks: string[], source: Source = MARIO) {
+	const grants = ticks.map((tick) => ({ workspace, thing, party, tick, gives: false }));
+	return store.setGrants({ source, grants }, context);
+}
+
+/** Removes `source`'s rows of `ticks` for `party` on `thing` in `workspace`. */
+function reset(workspace: string, thing: string, party: Party, ticks: string[], source: Source = MARIO) {
+	return store.setGrants({ source, grants: ticks.map((tick) => ({ workspace, thing, party, tick })) }, context);
 }
 
 /** What `caller` (`person:<id>` or `worker:<session>`) gets for `thing` in `workspace`: its ticks, or none. */
@@ -77,6 +78,7 @@ async function board(workspace: string, name: string, ticksOf: { everyone: strin
 		{ kind: Board.name, name, workspace, by: { kind: "plugin", plugin: "test" } },
 		context,
 	);
+	for (const party of [everyone, agents]) await reset(workspace, thing, party, ["read"], KIND_PLUGIN);
 	await grant(workspace, thing, everyone, ticksOf.everyone, KIND_PLUGIN);
 	await grant(workspace, thing, agents, ticksOf.agents, KIND_PLUGIN);
 	return thing;
@@ -121,7 +123,7 @@ beforeEach(async () => {
 	const plan = await board(club, "Plan", { everyone: [], agents: [] });
 	await grant(club, plan, { kind: "group", group: coaches }, ["write", "draw"]);
 	await grant(club, plan, { kind: "group", group: players }, []);
-	await takeAway(fix, sketch, agents, ["draw"]);
+	await withhold(fix, sketch, agents, ["draw"]);
 	await store.setSwitch({ workspace: fix, item: { kind: "thing", thing: tools }, shown: false }, context);
 	c = { pi, team, fix, club, mario, ada, jo, kim, lu, coaches, players, tools, sketch, plan };
 });
@@ -133,7 +135,8 @@ describe("what the parties get", () => {
 		assert.deepEqual(await ticks(c.fix, c.sketch, `person:${c.ada}`), ["draw"]);
 		await grant(c.team, c.sketch, person(c.ada), ["moderate"]);
 		assert.deepEqual(await ticks(c.fix, c.sketch, `person:${c.ada}`), ["draw", "moderate"]);
-		// A grant of hers whose ticks all count for nothing takes nothing of everyone's (Opus should 6).
+		// Her row of Moderate removed, one of no tick (`OPEN`) instead: it takes nothing of everyone's (Opus should 6).
+		await reset(c.team, c.sketch, person(c.ada), ["moderate"]);
 		await grant(c.team, c.sketch, person(c.ada), []);
 		assert.deepEqual(await ticks(c.fix, c.sketch, `person:${c.ada}`), ["draw"]);
 	});
@@ -153,13 +156,7 @@ describe("what the parties get", () => {
 		// Everyone here's empty grant also lets in: a person put in alone sees the plan.
 		await store.putParty({ workspace: c.club, party: person(c.ada), source: MARIO }, context);
 		assert.deepEqual(await ticks(c.club, c.plan, `person:${c.ada}`), []);
-		await store.setGrants(
-			{
-				source: KIND_PLUGIN,
-				grants: [{ workspace: c.club, thing: c.plan, party: everyone, gives: false, ticks: [], takenAway: [] }],
-			},
-			context,
-		);
+		await reset(c.club, c.plan, everyone, [OPEN], KIND_PLUGIN);
 		assert.equal(await ticks(c.club, c.plan, `person:${c.ada}`), undefined);
 	});
 
@@ -205,13 +202,26 @@ describe("below a link only less", () => {
 	});
 
 	it("a take-away naming a person removes the tick from them by every route (item 106), from nobody else", async () => {
-		await takeAway(c.fix, c.sketch, person(c.ada), ["draw"]);
+		await withhold(c.fix, c.sketch, person(c.ada), ["draw"]);
 		assert.deepEqual(await ticks(c.fix, c.sketch, `person:${c.ada}`), []);
 		assert.deepEqual(await ticks(c.team, c.sketch, `person:${c.ada}`), ["draw"]);
 		// Kim counts only through her group in Club: a take-away naming her applies there too; Jo keeps Write.
-		await takeAway(c.club, c.plan, person(c.kim), ["write"]);
+		await withhold(c.club, c.plan, person(c.kim), ["write"]);
 		assert.deepEqual(await ticks(c.club, c.plan, `person:${c.kim}`), ["draw"]);
 		assert.deepEqual(await ticks(c.club, c.plan, `person:${c.jo}`), ["draw", "write"]);
+	});
+
+	it("`OPEN` withheld from a person keeps them out by every route; from a group, only that group's way in (113)", async () => {
+		// The Plan in Club: coaches Write and Draw, players and everyone let in with no tick.
+		await withhold(c.club, c.plan, person(c.kim), [OPEN]);
+		assert.equal(await ticks(c.club, c.plan, `person:${c.kim}`), undefined);
+		assert.deepEqual(await ticks(c.club, c.plan, `person:${c.jo}`), ["draw", "write"]);
+		await withhold(c.club, c.plan, { kind: "group", group: c.coaches }, [OPEN]);
+		// Jo is still let in by the players and everyone, with no tick.
+		assert.deepEqual(await ticks(c.club, c.plan, `person:${c.jo}`), []);
+		// Reset, Kim is back, through everyone only.
+		await reset(c.club, c.plan, person(c.kim), [OPEN]);
+		assert.deepEqual(await ticks(c.club, c.plan, `person:${c.kim}`), []);
 	});
 
 	it("unlinking a thing where it is not linked changes nothing: the take-aways written there stay", async () => {
@@ -357,9 +367,8 @@ describe("the rules alone", () => {
 		thing: "sketch",
 		party: "everyone",
 		audience: "people",
+		tick: OPEN,
 		gives: true,
-		ticks: [],
-		takenAway: [],
 		...own,
 	});
 
@@ -369,12 +378,33 @@ describe("the rules alone", () => {
 			entries({
 				links: new Map([["sketch", "k"]]),
 				members: new Set(["person/ada"]),
-				grants: [grantOf({ ticks: ["read"] })],
+				grants: [grantOf({ tick: "read" })],
 			}),
 			lookup,
 		);
-		const below = accessHere(top, entries({ grants: [grantOf({ ticks: ["draw"] })] }), lookup);
+		const below = accessHere(top, entries({ grants: [grantOf({ tick: "draw" })] }), lookup);
 		const ada = personCounts(below, "person/ada", { owner: false, groups: [] });
 		assert.deepEqual(answerOf(below.things.get("sketch")!, ada), { ticks: ["read"] });
+	});
+
+	it("a row of a tick that counts lets its party in, `OPEN` with no tick; one that counts for nothing lets nobody in (113)", () => {
+		const onlyRead = {
+			tickFor: (_kind: string, tick: string) => (tick === "read" ? "all" : undefined),
+			ticksOf: () => ["read"],
+		};
+		const answer = (...grants: GrantEntry[]) => {
+			const here = accessHere(
+				{ things: new Map(), present: new Set(), hidden: new Set() },
+				entries({ links: new Map([["sketch", "k"]]), members: new Set(["person/ada"]), grants }),
+				onlyRead,
+			);
+			return answerOf(here.things.get("sketch")!, personCounts(here, "person/ada", { owner: false, groups: [] }));
+		};
+		assert.equal(answer(grantOf({ party: "person/ada", tick: "fly" })), undefined);
+		assert.deepEqual(answer(grantOf({ party: "person/ada", tick: "read" })), { ticks: ["read"] });
+		assert.deepEqual(answer(grantOf({ party: "person/ada" })), { ticks: [] });
+		// Withheld: `OPEN` lets the party in no more; another tick withheld leaves it in.
+		assert.equal(answer(grantOf({}), grantOf({ gives: false })), undefined);
+		assert.deepEqual(answer(grantOf({ tick: "read" }), grantOf({ tick: "read", gives: false })), { ticks: [] });
 	});
 });
