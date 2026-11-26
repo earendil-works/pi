@@ -2,7 +2,7 @@
 // against the store's bindings and run on SQLite; what a plan refuses before any SQL; the uses it lists for the skip
 // test; and the query plans: a joined read is driven from its own table, a probe is a keyed lookup.
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
 import { bool, hostKind, int, num, opt, str } from "../../src/contracts/index.ts";
 import { Batch } from "../../src/state/internal.ts";
@@ -479,6 +479,37 @@ describe("a named query's shape, shared (hot-path pass)", () => {
 		expect(plan(ofApp("club"), { last: undefined }).uses).not.toBe(club.uses);
 		const alone = () => new ReadPlan(ofApp("club"), tables.get(Sessions)!, {}, "rows", store.reads);
 		expect(alone().uses).not.toBe(alone().uses);
+	});
+
+	it("normalizes a condition's equalities once per plan, not per registration of a read (hot-path review)", async () => {
+		// Astra, 0c796cefb: a list's pages register again as they split and merge; an `inArray` of 10,000 strings
+		// (past the bucket limit) was normalized again at each registration.
+		store = await memoryStore();
+		const Docs = defineTable("docs", { version: 1, columns: { id: str() }, key: ["id"] });
+		const ids = Array.from({ length: 10_000 }, (_, at) => String(at));
+		const handle = await tableIn(store, Docs);
+		const spec = {
+			query: query(Docs).where((row) => inArray(row.id, ids)),
+			table: handle.sql.table,
+			projection: {},
+			owner: handle,
+		};
+		const open = new OpenQuery({ store, batch: new Batch(() => {}, undefined) }, spec, "rows", () => {}, context);
+		const toWellFormed = String.prototype.toWellFormed;
+		let normalized = 0;
+		const spy = vi.spyOn(String.prototype, "toWellFormed").mockImplementation(function (this: string) {
+			normalized++;
+			return toWellFormed.call(this);
+		});
+		try {
+			for (let page = 0; page < 20; page++) {
+				open.readKnown({ after: [String(page)], through: [String(page + 1)], limit: 1 }, [], { adopt: () => {} });
+			}
+		} finally {
+			spy.mockRestore();
+			open.close();
+		}
+		expect(normalized).toBe(0);
 	});
 
 	it("leaves the equalities per read: two reads of one shape are filed under their own buckets", async () => {

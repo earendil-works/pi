@@ -68,6 +68,7 @@ const PARTNER = "p";
 const NO_COLUMNS: readonly never[] = [];
 const UNBOUNDED: Range = { limit: 0 };
 const NO_PARAMS: readonly SqliteValue[] = [];
+const NO_EQUALITIES: readonly (readonly [string, readonly SqliteValue[]])[] = [];
 
 /**
  * The last shape the plans of one named query shared (one slot per `OwnQuery`): two reads of the query whose
@@ -84,6 +85,14 @@ export type ShapeSlot = { last: WeakRef<PlanShape> | undefined };
  */
 export class ReadPlan {
 	readonly query: Query;
+	/**
+	 * The own columns its condition fixes in its top-level `and` terms, in their order, each with the values a row of
+	 * its result may have there: an `eq`'s value, an `inArray`'s list (the first term of a column counts). As stored:
+	 * a boolean as 0 or 1, an address as its key. The commit index files the read under them (slice 15 §3) at every
+	 * registration (a list's pages register again as they split and merge), so they are made once, with the plan: a
+	 * list of entries of exactly their number (a map of one costs 240 B, this 120 B).
+	 */
+	readonly equalities: readonly (readonly [string, readonly SqliteValue[]])[];
 	readonly #shape: PlanShape;
 	/** The condition's parameters, kept for the plan's life: a list of exactly them. */
 	readonly #params: readonly SqliteValue[];
@@ -112,6 +121,7 @@ export class ReadPlan {
 		const partnerReads = counted ? NO_COLUMNS : (projection.partnerReads ?? [...(joined?.set.byName.keys() ?? [])]);
 		const used = [...(condition === undefined ? [] : columnsOf(condition)), ...(counted ? [] : order.columns)];
 		const fixed = equalitiesOf(condition, sides);
+		this.equalities = fixed.size === 0 ? NO_EQUALITIES : entriesOf(fixed);
 		const what = `${query.table.name}: exists`;
 		const tested = condition === undefined ? [] : existsUses(condition, (name) => query.column(name), bindings, what);
 		const own = ownUse(
@@ -149,16 +159,6 @@ export class ReadPlan {
 
 	get uses(): readonly Use[] {
 		return this.#shape.uses;
-	}
-
-	/**
-	 * The own columns its condition fixes in its top-level `and` terms, each with the values a row of its result may
-	 * have there: an `eq`'s value, an `inArray`'s list (the first term of a column counts). As stored: a boolean as 0
-	 * or 1, an address as its key. The commit index files the read under them (slice 15 §3), once per registration:
-	 * computed when asked, not kept (240 B per read for one term).
-	 */
-	get equalities(): ReadonlyMap<string, readonly SqliteValue[]> {
-		return equalitiesOf(this.query.condition, this.#shape.sides);
 	}
 
 	/** The rows of `range` in the plan's order. */
@@ -545,11 +545,19 @@ function checkColumn(expected: Column | undefined, found: Column | undefined, se
 	throw invalid("args", `column "${name}" of column set "${set}" is not what this read was written for`);
 }
 
-/** A plan's `equalities`: the own `eq` and `inArray` terms of `condition`'s top-level `and`, in their order. */
+/** The own `eq` and `inArray` terms of `condition`'s top-level `and`, in their order. */
 function equalitiesOf(condition: WhereNode | undefined, sides: Sides): Map<string, readonly SqliteValue[]> {
 	const fixed = new Map<string, readonly SqliteValue[]>();
 	if (condition !== undefined) collectEqualities(condition, sides, fixed);
 	return fixed;
+}
+
+/** The entries of `map` in its order, in a list of exactly their number. */
+function entriesOf<K, V>(map: ReadonlyMap<K, V>): (readonly [K, V])[] {
+	const entries = new Array<readonly [K, V]>(map.size);
+	let at = 0;
+	for (const entry of map) entries[at++] = entry;
+	return entries;
 }
 
 /** The own `eq` and `inArray` terms of `node`'s top-level `and`, added to `into` (the first term of a column counts). */
