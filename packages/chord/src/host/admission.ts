@@ -11,7 +11,7 @@ import type { Context } from "../context/index.ts";
 import type { AllowedOf, Contract, NamedQuery, ParamsOf } from "../contracts/index.ts";
 import { NO_GRANTS } from "../contracts/internal.ts";
 import { ChordError, forbidden, type MessageData, type Principal } from "../data/index.ts";
-import { asChordError, checkParams, copyJson, isMessageData, sameJson, stackless } from "../data/internal.ts";
+import { asChordError, checkParams, isMessageData, sameJson, stackless } from "../data/internal.ts";
 import type { JsonValue } from "../json.ts";
 import { appended, NO_ITEMS } from "../lists.ts";
 import type { Registry, RegistryValue } from "../registries/index.ts";
@@ -152,7 +152,7 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 	#releases: readonly (() => void)[] = NO_ITEMS;
 	/** The watchable `admit` returned, as Chord follows it. */
 	#source: DeriveSource | undefined;
-	/** The last allow or denial it read, with what it keeps to compare the next read with (Chord's own, `Decided`). */
+	/** The last allow or denial it read, with what it was read from (`Decided`). */
 	#decided: Decided | undefined;
 	/** Whether a change of its source waits for the current batch's flush: one check per batch. */
 	#flushing = false;
@@ -423,6 +423,10 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 			const shown = waitingOn(`${label}: its admission`, asChordError(error, label));
 			return { kind: "parked", shown, firstPass: true, cause: shown.cause };
 		}
+		const decided = this.#decided;
+		// The object it was read from last (a derive that did not recompute, a constant): that decision, read no more
+		// (values handed to Chord are immutable by convention).
+		if (decided !== undefined && decided.kind !== "released" && decision === decided.decision) return decided.verdict;
 		const { kind, value, reason, message } = (decision ?? {}) as {
 			kind?: unknown;
 			value?: JsonValue;
@@ -434,9 +438,9 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 			// A route's value goes on as it is; an object's is read against its contract's grants.
 			if (grants === undefined) {
 				countWalk(context);
-				return this.#allowRoute(value);
+				return this.#allowRoute(decision, value);
 			}
-			return this.#allowObject(value, grants, label, context);
+			return this.#allowObject(decision, value, grants, label, context);
 		}
 		if (kind === "deny" && typeof reason === "string") {
 			if (message !== undefined && !isMessageData(message, context)) {
@@ -444,7 +448,7 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 				return { kind: "broken", error: asChordError(error, label) };
 			}
 			countWalk(context);
-			return this.#deny(reason, message);
+			return this.#deny(decision, reason, message);
 		}
 		const error = new Error("its admission's value is neither allow(value) nor deny(reason)");
 		return { kind: "broken", error: asChordError(error, label) };
@@ -452,11 +456,17 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 
 	/**
 	 * An object's allowed value: an object whose `granted` is none or a list of the contract's grants (else it breaks
-	 * and counts no walk), compared with what the last allow kept, Chord's own copy made when the decision changed: the
-	 * names against the kept ones (in any order, repeated or not), the other fields against the copy. An equal read is
-	 * that decision and allocates nothing; any other makes the new one.
+	 * and counts no walk), compared with the value the last allow was read from: the names against its ones (in any
+	 * order, repeated or not), the other fields field by field. An equal read is that decision, kept as read from this
+	 * value from now on, and allocates nothing; any other makes the new one.
 	 */
-	#allowObject(value: JsonValue, grants: readonly string[], label: string, context: Context): Verdict {
+	#allowObject(
+		decision: unknown,
+		value: JsonValue,
+		grants: readonly string[],
+		label: string,
+		context: Context,
+	): Verdict {
 		if (typeof value !== "object" || value === null || Array.isArray(value)) {
 			return brokenRead("its admission's value is an object (allow({ granted, ...data }))", label);
 		}
@@ -479,31 +489,36 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 		const kept = last === undefined ? NO_ITEMS : namesOf(last.verdict.granted);
 		// Checked above: grants.
 		const names = namesOfListed(listed as readonly string[] | undefined, kept);
-		if (last !== undefined && names === kept && sameJson(last.data, value, "granted")) return last.verdict;
+		if (last !== undefined && names === kept && sameJson(last.value, value, "granted"))
+			return last.equal(decision, value);
 		const { granted: _, ...data } = value;
 		const granted = names.length === 0 ? NO_GRANTS : grantedSet(grants, names);
 		const verdict: Allowed = { kind: "allow", value: { ...data, granted } as AdmittedValue, granted };
-		this.#decided = { kind: "allow", verdict, data: copyJson(data) };
+		this.#decided = new DecidedAllow(verdict, decision, value);
 		return verdict;
 	}
 
-	/** A route's allowed value, passed on as it is: compared with the last one's copy. */
-	#allowRoute(value: JsonValue): Allowed {
+	/** A route's allowed value, passed on as it is: compared with the value the last allow was read from. */
+	#allowRoute(decision: unknown, value: JsonValue): Allowed {
 		const last = this.#decided?.kind === "allow" ? this.#decided : undefined;
-		if (last !== undefined && sameJson(last.data, value)) return last.verdict;
+		if (last !== undefined && sameJson(last.value, value)) return last.equal(decision, value);
 		const verdict: Allowed = { kind: "allow", value, granted: NO_GRANTS };
-		this.#decided = { kind: "allow", verdict, data: copyJson(value) };
+		this.#decided = new DecidedAllow(verdict, decision, value);
 		return verdict;
 	}
 
 	/** A denial (its message checked, its walk counted): the last one when its reason and message are the same. */
-	#deny(reason: string, message: unknown): Denied {
+	#deny(decision: unknown, reason: string, message: unknown): Denied {
 		const last = this.#decided?.kind === "deny" ? this.#decided : undefined;
-		if (last !== undefined && last.reason === reason && sameMessage(last.message, message)) return last.verdict;
+		if (last !== undefined && last.reason === reason && sameMessage(last.message, message)) {
+			last.decision = decision;
+			last.message = message;
+			return last.verdict;
+		}
 		// Checked by the caller: a message as data.
 		const details = message === undefined ? undefined : { message: message as MessageData };
 		const verdict: Denied = { kind: "deny", error: forbidden(reason, details) };
-		this.#decided = { kind: "deny", verdict, reason, message: copyJson(message) };
+		this.#decided = { kind: "deny", verdict, decision, reason, message };
 		return verdict;
 	}
 
@@ -588,7 +603,7 @@ function sameList(a: readonly string[], b: readonly string[]): boolean {
 	return true;
 }
 
-/** Whether a denial's message is the kept one (Chord's copy): both none, or the same message as data. */
+/** Whether a denial's message is the last one's: both none, or the same message as data. */
 function sameMessage(kept: unknown, message: unknown): boolean {
 	if (kept === undefined || message === undefined) return kept === message;
 	return sameJson(kept, message);
@@ -600,14 +615,34 @@ function countWalk(context: Context): void {
 }
 
 /**
- * What a decision read last, all of it Chord's own, made when the decision changed (never the plugin's object, which
- * it may change in place or let go): its verdict and a copy of what the next read is compared with (an object's data
- * without `granted`, whose names are the verdict's set; a route's value; a denial's reason and message). Once
- * released, only the verdict.
+ * The last allow a decision read: its verdict and the decision object and value it was read from (the latest of
+ * equal ones: an earlier object is not kept). Values handed to Chord are immutable by convention: a later read is
+ * compared with this value.
  */
+class DecidedAllow {
+	readonly kind = "allow";
+	readonly verdict: Allowed;
+	decision: unknown;
+	value: JsonValue;
+
+	constructor(verdict: Allowed, decision: unknown, value: JsonValue) {
+		this.verdict = verdict;
+		this.decision = decision;
+		this.value = value;
+	}
+
+	/** An equal read of `decision` and `value`: this decision, kept as read from them. */
+	equal(decision: unknown, value: JsonValue): Allowed {
+		this.decision = decision;
+		this.value = value;
+		return this.verdict;
+	}
+}
+
+/** What a decision read last: an allow, a denial with what it was read from, or once released only the verdict. */
 type Decided =
-	| { readonly kind: "allow"; readonly verdict: Allowed; readonly data: unknown }
-	| { readonly kind: "deny"; readonly verdict: Denied; readonly reason: string; readonly message: unknown }
+	| DecidedAllow
+	| { readonly kind: "deny"; readonly verdict: Denied; decision: unknown; readonly reason: string; message: unknown }
 	| { readonly kind: "released"; readonly verdict: Allowed | Denied };
 
 /**

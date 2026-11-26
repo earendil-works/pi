@@ -12,6 +12,6 @@ export {
 export { openFailure, sameCause, waitingFor } from "./failure.ts";
 export { isMessageData } from "./message.ts";
 export { checkAddress, checkParams, identityKey } from "./params.ts";
-export { copyJson, sameJson } from "./plain-json.ts";
+export { sameJson } from "./plain-json.ts";
 export { canonicalJson, principalJson, principalKey, samePrincipal } from "./principal.ts";
 export { check, validatorFor } from "./validator.ts";

@@ -1,12 +1,11 @@
-// Tests of plain JSON kept and compared without text (`plain-json.ts`): equal exactly when canonical JSON's texts are
-// (random plain values and their remixes: other objects, keys in another order, -0 for 0), with a skipped key; copies
-// that are Chord's own (other objects, an own `__proto__` key kept, later changes of the original not seen); a
-// comparison of equal values allocates no text (cost guard).
+// Tests of plain JSON compared without text (`plain-json.ts`): equal exactly when canonical JSON's texts are (random
+// plain values and their remixes: other objects, keys in another order, -0 for 0), with a skipped key; a comparison of
+// equal values allocates no text (cost guard).
 
 import { GCProfiler, getHeapStatistics } from "node:v8";
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT } from "../../src/context/index.ts";
-import { canonicalJson, copyJson, sameJson } from "../../src/data/internal.ts";
+import { canonicalJson, sameJson } from "../../src/data/internal.ts";
 
 const text = (value: unknown) => canonicalJson(value as never, BACKGROUND_CONTEXT);
 
@@ -55,11 +54,11 @@ describe("sameJson", () => {
 			const a = random(next, 0);
 			const b = next() < 0.6 ? remix(a, next) : random(next, 0);
 			const same = text(a) === text(b);
-			expect([round, sameJson(copyJson(a), b)]).toEqual([round, same]);
+			expect([round, sameJson(a, b)]).toEqual([round, same]);
 			if (same) equal++;
 			if (object(a) && object(b)) {
 				const skipped = text(omit(a)) === text(omit(b));
-				expect([round, sameJson(copyJson(a), b, "granted")]).toEqual([round, skipped]);
+				expect([round, sameJson(a, b, "granted")]).toEqual([round, skipped]);
 			}
 		}
 		expect(equal).toBeGreaterThan(5_000);
@@ -76,7 +75,7 @@ describe("sameJson", () => {
 	});
 
 	it("makes no text for equal values of other objects (cost guard)", () => {
-		const a = copyJson({ mode: "write", level: 3, tags: ["x", "y"], nested: { on: true, at: [1, 2, 3] } });
+		const a = { mode: "write", level: 3, tags: ["x", "y"], nested: { on: true, at: [1, 2, 3] } };
 		const b = { nested: { at: [1, 2, 3], on: true }, tags: ["x", "y"], level: 3, mode: "write" };
 		for (let warm = 0; warm < 1_000; warm++) sameJson(a, b);
 		const profiler = new GCProfiler();
@@ -92,20 +91,5 @@ describe("sameJson", () => {
 		expect(equal).toBe(10_000);
 		// Measured about 50 B per comparison (V8's for-in over an object's keys), 7.5 KiB for two canonical texts.
 		expect(after - before + freed).toBeLessThan(10_000 * 500);
-	});
-});
-
-describe("copyJson", () => {
-	it("copies as Chord's own: other objects, an own __proto__ key kept, later changes not seen", () => {
-		const value = JSON.parse('{"__proto__":1,"list":[{"n":-0}],"o":{"x":"y"}}');
-		const copy = copyJson(value) as { list: { n: number }[]; o: object };
-		expect([copy === value, copy.list === value.list, copy.o === value.o]).toEqual([false, false, false]);
-		expect([Object.keys(copy), Object.getPrototypeOf(copy), sameJson(copy, value)]).toEqual([
-			["__proto__", "list", "o"],
-			Object.prototype,
-			true,
-		]);
-		value.list[0].n = 1;
-		expect([copy.list[0]!.n, sameJson(copy, value)]).toEqual([-0, false]);
 	});
 });
