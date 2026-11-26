@@ -13,7 +13,7 @@ import { eq } from "../../src/store/expression.ts";
 import { json } from "../../src/store/json-column.ts";
 import { LiveQuery } from "../../src/store/live-query.ts";
 import { query } from "../../src/store/query.ts";
-import type { Read } from "../../src/store/read.ts";
+import { Read } from "../../src/store/read.ts";
 import { ReadRefresh, Reads } from "../../src/store/reads.ts";
 import type { Step } from "../../src/store/step.ts";
 import type { ChordStore } from "../../src/store/store.ts";
@@ -339,6 +339,39 @@ describe("memory", () => {
 		await expectCollected(queries[from]!);
 		await host.close(context);
 		await store.close(context);
+	});
+
+	it("keeps none of the stored rows its runs fetched while it shows them", async () => {
+		// node:sqlite returns each row as a dictionary-mode object (256 B for two columns): the read keeps their keys,
+		// the value its decoded rows, and the comparison of the next run their values.
+		const fetched: WeakRef<object>[] = [];
+		const fetch = Read.prototype.fetch;
+		Read.prototype.fetch = async function (this: Read, ...args: Parameters<Read["fetch"]>) {
+			const run = await fetch.apply(this, args);
+			if (run.kind === "rows") for (const row of run.result.rows) fetched.push(new WeakRef(row));
+			return run;
+		};
+		try {
+			const store = await memoryStore();
+			const { board: reference, host } = await board(store);
+			for (const id of [1, 2, 3]) await reference.put({ id, text: `t${id}` }, context);
+			await reference.rename({ id: 2, text: "two" }, context);
+			expect(fetched.length).toBeGreaterThan(3);
+			await expectCollected(...fetched);
+			const shown = reference.items.value;
+			expect(shown).toEqual([
+				{ id: 3, text: "t3" },
+				{ id: 2, text: "two" },
+				{ id: 1, text: "t1" },
+			]);
+			// An unchanged row is still the same object in the next frame.
+			await reference.put({ id: 4, text: "t4" }, context);
+			expect(reference.items.value[1]).toBe(shown[0]);
+			await host.close(context);
+			await store.close(context);
+		} finally {
+			Read.prototype.fetch = fetch;
+		}
 	});
 });
 

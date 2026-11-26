@@ -6,7 +6,7 @@
 import type { Context } from "../context/index.ts";
 import type { SqliteValue } from "../sqlite/index.ts";
 import { chordMetrics } from "../telemetry.ts";
-import { identityOf, type Read, type ReadResult } from "./read.ts";
+import { identityOf, type KeptRows, type Read } from "./read.ts";
 import type { Use } from "./read-plan.ts";
 import type { Step } from "./step.ts";
 
@@ -39,8 +39,8 @@ const PROBES_PER_READ = 8;
  */
 export async function skips(read: Read, changes: readonly Change[], step: Step, context: Context): Promise<boolean> {
 	const latest = read.latest(step.executor);
-	if (latest === undefined || latest.kind === "failed") return false;
-	const result = latest.kind === "rows" ? latest.result : undefined;
+	if (latest === undefined) return false;
+	const result = latest.kind === "rows" ? latest : undefined;
 	const budget = { probes: PROBES_PER_READ };
 	for (const change of changes) {
 		for (const use of read.plan.uses) {
@@ -56,7 +56,7 @@ async function skipped(
 	read: Read,
 	use: Use,
 	change: Change,
-	result: ReadResult | undefined,
+	result: KeptRows | undefined,
 	step: Step,
 	context: Context,
 	budget: { probes: number },
@@ -88,7 +88,7 @@ async function probe(
 	read: Read,
 	columns: readonly string[],
 	values: readonly SqliteValue[],
-	result: ReadResult,
+	result: KeptRows,
 	step: Step,
 	context: Context,
 ): Promise<boolean> {

@@ -7,6 +7,7 @@
 import type { Context } from "../context/index.ts";
 import { invalid } from "../data/internal.ts";
 import type { JsonValue } from "../json.ts";
+import type { SqliteValue } from "../sqlite/index.ts";
 import { type FramedOwner, FramedSource } from "../state/internal.ts";
 import { OpenQuery, type OpenRead, type QuerySpec, type ReadSite } from "./open-query.ts";
 import type { Query } from "./query.ts";
@@ -147,11 +148,21 @@ export class LiveQuery extends FramedSource {
 	}
 }
 
-/** A row as a run decoded it, with the stored row it came from. */
-type Decoded = { readonly stored: StoredRead; readonly row: JsonValue };
+/**
+ * A row as a run decoded it, with the values of the stored row it came from in `columns`, that row's columns in its
+ * own order. Not the stored row itself: node:sqlite returns a dictionary-mode object per row (256 B for two columns),
+ * and a value keeps every row it shows.
+ */
+type Decoded = {
+	readonly columns: readonly string[];
+	readonly values: readonly SqliteValue[];
+	readonly row: JsonValue;
+};
 
 /** No rows decoded yet: the shared empty map. */
 const NO_ROWS: ReadonlyMap<unknown, Decoded> = new Map();
+
+const NO_COLUMNS: readonly string[] = [];
 
 /**
  * The decoded rows of a live source's last value, by key: a row whose stored columns are all the same in the next
@@ -161,6 +172,8 @@ const NO_ROWS: ReadonlyMap<unknown, Decoded> = new Map();
  */
 export class DecodedRows {
 	#byKey: ReadonlyMap<unknown, Decoded> = NO_ROWS;
+	/** The columns of the row decoded last: rows of one statement share them, so their entries share the list. */
+	#columns: readonly string[] = NO_COLUMNS;
 
 	/** The rows of `stored` as `target` decodes them, unchanged ones reused; a row the code cannot read throws. */
 	decode(stored: readonly StoredRead[], target: LiveTarget, context: Context): JsonValue[] {
@@ -169,11 +182,11 @@ export class DecodedRows {
 		// `map`: a list of exactly its rows (the value keeps it; one pushed to reserves room for 16 more).
 		const rows = stored.map((each) => {
 			const id = identity(key, each);
-			const before = this.#byKey.get(id);
-			const row =
-				before !== undefined && sameStored(before.stored, each) ? before.row : target.decode(each, context);
-			byKey.set(id, { stored: each, row });
-			return row;
+			let decoded = this.#byKey.get(id);
+			// Unchanged: the entry is kept as it is (its values are the new row's in its columns).
+			if (decoded === undefined || !sameStored(decoded, each)) decoded = this.#decoded(each, target, context);
+			byKey.set(id, decoded);
+			return decoded.row;
 		});
 		this.#byKey = byKey;
 		return rows;
@@ -183,10 +196,36 @@ export class DecodedRows {
 	reset(): void {
 		this.#byKey = NO_ROWS;
 	}
+
+	#decoded(stored: StoredRead, target: LiveTarget, context: Context): Decoded {
+		const row = target.decode(stored, context);
+		const columns = this.#columnsOf(stored);
+		return { columns, values: columns.map((column) => stored[column]!), row };
+	}
+
+	/** The columns of `stored` in its own order: the list of the row decoded last when it has the same. */
+	#columnsOf(stored: StoredRead): readonly string[] {
+		const last = this.#columns;
+		let at = 0;
+		for (const column in stored) {
+			if (last[at] !== column) {
+				this.#columns = Object.keys(stored);
+				return this.#columns;
+			}
+			at++;
+		}
+		if (at === last.length) return last;
+		this.#columns = Object.keys(stored);
+		return this.#columns;
+	}
 }
 
-/** Whether two stored rows of one statement have the same value in every column (SQLite values compare by `===`). */
-function sameStored(a: StoredRead, b: StoredRead): boolean {
-	for (const column in a) if (a[column] !== b[column]) return false;
+/**
+ * Whether `stored` has the decoded row's values in every column of the row it came from (SQLite values compare by
+ * `===`): what comparing the two stored rows column by column gave, without keeping the old one.
+ */
+function sameStored(decoded: Decoded, stored: StoredRead): boolean {
+	const { columns, values } = decoded;
+	for (let at = 0; at < columns.length; at++) if (stored[columns[at]!] !== values[at]) return false;
 	return true;
 }
