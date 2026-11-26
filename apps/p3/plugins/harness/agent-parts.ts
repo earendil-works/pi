@@ -138,7 +138,11 @@ export class AgentParts {
 		}
 	}
 
-	/** Installs one kind's extension; one Durable refuses (a tool name another kind has) is left out, reported. */
+	/**
+	 * Installs one kind's extension; one Durable refuses (two tools or sections of one name in it, a reserved or malformed
+	 * section key, a task name another extension has) is left out, reported. A tool name another kind has too is not
+	 * refused: the later kind's tool takes the earlier's place.
+	 */
 	#install(kind: string, extension: Extension): void {
 		try {
 			this.registry.install(extension);

@@ -122,7 +122,8 @@ export function thingHarnessPart<C extends Contract>(
  * new map whenever a list changes; a kind whose list did not change keeps the same array, so the harness gives only
  * kinds whose array is new (a reference granted anew makes its kind's array new). `undefined`: not ready yet (no
  * contribution, or the holding still waits for a wanted reference to be live or failed once); the harness keeps what
- * it gave meanwhile, and its open, resume and submit wait for a value. One contributor, the holding (slice 5).
+ * it gave meanwhile, its resume and submit wait for a value (bounded), and its open applies one only if there is one.
+ * One contributor, the holding (slice 5).
  */
 export const HeldThings: Registry<Held | undefined, Held | undefined> = defineRegistry<
 	Held | undefined,

@@ -46,7 +46,7 @@ import { subagentsPart } from "./subagents.ts";
 /** The harness of the session, once per worker: no members, it only contributes. */
 const SessionAgent = local("harness.agent", { version: 1, params: {}, members: {} });
 
-/** How long open, resume and submit wait for the holding to be ready before they go on without it. */
+/** How long resume and submit wait for the holding to be ready before they go on without it (open does not wait). */
 const READY_MS = 10_000;
 
 /** The owner name of Durable's tables and documents in the session's store. */
