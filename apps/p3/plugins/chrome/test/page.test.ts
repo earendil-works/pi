@@ -64,18 +64,6 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		const me = await until((await owner.get(Me, {}, context)).me, () => true, context);
 		if (me.kind !== "person") assert.fail(me.kind);
 		ownerId = me.id;
-		// Until slice 3's push A the owner is the people plugin's person, whom the things index does not know as the
-		// owner: the test puts them into Pi and gives them every tick of Pi itself, Make of every kind among them.
-		await t.host.root(async (ctx) => {
-			const store = await ctx.get(ThingsStore, {});
-			const pi = (await store.workspaces.children.page({ parent: "" }, 1, ctx)).items[0]!.workspace;
-			const party = { kind: "person", person: ownerId } as const;
-			const source = { kind: "person", person: ownerId } as const;
-			await store.putParty({ workspace: pi, party, source }, ctx);
-			const ticks = ["link", "hide", "configure", "managePeople", "manageAccess", "@make:*"];
-			const grants = ticks.map((tick) => ({ workspace: pi, thing: pi, party, tick, gives: true }));
-			await store.setGrants({ source, grants }, ctx);
-		}, context);
 		origin = `http://127.0.0.1:${t.port}`;
 		browser = await Browser.start();
 		await browser.signIn(origin, await t.cookie(context));
