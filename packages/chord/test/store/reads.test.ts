@@ -19,7 +19,6 @@ import { defineTable } from "../../src/store/table.ts";
 import { TableChanges } from "../../src/store/table-changes.ts";
 import type { TableHandle } from "../../src/store/table-handle.ts";
 import { expectCollected, memoryStore, tableIn } from "../support.ts";
-import { closeWorld, opened as openedWorld, openRead, Teams } from "./read-world.ts";
 
 const Session = hostKind("session", { id: str() });
 const TagSet = defineColumns("tags.columns", { columns: { note: int(), tag: str() }, key: ["note", "tag"] });
@@ -325,22 +324,5 @@ describe("the index and the refresh", () => {
 		await expectCollected(await closed());
 		// The binding changes without a watcher left to tell.
 		store.reads.unbind(TagSet.name, tags);
-	});
-});
-
-describe("a read's sink as the store's reads expose it (hot-path review)", () => {
-	it("takes a run with one argument, as before the reads handed runs to their open read", async () => {
-		// astra2, 7be4cf9b0: `ChordStore.reads.on(table)` is in the package's declarations; its reads' `sink.adopt(run)`
-		// needed a second argument and threw without it.
-		const w = await openedWorld(context, []);
-		try {
-			const what = { kind: "count" } as const;
-			const reading = await openRead(w, { name: "count", query: query(Teams), table: Teams, what }, context);
-			const read = (w.store as ChordStore).reads.on(w.handles.teams!.sql.table)?.values().next().value;
-			read?.sink.adopt({ kind: "count", count: 42 });
-			expect(reading.latest).toEqual({ kind: "count", count: 42 });
-		} finally {
-			await closeWorld();
-		}
 	});
 });

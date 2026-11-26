@@ -75,8 +75,7 @@ export type ReadKind = { readonly kind: "rows"; readonly range: Range } | { read
 export class Read {
 	readonly plan: ReadPlan;
 	readonly what: ReadKind;
-	/** Its open read, which takes its runs (`RunSink`); `sink` is the one-argument face of it. */
-	readonly #open: RunSink;
+	readonly sink: RunSink;
 	/** Which registration of its open read it is. */
 	readonly registration: number;
 	/** What it keeps of its last adopted run; `undefined` while loading or failed: such a read is never skipped. */
@@ -89,7 +88,7 @@ export class Read {
 	constructor(plan: ReadPlan, what: ReadKind, sink: RunSink, registration: number) {
 		this.plan = plan;
 		this.what = what;
-		this.#open = sink;
+		this.sink = sink;
 		this.registration = registration;
 	}
 
@@ -168,20 +167,12 @@ export class Read {
 		this.#watcher?.kept(this);
 	}
 
-	/**
-	 * Who takes its runs, as a sink of one argument: what its open read does with a run of this read. Made when asked
-	 * (an adapter of the store's reads; the store hands runs on directly), so no read keeps one.
-	 */
-	get sink(): ReadSink {
-		return { adopt: (run) => this.#open.adopt(run, this) };
-	}
-
 	/** Takes `run` as its state and hands it to the sink. */
 	adopt(run: ReadRun): void {
 		if (this.#tentative?.run === run) this.#tentative = undefined;
 		this.#adopted = keptOf(run);
 		this.#watcher?.kept(this);
-		this.#open.adopt(run, this);
+		this.sink.adopt(run, this);
 	}
 
 	/** The range its probe asks about: the read's own, ending at the row past its limit when there is one. */
