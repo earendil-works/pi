@@ -14,7 +14,7 @@ import type { Extension } from "@earendil-works/p3/v1/worker";
 import { within } from "../../../test/until.ts";
 import { type HeldThing, ThingHarnessParts } from "../../things/contract.worker.ts";
 import { type KindServer, kindServer, runTool, toolNames } from "../../things/test/kind-server.ts";
-import { type Checklist, ChecklistKind } from "../contract.ts";
+import { type Checklist, ChecklistKind } from "../kind.ts";
 import checklistServer from "../server.ts";
 
 /** The checklist plugin's root. */
@@ -81,9 +81,12 @@ describe("the checklist kind's harness part", () => {
 		await c.tick(s1, packing, AGENT_PARTY, "add", true);
 		await giving([packing], async (extension, ctx, [held]) => {
 			const added = await runTool(extension, "checklist_add", { checklist: packing, text: "tent" }, context);
-			const id = /^Added (.+)\.$/.exec(added)?.[1];
-			assert.ok(id !== undefined, added);
-			await runTool(extension, "checklist_tick", { checklist: packing, item: id, done: true }, context);
+			const { id } = JSON.parse(added) as { id: string };
+			assert.equal(typeof id, "string", added);
+			assert.equal(
+				await runTool(extension, "checklist_tick", { checklist: packing, item: id, done: true }, context),
+				"{}",
+			);
 			// The read is the agent's reference's: it shows the tick once it arrived there.
 			await until(held!.ref.items, (items) => items[0]?.done === true, within("the tick", ctx));
 			assert.deepEqual(JSON.parse(await runTool(extension, "checklist_read", { checklist: packing }, context)), [

@@ -1,7 +1,7 @@
-// The checklist kind (`checklist.checklist`): items with a done mark, and one checklist held in a workspace by a person
-// or an agent (`Checklist`, `ChecklistKind`'s contract). Anyone, people and agents, may make one where they may make
-// things; its items, keyed by the thing's id, are the same in every workspace it is linked in. Reading is for everyone
-// let in; the tick Add adds items, the tick Tick marks them done or not.
+// The checklist kind (`checklist.checklist`): checklists, items with a done mark. Anyone, people and agents, may make
+// one; it may be linked in any number of workspaces, its items, keyed by the thing's id, the same in each. Reading is
+// for everyone let in; the tick Add adds items, the tick Tick marks them done or not. A new link starts with both for
+// everyone there and Tick for the agents; a Read share's guests read. It has no settings.
 
 import { arr, bool, method, obj, type Static, str } from "@earendil-works/p3/v1";
 import { defineThing } from "../things/kind.ts";

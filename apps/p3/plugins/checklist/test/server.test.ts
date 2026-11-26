@@ -10,13 +10,13 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { BACKGROUND_CONTEXT as context, isChordError, type P3Principal, until } from "@earendil-works/p3/v1";
+import { BACKGROUND_CONTEXT as context, type P3Principal, until } from "@earendil-works/p3/v1";
 import { collected, eventually, within } from "../../../test/until.ts";
 import { ThingHooks } from "../../things/contract.server.ts";
 import { OPEN } from "../../things/contract.ts";
 import { ThingKinds } from "../../things/kind.ts";
-import { BY, type KindServer, kindServer } from "../../things/test/kind-server.ts";
-import { type Checklist, ChecklistKind } from "../contract.ts";
+import { BY, type KindServer, kindServer, refused } from "../../things/test/kind-server.ts";
+import { type Checklist, ChecklistKind } from "../kind.ts";
 import checklistServer from "../server.ts";
 import { ChecklistStore } from "../store.ts";
 
@@ -37,15 +37,6 @@ beforeEach(async () => {
 });
 
 afterEach(() => c.close());
-
-/** What `principal` is granted on checklist `thing` in `where`. */
-const grantedTo = (principal: P3Principal, where: string, thing: string) =>
-	c.holding(principal, where, thing, async (list) => [...list.granted].sort());
-
-/** Whether `promise` rejects with a ChordError of `code`. */
-async function refused(promise: Promise<unknown>, code = "forbidden"): Promise<void> {
-	await assert.rejects(promise, (error: unknown) => isChordError(error) && error.code === code);
-}
 
 describe("the kind", () => {
 	it("is registered by the checklist plugin, made by anyone", async () => {
@@ -91,11 +82,11 @@ describe("who may do what in a checklist", () => {
 		const s1 = await c.workspace("s1");
 		const ann = await c.person("Ann", s1);
 		const list = await c.thingIn(s1);
-		assert.deepEqual(await grantedTo(ann, s1, list), ["addItem", "setDone"]);
-		assert.deepEqual(await grantedTo(AGENT, s1, list), ["setDone"]);
-		await refused(grantedTo({ kind: "worker", session: "s2" }, s1, list));
+		assert.deepEqual(await c.granted(ann, s1, list), ["addItem", "setDone"]);
+		assert.deepEqual(await c.granted(AGENT, s1, list), ["setDone"]);
+		await refused(c.granted({ kind: "worker", session: "s2" }, s1, list));
 		const dana = await c.things.createPerson({ name: "Dana", madeBy: BY }, context);
-		await refused(grantedTo({ kind: "person", id: dana, name: "Dana" }, s1, list));
+		await refused(c.granted({ kind: "person", id: dana, name: "Dana" }, s1, list));
 	});
 
 	it("gives each tick its own member: Add without Tick adds, Tick without Add ticks", async () => {
@@ -142,7 +133,7 @@ describe("who may do what in a checklist", () => {
 		await c.things.setOwner({ person: id, owner: true }, context);
 		const thing = await c.thingIn(c.pi);
 		for (const tick of ["add", "tick"]) await c.tick(c.pi, thing, { kind: "everyone" }, tick, false);
-		assert.deepEqual(await grantedTo({ kind: "person", id, name: "Olga" }, c.pi, thing), ["addItem", "setDone"]);
+		assert.deepEqual(await c.granted({ kind: "person", id, name: "Olga" }, c.pi, thing), ["addItem", "setDone"]);
 	});
 
 	it("follows the grants live, on the same hold: Tick withheld leaves no setDone, removed from Pi denied", async () => {
@@ -209,11 +200,11 @@ describe("a checklist's items", () => {
 		const [thing, other] = [await c.thingIn(c.pi), await c.thingIn(c.pi)];
 		const elsewhere = await c.holding(ann, c.pi, other, (list, ctx) => list.addItem!({ text: "other" }, ctx));
 		await c.holding(ann, c.pi, thing, async (list, ctx) => {
-			await refused(list.setDone!({ id: elsewhere, done: true }, ctx), "invalid");
+			await refused(list.setDone!({ id: elsewhere, done: true }, ctx), "invalid", "noItem");
 			await refused(list.addItem!({ text: "" }, ctx), "invalid");
 			await refused(list.addItem!({ text: "x".repeat(501) }, ctx), "invalid");
 			for (let i = 0; i < 500; i++) await list.addItem!({ text: `i${i}` }, ctx);
-			await refused(list.addItem!({ text: "one too many" }, ctx), "invalid");
+			await refused(list.addItem!({ text: "one too many" }, ctx), "invalid", "full");
 			await until(list.items, (items) => items.length === 500, within("all 500", ctx));
 		});
 		assert.deepEqual(await c.holding(ann, c.pi, other, async (list) => list.items.value), [

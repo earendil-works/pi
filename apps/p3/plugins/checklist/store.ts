@@ -18,7 +18,8 @@ import {
 	str,
 	type Tx,
 } from "@earendil-works/p3/v1";
-import { Item, MAX_ITEMS } from "./contract.ts";
+import { Item, MAX_ITEMS } from "./kind.ts";
+import { messages } from "./messages.ts";
 
 /**
  * The items of every checklist, and their writes; a checklist is its thing's id. Server code of this plugin only: it
@@ -80,7 +81,11 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				await self.tx(async (tx) => {
 					// A full checklist refuses, so its readers, which read `MAX_ITEMS` items, never miss one.
 					const held = await count(tx, checklist);
-					if (held >= MAX_ITEMS) throw invalid("args", `checklist: a checklist holds ${MAX_ITEMS} items`);
+					if (held >= MAX_ITEMS) {
+						throw invalid("args", `checklist: a checklist holds ${MAX_ITEMS} items`, {
+							message: messages.message("full", MAX_ITEMS),
+						});
+					}
 					tx.put(items, { checklist, id, text, done: false, seq: held + 1 });
 					return null;
 				}, ctx);
@@ -89,7 +94,9 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			tick: ({ checklist, id, done }, ctx) =>
 				self.tx(async (tx) => {
 					if ((await tx.get(items, { checklist, id })) === undefined) {
-						throw invalid("args", `checklist: ${checklist} has no item ${id}`);
+						throw invalid("args", `checklist: ${checklist} has no item ${id}`, {
+							message: messages.message("noItem"),
+						});
 					}
 					tx.update(items, { checklist, id }, { done });
 					return null;

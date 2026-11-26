@@ -10,7 +10,7 @@ import { afterEach, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT as context, type Reference, until } from "@earendil-works/p3/v1";
 import { within } from "../../../test/until.ts";
 import { type KindE2E, kindE2E, restarted } from "../../things/test/kind-e2e.ts";
-import { Checklist, ChecklistKind } from "../contract.ts";
+import { Checklist, ChecklistKind } from "../kind.ts";
 
 let running: KindE2E | undefined;
 
