@@ -12,16 +12,30 @@ export type Caller =
 
 /**
  * What a caller gets for one thing: its ticks, sorted, with the thing's kind and the ticks version (the differential
- * test runs every kind at ticks version 1), or nothing.
+ * test runs every kind at ticks version 1), or nothing; on a workspace's own thing also the kinds they may make there
+ * and the workspaces above they are present in.
  */
-export type Answer = { readonly kind: string; readonly ticksVersion: number; readonly ticks: string[] } | undefined;
+export type Answer =
+	| {
+			readonly kind: string;
+			readonly ticksVersion: number;
+			readonly ticks: string[];
+			readonly makes?: string[];
+			readonly above?: string[];
+	  }
+	| undefined;
 
-/** Whom each tick of each kind is for. */
-export type KindTicks = ReadonlyMap<string, ReadonlyMap<string, "agents" | "people" | "all">>;
+/** Whom each tick of each kind is for, and who makes the kind's things. */
+export type KindTicks = ReadonlyMap<
+	string,
+	{ readonly ticks: ReadonlyMap<string, "agents" | "people" | "all">; readonly makers: "anyone" | "people" | "plugin" }
+>;
 
 /** Every row of every table the rules read. */
 export type Everything = {
 	readonly workspaces: { id: string; parent: string; showsThings: boolean; showsPeople: boolean }[];
+	/** Each workspace's kind (its thing's). */
+	readonly workspaceKinds: ReadonlyMap<string, string>;
 	readonly things: { thing: string; kind: string }[];
 	readonly links: { workspace: string; thing: string; of: string }[];
 	readonly members: { workspace: string; party: string }[];
@@ -69,6 +83,7 @@ export function readEverything(path: string): Everything {
 			showsPeople: r.showsPeople === 1,
 		})),
 		things: all("things").map((r) => ({ thing: String(r.thing), kind: String(r.kind) })),
+		workspaceKinds: new Map(all("things").map((r) => [String(r.thing), String(r.kind)])),
 		links: all("links").map((r) => ({ workspace: String(r.workspace), thing: String(r.thing), of: String(r.of) })),
 		members: all("workspace-members").map((r) => ({ workspace: String(r.workspace), party: keyOf(parsed(r.party)) })),
 		switches: all("switches").map((r) => {
@@ -109,10 +124,105 @@ export function answersFrom(
 ): Record<string, NonNullable<Answer>> {
 	const answers: Record<string, NonNullable<Answer>> = {};
 	for (const { thing } of all.things) {
+		if (thing === workspace) continue;
 		const answer = answerFrom(all, kinds, workspace, thing, caller);
 		if (answer !== undefined) answers[thing] = answer;
 	}
+	const own = ownFrom(all, kinds, workspace, caller);
+	if (own !== undefined) answers[workspace] = own;
 	return answers;
+}
+
+/** Whether `caller` is the owner. */
+function isOwner(all: Everything, caller: Caller): boolean {
+	return caller.kind === "person" && all.persons.some((p) => p.id === caller.person && p.owner);
+}
+
+/** The way from the root to `workspace`, root first; none when a workspace on it does not exist. */
+function wayTo(all: Everything, workspace: string): Everything["workspaces"] | undefined {
+	const way: Everything["workspaces"] = [];
+	for (let at: string = workspace; at !== ""; ) {
+		const here = all.workspaces.find((w) => w.id === at);
+		if (here === undefined) return undefined;
+		way.unshift(here);
+		at = here.parent;
+	}
+	return way;
+}
+
+/** The kinds a Make tick names (`@make:*`: every kind of `kinds`). */
+function madeWith(kinds: KindTicks, tick: string): string[] {
+	const kind = tick.slice("@make:".length);
+	if (kind === "*") return [...kinds.keys()];
+	return kinds.has(kind) ? [kind] : [];
+}
+
+/**
+ * Rule 5 on workspace `workspace`'s own thing (item 88): its grants written at itself, its presence; anyone counted is
+ * let in; Make ticks become `makes` within each kind's makers (114); the workspaces above the caller is present in.
+ */
+export function ownFrom(all: Everything, kinds: KindTicks, workspace: string, caller: Caller): Answer {
+	const way = wayTo(all, workspace);
+	if (way === undefined) return undefined;
+	const kind = all.workspaceKinds.get(workspace)!;
+	const ticksOf = kinds.get(kind)?.ticks ?? new Map();
+	const makeable = (made: string) => {
+		const makers = kinds.get(made)?.makers;
+		return makers === "anyone" || (makers === "people" && caller.kind === "person");
+	};
+	const above: string[] = [];
+	for (const step of way.slice(0, -1).reverse()) {
+		const state = walk(all, kinds, step.id, step.id);
+		if (isOwner(all, caller) || counted(all, caller, state).length > 0) above.push(step.id);
+	}
+	if (isOwner(all, caller)) {
+		return {
+			kind,
+			ticksVersion: 1,
+			ticks: [...ticksOf]
+				.filter(([, forWhom]) => forWhom !== "agents")
+				.map(([tick]) => tick)
+				.sort(),
+			makes: [...kinds.keys()].filter(makeable).sort(),
+			above,
+		};
+	}
+	const state = walk(all, kinds, workspace, workspace);
+	const parties = counted(all, caller, state);
+	if (parties.length === 0) return undefined;
+	const named = caller.kind === "person" ? `person/${caller.person}` : `agent/${caller.session}`;
+	const grants = all.grants.filter((g) => g.workspace === workspace && g.thing === workspace);
+	if (grants.some((g) => !g.gives && g.party === named && g.tick === "@open")) return undefined;
+	const forOf = (tick: string): string | undefined => {
+		if (!tick.startsWith("@")) return ticksOf.get(tick);
+		if (!tick.startsWith("@make:")) return undefined;
+		const made = tick.slice("@make:".length);
+		if (made === "*") return "all";
+		const makers = kinds.get(made)?.makers;
+		return makers === "anyone" ? "all" : makers === "people" ? "people" : undefined;
+	};
+	const ticks = new Set<string>();
+	const makes = new Set<string>();
+	for (const party of parties) {
+		const rows = grants.filter((g) => g.party === party);
+		const given = rows
+			.filter((g) => g.gives && (forOf(g.tick) === "all" || forOf(g.tick) === (g.agents ? "agents" : "people")))
+			.map((g) => g.tick);
+		const withheld = rows.filter((g) => !g.gives).map((g) => g.tick);
+		const kept = given.filter((tick) => !withheld.includes(tick));
+		for (const tick of kept) if (!tick.startsWith("@")) ticks.add(tick);
+		const partyMakes = new Set(
+			kept.filter((tick) => tick.startsWith("@make:")).flatMap((tick) => madeWith(kinds, tick)),
+		);
+		for (const tick of withheld.filter((t) => t.startsWith("@make:")))
+			for (const made of madeWith(kinds, tick)) partyMakes.delete(made);
+		for (const made of partyMakes) makes.add(made);
+	}
+	for (const g of grants.filter((g) => !g.gives && g.party === named)) {
+		ticks.delete(g.tick);
+		if (g.tick.startsWith("@make:")) for (const made of madeWith(kinds, g.tick)) makes.delete(made);
+	}
+	return { kind, ticksVersion: 1, ticks: [...ticks].sort(), makes: [...makes].filter(makeable).sort(), above };
 }
 
 /** Rule 5 for one thing. */
@@ -123,10 +233,11 @@ export function answerFrom(
 	thing: string,
 	caller: Caller,
 ): Answer {
+	if (wayTo(all, workspace) === undefined) return undefined;
 	const state = walk(all, kinds, workspace, thing);
 	if (state.kind === undefined) return undefined;
-	if (caller.kind === "person" && all.persons.some((p) => p.id === caller.person && p.owner)) {
-		const forPeople = [...(kinds.get(state.kind) ?? [])].filter(([, forWhom]) => forWhom !== "agents");
+	if (isOwner(all, caller)) {
+		const forPeople = [...(kinds.get(state.kind)?.ticks ?? [])].filter(([, forWhom]) => forWhom !== "agents");
 		return { kind: state.kind, ticksVersion: 1, ticks: forPeople.map(([tick]) => tick).sort() };
 	}
 	// A tick withheld from the caller's person or session agent applies whatever route they count by (item 106);
@@ -175,7 +286,7 @@ function walk(all: Everything, kinds: KindTicks, workspace: string, thing: strin
 			state.ticks = new Map();
 			state.taken = new Map();
 			for (const grant of grantsHere.filter((g) => g.gives)) {
-				const forWhom = kinds.get(link.of)?.get(grant.tick);
+				const forWhom = kinds.get(link.of)?.ticks.get(grant.tick);
 				const counts = forWhom === "all" || forWhom === (grant.agents ? "agents" : "people");
 				if (grant.tick !== "@open" && !counts) continue;
 				const had = state.ticks.get(grant.party) ?? [];

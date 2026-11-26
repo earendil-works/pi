@@ -1,8 +1,8 @@
 // The plans of the things store's named queries, as SQLite runs them: each read (its first page and the page after a
 // bookmark) searches the index its comment names, or the key, with no temporary B-tree; and the reads of the writes
 // that look rows up (unlink, a thing's removal, the cleanup by source) search an index too. One read is a whole-table
-// scan on purpose: the pending deletes (`things.pending`, few rows), read at the start and when the kinds' hooks
-// change. The test opens the store on a SQLite database of its own and records the statements Chord prepares.
+// scan on purpose: the pending deletes (`things.pending`), removals (`things.removing`) and gone workspaces
+// (`things.gone`), few rows each, read at the start and when the kinds' hooks change. The test opens the store on a SQLite database of its own and records the statements Chord prepares.
 
 import assert from "node:assert/strict";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
@@ -16,6 +16,7 @@ import {
 	Server,
 	sqliteBackend,
 } from "@earendil-works/p3/v1";
+import { eventually } from "../../../test/until.ts";
 import { ThingsStore } from "../contract.server.ts";
 import type { Source } from "../contract.ts";
 import { BOARD, Board } from "./kinds.ts";
@@ -114,6 +115,9 @@ describe("the plans of the things store's queries", () => {
 			const T = "things.store:things";
 			const cases: readonly (readonly [string, readonly Read[], string | undefined])[] = [
 				["things.one", pages(things.things.one, { thing: ids[0]! }), undefined],
+				["things.ofIds", pages(things.things.ofIds, { things: [ids[0]!, ids[1]!, "none"] }), undefined],
+				["workspaces.under", pages(things.workspaces.under, { pathPrefix: `${pi}/` }), `${T}.workspaces:under`],
+				["links.where", pages(things.links.where, { thing: ids[0]! }), `${T}.links:by_thing`],
 				[
 					"things.ofMaker",
 					pages(things.things.ofMaker, { sourceKey: `person/${ann}`, kind: Board.name }),
@@ -148,18 +152,38 @@ describe("the plans of the things store's queries", () => {
 				}
 			}
 			// The writes that look rows up: an unlink that removes the thing with its last link, and a cleanup by source.
+			const sub = await things.createWorkspace({ kind: "things.workspace", name: "sub", parent: team, by }, context);
+			await things.create({ kind: Board.name, name: "b", workspace: sub, by }, context);
 			for (const write of [
 				() => things.unlink({ workspace: pi, thing: ids[2]! }, context),
 				() => things.deleteEverythingFrom({ source: by }, context),
+				() =>
+					things.setTick(
+						{ workspace: team, thing: team, party: { kind: "everyone" }, tick: "link", gives: true, source: by },
+						context,
+					),
+				// A removal: its line cut, then its subtree cleared in background commits.
+				async () => {
+					await things.removeWorkspace({ workspace: team }, context);
+					await eventually(
+						() => database.prepare(`SELECT count(*) AS n FROM "${T}.removing"`).get()!.n,
+						(n) => n === 0,
+					);
+				},
 			]) {
 				const plans = await plansOf(write);
 				for (const step of plans.filter((each) => !/^(LIST SUBQUERY|SCAN json_each)/.test(each))) {
 					assert.ok(/^SEARCH [tp] USING /.test(step) && !step.includes("TEMP B-TREE"), plans.join(" | "));
 				}
 			}
-			// Of everything read since the start, only the pending deletes are read whole.
+			// Of everything read since the start, only the pending deletes, removals and gone workspaces (few rows, read at
+			// the start and when the hooks change) are read whole.
 			const scans = [...ever].filter((sql) => plan(sql).some((step) => /^SCAN t( |$)/.test(step)));
-			assert.ok(scans.length > 0 && scans.every((sql) => sql.includes(`"${T}.pending"`)), scans.join(" | "));
+			const whole = [`"${T}.pending"`, `"${T}.removing"`, `"${T}.gone"`];
+			assert.ok(
+				scans.length > 0 && scans.every((sql) => whole.some((table) => sql.includes(table))),
+				scans.join(" | "),
+			);
 		} finally {
 			await host.close(context);
 			await store.close(context);

@@ -13,5 +13,16 @@ export const messages = defineMessages("things", {
 		belowLink: (workspace: string) =>
 			`This is linked in ${workspace}. Ticks are given there; here they can only be taken away.`,
 		lastOwner: "A Pi needs at least one owner.",
+		tickLink: "Link",
+		tickHide: "Hide",
+		tickConfigure: "Configure",
+		tickManagePeople: "Manage people",
+		tickManageAccess: "Manage access",
+		mayNotMake: (kind: string) => `You may not make a ${kind} here.`,
+		mayNotLink: "To link this here you need Link here and where it is linked now.",
+		notLinkedHere: "This is not linked here.",
+		fromAboveOnly: "Only what comes from above can be hidden here; unlink what is linked here.",
+		leafHoldsNoWorkspaces: "A session holds no workspaces.",
+		notYet: "This comes later.",
 	},
 });

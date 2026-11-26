@@ -4,7 +4,9 @@
 // record what they were called with).
 
 import { constant, defineFacet, method, obj, type P3Principal, type PluginFacet, str } from "@earendil-works/p3/v1";
-import { defineThing } from "../kind.ts";
+import type { CreateAnswer } from "../contract.server.ts";
+import { MAKE_ANY } from "../contract.ts";
+import { defineThing, defineWorkspace } from "../kind.ts";
 import { serveThing } from "../serve.ts";
 
 /** What the test kind's hooks were called with, in order. */
@@ -72,3 +74,59 @@ export const boardFacet = defineFacet((host) => {
 
 /** The test kind's plugin as a host loads it. */
 export const BOARD: PluginFacet<P3Principal> = { name: BOARD_PLUGIN, facet: boardFacet };
+
+/** What the test session kind's `create` hook answers (a private session: `CreateAnswer`), and was called with. */
+export const SESSION = { answer: undefined as CreateAnswer | undefined, made: [] as string[], gone: [] as string[] };
+
+/**
+ * A leaf workspace kind like the session kind (ERNDL-704): Read and Send, the agents `MAKE_ANY` in it (R6), everyone
+ * Read; made by anyone.
+ */
+export const TestSession = defineWorkspace("test.session", {
+	version: 1,
+	leaf: true,
+	makers: "anyone",
+	state: { title: str() },
+	ticks: {
+		read: { label: label("sessionRead") },
+		send: { label: label("sessionSend"), for: "people" },
+	},
+	defaultGrants: { agents: [MAKE_ANY], everyone: ["read", "send"] },
+});
+
+/** A kind only people make (a login): Use, for agents. */
+export const Login = defineThing("test.login", {
+	version: 1,
+	makers: "people",
+	ticks: { use: { label: label("use"), for: "agents" } },
+	defaultGrants: { agents: ["use"] },
+});
+
+/** A kind that stacks `nearest` (session defaults, decision 75): Use. */
+export const Defaults = defineThing("test.defaults", {
+	version: 1,
+	makers: "anyone",
+	stacking: "nearest",
+	ticks: { use: { label: label("use") } },
+	defaultGrants: { everyone: ["use"], agents: ["use"] },
+});
+
+/** The plugin of the workspace tests' kinds. */
+export const SPACES_PLUGIN = "p3-test-spaces";
+
+/** The workspace tests' kinds served: the session kind with hooks that record, the login, the defaults. */
+export const spacesFacet = defineFacet((host) => {
+	serveThing(host, TestSession, {
+		implement: ({ thing }) => ({ title: constant(thing) }),
+		create: async (thing) => {
+			SESSION.made.push(thing);
+			return SESSION.answer;
+		},
+		workspaceGone: async (workspace) => void SESSION.gone.push(workspace),
+	});
+	serveThing(host, Login, { implement: () => ({}) });
+	serveThing(host, Defaults, { implement: () => ({}) });
+});
+
+/** The workspace tests' kinds' plugin as a host loads it. */
+export const SPACES: PluginFacet<P3Principal> = { name: SPACES_PLUGIN, facet: spacesFacet };

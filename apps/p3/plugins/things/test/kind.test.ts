@@ -39,6 +39,7 @@ describe("a kind", () => {
 			workspaces: "many",
 			makers: "plugin",
 			stacking: "all",
+			workspace: "no",
 			ticks: [
 				{ name: "see", label: label("see"), for: "people" },
 				{ name: "edit", label: label("edit"), for: "all" },
@@ -46,6 +47,7 @@ describe("a kind", () => {
 			],
 			defaultGrants: { everyone: ["see"] },
 			settings: ["title"],
+			settingsSchemas: { title: str() },
 			ticksVersion: 1,
 		});
 	});

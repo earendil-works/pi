@@ -84,7 +84,16 @@ describe("the tree", () => {
 		);
 		const team = await store.createWorkspace({ kind: "things.workspace", name: "Team", parent: pi, by: BY }, context);
 		const [row] = (await store.workspaces.one.page({ workspace: team }, 1, context)).items;
-		assert.deepEqual(row, { workspace: team, parent: pi, showsThings: true, showsPeople: true });
+		assert.deepEqual(row, {
+			workspace: team,
+			kind: "things.workspace",
+			name: "Team",
+			parent: pi,
+			showsThings: true,
+			showsPeople: true,
+			path: [pi, team],
+			pathText: `${pi}/${team}/`,
+		});
 		assert.deepEqual(
 			(await store.workspaces.children.page({ parent: pi }, 10, context)).items.map(({ workspace }) => workspace),
 			[team],
@@ -722,10 +731,10 @@ describe("races, failures and restarts", () => {
 			const release = Promise.withResolvers<void>();
 			const create =
 				mode === "throws at once"
-					? (): Promise<void> => {
+					? (): Promise<undefined> => {
 							throw new Error("bad input");
 						}
-					: async () => {
+					: async (): Promise<undefined> => {
 							entered.resolve();
 							await release.promise;
 							throw new Error("create failed");

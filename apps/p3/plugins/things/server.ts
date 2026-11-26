@@ -9,9 +9,8 @@ import { AccessHandles, ThingHooks } from "./contract.server.ts";
 import { kindView, ThingKinds, ThingKindsView } from "./kind.ts";
 import { serveOne } from "./one.ts";
 import { serveStore } from "./store.ts";
-
-/** The things plugin's name: the one contributor of `AccessHandles`. */
-const THINGS_PLUGIN = "@earendil-works/p3-things";
+import { serveWorkspace } from "./workspace-object.ts";
+import { serveWorkspaceKind, THINGS_PLUGIN } from "./workspaces.ts";
 
 export default defineFacet((host) => {
 	host.serve(ThingKinds, {
@@ -31,4 +30,6 @@ export default defineFacet((host) => {
 	serveStore(host);
 	serveGives(host);
 	serveOne(host);
+	serveWorkspaceKind(host);
+	serveWorkspace(host);
 });

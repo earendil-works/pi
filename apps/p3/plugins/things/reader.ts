@@ -18,10 +18,15 @@ export function lookupOf(table: ReadonlyMap<string, TableItem<KindInfo>>): Kinds
 	const ticks = new Map(
 		[...table].map(([kind, { value }]) => [kind, new Map(value.ticks.map((tick) => [tick.name, tick.for]))]),
 	);
+	const names = [...table.keys()].sort();
 	return {
 		tickFor: (kind, tick) => ticks.get(kind)?.get(tick),
 		ticksOf: (kind) => [...(ticks.get(kind)?.keys() ?? [])],
 		ticksVersionOf: (kind) => table.get(kind)?.value.ticksVersion ?? 0,
+		stackingOf: (kind) => table.get(kind)?.value.stacking ?? "all",
+		makersOf: (kind) => table.get(kind)?.value.makers,
+		sortOf: (kind) => table.get(kind)?.value.workspace ?? "no",
+		kinds: () => names,
 		info: (kind) => table.get(kind)?.value,
 	};
 }
@@ -44,15 +49,18 @@ export function readerOf(q: Read, kinds: () => Kinds, reported: Set<string>): Re
 			const links = await readAll(q.links.here, { workspace: id }, ctx);
 			const members = await readAll(q.workspaceMembers.here, { workspace: id }, ctx);
 			const switches = await readAll(q.switches.here, { workspace: id }, ctx);
-			const grants = await readAll(q.grants.here, { workspace: id }, ctx);
+			const grants = grantEntries(await readAll(q.grants.here, { workspace: id }, ctx), kinds(), reported, ctx);
 			return {
+				id,
+				kind: row.kind,
 				parent: row.parent,
 				showsThings: row.showsThings,
 				showsPeople: row.showsPeople,
 				links: new Map(links.map(({ thing, of }) => [thing, of])),
 				members: new Set(members.map(({ party }) => partyKey(party))),
 				switches: new Map(switches.map(({ item, shown }) => [itemKey(item), shown])),
-				grants: grantEntries(grants, kinds(), reported, ctx),
+				grants: grants.filter((grant) => grant.thing !== id),
+				ownGrants: grants.filter((grant) => grant.thing === id),
 			} satisfies WorkspaceEntries;
 		},
 		person: async (id, ctx) => {

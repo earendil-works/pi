@@ -16,15 +16,33 @@ import {
 } from "@earendil-works/p3/v1";
 import { AccessIndex, type Answers, type Reader } from "../access.ts";
 import { Gives, ThingsStore } from "../contract.server.ts";
-import { OPEN, type Party, type Source } from "../contract.ts";
+import { MAKE_ANY, makeTick, OPEN, type Party, type Source } from "../contract.ts";
 import { lookupOf, readerOf } from "../reader.ts";
-import { ABOVE_THE_ROOT, accessHere } from "../rules.ts";
+import { ABOVE_THE_ROOT, accessHere, type KindsLookup } from "../rules.ts";
+import { THINGS_PLUGIN, WorkspaceKind } from "../workspaces.ts";
 import { BOARD_PLUGIN, Board } from "./kinds.ts";
 import { answersFrom, type Caller, type Everything, type KindTicks, readEverything } from "./reference.ts";
 import { type World, world } from "./world.ts";
 
 const TICKS = ["read", "write", "draw", "moderate", "read", "write", "draw", "moderate", "bash", "look"];
-const KINDS: KindTicks = new Map([[Board.name, new Map(Board.info.ticks.map((tick) => [tick.name, tick.for]))]]);
+const KINDS: KindTicks = new Map(
+	[Board, WorkspaceKind].map((Kind) => [
+		Kind.name,
+		{ ticks: new Map(Kind.info.ticks.map((tick) => [tick.name, tick.for])), makers: Kind.info.makers },
+	]),
+);
+/** The ticks a workspace's own grants name in the random writes: its workspace ticks and Make ticks. */
+const OWN_TICKS = [
+	"link",
+	"hide",
+	"configure",
+	"managePeople",
+	"manageAccess",
+	MAKE_ANY,
+	makeTick(Board),
+	makeTick(WorkspaceKind),
+	OPEN,
+];
 const MAX_DEPTH = 6;
 
 /** A small seeded random number generator (mulberry32). */
@@ -217,6 +235,17 @@ class Run {
 				{ workspace: this.pick(this.workspaces), item, ...(this.chance(0.2) ? {} : { shown: this.chance(0.5) }) },
 				context,
 			);
+		} else if (roll < 66 && this.chance(0.25)) {
+			// A workspace's own grants (item 88): its workspace ticks and Make ticks, given or withheld, or removed.
+			const workspace = this.pick(this.workspaces);
+			const grants = Array.from({ length: this.chance(0.3) ? 2 : 1 }, () => ({
+				workspace,
+				thing: workspace,
+				party: this.someParty(),
+				tick: this.pick(OWN_TICKS),
+				...(this.chance(0.85) ? { gives: this.chance(0.75) } : {}),
+			}));
+			await s.setGrants({ source: this.pick(this.sources), grants }, context);
 		} else if (roll < 66) {
 			const link = this.someLink();
 			// Given, or the source's row removed.
@@ -314,6 +343,7 @@ async function run(t: TestContext, seed: number, writes: number, forgetting: boo
 	await second?.start(10);
 	let sampled = 0;
 	let withTicks = 0;
+	let withOwn = 0;
 	for (let step = 0; step < writes; step++) {
 		await r.write();
 		await second?.changed();
@@ -342,6 +372,8 @@ async function run(t: TestContext, seed: number, writes: number, forgetting: boo
 			);
 			sampled++;
 			if (Object.values(answers).some((answer) => answer.ticks.length > 0)) withTicks++;
+			const own = answers[workspace];
+			if (own !== undefined && (own.ticks.length > 0 || (own.makes?.length ?? 0) > 0)) withOwn++;
 		}
 		second?.check(all, step);
 	}
@@ -362,10 +394,11 @@ async function run(t: TestContext, seed: number, writes: number, forgetting: boo
 	const calls = [...watchers].reduce((sum, watcher) => sum + watcher.calls, 0);
 	for (const watcher of watchers) watcher.stop();
 	assert.ok(withTicks / sampled > 0.1, `only ${withTicks} of ${sampled} questions gave ticks`);
+	assert.ok(withOwn / sampled > 0.05, `only ${withOwn} of ${sampled} questions gave a workspace's own ticks or makes`);
 	assert.ok(calls > 30, `watchers were told only ${calls} times`);
 	assert.deepEqual(w.errors, []);
 	t.diagnostic(
-		`seed ${seed}: ${r.workspaces.length} workspaces, ${sampled} questions (${Math.round((100 * withTicks) / sampled)}% with ticks), ${calls} watcher calls`,
+		`seed ${seed}: ${r.workspaces.length} workspaces, ${sampled} questions (${Math.round((100 * withTicks) / sampled)}% with ticks, ${Math.round((100 * withOwn) / sampled)}% with own ticks or makes), ${calls} watcher calls`,
 	);
 }
 
@@ -441,7 +474,12 @@ function changed(index: AccessIndex, touched: { workspaces: Set<string>; persons
 }
 
 /** The test kind as the store's index looks kinds up. */
-const LOOKUP = lookupOf(new Map([[Board.name, { plugin: BOARD_PLUGIN, value: Board.info }]]));
+const LOOKUP = lookupOf(
+	new Map([
+		[Board.name, { plugin: BOARD_PLUGIN, value: Board.info }],
+		[WorkspaceKind.name, { plugin: THINGS_PLUGIN, value: WorkspaceKind.info }],
+	]),
+);
 
 describe("the index against the reference", () => {
 	for (const seed of [1, 2, 3, 4, 5, 6]) {
@@ -459,6 +497,9 @@ describe("the index's own mechanics", () => {
 			const found = workspaces.get(id);
 			if (found === undefined) return undefined;
 			return {
+				id,
+				kind: "things.workspace",
+				ownGrants: [],
 				parent: found.parent,
 				showsThings: true,
 				showsPeople: true,
@@ -498,7 +539,13 @@ describe("the index's own mechanics", () => {
 		assert.deepEqual(attached?.value, {});
 		workspaces.set("later", { parent: "team", members: ["person/ada"] });
 		await changed(index, { workspaces: new Set(["later"]), persons: new Set() });
-		assert.deepEqual(told, [{ sketch: { kind: Board.name, ticksVersion: 1, ticks: ["read"] } }]);
+		assert.deepEqual(told, [
+			{
+				sketch: { kind: Board.name, ticksVersion: 1, ticks: ["read"] },
+				// Ada is present in it: its own thing lets her in (item 88), with nothing to make.
+				later: { kind: "things.workspace", ticksVersion: 1, ticks: [], makes: [], above: [] },
+			},
+		]);
 		assert.deepEqual(index.loaded().workspaces, 3);
 	});
 
@@ -521,9 +568,20 @@ describe("the index's own mechanics", () => {
 describe("the index under races, failures and load", () => {
 	const who = { kind: "person", person: "p" } as const;
 	const none: FollowObserver<unknown> = { advance() {}, end() {} };
-	const kinds = { tickFor: () => "all" as const, ticksOf: () => ["a"], ticksVersionOf: () => 1 };
+	const kinds: KindsLookup = {
+		tickFor: () => "all",
+		ticksOf: () => ["a"],
+		ticksVersionOf: () => 1,
+		stackingOf: () => "all",
+		makersOf: () => "anyone",
+		sortOf: () => "no",
+		kinds: () => ["board"],
+	};
 	const person = async () => ({ owner: true, groups: [] });
 	const rows = (...ids: string[]) => ({
+		id: "w",
+		kind: "things.workspace",
+		ownGrants: [],
 		parent: "",
 		showsThings: true,
 		showsPeople: true,

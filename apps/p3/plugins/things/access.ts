@@ -19,9 +19,14 @@ import {
 	agentCounts,
 	answerOf,
 	type Counted,
+	GONE,
 	type KindsLookup,
+	type Maker,
 	NOBODY,
+	type OwnHere,
+	ownAnswerOf,
 	ownerAnswer,
+	ownerOwnAnswer,
 	type PersonEntries,
 	personCounts,
 	sameAnswer,
@@ -311,14 +316,33 @@ export class AccessIndex {
 	}
 
 	/**
-	 * The view's answers now (rule 5): an owner every tick for people of each available thing (item 99), anyone else the
-	 * answer of their counted parties. The last answers when nothing differs, and each unchanged thing's answer object
-	 * kept.
+	 * The answer `caller` gets for `thing` in `workspace` now, loading what that needs (`undefined`: nothing), one at a
+	 * time with every other operation: not live (R41, `ThingsStore.answerOf`; linking's check, R9).
+	 */
+	answer(workspace: string, thing: string, caller: Caller, context: Context): Promise<Answer | undefined> {
+		return this.#run(async () => {
+			await this.#ensure(workspace, context);
+			if (caller.kind === "person") await this.#ensurePerson(caller.person, context);
+			const access = this.#accessOf(workspace, context);
+			const everything = this.#everything(caller);
+			const counted = everything ? NOBODY : this.#counted(access, caller);
+			const kinds = this.#kinds();
+			if (access.own?.id === thing) return this.#ownAnswer(workspace, access.own, caller, counted, context);
+			const given = access.things.get(thing);
+			if (given === undefined) return undefined;
+			return everything ? ownerAnswer(given.kind, kinds) : answerOf(given, counted, kinds);
+		});
+	}
+
+	/**
+	 * The view's answers now (rule 5): an owner (and the server) every tick for people of each available thing (item
+	 * 99), anyone else the answer of their counted parties; the workspace's own thing among them (item 88). The last
+	 * answers when nothing differs, and each unchanged thing's answer object kept.
 	 */
 	#answers(view: View, context: Context): Answers {
 		const access = this.#accessOf(view.workspace, context);
 		const { caller } = view;
-		const owner = caller.kind === "person" && this.#persons.get(caller.person)?.owner === true;
+		const owner = this.#everything(caller);
 		const counted = owner ? NOBODY : this.#counted(access, caller);
 		const kinds = this.#kinds();
 		const last = view.last;
@@ -334,9 +358,8 @@ export class AccessIndex {
 		};
 		let same = true;
 		let size = 0;
-		for (const [thing, given] of access.things) {
-			const answer = owner ? ownerOf(given.kind) : answerOf(given, counted, kinds);
-			if (answer === undefined) continue;
+		const put = (thing: string, answer: Answer | undefined) => {
+			if (answer === undefined) return;
 			const before = last[thing];
 			if (sameAnswer(before, answer)) answers[thing] = before!;
 			else {
@@ -344,8 +367,36 @@ export class AccessIndex {
 				same = false;
 			}
 			size++;
-		}
+		};
+		for (const [thing, given] of access.things)
+			put(thing, owner ? ownerOf(given.kind) : answerOf(given, counted, kinds));
+		if (access.own !== undefined)
+			put(access.own.id, this.#ownAnswer(view.workspace, access.own, caller, counted, context));
 		return same && size === Object.keys(last).length ? last : answers;
+	}
+
+	/**
+	 * `caller`'s answer on workspace `workspace`'s own thing (`own`), `counted` there: an owner's and the server's every
+	 * tick for people and every kind people may make, anyone else's as their parties give it; with the workspaces
+	 * above it they are present in (item 96).
+	 */
+	#ownAnswer(workspace: string, own: OwnHere, caller: Caller, counted: Counted, context: Context): Answer | undefined {
+		const kinds = this.#kinds();
+		const everything = this.#everything(caller);
+		const answer = everything ? ownerOwnAnswer(own.kind, kinds) : ownAnswerOf(own, counted, makerOf(caller), kinds);
+		if (answer === undefined) return undefined;
+		const above: string[] = [];
+		for (let at = this.#workspaces.get(workspace)?.entries?.parent ?? ""; at !== ""; ) {
+			const access = this.#accessOf(at, context);
+			if (everything || this.#counted(access, caller).parties.length > 0) above.push(at);
+			at = this.#workspaces.get(at)?.entries?.parent ?? "";
+		}
+		return { ...answer, above };
+	}
+
+	/** Whether `caller` gets everything available (items 78, 99): an owner, or the server (trusted server code). */
+	#everything(caller: Caller): boolean {
+		return caller.kind === "server" || (caller.kind === "person" && this.#persons.get(caller.person)?.owner === true);
 	}
 
 	/** Rule 4: whom `caller` counts as in a workspace with `access`. */
@@ -365,7 +416,8 @@ export class AccessIndex {
 		const loaded = this.#workspaces.get(id)!;
 		if (loaded.access !== undefined) return loaded.access;
 		const own = loaded.entries;
-		if (own === undefined) loaded.access = ABOVE_THE_ROOT;
+		// A workspace that does not exist, or whose line above is cut (a removal under way), gives nothing.
+		if (own === undefined) loaded.access = GONE;
 		else {
 			const above = own.parent === "" ? ABOVE_THE_ROOT : this.#accessOf(own.parent, context);
 			loaded.access = accessHere(above, own, this.#kinds());
@@ -379,6 +431,11 @@ export class AccessIndex {
 		for (let at = id; at !== ""; at = this.#workspaces.get(at)?.entries?.parent ?? "") if (above.has(at)) return true;
 		return false;
 	}
+}
+
+/** Whom `caller` is for the Make ceiling: a session's agent, else a person (the server has every answer anyway). */
+function makerOf(caller: Caller): Maker {
+	return caller.kind === "agent" ? "agent" : "person";
 }
 
 /** The ops that turn `before` into `after`: a thing's answer set, or deleted. */
