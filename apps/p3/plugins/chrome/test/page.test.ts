@@ -5,17 +5,17 @@
 // row per checkbox (given, reset, withheld) and folds the Make ticks into one column; the add-thing picker groups by
 // plugin and previews a kind's default grants, which the person may untick; a thing with a view opens in it, one
 // without in its Settings view; a thing from above is greyed and a hidden one folded; a view that takes the whole page
-// keeps only the corner button; the invite dialog says what comes with slice 3; `/me` is the person's own page; a
-// session made through the picker opens from the navigator in its transcript view, streams a scripted answer, and shows
-// a person with Read only the transcript with no way to send; who may's access choice and Make column, a write from
-// another page shown live, its cards on a phone; the switches for things and people from above; no link offered without
-// Link; a person present only below sees nothing of the workspaces above; `?view=` kept through the gear and Back and
-// through pane focus, and a session's pane back when its thing is shown again; the add dialog's draft kept through an
-// apply and dropped on close, one make for two activations of Add, Add disabled when Make of the chosen kind goes, a
-// default unticked and ticked again written; the phone's screens; a reload of the chrome, things and transcript plugins
-// keeps the open page and unsent work; an apply whose web contracts are newer than the page's base leaves it working,
-// and a component the base lacks is reported once. Screenshots at the phone's and the desktop's size, light and dark,
-// go to `/tmp/p3-base/shots/` (`P3_SHOTS` names another directory).
+// keeps only the corner button; the invite dialog makes a guest's link; `/me` is the person's own page; a session made
+// through the picker opens from the navigator in its transcript view, streams a scripted answer, and shows a person
+// with Read only the transcript with no way to send; who may's access choice and Make column, a write from another page
+// shown live, its cards on a phone; the switches for things and people from above; no link offered without Link; a
+// person present only below sees nothing of the workspaces above; `?view=` kept through the gear and Back and through
+// pane focus, and a session's pane back when its thing is shown again; the add dialog's draft kept through an apply and
+// dropped on close, one make for two activations of Add, Add disabled when Make of the chosen kind goes, a default
+// unticked and ticked again written; the phone's screens; a reload of the chrome, things and transcript plugins keeps
+// the open page and unsent work; an apply whose web contracts are newer than the page's base leaves it working, and a
+// component the base lacks is reported once. Screenshots at the phone's and the desktop's size, light and dark, go to
+// `/tmp/p3-base/shots/` (`P3_SHOTS` names another directory).
 
 import assert from "node:assert/strict";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -352,13 +352,15 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await browser.wait(`document.querySelector('[data-area="main"] [data-settings="${pi}"]')`);
 	});
 
-	it("opens the invite dialog, which says what comes with slice 3", async () => {
+	it("makes a guest's invite link in the invite dialog", async () => {
 		await press("[data-invite-open]");
 		await browser.settled("[data-invite-dialog]");
 		await press('[data-invite-as="guest"]');
+		await browser.type("[data-invite-name]", "Gus");
 		await press("[data-invite-create]");
-		// Invite links are slice 3's (ERNDL-1144): until then the server says so, and the dialog shows it.
-		await browser.wait(`document.querySelector("[data-invite-failure]")?.textContent.includes("This comes later.")`);
+		await browser.wait(
+			`document.querySelector("[data-invite-url]")?.value.startsWith(${JSON.stringify(`${origin}/_p3/invite#`)})`,
+		);
 		await shots("12-invite-desktop");
 		await browser.evaluate(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))`);
 		await browser.wait(`document.querySelector("[data-invite-dialog]") === null`);
@@ -589,10 +591,11 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 			context,
 		);
 		const { person: max, link } = await (await owner.get(People, {}, context)).invite({ name: "Max" }, context);
-		await (await owner.get(Workspace, { workspace: stuff }, context)).putParty!(
-			{ party: { kind: "person", person: max } },
-			context,
-		);
+		await t.host.root(async (ctx) => {
+			const store = await ctx.get(ThingsStore, {});
+			const source = { kind: "person", person: ownerId } as const;
+			await store.putParty({ workspace: stuff, party: { kind: "person", person: max }, source }, ctx);
+		}, context);
 		await browser.signOut();
 		await browser.open(`${origin}${link}`);
 		await browser.wait(`document.querySelector("[data-person-menu]")?.textContent.includes("Max")`);
@@ -732,7 +735,11 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		const workspace = await owner.get(Workspace, { workspace: pi }, context);
 		const { person, link } = await (await owner.get(People, {}, context)).invite({ name: "Maker" }, context);
 		const party = { kind: "person", person } as const;
-		await workspace.putParty!({ party }, context);
+		// The Workspace's putParty takes only whom its picker offers: an invited person is put in by the store.
+		await t.host.root(async (ctx) => {
+			const store = await ctx.get(ThingsStore, {});
+			await store.putParty({ workspace: pi, party, source: { kind: "person", person: ownerId } }, ctx);
+		}, context);
 		for (const kind of ["canvas.board", "things.workspace"]) {
 			await workspace.setTick!({ thing: pi, party, tick: `@make:${kind}`, gives: true }, context);
 		}

@@ -93,6 +93,7 @@ export const page = defineMessages("things.page", {
 		guestHint: "Gets only what this workspace gives its guests. Never part of everyone here.",
 		createLink: "Create link",
 		copy: "Copy",
+		inviteName: "Their name (a new person starts with it)",
 		expires: "Expires",
 		inDays: (days: number) => (days === 1 ? "in 1 day" : `in ${days} days`),
 		usedBy: "Can be used by",

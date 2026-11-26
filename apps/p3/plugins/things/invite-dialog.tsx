@@ -1,6 +1,6 @@
 // The invite dialog of a workspace (mockup 5): someone already on this Pi, from the people and groups present here
 // (`Workspace.picker`), put in as a member; or someone new by a link (`Workspace.inviteLink`): as a member or a guest,
-// how long it lasts and how often it may be used.
+// the name a new person starts with, how long it lasts and how often it may be used.
 
 import {
 	Button,
@@ -113,6 +113,7 @@ function Existing(props: { readonly workspace: string; readonly name: string }) 
 function ByLink(props: { readonly workspace: string }) {
 	const { t } = useMessages(page);
 	const ref = withGranted(useLive(useHold(Workspace, { workspace: props.workspace })), "inviteLink");
+	const [name, setName] = useState("");
 	const [as, setAs] = useState<"member" | "guest">("member");
 	const [days, setDays] = useState<(typeof EXPIRIES)[number]>(7);
 	const [uses, setUses] = useState<"one" | "several">("one");
@@ -121,7 +122,7 @@ function ByLink(props: { readonly workspace: string }) {
 	const errorText = useErrorText();
 	const make = () => {
 		setFailure(undefined);
-		ref?.inviteLink({ name: "", as, expires: days * DAY, uses }, BACKGROUND_CONTEXT).then(
+		ref?.inviteLink({ name: name.trim(), as, expires: days * DAY, uses }, BACKGROUND_CONTEXT).then(
 			({ url }) => setLink(new URL(url, location.origin).href),
 			(error: unknown) => setFailure(errorText(error)),
 		);
@@ -129,6 +130,7 @@ function ByLink(props: { readonly workspace: string }) {
 	return (
 		<section className={styles.invitePart} data-invite-link-part="">
 			<h3 className={styles.pickerTitle}>{t("inviteNew")}</h3>
+			<Input data-invite-name="" onValueChange={setName} placeholder={t("inviteName")} value={name} />
 			{/* The group reports the value of one of its two radios, typed `unknown` by Elanor. */}
 			<Radio.Group onValueChange={(value) => setAs(value as "member" | "guest")} value={as}>
 				<SelectionControlAndLabel
@@ -174,7 +176,7 @@ function ByLink(props: { readonly workspace: string }) {
 					<SegmentedControl.Item value="several">{t("several")}</SegmentedControl.Item>
 				</SegmentedControl.Root>
 			</Stack>
-			<Button data-invite-create="" hierarchy="secondary" onClick={make}>
+			<Button data-invite-create="" disabled={name.trim() === ""} hierarchy="secondary" onClick={make}>
 				{t("createLink")}
 			</Button>
 			{failure === undefined ? null : (
