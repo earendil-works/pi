@@ -164,7 +164,8 @@ export function matchesHash(token: string, hash: string): boolean {
 }
 // pi-ai for the providers plugin's server facet: the built-in providers people sign in to, their sign-in flows and
 // the request auth a login's credential resolves to (refreshed on the server only); `makeLogin`, `setCredential` and
-// `ensureLogin` for server code making logins of its own (a deployment's at every start, a key found at start). pi-ai's types are `/v1`'s.
+// `ensureLogin` for server code making logins of its own (a deployment's at every start, a key found at start).
+// pi-ai's types are `/v1`'s.
 export {
 	createModels,
 	// pi-ai's faux provider, for plugins' tests: a provider people sign in to without a network.

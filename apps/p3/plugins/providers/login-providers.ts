@@ -16,7 +16,9 @@ export type ProviderMap = ReadonlyMap<string, TableItem<Provider>>;
 
 /**
  * The providers, by provider id: a plugin contributes a list; an id contributed twice is reported, the first by
- * plugin name kept.
+ * plugin name kept. A plugin contributing a provider under a built-in id takes the requests of that provider's logins
+ * on the workers it is loaded on, their auth included: install only plugins you trust (a plugin's server code is
+ * trusted anyway).
  */
 export const LoginProviders = defineRegistry<readonly Provider[], ProviderMap>("providers.providers", { version: 1 });
 

@@ -28,9 +28,9 @@ import { eventually, within } from "../../../test/until.ts";
 import { ThingsStore } from "../../things/contract.server.ts";
 import type { Source } from "../../things/contract.ts";
 import thingsServer from "../../things/server.ts";
-import { LoginStore } from "../contract.server.ts";
+import { LoginStore, SignIns } from "../contract.server.ts";
 import { Login, LoginKind, SignIn } from "../contract.ts";
-import { ensureLogin, makeLogin } from "../logins.ts";
+import { ensureLogin, makeLogin, setCredential } from "../logins.ts";
 
 /** A person's principal. */
 type Person = Extract<P3Principal, { kind: "person" }>;
@@ -119,6 +119,15 @@ const oauthStub = defineFacet((_host, self) => {
 	]);
 });
 
+/** A test provider (`stubborn`) whose sign-in never ends, whatever its abort says. */
+const stubbornStub = defineFacet((_host, self) => {
+	const base = fauxProvider({ provider: "stubborn", api: "stubborn", models: [{ id: "m" }] }).provider;
+	const never = () => new Promise<never>(() => {});
+	self.contribute(LoginProviders, [
+		{ ...base, auth: { apiKey: { name: "Stubborn", login: never, resolve: async () => undefined } } },
+	]);
+});
+
 let t: TestedPlugin<P3Principal>;
 let things: Reference<typeof ThingsStore>;
 let pi: string;
@@ -135,6 +144,7 @@ beforeEach(async () => {
 				{ name: "p3-test-faux-login", facet: fauxServer },
 				{ name: "oauth-test", facet: oauthStub },
 				{ name: "failing", facet: failingStub },
+				{ name: "stubborn", facet: stubbornStub },
 				{ name: "@earendil-works/p3-people", facet: ownerStub },
 			],
 		},
@@ -284,6 +294,29 @@ describe("signing in", () => {
 		});
 	});
 
+	it("outlives its person's last page: a page that lost its socket finds its sign-in again (Fable)", async () => {
+		const ann = await owner("Ann");
+		await signingIn(ann, async (flow, ctx) => {
+			await flow.start({ provider: FAUX_PROVIDER, method: "api_key" }, ctx);
+			await until(flow.attempt, (now) => now?.status === "working" && now.prompt !== null, within("asked", ctx));
+		});
+		// No page holds it now; the next one finds the question still asked.
+		const again = await signingIn(ann, async (flow) => flow.attempt.value);
+		assert.equal(again?.status, "working");
+	});
+
+	it("starts anew even when the flow it replaces ignores its end, after a bound (Opus)", async () => {
+		const ann = await owner("Ann");
+		await signingIn(ann, async (flow, ctx) => {
+			await flow.start({ provider: "stubborn", method: "api_key" }, ctx);
+			await until(flow.attempt, (now) => now?.status === "working", within("the first", ctx));
+			// Real time: the bound (5 s) passes, then the new flow starts.
+			const started = Date.now();
+			assert.match(await flow.start({ provider: FAUX_PROVIDER, method: "api_key" }, ctx), /^[0-9a-f-]{36}$/);
+			assert.ok(Date.now() - started >= 4_900);
+		});
+	});
+
 	it("takes only one of a question's options; then asks the next", async () => {
 		const ann = await owner("Ann");
 		await signingIn(ann, async (flow, ctx) => {
@@ -366,6 +399,12 @@ describe("making a login", () => {
 		assert.equal(linked.filter(({ of }) => of === LoginKind.name).length, 1);
 	});
 
+	it("never lets a session's agent make one, not with a sign-in the server holds", async () => {
+		const flows = await t.host.get(SignIns, { owner: "server" }, context);
+		const attempt = await flows.hold({ provider: FAUX_PROVIDER, credential: { type: "api_key", key: "k" } }, context);
+		await refused(create({ kind: "agent", session: "s1" }, pi, attempt), "invalid");
+	});
+
 	it("takes nothing of a finished sign-in a new start replaced", async () => {
 		const ann = await owner("Ann");
 		await signedIn(ann, async (attempt, flow, ctx) => {
@@ -418,6 +457,45 @@ describe("making a login", () => {
 		// The session below Pi has it, as every login linked above (the agents' Use comes down with it).
 		const auth = await holding(pi1.agent, pi1.workspace, first, (held, ctx) => held.authorize!({}, ctx));
 		assert.equal(auth.auth.apiKey, "one");
+	});
+
+	it("is made once by calls at once (Astra), and never taken for a person's login of the same name (Opus)", async () => {
+		const ann = await owner("Ann");
+		const persons = await signedIn(ann, (attempt) =>
+			things.create(
+				{ kind: LoginKind.name, name: "Deploy", workspace: pi, by: madeBy(ann), input: { attempt } },
+				context,
+			),
+		);
+		const one = () =>
+			t.root(
+				(ctx) =>
+					ensureLogin(
+						{ name: "Deploy", by: BY, provider: FAUX_PROVIDER, credential: { type: "api_key", key: "k" } },
+						ctx,
+					),
+				context,
+			);
+		const [a, b] = await Promise.all([one(), one()]);
+		assert.equal(a, b);
+		assert.notEqual(a, persons);
+	});
+
+	it("takes a new credential only of its own provider, and never comes back once deleted (Astra)", async () => {
+		const thing = await serverLogin(pi, FAUX_PROVIDER, { type: "api_key", key: "one" });
+		const set = (provider: string, key: string) =>
+			t.root((ctx) => setCredential(thing, { provider, credential: { type: "api_key", key } }, ctx), context);
+		await refused(set("anthropic", "theirs"), "invalid");
+		await set(FAUX_PROVIDER, "two");
+		await things.unlink({ workspace: pi, thing }, context);
+		const store = await t.host.get(LoginStore, {}, context);
+		await eventually(
+			async () => (await store.logins.one.page({ thing }, 1, context)).items,
+			(rows) => rows.length === 0,
+			2000,
+		);
+		await refused(set(FAUX_PROVIDER, "three"), "invalid");
+		assert.deepEqual((await store.logins.one.page({ thing }, 1, context)).items, []);
 	});
 
 	it("drops its credential when it goes with its last link", async () => {

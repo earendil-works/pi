@@ -15,11 +15,11 @@ import {
 } from "@earendil-works/p3/v1";
 import { builtinProviders } from "@earendil-works/p3/v1/server";
 import { serveThing } from "../things/serve.ts";
-import { type LoginRow, LoginStore } from "./contract.server.ts";
+import { type LoginRow, LoginStore, SignIns } from "./contract.server.ts";
 import { type LoginInfo, LoginKind } from "./contract.ts";
 import { LoginProviders, type ProviderMap, serveLoginProviders } from "./login-providers.ts";
 import { ownerOf } from "./logins.ts";
-import { SignIns, serveSignIn } from "./sign-in.ts";
+import { serveSignIn } from "./sign-in.ts";
 import { serveStore } from "./store.ts";
 
 export default defineFacet((host, self) => {
@@ -29,6 +29,7 @@ export default defineFacet((host, self) => {
 	serveSignIn(host);
 	serveThing(host, LoginKind, {
 		create: async (thing, input, by, ctx) => {
+			if (by.kind === "agent") throw invalid("args", "providers: a login is made by a person, never an agent");
 			// Only its maker's own finished sign-in: a person's from their page, the server's for its own logins.
 			const flows = await ctx.get(SignIns, { owner: ownerOf(by) });
 			await flows.adopt({ attempt: attemptOf(input), thing }, ctx);

@@ -1,5 +1,6 @@
-// One thing at a time per key: a login's authorize, refresh, save and removal; a person's sign-in moves. Each key's
-// work runs after the work queued before it settled, whatever its outcome; a key with nothing queued holds nothing.
+// One thing at a time per key: a login's requests for its auth (and with them its refresh), a person's sign-in moves.
+// Each key's work runs after the work queued before it settled, whatever its outcome; a key with nothing queued holds
+// nothing.
 
 /** Work queued per key, run one after another. */
 export class Turns {

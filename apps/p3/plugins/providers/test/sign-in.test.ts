@@ -15,9 +15,8 @@ import {
 import { fauxProvider } from "@earendil-works/p3/v1/server";
 import { FAUX_PROVIDER } from "../../../test/plugins/faux-login/contract.ts";
 import { within } from "../../../test/until.ts";
-import { world } from "../../things/test/world.ts";
 import { SignIn } from "../contract.ts";
-import { providerFacets } from "./hosts.ts";
+import { providersWorld } from "./hosts.ts";
 
 /** The owner, who may sign in. */
 const ANN: P3Principal = { kind: "person", id: "ann", name: "Ann" };
@@ -61,7 +60,7 @@ describe("starts at once", () => {
 				]),
 			),
 		};
-		const w = await world(context, [...providerFacets(OWNERS), gated]);
+		const w = await providersWorld(context, OWNERS, [gated]);
 		try {
 			await w.host.root(
 				async (ctx) => {
@@ -97,7 +96,7 @@ describe("starts at once", () => {
 
 describe("a server stopping", () => {
 	it("while a question is open stops cleanly", async () => {
-		const w = await world(context, providerFacets(OWNERS));
+		const w = await providersWorld(context, OWNERS);
 		const unhandled: unknown[] = [];
 		const record = (error: unknown) => unhandled.push(error);
 		process.on("uncaughtException", record);
@@ -129,7 +128,7 @@ describe("a server stopping", () => {
 
 describe("a sign-in taking too long", () => {
 	it("ends expired after ten minutes", async () => {
-		const w = await world(context, providerFacets(OWNERS));
+		const w = await providersWorld(context, OWNERS);
 		try {
 			await w.host.root(
 				async (ctx) => {

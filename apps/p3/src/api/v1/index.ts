@@ -43,6 +43,7 @@ export type {
 	Credential,
 	CredentialStore,
 	Model,
+	OAuthAuth,
 	Provider,
 	ProviderAuth,
 } from "@earendil-works/pi-ai";

@@ -67,7 +67,7 @@ describe("the build's guards", () => {
 	// Astra, review of the provider logins (round 1): pi-ai imports its OAuth flows and Bedrock through a variable
 	// specifier unless the API registers them, and a bundle cannot follow it: the first sign-in or refresh failed with
 	// ERR_MODULE_NOT_FOUND.
-	it("bundle pi-ai's built-in providers so their OAuth flows and request code load on first use", async () => {
+	it("bundle pi-ai's providers so their OAuth flows and Bedrock's SDK load on first use", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "p3-providers-"));
 		try {
 			const api = (module: string) => fileURLToPath(new URL(`../src/api/v1/${module}.ts`, import.meta.url));
@@ -76,14 +76,19 @@ describe("the build's guards", () => {
 				`import { loadProvider } from ${JSON.stringify(api("worker"))};`,
 				'const oauth = builtinProviders().find(({ id }) => id === "anthropic").auth.oauth;',
 				'const auth = await oauth.toAuth({ type: "oauth", access: "a-token", refresh: "r", expires: 0 });',
-				'console.log(JSON.stringify({ auth, bedrock: (await loadProvider("amazon-bedrock"))?.id }));',
+				'const bedrock = await loadProvider("amazon-bedrock");',
+				// Bedrock's SDK calls onPayload before it sends anything: offline, its request code ran.
+				"const message = { role: 'user', content: 'x', timestamp: 0 };",
+				"const sent = await bedrock.streamSimple(bedrock.getModels()[0], { messages: [message] },",
+				"\t{ apiKey: 'synthetic', onPayload: () => { throw new Error('offline: nothing sent'); } }).result();",
+				"console.log(JSON.stringify({ auth, bedrock: sent.errorMessage }));",
 			];
 			await writeFile(join(dir, "entry.ts"), entry.join("\n"));
 			const dist = join(dir, "dist");
 			await build({ ...bundleOptions(dist), entryPoints: { entry: join(dir, "entry.ts") } });
 			const { stdout } = await promisify(execFile)(process.execPath, [join(dist, "entry.js")]);
 			const shown = JSON.parse(stdout.trim().split("\n").at(-1)!) as { auth: object; bedrock: string };
-			assert.equal(shown.bedrock, "amazon-bedrock");
+			assert.match(shown.bedrock, /offline: nothing sent/);
 			assert.ok(JSON.stringify(shown.auth).includes("a-token"), stdout);
 		} finally {
 			await rm(dir, { recursive: true, force: true });

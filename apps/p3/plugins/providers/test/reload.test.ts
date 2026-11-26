@@ -17,10 +17,10 @@ import { FAUX_PROVIDER, keyOf, type Step } from "../../../test/plugins/faux-logi
 import { within } from "../../../test/until.ts";
 import { ThingsStore } from "../../things/contract.server.ts";
 import type { Source } from "../../things/contract.ts";
-import { type World, world } from "../../things/test/world.ts";
+import type { World } from "../../things/test/world.ts";
 import { Login, SignIn } from "../contract.ts";
 import { makeLogin } from "../logins.ts";
-import { PROVIDERS, providerFacets } from "./hosts.ts";
+import { PROVIDERS, providersWorld } from "./hosts.ts";
 
 /** Who sets things up. */
 const BY: Source = { kind: "plugin", plugin: "test" };
@@ -57,7 +57,7 @@ let workspace: string;
 
 beforeEach(async () => {
 	waiting.ended = 0;
-	w = await world(context, [...providerFacets(new Set(["person:ann"])), { name: "waiting", facet: waitingStub }]);
+	w = await providersWorld(context, new Set(["person:ann"]), [{ name: "waiting", facet: waitingStub }]);
 	things = await w.host.get(ThingsStore, {}, context);
 	const pi = (await things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
 	workspace = await things.createWorkspace({ kind: "things.workspace", name: "s1", parent: pi, by: BY }, context);
