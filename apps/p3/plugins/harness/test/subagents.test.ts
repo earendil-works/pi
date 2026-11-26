@@ -99,4 +99,53 @@ describe("a subagent's reporter", () => {
 		await phase("withdraw")(reporter, runtime, context);
 		assert.match((checkpoints.at(-1) as { report?: string }).report ?? "", /reader failed: its run failed/);
 	});
+
+	it("steers a busy subagent, or waits for its current answer with followUp; the same request ids after a restart", async () => {
+		const submitted: { whenBusy?: string; requestId?: string }[] = [];
+		const runtime = {
+			conversationId: 1,
+			conversation: async () => ({
+				submit: async (draft: { whenBusy?: string; requestId?: string }) => {
+					submitted.push(draft);
+					return { wait: async () => ({ status: "unanswered", reason: "aborted" }) };
+				},
+				waitForIdle: () => new Promise(() => {}),
+			}),
+			commit: async (fn: (tx: unknown) => unknown) => fn(parentWith(2)),
+		};
+		const steer = { id: 7, input: { name: "reader", conversationId: 2, message: "now", followUp: false } };
+		const later = { id: 8, input: { name: "reader", conversationId: 2, message: "later", followUp: true } };
+		await phase("deliver")(steer, runtime, context);
+		await phase("deliver")(later, runtime, context);
+		// After a restart the phase runs again with the same request id: Durable answers with the first submission.
+		await phase("deliver")(later, runtime, context);
+		assert.deepEqual(
+			submitted.map(({ whenBusy, requestId }) => [whenBusy, requestId]),
+			[
+				["steer", "subagent:7"],
+				["followUp", "subagent:8"],
+				["followUp", "subagent:8"],
+			],
+		);
+	});
+
+	it("reports nothing and records nothing for an answer of a subagent archived meanwhile", async () => {
+		let report: string | undefined = "unset";
+		const parent = { agents: {} as Record<string, unknown> };
+		await phase("deliver")(
+			{ id: 9, input: { name: "reader", conversationId: 2, message: "task", followUp: false } },
+			{
+				conversationId: 1,
+				conversation: async () => ({
+					submit: async () => ({ wait: async () => ({ status: "done", type: "input", answer: 42 }) }),
+					waitForIdle: () => new Promise(() => {}),
+				}),
+				commit: async (fn: (tx: unknown) => Promise<{ checkpoint: { report?: string } }>) => {
+					report = (await fn({ doc: async () => parent, entry: async () => ({ model: [] }) })).checkpoint.report;
+				},
+			},
+			context,
+		);
+		assert.deepEqual([report, parent.agents], [undefined, {}]);
+	});
 });

@@ -474,4 +474,34 @@ describe("the harness plugin on a worker", () => {
 		await open.durable.waitForIdle(context);
 		assert.deepEqual(requests()[0]?.tools, ["bash", "edit", "read", "write"]);
 	});
+
+	it("gives a running subagent no new message once Use is withheld (ERNDL-1171, test 2)", async () => {
+		const tool = (when: string, name: string, args: object): Step => ({
+			when,
+			reply: [{ kind: "tool", name, args: JSON.stringify(args) }],
+		});
+		const script: Step[] = [
+			tool("@spawn", "subagent_spawn", { name: "reader", message: "child-start" }),
+			runs("child-start", "touch started; until [ -e gate ]; do sleep 0.02; done; echo first done"),
+			says("Started reader.", "ok"),
+			tool("@send", "subagent_send", { name: "reader", message: "a new message" }),
+			says("", "ok"),
+		];
+		const held = [login("login", "faux", script), coding(), subagents()];
+		const server = await start(held);
+		const open = await harness();
+		try {
+			await open.submit(undefined, { text: "@spawn", requestId: "spawn" }, context);
+			await eventually(() => existsSync(join(folder, "started")), Boolean);
+			server.hold([held[0]!, held[1]!, subagents(false)]);
+			await ask("@send");
+			const offered = requests().find(({ last }) => last === "@send")?.tools ?? [];
+			assert.ok(!offered.includes("subagent_send"), offered.join());
+		} finally {
+			await writeFile(join(folder, "gate"), "");
+		}
+		await open.durable.waitForIdle(context);
+		// The running subagent finished its step; it never got the new message.
+		assert.ok(!requests().some(({ last }) => last.includes("a new message")));
+	});
 });
