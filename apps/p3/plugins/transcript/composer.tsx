@@ -1,5 +1,5 @@
-// A writer's composer: the message being written, sent with Enter (Shift+Enter for a new line) or the send button,
-// and a stop button while the agent works. A failed send keeps the text.
+// The composer of a holder with Send: the message being written, sent with Enter (Shift+Enter for a new line) or the
+// send button, and with Stop a stop button while the agent works. A failed send keeps the text.
 
 import { Button, TextArea } from "@earendil-works/elanor-react";
 import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/p3/v1";
@@ -7,11 +7,11 @@ import { SendIcon, StopIcon } from "@earendil-works/p3/v1/web";
 import { useState } from "react";
 import styles from "./composer.module.css";
 
-/** The composer: `send` takes the text and a request id; `stop` is shown while `working`. */
+/** The composer: `send` takes the text and a request id; `stop` (given with Stop) is shown while `working`. */
 export function Composer(props: {
 	readonly working: boolean;
 	readonly send: (message: { readonly text: string; readonly requestId: string }, context: Context) => Promise<null>;
-	readonly stop: (context: Context) => Promise<null>;
+	readonly stop?: (context: Context) => Promise<null>;
 }) {
 	const [text, setText] = useState("");
 	const [sending, setSending] = useState(false);
@@ -59,11 +59,11 @@ export function Composer(props: {
 					rows={1}
 					value={text}
 				/>
-				{props.working ? (
+				{props.working && props.stop !== undefined ? (
 					<Button
 						data-stop=""
 						iconStart={<StopIcon />}
-						onClick={() => void props.stop(BACKGROUND_CONTEXT).catch(failed)}
+						onClick={() => void props.stop?.(BACKGROUND_CONTEXT).catch(failed)}
 						semantic="negative"
 					>
 						Stop

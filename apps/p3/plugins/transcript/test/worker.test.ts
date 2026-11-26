@@ -235,4 +235,18 @@ describe("the transcript plugin on a worker", () => {
 			{ principal: ALICE },
 		);
 	});
+
+	// Astra, round 1 (should 7).
+	it("opens no reader of the conversation for a holder with Send only", async () => {
+		server.ticks("person:alice", ["send"]);
+		await t.root(
+			async (ctx) => {
+				const held = withGranted(await ctx.get(Transcript, { session: SESSION }), "send")!;
+				assert.equal(await held.send({ text: "hi", requestId: "send-only" }, ctx), null);
+				assert.equal(counts.observers, 0);
+			},
+			context,
+			{ principal: ALICE },
+		);
+	});
 });

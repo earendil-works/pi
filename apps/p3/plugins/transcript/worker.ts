@@ -58,7 +58,6 @@ export default defineFacet((host) => {
 	host.serve(
 		Transcript,
 		(_params, _principal, _admitted, self) => {
-			const followed = self.get(Followed, { conversation: ROOT });
 			const harness = self.registry(SessionHarness);
 			const facts = self.get(SessionFacts, {});
 			const open = (): OpenHarness => {
@@ -68,7 +67,8 @@ export default defineFacet((host) => {
 			};
 			// Each member is granted by its tick (`TRANSCRIPT_GRANTS`): a call without it is refused before it runs.
 			return {
-				view: () => followed.view,
+				// Only a holder granted the view follows the conversation (Astra, round 1): Send alone opens no reader.
+				view: () => self.get(Followed, { conversation: ROOT }).view,
 				entries: async (
 					query: { minEntryId?: number; maxEntryId?: number; order?: string; limit: number },
 					ctx: Context,

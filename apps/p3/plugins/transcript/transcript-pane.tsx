@@ -4,7 +4,7 @@
 // reader is there.
 
 import { Button } from "@earendil-works/elanor-react";
-import { type RefState, Transcript, withGranted } from "@earendil-works/p3/v1";
+import { type Context, type RefState, Transcript, withGranted } from "@earendil-works/p3/v1";
 import type { ConversationView, LiveState } from "@earendil-works/p3/v1/web";
 import { useHold, useLive, useRefState, useWatch } from "@earendil-works/p3/v1/web";
 import { useLayoutEffect, useMemo, useRef } from "react";
@@ -69,7 +69,7 @@ export function TranscriptPane(props: { readonly session: string }) {
 			{sender === undefined ? null : (
 				<Composer
 					send={(message, ctx) => sender.send(message, ctx)}
-					stop={(ctx) => (stopper === undefined ? Promise.resolve(null) : stopper.stop(ctx))}
+					{...(stopper === undefined ? {} : { stop: (ctx: Context) => stopper.stop(ctx) })}
 					working={liveState.run !== undefined}
 				/>
 			)}
