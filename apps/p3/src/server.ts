@@ -40,7 +40,7 @@ import {
 	type HttpResponse,
 	type ListenAddress,
 } from "@earendil-works/chord/http";
-import { createPlugins, type PluginsError, type PluginsState } from "@earendil-works/chord/plugins";
+import { createPlugins, type PluginsError, type PluginsState, type RolloutResult } from "@earendil-works/chord/plugins";
 import { type PageAssets, pageScripts, webSurface } from "@earendil-works/chord/surfaces";
 import * as v1 from "@earendil-works/p3/v1";
 import { reportError, Server, Session, SessionAccess, until } from "@earendil-works/p3/v1";
@@ -200,7 +200,23 @@ export async function startServer(options: ServerOptions, context: Context): Pro
 			},
 			context,
 		);
+		// One build of the dirty plugins and its rollout: the server, the workers, then the page.
+		const apply = async (ctx: Context): Promise<RolloutResult> => {
+			const built = await plugins.build(plugins.state.value.dirty, ctx);
+			// The runner is read when its step runs: the server step may have reloaded the runner plugin or a wrap's.
+			const workers = {
+				name: "workers",
+				kinds: ["worker"],
+				reload: async (step: typeof built, stepContext: Context) => {
+					const runner = await used.now(stepContext);
+					return runner === undefined ? { hosts: [] } : runner.reload(step, stepContext);
+				},
+			};
+			return plugins.rollout([plugins.step("server", host), workers, web.step("web")], built, ctx);
+		};
 		let listening: ListenAddress | undefined;
+		// The latest apply, settled to nothing: the next one starts after it.
+		let applying: Promise<void> = Promise.resolve();
 		const runtime: ServerRuntime = {
 			dataDir,
 			machine: { user: userInfo().username, hostname: hostname() },
@@ -211,18 +227,15 @@ export async function startServer(options: ServerOptions, context: Context): Pro
 			workerIdleMs: options.workerIdleMs ?? IDLE_MS,
 			workerScripts: async (ctx) => plugins.current("worker") ?? (await plugins.scripts("worker", ctx)),
 			listening: () => listening,
-			apply: async (ctx) => {
-				const built = await plugins.build(plugins.state.value.dirty, ctx);
-				// The runner is read when its step runs: the server step may have reloaded the runner plugin or a wrap's.
-				const workers = {
-					name: "workers",
-					kinds: ["worker"],
-					reload: async (step: typeof built, stepContext: Context) => {
-						const runner = await used.now(stepContext);
-						return runner === undefined ? { hosts: [] } : runner.reload(step, stepContext);
-					},
-				};
-				return plugins.rollout([plugins.step("server", host), workers, web.step("web")], built, ctx);
+			apply: (ctx) => {
+				// One build and rollout at a time, as Chord's app kit does: an older apply whose step finished after a newer
+				// one would leave its older code deployed (each host applies the last set it is handed), with nothing dirty.
+				const applied = applying.then(() => apply(ctx));
+				applying = applied.then(
+					() => {},
+					() => {},
+				);
+				return applied;
 			},
 			stop: () => options.onStop({ kind: "stopped" }),
 		};

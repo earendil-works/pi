@@ -8,11 +8,21 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { setTimeout as sleep } from "node:timers/promises";
 import { join } from "node:path";
 import { describe, it, mock, type TestContext } from "node:test";
 import { createHost, type HostError } from "@earendil-works/chord";
-import { BACKGROUND_CONTEXT as context, withAbortSignal } from "@earendil-works/chord/context";
-import { contribute, defineFacet, type P3Principal, Session, Sessions, SessionWorker } from "@earendil-works/p3/v1";
+import { type Context, BACKGROUND_CONTEXT as context, withAbortSignal } from "@earendil-works/chord/context";
+import {
+	contribute,
+	defineFacet,
+	type P3Principal,
+	Session,
+	Sessions,
+	SessionWorker,
+	until,
+	WebScripts,
+} from "@earendil-works/p3/v1";
 import {
 	type HttpRequest,
 	LinkOpened,
@@ -24,6 +34,7 @@ import {
 	WorkerRunners,
 	WorkerRunnerWraps,
 } from "@earendil-works/p3/v1/server";
+import { testServer } from "@earendil-works/p3/v1/testing";
 import { PLUGINS, WORKER } from "../src/install.ts";
 import { exchange, serverSocket } from "../src/local-socket.ts";
 import {
@@ -380,5 +391,58 @@ describe("the runner the server uses", () => {
 		assert.equal(conflicts.length, 1);
 		assert.equal(conflicts[0]?.registry, WorkerRunners.name);
 		assert.deepEqual(conflicts[0]?.plugins, ["@earendil-works/p3-runner", "test.runner"]);
+	});
+});
+
+describe("the apply", () => {
+	// Review of the perf pass (Astra, ERNDL-1060): apply A's workers step was delayed, an edit, apply B finished, then A:
+	// both reported success, the page went back to A's code, nothing was dirty, and a third apply did not repair it.
+	it("runs one build and rollout at a time: a newer apply is not undone by an older one finishing late", async (t) => {
+		const running = await testServer({}, context);
+		t.after(() => running.close(context));
+		const file = join(running.userRoot, "race.web.ts");
+		const write = (said: string) => writeFile(file, `export default { setup() { globalThis.said = "${said}"; } };`);
+		await write("initial");
+		await until(running.plugins, ({ set }) => set, context);
+		await running.apply(context);
+		const scripts = await running.host.get(WebScripts, {}, context);
+		t.after(() => scripts.release());
+		const runners = (await running.host.registry(WorkerRunners, context)).value;
+		assert.ok(runners !== undefined);
+		const reload = runners.reload.bind(runners);
+		const reached = Promise.withResolvers<void>();
+		const finish = Promise.withResolvers<void>();
+		t.after(() => finish.resolve());
+		let first = true;
+		// The older apply's workers step finishes only after the newer apply started.
+		t.mock.method(runners, "reload", async (built: Parameters<WorkerRunner["reload"]>[0], ctx: Context) => {
+			const result = await reload(built, ctx);
+			if (first) {
+				first = false;
+				reached.resolve();
+				await finish.promise;
+			}
+			return result;
+		});
+		await write("a");
+		await until(running.plugins, ({ dirty }) => dirty.includes("race"), context);
+		const older = running.apply(context);
+		await reached.promise;
+		await write("b");
+		await until(running.plugins, ({ dirty }) => dirty.includes("race"), context);
+		const newer = running.apply(context);
+		// Unserialized, the newer apply finishes here while the older one is held, and the older one's page step lands
+		// last; serialized, it waits for the older one: nothing to wait for but time.
+		await Promise.race([newer, sleep(1500)]);
+		finish.resolve();
+		assert.equal((await older).stopped, undefined);
+		assert.equal((await newer).stopped, undefined);
+		assert.deepEqual(running.plugins.value.dirty, []);
+		const shown = scripts.set.value.combined;
+		const headers = { cookie: await running.cookie(context) };
+		const combined = await (await fetch(`http://127.0.0.1:${running.port}${shown}`, { headers })).text();
+		assert.match(combined, /said\s*=\s*"b"/);
+		await running.apply(context);
+		assert.equal(scripts.set.value.combined, shown);
 	});
 });
