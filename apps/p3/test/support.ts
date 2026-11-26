@@ -57,12 +57,13 @@ export async function scriptFaux(
 }
 
 /**
- * A coding session titled `title` in `folder`, made by the owner of `client` (so it follows them: the Pi's coding
- * tools and faux login), whose agent works until `folder` has a file `gate` (`openGate`): the faux login answers every
+ * A coding session titled `title` in `folder`, made by the owner of `client`, with the faux login made in it by
+ * `server` (the test server's host; `scriptFaux`), whose agent works until `folder` has a file `gate` (`openGate`): the faux login answers every
  * request with a bash call waiting for it (a run cut off asks again and waits again) until the gate is open. Its row
  * says `working` because the harness says so, as for any run: a test never reports a state the harness owns.
  */
 export async function gatedSession(
+	server: Host<P3Principal>,
 	client: Host<P3Principal>,
 	title: string,
 	folder: string,
@@ -78,7 +79,7 @@ export async function gatedSession(
 		{ app: "coding", title, location: { environment: THIS_DEVICE, folder } },
 		context,
 	);
-	await scriptFaux(client, session, script, context);
+	await scriptFaux(server, session, script, context);
 	return session;
 }
 
