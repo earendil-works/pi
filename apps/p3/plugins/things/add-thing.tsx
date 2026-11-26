@@ -222,6 +222,12 @@ function Confirm(props: {
 			{offer.kind === "make" && Create !== undefined ? (
 				<Create onReady={setInput} workspace={props.workspace} />
 			) : null}
+			{offer.thingKind.workspace === "no" ? null : (
+				// A workspace kind's create hook may answer other default grants (a session: the nearest session defaults).
+				<p className={styles.hint} data-add-defaults-note="">
+					{t("defaultsMayChange")}
+				</p>
+			)}
 			{(["everyone", "agents"] as const).map((party) =>
 				(grants[party] ?? []).length === 0 ? null : (
 					<div className={styles.preview} data-add-defaults={party} key={party}>

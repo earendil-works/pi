@@ -47,6 +47,7 @@ export const page = defineMessages("things.page", {
 		makeFor: (party: string) => `Make, for ${party}`,
 		makeAllKinds: "All kinds, also ones added later",
 		kindDefault: "kind default",
+		defaultsMayChange: "The nearest session defaults may change what this gives.",
 		notInEffect: "not in effect",
 		byNamed: (name: string) => `by ${name}`,
 		byPerson: "by a person",
