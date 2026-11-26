@@ -8,9 +8,9 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { BACKGROUND_CONTEXT as context, type P3Principal } from "@earendil-works/p3/v1";
+import { BACKGROUND_CONTEXT as context, defineFacet, LoginProviders, type P3Principal } from "@earendil-works/p3/v1";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
-import { createModels, fauxProvider, type Provider } from "@earendil-works/p3/v1/worker";
+import { createModels, fauxAssistantMessage, fauxProvider, type Provider } from "@earendil-works/p3/v1/worker";
 import { FAUX_MODEL, FAUX_PROVIDER, keyOf, type Step } from "../../../test/plugins/faux-login/contract.ts";
 import fauxWorker from "../../../test/plugins/faux-login/worker.ts";
 import { type HarnessSession, type HeldThing, ThingHarnessParts } from "../../things/contract.worker.ts";
@@ -33,11 +33,38 @@ const FAUX: LoginInfo = {
 /** The faux provider's models, as the server's catalog has them. */
 const CATALOG = fauxProvider({ provider: FAUX_PROVIDER, api: "faux", models: [{ id: FAUX_MODEL }] }).models;
 
+/** The model providers the recording provider's request code was given, in order. */
+const given: string[] = [];
+
+/** A provider (`rec`) whose request code records the model's provider, then answers as the faux one. */
+const recording = defineFacet((_host, self) => {
+	const base = fauxProvider({ provider: "rec", api: "rec", models: [{ id: "m" }] });
+	base.setResponses([fauxAssistantMessage("recorded")]);
+	self.contribute(LoginProviders, [
+		{
+			...base.provider,
+			streamSimple: (model, context, options) => {
+				given.push(model.provider);
+				return base.provider.streamSimple(model, context, options);
+			},
+		},
+	]);
+});
+
 /** A faux script. */
 const SCRIPT: Step[] = [{ when: "hello", reply: [{ kind: "text", text: "hi there" }] }];
 
-/** A login `thing` the agent holds: `authorize` answers `script` as the key, left out without Use. */
-function held(thing: string, script: readonly Step[] | undefined, calls: string[] = []): HeldThing<typeof Login> {
+/**
+ * A login `thing` the agent holds: `authorize` answers `script` as the key, left out without Use; it shows `login` and
+ * has the models `catalog`.
+ */
+function held(
+	thing: string,
+	script: readonly Step[] | undefined,
+	calls: string[] = [],
+	login: LoginInfo = FAUX,
+	catalog: readonly unknown[] = CATALOG,
+): HeldThing<typeof Login> {
 	const authorize =
 		script === undefined
 			? undefined
@@ -46,7 +73,7 @@ function held(thing: string, script: readonly Step[] | undefined, calls: string[
 					return { auth: { apiKey: keyOf(script) } };
 				};
 	// The part reads the reference's `login`, `catalog` and `authorize` only.
-	const ref = { login: { value: FAUX }, catalog: { value: CATALOG }, authorize } as unknown as HeldThing<
+	const ref = { login: { value: login }, catalog: { value: catalog }, authorize } as unknown as HeldThing<
 		typeof Login
 	>["ref"];
 	return { thing, workspace: "w1", ref };
@@ -58,7 +85,14 @@ describe("the providers of the logins the agent holds", () => {
 	beforeEach(async () => {
 		t = await testPlugin(
 			ROOT,
-			{ kind: "worker", session: "s1", stubs: [{ name: "p3-test-faux-login", facet: fauxWorker }] },
+			{
+				kind: "worker",
+				session: "s1",
+				stubs: [
+					{ name: "p3-test-faux-login", facet: fauxWorker },
+					{ name: "recording", facet: recording },
+				],
+			},
 			context,
 		);
 	});
@@ -86,9 +120,7 @@ describe("the providers of the logins the agent holds", () => {
 	});
 
 	it("loads no request code until a request; one for a provider nobody has fails that request only", async () => {
-		const unknown = held("x", SCRIPT);
-		const ref = { ...unknown.ref, login: { value: { ...FAUX, provider: "nobody" } } } as typeof unknown.ref;
-		const [provider] = providers({ ...unknown, ref });
+		const [provider] = providers(held("x", SCRIPT, [], { ...FAUX, provider: "nobody" }));
 		assert.equal(provider!.id, "nobody~x");
 		const models = createModels();
 		models.setProvider(provider!);
@@ -97,6 +129,18 @@ describe("the providers of the logins the agent holds", () => {
 		});
 		assert.equal(answer.stopReason, "error");
 		assert.match(answer.errorMessage ?? "", /no request code for the provider nobody/);
+	});
+
+	it("hands the request code the model under its provider's own id (request code checks it)", async () => {
+		given.length = 0;
+		const catalog = fauxProvider({ provider: "rec", api: "rec", models: [{ id: "m" }] }).models;
+		const [provider] = providers(held("r", SCRIPT, [], { ...FAUX, provider: "rec" }, catalog));
+		const models = createModels();
+		models.setProvider(provider!);
+		await models.completeSimple(models.getModel("rec~r", "m")!, {
+			messages: [{ role: "user", content: "hello", timestamp: 0 }],
+		});
+		assert.deepEqual(given, ["rec"]);
 	});
 
 	it("answers a request with the login's auth, through the provider's own request code", async () => {

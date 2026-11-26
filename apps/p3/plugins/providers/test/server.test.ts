@@ -42,7 +42,8 @@ const SCRIPT: Step[] = [{ when: "", reply: [{ kind: "text", text: "hi" }] }];
 const oauth = { refreshes: 0 };
 
 /**
- * An OAuth test provider (`oauth-test`): its sign-in asks for a code and answers a token that expired; a refresh
+ * An OAuth test provider (`oauth-test`): its sign-in asks how (one of two options), then for a code, and answers a
+ * token that expired; a refresh
  * answers `access-<n>` (refused for the refresh token `bad`); the request auth is the access token.
  */
 const oauthStub = defineFacet((_host, self) => {
@@ -55,6 +56,14 @@ const oauthStub = defineFacet((_host, self) => {
 				oauth: {
 					name: "OAuth test",
 					login: async (interaction) => {
+						await interaction.prompt({
+							type: "select",
+							message: "how",
+							options: [
+								{ id: "code", label: "A code" },
+								{ id: "browser", label: "A browser" },
+							],
+						});
 						const code = await interaction.prompt({ type: "manual_code", message: "the code" });
 						return { type: "oauth", access: `access-${code}`, refresh: code, expires: 0 };
 					},
@@ -199,6 +208,29 @@ describe("signing in", () => {
 		});
 	});
 
+	it("takes only one of a question's options; then asks the next", async () => {
+		const ann = await person("Ann");
+		await signingIn(ann, async (flow, ctx) => {
+			const attempt = await flow.start({ provider: "oauth-test", method: "oauth" }, ctx);
+			const how = await until(
+				flow.attempt,
+				(now) => now?.status === "working" && now.prompt !== null,
+				within("how", ctx),
+			);
+			assert.ok(how?.status === "working" && how.prompt?.type === "select");
+			await refused(flow.answer({ attempt, prompt: how.prompt.id, value: "zzz" }, ctx), "invalid");
+			await flow.answer({ attempt, prompt: how.prompt.id, value: "code" }, ctx);
+			const code = await until(
+				flow.attempt,
+				(now) => now?.status === "working" && now.prompt?.type === "manual_code",
+				within("the code", ctx),
+			);
+			assert.ok(code?.status === "working" && code.prompt !== null);
+			await flow.answer({ attempt, prompt: code.prompt.id, value: "c1" }, ctx);
+			await until(flow.attempt, (now) => now?.status === "done", within("done", ctx));
+		});
+	});
+
 	it("never shows the secret: not in the attempt, not in the login", async () => {
 		const ann = await person("Ann");
 		const secret: Step[] = [{ when: "the-secret-text", reply: [] }];
@@ -265,8 +297,44 @@ describe("who gets the request auth", () => {
 		);
 		assert.equal(await holding(ann, workspace, thing, async (login) => login.authorize), undefined);
 		assert.equal(await holding(ann, workspace, thing, async (login) => login.catalog), undefined);
+		// Anyone else here is not let in at all: people see the models through the session's model picker.
+		const bob = await person("Bob", workspace);
+		await refused(
+			holding(bob, workspace, thing, async (login) => login.login.value),
+			"forbidden",
+		);
 		await things.setOwner({ person: ann.id, owner: true }, context);
 		assert.equal(await holding(ann, workspace, thing, async (login) => login.authorize), undefined);
+	});
+
+	it("resolves only what the login stored, never the server's environment", async () => {
+		const { workspace, agent } = await session("s1");
+		const thing = await t.root(
+			(ctx) =>
+				makeLogin(
+					{
+						name: "Keyless",
+						workspace,
+						by: BY,
+						provider: "anthropic",
+						method: "api_key",
+						credential: { type: "api_key" },
+					},
+					ctx,
+				),
+			context,
+		);
+		const before = process.env.ANTHROPIC_API_KEY;
+		process.env.ANTHROPIC_API_KEY = "the-servers-own-key";
+		try {
+			await refused(
+				holding(agent, workspace, thing, (login, ctx) => login.authorize!({}, ctx)),
+				"providers.signInAgain",
+			);
+		} finally {
+			if (before === undefined) delete process.env.ANTHROPIC_API_KEY;
+			else process.env.ANTHROPIC_API_KEY = before;
+		}
 	});
 
 	it("refreshes an expired OAuth token once for requests at once, and keeps the new one", async () => {

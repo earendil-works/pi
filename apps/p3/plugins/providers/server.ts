@@ -10,7 +10,6 @@ import {
 	type JsonValue,
 	keyedEntries,
 	type P3Principal,
-	type Reference,
 	type RegistryValue,
 	type Self,
 	type TableItem,
