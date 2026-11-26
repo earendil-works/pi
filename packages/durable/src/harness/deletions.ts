@@ -32,9 +32,9 @@ export const DELETIONS_KEY = documentKey(addressId({ kind: DeletionsDoc.definiti
 const SCAN_PAGE_SIZE = 256;
 
 /**
- * The conversations a deletion of `ids` takes: them and, transitively, the conversations their tasks own; unknown IDs
- * are skipped. Table reads, so before the commit's first table write. Throws `DeletionRefused` for the root
- * conversation, one owned by a live task outside the set, and one with a fork outside it.
+ * The conversations a deletion of `ids` takes: them and, transitively, their forks, whose history reads theirs, and
+ * the conversations their tasks own; unknown IDs are skipped. Table reads, so before the commit's first table write.
+ * Throws `DeletionRefused` for the root conversation and one owned by a live task outside the set.
  */
 export async function deletionSet(tx: Tx, ids: readonly ConversationId[]): Promise<ConversationRecord[]> {
 	const scan = (query: ConversationQuery) => scanAll((cursor) => tx.scanConversations(query, SCAN_PAGE_SIZE, cursor));
@@ -43,9 +43,11 @@ export async function deletionSet(tx: Tx, ids: readonly ConversationId[]): Promi
 		const record = await tx.conversation(id);
 		if (record !== undefined) set.set(id, record);
 	}
-	// Also visits the entries added while it iterates: owned conversations of owned conversations.
+	// Also visits the entries added while it iterates: forks and owned conversations of those it took.
 	for (const id of set.keys()) {
-		for (const owned of await scan({ ownerConversationId: id })) if (!set.has(owned.id)) set.set(owned.id, owned);
+		for (const query of [{ parentConversationId: id }, { ownerConversationId: id }]) {
+			for (const record of await scan(query)) if (!set.has(record.id)) set.set(record.id, record);
+		}
 	}
 	for (const record of set.values()) {
 		if (record.id === ROOT_CONVERSATION_ID) throw new DeletionRefused(record.id, { kind: "root" });
@@ -55,9 +57,6 @@ export async function deletionSet(tx: Tx, ids: readonly ConversationId[]): Promi
 			if (task !== undefined && task.state.status !== "terminal") {
 				throw new DeletionRefused(record.id, { kind: "owner", taskId: owner.taskId });
 			}
-		}
-		for (const fork of await scan({ parentConversationId: record.id })) {
-			if (!set.has(fork.id)) throw new DeletionRefused(record.id, { kind: "fork", forkId: fork.id });
 		}
 	}
 	return [...set.values()];
