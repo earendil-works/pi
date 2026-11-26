@@ -67,7 +67,8 @@ function commandExists(cmd: string): boolean {
 	}
 }
 
-// Get the path to a tool (system-wide or in our tools dir)
+// Get the path to a tool (system-wide or in our tools dir).
+// Reads the agent dir: do not call it while modules load, before main() has applied --agent-dir.
 export function getToolPath(tool: "fd" | "rg"): string | null {
 	const config = TOOLS[tool];
 	if (!config) return null;
@@ -332,6 +333,7 @@ export interface ToolStatus {
  * Ensure a tool is available, downloading if necessary.
  * Reports progress through `onStatus`; status messages are otherwise silent.
  * Returns the tool path, or undefined if unavailable.
+ * Reads the agent dir: do not call it while modules load, before main() has applied --agent-dir.
  */
 export async function ensureTool(
 	tool: "fd" | "rg",
