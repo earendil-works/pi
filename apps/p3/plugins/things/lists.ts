@@ -26,7 +26,7 @@ import type { Answers, Look, Probe } from "./access.ts";
 import { callerOf } from "./admission.ts";
 import { AccessHandles, Gives, ThingsStore } from "./contract.server.ts";
 import { type Caller, kindOfMakeTick, MAKE_ANY, makeTick, OPEN, type Party, partyKey, partyOf } from "./contract.ts";
-import { type KindInfo, ThingKinds } from "./kind.ts";
+import { type KindInfo, ThingKinds, type TickFor } from "./kind.ts";
 import { messages } from "./messages.ts";
 import { readAll, readWhole } from "./reader.ts";
 import type { OwnHere, ThingHere } from "./rules.ts";
@@ -372,7 +372,7 @@ type WhoMayValue = {
 	ticks: {
 		name: string;
 		label: { namespace: string; key: string; params: (string | number | boolean | null)[] };
-		for: "agents" | "people" | "all";
+		for: TickFor;
 	}[];
 	linkedIn: Origin;
 	rows: { party: Party; name: string; open: Cell; ticks: Record<string, Cell> }[];
