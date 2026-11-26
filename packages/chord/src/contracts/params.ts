@@ -62,15 +62,13 @@ const SPECIAL = /[\\|]/;
 
 /** Joins key parts with `|`, each escaped (`\\` and `|`), so two different part lists never join to one key. */
 export function joinKey(parts: readonly string[]): string {
-	// Most keys have nothing to escape: joined as they are, no list mapped (a key is made per get and per hold).
+	// Each part read once, escaped only when it has something to escape (no closure mapped over the list).
+	const read: string[] = new Array(parts.length);
 	for (let index = 0; index < parts.length; index++) {
-		if (SPECIAL.test(parts[index]!)) return parts.map(escapedPart).join("|");
+		const part = parts[index]!;
+		read[index] = SPECIAL.test(part) ? part.replaceAll("\\", "\\\\").replaceAll("|", "\\|") : part;
 	}
-	return parts.join("|");
-}
-
-function escapedPart(part: string): string {
-	return SPECIAL.test(part) ? part.replaceAll("\\", "\\\\").replaceAll("|", "\\|") : part;
+	return read.join("|");
 }
 
 type SchemaNode = { readonly [keyword: string]: JsonValue };

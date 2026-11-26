@@ -53,4 +53,12 @@ describe("joinKey", () => {
 		expect(joinKey(["a|", "b"])).not.toBe(joinKey(["a", "|b"]));
 		expect(joinKey(["x", "a\\|b"])).toBe("x|a\\\\\\|b");
 	});
+
+	// Found by the review of the hot-path pass (astra2, 2026-11-26).
+	it("reads each part once", () => {
+		let reads = 0;
+		const parts = [""];
+		Object.defineProperty(parts, "0", { get: () => (++reads === 1 ? "a" : "b|c") });
+		expect([joinKey(parts), reads]).toEqual(["a", 1]);
+	});
 });
