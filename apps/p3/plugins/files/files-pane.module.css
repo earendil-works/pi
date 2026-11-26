@@ -1,0 +1,102 @@
+/* The Files pane: the folder's bar (Up, the path, Upload), the search field, then one row per entry. */
+
+.pane {
+	display: flex;
+	flex-direction: column;
+	gap: var(--semantic-dimension-space-gap-small);
+	padding-block: var(--semantic-dimension-space-gap-x-small);
+	min-inline-size: 0;
+}
+
+.bar {
+	display: flex;
+	align-items: center;
+	gap: var(--semantic-dimension-space-gap-small);
+	min-inline-size: 0;
+}
+
+.grow {
+	flex: 1 1 auto;
+	min-inline-size: 0;
+}
+
+.path {
+	flex: 1 1 auto;
+	min-inline-size: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	direction: rtl;
+	text-align: start;
+	font: var(--semantic-typography-ui-secondary);
+	color: var(--semantic-color-text-secondary);
+}
+
+.list {
+	display: flex;
+	flex-direction: column;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.entry {
+	display: flex;
+	align-items: center;
+	gap: var(--semantic-dimension-space-gap-x-small);
+	min-block-size: 2.75rem;
+	min-inline-size: 0;
+}
+
+.name {
+	display: flex;
+	flex: 1 1 auto;
+	align-items: center;
+	gap: var(--semantic-dimension-space-gap-small);
+	min-inline-size: 0;
+	padding: 0;
+	border: 0;
+	background: none;
+	color: var(--semantic-color-text-primary);
+	font: var(--semantic-typography-ui-primary);
+	text-align: start;
+	cursor: pointer;
+}
+
+.name span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.size {
+	flex: none;
+	color: var(--semantic-color-text-secondary);
+	font: var(--semantic-typography-ui-tertiary);
+}
+
+.upload {
+	flex: none;
+	cursor: pointer;
+	color: var(--semantic-color-text-primary);
+	font: var(--semantic-typography-ui-secondary);
+}
+
+.hiddenInput {
+	position: absolute;
+	inline-size: 1px;
+	block-size: 1px;
+	opacity: 0;
+}
+
+.note {
+	margin: 0;
+	color: var(--semantic-color-text-secondary);
+	font: var(--semantic-typography-ui-secondary);
+}
+
+.error {
+	margin: 0;
+	color: var(--semantic-color-text-negative);
+	font: var(--semantic-typography-ui-secondary);
+}

@@ -1,0 +1,414 @@
+// The Files pane: one folder of a machine through a workspace's Files, folders first, a page at a time; a search below
+// the folder; downloads; and, with Write, uploads (in pieces of `CHUNK`), renames and removals. A component until
+// slice 4's `Views` registers panes; what it opens on (the workspace, its Files, the machine and the folder) is its
+// props. The pane follows the reference live: Read or Write withheld takes their controls away at once.
+
+import { Button, IconButton, Input } from "@earendil-works/elanor-react";
+import {
+	BACKGROUND_CONTEXT,
+	type Context,
+	isChordError,
+	type MessageData,
+	type Reference,
+	type With,
+	withGranted,
+} from "@earendil-works/p3/v1";
+import {
+	DeleteIcon,
+	DescriptionIcon,
+	EditIcon,
+	FolderIcon,
+	SearchIcon,
+	useHold,
+	useLive,
+	useMessages,
+	useRefState,
+} from "@earendil-works/p3/v1/web";
+import { type ChangeEvent, useCallback, useEffect, useState } from "react";
+import { messages as machineMessages } from "../environments/messages.ts";
+import { CHUNK, type Entry, Files, type Hit } from "./contract.ts";
+import styles from "./files-pane.module.css";
+import { messages } from "./messages.ts";
+
+/** What the pane opens on: the workspace, its Files thing, a machine thing's id and an absolute folder on it. */
+export type FilesPaneProps = {
+	readonly workspace: string;
+	readonly thing: string;
+	readonly machine: string;
+	readonly folder: string;
+};
+
+/** Files with Read, as the pane calls it. */
+type Reader = With<Reference<typeof Files>, "entries" | "search" | "download">;
+
+/** Files with Write. */
+type Writer = With<Reference<typeof Files>, "upload" | "rename" | "remove">;
+
+/** The pane on `props.folder` of `props.machine`; the person moves between folders in it. */
+export function FilesPane(props: FilesPaneProps) {
+	const { t } = useMessages(messages);
+	const ref = useHold(Files, { workspace: props.workspace, thing: props.thing });
+	const live = useLive(ref);
+	const state = useRefState(ref);
+	const reader = withGranted(live, "entries", "search", "download");
+	const writer = withGranted(live, "upload", "rename", "remove");
+	const [folder, setFolder] = useState(props.folder);
+	// A change (upload, rename, removal) shows the folder anew: `changes` counts them.
+	const [changes, setChanges] = useState(0);
+	if (state?.kind === "failed" && state.cause.kind === "denied") return <p className={styles.note}>{t("denied")}</p>;
+	if (state?.kind === "failed" || state?.kind === "ended") return <p className={styles.note}>{t("unavailable")}</p>;
+	if (live === undefined) return <p className={styles.note}>{t("loading")}</p>;
+	if (reader === undefined) return <p className={styles.note}>{t("denied")}</p>;
+	return (
+		<section aria-label={t("pane")} className={styles.pane} data-files={writer === undefined ? "reader" : "writer"}>
+			<Folder
+				folder={folder}
+				key={`${folder}\n${changes}`}
+				machine={props.machine}
+				onChanged={() => setChanges((n) => n + 1)}
+				onOpen={setFolder}
+				reader={reader}
+				writer={writer}
+			/>
+		</section>
+	);
+}
+
+/** One folder: its path with Up, the search field, the entries or the hits, and the upload button. */
+function Folder(props: {
+	readonly folder: string;
+	readonly machine: string;
+	readonly reader: Reader;
+	readonly writer: Writer | undefined;
+	readonly onOpen: (folder: string) => void;
+	readonly onChanged: () => void;
+}) {
+	const { t } = useMessages(messages);
+	const { folder, machine, reader, writer, onChanged: changed } = props;
+	const [entries, setEntries] = useState<{ readonly list: readonly Entry[]; readonly next?: string } | undefined>();
+	const [hits, setHits] = useState<{ readonly list: readonly Hit[]; readonly truncated: boolean } | undefined>();
+	const [query, setQuery] = useState("");
+	const action = useAction();
+	const { run } = action;
+	useEffect(() => {
+		run(async (ctx) => {
+			const page = await reader.entries({ machine, path: folder }, ctx);
+			setEntries({ list: page.entries, ...(page.next === undefined ? {} : { next: page.next }) });
+		});
+	}, [run, reader, machine, folder]);
+	const more = (after: string) =>
+		action.run(async (ctx) => {
+			const page = await reader.entries({ machine, path: folder, after }, ctx);
+			setEntries((had) => ({
+				list: [...(had?.list ?? []), ...page.entries],
+				...(page.next === undefined ? {} : { next: page.next }),
+			}));
+		});
+	const search = () =>
+		action.run(async (ctx) => {
+			const found = await reader.search({ machine, path: folder, query: query.trim() }, ctx);
+			setHits({ list: found.hits, truncated: found.truncated });
+		});
+	const parent = folder === "/" ? undefined : folder.slice(0, Math.max(1, folder.lastIndexOf("/")));
+	return (
+		<>
+			<div className={styles.bar}>
+				<Button
+					data-files-up=""
+					density="compact"
+					disabled={parent === undefined}
+					hierarchy="tertiary"
+					onClick={() => parent !== undefined && props.onOpen(parent)}
+				>
+					{t("up")}
+				</Button>
+				<span className={styles.path} data-files-path="">
+					{folder}
+				</span>
+				{writer === undefined ? null : (
+					<Upload action={action} folder={folder} machine={machine} onDone={changed} writer={writer} />
+				)}
+			</div>
+			<form
+				className={styles.bar}
+				onSubmit={(event) => {
+					event.preventDefault();
+					if (query.trim() !== "") search();
+				}}
+			>
+				<Input
+					aria-label={t("searchHere")}
+					className={styles.grow}
+					data-files-query=""
+					onValueChange={setQuery}
+					placeholder={t("searchHere")}
+					value={query}
+				/>
+				<IconButton aria-label={t("search")} data-files-search="" type="submit">
+					<SearchIcon />
+				</IconButton>
+				{hits === undefined ? null : (
+					<Button density="compact" hierarchy="tertiary" onClick={() => setHits(undefined)}>
+						{t("clearSearch")}
+					</Button>
+				)}
+			</form>
+			{hits !== undefined ? (
+				<Hits hits={hits.list} onOpen={props.onOpen} truncated={hits.truncated} />
+			) : entries === undefined ? (
+				<p className={styles.note}>{t("loading")}</p>
+			) : entries.list.length === 0 ? (
+				<p className={styles.note}>{t("empty")}</p>
+			) : (
+				<ul className={styles.list}>
+					{entries.list.map((entry) => (
+						<EntryItem
+							action={action}
+							entry={entry}
+							key={entry.path}
+							machine={machine}
+							onChanged={changed}
+							onOpen={props.onOpen}
+							reader={reader}
+							writer={writer}
+						/>
+					))}
+				</ul>
+			)}
+			{hits === undefined && entries?.next !== undefined ? (
+				<Button
+					data-files-more=""
+					density="compact"
+					hierarchy="tertiary"
+					onClick={() => entries.next !== undefined && more(entries.next)}
+					pending={action.pending}
+				>
+					{t("more")}
+				</Button>
+			) : null}
+			{action.error === undefined ? null : (
+				<p className={styles.error} data-files-error="">
+					{action.error}
+				</p>
+			)}
+		</>
+	);
+}
+
+/** One entry: a folder opens on a click, a file downloads; with Write, rename and remove. */
+function EntryItem(props: {
+	readonly entry: Entry;
+	readonly machine: string;
+	readonly reader: Reader;
+	readonly writer: Writer | undefined;
+	readonly action: Action;
+	readonly onOpen: (folder: string) => void;
+	readonly onChanged: () => void;
+}) {
+	const { t } = useMessages(messages);
+	const { entry, machine, reader, writer, action } = props;
+	const [renaming, setRenaming] = useState<string | undefined>(undefined);
+	const folder = entry.kind === "directory";
+	const download = () =>
+		action.run(async (ctx) => {
+			window.location.assign(await reader.download({ machine, path: entry.path }, ctx));
+		});
+	if (renaming !== undefined && writer !== undefined) {
+		const at = entry.path.slice(0, entry.path.lastIndexOf("/") + 1);
+		return (
+			<li className={styles.entry} data-files-entry={entry.name}>
+				<form
+					className={styles.bar}
+					onSubmit={(event) => {
+						event.preventDefault();
+						action.run(async (ctx) => {
+							await writer.rename({ machine, from: entry.path, to: `${at}${renaming}` }, ctx);
+							setRenaming(undefined);
+							props.onChanged();
+						});
+					}}
+				>
+					<Input
+						aria-label={t("rename")}
+						autoFocus
+						className={styles.grow}
+						onValueChange={setRenaming}
+						value={renaming}
+					/>
+					<Button density="compact" disabled={renaming.trim() === ""} type="submit">
+						{t("save")}
+					</Button>
+					<Button density="compact" hierarchy="tertiary" onClick={() => setRenaming(undefined)}>
+						{t("cancel")}
+					</Button>
+				</form>
+			</li>
+		);
+	}
+	return (
+		<li className={styles.entry} data-files-entry={entry.name}>
+			<button
+				className={styles.name}
+				onClick={() => (folder ? props.onOpen(entry.path) : download())}
+				title={folder ? entry.path : t("download")}
+				type="button"
+			>
+				{folder ? <FolderIcon /> : <DescriptionIcon />}
+				<span>{entry.name}</span>
+			</button>
+			{folder ? null : <span className={styles.size}>{sizeText(entry.size)}</span>}
+			{writer === undefined ? null : (
+				<>
+					<IconButton aria-label={t("rename")} data-files-rename="" onClick={() => setRenaming(entry.name)}>
+						<EditIcon />
+					</IconButton>
+					<IconButton
+						aria-label={t("remove")}
+						data-files-remove=""
+						onClick={() =>
+							action.run(async (ctx) => {
+								await writer.remove({ machine, path: entry.path }, ctx);
+								props.onChanged();
+							})
+						}
+					>
+						<DeleteIcon />
+					</IconButton>
+				</>
+			)}
+		</li>
+	);
+}
+
+/** A search's hits: a folder opens on a click, a file opens its folder. */
+function Hits(props: {
+	readonly hits: readonly Hit[];
+	readonly truncated: boolean;
+	readonly onOpen: (folder: string) => void;
+}) {
+	const { t } = useMessages(messages);
+	if (props.hits.length === 0) return <p className={styles.note}>{t("noHits")}</p>;
+	return (
+		<>
+			<ul className={styles.list}>
+				{props.hits.map((hit) => (
+					<li className={styles.entry} data-files-hit={hit.path} key={hit.path}>
+						<button
+							className={styles.name}
+							onClick={() =>
+								props.onOpen(
+									hit.kind === "directory"
+										? hit.path
+										: hit.path.slice(0, Math.max(1, hit.path.lastIndexOf("/"))),
+								)
+							}
+							type="button"
+						>
+							{hit.kind === "directory" ? <FolderIcon /> : <DescriptionIcon />}
+							<span>{hit.path}</span>
+						</button>
+					</li>
+				))}
+			</ul>
+			{props.truncated ? <p className={styles.note}>{t("truncated")}</p> : null}
+		</>
+	);
+}
+
+/** The upload button: the picked file goes into `folder` in pieces of `CHUNK`, the last one putting it in place. */
+function Upload(props: {
+	readonly folder: string;
+	readonly machine: string;
+	readonly writer: Writer;
+	readonly action: Action;
+	readonly onDone: () => void;
+}) {
+	const { t } = useMessages(messages);
+	const [uploading, setUploading] = useState<string | undefined>(undefined);
+	const picked = (event: ChangeEvent<HTMLInputElement>) => {
+		const file = event.target.files?.[0];
+		event.target.value = "";
+		if (file === undefined) return;
+		const path = props.folder === "/" ? `/${file.name}` : `${props.folder}/${file.name}`;
+		setUploading(file.name);
+		props.action.run(async (ctx) => {
+			try {
+				// An empty file is one empty last piece.
+				for (let offset = 0; offset === 0 || offset < file.size; offset += CHUNK) {
+					const bytes = new Uint8Array(await file.slice(offset, offset + CHUNK).arrayBuffer());
+					const last = offset + CHUNK >= file.size;
+					await props.writer.upload({ machine: props.machine, path, offset, data: base64(bytes), last }, ctx);
+				}
+				props.onDone();
+			} finally {
+				setUploading(undefined);
+			}
+		});
+	};
+	return (
+		<label className={styles.upload} data-files-upload="">
+			<input className={styles.hiddenInput} onChange={picked} type="file" />
+			<span>{uploading === undefined ? t("upload") : t("uploading", uploading)}</span>
+		</label>
+	);
+}
+
+/** `bytes` as base64, built in slices: one `String.fromCharCode` over a whole piece would overflow the stack. */
+function base64(bytes: Uint8Array): string {
+	let text = "";
+	for (let at = 0; at < bytes.length; at += 0x8000) text += String.fromCharCode(...bytes.subarray(at, at + 0x8000));
+	return btoa(text);
+}
+
+/** A size in bytes as people read it. */
+function sizeText(size: number): string {
+	if (size < 1024) return `${size} B`;
+	if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+	if (size < 1024 * 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`;
+	return `${(size / 1024 / 1024 / 1024).toFixed(1)} GB`;
+}
+
+/** A call the pane makes: whether one runs and the text of the last failure. */
+type Action = {
+	readonly pending: boolean;
+	readonly error: string | undefined;
+	/** Runs `call`; its failure is kept as `error`, never thrown. */
+	run(call: (context: Context) => Promise<unknown>): void;
+};
+
+/** The pane's call state and its `run`. */
+function useAction(): Action {
+	const files = useMessages(messages).t;
+	const machines = useMessages(machineMessages).t;
+	const [pending, setPending] = useState(false);
+	const [error, setError] = useState<string | undefined>(undefined);
+	const run = useCallback(
+		(call: (context: Context) => Promise<unknown>) => {
+			setPending(true);
+			setError(undefined);
+			call(BACKGROUND_CONTEXT)
+				.catch((failure: unknown) => {
+					const message = isChordError(failure) ? messageIn(failure.details) : undefined;
+					if (message === undefined) setError(failure instanceof Error ? failure.message : String(failure));
+					else setError(message.namespace === "environments" ? machines.render(message) : files.render(message));
+				})
+				.finally(() => setPending(false));
+		},
+		[files, machines],
+	);
+	return { pending, error, run };
+}
+
+/**
+ * The message a refusal's details carry (`{ message }`, as the files and environments plugins refuse), if any. A trust
+ * boundary: the details came over the wire.
+ */
+function messageIn(details: unknown): MessageData | undefined {
+	if (details === null || typeof details !== "object" || !("message" in details)) return undefined;
+	const { message } = details;
+	if (message === null || typeof message !== "object") return undefined;
+	if (!("namespace" in message && "key" in message && "params" in message)) return undefined;
+	const { namespace, key, params } = message;
+	if (typeof namespace !== "string" || typeof key !== "string" || !Array.isArray(params)) return undefined;
+	return { namespace, key, params };
+}
