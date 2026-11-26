@@ -2,15 +2,18 @@
 // lookups) searches the key, never scans or sorts; a credential is created once and replaced only with one of its own
 // provider; a refresh keeps the token its provider rotated whatever ends meanwhile (its caller, the store's object in
 // a reload) and is written over the credential it read only (a replacement, a removal and a new login meanwhile win);
-// one refresh at a time across a reload; a failed refresh refuses the login for a while, then one request tries
-// again; a failed derivation of an unexpired token refuses nothing (Astra's and Opus's reproductions, rounds 1 and 2);
-// the device id is made once and kept across a reload.
+// one refresh at a time across a reload, a clock set forward too, a lease of a process that is gone holding nothing;
+// a rotation is stored when its account's models cannot be told; a failed refresh refuses the login for a while (a
+// request that waited for it too), then one request tries again, and a success clears it; a failed derivation of an
+// unexpired token refuses nothing (Astra's and Opus's reproductions, rounds 1 to 3); the device id is made once and
+// kept across a reload.
 
 import assert from "node:assert/strict";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { describe, it, type TestContext } from "node:test";
 import { NodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
 import {
+	type Credential,
 	BACKGROUND_CONTEXT as context,
 	createHost,
 	defineFacet,
@@ -38,13 +41,25 @@ const OLD = { type: "oauth", access: "old", refresh: "old", expires: 0 };
 /** A token valid for an hour. */
 const valid = (access: string) => ({ ...OLD, access, expires: Date.now() + 3_600_000 });
 
-/** The things plugin's test host with the providers plugin and `more`; its store, and a reload of the providers. */
+/**
+ * The things plugin's test host with the providers plugin and `more`; its store, a reload of the providers, and login
+ * `thing`'s row as the store's file holds it.
+ */
 async function served(t: TestContext, more: readonly PluginFacet<P3Principal>[] = []) {
 	const w = await providersWorld(context, new Set(), more);
 	t.after(() => w.close(context));
 	return {
 		store: () => w.host.get(LoginStore, {}, context),
 		reload: () => w.reload(PROVIDERS, context),
+		stored: (thing: string) => {
+			const database = new DatabaseSync(w.path, { readOnly: true });
+			try {
+				const select = 'SELECT * FROM "providers.store:providers.logins" WHERE thing = ?';
+				return database.prepare(select).get(thing)!;
+			} finally {
+				database.close();
+			}
+		},
 	};
 }
 
@@ -210,6 +225,51 @@ describe("credentials while a refresh runs", () => {
 	});
 });
 
+describe("a rotation", () => {
+	it("is stored, its lease released, when its provider cannot tell the account's models (Astra)", async (t) => {
+		const base = fauxProvider({ provider: "unlisted", api: "unlisted", models: [{ id: "m" }] }).provider;
+		const unlisted = {
+			name: "unlisted",
+			facet: defineFacet((_host, self) =>
+				self.contribute(LoginProviders, [
+					{
+						...base,
+						filterModels: (models, credential) => {
+							if (credential?.type === "oauth" && credential.access === "fresh")
+								throw new Error("no account list");
+							return models;
+						},
+						auth: {
+							oauth: {
+								name: "unlisted",
+								login: async () => {
+									throw new Error("no sign-in");
+								},
+								refresh: async (credential) => ({
+									...credential,
+									access: "fresh",
+									refresh: "fresh",
+									expires: Date.now() + 3_600_000,
+								}),
+								toAuth: async (credential) => ({ apiKey: credential.access }),
+							},
+						},
+					},
+				]),
+			),
+		};
+		const host = await served(t, [unlisted]);
+		const store = await host.store();
+		await store.create({ thing: "t", provider: "unlisted", credential: OLD }, context);
+		assert.equal((await store.authorize({ thing: "t" }, context)).auth.apiKey, "fresh");
+		const row = host.stored("t");
+		assert.equal(JSON.parse(String(row.credential)).refresh, "fresh");
+		assert.equal(row.holder, "");
+		// The models known before stay.
+		assert.deepEqual(JSON.parse(String(row.models)), ["m"]);
+	});
+});
+
 describe("a reload while a refresh runs", () => {
 	it("keeps the rotation that finishes while the reload drains the old store (Astra)", async (t) => {
 		const { entered, release, plugin } = gated();
@@ -289,9 +349,10 @@ describe("a reload while a refresh runs", () => {
 		await entered[0]!.promise;
 		await host.reload();
 		await new Promise((resolve) => setTimeout(resolve, 5_500));
-		// The first refresh outlives its lease (a minute): the next object's request refreshes the token it read too.
-		const now = Date.now;
-		Date.now = () => now() + 61_000;
+		// The first refresh outlives its lease (a minute on the process's clock): the next object's request refreshes the
+		// token it read too.
+		const now = performance.now.bind(performance);
+		performance.now = () => now() + 61_000;
 		try {
 			const next = (await host.store()).authorize({ thing: "t" }, context);
 			await entered[1]!.promise;
@@ -301,9 +362,74 @@ describe("a reload while a refresh runs", () => {
 			gates[1]!.resolve();
 			await assert.rejects(next, { code: "providers.signInAgain" });
 		} finally {
-			Date.now = now;
+			performance.now = now;
 		}
 		assert.equal((await (await host.store()).authorize({ thing: "t" }, context)).auth.apiKey, "rotated");
+	});
+});
+
+describe("the lease of a refresh", () => {
+	it("refuses a request waiting for a refresh that failed, without a refresh of its own (Astra)", async (t) => {
+		const entered = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<void>();
+		let refreshes = 0;
+		const failing = oauthProvider("failing", {
+			refresh: async () => {
+				refreshes++;
+				entered.resolve();
+				await release.promise;
+				throw new TypeError("fetch failed");
+			},
+			toAuth: async (credential) => ({ apiKey: credential.access }),
+		});
+		const host = await served(t, [failing]);
+		const older = await host.store();
+		await older.create({ thing: "t", provider: "failing", credential: OLD }, context);
+		const first = older.authorize({ thing: "t" }, context).catch(() => undefined);
+		await entered.promise;
+		await host.reload();
+		await new Promise((resolve) => setTimeout(resolve, 5_500));
+		const next = (await host.store()).authorize({ thing: "t" }, context);
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		release.resolve();
+		await first;
+		await assert.rejects(next, { code: "providers.signInAgain" });
+		assert.equal(refreshes, 1);
+	});
+
+	it("is not taken over by a clock set forward while its refresh runs (Astra)", async (t) => {
+		const { entered, release, plugin } = gated();
+		const host = await served(t, [plugin]);
+		const older = await host.store();
+		await older.create({ thing: "t", provider: "gated", credential: OLD }, context);
+		const first = older.authorize({ thing: "t" }, context).catch(() => undefined);
+		await entered.promise;
+		await host.reload();
+		await new Promise((resolve) => setTimeout(resolve, 5_500));
+		const now = Date.now;
+		Date.now = () => now() + 61_000;
+		try {
+			const next = (await host.store()).authorize({ thing: "t" }, context);
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			release.resolve();
+			await first;
+			// A second refresh of the same token would be refused ("already rotated").
+			assert.equal((await next).auth.apiKey, "rotated");
+		} finally {
+			Date.now = now;
+		}
+	});
+
+	it("of a server process that is gone (a restart) holds nothing", { timeout: 5_000 }, async (t) => {
+		const { release, plugin } = gated();
+		release.resolve();
+		const host = await served(t, [plugin]);
+		const store = await host.store();
+		await store.create({ thing: "t", provider: "gated", credential: OLD }, context);
+		const { version } = host.stored("t");
+		const change = { holder: "1@0", heldUntil: Number.MAX_SAFE_INTEGER };
+		await store.settle({ thing: "t", version: String(version), change }, context);
+		assert.equal((await store.authorize({ thing: "t" }, context)).auth.apiKey, "rotated");
 	});
 });
 
@@ -332,6 +458,31 @@ describe("a failed refresh", () => {
 			Date.now = now;
 		}
 		assert.equal(await status(), "signedIn");
+	});
+
+	it("is forgotten when a request succeeds again without a refresh (Astra)", async (t) => {
+		let resolves = false;
+		const base = fauxProvider({ provider: "keyed", api: "keyed", models: [{ id: "m" }] }).provider;
+		const resolve = async ({ credential }: { credential?: Credential }) =>
+			resolves && credential?.type === "api_key" ? { auth: { apiKey: credential.key } } : undefined;
+		const keyed = {
+			name: "keyed",
+			facet: defineFacet((_host, self) =>
+				self.contribute(LoginProviders, [{ ...base, auth: { apiKey: { name: "keyed", resolve } } }]),
+			),
+		};
+		const store = await (await served(t, [keyed])).store();
+		await store.create({ thing: "t", provider: "keyed", credential: { type: "api_key", key: "k" } }, context);
+		await assert.rejects(store.authorize({ thing: "t" }, context), { code: "providers.signInAgain" });
+		resolves = true;
+		const now = Date.now;
+		Date.now = () => now() + 2 * 60_000 + 1000;
+		try {
+			assert.equal((await store.authorize({ thing: "t" }, context)).auth.apiKey, "k");
+		} finally {
+			Date.now = now;
+		}
+		assert.equal((await store.logins.one.page({ thing: "t" }, 1, context)).items[0]?.status, "signedIn");
 	});
 
 	it("a failed derivation of an unexpired token refuses nothing (Astra)", async (t) => {

@@ -39,14 +39,15 @@ export type LoginRow = Static<typeof LoginRow>;
 
 /**
  * What a refresh changes of a login: its credential (pi-ai's), the models its account has and its version (a rotation),
- * when it failed, until when it holds the login.
+ * when it failed, and who holds the login for a refresh (`holder` `""`: nobody) until when on the holder's clock.
  */
 export const LoginChange = obj({
 	credential: opt(unknown()),
 	models: opt(union([arr(str()), nul()])),
 	version: opt(str()),
 	failedAt: opt(int()),
-	refreshingUntil: opt(int()),
+	holder: opt(str()),
+	heldUntil: opt(int()),
 });
 
 /** What a refresh changes of a login (see `LoginChange`). */
@@ -68,7 +69,7 @@ export const LoginStore = local("providers.store", {
 		 * The request auth of login `thing`, its OAuth token refreshed first when it expired: one refresh at a time per
 		 * login, across the store's objects too (a reload), each written over the credential it read only, kept also
 		 * when its caller or the store's object went away meanwhile. A login whose refresh failed is refused at once for
-		 * a while; then one request tries again.
+		 * a while, a request waiting for that refresh too; then one request tries again, and a success clears it.
 		 */
 		authorize: method(obj({ thing: str() }), RequestAuth),
 		/** This Pi's device id for providers that sign in a device (made once, the same ever after). */

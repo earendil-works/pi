@@ -7,7 +7,9 @@
 // A refresh may rotate the refresh token: the provider then refuses the old one. So one refresh at a time per login,
 // across the store's objects too (a lease in its row: after a reload the next object waits for the one before), each
 // written only over the credential it read (its row's version, new at every write) and under a context that outlives
-// both its caller and the store's object, so a token the provider rotated is never lost.
+// both its caller and the store's object, so a token the provider rotated is never lost. The lease is the server
+// process's (one at a time has the store) and runs out on its monotonic clock: a clock set forward never hands a
+// running refresh's token to a second one, and a lease of a process that is gone (a restart) holds nothing.
 
 import {
 	type AuthContext,
@@ -44,8 +46,8 @@ import { Turns } from "./turns.ts";
 /**
  * Every login: its provider, how it signs in (its credential's kind), its credential (pi-ai's `Credential`), when its
  * last refresh failed (0: it did not), the ids of the models its account has (`null`: all of the provider's), its
- * version (a new random one at every write of the credential: a refresh that read an older one writes nothing) and
- * until when a refresh holds it (0: none does).
+ * version (a new random one at every write of the credential: a refresh that read an older one writes nothing), and
+ * which server process holds it for a refresh (`""`: none) until when on that process's monotonic clock.
  */
 const Logins = defineTable("providers.logins", {
 	version: 1,
@@ -57,7 +59,8 @@ const Logins = defineTable("providers.logins", {
 		failedAt: int(),
 		models: json(union([arr(str()), nul()]), { version: 1 }),
 		version: str(),
-		refreshingUntil: int(),
+		holder: str(),
+		heldUntil: int(),
 	},
 	key: ["thing"],
 });
@@ -81,12 +84,18 @@ const NO_AMBIENT: AuthContext = { env: async () => undefined, fileExists: async 
  */
 const RETRY_AFTER_MS = 2 * 60_000;
 
-/** How long a refresh holds a login (pi-ai's refresh times out after 15 s), and how often a waiting one looks. */
+/**
+ * How long a refresh holds a login on its process's monotonic clock (pi-ai's refresh times out after 15 s: a bound for
+ * a release that was lost), and how often a waiting one looks.
+ */
 const LEASE_MS = 60_000;
 const POLL_MS = 50;
 
-/** What a request learned of its refresh: whether one failed, and the version of the credential it read. */
-type Refresh = { failed: boolean; version: string | undefined };
+/** A lease released: nobody holds the login. */
+const RELEASED = { holder: "", heldUntil: 0 } as const;
+
+/** What a request learned of its refresh: whether it failed (or was refused at once, after a failed one). */
+type Refresh = { failed: boolean };
 
 /** Serves `LoginStore` on `host`. */
 export function serveStore(host: FacetHost<P3Principal>): void {
@@ -102,6 +111,8 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			return found;
 		};
 		const runtime = self.registry(ServerRuntime);
+		// This server process: its id and its start; a process id alone comes back after a restart.
+		const me = `${process.pid}@${performance.timeOrigin}`;
 		/** Changes login `thing` while its credential is still of `version`. */
 		const settle = (thing: string, version: string, change: LoginChange, context: Context) =>
 			self.tx(async (tx) => {
@@ -123,21 +134,22 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			}
 		};
 		/**
-		 * Holds login `thing` for a refresh: waits while another holds it (a request of the store's previous object,
-		 * after a reload), then takes it; `undefined` once the login is gone.
+		 * Holds login `thing` for a refresh: waits while another request of this process holds it (one of the store's
+		 * previous object, after a reload), then takes it; `gone` once the login is, `cooling` while the last refresh
+		 * failed a moment ago (the one this request waited for, perhaps).
 		 */
 		const lease = async (thing: string, context: Context) => {
 			for (;;) {
 				const leased = await self.tx(async (tx) => {
 					const row = await tx.get(logins, { thing });
 					if (row === undefined) return { kind: "gone" } as const;
-					const now = Date.now();
-					if (row.refreshingUntil > now) return { kind: "held" } as const;
-					tx.update(logins, { thing }, { refreshingUntil: now + LEASE_MS });
+					if (cooling(row.failedAt)) return { kind: "cooling" } as const;
+					const now = Math.ceil(performance.now());
+					if (row.holder === me && row.heldUntil > now) return { kind: "held" } as const;
+					tx.update(logins, { thing }, { holder: me, heldUntil: now + LEASE_MS });
 					return { kind: "leased", row } as const;
 				}, context);
-				if (leased.kind === "gone") return undefined;
-				if (leased.kind === "leased") return leased.row;
+				if (leased.kind !== "held") return leased;
 				await sleep(POLL_MS, context);
 			}
 		};
@@ -155,28 +167,33 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				return row === undefined ? [] : [{ providerId: provider.id, type: (row.credential as Credential).type }];
 			},
 			modify: async (_provider, fn) => {
-				const row = await lease(thing, context);
-				if (row === undefined) return undefined;
+				const leased = await lease(thing, context);
+				if (leased.kind === "gone") return undefined;
+				if (leased.kind === "cooling") {
+					refresh.failed = true;
+					throw new Error("providers: the last refresh failed a moment ago");
+				}
+				const { row } = leased;
 				const current = row.credential as Credential;
-				refresh.version = row.version;
 				let next: Credential | undefined;
 				try {
 					next = await fn(current);
 				} catch (error) {
 					refresh.failed = true;
-					await ifStill(thing, row.version, { refreshingUntil: 0 });
+					// With the lease's release: a request waiting for this refresh is refused at once too.
+					await ifStill(thing, row.version, { ...RELEASED, failedAt: Date.now() });
 					throw error;
 				}
 				if (next === undefined) {
-					await ifStill(thing, row.version, { refreshingUntil: 0 });
+					await ifStill(thing, row.version, RELEASED);
 					return current;
 				}
 				await ifStill(thing, row.version, {
+					...RELEASED,
 					credential: next,
-					models: modelsOf(provider, next),
+					models: rotatedModels(thing, provider, row.models, next, context),
 					version: crypto.randomUUID(),
 					failedAt: 0,
-					refreshingUntil: 0,
 				});
 				return next;
 			},
@@ -201,7 +218,7 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 					failedAt: 0,
 					models: modelsOf(providerOf(id), saved),
 					version: crypto.randomUUID(),
-					refreshingUntil: 0,
+					...RELEASED,
 				});
 				return null;
 			}, ctx);
@@ -233,9 +250,9 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				turns.run(thing, async () => {
 					const row = await read(thing, ctx);
 					if (row === undefined) throw invalid("args", `providers: no login ${thing}`);
-					if (row.failedAt > 0 && Date.now() - row.failedAt < RETRY_AFTER_MS) throw needsSignIn(thing);
+					if (cooling(row.failedAt)) throw needsSignIn(thing);
 					const provider = providerOf(row.provider);
-					const refresh: Refresh = { failed: false, version: undefined };
+					const refresh: Refresh = { failed: false };
 					const models = createModels({
 						credentials: credentialsOf(thing, provider, refresh, ctx),
 						authContext: NO_AMBIENT,
@@ -247,16 +264,15 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 					} catch (error) {
 						reportError(`providers: login ${thing}: its request auth failed`, nameOf(error), ctx);
 						// A refresh that failed (refused, or the network): refused for a while, then tried again.
-						if (refresh.failed && refresh.version !== undefined) {
-							await ifStill(thing, refresh.version, { failedAt: Date.now() });
-							throw needsSignIn(thing);
-						}
+						if (refresh.failed) throw needsSignIn(thing);
 						throw new PluginError("providers.authFailed", `providers: login ${thing}: its request auth failed`);
 					}
 					if (result === undefined) {
 						await ifStill(thing, row.version, { failedAt: Date.now() });
 						throw needsSignIn(thing);
 					}
+					// Signed in again without a refresh (a refresh wrote a new version, its own clearing).
+					if (row.failedAt > 0) await settle(thing, row.version, { failedAt: 0 }, ctx);
 					return requestAuth(result);
 				}),
 			settle: async ({ thing, version, change }, ctx) => settle(thing, version, change, ctx),
@@ -277,6 +293,30 @@ function modelsOf(provider: Provider, credential: Credential): string[] | null {
 	return provider.filterModels === undefined
 		? null
 		: provider.filterModels(provider.getModels(), credential).map(({ id }) => id);
+}
+
+/**
+ * The models of login `thing`'s account after a rotation; the ones known before when its provider cannot tell them:
+ * the rotated token is written whatever happens, as the provider refuses the one before it.
+ */
+function rotatedModels(
+	thing: string,
+	provider: Provider,
+	known: string[] | null,
+	next: Credential,
+	context: Context,
+): string[] | null {
+	try {
+		return modelsOf(provider, next);
+	} catch (error) {
+		reportError(`providers: login ${thing}: its models`, nameOf(error), context);
+		return known;
+	}
+}
+
+/** Whether a refresh failed (at `failedAt`, 0: none did) a moment ago: its login is refused at once. */
+function cooling(failedAt: number): boolean {
+	return failedAt > 0 && Date.now() - failedAt < RETRY_AFTER_MS;
 }
 
 /** The error of a login that needs a sign-in again: a fixed text, never the provider's. */

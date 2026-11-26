@@ -41,7 +41,8 @@ export type ModelInfo = Static<typeof ModelInfo>;
 
 /**
  * A login as everyone admitted sees it: its provider (id and name), how it signs in, whether its credential works
- * (`signInAgain`: the provider refused it or its refresh), and the models its account has.
+ * (`signInAgain`: its last refresh failed, refused or not reached; shown only, a request a while later tries again),
+ * and the models its account has.
  */
 export const LoginInfo = obj({
 	provider: str(),
@@ -71,9 +72,10 @@ export type RequestAuth = Static<typeof RequestAuth>;
  * A login (`providers.login`): its `login` for everyone admitted (`null` while its credential is not stored: made a
  * moment ago, or deleted); Use, for agents, gives `authorize` (the request auth of the login's provider, refreshed on
  * the server when it expired) and `catalog` (the models its account has, as pi-ai's `Model` definitions: plain data,
- * what a worker's requests need; the worker loads no catalog of its own; none while it needs a sign-in again). Logins
- * have no model or money limits (decision 89). A new link gives the agents Use, nobody else anything; its maker gets
- * every tick (item 90). Its create step hands over `{ attempt }`: a sign-in its maker finished, never a secret.
+ * what a worker's requests need; the worker loads no catalog of its own; whatever the status says: after a failed
+ * refresh a request tries again, which needs a model). Logins have no model or money limits (decision 89). A new link
+ * gives the agents Use, nobody else anything; its maker gets every tick (item 90). Its create step hands over
+ * `{ attempt }`: a sign-in its maker finished, never a secret.
  */
 export const LoginKind = defineThing("providers.login", {
 	version: 1,

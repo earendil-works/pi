@@ -109,7 +109,10 @@ const oauthStub = defineFacet((_host, self) => {
 						oauth.refreshes++;
 						// The test's two requests wait here together.
 						await new Promise((resolve) => setTimeout(resolve, 20));
-						if (credential.refresh === "bad") throw new Error(`invalid_grant: ${MARKER}`);
+						// "bad": refused always; "flaky": its first refresh fails (the network), the next one works.
+						const fails =
+							credential.refresh === "bad" || (credential.refresh === "flaky" && oauth.refreshes === 1);
+						if (fails) throw new Error(`invalid_grant: ${MARKER}`);
 						return { ...credential, access: `access-${oauth.refreshes}`, expires: Date.now() + 3_600_000 };
 					},
 					toAuth: async (credential) => ({ apiKey: credential.access }),
@@ -559,16 +562,16 @@ describe("who gets the request auth", () => {
 		const before = process.env.ANTHROPIC_API_KEY;
 		process.env.ANTHROPIC_API_KEY = "the-servers-own-key";
 		try {
-			await refused(
-				holding(agent, workspace, thing, (login, ctx) => login.authorize!({}, ctx)),
-				"providers.signInAgain",
-			);
+			for (let request = 0; request < 2; request++) {
+				await refused(
+					holding(agent, workspace, thing, (login, ctx) => login.authorize!({}, ctx)),
+					"providers.signInAgain",
+				);
+			}
 		} finally {
 			if (before === undefined) delete process.env.ANTHROPIC_API_KEY;
 			else process.env.ANTHROPIC_API_KEY = before;
 		}
-		const shown = await holding(agent, workspace, thing, async (login) => login.catalog!.value);
-		assert.deepEqual(shown, [], "a login that needs a sign-in again offers no model");
 	});
 
 	it("refreshes an expired OAuth token once for requests at once, and keeps the new one", async () => {
@@ -619,6 +622,30 @@ describe("who gets the request auth", () => {
 			"providers.signInAgain",
 		);
 		assert.equal(oauth.refreshes, 1, "no second refresh of a refused credential");
+	});
+
+	it("keeps its models after a failed refresh, so a request a while later tries again and works (Opus, Astra)", async () => {
+		const { workspace, agent } = await session("s1");
+		const thing = await serverLogin(workspace, "oauth-test", {
+			type: "oauth",
+			access: "old",
+			refresh: "flaky",
+			expires: 0,
+		});
+		await refused(
+			holding(agent, workspace, thing, (login, ctx) => login.authorize!({}, ctx)),
+			"providers.signInAgain",
+		);
+		const now = Date.now;
+		Date.now = () => now() + 3 * 60_000;
+		try {
+			const models = await holding(agent, workspace, thing, async (login) => login.catalog!.value.length);
+			assert.ok(models > 0, "the harness has a model to ask with");
+			const auth = await holding(agent, workspace, thing, (login, ctx) => login.authorize!({}, ctx));
+			assert.equal(auth.auth.apiKey, "access-2");
+		} finally {
+			Date.now = now;
+		}
 	});
 
 	it("fails a request auth that fails otherwise with a fixed error, the login still signed in", async () => {

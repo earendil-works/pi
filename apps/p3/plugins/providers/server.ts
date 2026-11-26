@@ -43,11 +43,12 @@ export default defineFacet((host, self) => {
 			const row = self.liveQuery(store.logins.one, { thing }, { first: 1 });
 			return {
 				login: loginOf(row, providers, self),
-				// pi-ai's definitions are plain data: its catalogs are JSON.
+				// pi-ai's definitions are plain data: its catalogs are JSON. Whatever the status (shown only): a login whose
+				// refresh failed is refused by `authorize` for a while, then a request tries again, which needs a model.
 				catalog: () =>
 					self.derive([row, providers], ([{ rows }, offered]) => {
 						const found = rows[0];
-						return found?.status === "signedIn" ? (modelsOf(found, offered) as unknown as JsonValue[]) : [];
+						return found === undefined ? [] : (modelsOf(found, offered) as unknown as JsonValue[]);
 					}),
 				authorize: (_args: Record<never, never>, ctx: Ctx<P3Principal>) => store.authorize({ thing }, ctx),
 			};
