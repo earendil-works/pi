@@ -155,7 +155,6 @@ const collectedSets = new FinalizationRegistry<{
  * id, each member with its own Delta decoder. It tells every binding of each change; the hold ends with the last.
  */
 export class RemoteObject implements Target {
-	readonly kind = "remote";
 	/** The object in errors: its type, and its params key when it has params. */
 	readonly label: string;
 	readonly contract: Contract;
@@ -229,6 +228,11 @@ export class RemoteObject implements Target {
 		this.#path = path;
 		this.#dependent = dependent;
 		this.#unindex = unindex;
+	}
+
+	/** A getter on the class, not a field of each object (8 B per object). */
+	get kind(): "remote" {
+		return "remote";
 	}
 
 	get state(): RefState {

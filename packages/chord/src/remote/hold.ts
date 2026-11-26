@@ -135,12 +135,7 @@ const BINDING: HoldState = { kind: "binding" };
  * end, bound or not.
  */
 export class Hold implements Holder, UnboundRequest {
-	readonly kind = "served";
 	readonly id: number;
-	/** A hold is declared by no object on this host. */
-	readonly dependent = undefined;
-	/** Presence lists show every hold. */
-	readonly listed = true;
 	/** Whom the hold acts for: its calls run as it, with its origin's incarnation. */
 	readonly caller: Caller;
 	/** The limits per part of its params and its calls' arguments: its link's, the decoded one smaller when stamped (Q2). */
@@ -188,6 +183,22 @@ export class Hold implements Holder, UnboundRequest {
 		this.limits = limits;
 		provider.link.host.count("references", 1);
 		provider.link.host.metrics.upDownCounter("chord.holds.active").add(1);
+	}
+
+	// Constants of every hold are getters on the class, not fields of each (8 B a field per hold).
+
+	get kind(): "served" {
+		return "served";
+	}
+
+	/** A hold is declared by no object on this host. */
+	get dependent(): undefined {
+		return undefined;
+	}
+
+	/** Presence lists show every hold. */
+	get listed(): true {
+		return true;
 	}
 
 	/** Whether the hold is bound: its members' changes are sent. */
@@ -665,7 +676,9 @@ export class Hold implements Holder, UnboundRequest {
 	retarget(): void {}
 
 	/** It moves nothing in `retarget`. */
-	readonly following = false;
+	get following(): false {
+		return false;
+	}
 
 	/**
 	 * Its object left it (slice 7b §6): its type was removed (`not_served`) or its provider no longer binds the hold's
