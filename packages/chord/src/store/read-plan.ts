@@ -197,6 +197,8 @@ export class ReadPlan {
 	}
 }
 
+const NO_TEXTS: readonly Rendered[] = [];
+
 /**
  * What the plans of one named query share when their products are equal (`sameAs`): the uses, the order, the select
  * list, the tables read and the condition's text, and the statement texts rendered from them. Only strings are
@@ -213,10 +215,9 @@ class PlanShape {
 	readonly from: string;
 	/** The condition's text; `undefined` without a condition. */
 	readonly where: string | undefined;
-	/** The text of the statement shape rendered first (a read's one `select`, mostly), by its key (`text`). */
-	#first: { readonly key: string; readonly text: string } | undefined;
-	/** Its other statements' texts by shape, made by the second shape. */
-	#texts: Map<string, string> | undefined;
+	/** The statement rendered first (a read's one `select`, mostly), and the others, by what they were rendered for. */
+	#first: Rendered | undefined;
+	#texts: Rendered[] | undefined;
 
 	constructor(
 		table: string,
@@ -261,19 +262,17 @@ class PlanShape {
 	 * columns a probe is limited by): a probe runs per written key and read, so only its parameters are built per call.
 	 */
 	text(kind: string, range: Range, columns: readonly string[], render: (filter: string) => string): string {
-		const key = `${kind}|${range.after?.length ?? "-"}|${range.through?.length ?? "-"}|${columns.join(",")}`;
+		// Found field by field, not by a text key built per call (a probe runs per written key and read).
+		const after = range.after?.length ?? -1;
+		const through = range.through?.length ?? -1;
 		const first = this.#first;
-		if (first?.key === key) return first.text;
-		let text = this.#texts?.get(key);
-		if (text === undefined) {
-			text = render(this.#filter(range));
-			if (first === undefined) this.#first = { key, text };
-			else {
-				this.#texts ??= new Map();
-				this.#texts.set(key, text);
-			}
-		}
-		return text;
+		if (first !== undefined && renders(first, kind, after, through, columns)) return first.text;
+		for (const each of this.#texts ?? NO_TEXTS) if (renders(each, kind, after, through, columns)) return each.text;
+		// The columns copied: the shape keeps strings, never a caller's list.
+		const rendered = { kind, after, through, columns: columns.slice(), text: render(this.#filter(range)) };
+		if (first === undefined) this.#first = rendered;
+		else (this.#texts ??= []).push(rendered);
+		return rendered.text;
 	}
 
 	/** ` WHERE …` of the condition and the range's bounds (row-value comparisons over the leading order columns). */
@@ -288,6 +287,30 @@ class PlanShape {
 		if (range.through !== undefined) bound(range.through, asc ? "<=" : ">=");
 		return conditions.length === 0 ? "" : ` WHERE ${conditions.join(" AND ")}`;
 	}
+}
+
+/** A statement's text with what it was rendered for: its kind, its bounds' lengths (-1: none), a probe's columns. */
+type Rendered = {
+	readonly kind: string;
+	readonly after: number;
+	readonly through: number;
+	readonly columns: readonly string[];
+	readonly text: string;
+};
+
+function renders(
+	rendered: Rendered,
+	kind: string,
+	after: number,
+	through: number,
+	columns: readonly string[],
+): boolean {
+	return (
+		rendered.kind === kind &&
+		rendered.after === after &&
+		rendered.through === through &&
+		sameList(rendered.columns, columns)
+	);
 }
 
 /** Whether two uses are the same, field by field (their column sets by members). */
