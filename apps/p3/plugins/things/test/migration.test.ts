@@ -119,7 +119,12 @@ describe("reading stored ticks", () => {
 		const thing = await store.create({ kind: Board.name, name: "b", workspace: pi, by: BY }, context);
 		await write(thing, ada.party, ["draw", "read"], true);
 		const gives = await w.host.get(Gives, { workspace: pi, caller: `person:${ada.id}` }, context);
-		assert.deepEqual(gives.answers.value[thing], { kind: Board.name, ticksVersion: 1, ticks: ["draw", "read"] });
+		assert.deepEqual(gives.answers.value[thing], {
+			kind: Board.name,
+			ticksVersion: 1,
+			ticks: ["draw", "read"],
+			depth: 0,
+		});
 		const before = w.rows("grants");
 		// Contract version 2, ticks version 1: read as written; `draw` is no tick of it and is ignored.
 		await w.reload(BOARD_PLUGIN, context, facetOf(next(1)));

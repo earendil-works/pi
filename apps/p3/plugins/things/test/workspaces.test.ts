@@ -829,3 +829,23 @@ describe("the create hook (sessions' push 3)", () => {
 		assert.equal((await store.things.one.page({ thing: plain }, 1, context)).items[0]?.view, "");
 	});
 });
+
+describe("depth: how far above a thing is linked", () => {
+	it("each answer says it (nearest link), a nearer link is a changed answer, told live; the own thing is 0", async () => {
+		const { leo, fam, robot } = await family();
+		const owner = await person("Mario");
+		await store.setOwner({ person: owner.id, owner: true }, context);
+		const board = await store.create({ kind: Board.name, name: "b", workspace: pi, by: BY }, context);
+		const gives = await w.host.get(Gives, { workspace: robot, caller: `person:${leo.id}` }, context);
+		const before = gives.answers.value[board]!;
+		assert.equal(before.depth, 2);
+		assert.equal(gives.answers.value[robot]?.depth, 0);
+		assert.equal((await answers(robot, `person:${owner.id}`))[board]?.depth, 2);
+		assert.equal((await answers(robot, `worker:${robot}`))[board]?.depth, 2);
+		await store.link({ workspace: fam, thing: board }, context);
+		await until(gives.answers, (given) => given[board]?.depth === 1, within("the nearer link", context));
+		assert.notEqual(gives.answers.value[board], before);
+		assert.equal((await answers(pi, "server"))[board]?.depth, 0);
+		gives.release();
+	});
+});

@@ -544,9 +544,9 @@ describe("the index's own mechanics", () => {
 		await changed(index, { workspaces: new Set(["later"]), persons: new Set() });
 		assert.deepEqual(told, [
 			{
-				sketch: { kind: Board.name, ticksVersion: 1, ticks: ["read"] },
+				sketch: { kind: Board.name, ticksVersion: 1, ticks: ["read"], depth: 2 },
 				// Ada is present in it: its own thing lets her in (item 88), with nothing to make.
-				later: { kind: "things.workspace", ticksVersion: 1, ticks: [], makes: [], above: [] },
+				later: { kind: "things.workspace", ticksVersion: 1, ticks: [], depth: 0, makes: [], above: [] },
 			},
 		]);
 		assert.deepEqual(index.loaded().workspaces, 3);

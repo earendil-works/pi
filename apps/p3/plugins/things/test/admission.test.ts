@@ -165,7 +165,7 @@ describe("a thing held by a person or an agent", () => {
 		// Ada gets Draw on a thing of `test.other`; held as a Board, Board's `draw` would be granted.
 		const other = await store.create({ kind: Other.name, name: "o", workspace: pi, by: BY }, context);
 		const gives = await w.host.get(Gives, { workspace: pi, caller: `person:${ada.id}` }, context);
-		assert.deepEqual(gives.answers.value[other], { kind: Other.name, ticksVersion: 1, ticks: ["draw"] });
+		assert.deepEqual(gives.answers.value[other], { kind: Other.name, ticksVersion: 1, ticks: ["draw"], depth: 0 });
 		gives.release();
 		await as(ada, async (ctx) => {
 			// As its own kind it is admitted, with Draw.

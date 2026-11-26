@@ -10,6 +10,7 @@ import {
 	type Ctx,
 	defineRegistry,
 	type FollowObserver,
+	int,
 	local,
 	map,
 	method,
@@ -116,6 +117,7 @@ export const Answer = obj({
 	kind: str(),
 	ticksVersion: num(),
 	ticks: arr(str()),
+	depth: int(),
 	makes: opt(arr(str())),
 	above: opt(arr(str())),
 });
