@@ -857,7 +857,7 @@ class Writes {
 			const link = await tx.get(this.#t.links, { workspace, thing });
 			if (gives === true && link === undefined) {
 				throw invalid("args", `things: ${thing} is not linked in ${workspace}: ticks are given where it is`, {
-					message: messages.message("belowLink", workspace),
+					message: messages.message("belowLink"),
 				});
 			}
 			const kind = link?.of ?? (await tx.get(this.#t.things, { thing }))?.kind;
