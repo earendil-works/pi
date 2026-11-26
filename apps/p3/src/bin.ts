@@ -67,6 +67,9 @@ const STOP_MS = 10_000;
 /** How long an apply may take: it builds every changed plugin and reloads every running worker. */
 const APPLY_MS = 5 * 60_000;
 
+/** Where the providers' types request their model catalogs unless `P3_CATALOG_URL` names another place. */
+const CATALOG_URL = "https://pi.dev";
+
 /** No holder of a socket (also for a data directory that does not exist). */
 const NONE = { kind: "none" } as const;
 
@@ -162,6 +165,7 @@ async function serve(path: string, port: number | undefined): Promise<void> {
 			port: port ?? kept.port,
 			version: version(),
 			worker: WORKER,
+			catalogBaseUrl: process.env.P3_CATALOG_URL ?? CATALOG_URL,
 			onStop: (why) => end(why.kind === "stopped" ? 0 : 1),
 			onError: (error) => reportError(`p3: ${error.kind}`, error.error, context),
 		},

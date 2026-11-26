@@ -1,7 +1,7 @@
-// The providers plugin's contracts for server facets only: the store of the logins' credentials (`LoginStore`) and a
-// person's sign-ins with the credentials of finished ones (`SignIns`); this plugin's own server code only: they check
-// no caller. Credentials pass only between this plugin's objects on the server; no remote contract carries one, and no
-// method answers one.
+// The providers plugin's contracts for server facets only: the store of the logins' credentials (`LoginStore`), a
+// person's sign-ins with the credentials of finished ones (`SignIns`) and the provider types' stored model catalogs
+// (`CatalogStore`); this plugin's own server code only: they check no caller. Credentials pass only between this
+// plugin's objects on the server; no remote contract carries one, and no method answers one.
 
 import {
 	arr,
@@ -9,6 +9,7 @@ import {
 	local,
 	method,
 	nul,
+	num,
 	obj,
 	oneOf,
 	opt,
@@ -103,5 +104,32 @@ export const SignIns = local("providers.sign-ins", {
 		 * none; one at a time for the owner, so two at once make one.
 		 */
 		ensure: method(obj({ name: str(), workspace: str(), by: Source, provider: str(), credential: unknown() }), str()),
+	},
+});
+
+/**
+ * A provider's stored model catalog, as its type's catalog last got it from pi.dev: the models (pi-ai's definitions,
+ * plain data, typed `unknown` here), the catalog's Last-Modified (0: none, or no catalog at pi.dev), its ETag, and
+ * when pi.dev last answered.
+ */
+export const CatalogEntry = obj({ models: arr(unknown()), lastModified: num(), etag: opt(str()), checkedAt: num() });
+
+/** A provider's stored model catalog (see `CatalogEntry`). */
+export type CatalogEntry = Static<typeof CatalogEntry>;
+
+/** A provider's stored catalog, by provider id. */
+export const CatalogRow = obj({ provider: str(), entry: CatalogEntry });
+
+/** A provider's stored catalog, by provider id (see `CatalogRow`). */
+export type CatalogRow = Static<typeof CatalogRow>;
+
+/** The provider types' model catalogs, one entry per provider, each written by its type (`login-catalogs.ts`). */
+export const CatalogStore = local("providers.catalog-store", {
+	version: 1,
+	params: {},
+	members: {
+		catalogs: queries(CatalogRow, { one: obj({ provider: str() }) }),
+		/** Stores provider `provider`'s catalog `entry`, replacing the one before. */
+		write: method(obj({ provider: str(), entry: CatalogEntry })),
 	},
 });

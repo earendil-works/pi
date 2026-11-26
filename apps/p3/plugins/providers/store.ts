@@ -14,6 +14,7 @@
 // written (the store closing) holds its login until the next start.
 
 import {
+	type Api,
 	type AuthContext,
 	type AuthResult,
 	arr,
@@ -27,6 +28,7 @@ import {
 	int,
 	invalid,
 	json,
+	type Model,
 	nul,
 	type P3Principal,
 	PluginError,
@@ -39,8 +41,9 @@ import {
 	union,
 	unknown,
 } from "@earendil-works/p3/v1";
-import { createModels, ModelsError, ServerRuntime } from "@earendil-works/p3/v1/server";
-import { type LoginChange, LoginStore } from "./contract.server.ts";
+import { createModels, getBuiltinModelDataGeneratedAt, ModelsError, ServerRuntime } from "@earendil-works/p3/v1/server";
+import { overlay } from "./catalog.ts";
+import { CatalogStore, type LoginChange, LoginStore } from "./contract.server.ts";
 import { SignInMethod } from "./contract.ts";
 import type { RequestAuth } from "./kind.ts";
 import { LoginProviders } from "./login-providers.ts";
@@ -113,6 +116,14 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			return found;
 		};
 		const runtime = self.registry(ServerRuntime);
+		const catalogs = self.get(CatalogStore, {});
+		// The shipped model data's date: a stored catalog is laid over it only when newer.
+		const shipped = getBuiltinModelDataGeneratedAt();
+		/** Provider `provider`'s chat models: its type's catalog, the stored one laid over the shipped ones. */
+		const offeredOf = async (provider: Provider, context: Context) => {
+			const [row] = (await catalogs.catalogs.one.page({ provider: provider.id }, 1, context)).items;
+			return overlay(provider.getModels(), row?.entry, shipped);
+		};
 		// This server process: its id and its start; a process id alone comes back after a restart.
 		const me = `${process.pid}@${performance.timeOrigin}`;
 		/** Changes login `thing` while its credential is still of `version`. */
@@ -170,6 +181,8 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				return row === undefined ? [] : [{ providerId: provider.id, type: (row.credential as Credential).type }];
 			},
 			modify: async (_provider, fn) => {
+				// Read before the lease: nothing may fail between a rotation and its write.
+				const offered = await offeredOf(provider, context);
 				const leased = await lease(thing, context);
 				if (leased.kind === "gone") return undefined;
 				if (leased.kind === "cooling") {
@@ -196,7 +209,7 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				await ifStill(thing, row.version, {
 					...RELEASED,
 					credential: next,
-					models: rotatedModels(thing, provider, row.models, next, context),
+					models: rotatedModels(thing, provider, offered, row.models, next, context),
 					version: crypto.randomUUID(),
 					failedAt: 0,
 				});
@@ -207,26 +220,35 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			},
 		});
 		/** Stores login `thing`'s credential: `create` a new one, else replace one of the same provider. */
-		const store = (kind: "create" | "replace", thing: string, id: string, credential: unknown, ctx: Context) =>
-			self.tx(async (tx) => {
+		const store = async (
+			kind: "create" | "replace",
+			thing: string,
+			id: string,
+			credential: unknown,
+			ctx: Context,
+		) => {
+			// Only this plugin's server code stores credentials, pi-ai's.
+			const saved = credential as Credential;
+			const provider = providerOf(id);
+			const models = modelsOf(provider, saved, await offeredOf(provider, ctx));
+			return self.tx(async (tx) => {
 				const found = await tx.get(logins, { thing });
 				if (kind === "create" ? found !== undefined : found?.provider !== id) {
 					throw invalid("args", `providers: login ${thing} cannot take this credential (${kind})`);
 				}
-				// Only this plugin's server code stores credentials, pi-ai's.
-				const saved = credential as Credential;
 				tx.put(logins, {
 					thing,
 					provider: id,
 					method: saved.type,
 					credential,
 					failedAt: 0,
-					models: modelsOf(providerOf(id), saved),
+					models,
 					version: crypto.randomUUID(),
 					...RELEASED,
 				});
 				return null;
 			}, ctx);
+		};
 		return {
 			logins: self.queries(
 				logins,
@@ -293,11 +315,12 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 	});
 }
 
-/** The ids of the models `credential`'s account has at `provider` (`null`: the provider says all of its). */
-function modelsOf(provider: Provider, credential: Credential): string[] | null {
-	return provider.filterModels === undefined
-		? null
-		: provider.filterModels(provider.getModels(), credential).map(({ id }) => id);
+/**
+ * The ids of the models `credential`'s account has among its type's `offered` ones (`null`: the provider says all of
+ * them).
+ */
+function modelsOf(provider: Provider, credential: Credential, offered: readonly Model<Api>[]): string[] | null {
+	return provider.filterModels === undefined ? null : provider.filterModels(offered, credential).map(({ id }) => id);
 }
 
 /**
@@ -307,12 +330,13 @@ function modelsOf(provider: Provider, credential: Credential): string[] | null {
 function rotatedModels(
 	thing: string,
 	provider: Provider,
+	offered: readonly Model<Api>[],
 	known: string[] | null,
 	next: Credential,
 	context: Context,
 ): string[] | null {
 	try {
-		return modelsOf(provider, next);
+		return modelsOf(provider, next, offered);
 	} catch {
 		// Nothing of the thrown value: a provider's (its name, its text) may carry anything, or throw itself.
 		reportError(`providers: login ${thing}: its models`, "its provider could not tell them", context);

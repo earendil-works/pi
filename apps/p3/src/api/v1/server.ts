@@ -56,6 +56,11 @@ export type ServerRuntime = {
 	readonly worker: { readonly entry: string; readonly execArgv: readonly string[] };
 	/** How long a worker idles before it stops itself. */
 	readonly workerIdleMs: number;
+	/**
+	 * Where the providers' types request their model catalogs (pi.dev unless `P3_CATALOG_URL` says otherwise);
+	 * `undefined`: nowhere, no catalog request leaves the server (a test's host unless it sets its own).
+	 */
+	readonly catalogBaseUrl: string | undefined;
 	/** The worker plugins' current scripts: what a worker starts with, and what a reload ships. */
 	workerScripts(context: Context): Promise<readonly PluginScript[]>;
 	/** Where the server listens, once it does. */
@@ -174,9 +179,11 @@ export {
 	createModels,
 	// pi-ai's faux provider, for plugins' tests: a provider people sign in to without a network.
 	fauxProvider,
+	// The `User-Agent` of pi-ai's own version: what a catalog is requested as.
+	formatUserAgent,
 	ModelsError,
 } from "@earendil-works/pi-ai";
-export { builtinProviders } from "@earendil-works/pi-ai/providers/all";
+export { builtinProviders, getBuiltinModelDataGeneratedAt } from "@earendil-works/pi-ai/providers/all";
 export { ensureLogin, makeLogin, type ServerLogin, setCredential } from "../../../plugins/providers/logins.ts";
 
 // The OAuth flows inside the server's bundle, each loaded on its first use: without it pi-ai imports them through a

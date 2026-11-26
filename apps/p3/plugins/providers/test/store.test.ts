@@ -1,10 +1,10 @@
-// The logins' store (`store.ts`): every statement it runs on its tables (the named query's pages and the writes'
-// lookups) searches the key, never scans or sorts; a credential is created once and replaced only with one of its own
-// provider; a refresh keeps the token its provider rotated whatever ends meanwhile (its caller, the store's object in
-// a reload) and is written over the credential it read only (a replacement, a removal and a new login meanwhile win);
-// one refresh at a time across a reload, a clock set forward too, a refresh still running never taken over (its
-// waiter fails), a lease of a process that is gone holding nothing; a rotation is stored when its account's models
-// cannot be told, nothing of the provider's error logged; a failed refresh refuses the login for a while (a
+// The logins' store (`store.ts`): every statement it runs on its tables and on the types' catalogs (the named queries'
+// pages and the writes' lookups) searches the key, never scans or sorts; a credential is created once and replaced only
+// with one of its own provider; a refresh keeps the token its provider rotated whatever ends meanwhile (its caller, the
+// store's object in a reload) and is written over the credential it read only (a replacement, a removal and a new login
+// meanwhile win); one refresh at a time across a reload, a clock set forward too, a refresh still running never taken
+// over (its waiter fails), a lease of a process that is gone holding nothing; a rotation is stored when its account's
+// models cannot be told, nothing of the provider's error logged; a failed refresh refuses the login for a while (a
 // request that waited for it too), then one request tries again, and a success clears it; a failed derivation of an
 // unexpired token refuses nothing (Astra's and Opus's reproductions, rounds 1 to 4); the device id is made once and
 // kept across a reload.
@@ -31,7 +31,7 @@ import { fauxProvider } from "@earendil-works/p3/v1/server";
 import { FAUX_PROVIDER, keyOf } from "../../../test/plugins/faux-login/contract.ts";
 import { eventually } from "../../../test/until.ts";
 import thingsServer from "../../things/server.ts";
-import { LoginStore } from "../contract.server.ts";
+import { CatalogStore, LoginStore } from "../contract.server.ts";
 import { PROVIDERS, providerFacets, providersWorld } from "./hosts.ts";
 
 /** A faux credential. */
@@ -144,6 +144,10 @@ describe("the store's statements", () => {
 		await store.authorize({ thing: "t2" }, context);
 		await store.device({}, context);
 		await store.remove({ thing: "t1" }, context);
+		// The types' catalogs: a write and a read by provider (the login's models read it, `authorize`'s cut too).
+		const catalogs = await host.get(CatalogStore, {}, context);
+		await catalogs.write({ provider: "gated", entry: { models: [], lastModified: 0, checkedAt: 1 } }, context);
+		assert.equal((await catalogs.catalogs.one.page({ provider: "gated" }, 1, context)).items.length, 1);
 		const lookups = [...seen].filter((sql) => /^(SELECT|UPDATE|DELETE)\b/.test(sql));
 		assert.ok(lookups.length > 0);
 		for (const sql of lookups) {
