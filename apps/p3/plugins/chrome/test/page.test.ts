@@ -10,10 +10,12 @@
 // a person with Read only the transcript with no way to send; who may's access choice and Make column, a write from
 // another page shown live, its cards on a phone; the switches for things and people from above; no link offered without
 // Link; a person present only below sees nothing of the workspaces above; `?view=` kept through the gear and Back and
-// through pane focus, and a session's pane back when its thing is shown again; the phone's screens; a reload of the
-// chrome, things and transcript plugins keeps the open page and unsent work; an apply whose web contracts are newer
-// than the page's base leaves it working, and a component the base lacks is reported once. Screenshots at the phone's
-// and the desktop's size, light and dark, go to `/tmp/p3-base/shots/` (`P3_SHOTS` names another directory).
+// through pane focus, and a session's pane back when its thing is shown again; the add dialog's draft kept through an
+// apply and dropped on close, one make for two activations of Add, Add disabled when Make of the chosen kind goes, a
+// default unticked and ticked again written; the phone's screens; a reload of the chrome, things and transcript plugins
+// keeps the open page and unsent work; an apply whose web contracts are newer than the page's base leaves it working,
+// and a component the base lacks is reported once. Screenshots at the phone's and the desktop's size, light and dark,
+// go to `/tmp/p3-base/shots/` (`P3_SHOTS` names another directory).
 
 import assert from "node:assert/strict";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -650,6 +652,117 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await browser.wait(`document.querySelector('[data-pane-tab="${board}"]') === null`);
 		await workspace.hide!({ thing: board, shown: true }, context);
 		await browser.wait(`document.querySelector('[data-pane-tab="${board}"]')`);
+	});
+
+	it("keeps the add dialog's draft through an apply (the folder and the removals written as chosen), and drops it on close", async () => {
+		await browser.size(DESKTOP);
+		await browser.open(`${origin}/w/${pi}/settings`);
+		await press('[data-settings-tab="what"]');
+		await press("[data-add-thing]");
+		await browser.settled("[data-add-thing-dialog]");
+		await press('[data-add-offer="make:sessions.session"]');
+		await browser.type("[data-add-name]", "Alpha");
+		await browser.type('[data-field="folder"]', "custom/folder");
+		await press('[data-add-default="everyone/send"]');
+		const draft = () =>
+			browser.evaluate<string>(
+				`JSON.stringify([document.querySelector("[data-add-name]").value, document.querySelector('[data-field="folder"]').value, document.querySelector('[data-add-default="everyone/send"]').getAttribute("aria-checked")])`,
+			);
+		const before = await draft();
+		assert.equal(before, JSON.stringify(["Alpha", "custom/folder", "false"]));
+		// Astra, review round 2: an apply of the things plugin remounted the dialog and lost the folder and the removal.
+		const file = join(builtIn, "things/add-thing.tsx");
+		await writeFile(
+			file,
+			(await readFile(file, "utf8")).replace(
+				'data-add-confirm-button=""',
+				'data-add-confirm-button="" data-draft-apply=""',
+			),
+		);
+		await until(t.plugins, (state) => state.dirty.length > 0, within("the edit seen", context, 10_000));
+		await t.apply(context);
+		await browser.wait(
+			`document.querySelector("[data-draft-apply]") && document.querySelector("[data-new-session]")`,
+		);
+		assert.equal(await draft(), before);
+		await press("[data-add-confirm-button]");
+		await browser.wait(`document.querySelector("[data-add-thing-dialog]") === null`);
+		const entry = `[...document.querySelectorAll("[data-nav-workspace]")].find((e) => e.textContent === "Alpha")`;
+		await browser.wait(`${entry} !== undefined`);
+		const alpha = await browser.evaluate<string>(`${entry}.dataset.navWorkspace`);
+		await browser.open(`${origin}/w/${alpha}/settings`);
+		await press('[data-settings-tab="may"]');
+		await eventually(
+			() => look("everyone", "read"),
+			(found) => found === "given",
+		);
+		assert.equal(await look("everyone", "send"), "empty");
+		// Closed, the draft is gone: the next dialog starts with no name.
+		await browser.open(`${origin}/w/${pi}/settings`);
+		await press('[data-settings-tab="what"]');
+		await press("[data-add-thing]");
+		await press('[data-add-offer="make:things.workspace"]');
+		await browser.type("[data-add-name]", "Cancelled");
+		await press('[data-add-thing-dialog] button[aria-label="Close"]');
+		await browser.wait(`document.querySelector("[data-add-thing-dialog]") === null`);
+		await press("[data-add-thing]");
+		await press('[data-add-offer="make:canvas.board"]');
+		assert.equal(await browser.evaluate(`document.querySelector("[data-add-name]").value`), "");
+		await press('[data-add-thing-dialog] button[aria-label="Close"]');
+	});
+
+	it("makes one thing for two activations of Add before the page renders again", async () => {
+		await browser.open(`${origin}/w/${pi}/settings`);
+		await press('[data-settings-tab="what"]');
+		await press("[data-add-thing]");
+		await press('[data-add-offer="make:things.workspace"]');
+		await browser.type("[data-add-name]", "Made once");
+		await browser.evaluate(
+			`(() => { const add = document.querySelector("[data-add-confirm-button]"); add.click(); add.click(); })()`,
+		);
+		await browser.wait(`document.querySelector("[data-add-thing-dialog]") === null`);
+		const count = `[...document.querySelectorAll("[data-nav-workspace]")].filter((e) => e.textContent === "Made once").length`;
+		await browser.wait(`${count} > 0`);
+		// A second make would land within the idle second.
+		await idles();
+		assert.equal(await browser.evaluate(count), 1);
+	});
+
+	it("disables Add, saying why, when Make of the chosen kind is withdrawn while the dialog is open", async () => {
+		const workspace = await owner.get(Workspace, { workspace: pi }, context);
+		const { person, link } = await (await owner.get(People, {}, context)).invite({ name: "Maker" }, context);
+		const party = { kind: "person", person } as const;
+		await workspace.putParty!({ party }, context);
+		for (const kind of ["canvas.board", "things.workspace"]) {
+			await workspace.setTick!({ thing: pi, party, tick: `@make:${kind}`, gives: true }, context);
+		}
+		await browser.signOut();
+		await browser.open(`${origin}${link}`);
+		await browser.wait(`document.querySelector("[data-person-menu]")?.textContent.includes("Maker")`);
+		await browser.open(`${origin}/w/${pi}/settings`);
+		await press('[data-settings-tab="what"]');
+		await press("[data-add-thing]");
+		await press('[data-add-offer="make:canvas.board"]');
+		await browser.type("[data-add-name]", "Chosen before");
+		await browser.wait(`document.querySelector("[data-add-confirm-button]")?.disabled === false`);
+		await workspace.setTick!({ thing: pi, party, tick: "@make:canvas.board" }, context);
+		await browser.wait(
+			`document.querySelector("[data-add-not-allowed]") && document.querySelector("[data-add-confirm-button]").disabled`,
+		);
+		await browser.signOut();
+		await browser.signIn(origin, await t.cookie(context));
+	});
+
+	it("writes a default unticked and ticked again in the add dialog (no removal)", async () => {
+		await browser.open(`${origin}/w/${pi}/settings`);
+		await add("make:page-kinds.note", "Ticked again", ["agents/write", "agents/write"]);
+		const entry = `[...document.querySelectorAll('[data-nav-thing]')].find((e) => e.textContent === "Ticked again")`;
+		await browser.wait(`${entry} !== undefined`);
+		await browser.open(`${origin}/w/${pi}/t/${await browser.evaluate<string>(`${entry}.dataset.navThing`)}/settings`);
+		await eventually(
+			() => look("agents", "write"),
+			(found) => found === "given",
+		);
 	});
 
 	it("on a phone, reaches a plain workspace's Settings from the navigator, and goes back from a session and /me", async () => {

@@ -1,11 +1,13 @@
 // The things plugin's contract for web facets (decisions 60, 64 to 66, 70, 72, 74): the views a plugin offers for a
 // target (`Views`: things of a kind, persons, groups; 0 to n each), what a kind has once (`ThingParts`: its title,
-// icon, create step and settings form), and the components the page places: `TargetView`, which draws a target
-// in its chosen view, the Settings view, the navigator, the add-thing picker and the invite dialog; the plugins'
-// titles for the picker's headings and the sections of `/me`; and three hooks every view plugin may use: `useScreenId`
-// (the id every list a page holds takes), `useMessageText` (a message of any plugin as text) and `useNames` (a kind
-// and a thing as the page names them). Tokens, data and hooks only (the base bundle carries this file, so no
-// component lives here); `/v1/web` re-exports it.
+// icon, create step and settings form), and the components the page places: `TargetView`, which draws a target in its
+// chosen view, the Settings view, the navigator, the add-thing picker and the invite dialog; the plugins' titles for
+// the picker's headings and the sections of `/me`; and three hooks every view plugin may use: `useScreenId` (the id
+// every list a page holds takes), `useMessageText` (a message of any plugin as text) and `useNames` (a kind and a thing
+// as the page names them). Tokens, data and hooks only: the base bundle carries this file, so no component lives here.
+// The three hooks, and the things plugin's page messages they read, are part of that bundle: a live apply of the things
+// plugin does not change them for third-party plugins (built-in ones import this file by path and get the new code).
+// `/v1/web` re-exports it.
 
 import { defineRegistry, type JsonValue, type MessageData, type TableItem, Translations } from "@earendil-works/p3/v1";
 import { defineComponent, type Target, useMessages, usePageState, useRegistry } from "@earendil-works/p3/v1/web";
@@ -71,8 +73,16 @@ export function viewsKey(target: ViewFor): string {
 	return target.kind === "thing" ? `thing/${target.thingKind}` : target.kind;
 }
 
-/** What a kind's create step gets: the workspace it is made in, and `onReady` for the input its create hook takes. */
-export type ThingCreateProps = { readonly workspace: string; readonly onReady: (input: JsonValue) => void };
+/**
+ * What a kind's create step gets: the workspace it is made in, `onReady` for the input its create hook takes, and the
+ * input it last reported (`undefined` at first): the step starts its form from it, so a live apply of its plugin keeps
+ * what the person filled in.
+ */
+export type ThingCreateProps = {
+	readonly workspace: string;
+	readonly input: JsonValue | undefined;
+	readonly onReady: (input: JsonValue) => void;
+};
 
 /**
  * What a kind's settings form gets (ERNDL-1141 §9, R40): the thing as it is linked in `workspace`, its settings'
@@ -88,7 +98,8 @@ export type ThingSettingsProps = {
 
 /**
  * What a kind has once, from its own plugin: its title (a message: the page never shows a kind's name), its icon
- * (none: a page icon), its create step (a sign-in, a token), and its form in the Settings view.
+ * (none: a page icon), its create step (a sign-in, a token), and its form in the Settings view (not rendered until
+ * the server read `things.thing-settings` exists: carry-over of ERNDL-734 and ERNDL-1143).
  */
 export type ThingPartsEntry = {
 	readonly kind: string;

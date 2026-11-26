@@ -25,7 +25,7 @@ import {
 	useRegistry,
 	useWatch,
 } from "@earendil-works/p3/v1/web";
-import { type ComponentType, useState } from "react";
+import { type ComponentType, useRef, useState } from "react";
 import { kindOfMakeTick, MAKE_ANY } from "./contract.ts";
 import { PluginTitles, ThingParts, useMessageText, useNames, useScreenId } from "./contract.web.tsx";
 import type { KindView } from "./kind.ts";
@@ -47,16 +47,15 @@ export function AddThingDialog(props: {
 }) {
 	const { t } = useMessages(page);
 	const info = useWatch(useLive(useHold(Workspace, { workspace: props.workspace }))?.info);
-	// Kept in page state, per workspace: a reload of a plugin keeps what the person chose and typed.
-	const [chosen, setChosen] = usePageState<Offer | undefined>(`things.add.chosen.${props.workspace}`, undefined);
+	const draft = useDraft(props.workspace);
 	const names = useNames();
 	// Closed or done, the dialog starts afresh the next time.
 	const close = () => {
-		setChosen(undefined);
+		draft.clear();
 		props.onClose();
 	};
 	const added = (thing: string) => {
-		setChosen(undefined);
+		draft.clear();
 		props.onAdded(thing);
 	};
 	return (
@@ -73,13 +72,14 @@ export function AddThingDialog(props: {
 								<CloseIcon />
 							</Modal.Close>
 						</Stack>
-						{chosen === undefined ? (
-							<Choices onChoose={setChosen} workspace={props.workspace} />
+						{draft.chosen === undefined ? (
+							<Choices onChoose={draft.setChosen} workspace={props.workspace} />
 						) : (
 							<Confirm
-								offer={chosen}
+								draft={draft}
+								offer={draft.chosen}
 								onAdded={added}
-								onBack={() => setChosen(undefined)}
+								onBack={draft.clear}
 								workspace={props.workspace}
 							/>
 						)}
@@ -89,6 +89,34 @@ export function AddThingDialog(props: {
 		</Modal.Root>
 	);
 }
+
+/** What the person removed from the kind's default grants, per party (`DefaultsChoice`'s `without`, before sending). */
+type Removed = { readonly everyone: readonly string[]; readonly agents: readonly string[] };
+
+/** Nothing removed. */
+const NOTHING_REMOVED: Removed = { everyone: [], agents: [] };
+
+/**
+ * The dialog's draft, in page state per workspace (review round 2: a live apply of a plugin keeps it all): the offer
+ * chosen, the name, the defaults removed and the create step's last input; `clear` discards it (closed, Back, done).
+ */
+function useDraft(workspace: string) {
+	const key = `things.add.${workspace}`;
+	const [chosen, setChosen] = usePageState<Offer | undefined>(`${key}.chosen`, undefined);
+	const [name, setName] = usePageState(`${key}.name`, "");
+	const [removed, setRemoved] = usePageState(`${key}.removed`, NOTHING_REMOVED);
+	const [input, setInput] = usePageState<JsonValue | undefined>(`${key}.input`, undefined);
+	const clear = () => {
+		setChosen(undefined);
+		setName("");
+		setRemoved(NOTHING_REMOVED);
+		setInput(undefined);
+	};
+	return { chosen, setChosen, name, setName, removed, setRemoved, input, setInput, clear };
+}
+
+/** The dialog's draft (see `useDraft`). */
+type Draft = ReturnType<typeof useDraft>;
 
 /** The offers, grouped by plugin, under one search. */
 function Choices(props: { readonly workspace: string; readonly onChoose: (offer: Offer) => void }) {
@@ -176,27 +204,27 @@ function offerKey(offer: Offer): string {
 function Confirm(props: {
 	readonly workspace: string;
 	readonly offer: Offer;
+	readonly draft: Draft;
 	readonly onAdded: (thing: string) => void;
 	readonly onBack: () => void;
 }) {
 	const { t } = useMessages(page);
 	const { offer } = props;
+	const { name, setName, removed, setRemoved, input, setInput } = props.draft;
 	const ref = useLive(useHold(Workspace, { workspace: props.workspace }));
 	const maker = withGranted(ref, "make");
 	const linker = withGranted(ref, "link");
+	const makes = useWatch(withGranted(ref, "makes")?.makes);
 	const Create = useRegistry(ThingParts)?.get(offer.thingKind.name)?.value.Create;
 	const text = useMessageText();
 	const names = useNames();
-	const [name, setName] = usePageState(`things.add.name.${props.workspace}`, "");
-	const [input, setInput] = useState<JsonValue | undefined>(undefined);
 	const grants = offer.thingKind.defaultGrants;
-	// What the person removed from the defaults, per party (decision of review round 1): the store writes what the kind
-	// or its create hook offers minus these, so the preview's list can differ from the offer (a private session) and
-	// nothing is refused. Ticked again, a tick is not removed.
-	const [removed, setRemoved] = useState<{ readonly everyone: readonly string[]; readonly agents: readonly string[] }>(
-		{ everyone: [], agents: [] },
-	);
+	// The store writes what the kind or its create hook offers minus `removed` (decision of review round 1), so the
+	// preview's list can differ from the offer (a private session) and nothing is refused. Ticked again, a tick is not
+	// removed.
 	const [pending, setPending] = useState(false);
+	// Claimed before the call, not at the next render: two activations before React commits make one call.
+	const calling = useRef(false);
 	const [failure, setFailure] = useState<string | undefined>(undefined);
 	const errorText = useErrorText();
 	// A Make tick (item 114) reads as what it lets do; a kind's own tick by its label.
@@ -217,13 +245,19 @@ function Confirm(props: {
 		...(removed.agents.length === 0 ? {} : { agents: [...removed.agents] }),
 	};
 	const defaults = Object.keys(without).length === 0 ? {} : { defaults: { without } };
-	// The grant is read live: Make or Link taken away while the dialog is open disables Add and says why.
-	const allowed = offer.kind === "make" ? maker !== undefined : linker !== undefined;
+	// The grants are read live: Make of the chosen kind (or Link) taken away while the dialog is open disables Add and
+	// says why.
+	const allowed =
+		offer.kind === "make"
+			? maker !== undefined && (makes ?? []).includes(offer.thingKind.name)
+			: linker !== undefined;
 	const ready = allowed && !pending && (offer.kind === "link" || Create === undefined || input !== undefined);
 	const confirm = () => {
-		if (!ready) return;
+		if (!ready || calling.current) return;
+		calling.current = true;
 		setFailure(undefined);
 		setPending(true);
+		// `ready` holds only with the reference of the offer's kind: `allowed` checked it.
 		const done =
 			offer.kind === "make"
 				? maker!.make(
@@ -238,11 +272,12 @@ function Confirm(props: {
 				: linker!.link({ thing: offer.thing, ...defaults }, BACKGROUND_CONTEXT).then(() => offer.thing);
 		done.then(
 			(thing) => {
+				calling.current = false;
 				setPending(false);
-				setName("");
 				props.onAdded(thing);
 			},
 			(error: unknown) => {
+				calling.current = false;
 				setPending(false);
 				setFailure(errorText(error));
 			},
@@ -256,7 +291,7 @@ function Confirm(props: {
 				<strong>{offer.name}</strong>
 			)}
 			{offer.kind === "make" && Create !== undefined ? (
-				<Create onReady={setInput} workspace={props.workspace} />
+				<Create input={input} onReady={setInput} workspace={props.workspace} />
 			) : null}
 			{offer.thingKind.workspace === "no" ? null : (
 				// A workspace kind's create hook may answer other default grants (a session: the nearest session defaults).

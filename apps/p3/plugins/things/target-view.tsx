@@ -1,7 +1,7 @@
 // `TargetView` (decision 70): a target in its view. Which view: `?view=` if it is one of the target's, then the thing's
-// own `view`, then its kind's `defaultView`, then the first by plugin name (an id no plugin has is skipped, 74); with
-// none, the Settings view. A thing is read as it is available here (`ThingInfo`, admitted by the caller's answer: its
-// denial is the link's message); a workspace as `Workspace` says it.
+// own `view`, then the first by plugin name (an id no plugin has is skipped, 74; a kind's own default view is
+// carry-over of ERNDL-734); with none, the Settings view. A thing is read as it is available here (`ThingInfo`,
+// admitted by the caller's answer: its denial is the link's message); a workspace as `Workspace` says it.
 
 import type { RefState } from "@earendil-works/p3/v1";
 import {
@@ -87,8 +87,8 @@ function Held(
 }
 
 /**
- * Picks the view among those `for` this target and draws it with `of`: `view`, the thing's `own`, the kind's default,
- * the first by plugin name; none: the Settings view. Only a decided view is reported (`onShown`): while loading the
+ * Picks the view among those `for` this target and draws it with `of`: `view`, the thing's `own`, the first by plugin
+ * name; none: the Settings view. Only a decided view is reported (`onShown`): while loading the
  * chrome keeps what it shows.
  */
 function Chosen(

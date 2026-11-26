@@ -96,11 +96,12 @@ export function WhoMayTable(props: { readonly workspace: string; readonly thing:
 			?.setTick({ thing: props.thing, party, tick, ...(gives === undefined ? {} : { gives }) }, BACKGROUND_CONTEXT)
 			.catch((error: unknown) => setFailure(errorText(error)));
 	};
-	// A row's source names a person by their row in this table, when they have one.
-	const personName = (person: string) => {
-		const found = table.rows.find((row) => row.party.kind === "person" && row.party.person === person);
-		return found === undefined || found.name === "" ? undefined : found.name;
-	};
+	// A row's source names a person by their row in this table, when they have one: looked up once per render, not
+	// per cell (about 120 rows of 7 cells).
+	const names = new Map<string, string>();
+	for (const row of table.rows)
+		if (row.party.kind === "person" && row.name !== "") names.set(row.party.person, row.name);
+	const personName = (person: string) => names.get(person);
 	const cellProps = (row: Row): CellProps => ({
 		personName,
 		row: { ...row, name: nameOf(row.party, row.name) },

@@ -1,9 +1,10 @@
 // The session kind's create step (`SessionCreate`, a kind's `Create` in `ThingParts`): where the new session works, a
 // machine of `Environments` and a folder there; none given, this device in a folder of the session's own. It hands
-// the session kind's make input to the page's add dialog (`onReady`), which makes the session with `Workspace.make`.
+// the session kind's make input to the page's add dialog (`onReady`), which makes the session with `Workspace.make`,
+// and starts from the input it last handed (`input`: a live apply keeps the machine and folder chosen).
 
 import { Dropdown, Field, Input } from "@earendil-works/elanor-react";
-import { Environments, THIS_DEVICE } from "@earendil-works/p3/v1";
+import { Environments, type JsonValue, THIS_DEVICE } from "@earendil-works/p3/v1";
 import { CodeIcon, useHold, useLive, useMessages, useWatch } from "@earendil-works/p3/v1/web";
 import { useEffect, useState } from "react";
 // Other plugins' web contracts by path, never through `/v1/web` (see `web.tsx`).
@@ -21,8 +22,9 @@ export const SessionIcon = CodeIcon;
 export function SessionCreate(props: ThingCreateProps) {
 	const { t } = useMessages(messages);
 	const environments = useWatch(useLive(useHold(Environments, {}))?.environments);
-	const [folder, setFolder] = useState("");
-	const [chosen, setChosen] = useState<string | null>(null);
+	const last = locationOf(props.input);
+	const [folder, setFolder] = useState(last?.folder ?? "");
+	const [chosen, setChosen] = useState<string | null>(last?.environment ?? null);
 	const items = (environments ?? []).map((environment) => ({ value: environment.id, label: environment.name }));
 	const machine = chosen ?? items.find((item) => item.value === THIS_DEVICE)?.value ?? items[0]?.value ?? null;
 	const { onReady } = props;
@@ -60,4 +62,18 @@ export function SessionCreate(props: ThingCreateProps) {
 			</Field.Root>
 		</div>
 	);
+}
+
+/**
+ * The location in an input this step handed before (`{ location }`), if any. The dialog keeps it as `JsonValue`, so
+ * its shape is read again here.
+ */
+function locationOf(
+	input: JsonValue | undefined,
+): { readonly environment: string; readonly folder: string } | undefined {
+	if (typeof input !== "object" || input === null || Array.isArray(input)) return undefined;
+	const location = input.location;
+	if (typeof location !== "object" || location === null || Array.isArray(location)) return undefined;
+	const { environment, folder } = location;
+	return typeof environment === "string" && typeof folder === "string" ? { environment, folder } : undefined;
 }
