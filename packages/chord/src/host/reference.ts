@@ -31,6 +31,7 @@ import { Keyed, type KeyedSlot, type SealToken, Singleton } from "../documents/i
 import type { JsonValue } from "../json.ts";
 import { RETRY_HOPS } from "../link/internal.ts";
 import { appended, NO_ITEMS } from "../lists.ts";
+import { SmallSet } from "../small-set.ts";
 import { type Batch, Constant, type DeriveSource, Source } from "../state/internal.ts";
 import { storedText } from "../store/text.ts";
 import type { NativeWatchable, Watch, Watchable } from "../watch.ts";
@@ -325,7 +326,7 @@ export class Binding implements Holder, UnboundRequest {
 	/** Its grant at its version (`to`), by its target's it was read from: made when seen live, dropped by a denial. */
 	#projection: { readonly from: ReadonlySet<string>; readonly to: ReadonlySet<string> } | undefined;
 	/** Who reads its object's named queries: each told when another instance is live (`followInstance`). */
-	#instanceFollowers: Set<() => void> | undefined;
+	#instanceFollowers: SmallSet<() => void> | undefined;
 	/** The instance its followers were told of last, held weakly: an ended instance is kept by nothing here. */
 	#followedInstance: WeakRef<object> | undefined;
 
@@ -505,7 +506,7 @@ export class Binding implements Holder, UnboundRequest {
 		// A live instance is an object (an attempt, a remote object's binding).
 		if (typeof instance !== "object" || instance === null || instance === this.#followedInstance?.deref()) return;
 		this.#followedInstance = new WeakRef(instance);
-		for (const moved of [...followers]) moved();
+		for (const moved of followers.snapshot()) moved();
 	}
 
 	/**
@@ -513,7 +514,8 @@ export class Binding implements Holder, UnboundRequest {
 	 * successor: the readers of its named queries read that one's, slice 14 §3.2), until the returned release.
 	 */
 	followInstance(moved: () => void): () => void {
-		this.#instanceFollowers ??= new Set();
+		// Most references have one reader of its named queries: no `Set` for it (184 B for as long as it reads).
+		this.#instanceFollowers ??= new SmallSet();
 		const followers = this.#instanceFollowers;
 		followers.add(moved);
 		const instance: unknown = this.target?.instance;
