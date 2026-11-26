@@ -5,6 +5,7 @@
 
 import assert from "node:assert/strict";
 import { stat } from "node:fs/promises";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
@@ -30,7 +31,7 @@ import {
 	usingThing,
 	type With,
 } from "@earendil-works/p3/v1";
-import { PeopleStore, SessionsStore } from "@earendil-works/p3/v1/server";
+import { PeopleStore, ServerRuntime, SessionsStore } from "@earendil-works/p3/v1/server";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
 import { assertGranted } from "../../../test/granted.ts";
 import { within } from "../../../test/until.ts";
@@ -183,11 +184,13 @@ describe("making a session", () => {
 		assert.equal(await activeCount(), before);
 	});
 
-	it("works in a private folder of the data directory on this device without a location", async () => {
+	it("works in a private folder of its own under the work root, outside the data directory, without a location", async () => {
 		const id = await asServer((ctx, store) => store.create({ app: "coding" }, ctx));
 		const row = await asServer(async (ctx, store) => (await store.sessions.one.page({ id }, 1, ctx)).items[0]);
 		assert.equal(row?.location.environment, HERE.environment);
-		assert.match(row!.location.folder, new RegExp(`/folders/${id}$`));
+		const { dataDir, workRoot } = (await t.host.registry(ServerRuntime, context)).value;
+		assert.equal(row!.location.folder, join(workRoot, id));
+		assert.equal(row!.location.folder.startsWith(`${dataDir}/`), false);
 		assert.equal((await stat(row!.location.folder)).mode & 0o777, 0o700);
 	});
 });

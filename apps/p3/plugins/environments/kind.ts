@@ -9,23 +9,21 @@ import { defineThing } from "../things/kind.ts";
 import { MACHINE_KIND } from "./contract.ts";
 import { messages } from "./messages.ts";
 
-/** What a machine is: its name (its thing's) and its kind (only this device, `local`, for now). */
-export const MachineInfo = obj({ name: str(), kind: oneOf("local") });
+/** What a machine is: its name (its thing's) and whether its host answers (this device's always does). */
+export const MachineInfo = obj({ name: str(), status: oneOf("ready", "unreachable") });
 
 /** What a machine is (see `MachineInfo`). */
 export type MachineInfo = Static<typeof MachineInfo>;
 
 /**
- * This device's machine (`environments.local`): one per Pi, made by this plugin, linked in Pi only (below it can only
- * be hidden or have its ticks withheld); the nearest link reaching a workspace applies. Work here, a flag tick for
- * agents, lets a session's agent run its tools there. A new link lets everyone here in with no tick and gives the
- * agents Work here; withholding `@open` from a group keeps it out of the machine's files and terminals.
+ * This device's machine (`environments.local`): one per Pi, made by this plugin; it may be linked in many workspaces,
+ * and every machine reaching a workspace can be worked on (the kind's defaults, `many` and `all`). Work here, a flag
+ * tick for agents, lets a session's agent run its tools there. A new link lets everyone here in with no tick and gives
+ * the agents Work here; withholding `@open` from a group keeps it out of the machine's files and terminals.
  */
 export const MachineKind = defineThing(MACHINE_KIND, {
 	version: 1,
 	makers: "plugin",
-	workspaces: "one",
-	stacking: "nearest",
 	state: { info: MachineInfo },
 	ticks: { work: { label: messages.message("tickWork"), for: "agents" } },
 	defaultGrants: { everyone: [], agents: ["work"] },

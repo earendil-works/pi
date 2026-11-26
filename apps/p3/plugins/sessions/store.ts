@@ -467,7 +467,7 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				const device = await thisDevice(ctx);
 				const where = location ?? {
 					environment: device,
-					folder: join(runtime.value.dataDir, "folders", id),
+					folder: join(runtime.value.workRoot, id),
 				};
 				if (location !== undefined) machineMustExist(location, device);
 				const parties = new Map<string, Member>();

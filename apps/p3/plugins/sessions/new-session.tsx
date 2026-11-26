@@ -2,7 +2,7 @@
 // (a machine of `Environments` and a folder on it) and the things the app gives every new session.
 
 import { Button, Field, Form, Heading, Input } from "@earendil-works/elanor-react";
-import { Environments, Sessions, type ThingUse, ThisDevice } from "@earendil-works/p3/v1";
+import { Environments, Sessions, type ThingUse } from "@earendil-works/p3/v1";
 import { useHold, useLive, useRefState, useWatch } from "@earendil-works/p3/v1/web";
 import { useState } from "react";
 import { useAction } from "./action.ts";
@@ -19,15 +19,14 @@ export function NewSession(props: {
 	const sessions = useLive(sessionsRef);
 	const refused = useRefState(sessionsRef)?.kind === "failed";
 	const environments = useWatch(useLive(useHold(Environments, {}))?.environments);
-	const thisDevice = useWatch(useLive(useHold(ThisDevice, {}))?.machine);
 	const [title, setTitle] = useState("");
 	const [folder, setFolder] = useState("");
 	const [chosen, setChosen] = useState<string | undefined>(undefined);
 	const create = useAction();
 	if (refused) return <p className={styles.note}>Only the owner makes sessions here.</p>;
 	const items = (environments ?? []).map((environment) => ({ value: environment.id, label: environment.name }));
-	// This device by default, else the first machine: a Pi has a few.
-	const environment = chosen ?? items.find((item) => item.value === thisDevice)?.value ?? items[0]?.value;
+	// The first machine: this device is the only one until SSH machines come.
+	const environment = chosen ?? items[0]?.value;
 	const submit = () => {
 		if (sessions === undefined || environment === undefined || folder.trim() === "") return;
 		create.run(async (ctx) => {

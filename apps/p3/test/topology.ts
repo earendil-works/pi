@@ -151,6 +151,7 @@ export async function topology(context: Context, idleMs = 60_000): Promise<Topol
 	const sessions = server.route(Session, { authorize: () => true, admit: admitRoute, resolve: startWorker }, context);
 	const runtime: ServerRuntime = {
 		dataDir,
+		workRoot: `${dataDir}-work`,
 		machine: { user: userInfo().username, hostname: hostname() },
 		host: server,
 		store,
@@ -216,6 +217,7 @@ export async function topology(context: Context, idleMs = 60_000): Promise<Topol
 			await server.close(context);
 			await store.close(context);
 			await rm(dataDir, { recursive: true, force: true });
+			await rm(`${dataDir}-work`, { recursive: true, force: true });
 		},
 	};
 }

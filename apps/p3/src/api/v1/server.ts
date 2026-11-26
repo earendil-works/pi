@@ -36,7 +36,7 @@ export {
 	processLock,
 } from "@earendil-works/chord/workers/child";
 // A machine's files and commands, for the machine plugins' server facets (this device's host) and Files.
-export type { ExecutionEnv, FileError, FileInfo, Result } from "@earendil-works/pi-durable/env";
+export type { BinaryReader, ExecutionEnv, FileError, Result } from "@earendil-works/pi-durable/env";
 export { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 export * from "../../../plugins/apps/contract.server.ts";
 export * from "../../../plugins/environments/contract.server.ts";
@@ -48,6 +48,8 @@ export * from "./control.ts";
 export type ServerRuntime = {
 	/** The Pi's data directory (a real path, private). */
 	readonly dataDir: string;
+	/** Where a session works when it names no folder (one folder per session), outside the data directory. */
+	readonly workRoot: string;
 	/** The machine the server runs on: its OS user's name and its host name (what the owner and this device are first named). */
 	readonly machine: { readonly user: string; readonly hostname: string };
 	readonly host: Host<P3Principal>;

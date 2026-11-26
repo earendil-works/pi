@@ -95,7 +95,7 @@ describe("the environments plugin on the server", () => {
 
 	it("lets a person in with no tick and gives the agents Work here; never a person", async () => {
 		await things.putParty({ workspace: pi, party: { kind: "agent", session: "s1" }, source: BY }, context);
-		const info = { name: hostname(), kind: "local" };
+		const info = { name: hostname(), status: "ready" };
 		assert.deepEqual(await held(await person("Ann")), { granted: [], info });
 		assert.deepEqual(await held({ kind: "worker", session: "s1" }), { granted: ["work"], info });
 		const grant = { workspace: pi, thing: machine, party: { kind: "everyone" }, tick: "work", gives: true } as const;

@@ -102,7 +102,8 @@ export async function testPlugin(
 		tested.close = (ctx) =>
 			close(ctx)
 				.finally(() => server?.close(ctx))
-				.finally(() => rm(dir, { recursive: true, force: true }));
+				.finally(() => rm(dir, { recursive: true, force: true }))
+				.finally(() => rm(`${dir}-work`, { recursive: true, force: true }));
 		return tested;
 	} catch (error) {
 		await server?.close(context);
@@ -149,6 +150,7 @@ function serverStubs(host: Host<P3Principal>, store: ChordStore, dataDir: string
 	);
 	const runtime: ServerRuntime = {
 		dataDir,
+		workRoot: `${dataDir}-work`,
 		machine: { user: userInfo().username, hostname: hostname() },
 		host,
 		store,
@@ -255,6 +257,7 @@ export async function testServer(options: TestServerOptions, context: Context): 
 		const server = await startServer(
 			{
 				dataDir,
+				workRoot: `${dataDir}-work`,
 				roots: [
 					{ path: options.builtIn ?? PLUGINS, required: true },
 					{ path: tested, required: true },
@@ -323,13 +326,19 @@ export async function testServer(options: TestServerOptions, context: Context): 
 				try {
 					await stop(ctx);
 				} finally {
-					if (closed && !handedOver) await rm(dataDir, { recursive: true, force: true });
+					if (closed && !handedOver) {
+						await rm(dataDir, { recursive: true, force: true });
+						await rm(`${dataDir}-work`, { recursive: true, force: true });
+					}
 				}
 			},
 		};
 	} catch (error) {
 		await rm(tested, { recursive: true, force: true });
-		if (options.dataDir === undefined) await rm(dataDir, { recursive: true, force: true });
+		if (options.dataDir === undefined) {
+			await rm(dataDir, { recursive: true, force: true });
+			await rm(`${dataDir}-work`, { recursive: true, force: true });
+		}
 		throw error;
 	}
 }

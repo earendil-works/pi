@@ -10,5 +10,6 @@ export const messages = defineMessages("environments", {
 		notHere: "This machine is not available here.",
 		noWork: "Agents may not work on this machine here.",
 		noTerminals: "Terminals on this machine are not there yet.",
+		tooMany: "Too many terminals are open here; close one first.",
 	},
 });
