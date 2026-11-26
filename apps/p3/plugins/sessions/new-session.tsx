@@ -1,7 +1,8 @@
 // The session kind's create step (`SessionCreate`, a kind's `Create` in `ThingParts`): where the new session works, a
-// machine of `Environments` and a folder there; none given, this device in a folder of the session's own. It hands
-// the session kind's make input to the page's add dialog (`onReady`), which makes the session with `Workspace.make`,
-// and starts from the input it last handed (`input`: a live apply keeps the machine and folder chosen).
+// machine of `Environments` and a folder there; none given, this device in a folder of the session's own. It hands the
+// session kind's make input to the page's add dialog (`onReady`), which makes the session with `Workspace.make`, and
+// starts from the input it last handed (`input`: a live apply keeps the machine and folder chosen; a machine without a
+// folder is no input, as it makes no difference to the session, so it is not kept).
 
 import { Dropdown, Field, Input } from "@earendil-works/elanor-react";
 import { Environments, type JsonValue, THIS_DEVICE } from "@earendil-works/p3/v1";
