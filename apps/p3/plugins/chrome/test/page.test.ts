@@ -211,32 +211,33 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await press("[data-what-is-here] [data-switch]");
 		await browser.wait(`document.querySelector("[data-nav-hidden]")?.textContent === "1 hidden"`);
 		await shots("07-family-desktop");
-		// Below the link: everyone's Read on Plans is inherited; unticking it withholds it here; an empty box is disabled.
-		const plans = await browser.evaluate<string>(
-			`[...document.querySelectorAll('[data-here-thing]')].find((e) => e.textContent.includes("Plans")).dataset.hereThing`,
+		// Below the link (a thing hidden here gives nothing here, so the Sketch): everyone's Draw is inherited; unticking it
+		// withholds it here, ticking it again resets the cell; an empty box (everyone's Moderate) is disabled.
+		const sketch = await browser.evaluate<string>(
+			`[...document.querySelectorAll('[data-here-thing]')].find((e) => e.textContent.includes("Sketch")).dataset.hereThing`,
 		);
 		const family = decodeURIComponent((await browser.evaluate<string>("location.pathname")).split("/")[2]!);
-		await browser.open(`${origin}/w/${family}/t/${plans}/settings`);
+		await browser.open(`${origin}/w/${family}/t/${sketch}/settings`);
 		await eventually(
-			() => look("everyone", "read"),
+			() => look("everyone", "draw"),
 			(found) => found === "inherited",
 		);
-		const box = `document.querySelector('[data-who-may-row="agents"] [data-tick="write"] [role="checkbox"]')`;
+		const box = `document.querySelector('[data-who-may-row="everyone"] [data-tick="moderate"] [role="checkbox"]')`;
 		assert.equal(
 			await browser.evaluate(
 				`${box}?.getAttribute("aria-disabled") === "true" || ${box}?.hasAttribute("data-disabled")`,
 			),
 			true,
 		);
-		await press('[data-who-may-row="everyone"] [data-tick="read"] [role="checkbox"]');
+		await press('[data-who-may-row="everyone"] [data-tick="draw"] [role="checkbox"]');
 		await eventually(
-			() => look("everyone", "read"),
+			() => look("everyone", "draw"),
 			(found) => found === "withheld",
 		);
 		await shots("08-withheld-desktop");
-		await press('[data-who-may-row="everyone"] [data-tick="read"] [role="checkbox"]');
+		await press('[data-who-may-row="everyone"] [data-tick="draw"] [role="checkbox"]');
 		await eventually(
-			() => look("everyone", "read"),
+			() => look("everyone", "draw"),
 			(found) => found === "inherited",
 		);
 		await browser.open(`${origin}/w/${family}`);

@@ -22,6 +22,8 @@
 
 .from {
 	flex: none;
+	margin-inline-start: auto;
+	padding-inline-start: var(--semantic-dimension-space-gap-medium);
 	color: var(--semantic-color-text-secondary);
 	font: var(--semantic-typography-ui-secondary);
 	white-space: nowrap;
