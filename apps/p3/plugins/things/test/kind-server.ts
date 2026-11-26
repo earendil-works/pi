@@ -1,24 +1,17 @@
-// A kind's tests' server: the kind's plugin's server facet beside the things plugin's (`testPlugin` of the kind's
-// plugin root, the things plugin as its stub), with what a kind's cases set up there: people put into a workspace,
-// workspaces with a session's agent, things of the kind, ticks given or withheld, a thing held as a caller, and the
-// kind's harness part (from its worker facet, loaded as a session's worker loads it) given the things an agent holds.
+// A kind's tests' server: the kind's server facet beside the things plugin's on the things plugin's test host (`world`:
+// a SQLite store, counted work), with what a kind's cases set up there: people put into a workspace, workspaces with a
+// session's agent, things of the kind, ticks given or withheld, a thing held by one caller or several at once, the
+// counted work, a reload of the kind's facet, and the kind's harness part (its worker facet, built as a session's
+// worker builds it) given the things an agent holds.
 
-import {
-	BACKGROUND_CONTEXT,
-	type Context,
-	type Contract,
-	type Ctx,
-	type P3Principal,
-	type ParamsOf,
-	type Reference,
-} from "@earendil-works/p3/v1";
+import type { Context, Contract, Ctx, Facet, P3Principal, ParamsOf, Reference } from "@earendil-works/p3/v1";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
 import type { Extension } from "@earendil-works/p3/v1/worker";
 import { ThingsStore } from "../contract.server.ts";
 import type { Party, Source } from "../contract.ts";
 import { type HarnessSession, type HeldThing, ThingHarnessParts } from "../contract.worker.ts";
 import type { ThingKind } from "../kind.ts";
-import thingsServer from "../server.ts";
+import { type World, world } from "./world.ts";
 
 /** A person's principal. */
 export type Person = Extract<P3Principal, { kind: "person" }>;
@@ -26,9 +19,18 @@ export type Person = Extract<P3Principal, { kind: "person" }>;
 /** Who sets things up in a kind's tests. */
 export const BY: Source = { kind: "plugin", plugin: "test" };
 
-/** A kind's plugin and the things plugin on a server, and what a kind's cases set up there. */
+/** The kind's plugin: its name, its root (for its worker facet), and its server facet. */
+export type KindPlugin = { readonly name: string; readonly root: string; readonly server: Facet<P3Principal> };
+
+/** Several callers holding one thing at once, until `release`. */
+export type Holders<C extends Contract> = {
+	readonly held: readonly { readonly ref: Reference<C>; readonly ctx: Ctx<P3Principal> }[];
+	release(): Promise<void>;
+};
+
+/** A kind's plugin and the things plugin on a test host, and what a kind's cases set up there. */
 export type KindServer<C extends Contract> = {
-	readonly t: TestedPlugin<P3Principal>;
+	readonly host: World["host"];
 	readonly things: Reference<typeof ThingsStore>;
 	/** Pi's workspace, the root. */
 	readonly pi: string;
@@ -47,34 +49,46 @@ export type KindServer<C extends Contract> = {
 		thing: string,
 		fn: (ref: Reference<C>, ctx: Ctx<P3Principal>) => Promise<T>,
 	): Promise<T>;
+	/** Holds `thing` in `where` as each of `principals` at once, in order, until `release`. */
+	holders(principals: readonly P3Principal[], where: string, thing: string): Promise<Holders<C>>;
+	/** The sum of metric `name` so far (`chord.query.runs`, ...). */
+	count(name: string): number;
+	/** Renews the kind's server facet, as after an edit: its objects restart. */
+	reload(): Promise<void>;
 	/**
 	 * Runs `fn` with session `session`'s agent holding `things` in `workspace`: the extension the kind's harness part
-	 * (contributed by `worker`, the kind's worker facet) gives for them, and the held things.
+	 * gives for them, and the held things.
 	 */
 	giving<T>(
-		worker: TestedPlugin<P3Principal>,
 		at: { readonly session: string; readonly workspace: string },
 		things: readonly string[],
 		fn: (extension: Extension, ctx: Ctx<P3Principal>, held: readonly HeldThing<C>[]) => Promise<T>,
 	): Promise<T>;
+	/** The kind's harness part as its worker facet contributes it. */
+	part(): Promise<TestedPlugin<P3Principal>>;
 	close(): Promise<void>;
 };
 
-/** Starts the server facet of the plugin at `root`, the plugin of `Kind`, beside the things plugin's. */
+/** Starts `plugin`'s server facet, the plugin of `Kind`, beside the things plugin's. */
 export async function kindServer<C extends Contract>(
-	root: string,
+	plugin: KindPlugin,
 	Kind: ThingKind<C>,
 	context: Context,
 ): Promise<KindServer<C>> {
-	const t = await testPlugin(
-		root,
-		{ kind: "server", stubs: [{ name: "@earendil-works/p3-things", facet: thingsServer }] },
-		context,
-	);
-	const things = await t.host.get(ThingsStore, {}, context);
+	const w = await world(context, [{ name: plugin.name, facet: plugin.server }]);
+	const { host } = w;
+	const things = await host.get(ThingsStore, {}, context);
 	const pi = (await things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
+	// A kind's contract has the things plugin's params, which a generic contract's type cannot say.
+	const get = (ctx: Ctx<P3Principal>, workspace: string, thing: string) =>
+		ctx.get(Kind.contract, { workspace, thing } as ParamsOf<C>, { readyTimeout: 500 });
+	let worker: Promise<TestedPlugin<P3Principal>> | undefined;
+	const part = () => {
+		worker ??= testPlugin(plugin.root, { kind: "worker", session: "s1" }, context);
+		return worker;
+	};
 	return {
-		t,
+		host,
 		things,
 		pi,
 		person: async (name, workspace = pi) => {
@@ -94,27 +108,26 @@ export async function kindServer<C extends Contract>(
 		tick: (where, thing, party, tick, gives) =>
 			things.setGrants({ source: BY, grants: [{ workspace: where, thing, party, tick, gives }] }, context),
 		holding: (principal, where, thing, fn) =>
-			t.root(
-				// A kind's contract has the things plugin's params, which a generic contract's type cannot say.
-				async (ctx) =>
-					fn(await ctx.get(Kind.contract, { workspace: where, thing } as ParamsOf<C>, { readyTimeout: 500 }), ctx),
-				context,
-				{ principal },
-			),
-		giving: (worker, { session, workspace }, ids, fn) => {
+			host.root(async (ctx) => fn(await get(ctx, where, thing), ctx), context, { principal }),
+		holders: (principals, where, thing) => holdAll(host, principals, (ctx) => get(ctx, where, thing), context),
+		count: (name) => w.count(name),
+		reload: () => w.reload(plugin.name, context),
+		giving: async ({ session, workspace }, ids, fn) => {
+			const contributed = (await part()).contributions(ThingHarnessParts);
+			const entry = contributed.find(({ value }) => value.kind.name === Kind.name);
+			if (entry === undefined) throw new Error(`${Kind.name}: the worker facet contributes no harness part`);
 			const principal: P3Principal = { kind: "worker", session };
-			const harness: HarnessSession = { session, workspace, call: (call, ctx) => t.root(call, ctx, { principal }) };
-			return t.root(
+			const harness: HarnessSession = {
+				session,
+				workspace,
+				call: (call, ctx) => host.root(call, ctx, { principal }),
+			};
+			return host.root(
 				async (ctx) => {
 					const held: HeldThing<C>[] = [];
-					for (const thing of ids) {
-						// As in `holding`: a kind's contract has the things plugin's params.
-						const ref = await ctx.get(Kind.contract, { workspace, thing } as ParamsOf<C>);
-						held.push({ thing, workspace, ref });
-					}
-					const [part] = worker.contributions(ThingHarnessParts);
+					for (const thing of ids) held.push({ thing, workspace, ref: await get(ctx, workspace, thing) });
 					// The registry's part takes any kind's held things; these are its kind's.
-					const { extension } = part!.value.part(held as unknown as readonly HeldThing[], harness);
+					const { extension } = entry.value.part(held as unknown as readonly HeldThing[], harness);
 					if (extension === undefined) throw new Error(`${Kind.name}: the harness part gave no extension`);
 					return fn(extension, ctx, held);
 				},
@@ -122,16 +135,53 @@ export async function kindServer<C extends Contract>(
 				{ principal },
 			);
 		},
-		close: () => t.close(context),
+		part,
+		close: async () => {
+			await (await worker)?.close(context);
+			await w.close(context);
+		},
 	};
 }
 
-/** Runs tool `name` of `extension` with `args`; its output's text. */
-export async function runTool(extension: Extension, name: string, args: object): Promise<string> {
+/** Holds one reference per principal, each in a root of its own, until `release`. */
+async function holdAll<C extends Contract>(
+	host: World["host"],
+	principals: readonly P3Principal[],
+	get: (ctx: Ctx<P3Principal>) => Promise<Reference<C>>,
+	context: Context,
+): Promise<Holders<C>> {
+	const released = Promise.withResolvers<void>();
+	const held: { ref: Reference<C>; ctx: Ctx<P3Principal> }[] = [];
+	const roots: Promise<void>[] = [];
+	for (const principal of principals) {
+		const ready = Promise.withResolvers<void>();
+		const root = host.root(
+			async (ctx) => {
+				held.push({ ref: await get(ctx), ctx });
+				ready.resolve();
+				await released.promise;
+			},
+			context,
+			{ principal },
+		);
+		roots.push(root);
+		await Promise.race([ready.promise, root]);
+	}
+	return {
+		held,
+		release: async () => {
+			released.resolve();
+			await Promise.all(roots);
+		},
+	};
+}
+
+/** Runs tool `name` of `extension` with `args` under `context`; its output's text. */
+export async function runTool(extension: Extension, name: string, args: object, context: Context): Promise<string> {
 	const tool = extension.tools?.find((each) => each.name === name);
 	if (tool === undefined) throw new Error(`no tool ${name}`);
 	// Kinds' tools use neither Durable's execution API nor arguments beyond their schema's.
-	const result = await tool.execute(args as never, {} as never, BACKGROUND_CONTEXT);
+	const result = await tool.execute(args as never, {} as never, context);
 	// A park has no output: kinds' tools never park.
 	return (result.output ?? []).map((part) => (part.type === "text" ? part.text : "")).join("");
 }
