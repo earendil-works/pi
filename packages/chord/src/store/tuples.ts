@@ -45,6 +45,15 @@ export function hasTuple(set: TupleSet, values: readonly SqliteValue[]): boolean
 	return at !== undefined && (at as Set<unknown>).has(values[values.length - 1]);
 }
 
+/** Whether `set` holds the tuple of `row`'s values in `columns`. */
+export function hasRow(set: TupleSet, columns: readonly string[], row: Row): boolean {
+	let at: TupleSet | undefined = set;
+	for (let index = 0; index < columns.length - 1 && at !== undefined; index++) {
+		at = (at as Map<unknown, TupleSet>).get(row[columns[index]!]);
+	}
+	return at !== undefined && (at as Set<unknown>).has(row[columns[columns.length - 1]!]);
+}
+
 /**
  * Calls `visit` with every tuple of `set` (of `length` values), in the order added within each level. `visit` gets one
  * list, refilled for each tuple: valid during the call only.

@@ -9,6 +9,7 @@ import {
 	eachTuple,
 	getRow,
 	getTuple,
+	hasRow,
 	hasTuple,
 	setRow,
 	setTuple,
@@ -60,6 +61,7 @@ describe("tuple sets and maps", () => {
 					referenceMap.delete(json);
 				}
 				expect(hasTuple(set, values)).toBe(reference.has(json));
+				expect(hasRow(set, columns, rowOf(values))).toBe(reference.has(json));
 				expect(getTuple(map, values)).toBe(referenceMap.get(json));
 				expect(getRow(map, columns, rowOf(values))).toBe(referenceMap.get(json));
 			}
