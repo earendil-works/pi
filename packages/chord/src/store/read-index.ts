@@ -19,7 +19,7 @@ import type { Step } from "./step.ts";
 type Filed = Read | Set<Read>;
 
 /** The reads of one bucket shape on a table: by the identity of their columns' values. */
-type Group = { readonly columns: readonly string[]; readonly byValues: Map<unknown, Filed> };
+type Group = { readonly name: string; readonly columns: readonly string[]; readonly byValues: Map<unknown, Filed> };
 
 /** A filed read's entries: its table's index, its group and value identities there, the key sets it is filed by. */
 type Filing = {
@@ -69,7 +69,7 @@ export class ReadIndex implements KeptKeysWatcher {
 		read.watchKept(undefined);
 		const { index, group } = filing;
 		for (const id of filing.identities) removeFrom(group.byValues, id, read);
-		if (group.byValues.size === 0) index.groups.delete(group.columns.join(","));
+		if (group.byValues.size === 0) index.drop(group);
 		this.#unkeep(read, filing);
 		if (index.isEmpty()) this.#tables.delete(read.plan.table);
 	}
@@ -160,13 +160,27 @@ class TableIndex {
 	/** The groups by their columns, joined. */
 	readonly groups = new Map<string, Group>();
 	readonly kept = new Map<unknown, Filed>();
-	/** The statement reading the buckets' columns back by key, for the groups it was rendered for. */
-	#lookup: { readonly groups: string; readonly sql: string | undefined } | undefined;
+	/** Counts the changes of `groups`: the lookup is rendered again after one, not compared by a text key per commit. */
+	#changes = 0;
+	/** The statement reading the buckets' columns back by key, for the groups as they were at its change. */
+	#lookup: { readonly changes: number; readonly sql: string | undefined } | undefined;
 
 	/** The group of reads whose buckets fix `columns` (sorted). */
 	group(columns: readonly string[]): Group {
 		const name = columns.join(",");
-		return this.groups.get(name) ?? this.groups.set(name, { columns, byValues: new Map() }).get(name)!;
+		let group = this.groups.get(name);
+		if (group === undefined) {
+			group = { name, columns, byValues: new Map() };
+			this.groups.set(name, group);
+			this.#changes++;
+		}
+		return group;
+	}
+
+	/** Drops `group`, which has no reads left. */
+	drop(group: Group): void {
+		this.groups.delete(group.name);
+		this.#changes++;
 	}
 
 	isEmpty(): boolean {
@@ -178,15 +192,15 @@ class TableIndex {
 	 * when the key holds them all (the written key is the row's values then). Rendered again when the groups changed.
 	 */
 	lookup(table: string): string | undefined {
-		const groups = [...this.groups.keys()].join("|");
-		if (this.#lookup?.groups === groups) return this.#lookup.sql;
+		const changes = this.#changes;
+		if (this.#lookup?.changes === changes) return this.#lookup.sql;
 		const key = this.key!;
 		const columns = [...new Set([...this.groups.values()].flatMap((group) => group.columns))];
 		const where = key.map((column) => `${quote(column)} = ?`).join(" AND ");
 		const sql = columns.every((column) => key.includes(column))
 			? undefined
 			: `SELECT ${columns.map(quote).join(", ")} FROM ${quote(table)} WHERE ${where}`;
-		this.#lookup = { groups, sql };
+		this.#lookup = { changes, sql };
 		return sql;
 	}
 }
