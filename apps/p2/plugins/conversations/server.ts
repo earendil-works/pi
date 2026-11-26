@@ -98,11 +98,7 @@ export default defineFacet((host) => {
 		): Promise<Session> => {
 			if (query.project !== undefined && query.cwd !== undefined)
 				throw new Error("create takes either a project or a cwd, not both");
-			// A project's coordinator starts its sessions in its project unless it names another place.
-			const project = query.project ?? (query.cwd === undefined ? coordinatedBy(sender.id) : undefined);
-			const env = query.env ?? null;
-			const cwd = project === undefined ? query.cwd : placeOf(project, env);
-			if (cwd === undefined) throw new Error("create needs either a project or a cwd");
+			const { env, cwd } = locationOf(sender, query);
 			const row = await operations.create(
 				{
 					id: idOf(`${sender.id}:${requestId}`),
@@ -113,8 +109,27 @@ export default defineFacet((host) => {
 				},
 				ctx,
 			);
+			// A coordinator's session joins its project as it is now: renamed while the session was made, the new name;
+			// deleted, none.
+			const project = query.project ?? coordinatedBy(sender.id);
 			if (project !== undefined) await projects.assign({ session: row.id, project }, ctx);
 			return row;
+		};
+
+		/**
+		 * Where `create` starts a session: the project's place on `env` (default this device), the folder `cwd` on `env`,
+		 * or, from a project's coordinator naming neither, its project's default place (on `env` if given).
+		 */
+		const locationOf = (sender: Session, query: Extract<Query, { action: "create" }>) => {
+			const env = query.env ?? null;
+			if (query.project !== undefined) return { env, cwd: placeOf(query.project, env) };
+			if (query.cwd !== undefined) return { env, cwd: query.cwd };
+			const coordinated = coordinatedBy(sender.id);
+			if (coordinated === undefined) throw new Error("create needs either a project or a cwd");
+			if (query.env !== undefined) return { env, cwd: placeOf(coordinated, env) };
+			const place = projects.projects.value.find((each) => each.name === coordinated)?.places[0];
+			if (!place) throw new Error(`Project "${coordinated}" has no place`);
+			return { env: place.env, cwd: place.path };
 		};
 
 		/** The project `session` coordinates, if it is a project's coordinator. */

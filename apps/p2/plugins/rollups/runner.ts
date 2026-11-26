@@ -11,8 +11,8 @@ import type { Status } from "../status/contract.ts";
 import { type Preview, RollupOutputSchema, type RollupSession } from "./contract.ts";
 
 /**
- * What a script reads: every session but the Familiar's (oldest first, so activity does not reorder them), the
- * projects, the time.
+ * What a script reads: every session but the Familiar's and the projects' coordinators (oldest first, so activity
+ * does not reorder them), the projects, the time.
  */
 export type RollupInput = {
 	readonly sessions: readonly RollupSession[];
@@ -31,12 +31,15 @@ export type RollupFacts = {
 	readonly memberships: Readonly<Record<string, string>>;
 	/** The Familiar's session: the sidebar lists it above the rollups, never in one. */
 	readonly familiar: string | null;
+	/** The projects' coordinators, project name to session: the sidebar shows each as its project's row, never in a rollup. */
+	readonly coordinators: Readonly<Record<string, string>>;
 };
 
 /** The input of a run at `now`. */
 export function inputOf(facts: RollupFacts, now: number): RollupInput {
+	const apart = new Set(Object.values(facts.coordinators));
 	const sessions = facts.sessions
-		.filter((session) => session.id !== facts.familiar)
+		.filter((session) => session.id !== facts.familiar && !apart.has(session.id))
 		.map((session): RollupSession => {
 			const status = facts.statuses[session.id];
 			return {

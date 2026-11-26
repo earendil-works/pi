@@ -1,7 +1,7 @@
 // The projects' tables in the server's store: one row per project (its order a position with gaps, so a move writes one
 // row), one row per session that belongs to a project (a move of a session writes one row), and one row per project
-// with a coordinator. Lists of hundreds of projects
-// and thousands of sessions stay cheap: no write rewrites a whole collection.
+// with a coordinator. Lists of hundreds of projects and thousands of sessions stay cheap: no write rewrites a whole
+// collection.
 import { arr, str } from "@earendil-works/pi-schema";
 import {
 	columnInt,

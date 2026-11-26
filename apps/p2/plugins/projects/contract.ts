@@ -3,7 +3,7 @@
 // coordinator session; and the helpers that find a project's place on a machine and a directory's subpath below a place.
 // Browser-safe: the sessions TUI uses them.
 import { arr, nul, num, obj, type Static, str, union } from "@earendil-works/pi-schema";
-import { LOCAL, local, method, record, remote, serverHost } from "@p2/app/v1";
+import { evolve, LOCAL, local, method, record, remote, serverHost } from "@p2/app/v1";
 
 /** Where a project lives on one machine: `env` null is this device; `path` may start with `~` (that machine's home). */
 export const ProjectPlaceSchema = obj({ env: union([str(), nul()]), path: str() });
@@ -33,19 +33,20 @@ const Create = obj({ name: Name, place: Place });
 /** A project's coordinator session, as `open` answers. */
 const Opened = obj({ id: str() });
 
+/** A coordinator session's title when made. */
+export const COORDINATOR_TITLE = "Project coordinator";
+
 /** `WorkerInitValues` key: whether the starting worker's session is a project's coordinator (a boolean). */
 export const COORDINATOR_INIT = "projectCoordinator";
 
 /**
  * The owner's projects and the sessions' projects (server, host-internal; persisted in the server's store, never in
- * the session catalog). A session belongs to a project only when the owner put it there (`assign`: the new-session
- * screen, the sidebar's Move to and drag and drop) or it was copied from a session that did (`copy`, the sessions
- * plugin's `SessionCopied`). Names are unique; a rename moves the project's sessions with it. Each project may have a
- * coordinator: a session of it, made by the first `open`, that starts and steers the project's other sessions. 3:
- * `coordinators` and `open`.
+ * the session catalog), as released in version 2. A session belongs to a project only when the owner put it there
+ * (`assign`: the new-session screen, the sidebar's Move to and drag and drop) or it was copied from a session that did
+ * (`copy`, the sessions plugin's `SessionCopied`). Names are unique; a rename moves the project's sessions with it.
  */
-export const ProjectService = local("p2.project-service", {
-	version: 3,
+const ProjectServiceV2 = local("p2.project-service", {
+	version: 2,
 	params: {},
 	members: {
 		/** The live projects, in the owner's order. */
@@ -54,12 +55,7 @@ export const ProjectService = local("p2.project-service", {
 		archived: arr(ArchivedProjectSchema),
 		/** Session ID to project name, archived projects' sessions included. */
 		sessions: record(str()),
-		/** Project name to its coordinator's session ID, once the first `open` chose it. */
-		coordinators: record(str()),
-		/**
-		 * Refused for a project that is not live, and for a coordinator leaving its project; `project` null: the session
-		 * belongs to none.
-		 */
+		/** Refused for a project that is not live; `project` null: the session belongs to none. */
 		assign: method(Assign),
 		/** `copy` belongs to `source`'s project, if it has one. */
 		copy: method(obj({ source: str(), copy: str() })),
@@ -74,18 +70,21 @@ export const ProjectService = local("p2.project-service", {
 		archive: method(NameOnly),
 		/** Restores an archived project and the sessions archived with it, after the live projects. */
 		restore: method(NameOnly),
-		/**
-		 * Deletes a project (live or archived): its sessions belong to none; no session is deleted, its coordinator is
-		 * archived.
-		 */
+		/** Deletes a project (live or archived): its sessions belong to none; no session is deleted. */
 		remove: method(NameOnly),
-		/**
-		 * A live project's coordinator: made on the first call (at the project's default place, with the default model) or
-		 * restored when archived. One call at a time: two pages opening it at once make one session.
-		 */
-		open: method(NameOnly, Opened),
 	},
 });
+
+/**
+ * `ProjectService` 3: each project may have a coordinator, a session of it made by the first `open` that starts and
+ * steers the project's other sessions. `coordinators`: project name to its coordinator's session ID, once the first
+ * `open` chose it. `open`: a live project's coordinator, made on the first call (at the project's default place, with
+ * the default model) or restored when archived. A coordinator stays in its project (`assign` refuses moving it out) and
+ * is archived when its project is deleted. Version 2 is still served (its members are unchanged).
+ */
+export const ProjectService = evolve(ProjectServiceV2, (e) =>
+	e.addState("coordinators", record(str())).addMethod("open", NameOnly, Opened),
+);
 
 /**
  * The owner's projects, archived ones, this device's name in place labels (the server's hostname) and the sessions'
@@ -130,7 +129,7 @@ export const CoordinatedProject = remote("p2.coordinated-project", {
 	version: 1,
 	params: {},
 	hostAddress: serverHost,
-	methods: { project: method(undefined, union([str(), nul()])) },
+	state: { project: union([str(), nul()]) },
 });
 
 /** How a place's machine reads: its environment's name, or this device's label. */

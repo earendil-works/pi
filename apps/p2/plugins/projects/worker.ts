@@ -1,9 +1,11 @@
-// A project coordinator's worker side, active only in a project's coordinator session: its main conversation's tools
-// (set at each start: it orchestrates the project's sessions and does no work itself) and its prompt section, which
-// names the project as the server knows it now (a rename while the worker runs shows at the next turn).
-import { AgentDoc, defineExtension, section } from "@earendil-works/pi-durable";
-import { type Context, defineFacet, local } from "@p2/app/v1";
-import { Extensions, harnessOf, isTopLevel, mainConversation, type WorkerParts, workerOf } from "@p2/app/v1/worker";
+// A project coordinator's worker side. In a project's coordinator session: its main conversation's tools (set at each
+// start: it orchestrates the project's sessions and does no work itself) and its prompt section, which names the
+// project as the server knows it now (a rename while the worker runs shows at the next turn). In any other session:
+// the coordinator's tools cleared at its start, for a session that stopped being one (its project was deleted) or a
+// copy of one (`/clone`, `/fork`).
+import { AgentDoc, type AgentState, defineExtension, section } from "@earendil-works/pi-durable";
+import { type Context, defineFacet, local, type Watchable } from "@p2/app/v1";
+import { Extensions, harnessOf, isTopLevel, mainConversation, workerOf } from "@p2/app/v1/worker";
 import { COORDINATOR_INIT, CoordinatedProject } from "./contract.ts";
 
 /** The tools its model is offered and has: the other sessions, its own history, and code mode to script them. */
@@ -13,41 +15,60 @@ const CoordinatorRuntime = local("p2.project-coordinator-runtime", { version: 1,
 
 export default defineFacet((host) => {
 	host.serve(CoordinatorRuntime, (_params, self) => {
-		const worker = workerOf(self);
-		if (worker().init.values[COORDINATOR_INIT] !== true) return {};
 		const harness = harnessOf(self);
+		const worker = workerOf(self);
 
-		/** Sets the main conversation's tools, by name as Durable stores them. */
-		const applyTools = async (context: Context) => {
+		/** Sets (`TOOLS`) or clears (`undefined`) the main conversation's tools, by name as Durable stores them. */
+		const setTools = async (tools: readonly string[] | undefined, context: Context) => {
 			const durable = harness().durable;
 			const main = await mainConversation(durable, context);
+			const agent = await durable.snapshot(AgentDoc, main, context);
+			// Already as wanted: one read, no write (a session that never coordinated has neither list).
+			const restricted = sameTools(agent?.tools) && sameTools(agent?.modelTools);
+			if (restricted === (tools !== undefined)) return;
 			await durable.commit(async (tx) => {
-				const agent = await tx.doc(AgentDoc, main);
-				agent.tools = [...TOOLS];
-				agent.modelTools = [...TOOLS];
+				const draft = await tx.doc(AgentDoc, main);
+				if (tools === undefined) {
+					delete draft.tools;
+					delete draft.modelTools;
+				} else {
+					draft.tools = [...tools];
+					draft.modelTools = [...tools];
+				}
 			}, context);
 		};
-		// At each start; nothing to close.
-		self.open(applyTools, () => {});
-		const extension = coordinatorExtension(worker);
+
+		if (worker().init.values[COORDINATOR_INIT] !== true) {
+			// At each start; nothing to close.
+			self.open(
+				(context) => setTools(undefined, context),
+				() => {},
+			);
+			return {};
+		}
+		const coordinated = self.get(CoordinatedProject, {});
+		self.open(
+			(context) => setTools(TOOLS, context),
+			() => {},
+		);
+		const extension = coordinatorExtension(coordinated.project);
 		self.contribute(Extensions, { [extension.name]: extension });
 		return {};
 	});
 });
 
-/** The coordinator's prompt section for its top-level conversations, naming its project. */
-function coordinatorExtension(worker: () => WorkerParts) {
+/** Whether a tool selection is exactly the coordinator's list (not an edit of the defaults). */
+const sameTools = (tools: AgentState["tools"] | AgentState["modelTools"]) =>
+	Array.isArray(tools) && tools.length === TOOLS.length && tools.every((tool, index) => tool === TOOLS[index]);
+
+/** The coordinator's prompt section for its top-level conversations, naming its project as the server says now. */
+function coordinatorExtension(project: Watchable<string | null>) {
 	return defineExtension({
 		name: "p2-project-coordinator",
 		sections: [
 			section("project-coordinator", async (input, context) => {
 				if (!(await isTopLevel(input.read, input.conversationId, context))) return undefined;
-				// A root of the worker's own under the section's context (its cancellation, its trace).
-				const project = await worker().root(
-					async (ctx) => (await ctx.get(CoordinatedProject, {})).project(ctx),
-					context,
-				);
-				return project === null ? undefined : coordinatorPrompt(project);
+				return project.value === null ? undefined : coordinatorPrompt(project.value);
 			}),
 		],
 	});
@@ -58,7 +79,7 @@ const coordinatorPrompt = (project: string) =>
 
 - The conversations tool does all of it: list (each session's ID, title, state, model, location and project, and the projects with their places; this project's sessions first), answer, send, create, stop, archive, restore.
 - Your sessions are the ones whose project is "${project}". Leave other projects' sessions alone unless the owner asks.
-- Starting work: create a session (no project or cwd needed: it starts at the project's default place and joins the project; give cwd for a subfolder or another checkout, env for another machine), without a model unless the owner names one (it gets yours), with a short title. In its first message say what to do and to report back to your ID with conversations send when done. Start sessions, never subagents.
+- Starting work: create a session; it joins the project. Without cwd it starts at the project's default place; give cwd for a subfolder or another checkout (env for another machine). No model unless the owner names one (it gets yours); a short title. In its first message say what to do and to report back to your ID with conversations send when done. Start sessions, never subagents.
 - Prefer one codemode script over several tool calls, and return only what the owner needs. Example: list, then the answers of the project's working sessions in parallel, then a few lines each.
 - Never read or change files yourself; a session of the project does.
 - Status questions: always look (list, answer); never answer from memory, sessions change while you are idle.

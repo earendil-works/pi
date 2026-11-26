@@ -16,7 +16,7 @@ import { after, before, beforeEach, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { Models } from "../../plugins/models/contract.ts";
-import { ProjectCoordinators, Projects } from "../../plugins/projects/contract.ts";
+import { COORDINATOR_TITLE, ProjectCoordinators, Projects } from "../../plugins/projects/contract.ts";
 import { SESSIONS_OWNER, Sessions, type SessionsOwner, SidebarSettings } from "../../plugins/sessions/contract.ts";
 import { folderKey, projectKey } from "../../plugins/sessions/sidebar/model.ts";
 import type { Ref } from "../../src/runtime/chord.ts";
@@ -286,7 +286,7 @@ describe("sidebar rollups", { skip: !browserTests }, () => {
 		await browser.wait(`${titles}==='Member'`);
 		await browser.click(`${group} .group-link`);
 		await browser.wait(`location.pathname.startsWith('/s/${id}')`);
-		assert.equal(sessions.sessions.value?.filter((row) => row.title === "coordinated coordinator").length, 1);
+		assert.equal(sessions.sessions.value?.filter((row) => row.title === COORDINATOR_TITLE).length, 1);
 		coordinators.release();
 	});
 

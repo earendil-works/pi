@@ -73,15 +73,17 @@ type HeadingActions = {
 export type Coordinators = {
 	/** A project's coordinator's row, once the project has one (archived ones included). */
 	rowOf: (project: string) => SidebarRow | undefined;
+	/** The projects whose coordinator the server is making or restoring for this page. */
+	opening: ReadonlySet<string>;
 	/** Opens a project's coordinator, made or restored first when it has to be. */
 	onOpen: (project: string) => void;
 };
 
 /**
  * A group inside a rollup: its row (a folder, a lock for a sandbox; its name, a project's ⋯, "+"), which shows
- * or hides its relevant sessions below it, one step in. A project's row stands for its coordinator: its name opens it
- * (selected while it shows; the folder framed while it works, bold with a dot for its unread answer) and the chevron
- * after the name shows or hides the sessions. Its tooltip is its path (a project's: its places). Collapsed, it says what
+ * or hides its relevant sessions below it, one step in. A project's row in the Projects rollup stands for its
+ * coordinator: its name opens it ("Opening…" while the server makes it; selected while it shows; the folder framed
+ * while it works, bold with a dot for its unread answer) and the chevron after the name shows or hides the sessions. Its tooltip is its path (a project's: its places). Collapsed, it says what
  * its hidden sessions do: how many run, failed or have a new answer.
  */
 function GroupItem({ group, rows, actions }: { group: GroupSection; rows: RowActions; actions: HeadingActions }) {
@@ -97,6 +99,7 @@ function GroupItem({ group, rows, actions }: { group: GroupSection; rows: RowAct
 	const menu = projectMenus && target?.kind === "project" ? projectTarget(target.project.name) : undefined;
 	const project = coordinators && target?.kind === "project" ? target.project.name : undefined;
 	const coordinator = project === undefined ? undefined : coordinators?.rowOf(project);
+	const opening = project !== undefined && coordinators?.opening.has(project) === true;
 	const unread = coordinator?.worker.unread === true;
 	const icon = group.sandboxed ? <NavLockIcon size={16} aria-label="Sandbox" /> : <NavFolderIcon size={16} />;
 	const hidden = group.hidden.working + group.hidden.failed + group.hidden.unread > 0 && (
@@ -129,7 +132,7 @@ function GroupItem({ group, rows, actions }: { group: GroupSection; rows: RowAct
 			? { href: linkHref({ session: coordinator.id, conversation: coordinator.main, layers: [] }) }
 			: {}),
 		selected: coordinator !== undefined && coordinator.id === activeId,
-		title: group.title ?? (places || undefined),
+		title: opening ? "Opening…" : (group.title ?? (places || undefined)),
 		marker:
 			project === undefined ? (
 				icon
@@ -201,6 +204,10 @@ function RollupGroup({ section, rows, actions }: { section: Section; rows: RowAc
 	const { page, onPage, onCollapse, onOptions, onNewProject, connected } = actions;
 	const linkHref = useLinkHref();
 	const listId = useId();
+	// Only the built-in Projects rollup's groups are projects' rows; a rollup made from code may target a project with
+	// a group's "+" without the group being that project.
+	const { coordinators: _coordinators, ...others } = actions;
+	const groupActions = section.key === PROJECTS ? actions : others;
 	if (section.layout === "sessions" && section.headless)
 		return <HeadlessGroup section={section} rows={rows} selected={page === section.key} onPage={onPage} />;
 	const collapsed = section.layout === "link" ? undefined : section.collapsed;
@@ -275,7 +282,7 @@ function RollupGroup({ section, rows, actions }: { section: Section; rows: RowAc
 						))}
 					{section.layout === "groups" &&
 						section.groups.map((group) => (
-							<GroupItem key={group.key} group={group} rows={rows} actions={actions} />
+							<GroupItem key={group.key} group={group} rows={rows} actions={groupActions} />
 						))}
 					{empty && <li className="empty-note sidebar-empty">No activity</li>}
 				</SideNavigation.List>

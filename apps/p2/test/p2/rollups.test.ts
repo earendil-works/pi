@@ -241,6 +241,7 @@ describe("fingerprintOf", () => {
 		projects: [],
 		memberships: {},
 		familiar: null,
+		coordinators: {},
 	});
 	const NONE = new Map<string, unknown>();
 
@@ -269,11 +270,17 @@ describe("fingerprintOf", () => {
 		assert.notEqual(once, fingerprintOf(input, [path], new Map([[path, { a: 2 }]])));
 	});
 
-	it("gives the script the sessions oldest first with their state, project and unread answer, but the Familiar", () => {
+	it("gives the script the sessions oldest first with their state, project and unread answer, but the Familiar and the coordinators", () => {
 		const input = inputOf(
 			{
-				...facts([session("late", { createdAt: 9 }), session("early", { createdAt: 3 }), session("familiar")]),
+				...facts([
+					session("late", { createdAt: 9 }),
+					session("early", { createdAt: 3 }),
+					session("familiar"),
+					session("coordinator"),
+				]),
 				familiar: "familiar",
+				coordinators: { pi: "coordinator" },
 				statuses: { late: { running: true, tasks: 1, busy: [1], work: {} } },
 				answers: { early: 4 },
 				reads: { early: 2 },

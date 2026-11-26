@@ -989,19 +989,27 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
   - **Coordinators** (owner, 2026-12: a project is a session too, not only a folder): each project may have one
     coordinator session that starts, steers, stops and archives the project's sessions (sessions, never subagents) and
     does no work itself. A third table, `project_coordinators` (project → session, index by session; a rename moves the
-    row). `ProjectService` 3 adds `coordinators` and `open`: the first open of a live project chooses the session ID and
+    row). `ProjectService` 3 (`evolve` of the released 2, which is still served: `accepts` without mappings, as its
+    members did not change) adds `coordinators` and `open`: the first open of a live project chooses the session ID and
     joins it to the project in one transaction, then makes its row at the project's default place with the default
-    model, titled "<project> coordinator" (a crash in between makes the same session on the next open); later opens
-    restore it when archived; one open at a time. It is a member like any other, so archiving and restoring the project
-    archive and restore it. `ProjectCoordinators` (owner) serves the map and `open`; `CoordinatedProject` tells a
-    current worker the project its session coordinates (null for none). Workers learn whether they are one from their
-    start data (`WorkerInitValues` key `projectCoordinator`); then `worker.ts` sets the main conversation's `tools` and
-    `modelTools` to conversations, codemode and the history tools at each start and adds the `project-coordinator`
-    prompt section, which names the project as `CoordinatedProject` says at that turn (a rename shows at the next one).
-    The conversations tool's `create` without a project or cwd starts a coordinator's session in its project (others
-    get "create needs either a project or a cwd"); `list` puts a coordinator's own project's sessions first (only 200
-    are listed). Not the Familiar: that stays separate. The TUI lists coordinators as ordinary sessions. Tests:
-    `project-coordinators.test.ts`, the coordinator case in `ui-sidebar.test.ts`.
+    model, titled "Project coordinator" (no project name: a rename would leave it behind); a failed make (a crash, a
+    missing folder) makes the same session on the next open; later opens restore it when archived. `open`, `archive`,
+    `restore` and `remove` run one at a time (each reads the catalog, waits for session operations, then writes; an
+    open's session made in between would otherwise stay live in an archived or deleted project). It is a member like any
+    other, so archiving and restoring the project archive and restore it. `ProjectCoordinators` (owner) serves the map
+    and `open`; `CoordinatedProject` gives a worker the project its session coordinates as state (null for none or a
+    stale generation). Workers learn whether they are one from their start data (`WorkerInitValues` key
+    `projectCoordinator`); then `worker.ts` sets the main conversation's `tools` and `modelTools` to conversations,
+    codemode and the history tools at each start, holds `CoordinatedProject` and adds the `project-coordinator` prompt
+    section, which names the project as that state says (a rename shows at the next request, no call per request). Any
+    other session clears exactly that tool list at its start: a former coordinator (its project deleted, then the
+    session restored) and a copy of one (`/clone`, `/fork`) get the defaults back. The conversations tool: a
+    coordinator's `create` without a project or cwd starts at its project's default place (its machine, or `env`'s
+    place); with a cwd it starts there; either way the session joins the coordinator's project as it is once the
+    session exists (renamed meanwhile: the new name; deleted: none). Others get "create needs either a project or a
+    cwd". `list` puts a coordinator's own project's sessions first (only 200 are listed). Rollup scripts never see
+    coordinators (as the Familiar). Not the Familiar: that stays separate. The TUI lists coordinators as ordinary
+    sessions. Tests: `project-coordinators.test.ts`, the coordinator case in `ui-sidebar.test.ts`.
   - **Membership** is explicit, never derived from a path (after the import): written by `Projects.assign` (the
     new-session screen's project and a project's "+", once the session exists; the TUI's project rows, before
     `Sessions.create`; the web sidebar's Move to project… and drag and drop) and by copies: the sessions plugin's
@@ -1135,11 +1143,14 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
     `run-state.test.ts`, `sidebar-settings.test.ts`, `ui-sidebar.test.ts`, the scoped search in `search.test.ts`,
     list links in `foreign-requests.test.ts`.
   - **A project's row is its coordinator** (`Sidebar.tsx` `GroupItem`, `web.tsx`): the owner's sidebar holds
-    `ProjectCoordinators`; a project's name opens its coordinator (a link to it while it is live; otherwise
-    `open`, which makes or restores it, then the page navigates), the chevron after the name (`Toggle`, `.group-toggle`)
+    `ProjectCoordinators`; in the built-in Projects rollup only (a rollup made from code may target a project with a
+    group's "+" without the group being it), a project's name opens its coordinator (a link to it while it is live;
+    otherwise `open`, which makes or restores it: the row says "Opening…" meanwhile, one open per project, and the page
+    goes there only if the reader has not navigated since), the chevron after the name (`Toggle`, `.group-toggle`)
     shows or hides the sessions. The row is selected while the coordinator shows, its folder framed while it works
     (`IconMarker`), bold with a dot for its unread answer. Coordinators are left out of every rollup and list page, and
-    the sections and project pages wait for the map, as they wait for the projects.
+    the sections and every owner's list page wait for the map. Delete project… counts the project's sessions without
+    its coordinator and says the coordinator is archived; an open coordinator gives way to the new-session screen first.
   - **Project commands and drag and drop** (`project-commands.tsx`, `sidebar/drag.ts`, owner): a project's group row
     is the command menu's target `project` (hovered or focused; a long press; its ⋯, shown on hover with a fine
     pointer, hidden on touch screens, opens the menu on it, `openCommandMenu`): Rename project… (the query is the new

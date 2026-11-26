@@ -108,6 +108,8 @@ const closeTopLayer = () => void getNavigation().close((route) => ({ ...route, l
 
 /** No archived projects (one value, so the page data keeps its identity across renders). */
 const NO_ARCHIVED: readonly ArchivedProject[] = [];
+const NO_OPENING: ReadonlySet<string> = new Set();
+const NO_COORDINATORS: Readonly<Record<string, string>> = {};
 
 /** The projects and the sessions' projects as the sidebar shows them: as known, with the owner's moves in flight. */
 type ProjectsShown = {
@@ -504,8 +506,17 @@ function Sidebar() {
 		() => (projectsUnknown ? [] : sectionsOf(rollups, rolledUp, context, view)),
 		[projectsUnknown, rollups, rolledUp, context, view],
 	);
-	// A project's name opens its coordinator; the server makes or restores it first when it has to, one open at a time.
-	const openingProject = useRef(false);
+	// A project's name opens its coordinator; the server makes or restores it first when it has to (one open per project
+	// at a time, shown on its row). The page goes there only if the reader has not gone elsewhere meanwhile.
+	const [opening, setOpening] = useState<ReadonlySet<string>>(NO_OPENING);
+	const openingNow = useRef<ReadonlySet<string>>(NO_OPENING);
+	const markOpening = useCallback((project: string, on: boolean) => {
+		const next = new Set(openingNow.current);
+		if (on) next.add(project);
+		else next.delete(project);
+		openingNow.current = next;
+		setOpening(next);
+	}, []);
 	const coordinators = useMemo((): Coordinators | undefined => {
 		if (!owner) return undefined;
 		const byId = new Map(rows.map((row) => [row.id, row]));
@@ -515,23 +526,25 @@ function Sidebar() {
 		};
 		return {
 			rowOf,
+			opening,
 			onOpen: (project) => {
 				const row = rowOf(project);
 				if (row && row.archivedAt === null) return onOpen(row.id);
 				const live = liveWith(coordinatorsHeld);
 				if (!live) return fail(new Error("Not connected"));
-				if (openingProject.current) return;
-				openingProject.current = true;
+				if (openingNow.current.has(project)) return;
+				markOpening(project, true);
+				const from = getNavigation().route;
 				void live
 					.open({ name: project }, BACKGROUND_CONTEXT)
-					.then(({ id }) => onOpen(id))
+					.then(({ id }) => {
+						if (getNavigation().route === from) onOpen(id);
+					})
 					.catch(fail)
-					.finally(() => {
-						openingProject.current = false;
-					});
+					.finally(() => markOpening(project, false));
 			},
 		};
-	}, [owner, coordinatorSessions, rows, coordinatorsHeld, onOpen, fail]);
+	}, [owner, coordinatorSessions, rows, opening, coordinatorsHeld, onOpen, fail, markOpening]);
 	useEffect(() => {
 		if (list) rememberMains(list);
 	}, [list]);
@@ -637,8 +650,10 @@ function Sidebar() {
 				view,
 				// A project's list and the sessions without one wait for the projects too, a rollup made from code for the
 				// rollups: before them they would show the wrong sessions, or say the list is gone.
+				// Every owner's list waits for the coordinators too: until then a coordinator would show as a session.
 				loading: (page) =>
 					!list ||
+					(owner && coordinatorSessions === undefined) ||
 					((page === OTHER || page.startsWith("project:")) && projectsUnknown) ||
 					(page.startsWith("rollup:") && entries === undefined),
 				connected,
@@ -651,6 +666,7 @@ function Sidebar() {
 				...(onSearch ? { onSearch } : {}),
 				...(ownerNewIn ? { onNewIn: ownerNewIn } : {}),
 				archivedProjects,
+				coordinators: coordinatorSessions ?? NO_COORDINATORS,
 				...(owner ? { onAssign, onMoveProject } : {}),
 			}),
 		[
@@ -660,6 +676,7 @@ function Sidebar() {
 			view,
 			list,
 			owner,
+			coordinatorSessions,
 			projectsUnknown,
 			entries,
 			connected,
