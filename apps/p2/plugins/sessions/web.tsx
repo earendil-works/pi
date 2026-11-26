@@ -43,10 +43,16 @@ import {
 	useRoute,
 	useSheet,
 } from "@p2/app/v1/web";
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Envs } from "../envs/contract.ts";
 import { DirectoryPicker, directoryPickerLayer } from "../envs/contract.web.tsx";
-import { type ArchivedProject, type Project, type ProjectPlace, Projects } from "../projects/contract.ts";
+import {
+	type ArchivedProject,
+	type Project,
+	ProjectCoordinators,
+	type ProjectPlace,
+	Projects,
+} from "../projects/contract.ts";
 import { SidebarRollups } from "../rollups/contract.ts";
 import { Search, SessionReads } from "../search/contract.ts";
 import { SessionStatus } from "../status/contract.ts";
@@ -95,7 +101,7 @@ import { NEW_PROJECT, NewProjectSheet, newProjectLayer, PROJECT_FOLDER, placeOf 
 import { publishPage, usePageData } from "./sidebar/page-data.ts";
 import { type CodeSource, RollupSheet } from "./sidebar/RollupSheet.tsx";
 import { folderName } from "./sidebar/Row.tsx";
-import { SidebarView, useNow } from "./sidebar/Sidebar.tsx";
+import { type Coordinators, SidebarView, useNow } from "./sidebar/Sidebar.tsx";
 
 /** Closes the top layer only (a sheet), keeping those below it (a phone's drawer). */
 const closeTopLayer = () => void getNavigation().close((route) => ({ ...route, layers: route.layers.slice(0, -1) }));
@@ -483,17 +489,49 @@ function Sidebar() {
 		[],
 	);
 	const drawerRows = useMemo<DrawerRows>(() => ({ sessions: rows, listApart }), [rows, listApart]);
+	// Each project's coordinator: its project's row stands for it, so it is left out of the rollups too.
+	const coordinatorsHeld = useObject(ProjectCoordinators, owner ? {} : undefined);
+	const coordinatorSessions = useReadable(kept(coordinatorsHeld)?.sessions);
 	const rolledUp = useMemo(() => {
-		const hidden = new Set(Object.values(apart).flat());
+		const hidden = new Set([...Object.values(apart).flat(), ...Object.values(coordinatorSessions ?? {})]);
 		return hidden.size ? rows.filter((row) => !hidden.has(row.id)) : rows;
-	}, [rows, apart]);
+	}, [rows, apart, coordinatorSessions]);
 	const { onSearch, projects } = data;
-	// The owner's sessions are grouped by project: until the projects are known, they would all show without one, then
-	// jump into their projects.
+	// The owner's sessions are grouped by project: until the projects and their coordinators are known, they would all
+	// show without one (a coordinator among its project's sessions), then jump into their places.
+	const projectsUnknown = owner && (projects === undefined || coordinatorSessions === undefined);
 	const sections = useMemo(
-		() => (owner && projects === undefined ? [] : sectionsOf(rollups, rolledUp, context, view)),
-		[owner, projects, rollups, rolledUp, context, view],
+		() => (projectsUnknown ? [] : sectionsOf(rollups, rolledUp, context, view)),
+		[projectsUnknown, rollups, rolledUp, context, view],
 	);
+	// A project's name opens its coordinator; the server makes or restores it first when it has to, one open at a time.
+	const openingProject = useRef(false);
+	const coordinators = useMemo((): Coordinators | undefined => {
+		if (!owner) return undefined;
+		const byId = new Map(rows.map((row) => [row.id, row]));
+		const rowOf = (project: string) => {
+			const id = coordinatorSessions?.[project];
+			return id === undefined ? undefined : byId.get(id);
+		};
+		return {
+			rowOf,
+			onOpen: (project) => {
+				const row = rowOf(project);
+				if (row && row.archivedAt === null) return onOpen(row.id);
+				const live = liveWith(coordinatorsHeld);
+				if (!live) return fail(new Error("Not connected"));
+				if (openingProject.current) return;
+				openingProject.current = true;
+				void live
+					.open({ name: project }, BACKGROUND_CONTEXT)
+					.then(({ id }) => onOpen(id))
+					.catch(fail)
+					.finally(() => {
+						openingProject.current = false;
+					});
+			},
+		};
+	}, [owner, coordinatorSessions, rows, coordinatorsHeld, onOpen, fail]);
 	useEffect(() => {
 		if (list) rememberMains(list);
 	}, [list]);
@@ -601,7 +639,7 @@ function Sidebar() {
 				// rollups: before them they would show the wrong sessions, or say the list is gone.
 				loading: (page) =>
 					!list ||
-					((page === OTHER || page.startsWith("project:")) && owner && projects === undefined) ||
+					((page === OTHER || page.startsWith("project:")) && projectsUnknown) ||
 					(page.startsWith("rollup:") && entries === undefined),
 				connected,
 				onOpen,
@@ -622,7 +660,7 @@ function Sidebar() {
 			view,
 			list,
 			owner,
-			projects,
+			projectsUnknown,
 			entries,
 			connected,
 			onOpen,
@@ -728,6 +766,7 @@ function Sidebar() {
 				onPage={openPage}
 				onCollapseSidebar={toggleSidebar}
 				{...(drop ? { drop } : {})}
+				{...(coordinators ? { coordinators } : {})}
 				headerActions={headerActions}
 				footerActions={actions}
 			/>

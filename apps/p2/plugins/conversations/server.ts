@@ -98,8 +98,10 @@ export default defineFacet((host) => {
 		): Promise<Session> => {
 			if (query.project !== undefined && query.cwd !== undefined)
 				throw new Error("create takes either a project or a cwd, not both");
+			// A project's coordinator starts its sessions in its project unless it names another place.
+			const project = query.project ?? (query.cwd === undefined ? coordinatedBy(sender.id) : undefined);
 			const env = query.env ?? null;
-			const cwd = query.project === undefined ? query.cwd : placeOf(query.project, env);
+			const cwd = project === undefined ? query.cwd : placeOf(project, env);
 			if (cwd === undefined) throw new Error("create needs either a project or a cwd");
 			const row = await operations.create(
 				{
@@ -111,9 +113,13 @@ export default defineFacet((host) => {
 				},
 				ctx,
 			);
-			if (query.project !== undefined) await projects.assign({ session: row.id, project: query.project }, ctx);
+			if (project !== undefined) await projects.assign({ session: row.id, project }, ctx);
 			return row;
 		};
+
+		/** The project `session` coordinates, if it is a project's coordinator. */
+		const coordinatedBy = (session: string): string | undefined =>
+			Object.entries(projects.coordinators.value).find(([, each]) => each === session)?.[0];
 
 		return {
 			query: async ({ source, requestId, query }, ctx) => {
@@ -138,8 +144,17 @@ export default defineFacet((host) => {
 					);
 				switch (query.action) {
 					case "list": {
-						const sessions = catalog.sessions.value.filter((session) => session.archivedAt === null);
 						const memberships = projects.sessions.value;
+						const live = catalog.sessions.value.filter((session) => session.archivedAt === null);
+						// A coordinator's own project first, so the 200 listed hold it on a server with many sessions.
+						const own = coordinatedBy(source);
+						const sessions =
+							own === undefined
+								? live
+								: [
+										...live.filter((session) => memberships[session.id] === own),
+										...live.filter((session) => memberships[session.id] !== own),
+									];
 						return {
 							action: "list",
 							self: source,

@@ -16,7 +16,7 @@ import { after, before, beforeEach, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { Models } from "../../plugins/models/contract.ts";
-import { Projects } from "../../plugins/projects/contract.ts";
+import { ProjectCoordinators, Projects } from "../../plugins/projects/contract.ts";
 import { SESSIONS_OWNER, Sessions, type SessionsOwner, SidebarSettings } from "../../plugins/sessions/contract.ts";
 import { folderKey, projectKey } from "../../plugins/sessions/sidebar/model.ts";
 import type { Ref } from "../../src/runtime/chord.ts";
@@ -229,17 +229,17 @@ describe("sidebar rollups", { skip: !browserTests }, () => {
 		const group = groupOf("kept");
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
 		await browser.wait(`document.querySelector(${JSON.stringify(`${group} .session-main`)})`);
-		// A group's row shows or hides its sessions; the choice is kept on the server.
-		await browser.click(`${group} .group-link`);
+		// A project's chevron shows or hides its sessions; the choice is kept on the server.
+		await browser.click(`${group} .group-toggle`);
 		await until(settings.collapsed, (collapsed) => collapsed?.[projectKey("kept")] === true);
 		await browser.wait(`!document.querySelector(${JSON.stringify(`${group} .session-main`)})`);
 		// A project without sessions: its row turns its chevron only, nothing below it takes room.
 		const unused = groupOf("unused");
 		const height = `Math.round(document.querySelector(${JSON.stringify(unused)}).getBoundingClientRect().height)`;
 		const open = await browser.evaluate<number>(height);
-		await browser.click(`${unused} .group-link`);
+		await browser.click(`${unused} .group-toggle`);
 		await until(settings.collapsed, (collapsed) => collapsed?.[projectKey("unused")] === true);
-		await browser.wait(`document.querySelector(${JSON.stringify(`${unused} .group-link`)}).ariaExpanded==='false'`);
+		await browser.wait(`document.querySelector(${JSON.stringify(`${unused} .group-toggle`)}).ariaExpanded==='false'`);
 		assert.equal(await browser.evaluate<number>(height), open);
 		// A rollup collapses to its row; so is that kept.
 		await browser.click(".sidebar-section[data-key=projects] .section-toggle");
@@ -258,6 +258,36 @@ describe("sidebar rollups", { skip: !browserTests }, () => {
 		);
 		await browser.evaluate("history.back()");
 		await browser.wait(`!document.querySelector('[role=dialog]')`);
+	});
+
+	it("opens a project's coordinator from its name: made on the first click, the project's row stands for it", async () => {
+		const place = folder("coordinated");
+		await setProjects({ coordinated: place });
+		await createIn("Member", place, "coordinated");
+		const group = groupOf("coordinated");
+		const titles = `[...document.querySelectorAll(${JSON.stringify(`${group} .session-main .session-title`)})].map(e=>e.textContent).join()`;
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
+		await browser.wait(`${titles}==='Member'`);
+		await browser.click(`${group} .group-link`);
+		const coordinators = await holdWith(fixture.browser(), ProjectCoordinators, {});
+		const id = (await until(coordinators.sessions, (map) => map?.coordinated !== undefined)).coordinated!;
+		await browser.wait(`location.pathname.startsWith('/s/${id}')`);
+		// Selected while it shows, a link to it from now on, and listed nowhere else in the sidebar.
+		await browser.wait(
+			`document.querySelector(${JSON.stringify(`${group} .group-row`)}).classList.contains('selected') && document.querySelector(${JSON.stringify(`${group} .group-link`)}).getAttribute('href')?.includes(${JSON.stringify(id)})`,
+		);
+		assert.equal(await browser.evaluate<string>(titles), "Member");
+		assert.equal(
+			await browser.evaluate<boolean>(`Boolean(document.querySelector('.sidebar-nav [data-session="${id}"]'))`),
+			false,
+		);
+		// Again from elsewhere: the same session.
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
+		await browser.wait(`${titles}==='Member'`);
+		await browser.click(`${group} .group-link`);
+		await browser.wait(`location.pathname.startsWith('/s/${id}')`);
+		assert.equal(sessions.sessions.value?.filter((row) => row.title === "coordinated coordinator").length, 1);
+		coordinators.release();
 	});
 
 	it("creates a project from Projects' +: the folder picker, then its name; it shows as a group", async () => {

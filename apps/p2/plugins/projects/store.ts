@@ -1,6 +1,6 @@
 // The projects' tables in the server's store: one row per project (its order a position with gaps, so a move writes one
-// row) and
-// one row per session that belongs to a project (a move of a session writes one row). Lists of hundreds of projects
+// row), one row per session that belongs to a project (a move of a session writes one row), and one row per project
+// with a coordinator. Lists of hundreds of projects
 // and thousands of sessions stay cheap: no write rewrites a whole collection.
 import { arr, str } from "@earendil-works/pi-schema";
 import {
@@ -38,6 +38,14 @@ export const MemberRows = defineTable("project_members", {
 	columns: { session: columnStr(), project: columnStr() },
 	key: ["session"],
 	indexes: { by_project: ["project"] },
+});
+
+/** A project's coordinator: its session, chosen by the first open. A rename moves the row. */
+export const CoordinatorRows = defineTable("project_coordinators", {
+	version: 1,
+	columns: { project: columnStr(), session: columnStr() },
+	key: ["project"],
+	indexes: { by_session: ["session"] },
 });
 
 /** Every project in the owner's order. */

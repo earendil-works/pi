@@ -1,6 +1,8 @@
-// Serves the owner's projects: one object for the server (`ProjectService`: the projects and the sessions' projects,
-// two tables of the server's store (store.ts), `projects.json` imported into them once), `Projects` per owner with this
-// device's label, the server's hostname, and a copy of a session (`/clone`, `/fork`) joining its source's project.
+// Serves the owner's projects: one object for the server (`ProjectService`: the projects, the sessions' projects and the
+// projects' coordinators, tables of the server's store (store.ts), `projects.json` imported into them once), `Projects`
+// per owner with this device's label, the server's hostname, `ProjectCoordinators` for the owner, `CoordinatedProject`
+// for workers, and a copy of a session (`/clone`, `/fork`) joining its source's project.
+import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 import { bool, obj, str } from "@earendil-works/pi-schema";
 import {
@@ -12,17 +14,26 @@ import {
 	eq,
 	forbidden,
 	isOwner,
+	isWorker,
 	mapShared,
 	query,
 	record,
 	type Tx,
 } from "@p2/app/v1";
-import { Server } from "@p2/app/v1/server";
+import { Hosts, Server, WorkerInitValues } from "@p2/app/v1/server";
 import { Catalog, SessionCopied, SessionOperations } from "../sessions/contract.ts";
 import { loadProjects, parsePlaces } from "./config.ts";
-import { type ArchivedProject, type Project, ProjectService, Projects } from "./contract.ts";
+import {
+	type ArchivedProject,
+	COORDINATOR_INIT,
+	CoordinatedProject,
+	type Project,
+	ProjectCoordinators,
+	ProjectService,
+	Projects,
+} from "./contract.ts";
 import { projectAt } from "./place.ts";
-import { BY_POSITION, MemberRows, type ProjectRow, ProjectRows } from "./store.ts";
+import { BY_POSITION, CoordinatorRows, MemberRows, type ProjectRow, ProjectRows } from "./store.ts";
 
 type Place = Project["places"][number];
 
@@ -61,6 +72,11 @@ export default defineFacet((host) => {
 		const memberTable = self.table(MemberRows);
 		const projectRows = self.query(projectTable, BY_POSITION, WINDOW);
 		const memberRows = self.query(memberTable, query(MemberRows), WINDOW);
+		const coordinatorTable = self.table(CoordinatorRows);
+		const coordinatorRows = self.query(coordinatorTable, query(CoordinatorRows), WINDOW);
+		const coordinators = self.derive([coordinatorRows], ([rows]) =>
+			Object.fromEntries(rows.map((row) => [row.project, row.session])),
+		);
 		const toProject = mapShared((row: ProjectRow): Project => ({ name: row.name, places: row.places }));
 		const toArchived = mapShared(
 			(row: ProjectRow): ArchivedProject => ({
@@ -130,6 +146,41 @@ export default defineFacet((host) => {
 				place.env === null ? { path: place.path.trim() } : { env: place.env, path: place.path.trim() },
 			])[0]!;
 		const write = (apply: (tx: Tx) => Promise<void>, ctx: Context) => self.tx(apply, ctx).then(() => null);
+		/** The project `session` coordinates, if it is a coordinator. */
+		const coordinated = async (tx: Tx, session: string) => {
+			for await (const row of tx.rows(
+				coordinatorTable,
+				query(CoordinatorRows).where((each) => eq(each.session, session)),
+			))
+				return row.project;
+			return undefined;
+		};
+		/**
+		 * The project's coordinator, its ID chosen and joined to the project before its row is made (a crash in between
+		 * makes the same session on the next open); made at the default place, or restored when archived.
+		 */
+		const openOnce = async (name: string, ctx: Context) => {
+			const { id, place } = await self.tx(async (tx) => {
+				const project = await live(tx, name);
+				const place = project.places[0];
+				if (!place) throw new Error(`Project "${name}" has no place`);
+				const chosen = await tx.get(coordinatorTable, { project: name });
+				if (chosen) return { id: chosen.session, place };
+				const fresh = randomUUID();
+				tx.put(coordinatorTable, { project: name, session: fresh });
+				tx.put(memberTable, { session: fresh, project: name });
+				return { id: fresh, place };
+			}, ctx);
+			const row = catalog.sessions.value.find((session) => session.id === id);
+			// A chosen ID makes the row once (`create` answers a retry with the existing row).
+			if (!row) await operations.create({ id, env: place.env, cwd: place.path, title: `${name} coordinator` }, ctx);
+			else if (row.archivedAt !== null) await operations.restore({ id }, ctx);
+			return { id };
+		};
+		let opening: Promise<unknown> = Promise.resolve();
+		self.contribute(WorkerInitValues, {
+			[COORDINATOR_INIT]: (session) => Object.values(coordinators.value).includes(session),
+		});
 		return {
 			projects: deriveTyped(self, [projectRows], ([rows]) =>
 				toProject(rows.filter((row) => row.archivedAt === undefined)),
@@ -142,8 +193,12 @@ export default defineFacet((host) => {
 			sessions: self.derive([memberRows], ([rows]) =>
 				Object.fromEntries(rows.map((row) => [row.session, row.project])),
 			),
+			coordinators,
 			assign: ({ session, project }, ctx) =>
 				write(async (tx) => {
+					const coordinates = await coordinated(tx, session);
+					if (coordinates !== undefined && coordinates !== project)
+						throw new Error(`The coordinator of "${coordinates}" stays in its project`);
 					if (project === null) return tx.delete(memberTable, { session });
 					await live(tx, project);
 					tx.put(memberTable, { session, project });
@@ -172,6 +227,11 @@ export default defineFacet((host) => {
 					tx.delete(projectTable, { name });
 					tx.put(projectTable, { ...row, name: free });
 					for (const session of await membersOf(tx, name)) tx.put(memberTable, { session, project: free });
+					const coordinator = await tx.get(coordinatorTable, { project: name });
+					if (coordinator) {
+						tx.delete(coordinatorTable, { project: name });
+						tx.put(coordinatorTable, { project: free, session: coordinator.session });
+					}
 				}, ctx),
 			locate: ({ name, place }, ctx) =>
 				write(async (tx) => {
@@ -233,12 +293,27 @@ export default defineFacet((host) => {
 					tx.put(projectTable, { ...current, archivedSessions: [], position: (await lastPosition(tx)) + GAP });
 				}, ctx);
 			},
-			remove: ({ name }, ctx) =>
-				write(async (tx) => {
+			remove: async ({ name }, ctx) => {
+				// Its coordinator has nothing left to coordinate: archived first, so a failure leaves the project as it was.
+				const coordinator = await self.tx(
+					(tx) => named(tx, name).then(() => tx.get(coordinatorTable, { project: name })),
+					ctx,
+				);
+				const session = coordinator && catalog.sessions.value.find((each) => each.id === coordinator.session);
+				if (session && session.archivedAt === null) await operations.archive({ id: session.id }, ctx);
+				return write(async (tx) => {
 					await named(tx, name);
 					tx.delete(projectTable, { name });
+					tx.delete(coordinatorTable, { project: name });
 					for (const session of await membersOf(tx, name)) tx.delete(memberTable, { session });
-				}, ctx),
+				}, ctx);
+			},
+			open: ({ name }, ctx) => {
+				// An earlier open's failure was its caller's answer; this one starts afresh.
+				const next = opening.catch(() => undefined).then(() => openOnce(name, ctx));
+				opening = next;
+				return next;
+			},
 		};
 	});
 
@@ -260,6 +335,31 @@ export default defineFacet((host) => {
 			archive: (args, ctx) => service.archive(args, ctx),
 			restore: (args, ctx) => service.restore(args, ctx),
 			remove: (args, ctx) => service.remove(args, ctx),
+		};
+	});
+
+	host.serve(ProjectCoordinators, (_params, principal, self) => {
+		if (!isOwner(principal)) throw forbidden("project coordinators are the owner's");
+		const service = self.get(ProjectService, {});
+		return {
+			sessions: service.coordinators,
+			open: (args, ctx) => service.open(args, ctx),
+		};
+	});
+
+	host.serve(CoordinatedProject, (_params, principal, self) => {
+		if (!isWorker(principal)) throw forbidden("for session workers");
+		const service = self.get(ProjectService, {});
+		const hosts = self.get(Hosts, {});
+		return {
+			project: async () => {
+				const current = hosts.workers.value[principal.session];
+				if (!current?.running || current.generation !== principal.generation) throw forbidden("stale worker");
+				const entry = Object.entries(service.coordinators.value).find(
+					([, session]) => session === principal.session,
+				);
+				return entry?.[0] ?? null;
+			},
 		};
 	});
 
