@@ -240,6 +240,50 @@ forEachCodec(() => {
 			})();
 			await expectCollected(set);
 		});
+
+		it("leave no slot of a collected set while the version lives (review of 9b548ea93)", async () => {
+			const Flagged = remote("app.granted-slots", {
+				version: 1,
+				params: { id: str() },
+				hostAddress: () => Server(),
+				state: { n: int() },
+				flags: { f0: "0", f1: "1", f2: "2", f3: "3", f4: "4" },
+			});
+			const { client, peer } = await rawProvider();
+			// Watches the cache's insertions only: it keeps neither the map, the slot nor its set.
+			const slots: WeakRef<WeakRef<ReadonlySet<string>>>[] = [];
+			const set = Map.prototype.set;
+			Map.prototype.set = function (this: Map<unknown, unknown>, key: unknown, value: unknown) {
+				const held = value instanceof WeakRef ? value.deref() : undefined;
+				if (typeof key === "number" && held instanceof Set && [...held][0]?.startsWith("f")) {
+					slots.push(new WeakRef(value as WeakRef<ReadonlySet<string>>));
+				}
+				return set.call(this, key, value);
+			};
+			const sets: WeakRef<ReadonlySet<string>>[] = [];
+			try {
+				await (async () => {
+					const ref = client.hold(Flagged, { id: "a" }, context);
+					const { hold } = await peer.next("hold");
+					for (let mask = 1; mask <= 31; mask++) {
+						const granted = [0, 1, 2, 3, 4].filter((index) => (mask & (1 << index)) !== 0);
+						const members = [{ member: 0, value: "1" }];
+						peer.send({ kind: "bound", holds: [{ hold, granted, members, failed: [] }] });
+						await transported();
+						expect([...ref.granted]).toEqual(granted.map((index) => `f${index}`));
+						sets.push(new WeakRef(ref.granted));
+					}
+					ref.release();
+					await transported();
+				})();
+			} finally {
+				Map.prototype.set = set;
+			}
+			expect(slots).toHaveLength(31);
+			await expectCollected(...sets);
+			await expectCollected(...slots);
+			expect(Flagged.version).toBe(1);
+		});
 	});
 
 	describe("a snapshot", () => {

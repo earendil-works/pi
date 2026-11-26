@@ -88,8 +88,9 @@ const NO_EVENT_NODES = (): undefined => undefined;
 /**
  * The set of `names` (`version`'s grants at `indexes`): one per version and grant while a binding has it, shared by
  * every remote object of the version granted the same, so the members granted it are found by the set's identity
- * (`grantedMembers`), not rebuilt per binding. Kept weakly (gone once no binding has it, all of them with the
- * version). Indexes as the provider sends them, ascending, into at most 30 grants (a bit set in a small integer);
+ * (`grantedMembers`), not rebuilt per binding; its references' `granted` is that one set, read-only by convention (as
+ * the provider's sets are shared per decision). Kept weakly: gone once no binding has it, its slot with it, all of
+ * them with the version. Indexes as the provider sends them, ascending, into at most 30 grants (a bit set in a small integer);
  * others get a set of their own in their order, as before.
  */
 function grantedSet(version: VersionData, indexes: readonly number[], names: readonly string[]): ReadonlySet<string> {
@@ -108,13 +109,27 @@ function grantedSet(version: VersionData, indexes: readonly number[], names: rea
 	let set = sets.get(bits)?.deref();
 	if (set === undefined) {
 		set = new Set(names);
-		sets.set(bits, new WeakRef(set));
+		const ref = new WeakRef(set);
+		sets.set(bits, ref);
+		collectedSets.register(set, { sets, bits, ref });
 	}
 	return set;
 }
 
-/** The granted sets of each version by their indexes' bits (`grantedSet`): gone with the version. */
-const grantedSets = new WeakMap<VersionData, Map<number, WeakRef<ReadonlySet<string>>>>();
+/** A version's granted sets by their indexes' bits, each while a binding has it. */
+type GrantedSets = Map<number, WeakRef<ReadonlySet<string>>>;
+
+/** The granted sets of each version (`grantedSet`): gone with the version. */
+const grantedSets = new WeakMap<VersionData, GrantedSets>();
+
+/** Drops the slot of a collected set, unless it holds another set of the same grants made since. */
+const collectedSets = new FinalizationRegistry<{
+	readonly sets: GrantedSets;
+	readonly bits: number;
+	readonly ref: WeakRef<ReadonlySet<string>>;
+}>(({ sets, bits, ref }) => {
+	if (sets.get(bits) === ref) sets.delete(bits);
+});
 
 /**
  * The object of the remote references with one sharing key, owned by its host across the links of its path (one held
