@@ -10,7 +10,7 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { BACKGROUND_CONTEXT as context, isChordError } from "@earendil-works/p3/v1";
 import { eventually } from "../../../test/until.ts";
-import { NotesKind } from "../../notes/contract.ts";
+import { NotesKind } from "../../notes/kind.ts";
 import notesServer from "../../notes/server.ts";
 import { BY, kindServer } from "./kind-server.ts";
 

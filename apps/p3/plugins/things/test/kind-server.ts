@@ -4,7 +4,17 @@
 // counted work, a reload of the kind's facet, and the kind's harness part (its worker facet, built as a session's
 // worker builds it) given the things an agent holds.
 
-import type { Context, Contract, Ctx, Facet, P3Principal, ParamsOf, Reference } from "@earendil-works/p3/v1";
+import assert from "node:assert/strict";
+import {
+	type Context,
+	type Contract,
+	type Ctx,
+	type Facet,
+	isChordError,
+	type P3Principal,
+	type ParamsOf,
+	type Reference,
+} from "@earendil-works/p3/v1";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
 import type { Extension } from "@earendil-works/p3/v1/worker";
 import { ThingsStore } from "../contract.server.ts";
@@ -49,6 +59,8 @@ export type KindServer<C extends Contract> = {
 		thing: string,
 		fn: (ref: Reference<C>, ctx: Ctx<P3Principal>) => Promise<T>,
 	): Promise<T>;
+	/** The members and flags `principal` is granted on `thing` in `where`, sorted. */
+	granted(principal: P3Principal, where: string, thing: string): Promise<string[]>;
 	/** Holds `thing` in `where` as each of `principals` at once, in order, until `release`. */
 	holders(principals: readonly P3Principal[], where: string, thing: string): Promise<Holders<C>>;
 	/** The sum of metric `name` so far (`chord.query.runs`, ...). */
@@ -110,6 +122,17 @@ export async function kindServer<C extends Contract>(
 			things.setGrants({ source: BY, grants: [{ workspace: where, thing, party, tick, gives }] }, context),
 		holding: (principal, where, thing, fn) =>
 			host.root(async (ctx) => fn(await get(ctx, where, thing), ctx), context, { principal }),
+		granted: (principal, where, thing) =>
+			host.root(
+				async (ctx) => {
+					// A kind's contract is remote (`defineThing`'s), so its reference has `granted`; a generic one's type
+					// cannot say which member it is.
+					const ref = (await get(ctx, where, thing)) as unknown as { readonly granted: ReadonlySet<string> };
+					return [...ref.granted].sort();
+				},
+				context,
+				{ principal },
+			),
 		holders: (principals, where, thing) => holdAll(host, principals, (ctx) => get(ctx, where, thing), context),
 		count: (name) => w.count(name),
 		reload: () => w.reload(plugin.name, context),
@@ -187,6 +210,20 @@ async function holdAll<C extends Contract>(
 		throw error;
 	}
 	return { held, release };
+}
+
+/**
+ * Asserts that `promise` rejects with a ChordError of `code`, and, with `key`, that the refusal carries the message of
+ * that key (`details.message.key`) for the person who caused it.
+ */
+export async function refused(promise: Promise<unknown>, code = "forbidden", key?: string): Promise<void> {
+	await assert.rejects(promise, (error: unknown) => {
+		if (!isChordError(error) || error.code !== code) return false;
+		if (key === undefined) return true;
+		// The details are the refusal's own: `{ message }` as the plugin built it (a message as data).
+		const details = error.details as { readonly message?: { readonly key?: string } } | undefined;
+		return details?.message?.key === key;
+	});
 }
 
 /** Runs tool `name` of `extension` with `args` under `context`; its output's text. */
