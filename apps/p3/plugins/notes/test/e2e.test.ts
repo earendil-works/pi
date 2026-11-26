@@ -19,13 +19,13 @@ import {
 	SessionThings,
 	TRANSCRIPT_WRITES,
 	Transcript,
-	thingOf,
 	until,
 } from "@earendil-works/p3/v1";
 import { PeopleStore, SessionsStore } from "@earendil-works/p3/v1/server";
 import { type TestServer, type TestServerOptions, testServer } from "@earendil-works/p3/v1/testing";
 import { assertGranted } from "../../../test/granted.ts";
-import { FauxLogin, FauxRequests, type Step } from "../../../test/plugins/faux-login/contract.ts";
+import { FauxRequests, type Step } from "../../../test/plugins/faux-login/contract.ts";
+import { scriptFaux } from "../../../test/support.ts";
 import { within } from "../../../test/until.ts";
 import { Notes, NotesKind } from "../contract.ts";
 
@@ -84,7 +84,6 @@ async function annsNotebook(t: TestServer) {
 					app: "coding",
 					title: "Notes",
 					members: [{ kind: "person", id, access: "write" }],
-					things: [thingOf(FauxLogin)],
 				},
 				ctx,
 			),
@@ -96,13 +95,8 @@ async function annsNotebook(t: TestServer) {
 	const thing = await things.create({ kind: NotesKind.name, name: "Ann's notebook" }, context);
 	const notes = await client.get(Notes, { session, thing }, context);
 	assert.equal(notes.granted.has("add") ? "editor" : "reader", "editor");
-	await t.host.root(async (ctx) => {
-		const store = await ctx.get(SessionsStore, {});
-		const links = (await store.links.of.page({ session }, 10, ctx)).items;
-		const login = links.find(({ kind }) => kind === FauxLogin.name)?.thing ?? assert.fail("no faux login");
-		const options = { provider: "faux", script: script(thing), tool: false };
-		await store.setOptions({ session, thing: login, for: { kind: "everyone" }, options }, ctx);
-	}, context);
+	// The session's faux login, made in its workspace by the server, answering from the script.
+	await scriptFaux(t.host, session, script(thing), context);
 	return { session, thing, notes };
 }
 

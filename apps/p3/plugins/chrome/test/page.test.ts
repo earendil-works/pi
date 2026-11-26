@@ -16,27 +16,17 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import {
-	BACKGROUND_CONTEXT as context,
-	type Host,
-	Me,
-	type P3Principal,
-	SESSION_THINGS_WRITES,
-	SessionInfo,
-	Sessions,
-	SessionThings,
-	until,
-} from "@earendil-works/p3/v1";
+import { BACKGROUND_CONTEXT as context, type Host, Me, type P3Principal, Sessions, until } from "@earendil-works/p3/v1";
 import { type TestServer, testServer } from "@earendil-works/p3/v1/testing";
-import { assertGranted } from "../../../test/granted.ts";
-import { FauxLogin, type Step } from "../../../test/plugins/faux-login/contract.ts";
+import type { Step } from "../../../test/plugins/faux-login/contract.ts";
+import { scriptFaux } from "../../../test/support.ts";
 import { eventually, within } from "../../../test/until.ts";
 import { BROWSER_SKIP, Browser, DESKTOP, PHONE } from "./browser.ts";
 
 /** The checkout's built-in plugins, which the test copies and edits. */
 const BUILT_IN = fileURLToPath(new URL("../../", import.meta.url));
 
-/** The tests' faux login: a kind of thing whose model answers from a script. */
+/** The tests' faux login: a provider whose model answers from a script, the login's key (`scriptFaux`). */
 const FAUX = fileURLToPath(new URL("../../../test/plugins/faux-login/", import.meta.url));
 
 /** Where the screenshots go. */
@@ -52,8 +42,7 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 	let session: string;
 	/** The invited person's id. */
 	let ada: string;
-	/** The session's faux login (its thing's id) and its script so far. */
-	let faux: string;
+	/** The session's faux login's script so far. */
 	let script: Step[];
 
 	before(async () => {
@@ -112,23 +101,15 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 	it("streams scripted answers, a tool call with its output among them, into the transcript", async () => {
 		script = [
 			{ when: "hello", reply: [{ kind: "text" as const, text: "Hello from the faux model." }] },
-			{ when: "which title", reply: [{ kind: "tool" as const, name: "faux_session", args: "{}" }] },
+			{
+				when: "which title",
+				reply: [{ kind: "tool" as const, name: "bash", args: JSON.stringify({ command: "echo First steps" }) }],
+			},
 			// The tool's result names the session's title.
 			{ when: "First steps", reply: [{ kind: "text" as const, text: "It is called First steps." }] },
 		];
-		// The faux login is the Pi's, in all its sessions: the session has it from following its owner; its script is
-		// this session's options for it.
-		const info = await owner.get(SessionInfo, { session }, context);
-		const things = await until(
-			info.things,
-			(list) => list.some((thing) => thing.kind === FauxLogin.name),
-			within("the faux login, followed", context, 10_000),
-		);
-		faux = things.find((thing) => thing.kind === FauxLogin.name)!.thing;
-		await (await writerOf(owner, session)).setOptions(
-			{ thing: faux, for: { kind: "everyone" }, options: { provider: "faux", script, tool: true } },
-			context,
-		);
+		// The session's faux login, made in its workspace by the server, answering from `script`.
+		await scriptFaux(t.host, session, script, context);
 		await browser.type("[data-message]", "hello there");
 		await browser.enter();
 		await browser.wait(`document.querySelector('[data-entry="user"]')?.textContent === "hello there"`);
@@ -137,12 +118,12 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		);
 		await browser.type("[data-message]", "which title is this?");
 		await browser.click("[data-send]");
-		await browser.wait(`document.querySelector('[data-tool="faux_session"][data-state="done"]')`);
+		await browser.wait(`document.querySelector('[data-tool="bash"][data-state="done"]')`);
 		await browser.wait(
 			`[...document.querySelectorAll('[data-entry="assistant"]')].some((e) => e.textContent.includes("It is called First steps."))`,
 		);
-		await browser.click('[data-tool="faux_session"] summary');
-		await browser.wait(`document.querySelector('[data-tool="faux_session"]').open`);
+		await browser.click('[data-tool="bash"] summary');
+		await browser.wait(`document.querySelector('[data-tool="bash"]').open`);
 		await browser.screenshot(join(SHOTS, "04-answer-desktop.png"));
 	});
 
@@ -390,11 +371,4 @@ function appPage(id: string, body: string): string {
 		`function Page() { return <main>${body}</main>; }`,
 		`export default defineFacet((_host, self) => self.contribute(AppPages, { app: ${JSON.stringify(id)}, Page }));`,
 	].join("\n");
-}
-
-/** `client`'s writer of session `session`'s things. */
-async function writerOf(client: Host<P3Principal>, session: string) {
-	const things = await client.get(SessionThings, { session }, context);
-	assertGranted(things, ...SESSION_THINGS_WRITES);
-	return things;
 }

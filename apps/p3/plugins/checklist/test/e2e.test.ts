@@ -18,13 +18,13 @@ import {
 	SessionThings,
 	TRANSCRIPT_WRITES,
 	Transcript,
-	thingOf,
 	until,
 } from "@earendil-works/p3/v1";
 import { PeopleStore, SessionsStore } from "@earendil-works/p3/v1/server";
 import { type TestServer, testServer } from "@earendil-works/p3/v1/testing";
 import { assertGranted } from "../../../test/granted.ts";
-import { FauxLogin, FauxRequests, type Step } from "../../../test/plugins/faux-login/contract.ts";
+import { FauxRequests, type Step } from "../../../test/plugins/faux-login/contract.ts";
+import { scriptFaux } from "../../../test/support.ts";
 import { within } from "../../../test/until.ts";
 import { CHECKLIST_CHECKS, Checklist, ChecklistKind } from "../contract.ts";
 
@@ -73,7 +73,6 @@ describe("the checklist end to end", { skip: "until sessions are workspaces, ERN
 						app: "coding",
 						title: "Groceries",
 						members: [{ kind: "person", id: ann, access: "write" }],
-						things: [thingOf(FauxLogin)],
 					},
 					ctx,
 				),
@@ -87,14 +86,9 @@ describe("the checklist end to end", { skip: "until sessions are workspaces, ERN
 		const list = await client.get(Checklist, { session, thing: checklist }, context);
 		assertGranted(list, ...CHECKLIST_CHECKS);
 		const milk = await list.add({ text: "milk" }, context);
-		// The login's script, which needs the checklist's and the item's ids.
-		await t.host.root(async (ctx) => {
-			const store = await ctx.get(SessionsStore, {});
-			const links = (await store.links.of.page({ session }, 10, ctx)).items;
-			const login = links.find(({ kind }) => kind === FauxLogin.name)?.thing ?? assert.fail("no faux login");
-			const options = { provider: "faux", script: script(checklist, milk), tool: false };
-			await store.setOptions({ session, thing: login, for: { kind: "everyone" }, options }, ctx);
-		}, context);
+		// The session's faux login, made in its workspace by the server; its script needs the checklist's and the item's
+		// ids.
+		await scriptFaux(t.host, session, script(checklist, milk), context);
 		const owner = await t.client(context);
 		await send(owner, session, "@tick");
 		await until(
