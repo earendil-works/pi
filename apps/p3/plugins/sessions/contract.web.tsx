@@ -1,4 +1,4 @@
-// The sessions plugin's contract for web facets: the views it offers apps (the session list, new session, what a
+// The sessions plugin's contract for web facets: the components it offers apps (the session list, new session, what a
 // session has), and `ThingViews`, through which each kind of thing shows one thing of a session (`<ThingView>`
 // renders the right one, so an app never knows kinds). `/v1/web` re-exports it.
 

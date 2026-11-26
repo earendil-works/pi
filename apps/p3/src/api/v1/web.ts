@@ -1,7 +1,8 @@
 // p3's API v1 for web facets (`@earendil-works/p3/v1/web`): Chord's React bindings, the page's one slot (`PageRoot`,
 // the chrome plugin's), the connection state, the components plugins offer each other as typed tokens
-// (`defineComponent`, `Components`, `useComponent`), the page's route (`useRoute`, `navigate`, `redirect`), and the icons p3 offers. The built-in plugins' web contracts p3 promises
-// are re-exported here (the layout plugin's pane layout among them). Browser only.
+// (`defineComponent`, `Components`, `useComponent`), the page's route (`useRoute`, `navigate`, `redirect`), and the
+// icons p3 offers. The built-in plugins' web contracts p3 promises are re-exported here (the layout plugin's pane
+// layout among them). Browser only.
 
 /// <reference path="./css.d.ts" />
 

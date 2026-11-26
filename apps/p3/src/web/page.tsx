@@ -1,8 +1,8 @@
 // The page's entry (the base bundle the web surface builds from it at the first page request): Chord's page host with
 // p3's web modules (the icons p3 offers among them), React and Elanor as the host packages web facets import, and the
-// base's page facet, which serves the registries every page has (`PageRoot`, `PageConnection`, `Components`). It renders
-// the one slot, `PageRoot`, which the chrome plugin fills; everything else on the page is a plugin. Light and dark
-// follow the system through Elanor's tokens, so Chord's own themes are off.
+// base's page facet, which serves the registries every page has (`PageRoot`, `PageConnection`, `Components`). It
+// renders the one slot, `PageRoot`, which the chrome plugin fills; everything else on the page is a plugin. Light and
+// dark follow the system through Elanor's tokens, so Chord's own themes are off.
 
 import "./page.css";
 import { startPage } from "@earendil-works/chord/web";

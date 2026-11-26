@@ -1,4 +1,4 @@
-// The transcript plugin's web facet: it offers apps the transcript view (`TranscriptView`).
+// The transcript plugin's web facet: it offers apps the transcript component (`TranscriptView`).
 
 import { defineFacet } from "@earendil-works/p3/v1";
 import { Components, componentOf } from "@earendil-works/p3/v1/web";

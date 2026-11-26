@@ -24,7 +24,7 @@ import {
 } from "@earendil-works/p3/v1/web";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 // Other plugins' web contracts by path, never through `/v1/web`: a plugin applied to a running server meets the base
-// its page started with, whose `/v1/web` may not have a newer contract yet (a view token would be `undefined`).
+// its page started with, whose `/v1/web` may not have a newer contract yet (a component token would be `undefined`).
 import {
 	activatePane,
 	groupOf,

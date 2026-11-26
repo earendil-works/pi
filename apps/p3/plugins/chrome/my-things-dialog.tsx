@@ -4,11 +4,11 @@
 import { IconButton, Modal, Stack } from "@earendil-works/elanor-react";
 import { CloseIcon, useComponent } from "@earendil-works/p3/v1/web";
 // Other plugins' web contracts by path, never through `/v1/web`: a plugin applied to a running server meets the base
-// its page started with, whose `/v1/web` may not have a newer contract yet (a view token would be `undefined`).
+// its page started with, whose `/v1/web` may not have a newer contract yet (a component token would be `undefined`).
 import { MyThingsView } from "../sessions/contract.web.tsx";
 import styles from "./frame.module.css";
 
-/** The dialog, open while `open` (its view, and so its objects, only then); `onClose` closes it. */
+/** The dialog, open while `open` (its component, and so its objects, only then); `onClose` closes it. */
 export function MyThingsDialog(props: { readonly open: boolean; readonly onClose: () => void }) {
 	const MyThings = useComponent(MyThingsView);
 	return (

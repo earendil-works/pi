@@ -1,7 +1,7 @@
 // The layout plugin's contract for web facets: the pane layout an app places (`PaneLayoutView`: the app's panes and
 // a tree of splits and tab groups the app keeps as JSON), and what an app does with that tree itself (plain data and
 // pure functions: make one, open or activate a pane, keep only known panes, read one back from storage). Dragging,
-// resizing and closing are the view's. `/v1/web` re-exports this file for third-party apps.
+// resizing and closing are the component's. `/v1/web` re-exports this file for third-party apps.
 
 import { defineComponent } from "@earendil-works/p3/v1/web";
 import type { ReactNode } from "react";

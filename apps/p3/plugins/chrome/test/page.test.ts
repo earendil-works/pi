@@ -383,9 +383,10 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 	});
 
 	it("applies a plugin whose web contract is newer than the page's base, without an error", async () => {
-		// The deployment's bug (2026-11-23): an apply brought a new component token in the sessions plugin's web contract; the
-		// coding app took it from `/v1/web`, which is the page's base, built at the server's start: `undefined` there,
-		// and the coding page stopped with an error. Here a new view and its use are applied over the running page.
+		// The deployment's bug (2026-11-23): an apply brought a new component token in the sessions plugin's web
+		// contract; the coding app took it from `/v1/web`, which is the page's base, built at the server's start:
+		// `undefined` there, and the coding page stopped with an error. Here a new component and its use are applied
+		// over the running page.
 		await browser.open(`${origin}/coding/${session}`);
 		await browser.wait(`document.querySelector('[data-transcript="writer"]')`);
 		await browser.evaluate("window.p3Marker = 2");
@@ -396,7 +397,7 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await edit(
 			"sessions/contract.web.tsx",
 			(source) =>
-				`${source}\n/** A view new since the page's base, for the test. */\nexport const ProbeView = defineComponent<Record<string, never>>("sessions.probe");\n`,
+				`${source}\n/** A component new since the page's base, for the test. */\nexport const ProbeView = defineComponent<Record<string, never>>("sessions.probe");\n`,
 		);
 		await edit("sessions/web.tsx", (source) =>
 			source
@@ -459,8 +460,8 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 	});
 
 	it("renders an app that asks for a component the page's base lacks, reporting it once instead of failing", async () => {
-		// A plugin built against a newer API than the page's base: a component token the base does not have is `undefined`
-		// here (`useComponent` of `undefined` stands for it).
+		// A plugin built against a newer API than the page's base: a component token the base does not have is
+		// `undefined` here (`useComponent` of `undefined` stands for it).
 		await writeFile(join(t.userRoot, "skew.server.ts"), appServer("skew", "Skew", "bar"));
 		await writeFile(
 			join(t.userRoot, "skew.web.tsx"),
@@ -469,7 +470,7 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 				'import { AppPages, useComponent, type ComponentToken } from "@earendil-works/p3/v1/web";',
 				"function Page() {",
 				"	const Missing = useComponent(undefined as unknown as ComponentToken<Record<string, never>>);",
-				'	return <main><p data-skew="">Still here</p>{Missing === undefined ? <p data-skew-missing="">No view</p> : <Missing />}</main>;',
+				'	return <main><p data-skew="">Still here</p>{Missing === undefined ? <p data-skew-missing="">No component</p> : <Missing />}</main>;',
 				"}",
 				'export default defineFacet((_host, self) => self.contribute(AppPages, { app: "skew", Page }));',
 			].join("\n"),

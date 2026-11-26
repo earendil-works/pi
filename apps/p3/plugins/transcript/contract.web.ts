@@ -1,4 +1,4 @@
-// The transcript plugin's contract for web facets: the transcript view an app places. `/v1/web` re-exports it.
+// The transcript plugin's contract for web facets: the transcript component an app places. `/v1/web` re-exports it.
 
 import { defineComponent } from "@earendil-works/p3/v1/web";
 
