@@ -21,6 +21,23 @@ describe("memory links", () => {
 		expect(got).toEqual([1, 2, 3]);
 	});
 
+	it("deliver each message in a microtask of its own, queued when it was sent: others keep their place between them", async () => {
+		const [a, b] = memoryLinkPair();
+		const seen: string[] = [];
+		b.onMessage((message) => {
+			seen.push(`message ${message[0]}`);
+			// Sent back while delivering: its own microtask, after the ones queued before it.
+			if (message[0] === 1) b.send(bytes(9));
+			queueMicrotask(() => seen.push(`after ${message[0]}`));
+		});
+		a.onMessage((message) => seen.push(`back ${message[0]}`));
+		a.send(bytes(1));
+		queueMicrotask(() => seen.push("between"));
+		a.send(bytes(2));
+		await flushed();
+		expect(seen).toEqual(["message 1", "between", "message 2", "back 9", "after 1", "after 2"]);
+	});
+
 	it("close this end at once and the peer one task later; send after close is a no-op", async () => {
 		const [a, b] = memoryLinkPair();
 		const closes: string[] = [];
