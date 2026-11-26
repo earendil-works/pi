@@ -65,6 +65,11 @@ function customKeyCache(customKey: PrincipalKeyFunction<never>): WeakMap<Princip
  */
 export function canonicalJson(value: JsonValue, context: Context): string {
 	chordMetrics(context.telemetry.metrics).counter("chord.data.walks").add(1);
+	return canonicalText(value);
+}
+
+/** `canonicalJson` for a caller that counted its walk already (a decision's read counts one before it compares). */
+export function canonicalText(value: JsonValue): string {
 	// JSON.stringify writes -0 as 0.
 	if (value === null || typeof value !== "object") return JSON.stringify(value);
 	const parts: string[] = [];
@@ -96,117 +101,112 @@ function canonical(value: JsonValue[] | { readonly [key: string]: JsonValue }, p
 }
 
 /**
- * Whether `b` has the canonical JSON of `a` (`canonicalJson`), decided without making text (AGENTS.md: never compare
- * by serializing): keys in any order, `-0` as `0`, a non-finite number as `null`, what is no JSON as canonical JSON
- * writes it (nothing in a list, `undefined` in an object). `a` was walked before (`canonicalJson` or `walkJson`): a
- * part of `b` that is the same object is equal at once. Throws where canonical JSON of `b` would (a bigint). Counts
- * nothing: its caller counts the walk. `skip` names a key of the outer objects left out of both.
+ * Whether `b` is the plain JSON `a` is, decided without making text (AGENTS.md: never compare by serializing). `a` is
+ * plain JSON (`isPlainJson`); for `b` it says `equal` (the same canonical JSON: keys in any order, `-0` as `0`),
+ * `different`, or `odd`: `b` is no plain JSON within the bounds (what is no JSON, a non-finite number, an exotic
+ * prototype; deeper than 16 or over 256 values), which only canonical JSON's text compares. A part of `b` that is the
+ * same object as `a`'s is equal at once. `skip` names a key of the outer objects left out of both. Counts nothing.
  */
-export function sameJson(a: unknown, b: unknown, skip?: string): boolean {
-	if (skip !== undefined && isObject(a) && isObject(b) && !Array.isArray(a) && !Array.isArray(b)) {
-		return sameFields(a, b, skip);
+export function samePlainJson(a: unknown, b: unknown, skip?: string): PlainComparison {
+	budget = PLAIN_VALUES;
+	return comparePlain(a, b, PLAIN_DEPTH, skip);
+}
+
+/** What `samePlainJson` found for its second value. */
+export type PlainComparison = "equal" | "different" | "odd";
+
+/** The bounds of a direct comparison: the depth and the number of values of a small value (a decision's data). */
+const PLAIN_DEPTH = 16;
+
+const PLAIN_VALUES = 256;
+
+/** The values a comparison may still visit (one comparison at a time: it calls no code of anyone's). */
+let budget = 0;
+
+function comparePlain(a: unknown, b: unknown, depth: number, skip: string | undefined): PlainComparison {
+	if (--budget < 0) return "odd";
+	if (a === b) return "equal";
+	switch (typeof b) {
+		case "string":
+		case "boolean":
+			return "different";
+		case "number":
+			return Number.isFinite(b) ? "different" : "odd";
+		case "object":
+			break;
+		default:
+			return "odd";
 	}
-	return sameAt(a, b, TOP);
-}
-
-/** Where a value is written: the text of what is no JSON depends on it (`canonicalJson`, `canonical`). */
-type Place = typeof TOP | typeof ITEM | typeof FIELD;
-
-const TOP = 0;
-
-const ITEM = 1;
-
-const FIELD = 2;
-
-function sameAt(a: unknown, b: unknown, place: Place): boolean {
-	if (a === b) return true;
-	if (isObject(a) && isObject(b)) {
-		if (Array.isArray(a)) return Array.isArray(b) && sameItems(a, b);
-		return !Array.isArray(b) && sameFields(a, b, undefined);
+	if (b === null) return "different";
+	if (depth === 0) return "odd";
+	if (Array.isArray(b)) {
+		if (Object.getPrototypeOf(b) !== Array.prototype) return "odd";
+		if (!Array.isArray(a) || a.length !== b.length) return "different";
+		// Indexed: a for-of allocates an iterator per list.
+		for (let index = 0; index < b.length; index++) {
+			const item = comparePlain(a[index], b[index], depth - 1, undefined);
+			if (item !== "equal") return item;
+		}
+		return "equal";
 	}
-	// A function's or bigint's text is what JSON.stringify makes of it (its toJSON, or a throw): compared as text.
-	if (byText(a) || byText(b)) return textAt(a, place) === textAt(b, place);
-	if (isObject(a) || isObject(b)) return false;
-	const kind = primitiveKind(a);
-	return kind !== VALUE && kind === primitiveKind(b);
-}
-
-function isObject(value: unknown): value is object {
-	return typeof value === "object" && value !== null;
-}
-
-function byText(value: unknown): boolean {
-	return typeof value === "function" || typeof value === "bigint";
-}
-
-/** A primitive other than an equal one with the same text: `null` (non-finite numbers too), or none (`undefined`). */
-function primitiveKind(value: unknown): typeof VALUE | typeof NULL | typeof NONE {
-	if (value === null || (typeof value === "number" && !Number.isFinite(value))) return NULL;
-	return value === undefined || typeof value === "symbol" ? NONE : VALUE;
-}
-
-const VALUE = 0;
-
-const NULL = 1;
-
-const NONE = 2;
-
-/** Lists: the same length and items, or no items against one item written as nothing (`[]` and `[undefined]`). */
-function sameItems(a: readonly unknown[], b: readonly unknown[]): boolean {
-	if (a.length !== b.length) {
-		if (a.length + b.length !== 1) return false;
-		const item = a.length === 1 ? a[0] : b[0];
-		return !isObject(item) && textAt(item, ITEM) === "";
-	}
-	// Indexed: a for-of allocates an iterator per list.
-	for (let index = 0; index < a.length; index++) if (!sameAt(a[index], b[index], ITEM)) return false;
-	return true;
-}
-
-/** Objects: the same own enumerable keys (`Object.keys`), each with the same value; `skip` left out. */
-function sameFields(a: object, b: object, skip: string | undefined): boolean {
+	if (!plainPrototype(b)) return "odd";
+	if (typeof a !== "object" || a === null || Array.isArray(a)) return "different";
 	const left = a as { readonly [key: string]: unknown };
 	const right = b as { readonly [key: string]: unknown };
 	let keys = 0;
-	// for-in with an own-enumerable filter: `Object.keys` allocates its list.
+	// for-in with an own-enumerable filter (the keys `Object.keys` lists): `Object.keys` allocates its list.
 	for (const key in right) {
 		if (key === skip || !isEnumerable.call(right, key)) continue;
-		if (!isEnumerable.call(left, key) || !sameAt(left[key], right[key], FIELD)) return false;
+		if (!isEnumerable.call(left, key)) return "different";
+		const field = comparePlain(left[key], right[key], depth - 1, undefined);
+		if (field !== "equal") return field;
 		keys++;
 	}
 	for (const key in left) if (key !== skip && isEnumerable.call(left, key)) keys--;
-	return keys === 0;
+	return keys === 0 ? "equal" : "different";
 }
 
 const isEnumerable = Object.prototype.propertyIsEnumerable;
 
-/** The text canonical JSON writes for `value` at `place` (only for what `sameAt` cannot tell apart otherwise). */
-function textAt(value: unknown, place: Place): string | undefined {
-	if (isObject(value)) {
-		const parts: string[] = [];
-		canonical(value as JsonValue[] | { readonly [key: string]: JsonValue }, parts);
-		return parts.join("");
-	}
-	const text = JSON.stringify(value);
-	if (place === TOP) return text;
-	return place === ITEM ? (text ?? "") : `${text}`;
+function plainPrototype(value: object): boolean {
+	const prototype = Object.getPrototypeOf(value);
+	return prototype === Object.prototype || prototype === null;
 }
 
 /**
- * Walks `value` as `canonicalJson` does, making no text: it throws where that throws (a bigint, a cycle), for a value
- * kept to be compared by `sameJson` later. Counts nothing: its caller counts the walk.
+ * Whether `value` is plain JSON within `samePlainJson`'s bounds: finite numbers, strings, booleans, `null`, plain
+ * lists and plain objects, at most 16 deep and 256 values. Only such a value is kept to be compared directly; any other
+ * is compared by its canonical JSON text, made when it is read.
  */
-export function walkJson(value: unknown): void {
-	if (!isObject(value)) {
-		if (byText(value)) JSON.stringify(value);
-		return;
+export function isPlainJson(value: unknown): boolean {
+	budget = PLAIN_VALUES;
+	return plain(value, PLAIN_DEPTH);
+}
+
+function plain(value: unknown, depth: number): boolean {
+	if (--budget < 0) return false;
+	switch (typeof value) {
+		case "string":
+		case "boolean":
+			return true;
+		case "number":
+			return Number.isFinite(value);
+		case "object":
+			break;
+		default:
+			return false;
 	}
+	if (value === null) return true;
+	if (depth === 0) return false;
 	if (Array.isArray(value)) {
-		for (let index = 0; index < value.length; index++) walkJson(value[index]);
-		return;
+		if (Object.getPrototypeOf(value) !== Array.prototype) return false;
+		for (let index = 0; index < value.length; index++) if (!plain(value[index], depth - 1)) return false;
+		return true;
 	}
+	if (!plainPrototype(value)) return false;
 	const fields = value as { readonly [key: string]: unknown };
-	for (const key in fields) if (isEnumerable.call(fields, key)) walkJson(fields[key]);
+	for (const key in fields) if (isEnumerable.call(fields, key) && !plain(fields[key], depth - 1)) return false;
+	return true;
 }
 
 /**

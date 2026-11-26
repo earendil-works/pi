@@ -44,9 +44,9 @@ try {
 - `validatorFor(owner, context)`: the compiled validator of a Chord-owned schema, cached weakly by its owner;
   `check(validator, value, reason, context)` runs it (counted) and throws `invalid/<reason>` naming the path (a job's
   args, `jobs/`).
-- `principalKey(principal, context, customKey?)`, `canonicalJson(value, context)`; `sameJson(a, b, skip?)`: whether two
-  values have the same canonical JSON, without making it; `walkJson(value)`: throws where canonical JSON would. Both
-  count nothing: a decision's read counts its one walk as `canonicalJson` counted it (`host/admission.ts`).
+- `principalKey(principal, context, customKey?)`, `canonicalJson(value, context)`; `canonicalText(value)`: the same text
+  for a caller that counted its walk; `samePlainJson(a, b, skip?)`: whether `b` is the plain JSON `a` is (`equal`,
+  `different`, or `odd` for a value that is no plain JSON within small bounds), without text; `isPlainJson(value)`.
 - `isMessageData(value, context)`: whether plugin code handed a message as data (`MessageSchema`, compiled once).
 - `invalid`, `asChordError`, `chordErrorFromJson`, `PROTOCOL_VERSION`, `CHORD_ERROR_REASONS`;
   `openFailure(thrown, label)`.

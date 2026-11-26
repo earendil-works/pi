@@ -12,5 +12,14 @@ export {
 export { openFailure, sameCause, waitingFor } from "./failure.ts";
 export { isMessageData } from "./message.ts";
 export { checkAddress, checkParams, identityKey } from "./params.ts";
-export { canonicalJson, principalJson, principalKey, sameJson, samePrincipal, walkJson } from "./principal.ts";
+export {
+	canonicalJson,
+	canonicalText,
+	isPlainJson,
+	type PlainComparison,
+	principalJson,
+	principalKey,
+	samePlainJson,
+	samePrincipal,
+} from "./principal.ts";
 export { check, validatorFor } from "./validator.ts";

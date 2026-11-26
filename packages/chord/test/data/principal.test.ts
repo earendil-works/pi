@@ -3,11 +3,11 @@ import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT } from "../../src/context/index.ts";
 import {
 	canonicalJson,
+	isPlainJson,
 	principalJson,
 	principalKey,
-	sameJson,
+	samePlainJson,
 	samePrincipal,
-	walkJson,
 } from "../../src/data/internal.ts";
 import { counted, expectCollected, metered } from "../support.ts";
 
@@ -37,49 +37,42 @@ describe("canonicalJson", () => {
 	});
 });
 
-describe("sameJson", () => {
+describe("samePlainJson", () => {
 	const text = (value: unknown) => canonicalJson(value as never, BACKGROUND_CONTEXT);
 
-	/** A random value of few distinct parts, odd ones included (what plugin code may hand over as JSON). */
-	function random(next: () => number, depth: number): unknown {
-		const pick = Math.floor(next() * (depth > 2 ? 14 : 17));
-		const tokens = [0, -0, 1, "a", "", true, false, null, Number.NaN, Number.POSITIVE_INFINITY, undefined];
+	/** A random value of few distinct parts; with `odd`, what plugin code may hand over as JSON too. */
+	function random(next: () => number, depth: number, odd: boolean): unknown {
+		const plainTokens = [0, -0, 1, "a", "", true, false, null, "b"];
+		const oddTokens = [Number.NaN, Number.POSITIVE_INFINITY, undefined, Symbol("s"), () => {}, new Date(0)];
+		const tokens = odd ? [...plainTokens, ...oddTokens] : plainTokens;
+		const pick = Math.floor(next() * (tokens.length + (depth > 2 ? 0 : 2)));
 		if (pick < tokens.length) return tokens[pick];
-		if (pick === 11) return Symbol("s");
-		if (pick === 12) return () => {};
-		if (pick === 13) return "b";
-		if (pick === 14) return Array.from({ length: Math.floor(next() * 3) }, () => random(next, depth + 1));
-		const object: Record<string, unknown> = pick === 15 ? {} : Object.create(null);
-		for (const key of ["a", "b", "granted"]) if (next() < 0.5) object[key] = random(next, depth + 1);
+		if (pick === tokens.length)
+			return Array.from({ length: Math.floor(next() * 3) }, () => random(next, depth + 1, odd));
+		const object: Record<string, unknown> = next() < 0.8 ? {} : Object.create(null);
+		for (const key of ["a", "b", "granted"]) if (next() < 0.5) object[key] = random(next, depth + 1, odd);
 		if (next() < 0.2) Object.defineProperty(object, "hidden", { value: 1, enumerable: false });
 		return object;
 	}
 
 	/** `value` built again: other objects, keys in another order, each part maybe one with the same text. */
 	function remix(value: unknown, next: () => number): unknown {
-		const same: unknown[][] = [
-			[0, -0],
-			[null, Number.NaN, Number.NEGATIVE_INFINITY],
-			[undefined, Symbol("t")],
-		];
-		const group = same.find((members) => members.some((member) => Object.is(member, value)));
-		if (group !== undefined) return group[Math.floor(next() * group.length)];
+		if (Object.is(value, 0) || Object.is(value, -0)) return next() < 0.5 ? 0 : -0;
+		if (value === null && next() < 0.3) return Number.NaN;
 		if (Array.isArray(value)) {
 			if (value.length === 0 && next() < 0.3) return [undefined];
 			return value.map((item) => remix(item, next));
 		}
 		if (typeof value !== "object" || value === null) return value;
-		const keys = Object.keys(value).sort(() => next() - 0.5);
+		const fields = value as Record<string, unknown>;
 		const copy: Record<string, unknown> = {};
-		for (const key of keys)
-			copy[key] =
-				next() < 0.2
-					? (value as Record<string, unknown>)[key]
-					: remix((value as Record<string, unknown>)[key], next);
+		for (const key of Object.keys(fields).sort(() => next() - 0.5)) {
+			copy[key] = next() < 0.2 ? fields[key] : remix(fields[key], next);
+		}
 		return copy;
 	}
 
-	it("says what equal canonical JSON says, for random values and their remixes, with and without a skipped key", () => {
+	it("says what canonical JSON says for a plain value against any other; odd for one that is no plain JSON", () => {
 		let seed = 7;
 		const next = () => {
 			seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
@@ -90,44 +83,88 @@ describe("sameJson", () => {
 			const { granted: _, ...rest } = value as Record<string, unknown>;
 			return rest;
 		};
-		let equal = 0;
+		// A plain object (a date is no plain JSON, whatever its fields).
+		const object = (value: unknown) =>
+			typeof value === "object" &&
+			value !== null &&
+			[Object.prototype, null].includes(Object.getPrototypeOf(value)) &&
+			!Array.isArray(value);
+		const found = { equal: 0, different: 0, odd: 0 };
 		for (let round = 0; round < 20_000; round++) {
-			const a = random(next, 0);
-			const b = next() < 0.6 ? remix(a, next) : random(next, 0);
+			const a = random(next, 0, false);
+			const b = next() < 0.6 ? remix(a, next) : random(next, 0, next() < 0.5);
+			expect(isPlainJson(a)).toBe(true);
 			const same = text(a) === text(b);
-			expect([round, sameJson(a, b)]).toEqual([round, same]);
-			if (same) equal++;
-			const object = (value: unknown) => typeof value === "object" && value !== null && !Array.isArray(value);
-			const skipped = object(a) && object(b) ? text(omit(a)) === text(omit(b)) : same;
-			expect([round, sameJson(a, b, "granted")]).toEqual([round, skipped]);
+			const result = samePlainJson(a, b);
+			found[result]++;
+			// Equal is always exact; for a plain value so is different; odd only for a value that is not plain.
+			if (result === "equal") expect([round, same]).toEqual([round, true]);
+			if (isPlainJson(b)) expect([round, result]).toEqual([round, same ? "equal" : "different"]);
+			else expect([round, result]).not.toEqual([round, "equal"]);
+			if (object(a) && object(b) && isPlainJson(omit(b))) {
+				const skipped = text(omit(a)) === text(omit(b));
+				expect([round, samePlainJson(a, b, "granted")]).toEqual([round, skipped ? "equal" : "different"]);
+			}
 		}
-		// Both answers are common: the test compares many equal values.
-		expect(equal).toBeGreaterThan(5_000);
+		// Every answer is common: the test compares many equal values.
+		expect(Math.min(found.equal, found.different, found.odd)).toBeGreaterThan(1_000);
 	});
 
-	it("throws where canonical JSON throws (a bigint); compares a function by what JSON.stringify makes of it", () => {
-		expect(() => sameJson({ a: 1 }, { a: 1n })).toThrow("BigInt");
-		expect(() => walkJson({ a: [1n] })).toThrow("BigInt");
-		const cyclic: Record<string, unknown> = {};
-		cyclic.self = cyclic;
-		expect(() => walkJson(cyclic)).toThrow(RangeError);
-		const json = Object.assign(() => {}, { toJSON: () => 5 });
-		expect([sameJson({ a: 5 }, { a: json }), sameJson([undefined], [() => {}]), sameJson([], [json])]).toEqual([
-			true,
-			true,
-			false,
-		]);
+	it("is odd for what is no plain JSON: no finite number, no JSON, an exotic prototype, a hole, past its bounds", () => {
+		class Point {
+			x = 1;
+		}
+		const deep = (depth: number) => {
+			let value: unknown = 0;
+			for (let level = 0; level < depth; level++) value = { x: value };
+			return value;
+		};
+		const odd = [
+			Number.NaN,
+			Number.NEGATIVE_INFINITY,
+			undefined,
+			Symbol("s"),
+			() => {},
+			1n,
+			new Date(0),
+			new Point(),
+			new (class extends Array {})(),
+			[, 1],
+			{ toJSON: () => 1 },
+			deep(17),
+			Array.from({ length: 256 }, () => 1),
+		];
+		// Never equal to a plain value; odd as soon as the comparison meets it, or different before.
+		expect(odd.map((value) => [isPlainJson(value), samePlainJson({ a: 1 }, { a: value }) === "equal"])).toEqual(
+			odd.map(() => [false, false]),
+		);
+		expect(odd.slice(0, 6).map((value) => samePlainJson({ a: 1 }, { a: value }))).toEqual(
+			odd.slice(0, 6).map(() => "odd"),
+		);
+		expect([isPlainJson(deep(15)), isPlainJson(Array.from({ length: 255 }, () => 1))]).toEqual([true, true]);
+		expect([
+			samePlainJson(deep(15), deep(15)),
+			samePlainJson([0], [-0]),
+			samePlainJson({ a: 1, b: 2 }, { b: 2, a: 1 }),
+		]).toEqual(["equal", "equal", "equal"]);
+	});
+
+	it("calls no code: a toJSON or getter of the kept value is never run again", () => {
+		let rendered = 0;
+		const kept = { x: 1 };
+		const later = { x: Object.assign(() => {}, { toJSON: () => ++rendered }) };
+		expect([samePlainJson(kept, later), rendered]).toEqual(["odd", 0]);
 	});
 
 	it("makes no text for equal values of other objects (cost guard)", () => {
 		const a = { mode: "write", level: 3, tags: ["x", "y"], nested: { on: true, at: [1, 2, 3] } };
 		const b = { nested: { at: [1, 2, 3], on: true }, tags: ["x", "y"], level: 3, mode: "write" };
-		for (let warm = 0; warm < 1_000; warm++) sameJson(a, b);
+		for (let warm = 0; warm < 1_000; warm++) samePlainJson(a, b);
 		const profiler = new GCProfiler();
 		profiler.start();
 		const before = getHeapStatistics().used_heap_size;
 		let equal = 0;
-		for (let round = 0; round < 10_000; round++) if (sameJson(a, b, "granted")) equal++;
+		for (let round = 0; round < 10_000; round++) if (samePlainJson(a, b, "granted") === "equal") equal++;
 		const after = getHeapStatistics().used_heap_size;
 		let freed = 0;
 		for (const collection of profiler.stop().statistics) {

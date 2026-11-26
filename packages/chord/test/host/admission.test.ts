@@ -41,10 +41,12 @@ import { ChordObject } from "../../src/host/object.ts";
 import { defineJob } from "../../src/jobs/index.ts";
 import { memoryLinkPair } from "../../src/link/index.ts";
 import { constant } from "../../src/state/index.ts";
+import { Source } from "../../src/state/internal.ts";
 import { query } from "../../src/store/index.ts";
 import { defineTable } from "../../src/store/table.ts";
 import {
 	changesOf,
+	counted,
 	delivered,
 	expectCollected,
 	failLive,
@@ -558,6 +560,113 @@ describe("an equal decision of another object (hot-path pass, 2026-11-26)", () =
 		await vi.waitFor(() => expect(thing.state.value).not.toBe(shown));
 		expect(thing.state.value).toMatchObject({ cause: { error: { details: { message: { params: [2, "a"] } } } } });
 		await h.close(context);
+	});
+});
+
+// Found by the review of the hot-path pass (Astra, 2026-11-26): a direct comparison only for plain JSON; anything else
+// as before (its text made at read time), with the same order of checks, counts and errors.
+describe("a re-read of a value that is no plain JSON", () => {
+	/** A decision over a source whose value the test sets one read at a time. */
+	function reading() {
+		const host = new ChordHost<TestPrincipal>({
+			address: Server(),
+			principal: { kind: "server" },
+			onError: () => {},
+		});
+		const source = new (class extends Source {
+			next: unknown;
+			get value(): never {
+				return this.next as never;
+			}
+			deliver() {}
+		})(host.batch);
+		const caller = { principal: host.principal, incarnation: host.incarnation };
+		const decision = new Decision({
+			host,
+			label: "doc",
+			dependent: undefined,
+			caller,
+			grants: ["a", "b"],
+			moved() {},
+		});
+		decision.declare(() => source, context);
+		return { decision, source };
+	}
+
+	it("a name that is no grant breaks also when another field is a bigint", () => {
+		const { decision, source } = reading();
+		source.next = { kind: "allow", value: { x: 0 } };
+		decision.now(context);
+		source.next = { kind: "allow", value: { x: 1n, granted: ["unknown"] } };
+		expect(decision.now(context)).toMatchObject({
+			kind: "broken",
+			error: { message: 'doc: its admission granted "unknown": no grantable member or flag of its contract' },
+		});
+	});
+
+	it("a read that throws on its value has counted its walk", async () => {
+		const { decision, source } = reading();
+		source.next = { kind: "allow", value: { x: 0 } };
+		decision.now(context);
+		source.next = { kind: "allow", value: { x: 1n } };
+		const counts = await counted((counting) => expect(() => decision.now(counting)).toThrow(TypeError));
+		expect(counts.walks).toBe(1);
+	});
+
+	it("the last value's serializer is not run again: its text was made when it was read", () => {
+		const { decision, source } = reading();
+		let rendered = 0;
+		source.next = { kind: "allow", value: { x: Object.assign(() => {}, { toJSON: () => ++rendered }) } };
+		const first = decision.now(context);
+		expect(rendered).toBe(1);
+		source.next = { kind: "allow", value: { x: 1 } };
+		expect(decision.now(context)).toBe(first);
+		expect(rendered).toBe(1);
+	});
+
+	it("a released decision still reachable keeps no list its source dropped", async () => {
+		const { decision, source } = reading();
+		const ref = (() => {
+			const raw = Array(40).fill("a");
+			source.next = { kind: "allow", value: { granted: raw } };
+			decision.now(context);
+			return new WeakRef(raw);
+		})();
+		decision.release();
+		source.next = null;
+		await expectCollected(ref);
+		expect(decision.dependencies).toHaveLength(0);
+	});
+
+	it("equal values nested 5,000 deep, built apart, are one decision", () => {
+		const deep = (depth: number) => {
+			let x: unknown = 0;
+			for (let level = 0; level < depth; level++) x = { x };
+			return { kind: "allow", value: { x } };
+		};
+		for (let depth = 250; depth <= 5000; depth += 250) {
+			const { decision, source } = reading();
+			source.next = deep(depth);
+			const first = decision.now(context);
+			source.next = deep(depth);
+			expect(decision.now(context) === first).toBe(true);
+		}
+	});
+
+	it("repeated names are read a few times each, not once per name", () => {
+		const { decision, source } = reading();
+		source.next = { kind: "allow", value: { granted: ["a", "b"] } };
+		const original = decision.now(context);
+		let reads = 0;
+		const list = new Proxy([...Array(64).fill("a"), ...Array(64).fill("b")], {
+			get(target, key, receiver) {
+				if (typeof key === "string" && /^\d+$/.test(key)) reads++;
+				return Reflect.get(target, key, receiver);
+			},
+		});
+		source.next = { kind: "allow", value: { granted: list } };
+		expect(decision.now(context)).toBe(original);
+		expect(reads).toBeLessThan(6 * list.length);
 	});
 });
 
