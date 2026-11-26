@@ -1893,10 +1893,11 @@ describe("what a decision keeps (hold memory)", () => {
 			params: { n: int() },
 			hostAddress: () => Server(),
 			state: { name: str() },
-			flags: Object.fromEntries(names.map((name) => [name, name])),
+			// Typed by a template: a plain record of strings would claim every name, `name` too.
+			flags: Object.fromEntries(names.map((name) => [name, name])) as Record<`g${number}`, string>,
 		});
 		// g00 and g31 are indexes 0 and 31 of the sorted grants: one hash.
-		const lists = [["g00"], ["g31"], ["g31", "g00"], ["g00", "g31", "g00"], ["g31"]];
+		const lists: `g${number}`[][] = [["g00"], ["g31"], ["g31", "g00"], ["g00", "g31", "g00"], ["g31"]];
 		const h = createHost<TestPrincipal>({ address: Server(), principal: { kind: "server" }, onError: () => {} });
 		const facet = defineFacet<TestPrincipal>((host) =>
 			host.serve(Many, () => ({ name: constant("n") }), {
