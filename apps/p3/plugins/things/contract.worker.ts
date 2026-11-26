@@ -28,6 +28,9 @@ export type HeldThing<C extends Contract = Contract> = {
 	readonly ref: Reference<C>;
 };
 
+/** The things held, by kind name (`HeldThings`' contribution and value). */
+export type Held = ReadonlyMap<string, readonly HeldThing[]>;
+
 /**
  * What a kind's part has of the session's agent: the session's id, the workspace the agent holds its things in (the
  * session's workspace; a part never assumes it equals the session's id), and `call`, which runs `fn` as the session's
@@ -84,6 +87,3 @@ export function thingHarnessPart<C extends Contract>(
  * (a reference granted anew makes its kind's array new). One contributor, the holding (slice 5); read by the harness.
  */
 export const HeldThings: Registry<Held, Held> = defineRegistry<Held, Held>("things.held", { version: 1 });
-
-/** The things held, by kind name (`HeldThings`' contribution and value). */
-export type Held = ReadonlyMap<string, readonly HeldThing[]>;

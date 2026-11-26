@@ -47,8 +47,8 @@ const SessionAgent = local("harness.agent", { version: 1, params: {}, members: {
 /** The owner name of Durable's tables and documents in the session's store. */
 const STORAGE_OWNER = "harness";
 
-export default defineFacet((host, self) => {
-	self.contribute(ThingHarnessParts, subagentsPart);
+export default defineFacet((host, facet) => {
+	facet.contribute(ThingHarnessParts, subagentsPart);
 	// Only this plugin contributes: the first is the one.
 	host.serve(SessionHarness, { compose: (table) => table[0]?.value });
 	host.serve(SessionAgent, (_params, self) => {
