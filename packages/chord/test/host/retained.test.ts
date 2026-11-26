@@ -354,7 +354,9 @@ describe("what a host retains after work came and went", () => {
 			`heap after warm-up ${kib(base)} KiB; after each round, from it: ${heaps.map((heap) => kib(heap - base)).join(" ")} KiB; a round's work at its peak: ${kib(peak - base)} KiB`,
 		);
 		expect([hosts.errors.server, hosts.errors.client]).toEqual([[], []]);
-		expect(heaps.at(-1)! - base).toBeLessThan(TOLERANCE);
+		// The smallest of the last three rounds: a single reading wanders by 150 KiB or so (+132, +179, +180 seen in
+		// middle rounds of a run ending at +33), a leak of a round's 42 KiB lifts all three (168 KiB and more).
+		expect(Math.min(...heaps.slice(-3)) - base).toBeLessThan(TOLERANCE);
 	}, 60_000);
 
 	it("collects a round's server objects (with their attempts), decisions, served holds and lists", async () => {
