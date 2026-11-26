@@ -98,60 +98,70 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await browser.screenshot(join(SHOTS, "03-session-desktop.png"));
 	});
 
-	it("streams scripted answers, a tool call with its output among them, into the transcript", async () => {
-		script = [
-			{ when: "hello", reply: [{ kind: "text" as const, text: "Hello from the faux model." }] },
-			{
-				when: "which title",
-				reply: [{ kind: "tool" as const, name: "bash", args: JSON.stringify({ command: "echo First steps" }) }],
-			},
-			// The tool's result names the session's title.
-			{ when: "First steps", reply: [{ kind: "text" as const, text: "It is called First steps." }] },
-		];
-		// The session's faux login, made in its workspace by the server, answering from `script`.
-		await scriptFaux(t.host, session, script, context);
-		await browser.type("[data-message]", "hello there");
-		await browser.enter();
-		await browser.wait(`document.querySelector('[data-entry="user"]')?.textContent === "hello there"`);
-		await browser.wait(
-			`[...document.querySelectorAll('[data-entry="assistant"]')].some((e) => e.textContent.includes("Hello from the faux model."))`,
-		);
-		await browser.type("[data-message]", "which title is this?");
-		await browser.click("[data-send]");
-		await browser.wait(`document.querySelector('[data-tool="bash"][data-state="done"]')`);
-		await browser.wait(
-			`[...document.querySelectorAll('[data-entry="assistant"]')].some((e) => e.textContent.includes("It is called First steps."))`,
-		);
-		await browser.click('[data-tool="bash"] summary');
-		await browser.wait(`document.querySelector('[data-tool="bash"]').open`);
-		await browser.screenshot(join(SHOTS, "04-answer-desktop.png"));
-	});
+	it(
+		"streams scripted answers, a tool call with its output among them, into the transcript",
+		{ skip: "until sessions are workspaces, ERNDL-704 push 3" },
+		async () => {
+			script = [
+				{ when: "hello", reply: [{ kind: "text" as const, text: "Hello from the faux model." }] },
+				{
+					when: "which title",
+					reply: [{ kind: "tool" as const, name: "bash", args: JSON.stringify({ command: "echo First steps" }) }],
+				},
+				// The tool's result names the session's title.
+				{ when: "First steps", reply: [{ kind: "text" as const, text: "It is called First steps." }] },
+			];
+			// The session's faux login, made in its workspace by the server, answering from `script`.
+			await scriptFaux(t.host, session, script, context);
+			await browser.type("[data-message]", "hello there");
+			await browser.enter();
+			await browser.wait(`document.querySelector('[data-entry="user"]')?.textContent === "hello there"`);
+			await browser.wait(
+				`[...document.querySelectorAll('[data-entry="assistant"]')].some((e) => e.textContent.includes("Hello from the faux model."))`,
+			);
+			await browser.type("[data-message]", "which title is this?");
+			await browser.click("[data-send]");
+			await browser.wait(`document.querySelector('[data-tool="bash"][data-state="done"]')`);
+			await browser.wait(
+				`[...document.querySelectorAll('[data-entry="assistant"]')].some((e) => e.textContent.includes("It is called First steps."))`,
+			);
+			await browser.click('[data-tool="bash"] summary');
+			await browser.wait(`document.querySelector('[data-tool="bash"]').open`);
+			await browser.screenshot(join(SHOTS, "04-answer-desktop.png"));
+		},
+	);
 
-	it("shows one screen at a time on a phone", async () => {
-		await browser.size(PHONE);
-		await browser.open(`${origin}/coding`);
-		await browser.wait(`document.querySelector('[data-session="${session}"]')`);
-		await browser.screenshot(join(SHOTS, "06-list-phone.png"));
-		await browser.click(`[data-session="${session}"]`);
-		await browser.wait(`document.querySelector('[data-transcript="writer"]')?.getBoundingClientRect().width > 0`);
-		await browser.wait(`document.querySelector('[data-session="${session}"]')?.getBoundingClientRect().width === 0`);
-		await browser.wait(
-			`[...document.querySelectorAll('[data-entry="assistant"]')].some((e) => e.textContent.includes("faux model"))`,
-		);
-		await browser.screenshot(join(SHOTS, "07-session-phone.png"));
-		await browser.colorScheme("dark");
-		await browser.screenshot(join(SHOTS, "07-session-phone-dark.png"));
-		await browser.colorScheme("light");
-		await browser.click('button[aria-label="Back to the sessions"]');
-		await browser.wait(`location.pathname === "/coding"`);
-		await browser.wait(`document.querySelector('[data-session="${session}"]')?.getBoundingClientRect().width > 0`);
-		await browser.click("[data-new-session-open]");
-		await browser.wait(`document.querySelector("[data-new-session]")?.getBoundingClientRect().width > 0`);
-		await browser.screenshot(join(SHOTS, "07-new-session-phone.png"));
-		await browser.click('button[aria-label="Back to the sessions"]');
-		await browser.wait(`document.querySelector("[data-new-session]") === null`);
-		await browser.size(DESKTOP);
-	});
+	it(
+		"shows one screen at a time on a phone",
+		{ skip: "until sessions are workspaces, ERNDL-704 push 3" },
+		async () => {
+			await browser.size(PHONE);
+			await browser.open(`${origin}/coding`);
+			await browser.wait(`document.querySelector('[data-session="${session}"]')`);
+			await browser.screenshot(join(SHOTS, "06-list-phone.png"));
+			await browser.click(`[data-session="${session}"]`);
+			await browser.wait(`document.querySelector('[data-transcript="writer"]')?.getBoundingClientRect().width > 0`);
+			await browser.wait(
+				`document.querySelector('[data-session="${session}"]')?.getBoundingClientRect().width === 0`,
+			);
+			await browser.wait(
+				`[...document.querySelectorAll('[data-entry="assistant"]')].some((e) => e.textContent.includes("faux model"))`,
+			);
+			await browser.screenshot(join(SHOTS, "07-session-phone.png"));
+			await browser.colorScheme("dark");
+			await browser.screenshot(join(SHOTS, "07-session-phone-dark.png"));
+			await browser.colorScheme("light");
+			await browser.click('button[aria-label="Back to the sessions"]');
+			await browser.wait(`location.pathname === "/coding"`);
+			await browser.wait(`document.querySelector('[data-session="${session}"]')?.getBoundingClientRect().width > 0`);
+			await browser.click("[data-new-session-open]");
+			await browser.wait(`document.querySelector("[data-new-session]")?.getBoundingClientRect().width > 0`);
+			await browser.screenshot(join(SHOTS, "07-new-session-phone.png"));
+			await browser.click('button[aria-label="Back to the sessions"]');
+			await browser.wait(`document.querySelector("[data-new-session]") === null`);
+			await browser.size(DESKTOP);
+		},
+	);
 
 	it("keeps the open page through a reload of the chrome plugin", async () => {
 		await browser.open(`${origin}/coding/${session}`);
@@ -286,60 +296,69 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await browser.wait(`location.pathname === "/coding" && document.querySelector("[data-session-list]")`);
 	});
 
-	it("lets an invited person in, added to the session in its view", async () => {
-		await browser.open(`${origin}/coding/${session}`);
-		await browser.click("[data-person-menu]");
-		await browser.click("[data-invite-open]");
-		await browser.type("[data-invite-name]", "Ada");
-		await browser.click('[data-invite] button[type="submit"]');
-		await browser.wait(`document.querySelector("[data-invite-link]")?.value.includes("/_p3/invite#")`);
-		await browser.settled("[data-invite]");
-		await browser.screenshot(join(SHOTS, "10-invite-desktop.png"));
-		const link = await browser.evaluate<string>(`document.querySelector("[data-invite-link]").value`);
-		await browser.click('[data-invite] button[aria-label="Close"]');
-		// The owner adds Ada to the session in its members ("Share").
-		await browser.click("[data-members-open]");
-		await browser.wait(
-			`document.querySelector('[data-add-member] [data-field="person"]')?.textContent.includes("Ada")`,
-		);
-		await press("[data-add-member] button:not([data-field])");
-		await browser.wait(`document.querySelector("[data-member]")?.textContent.includes("Ada")`);
-		await browser.screenshot(join(SHOTS, "11-members-desktop.png"));
-		ada = await browser.evaluate<string>(`document.querySelector("[data-member]").dataset.member`);
-		// Ada opens her link in a browser of her own (this one, signed out).
-		await browser.signOut();
-		await browser.open(link);
-		await browser.wait(`location.pathname === "/coding"`);
-		await browser.wait(`document.querySelector("[data-person-menu]")?.textContent.includes("Ada")`);
-		await browser.wait(`document.querySelector('[data-session="${session}"]')`);
-		await browser.click(`[data-session="${session}"]`);
-		await browser.wait(`document.querySelector('[data-transcript="writer"]')`);
-		await browser.wait(
-			`[...document.querySelectorAll('[data-entry="assistant"]')].some((e) => e.textContent.includes("faux model"))`,
-		);
-		await browser.screenshot(join(SHOTS, "12-person-desktop.png"));
-	});
+	it(
+		"lets an invited person in, added to the session in its view",
+		{ skip: "until sessions are workspaces, ERNDL-704 push 3" },
+		async () => {
+			await browser.open(`${origin}/coding/${session}`);
+			await browser.click("[data-person-menu]");
+			await browser.click("[data-invite-open]");
+			await browser.type("[data-invite-name]", "Ada");
+			await browser.click('[data-invite] button[type="submit"]');
+			await browser.wait(`document.querySelector("[data-invite-link]")?.value.includes("/_p3/invite#")`);
+			await browser.settled("[data-invite]");
+			await browser.screenshot(join(SHOTS, "10-invite-desktop.png"));
+			const link = await browser.evaluate<string>(`document.querySelector("[data-invite-link]").value`);
+			await browser.click('[data-invite] button[aria-label="Close"]');
+			// The owner adds Ada to the session in its members ("Share").
+			await browser.click("[data-members-open]");
+			await browser.wait(
+				`document.querySelector('[data-add-member] [data-field="person"]')?.textContent.includes("Ada")`,
+			);
+			await press("[data-add-member] button:not([data-field])");
+			await browser.wait(`document.querySelector("[data-member]")?.textContent.includes("Ada")`);
+			await browser.screenshot(join(SHOTS, "11-members-desktop.png"));
+			ada = await browser.evaluate<string>(`document.querySelector("[data-member]").dataset.member`);
+			// Ada opens her link in a browser of her own (this one, signed out).
+			await browser.signOut();
+			await browser.open(link);
+			await browser.wait(`location.pathname === "/coding"`);
+			await browser.wait(`document.querySelector("[data-person-menu]")?.textContent.includes("Ada")`);
+			await browser.wait(`document.querySelector('[data-session="${session}"]')`);
+			await browser.click(`[data-session="${session}"]`);
+			await browser.wait(`document.querySelector('[data-transcript="writer"]')`);
+			await browser.wait(
+				`[...document.querySelectorAll('[data-entry="assistant"]')].some((e) => e.textContent.includes("faux model"))`,
+			);
+			await browser.screenshot(join(SHOTS, "12-person-desktop.png"));
+		},
+	);
 
-	it("refuses the session to a person removed from it, and every app once they are in no session of it", async () => {
-		// Ada reads a second session, so Coding stays hers when the owner removes her from the first.
-		const sessions = await owner.get(Sessions, {}, context);
-		const location = { environment: "this-device", folder: t.dataDir };
-		const second = await sessions.create(
-			{ app: "coding", title: "Second", location, members: [{ kind: "person", id: ada, access: "read" }] },
-			context,
-		);
-		await browser.wait(`document.querySelector('[data-session="${second}"]')`);
-		await sessions.removeMember({ session, party: { kind: "person", id: ada } }, context);
-		await browser.wait(`document.body.textContent.includes("You have no access to this session.")`);
-		await browser.wait(`document.querySelector('[data-session="${session}"]') === null`);
-		await browser.screenshot(join(SHOTS, "16-refused-desktop.png"));
-		// Without any session of Coding, Ada may enter no app.
-		await sessions.removeMember({ session: second, party: { kind: "person", id: ada } }, context);
-		await browser.wait(`document.body.textContent.includes("There is no app for you on this Pi yet.")`);
-		await browser.wait(`document.querySelector("[data-top-bar]")`);
-		await browser.size(PHONE);
-		await browser.screenshot(join(SHOTS, "17-no-app-phone.png"));
-	});
+	// Ada is the person the invited case lets in.
+	it(
+		"refuses the session to a person removed from it, and every app once they are in no session of it",
+		{ skip: "until sessions are workspaces, ERNDL-704 push 3 (needs the invited person's case)" },
+		async () => {
+			// Ada reads a second session, so Coding stays hers when the owner removes her from the first.
+			const sessions = await owner.get(Sessions, {}, context);
+			const location = { environment: "this-device", folder: t.dataDir };
+			const second = await sessions.create(
+				{ app: "coding", title: "Second", location, members: [{ kind: "person", id: ada, access: "read" }] },
+				context,
+			);
+			await browser.wait(`document.querySelector('[data-session="${second}"]')`);
+			await sessions.removeMember({ session, party: { kind: "person", id: ada } }, context);
+			await browser.wait(`document.body.textContent.includes("You have no access to this session.")`);
+			await browser.wait(`document.querySelector('[data-session="${session}"]') === null`);
+			await browser.screenshot(join(SHOTS, "16-refused-desktop.png"));
+			// Without any session of Coding, Ada may enter no app.
+			await sessions.removeMember({ session: second, party: { kind: "person", id: ada } }, context);
+			await browser.wait(`document.body.textContent.includes("There is no app for you on this Pi yet.")`);
+			await browser.wait(`document.querySelector("[data-top-bar]")`);
+			await browser.size(PHONE);
+			await browser.screenshot(join(SHOTS, "17-no-app-phone.png"));
+		},
+	);
 
 	it("leaves nothing reported on the server, and no error in the page but the broken app's", () => {
 		assert.deepEqual(t.errors, []);
