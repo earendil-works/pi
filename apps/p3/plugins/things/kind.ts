@@ -39,11 +39,6 @@ import { messages } from "./messages.ts";
  * both.
  */
 export const TickFor = oneOf("agents", "people", "all");
-
-/**
- * Whom a tick can be given: the agents (the agents party, one session's agent), people (everyone, groups, persons), or
- * both.
- */
 export type TickFor = Static<typeof TickFor>;
 
 /**
