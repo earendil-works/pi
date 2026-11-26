@@ -7,7 +7,8 @@
 // read of its authors' names, not a hundred. Each caller's object keeps where its own view ends (its bound) and shows
 // the shared list down to it; the shared list loads at least as far as the deepest holder asked, and keeps that until
 // its last holder leaves (Chord cannot unload a list's pages: a holder who leaves after reading deep pages leaves them
-// loaded for the others, filtered out of their views).
+// loaded for the others, filtered out of their views). A caller's object is one per caller and notebook (its params
+// are the workspace and the thing): one person's two screens share it, and with it one bound (decided).
 
 import {
 	type Context,
