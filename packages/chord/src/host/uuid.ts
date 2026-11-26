@@ -18,9 +18,7 @@ let sequence: number | undefined;
 export function uuidv7(): string {
 	const timestamp = Math.max(Date.now(), lastTimestamp);
 	lastTimestamp = timestamp;
-	// The random bytes first, where pi-ai's generator took them: the random source may throw (nothing of this id has
-	// changed then) or mint an id itself (it takes its own bytes and sequence; this id's come after). No code of
-	// anyone's runs from here to the text.
+	// The random bytes first, where pi-ai's generator took them: a random source that throws changes nothing.
 	const at = takeRandom();
 	const pool = POOL;
 	if (sequence === undefined) {

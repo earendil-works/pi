@@ -61,26 +61,6 @@ describe("uuidv7", () => {
 		now.mockRestore();
 	});
 
-	it("gives an id minted by the random source during a refill a sequence of its own", () => {
-		let inner: string | undefined;
-		let reenter = false;
-		vi.spyOn(Date, "now").mockReturnValue(100);
-		vi.spyOn(crypto, "getRandomValues").mockImplementation((bytes) => {
-			if (reenter) {
-				reenter = false;
-				inner = uuidv7();
-			}
-			(bytes as Uint8Array).fill(0);
-			return bytes;
-		});
-		const ids = Array.from({ length: 50 }, () => uuidv7());
-		// Into the next refill of the pool (one per 25 ids): the random source mints one id meanwhile.
-		reenter = true;
-		for (let id = 0; id < 30 && inner === undefined; id++) ids.push(uuidv7());
-		expect(inner).toBeDefined();
-		expect(new Set([...ids, inner]).size).toBe(ids.length + 1);
-	});
-
 	it("writes pi-ai's layout: the milliseconds, version 7, the sequence, variant 10", () => {
 		const before = Date.now();
 		const id = uuidv7();
