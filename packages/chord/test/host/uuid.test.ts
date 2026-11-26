@@ -88,13 +88,11 @@ describe("uuidv7", () => {
 	});
 
 	it("gives ids of random bits apart from the sequence: no two of a thousand share them", () => {
-		// Past what earlier tests' stubs left in the pool.
-		for (let id = 0; id < 30; id++) uuidv7();
 		const tails = new Set(Array.from({ length: 1_000 }, () => uuidv7().slice(-8)));
 		expect(tails.size).toBeGreaterThan(990);
 	});
 
-	it("costs a flat string per id (cost guard)", () => {
+	it("costs a flat string and a few numbers per id (cost guard)", () => {
 		for (let warm = 0; warm < 2_000; warm++) uuidv7();
 		const profiler = new GCProfiler();
 		profiler.start();
@@ -107,7 +105,7 @@ describe("uuidv7", () => {
 			freed += collection.beforeGC.heapStatistics.usedHeapSize - collection.afterGC.heapStatistics.usedHeapSize;
 		}
 		expect(length).toBe(360_000);
-		// Measured 0.15 KiB per id (its string); with bigints, a buffer and a list of char codes per id 1.7 KiB.
+		// Measured 0.21 KiB per id; with bigints, a buffer and a list of char codes per id 1.7 KiB.
 		expect(after - before + freed).toBeLessThan(10_000 * 512);
 	});
 });

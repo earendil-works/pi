@@ -11,24 +11,22 @@ let sequence: number | undefined;
 
 /**
  * A time-ordered UUIDv7. Its bits are pi-ai's: 48 of milliseconds, version 7, the 41-bit sequence (its first value
- * random), variant 10, one random bit and 32 random bits. Made with numbers, random bytes taken from a pool and the
- * text made from one list of char codes: with bigints, a fresh random buffer and a list of char codes an id cost 1.7 KiB and
- * 1.4 µs (one per object instance).
+ * random), variant 10, one random bit and 32 random bits, from one call of the platform's random source per id into
+ * a reused buffer. Made with numbers and the text from one reused list of char codes: with bigints, a fresh buffer and
+ * a list of char codes per id an id cost 1.7 KiB and 1.4 µs (one per object instance).
  */
 export function uuidv7(): string {
 	const timestamp = Math.max(Date.now(), lastTimestamp);
 	lastTimestamp = timestamp;
-	// The random bytes first, where pi-ai's generator took them: a random source that throws changes nothing.
-	const at = takeRandom();
-	const pool = POOL;
+	const bytes = ID;
+	globalThis.crypto.getRandomValues(bytes);
 	if (sequence === undefined) {
 		sequence = 0;
-		for (let index = 0; index < 5; index++) sequence = sequence * 256 + pool[at + index]!;
+		for (let index = 1; index < 6; index++) sequence = sequence * 256 + bytes[index]!;
 	} else {
 		if (sequence === MAX_SEQUENCE) throw new RangeError("UUIDv7 generator sequence exhausted");
 		sequence++;
 	}
-	const bytes = ID;
 	// Bitwise operators read the low 32 bits: exact for every byte below (divisions by powers of two are exact).
 	for (let index = 5; index >= 0; index--) bytes[index] = Math.floor(timestamp / 2 ** ((5 - index) * 8)) & 0xff;
 	bytes[6] = 0x70 | (Math.floor(sequence / 2 ** 37) & 0x0f);
@@ -36,36 +34,12 @@ export function uuidv7(): string {
 	bytes[8] = 0x80 | (Math.floor(sequence / 2 ** 23) & 0x3f);
 	bytes[9] = Math.floor(sequence / 2 ** 15) & 0xff;
 	bytes[10] = Math.floor(sequence / 2 ** 7) & 0xff;
-	bytes[11] = ((sequence % 128) << 1) | (pool[at + 5]! & 0x01);
-	for (let index = 12; index < 16; index++) bytes[index] = pool[at + index - 6]!;
+	bytes[11] = ((sequence % 128) << 1) | (bytes[11]! & 0x01);
 	return uuidText(bytes);
 }
 
-/** The bytes of the id being made: one buffer, rewritten by each id (no code runs between its writes and its text). */
+/** The bytes of the id being made: one buffer, filled with random bytes and rewritten by each id. */
 const ID = new Uint8Array(16);
-
-/** Random bytes per id: five for a first sequence, one for byte 11's low bit, four for the last bytes. */
-const PER_ID = 10;
-
-/**
- * Where an id's `PER_ID` random bytes start in the pool, refilled by the platform's generator first when too few are
- * left: one call per 25 ids, not one per id. The pool holds random bytes not yet used, never an id or anything derived
- * from one. A refill that throws takes nothing.
- */
-function takeRandom(): number {
-	if (poolAt + PER_ID > POOL.length) {
-		globalThis.crypto.getRandomValues(POOL);
-		poolAt = 0;
-	}
-	const at = poolAt;
-	poolAt += PER_ID;
-	return at;
-}
-
-const POOL = new Uint8Array(250);
-
-/** The next unused byte of the pool; past its end, the pool is refilled first. */
-let poolAt = POOL.length;
 
 const HEX = "0123456789abcdef";
 
