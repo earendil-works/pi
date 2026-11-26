@@ -7,6 +7,7 @@ import {
 	principalKey,
 	samePrincipal,
 } from "../../src/data/internal.ts";
+import { isJsonValue } from "../../src/json.ts";
 import { counted, expectCollected, metered } from "../support.ts";
 
 describe("canonicalJson", () => {
@@ -55,6 +56,31 @@ describe("canonicalJsonOnly", () => {
 		expect(refused({ n: Number.NaN })).toContain("not NaN");
 		expect(refused({ at: new Date(0) })).toContain("not an object of a class");
 		expect(refused({ fine: [1, "a", true, null, {}] })).toBe("taken");
+	});
+
+	it("agrees with isJsonValue: a dictionary without a prototype is JSON, an array with more properties is none (Astra, round 3)", () => {
+		const fields: Record<string, string> = Object.assign(Object.create(null), { board: "a" });
+		expect(isJsonValue(fields)).toBe(true);
+		expect(canonicalJsonOnly(fields, BACKGROUND_CONTEXT)).toBe('{"board":"a"}');
+		// A regexp's match has `index`, `input` and `groups` besides its items: had it been taken, it was `["a"]`'s key.
+		const match = /a/.exec("ba")!;
+		expect(isJsonValue(match)).toBe(false);
+		expect(canonicalJsonOnly(["a"], BACKGROUND_CONTEXT)).toBe('["a"]');
+		expect(() => canonicalJsonOnly(match, BACKGROUND_CONTEXT)).toThrow("an array with other properties");
+		const cyclic: Record<string, unknown> = {};
+		cyclic.self = { back: cyclic };
+		expect(() => canonicalJsonOnly(cyclic, BACKGROUND_CONTEXT)).toThrow("a cycle");
+		const shared = { x: 1 };
+		expect(canonicalJsonOnly({ a: shared, b: [shared] }, BACKGROUND_CONTEXT)).toBe('{"a":{"x":1},"b":[{"x":1}]}');
+		const getter = Object.defineProperty({}, "board", { get: () => "a", enumerable: true });
+		expect(() => canonicalJsonOnly(getter, BACKGROUND_CONTEXT)).toThrow(
+			'a property "board" that is no enumerable data',
+		);
+		expect(() => canonicalJsonOnly({ [Symbol("s")]: 1 }, BACKGROUND_CONTEXT)).toThrow("a symbol key");
+		// An array with holes: fewer properties than its length says.
+		const sparse = new Array<number>(3);
+		sparse[0] = 1;
+		expect(() => canonicalJsonOnly(sparse, BACKGROUND_CONTEXT)).toThrow("an array with other properties");
 	});
 });
 

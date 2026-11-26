@@ -3810,8 +3810,10 @@ From `research/chord-on-durable-objects.md`, adopted for the Chord v2 kernel bec
   (`Batch.diffs`, by the earlier value, emptied with the commit: a cache kept past it chained every later value to
   an earlier one somebody held). Arguments are keys (round 1, Astra): **a query's argument schema is JSON only**
   (a `bytes()` leaf is refused at declaration, for a contract's and a private query's, as for admissions and
-  events), and what is no JSON (bytes, a function, `undefined`, a number that is not finite, an object of a class)
-  is refused `invalid/args` in the walk that makes the key, also past a schema that checks nothing (round 2, Astra);
+  events), and a value that is not strict JSON as `isJsonValue` (`json.ts`) has it (bytes, a function, `undefined`,
+  a number that is not finite, an object of a class, an array with more properties than its items, an accessor, a
+  symbol key, a cycle; a dictionary without a prototype is JSON) is refused `invalid/args` in the walk that makes
+  the key, also past a schema that checks nothing (rounds 2 and 3, Astra);
   builders read arguments as canonical JSON does (key order immaterial, an order that matters is an array; `-0` is
   `0`). Arguments that change move a reader between reads; a provider's retirement closes the
   read for all its readers, which move to one read of the successor; a shared run is counted once (in the commit's

@@ -655,4 +655,52 @@ describe("arguments as keys (round 1, Astra 4)", () => {
 			await store.close(context);
 		}
 	});
+
+	it("an array with more properties than its items is refused, not read as the plain array of its key (Astra, round 3)", async () => {
+		const Find = local("test.find-items", {
+			version: 1,
+			params: {},
+			members: { q: queries(Note, { find: arr(str()) }), seed: method() },
+		});
+		const Counting = local("test.counting-items", {
+			version: 1,
+			params: { asMatch: bool() },
+			members: { count: int() },
+		});
+		const store = await memoryStore();
+		const host = createHost({ store, onError: () => {} });
+		const facet = defineFacet((h) => {
+			h.serve(Find, (_, self) => {
+				const table = self.table(Notes);
+				const decorated = (x: unknown): boolean => Array.isArray(x) && Object.hasOwn(x, "index");
+				return {
+					q: self.queries(
+						table,
+						{ map: (row) => ({ id: row.id, text: row.text }) },
+						{ find: (x: string[]) => query(Notes).where((n) => eq(n.board, decorated(x) ? "a" : "b")) },
+					),
+					seed: async (ctx) => {
+						await self.tx(async (tx) => tx.put(table, { id: 1, board: "a", text: "n" }), ctx);
+						return null;
+					},
+				};
+			});
+			h.serve(Counting, ({ asMatch }, self) => ({
+				count: self.count(self.get(Find, {}).q.find, asMatch ? /a/.exec("ba")! : ["a"]),
+			}));
+		});
+		try {
+			await host.load([{ name: "@test/find-items", facet }], context);
+			await (await host.get(Find, {}, context)).seed(context);
+			await expect(host.get(Counting, { asMatch: true }, context)).rejects.toMatchObject({
+				code: "invalid",
+				reason: "args",
+				message: expect.stringContaining("an array with other properties than its items"),
+			});
+			expect((await host.get(Counting, { asMatch: false }, context)).count.value).toBe(0);
+		} finally {
+			await host.close(context);
+			await store.close(context);
+		}
+	});
 });
