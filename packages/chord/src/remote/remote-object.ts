@@ -85,6 +85,14 @@ function eventNodes(members: readonly string[]): (member: string) => EventNode |
 
 const NO_EVENT_NODES = (): undefined => undefined;
 
+/** The replica of state member `index` of binding `bound`; throws on one outside it (a protocol error of hold `id`). */
+function replicaAt(bound: Bound, id: number, index: number): Replica {
+	const name = bound.names.state[index];
+	const found = name === undefined ? undefined : bound.replicas.get(name);
+	if (found === undefined) throw new Error(`hold ${id}: no state member ${index}`);
+	return found;
+}
+
 /**
  * The set of `version`'s grants at `indexes`: one per version and grant while a binding has it, shared by
  * every remote object of the version granted the same, so the members granted it are found by the set's identity
@@ -711,35 +719,37 @@ export class RemoteObject implements Target {
 	prepare({ hold: id, members, failed, retired }: StateEntry, link: HostLink): () => void {
 		const bound = this.#bound;
 		if (this.#state.kind !== "live" || bound === undefined) throw new Error(`hold ${id}: state before bound`);
-		const replica = (index: number): Replica => {
-			const name = bound.names.state[index];
-			const found = name === undefined ? undefined : bound.replicas.get(name);
-			if (found === undefined) throw new Error(`hold ${id}: no state member ${index}`);
-			return found;
-		};
 		// Made by the first retirement (rare): no allocation per message otherwise.
 		let retirements: Set<Replica> | undefined;
 		for (const member of retired) {
-			const target = replica(member);
+			const target = replicaAt(bound, id, member);
 			retirements ??= new Set();
 			if (retirements.has(target)) throw new Error(`hold ${id}: member ${member} retired twice in one state`);
 			retirements.add(target);
 		}
-		const changed = new Set<Replica>();
-		const updates = members.map(({ member, ops }) => {
-			const target = replica(member);
-			if (changed.has(target)) throw new Error(`hold ${id}: member ${member} twice in one state`);
-			changed.add(target);
-			return { target, ...target.decode(parsePart(link.openPart(ops, link.limits, link.context))) };
+		const updates = members.map(({ member, ops }, at) => {
+			const target = replicaAt(bound, id, member);
+			// A hold's members are its contract's few: the earlier ones scanned (one index, one replica), no set per
+			// message.
+			for (let earlier = 0; earlier < at; earlier++) {
+				if (members[earlier]!.member === member) throw new Error(`hold ${id}: member ${member} twice in one state`);
+			}
+			const { value, ops: decoded } = target.decode(parsePart(link.openPart(ops, link.limits, link.context)));
+			return { target, value, ops: decoded };
 		});
-		const failures = failed.map(({ member, error }) => ({ target: replica(member), error: errorFromWire(error) }));
+		const failures = failed.map(({ member, error }) => ({
+			target: replicaAt(bound, id, member),
+			error: errorFromWire(error),
+		}));
 		return () => {
 			for (const { target, value, ops } of updates) target.adopt(value, ops, retirements?.has(target) === true);
 			for (const { target, error } of failures) target.fail(error);
 			// A retirement without ops (a derive whose value stayed, rule 21): the flag alone, after the failures (a
 			// failed member keeps it for its next value).
 			if (retirements !== undefined) {
-				for (const target of retirements) if (!changed.has(target)) target.retireAlone();
+				for (const target of retirements) {
+					if (!updates.some((update) => update.target === target)) target.retireAlone();
+				}
 			}
 		};
 	}
