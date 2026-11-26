@@ -281,6 +281,23 @@ trust_pi("readonly", "-t", "read,grep,find,ls")
 trust_pi("readonly_noext", "-t", "read,grep,find,ls", "--no-extensions")
 ```
 
-A Pi started with a combination no rule lists comes back as a plain shell, not without its flags. With `--agent-dir` or `--session-dir`, put them before `--session` in `command`, as Pi reports them.
+A Pi started with a combination no rule lists comes back as a plain shell, not without its flags.
+
+When `--agent-dir` or `--session-dir` are in the command, put them before `--session`, as Pi reports them, with absolute paths. For example, for a separate profile that a shell function selects in `~/work` by setting `PI_CODING_AGENT_DIR=~/.pi/work/agent` and `PI_CODING_AGENT_SESSION_DIR=~/.pi/work/agent/sessions`:
+
+```lua
+rex.set("resume.trust.pi_work_readonly", {
+	command = {
+		"pi",
+		"--agent-dir", "/home/you/.pi/work/agent",
+		"--session-dir", "/home/you/.pi/work/agent/sessions",
+		"--session", rex.match.uuid,
+		"-t", "read,grep,find,ls",
+	},
+	dir = "~/work",
+})
+```
+
+`dir` limits the rule to sessions under `~/work`.
 
 Pi removes `OSC7577_TOKEN` from its own environment at startup, so shells, editors, and extension processes it starts cannot replace its command or register commands of their own. Whether and when the terminal resumes a command is up to the terminal.
