@@ -5,8 +5,9 @@
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { memberNames, method, str } from "@earendil-works/p3/v1";
+import { type defineFacet, memberNames, method, str } from "@earendil-works/p3/v1";
 import { defineThing, expand } from "../kind.ts";
+import { serveThing } from "../serve.ts";
 
 const label = (key: string) => ({ namespace: "test", key, params: [] });
 
@@ -35,7 +36,6 @@ describe("a kind", () => {
 	it("carries its data with the defaults: many workspaces, made by its plugin, all stacking, ticks for all", () => {
 		assert.deepEqual(Kind.info, {
 			name: "test.kind",
-			version: 3,
 			workspaces: "many",
 			makers: "plugin",
 			stacking: "all",
@@ -67,6 +67,8 @@ describe("a kind", () => {
 			/names starting with @ are reserved/,
 		);
 		assert.throws(() => declare({ ticks: {}, settings: ["look"] }), /settings: "look" is no state member/);
+		// A ticks version above 1 needs the migration of the older grants' ticks (API C6, test 9a).
+		assert.throws(() => declare({ ticks: {}, ticksVersion: 2 }), /ticksVersion 2 needs migrateTicks/);
 		// A tick gives members and flag ticks only, never a tick that gives of its own (decision 97).
 		assert.throws(
 			() =>
@@ -150,6 +152,18 @@ describe("a kind", () => {
 				settings: ["look"],
 			}),
 		);
+		// A kind's settings name its state members: `configure` gets those keys only.
+		const facet = (host: Parameters<Parameters<typeof defineFacet>[0]>[0]) =>
+			serveThing(host, Kind, {
+				implement: () => ({}) as never,
+				configure: async (_thing, settings) => {
+					const title: unknown = settings.title;
+					// @ts-expect-error: `secret` is no setting of the kind.
+					const secret: unknown = settings.secret;
+					assert.deepEqual([title, secret], [undefined, undefined]);
+				},
+			});
+		assert.equal(typeof facet, "function");
 		const grantable: readonly ("change" | "export" | "secret")[] = Kind.all;
 		assert.equal(grantable.length, 3);
 		// @ts-expect-error: `title` no tick gives: it is plain, never granted.

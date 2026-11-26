@@ -1,18 +1,19 @@
 // How the access index reads the things store: one workspace's entries (5 reads) and one person's (2), through the
-// store's named queries, each set read whole; and how a grant's ticks read at its kind's ticks version now (item 105):
-// `readerOf`, with the kinds as the index looks them up (`lookupOf`).
+// store's named queries, each set read whole, its grant rows' ticks at their kind's ticks version now (item 105,
+// `migration.ts`): `readerOf`, with the kinds as the index looks them up (`lookupOf`).
 
 import { type Context, type NamedQuery, type Reference, reportError, type TableItem } from "@earendil-works/p3/v1";
 import type { Reader } from "./access.ts";
 import type { ThingsStore } from "./contract.server.ts";
 import { itemKey, partyKey, RESERVED, sourceKey } from "./contract.ts";
 import type { KindInfo } from "./kind.ts";
+import { ticksNow } from "./migration.ts";
 import { audienceOf, type GrantEntry, type KindsLookup, type PersonEntries, type WorkspaceEntries } from "./rules.ts";
 
 /** The kinds as the store reads them: the rules' lookup, and each kind's data. */
 export type Kinds = KindsLookup & { info(kind: string): KindInfo | undefined };
 
-/** The kinds of `table` as `Kinds`: each kind's ticks by name with whom they are for. */
+/** The kinds of `table` as `Kinds`: each kind's ticks by name with whom they are for, and its ticks version. */
 export function lookupOf(table: ReadonlyMap<string, TableItem<KindInfo>>): Kinds {
 	const ticks = new Map(
 		[...table].map(([kind, { value }]) => [kind, new Map(value.ticks.map((tick) => [tick.name, tick.for]))]),
@@ -20,6 +21,7 @@ export function lookupOf(table: ReadonlyMap<string, TableItem<KindInfo>>): Kinds
 	return {
 		tickFor: (kind, tick) => ticks.get(kind)?.get(tick),
 		ticksOf: (kind) => [...(ticks.get(kind)?.keys() ?? [])],
+		ticksVersionOf: (kind) => table.get(kind)?.value.ticksVersion ?? 0,
 		info: (kind) => table.get(kind)?.value,
 	};
 }
@@ -31,8 +33,8 @@ export type Read = Pick<
 >;
 
 /**
- * How the index reads through `q`, the kinds now from `kinds`. A grant its kind cannot read is reported once per grant
- * and version for the life of `reported` (the store object's).
+ * How the index reads through `q`, the kinds now from `kinds`. Rows of a grant its kind cannot read are reported once
+ * each for the life of `reported` (the store object's).
  */
 export function readerOf(q: Read, kinds: () => Kinds, reported: Set<string>): Reader {
 	return {
@@ -43,9 +45,6 @@ export function readerOf(q: Read, kinds: () => Kinds, reported: Set<string>): Re
 			const members = await readAll(q.workspaceMembers.here, { workspace: id }, ctx);
 			const switches = await readAll(q.switches.here, { workspace: id }, ctx);
 			const grants = await readAll(q.grants.here, { workspace: id }, ctx);
-			const hides = switches.filter(
-				({ item, shown }) => !shown && item.kind === "party" && item.party.kind === "person",
-			);
 			return {
 				parent: row.parent,
 				showsThings: row.showsThings,
@@ -53,8 +52,7 @@ export function readerOf(q: Read, kinds: () => Kinds, reported: Set<string>): Re
 				links: new Map(links.map(({ thing, of }) => [thing, of])),
 				members: new Set(members.map(({ party }) => partyKey(party))),
 				switches: new Map(switches.map(({ item, shown }) => [itemKey(item), shown])),
-				hides: new Set(hides.map(({ item }) => itemKey(item))),
-				grants: grants.flatMap((grant) => grantEntry(grant, kinds(), reported, ctx)),
+				grants: grantEntries(grants, kinds(), reported, ctx),
 			} satisfies WorkspaceEntries;
 		},
 		person: async (id, ctx) => {
@@ -85,50 +83,58 @@ async function readAll<T, A>(named: NamedQuery<T, A>, args: A, context: Context)
 	return items;
 }
 
-/** A grant as a read item. */
+/** A grant row as a read item. */
 type GrantItem = Awaited<ReturnType<Read["grants"]["here"]["page"]>>["items"][number];
 
 /**
- * A grant row as the rules read it (see `ticksNow`): its tick now, perhaps several or none; none when its kind cannot
- * read it, reported once.
+ * The grant rows `grants` as the rules read them, each tick at its kind's ticks version now. A row at the kind's
+ * version, of a reserved tick (`OPEN`: no kind's, never migrated) or of a kind no plugin registers (its ticks count
+ * for nothing, R3) reads as written; older rows migrate, those of one thing, party, source, `gives` value and version
+ * together (`ticksNow`). Rows that cannot be read are reported once and fail closed: giving rows give nothing, and
+ * withheld rows withhold every tick of the kind from their party (a refused row never hands a tick back).
  */
-function grantEntry(grant: GrantItem, kinds: Kinds, reported: Set<string>, context: Context): GrantEntry[] {
-	const { thing, party, gives, kind, tick, ticksVersion } = grant;
-	const now = ticksNow(grant, kinds.info(kind));
-	if (now.kind === "read") {
-		const [key, audience] = [partyKey(party), audienceOf(party.kind)];
-		return now.ticks.map((each) => ({ thing, party: key, audience, tick: each, gives }));
+function grantEntries(
+	grants: readonly GrantItem[],
+	kinds: Kinds,
+	reported: Set<string>,
+	context: Context,
+): GrantEntry[] {
+	const entries: GrantEntry[] = [];
+	const older = new Map<string, GrantItem[]>();
+	for (const grant of grants) {
+		const info = kinds.info(grant.kind);
+		if (info === undefined || grant.ticksVersion === info.ticksVersion || grant.tick.startsWith(RESERVED)) {
+			entries.push(entryOf(grant, grant.tick));
+			continue;
+		}
+		// The key of the rows that migrate together (a Map key: built once per row).
+		const key = `${grant.thing}\n${partyKey(grant.party)}\n${sourceKey(grant.source)}\n${grant.gives}\n${grant.ticksVersion}`;
+		const rows = older.get(key);
+		if (rows === undefined) older.set(key, [grant]);
+		else rows.push(grant);
 	}
-	const key = `${grant.workspace}\n${thing}\n${partyKey(party)}\n${tick}\n${sourceKey(grant.source)}\n${ticksVersion}`;
-	if (!reported.has(key)) {
-		reported.add(key);
-		reportError(`things: a grant on ${thing} in ${grant.workspace} counts for nothing`, now.why, context);
+	for (const [key, rows] of older) {
+		const first = rows[0]!;
+		try {
+			const now = ticksNow(
+				kinds.info(first.kind)!,
+				rows.map(({ tick }) => tick),
+				first.ticksVersion,
+			);
+			for (const tick of now) entries.push(entryOf(first, tick));
+		} catch (error) {
+			const report = `${first.workspace}\n${key}`;
+			if (!reported.has(report)) {
+				reported.add(report);
+				reportError(`things: a grant on ${first.thing} in ${first.workspace} counts for nothing`, error, context);
+			}
+			if (!first.gives) for (const tick of kinds.ticksOf(first.kind)) entries.push(entryOf(first, tick));
+		}
 	}
-	return [];
+	return entries;
 }
 
-/** A grant row's tick as it reads now (a migration may make it several, or none), or why it cannot be read. */
-type TicksNow =
-	| { readonly kind: "read"; readonly ticks: readonly string[] }
-	| { readonly kind: "refused"; readonly why: unknown };
-
-/**
- * A grant row's tick at its kind's ticks version now (item 105): as written at the same one, for a reserved tick
- * (`OPEN`: no kind's, never migrated) and for a kind no plugin registers (its ticks count for nothing, R3); from an
- * older one through the kind's `migrateTicks`. Refused: an older one without `migrateTicks`, one it throws for (plugin
- * code: a refused grant, never a failed read; open item 33), and a newer one (the plugin went back).
- */
-function ticksNow({ tick, ticksVersion, kind }: GrantItem, info: KindInfo | undefined): TicksNow {
-	if (info === undefined || info.ticksVersion === ticksVersion || tick.startsWith(RESERVED)) {
-		return { kind: "read", ticks: [tick] };
-	}
-	const at = `written at ${kind}'s ticks version ${ticksVersion}, the kind's is ${info.ticksVersion}`;
-	const migrate = info.migrateTicks;
-	if (ticksVersion > info.ticksVersion) return { kind: "refused", why: `${at}: newer (the plugin went back)` };
-	if (migrate === undefined) return { kind: "refused", why: `${at}, and it has no migrateTicks` };
-	try {
-		return { kind: "read", ticks: migrate([tick], ticksVersion) };
-	} catch (error) {
-		return { kind: "refused", why: error };
-	}
+/** `grant`'s row read as `tick`. */
+function entryOf({ thing, party, gives }: GrantItem, tick: string): GrantEntry {
+	return { thing, party: partyKey(party), audience: audienceOf(party.kind), tick, gives };
 }

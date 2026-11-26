@@ -44,12 +44,6 @@ export type Touched = { readonly workspaces: Set<string>; readonly persons: Set<
 /** An attached watcher: the answers now, and how to stop. */
 export type Attachment = { readonly value: Answers; detach(): void };
 
-/** What a re-read read, before it is taken: entries by workspace and by person. */
-type Reread = {
-	readonly workspaces: Map<string, WorkspaceEntries | undefined>;
-	readonly persons: Map<string, PersonEntries>;
-};
-
 /** A workspace in memory: its entries (`undefined`: it does not exist) and its result once computed. */
 type Loaded = { entries: WorkspaceEntries | undefined; access: WorkspaceAccess | undefined };
 
@@ -77,6 +71,8 @@ export class AccessIndex {
 	readonly #context: Context;
 	readonly #keepUnwatched: number;
 	#forgetWhenAbove: number;
+	/** How many views there were at the last sweep: once half of them went, the next attach sweeps. */
+	#viewsAtSweep = 0;
 	readonly #workspaces = new Map<string, Loaded>();
 	readonly #persons = new Map<string, PersonEntries>();
 	readonly #views = new Set<View>();
@@ -97,9 +93,12 @@ export class AccessIndex {
 		this.#forgetWhenAbove = keepUnwatched;
 	}
 
-	/** Whether it still follows the store: once its store object ended, nothing attaches to it any more. */
+	/**
+	 * Whether it still follows the store: once its store attempt is ending (its context aborted, a reload) or ended,
+	 * nothing attaches to it any more; a watcher waits for the next attempt's index instead.
+	 */
 	get open(): boolean {
-		return !this.#closed;
+		return !this.#closed && this.#context.abortSignal?.aborted !== true;
 	}
 
 	/**
@@ -112,10 +111,12 @@ export class AccessIndex {
 		observer: FollowObserver<unknown>,
 		context: Context,
 	): Promise<Attachment | undefined> {
-		if (this.#closed) return Promise.resolve(undefined);
+		if (!this.open) return Promise.resolve(undefined);
 		return this.#run(async () => {
-			if (this.#closed) return undefined;
-			if (this.#workspaces.size + this.#persons.size > this.#forgetWhenAbove) this.forgetUnwatched();
+			if (!this.open) return undefined;
+			// Past the budget, or many views gone since the last sweep (a burst of pins released): forget.
+			const loaded = this.#workspaces.size + this.#persons.size;
+			if (loaded > this.#forgetWhenAbove || this.#views.size * 2 < this.#viewsAtSweep) this.forgetUnwatched();
 			await this.#ensure(workspace, context);
 			if (caller.kind === "person") await this.#ensurePerson(caller.person, context);
 			// Closed while it loaded: the close's sweep has passed, nothing may attach behind it.
@@ -132,13 +133,17 @@ export class AccessIndex {
 
 	/**
 	 * Runs `transaction`, one commit of the store that says what it wrote to in `touched`, one at a time with every
-	 * other operation, then follows it (`changed`); answers what the transaction answers. Its commit and the index's
-	 * work are timed apart (`things.store.commit`, `things.access.adopt`).
+	 * other operation, then follows it: the loaded entries among the touched ones are read again, the results at and
+	 * below the touched workspaces dropped, and every view there and of a touched person asked again; answers what the
+	 * transaction answers once the changed views were told. Its wait in the queue, its commit and the index's work are
+	 * timed apart (`things.store.wait`, `things.store.commit`, `things.access.adopt`).
 	 */
 	commit<R>(transaction: (touched: Touched) => Promise<R>): Promise<R> {
+		const queued = performance.now();
 		return this.#run(async () => {
 			const touched: Touched = { workspaces: new Set(), persons: new Set() };
 			const started = performance.now();
+			this.#context.telemetry.metrics?.histogram("things.store.wait").record(started - queued);
 			const result = await transaction(touched);
 			const metrics = this.#context.telemetry.metrics;
 			metrics?.histogram("things.store.commit").record(performance.now() - started);
@@ -150,23 +155,14 @@ export class AccessIndex {
 	}
 
 	/**
-	 * After a commit that wrote `touched`: the loaded entries among them are read again (all of them before any is
-	 * taken), the results at and below the touched workspaces dropped, and every view there and of a touched person
-	 * asked again; resolves once the changed ones were told.
-	 */
-	changed(touched: Touched): Promise<void> {
-		return this.#run(() => this.#adopt(touched));
-	}
-
-	/**
-	 * The kinds changed (a plugin loaded, reloaded or removed): every loaded workspace is read again (its grants' ticks
+	 * The kinds changed (a plugin loaded, reloaded or removed): `install` puts the new kinds in place, inside the queue,
+	 * so every operation runs with one snapshot of them; then every loaded workspace is read again (its grants' ticks
 	 * migrate on load, item 91), every result computed again, every view asked.
 	 */
-	kindsChanged(): Promise<void> {
+	kindsChanged(install: () => void): Promise<void> {
 		return this.#run(async () => {
-			const read = await this.#reread(new Set(this.#workspaces.keys()), new Set());
-			if (read === undefined) return;
-			this.#take(read);
+			install();
+			if (!(await this.#reread(new Set(this.#workspaces.keys()), new Set()))) return;
 			for (const loaded of this.#workspaces.values()) loaded.access = undefined;
 			this.#ask(this.#views);
 		});
@@ -183,6 +179,7 @@ export class AccessIndex {
 		for (const id of this.#workspaces.keys()) if (!keep.has(id)) this.#workspaces.delete(id);
 		for (const id of this.#persons.keys()) if (!this.#viewsOf.has(id)) this.#persons.delete(id);
 		this.#forgetWhenAbove = this.#workspaces.size + this.#persons.size + this.#keepUnwatched;
+		this.#viewsAtSweep = this.#views.size;
 	}
 
 	/** What is in memory: the loaded workspaces and persons, and the views. */
@@ -210,13 +207,11 @@ export class AccessIndex {
 		return run;
 	}
 
-	/** Follows a commit that wrote `touched` (see `changed`). */
+	/** Follows a commit that wrote `touched` (see `commit`); nothing once closed (no view is left to tell). */
 	async #adopt(touched: Touched): Promise<void> {
-		if (touched.workspaces.size === 0 && touched.persons.size === 0) return;
+		if (this.#closed || (touched.workspaces.size === 0 && touched.persons.size === 0)) return;
 		const loaded = new Set([...touched.workspaces].filter((id) => this.#workspaces.has(id)));
-		const read = await this.#reread(loaded, touched.persons);
-		if (read === undefined) return;
-		this.#take(read);
+		if (!(await this.#reread(loaded, touched.persons))) return;
 		const asked = new Set<View>();
 		if (touched.workspaces.size > 0) {
 			for (const [id, loaded] of this.#workspaces) {
@@ -230,40 +225,25 @@ export class AccessIndex {
 	}
 
 	/**
-	 * The entries of `workspaces` (and the ancestors not loaded of one made since it was asked about) and of the loaded
-	 * ones of `persons`, read again; `undefined` when a read failed, after recovering (nothing of it is taken).
+	 * Reads the entries of the loaded `workspaces` (with the ancestors of one made since it was asked about) and of the
+	 * loaded ones of `persons` again; whether it did. A read that fails recovers, so nothing half read is asked.
 	 */
-	async #reread(workspaces: ReadonlySet<string>, persons: ReadonlySet<string>): Promise<Reread | undefined> {
-		const read: Reread = { workspaces: new Map(), persons: new Map() };
+	async #reread(workspaces: ReadonlySet<string>, persons: ReadonlySet<string>): Promise<boolean> {
 		try {
 			for (const id of workspaces) {
-				let entries = await this.#reader.workspace(id, this.#context);
-				read.workspaces.set(id, entries);
-				while (entries !== undefined && entries.parent !== "" && !this.#workspaces.has(entries.parent)) {
-					const parent = entries.parent;
-					if (read.workspaces.has(parent)) break;
-					entries = await this.#reader.workspace(parent, this.#context);
-					read.workspaces.set(parent, entries);
-				}
+				const loaded = this.#workspaces.get(id);
+				if (loaded === undefined) continue;
+				loaded.entries = await this.#reader.workspace(id, this.#context);
+				await this.#ensure(id, this.#context);
 			}
 			for (const id of persons) {
-				if (this.#persons.has(id)) read.persons.set(id, await this.#reader.person(id, this.#context));
+				if (this.#persons.has(id)) this.#persons.set(id, await this.#reader.person(id, this.#context));
 			}
-			return read;
+			return true;
 		} catch (error) {
 			this.#recover(error);
-			return undefined;
+			return false;
 		}
-	}
-
-	/** Takes what `#reread` read: one generation, all of it at once. */
-	#take(read: Reread): void {
-		for (const [id, entries] of read.workspaces) {
-			const loaded = this.#workspaces.get(id);
-			if (loaded === undefined) this.#workspaces.set(id, { entries, access: undefined });
-			else loaded.entries = entries;
-		}
-		for (const [id, entries] of read.persons) this.#persons.set(id, entries);
 	}
 
 	/**
@@ -343,10 +323,19 @@ export class AccessIndex {
 		const kinds = this.#kinds();
 		const last = view.last;
 		const answers: Record<string, Answer> = {};
+		// An owner's answer is the same for every thing of a kind: made once per kind.
+		const ownerAnswers = new Map<string, Answer>();
+		const ownerOf = (kind: string) => {
+			const made = ownerAnswers.get(kind);
+			if (made !== undefined) return made;
+			const answer = ownerAnswer(kind, kinds);
+			ownerAnswers.set(kind, answer);
+			return answer;
+		};
 		let same = true;
 		let size = 0;
 		for (const [thing, given] of access.things) {
-			const answer = owner ? ownerAnswer(given.kind, kinds) : answerOf(given, counted);
+			const answer = owner ? ownerOf(given.kind) : answerOf(given, counted, kinds);
 			if (answer === undefined) continue;
 			const before = last[thing];
 			if (sameAnswer(before, answer)) answers[thing] = before!;
@@ -387,7 +376,6 @@ export class AccessIndex {
 
 	/** Whether loaded workspace `id` is one of `above` or below one (its ancestors are loaded too). */
 	#isAtOrBelow(id: string, above: ReadonlySet<string>): boolean {
-		if (above.size === 0) return false;
 		for (let at = id; at !== ""; at = this.#workspaces.get(at)?.entries?.parent ?? "") if (above.has(at)) return true;
 		return false;
 	}

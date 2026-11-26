@@ -88,7 +88,7 @@ export const ThingsStore = local("things.store", {
 	version: 1,
 	params: {},
 	members: {
-		things: queries(ThingRow, { one: obj({ thing: str() }) }),
+		things: queries(ThingRow, { one: obj({ thing: str() }), ofMaker: obj({ sourceKey: str(), kind: str() }) }),
 		workspaces: queries(WorkspaceRow, { one: obj({ workspace: str() }), children: obj({ parent: str() }) }),
 		links: queries(LinkRow, { here: obj({ workspace: str() }) }),
 		workspaceMembers: queries(WorkspaceMemberRow, { here: obj({ workspace: str() }) }),
@@ -103,12 +103,13 @@ export const ThingsStore = local("things.store", {
 		 */
 		create: method(obj({ kind: str(), name: str(), workspace: str(), by: Source, input: opt(unknown()) }), str()),
 		/**
-		 * Plugin `plugin`'s one thing of `kind`: the one it made, else one made in `workspace` through the create path
-		 * (the kind's hook first, as `create`, by the plugin). Answers its id.
+		 * Kind `kind`'s seeded thing (`serveThing`'s `one`, made at the start): the one its plugin made, else one made
+		 * in Pi through the create path (the kind's hook first, as `create`, by the plugin). Answers its id; `invalid`
+		 * for a kind that asks for none.
 		 */
-		ensure: method(obj({ kind: str(), name: str(), workspace: str(), plugin: str(), input: opt(unknown()) }), str()),
+		ensure: method(obj({ kind: str() }), str()),
 		/** Links a thing into a workspace, with its kind's default grants there. */
-		link: method(obj({ workspace: str(), thing: str(), by: Source })),
+		link: method(obj({ workspace: str(), thing: str() })),
 		/** Unlinks a thing and what the workspace wrote for it (R15); with its last link the thing goes. */
 		unlink: method(obj({ workspace: str(), thing: str() })),
 		rename: method(obj({ thing: str(), name: str() })),
@@ -141,8 +142,11 @@ export const ThingsStore = local("things.store", {
 	},
 });
 
-/** What a caller gets for one thing: its ticks (perhaps none: here without ticks, R10). */
-export const Answer = obj({ ticks: arr(str()) });
+/**
+ * What a caller gets for one thing: its ticks (perhaps none: here without ticks, R10), the thing's kind and the ticks
+ * version they were read at.
+ */
+export const Answer = obj({ kind: str(), ticksVersion: num(), ticks: arr(str()) });
 
 /**
  * What a workspace gives one caller (`callerKey` of their principal): each thing they get anything for, by id. One
@@ -187,8 +191,8 @@ export type ThingHook = {
 	 */
 	readonly create?: (thing: string, input: unknown, by: Source, ctx: Ctx<P3Principal>) => Promise<void>;
 	/**
-	 * Sets `settings`, some of the kind's settings (`KindInfo.settings`: state members), on `thing`; `Workspace.configure`
-	 * calls it (slice 2) with values checked against their state members' schemas.
+	 * Sets `settings`, some of the kind's settings (`KindInfo.settings`: state members), on `thing`;
+	 * `Workspace.configure` calls it (slice 2) with values checked against their state members' schemas.
 	 */
 	readonly configure?: (
 		thing: string,
@@ -200,7 +204,10 @@ export type ThingHook = {
 	 * with backoff and at every start, until it succeeds.
 	 */
 	readonly delete?: (thing: string, ctx: Ctx<P3Principal>) => Promise<void>;
-	/** The plugin's one thing of the kind, named `name`: made in Pi once the kind is registered (`ensure`). */
+	/**
+	 * The plugin's seeded thing of the kind, named `name`: made in Pi once the kind is registered, and again at once
+	 * when it is deleted (`ensure`, `OneThing`).
+	 */
 	readonly one?: { readonly name: string };
 };
 
@@ -210,9 +217,10 @@ export const ThingHooks = defineRegistry<ThingHook, ReadonlyMap<string, TableIte
 });
 
 /**
- * The seeded thing of a kind (`serveThing`'s `one`) for server code of any plugin: `thing` its id, once it exists (the
- * session's default location is the machine's). Its value is the id it had when first held: a seeded thing someone
- * deleted is made again at the next start, and a holder sees the new one after attaching again.
+ * The seeded thing of a kind (`serveThing`'s `one`) for server code of any plugin: `thing` its id, live (the session's
+ * default location is the machine's). It is the plugin's replaceable singleton: deleted (its last link gone), it is
+ * made again in Pi at once and `thing` names the new one (`""` meanwhile); unlinked from Pi but linked elsewhere, it
+ * stays. Its plugin makes no other thing of the kind.
  */
 export const OneThing = local("things.one", {
 	version: 1,

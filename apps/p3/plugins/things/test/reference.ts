@@ -10,8 +10,11 @@ export type Caller =
 	| { readonly kind: "person"; readonly person: string }
 	| { readonly kind: "agent"; readonly session: string };
 
-/** What a caller gets for one thing: its ticks, sorted, or nothing. */
-export type Answer = { readonly ticks: string[] } | undefined;
+/**
+ * What a caller gets for one thing: its ticks, sorted, with the thing's kind and the ticks version (the differential
+ * test runs every kind at ticks version 1), or nothing.
+ */
+export type Answer = { readonly kind: string; readonly ticksVersion: number; readonly ticks: string[] } | undefined;
 
 /** Whom each tick of each kind is for. */
 export type KindTicks = ReadonlyMap<string, ReadonlyMap<string, "agents" | "people" | "all">>;
@@ -67,7 +70,7 @@ export function readEverything(path: string): Everything {
 		})),
 		things: all("things").map((r) => ({ thing: String(r.thing), kind: String(r.kind) })),
 		links: all("links").map((r) => ({ workspace: String(r.workspace), thing: String(r.thing), of: String(r.of) })),
-		members: all("workspace_members").map((r) => ({ workspace: String(r.workspace), party: keyOf(parsed(r.party)) })),
+		members: all("workspace-members").map((r) => ({ workspace: String(r.workspace), party: keyOf(parsed(r.party)) })),
 		switches: all("switches").map((r) => {
 			const item = parsed(r.item);
 			const party = item.party as Json | undefined;
@@ -90,7 +93,7 @@ export function readEverything(path: string): Everything {
 			};
 		}),
 		groups: all("groups").map((r) => ({ id: String(r.group), outside: r.outside === 1 })),
-		memberships: all("group_members").map((r) => ({ group: String(r.group), person: String(r.person) })),
+		memberships: all("group-members").map((r) => ({ group: String(r.group), person: String(r.person) })),
 		persons: all("persons").map((r) => ({ id: String(r.person), owner: r.owner === 1 })),
 	};
 	db.close();
@@ -103,8 +106,8 @@ export function answersFrom(
 	kinds: KindTicks,
 	workspace: string,
 	caller: Caller,
-): Record<string, { ticks: string[] }> {
-	const answers: Record<string, { ticks: string[] }> = {};
+): Record<string, NonNullable<Answer>> {
+	const answers: Record<string, NonNullable<Answer>> = {};
 	for (const { thing } of all.things) {
 		const answer = answerFrom(all, kinds, workspace, thing, caller);
 		if (answer !== undefined) answers[thing] = answer;
@@ -124,7 +127,7 @@ export function answerFrom(
 	if (state.kind === undefined) return undefined;
 	if (caller.kind === "person" && all.persons.some((p) => p.id === caller.person && p.owner)) {
 		const forPeople = [...(kinds.get(state.kind) ?? [])].filter(([, forWhom]) => forWhom !== "agents");
-		return { ticks: forPeople.map(([tick]) => tick).sort() };
+		return { kind: state.kind, ticksVersion: 1, ticks: forPeople.map(([tick]) => tick).sort() };
 	}
 	// A tick withheld from the caller's person or session agent applies whatever route they count by (item 106);
 	// `@open`: denied.
@@ -138,7 +141,7 @@ export function answerFrom(
 		if (own !== undefined) ticks = [...(ticks ?? []), ...own.filter((tick) => !(ticks ?? []).includes(tick))];
 	}
 	if (ticks === undefined) return undefined;
-	return { ticks: ticks.filter((tick) => !taken.includes(tick)).sort() };
+	return { kind: state.kind, ticksVersion: 1, ticks: ticks.filter((tick) => !taken.includes(tick)).sort() };
 }
 
 /**

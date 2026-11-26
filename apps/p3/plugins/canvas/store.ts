@@ -69,8 +69,8 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			add: async ({ canvas, shapes: added, author }, ctx) => {
 				const ids = added.map(() => crypto.randomUUID());
 				await self.tx(async (tx) => {
-					// After the canvas's last stored shape, whatever this process's clock or an earlier attempt gave
-					// (Sol, round 1): a reload or a clock gone back keeps the order shapes were added in.
+					// After the canvas's last stored shape, whatever this process's clock or an earlier attempt gave: a
+					// reload or a clock gone back keeps the order shapes were added in.
 					const newest = query(Shapes)
 						.where((shape) => eq(shape.canvas, canvas))
 						.orderBy((shape) => shape.seq, "desc");

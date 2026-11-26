@@ -14,7 +14,7 @@ import {
 } from "@earendil-works/p3/v1";
 import { admitThing } from "./admission.ts";
 import { type ThingHook, ThingHooks } from "./contract.server.ts";
-import type { Caller } from "./contract.ts";
+import type { Caller, Source } from "./contract.ts";
 import { type ThingKind, ThingKinds } from "./kind.ts";
 
 /** What `implement` gets about its caller: who calls, and the members and flags granted. */
@@ -23,16 +23,23 @@ export type ThingCaller<C extends Contract> = {
 	readonly granted: ReadonlySet<GrantableName<C>>;
 };
 
-/** A kind's server side: its object's members for one thing and caller, and its hooks. */
-export type ThingImplementation<C extends Contract> = {
+/**
+ * A kind's server side: its object's members for one thing and caller, and its hooks (`create` gets the kind's input,
+ * `configure` some of its settings `St`).
+ */
+export type ThingImplementation<C extends Contract, St extends string = string, I = unknown> = {
 	/** The members of thing `thing` held in `workspace` for one caller; grantable state and events as builders. */
 	readonly implement: (
 		params: { readonly workspace: string; readonly thing: string },
 		admitted: ThingCaller<C>,
 		self: Self<P3Principal>,
 	) => Implementation<C, Ctx<P3Principal>>;
-	readonly create?: ThingHook["create"];
-	readonly configure?: ThingHook["configure"];
+	readonly create?: (thing: string, input: I, by: Source, ctx: Ctx<P3Principal>) => Promise<void>;
+	readonly configure?: (
+		thing: string,
+		settings: { readonly [K in St]?: unknown },
+		ctx: Ctx<P3Principal>,
+	) => Promise<void>;
 	readonly delete?: ThingHook["delete"];
 	/**
 	 * The plugin's one thing of the kind, seeded in Pi once the kind is registered (any kind: `makers` says only who
@@ -42,14 +49,16 @@ export type ThingImplementation<C extends Contract> = {
 };
 
 /** Serves kind `Kind` on `host`: registers it with its hooks and serves its object with the one admission. */
-export function serveThing<C extends Contract>(
+export function serveThing<C extends Contract, St extends string, I>(
 	host: FacetHost<P3Principal>,
-	Kind: ThingKind<C>,
-	{ implement, ...hooks }: ThingImplementation<C>,
+	Kind: ThingKind<C, St, I>,
+	{ implement, ...hooks }: ThingImplementation<C, St, I>,
 ): void {
 	contribute(host, `${Kind.name}.kind`, (self) => {
 		self.contribute(ThingKinds, Kind.info);
-		self.contribute(ThingHooks, { kind: Kind.name, ...hooks });
+		// The store hands `create` an input checked against `Kind.input`, and `configure` (slice 2) settings of the
+		// kind's: the registry's hooks take any, these the kind's own.
+		self.contribute(ThingHooks, { kind: Kind.name, ...(hooks as Omit<ThingHook, "kind">) });
 	});
 	// The contract is `defineThing`'s: what Chord hands the factory as admitted is a `ThingCaller` (the things
 	// admission's caller, `granted` a set of its names).

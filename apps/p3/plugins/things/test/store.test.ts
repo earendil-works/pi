@@ -15,15 +15,17 @@ import {
 	createHost,
 	defineFacet,
 	method,
+	obj,
 	openStore,
 	type P3Principal,
 	type Reference,
 	Server,
 	sqliteBackend,
 	str,
+	until,
 	withCancel,
 } from "@earendil-works/p3/v1";
-import { eventually } from "../../../test/until.ts";
+import { eventually, within } from "../../../test/until.ts";
 import { Gives, OneThing, type ThingHook, ThingHooks, ThingsStore } from "../contract.server.ts";
 import { OPEN, type Source } from "../contract.ts";
 import { defineThing, ThingKinds } from "../kind.ts";
@@ -46,6 +48,15 @@ beforeEach(async () => {
 });
 
 afterEach(() => w.close(context));
+
+/** `promise`, or a failure after `ms`: a test that waits for a hook fails instead of hanging. */
+function soon<T>(promise: Promise<T>, ms = 3000): Promise<T> {
+	let timer: NodeJS.Timeout | undefined;
+	const late = new Promise<never>((_, reject) => {
+		timer = setTimeout(() => reject(new Error(`not within ${ms} ms`)), ms);
+	});
+	return Promise.race([promise, late]).finally(() => clearTimeout(timer));
+}
 
 /** The grant rows on disk of `thing` (in `workspace`, if given): party and source parsed. */
 function grantsOf(thing: string, workspace?: string) {
@@ -142,18 +153,24 @@ describe("making and deleting a thing", () => {
 			/no workspace/,
 		);
 		const thing = HOOKS[0]!.slice("create ".length);
-		assert.deepEqual(HOOKS, [`create ${thing}`, `delete ${thing}`]);
+		await eventually(
+			() => HOOKS,
+			(hooks) => hooks.join() === [`create ${thing}`, `delete ${thing}`].join(),
+		);
 		assert.deepEqual(
 			w.rows("things").filter(({ kind }) => kind === Board.name),
 			[],
 		);
-		assert.deepEqual(w.rows("pending"), []);
+		await eventually(
+			() => w.rows("pending").length,
+			(count) => count === 0,
+		);
 	});
 
 	it("a thing goes with its last link: its grants and switches everywhere, then its kind's delete hook", async () => {
 		const team = await store.createWorkspace({ kind: "things.workspace", name: "Team", parent: pi, by: BY }, context);
 		const thing = await store.create({ kind: Board.name, name: "x", workspace: pi, by: BY }, context);
-		await store.link({ workspace: team, thing, by: BY }, context);
+		await store.link({ workspace: team, thing }, context);
 		await store.setSwitch({ workspace: team, item: { kind: "thing", thing }, shown: false }, context);
 		await store.unlink({ workspace: pi, thing }, context);
 		assert.equal((await store.things.one.page({ thing }, 1, context)).items.length, 1);
@@ -205,12 +222,15 @@ describe("a plugin's one thing", () => {
 		ticks: { use: { label, gives: ["use"] } },
 		settings: ["folder"],
 	});
-	/** A world with the machine kind's plugin, its hooks recorded in `calls`. */
-	const machineWorld = async (calls: string[], one?: { name: string }) => {
+	/** A world with the machine kind's plugin, its hooks recorded in `calls`; `create` runs before each create hook. */
+	const machineWorld = async (calls: string[], one?: { name: string }, create?: () => Promise<void>) => {
 		const facet = defineFacet((host) =>
 			serveThing(host, Machine, {
 				implement: () => ({ folder: constant("/"), use: async () => null }),
-				create: async (thing) => void calls.push(`create ${thing}`),
+				create: async (thing) => {
+					calls.push(`create ${thing}`);
+					await create?.();
+				},
 				configure: async (thing, settings) => void calls.push(`configure ${thing} ${JSON.stringify(settings)}`),
 				delete: async (thing) => void calls.push(`delete ${thing}`),
 				...(one === undefined ? {} : { one }),
@@ -223,27 +243,7 @@ describe("a plugin's one thing", () => {
 	};
 	const machines = (path: string) => storedRows(path, "things").filter(({ kind }) => kind === Machine.name);
 
-	it("ensure makes it once, through the create path; at once twice, one stands and the other's hook is undone", async (t) => {
-		const calls: string[] = [];
-		const at = await machineWorld(calls);
-		t.after(() => at.w.close(context));
-		const args = { kind: Machine.name, name: "This machine", workspace: at.pi, plugin: "machine" };
-		const [a, b] = await Promise.all([at.store.ensure(args, context), at.store.ensure(args, context)]);
-		assert.equal(a, b);
-		assert.equal(await at.store.ensure(args, context), a);
-		assert.deepEqual(
-			machines(at.w.path).map(({ thing, madeByKey }) => [thing, madeByKey]),
-			[[a, "plugin/machine"]],
-		);
-		// Both hooks ran (each before its commit); the one that did not stand was undone.
-		const created = calls.filter((call) => call.startsWith("create")).map((call) => call.slice("create ".length));
-		assert.equal(created.length, 2);
-		const loser = created.find((thing) => thing !== a)!;
-		assert.ok(calls.includes(`delete ${loser}`));
-		assert.ok(!calls.includes(`delete ${a}`));
-	});
-
-	it("`one` seeds it in Pi once the kind is registered, and `OneThing` names it; a reload makes no second", async (t) => {
+	it("is seeded in Pi at the start, made by its plugin, once; ensure answers it; a reload makes no second", async (t) => {
 		const calls: string[] = [];
 		const at = await machineWorld(calls, { name: "This machine" });
 		t.after(() => at.w.close(context));
@@ -252,26 +252,171 @@ describe("a plugin's one thing", () => {
 			() => machines(at.w.path).length,
 			(count) => count === 1,
 		);
-		const one = await at.w.host.get(OneThing, { kind: Machine.name }, context);
-		const thing = one.thing.value;
-		assert.deepEqual(
-			machines(at.w.path).map(({ thing: id, name }) => [id, name]),
-			[[thing, "This machine"]],
-		);
+		const [row] = machines(at.w.path);
+		assert.deepEqual([row?.name, row?.madeByKey], ["This machine", "plugin/machine"]);
 		assert.deepEqual(
 			at.w
 				.rows("links")
-				.filter((row) => row.thing === thing)
+				.filter((link) => link.thing === row?.thing)
 				.map(({ workspace }) => workspace),
 			[at.pi],
 		);
-		one.release();
+		const [a, b] = await Promise.all([
+			at.store.ensure({ kind: Machine.name }, context),
+			at.store.ensure({ kind: Machine.name }, context),
+		]);
+		assert.deepEqual([a, b], [row?.thing, row?.thing]);
+		assert.equal(calls.filter((call) => call.startsWith("create")).length, 1);
 		await at.w.reload(THINGS.name, context);
 		await at.w.reload("machine", context, at.facet);
-		const again = await at.w.host.get(OneThing, { kind: Machine.name }, context);
-		assert.equal(again.thing.value, thing);
+		assert.equal(await (await at.w.host.get(ThingsStore, {}, context)).ensure({ kind: Machine.name }, context), a);
 		assert.equal(machines(at.w.path).length, 1);
-		again.release();
+	});
+
+	it("a kind's create input is checked against its schema and reaches its hook; one without takes none", async (t) => {
+		const label = { namespace: "test", key: "use", params: [] };
+		const Inbox = defineThing("test.inbox", {
+			version: 1,
+			ticks: { use: { label } },
+			create: { input: obj({ signIn: str() }) },
+		});
+		const inputs: unknown[] = [];
+		const at = await world(context, [
+			{
+				name: "inbox",
+				facet: defineFacet((host) =>
+					serveThing(host, Inbox, {
+						implement: () => ({}),
+						create: async (_thing, input) => {
+							// Typed by the kind's schema.
+							const signIn: string = input.signIn;
+							inputs.push(signIn);
+						},
+					}),
+				),
+			},
+		]);
+		t.after(() => at.close(context));
+		const things = await at.host.get(ThingsStore, {}, context);
+		const root = (await things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
+		const make = (input: unknown) =>
+			things.create({ kind: Inbox.name, name: "i", workspace: root, by: BY, input }, context);
+		await make({ signIn: "ann" });
+		await assert.rejects(make({ signIn: 1 }), /input of test.inbox/);
+		await assert.rejects(
+			things.create({ kind: Board.name, name: "b", workspace: root, by: BY, input: {} }, context),
+			/takes no input/,
+		);
+		assert.deepEqual(inputs, ["ann"]);
+	});
+
+	it("ensure refuses a kind that asks for none", async (t) => {
+		const at = await machineWorld([]);
+		t.after(() => at.w.close(context));
+		await assert.rejects(at.store.ensure({ kind: Machine.name }, context), /has no seeded thing/);
+	});
+
+	it("while the start's seed is still being made, deletes run: the lifecycle does not wait for it", async (t) => {
+		const calls: string[] = [];
+		const held = Promise.withResolvers<void>();
+		let first = true;
+		const at = await machineWorld(calls, { name: "This machine" }, async () => {
+			if (first) {
+				first = false;
+				await held.promise;
+			}
+		});
+		t.after(async () => {
+			held.resolve();
+			await at.w.close(context);
+		});
+		await eventually(
+			() => calls.length,
+			(count) => count === 1,
+		);
+		// An ensure meanwhile waits for the same seed: one thing, one create hook.
+		const ensured = at.store.ensure({ kind: Machine.name }, context);
+		const other = await at.store.create({ kind: Board.name, name: "other", workspace: at.pi, by: BY }, context);
+		HOOKS.length = 0;
+		await at.store.unlink({ workspace: at.pi, thing: other }, context);
+		await eventually(
+			() => HOOKS,
+			(hooks) => hooks.includes(`delete ${other}`),
+			2000,
+		);
+		held.resolve();
+		assert.equal(await ensured, machines(at.w.path)[0]?.thing);
+		assert.equal(calls.filter((call) => call.startsWith("create")).length, 1);
+	});
+
+	it("a seed that does not stand (the plugin made its thing meanwhile) has its hook's work cleared", async (t) => {
+		const calls: string[] = [];
+		const held = Promise.withResolvers<void>();
+		let first = true;
+		const at = await machineWorld(calls, { name: "This machine" }, async () => {
+			if (first) {
+				first = false;
+				await held.promise;
+			}
+		});
+		t.after(async () => {
+			held.resolve();
+			await at.w.close(context);
+		});
+		await eventually(
+			() => calls.length,
+			(count) => count === 1,
+		);
+		const seeded = calls[0]!.slice("create ".length);
+		// Its plugin makes the thing itself while the seed's hook still prepares: that one stands.
+		const made = await at.store.create(
+			{ kind: Machine.name, name: "made", workspace: at.pi, by: { kind: "plugin", plugin: "machine" } },
+			context,
+		);
+		held.resolve();
+		assert.equal(await at.store.ensure({ kind: Machine.name }, context), made);
+		await eventually(
+			() => calls,
+			(done) => done.includes(`delete ${seeded}`),
+		);
+		assert.ok(!calls.includes(`delete ${made}`));
+	});
+
+	it("`OneThing` names it live: deleted, it is made again at once and `OneThing` names the new one", async (t) => {
+		const calls: string[] = [];
+		const at = await machineWorld(calls, { name: "This machine" });
+		t.after(() => at.w.close(context));
+		const one = await at.w.host.get(OneThing, { kind: Machine.name }, context);
+		const first = await until(one.thing, (thing) => thing !== "", within("seeded", context));
+		await at.store.unlink({ workspace: at.pi, thing: first }, context);
+		const second = await until(one.thing, (thing) => thing !== "" && thing !== first, within("made again", context));
+		assert.deepEqual(
+			machines(at.w.path).map(({ thing }) => thing),
+			[second],
+		);
+		await eventually(
+			() => calls,
+			(done) => done.includes(`delete ${first}`),
+		);
+		one.release();
+	});
+
+	it("unlinked from Pi but linked elsewhere, it stays the seeded thing", async (t) => {
+		const at = await machineWorld([], { name: "This machine" });
+		t.after(() => at.w.close(context));
+		const leaf = await at.store.createWorkspace(
+			{ kind: "things.workspace", name: "leaf", parent: at.pi, by: BY },
+			context,
+		);
+		const thing = await at.store.ensure({ kind: Machine.name }, context);
+		await at.store.link({ workspace: leaf, thing }, context);
+		await at.store.unlink({ workspace: at.pi, thing }, context);
+		await at.w.reload(THINGS.name, context);
+		const again = await at.w.host.get(ThingsStore, {}, context);
+		assert.equal(await again.ensure({ kind: Machine.name }, context), thing);
+		const one = await at.w.host.get(OneThing, { kind: Machine.name }, context);
+		assert.equal(await until(one.thing, (id) => id !== "", within("named", context)), thing);
+		one.release();
 	});
 
 	it("a kind's settings and its configure hook are registered with it", async (t) => {
@@ -302,6 +447,8 @@ describe("grant rows (item 112)", () => {
 		await write(team, "draw", false);
 		await assert.rejects(write(team, "draw", true), /not linked in/);
 		await assert.rejects(write(pi, "@make:*", true), /has no tick @make:\*/);
+		// Withheld too, a tick must be the kind's.
+		await assert.rejects(write(team, "fly", false), /has no tick fly/);
 		const mine = () =>
 			grantsOf(thing)
 				.filter(({ party: { kind } }) => kind === "group")
@@ -343,15 +490,15 @@ describe("linking", () => {
 	it("a link starts with the kind's default grants; linking again changes nothing", async () => {
 		const team = await store.createWorkspace({ kind: "things.workspace", name: "Team", parent: pi, by: BY }, context);
 		const thing = await store.create({ kind: Board.name, name: "x", workspace: pi, by: BY }, context);
-		await store.link({ workspace: team, thing, by: BY }, context);
-		await store.link({ workspace: team, thing, by: BY }, context);
+		await store.link({ workspace: team, thing }, context);
+		await store.link({ workspace: team, thing }, context);
 		assert.deepEqual(
 			grantsOf(thing, team)
 				.map(({ party }) => party.kind)
 				.sort(),
 			["agents", "everyone"],
 		);
-		await assert.rejects(store.link({ workspace: team, thing: "none", by: BY }, context), /no thing none/);
+		await assert.rejects(store.link({ workspace: team, thing: "none" }, context), /no thing none/);
 	});
 
 	it("a kind of one workspace is linked in one only", async (t) => {
@@ -366,8 +513,8 @@ describe("linking", () => {
 		const team = await things.createWorkspace({ kind: "things.workspace", name: "T", parent: root, by: BY }, context);
 		const thing = await things.create({ kind: Single.name, name: "s", workspace: root, by: BY }, context);
 		// Linking it again where it is changes nothing; anywhere else is refused.
-		await things.link({ workspace: root, thing, by: BY }, context);
-		await assert.rejects(things.link({ workspace: team, thing, by: BY }, context), /linked in one workspace only/);
+		await things.link({ workspace: root, thing }, context);
+		await assert.rejects(things.link({ workspace: team, thing }, context), /linked in one workspace only/);
 		assert.deepEqual(
 			at.rows("links").map(({ workspace }) => workspace),
 			[root],
@@ -432,7 +579,7 @@ describe("people", () => {
 	});
 });
 
-describe("round 1's reproductions (Astra, Sol)", () => {
+describe("races, failures and restarts", () => {
 	const source: Source = { kind: "plugin", plugin: "fixture" };
 	const label = { namespace: "test", key: "mark", params: [] };
 	const Marker = defineThing("test.marker", { version: 1, ticks: { mark: { label } } });
@@ -475,10 +622,10 @@ describe("round 1's reproductions (Astra, Sol)", () => {
 		};
 	};
 
-	it("Astra: two unlinks at once of a thing's two links remove it", async () => {
+	it("two unlinks at once of a thing's two links remove it", async () => {
 		const leaf = await store.createWorkspace({ parent: pi, name: "leaf", kind: "things.workspace", by: BY }, context);
 		const thing = await store.create({ workspace: pi, kind: Board.name, name: "two", by: BY }, context);
-		await store.link({ workspace: leaf, thing, by: BY }, context);
+		await store.link({ workspace: leaf, thing }, context);
 		await Promise.all([
 			store.unlink({ workspace: pi, thing }, context),
 			store.unlink({ workspace: leaf, thing }, context),
@@ -487,7 +634,7 @@ describe("round 1's reproductions (Astra, Sol)", () => {
 	});
 
 	for (const mode of ["throws at once", "rejects after its caller cancelled"] as const) {
-		it(`Astra 3, Sol: a create hook that ${mode} leaves no thing`, async (t) => {
+		it(`a create hook that ${mode} leaves no thing`, async (t) => {
 			const entered = Promise.withResolvers<void>();
 			const release = Promise.withResolvers<void>();
 			const create =
@@ -544,7 +691,7 @@ describe("round 1's reproductions (Astra, Sol)", () => {
 		);
 	});
 
-	it("Astra 3: a commit cut off by its caller's cancel after the hook clears the content under the store's context", async (t) => {
+	it("a commit cut off by its caller's cancel after the hook clears the content under the store's context", async (t) => {
 		const entered = Promise.withResolvers<string>();
 		const release = Promise.withResolvers<void>();
 		const deleted = Promise.withResolvers<boolean>();
@@ -564,11 +711,11 @@ describe("round 1's reproductions (Astra, Sol)", () => {
 		cancelled.cancel();
 		release.resolve();
 		await creating;
-		assert.equal(await deleted.promise, false, "the delete hook ran under an aborted context");
+		assert.equal(await soon(deleted.promise), false, "the delete hook ran under an aborted context");
 		assert.deepEqual(markers(at.w.path), []);
 	});
 
-	it("Astra 4: a thing is nobody's until its commit; its delete hook runs after what its create hook made", async (t) => {
+	it("a thing is nobody's until its commit; its delete hook runs after what its create hook made", async (t) => {
 		const entered = Promise.withResolvers<string>();
 		const resume = Promise.withResolvers<void>();
 		const deleted = Promise.withResolvers<void>();
@@ -594,12 +741,12 @@ describe("round 1's reproductions (Astra, Sol)", () => {
 		assert.ok(contents.has(thing));
 		assert.equal((await at.store.things.one.page({ thing }, 1, context)).items.length, 1);
 		await at.store.unlink({ workspace: at.pi, thing }, context);
-		await deleted.promise;
+		await soon(deleted.promise);
 		assert.deepEqual((await at.store.things.one.page({ thing }, 1, context)).items, []);
 		assert.ok(!contents.has(thing), "content left after its cleanup");
 	});
 
-	it("Astra 5, Sol: a failed delete hook is tried again, after a reload and in a fresh host on the same disk", async (t) => {
+	it("a failed delete hook is tried again, after a reload and in a fresh host on the same disk", async (t) => {
 		let attempts = 0;
 		const first = Promise.withResolvers<void>();
 		const at = await markerWorld({
@@ -662,7 +809,92 @@ describe("round 1's reproductions (Astra, Sol)", () => {
 		assert.equal(attempts, 2);
 	});
 
-	it("Astra 5: a delete whose kind no plugin contributes waits for it, and runs once it is back", async (t) => {
+	it("a kind's plugin withdrawn while its create hook prepares a thing: the cleanup stays due until it is back", async (t) => {
+		const entered = Promise.withResolvers<string>();
+		const release = Promise.withResolvers<void>();
+		const content = new Set<string>();
+		const at = await markerWorld({
+			create: async (id) => {
+				content.add(id);
+				entered.resolve(id);
+				await release.promise;
+			},
+			delete: async (id) => void content.delete(id),
+		});
+		t.after(() => at.w.close(context));
+		const making = assert.rejects(
+			at.store.create({ kind: Marker.name, name: "m", workspace: at.pi, by: source }, context),
+			/no kind/,
+		);
+		const id = await entered.promise;
+		await at.w.reload(
+			"marker",
+			context,
+			defineFacet(() => {}),
+		);
+		release.resolve();
+		await making;
+		assert.ok(content.has(id));
+		assert.equal(at.w.rows("pending").length, 1);
+		await at.w.reload("marker", context, at.plugin.facet);
+		await eventually(
+			() => content.has(id),
+			(left) => !left,
+		);
+		await eventually(
+			() => at.w.rows("pending").length,
+			(count) => count === 0,
+		);
+	});
+
+	it("one thing's delete hook never runs twice at once: not on a hooks change, nor across a store reload", async (t) => {
+		const entered = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<void>();
+		let active = 0;
+		let peak = 0;
+		let calls = 0;
+		const hooks = {
+			delete: async () => {
+				peak = Math.max(++active, peak);
+				if (++calls === 1) {
+					entered.resolve();
+					await release.promise;
+				}
+				active--;
+			},
+		};
+		const at = await markerWorld(hooks);
+		t.after(() => at.w.close(context));
+		const thing = await at.store.create({ kind: Marker.name, name: "m", workspace: at.pi, by: source }, context);
+		await at.store.unlink({ thing, workspace: at.pi }, context);
+		await entered.promise;
+		// The hooks change (the kind's plugin reloads with a second kind): pending deletes are resumed, this one not a
+		// second time.
+		const Extra = defineThing("test.extra", { version: 1, ticks: { mark: { label } } });
+		await at.w.reload(
+			"marker",
+			context,
+			defineFacet((host) => {
+				serveThing(host, Marker, { implement: () => ({}), delete: hooks.delete });
+				serveThing(host, Extra, { implement: () => ({}) });
+			}),
+		);
+		// The resume runs after the reload, beside the hook still running.
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		// The store reloads while the hook runs: the next attempt resumes only after this one's hooks ended.
+		const reloading = at.w.reload(THINGS.name, context);
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		release.resolve();
+		await reloading;
+		await at.w.host.get(ThingsStore, {}, context);
+		await eventually(
+			() => at.w.rows("pending").length,
+			(count) => count === 0,
+		);
+		assert.equal(peak, 1);
+	});
+
+	it("a delete whose kind no plugin contributes waits for it, and runs once it is back", async (t) => {
 		let calls = 0;
 		const at = await markerWorld({ delete: async () => void calls++ });
 		t.after(() => at.w.close(context));
@@ -731,7 +963,7 @@ describe("round 1's reproductions (Astra, Sol)", () => {
 		}
 	});
 
-	it("Astra 1: a cold Gives is one generation: a commit of two boards while it loads shows both or neither", async (t) => {
+	it("a cold Gives is one generation: a commit of two boards while it loads shows both or neither", async (t) => {
 		const database = await openStore(sqliteBackend(new NodeSqliteDatabase(new DatabaseSync(":memory:"))), context);
 		const host = createHost<P3Principal>({
 			address: Server(),
@@ -779,8 +1011,8 @@ describe("round 1's reproductions (Astra, Sol)", () => {
 		await update;
 		try {
 			assert.deepEqual(first[a], first[b], "the two boards changed in one transaction");
-			assert.deepEqual(gives.answers.value[a], { ticks: ["read", "write"] });
-			assert.deepEqual(gives.answers.value[b], { ticks: ["read", "write"] });
+			assert.deepEqual(gives.answers.value[a]?.ticks, ["read", "write"]);
+			assert.deepEqual(gives.answers.value[b]?.ticks, ["read", "write"]);
 		} finally {
 			gives.release();
 		}

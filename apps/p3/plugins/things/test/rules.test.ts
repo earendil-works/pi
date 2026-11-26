@@ -138,7 +138,7 @@ describe("what the parties get", () => {
 		assert.deepEqual(await ticks(c.fix, c.sketch, `person:${c.ada}`), ["draw"]);
 		await grant(c.team, c.sketch, person(c.ada), ["moderate"]);
 		assert.deepEqual(await ticks(c.fix, c.sketch, `person:${c.ada}`), ["draw", "moderate"]);
-		// Her row of Moderate removed, one of no tick (`OPEN`) instead: it takes nothing of everyone's (Opus should 6).
+		// Her row of Moderate removed, one of no tick (`OPEN`) instead: it takes nothing of everyone's.
 		await reset(c.team, c.sketch, person(c.ada), ["moderate"]);
 		await grant(c.team, c.sketch, person(c.ada), []);
 		assert.deepEqual(await ticks(c.fix, c.sketch, `person:${c.ada}`), ["draw"]);
@@ -252,7 +252,7 @@ describe("below a link only less", () => {
 	});
 
 	it("unlink takes the link's grants; a take-away further below stays and applies again when it comes back (scenario 14)", async () => {
-		await store.link({ workspace: c.club, thing: c.sketch, by: MARIO }, context);
+		await store.link({ workspace: c.club, thing: c.sketch }, context);
 		await store.unlink({ workspace: c.team, thing: c.sketch }, context);
 		assert.equal(await ticks(c.fix, c.sketch, `person:${c.ada}`), undefined);
 		const left = w.rows("grants").filter(({ thing }) => thing === c.sketch);
@@ -261,7 +261,7 @@ describe("below a link only less", () => {
 			[],
 		);
 		assert.equal(left.filter((g) => g.workspace === c.fix).length, 1);
-		await store.link({ workspace: c.pi, thing: c.sketch, by: MARIO }, context);
+		await store.link({ workspace: c.pi, thing: c.sketch }, context);
 		await store.putParty({ workspace: c.pi, party: { kind: "agent", session: c.fix }, source: MARIO }, context);
 		// Pi's default grants give the agents Draw; Fix the build's take-away removes it again.
 		assert.deepEqual(await ticks(c.pi, c.sketch, `worker:${c.fix}`), ["read"]);
@@ -375,11 +375,10 @@ describe("the rules alone", () => {
 		links: new Map(),
 		members: new Set(),
 		switches: new Map(),
-		hides: new Set(),
 		grants: [],
 		...own,
 	});
-	const lookup = { tickFor: () => "all" as const, ticksOf: () => ["draw", "read"] };
+	const lookup = { tickFor: () => "all" as const, ticksOf: () => ["draw", "read"], ticksVersionOf: () => 1 };
 	const grantOf = (own: Partial<GrantEntry>): GrantEntry => ({
 		thing: "sketch",
 		party: "everyone",
@@ -401,13 +400,18 @@ describe("the rules alone", () => {
 		);
 		const below = accessHere(top, entries({ grants: [grantOf({ tick: "draw" })] }), lookup);
 		const ada = personCounts(below, "person/ada", { owner: false, groups: [] });
-		assert.deepEqual(answerOf(below.things.get("sketch")!, ada), { ticks: ["read"] });
+		assert.deepEqual(answerOf(below.things.get("sketch")!, ada, lookup), {
+			kind: "k",
+			ticksVersion: 1,
+			ticks: ["read"],
+		});
 	});
 
 	it("a row of a tick that counts lets its party in, `OPEN` with no tick; one that counts for nothing lets nobody in (113)", () => {
 		const onlyRead = {
 			tickFor: (_kind: string, tick: string) => (tick === "read" ? "all" : undefined),
 			ticksOf: () => ["read"],
+			ticksVersionOf: () => 1,
 		};
 		const answer = (...grants: GrantEntry[]) => {
 			const here = accessHere(
@@ -415,13 +419,14 @@ describe("the rules alone", () => {
 				entries({ links: new Map([["sketch", "k"]]), members: new Set(["person/ada"]), grants }),
 				onlyRead,
 			);
-			return answerOf(here.things.get("sketch")!, personCounts(here, "person/ada", { owner: false, groups: [] }));
+			const ada = personCounts(here, "person/ada", { owner: false, groups: [] });
+			return answerOf(here.things.get("sketch")!, ada, onlyRead)?.ticks;
 		};
 		assert.equal(answer(grantOf({ party: "person/ada", tick: "fly" })), undefined);
-		assert.deepEqual(answer(grantOf({ party: "person/ada", tick: "read" })), { ticks: ["read"] });
-		assert.deepEqual(answer(grantOf({ party: "person/ada" })), { ticks: [] });
+		assert.deepEqual(answer(grantOf({ party: "person/ada", tick: "read" })), ["read"]);
+		assert.deepEqual(answer(grantOf({ party: "person/ada" })), []);
 		// Withheld: `OPEN` lets the party in no more; another tick withheld leaves it in.
 		assert.equal(answer(grantOf({}), grantOf({ gives: false })), undefined);
-		assert.deepEqual(answer(grantOf({ tick: "read" }), grantOf({ tick: "read", gives: false })), { ticks: [] });
+		assert.deepEqual(answer(grantOf({ tick: "read" }), grantOf({ tick: "read", gives: false })), []);
 	});
 });

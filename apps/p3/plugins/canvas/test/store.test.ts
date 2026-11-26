@@ -1,5 +1,5 @@
 // The canvas store (`CanvasStore`) on its own: a canvas's shapes keep the order they were added in, also after a
-// reload of the plugin (a new store object) with the wall clock gone back (Sol, round 1).
+// reload of the plugin (a new store object) with the wall clock gone back.
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
