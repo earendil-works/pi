@@ -9,7 +9,7 @@ import type { Context } from "../context/index.ts";
 import type { Batch } from "../state/internal.ts";
 import type { Query } from "./query.ts";
 import { Read, type ReadKind, type ReadRun, type ReadSink } from "./read.ts";
-import { type Projection, type Range, ReadPlan, type StoredRead } from "./read-plan.ts";
+import { type Projection, type Range, ReadPlan, type ShapeSlot, type StoredRead } from "./read-plan.ts";
 import { setsOf } from "./reads.ts";
 import type { ChordStore } from "./store.ts";
 
@@ -21,6 +21,8 @@ export type QuerySpec = {
 	readonly projection: Projection;
 	/** Who offers the query (the attempt's table handle): when it retires, the query's reads leave the index. */
 	readonly owner: object;
+	/** Where the plans of its named query share their shape; none for a window of the owner's own (`self.query`). */
+	readonly shapes?: ShapeSlot;
 };
 
 /** Where an open query lives: the store whose index its reads are in, and the batch adoptions outside a commit run in. */
@@ -106,9 +108,10 @@ export class OpenQuery {
 	}
 
 	#compile(): Compiled {
-		const { query, table, projection } = this.spec;
+		const { query, table, projection, shapes } = this.spec;
 		try {
-			return { kind: "compiled", plan: new ReadPlan(query, table, projection, this.#shape, this.site.store.reads) };
+			const plan = new ReadPlan(query, table, projection, this.#shape, this.site.store.reads, shapes);
+			return { kind: "compiled", plan };
 		} catch (error) {
 			return { kind: "failed", error };
 		}

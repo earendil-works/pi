@@ -14,7 +14,7 @@ import { partnerName } from "../store/expression.ts";
 import type { LiveTarget } from "../store/live-query.ts";
 import { readPage } from "../store/page.ts";
 import { Query } from "../store/query.ts";
-import { type Projection, ReadPlan, type StoredRead } from "../store/read-plan.ts";
+import { type Projection, ReadPlan, type ShapeSlot, type StoredRead } from "../store/read-plan.ts";
 import { decodeScalar, versionColumn } from "../store/rows.ts";
 import type { TableHandle } from "../store/table-handle.ts";
 import type { Binding } from "./reference.ts";
@@ -66,6 +66,8 @@ export class OwnQuery extends NamedQueryHandle {
 	readonly #builder: (args: unknown) => unknown;
 	readonly #projection: Projection;
 	readonly #map: ((row: unknown, partner: PartnerRow) => unknown) | undefined;
+	/** Where its live reads share their plans' shape (a page, read once, takes none). */
+	readonly #shapes: ShapeSlot = { last: undefined };
 	/** The schema of its arguments: its own (a private query), or the contract's once its member was checked. */
 	#args: Snapshot | undefined;
 	#listed = false;
@@ -119,7 +121,13 @@ export class OwnQuery extends NamedQueryHandle {
 	target(args: unknown, context: Context): LiveTarget {
 		const query = this.#build(args, context);
 		const { handle } = this;
-		const spec = { query, table: handle.sql.table, projection: this.#projection, owner: handle };
+		const spec = {
+			query,
+			table: handle.sql.table,
+			projection: this.#projection,
+			owner: handle,
+			shapes: this.#shapes,
+		};
 		return { spec, decode: (stored, decoding) => this.#decode(query, stored, decoding) };
 	}
 

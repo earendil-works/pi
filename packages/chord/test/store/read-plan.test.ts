@@ -5,6 +5,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
 import { bool, hostKind, int, num, opt, str } from "../../src/contracts/index.ts";
+import { Batch } from "../../src/state/internal.ts";
 import { defineColumns } from "../../src/store/column-set.ts";
 import {
 	and,
@@ -17,16 +18,21 @@ import {
 	isNull,
 	not,
 	or,
+	prefix,
 	type WhereNode,
 } from "../../src/store/expression.ts";
 import { host } from "../../src/store/host-column.ts";
+import { OpenQuery } from "../../src/store/open-query.ts";
 import { type Query, query } from "../../src/store/query.ts";
-import { type Range, ReadPlan, type StoredRead } from "../../src/store/read-plan.ts";
+import type { ReadRun } from "../../src/store/read.ts";
+import { type Range, ReadPlan, type ShapeSlot, type StoredRead } from "../../src/store/read-plan.ts";
+import { ReadRefresh } from "../../src/store/reads.ts";
 import type { StagedWrite } from "../../src/store/step.ts";
 import type { ChordStore } from "../../src/store/store.ts";
 import { defineTable, type TableDefinition } from "../../src/store/table.ts";
 import { TableChanges } from "../../src/store/table-changes.ts";
-import { memoryStore, tableIn } from "../support.ts";
+import type { TableHandle } from "../../src/store/table-handle.ts";
+import { expectCollected, memoryStore, metered, tableIn } from "../support.ts";
 
 const SessionColumns = defineColumns("sessions.columns", {
 	columns: { id: str(), app: str(), private: bool(), lastTouch: int(), archivedAt: opt(int()) },
@@ -411,5 +417,170 @@ describe("a table handle's own reads", () => {
 		const joined = query(Teams).join(SessionColumns, (t) => ({ id: t.session }));
 		await expect(teams.page(joined, 10, context)).rejects.toThrow("a joined query is read as a named query");
 		await expect(teams.count(joined, context)).rejects.toThrow("a joined query is read as a named query");
+	});
+});
+
+describe("a named query's shape, shared (hot-path pass)", () => {
+	const ofApp = (app: string) => query(Sessions).where((s) => eq(s.app, app));
+	const inTeams = (app: string) =>
+		query(Sessions).where((s) => and(eq(s.app, app), exists(TeamSessions, { session: s.id })));
+
+	/** Opens a read of `q` sharing its shape through `slot`, loaded; its runs collected. */
+	async function opened(q: Query, slot: ShapeSlot, tables: Map<TableDefinition, string>, batch: Batch) {
+		const spec = { query: q, table: tables.get(Sessions)!, projection: {}, owner: tables, shapes: slot };
+		const open = new OpenQuery({ store, batch }, spec, "rows", () => {}, context);
+		const runs: ReadRun[] = [];
+		const read = open.read({ kind: "rows", range: { limit: 10 } }, { adopt: (run) => void runs.push(run) });
+		await read.load();
+		return {
+			open,
+			read,
+			runs,
+			plan: () => (open.compiled as Extract<typeof open.compiled, { kind: "compiled" }>).plan,
+		};
+	}
+
+	/** Commits `write`'s writes to `handle`'s table with the refresh a transaction stages: its runs, probes and skips. */
+	async function costOf(handle: TableHandle, batch: Batch, write: (changes: TableChanges) => void) {
+		const meter = await metered();
+		const staged: StagedWrite[] = [];
+		const changes = new TableChanges(handle, staged);
+		write(changes);
+		const refresh = new ReadRefresh(store.reads, [handle.sql.table], () => changes.changes(), meter.context);
+		staged.push(refresh.write);
+		const fence = { admit: () => true, adopt: () => batch.commit(() => refresh.adopt(), meter.context) };
+		await store.commit(staged, fence, meter.context);
+		const counts = meter.counts();
+		return [counts["chord.query.runs"] ?? 0, counts["chord.query.probes"] ?? 0, counts["chord.query.skips"] ?? 0];
+	}
+
+	it("is one for plans whose products are equal, and never across other texts, slots or none", async () => {
+		const tables = await seeded();
+		const slot: ShapeSlot = { last: undefined };
+		const plan = (q: Query, shared: ShapeSlot | undefined = slot) =>
+			new ReadPlan(q, tables.get(Sessions)!, {}, "rows", store.reads, shared);
+		const club = plan(ofApp("club"));
+		const family = plan(ofApp("family"));
+		expect(family.uses).toBe(club.uses);
+		expect(family.select({ limit: 5 }).sql).toBe(club.select({ limit: 5 }).sql);
+		expect([club.select({ limit: 5 }).params, family.select({ limit: 5 }).params]).toEqual([
+			["club", 5],
+			["family", 5],
+		]);
+		// Equalities stay the read's own.
+		expect([[...club.equalities], [...family.equalities]]).toEqual([[["app", ["club"]]], [["app", ["family"]]]]);
+		// A prefix with an upper bound is a range, one without (only U+10FFFF) a lower bound alone: other texts.
+		const bounded = plan(query(Sessions).where((s) => prefix(s.id, "s")));
+		const unbounded = plan(query(Sessions).where((s) => prefix(s.id, "\u{10FFFF}")));
+		expect(unbounded.select({ limit: 1 }).sql).not.toBe(bounded.select({ limit: 1 }).sql);
+		expect(unbounded.uses).not.toBe(bounded.uses);
+		// One slot holds the last shape: the club's is made again, other slots and none share nothing.
+		expect(plan(ofApp("club")).uses).not.toBe(club.uses);
+		expect(plan(ofApp("club"), { last: undefined }).uses).not.toBe(club.uses);
+		const alone = () => new ReadPlan(ofApp("club"), tables.get(Sessions)!, {}, "rows", store.reads);
+		expect(alone().uses).not.toBe(alone().uses);
+	});
+
+	it("leaves the equalities per read: two reads of one shape are filed under their own buckets", async () => {
+		const tables = await seeded();
+		const batch = new Batch(() => {}, undefined);
+		const slot: ShapeSlot = { last: undefined };
+		const club = await opened(ofApp("club"), slot, tables, batch);
+		const family = await opened(ofApp("family"), slot, tables, batch);
+		expect(family.plan().uses).toBe(club.plan().uses);
+		const sessions = await tableIn(store, Sessions);
+		// A new family session: the family read alone is a candidate; its probe finds the row and it runs.
+		const put = { id: "s9", app: "family", private: false, lastTouch: 90, title: "t9" };
+		expect(await costOf(sessions, batch, (changes) => changes.put(put))).toEqual([1, 1, 0]);
+		expect(club.runs).toHaveLength(1);
+		expect(family.runs.at(-1)).toMatchObject({ kind: "rows", result: { rows: [{ id: "s2" }, { id: "s9" }] } });
+	});
+
+	it("follows a rebound exists table into its uses, and a refused binding neither installs nor revives a shape", async () => {
+		const tables = await seeded();
+		const batch = new Batch(() => {}, undefined);
+		// The same set with a key the match is no part of: a written row may pair with other sessions before and after.
+		const ByTeam = defineColumns("club.team-sessions", {
+			columns: TeamSessions.columns,
+			key: ["team"],
+			indexes: { ofSession: ["session"] },
+		});
+		const byTeamTable = defineTable("teams-by-team", {
+			version: 1,
+			columns: ByTeam.columns,
+			key: ["team"],
+			indexes: { of_session: ["session"] },
+			exposes: ByTeam,
+		});
+		const Retyped = defineColumns("club.team-sessions", { columns: { team: str(), session: int() }, key: ["team"] });
+		const retypedTable = defineTable("teams-retyped", {
+			version: 1,
+			columns: Retyped.columns,
+			key: ["team"],
+			exposes: Retyped,
+		});
+		const teams = await tableIn(store, Teams);
+		const byTeam = await tableIn(store, byTeamTable as TableDefinition);
+		const retyped = await tableIn(store, retypedTable as TableDefinition);
+		const bind = (handle: TableHandle) =>
+			store.reads.bind(TeamSessions.name, { table: handle.sql.table, definition: handle.definition }, tables);
+		const slot: ShapeSlot = { last: undefined };
+		const club = await opened(inTeams("club"), slot, tables, batch);
+		const existsUse = () => club.plan().uses.find(({ role }) => role === "exists")!;
+		expect(existsUse().stable).toBe(true);
+		// A team row of a family session: the probe finds no club session for it.
+		expect(await costOf(teams, batch, (changes) => changes.put({ team: "u20", session: "s2" }))).toEqual([0, 1, 1]);
+
+		bind(byTeam);
+		await club.read.load();
+		expect(existsUse().stable).toBe(false);
+		const unstable = club.plan().uses;
+		const family = await opened(inTeams("family"), slot, tables, batch);
+		expect(family.plan().uses).toBe(unstable);
+		// Not stable: the read runs, no probe can rule the write out.
+		expect(await costOf(byTeam, batch, (changes) => changes.put({ team: "u20", session: "s2" }))).toEqual([2, 0, 0]);
+
+		bind(retyped);
+		await club.read.load();
+		expect(club.runs.at(-1)).toMatchObject({ kind: "failed" });
+		expect(((club.runs.at(-1) as Extract<ReadRun, { kind: "failed" }>).error as Error).message).toBe(
+			'column "session" of column set "club.team-sessions" is not what this read was written for',
+		);
+		expect(slot.last?.deref()?.uses).toBe(unstable);
+		// Neither read is registered: a write to the refused table runs, probes and skips nothing.
+		expect(await costOf(retyped, batch, (changes) => changes.put({ team: "u20", session: 2 }))).toEqual([0, 0, 0]);
+
+		bind(teams);
+		await club.read.load();
+		await family.read.load();
+		expect(existsUse().stable).toBe(true);
+		expect(club.plan().uses).not.toBe(unstable);
+		expect(family.plan().uses).toBe(club.plan().uses);
+	});
+
+	it("is collected with its last read; the first read's query and condition go before it", async () => {
+		const tables = await seeded();
+		const batch = new Batch(() => {}, undefined);
+		const slot: ShapeSlot = { last: undefined };
+		const condition = (app: string) => compile(SessionColumns, eq(SessionColumns.refs.app, app));
+		const first = await (async () => {
+			const node = condition("club");
+			const q = query(Sessions).whereNode(SessionColumns, node);
+			const { open } = await opened(q, slot, tables, batch);
+			return { open, node: new WeakRef(node as object), query: new WeakRef(q) };
+		})();
+		const second = await opened(query(Sessions).whereNode(SessionColumns, condition("family")), slot, tables, batch);
+		expect(slot.last?.deref()?.uses).toBe(second.plan().uses);
+		first.open.close();
+		const { node, query: q } = first;
+		(first as { open?: OpenQuery }).open = undefined;
+		await expectCollected(node, q);
+		expect(slot.last?.deref()?.uses).toBe(second.plan().uses);
+		second.open.close();
+		const shape = slot.last!;
+		(second as { open?: OpenQuery }).open = undefined;
+		(second as { plan?: unknown }).plan = undefined;
+		(second as { read?: unknown }).read = undefined;
+		await expectCollected(shape);
 	});
 });
