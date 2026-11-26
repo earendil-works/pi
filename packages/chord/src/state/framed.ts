@@ -113,12 +113,28 @@ export abstract class FramedSource extends Source {
 		if (state.kind === "value") {
 			// Listed by a change, so `before` was kept (a detach in the batch leaves no value).
 			const after = state.value;
-			const ops: readonly Op[] = before === NO_VALUE ? [["r", after]] : diffRevisions(before!, after);
+			const ops: readonly Op[] = before === NO_VALUE ? [["r", after]] : this.#diff(before!, after);
 			if (ops.length > 0) this.publish(after, ops, false, context);
 			return;
 		}
 		// Still failed since the last call: nothing new for the watches.
 		if (state.kind === "failed" && before !== NO_VALUE) this.failWatches(state.error, context);
+	}
+
+	/**
+	 * The ops from `before` to `after`: the ones a frame of this commit made already for these two values when there
+	 * are some (the sources a shared read feeds, `store/shared-read.ts`, all go from the same value to the same next
+	 * one in one batch, which is diffed once).
+	 */
+	#diff(before: JsonValue, after: JsonValue): readonly Op[] {
+		// A primitive (a count) diffs at once.
+		if (typeof before !== "object" || before === null) return diffRevisions(before, after);
+		const diffs = this.batch.diffs;
+		const made = diffs.get(before);
+		if (made?.after === after) return made.ops;
+		const ops = diffRevisions(before, after);
+		diffs.set(before, { after, ops });
+		return ops;
 	}
 
 	/** Its owner ended: reads throw `error`, its watches end `ended`. */
