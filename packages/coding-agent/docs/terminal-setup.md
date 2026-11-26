@@ -223,7 +223,7 @@ Only force a capability supported by the complete terminal path. Unsupported esc
 
 ## Recover the terminal after Pi was killed
 
-Pi turns on key, mouse, and paste reporting while it runs and turns it off when it exits. If Pi is killed (`kill -9`, Task Manager, out of memory), reporting stays on and the shell types the reports into the prompt.
+Pi turns on key, mouse, and paste reporting while it runs, and the alternate screen in fullscreen mode. It turns them off when it exits. If Pi is killed (`kill -9`, Task Manager, out of memory), they stay on and the shell types the reports into the prompt.
 
 The real fix is to find what kills Pi and stop it. Look for `JavaScript heap out of memory` in the terminal, or a script or IDE that ends the process, and [open an issue](https://github.com/earendil-works/pi/issues) with what you find.
 
