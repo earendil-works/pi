@@ -211,7 +211,6 @@ reference or a native.
 
 **Access**
 - A person's data comes from admission, never from params. Params only narrow inside what admission allows.
-- App-specific views check the session's **current** app.
 - Conditions are built by server code; clients send values only.
 - Per-person rows (pins, unread marks) are filtered by the person, not only by the access condition.
 - Admission values are small (a mode, a role).
@@ -267,7 +266,7 @@ reference or a native.
 | Two page objects tiled by row number: a row moving to the top fell between them | one list per screen; pages bounded by bookmarks inside `self.list` |
 | Growing a window ("first 100, then 150") re-sent every loaded row | `more` on the same object: only new rows travel |
 | The team's id taken from the page's params | the team comes from the admission; params only narrow |
-| The team page joined side rows without checking the session's current app | every app-specific view checks the current app |
+| The team page joined side rows without checking the session's current app (an app's sessions, before sessions became workspaces) | a view admits by the caller's answer on the thing it shows |
 | Pins read by the access condition only: Bob saw Alice's pins | per-person rows filter by the person |
 | `{ first: 1000 }` for a person's shares | `exists(Shares, …)` in the condition, or read whole and fail closed |
 | An `exists` as the selective part of a person's list: a guest's list walked the whole app | drive the list from the person's own rows |

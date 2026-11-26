@@ -35,7 +35,7 @@ principal, address and API modules, beside the base's facet as the real host has
 and `WorkerBusy`. Each test gets a temporary directory of its own (the runtime's `dataDir` or `dir`), removed at its
 close. Chord's HTTP component is not there: its registries (`Http`, `Authenticators`) are collected for the test
 (`t.contributions`). The installed release runs a third-party plugin's own test this way. Model:
-`plugins/sessions/test/server.test.ts`.
+`plugins/sessions/test/session.test.ts`.
 
 ```ts
 import { testPlugin } from "@earendil-works/p3/v1/testing";
@@ -80,7 +80,7 @@ import { testServer } from "@earendil-works/p3/v1/testing";
 const t = await testServer({ plugins: [fileURLToPath(new URL("../", import.meta.url))] }, context);
 try {
 	const client = await t.client(context);
-	const session = await (await client.get(Sessions, {}, context)).create({ title: "one" }, context);
+	const session = await newSession(client, "one", context);           // `test/support.ts`: `Workspace.make` in Pi
 	const held = await client.get(MyWorkerContract, { session }, context);      // the session's worker starts
 } finally {
 	await t.close(context);

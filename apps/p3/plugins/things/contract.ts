@@ -2,7 +2,8 @@
 // grant names, what a switch is about, who manages a group), the one function per value that makes its key column,
 // and who calls a thing's object, as its admission hands the factory. A thing's own contract comes from `defineThing`
 // (`kind.ts`); the store and the admission's objects are server only (`contract.server.ts`). And a group's object
-// (`Group`): its members and the calls its own tick gives.
+// (`Group`): its members and the calls its own tick gives; and `MyAnswer`, a caller's answer for admissions off the
+// server (a session's objects on its worker, the route to a worker).
 
 import {
 	arr,
