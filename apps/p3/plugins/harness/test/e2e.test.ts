@@ -25,9 +25,9 @@ import {
 	withGranted,
 } from "@earendil-works/p3/v1";
 import { SessionsStore } from "@earendil-works/p3/v1/server";
-import { type TestServer, type TestServerOptions, testServer } from "@earendil-works/p3/v1/testing";
+import { ownerClient, type TestServer, type TestServerOptions, testServer } from "@earendil-works/p3/v1/testing";
 import { type FauxRequest, FauxRequests, type Step } from "../../../test/plugins/faux-login/contract.ts";
-import { newSession, scriptFaux } from "../../../test/support.ts";
+import { newSession, scriptFaux, scriptFauxAs } from "../../../test/support.ts";
 import { eventually, within } from "../../../test/until.ts";
 import { OneThing, ThingsStore } from "../../things/contract.server.ts";
 import { CodingToolsKind } from "../../tools/kind.ts";
@@ -243,5 +243,20 @@ describe("the harness end to end", () => {
 			within("the answer in the held transcript", context, 10_000),
 		);
 		assert.deepEqual(t.errors, []);
+	});
+});
+
+// Astra, round 1 (should 9): the base bench's launched owner client scripts the faux login of its session.
+describe("the faux login over a link", () => {
+	it("is scripted from an owner client signed in over the network", async () => {
+		const t = await start();
+		const client = await ownerClient(t.dataDir, t.port, context, 5000);
+		try {
+			const id = await newSession(client, "bench", context);
+			const login = await scriptFauxAs(client, id, [{ when: "", reply: [{ kind: "text", text: "ok" }] }], context);
+			assert.ok(login !== "");
+		} finally {
+			await client.close(context);
+		}
 	});
 });

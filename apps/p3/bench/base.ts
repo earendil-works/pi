@@ -35,7 +35,7 @@ import { ownerClient, ownerCookie } from "@earendil-works/p3/v1/testing";
 import { SessionWorker } from "../plugins/sessions/contract.ts";
 import { COMMAND } from "../src/install.ts";
 import { FauxRequests, type Step } from "../test/plugins/faux-login/contract.ts";
-import { childrenOf, newSession, scriptFaux } from "../test/support.ts";
+import { childrenOf, newSession, scriptFauxAs } from "../test/support.ts";
 import { within } from "../test/until.ts";
 import { launchTracked, withServer } from "./launched.ts";
 
@@ -100,7 +100,7 @@ try {
 			await mkdir(folder);
 			// The session is made in Pi, so Pi's coding tools reach it; its faux login is made in it.
 			const id = await newSession(client, `s${i}`, context, { environment: THIS_DEVICE, folder });
-			await scriptFaux(client, id, SCRIPT, context);
+			await scriptFauxAs(client, id, SCRIPT, context);
 			const started = performance.now();
 			held.push(await client.get(SessionWorker, { session: id }, context));
 			workerStarts.push(performance.now() - started);

@@ -28,7 +28,7 @@ import {
 	withGranted,
 } from "@earendil-works/p3/v1";
 import { ensureLogin, setCredential } from "../plugins/providers/logins.ts";
-import { FAUX_PROVIDER, keyOf, type Step } from "./plugins/faux-login/contract.ts";
+import { FAUX_PROVIDER, FauxScript, keyOf, type Step } from "./plugins/faux-login/contract.ts";
 
 /** The probe (`test/plugins/probe/`): a test server's plugin under test (`testServer({ plugins: [PROBE] })`). */
 export const PROBE = fileURLToPath(new URL("./plugins/probe/", import.meta.url));
@@ -57,6 +57,22 @@ export async function scriptFaux(
 		await setCredential(thing, { provider: FAUX_PROVIDER, credential }, ctx);
 		return thing;
 	}, context);
+}
+
+/**
+ * As `scriptFaux`, over a link: `client` is the owner's (a launched server's, the bench's), which reaches no store of
+ * the server (Astra, round 1); the faux login plugin's `FauxScript` does it there. Answers the login's thing id.
+ */
+export async function scriptFauxAs(
+	client: Host<P3Principal>,
+	workspace: string,
+	script: readonly Step[],
+	context: Context,
+): Promise<string> {
+	return client.root(
+		async (ctx) => (await ctx.get(FauxScript, {})).script({ workspace, script: [...script] }, ctx),
+		context,
+	);
 }
 
 /**
