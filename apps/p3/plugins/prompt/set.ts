@@ -4,12 +4,12 @@
 
 import { arr, type FacetHost, local, type P3Principal, str } from "@earendil-works/p3/v1";
 import { ServerRuntime } from "@earendil-works/p3/v1/server";
-import { Skill } from "./contract.ts";
 import { FolderWatch, folderPath, readSkills, skillsRoot } from "./folder.ts";
-import { SkillsStore } from "./store.ts";
+import { Skill } from "./skills-kind.ts";
+import { PromptStore } from "./store.ts";
 
 /** Set `thing`: its folder's path on the Pi's disk and its skills. */
-export const SkillSet = local("skills.set", {
+export const SkillSet = local("prompt.skill-set", {
 	version: 1,
 	params: { thing: str() },
 	members: { path: str(), skills: arr(Skill) },
@@ -19,7 +19,7 @@ export const SkillSet = local("skills.set", {
 export function serveSet(host: FacetHost<P3Principal>): void {
 	host.serve(SkillSet, ({ thing }, self) => {
 		const root = skillsRoot(self.registry(ServerRuntime).value.dataDir);
-		const found = self.liveQuery(self.get(SkillsStore, {}).settings.of, { thing }, { first: 1 });
+		const found = self.liveQuery(self.get(PromptStore, {}).skills.of, { thing }, { first: 1 });
 		// A stored folder was checked by `configure`; the root moves only with the data directory.
 		const path = self.derive([found], ([{ rows }]) => folderPath(root, rows[0]?.folder ?? ""));
 		const skills = self.writable<Skill[]>([]);

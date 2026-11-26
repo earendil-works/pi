@@ -1,8 +1,8 @@
-// The skills plugin's contract: a set of skills as a kind of thing (`prompt.skills`, decision 101): the folders under
-// one folder of the Pi's skills root (`<data directory>/skills`), each with a `SKILL.md`. Made by people. Every set
-// that reaches a session adds its skills (`stacking: "all"`); a name in two sets is the closer set's. The list is
-// plain (whoever is let in sees which skills there are); Use, for agents, gives `read`, a skill's text and the names of
-// its files. The folder is the set's setting, changed with Configure where it is linked (decision 91).
+// The skills kind (`prompt.skills`, decision 101): a set of skills, the folders under one folder of the Pi's skills
+// root (`<data directory>/skills`), each with a `SKILL.md`. Made by people. Every set that reaches a session adds its
+// skills; a name in two sets is the closer set's. The list and the folder are plain: whoever is let in sees which
+// skills there are. Use, for agents, gives `read`: a skill's text and the names of its files. The folder is the set's
+// setting, changed with Configure where it is linked (decision 91). No guests.
 
 import { arr, method, obj, type Static, str } from "@earendil-works/p3/v1";
 import { defineThing } from "../things/kind.ts";
@@ -20,17 +20,22 @@ export const SkillText = obj({ text: str(), files: arr(str()) });
 /** A skill's text and files (see `SkillText`). */
 export type SkillText = Static<typeof SkillText>;
 
+/** What Use gives: the members an agent with Use is granted. */
+export const SKILLS_USES = ["read"] as const;
+
 /** A set of skills: the list and the folder, plain; Use gives `read`. */
 export const SkillsKind = defineThing("prompt.skills", {
 	version: 1,
 	makers: "people",
-	stacking: "all",
 	state: { skills: arr(Skill), folder: str() },
 	methods: {
-		/** The text and files of the skill `name` of this set. */
+		/** The text and files of the skill `name` of this set; `invalid` for a name the set has not. */
 		read: method(obj({ name: str() }), SkillText),
 	},
-	ticks: { use: { label: messages.message("tickUse"), for: "agents", gives: ["read"] } },
+	ticks: {
+		// `skills` and `folder` are given by no tick: for everyone let in.
+		use: { label: messages.message("skillsTickUse"), for: "agents", gives: SKILLS_USES },
+	},
 	defaultGrants: { agents: ["use"] },
 	settings: ["folder"],
 });

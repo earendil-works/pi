@@ -7,7 +7,8 @@ import { type FSWatcher, watch } from "node:fs";
 import { readdir, readFile, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { invalid } from "@earendil-works/p3/v1";
-import type { Skill, SkillText } from "./contract.ts";
+import { messages } from "./messages.ts";
+import type { Skill, SkillText } from "./skills-kind.ts";
 
 /** A skill's file, in its folder. */
 const SKILL_FILE = "SKILL.md";
@@ -24,7 +25,9 @@ export function skillsRoot(dataDir: string): string {
 export function folderPath(root: string, folder: string): string {
 	const path = resolve(root, folder);
 	if (isAbsolute(folder) || (path !== root && !path.startsWith(root + sep)))
-		throw invalid("args", `skills: the folder ${JSON.stringify(folder)} is outside the Pi's skills root`);
+		throw invalid("args", `prompt: the folder ${JSON.stringify(folder)} is outside the Pi's skills root`, {
+			message: messages.message("outsideRoot", folder),
+		});
 	return path;
 }
 
@@ -49,7 +52,7 @@ export async function readSkill(root: string, path: string, name: string): Promi
 	const folder = real === undefined || name.includes("/") || name.startsWith(".") ? undefined : join(real, name);
 	const text =
 		folder === undefined ? undefined : await readFile(join(folder, SKILL_FILE), "utf8").catch(() => undefined);
-	if (folder === undefined || text === undefined) throw invalid("args", `skills: no skill ${JSON.stringify(name)}`);
+	if (folder === undefined || text === undefined) throw invalid("args", `prompt: no skill ${JSON.stringify(name)}`);
 	const files = (await readdir(folder, { recursive: true, withFileTypes: true }))
 		.filter((entry) => entry.isFile())
 		.map((entry) => relative(folder, join(entry.parentPath, entry.name)))
