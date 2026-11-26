@@ -1,7 +1,8 @@
 // The backup plugin's contracts. Each store (the server's, and one per session) uploads its outbox to a backup target.
 //
 // Who uses which contract:
-// - the owner: `Backups` (the on/off switch and an overview) and `BackupsList` (the sessions that need attention);
+// - the owner: `Backups` (whether sessions are backed up by default, and an overview) and `BackupsList` (the sessions
+//   that need attention);
 // - a session's worker: `SessionBackup` (whether to back up its store, and where its backup stands).
 //
 // What is stored: a session's row keeps only its state (`BackupState`) and changes only when that state changes.
@@ -66,8 +67,11 @@ export const SessionBackupRow = obj({ session: str(), state: BackupState, since:
 export type SessionBackupRow = Static<typeof SessionBackupRow>;
 
 /**
- * The owner's overview: whether backup is on, the server store's status (`null` until it first reports), how many
- * sessions are in each state, and the switch.
+ * The owner's overview: whether sessions are backed up by default, the server store's status (`null` until it first
+ * reports), and how many sessions are in each state.
+ *
+ * The default applies to every session that has no choice of its own. A session's own choice (on or off) stays when the
+ * default changes.
  */
 export const Backups = remote("backup.backups", {
 	version: 1,
@@ -76,13 +80,15 @@ export const Backups = remote("backup.backups", {
 	// The owner's only: admitted by the people plugin's `admitOwner`.
 	admission: obj({}),
 	state: {
-		enabled: bool(),
+		defaultEnabled: bool(),
 		server: union([BackupStatus, nul()]),
 		counts: obj({ synced: num(), retrying: num(), paused: num(), stopped: num() }),
 	},
 	methods: {
-		/** Turns backup on or off for the whole Pi. */
-		setEnabled: method(bool()),
+		/** Sets whether sessions without a choice of their own are backed up. */
+		setDefault: method(bool()),
+		/** Sets session `session`'s own choice: on, off, or `null` to follow the default again. */
+		setSession: method(obj({ session: str(), enabled: union([bool(), nul()]) })),
 	},
 });
 
@@ -101,8 +107,8 @@ export const BackupsList = remote("backup.list", {
 
 /**
  * For a session's worker, about its own session (the session comes from the worker's identity, not from params).
- * `enabled` says whether to back up the store: the worker turns the store's outbox on or off to match. `report` tells
- * the server where the backup stands.
+ * `enabled` says whether to back up the store: the session's own choice, else the default. The worker turns the store's
+ * outbox on or off to match. `report` tells the server where the backup stands.
  */
 export const SessionBackup = remote("backup.session", {
 	version: 1,
