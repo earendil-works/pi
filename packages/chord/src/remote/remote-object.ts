@@ -741,17 +741,13 @@ export class RemoteObject implements Target {
 			if (retirements.has(target)) throw new Error(`hold ${id}: member ${member} retired twice in one state`);
 			retirements.add(target);
 		}
-		// The indexes read so far, each read once from the entry (as ever: a codec's entries and lists are read so, not
-		// even its length again).
-		const indexes: number[] = [];
 		const updates = members.map(({ member, ops }, at) => {
 			const target = replicaAt(bound, id, member);
 			// A hold's members are its contract's few: the earlier ones scanned (one index, one replica), no set per
 			// message.
 			for (let earlier = 0; earlier < at; earlier++) {
-				if (indexes[earlier] === member) throw new Error(`hold ${id}: member ${member} twice in one state`);
+				if (members[earlier]!.member === member) throw new Error(`hold ${id}: member ${member} twice in one state`);
 			}
-			indexes[at] = member;
 			const { value, ops: decoded } = target.decode(parsePart(link.openPart(ops, link.limits, link.context)));
 			return { target, value, ops: decoded };
 		});
@@ -766,10 +762,7 @@ export class RemoteObject implements Target {
 			// failed member keeps it for its next value).
 			if (retirements !== undefined) {
 				for (const target of retirements) {
-					// By index: `updates` is made by the entry's `map`, of whatever class a codec gave its list.
-					let changed = false;
-					for (let at = 0; at < updates.length && !changed; at++) changed = updates[at]!.target === target;
-					if (!changed) target.retireAlone();
+					if (!updates.some((update) => update.target === target)) target.retireAlone();
 				}
 			}
 		};
