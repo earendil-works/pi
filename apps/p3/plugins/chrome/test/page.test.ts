@@ -5,10 +5,12 @@
 // row per checkbox (given, reset, withheld) and folds the Make ticks into one column; the add-thing picker groups by
 // plugin and previews a kind's default grants, which the person may untick; a thing with a view opens in it, one
 // without in its Settings view; a thing from above is greyed and a hidden one folded; a view that takes the whole page
-// keeps only the corner button; the invite dialog makes a link; `/me` is the person's own page; a reload of the chrome
-// plugin keeps the open page; an apply whose web contracts are newer than the page's base leaves it working, and a
-// component the base lacks is reported once. Screenshots at the phone's and the desktop's size, light and dark, go to
-// `/tmp/p3-base/shots/` (`P3_SHOTS` names another directory).
+// keeps only the corner button; the invite dialog says what comes with slice 3; `/me` is the person's own page; a
+// session made through the picker opens from the navigator in its transcript view, streams a scripted answer, and shows
+// a person with Read only the transcript with no way to send; a reload of the chrome plugin keeps the open page; an
+// apply whose web contracts are newer than the page's base leaves it working, and a component the base lacks is
+// reported once. Screenshots at the phone's and the desktop's size, light and dark, go to `/tmp/p3-base/shots/`
+// (`P3_SHOTS` names another directory).
 
 import assert from "node:assert/strict";
 import { cp, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
@@ -16,14 +18,18 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { BACKGROUND_CONTEXT as context, Me, until } from "@earendil-works/p3/v1";
+import { BACKGROUND_CONTEXT as context, type Host, Me, type P3Principal, People, until } from "@earendil-works/p3/v1";
 import { type TestServer, testServer } from "@earendil-works/p3/v1/testing";
+import { scriptFaux } from "../../../test/support.ts";
 import { eventually, within } from "../../../test/until.ts";
 import { ThingsStore } from "../../things/contract.server.ts";
 import { BROWSER_SKIP, Browser, DESKTOP, PHONE } from "./browser.ts";
 
 /** The checkout's built-in plugins, which the test copies and edits. */
 const BUILT_IN = fileURLToPath(new URL("../../", import.meta.url));
+
+/** The tests' faux login: a model login answering from a script (`scriptFaux`). */
+const FAUX = fileURLToPath(new URL("../../../test/plugins/faux-login/", import.meta.url));
 
 /** The tests' kinds: a note without a view, a wall whose view takes the whole page. */
 const KINDS = fileURLToPath(new URL("../../../test/plugins/page-kinds/", import.meta.url));
@@ -43,14 +49,18 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 	let pi: string;
 	/** The owner's person id. */
 	let ownerId: string;
+	/** The owner's client. */
+	let owner: Host<P3Principal>;
+	/** The session the session cases share (its id: its workspace's), made through the picker. */
+	let session: string;
 
 	before(async () => {
 		await mkdir(SHOTS, { recursive: true });
 		const dataDir = await mkdtemp(join(tmpdir(), "p3-page-"));
 		builtIn = join(dataDir, "builtin");
 		await cp(BUILT_IN, builtIn, { recursive: true, filter: (path) => basename(path) !== "test" });
-		t = await testServer({ dataDir, builtIn, plugins: [KINDS] }, context);
-		const owner = await t.client(context);
+		t = await testServer({ dataDir, builtIn, plugins: [KINDS, FAUX] }, context);
+		owner = await t.client(context);
 		const me = await until((await owner.get(Me, {}, context)).me, () => true, context);
 		if (me.kind !== "person") assert.fail(me.kind);
 		ownerId = me.id;
@@ -159,7 +169,10 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await browser.wait(
 			`[...document.querySelectorAll('[data-nav-group="here"] [data-nav-thing]')].some((e) => e.textContent === "Plans")`,
 		);
-		await press('[data-nav-group="here"] [data-nav-thing]');
+		const plansEntry = await browser.evaluate<string>(
+			`[...document.querySelectorAll('[data-nav-group="here"] [data-nav-thing]')].find((e) => e.textContent === "Plans").dataset.navThing`,
+		);
+		await press(`[data-nav-thing="${plansEntry}"]`);
 		await browser.wait(`document.querySelector('[data-settings] [data-settings-title]')?.textContent === "Plans"`);
 		await eventually(
 			() => look("everyone", "read"),
@@ -205,7 +218,10 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		);
 		await press('[data-nav-group="sessions"] [data-nav-workspace]');
 		await browser.wait(`document.querySelector('[data-settings-title]')?.textContent === "Family"`);
-		await browser.wait(`document.querySelectorAll('[data-nav-group="above"] [data-nav-thing]').length === 2`);
+		// Pi's things come down: the Sketch and Plans among them (beside what plugins seed in Pi, the session defaults).
+		await browser.wait(
+			`["Sketch", "Plans"].every((name) => [...document.querySelectorAll('[data-nav-group="above"] [data-nav-thing]')].some((e) => e.textContent.startsWith(name)))`,
+		);
 		await browser.wait(`document.querySelector('[data-nav-group="above"]')?.textContent.includes("from Pi")`);
 		await press('[data-settings-tab="what"]');
 		// Plans is hidden here by name: the rows' order is no promise.
@@ -294,6 +310,71 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await press("[data-nav-me]");
 		await browser.wait(`location.pathname === "/me" && document.querySelector("[data-me]")`);
 		await shots("13-me-desktop");
+	});
+
+	it("makes a session through the picker and opens it from the navigator in its transcript view", async () => {
+		await browser.size(DESKTOP);
+		await browser.open(`${origin}/w/${pi}/settings`);
+		await browser.wait(`document.querySelector('[data-settings="${pi}"]')`);
+		await press('[data-settings-tab="what"]');
+		await press("[data-add-thing]");
+		await browser.settled("[data-add-thing-dialog]");
+		await press('[data-add-offer="make:sessions.session"]');
+		await browser.wait(`document.querySelector("[data-new-session]")`);
+		await browser.type("[data-add-name]", "First steps");
+		await shots("14-new-session-desktop");
+		await press("[data-add-confirm-button]");
+		await browser.wait(`document.querySelector("[data-add-thing-dialog]") === null`);
+		const entry = `[...document.querySelectorAll('[data-nav-group="sessions"] [data-nav-workspace]')].find((e) => e.textContent === "First steps")`;
+		await browser.wait(`${entry} !== undefined`);
+		session = await browser.evaluate<string>(`${entry}.dataset.navWorkspace`);
+		await press(`[data-nav-workspace="${session}"]`);
+		await browser.wait(`document.querySelector('[data-session-view="${session}"] [data-transcript="writer"]')`);
+		await browser.wait(`document.querySelector("[data-crumbs]")?.textContent.includes("First steps")`);
+		await shots("15-session-desktop");
+	});
+
+	it("streams a scripted answer into the session's transcript", async () => {
+		const reply = { kind: "text" as const, text: "Hello from the faux model." };
+		await scriptFaux(t.host, session, [{ when: "hello", reply: [reply] }], context);
+		await browser.type("[data-message]", "hello there");
+		await browser.enter();
+		await browser.wait(`document.querySelector('[data-entry="user"]')?.textContent === "hello there"`);
+		await browser.wait(
+			`[...document.querySelectorAll('[data-entry="assistant"]')].some((e) => e.textContent.includes("Hello from the faux model."))`,
+		);
+		await shots("16-answer-desktop");
+		await browser.size(PHONE);
+		await browser.wait(`document.querySelector('[data-transcript="writer"]')?.offsetParent !== null`);
+		await shots("17-answer-phone");
+		await browser.size(DESKTOP);
+	});
+
+	it("shows a person with Read only the session's transcript, with no way to send", async () => {
+		// Ada is invited, put into Pi, and her Send on the session withheld: she keeps everyone's Read.
+		const { person: ada, link } = await (await owner.get(People, {}, context)).invite({ name: "Ada" }, context);
+		await t.host.root(async (ctx) => {
+			const store = await ctx.get(ThingsStore, {});
+			const party = { kind: "person", person: ada } as const;
+			const source = { kind: "person", person: ownerId } as const;
+			await store.putParty({ workspace: pi, party, source }, ctx);
+			await store.setGrants(
+				{ source, grants: [{ workspace: session, thing: session, party, tick: "send", gives: false }] },
+				ctx,
+			);
+		}, context);
+		await browser.signOut();
+		await browser.open(`${origin}${link}`);
+		await browser.wait(`document.querySelector("[data-person-menu]")?.textContent.includes("Ada")`);
+		await browser.open(`${origin}/w/${session}`);
+		await browser.wait(`document.querySelector('[data-session-view="${session}"] [data-transcript="reader"]')`);
+		await browser.wait(
+			`[...document.querySelectorAll('[data-entry="assistant"]')].some((e) => e.textContent.includes("Hello from the faux model."))`,
+		);
+		assert.equal(await browser.evaluate(`document.querySelector("[data-composer]")`), null);
+		await shots("18-reader-desktop");
+		await browser.signOut();
+		await browser.signIn(origin, await t.cookie(context));
 	});
 
 	it("keeps the open page through a reload of the chrome plugin", async () => {

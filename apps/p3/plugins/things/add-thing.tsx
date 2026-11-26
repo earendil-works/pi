@@ -32,6 +32,12 @@ import styles from "./things.module.css";
 import { useErrorText, useKinds, useMessageText, useScreenId } from "./use-page.ts";
 import { type DefaultsChoice, Linkable, Workspace } from "./workspace.ts";
 
+/** The Make tick of every kind (item 114). */
+const MAKE_ANY = "@make:*";
+
+/** The Make tick of one kind: this, then its name. */
+const MAKE_PREFIX = "@make:";
+
 /** What the picker offers: a kind to make, or an existing thing to link. */
 type Offer =
 	| { readonly kind: "make"; readonly thingKind: KindView }
@@ -171,7 +177,10 @@ function Confirm(props: {
 	});
 	const [failure, setFailure] = useState<string | undefined>(undefined);
 	const errorText = useErrorText();
+	// A Make tick (item 114) reads as what it lets do; a kind's own tick by its label.
 	const labelOf = (tick: string) => {
+		if (tick === MAKE_ANY) return t("makeAnything");
+		if (tick.startsWith(MAKE_PREFIX)) return t("makeKind", tick.slice(MAKE_PREFIX.length));
 		const found = offer.thingKind.ticks.find((each) => each.name === tick);
 		return found === undefined ? tick : text(found.label);
 	};

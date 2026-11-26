@@ -50,6 +50,8 @@ export const page = defineMessages("things.page", {
 		makeAll: "all kinds",
 		makeFor: (party: string) => `Make, for ${party}`,
 		makeAllKinds: "All kinds, also ones added later",
+		makeAnything: "make things of any kind",
+		makeKind: (kind: string) => `make a ${kind}`,
 		unknownKind: (kind: string) => `${kind} (unknown kind)`,
 		peopleOnly: "People only, the kind says so:",
 		everyoneHere: "everyone here",
