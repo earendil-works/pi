@@ -17,6 +17,49 @@ import { join, resolve } from "node:path";
 type Mutation = { readonly name: string; readonly file: string; readonly find: string; readonly put: string };
 
 const MUTATIONS: readonly Mutation[] = [
+	// ---- workspaces, round 2 ----
+	{
+		name: "a maker put in tells no held list",
+		file: "store.ts",
+		find: "\t\ttouched.members.add(partyKey(party));\n\t\ttx.put(this.#t.workspaceMembers, {",
+		put: "\t\ttx.put(this.#t.workspaceMembers, {",
+	},
+	{
+		name: "No access leaves a person present",
+		file: "rules.ts",
+		find: "\tfor (const party of out) here.delete(party);\n",
+		put: "",
+	},
+	{
+		name: "a workspace may be made under a workspace of a kind not registered",
+		file: "rules.ts",
+		find: 'if (kinds.sortOf(kind) !== "no" && kinds.sortOf(workspace) !== "plain") return false;',
+		put: 'if (kinds.sortOf(kind) !== "no" && kinds.sortOf(workspace) === "leaf") return false;',
+	},
+	{
+		name: "WhoMay's aggregate Make cell ignores the ceiling",
+		file: "lists.ts",
+		find: "if (value === undefined || !makerMay(value, maker) || !mayHoldHere(look, workspace, kinds, made)) return false;",
+		put: "",
+	},
+	{
+		name: "an unknown kind's Make tick is refused",
+		file: "store.ts",
+		find: "forWhom === undefined && !this.#unknownMake(info, own, tick)) {",
+		put: "forWhom === undefined) {",
+	},
+	{
+		name: "No access for everyone is accepted",
+		file: "store.ts",
+		find: 'if (own && tick === OPEN && gives === false && (party.kind === "everyone" || party.kind === "agents")) {',
+		put: "if (false) {",
+	},
+	{
+		name: "a presence list is asked after any write",
+		file: "access.ts",
+		find: 'const workspaces = view.probe.reads === "presence" ? touched.presence : touched.workspaces;',
+		put: "const workspaces = touched.workspaces;",
+	},
 	// ---- workspaces, round 1 ----
 	{
 		name: "setTick leaves a migrated row of another source",
@@ -76,7 +119,7 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "a leaf may hold workspaces",
 		file: "rules.ts",
-		find: '\tif (kinds.sortOf(workspace) === "leaf" && kinds.sortOf(kind) !== "no") return false;\n',
+		find: '\tif (kinds.sortOf(kind) !== "no" && kinds.sortOf(workspace) !== "plain") return false;\n',
 		put: "",
 	},
 	{
@@ -106,7 +149,7 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "the maker of a workspace is not put in (115)",
 		file: "store.ts",
-		find: "\t\t\tthis.#member(tx, thing, maker, by);\n",
+		find: "\t\t\tthis.#member(tx, touched, thing, maker, by);\n",
 		put: "",
 	},
 	{
@@ -507,7 +550,7 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "a reserved tick other than `OPEN` is written (113)",
 		file: "store.ts",
-		find: "if (gives !== undefined && tick !== OPEN && forWhom === undefined) {",
+		find: "if (gives !== undefined && tick !== OPEN && forWhom === undefined && !this.#unknownMake(info, own, tick)) {",
 		put: 'if (gives !== undefined && !tick.startsWith("@") && forWhom === undefined) {',
 	},
 	{
@@ -597,8 +640,8 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "a withheld row of a tick the kind lacks is written",
 		file: "store.ts",
-		find: "if (gives !== undefined && tick !== OPEN && forWhom === undefined) {",
-		put: "if (gives === true && tick !== OPEN && forWhom === undefined) {",
+		find: "if (gives !== undefined && tick !== OPEN && forWhom === undefined && !this.#unknownMake(info, own, tick)) {",
+		put: "if (gives === true && tick !== OPEN && forWhom === undefined && !this.#unknownMake(info, own, tick)) {",
 	},
 	// ---- the lifecycle ----
 	{
