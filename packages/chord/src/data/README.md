@@ -46,7 +46,8 @@ try {
   args, `jobs/`).
 - `principalKey(principal, context, customKey?)`, `canonicalJson(value, context)`; `canonicalText(value)`: the same text
   for a caller that counted its walk; `samePlainJson(a, b, skip?)`: whether `b` is the plain JSON `a` is (`equal`,
-  `different`, or `odd` for a value that is no plain JSON within small bounds), without text; `isPlainJson(value)`.
+  `different`, or `odd` for a value that is no plain JSON within small bounds), without text; `copyPlainJson(value)`:
+  Chord's own copy of plain JSON (`undefined` for any other value).
 - `isMessageData(value, context)`: whether plugin code handed a message as data (`MessageSchema`, compiled once).
 - `invalid`, `asChordError`, `chordErrorFromJson`, `PROTOCOL_VERSION`, `CHORD_ERROR_REASONS`;
   `openFailure(thrown, label)`.

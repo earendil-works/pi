@@ -161,7 +161,7 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 	#releases: readonly (() => void)[] = NO_ITEMS;
 	/** The watchable `admit` returned, as Chord follows it. */
 	#source: DeriveSource | undefined;
-	/** The last allow or denial it read, with what it was read from: an equal one is the same object. */
+	/** The last allow or denial it read, with what it keeps to compare the next read with (Chord's own, `Decided`). */
 	#decided: Decided | undefined;
 	/** Whether a change of its source waits for the current batch's flush: one check per batch. */
 	#flushing = false;
