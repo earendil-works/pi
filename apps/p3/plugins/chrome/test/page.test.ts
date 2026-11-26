@@ -3,7 +3,7 @@
 // session made through the form appears in the list and opens in the transcript, which streams a scripted answer; a
 // phone shows one screen at a time; a reload of the chrome plugin keeps the open page, as does an apply whose web
 // contracts are newer than the page's base; an app without the bar gets a corner button, an app that throws shows its
-// error below the bar, and one asking for a view the base lacks renders, reported once; a person invited from the
+// error below the bar, and one asking for a component the base lacks renders, reported once; a person invited from the
 // person menu and added to the session enters Coding and works in it, brings her own notebook and writes in it as a
 // pane (the owner sees it as hers, sets its options in the page: everyone reads only, the agent writes; the agent's
 // scripted note appears, her view turns read only) and withdraws it, sees the session refused once removed from it, and
@@ -383,7 +383,7 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 	});
 
 	it("applies a plugin whose web contract is newer than the page's base, without an error", async () => {
-		// The deployment's bug (2026-11-23): an apply brought a new view token in the sessions plugin's web contract; the
+		// The deployment's bug (2026-11-23): an apply brought a new component token in the sessions plugin's web contract; the
 		// coding app took it from `/v1/web`, which is the page's base, built at the server's start: `undefined` there,
 		// and the coding page stopped with an error. Here a new view and its use are applied over the running page.
 		await browser.open(`${origin}/coding/${session}`);
@@ -396,14 +396,14 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await edit(
 			"sessions/contract.web.tsx",
 			(source) =>
-				`${source}\n/** A view new since the page's base, for the test. */\nexport const ProbeView = defineView<Record<string, never>>("sessions.probe");\n`,
+				`${source}\n/** A view new since the page's base, for the test. */\nexport const ProbeView = defineComponent<Record<string, never>>("sessions.probe");\n`,
 		);
 		await edit("sessions/web.tsx", (source) =>
 			source
 				.replace("	MyThingsView,\n", "	MyThingsView,\n	ProbeView,\n")
 				.replace(
-					"		viewOf(MyThingsView, MyThingsList),",
-					'		viewOf(MyThingsView, MyThingsList),\n		viewOf(ProbeView, () => <p data-probe="">probe</p>),',
+					"		componentOf(MyThingsView, MyThingsList),",
+					'		componentOf(MyThingsView, MyThingsList),\n		componentOf(ProbeView, () => <p data-probe="">probe</p>),',
 				),
 		);
 		await edit("coding/open-session.tsx", (source) =>
@@ -414,8 +414,8 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 					'from "../sessions/contract.web.tsx";\nimport { ProbeView } from "../sessions/contract.web.tsx";',
 				)
 				.replace(
-					"	const Layout = useView(PaneLayoutView);",
-					"	const Layout = useView(PaneLayoutView);\n	const Probe = useView(ProbeView);",
+					"	const Layout = useComponent(PaneLayoutView);",
+					"	const Layout = useComponent(PaneLayoutView);\n	const Probe = useComponent(ProbeView);",
 				)
 				.replace(
 					"<div className={styles.panes}>",
@@ -458,17 +458,17 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await browser.wait(`location.pathname === "/coding" && document.querySelector("[data-session-list]")`);
 	});
 
-	it("renders an app that asks for a view the page's base lacks, reporting it once instead of failing", async () => {
-		// A plugin built against a newer API than the page's base: a view token the base does not have is `undefined`
-		// here (`useView` of `undefined` stands for it).
+	it("renders an app that asks for a component the page's base lacks, reporting it once instead of failing", async () => {
+		// A plugin built against a newer API than the page's base: a component token the base does not have is `undefined`
+		// here (`useComponent` of `undefined` stands for it).
 		await writeFile(join(t.userRoot, "skew.server.ts"), appServer("skew", "Skew", "bar"));
 		await writeFile(
 			join(t.userRoot, "skew.web.tsx"),
 			[
 				'import { defineFacet } from "@earendil-works/p3/v1";',
-				'import { AppPages, useView, type ViewToken } from "@earendil-works/p3/v1/web";',
+				'import { AppPages, useComponent, type ComponentToken } from "@earendil-works/p3/v1/web";',
 				"function Page() {",
-				"	const Missing = useView(undefined as unknown as ViewToken<Record<string, never>>);",
+				"	const Missing = useComponent(undefined as unknown as ComponentToken<Record<string, never>>);",
 				'	return <main><p data-skew="">Still here</p>{Missing === undefined ? <p data-skew-missing="">No view</p> : <Missing />}</main>;',
 				"}",
 				'export default defineFacet((_host, self) => self.contribute(AppPages, { app: "skew", Page }));',
@@ -476,7 +476,7 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		);
 		await until(t.plugins, (state) => state.set, within("the new plugin seen", context, 10_000));
 		await t.apply(context);
-		const reported = () => browser.console.filter((line) => line.includes(MISSING_VIEW)).length;
+		const reported = () => browser.console.filter((line) => line.includes(MISSING_COMPONENT)).length;
 		const before = reported();
 		await browser.open(`${origin}/skew`);
 		await browser.wait(`document.querySelector("[data-skew]")?.textContent === "Still here"`);
@@ -944,16 +944,16 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 
 	it("leaves nothing reported on the server, and no error in the page but the broken app's", () => {
 		assert.deepEqual(t.errors, []);
-		// The broken app's error, and the one report of a view the base lacks (the skew app's): nothing else.
+		// The broken app's error, and the one report of a component the base lacks (the skew app's): nothing else.
 		assert.deepEqual(
-			browser.console.filter((line) => !line.includes("the page broke") && !line.includes(MISSING_VIEW)),
+			browser.console.filter((line) => !line.includes("the page broke") && !line.includes(MISSING_COMPONENT)),
 			[],
 		);
 	});
 });
 
-/** What `useView` reports for a view token the page's base does not have. */
-const MISSING_VIEW = "a view this page's base does not have";
+/** What `useComponent` reports for a component token the page's base does not have. */
+const MISSING_COMPONENT = "a component this page's base does not have";
 
 /** A single-file plugin's server facet saying app `id` exists, with `chrome`. */
 function appServer(id: string, title: string, chrome: "bar" | "button"): string {

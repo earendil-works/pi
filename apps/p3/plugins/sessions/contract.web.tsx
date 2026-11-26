@@ -3,7 +3,7 @@
 // renders the right one, so an app never knows kinds). `/v1/web` re-exports it.
 
 import { defineRegistry, type JsonValue, type OptionsFor, type TableItem, type ThingUse } from "@earendil-works/p3/v1";
-import { defineView, useRegistry } from "@earendil-works/p3/v1/web";
+import { defineComponent, useRegistry } from "@earendil-works/p3/v1/web";
 import type { ComponentType, ReactNode } from "react";
 
 /** One thing of a session, as its view gets it. */
@@ -57,14 +57,14 @@ export function ThingView(props: ThingViewProps & { readonly kind: string; reado
 }
 
 /** An app's sessions as a list the caller may open (`onOpen`), active or archived. */
-export const SessionListView = defineView<{
+export const SessionListView = defineComponent<{
 	readonly app: string;
 	readonly selected?: string;
 	readonly onOpen: (session: string) => void;
 }>("sessions.list");
 
 /** A form that makes a session of `app` (the owner's: title and location) with `things`; `onCreated` gets its id. */
-export const NewSessionView = defineView<{
+export const NewSessionView = defineComponent<{
 	readonly app: string;
 	readonly things?: readonly ThingUse[];
 	readonly onCreated: (session: string) => void;
@@ -75,7 +75,7 @@ export const NewSessionView = defineView<{
  * thing whose kind has a view offers "Open", which hands its id to the app (to show it where the app shows things);
  * the dialog never shows a thing's view itself.
  */
-export const SessionThingsView = defineView<{
+export const SessionThingsView = defineComponent<{
 	readonly session: string;
 	readonly onOpen?: (thing: string) => void;
 }>("sessions.things");
@@ -85,10 +85,10 @@ export const SessionThingsView = defineView<{
  * `creation: "person"` kind (its kind's creation view in the dialog), "in all my sessions", rename, give away,
  * delete, and where each is used.
  */
-export const MyThingsView = defineView<Record<string, never>>("sessions.my-things");
+export const MyThingsView = defineComponent<Record<string, never>>("sessions.my-things");
 
 /**
  * Who is in a session (persons and groups, reading or writing), opened on demand ("Share"): everyone with access sees
  * it; the owner adds and removes members there.
  */
-export const SessionMembersView = defineView<{ readonly session: string }>("sessions.members");
+export const SessionMembersView = defineComponent<{ readonly session: string }>("sessions.members");

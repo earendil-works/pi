@@ -215,8 +215,8 @@ reported `working` before Durable accepts an input, so a crash in between leaves
   below the bar; the bar stays.
 - **Routing:** `/<app>/<rest>`; the chrome owns the first segment, the app gets `useRoute()` and `navigate()` for the
   rest.
-- **Views** are typed tokens: `defineView<Props>(name)` in a contract file, one `Views` contribution per view,
-  `useView(Token)` returns its component. The base's: `SessionListView`, `NewSessionView`, `TranscriptView`,
+- **Components** are typed tokens (decision 72; were views): `defineComponent<Props>(name)` in a contract file, one
+  `Components` contribution per component, `useComponent(Token)` returns it. The base's: `SessionListView`, `NewSessionView`, `TranscriptView`,
   `SessionThingsView` (what a session has, opened on demand, never an always-shown strip: new content, add one of
   mine, keep, options, whom it follows), `MyThingsView` (what a person manages outside sessions: new, "in all my
   sessions", rename, give away, delete, where it is used).

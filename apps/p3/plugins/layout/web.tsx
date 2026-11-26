@@ -2,8 +2,8 @@
 // the layout in place; the tree it shows is the app's.
 
 import { defineFacet } from "@earendil-works/p3/v1";
-import { Views, viewOf } from "@earendil-works/p3/v1/web";
+import { Components, componentOf } from "@earendil-works/p3/v1/web";
 import { PaneLayoutView } from "./contract.web.tsx";
 import { PaneLayout } from "./pane-layout.tsx";
 
-export default defineFacet((_host, self) => self.contribute(Views, [viewOf(PaneLayoutView, PaneLayout)]));
+export default defineFacet((_host, self) => self.contribute(Components, [componentOf(PaneLayoutView, PaneLayout)]));

@@ -15,11 +15,11 @@ import {
 	navigate,
 	PersonAddIcon,
 	redirect,
+	useComponent,
 	useHold,
 	useLive,
 	usePageState,
 	useRegistry,
-	useView,
 	useWatch,
 } from "@earendil-works/p3/v1/web";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
@@ -59,14 +59,14 @@ function SessionPanes(props: {
 	readonly person: string;
 }) {
 	const { app, session } = props;
-	const Transcript = useView(TranscriptView);
-	const Layout = useView(PaneLayoutView);
+	const Transcript = useComponent(TranscriptView);
+	const Layout = useComponent(PaneLayoutView);
 	const info = useLive(useHold(SessionInfo, { session }));
 	const row = useWatch(info?.session);
 	const things = useWatch(info?.things);
 	const [tree, setTree] = useLayout(session, props.person);
-	const SessionThings = useView(SessionThingsView);
-	const SessionMembers = useView(SessionMembersView);
+	const SessionThings = useComponent(SessionThingsView);
+	const SessionMembers = useComponent(SessionMembersView);
 	const views = useRegistry(ThingViews);
 	// Which of the session's dialogs is open: its sheet, or its members ("Share").
 	const [opened, setOpened] = useState<"things" | "members" | undefined>(undefined);

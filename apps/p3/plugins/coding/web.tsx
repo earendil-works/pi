@@ -9,11 +9,11 @@ import {
 	AddIcon,
 	ArrowBackIcon,
 	navigate,
+	useComponent,
 	useHold,
 	useLive,
 	usePageState,
 	useRoute,
-	useView,
 	useWatch,
 } from "@earendil-works/p3/v1/web";
 // Other plugins' web contracts by path, never through `/v1/web`: a plugin applied to a running server meets the base
@@ -34,7 +34,7 @@ function CodingPage() {
 	const session = route.rest[0];
 	// Page state: a reload of this plugin keeps the form open.
 	const [creating, setCreating] = usePageState("coding.creating", false);
-	const SessionList = useView(SessionListView);
+	const SessionList = useComponent(SessionListView);
 	// Only the owner makes sessions through the base; a person works in the ones they are a member of.
 	const me = useWatch(useLive(useHold(Me, {}))?.me);
 	const owner = me?.kind === "person" && me.owner;
@@ -79,7 +79,7 @@ function CodingPage() {
 
 /** The new session form, with a back button; a made session opens. */
 function Creating(props: { readonly onBack: () => void }) {
-	const NewSession = useView(NewSessionView);
+	const NewSession = useComponent(NewSessionView);
 	return (
 		<div className={styles.scroll}>
 			<div className={styles.form}>
