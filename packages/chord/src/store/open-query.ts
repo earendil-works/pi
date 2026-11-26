@@ -8,7 +8,7 @@
 import type { Context } from "../context/index.ts";
 import type { Batch } from "../state/internal.ts";
 import type { Query } from "./query.ts";
-import { Read, type ReadKind, type ReadRun, type ReadSink } from "./read.ts";
+import { Read, type ReadKind, type ReadRun, type ReadSink, type RunSink } from "./read.ts";
 import { type Projection, type Range, ReadPlan, type ShapeSlot, type StoredRead } from "./read-plan.ts";
 import { setsOf } from "./reads.ts";
 import type { ChordStore } from "./store.ts";
@@ -150,7 +150,7 @@ export class OpenQuery {
 }
 
 /** One read of an open query: registered with the store while the query compiles. */
-export class OpenRead {
+export class OpenRead implements RunSink {
 	readonly what: ReadKind;
 	readonly #query: OpenQuery;
 	readonly #sink: ReadSink;
@@ -191,15 +191,15 @@ export class OpenRead {
 		if (this.#closed) return;
 		const registration = ++this.#registration;
 		if (compiled.kind === "failed") return;
-		const adopting: ReadSink = {
-			adopt: (run) => {
-				if (registration !== this.#registration) return;
-				this.#generation++;
-				this.#sink.adopt(run);
-			},
-		};
-		this.#read = new Read(compiled.plan, this.what, adopting);
+		this.#read = new Read(compiled.plan, this.what, this, registration);
 		reads.add(this.#read);
+	}
+
+	/** A run of one of its reads, inside a batch: handed to its sink unless an earlier registration made it. */
+	adopt(run: ReadRun, read: Read): void {
+		if (read.registration !== this.#registration) return;
+		this.#generation++;
+		this.#sink.adopt(run);
 	}
 
 	/**

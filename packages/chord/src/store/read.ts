@@ -51,6 +51,12 @@ export type ReadExecutor = Pick<SqliteExecutor, "all" | "get">;
 /** Who takes a read's runs: called inside the batch of the commit that ran it. */
 export type ReadSink = { adopt(run: ReadRun): void };
 
+/**
+ * Who takes a registered read's runs: its open read, told which read ran (a run of an earlier registration is
+ * dropped by it). One object for all its registrations, not a closure per registration (136 B).
+ */
+export type RunSink = { adopt(run: ReadRun, read: Read): void };
+
 /** Who is told when the keys a read keeps change: the commit index it is filed in (slice 15 §3). */
 export type KeptKeysWatcher = { kept(read: Read): void };
 
@@ -64,7 +70,9 @@ export type ReadKind = { readonly kind: "rows"; readonly range: Range } | { read
 export class Read {
 	readonly plan: ReadPlan;
 	readonly what: ReadKind;
-	readonly sink: ReadSink;
+	readonly sink: RunSink;
+	/** Which registration of its open read it is. */
+	readonly registration: number;
 	/** What it keeps of its last adopted run; `undefined` while loading or failed: such a read is never skipped. */
 	#adopted: Kept | undefined;
 	/** A step's run not adopted yet, with the backend transaction it ran in (a rolled-back group's is stale). */
@@ -72,10 +80,11 @@ export class Read {
 	/** The commit index that files it by its kept keys, if one does. */
 	#watcher: KeptKeysWatcher | undefined;
 
-	constructor(plan: ReadPlan, what: ReadKind, sink: ReadSink) {
+	constructor(plan: ReadPlan, what: ReadKind, sink: RunSink, registration: number) {
 		this.plan = plan;
 		this.what = what;
 		this.sink = sink;
+		this.registration = registration;
 	}
 
 	/**
@@ -158,7 +167,7 @@ export class Read {
 		if (this.#tentative?.run === run) this.#tentative = undefined;
 		this.#adopted = keptOf(run);
 		this.#watcher?.kept(this);
-		this.sink.adopt(run);
+		this.sink.adopt(run, this);
 	}
 
 	/** The range its probe asks about: the read's own, ending at the row past its limit when there is one. */
