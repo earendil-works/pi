@@ -8,6 +8,7 @@ import { applyImmutable } from "../../src/delta/index.ts";
 import type { JsonValue } from "../../src/json.ts";
 import { Batch, Derive, type FramedOwner, FramedSource, type Subscriber } from "../../src/state/internal.ts";
 import type { WatchCall } from "../../src/watch.ts";
+import { expectCollected } from "../support.ts";
 
 /** A framed source a test feeds, counting its deliveries. */
 class Fed extends FramedSource {
@@ -191,5 +192,46 @@ describe("a framed source failing and recovering in one batch", () => {
 		expect(calls).toEqual([]);
 		expect(errors).toEqual([]);
 		expect(source.detached).toBe(true);
+	});
+});
+
+describe("sources handed the same values (a shared read's subscribers)", () => {
+	it("diff them once: their frames carry the same ops", () => {
+		const a = fed({ rows: [1, 2] });
+		const batch = a.batch;
+		const owner: FramedOwner = { label: "b", report: () => {} };
+		const b = new Fed(batch, owner);
+		const value = a.source.value;
+		batch.commit(() => b.put(value), context);
+		const ops: (readonly unknown[])[] = [];
+		const subscriber = (into: (readonly unknown[])[]): Subscriber => ({
+			advance: (call) => void (call.kind === "value" && into.push(call.ops)),
+			end: () => {},
+			endAfterDelivery: () => {},
+		});
+		a.source.subscribe(subscriber(ops));
+		b.subscribe(subscriber(ops));
+		const next = { rows: [0, 1, 2] };
+		batch.commit(() => {
+			a.source.put(next);
+			b.put(next);
+		}, context);
+		expect(ops).toHaveLength(2);
+		expect(ops[0]).toBe(ops[1]);
+	});
+
+	it("keep no later value alive through an earlier one somebody holds: the diffs go with the commit (round 1)", async () => {
+		// Opus M3, Astra 3: a cache by the earlier value kept the next value, whose entry kept the one after.
+		const { source, batch } = fed();
+		batch.commit(() => source.put({ step: 0 }), context);
+		// Watched (its frames are diffed) by a subscriber that keeps nothing.
+		source.subscribe({ advance: () => {}, end: () => {}, endAfterDelivery: () => {} });
+		const held = source.value;
+		batch.commit(() => source.put({ step: 1 }), context);
+		const later = new WeakRef(source.value as object);
+		for (let step = 2; step < 10; step++) batch.commit(() => source.put({ step }), context);
+		await expectCollected(later);
+		expect(held).toEqual({ step: 0 });
+		expect(batch.diffs.size).toBe(0);
 	});
 });

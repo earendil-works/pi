@@ -341,7 +341,7 @@ const OWNER = {};
 export async function openRead(w: World, shape: Shape, context: Context): Promise<World["reads"][number]> {
 	const { name, query: q, table, what } = shape;
 	const spec = { query: q, table: w.handles[table.name]!.sql.table, projection: {}, owner: OWNER };
-	const opened = new OpenQuery({ store: w.store, batch: w.batch }, spec, what.kind, () => {}, context);
+	const opened = new OpenQuery({ store: w.store, batch: w.batch }, spec, what.kind, { rebound: () => {} }, context);
 	const entry: { latest: ReadRun | undefined } = { latest: undefined };
 	const adopt = (run: ReadRun): void => {
 		entry.latest = run;
@@ -350,7 +350,7 @@ export async function openRead(w: World, shape: Shape, context: Context): Promis
 	// The sink writes through `entry`: the listed object is that one.
 	const read = Object.assign(entry, { name, query: opened, open });
 	w.reads.push(read);
-	await open.load();
+	await open.load(context);
 	return read;
 }
 
