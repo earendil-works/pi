@@ -221,6 +221,51 @@ describe("derived types", () => {
 });
 
 // Found by the review of the hot-path pass (2026-11-26): grantIndexes handed every bind of a set one shared list.
+// The owner's rule for caches (2026-11-26): a clear eviction rule, no ever-growing host memory.
+describe("granted members of combinations nothing grants any more", () => {
+	it("are collected with their order and their entry while the version lives; granted again, they work", async () => {
+		const Many = remote("gc.many-grants", {
+			version: 1,
+			params: {},
+			hostAddress: () => Server(),
+			state: { n: int() },
+			methods: { a: grantable(method()), b: grantable(method()), c: grantable(method()), d: grantable(method()) },
+		});
+		const version = currentVersion(Many);
+		const names = ["a", "b", "c", "d"];
+		const entries: WeakRef<object>[] = [];
+		const set = Map.prototype.set;
+		// Watches the insertions into the version's table by names only: it keeps neither the table nor its entries.
+		Map.prototype.set = function (this: Map<unknown, unknown>, key: unknown, value: unknown) {
+			if (typeof key === "string" && key.startsWith("[") && value instanceof WeakRef)
+				entries.push(new WeakRef(value));
+			return set.call(this, key, value);
+		};
+		let made: WeakRef<object>[];
+		try {
+			made = (() => {
+				const refs: WeakRef<object>[] = [];
+				for (let mask = 1; mask < 16; mask++) {
+					const granted = new Set(names.filter((_, index) => (mask & (1 << index)) !== 0));
+					const members = grantedMembers(version, granted);
+					refs.push(new WeakRef(members), new WeakRef(memberOrder(members)));
+				}
+				return refs;
+			})();
+		} finally {
+			Map.prototype.set = set;
+		}
+		expect(entries).toHaveLength(15);
+		await expectCollected(...made, ...entries);
+		const again = grantedMembers(version, new Set(["b", "d"]));
+		expect([[...again.methods.keys()], memberOrder(again).methods]).toEqual([
+			["b", "d"],
+			["b", "d"],
+		]);
+		expect(grantedMembers(version, new Set(["d", "b"]))).toBe(again);
+	});
+});
+
 describe("granted indexes in bound messages", () => {
 	it("a codec that clears the lists it sent does not change what later binds grant", async () => {
 		const Thing = remote("codec.granted", {
