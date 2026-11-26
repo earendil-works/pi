@@ -59,9 +59,12 @@ tool: never compare the two.
   after a start include it, the warm starts and the apply with workers running do not. A package with large facets says
   what it adds to the start, on the phone too. The old base's `NODE_DEBUG=p3` (what a start spends building) does
   not exist in the skeleton: the new base never had it.
-- **The server holds every pi-ai provider** (the providers plugin's `builtinProviders`, to offer every sign-in): about
-  14 MiB of the server's memory (slayer, Node 26, pi-ai's dist, 2026-11-26). A later improvement: offer the choices
-  from a list of names and load a provider when a person signs in to it or a login of it authorizes.
+- **The server holds every pi-ai provider** (the providers plugin's `builtinProviders`, to offer every sign-in): the
+  settled server went from 66 to 84 to 86 MiB USS with the providers plugin (`bench/skeleton.ts --release`, slayer,
+  Node 26.11.1, 2026-11-26, two alternating runs of each; the things plugin's store is in it too), the launch about
+  25 ms slower; an idle worker 17.7 to 18.0 MiB (nothing of a provider loads before a login's first request). A later
+  improvement: offer the choices from a list of names and load a provider when a person signs in to it or a login of
+  it authorizes.
 - **Many workers at once:** the waker starts the worker of every `working` session together after a restart, and
   nothing caps live workers. On Android that meets the 32-child-process limit unless it is lifted (`testing.md`,
   Android).

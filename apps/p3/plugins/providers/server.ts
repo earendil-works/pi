@@ -8,43 +8,30 @@ import {
 	defineFacet,
 	invalid,
 	type JsonValue,
-	keyedEntries,
 	type P3Principal,
 	type RegistryValue,
 	type Self,
-	type TableItem,
 	type Watchable,
 } from "@earendil-works/p3/v1";
-import { type Api, builtinProviders, type Model, type Provider } from "@earendil-works/p3/v1/server";
+import { builtinProviders } from "@earendil-works/p3/v1/server";
 import { serveThing } from "../things/serve.ts";
 import { type LoginRow, LoginStore } from "./contract.server.ts";
 import { type LoginInfo, LoginKind } from "./contract.ts";
-import { LoginProviders } from "./login-providers.ts";
+import { LoginProviders, type ProviderMap, serveLoginProviders } from "./login-providers.ts";
 import { ownerOf } from "./logins.ts";
-import { serveSignIn } from "./sign-in.ts";
+import { SignIns, serveSignIn } from "./sign-in.ts";
 import { serveStore } from "./store.ts";
 
-/** The providers people may sign in to, by id. */
-type Providers = ReadonlyMap<string, TableItem<Provider>>;
-
 export default defineFacet((host, self) => {
-	host.serve(LoginProviders, {
-		compose: (table, { report }) =>
-			keyedEntries(
-				table,
-				(offered) => Object.fromEntries(offered.map((provider) => [provider.id, provider])),
-				report,
-			),
-	});
+	serveLoginProviders(host);
 	self.contribute(LoginProviders, builtinProviders());
 	serveStore(host);
 	serveSignIn(host);
 	serveThing(host, LoginKind, {
 		create: async (thing, input, by, ctx) => {
-			const store = await ctx.get(LoginStore, {});
-			// Only its maker's own sign-in: a person's id from their page, the server's for its own logins.
-			const claimed = await store.claim({ owner: ownerOf(by), signIn: signInOf(input) }, ctx);
-			await store.save({ thing, ...claimed }, ctx);
+			// Only its maker's own finished sign-in: a person's from their page, the server's for its own logins.
+			const flows = await ctx.get(SignIns, { owner: ownerOf(by) });
+			await flows.adopt({ attempt: attemptOf(input), thing }, ctx);
 		},
 		delete: async (thing, ctx) => {
 			await (await ctx.get(LoginStore, {})).remove({ thing }, ctx);
@@ -57,37 +44,37 @@ export default defineFacet((host, self) => {
 				login: loginOf(row, providers, self),
 				// pi-ai's definitions are plain data: its catalogs are JSON.
 				catalog: () =>
-					self.derive(
-						[row, providers],
-						([{ rows }, offered]) => modelsOf(rows[0], offered) as unknown as JsonValue[],
-					),
+					self.derive([row, providers], ([{ rows }, offered]) => {
+						const found = rows[0];
+						return found?.status === "signedIn" ? (modelsOf(found, offered) as unknown as JsonValue[]) : [];
+					}),
 				authorize: (_args: Record<never, never>, ctx: Ctx<P3Principal>) => store.authorize({ thing }, ctx),
 			};
 		},
 	});
 });
 
-/** The sign-in id of a create step's input: wire input from the person's page, checked here. */
-function signInOf(input: unknown): string {
-	const signIn = typeof input === "object" && input !== null ? (input as { signIn?: unknown }).signIn : undefined;
-	if (typeof signIn !== "string") throw invalid("args", "providers: a login needs a finished sign-in");
-	return signIn;
+/** The attempt id of a create step's input: wire input from the person's page, checked here. */
+function attemptOf(input: unknown): string {
+	const attempt = typeof input === "object" && input !== null ? (input as { attempt?: unknown }).attempt : undefined;
+	if (typeof attempt !== "string") throw invalid("args", "providers: a login needs a finished sign-in");
+	return attempt;
 }
 
-/** A login as everyone admitted sees it, live: its row, and its provider's name and models. */
+/** A login as everyone admitted sees it, live: its row, and its provider's name and its account's models. */
 function loginOf(
 	row: Watchable<{ rows: LoginRow[] }>,
-	providers: RegistryValue<Providers>,
+	providers: RegistryValue<ProviderMap>,
 	self: Self<P3Principal>,
-): Watchable<LoginInfo> {
-	return self.derive([row, providers], ([{ rows }, offered]): LoginInfo => {
+): Watchable<LoginInfo | null> {
+	return self.derive([row, providers], ([{ rows }, offered]): LoginInfo | null => {
 		const found = rows[0];
-		const provider = found === undefined ? undefined : offered.get(found.provider)?.value;
+		if (found === undefined) return null;
 		return {
-			provider: found?.provider ?? "",
-			providerName: provider?.name ?? found?.provider ?? "",
-			method: found?.method ?? "api_key",
-			status: found?.status ?? "signInAgain",
+			provider: found.provider,
+			providerName: offered.get(found.provider)?.value.name ?? found.provider,
+			method: found.method,
+			status: found.status,
 			models: modelsOf(found, offered).map(({ id, name, reasoning, contextWindow }) => ({
 				id,
 				name,
@@ -98,7 +85,9 @@ function loginOf(
 	});
 }
 
-/** The chat models of login `row`'s provider (none while no plugin offers it). */
-function modelsOf(row: LoginRow | undefined, offered: Providers): readonly Model<Api>[] {
-	return row === undefined ? [] : (offered.get(row.provider)?.value.getModels() ?? []);
+/** The chat models of login `row`'s account at its provider (none while no plugin offers the provider). */
+function modelsOf(row: LoginRow, offered: ProviderMap) {
+	const all = offered.get(row.provider)?.value.getModels() ?? [];
+	const { models } = row;
+	return models === null ? all : all.filter(({ id }) => models.includes(id));
 }

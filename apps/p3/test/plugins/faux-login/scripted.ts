@@ -10,8 +10,7 @@ import {
 	type Message,
 	type Provider,
 } from "@earendil-works/p3/v1/worker";
-import { fauxAuth } from "./auth.ts";
-import { FAUX_MODEL, FAUX_NAME, FAUX_PROVIDER, type FauxRequest, type Step } from "./contract.ts";
+import { FAUX_MODEL, FAUX_PROVIDER, type FauxRequest, type Step } from "./contract.ts";
 
 /** The faux provider; each request it answers is told to `recorded`. */
 export function scriptedProvider(recorded: (request: FauxRequest) => void): Provider {
@@ -33,7 +32,8 @@ export function scriptedProvider(recorded: (request: FauxRequest) => void): Prov
 		});
 	};
 	faux.setResponses([answer]);
-	return { ...faux.provider, name: FAUX_NAME, auth: fauxAuth() };
+	// The worker's requests take their auth from the login on the server: the provider's own is never asked.
+	return faux.provider;
 }
 
 /** The script of a request's API key (a faux login's credential); none or a broken one answers nothing. */

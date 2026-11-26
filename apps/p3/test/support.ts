@@ -23,9 +23,7 @@ import {
 	Transcript,
 	until,
 } from "@earendil-works/p3/v1";
-import { LoginKind } from "../plugins/providers/contract.ts";
-import { makeLogin, setCredential } from "../plugins/providers/logins.ts";
-import { ThingsStore } from "../plugins/things/contract.server.ts";
+import { ensureLogin, setCredential } from "../plugins/providers/logins.ts";
 import { assertGranted } from "./granted.ts";
 import { FAUX_PROVIDER, keyOf, type Step } from "./plugins/faux-login/contract.ts";
 
@@ -49,26 +47,14 @@ export async function scriptFaux(
 	script: readonly Step[],
 	context: Context,
 ): Promise<string> {
+	const credential = { type: "api_key", key: keyOf(script) };
+	const by = { kind: "plugin", plugin: "p3-test-faux-login" } as const;
 	return server.root(async (ctx) => {
-		const credential = { type: "api_key", key: keyOf(script) };
-		const login = { provider: FAUX_PROVIDER, method: "api_key", credential } as const;
-		const things = await ctx.get(ThingsStore, {});
-		for (const { thing, of } of (await things.links.here.page({ workspace }, 100, ctx)).items) {
-			if (of !== LoginKind.name) continue;
-			const [row] = (await things.things.one.page({ thing }, 1, ctx)).items;
-			if (row?.name !== FAUX_LOGIN) continue;
-			await setCredential(thing, login, ctx);
-			return thing;
-		}
-		return makeLogin(
-			{ ...login, name: FAUX_LOGIN, workspace, by: { kind: "plugin", plugin: "p3-test-faux-login" } },
-			ctx,
-		);
+		const thing = await ensureLogin({ name: "Faux", workspace, by, provider: FAUX_PROVIDER, credential }, ctx);
+		await setCredential(thing, { provider: FAUX_PROVIDER, credential }, ctx);
+		return thing;
 	}, context);
 }
-
-/** The name of a workspace's faux login. */
-const FAUX_LOGIN = "Faux";
 
 /**
  * A coding session titled `title` in `folder`, made by the owner of `client` (so it follows them: the Pi's coding

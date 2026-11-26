@@ -3,7 +3,6 @@
 // object, and a new one runs on the new; nothing is reported.
 
 import assert from "node:assert/strict";
-import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import {
 	BACKGROUND_CONTEXT as context,
@@ -18,9 +17,10 @@ import { FAUX_PROVIDER, keyOf, type Step } from "../../../test/plugins/faux-logi
 import { within } from "../../../test/until.ts";
 import { ThingsStore } from "../../things/contract.server.ts";
 import type { Source } from "../../things/contract.ts";
+import { type World, world } from "../../things/test/world.ts";
 import { Login, SignIn } from "../contract.ts";
 import { makeLogin } from "../logins.ts";
-import { type World, world } from "./world.ts";
+import { PROVIDERS, providerFacets } from "./hosts.ts";
 
 /** Who sets things up. */
 const BY: Source = { kind: "plugin", plugin: "test" };
@@ -57,7 +57,7 @@ let workspace: string;
 
 beforeEach(async () => {
 	waiting.ended = 0;
-	w = await world(new DatabaseSync(":memory:"), context, [{ name: "waiting", facet: waitingStub }]);
+	w = await world(context, [...providerFacets(new Set(["person:ann"])), { name: "waiting", facet: waitingStub }]);
 	things = await w.host.get(ThingsStore, {}, context);
 	const pi = (await things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
 	workspace = await things.createWorkspace({ kind: "things.workspace", name: "s1", parent: pi, by: BY }, context);
@@ -72,8 +72,7 @@ describe("a reload of the providers plugin while it is used", () => {
 		const ann: P3Principal = { kind: "person", id: "ann", name: "Ann" };
 		const credential = { type: "api_key", key: keyOf(SCRIPT) };
 		const thing = await w.host.root(
-			(ctx) =>
-				makeLogin({ name: "Faux", workspace, by: BY, provider: FAUX_PROVIDER, method: "api_key", credential }, ctx),
+			(ctx) => makeLogin({ name: "Faux", workspace, by: BY, provider: FAUX_PROVIDER, credential }, ctx),
 			context,
 		);
 		await w.host.root(
@@ -85,7 +84,7 @@ describe("a reload of the providers plugin while it is used", () => {
 					async (agentCtx) => {
 						const login = await agentCtx.get(Login, { workspace, thing });
 						assert.equal((await login.authorize!({}, agentCtx)).auth.apiKey, credential.key);
-						await w.reload(context);
+						await w.reload(PROVIDERS, context);
 						await until(
 							login.state,
 							(state) => state.kind === "live",
@@ -105,7 +104,7 @@ describe("a reload of the providers plugin while it is used", () => {
 					within("the new sign-in", ctx),
 				);
 				assert.ok(asked?.status === "working" && asked.prompt !== null);
-				await flow.answer({ attempt: next, prompt: asked.prompt.id, value: credential.key }, ctx);
+				await flow.answer({ prompt: asked.prompt.id, value: credential.key }, ctx);
 				await until(flow.attempt, (now) => now?.status === "done", within("its end", ctx));
 			},
 			context,

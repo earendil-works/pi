@@ -5,6 +5,7 @@
 // outside v1's promise: a plugin gives the agent tools only through a thing (`ThingExtensions`).
 
 import { type ChordStore, defineRegistry, type Host } from "@earendil-works/chord";
+import { registerLazyBedrockProvider } from "@earendil-works/pi-ai/lazy-bedrock-provider";
 import type { P3Principal } from "../../app.ts";
 
 // Chord's sync layer, for the backup plugin's worker facet: uploads from a store's outbox.
@@ -18,10 +19,7 @@ export {
 	type UploadResult,
 	uploadSession,
 } from "@earendil-works/chord/sync";
-// The built-in providers, for the providers plugin's worker facet: a login's requests (its auth comes from the server),
-// each provider loaded on its first use.
 export {
-	type Api,
 	createModels,
 	createProvider,
 	// pi-ai's faux provider, for plugins' tests: a model login that answers what the test scripts.
@@ -29,9 +27,9 @@ export {
 	fauxProvider,
 	fauxText,
 	fauxToolCall,
+	// For the providers plugin's worker facet: a login's requests, their request code loaded on the first one.
 	lazyStream,
 	type Message,
-	type Model,
 	type Models,
 	type MutableModels,
 	type Provider,
@@ -61,6 +59,10 @@ export { createCodingTools } from "@earendil-works/pi-durable/tools";
 export * from "../../../plugins/environments/contract.worker.ts";
 export * from "../../../plugins/harness/contract.worker.ts";
 export { loadProvider } from "./providers.ts";
+
+// Bedrock's request code inside the worker's bundle, loaded on its first request: without it pi-ai imports it through
+// a variable specifier, which a bundle cannot follow.
+registerLazyBedrockProvider();
 
 /** A session worker's process values, for plugins: what only the base has. */
 export type WorkerRuntime = {

@@ -2,19 +2,35 @@
 // agent holds with Use gives one provider of its own (`<provider>~<login>`), two logins of one provider two providers,
 // its models the login's catalog; a login without Use gives none; a request through it takes its auth from the
 // login's `authorize` and reaches the provider's request code (another plugin's, else pi-ai's, loaded on first use)
-// with the provider's own id. That `authorize` admits only agents with Use is the server's
-// test (`server.test.ts`).
+// with the provider's own id, at each request the provider contributed then (a plugin replaced while a login is held
+// answers with its new code). That `authorize` admits only agents with Use is the server's test (`server.test.ts`).
 
 import assert from "node:assert/strict";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { BACKGROUND_CONTEXT as context, defineFacet, LoginProviders, type P3Principal } from "@earendil-works/p3/v1";
+import { NodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
+import {
+	BACKGROUND_CONTEXT as context,
+	createHost,
+	defineFacet,
+	LoginProviders,
+	openStore,
+	type P3Principal,
+	type PluginFacet,
+	Session,
+	sqliteBackend,
+	until,
+} from "@earendil-works/p3/v1";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
 import { createModels, fauxAssistantMessage, fauxProvider, type Provider } from "@earendil-works/p3/v1/worker";
 import { FAUX_MODEL, FAUX_PROVIDER, keyOf, type Step } from "../../../test/plugins/faux-login/contract.ts";
 import fauxWorker from "../../../test/plugins/faux-login/worker.ts";
+import { within } from "../../../test/until.ts";
 import { type HarnessSession, type HeldThing, ThingHarnessParts } from "../../things/contract.worker.ts";
-import { type AuthResult, type Login, type LoginInfo, LoginKind } from "../contract.ts";
+import thingsWorker from "../../things/worker.ts";
+import { type Login, type LoginInfo, LoginKind, type RequestAuth } from "../contract.ts";
+import providersWorker from "../worker.ts";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 
@@ -68,7 +84,7 @@ function held(
 	const authorize =
 		script === undefined
 			? undefined
-			: async (): Promise<AuthResult> => {
+			: async (): Promise<RequestAuth> => {
 					calls.push(thing);
 					return { auth: { apiKey: keyOf(script) } };
 				};
@@ -155,5 +171,56 @@ describe("the providers of the logins the agent holds", () => {
 		assert.deepEqual(answer.content, [{ type: "text", text: "hi there" }]);
 		assert.equal(answer.provider, FAUX_PROVIDER);
 		assert.deepEqual(calls, ["a"]);
+	});
+});
+
+describe("a provider replaced while a login is held", () => {
+	it("answers the next request with its new code", async () => {
+		const answering = (text: string) =>
+			defineFacet((_host, self) => {
+				const base = fauxProvider({ provider: "swap", api: "swap", models: [{ id: "m" }] });
+				base.setResponses([fauxAssistantMessage(text), fauxAssistantMessage(text)]);
+				self.contribute(LoginProviders, [base.provider]);
+			});
+		const store = await openStore(sqliteBackend(new NodeSqliteDatabase(new DatabaseSync(":memory:"))), context);
+		const host = createHost<P3Principal>({
+			address: Session({ id: "s1" }),
+			principal: { kind: "worker", session: "s1" },
+			store,
+			onError: (error) => assert.fail(error.kind),
+		});
+		let facets: PluginFacet<P3Principal>[] = [
+			{ name: "@earendil-works/p3-providers", facet: providersWorker },
+			{ name: "@earendil-works/p3-things", facet: thingsWorker },
+			{ name: "swap", facet: answering("first") },
+		];
+		try {
+			await host.load(facets, context);
+			const catalog = fauxProvider({ provider: "swap", api: "swap", models: [{ id: "m" }] }).models;
+			const login = held("w", SCRIPT, [], { ...FAUX, provider: "swap" }, catalog);
+			// The part is contributed once the plugin's contributing object is live.
+			const parts = await until(
+				await host.registry(ThingHarnessParts, context),
+				(found) => found.has(LoginKind.name),
+				within("the login kind's part", context),
+			);
+			const part = parts.get(LoginKind.name);
+			const [provider] = part!.value.part([login as unknown as HeldThing], SESSION).providers ?? [];
+			const models = createModels();
+			models.setProvider(provider!);
+			const ask = async () =>
+				(
+					await models.completeSimple(models.getModel("swap~w", "m")!, {
+						messages: [{ role: "user", content: "hello", timestamp: 0 }],
+					})
+				).content;
+			assert.deepEqual(await ask(), [{ type: "text", text: "first" }]);
+			facets = facets.map((plugin) => (plugin.name === "swap" ? { ...plugin, facet: answering("second") } : plugin));
+			await host.reload(facets, context);
+			assert.deepEqual(await ask(), [{ type: "text", text: "second" }]);
+		} finally {
+			await host.close(context);
+			await store.close(context);
+		}
 	});
 });

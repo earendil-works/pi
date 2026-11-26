@@ -1,15 +1,33 @@
 // The providers people may sign in to, a registry on the server (their sign-in and auth) and on a session's worker
-// (their requests): this plugin contributes pi-ai's built-in providers, any plugin more (a test's faux one). `/v1`
-// re-exports it, for plugins of other roots.
+// (their requests): the providers plugin contributes pi-ai's built-in providers on the server, any plugin more (a
+// test's faux one). `/v1` re-exports the registry, for plugins of other roots.
 
-import { defineRegistry, type TableItem } from "@earendil-works/p3/v1";
-import type { Provider } from "@earendil-works/p3/v1/worker";
+import {
+	defineRegistry,
+	type FacetHost,
+	keyedEntries,
+	type P3Principal,
+	type Provider,
+	type TableItem,
+} from "@earendil-works/p3/v1";
+
+/** The providers, by provider id, each with its plugin. */
+export type ProviderMap = ReadonlyMap<string, TableItem<Provider>>;
 
 /**
- * The providers, by provider id, each with its plugin: a plugin contributes a list; an id contributed twice is
- * reported, the first by plugin name kept.
+ * The providers, by provider id: a plugin contributes a list; an id contributed twice is reported, the first by
+ * plugin name kept.
  */
-export const LoginProviders = defineRegistry<readonly Provider[], ReadonlyMap<string, TableItem<Provider>>>(
-	"providers.providers",
-	{ version: 1 },
-);
+export const LoginProviders = defineRegistry<readonly Provider[], ProviderMap>("providers.providers", { version: 1 });
+
+/** Serves `LoginProviders` on `host` (the providers plugin, on the server and on a worker). */
+export function serveLoginProviders(host: FacetHost<P3Principal>): void {
+	host.serve(LoginProviders, {
+		compose: (table, { report }) =>
+			keyedEntries(
+				table,
+				(offered) => Object.fromEntries(offered.map((provider) => [provider.id, provider])),
+				report,
+			),
+	});
+}

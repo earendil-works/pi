@@ -1,160 +1,219 @@
-// Signing in to a model provider (`SignIn`, one object per person): the person's page starts a sign-in, the provider's
-// own flow (pi-ai: OAuth, or an API key) runs here on the server, asks its questions and tells its steps through the
-// person's attempt, and a finished one's credential is kept by the store under a sign-in id bound to the person, for
-// the create step (or a sign-in again) that hands that id over. The flows run in one host-lifetime object
-// (`SignIns`): one per person at a time; a reload of the plugin ends the running ones (the person starts again).
+// Signing in to a model provider (`SignIn`, one object per person; the owner only until workspaces decide who may make
+// a login): the person's page starts a sign-in, the provider's own flow (pi-ai: OAuth, or an API key) runs here on the
+// server, asks its questions and tells its steps through the person's attempt, and a finished one's credential waits
+// in the person's `SignIns` object, in memory, for the create step that hands its attempt id over (`adopt`): one per
+// person, dropped by the next start, a cancel, its time running out, or the object's end (a reload, the person's last
+// page gone). Server code holds a credential the same way for a login it makes (`hold`).
 
 import {
+	type AuthEvent,
+	type AuthPrompt,
+	admitOwner,
+	type Credential,
 	type Ctx,
 	callerKey,
 	type FacetHost,
-	forbidden,
 	invalid,
 	local,
-	type MessageData,
-	map,
 	method,
+	nul,
 	obj,
 	type P3Principal,
+	type Provider,
+	reportError,
 	str,
+	union,
+	unknown,
 	untilAborted,
 } from "@earendil-works/p3/v1";
-import type { AuthEvent, AuthPrompt, Credential, Provider } from "@earendil-works/p3/v1/server";
 import { LoginStore } from "./contract.server.ts";
-import { Attempt, Method, type Notice, type Prompt, type ProviderChoice, SignIn } from "./contract.ts";
+import { Attempt, type Notice, type Prompt, type ProviderChoice, SignIn, SignInMethod } from "./contract.ts";
 import { LoginProviders } from "./login-providers.ts";
 import { messages } from "./messages.ts";
+import { nameOf } from "./store.ts";
+import { Turns } from "./turns.ts";
 
-/** Every person's sign-in, by their `callerKey`, and the moves on them: server code of this plugin only. */
-const SignIns = local("providers.sign-ins", {
+/**
+ * One person's sign-in (`owner`: their `callerKey`; the server's for its own logins) and the credentials of finished
+ * ones, waiting for a login: server code of this plugin only.
+ */
+export const SignIns = local("providers.sign-ins", {
 	version: 1,
-	params: {},
+	params: { owner: str() },
 	members: {
-		attempts: map(Attempt),
-		start: method(obj({ owner: str(), provider: str(), method: Method }), str()),
-		answer: method(obj({ owner: str(), attempt: str(), prompt: str(), value: str() })),
-		cancel: method(obj({ owner: str(), attempt: str() })),
+		attempt: union([Attempt, nul()]),
+		start: method(obj({ provider: str(), method: SignInMethod }), str()),
+		answer: method(obj({ prompt: str(), value: str() })),
+		cancel: method(obj({ attempt: str() })),
+		/** Holds `credential` (pi-ai's) of `provider` as a finished sign-in, for a login server code makes; its id. */
+		hold: method(obj({ provider: str(), credential: unknown() }), str()),
+		/** Gives the finished sign-in `attempt` to login `thing` (`invalid` if none waits: used, dropped or expired). */
+		adopt: method(obj({ attempt: str(), thing: str() })),
 	},
 });
 
 /** How long a sign-in may take before it ends. */
 const DEADLINE_MS = 10 * 60_000;
 
-/** The longest provider error text a failed sign-in shows. */
-const ERROR_TEXT = 300;
+/** How long a finished sign-in's credential waits for its login. */
+const KEPT_MS = 15 * 60_000;
+
+/** A finished sign-in's credential, waiting, and the timer that drops it. */
+type Held = {
+	readonly provider: string;
+	readonly credential: Credential;
+	readonly timer: ReturnType<typeof setTimeout>;
+};
 
 /** Serves `SignIns` and `SignIn` on `host`. */
 export function serveSignIn(host: FacetHost<P3Principal>): void {
+	// One object per person (its params): what it holds is theirs alone.
 	host.serve(SignIns, (_params, self) => {
 		const providers = self.registry(LoginProviders);
 		const store = self.get(LoginStore, {});
-		const attempts = self.writable<Readonly<Record<string, Attempt>>>({});
-		/** The running flows, by person (`callerKey`): their attempt id, how to end them, their open questions. */
-		const running = new Map<string, Running>();
-		/** Ends the flows with the object (a reload, the server's stop). */
+		const attempt = self.writable<Attempt | null>(null);
+		const held = new Map<string, Held>();
+		const turns = new Turns();
+		let current: Running | undefined;
+		/** Set as the object ends, before its flows abort: nothing is shown after its state ended. */
+		let closed = false;
 		const lifetime = new AbortController();
 		/** The object's own context while it is live: what a flow writes to the store under, after `start` answered. */
 		const live = Promise.withResolvers<Ctx<P3Principal>>();
 		self.onLive(async (ctx) => {
 			live.resolve(ctx);
-			await untilAborted(ctx).finally(() => lifetime.abort());
+			await untilAborted(ctx).finally(() => {
+				closed = true;
+				lifetime.abort();
+				for (const { timer } of held.values()) clearTimeout(timer);
+				held.clear();
+			});
 		});
-		const show = (owner: string, next: Attempt | undefined) => {
-			const { [owner]: _gone, ...others } = attempts.value;
-			attempts.set(next === undefined ? others : { ...others, [owner]: next });
+		const show = (next: Attempt | null) => {
+			if (!closed) attempt.set(next);
 		};
-		const ofAttempt = (owner: string, attempt: string): Running => {
-			const found = running.get(owner);
-			if (found === undefined || found.attempt !== attempt) {
-				throw invalid("args", "providers: that sign-in is no longer running");
-			}
-			return found;
+		const drop = (id: string) => {
+			clearTimeout(held.get(id)?.timer);
+			held.delete(id);
+			if (attempt.value?.attempt === id) show(null);
+		};
+		const keep = (id: string, provider: string, credential: Credential) => {
+			held.set(id, { provider, credential, timer: setTimeout(() => drop(id), KEPT_MS) });
+		};
+		/** Ends the current flow, and drops the credential the person's last sign-in left waiting. */
+		const replace = async () => {
+			const previous = current;
+			previous?.end();
+			await previous?.done;
+			const shown = attempt.value;
+			if (shown !== null) drop(shown.attempt);
 		};
 		return {
-			attempts: self.derive([attempts], ([value]) => value),
-			start: async ({ owner, provider: id, method }) => {
-				const provider = providers.value.get(id)?.value;
-				if (provider === undefined || !offers(provider, method)) {
-					throw invalid("args", `providers: ${id} offers no sign-in by ${method}`);
-				}
-				const previous = running.get(owner);
-				if (previous !== undefined) {
-					previous.end(messages.message("replaced"));
-					await previous.done;
-				}
-				const attempt = crypto.randomUUID();
-				const flow = new Running(attempt, AbortSignal.any([lifetime.signal, AbortSignal.timeout(DEADLINE_MS)]));
-				running.set(owner, flow);
-				let state: Attempt = { status: "working", attempt, provider: id, method, prompt: null, notices: [] };
-				const update = (next: Attempt) => {
-					state = next;
-					if (running.get(owner) === flow) show(owner, next);
-				};
-				update(state);
-				const ask = (prompt: Prompt | null) => {
-					if (state.status === "working") update({ ...state, prompt });
-				};
-				flow.done = (async () => {
-					const ctx = await live.promise;
-					try {
-						const credential = await signIn(provider, method, flow, {
-							prompt: ask,
-							answered: () => ask(null),
-							notice: (notice) => update({ ...state, notices: [...state.notices, notice] }),
-							deviceId: () => store.device({}, ctx),
-						});
-						const signInId = await store.keep({ owner, provider: id, method, credential }, ctx);
-						update({ status: "done", attempt, provider: id, method, signIn: signInId, notices: state.notices });
-					} catch (error) {
-						update({
-							status: "ended",
-							attempt,
-							provider: id,
-							method,
-							message: flow.why(error),
-							notices: state.notices,
-						});
-					} finally {
-						flow.close();
-						if (running.get(owner) === flow) running.delete(owner);
+			attempt: self.derive([attempt], ([value]) => value),
+			start: ({ provider: id, method }) =>
+				turns.run("moves", async () => {
+					const provider = providers.value.get(id)?.value;
+					if (provider === undefined || !offers(provider, method)) {
+						throw invalid("args", `providers: ${id} offers no sign-in by ${method}`);
 					}
-				})();
-				return attempt;
-			},
-			answer: async ({ owner, attempt, prompt, value }) => {
-				ofAttempt(owner, attempt).answer(prompt, value);
+					await replace();
+					const flow = new Running(crypto.randomUUID(), lifetime.signal);
+					current = flow;
+					let state: Attempt = {
+						status: "working",
+						attempt: flow.attempt,
+						provider: id,
+						method,
+						prompt: null,
+						notices: [],
+					};
+					const update = (next: Attempt) => {
+						state = next;
+						if (current === flow) show(next);
+					};
+					const ask = (prompt: Prompt | null) => {
+						if (state.status === "working") update({ ...state, prompt });
+					};
+					update(state);
+					flow.done = (async () => {
+						const ctx = await live.promise;
+						try {
+							const credential = await signIn(provider, method, flow, {
+								prompt: ask,
+								answered: () => ask(null),
+								notice: (notice) => update({ ...state, notices: [...state.notices, notice] }),
+								deviceId: () => store.device({}, ctx),
+							});
+							// A flow ended meanwhile keeps nothing: after the object's end nothing would ever drop it.
+							if (flow.signal.aborted) return;
+							keep(flow.attempt, id, credential);
+							update({ status: "done", attempt: flow.attempt, provider: id, method, notices: state.notices });
+						} catch (error) {
+							if (flow.why() === "failed")
+								reportError(`providers: a sign-in to ${id} failed`, nameOf(error), ctx);
+							update({
+								status: "ended",
+								attempt: flow.attempt,
+								provider: id,
+								method,
+								message: messages.message(flow.why()),
+								notices: state.notices,
+							});
+						} finally {
+							flow.close();
+							if (current === flow) current = undefined;
+						}
+					})();
+					return flow.attempt;
+				}),
+			answer: async ({ prompt, value }) => {
+				if (current === undefined) throw invalid("args", "providers: no sign-in is running");
+				current.answer(prompt, value);
 				return null;
 			},
-			cancel: async ({ owner, attempt }, ctx) => {
-				const found = running.get(owner);
-				if (found?.attempt === attempt) {
-					found.end(messages.message("cancelled"));
-					await found.done;
-				}
-				const shown = attempts.value[owner];
-				if (shown?.attempt !== attempt) return null;
-				if (shown.status === "done") await store.drop({ owner, signIn: shown.signIn }, ctx);
-				show(owner, undefined);
-				return null;
+			cancel: ({ attempt: id }) =>
+				turns.run("moves", async () => {
+					if (current?.attempt === id) {
+						current.end();
+						await current.done;
+					}
+					drop(id);
+					return null;
+				}),
+			hold: async ({ provider, credential }) => {
+				const id = crypto.randomUUID();
+				// Server code of this plugin hands pi-ai's credentials only.
+				keep(id, provider, credential as Credential);
+				return id;
 			},
+			adopt: ({ attempt: id, thing }, ctx) =>
+				turns.run("moves", async () => {
+					const found = held.get(id);
+					if (found === undefined) throw invalid("args", "providers: no such sign-in of yours (used or expired)");
+					await store.save({ thing, provider: found.provider, credential: found.credential }, ctx);
+					drop(id);
+					return null;
+				}),
 		};
 	});
 
-	host.serve(SignIn, (_params, principal, self) => {
-		if (principal.kind !== "person") throw forbidden("providers: people sign in, nobody else");
-		const owner = callerKey(principal);
-		const flows = self.get(SignIns, {});
-		const providers = self.registry(LoginProviders);
-		return {
-			providers: self.derive([providers], ([offered]) => choices([...offered.values()].map(({ value }) => value))),
-			attempt: self.derive([flows.attempts], ([all]) => all[owner] ?? null),
-			start: (args: { provider: string; method: Method }, ctx: Ctx<P3Principal>) =>
-				flows.start({ owner, ...args }, ctx),
-			answer: (args: { attempt: string; prompt: string; value: string }, ctx: Ctx<P3Principal>) =>
-				flows.answer({ owner, ...args }, ctx),
-			cancel: (args: { attempt: string }, ctx: Ctx<P3Principal>) => flows.cancel({ owner, ...args }, ctx),
-		};
-	});
+	host.serve(
+		SignIn,
+		(_params, principal, _admitted, self) => {
+			const flows = self.get(SignIns, { owner: callerKey(principal) });
+			const providers = self.registry(LoginProviders);
+			return {
+				providers: self.derive([providers], ([offered]) =>
+					choices([...offered.values()].map(({ value }) => value)),
+				),
+				attempt: flows.attempt,
+				start: (args: { provider: string; method: SignInMethod }, ctx: Ctx<P3Principal>) => flows.start(args, ctx),
+				answer: (args: { prompt: string; value: string }, ctx: Ctx<P3Principal>) => flows.answer(args, ctx),
+				cancel: (args: { attempt: string }, ctx: Ctx<P3Principal>) => flows.cancel(args, ctx),
+			};
+		},
+		{ admit: admitOwner },
+	);
 }
 
 /** What a flow tells its attempt, and the device id some providers sign in with. */
@@ -165,26 +224,32 @@ type Reports = {
 	readonly deviceId: () => Promise<string>;
 };
 
-/** One running sign-in: how it ends and why, and its open question. */
+/** Why a flow ended, as the person reads it (a message key). */
+type Ending = "failed" | "expired" | "stopped";
+
+/** One running sign-in: its deadline, how it ends and why, and its open question. */
 class Running {
 	readonly attempt: string;
 	readonly signal: AbortSignal;
 	done: Promise<void> = Promise.resolve();
+	readonly #lifetime: AbortSignal;
 	readonly #controller = new AbortController();
-	#ending: MessageData | undefined;
+	readonly #deadline: ReturnType<typeof setTimeout>;
+	#expired = false;
 	#question: { readonly prompt: Prompt; readonly resolve: (value: string) => void } | undefined;
 
-	readonly #outer: AbortSignal;
-
-	constructor(attempt: string, outer: AbortSignal) {
+	constructor(attempt: string, lifetime: AbortSignal) {
 		this.attempt = attempt;
-		this.#outer = outer;
-		this.signal = AbortSignal.any([outer, this.#controller.signal]);
+		this.#lifetime = lifetime;
+		this.signal = AbortSignal.any([lifetime, this.#controller.signal]);
+		this.#deadline = setTimeout(() => {
+			this.#expired = true;
+			this.#controller.abort();
+		}, DEADLINE_MS);
 	}
 
-	/** Ends the flow, for `why` (the first ending is the one it shows). */
-	end(why: MessageData): void {
-		this.#ending ??= why;
+	/** Ends the flow (replaced or cancelled: nothing of it is shown any more). */
+	end(): void {
 		this.#controller.abort();
 	}
 
@@ -195,11 +260,10 @@ class Running {
 		return new Promise<string>((resolve, reject) => {
 			if (signal.aborted) return reject(signal.reason);
 			const abort = () => {
-				if (this.#question?.prompt === prompt) {
-					this.#question = undefined;
-					reports.answered();
-				}
 				reject(signal.reason);
+				if (this.#question?.prompt !== prompt) return;
+				this.#question = undefined;
+				reports.answered();
 			};
 			signal.addEventListener("abort", abort, { once: true });
 			this.#question = {
@@ -227,26 +291,21 @@ class Running {
 		question.resolve(value);
 	}
 
-	/** Why the flow ended with `error`, as the person reads it. */
-	why(error: unknown): MessageData {
-		if (this.#ending !== undefined) return this.#ending;
-		if (this.#outer.aborted) {
-			return this.#outer.reason instanceof DOMException && this.#outer.reason.name === "TimeoutError"
-				? messages.message("expired")
-				: messages.message("stopped");
-		}
-		const text = error instanceof Error ? error.message : String(error);
-		return messages.message("failed", text.slice(0, ERROR_TEXT));
+	/** Why the flow ended: its deadline, the object's end, or the provider's flow failing. */
+	why(): Ending {
+		if (this.#expired) return "expired";
+		return this.#lifetime.aborted ? "stopped" : "failed";
 	}
 
-	/** Withdraws what the flow left open (a manual-code question raced by a callback that won). */
+	/** Withdraws what the flow left open (a manual-code question raced by a callback that won) and its deadline. */
 	close(): void {
+		clearTimeout(this.#deadline);
 		this.#controller.abort();
 	}
 }
 
 /** The provider's own sign-in by `method`: its credential. */
-async function signIn(provider: Provider, method: Method, flow: Running, reports: Reports): Promise<Credential> {
+async function signIn(provider: Provider, method: SignInMethod, flow: Running, reports: Reports): Promise<Credential> {
 	const interaction = {
 		signal: flow.signal,
 		prompt: (prompt: AuthPrompt) => flow.ask(prompt, reports),
@@ -263,7 +322,7 @@ async function signIn(provider: Provider, method: Method, flow: Running, reports
 }
 
 /** Whether `provider` offers a sign-in by `method`. */
-function offers(provider: Provider, method: Method): boolean {
+function offers(provider: Provider, method: SignInMethod): boolean {
 	return method === "oauth" ? provider.auth.oauth !== undefined : provider.auth.apiKey?.login !== undefined;
 }
 
