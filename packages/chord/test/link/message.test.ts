@@ -955,6 +955,12 @@ describe("the binary codec's medium strings", () => {
 			for (let index = 0; index < 2_000; index++) binaryCodec.encode(message);
 			return performance.now() - start;
 		};
+		// Warmed up first: while the encoder is still being compiled the two paths tier up at different times, and the
+		// ratio then says when, not what they cost (2.0 to 2.2 cold, 1.1 warm).
+		for (let round = 0; round < 10; round++) {
+			encode(4_095);
+			encode(4_096);
+		}
 		const medium: number[] = [];
 		const long: number[] = [];
 		for (let round = 0; round < 11; round++) {
