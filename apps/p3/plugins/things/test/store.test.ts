@@ -14,11 +14,13 @@ import {
 	BACKGROUND_CONTEXT as context,
 	createHost,
 	defineFacet,
+	int,
 	method,
 	obj,
 	openStore,
 	type P3Principal,
 	type Reference,
+	type Schema,
 	Server,
 	sqliteBackend,
 	str,
@@ -303,6 +305,8 @@ describe("a plugin's one thing", () => {
 			things.create({ kind: Inbox.name, name: "i", workspace: root, by: BY, input }, context);
 		await make({ signIn: "ann" });
 		await assert.rejects(make({ signIn: 1 }), /input of test.inbox/);
+		// A required input left out is refused too, before the hook runs.
+		await assert.rejects(make(undefined), /input of test.inbox/);
 		await assert.rejects(
 			things.create({ kind: Board.name, name: "b", workspace: root, by: BY, input: {} }, context),
 			/takes no input/,
@@ -310,10 +314,18 @@ describe("a plugin's one thing", () => {
 		assert.deepEqual(inputs, ["ann"]);
 	});
 
-	it("ensure refuses a kind that asks for none", async (t) => {
+	it("ensure refuses a kind that asks for none, and `OneThing` names none of its things", async (t) => {
 		const at = await machineWorld([]);
 		t.after(() => at.w.close(context));
 		await assert.rejects(at.store.ensure({ kind: Machine.name }, context), /has no seeded thing/);
+		// A thing its plugin made: no seeded thing all the same.
+		await at.store.create(
+			{ kind: Machine.name, name: "made", workspace: at.pi, by: { kind: "plugin", plugin: "machine" } },
+			context,
+		);
+		const one = await at.w.host.get(OneThing, { kind: Machine.name }, context);
+		assert.equal(one.thing.value, "");
+		one.release();
 	});
 
 	it("while the start's seed is still being made, deletes run: the lifecycle does not wait for it", async (t) => {
@@ -374,7 +386,8 @@ describe("a plugin's one thing", () => {
 			context,
 		);
 		held.resolve();
-		assert.equal(await at.store.ensure({ kind: Machine.name }, context), made);
+		// A deadline: a seed whose undo waits for a lifecycle that does not serve yet never ends.
+		assert.equal(await soon(at.store.ensure({ kind: Machine.name }, context)), made);
 		await eventually(
 			() => calls,
 			(done) => done.includes(`delete ${seeded}`),
@@ -621,6 +634,76 @@ describe("races, failures and restarts", () => {
 			},
 		};
 	};
+
+	it("a kind's plugin reloaded while the index is busy: create checks its input with the new schema, for the new hook", async (t) => {
+		const database = await openStore(sqliteBackend(new NodeSqliteDatabase(new DatabaseSync(":memory:"))), context);
+		const host = createHost<P3Principal>({
+			address: Server(),
+			principal: { kind: "server" },
+			store: database,
+			onError: (error) => assert.fail(`host error ${error.kind}`),
+		});
+		t.after(async () => {
+			await host.close(context);
+			await database.close(context);
+		});
+		// The counter kind takes a number at ticks version 1 and a text at 2; its create hook records the version.
+		const versions: number[] = [];
+		const counter = (version: number) => ({
+			name: "counter",
+			facet: defineFacet((at) => {
+				const Counter = defineThing("test.counter", {
+					version: 1,
+					ticksVersion: version,
+					ticks: { mark: { label } },
+					// Either schema (a union of the two for the types).
+					create: { input: (version === 1 ? int() : str()) as Schema<number | string> },
+					...(version === 1 ? {} : { migrateTicks: (ticks: readonly string[]) => [...ticks] }),
+				});
+				serveThing(at, Counter, { implement: () => ({}), create: async () => void versions.push(version) });
+			}),
+		});
+		await host.load([THINGS, counter(1)], context);
+		const things = await host.get(ThingsStore, {}, context);
+		const root = (await things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
+		await things.create({ workspace: root, kind: "test.counter", name: "one", by: source, input: 1 }, context);
+		// The index's next read is held, so the kinds it installs stay version 1 while the registry shows version 2.
+		const reached = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<void>();
+		const read = database.read.bind(database);
+		let reads = 0;
+		database.read = async <T>(fn: Parameters<typeof database.read<T>>[0], ctx: Context) => {
+			const result = await read(fn, ctx);
+			if (++reads === 1) {
+				reached.resolve();
+				await release.promise;
+			}
+			return result;
+		};
+		const cold = host.get(Gives, { workspace: root, caller: "person:p" }, context);
+		await reached.promise;
+		const kinds = await host.registry(ThingKinds, context);
+		const reloading = host.reload([THINGS, counter(2)], context);
+		let making: Promise<string> | undefined;
+		try {
+			await until(
+				kinds,
+				(table) => table.get("test.counter")?.value.ticksVersion === 2,
+				within("version 2", context),
+			);
+			making = things.create(
+				{ workspace: root, kind: "test.counter", name: "two", by: source, input: "blue" },
+				context,
+			);
+			making.catch(() => {});
+		} finally {
+			release.resolve();
+		}
+		await reloading;
+		(await cold).release();
+		await making;
+		assert.deepEqual(versions, [1, 2]);
+	});
 
 	it("two unlinks at once of a thing's two links remove it", async () => {
 		const leaf = await store.createWorkspace({ parent: pi, name: "leaf", kind: "things.workspace", by: BY }, context);

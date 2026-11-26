@@ -102,9 +102,14 @@ export const ThingKinds = defineRegistry<KindInfo, ReadonlyMap<string, TableItem
 	version: 1,
 });
 
-/** A kind's data as worker and page read it: `KindInfo` without its migration and its input schema (plain data). */
+/**
+ * A kind's data as worker and page read it: `KindInfo` without its migration and its input schema (plain data), with
+ * the plugin that contributes it (its package name: the picker groups kinds by it and finds its title in
+ * `PluginTitles`).
+ */
 export const KindView = obj({
 	name: str(),
+	plugin: str(),
 	workspaces: union([lit("one"), lit("many")]),
 	makers: union([lit("anyone"), lit("people"), lit("plugin")]),
 	stacking: union([lit("all"), lit("nearest")]),
@@ -118,8 +123,6 @@ export const KindView = obj({
 	),
 	defaultGrants: obj({ everyone: opt(arr(str())), agents: opt(arr(str())), guests: opt(arr(str())) }),
 	settings: arr(str()),
-	/** The plugin that registered the kind (`TableItem.plugin`): the add-thing picker groups by it. */
-	plugin: str(),
 	ticksVersion: num(),
 });
 
@@ -137,11 +140,15 @@ export const ThingKindsView = remote("things.kinds", {
 	state: { kinds: map(KindView) },
 });
 
-/** `info` as worker and page read it: its plain data (copied once per registry change: Chord's are mutable types). */
+/**
+ * `info`, contributed by `plugin`, as worker and page read it: its plain data (copied once per registry change:
+ * Chord's are mutable types).
+ */
 export function kindView(info: KindInfo, plugin: string): KindView {
 	const { name, workspaces, makers, stacking, ticks, defaultGrants, settings, ticksVersion } = info;
 	return {
 		name,
+		plugin,
 		workspaces,
 		makers,
 		stacking,
@@ -157,7 +164,6 @@ export function kindView(info: KindInfo, plugin: string): KindView {
 		},
 		settings: [...settings],
 		ticksVersion,
-		plugin,
 	};
 }
 

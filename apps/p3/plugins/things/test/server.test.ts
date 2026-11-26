@@ -11,7 +11,7 @@ import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
 import { within } from "../../../test/until.ts";
 import { ThingsStore } from "../contract.server.ts";
 import { ThingKindsView } from "../kind.ts";
-import { BOARD, Board } from "./kinds.ts";
+import { BOARD, BOARD_PLUGIN, Board } from "./kinds.ts";
 
 let t: TestedPlugin<P3Principal>;
 
@@ -76,6 +76,8 @@ describe("the things plugin on the server", () => {
 				[kinds[Board.name]?.ticksVersion, kinds[Board.name]?.defaultGrants],
 				[1, Board.info.defaultGrants],
 			);
+			// The plugin that contributes the kind: the picker groups kinds by it.
+			assert.equal(kinds[Board.name]?.plugin, BOARD_PLUGIN);
 		}
 	});
 });

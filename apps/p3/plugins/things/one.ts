@@ -6,7 +6,10 @@ import type { FacetHost, P3Principal } from "@earendil-works/p3/v1";
 import { OneThing, ThingHooks, ThingsStore } from "./contract.server.ts";
 import { sourceKey } from "./contract.ts";
 
-/** Serves `OneThing` on `host`: the id of the thing the kind's plugin made of it (`""` while none exists). */
+/**
+ * Serves `OneThing` on `host`: the id of the thing the kind's plugin made of it (`""` while none exists, and for a kind
+ * that asks for none).
+ */
 export function serveOne(host: FacetHost<P3Principal>): void {
 	host.serve(OneThing, ({ kind }, self) => {
 		const hooks = self.registry(ThingHooks);
@@ -17,6 +20,11 @@ export function serveOne(host: FacetHost<P3Principal>): void {
 			kind,
 		}));
 		const made = self.liveQuery(store.things.ofMaker, maker, { first: 1 });
-		return { thing: self.derive([made], ([page]) => page.rows[0]?.thing ?? "") };
+		// Only a kind that asks for a seeded thing has one: another thing its plugin made is no `OneThing`.
+		return {
+			thing: self.derive([hooks, made], ([table, page]) =>
+				table.get(kind)?.value.one === undefined ? "" : (page.rows[0]?.thing ?? ""),
+			),
+		};
 	});
 }

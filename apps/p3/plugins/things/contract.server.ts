@@ -94,12 +94,14 @@ export const ThingsStore = local("things.store", {
 		workspaceMembers: queries(WorkspaceMemberRow, { here: obj({ workspace: str() }) }),
 		switches: queries(SwitchRow, { here: obj({ workspace: str() }) }),
 		grants: queries(GrantRow, { here: obj({ workspace: str() }) }),
+		// `ofIds`: the persons of a list in one read (the notes plugin reads its notes' authors' names with it).
 		persons: queries(PersonRow, { one: obj({ person: str() }), ofIds: obj({ persons: arr(str()) }) }),
 		groupMembers: queries(GroupMemberRow, { ofPerson: obj({ person: str() }) }),
 		/**
 		 * Makes a thing of `kind` in `workspace`: the kind's `create` hook first, with the new id (item 34), then one
 		 * commit: the thing, its link, the kind's default grants, and every tick for its maker (`by`, a person or a
-		 * session's agent; item 90). Answers its id.
+		 * session's agent; item 90). `input` is checked against the kind's `create.input` before the hook runs (left
+		 * out too: a kind with a schema always gets a valid input, a kind without one takes none). Answers its id.
 		 */
 		create: method(obj({ kind: str(), name: str(), workspace: str(), by: Source, input: opt(unknown()) }), str()),
 		/**

@@ -250,7 +250,13 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			const result = await index!.commit((touched) => self.tx((tx) => fn(tx, { ...touched, retired }), ctx));
 			for (const { thing, kind } of retired) {
 				lifecycle.retire(thing, kind);
-				if (hooks.value.get(kind)?.value.one !== undefined && live !== undefined) void seedKind(kind, live);
+				if (hooks.value.get(kind)?.value.one !== undefined && live !== undefined) {
+					// Made again under the store's own context; a failure is reported (the next start seeds it).
+					const own = live;
+					seedKind(kind, own).catch((error) =>
+						reportError(`things: the seeded thing of ${kind}, made again`, error, own),
+					);
+				}
 			}
 			return result;
 		};
@@ -278,6 +284,15 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			commit: (tx: Tx, changes: Changes, thing: string) => Promise<string>,
 			ctx: Ctx<P3Principal>,
 		): Promise<string> => {
+			// A trust boundary of the kind's: its input, given or not, is checked against the schema it declared, read
+			// from the registry the hook is read from (a kind's plugin reloading: one generation, never the index's).
+			const schema = kinds.value.get(args.kind)?.value.input;
+			if (schema === undefined) {
+				if (args.input !== undefined) throw invalid("args", `things: ${args.kind} takes no input`);
+			} else {
+				const failed = checkValue(schema, args.input);
+				if (failed !== undefined) throw invalid("args", `things: input of ${args.kind}: ${failed}`);
+			}
 			const thing = crypto.randomUUID();
 			// A hook that throws leaves nothing, as no row names the thing yet. A crash between the hook and the commit
 			// leaves the kind's content under an id nobody knows (accepted: nothing can reach it).
@@ -359,23 +374,15 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		});
 		return {
 			...q,
-			create: async (args, ctx) => {
-				// A trust boundary of the kind's: its input is checked against the schema it declared.
-				const input = kindTable().get(args.kind)?.value.input;
-				if (args.input !== undefined) {
-					if (input === undefined) throw invalid("args", `things: ${args.kind} takes no input`);
-					const failed = checkValue(input, args.input);
-					if (failed !== undefined) throw invalid("args", `things: input of ${args.kind}: ${failed}`);
-				}
-				return make(
+			create: async (args, ctx) =>
+				make(
 					args,
 					async (tx, changes, thing) => {
 						await writes.make(tx, changes, { ...args, thing });
 						return thing;
 					},
 					ctx,
-				);
-			},
+				),
 			ensure: ({ kind }, ctx) => seedKind(kind, ctx),
 			link: (args, ctx) => write((tx, touched) => writes.link(tx, touched, args), ctx),
 			unlink: (args, ctx) => write((tx, touched) => writes.unlink(tx, touched, args), ctx),
@@ -524,7 +531,7 @@ function namedQueries(self: StoreSelf<P3Principal>, t: Tables) {
 			{
 				// The key.
 				one: ({ person }: { person: string }) => query(Persons).where((p) => eq(p.person, person)),
-				// The key, IN: the persons of a list (a notebook's authors, a board's pointers).
+				// The key, IN: the persons of a list (the notes plugin reads its notes' authors' names with it).
 				ofIds: ({ persons }: { persons: string[] }) => query(Persons).where((p) => inArray(p.person, persons)),
 			},
 		),
@@ -823,9 +830,13 @@ class Writes {
 
 	/**
 	 * Writes back the rows of `key`'s source for its party on its thing in its workspace that are at an older ticks
-	 * version than `info`'s: the rows of one `gives` value and version migrate together (`ticksNow`), the old ones go,
-	 * the migrated ones are put at the version now unless a row of that tick is there already (written since, it wins).
-	 * Rows that cannot be read now (a migration that throws, a newer version) are left as they are.
+	 * version than `info`'s, planned from the rows as they are: the named ticks of one `gives` value and version migrate
+	 * together (`ticksNow`; a group of reserved ticks only, `OPEN`, never calls the migration), reserved ticks stay as
+	 * they are. Every converted row goes first, then the outputs are put at the version now; where a given and a
+	 * withheld output meet at one tick it stays withheld, as the index reads them (a row's key has no `gives`, so only
+	 * one can stand). Rows that cannot be read now (a migration that throws, a newer version) are left as they are. An
+	 * output meeting a row of its tick that stays (at the version now, or one that cannot be read) is not put, unless
+	 * it withholds what that row gives.
 	 */
 	async #upgrade(
 		tx: Tx,
@@ -838,31 +849,44 @@ class Writes {
 		);
 		const rows = [];
 		for await (const row of tx.rows(this.#t.grants, mine)) rows.push(row);
-		const current = new Set(rows.filter((row) => row.ticksVersion === info.ticksVersion).map(({ tick }) => tick));
+		const current = new Map(
+			rows.filter((row) => row.ticksVersion === info.ticksVersion).map((row) => [row.tick, row]),
+		);
 		const older = new Map<string, typeof rows>();
 		for (const row of rows) {
 			if (row.ticksVersion === info.ticksVersion) continue;
-			const group = `${row.gives}\n${row.ticksVersion}`;
-			older.set(group, [...(older.get(group) ?? []), row]);
+			const key = `${row.gives}\n${row.ticksVersion}`;
+			const group = older.get(key);
+			if (group === undefined) older.set(key, [row]);
+			else group.push(row);
 		}
+		const outputs = new Map<string, (typeof rows)[number]>();
+		const unreadable = new Map<string, (typeof rows)[number]>();
 		for (const group of older.values()) {
 			const first = group[0]!;
-			// Reserved ticks (`OPEN`) mean the same at every version: written back as they are.
 			const named = group.filter(({ tick }) => !tick.startsWith(RESERVED)).map(({ tick }) => tick);
 			let now: readonly string[];
 			try {
-				now = ticksNow(info, named, first.ticksVersion);
+				now = named.length === 0 ? [] : ticksNow(info, named, first.ticksVersion);
 			} catch {
+				for (const row of group) unreadable.set(row.tick, row);
 				continue;
 			}
 			const reserved = group.filter(({ tick }) => tick.startsWith(RESERVED)).map(({ tick }) => tick);
 			for (const row of group)
 				tx.delete(this.#t.grants, { workspace, thing, partyKey: party, tick: row.tick, sourceKey: source });
 			for (const tick of [...now, ...reserved]) {
-				if (current.has(tick)) continue;
-				current.add(tick);
-				tx.put(this.#t.grants, { ...first, tick, ticksVersion: info.ticksVersion });
+				const before = outputs.get(tick);
+				if (before === undefined || (before.gives && !first.gives))
+					outputs.set(tick, { ...first, tick, ticksVersion: info.ticksVersion });
 			}
+		}
+		for (const [tick, row] of outputs) {
+			// A row of the tick there already (at the version now, or one that cannot be read) stays, unless the output
+			// withholds what it gives: withheld wins, as the index reads them.
+			const there = current.get(tick) ?? unreadable.get(tick);
+			if (there !== undefined && (row.gives || !there.gives)) continue;
+			tx.put(this.#t.grants, row);
 		}
 	}
 
