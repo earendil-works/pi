@@ -19,7 +19,7 @@ import {
 	remote,
 	str,
 } from "../../src/contracts/index.ts";
-import { currentVersion, grantedMembers } from "../../src/contracts/internal.ts";
+import { currentVersion, grantedMembers, memberOrder } from "../../src/contracts/internal.ts";
 import { ChordError } from "../../src/data/index.ts";
 import { Decision } from "../../src/host/admission.ts";
 import { allow, createHost, defineFacet, type Host, type HostError, type Reference } from "../../src/host/index.ts";
@@ -294,7 +294,7 @@ type RoundRefs = {
 	readonly references: WeakRef<object>[];
 	/** Every `granted` set of the round: the client's references' and the server's objects'. */
 	readonly granted: WeakRef<object>[];
-	/** The granted members (`grantedMembers`) of the round's combinations of `Combined` and `Admitted`. */
+	/** The granted members (`grantedMembers`) of the round's combinations of `Combined` and `Admitted`, orders, maps. */
 	readonly members: WeakRef<object>[];
 };
 
@@ -423,15 +423,18 @@ async function round(k: number, hosts: Hosts, held?: () => Promise<void>): Promi
 	expect(await first.m0("b", context)).toBe(`${k}-0 b`);
 	for (const ref of combined) if (ref.m1 !== undefined) await ref.m1("c", context);
 
-	const members = (Type: Contract, n: number) =>
-		new WeakRef(grantedMembers(currentVersion(Type), new Set(namesOf(n))));
-	const memberRefs = [...combinations.map((n) => members(Combined, n)), members(Admitted, rolesBefore(k))];
+	// A combination's members, their order lists and their maps (the keys of the member positions, `memberIndexes`).
+	const members = (Type: Contract, n: number) => {
+		const data = grantedMembers(currentVersion(Type), new Set(namesOf(n)));
+		return [data, memberOrder(data), data.state, data.methods, data.events].map((value) => new WeakRef(value));
+	};
+	const memberRefs = [...combinations.flatMap((n) => members(Combined, n)), ...members(Admitted, rolesBefore(k))];
 
 	// The grant changes while the admitted objects are held: each is rebuilt.
 	const after = namesOf(rolesAfter(k));
 	await roles.set(after, context);
 	await settles(() => admitted.every((ref) => ref.granted.size === after.length && ref.state.value.kind === "live"));
-	memberRefs.push(members(Admitted, rolesAfter(k)));
+	memberRefs.push(...members(Admitted, rolesAfter(k)));
 	await held?.();
 
 	// Rows deleted while the reads are open.
