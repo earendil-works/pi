@@ -34,13 +34,12 @@ export function serveSet(host: FacetHost<P3Principal>): void {
 			async () => new FolderWatch(() => changes.set(changes.value + 1)),
 			(watching) => watching.close(),
 		);
-		self.on(path, ({ value }) => {
-			watcher.value.watch(value);
-			changes.set(changes.value + 1);
-		});
-		// Every change reads the folder again (changes during a read fold into one next read).
-		self.on(changes, async () => {
-			skills.set(await readSkills(root, path.value));
+		self.on(path, ({ value }) => watcher.value.watch(value));
+		// One routine reads the folder: first, after a change of the folder, after each change in it (changes during a
+		// read fold into one next read).
+		const due = self.derive([path, changes], ([at, count]) => ({ at, count }));
+		self.on(due, async ({ value }) => {
+			skills.set(await readSkills(root, value.at));
 		});
 		// A writable is the object's own; holders get a derived view of it.
 		return { path, skills: self.derive([skills], ([value]) => [...value]) };

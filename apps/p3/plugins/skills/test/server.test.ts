@@ -25,7 +25,7 @@ import type { Source } from "../../things/contract.ts";
 import thingsServer from "../../things/server.ts";
 import { Skills, SkillsKind } from "../contract.ts";
 import { folderPath } from "../folder.ts";
-import { skillsRoot } from "../set.ts";
+import { SkillSet, skillsRoot } from "../set.ts";
 import { SkillsStore } from "../store.ts";
 
 /** Who sets things up in the tests. */
@@ -81,21 +81,30 @@ function holding<T>(thing: string, fn: (skills: Reference<typeof Skills>, ctx: C
 }
 
 describe("a set of skills", () => {
-	it("lists its folder's skills and follows the folder live; the agent reads a skill's text and files", async () => {
+	it("lists its folder's skills; the agent reads a skill's text and files, never another set's", async () => {
 		await writeSkill("coding", "release", "Cut a release", ["scripts/run.sh"]);
+		await writeSkill("other", "secret", "Not this set's");
 		const thing = await setIn("coding");
 		await holding(thing, async (skills, ctx) => {
 			assert.deepEqual([...skills.granted], ["read"]);
 			await until(skills.skills, (list) => list.length === 1, within("the folder's skills", ctx));
 			assert.deepEqual(skills.skills.value, [{ name: "release", description: "Cut a release" }]);
 			assert.equal(skills.folder.value, "coding");
-			await writeSkill("coding", "review", "Review a change");
-			await until(skills.skills, (list) => list.length === 2, within("the new skill", ctx));
 			const read = await skills.read!({ name: "release" }, ctx);
 			assert.match(read.text, /description: Cut a release/);
 			assert.deepEqual(read.files, ["scripts/run.sh"]);
-			await assert.rejects(skills.read!({ name: "../coding" }, ctx), (error) => isChordError(error));
+			await assert.rejects(skills.read!({ name: "../other/secret" }, ctx), (error) => isChordError(error));
 		});
+	});
+
+	it("follows its folder: a skill added appears without a reload", async () => {
+		await writeSkill("coding", "release", "Cut a release");
+		const thing = await setIn("coding");
+		// The set's own object, held throughout: the watcher's, not a new object's first read.
+		const set = await t.host.get(SkillSet, { thing }, context);
+		await until(set.skills, (list) => list.length === 1, within("the folder's skills", context));
+		await writeSkill("coding", "review", "Review a change");
+		await until(set.skills, (list) => list.length === 2, within("the new skill", context));
 	});
 
 	it("refuses a folder outside the skills root", () => {
