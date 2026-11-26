@@ -32,7 +32,7 @@ afterEach(async () => {
 /** `parts` imported into a fresh `:memory:` backend. */
 async function imported(parts: Iterable<unknown> | AsyncIterable<unknown>, outbox?: boolean): Promise<ChordStore> {
 	const backend = sqliteBackend(await openNodeSqliteDatabase(":memory:"));
-	const store = (await importStore(backend, parts, context, { outbox })) as ChordStore;
+	const store = await importStore(backend, parts, context, { outbox });
 	stores.push(store);
 	return store;
 }

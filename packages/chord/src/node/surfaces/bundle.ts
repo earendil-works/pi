@@ -4,10 +4,14 @@
 // a terminal's one CommonJS script the sandbox evaluates with its own `require` (its allowed builtins only). Packages
 // resolve as the server process resolves them, so a base reads the same package files as the server runs: with its
 // conditions (`--conditions`), and through a tsconfig's `paths` for a server that resolves through them; every file it
-// read is recorded with its bytes' hash (`BaseInputs`).
+// read is recorded with its bytes' hash (`BaseInputs`). The build runs in a child process of its own
+// (`base-child.ts`), which answers the bundle and exits: esbuild's JS API and the reads of every input file leave tens
+// of MiB of garbage the server's heap and allocator would keep for good.
 
+import { fork } from "node:child_process";
 import { createHash } from "node:crypto";
-import { basename, extname } from "node:path";
+import { basename, dirname, extname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { type BaseInputs, recordedSources } from "../plugins/base-inputs.ts";
 import { ASSET_EXTENSIONS, CSS, JAVASCRIPT, mimeOf, type ServedFile } from "./served.ts";
@@ -39,7 +43,8 @@ export type BaseResolution = { readonly conditions?: readonly string[]; readonly
 /**
  * Builds the base bundle of `entry` for `platform`, its files under `prefix` (`/_chord/web/`): the script
  * `base.<hash>.js`, the stylesheet `base.<hash>.css` when it imports CSS, assets under `assets/` by their own hashes.
- * Packages resolve by `resolution`. Rejects with esbuild's failure.
+ * Packages resolve by `resolution`. Runs in a child process that exits once it answered. Rejects with esbuild's
+ * failure (its `message`, `errors` and `warnings`), or when the child ends without an answer.
  */
 export async function buildBase(
 	entry: string,
@@ -47,9 +52,67 @@ export async function buildBase(
 	prefix: string,
 	resolution: BaseResolution,
 ): Promise<BaseBundle> {
+	const own = processConditions(process.execArgv, process.env.NODE_OPTIONS);
+	const conditions = resolution.conditions ?? own;
+	const request: BaseRequest = {
+		entry,
+		platform,
+		prefix,
+		resolution: { conditions, ...(resolution.tsconfig === undefined ? {} : { tsconfig: resolution.tsconfig }) },
+	};
+	const child = fork(childEntry(), [], {
+		// The child loads Chord and esbuild as this process does (its conditions); it needs none of this process's other
+		// flags (a test runner's, an inspector's, a worker's memory limits).
+		execArgv: [...own.map((condition) => `--conditions=${condition}`), "--disable-warning=ExperimentalWarning"],
+		serialization: "advanced",
+		stdio: ["ignore", "inherit", "inherit", "ipc"],
+	});
+	return new Promise<BaseBundle>((resolve, reject) => {
+		let answered = false;
+		child.once("message", (message: BaseAnswer) => {
+			answered = true;
+			if (message.kind === "built") resolve(message.bundle);
+			else reject(Object.assign(new Error(message.message), { errors: message.errors, warnings: message.warnings }));
+		});
+		child.once("error", (error) => {
+			if (!answered) reject(error);
+		});
+		child.once("exit", (code, signal) => {
+			if (!answered)
+				reject(new Error(`chord: the base build's process ended without an answer (${signal ?? code})`));
+		});
+		child.send(request);
+	});
+}
+
+/** What the base build's child process is asked: `buildBase`'s arguments, the conditions resolved. */
+export type BaseRequest = {
+	readonly entry: string;
+	readonly platform: BasePlatform;
+	readonly prefix: string;
+	readonly resolution: { readonly conditions: readonly string[]; readonly tsconfig?: string };
+};
+
+/** What the base build's child process answers: the bundle, or esbuild's failure as data. */
+export type BaseAnswer =
+	| { readonly kind: "built"; readonly bundle: BaseBundle }
+	| { readonly kind: "failed"; readonly message: string; readonly errors: unknown; readonly warnings: unknown };
+
+/**
+ * The child's module, beside this one's as the package resolves it: from Chord's sources or its built files. Through
+ * the package, not this module's URL: an app may inline Chord into a bundle of its own, where this module has no
+ * file (p3's release), while the installed package still has it.
+ */
+function childEntry(): string {
+	const surfaces = fileURLToPath(import.meta.resolve("@earendil-works/chord/surfaces"));
+	return join(dirname(surfaces), `base-child${extname(surfaces)}`);
+}
+
+/** Builds the base bundle `request` asks for in this process: the child's work (`base-child.ts`). */
+export async function buildHere(request: BaseRequest): Promise<BaseBundle> {
+	const { entry, platform, prefix, resolution } = request;
 	const browser = platform === "browser";
 	const inputs = new Map<string, string>();
-	const resolving = resolution.conditions ?? processConditions(process.execArgv, process.env.NODE_OPTIONS);
 	const result = await build({
 		entryPoints: [entry],
 		outdir: "/",
@@ -69,7 +132,7 @@ export async function buildBase(
 		jsx: "automatic",
 		define: { "process.env.NODE_ENV": '"production"' },
 		// Custom conditions drop esbuild's default `module`, which a browser build keeps; the platform stays its own.
-		conditions: browser ? [...resolving, "module"] : [...resolving],
+		conditions: browser ? [...resolution.conditions, "module"] : [...resolution.conditions],
 		// Fonts and images a stylesheet's `url()` (or a script) names: files under `assets/`, named by their content.
 		loader: Object.fromEntries(ASSET_EXTENSIONS.map((extension) => [`.${extension}`, "file" as const])),
 		plugins: [recordedSources(inputs)],
@@ -84,14 +147,16 @@ export async function buildBase(
 	let script = "";
 	let style: string | undefined;
 	for (const output of result.outputFiles) {
+		// A copy of its own: esbuild's contents are views of one buffer, which a structured clone would send whole.
+		const bytes = output.contents.slice();
 		const extension = extname(output.path);
 		if (basename(output.path) === `base${extension}`) {
 			const path = `${prefix}base.${digest}${extension}`;
 			if (extension === ".js") script = path;
 			else style = path;
-			files.set(path, { mime: extension === ".js" ? JAVASCRIPT : CSS, bytes: output.contents });
+			files.set(path, { mime: extension === ".js" ? JAVASCRIPT : CSS, bytes });
 		} else {
-			files.set(`${prefix}assets/${basename(output.path)}`, { mime: mimeOf(output.path), bytes: output.contents });
+			files.set(`${prefix}assets/${basename(output.path)}`, { mime: mimeOf(output.path), bytes });
 		}
 	}
 	return { hash: digest, script, style, files, inputs };

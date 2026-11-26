@@ -1,8 +1,11 @@
 // p3's API v1 for worker facets (`@earendil-works/p3/v1/worker`): the worker's process values (`WorkerRuntime`) and
-// what keeps it alive (`WorkerBusy`), both served by the base.
+// what keeps it alive (`WorkerBusy`), both served by the base; the built-in plugins' worker contracts p3 promises; and
+// the parts of Durable and pi-ai worker plugins build on (one instance per worker, the versions p3 ships: a plugin
+// inlines neither). `Harness`, `StoreStorage`, `createRegistry` and `createModels` are for p3's own harness plugin and
+// outside v1's promise: a plugin gives the agent tools only through a thing (`ThingExtensions`).
 
 import { type ChordStore, defineRegistry, type Host } from "@earendil-works/chord";
-import type { P3Principal } from "../../principals.ts";
+import type { P3Principal } from "../../app.ts";
 
 // Chord's sync layer, for the backup plugin's worker facet: uploads from a store's outbox.
 export {
@@ -15,6 +18,45 @@ export {
 	type UploadResult,
 	uploadSession,
 } from "@earendil-works/chord/sync";
+export {
+	createModels,
+	createProvider,
+	// pi-ai's faux provider, for plugins' tests: a model login that answers what the test scripts.
+	fauxAssistantMessage,
+	fauxProvider,
+	fauxText,
+	fauxToolCall,
+	type Message,
+	type Models,
+	type MutableModels,
+	type Provider,
+} from "@earendil-works/pi-ai";
+// Until real provider logins (ERNDL-705): a deployment's own login plugin builds on it. Outside v1's promise.
+export { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
+export {
+	type Conversation,
+	type ConversationId,
+	type ConversationView,
+	createRegistry,
+	defineExtension,
+	defineTool,
+	type EntryId,
+	type Extension,
+	Harness,
+	hook,
+	LiveDoc,
+	type LiveState,
+	type Registry,
+	ROOT_CONVERSATION_ID,
+	section,
+	type TaskGraph,
+} from "@earendil-works/pi-durable";
+export type { ExecutionEnv } from "@earendil-works/pi-durable/env";
+export { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
+export { StoreStorage } from "@earendil-works/pi-durable/storage/store";
+export { createCodingTools } from "@earendil-works/pi-durable/tools";
+export * from "../../../plugins/environments/contract.worker.ts";
+export * from "../../../plugins/harness/contract.worker.ts";
 
 /**
  * The file, relative to a worker's `dir`, whose presence opens the session's store with an outbox (each commit's
@@ -33,8 +75,11 @@ export type WorkerRuntime = {
 	readonly dir: string;
 	/** How long the worker may idle before it stops itself (the runner's choice, from its start). */
 	readonly idleMs: number;
-	/** Stops the worker: closes its host and store (everything it started finishes), tells the server why, exits. */
-	close(reason: "idle"): void;
+	/**
+	 * Stops the worker: it tells the server it leaves, closes its host, then its store (which settles the queued
+	 * commits), and exits (a clean exit once both closed).
+	 */
+	close(): void;
 };
 
 /** The worker's process values (`WorkerRuntime`), served by the base. */

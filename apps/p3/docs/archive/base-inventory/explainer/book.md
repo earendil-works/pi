@@ -546,7 +546,7 @@ Web and terminal keep separate registries; the terminal is not reduced to the we
 // plugins/presentation/contract.web.ts
 /** A kind of thing pages can route to and render: a name written once and its typed params. */
 export type ThingKind<P extends Record<string, string | number>> = { readonly name: string; readonly "~params"?: P };
-export function defineThingKind<P extends Record<string, string | number>>(name: string): ThingKind<P>;
+export function defineThing<P extends Record<string, string | number>>(name: string): ThingKind<P>;
 export type ThingRef = { readonly kind: string; readonly params: Readonly<Record<string, string | number>> };
 export function thing<P extends Record<string, string | number>>(kind: ThingKind<P>, params: P): ThingRef;
 
@@ -573,7 +573,7 @@ Question kinds are thing kinds too, so their renderers are ordinary views per fo
 
 ```ts
 // plugins/questions/contract.web.ts
-export const QuestionThing = defineThingKind<{ id: string }>("questions.question");   // id: OpenQuestion.id
+export const QuestionThing = defineThing<{ id: string }>("questions.question");   // id: OpenQuestion.id
 ```
 
 # The Rest of the Base {#rest lede="Secrets, platform bindings, ingress, and the agent's typed surface."}

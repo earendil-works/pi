@@ -1,0 +1,216 @@
+/*
+ * The pane layout's split form: splits as flex rows and columns (each cell's share its flex-grow), dividers with a
+ * wide grip and a thin line, each group a tab bar over its pane. While a tab is dragged: a ghost by the pointer, a
+ * line where it would go in a tab bar, a tinted half (or whole) of the body it would split (or join).
+ */
+
+.layout {
+	position: relative;
+	display: flex;
+	min-inline-size: 0;
+	min-block-size: 0;
+	flex: 1 1 auto;
+}
+
+.layout[data-dragging] {
+	cursor: grabbing;
+	user-select: none;
+}
+
+.split {
+	display: flex;
+	min-inline-size: 0;
+	min-block-size: 0;
+	flex: 1 1 0;
+}
+
+.split[data-direction="column"] {
+	flex-direction: column;
+}
+
+.cell {
+	display: flex;
+	min-inline-size: 0;
+	min-block-size: 0;
+	flex-basis: 0;
+	flex-shrink: 1;
+}
+
+.divider {
+	position: relative;
+	flex: none;
+	inline-size: var(--semantic-dimension-border-width-small);
+	background: var(--semantic-color-border-secondary);
+	touch-action: none;
+}
+
+.divider[data-direction="row"] {
+	cursor: col-resize;
+}
+
+.divider[data-direction="column"] {
+	block-size: var(--semantic-dimension-border-width-small);
+	inline-size: auto;
+	cursor: row-resize;
+}
+
+/* The grip: wider than the line, so a finger or a pointer finds it. */
+.divider::before {
+	position: absolute;
+	z-index: var(--semantic-number-layer-raised);
+	inset: 0 calc(-1 * var(--semantic-dimension-space-gap-x-small));
+	content: "";
+}
+
+.divider[data-direction="column"]::before {
+	inset: calc(-1 * var(--semantic-dimension-space-gap-x-small)) 0;
+}
+
+.divider:hover,
+.divider:focus-visible,
+.layout[data-dragging] .divider:active {
+	background: var(--semantic-color-focus-ring);
+	outline: none;
+}
+
+.group {
+	display: flex;
+	min-inline-size: 0;
+	min-block-size: 0;
+	flex: 1 1 0;
+	flex-direction: column;
+}
+
+.tabs {
+	display: flex;
+	flex: none;
+	gap: var(--semantic-dimension-space-gap-xx-small);
+	min-block-size: var(--semantic-dimension-size-large);
+	padding-inline: var(--semantic-dimension-space-padding-x-small);
+	overflow-x: auto;
+	border-block-end: var(--semantic-dimension-border-width-small) solid var(--semantic-color-border-secondary);
+	scrollbar-width: none;
+}
+
+.tab {
+	display: flex;
+	flex: none;
+	align-items: center;
+	border-block-end: var(--semantic-dimension-border-width-medium) solid transparent;
+}
+
+.tab[data-active] {
+	border-block-end-color: var(--semantic-color-border-secondary);
+}
+
+.group[data-focused] .tab[data-active] {
+	border-block-end-color: var(--semantic-color-text-primary);
+}
+
+.tabButton {
+	max-inline-size: 14rem;
+	padding-block: var(--semantic-dimension-space-control-padding-block-small);
+	padding-inline: var(--semantic-dimension-space-control-padding-inline-small);
+	overflow: hidden;
+	border: 0;
+	background: none;
+	color: var(--semantic-color-text-secondary);
+	font: var(--semantic-typography-ui-primary);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	cursor: pointer;
+	touch-action: none;
+	user-select: none;
+}
+
+.tab[data-active] .tabButton {
+	color: var(--semantic-color-text-primary);
+	font-weight: var(--semantic-font-weight-ui-selected);
+}
+
+.close {
+	display: grid;
+	inline-size: var(--semantic-dimension-size-small);
+	block-size: var(--semantic-dimension-size-small);
+	place-items: center;
+	padding: 0;
+	border: 0;
+	border-radius: var(--semantic-dimension-radius-small);
+	background: none;
+	color: var(--semantic-color-icon-secondary);
+	cursor: pointer;
+}
+
+.close > svg {
+	inline-size: var(--semantic-dimension-size-icon);
+	block-size: var(--semantic-dimension-size-icon);
+}
+
+.tabButton:focus-visible,
+.close:focus-visible {
+	outline: var(--semantic-dimension-border-width-focus-ring) solid var(--semantic-color-focus-ring);
+	outline-offset: calc(-1 * var(--semantic-dimension-border-width-focus-ring));
+}
+
+@media (hover: hover) {
+	.close:hover {
+		background: var(--semantic-color-background-fill-ghost-neutral-hover);
+		color: var(--semantic-color-icon-primary);
+	}
+}
+
+.insert {
+	flex: none;
+	align-self: stretch;
+	inline-size: var(--semantic-dimension-border-width-medium);
+	margin-block: var(--semantic-dimension-space-gap-xx-small);
+	background: var(--semantic-color-focus-ring);
+}
+
+.body {
+	position: relative;
+	display: flex;
+	min-block-size: 0;
+	flex: 1 1 auto;
+	flex-direction: column;
+	overflow: hidden;
+}
+
+.drop {
+	position: absolute;
+	z-index: var(--semantic-number-layer-raised);
+	inset: 0;
+	border: var(--semantic-dimension-border-width-medium) solid var(--semantic-color-focus-ring);
+	background: var(--semantic-color-background-fill-ghost-information);
+	pointer-events: none;
+}
+
+.drop[data-drop="left"] {
+	inset-inline-end: 50%;
+}
+
+.drop[data-drop="right"] {
+	inset-inline-start: 50%;
+}
+
+.drop[data-drop="top"] {
+	inset-block-end: 50%;
+}
+
+.drop[data-drop="bottom"] {
+	inset-block-start: 50%;
+}
+
+.ghost {
+	position: fixed;
+	z-index: var(--semantic-number-layer-overlay);
+	padding-block: var(--semantic-dimension-space-control-padding-block-small);
+	padding-inline: var(--semantic-dimension-space-control-padding-inline-small);
+	border: var(--semantic-dimension-border-width-small) solid var(--semantic-color-border-primary);
+	border-radius: var(--semantic-dimension-radius-small);
+	background: var(--semantic-color-background-surface);
+	box-shadow: var(--semantic-shadow-popup);
+	color: var(--semantic-color-text-primary);
+	font: var(--semantic-typography-ui-primary);
+	pointer-events: none;
+}

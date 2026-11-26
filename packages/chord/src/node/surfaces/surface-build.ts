@@ -123,6 +123,9 @@ export class SurfaceBuild<P extends Principal> {
 	async #run(context: Context): Promise<Outcome<P>> {
 		const { kind, entry, resolution, plugins } = this.#options;
 		try {
+			// The kind's plugins build here while the base builds in its own process; `start` below takes the same set
+			// (and its failure, if any).
+			plugins.scripts(kind, context).catch(() => {});
 			const base = await buildBase(entry, this.#platform, this.#prefix, resolution);
 			const published = new PublishedScripts(this.#surface, kind, this.#prefix, base.hash, plugins, this.#server);
 			await published.start(context);

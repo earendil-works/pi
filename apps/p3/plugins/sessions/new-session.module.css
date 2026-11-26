@@ -1,0 +1,25 @@
+/* The new session form: one column of fields, as wide as text reads well, its button at the end. */
+
+.form {
+	display: flex;
+	inline-size: 100%;
+	max-inline-size: var(--semantic-dimension-size-max-width-content-small);
+	flex-direction: column;
+	gap: var(--semantic-dimension-space-flow-medium);
+}
+
+.actions {
+	display: flex;
+	justify-content: flex-end;
+}
+
+.note,
+.error {
+	margin: 0;
+	color: var(--semantic-color-text-secondary);
+	font: var(--semantic-typography-ui-secondary);
+}
+
+.error {
+	color: var(--semantic-color-text-negative);
+}

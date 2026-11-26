@@ -1,10 +1,11 @@
 // Tests of testing a plugin alone (slice 12 §6): the plugin built as production builds it against the app's API
-// modules, loaded on an in-memory host beside a stub serving what it uses; the registries it contributes to that nobody
-// serves collected; the contracts it waits for unserved listed; a principal for the host and for a root scope.
+// modules, loaded on an in-memory host beside a stub serving what it uses (or one made once the host exists); the
+// registries it contributes to that nobody serves collected; the contracts it waits for unserved listed; a principal
+// for the host and for a root scope.
 
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
+import { type Context, BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
 import * as chord from "../../../src/index.ts";
 import { defineFacet, int, local, str } from "../../../src/index.ts";
 import { testPlugin } from "../../../src/node/plugins/index.ts";
@@ -45,6 +46,29 @@ async function statsPlugin(): Promise<string> {
 /** A stub of the notes plugin: every project has 42 words. */
 const notesStub = defineFacet((host) => host.serve(Notes, () => ({ words: chord.constant(42) })));
 
+/** A count kept in the host's store, and what bumps it. */
+const Counter = local("acme.counter", { version: 1, params: {}, members: { bump: chord.method() } });
+const Count = chord.defineState("acme.count", {
+	schema: chord.obj({ n: int() }),
+	version: 1,
+	initial: () => ({ n: 0 }),
+	persist: true,
+	checkpointWhen: () => true,
+});
+
+/** A stub serving `Counter`: each bump commits to the host's store. */
+const counterStub = defineFacet((host) =>
+	host.serve(Counter, (_params, self) => {
+		const count = self.state(Count);
+		return {
+			bump: async (ctx: Context) => {
+				await count.change((draft) => void draft.n++, ctx);
+				return null;
+			},
+		};
+	}),
+);
+
 describe("testPlugin", () => {
 	it("loads the plugin built against the API beside a stub; collects its contributions and lists what it waits for", async () => {
 		const dir = await statsPlugin();
@@ -73,6 +97,35 @@ describe("testPlugin", () => {
 		expect(() => t.contributions(chord.defineRegistry("acme.other", { version: 1 }))).toThrow(
 			"testPlugin: registry acme.other is not collected",
 		);
+		await t.close(context);
+	});
+
+	it("makes host stubs once the host exists: they get the test's host and store (p3's WorkerRuntime)", async () => {
+		const dir = await statsPlugin();
+		const seen: { host?: unknown; store?: chord.Store } = {};
+		const t = await testPlugin(
+			dir,
+			{
+				kind: "worker",
+				api: API,
+				modules: MODULES,
+				hostStubs: (host, store) => {
+					seen.host = host;
+					seen.store = store;
+					return [
+						{ name: "@acme/notes", facet: notesStub },
+						{ name: "@acme/counter", facet: counterStub },
+					];
+				},
+			},
+			context,
+		);
+		expect(seen.host).toBe(t.host);
+		expect((await t.host.get(Stats, { project: "p1" }, context)).words.value).toBe(42);
+		// The store the stubs got is the one the host commits to.
+		const before = seen.store!.lastSeq;
+		await (await t.host.get(Counter, {}, context)).bump(context);
+		expect(seen.store!.lastSeq).toBeGreaterThan(before);
 		await t.close(context);
 	});
 

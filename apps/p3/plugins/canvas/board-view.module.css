@@ -1,0 +1,127 @@
+/* One board: a drawer's tools above it, the board as white paper scaled to the width it has (a whiteboard in light
+ * and dark alike, so every colour reads), and the others' pointers with their names on it. */
+
+.board {
+	display: flex;
+	flex-direction: column;
+	gap: var(--semantic-dimension-space-gap-small);
+	padding-block: var(--semantic-dimension-space-gap-x-small);
+}
+
+.toolbar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--semantic-dimension-space-gap-small);
+}
+
+.colors {
+	margin: 0;
+	padding: 0;
+	border: 0;
+	display: flex;
+	gap: var(--semantic-dimension-space-gap-x-small);
+}
+
+/* Touch targets of 32px, the swatch inside; the picked one ringed. */
+.color {
+	inline-size: 32px;
+	block-size: 32px;
+	padding: 0;
+	border: var(--semantic-dimension-border-width-medium) solid var(--semantic-color-background-canvas);
+	border-radius: var(--semantic-dimension-radius-full);
+	box-shadow: 0 0 0 var(--semantic-dimension-border-width-small) var(--semantic-color-border-secondary);
+	cursor: pointer;
+}
+
+.color[aria-pressed="true"] {
+	box-shadow: 0 0 0 var(--semantic-dimension-border-width-focus-ring) var(--semantic-color-text-primary);
+}
+
+.actions {
+	display: flex;
+	margin-inline-start: auto;
+	gap: var(--semantic-dimension-space-gap-xx-small);
+}
+
+.text {
+	min-inline-size: 0;
+	flex: 1 1 100%;
+}
+
+.paper {
+	position: relative;
+	overflow: hidden;
+	border: var(--semantic-dimension-border-width-small) solid var(--semantic-color-border-secondary);
+	border-radius: var(--semantic-dimension-radius-medium);
+	background: #ffffff;
+}
+
+.surface {
+	display: block;
+	inline-size: 100%;
+	block-size: auto;
+	aspect-ratio: 4 / 3;
+	user-select: none;
+}
+
+/* A drawer's finger draws instead of scrolling the page. */
+.drawing {
+	cursor: crosshair;
+	touch-action: none;
+}
+
+.cursor {
+	position: absolute;
+	inline-size: 12px;
+	block-size: 12px;
+	margin: -6px 0 0 -6px;
+	border: 2px solid #ffffff;
+	border-radius: var(--semantic-dimension-radius-full);
+	background: #6639ba;
+	box-shadow: 0 0 0 1px #6639ba;
+	pointer-events: none;
+}
+
+.label {
+	position: absolute;
+	inset-block-start: 12px;
+	inset-inline-start: 10px;
+	padding: 1px 6px;
+	border-radius: var(--semantic-dimension-radius-small);
+	background: #6639ba;
+	color: #ffffff;
+	font: var(--semantic-typography-ui-tertiary);
+	white-space: nowrap;
+}
+
+.options {
+	display: flex;
+	align-items: center;
+	gap: var(--semantic-dimension-space-gap-small);
+}
+
+.title {
+	display: flex;
+	align-items: baseline;
+	gap: var(--semantic-dimension-space-gap-small);
+	margin: 0;
+	font: var(--semantic-typography-ui-secondary);
+	font-weight: var(--semantic-font-weight-ui-emphasis);
+}
+
+.hint {
+	color: var(--semantic-color-text-secondary);
+	font: var(--semantic-typography-ui-tertiary);
+}
+
+.note,
+.error {
+	margin: 0;
+	color: var(--semantic-color-text-secondary);
+	font: var(--semantic-typography-ui-tertiary);
+}
+
+.error {
+	color: var(--semantic-color-text-negative);
+}

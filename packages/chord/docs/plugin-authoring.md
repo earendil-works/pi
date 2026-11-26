@@ -375,7 +375,8 @@ await t.close(ctx);
 ```
 
 The plugin is built as production builds it and loaded on an in-memory host (a `:memory:` store). Stubs are ordinary
-facets with fake data. A test imports the API by its package name and the plugin's own contracts from its
+facets with fake data; `hostStubs(host, store)` makes stubs once the test's host exists, for an app registry that
+hands out the host or its store. A test imports the API by its package name and the plugin's own contracts from its
 `contract.ts` (the build bundles its own copy; contracts are data: the same name, version and schema bind); contracts
 of plugins it has no files of, it declares again, as `Notes` above.
 

@@ -2707,8 +2707,9 @@ touches several holds), so remote consumers never see a torn commit. Consumers a
 validation, no clone of snapshots or ops.
 
 - **The protocol version** travels in `hello`; hosts of different versions refuse each other (a web page reloads for
-  a newer server). Error reasons and message kinds are part of it. Until p3 ships, changes keep `PROTOCOL_VERSION` 1
-  (nothing is deployed); after that every message or reason change bumps it.
+  a newer server). Error reasons and message kinds are part of it. `PROTOCOL_VERSION` is 2 since slice 15 (owner,
+  2026-11-26: p2 is deployed, and a variant-era host must be refused at its `hello`, not fail at its first `bound`);
+  every message or reason change bumps it.
 - **One typed `Message`** (owner, 2026-10-22, "Wire protocol"): a pi-schema schema `MESSAGE`, a tagged union over
   `kind`, from which the protocol types derive; every decoded message is checked against it (compiled once) unless
   the link is trusted (section 3). Kinds:

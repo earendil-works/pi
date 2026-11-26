@@ -1,0 +1,8 @@
+/* The coding tools' options form: the switch and its save in one line. */
+
+.form {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--semantic-dimension-space-gap-small);
+}

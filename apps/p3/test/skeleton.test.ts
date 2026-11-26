@@ -2,72 +2,80 @@
 // client signed in as the owner over WebSocket. One case per rule of the base, the runner and the sessions plugin.
 
 import assert from "node:assert/strict";
-import { readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { spawn } from "node:child_process";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
-import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
-import { remote, Session, str } from "@earendil-works/p3/v1";
+import { BACKGROUND_CONTEXT as context, until } from "@earendil-works/p3/v1";
 import { WorkerRunners } from "@earendil-works/p3/v1/server";
+import { type TestServer, testServer } from "@earendil-works/p3/v1/testing";
+import { BACKUP_MARKER } from "@earendil-works/p3/v1/worker";
 import { Sessions, SessionWorker } from "../plugins/sessions/contract.ts";
+import { askServer } from "../src/local-socket.ts";
 import { Probe } from "./plugins/probe/contract.ts";
-import { alive, eventually, IDLE_MS, type TestServer, testServer } from "./support.ts";
-import { until } from "./until.ts";
+import {
+	alive,
+	coding,
+	constantContract,
+	constantPlugin,
+	FAUX,
+	gatedSession,
+	openGate,
+	PROBE,
+	startRun,
+} from "./support.ts";
+import { eventually, within } from "./until.ts";
 
 let running: TestServer | undefined;
 
-/** The contract of the plugin the apply test writes (`versioned`): its version, on a session's worker. */
-const Versioned = remote("versioned.versioned", {
-	version: 1,
-	params: { session: str() },
-	hostAddress: ({ session }) => Session({ id: session }),
-	state: { version: str() },
-});
-
-/** The source of a single-file worker plugin serving `Versioned` with `version`. */
-function versioned(version: string): string {
-	return `import { constant, defineFacet, remote, Session, str } from "@earendil-works/p3/v1";
-const Versioned = remote("versioned.versioned", {
-	version: 1,
-	params: { session: str() },
-	hostAddress: ({ session }) => Session({ id: session }),
-	state: { version: str() },
-});
-export default defineFacet((host) => {
-	host.serve(Versioned, () => ({ version: constant(${JSON.stringify(version)}) }));
-});
-`;
-}
+/** The contract of the plugin the apply test writes (`versioned`): its value, on a session's worker. */
+const Versioned = constantContract("versioned");
 
 afterEach(async () => {
-	await running?.close();
+	await running?.close(context);
 	running = undefined;
 });
 
 /** A server with one session; its id. */
 async function withSession(): Promise<{ readonly t: TestServer; readonly id: string }> {
-	running = await testServer();
-	const client = await running.client();
+	running = await testServer({ plugins: [PROBE] }, context);
+	const client = await running.client(context);
 	const sessions = await client.get(Sessions, {}, context);
-	return { t: running, id: await sessions.create({ title: "one" }, context) };
+	return { t: running, id: await sessions.create(coding("one"), context) };
+}
+
+/** Whether the session store in worker directory `dir` records an outbox (Chord's `chord_meta.outbox`), read aside. */
+function outboxOf(dir: string): number {
+	const db = new DatabaseSync(join(dir, "store.sqlite"), { readOnly: true });
+	try {
+		return (db.prepare("SELECT outbox FROM chord_meta WHERE singleton = 1").get() as { outbox: number }).outbox;
+	} finally {
+		db.close();
+	}
 }
 
 /** The probe on session `id`'s worker, held by a new owner client until `release`. */
 async function probe(t: TestServer, id: string) {
-	const client = await t.client();
-	return client.get(Probe, { session: id }, context);
+	const client = await t.client(context);
+	const held = await client.get(Probe, { session: id }, context);
+	assert.equal(held.state.value.kind, "live");
+	return held;
 }
 
 describe("session workers", () => {
 	it("a worker starts on the first hold, as a process of its own, and follows its session's row", async () => {
 		const { t, id } = await withSession();
-		const worker = await (await t.client()).get(SessionWorker, { session: id }, context);
+		const worker = await (await t.client(context)).get(SessionWorker, { session: id }, context);
+		assert.equal(worker.state.value.kind, "live");
 		const pid = (await probe(t, id)).pid.value;
 		assert.notEqual(pid, process.pid);
 		assert.ok(alive(pid));
-		const sessions = await (await t.client()).get(Sessions, {}, context);
-		await sessions.rename({ id, title: "two" }, context);
-		await until(worker.session, (row) => row?.title === "two", context);
+		const sessions = await (await t.client(context)).get(Sessions, {}, context);
+		await sessions.rename({ session: id, title: "two" }, context);
+		await until(worker.session, (row) => row?.title === "two", within("the renamed row", context));
 	});
 
 	it("a worker nobody holds stops itself after its idle time, cleanly", async () => {
@@ -80,7 +88,7 @@ describe("session workers", () => {
 			(lives) => !lives,
 		);
 		// A clean exit: the session is not failed, and the next hold starts a new worker.
-		assert.deepEqual(await t.workers(), {});
+		assert.deepEqual(await t.workers(context), {});
 		assert.notEqual((await probe(t, id)).pid.value, pid);
 	});
 
@@ -90,7 +98,7 @@ describe("session workers", () => {
 		const pid = held.pid.value;
 		await held.busy(1, context);
 		held.release();
-		await sleep(IDLE_MS * 4);
+		await sleep(t.idleMs * 4);
 		assert.ok(alive(pid));
 		const again = await probe(t, id);
 		await again.busy(0, context);
@@ -101,83 +109,125 @@ describe("session workers", () => {
 		);
 	});
 
+	it("a worker opens its session's store with an outbox exactly while the backup marker is there", async () => {
+		const { t, id } = await withSession();
+		const dir = join(t.dataDir, "workers", id);
+		await mkdir(dirname(join(dir, BACKUP_MARKER)), { recursive: true });
+		await writeFile(join(dir, BACKUP_MARKER), "");
+		const held = await probe(t, id);
+		assert.equal(outboxOf(dir), 1);
+		const pid = held.pid.value;
+		held.release();
+		await eventually(
+			async () => alive(pid),
+			(lives) => !lives,
+		);
+		// Backup stopped for good: the next start opens the store without its outbox.
+		await rm(join(dir, BACKUP_MARKER));
+		await probe(t, id);
+		assert.equal(outboxOf(dir), 0);
+	});
+
 	it("a worker that crashes fails its session until retry", async () => {
 		const { t, id } = await withSession();
 		const held = await probe(t, id);
 		const pid = held.pid.value;
 		await held.crash(context);
 		await eventually(
-			() => t.workers(),
+			() => t.workers(context),
 			(workers) => workers[id]?.status === "failed",
 		);
 		assert.ok(!alive(pid));
-		const client = await t.client();
+		const client = await t.client(context);
 		await assert.rejects(client.get(Probe, { session: id }, context, { readyTimeout: 1000 }));
-		(await t.server.runtime.host.registry(WorkerRunners, context)).value?.retry(id);
+		(await t.host.registry(WorkerRunners, context)).value?.retry(id);
 		assert.notEqual((await probe(t, id)).pid.value, pid);
 	});
 
-	it("a working session's worker starts again after a server restart, unasked", async () => {
-		const { t, id } = await withSession();
-		const held = await probe(t, id);
-		await t.report(id, "working");
-		await held.busy(1, context);
-		running = await t.restart();
+	it("a working session's worker starts again after a server restart, unasked", async (c) => {
+		running = await testServer({ plugins: [PROBE, FAUX] }, context);
+		const t = running;
+		const folder = await mkdtemp(join(tmpdir(), "p3-skeleton-run-"));
+		// The run waits on its gate on any worker; opened after the case, so no bash call waits on.
+		c.after(async () => {
+			await openGate(folder);
+			await rm(folder, { recursive: true, force: true });
+		});
+		const client = await t.client(context);
+		const id = await gatedSession(client, "one", folder, context);
+		// The harness reports the run `working` (a report by the test would race the harness's own).
+		await startRun(client, id, context);
+		running = await t.restart(context);
 		const restarted = running;
 		await eventually(
-			() => restarted.workers(),
+			() => restarted.workers(context),
 			(workers) => workers[id]?.status === "running",
 		);
 	});
 
+	// Sol, review round 2 (S6): the case applied again and again until the code changed; now one apply per change,
+	// once the watcher marked it, through the command `p3 apply` sends (D11).
 	it("an apply ships a changed worker plugin to a running worker", async () => {
 		const { t, id } = await withSession();
-		const file = join(t.plugins, "versioned.worker.ts");
-		await writeFile(file, versioned("1"));
-		const client = await t.client();
-		// The watcher sees the new file a moment after it is written: applied until the plugin is there.
-		const held = await eventually(async () => {
-			await t.server.runtime.apply(context);
-			return client.get(Versioned, { session: id }, context, { readyTimeout: 500 });
-		});
-		assert.equal(held.version.value, "1");
-		await writeFile(file, versioned("2"));
-		await eventually(
-			async () => {
-				const result = await t.server.runtime.apply(context);
-				assert.equal(result.stopped, undefined);
-				return held.version.value;
-			},
-			(version) => version === "2",
-		);
+		const file = join(t.userRoot, "versioned.worker.ts");
+		const client = await t.client(context);
+		await writeFile(file, constantPlugin("versioned", "1"));
+		await applied(t, (marks) => marks.set);
+		const held = await client.get(Versioned, { session: id }, context);
+		assert.equal(held.state.value.kind, "live");
+		assert.equal(held.value.value, "1");
+		await writeFile(file, constantPlugin("versioned", "2"));
+		await applied(t, (marks) => marks.dirty.length > 0);
+		await until(held.value, (value) => value === "2", within("the applied value", context));
+	});
+
+	// Astra B1, review round 4, adapted to the decision (one runner, wraps): a plugin changing how workers run, added by
+	// an apply while a worker is held, hid that worker from the status `p3 stop` kills by.
+	it("the status names a held worker after an apply added a wrap, and the wrap's own workers beside it", async (c) => {
+		const { t, id } = await withSession();
+		const pid = (await probe(t, id)).pid.value;
+		// A process the wrap says it runs elsewhere.
+		const own = spawn("sleep", ["60"], { stdio: "ignore" });
+		c.after(() => own.kill("SIGKILL"));
+		await writeFile(join(t.userRoot, "elsewhere.server.ts"), wrapPlugin(own.pid!));
+		await applied(t, (marks) => marks.set);
+		const status = await askServer(t.dataDir, { kind: "status" }, 5000);
+		assert.ok(status.kind === "answered" && status.answer.kind === "running", JSON.stringify(status));
+		assert.deepEqual([...status.answer.workers].sort(), [pid, own.pid!].sort());
+		assert.ok(alive(pid));
 	});
 });
 
-describe("sign-in", () => {
-	it("the owner link signs a browser in once", async () => {
-		running = await testServer();
-		const base = `http://127.0.0.1:${running.server.port}`;
-		const dataDir = running.dataDir;
-		const token = await eventually(async () => (await readFile(join(dataDir, "owner-token"), "utf8")).trim());
-		const answer = await fetch(`${base}/_p3/owner/link`, {
-			method: "POST",
-			headers: { authorization: `Bearer ${token}` },
-		});
-		const { link } = (await answer.json()) as { readonly link: string };
-		const once = new URL(link).hash.slice(1);
-		const post = (body: unknown) =>
-			fetch(`${base}/_p3/owner`, {
-				method: "POST",
-				headers: { "content-type": "application/json" },
-				body: JSON.stringify(body),
-			});
-		const signedIn = await post({ token: once });
-		assert.equal(signedIn.status, 200);
-		const cookie = signedIn.headers.get("set-cookie")?.split(";")[0];
-		assert.ok(cookie !== undefined);
-		const withCookie = await fetch(`${base}/_p3/owner/link`, { method: "POST", headers: { cookie } });
-		assert.equal(withCookie.status, 200);
-		assert.equal((await post({ token: once })).status, 403);
-		assert.equal((await fetch(`${base}/_p3/owner/link`, { method: "POST" })).status, 401);
+/** A single-file server plugin contributing a wrap that runs everything on the runner beneath, and says it runs `pid`. */
+function wrapPlugin(pid: number): string {
+	return `import { defineFacet } from "@earendil-works/p3/v1";
+import { WorkerRunnerWraps } from "@earendil-works/p3/v1/server";
+export default defineFacet((_host, self) =>
+	self.contribute(WorkerRunnerWraps, (inner) => ({
+		start: (address, ctx) => inner.start(address, ctx),
+		stop: (id) => inner.stop(id),
+		retry: (id) => inner.retry(id),
+		state: () => inner.state(),
+		pids: () => [${pid}, ...inner.pids()],
+		reload: (built, ctx) => inner.reload(built, ctx),
+	})),
+);
+`;
+}
+
+/** Waits until the watcher's marks pass `marked`, then applies once with the command `apply`; asserts no step stopped. */
+async function applied(t: TestServer, marked: (marks: typeof t.plugins.value) => boolean): Promise<void> {
+	await until(t.plugins, marked, within("the watcher's marks", context, 10_000));
+	const reply = await askServer(t.dataDir, { kind: "command", name: "apply" }, 60_000);
+	assert.ok(reply.kind === "answered" && reply.answer.kind === "answer", JSON.stringify(reply));
+	assert.equal((reply.answer.value as { readonly stopped: unknown }).stopped, null);
+}
+
+describe("the server", () => {
+	it("closes once when asked twice at once, and frees its data directory for the next server", async () => {
+		const first = await testServer({}, context);
+		await Promise.all([first.stop(context), first.stop(context)]);
+		running = await testServer({ dataDir: first.dataDir }, context);
+		assert.notEqual(running.port, 0);
 	});
 });

@@ -27,7 +27,7 @@ They belong to Mario:
 
 - Chord and Durable: `packages/chord/`, `packages/durable/`;
 - p3's base code: `apps/p3/src/` (the API `apps/p3/src/api/` included);
-- p3's test harness: `apps/p3/test/support.ts`, `apps/p3/test/until.ts`;
+- p3's test harness: `apps/p3/test/support.ts`, `apps/p3/test/topology.ts`, `apps/p3/test/until.ts`;
 - another package's plugin: agree with its owner; its owner changes it.
 
 When your package needs a change there, **stop** the work that depends on it and write the change up:
@@ -119,6 +119,20 @@ You work in the shared checkout, on main, with other sessions committing beside 
 - Messages: `feat(p3): ...`, `fix(p3): ...`, `docs(p3): ...`; plain, no emojis. Never name competing products in the
   repository, its docs or commit messages.
 
+### Commits on the Linear issue
+
+Linear's GitHub integration links every pushed commit that names an issue key to that issue: the issue shows the
+commit, and the commit is the record of what was built for it.
+
+- Every commit names the issue it is for, at the end of its first line: `feat(p3): the runner refuses starts once it
+  closed (ERNDL-1061)`. Name the most specific issue: the sub-issue of the part you changed, not the package's parent.
+  A commit for several parts names each: `(ERNDL-1060, ERNDL-1061)`.
+- Never use Linear's closing words with a key (`fixes`, `closes`, `resolves` and their forms): the integration would
+  move the issue to Done on the push, but an issue is Done only after the people's review (the Review stage above).
+  Status and stage labels are moved by hand.
+- Only pushed commits are linked. A commit made before the integration, or for which the key was forgotten, is linked
+  by hand: an attachment on the issue with the commit's GitHub URL, titled with its hash and first line.
+
 ## Checklist
 
 - [ ] The stage label kept current: `Design`, then `Implementation`, then `Review`.
@@ -129,5 +143,5 @@ You work in the shared checkout, on main, with other sessions committing beside 
 - [ ] `cd apps/p3 && npm run check` clean; `npm test` passes, serially and with four runs at once.
 - [ ] The tests and numbers of `testing.md` and `performance.md`, reported in the issue.
 - [ ] Two review rounds by Opus, Fable, Sol and Astra, each primed with the guides; reproductions are tests.
-- [ ] Pushed by explicit paths; video or explainer posted; questions on functionality and code answered; code
-      reviewed by Armin and Mario; devices checked; team sign-off.
+- [ ] Pushed by explicit paths, every commit naming its issue's key (no closing words); video or explainer posted;
+      questions on functionality and code answered; code reviewed by Armin and Mario; devices checked; team sign-off.

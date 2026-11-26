@@ -1,0 +1,148 @@
+// Who may work in a session, and which options apply to them: the sessions plugin's answer, the one every session
+// object's admission reads (`SessionAccess`, `ThingAccess`). One `SessionStanding` per session and caller holds what
+// both derive from: the caller's access and whose options apply to them, in order. Everything is live: a member
+// removed, a person leaving a group, an archive, a person removed change the answer in the commit's flush.
+
+import {
+	type Access,
+	arr,
+	callerKey,
+	constant,
+	type FacetHost,
+	forbidden,
+	type JsonValue,
+	lit,
+	local,
+	obj,
+	oneOf,
+	type P3Principal,
+	type Self,
+	SessionAccess,
+	str,
+	ThingAccess,
+	union,
+	type Watchable,
+} from "@earendil-works/p3/v1";
+import { PeopleStore, SessionsStore, ThingKinds } from "@earendil-works/p3/v1/server";
+import { SessionHas } from "./follow.ts";
+import { type CurrentOptions, currentOptions, unset } from "./options.ts";
+import { keyOf } from "./store.ts";
+
+/**
+ * Caller `caller`'s standing in session `session`: none, or their access and whose options apply to them, first
+ * first (`person:<id>`, their groups in the session's member order, `agent`, then `everyone`).
+ */
+const SessionStanding = local("sessions.standing", {
+	version: 1,
+	params: { session: str(), caller: str() },
+	members: {
+		standing: union([obj({ access: lit("none") }), obj({ access: oneOf("read", "write"), options: arr(str()) })]),
+	},
+});
+
+/**
+ * How many of a person's groups, and of a session's members and of a thing's options, a standing reads at most. A
+ * set that decides access is read whole: one with more rows fails closed (a person's groups grant nothing, a session
+ * with more members admits no person, a thing with more options gives nobody any).
+ */
+const READ_WHOLE = 1000;
+
+/** Serves `SessionStanding`, `SessionAccess` and `ThingAccess` on `host`. */
+export function serveAccess(host: FacetHost<P3Principal>): void {
+	host.serve(SessionStanding, ({ session, caller }, self) => ({ standing: standingOf(session, caller, self) }));
+
+	host.serve(SessionAccess, ({ session, caller }, principal, self) => {
+		mayAsk(principal, session, caller);
+		const { standing } = self.get(SessionStanding, { session, caller });
+		return { access: self.derive([standing], ([found]) => found.access) };
+	});
+
+	host.serve(ThingAccess, ({ session, thing, caller }, principal, self) => {
+		mayAsk(principal, session, caller);
+		const { standing } = self.get(SessionStanding, { session, caller });
+		const store = self.get(SessionsStore, {});
+		// What the session has: linked, or from whom it follows.
+		const has = self.get(SessionHas, { session }).things;
+		const set = self.liveQuery(store.options.of, { session, thing }, { first: READ_WHOLE });
+		const kinds = self.registry(ThingKinds);
+		const answer = self.derive([standing, has, set, kinds], ([theirs, things, written, table]) => {
+			const row = things.find((each) => each.thing === thing);
+			if (theirs.access === "none" || row === undefined || written.more) return NO_ANSWER;
+			const by = new Map(written.rows.map((options) => [options.for, options]));
+			const applies = theirs.options.map((key) => by.get(key)).find((options) => options !== undefined);
+			const entry = table.get(row.kind)?.value;
+			// Options stored at another version stay as stored (JSON, as written) when no migration reads them:
+			// `admitThing` then denies. None set (a followed thing): its kind's initial.
+			const answered: CurrentOptions | undefined =
+				applies === undefined
+					? unset(entry)
+					: (currentOptions(entry, applies) ?? {
+							version: applies.version,
+							options: applies.options as JsonValue,
+						});
+			if (answered === undefined) return NO_ANSWER;
+			return { access: theirs.access, kind: row.kind, ...answered };
+		});
+		return { answer };
+	});
+}
+
+/**
+ * Refuses `principal` an answer about `caller` in `session` (`forbidden`): the server asks about anyone, a worker
+ * about anyone in its own session (its objects' admissions ask for their callers), anyone else about themselves.
+ */
+function mayAsk(principal: P3Principal, session: string, caller: string): void {
+	if (principal.kind === "server") return;
+	if (principal.kind === "worker" ? principal.session === session : callerKey(principal) === caller) return;
+	throw forbidden("sessions: an answer about the caller only");
+}
+
+/**
+ * The standing of `caller` in `session`, read live through `self`: the server's, a worker's, or a person's (the owner
+ * writes every session, also an archived one, with options of their own like anyone).
+ */
+function standingOf(session: string, caller: string, self: Self<P3Principal>): Watchable<Standing> {
+	const store = self.get(SessionsStore, {});
+	const found = self.liveQuery(store.sessions.one, { id: session }, { first: 1 });
+	if (caller === "server") {
+		// The server's waker reaches no archived session.
+		return self.derive([found], ([{ rows }]) =>
+			rows[0] === undefined || rows[0].archivedAt !== null ? NONE : SERVER,
+		);
+	}
+	if (caller === `worker:${session}`) return constant(AGENT);
+	if (!caller.startsWith("person:")) return constant(NONE);
+	const person = caller.slice("person:".length);
+	const people = self.get(PeopleStore, {});
+	const persons = self.liveQuery(people.persons.one, { id: person }, { first: 1 });
+	const groups = self.liveQuery(people.groups.ofPerson, { person }, { first: READ_WHOLE });
+	const members = self.liveQuery(store.members.of, { session }, { first: READ_WHOLE });
+	return self.derive([found, persons, groups, members], ([sessions, them, theirs, all]) => {
+		const [row] = sessions.rows;
+		const [who] = them.rows;
+		if (row === undefined || who === undefined) return NONE;
+		const own = new Set([caller, ...(theirs.more ? [] : theirs.rows.map(({ id }) => `group:${id}`))]);
+		const matching = all.more ? [] : all.rows.filter((member) => own.has(keyOf(member)));
+		const groupsInOrder = matching.filter(({ kind }) => kind === "group").map(keyOf);
+		const options = [caller, ...groupsInOrder, "everyone"];
+		if (who.owner) return { access: "write", options } satisfies Standing;
+		if (row.archivedAt !== null || matching.length === 0) return NONE;
+		const access: Access = matching.some((member) => member.access === "write") ? "write" : "read";
+		return { access, options } satisfies Standing;
+	});
+}
+
+/** A caller's standing in a session (see `SessionStanding`). */
+type Standing = { access: "none" } | { access: Access; options: string[] };
+
+/** No access. */
+const NONE: Standing = { access: "none" };
+
+/** No access to a thing. */
+const NO_ANSWER = { access: "none" } as const;
+
+/** The server's standing: write, the session's default options. */
+const SERVER: Standing = { access: "write", options: ["everyone"] };
+
+/** A session's own worker: write, the agent's options, else the default. */
+const AGENT: Standing = { access: "write", options: ["agent", "everyone"] };

@@ -2,7 +2,8 @@
 // `startPage` with p2's API modules for the plugins' web scripts, p2's core facet and look (`themes: false`: p2's
 // stylesheet and theme switch), its connection state and error reports, and the React root. A page p2 serves follows
 // the server's scripts (a plugin's change applies in place; a new base bundle reloads the page); Radius Cloud Brain's
-// page (built offline by scripts/cloud-bundle.ts, its Chord URL in `#root`'s `data-pi-bootstrap`) is static.
+// page (built offline by scripts/cloud-bundle.ts, its Chord URL in `#root`'s `data-pi-bootstrap`) is static: refused
+// by a server on a newer link protocol, it stops reconnecting and says it is outdated.
 import * as schema from "@earendil-works/pi-schema";
 import * as React from "react";
 import * as jsx from "react/jsx-runtime";
@@ -15,7 +16,7 @@ import { startPage } from "@earendil-works/chord/web";
 import * as api from "../../api/v1/index.ts";
 import * as apiWeb from "../../api/v1/web.ts";
 import { Access } from "../../runtime/access.ts";
-import type { Host } from "../../runtime/chord.ts";
+import { type Host, newerPeerProtocol } from "../../runtime/chord.ts";
 import { SERVER_PART_LIMITS } from "../../runtime/link-limits.ts";
 import type { P2Principal } from "../../runtime/principals.ts";
 import { whenLive } from "../../runtime/refs.ts";
@@ -92,6 +93,7 @@ export function startP2Page(): void {
 		...(element.dataset.p2Telemetry === "on" ? { telemetry: true } : {}),
 		...(cloud === undefined ? {} : { follow: false }),
 		canRetry: async () => {
+			if (outdated) return false;
 			if (!guest || !(await shareHasEnded())) return true;
 			setShareEnded(true);
 			return false;
@@ -99,7 +101,10 @@ export function startP2Page(): void {
 		onConnection: (state) => setConnected(state === "connected"),
 		onError: (error) => {
 			console.error("p2 page:", error);
-			if (error.kind === "update_failed") reportClientError(error.error, "plugin update");
+			// A static page asks no base bundle (`follow: false`): a server on a newer link protocol is how it learns its
+			// code is outdated. It stops reconnecting (every attempt would be refused) and says so.
+			if (cloud !== undefined && error.kind === "host" && newerPeerProtocol(error.error)) setOutdated();
+			else if (error.kind === "update_failed") reportClientError(error.error, "plugin update");
 			else if (error.kind === "plugins")
 				for (const { plugin, error: failure } of error.failed) reportClientError(failure, `plugin ${plugin}`);
 		},
@@ -115,9 +120,11 @@ export function startP2Page(): void {
 			);
 			createRoot(element).render(
 				<AppBoundary>
-					<HostContext.Provider value={host}>
-						<Slot name="app" fallback={<div className="hero">Loading…</div>} />
-					</HostContext.Provider>
+					<UnlessOutdated>
+						<HostContext.Provider value={host}>
+							<Slot name="app" fallback={<div className="hero">Loading…</div>} />
+						</HostContext.Provider>
+					</UnlessOutdated>
 				</AppBoundary>,
 			);
 		},
@@ -130,6 +137,44 @@ export function startP2Page(): void {
 			</AppBoundary>,
 		);
 	});
+}
+
+/** Whether this (static) page found the server on a newer link protocol: its code is outdated. */
+let outdated = false;
+const outdatedListeners = new Set<() => void>();
+
+/** Marks the page outdated: it stops reconnecting and shows `PageOutdated`. */
+function setOutdated(): void {
+	if (outdated) return;
+	outdated = true;
+	for (const listener of outdatedListeners) listener();
+}
+
+/** `children`, or `PageOutdated` once the page is outdated. */
+function UnlessOutdated({ children }: { children: React.ReactNode }) {
+	const shown = React.useSyncExternalStore(
+		(listener) => {
+			outdatedListeners.add(listener);
+			return () => outdatedListeners.delete(listener);
+		},
+		() => outdated,
+	);
+	return shown ? <PageOutdated /> : children;
+}
+
+/** What an outdated page shows instead of the app: why, and Reload. */
+function PageOutdated() {
+	return (
+		<div className="hero page-failed" role="alert" data-testid="page-outdated">
+			<h2>This page is outdated</h2>
+			<p className="muted">The server runs a newer version. Reload the page to get it.</p>
+			<p>
+				<button type="button" className="primary" onClick={() => location.reload()}>
+					Reload
+				</button>
+			</p>
+		</div>
+	);
 }
 
 /** Rethrows a start failure inside the root boundary, so the page shows it with its Reload. */

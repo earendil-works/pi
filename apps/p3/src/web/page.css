@@ -1,0 +1,10 @@
+/*
+ * The page's one stylesheet, so the layer order is declared before any layer whatever order the files arrive in, as
+ * Inkling does: the reset, then Elanor's component styles. Plugins' CSS modules are unlayered and win over both.
+ * The fonts and the brand's tokens are not bundled: the page links them as stable files (`/fonts/elanor/`,
+ * `/tokens.css`, served by the server) before this one.
+ */
+@layer reset, elanor;
+
+@import "./reset.css" layer(reset);
+@import "@earendil-works/elanor-react/elanor.min.css";

@@ -3,8 +3,11 @@
 
 import type { JsonValue } from "../json.ts";
 
-/** Version of the error table below on links; adding or moving a code or reason bumps it. */
-export const PROTOCOL_VERSION = 1;
+/**
+ * The link protocol's version, announced in `hello`: a peer of another version is refused at its hello. Changing a
+ * message, a wire format or the error table below (adding or moving a code or reason) bumps it.
+ */
+export const PROTOCOL_VERSION = 2;
 
 /** Every code with the reasons it may carry. `invalid` requires a reason; every other code may omit it. */
 export const CHORD_ERROR_REASONS = {

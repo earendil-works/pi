@@ -10,6 +10,8 @@ export type ToWorker =
 			readonly session: string;
 			/** The worker's private directory: its store lives in it. */
 			readonly dir: string;
+			/** The name of the session's lock (Chord's `processLock`): the worker takes it before it opens its store. */
+			readonly lock: string;
 			/** How long it idles before it stops itself. */
 			readonly idleMs: number;
 			readonly scripts: readonly PluginScript[];
@@ -18,14 +20,16 @@ export type ToWorker =
 	| { readonly kind: "shutdown" };
 
 /**
- * What a worker sends the server: `failed` names the plugins that did not load; `closed`: it was idle for its idle
- * time, has closed its host and store (everything it started finished), and exits now (a clean exit, no crash).
+ * What a worker sends the server: `locked` once it holds its session's lock (a previous worker of the session exited);
+ * `failed` names the plugins that did not load; `closed`: it stops itself (it was idle for its idle time) and exits
+ * now, 0 once its host and store closed (a clean exit).
  */
 export type FromWorker =
+	| { readonly kind: "locked" }
 	| { readonly kind: "ready"; readonly failed: readonly string[] }
 	| { readonly kind: "reloaded"; readonly failed: readonly string[] }
 	| { readonly kind: "reload_failed"; readonly error: string }
-	| { readonly kind: "closed"; readonly reason: "idle" };
+	| { readonly kind: "closed" };
 
 /** A control message in its envelope, as it goes over the IPC channel. */
 export function workerMessage(message: ToWorker | FromWorker): { readonly p3: ToWorker | FromWorker } {
