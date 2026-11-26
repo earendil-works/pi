@@ -1,0 +1,330 @@
+// The things plugin's numbers (ERNDL-1142) at the access bench's scenario S2 (RESULTS-6.md): Pi > Org > 5 teams > 20
+// projects > 2,000 sessions; 30 things in Pi, 3 per team, 2 per project, 3 per session; 50 persons, 10 groups, two
+// put into each team; each session's agent put into it. 100 sessions run: each agent holds every thing its session
+// gives it; 30 persons hold 15 things each. Every hold goes over an in-memory link from a client host of its own, as a
+// worker's and a page's do. Three variants, each in a process of its own, alternated:
+// - `plain`: the thing's object with no admission;
+// - `baseline`: the bench's variant 0: admitted by a derive over one shared local object per thing (Chord's
+//   admission, a reference and a derive per hold, no access model);
+// - `things`: the things admission (`admitThing` over `Gives` and the index).
+// Measured: the heap per held thing (after GC; server and clients together, one process), the index's reads while
+// the holds start, and in `things` a change at the root (one tick taken from the agents on one of Pi's things, then given
+// back: the commit with the index's work, and the last of its holders rebound), a leaf change, a new session.
+// Run from apps/p3 with Node 26: node --expose-gc --conditions=source --disable-warning=ExperimentalWarning bench/things.ts
+
+import { spawnSync } from "node:child_process";
+import { parseArgs } from "node:util";
+import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
+import { openNodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
+import {
+	allow,
+	constant,
+	createHost,
+	defineFacet,
+	type Host,
+	local,
+	memoryLinkPair,
+	method,
+	openStore,
+	type P3Principal,
+	type Reference,
+	remote,
+	Server,
+	sqliteBackend,
+	str,
+	until,
+} from "@earendil-works/p3/v1";
+import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
+import { Gives, ThingsStore } from "../plugins/things/contract.server.ts";
+import { type Source, THING_PARAMS } from "../plugins/things/contract.ts";
+import { defineThing } from "../plugins/things/kind.ts";
+import thingsServer from "../plugins/things/server.ts";
+import { BOARD, Board } from "../plugins/things/test/kinds.ts";
+
+/** A tick's label in the bench. */
+const LABEL = { namespace: "bench", key: "tick", params: [] };
+
+const VARIANTS = ["plain", "baseline", "things"] as const;
+type Variant = (typeof VARIANTS)[number];
+
+/** Runs each variant three times, alternated, in processes of their own, and prints the medians. */
+function drive(): void {
+	const runs = new Map<Variant, Record<string, number>[]>();
+	for (let round = 0; round < 3; round++) {
+		for (const each of VARIANTS) {
+			const child = spawnSync(process.execPath, [...process.execArgv, import.meta.filename, "--variant", each], {
+				encoding: "utf8",
+			});
+			if (child.status !== 0) throw new Error(`${each}: ${child.stderr}`);
+			const line = child.stdout.trim().split("\n").at(-1)!;
+			runs.set(each, [...(runs.get(each) ?? []), JSON.parse(line) as Record<string, number>]);
+		}
+	}
+	const median = (values: number[]) => values.toSorted((a, b) => a - b)[Math.floor(values.length / 2)]!;
+	const of = (each: Variant, key: string) => median(runs.get(each)!.map((run) => run[key]!));
+	console.log(`Node ${process.versions.node}, medians of 3 runs, holds: ${of("things", "holds")}`);
+	for (const each of VARIANTS) console.log(`${each}: heap per held thing ${of(each, "perHold").toFixed(2)} KiB`);
+	console.log(
+		`things over baseline: ${(of("things", "perHold") - of("baseline", "perHold")).toFixed(2)} KiB per hold`,
+	);
+	console.log(`things over plain: ${(of("things", "perHold") - of("plain", "perHold")).toFixed(2)} KiB per hold`);
+	for (const key of Object.keys(runs.get("things")![0]!).filter((k) => !["perHold", "holds"].includes(k))) {
+		console.log(`things: ${key}: ${of("things", key).toFixed(2)}`);
+	}
+}
+
+/** The test kind's members, as declared. */
+const MEMBERS = {
+	state: { title: str() },
+	methods: {
+		read: method(undefined, str()),
+		write: method(),
+		draw: method(),
+		moderate: method(),
+		bash: method(),
+		look: method(),
+	},
+};
+
+/** The thing's object served plainly: the test kind's members, no admission. */
+const Plain = remote("bench.plain", { version: 1, params: THING_PARAMS, hostAddress: () => Server(), ...MEMBERS });
+
+/** The test kind under another name, for the baseline: the same members and ticks. */
+const Baseline = defineThing("bench.baseline", {
+	version: 1,
+	...MEMBERS,
+	ticks: {
+		read: { label: LABEL, gives: ["read"] },
+		write: { label: LABEL, gives: ["write"] },
+		draw: { label: LABEL, gives: ["draw"] },
+		moderate: { label: LABEL, gives: ["moderate"] },
+		bash: { label: LABEL, gives: ["bash"] },
+		look: { label: LABEL, gives: ["look"] },
+	},
+});
+
+/** The baseline's shared object per thing. */
+const Shared = local("bench.shared", { version: 1, params: { thing: str() }, members: { title: str() } });
+
+/** The test kind's members for any caller. */
+const members = (thing: string) => ({
+	title: constant(thing),
+	read: async () => "",
+	write: async () => null,
+	draw: async () => null,
+	moderate: async () => null,
+	bash: async () => null,
+	look: async () => null,
+});
+
+/** The decision the baseline admits every caller with: every name of the kind. */
+const ALL = allow({ granted: [...Baseline.all], caller: { kind: "server" } });
+
+/** The plain object, and the baseline: admitted by a derive over one shared object per thing (the bench's variant 0). */
+const benchFacet = defineFacet((host) => {
+	host.serve(Plain, ({ thing }, _principal, _self) => members(thing));
+	host.serve(Shared, ({ thing }, _self) => ({ title: constant(thing) }));
+	host.serve(Baseline.contract, ({ thing }, _principal, _admitted, _self) => members(thing), {
+		admit: ({ thing }, _principal, self) => self.derive([self.get(Shared, { thing }).title], () => ALL),
+	});
+});
+
+/** One variant's run: S2 seeded, the holds made, the heap measured; in `things` also the changes. */
+async function measure(which: Variant): Promise<void> {
+	const gc = (globalThis as { gc?: () => void }).gc;
+	if (gc === undefined) throw new Error("run with --expose-gc");
+	const heap = async () => {
+		for (let i = 0; i < 6; i++) {
+			gc();
+			await new Promise((resolve) => setImmediate(resolve));
+		}
+		return process.memoryUsage().heapUsed / 1024;
+	};
+	const telemetry = new InMemoryTelemetryContext();
+	const counted = (name: string) =>
+		telemetry
+			.getMetrics()
+			.filter((metric) => metric.name === name)
+			.reduce((sum, metric) => sum + metric.value, 0);
+	const store = await openStore(sqliteBackend(await openNodeSqliteDatabase(":memory:")), context);
+	const server = createHost<P3Principal>({
+		address: Server(),
+		principal: { kind: "server" },
+		store,
+		telemetry,
+		readyTimeout: 60_000,
+		onError: (error) => console.error(error),
+	});
+	await server.load(
+		[{ name: "@earendil-works/p3-things", facet: thingsServer }, BOARD, { name: "bench", facet: benchFacet }],
+		context,
+	);
+	const things = await server.get(ThingsStore, {}, context);
+	const { holders, piThings, sessions } = await seed(server, things);
+	const clients: Host<P3Principal>[] = [];
+	for (const { principal } of holders) {
+		const [toServer, fromClient] = memoryLinkPair();
+		const client = createHost<P3Principal>({ readyTimeout: 60_000, onError: (error) => console.error(error) });
+		server.accept(fromClient, { principal }, context);
+		client.connect(toServer, { principal: { kind: "server" } }, context);
+		await client.load([], context);
+		clients.push(client);
+	}
+	// The seed loaded the running sessions' workspaces (it asked what each agent is given); the persons load now.
+	const before = await heap();
+	const reads = counted("things.access.reads");
+	const start = performance.now();
+	const held: { principal: P3Principal; thing: string; ref: Reference<typeof Board.contract> }[] = [];
+	// The three contracts have the same members; the references are read alike.
+	const Type = (
+		which === "plain" ? Plain : which === "baseline" ? Baseline.contract : Board.contract
+	) as typeof Board.contract;
+	for (const [i, { principal, workspace, things: mine }] of holders.entries()) {
+		for (const thing of mine)
+			held.push({ principal, thing, ref: clients[i]!.hold(Type, { workspace, thing }, context) });
+	}
+	for (const { ref } of held) await until(ref.state, (state) => state.kind === "live", context);
+	const holdMs = performance.now() - start;
+	const perHold = ((await heap()) - before) / held.length;
+	const result: Record<string, number> = { holds: held.length, perHold, holdMs };
+	if (which === "things") {
+		result.coldReads = counted("things.access.reads") - reads;
+		result.queryRuns = counted("chord.query.runs");
+		Object.assign(result, await changes(things, held, piThings, sessions));
+	}
+	for (const { ref } of held) ref.release();
+	for (const client of clients) await client.close(context);
+	await server.close(context);
+	await store.close(context);
+	console.log(JSON.stringify(result));
+}
+
+/** S2, written through the store; who holds what. */
+async function seed(server: Host<P3Principal>, things: Reference<typeof ThingsStore>) {
+	const by: Source = { kind: "plugin", plugin: "bench" };
+	const pi = (await things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
+	const space = (name: string, parent: string) =>
+		things.createWorkspace({ kind: "things.workspace", name, parent, by }, context);
+	const make = (workspace: string) => things.create({ kind: Board.name, name: "t", workspace, by }, context);
+	const piThings: string[] = [];
+	for (let i = 0; i < 30; i++) piThings.push(await make(pi));
+	const persons: string[] = [];
+	for (let i = 0; i < 50; i++) persons.push(await things.createPerson({ name: `p${i}`, madeBy: by }, context));
+	const groups: string[] = [];
+	for (let i = 0; i < 10; i++) {
+		const group = await things.makeGroup({ name: `g${i}`, managedBy: { kind: "people" }, outside: false }, context);
+		groups.push(group);
+		for (let j = 0; j < 10; j++)
+			await things.addToGroup({ group, person: persons[(i * 5 + j) % 50]!, source: by }, context);
+	}
+	const org = await space("Org", pi);
+	const sessions: { id: string; team: number; things: string[] }[] = [];
+	for (let team = 0; team < 5; team++) {
+		const t = await space(`team${team}`, org);
+		for (let i = 0; i < 3; i++) await make(t);
+		for (const group of [groups[2 * team]!, groups[2 * team + 1]!]) {
+			await things.putParty({ workspace: t, party: { kind: "group", group }, source: by }, context);
+		}
+		for (let project = 0; project < 4; project++) {
+			const p = await space(`project${project}`, t);
+			for (let i = 0; i < 2; i++) await make(p);
+			for (let s = 0; s < 100; s++) {
+				const id = await space(`s${s}`, p);
+				await things.putParty({ workspace: id, party: { kind: "agent", session: id }, source: by }, context);
+				sessions.push({ id, team, things: [await make(id), await make(id), await make(id)] });
+			}
+		}
+	}
+	const holders: { principal: P3Principal; workspace: string; things: string[] }[] = [];
+	for (const session of sessions.filter((_, i) => i % 20 === 0)) {
+		const gives = await server.get(Gives, { workspace: session.id, caller: `worker:${session.id}` }, context);
+		holders.push({
+			principal: { kind: "worker", session: session.id },
+			workspace: session.id,
+			things: Object.keys(gives.answers.value),
+		});
+		gives.release();
+	}
+	for (let i = 0; i < 30; i++) {
+		const session = sessions[(i * 67) % sessions.length]!;
+		const person = persons[(session.team * 10 + (i % 10)) % 50]!;
+		holders.push({
+			principal: { kind: "person", id: person, name: "p" },
+			workspace: session.id,
+			things: [...piThings.slice(0, 12), ...session.things],
+		});
+	}
+	return { holders, piThings, sessions };
+}
+
+/** The changes, timed: at the root (one of Pi's things, the agents' Draw taken and given back), a leaf, a new session. */
+async function changes(
+	things: Reference<typeof ThingsStore>,
+	held: readonly { principal: P3Principal; thing: string; ref: Reference<typeof Board.contract> }[],
+	piThings: readonly string[],
+	sessions: readonly { id: string; things: string[] }[],
+): Promise<Record<string, number>> {
+	const plugin: Source = { kind: "plugin", plugin: "p3-test-board" };
+	const pi = (await things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
+	const target = piThings[0]!;
+	const affected = held.filter(({ principal, thing }) => principal.kind === "worker" && thing === target);
+	const commits: number[] = [];
+	const lasts: number[] = [];
+	for (let round = 0; round < 10; round++) {
+		const ticks = round % 2 === 0 ? ["read", "write"] : ["read", "write", "draw"];
+		const t0 = performance.now();
+		const grant = {
+			workspace: pi,
+			thing: target,
+			party: { kind: "agents" } as const,
+			gives: true,
+			ticks,
+			takenAway: [],
+		};
+		await things.setGrants({ source: plugin, grants: [grant] }, context);
+		commits.push(performance.now() - t0);
+		const wanted = ticks.includes("draw");
+		for (const { ref } of affected) {
+			await until(ref.state, (state) => state.kind === "live" && (ref.draw !== undefined) === wanted, context);
+		}
+		lasts.push(performance.now() - t0);
+	}
+	const leaf = sessions[0]!;
+	const leaves: number[] = [];
+	for (let round = 0; round < 10; round++) {
+		const t0 = performance.now();
+		const grant = {
+			workspace: leaf.id,
+			thing: leaf.things[0]!,
+			party: { kind: "agents" } as const,
+			gives: true,
+			ticks: round % 2 === 0 ? [] : ["read"],
+			takenAway: [],
+		};
+		await things.setGrants({ source: plugin, grants: [grant] }, context);
+		leaves.push(performance.now() - t0);
+	}
+	const project = (await things.workspaces.one.page({ workspace: leaf.id }, 1, context)).items[0]!.parent;
+	const news: number[] = [];
+	const by: Source = { kind: "plugin", plugin: "bench" };
+	for (let round = 0; round < 10; round++) {
+		const t0 = performance.now();
+		const id = await things.createWorkspace({ kind: "things.workspace", name: "new", parent: project, by }, context);
+		await things.putParty({ workspace: id, party: { kind: "agent", session: id }, source: by }, context);
+		for (let i = 0; i < 3; i++) await things.create({ kind: Board.name, name: "t", workspace: id, by }, context);
+		news.push(performance.now() - t0);
+	}
+	const median = (values: number[]) => values.toSorted((a, b) => a - b)[Math.floor(values.length / 2)]!;
+	return {
+		rootHolders: affected.length,
+		rootCommitMs: median(commits),
+		rootLastHolderMs: median(lasts),
+		leafChangeMs: median(leaves),
+		newSessionMs: median(news),
+	};
+}
+
+// The entry, last: the declarations above are made before it runs.
+const { variant } = parseArgs({ options: { variant: { type: "string" } } }).values;
+if (variant === undefined) drive();
+else await measure(variant as Variant);

@@ -142,10 +142,10 @@ describe("who may do what on a canvas", () => {
 		const ann = await person("Ann", s1);
 		const board = await canvasIn(s1);
 		const agent: P3Principal = { kind: "worker", session: "s1" };
-		assert.deepEqual(await grantedTo(ann, s1, board), ["add", "remove"]);
-		assert.deepEqual(await grantedTo(agent, s1, board), ["add", "remove"]);
+		assert.deepEqual(await grantedTo(ann, s1, board), ["add", "export", "remove"]);
+		assert.deepEqual(await grantedTo(agent, s1, board), ["add", "export", "remove"]);
 		await grant(s1, board, { kind: "person", person: ann.id }, ["draw", "moderate"]);
-		assert.deepEqual(await grantedTo(ann, s1, board), ["add", "clear", "remove", "removeAny"]);
+		assert.deepEqual(await grantedTo(ann, s1, board), ["add", "clear", "export", "remove", "removeAny"]);
 		await refused(grant(s1, board, { kind: "agents" }, ["moderate"]), "invalid");
 		await refused(grantedTo({ kind: "worker", session: "s2" }, s1, board));
 		const dana = await things.createPerson({ name: "Dana", madeBy: BY }, context);

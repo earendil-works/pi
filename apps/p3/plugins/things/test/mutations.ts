@@ -21,7 +21,9 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "a thing's switch is ignored when the workspace shows things from above",
 		file: "rules.ts",
+		// biome-ignore lint/suspicious/noTemplateCurlyInString: the text of a template in rules.ts
 		find: "if (own.switches.get(`thing/${thing}`) ?? own.showsThings) here.set(thing, given);",
+		// biome-ignore lint/suspicious/noTemplateCurlyInString: the text of a template in rules.ts
 		put: "if (own.showsThings || own.switches.get(`thing/${thing}`) === true) here.set(thing, given);",
 	},
 	{
