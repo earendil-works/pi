@@ -624,11 +624,13 @@ export function getShareViewerUrl(gistId: string): string {
 
 // =============================================================================
 // User Config Paths (~/.pi/agent/*)
+// Read these when needed, never into a module-level constant: callers of the exported main() apply --agent-dir
+// only when main() runs, after their modules loaded.
 // =============================================================================
 
 /**
  * Get the agent config directory (e.g., ~/.pi/agent/). `--agent-dir` sets PI_CODING_AGENT_DIR at startup, so this
- * reads both.
+ * reads both. Do not cache the result at module load (see above).
  */
 export function getAgentDir(): string {
 	const envDir = process.env[ENV_AGENT_DIR];
