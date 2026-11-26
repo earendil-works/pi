@@ -104,7 +104,8 @@ tab.connect(webSocketLink(new WebSocket(url)), { principal: { kind: "server" } }
   binding's members of each kind sorted (`memberOrder` in contracts), the version's grants sorted. Every kind but `hello`, `revoke`, `ping` and `pong` may carry
   `origin` (an integer from 1; absent: the sender's own work): a relay's number for one of its downstream origins,
   keying holds, calls, windows and acks with the ids (`OriginMessage`; decision "Relay flow control per origin").
-  `PROTOCOL_VERSION` is 1.
+  `PROTOCOL_VERSION` is 2 (since slice 15: `bound` carries `granted` in place of a variant; a peer of protocol 1 is
+  refused at its `hello`).
 - `Part = string | Uint8Array | DeflatedPart` (`params`, `args`, `value`, `bound` member values, `state` member ops,
   `part.ts`): a value's JSON text at its origin (and after a text decode), its UTF-8 bytes once a binary codec
   received it, or those bytes deflated by an origin that compresses. A part is opaque on the way and opened and parsed

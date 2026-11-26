@@ -276,8 +276,9 @@ deleted (the slice's spec and code are the record). Moved here from `carry-over.
 
 ### Any slice (protocol and checks)
 
-- **Bump `PROTOCOL_VERSION`** for any message or reason change once p3 has shipped (slice 3b added `retry`, `loading`
-  and `failed`'s `retryIn`; slice 4a parts, the list `bound`, `hello`'s `calls`, `ack`, `ping`, `pong`, `closed`,
+- **Bump `PROTOCOL_VERSION`** for any message or reason change (it is 2 since slice 15, which covers every change
+  listed here; slice 3b added `retry`, `loading` and `failed`'s `retryIn`; slice 4a parts, the list `bound`,
+  `hello`'s `calls`, `ack`, `ping`, `pong`, `closed`,
   `origin` and the hold's `address`, `principal` and `incarnation`; the reload build `call`'s `old` and the
   `unavailable` reasons `version` and `reload_cycle`; the events build `event`, `ack`'s `events` and an optional
   `hello.calls`; all without a bump: nothing is deployed). (Owner, slice 3b.)
@@ -366,7 +367,7 @@ Left by the second part (admission, route admission, `deleteHostData({ plugin })
   type.
 - **Two persons cannot widen a read by params** (§10 test 13) is still not written: it wants the worked example's
   `PersonAccess` (the condition from the admission's sources), which is p3's.
-- Bump `PROTOCOL_VERSION` for `denied` with p3's first release.
+- Bump `PROTOCOL_VERSION` for `denied` with p3's first release. Done: it is 2 since slice 15.
 
 Left by the first part itself:
 

@@ -91,6 +91,16 @@ forEachCodec(() =>
 			]);
 		});
 
+		for (const trusted of [false, true]) {
+			it(`refuses a peer of protocol 1, before grantable members, at its hello (${trusted ? "trusted" : "untrusted"} link)`, async () => {
+				const { peer, errors } = await rawLinked(() => {}, { hello: false, trusted });
+				peer.send({ kind: "hello", protocol: 1, incarnation: RAW_PEER, ...(trusted ? {} : { calls: 256 }) });
+				await transported();
+				expect(peer.closed).toBe(true);
+				expect(problems(errors)).toEqual(["handshake: protocol 1, this host speaks 2"]);
+			});
+		}
+
 		it("closes the link on a message failing its checks", async () => {
 			const { peer, errors } = await rawLinked(() => {});
 			peer.sendBytes(testCodec().encode({ kind: "error", call: 0, error: { kind: "nope" } } as never));

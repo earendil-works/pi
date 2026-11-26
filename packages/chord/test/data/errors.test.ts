@@ -96,9 +96,9 @@ describe("ChordError", () => {
 
 describe("protocol table", () => {
 	it("is pinned together with PROTOCOL_VERSION", () => {
-		// PROTOCOL_VERSION stays 1 until p3 ships (design §22): the table changes with it unbumped until then.
+		// PROTOCOL_VERSION 2 since slice 15 (design §22): every change of the table bumps it from now on.
 		const pinned = {
-			version: 1,
+			version: 2,
 			reasons: {
 				invalid: ["args", "params", "member", "host_address", "reentrant", "read_after_bulk", "cycle"],
 				contract_mismatch: ["updating"],
