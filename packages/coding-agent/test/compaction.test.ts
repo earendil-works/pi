@@ -269,6 +269,23 @@ describe("estimateContextTokens", () => {
 		expect(estimate.trailingTokens).toBeGreaterThan(0);
 		expect(estimate.tokens).toBe(150 + estimate.trailingTokens);
 	});
+
+	it("does not count !! bash output that is excluded from the LLM context", () => {
+		const bash = (excludeFromContext: boolean): AgentMessage => ({
+			role: "bashExecution",
+			command: "git diff",
+			output: "x".repeat(800),
+			exitCode: 0,
+			cancelled: false,
+			truncated: false,
+			timestamp: Date.now(),
+			excludeFromContext,
+		});
+		const anchor = [createUserMessage("Hello"), createAssistantMessage("Hi", createMockUsage(100, 50))];
+
+		expect(estimateContextTokens([...anchor, bash(true)]).trailingTokens).toBe(0);
+		expect(estimateContextTokens([...anchor, bash(false)]).trailingTokens).toBe(202);
+	});
 });
 
 describe("shouldCompact", () => {
