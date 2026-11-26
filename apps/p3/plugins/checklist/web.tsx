@@ -1,11 +1,10 @@
-// The checklist on the page: its view of one checklist (`ThingViews`' `View`: its items, ticked and added by a
-// checker, shown to a reader) and its options form in the session sheet (one switch, "May tick").
+// The checklist on the page: its view of one checklist (`ThingViews`): its items, ticked and added by a writer (granted
+// Write), shown to anyone else let in. Who may write is the things plugin's grants, edited in its Settings view.
 
-import { Button, Checkbox, Input, SelectionControlAndLabel, Switch } from "@earendil-works/elanor-react";
-import { BACKGROUND_CONTEXT, type Context, defineFacet, type OptionsOf, withGranted } from "@earendil-works/p3/v1";
+import { Button, Checkbox, Input, SelectionControlAndLabel } from "@earendil-works/elanor-react";
+import { BACKGROUND_CONTEXT, type Context, defineFacet, withGranted } from "@earendil-works/p3/v1";
 import {
 	CheckIcon,
-	type ThingOptionsProps,
 	type ThingViewProps,
 	ThingViews,
 	useHold,
@@ -14,7 +13,7 @@ import {
 	useWatch,
 } from "@earendil-works/p3/v1/web";
 import { useState } from "react";
-import { CHECKLIST_CHECKS, Checklist, ChecklistKind } from "./contract.ts";
+import { CHECKLIST_WRITES, Checklist, ChecklistKind } from "./contract.ts";
 import styles from "./web.module.css";
 
 export default defineFacet((_host, self) =>
@@ -22,15 +21,15 @@ export default defineFacet((_host, self) =>
 		kind: ChecklistKind.name,
 		Icon: CheckIcon,
 		View: ChecklistView,
-		Options: ChecklistOptions,
 	}),
 );
 
-/** Checklist `thing` of session `session`, as the viewer's admission allows: a checker ticks and adds. */
+/** Checklist `thing` of session `session`, as the viewer's admission allows: a writer ticks and adds. */
 function ChecklistView(props: ThingViewProps) {
-	const ref = useHold(Checklist, { session: props.session, thing: props.thing });
+	// Until sessions are workspaces (slice 5) a checklist is held in the workspace named by the session's id.
+	const ref = useHold(Checklist, { workspace: props.session, thing: props.thing });
 	const live = useLive(ref);
-	const checker = withGranted(live, ...CHECKLIST_CHECKS);
+	const writer = withGranted(live, ...CHECKLIST_WRITES);
 	const state = useRefState(ref);
 	const items = useWatch(live?.items);
 	const [text, setText] = useState("");
@@ -50,14 +49,14 @@ function ChecklistView(props: ThingViewProps) {
 	}
 	const add = () => {
 		const item = text.trim();
-		if (checker === undefined || item === "") return;
+		if (writer === undefined || item === "") return;
 		run(async (ctx) => {
-			await checker.add({ text: item }, ctx);
+			await writer.add({ text: item }, ctx);
 			setText("");
 		});
 	};
 	return (
-		<section aria-label="Checklist" className={styles.checklist} data-checklist={checker ? "checker" : "reader"}>
+		<section aria-label="Checklist" className={styles.checklist} data-checklist={writer ? "writer" : "reader"}>
 			{items === undefined ? (
 				<p className={styles.note}>Loading…</p>
 			) : items.length === 0 ? (
@@ -71,9 +70,9 @@ function ChecklistView(props: ThingViewProps) {
 								control={
 									<Checkbox.Root
 										checked={item.done}
-										disabled={checker === undefined}
+										disabled={writer === undefined}
 										onCheckedChange={(done: boolean) =>
-											checker && run((ctx) => checker.tick({ id: item.id, done }, ctx))
+											writer && run((ctx) => writer.tick({ id: item.id, done }, ctx))
 										}
 									>
 										<Checkbox.Indicator />
@@ -86,7 +85,7 @@ function ChecklistView(props: ThingViewProps) {
 					))}
 				</ul>
 			)}
-			{checker === undefined ? null : (
+			{writer === undefined ? null : (
 				<form
 					className={styles.add}
 					onSubmit={(event) => {
@@ -109,33 +108,5 @@ function ChecklistView(props: ThingViewProps) {
 			)}
 			{error === undefined ? null : <p className={styles.error}>{error}</p>}
 		</section>
-	);
-}
-
-/** The options form over `props.options` (none readable: the kind's initial), saved for `props.for`. */
-function ChecklistOptions(props: ThingOptionsProps) {
-	// The options the sessions plugin gives a form are its kind's, checked against its schema when written.
-	const stored = (props.options ?? ChecklistKind.initial) as OptionsOf<typeof ChecklistKind>;
-	const [check, setCheck] = useState(stored.check);
-	return (
-		<div className={styles.options} data-checklist-options="">
-			<SelectionControlAndLabel
-				control={
-					<Switch.Root checked={check} data-option="check" onCheckedChange={setCheck}>
-						<Switch.Thumb />
-					</Switch.Root>
-				}
-			>
-				May tick
-			</SelectionControlAndLabel>
-			<Button
-				data-options-save=""
-				disabled={check === stored.check}
-				hierarchy="secondary"
-				onClick={() => props.onSave(props.for, { check })}
-			>
-				Save
-			</Button>
-		</div>
 	);
 }

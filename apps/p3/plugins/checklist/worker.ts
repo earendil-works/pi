@@ -1,126 +1,156 @@
-// The checklist on a session's worker: what the session's checklists give its agent, one set of tools for all of
-// them. `checklist_list` (each checklist's id, name and whether the agent may tick there) and `checklist_read` (a
-// checklist's items with their ids) always; `checklist_add` and `checklist_tick` only while at least one checklist
-// lets the agent tick (the option covers adding too), refused with an error naming the checklist on the others. The tools take a checklist's id from `checklist_list`, so
-// their descriptions stay fixed whatever checklists the session has. They reach the checklist on the server
-// (`Checklist`) through `agent.call`, as the session's worker, so `admitThing` answers for the agent: options changed
-// while a call runs refuse the tick there too.
+// The checklist plugin on a session's worker: the checklist kind's harness part, what the checklists the agent holds
+// give it. `checklist_list` (each checklist's id, name and whether the agent may write there) and `checklist_read` (a
+// checklist's items with their ids) always; `checklist_add` and `checklist_tick` while one of them gives Write,
+// refused naming the checklist on the others. The tools take a checklist's id from `checklist_list`, so their
+// descriptions stay fixed whatever checklists the agent holds. They reach the checklist through the agent's
+// reference, as the session's worker: Write taken back while a call runs refuses that change too.
 
-import { bool, type Context, defineFacet, forbidden, obj, str } from "@earendil-works/p3/v1";
 import {
-	type Agent,
-	type AgentThing,
-	defineExtension,
-	defineTool,
-	type Extension,
-	ThingExtensions,
-	thingExtension,
-} from "@earendil-works/p3/v1/worker";
-import { Checklist, ChecklistKind, ItemText } from "./contract.ts";
+	bool,
+	type Context,
+	defineFacet,
+	forbidden,
+	invalid,
+	obj,
+	type Reference,
+	str,
+	type With,
+	withGranted,
+} from "@earendil-works/p3/v1";
+import { defineExtension, defineTool, type Extension } from "@earendil-works/p3/v1/worker";
+import { type HarnessSession, type HeldThing, ThingHarnessParts, thingHarnessPart } from "../things/contract.worker.ts";
+import { CHECKLIST_WRITES, type Checklist, ChecklistKind, ItemText } from "./contract.ts";
 
 export default defineFacet((_host, self) => {
 	self.contribute(
-		ThingExtensions,
-		// Called with every checklist of the session, again whenever they change.
-		thingExtension(ChecklistKind, (lists, agent) => ({ extension: checklistExtension(lists, agent) })),
+		ThingHarnessParts,
+		thingHarnessPart(ChecklistKind, (lists, session) => ({ extension: checklistExtension(lists, session) })),
 	);
 });
 
-/** A checklist of the session as the tools get it. */
-type List = AgentThing<{ check: boolean }>;
+/** A checklist the agent holds. */
+type List = HeldThing<typeof Checklist>;
 
-/** The tools of the session's checklists: listing and reading, and ticking while one of them allows it. */
-function checklistExtension(lists: readonly List[], agent: Agent): Extension {
-	const list = defineTool({
+/** The agent's checklist tools (exported for its test): list, read, and add and tick while one gives Write. */
+export function checklistExtension(lists: readonly List[], session: HarnessSession): Extension {
+	const tools = [listTool(lists), readTool(lists)];
+	return defineExtension({
+		name: "checklist",
+		tools: lists.some(({ ref }) => writer(ref) !== undefined)
+			? [...tools, addTool(lists, session), tickTool(lists, session)]
+			: tools,
+	});
+}
+
+/** The tool `checklist_list`: the agent's checklists, with whether it may write in each. */
+function listTool(lists: readonly List[]) {
+	return defineTool({
 		name: "checklist_list",
 		description:
-			"Lists the session's checklists as JSON: each one's `id` (what the other checklist tools take), its `name` " +
-			"and whether you may `tick` its items.",
+			"Lists your checklists as JSON: each one's `id` (what the other checklist tools take), its `name` and whether " +
+			"you may `write` in it (add and tick items).",
 		parameters: obj({}),
+		replay: "safe",
 		execute: async () => {
-			const shown = lists.map(({ thing, name, options }) => ({ id: thing, name, tick: options.check }));
+			const shown = lists.map(({ thing, ref }) => ({
+				id: thing,
+				name: ref.name.value,
+				write: writer(ref) !== undefined,
+			}));
 			return { output: [{ type: "text", text: JSON.stringify(shown) }] };
 		},
 	});
-	const read = defineTool({
+}
+
+/** The tool `checklist_read`: a checklist's items, in the order they were added. */
+function readTool(lists: readonly List[]) {
+	return defineTool({
 		name: "checklist_read",
 		description:
-			"Reads one of the session's checklists (`checklist`: its id from `checklist_list`): its items as JSON, each " +
-			"with its `id` (what checklist_tick takes), `text` and whether it is `done`.",
+			"Reads one of your checklists (`checklist`: its id from `checklist_list`): its items as JSON, each with its " +
+			"`id` (what checklist_tick takes), `text` and whether it is `done`.",
 		parameters: obj({ checklist: str() }),
-		execute: async ({ checklist }, _api, context) => {
-			const at = { session: agent.session, thing: listOf(lists, checklist).thing };
-			const items = await agent.call(async (ctx) => (await ctx.get(Checklist, at)).items.value, context);
-			return { output: [{ type: "text", text: JSON.stringify(items) }] };
-		},
+		replay: "safe",
+		// The agent's reference holds the items whole (a checklist has at most 500).
+		execute: async ({ checklist }) => ({
+			output: [{ type: "text", text: JSON.stringify(listOf(lists, checklist).ref.items.value) }],
+		}),
 	});
-	const add = defineTool({
+}
+
+/** The tool `checklist_add`: adds an item at the end of a checklist the agent may write in. */
+function addTool(lists: readonly List[], session: HarnessSession) {
+	return defineTool({
 		name: "checklist_add",
 		description:
-			"Adds an item (`text`) at the end of one of the session's checklists (`checklist`: its id from " +
-			"`checklist_list`, one you may tick); answers the new item's id.",
+			"Adds an item (`text`) at the end of one of your checklists (`checklist`: its id from `checklist_list`, one " +
+			"you may write in); answers the new item's id.",
 		parameters: obj({ checklist: str(), text: ItemText }),
 		execute: async ({ checklist, text }, _api, context) => {
-			const id = await change(lists, checklist, { kind: "add", text }, agent, context);
+			const id = await writing(
+				listOf(lists, checklist),
+				session,
+				(writes, ctx) => writes.add({ text }, ctx),
+				context,
+			);
 			return { output: [{ type: "text", text: `Added ${id}.` }] };
 		},
 	});
-	const tick = defineTool({
+}
+
+/** The tool `checklist_tick`: marks an item of a checklist the agent may write in done or not. */
+function tickTool(lists: readonly List[], session: HarnessSession) {
+	return defineTool({
 		name: "checklist_tick",
 		description:
-			"Ticks (`done: true`) or unticks an item (`item`: its id from checklist_read) of one of the session's " +
-			"checklists (`checklist`: its id from `checklist_list`, one you may tick).",
+			"Ticks (`done: true`) or unticks an item (`item`: its id from checklist_read) of one of your checklists " +
+			"(`checklist`: its id from `checklist_list`, one you may write in).",
 		parameters: obj({ checklist: str(), item: str(), done: bool() }),
 		execute: async ({ checklist, item, done }, _api, context) => {
-			await change(lists, checklist, { kind: "tick", item, done }, agent, context);
+			await writing(
+				listOf(lists, checklist),
+				session,
+				(writes, ctx) => writes.tick({ id: item, done }, ctx),
+				context,
+			);
 			return { output: [{ type: "text", text: `${done ? "Ticked" : "Unticked"} ${item}.` }] };
 		},
 	});
-	return defineExtension({
-		name: "checklist",
-		tools: lists.some(({ options }) => options.check) ? [list, read, add, tick] : [list, read],
-	});
 }
 
-/** A change the agent makes to a checklist. */
-type Change = { kind: "add"; text: string } | { kind: "tick"; item: string; done: boolean };
+/** A checklist's members Write gives. */
+type Writes = With<Reference<typeof Checklist>, (typeof CHECKLIST_WRITES)[number]>;
 
-/**
- * Makes `change` on checklist `id` as the agent, through the object people use: refused when the agent may not tick
- * there (its options now, which also cover adding). Answers the new item's id for an add.
- */
-async function change(
-	lists: readonly List[],
-	id: string,
-	change: Change,
-	agent: Agent,
+/** Runs `change` on `list` as the session's worker, refused unless the agent has Write there at the call. */
+function writing<T>(
+	list: List,
+	session: HarnessSession,
+	change: (writes: Writes, ctx: Context) => Promise<T>,
 	context: Context,
-): Promise<string | null> {
-	const found = listOf(lists, id);
-	if (!found.options.check) throw forbidden(`checklist: you may not change ${described(found)}`);
-	return agent.call(async (ctx) => {
-		const at = await ctx.get(Checklist, { session: agent.session, thing: found.thing });
-		if (at.add === undefined || at.tick === undefined)
-			throw forbidden(`checklist: you may not change ${described(found)} now`);
-		switch (change.kind) {
-			case "add":
-				return at.add({ text: change.text }, ctx);
-			case "tick":
-				return at.tick({ id: change.item, done: change.done }, ctx);
-		}
+) {
+	return session.call(async (ctx) => {
+		// Read at the call: Write may have been taken back since the tools were offered.
+		const writes = writer(list.ref);
+		if (writes === undefined) throw forbidden(`checklist: you may not write in ${described(list)}`);
+		return change(writes, ctx);
 	}, context);
 }
 
-/** The session's checklist `id`; an id that is none of them is the model's mistake, answered as its error result. */
+/** The checklist's members Write gives, while the agent has it there. */
+function writer(ref: Reference<typeof Checklist>): Writes | undefined {
+	return withGranted(ref, ...CHECKLIST_WRITES);
+}
+
+/** The agent's checklist `id`; an id that is none of them is the model's mistake, answered as its error result. */
 function listOf(lists: readonly List[], id: string): List {
 	const found = lists.find(({ thing }) => thing === id);
 	if (found === undefined) {
-		throw new Error(`checklist: the session has no checklist ${JSON.stringify(id)} (see checklist_list)`);
+		throw invalid("args", `checklist: you have no checklist ${JSON.stringify(id)} (see checklist_list)`);
 	}
 	return found;
 }
 
 /** A checklist as an error names it: its name and id. */
-function described({ thing, name }: List): string {
-	return name === "" ? `the checklist ${thing}` : `the checklist "${name}" (${thing})`;
+function described({ thing, ref }: List): string {
+	return `the checklist "${ref.name.value}" (${thing})`;
 }

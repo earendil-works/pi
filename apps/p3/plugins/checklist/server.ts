@@ -1,6 +1,7 @@
 // The checklist on the server: its items (a table keyed by the checklist's thing id), the store that owns them, and
-// the kind with its object (`serveThing`). The store is used only here (and by the query plans' test), so its contract
-// lives here too.
+// the kind (`serveThing`). The things plugin makes, links, admits and deletes checklists; this file says only what a
+// checklist is for one caller: its name, its items, and Write's members. Its items go when the thing goes (`delete`).
+// The store is used only here (and by the tests), so its contract lives here too.
 
 import {
 	bool,
@@ -19,13 +20,17 @@ import {
 	str,
 	type Tx,
 } from "@earendil-works/p3/v1";
-import { serveThing } from "@earendil-works/p3/v1/server";
-import { CHECKLIST_CHECKS, Checklist, ChecklistKind, Item } from "./contract.ts";
+import { ThingsStore } from "../things/contract.server.ts";
+import { serveThing } from "../things/serve.ts";
+import { ChecklistKind, Item } from "./contract.ts";
+
+/** The name of a checklist nobody named: its kind's title. */
+const TITLE = "Checklist";
 
 /** How many items a checklist holds at most: its object reads them whole. */
 const LIMIT = 500;
 
-/** The items of every checklist, and their writes; a checklist is its thing's id. Exported for the query plans' test. */
+/** The items of every checklist, and their writes; a checklist is its thing's id. Exported for the tests. */
 export const ChecklistStore = local("checklist.store", {
 	version: 1,
 	params: {},
@@ -54,25 +59,22 @@ const Items = defineTable("checklist.items", {
 export default defineFacet((host) => {
 	serveStore(host);
 	serveThing(host, ChecklistKind, {
-		title: "Checklist",
-		creation: "content",
-		// A new checklist starts empty; its items go with it.
+		// A new checklist starts empty: nothing to set up. Its items go with it.
 		delete: async (thing, ctx) => {
 			await (await ctx.get(ChecklistStore, {})).clear({ checklist: thing }, ctx);
 		},
-		object: {
-			contract: Checklist,
-			// The kind's one rule: a reader only reads; a writer ticks (and adds) only if the option allows it.
-			grants: ({ access, options }) => (access === "write" && options.check ? CHECKLIST_CHECKS : []),
-			factory: ({ thing }, _admitted, self) => {
-				const store = self.get(ChecklistStore, {});
-				const found = self.liveQuery(store.items.of, { checklist: thing }, { first: LIMIT });
-				return {
-					items: self.derive([found], ([{ rows }]) => rows),
-					add: ({ text }, ctx) => store.add({ checklist: thing, text }, ctx),
-					tick: ({ id, done }, ctx) => store.tick({ checklist: thing, id, done }, ctx),
-				};
-			},
+		// One checklist for one caller. The things plugin admitted them and decides which members they get: `add` and
+		// `tick` only with Write. Every caller gets the name and the items, read whole: a full checklist refuses a new item.
+		implement: ({ thing }, _admitted, self) => {
+			const store = self.get(ChecklistStore, {});
+			const named = self.liveQuery(self.get(ThingsStore, {}).things.one, { thing }, { first: 1 });
+			const found = self.liveQuery(store.items.of, { checklist: thing }, { first: LIMIT });
+			return {
+				name: self.derive([named], ([{ rows }]) => rows[0]?.name || TITLE),
+				items: self.derive([found], ([{ rows }]) => rows),
+				add: ({ text }, ctx) => store.add({ checklist: thing, text }, ctx),
+				tick: ({ id, done }, ctx) => store.tick({ checklist: thing, id, done }, ctx),
+			};
 		},
 	});
 });

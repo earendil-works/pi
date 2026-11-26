@@ -1,26 +1,11 @@
-// The checklist kind: its options, an item, and the object people and the agent use. A checklist is content (a writer
-// of a session or its agent makes one there); its items live on the server, keyed by the thing's id.
+// The checklist kind (`checklist.checklist`): items with a done mark, and one checklist held in a workspace by a person
+// or an agent (`Checklist`, `ChecklistKind`'s contract). Anyone, people and agents, may make one where they may make
+// things; its items, keyed by the thing's id, are the same in every workspace it is linked in. Reading is for everyone
+// let in; the one tick Write adds and ticks items.
 
-import {
-	arr,
-	bool,
-	defineThing,
-	grantable,
-	method,
-	obj,
-	remote,
-	Server,
-	type Static,
-	str,
-	thingAdmission,
-} from "@earendil-works/p3/v1";
-
-/** A checklist; one option: whether a writer may tick items (and add them). */
-export const ChecklistKind = defineThing("checklist.checklist", {
-	version: 1,
-	options: obj({ check: bool() }),
-	initial: { check: true },
-});
+import { arr, bool, method, obj, type Static, str } from "@earendil-works/p3/v1";
+import { defineThing } from "../things/kind.ts";
+import { messages } from "./messages.ts";
 
 /** An item's text: 1 to 500 characters. */
 export const ItemText = str({ min: 1, max: 500 });
@@ -32,23 +17,30 @@ export const Item = obj({ id: str(), text: ItemText, done: bool() });
 export type Item = Static<typeof Item>;
 
 /**
- * One checklist (`thing`: its id) in one session, for one caller: a reader sees its items (at most 500, in the order
- * they were added), a checker (who writes and whose options say `check`) also adds and ticks them.
+ * A checklist: its name (its thing's; "Checklist" while it has none) and its items (at most 500, in the order they
+ * were added), both for everyone let in; Write gives `add` and
+ * `tick`. A new link starts with Write for everyone there and the agents; a Read share's guests read.
  */
-export const Checklist = remote("checklist.checklist", {
+export const ChecklistKind = defineThing("checklist.checklist", {
 	version: 1,
-	params: { session: str(), thing: str() },
-	hostAddress: () => Server(),
-	admission: thingAdmission(ChecklistKind),
-	state: { items: arr(Item) },
-	// A checker's (`CHECKLIST_CHECKS`).
+	makers: "anyone",
+	workspaces: "many",
+	state: { name: str(), items: arr(Item) },
 	methods: {
 		/** Adds an item, not done; answers its id. Refused once the checklist holds 500 items. */
-		add: grantable(method(obj({ text: ItemText }), str())),
-		/** Marks item `id` done or not. */
-		tick: grantable(method(obj({ id: str(), done: bool() }))),
+		add: method(obj({ text: ItemText }), str()),
+		/** Marks item `id` done or not; refused for an item the checklist does not have. */
+		tick: method(obj({ id: str(), done: bool() })),
 	},
+	ticks: {
+		// The one tick. Members no tick gives (`name`, `items`) are there for everyone let in: reading.
+		write: { label: messages.message("tickWrite"), gives: ["add", "tick"] },
+	},
+	defaultGrants: { everyone: ["write"], agents: ["write"], guests: [] },
 });
 
-/** What a checker of a checklist is granted. */
-export const CHECKLIST_CHECKS = ["add", "tick"] as const;
+/** One checklist held in a workspace: `ChecklistKind`'s contract. */
+export const Checklist = ChecklistKind.contract;
+
+/** What a writer of a checklist is granted (Write). */
+export const CHECKLIST_WRITES = ["add", "tick"] as const;
