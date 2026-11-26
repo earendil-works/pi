@@ -140,7 +140,10 @@ export class GivenQuery implements Dependent {
 	/** The canonical JSON of the arguments read last; `undefined` before the first read and after a failed one. */
 	#read: string | undefined;
 	#moved: (() => void) | undefined;
-	#release: (() => void) | undefined;
+	/** The release of its follow of the provider's instances, while it follows (fields, not a closure: 112 B less). */
+	#releaseInstance: (() => void) | undefined;
+	/** The arguments' source it follows, while it follows. */
+	#source: Source | undefined;
 	/** Set from an invalidation until the batch's flush compares the arguments. */
 	#checking = false;
 
@@ -165,20 +168,19 @@ export class GivenQuery implements Dependent {
 	/** Calls `moved` from now on whenever `target` would read something else, until `release`. */
 	follow(moved: () => void): void {
 		this.#moved = moved;
-		const releaseInstance = this.handle.follow(moved);
+		this.#releaseInstance = this.handle.follow(moved);
 		const args = this.#args;
 		// A constant never changes: only a source is followed.
 		const source = args.kind === "following" && args.source instanceof Source ? args.source : undefined;
 		source?.dependents.add(this);
-		this.#release = () => {
-			releaseInstance();
-			source?.dependents.delete(this);
-		};
+		this.#source = source;
 	}
 
 	release(): void {
-		this.#release?.();
-		this.#release = undefined;
+		this.#releaseInstance?.();
+		this.#source?.dependents.delete(this);
+		this.#releaseInstance = undefined;
+		this.#source = undefined;
 		this.#moved = undefined;
 	}
 
