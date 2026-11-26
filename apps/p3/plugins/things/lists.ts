@@ -208,6 +208,7 @@ function rootsProbe(store: Store, caller: Caller): Probe<WorkspaceItem[]> {
 	return {
 		workspace: "",
 		caller,
+		reads: "presence",
 		compute: async (look, load, ctx) => {
 			const root = (await readAll(store.workspaces.children, { parent: "" }, ctx))[0]?.workspace ?? "";
 			const keys = [partyKey(caller.kind === "server" ? { kind: "everyone" } : caller)];
@@ -230,6 +231,7 @@ function rootsProbe(store: Store, caller: Caller): Probe<WorkspaceItem[]> {
 				const parent = look.entries(workspace)?.parent ?? "";
 				return answer !== undefined && !(answer.above ?? []).includes(parent);
 			});
+			load.things(roots);
 			return roots.map((workspace) => itemOf(look, workspace)).sort(byName);
 		},
 	};
@@ -240,9 +242,11 @@ function childrenProbe(store: Store, workspace: string, caller: Caller): Probe<W
 	return {
 		workspace,
 		caller,
+		reads: "presence",
 		compute: async (look, load, ctx) => {
 			const children = await readAll(store.workspaces.children, { parent: workspace }, ctx);
 			for (const child of children) await load.workspace(child.workspace);
+			load.things(children.map((child) => child.workspace));
 			return children
 				.filter((child) => look.answer(child.workspace, child.workspace, caller) !== undefined)
 				.map((child) => itemOf(look, child.workspace))
@@ -290,6 +294,7 @@ function peopleProbe(workspace: string, caller: Caller): Probe<PartyItem[]> {
 	return {
 		workspace,
 		caller,
+		reads: "presence",
 		compute: async (look) => {
 			const above = aboveOf(look, workspace, caller);
 			const entries = look.entries(workspace);
@@ -475,6 +480,10 @@ function hasTick(
 	const withheld = (given as Partial<OwnHere>).makesWithheld?.get(key);
 	const any = ticks?.has(MAKE_ANY) === true && withheld?.has(MAKE_ANY) !== true;
 	if (made === "*") return any;
+	// The one Make ceiling (main session, round 2): the kind's makers for the party's audience and the workspace's.
+	const maker = party.kind === "agents" ? "agent" : "person";
+	const value = kinds.get(made)?.value;
+	if (value === undefined || !makerMay(value, maker) || !mayHoldHere(look, workspace, kinds, made)) return false;
 	return (ticks?.has(tick) === true || any) && withheld?.has(tick) !== true;
 }
 
@@ -483,7 +492,10 @@ function makerMay(kind: KindInfo, maker: "person" | "agent"): boolean {
 	return kind.makers === "anyone" || (kind.makers === "people" && maker === "person");
 }
 
-/** Whether a thing of kind `name` may be made in `workspace` at all: a leaf holds no workspace kinds (decision 13). */
+/**
+ * Whether a thing of kind `name` may be made in `workspace` at all: only a plain workspace of a registered kind holds
+ * workspaces (decision 13; `makeable`'s ceiling).
+ */
 function mayHoldHere(
 	look: Look,
 	workspace: string,
@@ -491,7 +503,7 @@ function mayHoldHere(
 	name: string,
 ): boolean {
 	const here = look.entries(workspace)?.kind;
-	return !(kinds.get(here ?? "")?.value.workspace === "leaf" && kinds.get(name)?.value.workspace !== "no");
+	return kinds.get(name)?.value.workspace === "no" || kinds.get(here ?? "")?.value.workspace === "plain";
 }
 
 /**

@@ -484,6 +484,7 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				write(async (tx, touched) => {
 					tx.delete(t.workspaceMembers, { workspace, partyKey: partyKey(party) });
 					touched.workspaces.add(workspace);
+					touched.presence.add(workspace);
 					touched.members.add(partyKey(party));
 					return null;
 				}, ctx),
@@ -873,14 +874,15 @@ class Writes {
 		putWorkspace(tx, this.#t, { workspace: thing, kind, name, by, showsPeople, view: args.view }, above);
 		const maker = makerParty(by);
 		if (maker !== undefined) {
-			this.#member(tx, thing, maker, by);
+			this.#member(tx, touched, thing, maker, by);
 			this.#giveMaker(tx, thing, thing, item, by, [MAKE_ANY]);
 		}
 		if (item.value.workspace === "leaf") {
-			this.#member(tx, thing, { kind: "agent", session: thing }, { kind: "plugin", plugin: THINGS_PLUGIN });
+			this.#member(tx, touched, thing, { kind: "agent", session: thing }, { kind: "plugin", plugin: THINGS_PLUGIN });
 		}
 		this.#defaults(tx, thing, thing, item, args.defaultGrants ?? item.value.defaultGrants, args.defaults);
 		touched.workspaces.add(thing);
+		touched.presence.add(thing);
 		touched.lines.add(parent);
 		return null;
 	}
@@ -896,6 +898,7 @@ class Writes {
 		tx.delete(this.#t.workspaces, { workspace });
 		tx.put(this.#t.removing, { workspace, pathText: line.pathText });
 		touched.workspaces.add(workspace);
+		touched.presence.add(workspace);
 		touched.lines.add(line.parent);
 		return line.pathText;
 	}
@@ -945,6 +948,7 @@ class Writes {
 		}
 		tx.put(t.gone, { workspace });
 		touched.workspaces.add(workspace);
+		touched.presence.add(workspace);
 	}
 
 	/** The thing of `kind` that `by` made, if any (a plugin's one thing: `ensure`). */
@@ -1065,6 +1069,7 @@ class Writes {
 		if (shown === undefined) tx.delete(this.#t.switches, { workspace, itemKey: itemKey(item) });
 		else tx.put(this.#t.switches, { workspace, itemKey: itemKey(item), item, shown });
 		touched.workspaces.add(workspace);
+		if (item.kind === "party") touched.presence.add(workspace);
 		return null;
 	}
 
@@ -1084,6 +1089,7 @@ class Writes {
 			},
 		);
 		touched.workspaces.add(workspace);
+		if (showsPeople !== undefined) touched.presence.add(workspace);
 		return null;
 	}
 
@@ -1113,10 +1119,18 @@ class Writes {
 			if (kind === undefined) throw invalid("args", `things: no thing ${thing}`);
 			const info = this.#kind(kind).value;
 			const forWhom = this.#forOf(info, own, tick);
-			// A row is removed whatever its tick (one the kind lost too); written, its tick must be the kind's, `OPEN`,
-			// or on a workspace's own grants a Make tick of a registered kind (item 114).
-			if (gives !== undefined && tick !== OPEN && forWhom === undefined) {
+			// A row is removed whatever its tick (one the kind lost too); written, its tick must be the kind's, `OPEN`, or
+			// on a workspace's own grants a Make tick; one naming a kind no plugin registers now is kept and ignored
+			// (decisions 82, 91, 114; main session, round 2).
+			if (gives !== undefined && tick !== OPEN && forWhom === undefined && !this.#unknownMake(info, own, tick)) {
 				throw invalid("args", `things: ${kind} has no tick ${tick}`);
+			}
+			// "No access" on a workspace's own thing takes a person, a group or one agent out (round 1); everyone here
+			// and the agents leave a workspace through the people switches and defaults instead (round 2).
+			if (own && tick === OPEN && gives === false && (party.kind === "everyone" || party.kind === "agents")) {
+				throw invalid("args", `things: No access on ${workspace} is not for ${party.kind}`, {
+					message: messages.message("noAccessForAll"),
+				});
 			}
 			if (gives === true && forWhom !== undefined && !isFor(forWhom, audienceOf(party.kind))) {
 				throw invalid("args", `things: ${tick} of ${kind} cannot be given to ${partyKey(party)}`, {
@@ -1134,6 +1148,8 @@ class Writes {
 			if (gives === undefined) tx.delete(this.#t.grants, key);
 			else this.#grant(tx, workspace, thing, party, source, tick, gives, info.ticksVersion);
 			touched.workspaces.add(workspace);
+			// "No access" on a workspace's own thing takes its party out of the workspace: a change of who is there.
+			if (own && tick === OPEN) touched.presence.add(workspace);
 		}
 		return null;
 	}
@@ -1229,6 +1245,7 @@ class Writes {
 			and(eq(g.workspace, workspace), eq(g.thing, thing), eq(g.partyKey, key), eq(g.tick, tick)),
 		);
 		touched.workspaces.add(workspace);
+		if (thing === workspace && tick === OPEN) touched.presence.add(workspace);
 		if (gives === undefined) return null;
 		return this.setGrants(tx, touched, { source, grants: [{ workspace, thing, party, tick, gives }] });
 	}
@@ -1243,9 +1260,7 @@ class Writes {
 			throw invalid("args", `things: ${party.kind} is no party one puts in`);
 		}
 		await this.#mustBeWorkspace(tx, workspace);
-		this.#member(tx, workspace, party, source);
-		touched.workspaces.add(workspace);
-		touched.members.add(partyKey(party));
+		this.#member(tx, touched, workspace, party, source);
 		return null;
 	}
 
@@ -1290,6 +1305,8 @@ class Writes {
 		)) {
 			await this.#removeGroup(tx, touched, group);
 		}
+		// Members and groups went: who is where may have changed in every workspace it touched.
+		for (const workspace of touched.workspaces) touched.presence.add(workspace);
 		return null;
 	}
 
@@ -1353,12 +1370,24 @@ class Writes {
 				// What a workspace kind's defaults or its create hook's answer name is checked as a written grant is (93,
 				// 114): a tick of the kind for that party, `OPEN`, or on a workspace's own thing a Make tick of a
 				// registered kind its makers let that party make.
-				if (tick !== OPEN && !isFor(this.#forOf(item.value, thing === workspace, tick), audienceOf(party.kind))) {
+				const own = thing === workspace;
+				const forWhom = this.#forOf(item.value, own, tick);
+				const known = forWhom !== undefined || !this.#unknownMake(item.value, own, tick);
+				if (tick !== OPEN && known && !isFor(forWhom, audienceOf(party.kind))) {
 					throw invalid("args", `things: ${item.value.name}'s default ${tick} cannot be given to ${party.kind}`);
 				}
 				this.#grant(tx, workspace, thing, party, source, tick, true, item.value.ticksVersion);
 			}
 		}
+	}
+
+	/**
+	 * Whether `tick` is a Make tick on a workspace's own thing that names a kind no plugin registers now: kept and
+	 * ignored, never refused (decisions 82, 91, 114).
+	 */
+	#unknownMake(info: KindInfo, own: boolean, tick: string): boolean {
+		const made = kindOfMakeTick(tick);
+		return own && info.workspace !== "no" && made !== undefined && made !== "*" && !this.#kinds().has(made);
 	}
 
 	/**
@@ -1391,8 +1420,14 @@ class Writes {
 		this.#give(tx, workspace, thing, maker, by, [...ticks, ...extra], item.value.ticksVersion);
 	}
 
-	/** Puts `party` into `workspace` (`source` did). */
-	#member(tx: Tx, workspace: string, party: Party, source: Source): void {
+	/**
+	 * Puts `party` into `workspace` (`source` did), telling the index and the lists that read where the party is put in
+	 * (a held Roots learns of a workspace made for its person).
+	 */
+	#member(tx: Tx, touched: Touched, workspace: string, party: Party, source: Source): void {
+		touched.workspaces.add(workspace);
+		touched.presence.add(workspace);
+		touched.members.add(partyKey(party));
 		tx.put(this.#t.workspaceMembers, {
 			workspace,
 			partyKey: partyKey(party),
