@@ -1,37 +1,19 @@
-// The notes plugin's contract: notebooks as a kind of thing (`notes.notes`, content: a writer of a session or its
-// agent makes one there), and one notebook in a session as its members and its agent see it (`Notes`). A notebook is
-// a thing (its id, name and owner the sessions plugin's); its notes live on the server, keyed by the thing's id, so a
-// notebook kept and used in two sessions shows the same notes there.
+// The notes plugin's contract: notebooks as a kind of thing (`notes.notes`) and one notebook held in a workspace by a
+// person or an agent (`Notes`, `NotesKind`'s contract). Anyone, people and agents, may make one where they may make
+// things; it may be linked in any number of workspaces, and its notes, keyed by the thing's id, are the same in each.
+// Who may do what is the things plugin's grants: reading is for everyone let in, the one tick Write adds, edits and
+// removes notes.
 
-import {
-	arr,
-	bool,
-	defineThing,
-	grantable,
-	lit,
-	method,
-	num,
-	obj,
-	remote,
-	Server,
-	type Static,
-	str,
-	thingAdmission,
-	union,
-} from "@earendil-works/p3/v1";
+import { arr, bool, lit, method, num, obj, type Static, str, union } from "@earendil-works/p3/v1";
+import { defineThing } from "../things/kind.ts";
+import { messages } from "./messages.ts";
 
-/** A notebook in a session; `edit: false` leaves whoever it applies to (a member, the agent) reading only. */
-export const NotesKind = defineThing("notes.notes", {
-	version: 1,
-	options: obj({ edit: bool() }),
-	initial: { edit: true },
-});
-
-/**
- * Who wrote a note last: a person (the owner too; their name as the people plugin has it now), or an agent (which
- * session's is implicit: the notebook's use there).
- */
-export const Author = union([obj({ kind: lit("person"), id: str(), name: str() }), obj({ kind: lit("agent") })]);
+/** Who wrote a note last: a person (their name now, from the things store), a session's agent, or the Pi itself. */
+export const Author = union([
+	obj({ kind: lit("person"), person: str(), name: str() }),
+	obj({ kind: lit("agent"), session: str() }),
+	obj({ kind: lit("server") }),
+]);
 
 /** Who wrote a note last (see `Author`). */
 export type Author = Static<typeof Author>;
@@ -46,27 +28,32 @@ export const Note = obj({ id: str(), text: str(), at: num(), author: Author });
 export type Note = Static<typeof Note>;
 
 /**
- * One notebook of a session (`thing`: the thing's id, a thing of `NotesKind` the session has), for its members and its
- * agent: the notes, and for an editor (who writes in the session and whose options say `edit`) adding, editing and
- * removing them.
+ * A notebook (`notes.notes`): its name (its thing's; "Notes" while it has none) and its notes loaded so far, the last
+ * written first, with `more` for the next page: both for everyone let in. Write gives `add`, `edit` and `remove`. A
+ * new link starts with Write for everyone there and the agents; a Read share's guests read.
  */
-export const Notes = remote("notes.notes", {
+export const NotesKind = defineThing("notes.notes", {
 	version: 1,
-	params: { session: str(), thing: str() },
-	hostAddress: () => Server(),
-	admission: thingAdmission(NotesKind),
-	// The notebook's name (its thing's; none: its kind's title), its notes loaded so far, the last written first, and
-	// `more` for the next page; an editor is also granted `add`, `edit` and `remove` (`NOTES_EDITS`).
+	makers: "anyone",
+	workspaces: "many",
 	state: { name: str(), list: obj({ rows: arr(Note), moreAfter: bool() }) },
 	methods: {
 		more: method(),
-		/** Adds a note; answers its id. */
-		add: grantable(method(obj({ text: NoteText }), str())),
+		/** Adds a note, written now by the caller; answers its id. */
+		add: method(obj({ text: NoteText }), str()),
 		/** Replaces a note's text: it is written now, by the caller. */
-		edit: grantable(method(obj({ id: str(), text: NoteText }))),
-		remove: grantable(method(obj({ id: str() }))),
+		edit: method(obj({ id: str(), text: NoteText })),
+		remove: method(obj({ id: str() })),
 	},
+	ticks: {
+		// The one tick. Members no tick gives (`name`, `list`, `more`) are there for everyone let in: reading.
+		write: { label: messages.message("tickWrite"), gives: ["add", "edit", "remove"] },
+	},
+	defaultGrants: { everyone: ["write"], agents: ["write"], guests: [] },
 });
 
-/** What an editor of a notebook is granted. */
-export const NOTES_EDITS = ["add", "edit", "remove"] as const;
+/** One notebook held in a workspace: `NotesKind`'s contract. */
+export const Notes = NotesKind.contract;
+
+/** What a writer of a notebook is granted (Write). */
+export const NOTES_WRITES = ["add", "edit", "remove"] as const;

@@ -1,110 +1,160 @@
-// The notes plugin on a session's worker: what the session's notebooks give its agent. `notes_list` (the session's
-// notebooks: id, name, whether the agent may write there) and `notes_read({ notebook })` always; `notes_write({
-// notebook, text })` when the agent may edit at least one notebook, refused with an error naming the notebook on the
-// others. The tools take a notebook's id from `notes_list`, so their descriptions stay fixed whatever notebooks the
-// session has. They reach the notebook on the server (`Notes`) through `agent.call`, as the session's worker, so
-// `admitThing` answers for the agent (its access and its options): options changed while a call runs refuse the
-// write there too.
+// The notes plugin on a session's worker: the notes kind's harness part, what the notebooks the agent holds give it.
+// `notes_list` (each notebook's id, name and whether the agent may write there) and `notes_read({ notebook })` always;
+// `notes_write({ notebook, change })` (add, edit or remove a note) while one of them gives Write, refused naming the
+// notebook on the others. The tools take a notebook's id from `notes_list`, so their descriptions stay fixed whatever
+// notebooks the agent holds. They reach the notebook through the agent's reference, as the session's worker: Write
+// taken back while a call runs refuses that write too.
 
-import { defineFacet, forbidden, int, obj, opt, str } from "@earendil-works/p3/v1";
 import {
-	type Agent,
-	type AgentThing,
-	defineExtension,
-	defineTool,
-	type Extension,
-	ThingExtensions,
-	thingExtension,
-} from "@earendil-works/p3/v1/worker";
-import { type Note, Notes, NotesKind, NoteText } from "./contract.ts";
+	defineFacet,
+	forbidden,
+	int,
+	invalid,
+	lit,
+	obj,
+	opt,
+	type Reference,
+	str,
+	union,
+	withGranted,
+} from "@earendil-works/p3/v1";
+import { defineExtension, defineTool, type Extension } from "@earendil-works/p3/v1/worker";
+import { type HarnessSession, type HeldThing, ThingHarnessParts, thingHarnessPart } from "../things/contract.worker.ts";
+import { NOTES_WRITES, type Note, Notes, NotesKind, NoteText } from "./contract.ts";
 
 export default defineFacet((_host, self) => {
 	self.contribute(
-		ThingExtensions,
-		thingExtension(NotesKind, (things, agent) => ({ extension: notesExtension(things, agent) })),
+		ThingHarnessParts,
+		thingHarnessPart(NotesKind, (things, session) => ({ extension: notesExtension(things, session) })),
 	);
 });
 
-/** A notebook of the session as the notes tools get it. */
-type Notebook = AgentThing<{ edit: boolean }>;
+/** A notebook the agent holds. */
+type Notebook = HeldThing<typeof Notes>;
 
-/** The tools of the session's notebooks: listing and reading, and writing when the agent may edit one of them. */
-function notesExtension(things: readonly Notebook[], agent: Agent): Extension {
-	const list = defineTool({
-		name: "notes_list",
-		description:
-			"Lists the session's notebooks as JSON: each one's `id` (what the other notes tools take), its `name` and " +
-			"whether you may `write` in it.",
-		parameters: obj({}),
-		execute: async () => {
-			const notebooks = things.map(({ thing, name, options }) => ({ id: thing, name, write: options.edit }));
-			return { output: [{ type: "text", text: JSON.stringify(notebooks) }] };
-		},
-	});
-	const read = defineTool({
-		name: "notes_read",
-		description:
-			"Reads the notes of one of the session's notebooks (`notebook`: its id from `notes_list`), the last written " +
-			"first, a page of 50 notes at a time.",
-		parameters: obj({ notebook: str(), pages: opt(int({ min: 1, max: 10 })) }),
-		execute: async ({ notebook: id, pages }, _api, context) => {
-			const at = { session: agent.session, thing: notebookOf(things, id).thing };
-			const notes = await agent.call(async (ctx) => {
-				const notebook = await ctx.get(Notes, at);
-				for (let page = 1; page < (pages ?? 1) && notebook.list.value.moreAfter; page++) await notebook.more(ctx);
-				return notebook.list.value;
-			}, context);
-			return { output: [{ type: "text", text: listed(notes.rows, notes.moreAfter) }] };
-		},
-	});
-	const write = defineTool({
-		name: "notes_write",
-		description:
-			"Adds a note to one of the session's notebooks (`notebook`: its id from `notes_list`, one you may write in).",
-		parameters: obj({ notebook: str(), text: NoteText }),
-		execute: async ({ notebook: id, text }, _api, context) => {
-			const thing = notebookOf(things, id);
-			if (!thing.options.edit) throw forbidden(`notes: you may not write in ${described(thing)}`);
-			const added = await agent.call(async (ctx) => {
-				const notebook = await ctx.get(Notes, { session: agent.session, thing: thing.thing });
-				if (notebook.add === undefined) throw forbidden(`notes: you may not write in ${described(thing)} now`);
-				return notebook.add({ text }, ctx);
-			}, context);
-			return { output: [{ type: "text", text: `Added note ${added}.` }] };
-		},
-	});
+/** The agent's notes tools (exported for its test): list and read, and write while one notebook gives Write. */
+export function notesExtension(things: readonly Notebook[], session: HarnessSession): Extension {
+	const tools = [listTool(things), readTool(things, session)];
 	return defineExtension({
 		name: "notes",
-		tools: things.some(({ options }) => options.edit) ? [list, read, write] : [list, read],
+		tools: things.some(({ ref }) => writer(ref) !== undefined) ? [...tools, writeTool(things, session)] : tools,
 	});
 }
 
-/** The session's notebook `id`; an id that is none of them is the model's mistake, answered as its error result. */
+/** The tool `notes_list`: the agent's notebooks, with whether it may write in each. */
+function listTool(things: readonly Notebook[]) {
+	return defineTool({
+		name: "notes_list",
+		description:
+			"Lists your notebooks as JSON: each one's `id` (what the other notes tools take), its `name` and whether you " +
+			"may `write` in it.",
+		parameters: obj({}),
+		replay: "safe",
+		execute: async () => {
+			const notebooks = things.map(({ thing, ref }) => ({
+				id: thing,
+				name: ref.name.value,
+				write: writer(ref) !== undefined,
+			}));
+			return { output: [{ type: "text", text: JSON.stringify(notebooks) }] };
+		},
+	});
+}
+
+/** The tool `notes_read`: a notebook's notes, the last written first, a page of 50 at a time. */
+function readTool(things: readonly Notebook[], session: HarnessSession) {
+	return defineTool({
+		name: "notes_read",
+		description:
+			"Reads the notes of one of your notebooks (`notebook`: its id from `notes_list`), the last written first, each " +
+			"with its id, when and by whom it was written; `pages` pages of 50 notes (1 by default).",
+		parameters: obj({ notebook: str(), pages: opt(int({ min: 1, max: 20 })) }),
+		replay: "safe",
+		execute: async ({ notebook: id, pages }, _api, context) => {
+			const { thing, workspace } = notebookOf(things, id);
+			// A reference of its own: reading older pages grows this call's list, not the one the agent holds.
+			const list = await session.call(async (ctx) => {
+				const notebook = await ctx.get(Notes, { workspace, thing });
+				for (let page = 1; page < (pages ?? 1) && notebook.list.value.moreAfter; page++) await notebook.more(ctx);
+				return notebook.list.value;
+			}, context);
+			return { output: [{ type: "text", text: listed(list.rows, list.moreAfter) }] };
+		},
+	});
+}
+
+/** What `notes_write` does: adds a note, replaces one's text, or removes one. */
+const Change = union([
+	obj({ kind: lit("add"), text: NoteText }),
+	obj({ kind: lit("edit"), id: str(), text: NoteText }),
+	obj({ kind: lit("remove"), id: str() }),
+]);
+
+/** The tool `notes_write`: adds, edits or removes a note of a notebook the agent may write in. */
+function writeTool(things: readonly Notebook[], session: HarnessSession) {
+	return defineTool({
+		name: "notes_write",
+		description:
+			"Changes one of your notebooks (`notebook`: its id from `notes_list`, one you may write in), which everyone " +
+			'there sees at once: `change` is `{ kind: "add", text }`, `{ kind: "edit", id, text }` (a note\'s id from ' +
+			'`notes_read`) or `{ kind: "remove", id }`.',
+		parameters: obj({ notebook: str(), change: Change }),
+		execute: async ({ notebook: id, change }, _api, context) => {
+			const notebook = notebookOf(things, id);
+			const text = await session.call(async (ctx) => {
+				// Read at the call: Write may have been taken back since the tools were offered.
+				const writes = writer(notebook.ref);
+				if (writes === undefined) throw forbidden(`notes: you may not write in ${described(notebook)}`);
+				switch (change.kind) {
+					case "add":
+						return `Added note ${await writes.add({ text: change.text }, ctx)}.`;
+					case "edit":
+						await writes.edit({ id: change.id, text: change.text }, ctx);
+						return `Edited note ${change.id}.`;
+					case "remove":
+						await writes.remove({ id: change.id }, ctx);
+						return `Removed note ${change.id}.`;
+				}
+			}, context);
+			return { output: [{ type: "text", text }] };
+		},
+	});
+}
+
+/** The notebook's members Write gives, while the agent has it there. */
+function writer(ref: Reference<typeof Notes>) {
+	return withGranted(ref, ...NOTES_WRITES);
+}
+
+/** The agent's notebook `id`; an id that is none of them is the model's mistake, answered as its error result. */
 function notebookOf(things: readonly Notebook[], id: string): Notebook {
 	const found = things.find(({ thing }) => thing === id);
-	if (found === undefined)
-		throw new Error(`notes: the session has no notebook ${JSON.stringify(id)} (see notes_list)`);
+	if (found === undefined) throw invalid("args", `notes: you have no notebook ${JSON.stringify(id)} (see notes_list)`);
 	return found;
 }
 
 /** A notebook as an error names it: its name and id. */
-function described({ thing, name }: Notebook): string {
-	return name === "" ? `the notebook ${thing}` : `the notebook "${name}" (${thing})`;
+function described({ thing, ref }: Notebook): string {
+	return `the notebook "${ref.name.value}" (${thing})`;
 }
 
-/** Notes as the agent reads them: one per line with its time and author, and whether older ones were left out. */
+/** Notes as the agent reads them: one per line with its id, time and author, and whether older ones were left out. */
 function listed(rows: readonly Note[], more: boolean): string {
 	if (rows.length === 0) return "The notebook is empty.";
-	const lines = rows.map((note) => `- ${new Date(note.at).toISOString()} ${writer(note)}: ${note.text}`);
+	const lines = rows.map(
+		(note) => `- [${note.id}] ${new Date(note.at).toISOString()} ${authorName(note)}: ${note.text}`,
+	);
 	return [...lines, ...(more ? ["(older notes follow: read more pages)"] : [])].join("\n");
 }
 
 /** Who wrote a note, for the agent. */
-function writer(note: Note): string {
-	switch (note.author.kind) {
+function authorName({ author }: Note): string {
+	switch (author.kind) {
 		case "person":
-			return note.author.name;
+			return author.name;
 		case "agent":
-			return "an agent";
+			return `the agent of session ${author.session}`;
+		case "server":
+			return "Pi";
 	}
 }

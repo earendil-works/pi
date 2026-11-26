@@ -1,7 +1,7 @@
 // The notes store on the server (`NotesStore`): every notebook's notes, keyed by the notebook's thing id (the thing
-// itself, its name and owner are the sessions plugin's), its named query, and every write. A notebook's notes live as
-// long as its thing: its kind's `delete` clears them. Server code of this plugin only: it checks no caller (`Notes`
-// admits them).
+// itself, its name and where it is linked are the things plugin's), its named query, and every write. A notebook's
+// notes live as long as its thing: its kind's `delete` clears them. Server code of this plugin only: it checks no
+// caller (`Notes` admits them).
 
 import {
 	defineTable,
@@ -25,7 +25,7 @@ const StoredNote = obj({ id: str(), text: str(), at: num(), author: str() });
 
 /**
  * The notebooks' notes, once per server: each notebook's notes as a named query, the last written first, and the
- * writes. A notebook is its thing's id; an author is a key: `person:<id>` (the owner's too), `agent`.
+ * writes. A notebook is its thing's id; an author is a key: `person:<id>`, `agent:<session>`, `server`.
  */
 export const NotesStore = local("notes.store", {
 	version: 1,

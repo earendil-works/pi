@@ -1,26 +1,26 @@
-// The notes kind's view of one notebook in a session (`ThingViews`): its name, its notes, the last written first, with
-// older ones on demand; an editor (admitted with write access and options that say `edit`) adds notes and edits and
-// removes any of them, a reader only reads. The view follows the admission live: options set to read only turn it into the
-// reader's at once.
+// The notes kind's view of one notebook (`ThingViews`): its name, its notes, the last written first, with older ones
+// on demand. A writer (granted Write) adds notes and edits and removes any of them; anyone else let in reads. The view
+// follows the admission live: Write taken back turns it into the reader's at once, on the same hold.
 
 import { Button, TextArea } from "@earendil-works/elanor-react";
 import { BACKGROUND_CONTEXT, type Context, Me, type Reference, type With, withGranted } from "@earendil-works/p3/v1";
 import { useHold, useLive, useRefState, useWatch } from "@earendil-works/p3/v1/web";
 import { useState } from "react";
-import { type Author, NOTES_EDITS, type Note, Notes } from "./contract.ts";
+import { type Author, NOTES_WRITES, type Note, Notes } from "./contract.ts";
 import styles from "./notes-view.module.css";
 
 /** Who is looking: a person (the owner among them) by id, or nobody known yet. */
 type Viewer = { readonly id: string } | undefined;
 
-/** The editor's methods, as the view calls them. */
-type Editor = With<Reference<typeof Notes>, (typeof NOTES_EDITS)[number]>;
+/** A writer's members, as the view calls them. */
+type Editor = With<Reference<typeof Notes>, (typeof NOTES_WRITES)[number]>;
 
 /** Notebook `thing` of session `session`, as the viewer's admission allows. */
 export function NotesView(props: { readonly session: string; readonly thing: string }) {
-	const ref = useHold(Notes, { session: props.session, thing: props.thing });
+	// Until sessions are workspaces (slice 5) a notebook is held in the workspace named by the session's id.
+	const ref = useHold(Notes, { workspace: props.session, thing: props.thing });
 	const live = useLive(ref);
-	const editor = withGranted(live, ...NOTES_EDITS);
+	const editor = withGranted(live, ...NOTES_WRITES);
 	const state = useRefState(ref);
 	const list = useWatch(live?.list);
 	const name = useWatch(live?.name);
@@ -37,7 +37,7 @@ export function NotesView(props: { readonly session: string; readonly thing: str
 		<section
 			aria-label="Notes"
 			className={styles.notes}
-			data-notes={live === undefined ? "loading" : editor === undefined ? "reader" : "editor"}
+			data-notes={live === undefined ? "loading" : editor === undefined ? "reader" : "writer"}
 		>
 			<p className={styles.title} data-notes-name="">
 				{name ?? "Notes"}
@@ -209,12 +209,14 @@ function NoteItem(props: {
 	);
 }
 
-/** How the view names a note's author: the viewer as "You", a person (the owner too) by name, the agent. */
+/** How the view names a note's author: the viewer as "You", a person by name, an agent, the Pi itself. */
 function authorName(author: Author, viewer: Viewer): string {
 	switch (author.kind) {
 		case "person":
-			return viewer?.id === author.id ? "You" : author.name;
+			return viewer?.id === author.person ? "You" : author.name;
 		case "agent":
 			return "The agent";
+		case "server":
+			return "Pi";
 	}
 }
