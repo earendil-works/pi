@@ -1,8 +1,8 @@
 // The board kind's view of one canvas in a session (`ThingViews`): its name, the shapes, live, on a board of fixed
 // units that scales to the screen, with everyone else's pointer and name and what they are drawing as they draw it. A
-// drawer (admitted with write access and options that say `draw`) draws with the pen (mouse, pen or finger),
-// rectangles and text in a few colours, undoes their own last shape and clears the board; a viewer only looks, their
-// pointer shown. The view follows the admission live: `draw` taken back turns it into the viewer's at once.
+// drawer (granted Draw) draws with the pen (mouse, pen or finger), rectangles and text in a few colours and undoes
+// their own last shape; with Moderate also clears the board; a viewer only looks, their pointer shown. The view
+// follows the admission live: Draw taken back turns it into the viewer's at once.
 
 import { Button, Input, SegmentedControl } from "@earendil-works/elanor-react";
 import { BACKGROUND_CONTEXT, type Context, Me, type Reference, type With, withGranted } from "@earendil-works/p3/v1";
@@ -32,14 +32,15 @@ const COLORS = [
 
 /** Board `thing` of session `session`, as the viewer's admission allows. */
 export function BoardView(props: { readonly session: string; readonly thing: string }) {
-	const ref = useHold(Canvas, { session: props.session, thing: props.thing });
+	// Until slice 5 (sessions as session workspaces) the board is held in the workspace named by the session's id.
+	const ref = useHold(Canvas, { workspace: props.session, thing: props.thing });
 	const live = useLive(ref);
 	const drawer = withGranted(live, ...CANVAS_DRAWS);
 	const state = useRefState(ref);
 	const shapes = useWatch(live?.shapes);
 	const name = useWatch(live?.name);
 	const me = useWatch(useLive(useHold(Me, {}))?.me);
-	const myKey = me === undefined ? undefined : me.kind === "person" ? `person:${me.id}` : me.kind;
+	const myKey = me === undefined ? undefined : me.kind === "person" ? `person:${me.id}` : `agent:${me.session}`;
 	const others = useOthers(live?.motion, myKey);
 	const [failure, setFailure] = useState<string | undefined>(undefined);
 	const run = (call: (context: Context) => Promise<unknown>) => {
@@ -222,16 +223,18 @@ function Board(props: {
 						>
 							Undo
 						</Button>
-						<Button
-							data-canvas-clear=""
-							density="compact"
-							disabled={props.shapes.length === 0}
-							hierarchy="tertiary"
-							onClick={() => props.run((ctx) => drawer.clear(ctx))}
-							semantic="negative"
-						>
-							Clear
-						</Button>
+						{drawer.clear === undefined ? null : (
+							<Button
+								data-canvas-clear=""
+								density="compact"
+								disabled={props.shapes.length === 0}
+								hierarchy="tertiary"
+								onClick={() => props.run((ctx) => drawer.clear!(ctx))}
+								semantic="negative"
+							>
+								Clear
+							</Button>
+						)}
 					</div>
 					{tool === "text" ? (
 						<Input

@@ -64,6 +64,12 @@ tool: never compare the two.
   Android).
 - **Telemetry:** a healthy turn should store no spans; at most 1 KB of metrics per process per 10 s; the store
   bounded by size (slice 28's targets, `slices/28-telemetry.md`).
+- **The access index (things plugin):** its first question about a workspace reads it and every ancestor not loaded
+  (five reads each) and a person (two); after a commit only the touched workspaces and persons are read again. A
+  kinds change (a plugin with a kind loaded, reloaded or removed) reads every loaded workspace again, up to the
+  forgetting budget (1,000 unwatched) plus the watched ones and their ancestors, in the index's queue: the writes and
+  questions behind it wait for it. `bench/things.ts` times the root and leaf changes, one worker's start and the cold
+  first question; a kind's plugin reload under load is not timed yet.
 - **Bytes on the wire:** none measured per action yet. A UI package sets a budget for its common actions (opening a
   session, switching conversations, a streamed answer) and measures it with `chord.link.bytes`. The page bundle starts
   at about 140 KB gzipped for Chord's web client alone.

@@ -1,5 +1,5 @@
 // The canvas store on the server (`CanvasStore`): every canvas's committed shapes, keyed by the canvas's thing id (a
-// canvas is a thing, made and owned through the sessions plugin; its shapes are this plugin's), their named query, and
+// canvas is a thing, made and linked through the things plugin; its shapes are this plugin's), their named query, and
 // every write. Server code of this plugin only: it checks no caller (`Canvas` admits them).
 
 import {
@@ -13,6 +13,7 @@ import {
 	local,
 	method,
 	obj,
+	opt,
 	type P3Principal,
 	queries,
 	query,
@@ -31,7 +32,8 @@ export const CanvasStore = local("canvas.store", {
 		}),
 		/** Adds `shapes` to `canvas`, in order, drawn by `author`; answers their ids. */
 		add: method(obj({ canvas: str(), shapes: arr(Shape), author: str() }), arr(str())),
-		remove: method(obj({ canvas: str(), id: str() })),
+		/** Removes shape `id` of `canvas`; with `author`, only a shape they drew (`invalid` otherwise). */
+		remove: method(obj({ canvas: str(), id: str(), author: opt(str()) })),
 		/** Removes every shape of `canvas` (cleared, or the canvas deleted). */
 		clear: method(obj({ canvas: str() })),
 	},
@@ -52,12 +54,6 @@ const Shapes = defineTable("canvas.shapes", {
 export function serveStore(host: FacetHost<P3Principal>): void {
 	host.serve(CanvasStore, (_params, self) => {
 		const shapes = self.table(Shapes);
-		// The last `seq` this attempt gave: shapes added in one millisecond keep the order they were added in.
-		let last = 0;
-		const next = () => {
-			last = Math.max(Date.now() * 1000, last + 1);
-			return last;
-		};
 		return {
 			shapes: self.queries(
 				shapes,
@@ -73,17 +69,26 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			add: async ({ canvas, shapes: added, author }, ctx) => {
 				const ids = added.map(() => crypto.randomUUID());
 				await self.tx(async (tx) => {
+					// After the canvas's last stored shape, whatever this process's clock or an earlier attempt gave: a
+					// reload or a clock gone back keeps the order shapes were added in.
+					const newest = query(Shapes)
+						.where((shape) => eq(shape.canvas, canvas))
+						.orderBy((shape) => shape.seq, "desc");
+					const [last] = (await tx.page(shapes, newest, 1)).items;
+					let seq = Math.max(Date.now() * 1000, (last?.seq ?? 0) + 1);
 					added.forEach((shape, at) => {
-						tx.put(shapes, { canvas, id: ids[at]!, seq: next(), author, shape });
+						tx.put(shapes, { canvas, id: ids[at]!, seq: seq++, author, shape });
 					});
 					return null;
 				}, ctx);
 				return ids;
 			},
-			remove: ({ canvas, id }, ctx) =>
+			remove: ({ canvas, id, author }, ctx) =>
 				self.tx(async (tx) => {
-					if ((await tx.get(shapes, { canvas, id })) === undefined) {
-						throw invalid("args", `canvas: ${canvas} has no shape ${id}`);
+					const found = await tx.get(shapes, { canvas, id });
+					if (found === undefined) throw invalid("args", `canvas: ${canvas} has no shape ${id}`);
+					if (author !== undefined && found.author !== author) {
+						throw invalid("args", `canvas: shape ${id} was drawn by someone else`);
 					}
 					tx.delete(shapes, { canvas, id });
 					return null;
