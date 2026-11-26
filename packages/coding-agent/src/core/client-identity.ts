@@ -1,8 +1,6 @@
 import { type ClientIdentity, PI_ATTRIBUTION } from "@earendil-works/pi-ai";
 import type { GoogleAiPlanClient } from "@earendil-works/pi-ai/providers/google-ai-plan";
 import { VERSION } from "../config.ts";
-import type { SettingsManager } from "./settings-manager.ts";
-import { isInstallTelemetryEnabled } from "./telemetry.ts";
 
 /**
  * pi's Google `Desktop app` OAuth client for the Google AI Ultra plan, approved by Google for pi only. Forks and other
@@ -17,12 +15,12 @@ export const PI_GOOGLE_AI_PLAN_CLIENT: GoogleAiPlanClient = {
 
 /**
  * How pi's requests identify it to providers: a detailed `User-Agent` with pi's version, and attribution to pi as a
- * CLI agent while install telemetry is enabled.
+ * CLI agent.
  */
-export function getClientIdentity(settingsManager: SettingsManager): ClientIdentity {
+export function getClientIdentity(): ClientIdentity {
 	return {
 		userAgent: "detailed",
 		version: VERSION,
-		attribution: isInstallTelemetryEnabled(settingsManager) ? PI_ATTRIBUTION : null,
+		attribution: PI_ATTRIBUTION,
 	};
 }

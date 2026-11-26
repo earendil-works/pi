@@ -58,13 +58,6 @@ export { createCodingTools } from "@earendil-works/pi-durable/tools";
 export * from "../../../plugins/environments/contract.worker.ts";
 export * from "../../../plugins/harness/contract.worker.ts";
 
-/**
- * The file, relative to a worker's `dir`, whose presence opens the session's store with an outbox (each commit's
- * record, which backups upload). The backup plugin writes it once backup is on for the session and removes it when
- * backup stops for good; the base reads it before the store opens.
- */
-export const BACKUP_MARKER = "backup/enabled";
-
 /** A session worker's process values, for plugins: what only the base has. */
 export type WorkerRuntime = {
 	/** The session's id. */

@@ -64,6 +64,29 @@ A facet only declares (`host.serve`, `self.contribute`, `host.references`), sync
 happens in objects: state in documents and tables, standing behaviour in a `local` object with empty params (it lives
 as long as the host). Names are prefixed by the plugin (`bob.stats`).
 
+## Values you hand to Chord
+
+Everything you hand Chord is plain data (JSON plus bytes) that you never change afterwards: a state value, an
+admission's value, a reference's params, a method's arguments and result, a condition. Chord keeps the object you gave
+it without copying it, and compares by identity first: the same object is "unchanged".
+
+```ts
+// Wrong: one kept object, changed in place. The second decision is the same object: Chord sees no change, the
+// person's object is not rebuilt, and nothing reports it.
+const decision = { granted: [] as string[] };
+admit: (params, principal, self) => self.derive([role], ([r]) => {
+	decision.granted.length = 0;
+	if (r === "editor") decision.granted.push("edit");
+	return allow(decision);
+});
+
+// Right: a new value every time.
+admit: (params, principal, self) => self.derive([role], ([r]) => allow({ granted: r === "editor" ? ["edit"] : [] }));
+```
+
+The same for a writable: `items.set([...items.value, item])`, never `items.value.push(item); items.set(items.value)`.
+Nothing freezes values or checks this; a mutated value simply never arrives.
+
 ## Tables shown live
 
 A table has no watch. To show its rows live, the object owning it declares a live query with a limit:

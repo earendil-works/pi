@@ -84,6 +84,14 @@ final class PiWindowController: NSWindowController, NSWindowDelegate {
 	/// The selected page.
 	var page: BrainPage? { pages[selected] }
 
+	/// Closes the window when `page` is all it holds (it opened for a link the browser took); whether it does.
+	func closeIfOnly(_ page: BrainPage) -> Bool {
+		guard pages.count == 1, pages[selected] === page, let window else { return false }
+		// Later: the page's webview is inside its delegate callback, and closing releases it.
+		DispatchQueue.main.async { window.close() }
+		return true
+	}
+
 	/// Follows this Mac's server into the pages on it.
 	func serverChanged() {
 		for page in pages.values { page.serverChanged(app.server) }

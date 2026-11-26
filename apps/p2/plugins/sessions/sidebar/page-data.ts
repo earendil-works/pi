@@ -26,6 +26,8 @@ export type PageData = {
 	readonly onNewIn?: (target: NewTarget) => void;
 	/** The owner's archived projects (the Archive's list shows them). */
 	readonly archivedProjects: readonly ArchivedProject[];
+	/** The projects' coordinators, project name to session (the owner's; empty until known). */
+	readonly coordinators: Readonly<Record<string, string>>;
 	/** Moves a session to a project, or (null) out of its project; shown at once (the owner's). */
 	readonly onAssign?: (session: string, project: string | null) => void;
 	/** Moves a project before another one, or (null) to the end; shown at once (the owner's). */

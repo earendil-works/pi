@@ -23,7 +23,6 @@ describe("createAgentSession client identity", () => {
 	let tempDir: string;
 	let cwd: string;
 	let agentDir: string;
-	let originalTelemetryEnv: string | undefined;
 
 	beforeEach(() => {
 		tempDir = join(tmpdir(), `pi-sdk-identity-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -31,16 +30,9 @@ describe("createAgentSession client identity", () => {
 		agentDir = join(tempDir, "agent");
 		mkdirSync(cwd, { recursive: true });
 		mkdirSync(agentDir, { recursive: true });
-		originalTelemetryEnv = process.env.PI_TELEMETRY;
-		delete process.env.PI_TELEMETRY;
 	});
 
 	afterEach(() => {
-		if (originalTelemetryEnv === undefined) {
-			delete process.env.PI_TELEMETRY;
-		} else {
-			process.env.PI_TELEMETRY = originalTelemetryEnv;
-		}
 		if (tempDir && existsSync(tempDir)) {
 			rmSync(tempDir, { recursive: true, force: true });
 		}
@@ -87,15 +79,11 @@ describe("createAgentSession client identity", () => {
 	async function captureOptions(
 		model: Model<Api>,
 		options: {
-			telemetryEnabled?: boolean;
 			providerHeaders?: Record<string, string>;
 			sessionId?: string;
 		} = {},
 	): Promise<SimpleStreamOptions | undefined> {
 		const settingsManager = SettingsManager.create(cwd, agentDir);
-		if (options.telemetryEnabled === false) {
-			settingsManager.setEnableInstallTelemetry(false);
-		}
 
 		const authStorage = AuthStorage.inMemory({
 			[model.provider]: { type: "api_key", key: "test-api-key" },
@@ -155,19 +143,23 @@ describe("createAgentSession client identity", () => {
 		});
 	});
 
-	it("turns attribution off when telemetry is disabled", async () => {
-		const model = createModel("nvidia", "https://integrate.api.nvidia.com/v1");
-		const options = await captureOptions(model, { telemetryEnabled: false });
+	it("always sends provider attribution headers", async () => {
+		const nvidiaModel = createModel("nvidia", "https://integrate.api.nvidia.com/v1");
+		const nvidiaOptions = await captureOptions(nvidiaModel);
+		expect(nvidiaOptions?.identity).toEqual({
+			userAgent: "detailed",
+			version: VERSION,
+			attribution: PI_ATTRIBUTION,
+		});
+		expect(getAttributionHeaders(nvidiaModel, nvidiaOptions?.identity)).toEqual({
+			"X-BILLING-INVOKE-ORIGIN": "Pi",
+		});
 
-		expect(options?.identity).toEqual({ userAgent: "detailed", version: VERSION, attribution: null });
-		expect(getAttributionHeaders(model, options?.identity)).toEqual({});
-	});
-
-	it("turns attribution off with PI_TELEMETRY=0", async () => {
-		process.env.PI_TELEMETRY = "0";
-		const options = await captureOptions(createModel("openrouter", "https://openrouter.ai/api/v1"));
-
-		expect(options?.identity?.attribution).toBeNull();
+		const opencodeModel = createModel("opencode", "https://opencode.ai/zen/v1");
+		const opencodeOptions = await captureOptions(opencodeModel);
+		expect(getAttributionHeaders(opencodeModel, opencodeOptions?.identity)).toEqual({
+			"x-opencode-client": "pi",
+		});
 	});
 
 	it("adds OpenCode session headers for custom OpenCode providers", async () => {

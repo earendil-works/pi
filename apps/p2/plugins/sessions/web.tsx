@@ -43,10 +43,16 @@ import {
 	useRoute,
 	useSheet,
 } from "@p2/app/v1/web";
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Envs } from "../envs/contract.ts";
 import { DirectoryPicker, directoryPickerLayer } from "../envs/contract.web.tsx";
-import { type ArchivedProject, type Project, type ProjectPlace, Projects } from "../projects/contract.ts";
+import {
+	type ArchivedProject,
+	type Project,
+	ProjectCoordinators,
+	type ProjectPlace,
+	Projects,
+} from "../projects/contract.ts";
 import { SidebarRollups } from "../rollups/contract.ts";
 import { Search, SessionReads } from "../search/contract.ts";
 import { SessionStatus } from "../status/contract.ts";
@@ -95,13 +101,15 @@ import { NEW_PROJECT, NewProjectSheet, newProjectLayer, PROJECT_FOLDER, placeOf 
 import { publishPage, usePageData } from "./sidebar/page-data.ts";
 import { type CodeSource, RollupSheet } from "./sidebar/RollupSheet.tsx";
 import { folderName } from "./sidebar/Row.tsx";
-import { SidebarView, useNow } from "./sidebar/Sidebar.tsx";
+import { type Coordinators, SidebarView, useNow } from "./sidebar/Sidebar.tsx";
 
 /** Closes the top layer only (a sheet), keeping those below it (a phone's drawer). */
 const closeTopLayer = () => void getNavigation().close((route) => ({ ...route, layers: route.layers.slice(0, -1) }));
 
 /** No archived projects (one value, so the page data keeps its identity across renders). */
 const NO_ARCHIVED: readonly ArchivedProject[] = [];
+const NO_OPENING: ReadonlySet<string> = new Set();
+const NO_COORDINATORS: Readonly<Record<string, string>> = {};
 
 /** The projects and the sessions' projects as the sidebar shows them: as known, with the owner's moves in flight. */
 type ProjectsShown = {
@@ -483,17 +491,63 @@ function Sidebar() {
 		[],
 	);
 	const drawerRows = useMemo<DrawerRows>(() => ({ sessions: rows, listApart }), [rows, listApart]);
-	const rolledUp = useMemo(() => {
-		const hidden = new Set(Object.values(apart).flat());
-		return hidden.size ? rows.filter((row) => !hidden.has(row.id)) : rows;
-	}, [rows, apart]);
+	// Each live project's coordinator: its project's row stands for it, so it is left out of the rollups too. One
+	// restored on its own while its project is archived has no row of its own: it shows as any member does then, in no
+	// project.
+	const coordinatorsHeld = useObject(ProjectCoordinators, owner ? {} : undefined);
+	const coordinatorSessions = useReadable(kept(coordinatorsHeld)?.sessions);
 	const { onSearch, projects } = data;
-	// The owner's sessions are grouped by project: until the projects are known, they would all show without one, then
-	// jump into their projects.
+	const rolledUp = useMemo(() => {
+		const standing = (projects ?? []).flatMap((project) => coordinatorSessions?.[project.name] ?? []);
+		const hidden = new Set([...Object.values(apart).flat(), ...standing]);
+		return hidden.size ? rows.filter((row) => !hidden.has(row.id)) : rows;
+	}, [rows, apart, coordinatorSessions, projects]);
+	// The owner's sessions are grouped by project: until the projects and their coordinators are known, they would all
+	// show without one (a coordinator among its project's sessions), then jump into their places.
+	const projectsUnknown = owner && (projects === undefined || coordinatorSessions === undefined);
 	const sections = useMemo(
-		() => (owner && projects === undefined ? [] : sectionsOf(rollups, rolledUp, context, view)),
-		[owner, projects, rollups, rolledUp, context, view],
+		() => (projectsUnknown ? [] : sectionsOf(rollups, rolledUp, context, view)),
+		[projectsUnknown, rollups, rolledUp, context, view],
 	);
+	// A project's name opens its coordinator; the server makes or restores it first when it has to (one open per project
+	// at a time, shown on its row). The page goes there only if the reader has not gone elsewhere meanwhile.
+	const [opening, setOpening] = useState<ReadonlySet<string>>(NO_OPENING);
+	const openingNow = useRef<ReadonlySet<string>>(NO_OPENING);
+	const markOpening = useCallback((project: string, on: boolean) => {
+		const next = new Set(openingNow.current);
+		if (on) next.add(project);
+		else next.delete(project);
+		openingNow.current = next;
+		setOpening(next);
+	}, []);
+	const coordinators = useMemo((): Coordinators | undefined => {
+		if (!owner) return undefined;
+		const byId = new Map(rows.map((row) => [row.id, row]));
+		const rowOf = (project: string) => {
+			const id = coordinatorSessions?.[project];
+			return id === undefined ? undefined : byId.get(id);
+		};
+		return {
+			rowOf,
+			opening,
+			onOpen: (project) => {
+				const row = rowOf(project);
+				if (row && row.archivedAt === null) return onOpen(row.id);
+				const live = liveWith(coordinatorsHeld);
+				if (!live) return fail(new Error("Not connected"));
+				if (openingNow.current.has(project)) return;
+				markOpening(project, true);
+				const from = getNavigation().route;
+				void live
+					.open({ name: project }, BACKGROUND_CONTEXT)
+					.then(({ id }) => {
+						if (getNavigation().route === from) onOpen(id);
+					})
+					.catch(fail)
+					.finally(() => markOpening(project, false));
+			},
+		};
+	}, [owner, coordinatorSessions, rows, opening, coordinatorsHeld, onOpen, fail, markOpening]);
 	useEffect(() => {
 		if (list) rememberMains(list);
 	}, [list]);
@@ -599,9 +653,11 @@ function Sidebar() {
 				view,
 				// A project's list and the sessions without one wait for the projects too, a rollup made from code for the
 				// rollups: before them they would show the wrong sessions, or say the list is gone.
+				// Every owner's list waits for the coordinators too: until then a coordinator would show as a session.
 				loading: (page) =>
 					!list ||
-					((page === OTHER || page.startsWith("project:")) && owner && projects === undefined) ||
+					(owner && coordinatorSessions === undefined) ||
+					((page === OTHER || page.startsWith("project:")) && projectsUnknown) ||
 					(page.startsWith("rollup:") && entries === undefined),
 				connected,
 				onOpen,
@@ -613,6 +669,7 @@ function Sidebar() {
 				...(onSearch ? { onSearch } : {}),
 				...(ownerNewIn ? { onNewIn: ownerNewIn } : {}),
 				archivedProjects,
+				coordinators: coordinatorSessions ?? NO_COORDINATORS,
 				...(owner ? { onAssign, onMoveProject } : {}),
 			}),
 		[
@@ -622,7 +679,8 @@ function Sidebar() {
 			view,
 			list,
 			owner,
-			projects,
+			coordinatorSessions,
+			projectsUnknown,
 			entries,
 			connected,
 			onOpen,
@@ -728,6 +786,7 @@ function Sidebar() {
 				onPage={openPage}
 				onCollapseSidebar={toggleSidebar}
 				{...(drop ? { drop } : {})}
+				{...(coordinators ? { coordinators } : {})}
 				headerActions={headerActions}
 				footerActions={actions}
 			/>

@@ -84,7 +84,6 @@ export interface SettingsConfig {
 	hideThinkingBlock: boolean;
 	mermaidRenderingMode: MermaidRenderingMode;
 	collapseChangelog: boolean;
-	enableInstallTelemetry: boolean;
 	doubleEscapeAction: "fork" | "tree" | "none";
 	treeFilterMode: "default" | "no-tools" | "user-only" | "labeled-only" | "all";
 	showHardwareCursor: boolean;
@@ -124,7 +123,6 @@ export interface SettingsCallbacks {
 	onHideThinkingBlockChange: (hidden: boolean) => void;
 	onMermaidRenderingModeChange: (mode: MermaidRenderingMode) => void;
 	onCollapseChangelogChange: (collapsed: boolean) => void;
-	onEnableInstallTelemetryChange: (enabled: boolean) => void;
 	onDoubleEscapeActionChange: (action: "fork" | "tree" | "none") => void;
 	onTreeFilterModeChange: (mode: "default" | "no-tools" | "user-only" | "labeled-only" | "all") => void;
 	onShowHardwareCursorChange: (enabled: boolean) => void;
@@ -598,13 +596,6 @@ export class SettingsSelectorComponent extends Container {
 				values: ["true", "header", "false"],
 			},
 			{
-				id: "install-telemetry",
-				label: "Install telemetry",
-				description: "Send an anonymous version/update ping after changelog-detected updates",
-				currentValue: config.enableInstallTelemetry ? "true" : "false",
-				values: ["true", "false"],
-			},
-			{
 				id: "default-project-trust",
 				label: "Default project trust",
 				description: "Fallback behavior when no extension or saved trust decision decides project trust",
@@ -980,9 +971,6 @@ export class SettingsSelectorComponent extends Container {
 						break;
 					case "quiet-startup":
 						callbacks.onQuietStartupChange(newValue === "header" ? "header" : newValue === "true");
-						break;
-					case "install-telemetry":
-						callbacks.onEnableInstallTelemetryChange(newValue === "true");
 						break;
 					case "default-project-trust": {
 						const defaultProjectTrust = DEFAULT_PROJECT_TRUST_BY_LABEL.get(newValue);

@@ -88,8 +88,9 @@ export default defineFacet((host) => {
 				projects.projects,
 				projects.sessions,
 				familiar.session,
+				projects.coordinators,
 			],
-			([sessions, statuses, answers, reads, projects, memberships, familiar]): RollupFacts => ({
+			([sessions, statuses, answers, reads, projects, memberships, familiar, coordinators]): RollupFacts => ({
 				sessions,
 				statuses,
 				answers,
@@ -97,6 +98,7 @@ export default defineFacet((host) => {
 				projects,
 				memberships,
 				familiar,
+				coordinators,
 			}),
 		);
 

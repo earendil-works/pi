@@ -3,9 +3,10 @@
 // and the guest's list of shared sessions. Every row has the same shape (NavRow.tsx): a marker, a label, details and
 // controls at the trailing end. The owner's list starts with the rows plugins put there (the Familiar's), then the row
 // that opens the new-session screen. A rollup's name opens its list page, its chevron shows or hides its sessions; the
-// Projects rollup's "+" creates a project; a group's row shows or hides its sessions, a project's ⋯ (or a long press)
-// opens its commands; a session's row opens it, its chevron shows or hides its subagents. With a mouse, sessions and
-// projects are dragged (drag.ts). It renders what model.ts computes and calls back for every action.
+// Projects rollup's "+" creates a project; a project's name opens its coordinator session, its chevron shows or hides
+// its sessions, its ⋯ (or a long press) opens its commands; another group's row shows or hides its sessions; a
+// session's row opens it, its chevron shows or hides its subagents. With a mouse, sessions and projects are dragged
+// (drag.ts). It renders what model.ts computes and calls back for every action.
 import { type Grant, grantMode } from "@p2/app/v1";
 import {
 	listenModifierTap,
@@ -24,6 +25,7 @@ import {
 import { type ComponentProps, memo, type ReactNode, useEffect, useId, useState } from "react";
 import { projectTarget } from "../project-commands.tsx";
 import { type DropActions, useSidebarDrag } from "./drag.ts";
+import { IconMarker, UnreadMark } from "./marks.tsx";
 import { type GroupSection, type NewTarget, PROJECTS, type Section, type SidebarRow } from "./model.ts";
 import { NavRow } from "./NavRow.tsx";
 import {
@@ -61,35 +63,90 @@ type HeadingActions = {
 	onNewProject?: () => void;
 	/** Whether a project's row has its commands (⋯, a long press; the owner's). */
 	projectMenus?: boolean;
+	/** The projects' coordinators (the owner's): a project's name opens its coordinator. */
+	coordinators?: Coordinators;
+	/** The open session. */
+	activeId?: string;
+};
+
+/** The projects' coordinator sessions in the sidebar: each project's row stands for its coordinator. */
+export type Coordinators = {
+	/** A project's coordinator's row, once the project has one (archived ones included). */
+	rowOf: (project: string) => SidebarRow | undefined;
+	/** The projects whose coordinator the server is making or restoring for this page. */
+	opening: ReadonlySet<string>;
+	/** Opens a project's coordinator, made or restored first when it has to be. */
+	onOpen: (project: string) => void;
 };
 
 /**
  * A group inside a rollup: its row (a folder, a lock for a sandbox; its name, a project's ⋯, "+"), which shows
- * or hides its relevant sessions below it, one step in. Its tooltip is its path (a project's: its places). Collapsed, it
- * says what its hidden sessions do: how many run, failed or have a new answer.
+ * or hides its relevant sessions below it, one step in. A project's row in the Projects rollup stands for its
+ * coordinator: its name opens it ("Opening…" while the server makes it; selected while it shows; the folder framed
+ * while it works, bold with a dot for its unread answer) and the chevron after the name shows or hides the sessions. Its tooltip is its path (a project's: its places). Collapsed, it says what
+ * its hidden sessions do: how many run, failed or have a new answer.
  */
 function GroupItem({ group, rows, actions }: { group: GroupSection; rows: RowActions; actions: HeadingActions }) {
-	const { onCollapse, onNewIn, connected, projectMenus } = actions;
+	const { onCollapse, onNewIn, connected, projectMenus, coordinators, activeId } = actions;
 	const { target } = group;
 	const listId = useId();
+	const linkHref = useLinkHref();
 	// A project's tooltip: its places, one per line.
 	const places =
 		target?.kind === "project"
 			? target.project.places.map((place) => (place.env ? `${place.env}:${place.path}` : place.path)).join("\n")
 			: undefined;
-	const marker = group.sandboxed ? <NavLockIcon size={16} aria-label="Sandbox" /> : <NavFolderIcon size={16} />;
-	const label = <span className="session-title">{group.name}</span>;
 	const menu = projectMenus && target?.kind === "project" ? projectTarget(target.project.name) : undefined;
+	const project = coordinators && target?.kind === "project" ? target.project.name : undefined;
+	const coordinator = project === undefined ? undefined : coordinators?.rowOf(project);
+	const opening = project !== undefined && coordinators?.opening.has(project) === true;
+	const unread = coordinator?.worker.unread === true;
+	const icon = group.sandboxed ? <NavLockIcon size={16} aria-label="Sandbox" /> : <NavFolderIcon size={16} />;
+	const hidden = group.hidden.working + group.hidden.failed + group.hidden.unread > 0 && (
+		<HiddenAttention activity={group.hidden} />
+	);
+	const shows: Pick<ComponentProps<typeof NavRow>, "expanded" | "controlsId" | "onActivate" | "after"> = project ===
+	undefined
+		? {
+				...(onCollapse ? { expanded: !group.collapsed, controlsId: listId } : {}),
+				onActivate: () => onCollapse?.(group.key, !group.collapsed),
+			}
+		: {
+				onActivate: () => coordinators?.onOpen(project),
+				after: onCollapse && (
+					<Toggle
+						className="group-toggle"
+						open={!group.collapsed}
+						label={`the sessions of ${group.name}`}
+						controls={listId}
+						onToggle={() => onCollapse(group.key, !group.collapsed)}
+					/>
+				),
+			};
 	const row: ComponentProps<typeof NavRow> = {
 		className: "group-row",
 		linkClassName: "group-link",
-		...(onCollapse ? { expanded: !group.collapsed, controlsId: listId } : {}),
-		title: group.title ?? (places || undefined),
-		onActivate: () => onCollapse?.(group.key, !group.collapsed),
-		marker,
-		label,
-		details: group.hidden.working + group.hidden.failed + group.hidden.unread > 0 && (
-			<HiddenAttention activity={group.hidden} />
+		...shows,
+		// A live coordinator's address, so its name opens like a session's (a new tab too); otherwise an action.
+		...(coordinator && coordinator.archivedAt === null
+			? { href: linkHref({ session: coordinator.id, conversation: coordinator.main, layers: [] }) }
+			: {}),
+		selected: coordinator !== undefined && coordinator.id === activeId,
+		title: opening ? "Opening…" : (group.title ?? (places || undefined)),
+		marker:
+			project === undefined ? (
+				icon
+			) : (
+				<IconMarker working={coordinator !== undefined && coordinator.worker.busy.length > 0}>{icon}</IconMarker>
+			),
+		label: <span className={`session-title ${unread ? "unread" : ""}`}>{group.name}</span>,
+		details: unread ? (
+			<>
+				{hidden}
+				<UnreadMark />
+			</>
+		) : (
+			hidden
 		),
 		controls: (
 			<>
@@ -147,6 +204,10 @@ function RollupGroup({ section, rows, actions }: { section: Section; rows: RowAc
 	const { page, onPage, onCollapse, onOptions, onNewProject, connected } = actions;
 	const linkHref = useLinkHref();
 	const listId = useId();
+	// Only the built-in Projects rollup's groups are projects' rows; a rollup made from code may target a project with
+	// a group's "+" without the group being that project.
+	const { coordinators: _coordinators, ...others } = actions;
+	const groupActions = section.key === PROJECTS ? actions : others;
 	if (section.layout === "sessions" && section.headless)
 		return <HeadlessGroup section={section} rows={rows} selected={page === section.key} onPage={onPage} />;
 	const collapsed = section.layout === "link" ? undefined : section.collapsed;
@@ -221,7 +282,7 @@ function RollupGroup({ section, rows, actions }: { section: Section; rows: RowAc
 						))}
 					{section.layout === "groups" &&
 						section.groups.map((group) => (
-							<GroupItem key={group.key} group={group} rows={rows} actions={actions} />
+							<GroupItem key={group.key} group={group} rows={rows} actions={groupActions} />
 						))}
 					{empty && <li className="empty-note sidebar-empty">No activity</li>}
 				</SideNavigation.List>
@@ -315,6 +376,7 @@ export const SidebarView = memo(function SidebarView({
 	onPage,
 	onCollapseSidebar,
 	drop,
+	coordinators,
 	headerActions,
 	footerActions,
 }: {
@@ -358,6 +420,8 @@ export const SidebarView = memo(function SidebarView({
 	onCollapseSidebar: () => void;
 	/** Moving sessions and projects by drag and drop (the owner's): what a drop does. */
 	drop?: DropActions;
+	/** The projects' coordinators (the owner's): a project's name opens its coordinator. */
+	coordinators?: Coordinators;
 	/** Icon buttons in the owner's header, before the collapse button (e.g. the scope prompt's). */
 	headerActions?: ReactNode;
 	/** Icon buttons at the footer's end, before the theme switch (the owner's), e.g. the Settings gear. */
@@ -391,6 +455,8 @@ export const SidebarView = memo(function SidebarView({
 		onNewIn,
 		onNewProject,
 		projectMenus: drop !== undefined,
+		...(coordinators ? { coordinators } : {}),
+		...(activeId === undefined ? {} : { activeId }),
 	};
 	useSidebarDrag(guest ? undefined : drop);
 	// Cmd+Shift (Ctrl+Shift off macOS), tapped: the session below the open one's row, from the top after the last.

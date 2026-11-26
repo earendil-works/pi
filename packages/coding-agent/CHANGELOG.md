@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Removed telemetry reporting from pi for new installs and updates (`/api/report-install`), the `enableInstallTelemetry` setting (`SettingsManager.getEnableInstallTelemetry()` / `setEnableInstallTelemetry()`), and `PI_TELEMETRY`
+
 ### Added
 
 - Added program resume through the [Program Resume Protocol (OSC 7577)](https://www.superlogical.com/rex/docs/build/program-resume): in terminals that set `OSC7577_TOKEN`, interactive mode reports `pi --session <id>` for the current session, so the terminal can bring it back after it restarts. Pi removes the token from the environment of every process it starts. See [Terminal setup](docs/terminal-setup.md#program-resume)
@@ -17,6 +21,7 @@
 - Fixed key hints that named the wrong keybinding or a hardcoded key: the extension editor and session rename now name `tui.input.submit`, `/hotkeys` names `tui.select.cancel` for cancelling autocomplete, and the settings submenu, `/config` selector, session selector and fullscreen copy setting follow remapped keys
 - Fixed a console Ctrl+Break on Windows ending pi without restoring the terminal, which left the shell in the alternate screen with mouse reports typed into the prompt. A child process in the same console can send Ctrl+Break too. pi now shuts down normally on it ([#12133](https://github.com/earendil-works/pi/issues/12133))
 - Fixed print, JSON, and RPC modes not reporting an invalid `models.json`, so a typo such as `"contextWindow": "32000"` showed up only as `Model "..." not found` or `No API key found`. `createAgentSessionServices()` now returns the error as a warning in `diagnostics`, so every mode and SDK runtimes report it; interactive mode shows it as a warning instead of an error ([#12522](https://github.com/earendil-works/pi/issues/12522), [#12523](https://github.com/earendil-works/pi/pull/12523) by [@acmerfight](https://github.com/acmerfight))
+- Fixed `app.message.followUp` (Alt+Enter) ignoring an open autocomplete menu and queuing the half-typed text. It now applies the selected suggestion like Enter: a completed command name is queued, and other completions are inserted without queuing
 
 ## [1.6.1] - 2026-11-25
 

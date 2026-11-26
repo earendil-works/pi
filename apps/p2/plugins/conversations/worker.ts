@@ -68,7 +68,7 @@ const conversationsExtension = (worker: () => WorkerParts) => {
 					"list: IDs, titles, models, working/idle/stopped state, location (env:cwd) and project of each session (excludes archived ones), and the projects with their places.",
 					"send (to = stable session ID, message; optional followUp): deliver an attributed message; steering by default, followUp queues after current work.",
 					"answer (to): read the latest completed answer without sending input or waiting for current work.",
-					"create (message, and project or cwd; optional env, title, model 'provider/modelId': a signed-in one, default your own): start a new session there with message as its first input, from you. Returns its ID.",
+					"create (message, and project or cwd, a project's coordinator defaults to its project; optional env, title, model 'provider/modelId': a signed-in one, default your own): start a new session there with message as its first input, from you. Returns its ID.",
 					"stop (to): abort the session's current run; queued messages from people go back to their authors' composers, those from agents and sessions stay queued for its next input.",
 					"archive (to) / restore (to): archive a session (its worker stops, its history stays) or bring it back.",
 					"Replies arrive only when the peer explicitly uses send back to your ID. No automatic reports. Do not poll or create reply loops.",
@@ -211,8 +211,8 @@ function queryOf(args: ToolArgs): Query | string {
 			return { action: "list" };
 		case "create": {
 			if (!args.message?.trim()) return "create needs a message: the new session's first input.";
-			if ((args.project === undefined) === (args.cwd === undefined))
-				return "create needs either a project or a cwd.";
+			// Neither is the server's to answer: a project's coordinator gets its project.
+			if (args.project !== undefined && args.cwd !== undefined) return "create takes either a project or a cwd.";
 			return {
 				action: "create",
 				message: args.message,

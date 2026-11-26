@@ -207,6 +207,9 @@ export class BackupUploader {
 			case "behind":
 				this.#stop("behind", "the store lost commits the backup holds", head);
 				return;
+			case "refused":
+				this.#stop("refused", `the backup refused the slot (${result.reason})`, head);
+				return;
 		}
 	}
 
@@ -219,7 +222,7 @@ export class BackupUploader {
 	 * Stops uploads until a restart: retrying cannot fix the history (another machine wrote it, the remote refused a body
 	 * for good, the store lost what it uploaded). The commits stay in the outbox.
 	 */
-	#stop(reason: "diverged" | "behind", why: string, head: { syncedHead?: number }): void {
+	#stop(reason: "diverged" | "behind" | "refused", why: string, head: { syncedHead?: number }): void {
 		this.#stopped = true;
 		this.#options.report({ state: "stopped", reason, error: why, ...head, at: Date.now() });
 	}

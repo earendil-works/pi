@@ -241,6 +241,14 @@ reference or a native.
 - Node flags go into the worker's `execArgv` (`apps/p3/src/install.ts`), never only into `npm test`.
 - A package that changes what the release ships runs `npm run release:p3:local` (`testing.md`).
 
+**Values handed to Chord**
+- Never change a value after you handed it to Chord (a state value, an admission's value, params, a method's
+  arguments or result, a condition): make a new one. Chord keeps it without a copy and compares by identity first, so
+  the same object changed in place reads as "unchanged": no rebuild, no update, nothing reported (Chord decision
+  "Values handed to Chord are never changed afterwards", 2026-11-26; `plugin-authoring.md`, "Values you hand to
+  Chord"). In-memory indexes that answer admissions (the things plugin's access index) hand out a new answer object
+  for every changed answer and keep the old one untouched.
+
 **Code** (the Chord v2 code style of the root `AGENTS.md`, for plugin code too)
 - One concept per file, named after it; the first line says what the file is for; the public entry first, helpers
   below in the order used.

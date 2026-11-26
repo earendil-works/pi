@@ -43,6 +43,13 @@ export type RemoteListing = {
 	readonly snapshots: readonly Seq[];
 };
 
+/**
+ * Why a remote refused a slot for good, so that sending the same upload again cannot help: `content_mismatch`, this
+ * device created the slot before with other bytes; `next_id_regression`, the batch's id allocator is behind the
+ * remote's at its head; `protocol_too_old`, the session needs a newer `SYNC_PROTOCOL` than this client's.
+ */
+export type RefusalReason = "content_mismatch" | "next_id_regression" | "protocol_too_old";
+
 export type PutBatchResult =
 	| { readonly type: "created" }
 	/** The slot is taken; by this device, after an upload whose response was lost, or by another one. */
@@ -51,7 +58,9 @@ export type PutBatchResult =
 	 * No slot starts at `after`, and the history does not end there: a slot there would branch the chain inside a batch
 	 * or leave a gap. The uploader's history is not the remote's from `after` on.
 	 */
-	| { readonly type: "not_head"; readonly head: Seq };
+	| { readonly type: "not_head"; readonly head: Seq }
+	/** The remote refused the slot for good (`RefusalReason`). */
+	| { readonly type: "refused"; readonly reason: RefusalReason };
 
 /** A session as the remote's listing describes it. */
 export type SessionSummary = {

@@ -98,9 +98,7 @@ export default defineFacet((host) => {
 		): Promise<Session> => {
 			if (query.project !== undefined && query.cwd !== undefined)
 				throw new Error("create takes either a project or a cwd, not both");
-			const env = query.env ?? null;
-			const cwd = query.project === undefined ? query.cwd : placeOf(query.project, env);
-			if (cwd === undefined) throw new Error("create needs either a project or a cwd");
+			const { env, cwd } = locationOf(sender, query);
 			const row = await operations.create(
 				{
 					id: idOf(`${sender.id}:${requestId}`),
@@ -111,9 +109,33 @@ export default defineFacet((host) => {
 				},
 				ctx,
 			);
-			if (query.project !== undefined) await projects.assign({ session: row.id, project: query.project }, ctx);
+			// A coordinator's session joins its project as it is now: renamed while the session was made, the new name;
+			// deleted, none.
+			const project = query.project ?? coordinatedBy(sender.id);
+			if (project !== undefined) await projects.assign({ session: row.id, project }, ctx);
 			return row;
 		};
+
+		/**
+		 * Where `create` starts a session: the project's place on `env` (default this device), the folder `cwd` on `env`,
+		 * or, from a project's coordinator naming neither, its project's default place (on `env` if given).
+		 */
+		const locationOf = (sender: Session, query: Extract<Query, { action: "create" }>) => {
+			const env = query.env ?? null;
+			if (query.project !== undefined) return { env, cwd: placeOf(query.project, env) };
+			if (query.cwd !== undefined) return { env, cwd: query.cwd };
+			const coordinated = coordinatedBy(sender.id);
+			if (coordinated === undefined) throw new Error("create needs either a project or a cwd");
+			if (query.env !== undefined) return { env, cwd: placeOf(coordinated, env) };
+			const place = projects.projects.value.find((each) => each.name === coordinated)?.places[0];
+			// Projects always have a place: none means not live (archived while this coordinator was restored on its own).
+			if (!place) throw new Error(`Project "${coordinated}" is archived; create needs either a project or a cwd`);
+			return { env: place.env, cwd: place.path };
+		};
+
+		/** The project `session` coordinates, if it is a project's coordinator. */
+		const coordinatedBy = (session: string): string | undefined =>
+			Object.entries(projects.coordinators.value).find(([, each]) => each === session)?.[0];
 
 		return {
 			query: async ({ source, requestId, query }, ctx) => {
@@ -138,8 +160,17 @@ export default defineFacet((host) => {
 					);
 				switch (query.action) {
 					case "list": {
-						const sessions = catalog.sessions.value.filter((session) => session.archivedAt === null);
 						const memberships = projects.sessions.value;
+						const live = catalog.sessions.value.filter((session) => session.archivedAt === null);
+						// A coordinator's own project first, so the 200 listed hold it on a server with many sessions.
+						const own = coordinatedBy(source);
+						const sessions =
+							own === undefined
+								? live
+								: [
+										...live.filter((session) => memberships[session.id] === own),
+										...live.filter((session) => memberships[session.id] !== own),
+									];
 						return {
 							action: "list",
 							self: source,

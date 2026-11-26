@@ -127,6 +127,9 @@ class MemoryState implements SyncStateStore {
 	async set(sessionId: string, state: SyncState, _context: Context): Promise<void> {
 		this.states.set(sessionId, state);
 	}
+	async delete(sessionId: string, _context: Context): Promise<void> {
+		this.states.delete(sessionId);
+	}
 }
 
 /** `store` with some methods replaced: the remote keeps private fields, so the rest stay bound to it. */
@@ -198,7 +201,7 @@ function device(name: string, remoteStore: FileSystemSyncRemote) {
 		async forget(sessionId = SESSION): Promise<void> {
 			const store = copies.get(sessionId);
 			copies.delete(sessionId);
-			await state.set(sessionId, { syncedHead: undefined }, context);
+			await state.delete(sessionId, context);
 			if (store !== undefined) {
 				stores.splice(stores.indexOf(store), 1);
 				await store.close(context);
@@ -448,7 +451,7 @@ describe("syncing a session between devices", () => {
 			);
 		expect(await upload()).toEqual({ type: "remote_empty", at: synced });
 		// The host forgets the bookmark: the next upload is the whole store, as an archive (the outbox was trimmed).
-		await laptop.state.set(SESSION, { syncedHead: undefined }, context);
+		await laptop.state.delete(SESSION, context);
 		const source = await laptop.store();
 		expect(await upload()).toEqual({ type: "uploaded", head: source.lastSeq });
 		expect((await emptied.list(SESSION, context)).batches).toEqual([
@@ -457,6 +460,30 @@ describe("syncing a session between devices", () => {
 		const replica = device("replica", emptied);
 		await replica.pull();
 		expect(await reads(await replica.store())).toEqual(await reads(source));
+	});
+
+	it("reports a slot the remote refuses for good, keeping its bookmark and outbox", async () => {
+		const store = await remote();
+		const laptop = device("laptop", store);
+		await laptop.commit(seedBatches().slice(0, 3));
+		const refusing = overriding(store, {
+			putBatch: async () => ({ type: "refused", reason: "next_id_regression" }),
+		});
+		const source = await laptop.store();
+		expect(
+			await uploadSession({
+				sessionId: SESSION,
+				device: "laptop",
+				source,
+				store: refusing,
+				state: laptop.state,
+				context,
+			}),
+		).toEqual({ type: "refused", reason: "next_id_regression" });
+		expect(await laptop.state.get(SESSION, context)).toBeUndefined();
+		expect(source.outbox!.floor).toBe(0);
+		// Nothing was written: the remote that accepts takes the same slot.
+		expect((await laptop.upload()).type).toBe("uploaded");
 	});
 
 	it("refuses to upload a copy that lost uploaded commits, and pulls them back", async () => {
@@ -848,8 +875,8 @@ describe("host pieces", () => {
 		expect(await state.get(SESSION, context)).toBeUndefined();
 		await state.set(SESSION, { syncedHead: 3, pulling: 7 }, context);
 		expect(await state.get(SESSION, context)).toEqual({ syncedHead: 3, pulling: 7 });
-		await state.set(SESSION, { syncedHead: undefined }, context);
-		expect(await state.get(SESSION, context)).toEqual({ syncedHead: undefined });
+		await state.set(SESSION, {}, context);
+		expect(await state.get(SESSION, context)).toEqual({});
 		await state.delete(SESSION, context);
 		expect(await state.get(SESSION, context)).toBeUndefined();
 	});

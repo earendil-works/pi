@@ -291,6 +291,9 @@ class MemoryState implements SyncStateStore {
 	async set(_session: string, state: SyncState): Promise<void> {
 		this.#state = state;
 	}
+	async delete(): Promise<void> {
+		this.#state = undefined;
+	}
 }
 
 /**

@@ -65,6 +65,10 @@ const PutResultSchema = union([
 	obj({ type: literal("created") }),
 	obj({ type: literal("exists"), to: int(), device: str() }),
 	obj({ type: literal("not_head"), head: int() }),
+	obj({
+		type: literal("refused"),
+		reason: union([literal("content_mismatch"), literal("next_id_regression"), literal("protocol_too_old")]),
+	}),
 ]);
 
 /** `begin`'s answer: an upload to send the body to, or the slot's result when the remote wants no body. */
@@ -123,10 +127,11 @@ export const BackupNative = defineRegistry<
 
 /**
  * The backup for a session's worker: its own store only, named from the worker's principal. Its methods are
- * `BackupUploads`' (declared here alone) and `Backup.report`, with the store filled in.
+ * `BackupUploads`' (declared here alone) and `Backup.report`, with the store filled in. 3: a slot's answer may be
+ * `refused` (the remote refused it for good, with its reason).
  */
 export const BackupRemote = remote("p2.backup-remote", {
-	version: 2,
+	version: 3,
 	params: {},
 	hostAddress: serverHost,
 	state: { device: union([str(), nul()]) },
