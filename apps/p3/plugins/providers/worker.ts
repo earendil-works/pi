@@ -15,7 +15,7 @@ import {
 	type RegistryValue,
 } from "@earendil-works/p3/v1";
 import { lazyStream, loadProvider } from "@earendil-works/p3/v1/worker";
-import { type HarnessSession, type HeldThing, ThingHarnessParts, thingHarnessPart } from "../things/contract.worker.ts";
+import { type HeldThing, ThingHarnessParts, thingHarnessPart } from "../things/contract.worker.ts";
 import { type Login, LoginKind } from "./contract.ts";
 import { LoginProviders, type ProviderMap, serveLoginProviders } from "./login-providers.ts";
 
@@ -25,12 +25,12 @@ export default defineFacet((host) => {
 		const added = self.registry(LoginProviders);
 		self.contribute(
 			ThingHarnessParts,
-			thingHarnessPart(LoginKind, (things, session) => ({
+			thingHarnessPart(LoginKind, (things) => ({
 				providers: things.flatMap((held) => {
 					const shown = held.ref.login.value;
 					return held.ref.authorize === undefined || shown === null
 						? []
-						: [loginProvider(held, shown.provider, added, session)];
+						: [loginProvider(held, shown.provider, added)];
 				}),
 			})),
 		);
@@ -49,7 +49,6 @@ function loginProvider(
 	{ thing, ref }: HeldThing<typeof Login>,
 	base: string,
 	added: RegistryValue<ProviderMap>,
-	session: HarnessSession,
 ): Provider {
 	const id = `${base}${SEPARATOR}${thing}`;
 	/** pi-ai's built-in request code, loaded on the first request that needs it; a failed load is tried again. */
@@ -81,8 +80,8 @@ function loginProvider(
 				resolve: async () => {
 					const authorize = ref.authorize;
 					if (authorize === undefined) return undefined;
-					// The request's own cancellation is pi-ai's; the call ends with the worker's.
-					return session.call((ctx) => authorize({}, ctx), BACKGROUND_CONTEXT);
+					// On the agent's held reference (decision 120); the request's own cancellation is pi-ai's.
+					return authorize({}, BACKGROUND_CONTEXT);
 				},
 			},
 		},

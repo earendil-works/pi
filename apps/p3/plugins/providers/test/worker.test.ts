@@ -35,7 +35,12 @@ import providersWorker from "../worker.ts";
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 
 /** The session as the parts get it: its `call` runs the function at once (the login's `authorize` is a fake). */
-const SESSION: HarnessSession = { session: "s1", workspace: "w1", call: (fn) => fn({} as never) };
+const SESSION: HarnessSession = {
+	session: "s1",
+	workspace: "w1",
+	call: (fn) => fn({} as never),
+	location: async () => undefined,
+};
 
 /** What a faux login shows. */
 const FAUX: LoginInfo = {
