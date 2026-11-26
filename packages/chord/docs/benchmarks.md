@@ -1323,7 +1323,7 @@ night, so times are medians of 3 to 7 runs and rough, heap numbers repeat exactl
 
 **Admitted objects over a link** (`test/bench/hot-paths.ts`: 170 objects whose admissions derive from one source,
 server and client in one process over a memory link; time per object, and bytes allocated per object from the
-sampling heap profiler, garbage included; 7 runs):
+sampling heap profiler, garbage included; 5 runs):
 
 | Case | before | after |
 | --- | --- | --- |
