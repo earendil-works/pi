@@ -515,15 +515,16 @@ class Writer {
 		this.#reserve(LENGTH_SLOT + text.length);
 		this.#length += LENGTH_SLOT;
 		let read = 0;
-		while (read < text.length) {
-			const rest = read === 0 ? text : text.slice(read);
+		let rest = text;
+		for (;;) {
 			const done = UTF8.encodeInto(rest, this.#buffer.subarray(this.#length));
 			read += done.read;
 			this.#length += done.written;
-			// The rest at the bytes per unit seen so far, at most three (a text whose UTF-8 is longer than its units grows
-			// about once); a short guess grows again, by a quarter at least.
-			const perUnit = read > 0 ? Math.min(3, (this.#length - slot - LENGTH_SLOT) / read) : 3;
-			if (read < text.length) this.#reserve(Math.max(Math.ceil((text.length - read) * perUnit), 4));
+			if (read >= text.length) break;
+			rest = text.slice(read);
+			// Its UTF-8 is longer than its units: it falls short once, then the rest fits (its exact bytes where Node's
+			// `Buffer` counts them natively, else three a unit, the most; `finish` hands the buffer off or copies it).
+			this.#exactly(NATIVE?.byteLength(rest, "utf8") ?? rest.length * 3);
 		}
 		let length = (this.#length - slot - LENGTH_SLOT) * scale;
 		for (let index = 0; index < LENGTH_SLOT; index++) {
@@ -648,6 +649,15 @@ class Writer {
 		if (bytes > KEPT) this.#buffer = new Uint8Array(bytes);
 	}
 
+	/** Grows the buffer to fit exactly `bytes` more and room for the small fields after them. */
+	#exactly(bytes: number): void {
+		const needed = this.#length + bytes;
+		if (needed <= this.#buffer.byteLength) return;
+		const grown = new Uint8Array(needed + SPARE);
+		grown.set(this.#buffer.subarray(0, this.#length));
+		this.#buffer = grown;
+	}
+
 	/** Grows the buffer to fit `bytes` more: doubled, or for a large chunk to its end plus room for the small fields after it. */
 	#reserve(bytes: number): void {
 		const needed = this.#length + bytes;
@@ -721,6 +731,12 @@ function segmentsLength(segments: readonly Uint8Array[] | undefined): number {
 }
 
 const NO_SEGMENTS: readonly Uint8Array[] = [];
+
+/**
+ * Node's `Buffer`, for its native count of a text's UTF-8 bytes (`#text`), where the platform has one: found on
+ * `globalThis`, not imported, so this file loads in browsers and workerd too.
+ */
+const NATIVE = (globalThis as { Buffer?: { byteLength(text: string, encoding: "utf8"): number } }).Buffer;
 
 /** How many bytes the varint of `value` takes. */
 function varintBytes(value: number): number {

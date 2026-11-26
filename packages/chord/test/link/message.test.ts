@@ -728,6 +728,21 @@ describe("the binary codec", () => {
 		expect((process.memoryUsage().arrayBuffers - before) / 8).toBeLessThan(1.5 * length);
 	});
 
+	it("allocates about one frame for a text that changes density: ASCII, then three-byte (review of 35496c9c8)", () => {
+		const gc = runInNewContext("gc") as () => void;
+		const value = JSON.stringify({ en: "a".repeat(524_288), zh: "源".repeat(524_288) });
+		const frame: Message = {
+			kind: "bound",
+			holds: [{ hold: 0, granted: [], members: [{ member: 0, value }], failed: [] }],
+		};
+		const length = binaryCodec.encode(frame).byteLength;
+		gc();
+		const before = process.memoryUsage().arrayBuffers;
+		for (let index = 0; index < 4; index++) binaryCodec.encode(frame);
+		// Reserved at the density of its ASCII half, the three-byte half fell short again and again: 4.4 frames.
+		expect((process.memoryUsage().arrayBuffers - before) / 4).toBeLessThan(1.6 * length);
+	});
+
 	it("refuses invalid UTF-8 in strings", () => {
 		expect(() => binaryCodec.decode(new Uint8Array([1, 0, 1, 0xff]))).toThrow();
 	});
