@@ -14,7 +14,12 @@ import { CodingToolsKind } from "../contract.ts";
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 
 /** The session, whose `call` the coding tools never use. */
-const SESSION = { session: "s", workspace: "w", call: () => Promise.reject(new Error("no call")) };
+const SESSION = {
+	session: "s",
+	workspace: "w",
+	call: () => Promise.reject(new Error("no call")),
+	location: async () => undefined,
+};
 
 /** A held coding tools thing whose reference has the flags `granted`. */
 function held(thing: string, ...granted: string[]): HeldThing {

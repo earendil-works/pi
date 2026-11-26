@@ -31,20 +31,22 @@ export type HeldThing<C extends Contract = Contract> = {
 /** The things held, by kind name (`HeldThings`' contribution and value). */
 export type Held = ReadonlyMap<string, readonly HeldThing[]>;
 
+/** Where a conversation works: a machine (its thing's id) and a folder on it (decision 24). */
+export type HarnessLocation = { readonly machine: string; readonly folder: string };
+
 /**
  * What a kind's part has of the session's agent: the session's id, the workspace the agent holds its things in (the
- * session's workspace; a part never assumes it equals the session's id), and `call`, which runs `fn` as the session's
+ * session's workspace; a part never assumes it equals the session's id), `call`, which runs `fn` as the session's
  * worker (a tool reaches its plugin's objects with it, on the worker or the server), its references released when
- * `fn` settles. `context` is the tool's (Durable's), so cancelling the tool cancels the call.
+ * `fn` settles (`context` is the tool's, Durable's, so cancelling the tool cancels the call), and `location`, where
+ * conversation `conversation` (a tool's `api.conversationId`) works now; `undefined`: nowhere (an unknown session).
  */
 export type HarnessSession = {
 	readonly session: string;
 	readonly workspace: string;
 	call<T>(fn: (ctx: Ctx<P3Principal>) => Promise<T>, context: Context): Promise<T>;
+	location(conversation: string, context: Context): Promise<HarnessLocation | undefined>;
 };
-
-/** Where a conversation works: a machine (its thing's id) and a folder on it (decision 24). */
-export type HarnessLocation = { readonly machine: string; readonly folder: string };
 
 /**
  * What the things of one kind give the agent together: a Durable extension (its tools take the thing they act on as an

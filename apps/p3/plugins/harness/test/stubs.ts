@@ -41,6 +41,7 @@ import {
 } from "@earendil-works/p3/v1/worker";
 import {
 	type HarnessLocation,
+	type HarnessSession,
 	type Held,
 	type HeldThing,
 	HeldThings,
@@ -147,6 +148,8 @@ export type Extra = {
 	readonly kind: string;
 	readonly prompt?: string;
 	readonly env?: (location: HarnessLocation) => ExecutionEnv | undefined;
+	/** Gets the session the part is called with. */
+	readonly seen?: (session: HarnessSession) => void;
 };
 
 /** The stand-ins (plus the things and tools plugins) for session `row.id`, the extra parts, and the controls. */
@@ -240,12 +243,13 @@ export function standIns(
 		);
 	});
 	const extra = defineFacet((_host, self) => {
-		for (const { kind, prompt, env } of extras) {
+		for (const { kind, prompt, env, seen } of extras) {
 			const Kind = defineThing(kind, { version: 1, ticks: {} });
 			self.contribute(
 				ThingHarnessParts,
-				thingHarnessPart(Kind, () => {
+				thingHarnessPart(Kind, (_things, session) => {
 					count(kind);
+					seen?.(session);
 					return {
 						...(prompt === undefined ? {} : { prompt: [{ key: "test-extra", render: () => prompt }] }),
 						...(env === undefined ? {} : { env }),

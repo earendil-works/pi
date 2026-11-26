@@ -16,7 +16,12 @@ import { CanvasKind, type Shape } from "../contract.ts";
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 
 /** The session, whose `call` a case never reaches. */
-const SESSION = { session: "s", workspace: "w", call: () => Promise.reject(new Error("no call")) };
+const SESSION = {
+	session: "s",
+	workspace: "w",
+	call: () => Promise.reject(new Error("no call")),
+	location: async () => undefined,
+};
 
 /** A held board: its id, its name, and whether Draw is granted; `drawn` records what its `add` got. */
 function board(thing: string, name: string, draw: boolean, drawn: Shape[][] = []): HeldThing {

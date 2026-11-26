@@ -15,7 +15,12 @@ import { type Skill, SkillsKind } from "../contract.ts";
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 
 /** The session, whose `call` the part never uses. */
-const SESSION = { session: "s", workspace: "w", call: () => Promise.reject(new Error("no call")) };
+const SESSION = {
+	session: "s",
+	workspace: "w",
+	call: () => Promise.reject(new Error("no call")),
+	location: async () => undefined,
+};
 
 /** A held set `thing` with `skills` (a list the case may change), `read` granted unless `use` is false. */
 function set(thing: string, skills: { value: Skill[] }, use = true): HeldThing {

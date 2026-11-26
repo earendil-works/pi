@@ -17,7 +17,12 @@ import { InstructionsKind, type Language } from "../contract.ts";
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 
 /** The session, whose `call` the part never uses. */
-const SESSION = { session: "s", workspace: "w", call: () => Promise.reject(new Error("no call")) };
+const SESSION = {
+	session: "s",
+	workspace: "w",
+	call: () => Promise.reject(new Error("no call")),
+	location: async () => undefined,
+};
 
 /** A value the case changes, as a reference's state member reads (`value`, the current one). */
 type Value<T> = { value: T };

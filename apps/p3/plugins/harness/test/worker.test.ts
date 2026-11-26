@@ -24,6 +24,7 @@ import {
 	WorkerBusy,
 } from "@earendil-works/p3/v1/worker";
 import { eventually, within } from "../../../test/until.ts";
+import type { HarnessSession } from "../../things/contract.worker.ts";
 import {
 	coding,
 	type Extra,
@@ -306,6 +307,22 @@ describe("the harness plugin on a worker", () => {
 		assert.equal(results[0], elsewhere);
 		assert.match(results[1] ?? "", /No execution environment/, "none on a machine the part does not give");
 		assert.equal(results[2], folder, "no machine part: the environments plugin's");
+	});
+
+	it("tells a part where a conversation works: the session's location, live", async () => {
+		const sessions: HarnessSession[] = [];
+		const server = await start([other("test.located", "l")], {}, [
+			{ kind: "test.located", seen: (session) => sessions.push(session) },
+		]);
+		await harness();
+		const [session] = sessions;
+		assert.ok(session !== undefined);
+		assert.deepEqual(await session.location("0", context), { machine: "this-device", folder });
+		server.row({ location: { environment: "m", folder: "/elsewhere" } });
+		await eventually(
+			() => session.location("0", context),
+			(at) => at?.machine === "m" && at.folder === "/elsewhere",
+		);
 	});
 
 	it("starts a subagent, a copy without the subagent tools, whose answer comes back; Use withheld: no tools", async () => {

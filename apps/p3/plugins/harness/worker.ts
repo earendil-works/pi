@@ -36,7 +36,7 @@ import {
 	WorkerBusy,
 	WorkerRuntime,
 } from "@earendil-works/p3/v1/worker";
-import { type Held, HeldThings, ThingHarnessParts } from "../things/contract.worker.ts";
+import { type HarnessLocation, type Held, HeldThings, ThingHarnessParts } from "../things/contract.worker.ts";
 import { activityOf, serialized } from "./activity.ts";
 import { AgentThings, type Parts } from "./agent-things.ts";
 import { SUBAGENT_TASKS, subagentsPart } from "./subagents.ts";
@@ -136,8 +136,18 @@ type Sources = {
 async function openAgent(sources: Sources, opening: Context): Promise<{ durable: Harness; things: AgentThings }> {
 	const { runtime, facts, parts, held, environments } = sources;
 	const { session, host: worker, store } = runtime;
-	// The session's workspace has the session's id (slice 5); the parts take it from here, never assume it.
-	const things = new AgentThings({ session, workspace: session, call: (fn, context) => worker.root(fn, context) });
+	// Every conversation works at the session's location until slice 5 gives each its own.
+	const location = (): HarnessLocation | undefined => {
+		const row = facts.session.value;
+		return row === null ? undefined : { machine: row.location.environment, folder: row.location.folder };
+	};
+	const things = new AgentThings({
+		session,
+		// The session's workspace has the session's id (slice 5); the parts take it from here, never assume it.
+		workspace: session,
+		call: (fn, context) => worker.root(fn, context),
+		location: async () => location(),
+	});
 	// The subagents' tasks, whatever the agent holds: a reporter under way finishes when Use is withheld.
 	things.registry.install(SUBAGENT_TASKS);
 	things.apply(held.value, parts.value);
@@ -150,10 +160,10 @@ async function openAgent(sources: Sources, opening: Context): Promise<{ durable:
 			// changes while a tool call runs. Once a kind gives environments (a machine's), only kinds do: a location on
 			// no machine the agent holds has none. Until then, the environments plugin's resolver.
 			env: (_target, context) => {
-				const row = facts.session.value;
-				if (row === null) return undefined;
-				if (!things.givesEnv) return environments.value(row.location, context);
-				return things.env({ machine: row.location.environment, folder: row.location.folder }, context);
+				const at = location();
+				if (at === undefined) return undefined;
+				if (!things.givesEnv) return environments.value({ environment: at.machine, folder: at.folder }, context);
+				return things.env(at, context);
 			},
 			onReport: (report) => reportError(`p3 harness: session ${session}`, report, BACKGROUND_CONTEXT),
 		},
