@@ -202,6 +202,53 @@ forEachCodec(() => {
 		});
 	});
 
+	describe("a wide state frame (review of aeceda143)", () => {
+		it("costs about as much per member at 16,384 members as at 256: no scan per member", async () => {
+			const costs: number[] = [];
+			for (const count of [256, 16_384]) {
+				const names = Array.from({ length: count }, (_, index) => `v${index.toString().padStart(5, "0")}`);
+				const Wide = remote(`app.wide${count}`, {
+					version: 1,
+					params: {},
+					hostAddress: () => Server(),
+					state: Object.fromEntries(names.map((name) => [name, int()])) as Record<string, ReturnType<typeof int>>,
+				});
+				const { client, peer } = await rawProvider();
+				try {
+					const ref = client.hold(Wide, {}, context) as unknown as Record<string, { readonly value: unknown }>;
+					const { hold } = await peer.next("hold");
+					const values = names.map((_, member) => ({ member, value: jsonPart(1) }));
+					peer.send({ kind: "bound", holds: [{ hold, granted: [], members: values, failed: [] }] });
+					await transported();
+					const frames = [2, 3].map((n) => ({
+						kind: "state" as const,
+						holds: [
+							{
+								hold,
+								members: names.map((_, member) => ({ member, ops: jsonPart([["r", n]]) })),
+								retired: [],
+								failed: [],
+							},
+						],
+					}));
+					const samples: number[] = [];
+					for (let run = 0; run < 14; run++) {
+						const started = performance.now();
+						peer.send(frames[run % 2]!);
+						await transported();
+						if (run >= 5) samples.push(((performance.now() - started) * 1000) / count);
+						expect(ref[names[0]!]!.value).toBe((run % 2) + 2);
+					}
+					costs.push(samples.sort((a, b) => a - b)[4]!);
+				} finally {
+					await client.close(context);
+				}
+			}
+			// A scan per member made it 10 times as much per member (18.6 against 1.9 µs).
+			expect(costs[1]! / costs[0]!).toBeLessThan(3.25);
+		}, 60_000);
+	});
+
 	describe("granted sets", () => {
 		it("are shared by the remote objects of a version granted the same, and found again while one has it", async () => {
 			const { client, peer } = await rawProvider();

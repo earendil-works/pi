@@ -85,6 +85,9 @@ function eventNodes(members: readonly string[]): (member: string) => EventNode |
 
 const NO_EVENT_NODES = (): undefined => undefined;
 
+/** Up to this many members a state entry scans for a member listed twice; more keep a set (the measured crossover). */
+const SCANNED = 32;
+
 /** The replica of state member `index` of binding `bound`; throws on one outside it (a protocol error of hold `id`). */
 function replicaAt(bound: Bound, id: number, index: number): Replica {
 	const name = bound.names.state[index];
@@ -741,13 +744,16 @@ export class RemoteObject implements Target {
 			if (retirements.has(target)) throw new Error(`hold ${id}: member ${member} retired twice in one state`);
 			retirements.add(target);
 		}
+		// A frame of a few members (the usual one) scans the earlier ones for a member listed twice; a wider one keeps a
+		// set of the changed replicas, so a frame of n members costs O(n), not O(n²).
+		const changed = members.length > SCANNED ? new Set<Replica>() : undefined;
 		const updates = members.map(({ member, ops }, at) => {
 			const target = replicaAt(bound, id, member);
-			// A hold's members are its contract's few: the earlier ones scanned (one index, one replica), no set per
-			// message.
-			for (let earlier = 0; earlier < at; earlier++) {
-				if (members[earlier]!.member === member) throw new Error(`hold ${id}: member ${member} twice in one state`);
-			}
+			let twice = changed?.has(target) === true;
+			for (let earlier = 0; changed === undefined && earlier < at; earlier++)
+				twice ||= members[earlier]!.member === member;
+			if (twice) throw new Error(`hold ${id}: member ${member} twice in one state`);
+			changed?.add(target);
 			const { value, ops: decoded } = target.decode(parsePart(link.openPart(ops, link.limits, link.context)));
 			return { target, value, ops: decoded };
 		});
@@ -762,7 +768,8 @@ export class RemoteObject implements Target {
 			// failed member keeps it for its next value).
 			if (retirements !== undefined) {
 				for (const target of retirements) {
-					if (!updates.some((update) => update.target === target)) target.retireAlone();
+					const updated = changed?.has(target) ?? updates.some((update) => update.target === target);
+					if (!updated) target.retireAlone();
 				}
 			}
 		};
