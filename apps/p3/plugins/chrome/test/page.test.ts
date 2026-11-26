@@ -459,14 +459,35 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		);
 	});
 
-	it("keeps the open page through a reload of the chrome plugin", async () => {
-		await browser.open(`${origin}/w/${pi}/settings`);
-		await browser.wait(`document.querySelector('[data-settings="${pi}"]')`);
+	it("keeps the open page, an unsent draft and the open Settings tab through an apply of chrome, things and transcript", async () => {
+		const edit = async (path: string, from: string, to: string) => {
+			const file = join(builtIn, ...path.split("/"));
+			await writeFile(file, (await readFile(file, "utf8")).replace(from, to));
+		};
+		const apply = async () => {
+			await until(t.plugins, (state) => state.dirty.length > 0, within("the edit seen", context, 10_000));
+			await t.apply(context);
+		};
+		// An unsent draft in a session survives the transcript's and the chrome's apply (review round 1, must 4).
+		await browser.open(`${origin}/w/${session}`);
+		await browser.wait(`document.querySelector('[data-transcript="writer"]')`);
 		await browser.evaluate("window.p3Marker = 1");
-		const file = join(builtIn, "chrome", "messages.ts");
-		await writeFile(file, (await readFile(file, "utf8")).replace('settings: "Settings",', 'settings: "Settings!",'));
-		await until(t.plugins, (state) => state.dirty.length > 0, within("the edit seen", context, 10_000));
-		await t.apply(context);
+		await browser.type("[data-message]", "important draft");
+		const at = await browser.evaluate<string>("location.pathname + location.search");
+		await edit("transcript/messages.ts", 'send: "Send",', 'send: "Send!",');
+		await edit("chrome/messages.ts", 'settings: "Settings",', 'settings: "Settings!",');
+		await apply();
+		await browser.wait(`document.querySelector("[data-send]")?.textContent.includes("Send!")`);
+		await browser.wait(`document.querySelector("[data-message]")?.value === "important draft"`);
+		assert.equal(await browser.evaluate("location.pathname + location.search"), at);
+		// The Settings view's open tab survives the things plugin's apply.
+		await browser.open(`${origin}/w/${pi}/settings`);
+		await browser.evaluate("window.p3Marker = 1");
+		await press('[data-settings-tab="what"]');
+		await edit("things/page-messages.ts", 'whatIsHere: "What is here?",', 'whatIsHere: "What is here?!",');
+		await apply();
+		await browser.wait(`document.querySelector('[data-settings-tab="what"]')?.textContent.includes("?!")`);
+		await browser.wait(`document.querySelector("[data-what-is-here]") !== null`);
 		await browser.wait(`document.querySelector("[data-crumbs]")?.textContent.includes("Settings!")`);
 		assert.equal(await browser.evaluate("window.p3Marker"), 1, "the page loaded again");
 	});

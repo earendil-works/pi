@@ -32,7 +32,7 @@ import type { KindView } from "./kind.ts";
 import { page } from "./page-messages.ts";
 import styles from "./things.module.css";
 import { useErrorText, useKinds } from "./use-page.ts";
-import { type DefaultsChoice, Linkable, Workspace } from "./workspace.ts";
+import { Linkable, Workspace } from "./workspace.ts";
 
 /** What the picker offers: a kind to make, or an existing thing to link. */
 type Offer =
