@@ -123,6 +123,12 @@
 	opacity: var(--semantic-number-opacity-pulse);
 }
 
+.source {
+	color: var(--semantic-color-text-secondary);
+	font: var(--semantic-typography-ui-secondary);
+	white-space: nowrap;
+}
+
 .withheldMark {
 	color: var(--semantic-color-icon-negative);
 }

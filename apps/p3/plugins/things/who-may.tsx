@@ -90,7 +90,13 @@ export function WhoMayTable(props: { readonly workspace: string; readonly thing:
 			?.setTick({ thing: props.thing, party, tick, ...(gives === undefined ? {} : { gives }) }, BACKGROUND_CONTEXT)
 			.catch((error: unknown) => setFailure(errorText(error)));
 	};
+	// A row's source names a person by their row in this table, when they have one.
+	const personName = (person: string) => {
+		const found = table.rows.find((row) => row.party.kind === "person" && row.party.person === person);
+		return found === undefined || found.name === "" ? undefined : found.name;
+	};
 	const cellProps = (row: Row) => ({
+		personName,
 		row: { ...row, name: nameOf(row.party, row.name) },
 		linkedHere,
 		belowLink: linkedHere
@@ -177,9 +183,13 @@ export function WhoMayTable(props: { readonly workspace: string; readonly thing:
 	);
 }
 
-/** What every cell control gets: its row, whether the thing is linked here, and the setter (none: read only). */
+/**
+ * What every cell control gets: its row, how a person is named (a row's source), whether the thing is linked here, and
+ * the setter (none: read only).
+ */
 type CellProps = {
 	readonly row: Row;
+	readonly personName: (person: string) => string | undefined;
 	readonly linkedHere: boolean;
 	readonly belowLink: string | undefined;
 	readonly onSet: ((tick: string, gives: boolean | undefined) => void) | undefined;
@@ -214,6 +224,47 @@ function TickBox(
 				<SelectionControlAndLabel control={box}>{props.label}</SelectionControlAndLabel>
 			)}
 			{look === "withheld" ? <CancelIcon className={styles.withheldMark} /> : null}
+			<CellSource cell={props.row.ticks[props.tick]} personName={props.personName} />
+		</span>
+	);
+}
+
+/**
+ * Where a cell's rows here come from (the design's "each row's source", tests 6 and 7a): "kind default" for what the
+ * kind's plugin wrote at the link (93), the person who wrote it, and "not in effect" for a withholding row whose thing
+ * no longer comes from above.
+ */
+function CellSource(props: {
+	readonly cell: Cell | undefined;
+	readonly personName: (person: string) => string | undefined;
+}) {
+	const { t } = useMessages(page);
+	const rows = props.cell?.here ?? [];
+	if (rows.length === 0) return null;
+	const said = rows.map((row) => {
+		if (!row.inEffect) return t("notInEffect");
+		if (row.kindDefault) return t("kindDefault");
+		switch (row.source.kind) {
+			case "person": {
+				const name = props.personName(row.source.person);
+				return name === undefined ? t("byPerson") : t("byNamed", name);
+			}
+			case "agent":
+				return t("byAgent");
+			case "thing":
+				return t("byShare");
+			case "identity":
+				return t("bySignIn");
+			case "plugin":
+				return t("byPlugin");
+		}
+	});
+	return (
+		<span
+			className={styles.source}
+			data-source={rows.map((row) => (row.kindDefault ? "kind-default" : row.source.kind)).join(" ")}
+		>
+			{said.join(", ")}
 		</span>
 	);
 }

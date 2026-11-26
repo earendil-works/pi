@@ -182,6 +182,13 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 			(found) => found === "given",
 		);
 		assert.equal(await look("agents", "write"), "empty");
+		// The kind's plugin wrote everyone's Read at the link: the cell says so (93, test 7a).
+		assert.equal(
+			await browser.evaluate(
+				`document.querySelector('[data-who-may-row="everyone"] [data-tick="read"] [data-source]')?.dataset.source`,
+			),
+			"kind-default",
+		);
 		await shots("05-thing-settings-desktop");
 		// One checkbox is one row: unticking a given tick deletes it, ticking writes it again.
 		await press('[data-who-may-row="everyone"] [data-tick="read"] [role="checkbox"]');
