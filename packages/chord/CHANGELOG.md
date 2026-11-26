@@ -22,6 +22,7 @@
 
 ### Changed
 
+- A commit files a read only under the row keys that came or went since its last run, and a live window that moved by k rows is diffed by identity: a 500-item checklist read by 100 unshared lists 54 → 45 ms per write, a shifted window of 500 rows diffed in about 3 µs instead of 80 (`docs/benchmarks.md`, "Identical live reads", step 4).
 - Identical live reads share one source: `self.liveQuery` and `self.count` readers of the same provider instance's named query with the same arguments and window (or count) share one read: one run, one decode and one value per write, their frames diffed once. 100 callers each holding their own object over a link with the same window of 50 notes: 1.6 ms to the last delivery per write instead of 8.1 ms, a 500-item checklist 1.8 ms instead of 46 ms; one query run instead of 100 (`docs/benchmarks.md`, "Identical live reads"). Lists do not share their pages yet.
 - A reference makes its named queries' handles on first use: a reference to a store with 23 named queries, none read, takes 1.3 KiB instead of 6.4 KiB.
 - A held object keeps about half the memory on its host: a local object with its reference 2.9 KiB instead of 6.3 KiB, a remote object whose admission derives from one reference 7.6 KiB instead of 13.6 KiB (`docs/benchmarks.md`, "Hold memory"). No behaviour changes; `ref.granted` of references granted the same names is one shared set.

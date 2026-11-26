@@ -244,6 +244,48 @@ describe("candidates", () => {
 		session.close();
 	});
 
+	it("a run that keeps the keys it kept files none of them again (ERNDL-1176, step 4: issue test 8)", async () => {
+		// Two reads keep the same 500 keys: before, a read moved itself behind the other under each key it kept again, at
+		// its run and at its adoption (a removal and an insertion per key: 6,000 changes for this commit); now its stamp
+		// orders them and only keys that come or go change.
+		store = await memoryStore();
+		const entries = await tableIn(store, Entries);
+		const meter = await metered();
+		await costOf(entries, new Batch(() => {}, undefined), meter, (changes) => {
+			for (let id = 0; id < 500; id++) changes.put({ session: "s0", id, kind: "note", text: "" });
+		});
+		const { batch, runs } = await openReads(
+			entries,
+			2,
+			(index) =>
+				index === 0
+					? query(Entries).where((e) => eq(e.session, "s0"))
+					: query(Entries).where((e) => eq(e.kind, "note")),
+			{ kind: "rows", range: { limit: 1_000 } },
+		);
+		// Changes of the sets of reads filed under a key: counted while the commit runs.
+		let filedWrites = 0;
+		const { add, delete: remove, has } = Set.prototype;
+		Set.prototype.add = function (this: Set<unknown>, value: unknown) {
+			if (value instanceof Read && !has.call(this, value)) filedWrites++;
+			return add.call(this, value);
+		};
+		Set.prototype.delete = function (this: Set<unknown>, value: unknown) {
+			if (value instanceof Read && has.call(this, value)) filedWrites++;
+			return remove.call(this, value);
+		};
+		try {
+			// The text is mapped by both: both run, each keeps its 500 keys.
+			const edit = (changes: TableChanges) => changes.update({ session: "s0", id: 7 }, { text: "x" });
+			expect(await costOf(entries, batch, meter, edit)).toMatchObject({ runs: 2 });
+		} finally {
+			Set.prototype.add = add;
+			Set.prototype.delete = remove;
+		}
+		expect(runs.map((each) => each.length)).toEqual([2, 2]);
+		expect(filedWrites).toBe(0);
+	});
+
 	it("an `in` files a read once per value, up to 32 combinations; a column past that is left out of its bucket", async () => {
 		store = await memoryStore();
 		const entries = await tableIn(store, Entries);
