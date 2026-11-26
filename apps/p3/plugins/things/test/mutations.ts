@@ -17,12 +17,55 @@ import { join, resolve } from "node:path";
 type Mutation = { readonly name: string; readonly file: string; readonly find: string; readonly put: string };
 
 const MUTATIONS: readonly Mutation[] = [
+	// ---- workspaces, round 1 ----
+	{
+		name: "setTick leaves a migrated row of another source",
+		file: "store.ts",
+		find: "for (const sourceKey of sources) await this.#upgrade(",
+		put: "for (const sourceKey of sources.size > 99 ? sources : []) await this.#upgrade(",
+	},
+	{
+		name: "a child under a leaf of an unregistered kind",
+		file: "store.ts",
+		find: 'if (aboveKind === undefined || this.#kinds().get(aboveKind)?.value.workspace !== "plain") {',
+		put: 'if (aboveKind !== undefined && this.#kinds().get(aboveKind)?.value.workspace === "leaf") {',
+	},
+	{
+		name: "a failing list restarts the whole index",
+		file: "access.ts",
+		find: '\t\t\t\tthis.#probes.delete(view);\n\t\t\t\treportError("things: a list over the access index failed; it attaches again", error, this.#context);',
+		put: '\t\t\t\tthis.#recover(error);\n\t\t\t\treturn;\n\t\t\t\treportError("things: a list over the access index failed; it attaches again", error, this.#context);',
+	},
+	{
+		name: "the hook's people shown beats the maker's private",
+		file: "store.ts",
+		find: "showsPeople: showsPeople !== false && answer?.showsPeople !== false,",
+		put: "showsPeople: answer?.showsPeople ?? showsPeople ?? true,",
+	},
+	{
+		name: "No access on a workspace leaves the person in",
+		file: "rules.ts",
+		find: '\thides.push(...out.filter((party) => party.startsWith("person/")));\n',
+		put: "",
+	},
+	{
+		name: "a rename asks every list again",
+		file: "access.ts",
+		find: "for (const id of touched.things) if (view.things.has(id)) return true;",
+		put: "if (touched.things.size > 0) return true;",
+	},
+	{
+		name: "WhoMay's Make cell reads only the party's own row",
+		file: "lists.ts",
+		find: 'if (made !== "*") return makes.includes(made);',
+		put: 'if (made !== "*") return given.ticks.get(key)?.has(tick) === true;',
+	},
 	// ---- workspaces (ERNDL-1143) ----
 	{
 		name: "a workspace's own thing comes down to the workspaces below",
 		file: "rules.ts",
-		find: "\tif (above === GONE) return GONE;\n\treturn {",
-		put: "\tif (above === GONE) return GONE;\n\tif (above.own !== undefined) return { things: new Map([...thingsHere(above.things, own, kinds), [above.own.id, above.own]]), present: partiesHere(above.present, own), hidden: hiddenHere(above.hidden, own), own: ownHere(own, kinds) };\n\treturn {",
+		find: "\tconst out = takenOut(own);\n\treturn {",
+		put: "\tconst out = takenOut(own);\n\tif (above.own !== undefined) return { things: new Map([...thingsHere(above.things, own, kinds), [above.own.id, above.own]]), present: partiesHere(above.present, own, out), hidden: hiddenHere(above.hidden, own, out), own: ownHere(own, kinds) };\n\treturn {",
 	},
 	{
 		name: "a Make tick's kind's makers are no ceiling",
@@ -422,8 +465,8 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "a link starts with no default grants",
 		file: "store.ts",
-		find: "for (const tick of written)\n",
-		put: "for (const tick of written.slice(written.length))\n",
+		find: "for (const tick of written) {",
+		put: "for (const tick of written.slice(written.length)) {",
 	},
 	{
 		name: "a giving grant is written below a link",

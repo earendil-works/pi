@@ -494,8 +494,14 @@ function mayHoldHere(
 	return !(kinds.get(here ?? "")?.value.workspace === "leaf" && kinds.get(name)?.value.workspace !== "no");
 }
 
-/** `probe` with each row's thing named: the names are read at each computation (a rename asks every probe again). */
-function named<T extends { readonly thing: string }>(store: Store, probe: Probe<T[]>): Probe<(T & { name: string })[]> {
+/**
+ * `probe` with each row's thing named and the rows in reading order: the names are read at each computation (a rename
+ * of a thing it shows asks it again).
+ */
+function named<T extends { readonly thing: string; readonly hidden?: boolean }>(
+	store: Store,
+	probe: Probe<T[]>,
+): Probe<(T & { name: string })[]> {
 	return {
 		...probe,
 		compute: async (look, load, ctx) => {
@@ -505,7 +511,15 @@ function named<T extends { readonly thing: string }>(store: Store, probe: Probe<
 			const names = new Map(
 				(await readWhole(store.things.ofIds, { things }, ctx)).map(({ thing, name }) => [thing, name]),
 			);
-			return rows.map((row) => ({ ...row, name: names.get(row.thing) ?? "" }));
+			// In the order a person reads them: what is here before what is hidden, then by name (then id).
+			return rows
+				.map((row) => ({ ...row, name: names.get(row.thing) ?? "" }))
+				.sort(
+					(a, b) =>
+						Number(a.hidden === true) - Number(b.hidden === true) ||
+						a.name.localeCompare(b.name) ||
+						a.thing.localeCompare(b.thing),
+				);
 		},
 	};
 }
