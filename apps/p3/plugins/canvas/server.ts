@@ -75,6 +75,15 @@ export default defineFacet((host) => {
 				name: self.derive([named], ([{ rows }]) => rows[0]?.name || CANVAS),
 				shapes: list.value,
 				more: (ctx: Context) => list.more(ctx),
+				page: async ({ after }, ctx) => {
+					const found = await store.shapes.of.page(
+						{ canvas: thing },
+						PAGE,
+						ctx,
+						after === undefined ? {} : { after },
+					);
+					return { rows: found.items, ...(found.next === undefined ? {} : { next: found.next }) };
+				},
 				leave: async (ctx: Ctx<P3Principal>) => {
 					await board.send({ kind: "leave", who }, ctx);
 					return null;

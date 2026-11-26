@@ -21,8 +21,8 @@ it. Remove this file when the list is done.
   tools taking the thing's id, write tools only while some thing allows them.
 - Tools: the coding tools as a `plugin` kind, one thing, the Pi's, everywhere (`ensureThing` at the plugin's start).
   The test login and the deployment's dev login likewise.
-- Harness: one extension per kind; its own `thing_create({ kind, name })` for content; nothing left of making for
-  someone, keeping, or listing whom to make for.
+- Harness: one part per kind (now the things plugin's `ThingHarnessParts`); making things is the things plugin's
+  `make_thing`; nothing left of making for someone, keeping, or listing whom to make for.
 - `plugins/checklist/` (builder "notes"): the small example kind of `base.md`, with tests.
 
 ## 3. The page (builder "page"; in progress)

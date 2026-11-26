@@ -338,10 +338,6 @@ describe("options", () => {
 		await asServer(async (ctx, store) => {
 			await store.setOptions({ session: id, thing, for: { kind: "agent" }, options: { color: "blue" } }, ctx);
 			const access = await ctx.get(ThingAccess, { session: id, thing, caller: `worker:${id}` });
-			const facts = async () =>
-				t.root(async (worker) => (await worker.get(SessionFacts, {})).things.value, context, {
-					principal: { kind: "worker", session: id },
-				});
 			setNotes(notesAt(2, (options) => ({ color: `${(options as { color: string }).color}!` })));
 			assert.deepEqual(access.answer.value, {
 				access: "write",
@@ -349,10 +345,7 @@ describe("options", () => {
 				version: 2,
 				options: { color: "blue!" },
 			});
-			assert.deepEqual(await facts(), [
-				{ thing, kind: Notes.name, name: "", version: 2, options: { color: "blue!" } },
-			]);
-			// No migration: the agent gets nothing, and the answer keeps the stored version (`admitThing` denies it).
+			// No migration: the answer keeps the stored version (`admitThing` denies it).
 			setNotes(notesAt(3));
 			assert.deepEqual(access.answer.value, {
 				access: "write",
@@ -360,10 +353,6 @@ describe("options", () => {
 				version: 1,
 				options: { color: "blue" },
 			});
-			assert.deepEqual(await facts(), [{ thing, kind: Notes.name, name: "", version: 1, options: null }]);
-			// A migration whose result the schema refuses gives nothing either.
-			setNotes(notesAt(2, () => ({ color: 7 }) as unknown as { color: string }));
-			assert.deepEqual(await facts(), [{ thing, kind: Notes.name, name: "", version: 1, options: null }]);
 			setNotes(NOTES);
 		});
 	});
@@ -563,16 +552,12 @@ describe("refusals", () => {
 });
 
 describe("a worker's facts", () => {
-	it("give its row, its things with the agent's options, and its report", async () => {
+	it("give its row and its report", async () => {
 		const id = await session();
-		const thing = await firstThing(id);
 		await t.root(
 			async (ctx) => {
 				const facts = await ctx.get(SessionFacts, {});
 				assert.equal(facts.session.value?.id, id);
-				assert.deepEqual(facts.things.value, [
-					{ thing, kind: Notes.name, name: "", version: 1, options: { color: "red" } },
-				]);
 				await facts.report({ state: "working" }, ctx);
 				assert.equal(facts.session.value?.state, "working");
 				assert.deepEqual(await asServer((server, store) => store.working({}, server)), [id]);
