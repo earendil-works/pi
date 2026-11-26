@@ -10,6 +10,7 @@
 ### Fixed
 
 - Fixed `SettingsList` hint hardcoding Enter and Esc instead of naming the configured `tui.select.confirm` and `tui.select.cancel` keys
+- Fixed Kitty images disappearing in Konsole in both regular and fullscreen mode: `allocateImageId()` now returns IDs that fit a signed 32-bit integer, which Konsole requires ([#12548](https://github.com/earendil-works/pi/issues/12548))
 
 ## [1.6.1] - 2026-11-25
 
