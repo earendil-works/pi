@@ -260,6 +260,14 @@ describe("provider retry classification", () => {
 		expect(isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage }))).toBe(true);
 	});
 
+	// Regression for #12573: the token throttle was not retried, while the request throttle was.
+	it.each([
+		"Throttling error: Too many tokens, please wait before trying again.",
+		"Throttling error: Too many requests, please wait before trying again.",
+	])("retries Bedrock throttling: %s", (errorMessage) => {
+		expect(isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage }))).toBe(true);
+	});
+
 	it.each([
 		// A cancellation, usually the user's.
 		"The operation was aborted",
