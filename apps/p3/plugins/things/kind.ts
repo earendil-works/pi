@@ -148,6 +148,7 @@ export function defineThing<
 ): ThingKind<ThingContract<N, V, S, M, E, F, GivenBy<T>>> {
 	const ticks = Object.entries(declaration.ticks);
 	const given = new Set(ticks.flatMap(([, tick]) => tick.gives));
+	checkTicks(name, declaration, given);
 	const marked = <D extends States | Methods>(members: D | undefined) =>
 		Object.fromEntries(
 			Object.entries(members ?? {}).map(([member, schema]) => [
@@ -182,6 +183,24 @@ export function defineThing<
 	type C = ThingContract<N, V, S, M, E, F, GivenBy<T>>;
 	const gives = new Map(ticks.map(([tick, { gives }]) => [tick, gives as readonly GrantableName<C>[]]));
 	return { name, info, contract: contract as unknown as C, all: [...given] as GrantableName<C>[], gives };
+}
+
+/**
+ * Declaration policy the types state but JavaScript callers can skip (decision 95): a tick gives only the kind's
+ * members and flags, and every flag is given by a tick (a flag nobody can be given is no right).
+ */
+function checkTicks(
+	name: string,
+	{ state, methods, events, flags }: { state?: States; methods?: Methods; events?: States; flags?: Flags },
+	given: ReadonlySet<string>,
+): void {
+	const names = new Set([state, methods, events, flags].flatMap((members) => Object.keys(members ?? {})));
+	for (const gives of given) {
+		if (!names.has(gives)) throw new Error(`${name}.ticks: "${gives}" is no member or flag of the kind`);
+	}
+	for (const flag of Object.keys(flags ?? {})) {
+		if (!given.has(flag)) throw new Error(`${name}.flags.${flag}: no tick gives it`);
+	}
 }
 
 /**
