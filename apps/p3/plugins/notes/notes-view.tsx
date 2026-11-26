@@ -1,4 +1,4 @@
-// The notes kind's view of one notebook (`ThingViews`): its name, its notes, the last written first, with older ones
+// The notes kind's view of one notebook (`ThingViews`): its name, its notes in the notebook's order, with more of them
 // on demand. A writer (granted Write) adds notes and edits and removes any of them; anyone else let in reads. The view
 // follows the admission live: Write taken back turns it into the reader's at once, on the same hold.
 
@@ -69,7 +69,7 @@ export function NotesView(props: ThingViewProps) {
 					onClick={() => action.run((ctx) => live.more(ctx))}
 					pending={action.pending}
 				>
-					{t("older")}
+					{t("more")}
 				</Button>
 			) : null}
 			{action.error === undefined ? null : <p className={styles.error}>{action.error}</p>}
@@ -77,7 +77,7 @@ export function NotesView(props: ThingViewProps) {
 	);
 }
 
-/** A change the view makes (an add, an edit, a removal, older notes): whether one runs and why the last one failed. */
+/** A change the view makes (an add, an edit, a removal, more notes): whether one runs and why the last one failed. */
 type Action = {
 	readonly pending: boolean;
 	readonly error: string | undefined;

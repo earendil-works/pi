@@ -1,7 +1,7 @@
 // The notes store (`NotesStore`) on its own: a note's `at` is unique in its notebook and the last written is the
 // newest, also for writes within one millisecond and with the clock gone back (the list's order is `at`: the last
 // written stays first); an edit makes a note the last written, by its editor; `clear` removes one notebook's notes
-// only.
+// only and marks it gone, so a later add or order is refused.
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
@@ -44,6 +44,10 @@ describe("the notes store", () => {
 			assert.deepEqual(items[0]?.author, { kind: "agent", session: "s1" });
 			await store.clear({ notebook: "a" }, context);
 			assert.deepEqual((await store.notes.of.page({ notebook: "a", order: "newest" }, 10, context)).items, []);
+			// A notebook cleared is gone: a write that comes later (begun before the clear) is refused.
+			await assert.rejects(store.add({ notebook: "a", text: "late", author: ANN }, context), /is gone/);
+			await assert.rejects(store.setOrder({ notebook: "a", order: "oldest" }, context), /is gone/);
+			assert.deepEqual((await store.orders.of.page({ notebook: "a" }, 1, context)).items, []);
 			assert.equal((await store.notes.of.page({ notebook: "b", order: "newest" }, 10, context)).items.length, 1);
 		} finally {
 			await n.close();

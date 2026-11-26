@@ -1,7 +1,8 @@
 // The notes kind's harness part, as the worker facet contributes it to `ThingHarnessParts`, given the notebooks an
 // agent holds (real references, held as the session's worker on a server with the things plugin, `kindServer`): it
 // offers `notes_list` and `notes_read` always and `notes_write` while one notebook gives Write; `notes_list` names
-// each notebook with its id and whether the agent may write there; `notes_read` answers a page as JSON, read now, so
+// each notebook with its id and whether the agent may write there; `notes_read` answers a page as JSON in the
+// notebook's order, saying it, and asks to start over when the order changed since its cursor; it reads now, so
 // the agent's own reference keeps its pages however often it reads (Astra: it grew with each read); `notes_write`
 // adds, edits and removes, refused naming the notebook where Write is not given (also when it was taken back after
 // the tools were offered) and for an id that is no notebook of the agent's.
@@ -12,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { type Ctx, BACKGROUND_CONTEXT as context, type P3Principal, until } from "@earendil-works/p3/v1";
 import type { Extension } from "@earendil-works/p3/v1/worker";
 import { within } from "../../../test/until.ts";
+import { ThingHooks } from "../../things/contract.server.ts";
 import { type HeldThing, ThingHarnessParts } from "../../things/contract.worker.ts";
 import { type KindServer, kindServer, runTool, toolNames } from "../../things/test/kind-server.ts";
 import { type Notes, NotesKind } from "../contract.ts";
@@ -108,6 +110,37 @@ describe("the notes kind's harness part", () => {
 			assert.deepEqual([holds, held!.ref.list.value.rows.length], [51, 51]);
 			await runTool(extension, "notes_write", { notebook: log, change: { kind: "remove", id } }, context);
 			assert.notEqual((await read()).rows[0].id, id);
+		});
+	});
+
+	it("reads in the notebook's order, says it with each page, and asks to start over once it changed", async () => {
+		const log = await n.thingIn(s1, "Log");
+		const ann = await n.person("Ann", s1);
+		await n.holding(ann, s1, log, async (notes, ctx) => {
+			for (let i = 0; i < 60; i++) await notes.add!({ text: `n${i}` }, ctx);
+		});
+		const configure = (await n.host.registry(ThingHooks, context)).value.get(NotesKind.name)?.value.configure;
+		await giving([log], async (extension) => {
+			const read = async (after?: string) =>
+				JSON.parse(
+					await runTool(
+						extension,
+						"notes_read",
+						{ notebook: log, ...(after === undefined ? {} : { after }) },
+						context,
+					),
+				);
+			const first = await read();
+			assert.deepEqual([first.order, first.rows[0].text], ["newest", "n59"]);
+			await n.host.root((ctx) => configure!(log, { order: "oldest" }, ctx), context);
+			// Opus, round 5: a cursor of the order before was refused with no way on.
+			await assert.rejects(read(first.next), /the notebook's order changed; read again from the start/);
+			const again = await read();
+			assert.deepEqual([again.order, again.rows[0].text], ["oldest", "n0"]);
+			assert.deepEqual(
+				(await read(again.next)).rows.map(({ text }: { text: string }) => text),
+				["n50", "n51", "n52", "n53", "n54", "n55", "n56", "n57", "n58", "n59"],
+			);
 		});
 	});
 

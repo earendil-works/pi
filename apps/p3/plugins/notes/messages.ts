@@ -13,7 +13,7 @@ export const messages = defineMessages("notes", {
 		unavailable: "These notes cannot be shown now.",
 		loading: "Loading…",
 		empty: "No notes yet.",
-		older: "Older notes",
+		more: "More notes",
 		newNote: "New note",
 		newNotePlaceholder: "A new note",
 		add: "Add",

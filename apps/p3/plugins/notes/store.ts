@@ -54,7 +54,10 @@ export const NotesStore = local("notes.store", {
 		remove: method(obj({ notebook: str(), id: str() })),
 		/** Sets notebook `notebook`'s order. */
 		setOrder: method(obj({ notebook: str(), order: NotesOrder })),
-		/** Removes every note of `notebook` and its order (its thing is gone). */
+		/**
+		 * Removes every note of `notebook` and its order, and marks it gone (its thing is gone): an add or an order a
+		 * caller started before, committed after, is refused, so nothing of it comes back.
+		 */
 		clear: method(obj({ notebook: str() })),
 	},
 });
@@ -74,11 +77,26 @@ const Orders = defineTable("notes.orders", {
 	key: ["notebook"],
 });
 
+/**
+ * The notebooks whose thing is gone (`clear`). Thing ids are never used again, so a mark stays: one row per deleted
+ * notebook.
+ */
+const Gone = defineTable("notes.gone", {
+	version: 1,
+	columns: { notebook: str() },
+	key: ["notebook"],
+});
+
 /** Serves `NotesStore` on `host`. */
 export function serveStore(host: FacetHost<P3Principal>): void {
 	host.serve(NotesStore, (_params, self) => {
 		const rows = self.table(Rows);
 		const orders = self.table(Orders);
+		const gone = self.table(Gone);
+		/** Refuses a write to `notebook` once it is gone: checked in the write's own transaction, which `clear`'s orders. */
+		const present = async (tx: Tx, notebook: string) => {
+			if ((await tx.get(gone, { notebook })) !== undefined) throw invalid("args", `notes: ${notebook} is gone`);
+		};
 		/**
 		 * When a note of `notebook` written now is: now, or just after its last written note, so `at` is unique in a
 		 * notebook and the last written stays first also within one millisecond (index `by_time`, one row).
@@ -112,12 +130,14 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			),
 			setOrder: ({ notebook, order }, ctx) =>
 				self.tx(async (tx) => {
+					await present(tx, notebook);
 					tx.put(orders, { notebook, order });
 					return null;
 				}, ctx),
 			add: async ({ notebook, text, author }, ctx) => {
 				const id = crypto.randomUUID();
 				await self.tx(async (tx) => {
+					await present(tx, notebook);
 					tx.put(rows, { notebook, id, text, at: await nextAt(tx, notebook), author });
 					return null;
 				}, ctx);
@@ -140,6 +160,7 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 					// The key's prefix `notebook`: one statement each.
 					tx.deleteWhere(rows, (note) => eq(note.notebook, notebook));
 					tx.delete(orders, { notebook });
+					tx.put(gone, { notebook });
 					return null;
 				}, ctx),
 		};

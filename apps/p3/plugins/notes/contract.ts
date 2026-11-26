@@ -39,7 +39,10 @@ export const NotesPage = obj({ rows: arr(Note), moreAfter: bool() });
 /** Notes in the order of a notebook (see `NotesPage`). */
 export type NotesPage = Static<typeof NotesPage>;
 
-/** The order a notebook shows its notes in: the last written first (the default), or the first written first. */
+/**
+ * The order a notebook shows its notes in: the last written first (`newest`, the default), or the least recently
+ * written first (`oldest`; an edit writes a note again, so an edited note goes to the end).
+ */
 export const NotesOrder = oneOf("newest", "oldest");
 
 /** The order a notebook shows its notes in (see `NotesOrder`). */
@@ -49,22 +52,23 @@ export type NotesOrder = Static<typeof NotesOrder>;
 export const NOTES_WRITES = ["add", "edit", "remove"] as const;
 
 /**
- * A notebook (`notes.notes`): its name (its thing's, "" while it has none), its order (its one setting) and its notes
- * loaded so far in that order, all for everyone let in. Write gives `add`, `edit` and `remove`. A new link starts with
- * Write for everyone there and the agents; a Read share's guests read.
+ * A notebook (`notes.notes`): its name (its thing's, "" while it has none), its notes loaded so far and the order
+ * `list` shows them in (its one setting, as the list has applied it), all for everyone let in. Write gives `add`,
+ * `edit` and `remove`. A new link starts with Write for everyone there and the agents; a Read share's guests read.
  */
 export const NotesKind = defineThing("notes.notes", {
 	version: 1,
 	makers: "anyone",
 	state: { name: str(), order: NotesOrder, list: NotesPage },
 	methods: {
-		/** Loads the next page of older notes into `list`. */
+		/** Loads the next page of notes, in the notebook's order, into `list`. */
 		more: method(),
 		/**
-		 * A page of notes in the notebook's order, from the start or `after` (an earlier page's `next`), read now and
-		 * not followed: what a reader that keeps no list (an agent's tool) pages through.
+		 * A page of notes in the notebook's order (`order`, the one it was read in), from the start or `after` (an
+		 * earlier page's `next`), read now and not followed: what a reader that keeps no list (an agent's tool) pages
+		 * through. An `after` of another order (the order changed since) is refused: read again from the start.
 		 */
-		page: method(obj({ after: opt(str()) }), obj({ rows: arr(Note), next: opt(str()) })),
+		page: method(obj({ after: opt(str()) }), obj({ order: NotesOrder, rows: arr(Note), next: opt(str()) })),
 		/** Adds a note, written now by the caller; answers its id. */
 		add: method(obj({ text: NoteText }), str()),
 		/** Replaces a note's text: it is written now, by the caller. */

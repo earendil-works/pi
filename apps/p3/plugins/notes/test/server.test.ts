@@ -379,39 +379,78 @@ describe("a notebook's pages", () => {
 });
 
 describe("a notebook's order", () => {
-	it("is newest first by default; configure flips it for a holder already holding it, and back", async () => {
+	/** The notes kind's `configure` hook, as the things plugin calls it (its `Workspace.configure` comes in slice 2). */
+	const configure = async (thing: string, settings: Record<string, unknown>) => {
+		const hook = (await n.host.registry(ThingHooks, context)).value.get(NotesKind.name)?.value.configure;
+		await n.host.root((ctx) => hook!(thing, settings, ctx), context);
+	};
+
+	it("is newest first by default; configure flips it for every holder already holding it, and back", async () => {
 		const [ann, ben] = [await n.person("Ann"), await n.person("Ben")];
 		const notebook = await n.thingIn(n.pi);
 		await fill(ann, notebook, 120);
-		const configure = (await n.host.registry(ThingHooks, context)).value.get(NotesKind.name)?.value.configure;
-		assert.ok(configure !== undefined);
-		await n.holding(ben, n.pi, notebook, async (notes, ctx) => {
-			assert.deepEqual([notes.order.value, texts(notes)], ["newest", newestFirst(120).slice(0, 50)]);
-			await notes.more(ctx);
-			await n.host.root((call) => configure(notebook, { order: "oldest" }, call), context);
-			// A new order starts the list again at its first page.
-			await until(notes.list, (list) => list.rows[0]?.text === "n0", within("oldest first", ctx));
-			assert.deepEqual([notes.order.value, texts(notes)], ["oldest", newestFirst(120).reverse().slice(0, 50)]);
-			// The agent's page read follows it.
-			assert.deepEqual(
-				(await notes.page({}, ctx)).rows.slice(0, 2).map(({ text }) => text),
-				["n0", "n1"],
-			);
+		const holders = await n.holders([ann, ben], n.pi, notebook);
+		try {
+			const [anns, bens] = holders.held;
+			for (const { ref } of holders.held) {
+				assert.deepEqual([ref.order.value, texts(ref)], ["newest", newestFirst(120).slice(0, 50)]);
+			}
+			await bens!.ref.more(bens!.ctx);
+			await configure(notebook, { order: "oldest" });
+			// A new order starts each list again at its first page.
+			for (const { ref, ctx } of holders.held) {
+				await until(ref.list, (list) => list.rows[0]?.text === "n0", within("oldest first", ctx));
+				assert.deepEqual([ref.order.value, texts(ref)], ["oldest", newestFirst(120).reverse().slice(0, 50)]);
+			}
+			const notes = anns!.ref;
+			const ctx = anns!.ctx;
+			// The agent's page read follows it, and says its order.
+			const page = await notes.page({}, ctx);
+			assert.deepEqual([page.order, page.rows.slice(0, 2).map(({ text }) => text)], ["oldest", ["n0", "n1"]]);
 			await notes.more(ctx);
 			assert.equal(notes.list.value.rows.at(-1)?.text, "n99");
 			// A new note is the newest: last in this order, once the list reaches it.
 			await notes.add!({ text: "latest" }, ctx);
-			await n.host.root((call) => configure(notebook, { order: "newest" }, call), context);
+			await configure(notebook, { order: "newest" });
 			await until(notes.list, (list) => list.rows[0]?.text === "latest", within("newest first again", ctx));
 			assert.equal(notes.order.value, "newest");
+		} finally {
+			await holders.release();
+		}
+	});
+
+	it("shows the order its rows are in, never a new order over rows in the old one (Astra, round 5)", async () => {
+		const ann = await n.person("Ann");
+		const notebook = await n.thingIn(n.pi);
+		await fill(ann, notebook, 120);
+		await n.holding(ann, n.pi, notebook, async (notes, ctx) => {
+			await notes.more(ctx);
+			const seen: [string, string | undefined][] = [];
+			const watch = await notes.order.watch(ctx);
+			watch.start(async (call) => {
+				if (call.kind === "value") seen.push([call.value, notes.list.value.rows[0]?.text]);
+			});
+			await configure(notebook, { order: "oldest" });
+			await until(notes.list, (list) => list.rows[0]?.text === "n0", within("flipped", ctx));
+			await until(notes.order, (order) => order === "oldest", within("the shown order", ctx));
+			assert.ok(
+				seen.every(([order, first]) => (order === "oldest" ? first === "n0" : first === "n119")),
+				JSON.stringify(seen),
+			);
 		});
+	});
+
+	it("refuses a value that is no order", async () => {
+		const notebook = await n.thingIn(n.pi);
+		await refused(configure(notebook, { order: "sideways" }), "invalid");
+		const ann = await n.person("Ann");
+		assert.equal(await n.holding(ann, n.pi, notebook, async (notes) => notes.order.value), "newest");
 	});
 
 	it("goes with the notebook: one made after it starts newest first again", async () => {
 		const ann = await n.person("Ann");
 		const notebook = await n.thingIn(n.pi);
-		const configure = (await n.host.registry(ThingHooks, context)).value.get(NotesKind.name)?.value.configure;
-		await n.host.root((call) => configure!(notebook, { order: "oldest" }, call), context);
+		await configure(notebook, { order: "oldest" });
 		await n.things.unlink({ workspace: n.pi, thing: notebook }, context);
 		const store = await n.host.get(NotesStore, {}, context);
 		await eventually(
@@ -421,6 +460,35 @@ describe("a notebook's order", () => {
 		);
 		const other = await n.thingIn(n.pi);
 		assert.equal(await n.holding(ann, n.pi, other, async (notes) => notes.order.value), "newest");
+	});
+
+	it("is not written back by a configure that started before the notebook's last unlink (Astra, round 5)", async (t) => {
+		const notebook = await n.thingIn(n.pi);
+		await configure(notebook, { order: "newest" });
+		const store = await n.host.get(NotesStore, {}, context);
+		const stored = async () => (await store.orders.of.page({ notebook }, 1, context)).items;
+		const hook = (await n.host.registry(ThingHooks, context)).value.get(NotesKind.name)?.value.configure;
+		const started = Promise.withResolvers<void>();
+		const resume = Promise.withResolvers<void>();
+		const changing = n.host.root(async (ctx) => {
+			// The hook stalls before its write: it gets the store only once the delete is done.
+			const get = ctx.get.bind(ctx);
+			t.mock.method(ctx, "get", async (...args: Parameters<typeof get>) => {
+				started.resolve();
+				await resume.promise;
+				return get(...args);
+			});
+			return hook!(notebook, { order: "oldest" }, ctx);
+		}, context);
+		try {
+			await started.promise;
+			await n.things.unlink({ workspace: n.pi, thing: notebook }, context);
+			await eventually(stored, (rows) => rows.length === 0, 2000);
+		} finally {
+			resume.resolve();
+		}
+		await assert.rejects(changing, /is gone/);
+		assert.deepEqual(await stored(), []);
 	});
 });
 

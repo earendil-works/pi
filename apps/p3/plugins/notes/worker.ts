@@ -60,14 +60,15 @@ function listTool(things: readonly Notebook[]) {
 	});
 }
 
-/** The tool `notes_read`: a page of a notebook's notes, the last written first, as JSON. */
+/** The tool `notes_read`: a page of a notebook's notes, in the notebook's order, as JSON. */
 function readTool(things: readonly Notebook[], session: HarnessSession) {
 	return defineTool({
 		name: "notes_read",
 		description:
-			"Reads a page of the notes of one of your notebooks (`notebook`: its id from `notes_list`), the last written " +
-			"first, as JSON: `rows` (each note's `id`, `text`, `at` in ms since the epoch and `author`) and `next`, which " +
-			"`after` takes for the next page (absent: no older notes).",
+			"Reads a page of the notes of one of your notebooks (`notebook`: its id from `notes_list`) in the notebook's " +
+			"order, as JSON: `order` (`newest`: the last written first; `oldest`: the least recently written first), " +
+			"`rows` (each note's `id`, `text`, `at` in ms since the epoch and `author`) and `next`, which `after` takes " +
+			"for the next page (absent: no more notes). If the order changed since, read again from the start.",
 		parameters: obj({ notebook: str(), after: opt(str()) }),
 		replay: "safe",
 		execute: async ({ notebook, after }, _api, context) => {

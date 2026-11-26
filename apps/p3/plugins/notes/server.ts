@@ -6,6 +6,7 @@
 import {
 	type Context,
 	defineFacet,
+	invalid,
 	type P3Principal,
 	type Reference,
 	type Self,
@@ -39,16 +40,17 @@ export default defineFacet((host) => {
 			const things = self.get(ThingsStore, {});
 			const named = self.liveQuery(things.things.one, { thing }, { first: 1 });
 			const set = self.liveQuery(store.orders.of, { notebook: thing }, { first: 1 });
-			const order = self.derive([set], ([{ rows }]): NotesOrder => rows[0]?.order ?? "newest");
-			// A new order is a new list: it starts again at its first page.
-			const args = self.derive([order], ([by]) => ({ notebook: thing, order: by }));
+			const setting = self.derive([set], ([{ rows }]): NotesOrder => rows[0]?.order ?? "newest");
+			// A new order is a new list: it starts again at its first page. Until it has switched, it shows its rows
+			// in the order before.
+			const args = self.derive([setting], ([by]) => ({ notebook: thing, order: by }));
 			const list = self.list("notes", [[store.notes.of, args]], { first: PAGE });
 			return {
 				name: self.derive([named], ([{ rows }]) => rows[0]?.name ?? ""),
-				order,
+				order: self.derive([list.value, setting], ([{ rows }, by]) => shownOrder(rows, by)),
 				list: withNames(list.value, things, self),
 				more: (ctx: Context) => list.more(ctx),
-				page: ({ after }, ctx) => pageOf({ notebook: thing, order: order.value }, after, store, things, ctx),
+				page: ({ after }, ctx) => pageOf({ notebook: thing, order: setting.value }, after, store, things, ctx),
 				add: ({ text }, ctx) => store.add({ notebook: thing, text, author: caller }, ctx),
 				edit: ({ id, text }, ctx) => store.edit({ notebook: thing, id, text, author: caller }, ctx),
 				remove: ({ id }, ctx) => store.remove({ notebook: thing, id }, ctx),
@@ -57,19 +59,39 @@ export default defineFacet((host) => {
 	});
 });
 
-/** A page of a notebook's notes in an order, from the start or `after`, with their authors' names, read now. */
+/**
+ * The order `rows` are in: told by their first two (`at` is unique in a notebook); fewer look the same in both orders,
+ * so they are in `setting`'s.
+ */
+function shownOrder(rows: readonly StoredNote[], setting: NotesOrder): NotesOrder {
+	const [first, second] = rows;
+	if (first === undefined || second === undefined) return setting;
+	return first.at > second.at ? "newest" : "oldest";
+}
+
+/**
+ * A page of a notebook's notes in an order, from the start or `after`, with their authors' names, read now. A page's
+ * `next` names its order (`<order>:<cursor>`): an `after` of another order is refused with what to do.
+ */
 async function pageOf(
 	of: { readonly notebook: string; readonly order: NotesOrder },
 	after: string | undefined,
 	store: Reference<typeof NotesStore>,
 	things: Reference<typeof ThingsStore>,
 	ctx: Context,
-): Promise<{ rows: Note[]; next?: string }> {
-	const found = await store.notes.of.page(of, PAGE, ctx, after === undefined ? {} : { after });
+): Promise<{ order: NotesOrder; rows: Note[]; next?: string }> {
+	const prefix = `${of.order}:`;
+	// `after` is the caller's (an agent's): a cursor of another order, or none of ours, is refused.
+	if (after !== undefined && !after.startsWith(prefix)) {
+		throw invalid("args", "notes: the notebook's order changed; read again from the start (without after)");
+	}
+	const cursor = after?.slice(prefix.length);
+	const found = await store.notes.of.page(of, PAGE, ctx, cursor === undefined ? {} : { after: cursor });
 	const persons = authors(found.items);
 	// No person among the authors: no names to read.
 	const names = persons.length === 0 ? [] : (await things.persons.ofIds.page({ persons }, persons.length, ctx)).items;
-	return { rows: withAuthors(found.items, names), ...(found.next === undefined ? {} : { next: found.next }) };
+	const next = found.next === undefined ? {} : { next: `${prefix}${found.next}` };
+	return { order: of.order, rows: withAuthors(found.items, names), ...next };
 }
 
 /** The persons among `notes`' authors, each once, sorted: the same authors are the same arguments. */
