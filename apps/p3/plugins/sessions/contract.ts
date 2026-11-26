@@ -553,6 +553,18 @@ export const SessionFacts = remote("sessions.facts", {
 });
 
 /**
+ * What a session's workspace gives its agent, for its worker, which holds it as itself: each thing the agent gets
+ * anything for there and its kind, by thing id, live (the session's workspace is the session's id). The worker holds a
+ * reference to each one whose kind has a harness part there (`HeldThings`).
+ */
+export const AgentThings = remote("sessions.agent-things", {
+	version: 1,
+	params: {},
+	hostAddress: () => Server(),
+	state: { things: arr(obj({ thing: str(), kind: str() })) },
+});
+
+/**
  * A session's worker, for the server's waker: holding it starts the worker (after a restart, for a session whose run
  * was cut off), where the harness resumes the run once loaded.
  */
