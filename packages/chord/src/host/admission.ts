@@ -135,8 +135,8 @@ type Declared = { readonly binding: Binding; readonly contract: Contract; readon
 /** No state members: a decision's derives are exposed by none. */
 const NO_MEMBERS: ReadonlyMap<string, DeriveSource> = new Map();
 
-/** A decision without live queries follows none: the shared wake, never told. */
-const NO_WAKE: Dependent = { invalidate: () => {}, sourceRetired: () => {} };
+/** A decision without live queries has none to open: ready at once. */
+const READY: Parking = { kind: "ready" };
 
 /**
  * One decision: the `self` its `admit` declares with, the requests it made (held until `release`), and what it says.
@@ -290,15 +290,17 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 			long.blockedBy(verdict.kind === "parked" && check.kind === "parked" ? check.blocker : undefined);
 			return verdict;
 		}
-		const bindings = this.#references.map(({ binding }) => binding);
-		const pinned = await pinKeys(bindings, long, context);
+		const pinned = await pinKeys(this.#references, long, context);
 		if (pinned !== undefined) return { kind: "parked", shown: pinned, firstPass: true, cause: pinned.cause };
-		const label = `${this.#owner.label}: a live query of its admission`;
-		// Without live queries nothing is followed: no wake is made.
+		// Without live queries none is opened, in the same one turn an open of none took (its async frame and the
+		// label cost 0.4 KiB per settle); nothing is followed: no wake is made.
+		let opening: Parking | Promise<Parking> = READY;
 		if (this.#readers.length > 0) {
 			this.#readerWake ??= { invalidate: () => this.#owner.moved(), sourceRetired: () => {} };
+			const label = `${this.#owner.label}: a live query of its admission`;
+			opening = openReaders(this.#readers, this.#readerWake, long, label, context);
 		}
-		const reading = await openReaders(this.#readers, this.#readerWake ?? NO_WAKE, long, label, context);
+		const reading = await opening;
 		if (reading.kind !== "ready") {
 			// A live query whose read has not run yet keeps the last decision, as a source that only loads does.
 			const loading = reading.kind === "parked" && reading.shown.kind === "loading";

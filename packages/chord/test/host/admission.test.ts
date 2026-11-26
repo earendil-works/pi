@@ -563,36 +563,36 @@ describe("an equal decision of another object (hot-path pass, 2026-11-26)", () =
 	});
 });
 
+/** A decision over a source whose value the test sets one read at a time. */
+function reading() {
+	const host = new ChordHost<TestPrincipal>({
+		address: Server(),
+		principal: { kind: "server" },
+		onError: () => {},
+	});
+	const source = new (class extends Source {
+		next: unknown;
+		get value(): never {
+			return this.next as never;
+		}
+		deliver() {}
+	})(host.batch);
+	const caller = { principal: host.principal, incarnation: host.incarnation };
+	const decision = new Decision({
+		host,
+		label: "doc",
+		dependent: undefined,
+		caller,
+		grants: ["a", "b"],
+		moved() {},
+	});
+	decision.declare(() => source, context);
+	return { decision, source };
+}
+
 // Found by the review of the hot-path pass (Astra, 2026-11-26): a direct comparison only for plain JSON; anything else
 // as before (its text made at read time), with the same order of checks, counts and errors.
 describe("a re-read of a value that is no plain JSON", () => {
-	/** A decision over a source whose value the test sets one read at a time. */
-	function reading() {
-		const host = new ChordHost<TestPrincipal>({
-			address: Server(),
-			principal: { kind: "server" },
-			onError: () => {},
-		});
-		const source = new (class extends Source {
-			next: unknown;
-			get value(): never {
-				return this.next as never;
-			}
-			deliver() {}
-		})(host.batch);
-		const caller = { principal: host.principal, incarnation: host.incarnation };
-		const decision = new Decision({
-			host,
-			label: "doc",
-			dependent: undefined,
-			caller,
-			grants: ["a", "b"],
-			moved() {},
-		});
-		decision.declare(() => source, context);
-		return { decision, source };
-	}
-
 	it("a name that is no grant breaks also when another field is a bigint", () => {
 		const { decision, source } = reading();
 		source.next = { kind: "allow", value: { x: 0 } };
@@ -667,6 +667,24 @@ describe("a re-read of a value that is no plain JSON", () => {
 		source.next = { kind: "allow", value: { granted: list } };
 		expect(decision.now(context)).toBe(original);
 		expect(reads).toBeLessThan(6 * list.length);
+	});
+});
+
+describe("a decision's settle (hot-path pass: no async frames where nothing waits)", () => {
+	it("answers in the turns it took as an async function throughout, without keys to load or live queries", async () => {
+		const { decision, source } = reading();
+		source.next = { kind: "allow", value: { granted: ["a"] } };
+		let turns = 0;
+		let answered = -1;
+		void decision.settle({ blockedBy: () => {} }, context).then(() => {
+			answered = turns;
+		});
+		for (let turn = 0; turn < 8; turn++) {
+			await null;
+			turns++;
+		}
+		// Measured on 1cbc0e094 (settle, pinKeys and openReaders all async functions).
+		expect(answered).toBe(2);
 	});
 });
 

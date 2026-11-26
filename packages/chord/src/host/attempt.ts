@@ -1588,13 +1588,8 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 			long.blockedBy(check.blocker);
 			return { kind: "parked", shown: check.shown, firstPass: check.firstPass, cause: parkedCause(check) };
 		}
-		const pinned = await pinKeys(this.#bindings(), long, this.#opening);
+		const pinned = await pinKeys(this.#references, long, this.#opening);
 		return pinned === undefined ? READY : { kind: "parked", shown: pinned, firstPass: true, cause: undefined };
-	}
-
-	/** The references its factory declared. */
-	#bindings(): Binding[] {
-		return this.#references.map(({ binding }) => binding);
 	}
 
 	/** Its dependencies are live after it parked: its own steps run in a new activation span, linked to the parked one. */

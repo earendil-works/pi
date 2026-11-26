@@ -143,22 +143,49 @@ export function waitingOn(label: string, error: ChordError): Failed {
 }
 
 /**
- * Loads the keys a factory (or an admission) pinned on `bindings`' keyed members (`at(key)`), each reference named
+ * Loads the keys a factory (or an admission) pinned on `references`' keyed members (`at(key)`), each reference named
  * to `long` as the blocker while they load (`failed` when they failed); `undefined` once all are, else what the parked
- * attempt shows for the first that failed to load (`waiting` on its reference).
+ * attempt shows for the first that failed to load (`waiting` on its reference). Awaited by its callers: without a key
+ * to load it answers at once, and the await takes the one turn it took when this was an async function (whose frame
+ * cost about 0.45 KiB per check); with one, the rest runs as it did, in one async function from that reference on.
  */
-export async function pinKeys(
-	bindings: Iterable<Binding>,
+export function pinKeys(
+	references: readonly { readonly binding: Binding }[],
 	long: Blocked,
 	context: Context,
-): Promise<Failed | undefined> {
-	for (const binding of bindings) {
+): Failed | undefined | Promise<Failed | undefined> {
+	for (let index = 0; index < references.length; index++) {
+		const { binding } = references[index]!;
 		const { label } = binding;
 		try {
 			const pinning = binding.pinKeys(context);
 			if (pinning === undefined) continue;
 			long.blockedBy({ label, state: "loading" });
-			await pinning;
+			return pinsLoading(references, index, pinning, long, context);
+		} catch (error) {
+			long.blockedBy({ label, state: "failed" });
+			return waitingOn(label, asChordError(error, label));
+		}
+	}
+	return undefined;
+}
+
+/** `pinKeys` from the reference at `from` on, whose keys load (`pinning`, named to `long` already). */
+async function pinsLoading(
+	references: readonly { readonly binding: Binding }[],
+	from: number,
+	pinning: Promise<void>,
+	long: Blocked,
+	context: Context,
+): Promise<Failed | undefined> {
+	for (let index = from; index < references.length; index++) {
+		const { binding } = references[index]!;
+		const { label } = binding;
+		try {
+			const loading = index === from ? pinning : binding.pinKeys(context);
+			if (loading === undefined) continue;
+			if (index !== from) long.blockedBy({ label, state: "loading" });
+			await loading;
 		} catch (error) {
 			long.blockedBy({ label, state: "failed" });
 			return waitingOn(label, asChordError(error, label));
