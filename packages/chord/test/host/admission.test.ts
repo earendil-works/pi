@@ -8,8 +8,15 @@
 // factory's error at its activation, a decision change while its old attempt drains or its successor opens a native).
 
 import { performance } from "node:perf_hooks";
+import { InMemoryTelemetryContext, NOOP_TELEMETRY_CONTEXT, NOOP_TELEMETRY_METRICS } from "@earendil-works/pi-telemetry";
 import { describe, expect, it, vi } from "vitest";
-import { awaitWithContext, type Context, BACKGROUND_CONTEXT as context, withCancel } from "../../src/context/index.ts";
+import {
+	awaitWithContext,
+	type Context,
+	BACKGROUND_CONTEXT as context,
+	withCancel,
+	withTelemetry,
+} from "../../src/context/index.ts";
 import {
 	evolve,
 	grantable,
@@ -670,12 +677,13 @@ describe("what a decision compares a read with", () => {
 // read walks the listed names, not every grant of the contract.
 describe("the order of a read", () => {
 	/** A decision granting `grants`, read with an allow of `value` under `under`. */
-	function reader(grants: readonly string[]) {
-		const host = new ChordHost<TestPrincipal>({
-			address: Server(),
-			principal: { kind: "server" },
-			onError: () => {},
-		});
+	function reader(grants: readonly string[], host = readerHost()) {
+		const read = decisionReader(grants, host);
+		return (value: unknown, under: Context = context) => read({ kind: "allow", value }, under);
+	}
+
+	/** A decision granting `grants`, read with the decision object `decided` under `under`. */
+	function decisionReader(grants: readonly string[], host = readerHost()) {
 		const source = new (class extends Source {
 			next: unknown;
 			get value(): never {
@@ -686,11 +694,56 @@ describe("the order of a read", () => {
 		const caller = { principal: host.principal, incarnation: host.incarnation };
 		const decision = new Decision({ host, label: "doc", dependent: undefined, caller, grants, moved() {} });
 		decision.declare(() => source, context);
-		return (value: unknown, under: Context = context) => {
-			source.next = { kind: "allow", value };
+		return (decided: unknown, under: Context = context) => {
+			source.next = decided;
 			return decision.now(under) as Allowed;
 		};
 	}
+
+	function readerHost() {
+		return new ChordHost<TestPrincipal>({ address: Server(), principal: { kind: "server" }, onError: () => {} });
+	}
+
+	// The owner's rule (2026-11-26, 03:12 UTC): values handed to Chord are immutable by convention.
+	it("the same decision object read again is the same verdict and counts no walk (1,000 reads)", async () => {
+		const read = decisionReader(["a", "b"]);
+		const decided = { kind: "allow", value: { level: 1, tags: ["x"], granted: ["b", "a"] } };
+		const first = read(decided);
+		const telemetry = new InMemoryTelemetryContext();
+		const walks = () => telemetry.getMetrics().filter(({ name }) => name === "chord.data.walks").length;
+		await telemetry.startSpan({ name: "reads" }, (span) => {
+			const under = withTelemetry(span, context);
+			let same = 0;
+			for (let index = 0; index < 1_000; index++) if (read(decided, under) === first) same++;
+			expect([same, walks()]).toEqual([1_000, 0]);
+			// An equal value of another object walks once: the counter is the one a read would add to.
+			read({ kind: "allow", value: { level: 1, tags: ["x"], granted: ["a", "b"] } }, under);
+			expect(walks()).toBe(1);
+		});
+	});
+
+	// Found by the review of the pass (first reviewer, 2026-11-26): a reused scratch list kept the size of the widest
+	// value a decision ever read (2,735 B per decision); a decision keeps only what its last read needs.
+	it("a short-lived wide value leaves no storage per decision once a small value replaces it (heap guard)", async () => {
+		const host = readerHost();
+		const reads = Array.from({ length: 6_000 }, () => reader([], host));
+		const small = { n: 1 };
+		const wide = Object.fromEntries(Array.from({ length: 128 }, (_, n) => [`f${n}`, n]));
+		for (const read of reads) {
+			read(small);
+			read(small);
+		}
+		const before = await settledHeap();
+		for (const read of reads) {
+			read(wide);
+			read(small);
+			read(small);
+		}
+		const each = ((await settledHeap()) - before) / reads.length;
+		expect(reads[400]!(small).value).toMatchObject({ n: 1 });
+		// Measured: under 1 B on the base, 2,735 B with the scratch list, under 3 B now.
+		expect(each).toBeLessThan(512);
+	}, 60_000);
 
 	it("equal reads stay one verdict and changes rebuild, from 30 to 33 names", () => {
 		for (const n of [30, 31, 32, 33]) {
@@ -731,6 +784,28 @@ describe("the order of a read", () => {
 				expect(read({ granted: [...listed].reverse().concat(listed.slice(0, 1)) })).toBe(verdict);
 			}
 		}
+	});
+
+	// Found by the review of the pass (second reviewer, 2026-11-26): the last decision is taken after the walk is counted.
+	it("a read made while the walk is counted leaves the outer read's verdict kept", () => {
+		const read = reader(["a", "b"]);
+		read({ p: 1, granted: ["a"] });
+		let once = true;
+		const metrics = {
+			...NOOP_TELEMETRY_METRICS,
+			counter: (name: string) => ({
+				add: () => {
+					if (name !== "chord.data.walks" || !once) return;
+					once = false;
+					read({ p: 2, granted: ["b"] });
+				},
+			}),
+		};
+		const outer = read(
+			{ p: 1, granted: ["a"] },
+			withTelemetry({ ...NOOP_TELEMETRY_CONTEXT, metrics } as never, context),
+		);
+		expect(read({ p: 1, granted: ["a"] })).toBe(outer);
 	});
 
 	it("the admitted value has the rest copy's own keys in their order and its prototype", () => {
