@@ -17,6 +17,7 @@ import {
 	type MethodData,
 	memberOrder,
 	NO_GRANTS,
+	type VersionData,
 } from "../contracts/internal.ts";
 import { ChordError, type FailureCause, isChordError } from "../data/index.ts";
 import { asChordError, invalid, stackless } from "../data/internal.ts";
@@ -82,6 +83,37 @@ function eventNodes(members: readonly string[]): (member: string) => EventNode |
 }
 
 const NO_EVENT_NODES = (): undefined => undefined;
+
+/**
+ * The set of `names` (`version`'s grants at `indexes`): one per version and grant while a binding has it, shared by
+ * every remote object of the version granted the same, so the members granted it are found by the set's identity
+ * (`grantedMembers`), not rebuilt per binding. Kept weakly (gone once no binding has it, all of them with the
+ * version). Indexes as the provider sends them, ascending, into at most 30 grants (a bit set in a small integer);
+ * others get a set of their own in their order, as before.
+ */
+function grantedSet(version: VersionData, indexes: readonly number[], names: readonly string[]): ReadonlySet<string> {
+	if (version.grants.length > 30) return new Set(names);
+	let bits = 0;
+	for (let at = 0; at < indexes.length; at++) {
+		const index = indexes[at]!;
+		if (at > 0 && index <= indexes[at - 1]!) return new Set(names);
+		bits |= 1 << index;
+	}
+	let sets = grantedSets.get(version);
+	if (sets === undefined) {
+		sets = new Map();
+		grantedSets.set(version, sets);
+	}
+	let set = sets.get(bits)?.deref();
+	if (set === undefined) {
+		set = new Set(names);
+		sets.set(bits, new WeakRef(set));
+	}
+	return set;
+}
+
+/** The granted sets of each version by their indexes' bits (`grantedSet`): gone with the version. */
+const grantedSets = new WeakMap<VersionData, Map<number, WeakRef<ReadonlySet<string>>>>();
 
 /**
  * The object of the remote references with one sharing key, owned by its host across the links of its path (one held
@@ -569,7 +601,8 @@ export class RemoteObject implements Target {
 	 */
 	#grantedFrom(entry: BoundEntry): ReadonlySet<string> {
 		if (entry.granted.length === 0) return NO_GRANTS;
-		const { grants } = currentVersion(this.contract);
+		const version = currentVersion(this.contract);
+		const { grants } = version;
 		const names = entry.granted.map((index) => {
 			const name = grants[index];
 			if (name === undefined) throw new Error(`hold ${entry.hold}: no grant ${index} in bound`);
@@ -577,7 +610,7 @@ export class RemoteObject implements Target {
 		});
 		const last = this.#bound?.granted;
 		if (last !== undefined && last.size === names.length && names.every((name) => last.has(name))) return last;
-		return new Set(names);
+		return grantedSet(version, entry.granted, names);
 	}
 
 	/** After a `bound` message's batch: the reference goes live (its parked calls are sent, a parked dependent goes on). */

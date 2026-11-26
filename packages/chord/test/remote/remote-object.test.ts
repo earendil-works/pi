@@ -35,6 +35,7 @@ import {
 	linked,
 	MATCH_PLAYER,
 	Match,
+	NOTES_EDITOR,
 	Notes,
 	PlacedNotes,
 	partValue,
@@ -180,6 +181,64 @@ forEachCodec(() => {
 			await transported();
 			expect(peer.closed).toBe(true);
 			expect(errors.map(({ kind }) => kind)).toEqual(["protocol_error"]);
+		});
+	});
+
+	describe("granted sets", () => {
+		it("are shared by the remote objects of a version granted the same, and found again while one has it", async () => {
+			const { client, peer } = await rawProvider();
+			const a = client.hold(Notes, { session: "S1" }, context);
+			await bindNext(peer);
+			const b = client.hold(Notes, { session: "S2" }, context);
+			await bindNext(peer);
+			await transported();
+			expect(grantOf(a)).toEqual([...NOTES_EDITOR].sort());
+			expect(b.granted).toBe(a.granted);
+			// Another grant has its own set; the first one's is found again while `b` keeps it.
+			const c = client.hold(Notes, { session: "S3" }, context);
+			const { hold } = await peer.next("hold");
+			const members = [
+				{ member: wireNames(Notes, [NOTES_EDITOR[0]!]).state.notes!, value: jsonPart([]) },
+				{ member: wireNames(Notes, [NOTES_EDITOR[0]!]).state.count!, value: jsonPart(0) },
+			];
+			peer.send({
+				kind: "bound",
+				holds: [{ hold, granted: wireNames(Notes, [NOTES_EDITOR[0]!]).granted, members, failed: [] }],
+			});
+			await transported();
+			expect(grantOf(c)).toEqual([NOTES_EDITOR[0]]);
+			expect(c.granted).not.toBe(a.granted);
+			a.release();
+			const d = client.hold(Notes, { session: "S4" }, context);
+			await bindNext(peer);
+			await transported();
+			expect(d.granted).toBe(b.granted);
+		});
+
+		it("are kept by no version: a set goes once no binding has it", async () => {
+			// A type of its own: another test's live reference granted the same would keep a set of `Notes`.
+			const Granted = remote("app.granted-set", {
+				version: 1,
+				params: { id: str() },
+				hostAddress: () => Server(),
+				state: { n: int() },
+				methods: { go: grantable(method()) },
+			});
+			const { client, peer } = await rawProvider();
+			const set = await (async () => {
+				const ref = client.hold(Granted, { id: "a" }, context);
+				const { hold } = await peer.next("hold");
+				const names = wireNames(Granted, ["go"]);
+				const members = [{ member: names.state.n!, value: jsonPart(1) }];
+				peer.send({ kind: "bound", holds: [{ hold, granted: names.granted, members, failed: [] }] });
+				await transported();
+				expect(grantOf(ref)).toEqual(["go"]);
+				const set = new WeakRef(ref.granted);
+				ref.release();
+				await transported();
+				return set;
+			})();
+			await expectCollected(set);
 		});
 	});
 
