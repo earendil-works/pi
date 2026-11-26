@@ -271,7 +271,8 @@ class PlanShape {
 		// The columns copied: the shape keeps strings, never a caller's list.
 		const rendered = { kind, after, through, columns: columns.slice(), text: render(this.#filter(range)) };
 		if (first === undefined) this.#first = rendered;
-		else (this.#texts ??= []).push(rendered);
+		else if (this.#texts === undefined) this.#texts = [rendered];
+		else this.#texts.push(rendered);
 		return rendered.text;
 	}
 
