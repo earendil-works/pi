@@ -925,19 +925,25 @@ class Writes {
 		tx.deleteWhere(t.switches, (w) => eq(w.workspace, workspace));
 		tx.deleteWhere(t.workspaceMembers, (m) => eq(m.workspace, workspace));
 		const agent = partyKey({ kind: "agent", session: workspace });
-		await deleteTold(
-			tx,
-			t.workspaceMembers,
-			WorkspaceMembers,
-			(m) => eq(m.partyKey, agent),
-			touched.workspaces,
-			"workspace",
-		);
+		// Its agent put in elsewhere goes too: who is present there changed (an open People list there follows).
+		const agentIn = new Set<string>();
+		await deleteTold(tx, t.workspaceMembers, WorkspaceMembers, (m) => eq(m.partyKey, agent), agentIn, "workspace");
+		for (const other of agentIn) {
+			touched.workspaces.add(other);
+			touched.presence.add(other);
+		}
+		if (agentIn.size > 0) touched.members.add(agent);
 		await deleteTold(tx, t.grants, Grants, (g) => eq(g.partyKey, agent), touched.workspaces, "workspace");
 		// What other workspaces wrote about it: rows withholding its own thing below it are gone with the subtree, but
 		// switches on it or its agent elsewhere (index `by_item`) and rows naming it as a thing (`by_thing`) are not.
 		for (const item of [itemKey({ kind: "thing", thing: workspace }), agent]) {
-			await deleteTold(tx, t.switches, Switches, (w) => eq(w.itemKey, item), touched.workspaces, "workspace");
+			const switched = new Set<string>();
+			await deleteTold(tx, t.switches, Switches, (w) => eq(w.itemKey, item), switched, "workspace");
+			for (const other of switched) {
+				touched.workspaces.add(other);
+				// A switch on its agent was about who is present there.
+				if (item === agent) touched.presence.add(other);
+			}
 		}
 		await deleteTold(tx, t.grants, Grants, (g) => eq(g.thing, workspace), touched.workspaces, "workspace");
 		tx.delete(t.workspaces, { workspace });

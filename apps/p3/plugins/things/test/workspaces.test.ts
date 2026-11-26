@@ -1395,3 +1395,45 @@ describe("round 2: Opus's cases and the decisions", () => {
 		});
 	});
 });
+
+describe("round 3: Astra's cases", () => {
+	it("astra3: owner Roots follows the displayed Pi name", async () => {
+		const p = await person("Owner");
+		await store.setOwner({ person: p.id, owner: true }, context);
+		await as(p, async (ctx) => {
+			const held = await ctx.get(Roots, { view: "held" });
+			await store.rename({ thing: pi, name: "My Pi" }, context);
+			const fresh = await ctx.get(Roots, { view: "fresh" });
+			assert.equal(fresh.list.value.rows[0]?.name, "My Pi");
+			assert.deepEqual(held.list.value.rows, fresh.list.value.rows);
+		});
+	});
+	it("astra3: People follows the displayed name of the workspace where someone joined", async () => {
+		const { leo, fam, robot } = await family();
+		await as(leo, async (ctx) => {
+			const held = await ctx.get(WorkspacePeople, { workspace: robot, view: "held" });
+			await store.rename({ thing: fam, name: "Renamed Family" }, context);
+			const fresh = await ctx.get(WorkspacePeople, { workspace: robot, view: "fresh" });
+			assert.ok(fresh.list.value.rows.some((r) => r.from.kind === "above" && r.from.name === "Renamed Family"));
+			assert.deepEqual(held.list.value.rows, fresh.list.value.rows);
+		});
+	});
+	it("astra3: removing a leaf updates the People list where its named agent had been put", async () => {
+		const { leo, robot } = await family();
+		const other = await space(pi, "Other");
+		await put(other, leo);
+		await store.putParty({ workspace: other, party: { kind: "agent", session: robot }, source: BY }, context);
+		await as(leo, async (ctx) => {
+			const held = await ctx.get(WorkspacePeople, { workspace: other, view: "held" });
+			assert.ok(held.list.value.rows.some((r) => r.party.kind === "agent"));
+			await store.removeWorkspace({ workspace: robot }, context);
+			await eventually(
+				() => w.rows("removing").length,
+				(left) => left === 0,
+			);
+			const fresh = await ctx.get(WorkspacePeople, { workspace: other, view: "fresh" });
+			assert.ok(!fresh.list.value.rows.some((r) => r.party.kind === "agent"));
+			assert.deepEqual(held.list.value.rows, fresh.list.value.rows);
+		});
+	});
+});

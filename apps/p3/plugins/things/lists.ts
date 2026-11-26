@@ -225,7 +225,10 @@ function rootsProbe(store: Store, caller: Caller): Probe<WorkspaceItem[]> {
 			for (const workspace of [root, ...candidates]) await load.workspace(workspace);
 			const everything =
 				caller.kind === "server" || (caller.kind === "person" && look.person(caller.person)?.owner === true);
-			if (everything) return root === "" ? [] : [itemOf(look, root)];
+			if (everything) {
+				load.things([root]);
+				return root === "" ? [] : [itemOf(look, root)];
+			}
 			const roots = [...candidates].filter((workspace) => {
 				const answer = look.answer(workspace, workspace, caller);
 				const parent = look.entries(workspace)?.parent ?? "";
@@ -295,14 +298,19 @@ function peopleProbe(workspace: string, caller: Caller): Probe<PartyItem[]> {
 		workspace,
 		caller,
 		reads: "presence",
-		compute: async (look) => {
+		compute: async (look, load) => {
 			const above = aboveOf(look, workspace, caller);
 			const entries = look.entries(workspace);
 			const present = look.access(workspace).present;
 			const rows: PartyItem[] = [];
+			// The workspaces it names (where each party was put in): a rename of one asks it again.
+			const named = new Set<string>();
 			const putIn = (key: string): Origin => {
 				for (let at = workspace; at !== ""; at = look.entries(at)?.parent ?? "") {
-					if (look.entries(at)?.members.has(key) === true) return originOf(look, workspace, at, above);
+					if (look.entries(at)?.members.has(key) === true) {
+						named.add(at);
+						return originOf(look, workspace, at, above);
+					}
 				}
 				return { kind: "aboveUnnamed" };
 			};
@@ -312,6 +320,7 @@ function peopleProbe(workspace: string, caller: Caller): Probe<PartyItem[]> {
 					if (!present.has(key)) rows.push({ party: partyOf(key), from: putIn(key), hidden: true });
 				}
 			}
+			load.things([...named]);
 			return rows.sort(
 				(a, b) => Number(a.hidden) - Number(b.hidden) || partyKey(a.party).localeCompare(partyKey(b.party)),
 			);
