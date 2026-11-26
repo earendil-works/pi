@@ -234,16 +234,16 @@ Running Pi again and quitting it is not enough: the terminal keeps key-reporting
 bash or zsh:
 
 ```bash
-printf '\e[<16u\e[=0;1u\e[>4;0m\e[?2004l\e[?1000l\e[?1002l\e[?1003l\e[?1004l\e[?1006l\e[?7h\e[?25h'
+printf '\e[<16u\e[=0;1u\e[>4;0m\e[?2004;1000;1002;1003;1004;1006l\e[?7;25h'
 ```
 
 PowerShell:
 
 ```powershell
-$e = [char]27; [Console]::Write("$e[<16u$e[=0;1u$e[>4;0m$e[?2004l$e[?1000l$e[?1002l$e[?1003l$e[?1004l$e[?1006l$e[?7h$e[?25h")
+$e = [char]27; [Console]::Write("$e[<16u$e[=0;1u$e[>4;0m$e[?2004;1000;1002;1003;1004;1006l$e[?7;25h")
 ```
 
-`\e[<16u` removes the key-reporting entries of up to 16 killed runs and `\e[=0;1u` turns off whatever remains. The rest turns off modifyOtherKeys, bracketed paste, mouse and focus reporting, and restores line wrapping and the cursor.
+`\e[<16u\e[=0;1u` clears key reporting left by up to 16 killed runs. The rest turns off the other modes and restores line wrapping and the cursor.
 
 If the pane still shows Pi's last screen around the prompt, the alternate screen is still active. Also run `printf '\e[?1049l'` (bash or zsh) or `[Console]::Write("$([char]27)[?1049l")` (PowerShell). Run it only in that case: on the normal screen it moves the cursor and confuses the shell's line editor.
 
