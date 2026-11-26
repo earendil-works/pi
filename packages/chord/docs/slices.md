@@ -350,6 +350,12 @@ deleted (the slice's spec and code are the record). Moved here from `carry-over.
   reserves the rest of a text that did not fit at three bytes a unit and copies the frame right-sized: a text of 1 Mi
   two-byte units 5.77 MB of buffers and 1,437 µs against 3.16 MB and 744 µs before the pass. On Node the rest is
   counted exactly.
+- **The encoder sizes a frame past its kept buffer from the message** (`partsLength` in `link/binary.ts`: parts and
+  their prefixes exactly, a failure by a flat 72 B, a text by its units and, once one fell short, every text at its
+  UTF-8). Rows measured above the code before the pass: 256 failures whose errors are strings of 2,000 two-byte
+  units 4.24 against 3.10 MB of buffers and 1,153 against 637 µs (4,096 of them 1.10 times); 256 failures of 100
+  two-byte bytes 1.22 times, 16 of 10 KiB 1.17 times. If such frames matter, size failures too or take frames past
+  the kept buffer back to the earlier growth; the kept buffer for small frames is the part that pays.
 - **Small items** (30 to 60 B each): an open query's compiled-plan wrapper, a given query's argument wrapper, a read
   plan's equality entries; a consumer's `#move` batch closure and list copy (about 0.3 KiB of garbage per move).
 

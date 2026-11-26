@@ -1441,4 +1441,4 @@ ending +31, −35 and −9 KiB; a round's work peaks at 11 MiB). Every cache of 
   two arguments, `latest`, `probed`), `ReadResult` (`kept`, `ids`), `ReadPlan.equalities`, `DecodedRows`, `QuerySpec.shapes`; an object's
   `holders` is an `Iterable`.
 
-Lines: `packages/chord/src` +2,723 −929.
+Lines: `packages/chord/src` +2,725 −929.
