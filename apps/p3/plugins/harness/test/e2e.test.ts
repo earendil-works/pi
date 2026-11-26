@@ -224,10 +224,16 @@ describe("the harness end to end", () => {
 		const transcript = withGranted(await client.get(Transcript, { session: id }, context), "view", "send")!;
 		await transcript.send({ text: "@go", requestId: "go" }, context);
 		await eventually(() => existsSync(join(folder, "started")), Boolean);
+		// A real edit (a comment alone builds the same script, which reloads nothing; Astra, round 1).
 		const file = join(built, "harness", "worker.ts");
-		await writeFile(file, `${await readFile(file, "utf8")}\n// edited\n`);
+		await writeFile(file, `${await readFile(file, "utf8")}\nexport const RELOADED = 1;\n`);
 		await until(t.plugins, (marks) => marks.dirty.length > 0, within("the watcher's marks", context, 10_000));
-		await t.apply(context);
+		const { steps } = await t.apply(context);
+		const workers = steps.find((step) => step.name === "workers");
+		assert.ok(
+			workers?.hosts.some((host) => host.kind === "reloaded" && host.host === id),
+			`the session's worker reloaded: ${JSON.stringify(steps)}`,
+		);
 		await writeFile(join(folder, "gate"), "");
 		await reaches(client, id, "settled", 20_000);
 		// The held transcript follows the next harness and shows the answer.
