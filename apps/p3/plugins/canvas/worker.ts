@@ -6,7 +6,7 @@
 // withheld meanwhile refuses it; reading pages through a reference of its own, held for the call only.
 
 import { arr, type Context, type Ctx, defineFacet, obj, type P3Principal, str } from "@earendil-works/p3/v1";
-import { defineExtension, defineTool } from "@earendil-works/p3/v1/worker";
+import { defineTool } from "@earendil-works/p3/v1/worker";
 import { type HarnessSession, type HeldThing, ThingHarnessParts, thingHarnessPart } from "../things/contract.worker.ts";
 import { BOARD_HEIGHT, BOARD_WIDTH, Canvas, CanvasKind, Shape } from "./contract.ts";
 
@@ -17,11 +17,11 @@ export default defineFacet((_host, self) => {
 /** A board the agent holds. */
 type Board = HeldThing<typeof Canvas>;
 
-/** The canvas's harness part (exported for its test). */
-export const canvasPart = thingHarnessPart(CanvasKind, (boards, session) => {
+/** The canvas's harness part. */
+const canvasPart = thingHarnessPart(CanvasKind, (boards, session) => {
 	const tools = [listTool(boards), readTool(boards, session)];
 	const draws = boards.some(({ ref }) => ref.granted.has("add"));
-	return { extension: defineExtension({ name: "canvas", tools: draws ? [...tools, drawTool(boards)] : tools }) };
+	return { extension: { tools: draws ? [...tools, drawTool(boards)] : tools } };
 });
 
 /** The tool `canvas_list`: the boards, with whether the agent may draw on each. */

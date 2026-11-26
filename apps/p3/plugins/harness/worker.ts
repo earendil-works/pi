@@ -162,7 +162,10 @@ async function openAgent(sources: Sources, opening: Context): Promise<{ durable:
 			env: (_target, context) => {
 				const at = location();
 				if (at === undefined) return undefined;
-				if (!things.givesEnv) return environments.value({ environment: at.machine, folder: at.folder }, context);
+				// Until a part that gives environments is registered at all (the machine kind; env4 removes this with
+				// ERNDL-1172): the environments plugin's resolver. From then on only parts: none withheld, none given.
+				const machines = [...parts.value.values()].some(({ value }) => value.givesEnv);
+				if (!machines) return environments.value({ environment: at.machine, folder: at.folder }, context);
 				return things.env(at, context);
 			},
 			onReport: (report) => reportError(`p3 harness: session ${session}`, report, BACKGROUND_CONTEXT),

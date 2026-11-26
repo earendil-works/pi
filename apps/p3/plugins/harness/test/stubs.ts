@@ -28,7 +28,6 @@ import {
 	type Writable,
 } from "@earendil-works/p3/v1";
 import {
-	defineExtension,
 	defineTool,
 	type ExecutionEnv,
 	ExecutionEnvironments,
@@ -38,6 +37,7 @@ import {
 	fauxToolCall,
 	type Message,
 	NodeExecutionEnv,
+	section,
 } from "@earendil-works/p3/v1/worker";
 import {
 	type HarnessLocation,
@@ -49,6 +49,7 @@ import {
 	thingHarnessPart,
 } from "../../things/contract.worker.ts";
 import { defineThing } from "../../things/kind.ts";
+import { held as heldThing } from "../../things/test/part.ts";
 import things from "../../things/worker.ts";
 import { CodingToolsKind } from "../../tools/kind.ts";
 import tools from "../../tools/worker.ts";
@@ -74,7 +75,14 @@ const LoginKind = defineThing("test.login", {
 });
 
 /** A request a scripted login received: its provider, the last message's text, the tools offered, the system prompt. */
-export type Request = { provider: string; last: string; tools: string[]; prompt: string };
+export type Request = {
+	provider: string;
+	last: string;
+	tools: string[];
+	prompt: string;
+	/** The tools the request's last change of tools took away (none: no change). */
+	removed: string[];
+};
 
 /** A thing the agent holds, as the test makes it: its kind's name and the held entry. */
 export type Holding = { readonly kind: string; readonly held: HeldThing };
@@ -114,33 +122,23 @@ export function sessionRow(id: string, folder: string): SessionRow {
 
 /** A held scripted login `thing` of provider `provider` answering from `script`, with `test_session` if `tool`. */
 export function login(thing: string, provider: string, script: Step[], tool = false): Holding {
-	const ref = {
-		provider: constant(provider),
-		script: constant(script),
-		tool: constant(tool),
-		granted: new Set(["use"]),
-	};
-	// A stand-in for the holding's reference: the members the part reads, nothing of a reference's lifecycle.
-	return { kind: LoginKind.name, held: { thing, workspace: "w", ref: ref as unknown as HeldThing["ref"] } };
+	const members = { provider: constant(provider), script: constant(script), tool: constant(tool) };
+	return { kind: LoginKind.name, held: heldThing(thing, ["use"], members) };
 }
 
 /** A held coding tools thing with the flags `granted` (all four by default). */
 export function coding(thing = "tools", granted = ["read", "write", "edit", "bash"]): Holding {
-	// A stand-in for the holding's reference: the coding tools' part reads only `granted`.
-	const ref = { granted: new Set(granted) } as unknown as HeldThing["ref"];
-	return { kind: CodingToolsKind.name, held: { thing, workspace: "w", ref } };
+	return { kind: CodingToolsKind.name, held: heldThing(thing, granted) };
 }
 
 /** A held subagents thing, with the flag `use` unless withheld. */
 export function subagents(use = true): Holding {
-	// A stand-in for the holding's reference: the subagents' part reads only `granted`.
-	const ref = { granted: new Set(use ? ["use"] : []) } as unknown as HeldThing["ref"];
-	return { kind: SubagentsKind.name, held: { thing: "subagents", workspace: "w", ref } };
+	return { kind: SubagentsKind.name, held: heldThing("subagents", use ? ["use"] : []) };
 }
 
 /** A held thing of `kind`, whose part (`extra`) gives what the case needs. */
 export function other(kind: string, thing: string): Holding {
-	return { kind, held: { thing, workspace: "w", ref: { granted: new Set() } as unknown as HeldThing["ref"] } };
+	return { kind, held: heldThing(thing, []) };
 }
 
 /** A part a case adds beside the others: the kind's name, and what it gives (a prompt section, an environment). */
@@ -238,7 +236,7 @@ export function standIns(
 						return { output: [{ type: "text", text: `title: ${title}` }] };
 					},
 				});
-				return { providers, extension: defineExtension({ name: "test-session", tools: [tool] }) };
+				return { providers, extension: { tools: [tool] } };
 			}),
 		);
 	});
@@ -247,14 +245,20 @@ export function standIns(
 			const Kind = defineThing(kind, { version: 1, ticks: {} });
 			self.contribute(
 				ThingHarnessParts,
-				thingHarnessPart(Kind, (_things, session) => {
-					count(kind);
-					seen?.(session);
-					return {
-						...(prompt === undefined ? {} : { prompt: [{ key: "test-extra", render: () => prompt }] }),
-						...(env === undefined ? {} : { env }),
-					};
-				}),
+				thingHarnessPart(
+					Kind,
+					(_things, session) => {
+						count(kind);
+						seen?.(session);
+						return {
+							...(prompt === undefined
+								? {}
+								: { extension: { sections: [section("test-extra", () => prompt)] } }),
+							...(env === undefined ? {} : { env }),
+						};
+					},
+					env === undefined ? {} : { env: "gives" },
+				),
 			);
 		}
 	});
@@ -288,7 +292,13 @@ function scripted(provider: string, script: readonly Step[], requests: Request[]
 	const answer = (context: { messages: Message[] }) => {
 		const last = lastText(context.messages);
 		const step = script.find(({ when }) => last.includes(when));
-		requests.push({ provider, last, tools: offered(context.messages), prompt: prompted(context.messages) });
+		requests.push({
+			provider,
+			last,
+			tools: offered(context.messages),
+			prompt: prompted(context.messages),
+			removed: removed(context.messages),
+		});
 		// One answer queued at a time: each request queues the next.
 		faux.appendResponses([answer]);
 		if (step === undefined)
@@ -323,6 +333,12 @@ function prompted(messages: readonly Message[]): string {
 		}
 	}
 	return [...sections.values()].join("\n");
+}
+
+/** The tools the request's last change of tools took away. */
+function removed(messages: readonly Message[]): string[] {
+	const last = messages.findLast((message) => message.role === "system" && message.toolsRemoved !== undefined);
+	return last?.role === "system" ? (last.toolsRemoved ?? []).map((tool) => tool.name) : [];
 }
 
 /** The tools the request offers: its system messages' additions minus their removals, in order. */

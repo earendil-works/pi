@@ -9,8 +9,13 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { BACKGROUND_CONTEXT as context, isChordError, type P3Principal } from "@earendil-works/p3/v1";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
-import type { Extension, PromptSection } from "@earendil-works/p3/v1/worker";
-import { type HarnessContribution, type HeldThing, ThingHarnessParts } from "../../things/contract.worker.ts";
+import type { PromptSection } from "@earendil-works/p3/v1/worker";
+import {
+	type HarnessContribution,
+	type HarnessExtension,
+	type HeldThing,
+	ThingHarnessParts,
+} from "../../things/contract.worker.ts";
 import { InstructionsKind, type Language } from "../instructions-kind.ts";
 import { type Skill, SkillsKind } from "../skills-kind.ts";
 
@@ -73,7 +78,7 @@ describe("the agent's instructions", () => {
 		const pi = instructions("pi", { value: "Work with code." }, { value: "en" });
 		const family = instructions("family", { value: "Sei freundlich." }, { value: "de" });
 		const hidden = instructions("other", { value: "Not for the agent." }, { value: "en" }, false);
-		const shown = await rendered(given(InstructionsKind.name, [pi, hidden, family]).prompt ?? []);
+		const shown = await rendered(given(InstructionsKind.name, [pi, hidden, family]).extension?.sections ?? []);
 		assert.deepEqual(
 			shown.map(([key]) => key),
 			["instructions-pi", "instructions-family"],
@@ -85,7 +90,7 @@ describe("the agent's instructions", () => {
 	it("read the text and the language at each prompt, and give nothing for an empty text", async () => {
 		const text = { value: "Old." };
 		const language: Value<Language> = { value: "en" };
-		const [section] = given(InstructionsKind.name, [instructions("pi", text, language)]).prompt ?? [];
+		const [section] = given(InstructionsKind.name, [instructions("pi", text, language)]).extension?.sections ?? [];
 		assert.ok(section !== undefined);
 		text.value = "New.";
 		language.value = "de";
@@ -97,16 +102,16 @@ describe("the agent's instructions", () => {
 
 describe("the agent's skills", () => {
 	/** The extension the skills part gives `sets`. */
-	const skills = (...sets: HeldThing[]): Extension | undefined => given(SkillsKind.name, sets).extension;
+	const skills = (...sets: HeldThing[]): HarnessExtension | undefined => given(SkillsKind.name, sets).extension;
 
 	/** The section's text of `extension`. */
-	async function section(extension: Extension | undefined): Promise<string | undefined> {
+	async function section(extension: HarnessExtension | undefined): Promise<string | undefined> {
 		// The section reads neither the prompt's input nor its context.
 		return extension?.sections?.[0]?.render({} as never, context);
 	}
 
 	/** Runs `skills_read` of `extension` for `name`; its answer, parsed. */
-	async function read(extension: Extension | undefined, name: string): Promise<unknown> {
+	async function read(extension: HarnessExtension | undefined, name: string): Promise<unknown> {
 		const tool = extension?.tools?.find((each) => each.name === "skills_read");
 		assert.ok(tool !== undefined);
 		// `skills_read` uses neither Durable's execution API nor arguments beyond its schema's.

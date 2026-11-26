@@ -1,16 +1,23 @@
 // The prompt plugin on the server: its two kinds (`serveThing`: the things plugin admits every caller) over one store
-// of their settings (`store.ts`). Instructions read their settings live, the default while never set, and Pi's first
-// one is seeded at start (`one`). A set of skills hands out its shared read (`set.ts`: the folder's skills, watched)
+// of their settings (`store.ts`). Instructions read their settings live (no text while never set); Pi's first one is
+// seeded at start (`one`) with a default text. A set of skills hands out its shared read (`set.ts`: the folder's skills, watched)
 // and `read`, a skill's text, read from the Pi's disk when asked for.
 
 import { defineFacet } from "@earendil-works/p3/v1";
-import { ServerRuntime } from "@earendil-works/p3/v1/server";
 import { serveThing } from "../things/serve.ts";
-import { readSkill, skillsRoot } from "./folder.ts";
 import { InstructionsKind } from "./instructions-kind.ts";
 import { SkillSet, serveSet } from "./set.ts";
 import { SkillsKind } from "./skills-kind.ts";
-import { DEFAULT_INSTRUCTIONS, type InstructionsSettings, PromptStore, serveStore } from "./store.ts";
+import { type InstructionsSettings, PromptStore, serveStore, UNSET_INSTRUCTIONS } from "./store.ts";
+
+/** This plugin's name: the maker of the things it seeds. */
+const PLUGIN = "@earendil-works/p3-prompt";
+
+/** What Pi's seeded instructions say at first. */
+const SEED: InstructionsSettings = {
+	language: "en",
+	text: "Be direct and concise. Ask before you change or delete something you did not make.",
+};
 
 export default defineFacet((host) => {
 	serveStore(host);
@@ -19,11 +26,16 @@ export default defineFacet((host) => {
 	serveThing(host, InstructionsKind, {
 		implement: ({ thing }, _caller, self) => {
 			const found = self.liveQuery(self.get(PromptStore, {}).instructions.of, { thing }, { first: 1 });
-			const settings = self.derive([found], ([{ rows }]) => rows[0] ?? DEFAULT_INSTRUCTIONS);
+			const settings = self.derive([found], ([{ rows }]) => rows[0] ?? UNSET_INSTRUCTIONS);
 			return {
 				text: self.derive([settings], ([{ text }]) => text),
 				language: self.derive([settings], ([{ language }]) => language),
 			};
+		},
+		// Pi's seed (made by this plugin, `one`) starts with the default text; a person's new instructions start empty.
+		create: async (thing, _input, by, ctx) => {
+			if (by.kind !== "plugin" || by.plugin !== PLUGIN) return;
+			await (await ctx.get(PromptStore, {})).configureInstructions({ thing, ...SEED }, ctx);
 		},
 		configure: async (thing, settings, ctx) => {
 			// `Workspace.configure` checked each value against its state member's schema (`text`, `language`).
@@ -37,15 +49,10 @@ export default defineFacet((host) => {
 	});
 
 	serveThing(host, SkillsKind, {
+		// One object per set holds its folder's read and its watcher; every caller's object hands out that one.
 		implement: ({ thing }, _caller, self) => {
-			const root = skillsRoot(self.registry(ServerRuntime).value.dataDir);
 			const set = self.get(SkillSet, { thing });
-			const found = self.liveQuery(self.get(PromptStore, {}).skills.of, { thing }, { first: 1 });
-			return {
-				skills: set.skills,
-				folder: self.derive([found], ([{ rows }]) => rows[0]?.folder ?? ""),
-				read: ({ name }) => readSkill(root, set.path.value, name),
-			};
+			return { skills: set.skills, folder: set.folder, read: (args, ctx) => set.read(args, ctx) };
 		},
 		configure: async (thing, { folder }, ctx) => {
 			// The one setting, left out: nothing to change.

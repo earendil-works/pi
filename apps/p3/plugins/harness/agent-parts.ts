@@ -1,7 +1,7 @@
 // What a session's agent gets from the things it holds: one Durable registry, one `Models` and an execution
 // environment, kept in step with what the worker holds (`HeldThings`) and the kinds' parts on this worker
 // (`ThingHarnessParts`). Each kind's part gets every thing of its kind at once and gives one contribution: an
-// extension (its prompt sections added) installed under the kind's name, providers (a login's, one per thing),
+// extension, installed under the kind's name, providers (a login's, one per thing),
 // composed into a new `Models` when they change, and an environment. A kind is given again only when its list of held
 // things (by identity: the holding keeps an unchanged kind's array) or its part changed; a kind no longer held is
 // uninstalled.
@@ -13,7 +13,6 @@ import {
 	type ExecutionEnv,
 	type Extension,
 	type Models,
-	type PromptSection,
 	type Provider,
 	type Registry,
 } from "@earendil-works/p3/v1/worker";
@@ -62,12 +61,6 @@ export class AgentParts {
 		return this.#models;
 	}
 
-	/** Whether a kind gives environments (a machine's): then only kinds do, the location's resolver no more. */
-	get givesEnv(): boolean {
-		for (const given of this.#given.values()) if (given.env !== undefined) return true;
-		return false;
-	}
-
 	/** The environment at `location`: the first kind's that gives one there; `undefined`: none does. */
 	async env(location: HarnessLocation, context: Context): Promise<ExecutionEnv | undefined> {
 		for (const given of this.#given.values()) {
@@ -95,8 +88,11 @@ export class AgentParts {
 				old !== undefined && old.things === things && old.part === part ? old : this.#give(kind, things, part),
 			);
 		}
+		// Durable replaces an installed extension of the same name in place: a kind given again keeps its place among
+		// the others (and with it the order of the tools and sections the model was shown).
 		for (const [kind, given] of before) {
-			if (next.get(kind) !== given && given.extension !== undefined) this.registry.uninstall(given.extension);
+			if (given.extension !== undefined && next.get(kind)?.extension === undefined)
+				this.registry.uninstall(given.extension);
 		}
 		for (const [kind, given] of next) {
 			if (before.get(kind) !== given && given.extension !== undefined) this.#install(kind, given.extension);
@@ -123,7 +119,7 @@ export class AgentParts {
 			return {
 				things,
 				part,
-				extension: extensionOf(kind, given.extension, given.prompt),
+				extension: given.extension === undefined ? undefined : { ...given.extension, name: kind },
 				providers: given.providers ?? [],
 				env: given.env,
 			};
@@ -139,6 +135,8 @@ export class AgentParts {
 		try {
 			this.registry.install(extension);
 		} catch (error) {
+			// What the kind gave before is not what it gives now.
+			this.registry.uninstall(extension);
 			this.#report(kind, "install", error);
 		}
 	}
@@ -172,17 +170,6 @@ export class AgentParts {
 		this.#reported.add(key);
 		reportError(`p3 harness: session ${this.#session.session}: ${kind}`, error, BACKGROUND_CONTEXT);
 	}
-}
-
-/** A kind's extension under the kind's name, its prompt sections after the extension's own; none: nothing to install. */
-function extensionOf(
-	kind: string,
-	extension: Extension | undefined,
-	prompt: readonly PromptSection[] | undefined,
-): Extension | undefined {
-	if (extension === undefined && (prompt === undefined || prompt.length === 0)) return undefined;
-	const sections = [...(extension?.sections ?? []), ...(prompt ?? [])];
-	return { ...extension, name: kind, sections };
 }
 
 /** Whether the providers differ between two applies: other kinds with providers, or other providers of one. */

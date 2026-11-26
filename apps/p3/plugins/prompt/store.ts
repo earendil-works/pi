@@ -1,7 +1,7 @@
 // The prompt store on the server (`PromptStore`): the settings of every instructions thing (its text and language) and
 // of every set of skills (its folder), each keyed by the thing's id, read through `settings.of`, written by one
 // merging method per kind inside one transaction (two Configures at once never lose one's change). A thing whose
-// settings were never set reads the default. A thing's settings live as long as the thing: its kind's `delete`
+// settings were never set reads them unset. A thing's settings live as long as the thing: its kind's `delete`
 // clears them. Server code of this plugin only: it checks no caller (the things plugin admits them).
 
 import {
@@ -29,13 +29,10 @@ export const InstructionsSettings = obj({ text: InstructionsText, language: Lang
 /** An instructions thing's settings (see `InstructionsSettings`). */
 export type InstructionsSettings = Static<typeof InstructionsSettings>;
 
-/** What instructions say before anyone set them: Pi's seed, and any thing never configured. */
-export const DEFAULT_INSTRUCTIONS: InstructionsSettings = {
-	language: "en",
-	text: "Be direct and concise. Ask before you change or delete something you did not make.",
-};
+/** What instructions read while never configured: no text (no prompt section), in English. */
+export const UNSET_INSTRUCTIONS: InstructionsSettings = { language: "en", text: "" };
 
-/** A set of skills' settings: its folder, relative to the Pi's skills root (`""`: the root itself). */
+/** A set of skills' settings: its folder, relative to the Pi's skills root (`""`: none, no skills). */
 export const SkillsSettings = obj({ folder: str() });
 
 /** The prompt plugin's settings, once per server: each kind's as a named query, and the writes. */
@@ -48,7 +45,7 @@ export const PromptStore = local("prompt.store", {
 			of: obj({ thing: str() }),
 		}),
 		skills: queries(SkillsSettings, {
-			/** Set `thing`'s settings: one row, none while never set (the root). */
+			/** Set `thing`'s settings: one row, none while never set (no folder). */
 			of: obj({ thing: str() }),
 		}),
 		/** Sets some of instructions `thing`'s settings, keeping the others (the default where never set). */
@@ -97,7 +94,7 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			),
 			configureInstructions: ({ thing, text, language }, ctx) =>
 				self.tx(async (tx) => {
-					const stored = (await tx.get(instructions, { thing })) ?? { thing, ...DEFAULT_INSTRUCTIONS };
+					const stored = (await tx.get(instructions, { thing })) ?? { thing, ...UNSET_INSTRUCTIONS };
 					tx.put(instructions, {
 						...stored,
 						...(text === undefined ? {} : { text }),

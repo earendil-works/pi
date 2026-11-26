@@ -6,7 +6,7 @@
 // held reference of the set that owns the name. A skill's files stay on the Pi for now: the tool names them.
 
 import { contribute, defineFacet, forbidden, invalid, obj, str } from "@earendil-works/p3/v1";
-import { defineExtension, defineTool, type PromptSection } from "@earendil-works/p3/v1/worker";
+import { defineTool, type PromptSection } from "@earendil-works/p3/v1/worker";
 import { type HeldThing, ThingHarnessParts, thingHarnessPart } from "../things/contract.worker.ts";
 import { type Instructions, InstructionsKind, type Language } from "./instructions-kind.ts";
 import { type Skill, type Skills, SkillsKind } from "./skills-kind.ts";
@@ -17,7 +17,7 @@ export default defineFacet((host) => {
 		self.contribute(
 			ThingHarnessParts,
 			thingHarnessPart(InstructionsKind, (things) => ({
-				prompt: things.filter(({ ref }) => ref.granted.has("use")).map(instructionsSection),
+				extension: { sections: things.filter(({ ref }) => ref.granted.has("use")).map(instructionsSection) },
 			})),
 		),
 	);
@@ -45,26 +45,20 @@ function instructionsSection({ thing, ref }: HeldThing<typeof Instructions>): Pr
 	};
 }
 
-/** A set of skills the agent holds. */
-type Set = HeldThing<typeof Skills>;
+/** A set of skills the agent holds (`Set` would shadow the global). */
+type HeldSet = HeldThing<typeof Skills>;
 
 /** What the sets give: the list section and `skills_read`, over the sets the agent may read; none: nothing. */
-function skillsPart(things: readonly Set[]) {
+function skillsPart(things: readonly HeldSet[]) {
 	// Use gives `read`: a set the agent is let in to without it lists nothing.
 	const usable = things.filter(({ ref }) => ref.granted.has("read"));
 	if (usable.length === 0) return {};
-	return {
-		extension: defineExtension({
-			name: SkillsKind.name,
-			tools: [readTool(usable)],
-			sections: [{ key: "skills", render: () => listed(usable) }],
-		}),
-	};
+	return { extension: { tools: [readTool(usable)], sections: [{ key: "skills", render: () => listed(usable) }] } };
 }
 
 /** The skills of `sets` by name, each from the closest set that has it (held last), the closest set's first. */
-function skillsOf(sets: readonly Set[]): Map<string, { readonly set: Set; readonly skill: Skill }> {
-	const named = new Map<string, { readonly set: Set; readonly skill: Skill }>();
+function skillsOf(sets: readonly HeldSet[]): Map<string, { readonly set: HeldSet; readonly skill: Skill }> {
+	const named = new Map<string, { readonly set: HeldSet; readonly skill: Skill }>();
 	for (const set of sets.toReversed()) {
 		for (const skill of set.ref.skills.value) if (!named.has(skill.name)) named.set(skill.name, { set, skill });
 	}
@@ -72,7 +66,7 @@ function skillsOf(sets: readonly Set[]): Map<string, { readonly set: Set; readon
 }
 
 /** The skills section: the skills by name and description; none: no section. */
-function listed(sets: readonly Set[]): string | undefined {
+function listed(sets: readonly HeldSet[]): string | undefined {
 	const skills = [...skillsOf(sets).values()];
 	if (skills.length === 0) return undefined;
 	const lines = skills.map(({ skill }) => `- ${skill.name}: ${skill.description}`);
@@ -80,7 +74,7 @@ function listed(sets: readonly Set[]): string | undefined {
 }
 
 /** The tool `skills_read`: one skill's text and files as JSON, from the set that owns its name. */
-function readTool(sets: readonly Set[]) {
+function readTool(sets: readonly HeldSet[]) {
 	return defineTool({
 		name: "skills_read",
 		description:

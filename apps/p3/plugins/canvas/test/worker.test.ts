@@ -9,46 +9,20 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { constant, BACKGROUND_CONTEXT as context, type P3Principal } from "@earendil-works/p3/v1";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
-import type { Extension } from "@earendil-works/p3/v1/worker";
-import { type HeldThing, ThingHarnessParts } from "../../things/contract.worker.ts";
+import type { HarnessExtension as Extension, HeldThing } from "../../things/contract.worker.ts";
+import { held, partOf, runTool as run, SESSION } from "../../things/test/part.ts";
 import { CanvasKind, type Shape } from "../contract.ts";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 
-/** The session, whose `call` a case never reaches. */
-const SESSION = {
-	session: "s",
-	workspace: "w",
-	call: () => Promise.reject(new Error("no call")),
-	location: async () => undefined,
-};
-
 /** A held board: its id, its name, and whether Draw is granted; `drawn` records what its `add` got. */
 function board(thing: string, name: string, draw: boolean, drawn: Shape[][] = []): HeldThing {
-	const ref = {
-		name: constant(name),
-		granted: new Set(draw ? ["add", "remove", "export"] : []),
-		...(draw
-			? {
-					add: async ({ shapes }: { shapes: Shape[] }) => {
-						drawn.push(shapes);
-						return shapes.map((_, at) => `${thing}-${at}`);
-					},
-				}
-			: {}),
+	if (!draw) return held(thing, [], { name: constant(name) });
+	const add = async ({ shapes }: { shapes: Shape[] }) => {
+		drawn.push(shapes);
+		return shapes.map((_, at) => `${thing}-${at}`);
 	};
-	// A stand-in for the holding's reference: the members the part reads, nothing of a reference's lifecycle.
-	return { thing, workspace: "w", ref: ref as unknown as HeldThing["ref"] };
-}
-
-/** Runs tool `name` of `extension` with `args`; its output's text. */
-async function run(extension: Extension, name: string, args: object): Promise<string> {
-	const tool = extension.tools?.find((each) => each.name === name);
-	assert.ok(tool !== undefined, name);
-	// The canvas tools use neither Durable's execution API nor arguments beyond their schema's.
-	const result = await tool.execute(args as never, {} as never, context);
-	// A park has no output: the canvas tools never park.
-	return (result.output ?? []).map((part) => (part.type === "text" ? part.text : "")).join("");
+	return held(thing, ["add", "remove", "export"], { name: constant(name), add });
 }
 
 const RECT: Shape = { kind: "rect", color: "#000000", x: 0, y: 0, w: 10, h: 10, fill: false };
@@ -64,9 +38,7 @@ describe("the agent's tools for the boards it holds", () => {
 
 	/** What the canvas part gives `boards`. */
 	function given(...boards: HeldThing[]): Extension {
-		const [entry] = t.contributions(ThingHarnessParts);
-		assert.equal(entry?.value.kind.name, CanvasKind.name);
-		const extension = entry.value.part(boards, SESSION).extension;
+		const extension = partOf(t, CanvasKind)(boards, SESSION).extension;
 		assert.ok(extension !== undefined);
 		return extension;
 	}

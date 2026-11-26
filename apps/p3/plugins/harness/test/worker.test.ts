@@ -139,6 +139,18 @@ describe("the harness plugin on a worker", () => {
 		assert.deepEqual(requests()[0]?.tools, ["edit", "read", "write"]);
 	});
 
+	it("takes only bash from the offered tools when Bash is withheld: the kind keeps its place among the others", async () => {
+		// The coding tools are held before the login, whose part gives a tool too.
+		const faux = login("login", "faux", [says("", "ok")], true);
+		const server = await start([coding(), faux]);
+		await ask("one");
+		server.hold([coding("tools", ["read", "write", "edit"]), faux]);
+		await ask("two");
+		assert.deepEqual(requests()[1]?.tools, ["edit", "read", "test_session", "write"]);
+		// Durable removes and offers every tool again when their order changed: an extension replaced in place keeps it.
+		assert.deepEqual(requests()[1]?.removed, ["bash"]);
+	});
+
 	it("offers no tools to the next request once the agent let go of the tools", async () => {
 		const held = [login("login", "faux", [says("", "ok")]), coding()];
 		const server = await start(held);
@@ -285,7 +297,7 @@ describe("the harness plugin on a worker", () => {
 		);
 	});
 
-	it("runs the tools where a part gives the location's environment; none there: none; no such part: the location's", async () => {
+	it("runs the tools where a part gives the location's environment; none there or the machine let go of: none", async () => {
 		const elsewhere = join(folder, "machine");
 		await mkdir(elsewhere);
 		const script = [runs("where", "pwd"), says("", "done")];
@@ -306,7 +318,8 @@ describe("the harness plugin on a worker", () => {
 			.map(({ last }) => last.trim());
 		assert.equal(results[0], elsewhere);
 		assert.match(results[1] ?? "", /No execution environment/, "none on a machine the part does not give");
-		assert.equal(results[2], folder, "no machine part: the environments plugin's");
+		// Astra and Opus, round 1: the machine let go of (Work withheld) leaves no environment, no fallback.
+		assert.match(results[2] ?? "", /No execution environment/, "a machine part registered: no fallback");
 	});
 
 	it("tells a part where a conversation works: the session's location, live", async () => {

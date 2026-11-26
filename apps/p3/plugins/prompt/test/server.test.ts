@@ -1,6 +1,6 @@
 // The prompt plugin on the server (`testPlugin`, beside the things plugin's server facet). Instructions: the agents get
-// Use by the kind's default grants, a person let in with `@open` gets no flag (Use is for agents); the default text
-// before anyone set it; Pi's seeded one; configure sets some settings and keeps the others, also when two run at once;
+// Use by the kind's default grants, a person let in with `@open` gets no flag (Use is for agents); no text before anyone
+// set one; Pi's seeded one with the default text; configure sets some settings and keeps the others, also when two run at once;
 // hidden in a workspace: denied there; the settings dropped with the thing, the clear safe to run twice. Skills: a set
 // lists its folder's skills and follows the folder live, one watcher per set, closed with its last holder; the agent
 // reads a skill's text and files, never another set's; a folder outside the Pi's skills root is refused with its
@@ -98,12 +98,12 @@ describe("instructions", () => {
 	/** Makes instructions in Pi, by the test; linked with the kind's default grants. */
 	const make = () => things.create({ kind: InstructionsKind.name, name: "Coding", workspace: pi, by: BY }, context);
 
-	it("give the agent Use and the default text before anyone set them; a person with @open gets no flag", async () => {
+	it("give the agent Use and no text before anyone set one; a person with @open gets no flag", async () => {
 		const thing = await make();
 		await holding(Instructions, thing, async (instructions) => {
 			assert.deepEqual([...instructions.granted], ["use"]);
 			assert.equal(instructions.language.value, "en");
-			assert.match(instructions.text.value, /concise/);
+			assert.equal(instructions.text.value, "");
 		});
 		const person = await things.createPerson({ name: "Ann", madeBy: BY }, context);
 		const party = { kind: "person", person } as const;
@@ -118,10 +118,12 @@ describe("instructions", () => {
 		});
 	});
 
-	it("are seeded once in Pi with the default text", async () => {
+	it("are seeded once in Pi with the default text, which only the seed gets", async () => {
 		const seeded = await t.host.get(OneThing, { kind: InstructionsKind.name }, context);
 		const seed = await until(seeded.thing, (thing) => thing !== "", within("the seed", context));
-		await holding(Instructions, seed, async (instructions) => assert.match(instructions.text.value, /concise/));
+		await holding(Instructions, seed, async (instructions, ctx) => {
+			await until(instructions.text, (text) => /concise/.test(text), within("the seed's text", ctx));
+		});
 	});
 
 	it("configure sets some settings and keeps the others, also when two run at once", async () => {

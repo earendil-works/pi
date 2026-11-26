@@ -224,8 +224,5 @@ const archiveTool = defineTool({
 	},
 });
 
-/** The subagent tools, under the kind's name (the harness installs a kind's extension under it). */
-const SUBAGENT_TOOLS: Extension = defineExtension({
-	name: SubagentsKind.name,
-	tools: [spawnTool, sendTool, listTool, archiveTool],
-});
+/** The subagent tools (the harness installs them under the kind's name, which `subagent_spawn` leaves out). */
+const SUBAGENT_TOOLS = { tools: [spawnTool, sendTool, listTool, archiveTool] };

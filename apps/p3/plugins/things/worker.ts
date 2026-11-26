@@ -2,10 +2,10 @@
 // kind name) and `HeldThings` (what the worker holds as its agent, from its one contributor, the holding).
 
 import { defineFacet, keyedEntries } from "@earendil-works/p3/v1";
-import { type HeldThing, HeldThings, ThingHarnessParts } from "./contract.worker.ts";
+import { type Held, HeldThings, ThingHarnessParts } from "./contract.worker.ts";
 
 /** What the worker holds before the holding contributed. */
-const NOTHING_HELD: ReadonlyMap<string, readonly HeldThing[]> = new Map();
+const NOTHING_HELD: Held = new Map();
 
 export default defineFacet((host) => {
 	host.serve(ThingHarnessParts, {

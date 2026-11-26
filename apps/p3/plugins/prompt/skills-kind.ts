@@ -2,7 +2,7 @@
 // root (`<data directory>/skills`), each with a `SKILL.md`. Made by people. Every set that reaches a session adds its
 // skills; a name in two sets is the closer set's. The list and the folder are plain: whoever is let in sees which
 // skills there are. Use, for agents, gives `read`: a skill's text and the names of its files. The folder is the set's
-// setting, changed with Configure where it is linked (decision 91). No guests.
+// setting, changed with Configure where it is linked (decision 91); a set without one has no skills. No guests.
 
 import { arr, method, obj, type Static, str } from "@earendil-works/p3/v1";
 import { defineThing } from "../things/kind.ts";
