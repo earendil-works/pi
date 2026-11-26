@@ -101,6 +101,35 @@ describe("declaration checks", () => {
 			{ version: 1, params: {}, hostAddress, flags: { export: { namespace: "n", key: "k", params: [{}] } } },
 			"n.flags.export: expected its label as a message ({ namespace, key, params })",
 		],
+		// Review of the flag labels, Sol: values `MessageSchema` refuses and JSON would change.
+		[
+			"a flag label with NaN among its parameters",
+			"n",
+			{ version: 1, params: {}, hostAddress, flags: { export: { namespace: "n", key: "k", params: [Number.NaN] } } },
+			"n.flags.export: expected its label as a message ({ namespace, key, params })",
+		],
+		[
+			"a flag label with an infinite number among its parameters",
+			"n",
+			{
+				version: 1,
+				params: {},
+				hostAddress,
+				flags: { export: { namespace: "n", key: "k", params: [Number.POSITIVE_INFINITY] } },
+			},
+			"n.flags.export: expected its label as a message ({ namespace, key, params })",
+		],
+		[
+			"a flag label with a hole among its parameters",
+			"n",
+			{
+				version: 1,
+				params: {},
+				hostAddress,
+				flags: { export: { namespace: "n", key: "k", params: new Array<null>(1) } },
+			},
+			"n.flags.export: expected its label as a message ({ namespace, key, params })",
+		],
 		[
 			"a flag label with a key a message has not",
 			"n",

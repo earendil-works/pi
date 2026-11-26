@@ -2,6 +2,7 @@
 // untyped declaration input. A member is state, a method, a keyed member (local only) or an event; a remote contract's
 // may be grantable, and it may declare flags (slice 15 §1).
 
+import { isJsonValue } from "../json.ts";
 import type { AdmissionData, HostKeyed, KeyedSnapshot, MembersData, QueriesData } from "./contract.ts";
 import {
 	type Contract,
@@ -114,14 +115,20 @@ export function remote<
 
 const REMOTE_KEYS = ["version", "params", "hostAddress", "admission", "state", "methods", "events", "flags"];
 
-/** A flag's label as `MessageSchema` describes a message: its namespace, key and plain parameters, nothing else. */
+/**
+ * A flag's label as `MessageSchema` describes a message: JSON data (finite numbers, dense arrays, as it crosses links)
+ * of its namespace, key and plain parameters, nothing else.
+ */
 function flagLabel(label: unknown, path: string): MessageData {
-	const { namespace, key, params } = (typeof label === "object" && label !== null ? label : {}) as {
+	const { namespace, key, params } = (
+		isJsonValue(label) && typeof label === "object" && label !== null ? label : {}
+	) as {
 		namespace?: unknown;
 		key?: unknown;
 		params?: unknown;
 	};
-	const plain = (param: unknown) => param === null || ["string", "number", "boolean"].includes(typeof param);
+	// JSON already: a parameter is plain unless it is an object or an array.
+	const plain = (param: unknown) => param === null || typeof param !== "object";
 	if (typeof namespace !== "string" || typeof key !== "string" || !Array.isArray(params) || !params.every(plain)) {
 		throw new Error(`${path}: expected its label as a message ({ namespace, key, params })`);
 	}
