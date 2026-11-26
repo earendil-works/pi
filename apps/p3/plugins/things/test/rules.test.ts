@@ -15,6 +15,7 @@ import {
 	ABOVE_THE_ROOT,
 	accessHere,
 	answerOf,
+	GONE,
 	type GrantEntry,
 	type KindsLookup,
 	personCounts,
@@ -409,6 +410,20 @@ describe("the rules alone", () => {
 		tick: OPEN,
 		gives: true,
 		...own,
+	});
+
+	it("below a gone workspace (its line cut by a removal) nothing counts, whatever is written there", () => {
+		const below = accessHere(
+			GONE,
+			entries({
+				links: new Map([["sketch", "k"]]),
+				members: new Set(["person/ada"]),
+				grants: [grantOf({ tick: "read" })],
+			}),
+			lookup,
+		);
+		assert.equal(below, GONE);
+		assert.equal(below.things.size + below.present.size, 0);
 	});
 
 	it("a giving grant stored below the link anyway counts for nothing", () => {
