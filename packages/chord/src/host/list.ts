@@ -6,9 +6,9 @@
 import { awaitWithContext, type Context } from "../context/index.ts";
 import { type FramedOwner, FramedSource } from "../state/internal.ts";
 import { DecodedRows } from "../store/decoded-rows.ts";
-import type { LiveTarget } from "../store/live-query.ts";
 import type { ReadSite } from "../store/open-query.ts";
 import type { Position } from "../store/read-plan.ts";
+import type { LiveTarget } from "../store/shared-read.ts";
 import type { Reading } from "./query-reader.ts";
 import { Tiling } from "./tiling.ts";
 

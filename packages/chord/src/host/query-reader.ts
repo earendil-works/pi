@@ -8,7 +8,7 @@ import { ChordError, invalid } from "../data/index.ts";
 import { canonicalJson } from "../data/internal.ts";
 import type { JsonValue } from "../json.ts";
 import { type Batch, type Dependent, type DeriveSource, type FramedSource, Source } from "../state/internal.ts";
-import type { LiveTarget } from "../store/live-query.ts";
+import type { LiveTarget } from "../store/shared-read.ts";
 import type { NamedQueryHandle, NamedTarget } from "./named-query.ts";
 
 /** The arguments a factory gave a reader: a value, or a watchable the arguments follow. */

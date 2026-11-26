@@ -5,11 +5,11 @@
 
 import type { Context } from "../context/index.ts";
 import { compareScalar } from "../store/evaluate.ts";
-import type { LiveTarget } from "../store/live-query.ts";
 import { OpenQuery, type OpenRead, type ReadSite } from "../store/open-query.ts";
 import type { ReadRun } from "../store/read.ts";
 import type { Position, Range, StoredRead } from "../store/read-plan.ts";
 import type { Scalar } from "../store/rows.ts";
+import type { LiveTarget } from "../store/shared-read.ts";
 import type { Order } from "../store/sql.ts";
 
 /** One page: the rows after `after` through `through` (the last page has none: it is open at its end). */
@@ -54,7 +54,7 @@ export class Tiling {
 
 	constructor(site: ReadSite, target: LiveTarget, first: number, owner: TilingOwner, context: Context) {
 		this.target = target;
-		this.#query = new OpenQuery(site, target.spec, "rows", () => owner.rebound(), context);
+		this.#query = new OpenQuery(site, target.spec, "rows", owner, context);
 		this.#first = first;
 		this.#order = target.spec.query.order;
 		this.#owner = owner;

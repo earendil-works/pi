@@ -6,36 +6,18 @@
 
 import type { Context } from "../context/index.ts";
 import { invalid } from "../data/internal.ts";
-import type { JsonValue } from "../json.ts";
 import { type FramedOwner, FramedSource } from "../state/internal.ts";
-import type { QuerySpec, ReadSite } from "./open-query.ts";
+import type { ReadSite } from "./open-query.ts";
 import type { Query } from "./query.ts";
-import type { ReadRun } from "./read.ts";
-import type { Range, StoredRead } from "./read-plan.ts";
 import {
+	type LiveShape,
+	type LiveTarget,
 	type ReadOutcome,
 	type ReadSubscriber,
 	type SharedRead,
-	type Sharing,
-	subscribeShared,
+	sharedRead,
 } from "./shared-read.ts";
 import type { TableDefinition } from "./table.ts";
-
-/**
- * What a live source reads: a query to keep open, and how a stored row of it becomes the value's row (decoded,
- * projected, mapped); a row the code cannot read throws.
- */
-export type LiveTarget = {
-	readonly spec: QuerySpec;
-	/** Where its reads are shared with other readers (a named query's); `undefined` for the owner's own window. */
-	readonly sharing: Sharing | undefined;
-	decode(stored: StoredRead, context: Context): JsonValue;
-};
-
-/** What a live query reads and shows: the rows of `range` (as they are, or as `{ rows, more }`), or a count. */
-export type LiveShape =
-	| { readonly kind: "rows"; readonly range: Range; present(rows: JsonValue[], more: boolean): JsonValue }
-	| { readonly kind: "count" };
 
 /**
  * Refuses what the types cannot (plugin code is bundled without type checks; declaration policy): a query of another
@@ -57,20 +39,17 @@ export function checkLiveQuery(table: TableDefinition, q: Query, limit: unknown,
  * that follow a value, a provider's successor) shows the previous value until the new read has an outcome, then
  * switches in one frame.
  */
-export class LiveQuery extends FramedSource {
+export class LiveQuery extends FramedSource implements ReadSubscriber {
 	readonly #site: ReadSite;
 	readonly #shape: LiveShape;
-	/** The shape as the key of a shared read: a live query's range is its limit. */
-	readonly #shapeKey: string;
-	/** The subscription its value is of, and the one that replaces it once it has an outcome. */
-	#current: Reading | undefined;
-	#next: Reading | undefined;
+	/** The shared read its value is of, and the one that replaces it once it has an outcome: never the same one. */
+	#current: SharedRead | undefined;
+	#next: SharedRead | undefined;
 
 	constructor(site: ReadSite, owner: FramedOwner, shape: LiveShape) {
 		super(site.batch, owner);
 		this.#site = site;
 		this.#shape = shape;
-		this.#shapeKey = shape.kind === "rows" ? `rows ${shape.range.limit}` : "count";
 	}
 
 	/**
@@ -86,15 +65,16 @@ export class LiveQuery extends FramedSource {
 
 	/**
 	 * Reads `target` from now on (its shape's range of it, or its count), through the shared read of its key. Resolves
-	 * with that read's first run once settled (`undefined`: a commit's run came first, a table it reads is held, or the
-	 * read was closed meanwhile).
+	 * once that read has an outcome, or its first run ended without one (a table it reads is held).
 	 */
-	read(target: LiveTarget, context: Context): Promise<ReadRun | undefined> {
-		if (this.detached) return Promise.resolve(undefined);
-		this.#next?.close();
-		const reading = new Reading(this);
-		this.#next = reading;
-		return reading.open(this.#site, this.#shape, this.#shapeKey, target, context);
+	read(target: LiveTarget, context: Context): Promise<void> {
+		if (this.detached) return Promise.resolve();
+		const read = sharedRead(this.#site, this.#shape, target, context);
+		const replaced = this.#next;
+		// The read its value is of (arguments that changed and changed back): nothing replaces it.
+		this.#next = read === this.#current ? undefined : read;
+		if (replaced !== read) replaced?.unsubscribe(this);
+		return read.subscribe(this, context);
 	}
 
 	/**
@@ -115,59 +95,24 @@ export class LiveQuery extends FramedSource {
 	}
 
 	#close(): void {
-		this.#current?.close();
-		this.#next?.close();
+		this.#current?.unsubscribe(this);
+		this.#next?.unsubscribe(this);
 		this.#current = undefined;
 		this.#next = undefined;
 	}
 
 	/**
-	 * Takes an outcome of one of its subscriptions, inside a batch (called by the reading). The first outcome of a new
-	 * subscription makes it the current one. A failure makes the query a failed member.
+	 * Takes an outcome of one of its shared reads, inside a batch. The first outcome of the read that replaces the
+	 * current one makes it the current one. A failure makes the query a failed member.
 	 */
-	adopted(reading: Reading, outcome: ReadOutcome): void {
+	adopted(read: SharedRead, outcome: ReadOutcome): void {
 		if (this.detached) return;
-		if (reading === this.#next) {
-			this.#current?.close();
-			this.#current = reading;
+		if (read === this.#next) {
+			this.#current?.unsubscribe(this);
+			this.#current = read;
 			this.#next = undefined;
-		} else if (reading !== this.#current) return;
+		} else if (read !== this.#current) return;
 		if (outcome.kind === "failed") this.failWith(outcome.error);
 		else this.set(outcome.value);
-	}
-}
-
-/**
- * One of a live query's subscriptions to a shared read. A class: the live query tells its subscriptions apart (the
- * pending one and the current one may be of one shared read).
- */
-class Reading implements ReadSubscriber {
-	readonly #live: LiveQuery;
-	#read: SharedRead | undefined;
-
-	constructor(live: LiveQuery) {
-		this.#live = live;
-	}
-
-	/** Subscribes to the shared read of `target`; resolves with its first run once settled. */
-	open(
-		site: ReadSite,
-		shape: LiveShape,
-		shapeKey: string,
-		target: LiveTarget,
-		context: Context,
-	): Promise<ReadRun | undefined> {
-		const { read, first } = subscribeShared(site, shape, shapeKey, target, this, context);
-		this.#read = read;
-		return first;
-	}
-
-	close(): void {
-		this.#read?.unsubscribe(this);
-		this.#read = undefined;
-	}
-
-	adopted(_read: SharedRead, outcome: ReadOutcome): void {
-		this.#live.adopted(this, outcome);
 	}
 }

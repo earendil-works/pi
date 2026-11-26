@@ -5,9 +5,9 @@
 import type { Context } from "../context/index.ts";
 import type { JsonValue } from "../json.ts";
 import type { SqliteValue } from "../sqlite/index.ts";
-import type { LiveTarget } from "./live-query.ts";
 import { identity } from "./read.ts";
 import type { StoredRead } from "./read-plan.ts";
+import type { LiveTarget } from "./shared-read.ts";
 
 /** No rows decoded yet: the shared empty map. */
 const NO_ROWS: ReadonlyMap<unknown, Entry> = new Map();

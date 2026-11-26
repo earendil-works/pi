@@ -6,9 +6,9 @@ import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
 import { int, str } from "../../src/contracts/index.ts";
 import { DecodedRows } from "../../src/store/decoded-rows.ts";
-import type { LiveTarget } from "../../src/store/live-query.ts";
 import { query } from "../../src/store/query.ts";
 import type { StoredRead } from "../../src/store/read-plan.ts";
+import type { LiveTarget } from "../../src/store/shared-read.ts";
 import { defineTable } from "../../src/store/table.ts";
 
 describe("decoded rows", () => {

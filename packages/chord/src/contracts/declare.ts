@@ -240,9 +240,20 @@ export function keyedSnapshot(schema: unknown, key: KindShape | undefined, path:
 /** A `queries` member as Chord-owned snapshots: its items' schema, and each named query's arguments, closed. */
 function readQueries(member: QueriesMember, path: string): QueriesData {
 	const args = entriesOf(member.args, `${path}.args`).map(
-		([query, schema]) => [query, snapshotArguments(schema, `${path}.args.${query}`)] as const,
+		([query, schema]) => [query, queryArguments(schema, `${path}.args.${query}`)] as const,
 	);
 	return { item: snapshotSchema(member.item, `${path}.item`), args: new Map(args) };
+}
+
+/**
+ * A named query's argument schema (a contract's or a private query's): closed, and JSON only (declaration policy: no
+ * `bytes()` leaf). Readers with equal arguments share one read, told apart by the arguments' canonical JSON, which
+ * writes bytes as an object of their indexes.
+ */
+export function queryArguments(schema: unknown, path: string): Snapshot {
+	const snapshot = snapshotArguments(schema, path);
+	if (snapshot.bytes) throw new Error(`${path}: a query's arguments are JSON only (no bytes())`);
+	return snapshot;
 }
 
 /** One method declaration as Chord-owned snapshots; its arguments must be closed. */

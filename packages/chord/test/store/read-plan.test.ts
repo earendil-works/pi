@@ -428,7 +428,7 @@ describe("a named query's shape, shared (hot-path pass)", () => {
 	/** Opens a read of `q` sharing its shape through `slot`, loaded; its runs collected. */
 	async function opened(q: Query, slot: ShapeSlot, tables: Map<TableDefinition, string>, batch: Batch) {
 		const spec = { query: q, table: tables.get(Sessions)!, projection: {}, owner: tables, shapes: slot };
-		const open = new OpenQuery({ store, batch }, spec, "rows", () => {}, context);
+		const open = new OpenQuery({ store, batch }, spec, "rows", { rebound: () => {} }, context);
 		const runs: ReadRun[] = [];
 		const read = open.read({ kind: "rows", range: { limit: 10 } }, { adopt: (run) => void runs.push(run) });
 		await read.load();
@@ -494,7 +494,13 @@ describe("a named query's shape, shared (hot-path pass)", () => {
 			projection: {},
 			owner: handle,
 		};
-		const open = new OpenQuery({ store, batch: new Batch(() => {}, undefined) }, spec, "rows", () => {}, context);
+		const open = new OpenQuery(
+			{ store, batch: new Batch(() => {}, undefined) },
+			spec,
+			"rows",
+			{ rebound: () => {} },
+			context,
+		);
 		const toWellFormed = String.prototype.toWellFormed;
 		let normalized = 0;
 		const spy = vi.spyOn(String.prototype, "toWellFormed").mockImplementation(function (this: string) {

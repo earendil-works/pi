@@ -447,6 +447,11 @@ Left by the first part itself:
 - **Small leftovers of code review round 1:** `QueryPage` (contracts) and `Page` (store) are one shape with two
   names; a list decodes every loaded row's identity on each page adoption (0.6 ms a message at 20 pages); a list's
   method is `more` beside the values `more` and `moreAfter`, as the spec has it.
+- **The commit index refiles every kept key of a read on each run** (ERNDL-1176, its test 8): 15 % of the checklist
+  profile at 100 identical reads before sharing (`read-index.ts` `kept`, `refile`). Refiling only the keys that
+  changed between two runs makes it per changed row.
+- **A window shift diffs the whole window** (ERNDL-1176, its test 9): 11 % of the notes profile (`delta/diff.ts`
+  `identityAnchors`, `permutation`); a shift by k rows should cost about k.
 - **A list's pages are not shared between lists** (decision "Identical live reads share one source"; ERNDL-1176):
   live queries and counts share one read per (provider instance, query, arguments, shape); two lists of one query
   with equal arguments are still two tilings. Next: share pages keyed by (query, arguments, bookmarks), every fresh

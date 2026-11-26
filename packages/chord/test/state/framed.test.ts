@@ -220,13 +220,18 @@ describe("sources handed the same values (a shared read's subscribers)", () => {
 		expect(ops[0]).toBe(ops[1]);
 	});
 
-	it("keep no earlier value alive: the diff is kept by the earlier value, weakly", async () => {
+	it("keep no later value alive through an earlier one somebody holds: the diffs go with the commit (round 1)", async () => {
+		// Opus M3, Astra 3: a cache by the earlier value kept the next value, whose entry kept the one after.
 		const { source, batch } = fed();
 		batch.commit(() => source.put({ step: 0 }), context);
 		// Watched (its frames are diffed) by a subscriber that keeps nothing.
 		source.subscribe({ advance: () => {}, end: () => {}, endAfterDelivery: () => {} });
-		const first = new WeakRef(source.value as object);
-		for (let step = 1; step < 5; step++) batch.commit(() => source.put({ step }), context);
-		await expectCollected(first);
+		const held = source.value;
+		batch.commit(() => source.put({ step: 1 }), context);
+		const later = new WeakRef(source.value as object);
+		for (let step = 2; step < 10; step++) batch.commit(() => source.put({ step }), context);
+		await expectCollected(later);
+		expect(held).toEqual({ step: 0 });
+		expect(batch.diffs.size).toBe(0);
 	});
 });

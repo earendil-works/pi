@@ -1,13 +1,16 @@
 // Identical live reads (decision "Identical live reads share one source"): N callers each holding their own object
 // with an identical live read (the same named query, arguments and window), one write, the time until the last caller
-// has it, and the server's heap per extra holder.
+// has it, and the heap per extra holder.
 // - read: "live" (`self.liveQuery(..., { first })`) or "list" (`self.list(..., { first })`);
 // - where: "local" (N objects on the server, watched there) or "remote" (N client hosts over memory links, each holding
 //   its own object), or "shared" (N client hosts holding one object: one read, N wire holds);
 // - load: "notes" (a notebook of 51 rows, a window of the newest 50; the write adds a row at the top) or "checklist"
 //   (500 items, all in one window; the write ticks the last one).
 // Per write: the time to the last delivery, the write's own time, and the server's counted work (query runs, probes,
-// skips, derive computes, encodes, bytes sent). Run by hand from packages/chord (not in CI):
+// skips, derive computes, encodes, bytes sent). The heap is the process's, settled after collections: with `local` the
+// server's alone, with `remote` and `shared` the client hosts', their links and replicas too (one process). Per extra
+// holder: (H_N − H_1) / (N − 1), H_k the settled heap with k holders watching. Run by hand from packages/chord (not in
+// CI):
 //   node --conditions=source --expose-gc test/bench/identical-reads.ts <read> <where> <load> <n> [writes]
 import { performance } from "node:perf_hooks";
 import type { TelemetrySpan } from "@earendil-works/pi-telemetry";
@@ -166,39 +169,39 @@ async function settledHeap(): Promise<number> {
 
 const Reader = (readKind === "live" ? LiveReader : ListReader) as typeof ListReader;
 type Items = { rows: { id: number; text: string; at: number; done: boolean }[] };
-const sent = { bytes: 0 };
-// The heap the N holders add (their objects, reads, holds and watches), per holder: at N = 100 what one more adds.
-const heapBefore = await settledHeap();
-const clients: Host<P>[] = [];
-const refs: {
+type Watched = {
 	items: {
 		watch(
 			c: unknown,
 		): Promise<{ start(l: (call: { kind: string; value?: unknown }) => Promise<void>): void; stop(): Promise<void> }>;
 	};
-}[] = [];
-for (let i = 0; i < N; i++) {
-	const caller = where === "shared" ? "shared" : `caller-${i}`;
-	if (where === "local") {
-		refs.push((await server.get(Reader, { caller }, context)) as never);
-		continue;
-	}
-	const client = createHost<P>({ onError: (e) => console.error("client", e) });
-	await client.load([], context);
-	const [a, b] = memoryLinkPair();
-	server.accept(counted(a, sent), { principal: { kind: "owner" } }, context);
-	client.connect(b, { principal: { kind: "server" } }, context);
-	clients.push(client);
-	refs.push((await client.get(Reader, { caller }, BACKGROUND_CONTEXT)) as never);
-}
+};
+const sent = { bytes: 0 };
+const clients: Host<P>[] = [];
+const refs: Watched[] = [];
 // Every caller watches its value as a client's hold does; `want` says what the next write must show.
 let want: (items: Items) => boolean = () => true;
 let pending = 0;
 let seenAll: () => void = () => {};
 const last: number[] = [];
 const seen = new Array<boolean>(N).fill(true);
-for (let i = 0; i < N; i++) {
-	const watch = await refs[i]!.items.watch(BACKGROUND_CONTEXT);
+
+/** Caller `i` holds its object (or the shared one) and watches its value. */
+async function holdAndWatch(i: number): Promise<void> {
+	const caller = where === "shared" ? "shared" : `caller-${i}`;
+	let ref: Watched;
+	if (where === "local") ref = (await server.get(Reader, { caller }, context)) as never;
+	else {
+		const client = createHost<P>({ onError: (e) => console.error("client", e) });
+		await client.load([], context);
+		const [a, b] = memoryLinkPair();
+		server.accept(counted(a, sent), { principal: { kind: "owner" } }, context);
+		client.connect(b, { principal: { kind: "server" } }, context);
+		clients.push(client);
+		ref = (await client.get(Reader, { caller }, BACKGROUND_CONTEXT)) as never;
+	}
+	refs.push(ref);
+	const watch = await ref.items.watch(BACKGROUND_CONTEXT);
 	watch.start(async (call) => {
 		if (call.kind !== "value" || seen[i] || !want(call.value as Items)) return;
 		seen[i] = true;
@@ -206,7 +209,11 @@ for (let i = 0; i < N; i++) {
 		if (--pending === 0) seenAll();
 	});
 }
-const heapAfter = await settledHeap();
+
+await holdAndWatch(0);
+const heapOne = await settledHeap();
+for (let i = 1; i < N; i++) await holdAndWatch(i);
+const heapAll = await settledHeap();
 const results: { total: number; write: number; counters: Record<string, number> }[] = [];
 for (let w = 0; w < WRITES; w++) {
 	const id = seed + 1 + w;
@@ -249,7 +256,8 @@ console.log(
 		minMs: +sorted[0]!.total.toFixed(2),
 		maxMs: +sorted.at(-1)!.total.toFixed(2),
 		writeMs: +med((r) => r.write).toFixed(2),
-		heapPerHolderKB: +((heapAfter - heapBefore) / N / 1024).toFixed(1),
+		heapBytes: heapAll,
+		heapPerExtraHolderKB: N > 1 ? +((heapAll - heapOne) / (N - 1) / 1024).toFixed(1) : null,
 		queryRuns: c("chord.query.runs"),
 		probes: c("chord.query.probes"),
 		skips: c("chord.query.skips"),

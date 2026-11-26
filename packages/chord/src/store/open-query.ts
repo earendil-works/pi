@@ -25,6 +25,13 @@ export type QuerySpec = {
 	readonly shapes?: ShapeSlot;
 };
 
+/**
+ * Who an open query belongs to: told whenever a binding changed and the query was compiled again (its reads are
+ * registered for the new plan and none has a result: a commit over their tables runs them; it reads again), and once
+ * it closed (by its reader, or because its owner retired). An object, not closures: a shared read is its own.
+ */
+export type QueryOwner = { rebound(): void; closed?(): void };
+
 /** Where an open query lives: the store whose index its reads are in, and the batch adoptions outside a commit run in. */
 export type ReadSite = { readonly store: ChordStore; readonly batch: Batch };
 
@@ -43,7 +50,7 @@ export class OpenQuery {
 	/** The context its reads run and recompile under. */
 	readonly context: Context;
 	readonly #shape: "rows" | "count";
-	readonly #rebound: () => void;
+	readonly #owner: QueryOwner;
 	/**
 	 * Its open reads: without a set while there is at most one (a live query's one read; a set of one costs 152 B),
 	 * in a set from the second on (a list's pages), kept once made.
@@ -54,16 +61,13 @@ export class OpenQuery {
 	#watches: (() => void)[] | undefined;
 	#compiled: Compiled;
 
-	/**
-	 * `rebound` is called whenever a binding changed and the query was compiled again: its reads are registered for
-	 * the new plan and none has a result (a commit over their tables runs them); its owner reads again.
-	 */
-	constructor(site: ReadSite, spec: QuerySpec, shape: "rows" | "count", rebound: () => void, context: Context) {
+	/** `owner` is told when the query is compiled again and when it closed; its reads run under `context`. */
+	constructor(site: ReadSite, spec: QuerySpec, shape: "rows" | "count", owner: QueryOwner, context: Context) {
 		this.site = site;
 		this.spec = spec;
 		this.context = context;
 		this.#shape = shape;
-		this.#rebound = rebound;
+		this.#owner = owner;
 		const reads = site.store.reads;
 		const sets = setsOf(spec.query);
 		// No set besides its own table (most queries): the shared empty list, none made per query.
@@ -122,6 +126,7 @@ export class OpenQuery {
 		this.#watches = undefined;
 		this.site.store.reads.closed(this);
 		for (const read of this.#opened()) read.close();
+		this.#owner.closed?.();
 	}
 
 	/** Its open reads now, in the order they were opened: a copy, which what is done with them may change. */
@@ -145,7 +150,7 @@ export class OpenQuery {
 		if (this.#watches === undefined) return;
 		this.#compiled = this.#compile();
 		for (const read of this.#opened()) read.register();
-		this.#rebound();
+		this.#owner.rebound();
 	}
 }
 
@@ -218,10 +223,11 @@ export class OpenRead implements RunSink {
 	/**
 	 * Runs it once, outside the commit queue, and adopts the run in a batch; resolves with that run, `undefined` when
 	 * a commit's run overtook it, a table it reads is held (it runs when the table is ready), or it was closed. Nothing
-	 * throws: a query that does not compile and a run that fails are failed runs.
+	 * throws: a query that does not compile and a run that fails are failed runs. It runs under `context`, its query's
+	 * by default (a shared read gives each load its own signal).
 	 */
-	async load(): Promise<ReadRun | undefined> {
-		const { site, context, compiled } = this.#query;
+	async load(context: Context = this.#query.context): Promise<ReadRun | undefined> {
+		const { site, compiled } = this.#query;
 		if (this.#closed) return undefined;
 		if (compiled.kind === "failed") {
 			const failed: ReadRun = { kind: "failed", error: compiled.error };

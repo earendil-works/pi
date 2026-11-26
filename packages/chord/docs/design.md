@@ -1697,9 +1697,13 @@ when a case needs it.
 instance's named query with the same arguments (canonical JSON, made once per read) and shape (a `{ first }` window,
 or a count) share one open read (`store/shared-read.ts`), reference-counted by the readers: one entry in the store's
 index and commit index, one skip test, one run, one decode and one value per write, which every reader takes (their
-frames diff it once). A later reader takes the read's current value at once, with no run. Arguments that change move
-a reader to the read of its new key; the provider's restart moves every reader to one read of its successor; the
-last reader to leave closes the read. Lists do not share their pages yet (`slices.md`, "Carry-over").
+frames diff it once in the commit). A later reader takes the read's current value at once, with no run. Arguments
+that change move a reader to the read of its new key; the provider's restart moves every reader to one read of its
+successor; the last reader to leave closes the read. A shared read keeps nothing of the reader that made it (its
+site, its context, its signal): its loads run under a signal of its own, aborted when it closes. So that equal
+arguments are one key, **a query's arguments are JSON only** (a `bytes()` leaf in their schema is refused at
+declaration) and **a builder reads them as canonical JSON does**: the order of an object's keys is no part of them
+(an order that matters is an array), and `-0` is `0`. Lists do not share their pages yet (`slices.md`, "Carry-over").
 
 **Named queries** (slice 14, `slice-14.md` §3): a `local` contract lists them, `members: { sessions:
 queries(SessionRow, { visible: argsSchema, one: argsSchema }) }`, the argument schemas part of the fingerprint. The
