@@ -359,8 +359,6 @@ function getResumeArgs(sessionManager: SessionManager): string[] | undefined {
 	if (!sessionFile || !fs.existsSync(sessionFile)) return undefined;
 
 	const args = [APP_NAME];
-	// A config dir set with PI_CODING_AGENT_DIR would be lost: a terminal resumes the command without the environment
-	// pi was started with (OSC 7577), and a user copying the command may run it in another shell.
 	if (!usesDefaultAgentDir()) {
 		args.push("--agent-dir", resolvePath(getAgentDir()));
 	}
