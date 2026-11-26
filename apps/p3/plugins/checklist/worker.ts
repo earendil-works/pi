@@ -7,8 +7,13 @@
 // at the call. Reads and changes answer JSON.
 
 import { bool, defineFacet, forbidden, invalid, obj, str } from "@earendil-works/p3/v1";
-import { defineExtension, defineTool, type Extension } from "@earendil-works/p3/v1/worker";
-import { type HeldThing, ThingHarnessParts, thingHarnessPart } from "../things/contract.worker.ts";
+import { defineTool } from "@earendil-works/p3/v1/worker";
+import {
+	type HarnessExtension,
+	type HeldThing,
+	ThingHarnessParts,
+	thingHarnessPart,
+} from "../things/contract.worker.ts";
 import { type Checklist, ChecklistKind, ItemText } from "./kind.ts";
 
 export default defineFacet((_host, self) => {
@@ -22,11 +27,12 @@ export default defineFacet((_host, self) => {
 type List = HeldThing<typeof Checklist>;
 
 /** The agent's checklist tools: list and read, add while one checklist gives Add, tick while one gives Tick. */
-function checklistExtension(lists: readonly List[]): Extension {
+function checklistExtension(lists: readonly List[]): HarnessExtension {
 	const tools = [listTool(lists), readTool(lists)];
 	if (lists.some(({ ref }) => ref.addItem !== undefined)) tools.push(addTool(lists));
 	if (lists.some(({ ref }) => ref.setDone !== undefined)) tools.push(tickTool(lists));
-	return defineExtension({ name: ChecklistKind.name, tools });
+	// Installed under the kind's name by the harness.
+	return { tools };
 }
 
 /** The tool `checklist_list`: the agent's checklists, with whether it may add and tick in each. */

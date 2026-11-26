@@ -16,10 +16,15 @@ import {
 	type Reference,
 } from "@earendil-works/p3/v1";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
-import type { Extension } from "@earendil-works/p3/v1/worker";
 import { ThingsStore } from "../contract.server.ts";
 import type { Party, Source } from "../contract.ts";
-import { type HarnessSession, type HeldThing, ThingHarnessParts } from "../contract.worker.ts";
+import {
+	type HarnessExtension,
+	type HarnessLocation,
+	type HarnessSession,
+	type HeldThing,
+	ThingHarnessParts,
+} from "../contract.worker.ts";
 import type { ThingKind } from "../kind.ts";
 import { type World, world } from "./world.ts";
 
@@ -68,13 +73,13 @@ export type KindServer<C extends Contract> = {
 	/** Renews the kind's server facet, as after an edit: its objects restart. */
 	reload(): Promise<void>;
 	/**
-	 * Runs `fn` with session `session`'s agent holding `things` in `workspace`: the extension the kind's harness part
-	 * gives for them, and the held things.
+	 * Runs `fn` with session `session`'s agent holding `things` in `workspace`, its conversations working at
+	 * `location` (none by default): the extension the kind's harness part gives for them, and the held things.
 	 */
 	giving<T>(
-		at: { readonly session: string; readonly workspace: string },
+		at: { readonly session: string; readonly workspace: string; readonly location?: HarnessLocation },
 		things: readonly string[],
-		fn: (extension: Extension, ctx: Ctx<P3Principal>, held: readonly HeldThing<C>[]) => Promise<T>,
+		fn: (extension: HarnessExtension, ctx: Ctx<P3Principal>, held: readonly HeldThing<C>[]) => Promise<T>,
 	): Promise<T>;
 	/** The kind's worker facet, built for session `session`'s worker as it builds it (once per session). */
 	worker(session: string): Promise<TestedPlugin<P3Principal>>;
@@ -136,7 +141,7 @@ export async function kindServer<C extends Contract>(
 		holders: (principals, where, thing) => holdAll(host, principals, (ctx) => get(ctx, where, thing), context),
 		count: (name) => w.count(name),
 		reload: () => w.reload(plugin.name, context),
-		giving: async ({ session, workspace }, ids, fn) => {
+		giving: async ({ session, workspace, location }, ids, fn) => {
 			const contributed = (await worker(session)).contributions(ThingHarnessParts);
 			const entry = contributed.find(({ value }) => value.kind.name === Kind.name);
 			if (entry === undefined) throw new Error(`${Kind.name}: the worker facet contributes no harness part`);
@@ -145,6 +150,7 @@ export async function kindServer<C extends Contract>(
 				session,
 				workspace,
 				call: (call, ctx) => host.root(call, ctx, { principal }),
+				location: async () => location,
 			};
 			return host.root(
 				async (ctx) => {
@@ -227,7 +233,12 @@ export async function refused(promise: Promise<unknown>, code = "forbidden", key
 }
 
 /** Runs tool `name` of `extension` with `args` under `context`; its output's text. */
-export async function runTool(extension: Extension, name: string, args: object, context: Context): Promise<string> {
+export async function runTool(
+	extension: HarnessExtension,
+	name: string,
+	args: object,
+	context: Context,
+): Promise<string> {
 	const tool = extension.tools?.find((each) => each.name === name);
 	if (tool === undefined) throw new Error(`no tool ${name}`);
 	// Kinds' tools use neither Durable's execution API nor arguments beyond their schema's.
@@ -237,6 +248,6 @@ export async function runTool(extension: Extension, name: string, args: object, 
 }
 
 /** The names of `extension`'s tools, sorted. */
-export function toolNames(extension: Extension): readonly string[] | undefined {
+export function toolNames(extension: HarnessExtension): readonly string[] | undefined {
 	return extension.tools?.map((tool) => tool.name).toSorted();
 }

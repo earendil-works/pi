@@ -84,7 +84,7 @@ From its README and sources:
 - **Options** `{ comment: boolean, push: boolean, commandLine: boolean }`.
 - **`GitHub`**, the object per `{ session, thing }`, admitted like the canvas: `reader`, `commenter` (writes and
   `comment`), `full` (also `push`).
-- **The agent's tools** (`thingExtension`): `github_accounts`, `github_issue_read`, `github_issue_reply`,
+- **The agent's tools** (its harness part, `thingHarnessPart`): `github_accounts`, `github_issue_read`, `github_issue_reply`,
   `github_pr_open`. They take the account's id; the writing ones are there only while some account allows them.
 - **Environment variables for commands:** `GH_TOKEN`, a fresh short-lived token, from the one account whose options
   say `commandLine` (the first in session order if several).

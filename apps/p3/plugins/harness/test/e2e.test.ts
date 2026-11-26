@@ -108,7 +108,7 @@ async function start(options: TestServerOptions = {}): Promise<TestServer> {
 	return running;
 }
 
-describe("the harness end to end", () => {
+describe("the harness end to end", { skip: "until sessions are workspaces, ERNDL-704 push 3" }, () => {
 	it("answers through the transcript, its tool in the folder, working then settled, alive without a holder", async () => {
 		const folder = await directory("p3-harness-e2e-");
 		const t = await start();

@@ -10,9 +10,8 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { type Ctx, BACKGROUND_CONTEXT as context, type P3Principal, until } from "@earendil-works/p3/v1";
-import type { Extension } from "@earendil-works/p3/v1/worker";
 import { within } from "../../../test/until.ts";
-import { type HeldThing, ThingHarnessParts } from "../../things/contract.worker.ts";
+import { type HarnessExtension, type HeldThing, ThingHarnessParts } from "../../things/contract.worker.ts";
 import { type KindServer, kindServer, runTool, toolNames } from "../../things/test/kind-server.ts";
 import { type Checklist, ChecklistKind } from "../kind.ts";
 import checklistServer from "../server.ts";
@@ -40,7 +39,7 @@ afterEach(() => c.close());
 /** Runs `fn` with s1's agent holding checklists `things` there: the part's extension for them, and the held things. */
 const giving = <T>(
 	things: readonly string[],
-	fn: (extension: Extension, ctx: Ctx<P3Principal>, held: readonly HeldThing<typeof Checklist>[]) => Promise<T>,
+	fn: (extension: HarnessExtension, ctx: Ctx<P3Principal>, held: readonly HeldThing<typeof Checklist>[]) => Promise<T>,
 ) => c.giving({ session: "s1", workspace: s1 }, things, fn);
 
 describe("the checklist kind's harness part", () => {

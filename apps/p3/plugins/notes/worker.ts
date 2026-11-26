@@ -20,8 +20,13 @@ import {
 	type With,
 	withGranted,
 } from "@earendil-works/p3/v1";
-import { defineExtension, defineTool, type Extension } from "@earendil-works/p3/v1/worker";
-import { type HeldThing, ThingHarnessParts, thingHarnessPart } from "../things/contract.worker.ts";
+import { defineTool } from "@earendil-works/p3/v1/worker";
+import {
+	type HarnessExtension,
+	type HeldThing,
+	ThingHarnessParts,
+	thingHarnessPart,
+} from "../things/contract.worker.ts";
 import { NOTES_WRITES, type Notes, NotesKind, NoteText } from "./kind.ts";
 
 export default defineFacet((_host, self) => {
@@ -35,12 +40,10 @@ export default defineFacet((_host, self) => {
 type Notebook = HeldThing<typeof Notes>;
 
 /** The agent's notes tools: list and read, and write while one notebook gives Write. */
-function notesExtension(things: readonly Notebook[]): Extension {
+function notesExtension(things: readonly Notebook[]): HarnessExtension {
 	const tools = [listTool(things), readTool(things)];
-	return defineExtension({
-		name: NotesKind.name,
-		tools: things.some(({ ref }) => writer(ref) !== undefined) ? [...tools, writeTool(things)] : tools,
-	});
+	// Installed under the kind's name by the harness.
+	return { tools: things.some(({ ref }) => writer(ref) !== undefined) ? [...tools, writeTool(things)] : tools };
 }
 
 /** The tool `notes_list`: the agent's notebooks, with whether it may write in each. */
