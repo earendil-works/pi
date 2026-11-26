@@ -103,8 +103,14 @@ export class Tiling {
 		return this.#query.context;
 	}
 
-	/** The loaded rows in order, up to the first page that has none yet: a prefix, never a hole. */
-	rows(): StoredRead[] {
+	/**
+	 * The loaded rows in order, up to the first page that has none yet: a prefix, never a hole. Only read (its list
+	 * decodes them): the rows of a list's only loaded page are that page's own, not copied (most lists have one).
+	 */
+	rows(): readonly StoredRead[] {
+		const pages = this.#pages;
+		const first = pages[0]?.rows;
+		if (first !== undefined && (pages.length === 1 || pages[1]!.rows === undefined)) return first;
 		const rows: StoredRead[] = [];
 		for (const page of this.#pages) {
 			if (page.rows === undefined) break;
