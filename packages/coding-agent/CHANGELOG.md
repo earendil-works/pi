@@ -9,6 +9,7 @@
 ### Added
 
 - Added program resume through the [Program Resume Protocol (OSC 7577)](https://www.superlogical.com/rex/docs/build/program-resume): in terminals that set `OSC7577_TOKEN`, interactive mode reports `pi --session <id>` for the current session, so the terminal can bring it back after it restarts. Pi removes the token from the environment of every process it starts. See [Terminal setup](docs/terminal-setup.md#program-resume)
+- Added optional `{ aspectRatio, size }` as the third argument to codemode `models.generateImages()`
 
 ### Changed
 

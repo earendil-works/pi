@@ -9,6 +9,7 @@
 ### Added
 
 - Added `compat.supportsReasoningReplay` to the `bedrock-converse-stream` API. When `false`, reasoning from earlier assistant messages is not sent back
+- Added `aspectRatio` and `size` to `ImagesOptions`, forwarded by `openrouter-images` to OpenRouter's `image_config`
 
 ### Changed
 

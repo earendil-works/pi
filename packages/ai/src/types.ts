@@ -378,6 +378,10 @@ export interface ClassifierOptions extends ProviderRequestOptions<ClassifierMode
 }
 
 export interface ImagesOptions extends ProviderRequestOptions<ImageModel<ImageApi>> {
+	/** Desired aspect ratio, e.g. `"1:1"`, `"16:9"`, `"4:3"`, `"9:16"`. Sent to the provider unchanged; supported values depend on the model. */
+	aspectRatio?: string;
+	/** Desired resolution, e.g. `"1K"`, `"2K"`, `"4K"`. Sent to the provider unchanged; supported values depend on the model. */
+	size?: string;
 	/**
 	 * Optional metadata to include in API requests.
 	 * Providers extract the fields they understand and ignore the rest.
