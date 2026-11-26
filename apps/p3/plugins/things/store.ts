@@ -488,14 +488,6 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				if (pathText !== undefined) removal.removed(workspace, pathText);
 				return null;
 			},
-			workspaceGone: async ({ workspace }, ctx) => {
-				await write(async (tx) => {
-					tx.put(gone, { workspace });
-					return null;
-				}, ctx);
-				removal.tell(workspace);
-				return null;
-			},
 			setTick: (args, ctx) => write((tx, touched) => writes.setTick(tx, touched, args), ctx),
 			answerOf: async ({ workspace, thing, caller }, ctx) =>
 				(await index!.answer(workspace, thing, callerOfKey(caller), ctx)) ?? null,

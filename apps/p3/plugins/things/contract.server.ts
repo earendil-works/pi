@@ -225,11 +225,6 @@ export const ThingsStore = local("things.store", {
 		 * linked nowhere else go with their delete hooks); each workspace's kinds are told (`workspaceGone`). Pi stays.
 		 */
 		removeWorkspace: method(obj({ workspace: str() })),
-		/**
-		 * Tells every kind that workspace `workspace` is gone though it stays (a session archived): their
-		 * `workspaceGone` hooks run, durably, as after a removal.
-		 */
-		workspaceGone: method(obj({ workspace: str() })),
 		/** Shows or hides a thing or party from above; `shown` left out removes the switch (the default decides). */
 		setSwitch: method(obj({ workspace: str(), item: Item, shown: opt(bool()) })),
 		setDefaults: method(obj({ workspace: str(), showsThings: opt(bool()), showsPeople: opt(bool()) })),
@@ -378,8 +373,8 @@ export type ThingHook = {
 	 */
 	readonly delete?: (thing: string, ctx: Ctx<P3Principal>) => Promise<void>;
 	/**
-	 * Clears what the kind keeps for workspace `workspace` (a session's terminals), which is gone: removed, or a session
-	 * archived. Called once per workspace after the commit that removed it, tried again with backoff and at every
+	 * Clears what the kind keeps for workspace `workspace` (a session's terminals), which is gone: removed (an archived
+	 * session keeps what kinds keep for it, decision 122). Called once per workspace after the commit that removed it, tried again with backoff and at every
 	 * start until it succeeds; may run again after a crash (it must be safe to repeat).
 	 */
 	readonly workspaceGone?: (workspace: string, ctx: Ctx<P3Principal>) => Promise<void>;

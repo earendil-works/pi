@@ -808,10 +808,10 @@ describe("reloads, failures and caches", () => {
 		);
 	});
 
-	it("a workspaceGone hook that fails is tried again until it succeeds; an archive tells the kinds too", async () => {
+	it("a workspaceGone hook that fails is tried again until it succeeds", async () => {
 		const { robot } = await family();
 		SESSION.goneFails = 1;
-		await store.workspaceGone({ workspace: robot }, context);
+		await store.removeWorkspace({ workspace: robot }, context);
 		await eventually(
 			() => SESSION.gone,
 			(gone) => gone.includes(robot),
@@ -821,8 +821,6 @@ describe("reloads, failures and caches", () => {
 			() => w.rows("gone").length,
 			(left) => left === 0,
 		);
-		// The workspace stays (an archive).
-		assert.equal((await store.workspaces.one.page({ workspace: robot }, 1, context)).items.length, 1);
 	});
 
 	it("a Workspace admission's decision goes with its answer", async () => {
@@ -968,7 +966,7 @@ describe("round 1: Astra's cases", () => {
 	it("gone retry: a failed recipient's debt survives its absence on the next attempt", async () => {
 		const { robot } = await family();
 		SESSION.goneFails = 1;
-		await store.workspaceGone({ workspace: robot }, context);
+		await store.removeWorkspace({ workspace: robot }, context);
 		await eventually(
 			() => SESSION.goneFails,
 			(n) => n === 0,
