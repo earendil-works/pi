@@ -138,8 +138,15 @@ export async function kindServer<C extends Contract>(
 		},
 		worker,
 		close: async () => {
-			for (const built of workers.values()) await (await built).close(context);
-			await w.close(context);
+			// Every worker that was built, and always the host: a failed build closes nothing else's.
+			try {
+				const built = await Promise.allSettled(workers.values());
+				await Promise.allSettled(
+					built.map((each) => (each.status === "fulfilled" ? each.value.close(context) : null)),
+				);
+			} finally {
+				await w.close(context);
+			}
 		},
 	};
 }
