@@ -200,8 +200,9 @@ describe("candidates", () => {
 		expect(log).toEqual([]);
 	});
 
-	it("a read run again is filed last under the keys it keeps again, as filing it anew did (hot-path pass)", async () => {
-		// Only the keys it no longer keeps lose it and only new ones gain it; a key it keeps again still has it last.
+	it("a read run again stays where it was filed under the keys it keeps again", async () => {
+		// Only the keys it no longer keeps lose it and only new ones gain it; under a key it keeps again the reads are
+		// candidates in the order they came to keep it.
 		store = await memoryStore();
 		const entries = await tableIn(store, Entries);
 		const batch = new Batch(() => {}, undefined);
@@ -235,13 +236,95 @@ describe("candidates", () => {
 		log.length = 0;
 		await costOf(entries, batch, meter, edit);
 		expect(log).toEqual(["notes", "session"]);
-		// Another note: the notes' read alone runs, and is filed again behind the session's read under (s0, 1).
+		// Another note: the notes' read alone runs, and stays before the session's read under (s0, 1).
 		await costOf(entries, batch, meter, (changes) => changes.put({ ...row, session: "s1" }));
 		log.length = 0;
 		await costOf(entries, batch, meter, edit);
-		expect(log).toEqual(["session", "notes"]);
+		expect(log).toEqual(["notes", "session"]);
 		notes.close();
 		session.close();
+	});
+
+	it("a run that keeps the keys it kept files none of them again (ERNDL-1176, step 4: issue test 8)", async () => {
+		// Two reads keep the same 500 keys: before, a read moved itself behind the other under each key it kept again, at
+		// its run and at its adoption (a removal and an insertion per key: 6,000 changes for this commit); now only keys
+		// that come or go change.
+		store = await memoryStore();
+		const entries = await tableIn(store, Entries);
+		const meter = await metered();
+		await costOf(entries, new Batch(() => {}, undefined), meter, (changes) => {
+			for (let id = 0; id < 500; id++) changes.put({ session: "s0", id, kind: "note", text: "" });
+		});
+		const { batch, runs } = await openReads(
+			entries,
+			2,
+			(index) =>
+				index === 0
+					? query(Entries).where((e) => eq(e.session, "s0"))
+					: query(Entries).where((e) => eq(e.kind, "note")),
+			{ kind: "rows", range: { limit: 1_000 } },
+		);
+		// Changes of the sets of reads filed under a key: counted while the commit runs.
+		let filedWrites = 0;
+		const { add, delete: remove, has } = Set.prototype;
+		Set.prototype.add = function (this: Set<unknown>, value: unknown) {
+			if (value instanceof Read && !has.call(this, value)) filedWrites++;
+			return add.call(this, value);
+		};
+		Set.prototype.delete = function (this: Set<unknown>, value: unknown) {
+			if (value instanceof Read && has.call(this, value)) filedWrites++;
+			return remove.call(this, value);
+		};
+		try {
+			// The text is mapped by both: both run, each keeps its 500 keys.
+			const edit = (changes: TableChanges) => changes.update({ session: "s0", id: 7 }, { text: "x" });
+			expect(await costOf(entries, batch, meter, edit)).toMatchObject({ runs: 2 });
+		} finally {
+			Set.prototype.add = add;
+			Set.prototype.delete = remove;
+		}
+		expect(runs.map((each) => each.length)).toEqual([2, 2]);
+		expect(filedWrites).toBe(0);
+	});
+
+	it("candidates under keys many reads keep cost no ordering work (ERNDL-1176, step 4 review, Opus S1)", async () => {
+		// 100 reads keep the same 500 keys; 500 keyed updates of a column none of them reads: each read is a candidate
+		// and skips without a probe. The reads are candidates in the order they came to keep a key: no copy, no sort.
+		store = await memoryStore();
+		const entries = await tableIn(store, Entries);
+		const meter = await metered();
+		await costOf(entries, new Batch(() => {}, undefined), meter, (changes) => {
+			for (let id = 0; id < 500; id++) changes.put({ session: "s0", id, kind: "note", text: "" });
+		});
+		const batch = new Batch(() => {}, undefined);
+		const queries: OpenQuery[] = [];
+		for (let index = 0; index < 100; index++) {
+			const spec = {
+				query: query(Entries).where((e) => eq(e.session, "s0")),
+				table: entries.sql.table,
+				projection: { reads: ["session", "id", "kind"] },
+				owner: {},
+			};
+			const opened = new OpenQuery({ store, batch }, spec, "rows", { rebound: () => {} }, BACKGROUND_CONTEXT);
+			await opened.read({ kind: "rows", range: { limit: 1_000 } }, { adopt: () => {} }).load(BACKGROUND_CONTEXT);
+			queries.push(opened);
+		}
+		let sorts = 0;
+		const { sort } = Array.prototype;
+		Array.prototype.sort = function <T>(this: T[], compare?: (a: T, b: T) => number) {
+			sorts++;
+			return sort.call(this, compare) as T[];
+		};
+		try {
+			const edits = (changes: TableChanges) => {
+				for (let id = 0; id < 500; id++) changes.update({ session: "s0", id }, { text: "x" });
+			};
+			expect(await costOf(entries, batch, meter, edits)).toMatchObject({ runs: 0, probes: 0, skips: 100 });
+		} finally {
+			Array.prototype.sort = sort;
+		}
+		expect(sorts).toBe(0);
+		for (const opened of queries) opened.close();
 	});
 
 	it("an `in` files a read once per value, up to 32 combinations; a column past that is left out of its bucket", async () => {

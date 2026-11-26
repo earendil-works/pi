@@ -410,6 +410,9 @@ const diffArray = (before: JsonValue[], after: JsonValue[], path: Path, operatio
 		!sameValue(before[0]!, after[0]!) &&
 		!sameValue(before[before.length - 1]!, after[after.length - 1]!)
 	) {
+		// A window that moved by k items (a live query's newest rows, one added on top): about k identity comparisons
+		// to find it and the rest to confirm it, not the matching of every item with every other.
+		if (shifted(before, after, path, operations)) return;
 		const order = permutation(before, after);
 		if (order !== undefined) {
 			emitOperation(operations, ["m", path, order]);
@@ -417,6 +420,36 @@ const diffArray = (before: JsonValue[], after: JsonValue[], path: Path, operatio
 		}
 	}
 	diffArrayRegion(before, after, path, operations, 0, before.length, 0, after.length, 0);
+};
+
+/**
+ * Emits the two ops of `after` as `before` shifted by k items, its items the same objects (`===`): k new ones in front
+ * and its last k gone, or its first k gone and k new ones behind. Whether it was such a shift. The ops are the ones
+ * the region diff makes when the items that came are new, correct ones otherwise. The first item that came (the
+ * last, shifted up) being one that left is no such shift: a rotation goes to `permutation`, an edited one to the
+ * region diff, which keeps what it can.
+ */
+const shifted = (before: JsonValue[], after: JsonValue[], path: Path, operations: Op[]): boolean => {
+	const length = before.length;
+	const down = after.indexOf(before[0]!, 1);
+	if (down > 0 && !before.includes(after[0]!, length - down) && sameRun(before, 0, after, down, length - down)) {
+		emitOperation(operations, ["p", path, 0, 0, after.slice(0, down)]);
+		emitOperation(operations, ["p", path, length, down, []]);
+		return true;
+	}
+	const up = before.indexOf(after[0]!, 1);
+	if (up > 0 && before.lastIndexOf(after[length - 1]!, up - 1) < 0 && sameRun(before, up, after, 0, length - up)) {
+		emitOperation(operations, ["p", path, 0, up, []]);
+		emitOperation(operations, ["p", path, length - up, 0, after.slice(length - up)]);
+		return true;
+	}
+	return false;
+};
+
+/** Whether `count` items of `before` from `from` are the items of `after` from `to`, the same objects. */
+const sameRun = (before: JsonValue[], from: number, after: JsonValue[], to: number, count: number): boolean => {
+	for (let offset = 0; offset < count; offset++) if (before[from + offset] !== after[to + offset]) return false;
+	return true;
 };
 
 const diffObject = (

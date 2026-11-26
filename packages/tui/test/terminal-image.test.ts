@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { Image, setImageTranscoder } from "../src/components/image.ts";
 import {
+	allocateImageId,
 	cropKittyImageLine,
 	deleteAllKittyImages,
 	deleteAllKittyPlacements,
@@ -508,6 +509,16 @@ describe("iTerm2 image encoding", () => {
 	it("includes the decoded payload size in OSC 1337 metadata", () => {
 		const sequence = encodeITerm2("AAAA", { width: 2, height: "auto" });
 		assert.strictEqual(sequence, "\x1b]1337;File=inline=1;size=3;width=2;height=auto:AAAA\x07");
+	});
+});
+
+describe("Kitty image IDs", () => {
+	// #12548: Konsole parses keys as signed 32-bit integers and reads larger IDs as 0.
+	it("allocates IDs that fit a signed 32-bit integer", (t) => {
+		t.mock.method(Math, "random", () => 0.999999999999);
+		assert.strictEqual(allocateImageId(), 0x7fffffff);
+		t.mock.method(Math, "random", () => 0);
+		assert.strictEqual(allocateImageId(), 1);
 	});
 });
 

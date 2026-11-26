@@ -74,13 +74,17 @@ export class ReadIndex implements KeptKeysWatcher {
 		if (index.isEmpty()) this.#tables.delete(read.plan.table);
 	}
 
-	/** Re-files `read` by the keys it keeps now, unless they are the same sets (a run adopted after its group's step). */
+	/**
+	 * Re-files `read` by the keys it keeps now, unless they are the same sets (a run adopted after its group's step).
+	 * Only the sets that changed are walked: a set it kept and keeps (the same object) is filed already, a key of a set
+	 * it no longer keeps leaves unless another set keeps it, a key of a new set is added. Under a key several reads
+	 * keep, they stay candidates in the order they came to keep it.
+	 */
 	kept(read: Read): void {
 		const filing = this.#filings.get(read)!;
 		const kept = read.kept();
-		if (kept?.length === filing.kept?.length && (kept ?? NO_KEYS).every((keys, at) => keys === filing.kept![at]))
-			return;
 		const before = filing.kept;
+		if (kept?.length === before?.length && (kept ?? NO_KEYS).every((keys, at) => keys === before![at])) return;
 		filing.kept = kept;
 		const { index } = filing;
 		if (kept === undefined) {
@@ -89,13 +93,13 @@ export class ReadIndex implements KeptKeysWatcher {
 			return;
 		}
 		index.unindexed.delete(read);
-		// What filing it anew after removing it from every key gave, without the map's removals and insertions of the
-		// keys it keeps again (a run of 100 rows keeps 99 of them): a key it no longer keeps loses it; a key it keeps
-		// has it last among the reads filed there.
 		for (const keys of before ?? NO_KEYS) {
+			if (kept.includes(keys)) continue;
 			for (const key of keys) if (!keepsKey(kept, key)) removeFrom(index.kept, key, read);
 		}
-		for (const keys of kept) for (const key of keys) refile(index.kept, key, read);
+		// Keys a set filed before already has are filed: adding them again changes nothing.
+		for (const keys of kept)
+			if (before === undefined || !before.includes(keys)) for (const key of keys) addTo(index.kept, key, read);
 	}
 
 	/**
@@ -261,14 +265,6 @@ function addTo<K>(map: Map<K, Filed>, key: K, read: Read): void {
 function keepsKey(kept: readonly ReadonlySet<unknown>[], key: unknown): boolean {
 	for (const keys of kept) if (keys.has(key)) return true;
 	return false;
-}
-
-/** Files `read` under `key` as the last read there: added, or moved behind the reads filed after it. */
-function refile<K>(map: Map<K, Filed>, key: K, read: Read): void {
-	const filed = map.get(key);
-	if (filed === read) return;
-	if (filed instanceof Set && filed.delete(read)) filed.add(read);
-	else addTo(map, key, read);
 }
 
 function removeFrom<K>(map: Map<K, Filed>, key: K, read: Read): void {
