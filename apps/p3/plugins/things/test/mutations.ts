@@ -525,13 +525,13 @@ const MUTATIONS: readonly Mutation[] = [
 	},
 	{
 		name: "deleteEverythingFrom does not say which workspaces its grants were in",
-		file: "store.ts",
+		file: "cleanup.ts",
 		find: 'await deleteTold(tx, t.grants, Grants, (r) => eq(r.sourceKey, key), touched.workspaces, "workspace");',
 		put: 'await deleteTold(tx, t.grants, Grants, (r) => eq(r.sourceKey, key), new Set(), "workspace");',
 	},
 	{
 		name: "deleteEverythingFrom does not say which persons it touched",
-		file: "store.ts",
+		file: "cleanup.ts",
 		find: 'await deleteTold(tx, t.groupMembers, GroupMembers, (r) => eq(r.sourceKey, key), touched.persons, "person");',
 		put: 'await deleteTold(tx, t.groupMembers, GroupMembers, (r) => eq(r.sourceKey, key), new Set(), "person");',
 	},
@@ -754,13 +754,13 @@ const MUTATIONS: readonly Mutation[] = [
 	},
 	{
 		name: "the cleanup takes the persons a source made even if something else is left of them",
-		file: "store.ts",
+		file: "cleanup.ts",
 		find: "for (const person of made) if (!left.has(person)) this.#forget(tx, touched, person);",
 		put: "for (const person of made) this.#forget(tx, touched, person);",
 	},
 	{
 		name: "the cleanup leaves the persons a source made",
-		file: "store.ts",
+		file: "cleanup.ts",
 		find: "for (const person of made) if (!left.has(person)) this.#forget(tx, touched, person);",
 		put: "",
 	},
@@ -814,7 +814,7 @@ const MUTATIONS: readonly Mutation[] = [
 	},
 	{
 		name: "a person with the owner flag is removed",
-		file: "store.ts",
+		file: "cleanup.ts",
 		find: 'if (row.owner === 1) throw invalid("args", "things: an owner is removed once the owner flag is taken");',
 		put: "",
 	},
@@ -826,7 +826,7 @@ const MUTATIONS: readonly Mutation[] = [
 	},
 	{
 		name: "a removed group leaves its managers",
-		file: "store.ts",
+		file: "cleanup.ts",
 		find: "		tx.deleteWhere(t.groupManagers, (m) => eq(m.group, group));\n",
 		put: "",
 	},
@@ -839,18 +839,18 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "a thing's last unlink leaves what it wrote and made",
 		file: "store.ts",
-		find: 'await this.deleteEverythingFrom(tx, touched, sourceKey({ kind: "thing", thing }));',
+		find: 'await this.#cleanup.deleteEverythingFrom(tx, touched, sourceKey({ kind: "thing", thing }));',
 		put: "",
 	},
 	{
 		name: "a source's cleanup leaves its invite links",
-		file: "store.ts",
+		file: "cleanup.ts",
 		find: "tx.deleteWhere(t.invites, (r) => eq(r.byKey, key));",
 		put: "",
 	},
 	{
 		name: "a person who made someone goes with the source's cleanup",
-		file: "store.ts",
+		file: "cleanup.ts",
 		find: "for (const rows of makers) for await (const row of rows) left.add(personOf.get(row.madeByKey)!);",
 		put: "",
 	},
@@ -892,7 +892,7 @@ const MUTATIONS: readonly Mutation[] = [
 	},
 	{
 		name: "a removed group stays a manager of others",
-		file: "store.ts",
+		file: "cleanup.ts",
 		find: 'tx.deleteWhere(t.groupManagers, (m) => eq(m.partyKey, partyKey({ kind: "group", group })));',
 		put: "",
 	},

@@ -32,7 +32,7 @@ import type { Attachment, Probe, ProbeAttachment } from "./access.ts";
 import { type Caller, Item, ManagedBy, Party, Source } from "./contract.ts";
 import type { DefaultGrants } from "./kind.ts";
 import type { Answer as Answered } from "./rules.ts";
-import { DefaultsChoice } from "./workspace.ts";
+import { DefaultsChoice, PartyInfo } from "./workspace.ts";
 
 /** A thing: its id, kind, name, its own default view (`""`: none, item 74), who made it and when. */
 export const ThingRow = obj({
@@ -126,9 +126,6 @@ export const Answer = obj({
 	makes: opt(arr(str())),
 	above: opt(arr(str())),
 });
-
-/** A person or group the picker offers: the party and its name. */
-export const PartyInfo = obj({ party: Party, name: str() });
 
 /**
  * What an invite link is made with (R39): into `workspace`, made by `by`, `as` a member or a guest, valid `expires`
