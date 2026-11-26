@@ -1263,7 +1263,7 @@ describe("the turns of an activation", () => {
 		return answered;
 	}
 
-	it("are those before: a plain object live after 7, an admitted one after 14, the host closed after 65", async () => {
+	it("are those before: a plain object live after 7, an admitted one after 14, the host closed after 51", async () => {
 		const h = createHost({ address: Server(), principal: { kind: "server" }, onError: () => {} });
 		const facet = defineFacet((host) => {
 			host.serve(Plain, ({ id }) => ({ name: constant(id) }));
@@ -1279,9 +1279,9 @@ describe("the turns of an activation", () => {
 			counts.push(await turnsOf(() => h.get(Plain, { id: `p${id}` }, context)));
 			counts.push(await turnsOf(() => h.get(Admitted, { id: `a${id}` }, context)));
 		}
-		// The host's close with the eight objects held: their attempts sealed, drained and closed.
+		// The host's close with the six objects held: their attempts sealed, drained and closed.
 		counts.push(await turnsOf(() => h.close(context)));
 		// Measured on the base of the pass (every step an async function).
-		expect(counts).toEqual([7, 14, 7, 14, 7, 14, 65]);
+		expect(counts).toEqual([7, 14, 7, 14, 7, 14, 51]);
 	});
 });
