@@ -26,7 +26,8 @@ type NotesProvider = Implementation<typeof Notes>; // { notes, add(args, context
   arguments are `null` omits them: `clear(context)`) and `events` (schemas of the JSON values the object emits,
   decision "Events: fire-and-forget members"); a member marked `grantable(...)` exists for a caller only if its
   admission granted it, and `flags: { name: label }` are rights that are no member, each `label` a message as data
-  (`MessageData`, `message.ts`; declaration refuses another value), which the access UI renders. `GrantableName<C>` is the union of
+  (`MessageData`, `message.ts`; declaration refuses another value, `isMessageData`, but checks no catalog:
+  `messages.message(key)` does, by its type), which the access UI renders. `GrantableName<C>` is the union of
   a contract's grantable members and flags. `local(name, { version, params, members })`: one flat map, where a schema is state, `method(...)` a
   method, `keyed(schema)` a keyed member and `event(schema)` an event member.
 - `admission: obj(...)` (remote only, optional; slice 14): the JSON data the type's admission hands its factory about

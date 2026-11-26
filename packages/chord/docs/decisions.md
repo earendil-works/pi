@@ -3803,9 +3803,10 @@ From `research/chord-on-durable-objects.md`, adopted for the Chord v2 kernel bec
   slice 15's (B) "a flag's label is plain English text"):** everything that reaches the UI is a message, so it reads in
   the viewer's language: `flags: { export: messages.message("flagExport") }`, the label a `MessageData` of the
   plugin's `defineMessages` (`MessageData<N, K>`, the key a type error unless the catalog has it). It is plain data, so
-  a contract file holds it: a contract file may import its plugin's `messages.ts`, which imports only the API and whose
-  catalog functions are pure. Declaration refuses a label that is no message (`MessageSchema`: namespace, key, plain
-  parameters, nothing else); the fingerprint leaves labels out as before. The access UI renders a label with the
+  a contract file holds it: a contract file may import its plugin's `messages.ts` (the rule: `plugin-authoring.md`,
+  "What a plugin may import"). Declaration refuses a label that is no message (`MessageSchema`: namespace, key, plain
+  parameters, nothing else) and checks no catalog: `messages.message(key)` checks the key against the catalog (by its
+  type); the fingerprint leaves labels out as before. The access UI renders a label with the
   viewer's `t.render(label)` or passes it on as data. `MessageData` and `MessageSchema` are declared in the contracts
   layer (`contracts/message.ts`, re-exported by the data layer as before), since contracts hold them.
 

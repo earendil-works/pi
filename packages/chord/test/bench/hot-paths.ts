@@ -15,7 +15,6 @@ import { defineState } from "../../src/documents/index.ts";
 import { allow, createHost, defineFacet } from "../../src/host/index.ts";
 import { memoryLinkPair } from "../../src/link/index.ts";
 import { constant } from "../../src/state/index.ts";
-import { flagLabel } from "../support.ts";
 
 const N = Number(process.argv[2] ?? 170);
 const ROUNDS = Number(process.argv[3] ?? 60);
@@ -38,13 +37,17 @@ const Access = local("bench.access", {
 	params: {},
 	members: { roles: obj({ names: arr(Name), touched: int() }), grant: method(arr(Name)), touch: method(int()) },
 });
+
+/** The flag's label: a message as data, declared here (the test support would load Vitest into the benchmark). */
+const EXPORT = { namespace: "bench", key: "export", params: [] };
+
 const Thing = remote("bench.thing", {
 	version: 1,
 	params: { id: str() },
 	hostAddress: () => Server(),
 	state: { name: str(), history: grantable(arr(str())) },
 	methods: { use: method(str(), str()), add: grantable(method(str(), str())) },
-	flags: { export: flagLabel("export") },
+	flags: { export: EXPORT },
 });
 
 let built = 0;

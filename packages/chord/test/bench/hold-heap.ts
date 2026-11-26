@@ -31,7 +31,6 @@ import { ipcLink } from "../../src/link/index.ts";
 import { openNodeSqliteDatabase } from "../../src/sqlite/node.ts";
 import { constant } from "../../src/state/index.ts";
 import { defineTable, eq, openStore, query, sqliteBackend } from "../../src/store/index.ts";
-import { flagLabel } from "../support.ts";
 
 const OBJECTS = 1_000;
 const WARM_UP = 1_000;
@@ -49,13 +48,16 @@ const Store = local("bench.store", {
 const Roles = local("bench.roles", { version: 1, params: {}, members: { names: arr(str()) } });
 const Count = defineState("count", { schema: obj({ n: int() }), version: 1, initial: () => ({ n: 0 }) });
 
+/** The flag's label: a message as data, declared here (the test support would load Vitest into the benchmark). */
+const EXPORT = { namespace: "bench", key: "export", params: [] };
+
 const thing = {
 	version: 1,
 	params: { id: str() },
 	hostAddress: () => Server(),
 	state: { name: str(), history: grantable(arr(str())) },
 	methods: { use: method(str(), str()), add: grantable(method(str(), str())) },
-	flags: { export: flagLabel("export") },
+	flags: { export: EXPORT },
 } as const;
 const Bare = remote("bench.bare", {
 	version: 1,

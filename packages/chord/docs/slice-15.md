@@ -42,11 +42,11 @@ type Names = GrantableName<typeof Canvas>; // "history" | "reported" | "add" | "
 
 - `remote(name, { version, params, hostAddress, admission?, state?, events?, methods?, flags? })`. `variants` is gone.
   `grantable(schema)` in `state` and `events`, `grantable(method(...))` in `methods`; `flags: { name: label }`, the
-  label an English text for the access UI (not a message: flags are declared by code, the UI renders it as given) **(B)**.
-  **Changed 2026-11-26, decision "Flag labels are messages" (Mario):** the label is a message as data (`MessageData`,
-  `messages.message("flagExport")` of the plugin's `defineMessages`, its key checked against the catalog), which the
-  access UI renders in the viewer's language; declaration refuses a label that is no message (`MessageSchema`); the
-  fingerprint still leaves labels out. A contract file may import its plugin's `messages.ts`.
+  label a message as data (`MessageData`, `messages.message("flagExport")` of the plugin's `defineMessages`, which
+  checks the key against the catalog by its type), which the access UI renders in the viewer's language; declaration
+  refuses a label that is no message (`MessageSchema`, the shape only) (decision "Flag labels are messages",
+  2026-11-26, superseding **(B)**'s English text). A contract file may import its plugin's `messages.ts`
+  (`plugin-authoring.md`, "What a plugin may import").
 - `local(...)` is unchanged: a local object has no audiences; `grantable` there is a declaration error.
 - `granted` is reserved (a reference has it) and `variant` no longer is. Flag names follow member names' rules.
 - **The fingerprint** covers the members, which of them are grantable, and the flag names, never the labels:

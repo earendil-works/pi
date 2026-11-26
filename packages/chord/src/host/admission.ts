@@ -443,7 +443,7 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 			return this.#allowObject(decision, value, grants, label, context);
 		}
 		if (kind === "deny" && typeof reason === "string") {
-			if (message !== undefined && !isMessageData(message, context)) {
+			if (message !== undefined && !isMessageData(message)) {
 				const error = new Error(`its denial's message is no message as data (MessageSchema): ${reason}`);
 				return { kind: "broken", error: asChordError(error, label) };
 			}

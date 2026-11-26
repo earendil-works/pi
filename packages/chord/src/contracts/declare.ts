@@ -2,7 +2,6 @@
 // untyped declaration input. A member is state, a method, a keyed member (local only) or an event; a remote contract's
 // may be grantable, and it may declare flags (slice 15 §1).
 
-import { isJsonValue } from "../json.ts";
 import type { AdmissionData, HostKeyed, KeyedSnapshot, MembersData, QueriesData } from "./contract.ts";
 import {
 	type Contract,
@@ -15,7 +14,7 @@ import {
 } from "./contract.ts";
 import { fingerprintOf, materialize } from "./fingerprint.ts";
 import { type Address, type KindShape, kindParams } from "./host-kind.ts";
-import type { MessageData } from "./message.ts";
+import { isMessageData, type MessageData } from "./message.ts";
 import { checkName } from "./names.ts";
 import { type Params, type RequiredFields, readParams } from "./params.ts";
 import { EventDeclaration, Grantable, KeyedMember, Method, QueriesMember, type Schema, type Static } from "./schema.ts";
@@ -102,9 +101,12 @@ export function remote<
 	if (typeof hostAddress !== "function") throw new Error(`${name}.hostAddress: expected a function of the params`);
 	const { members, grantable } = readRemoteMembers(declaration, name);
 	const flags = new Map(
-		entriesOf(declaration.flags ?? {}, `${name}.flags`).map(
-			([flag, label]) => [flag, flagLabel(label, `${name}.flags.${flag}`)] as const,
-		),
+		entriesOf(declaration.flags ?? {}, `${name}.flags`).map(([flag, label]) => {
+			if (!isMessageData(label)) {
+				throw new Error(`${name}.flags.${flag}: expected its label as a message ({ namespace, key, params })`);
+			}
+			return [flag, label] as const;
+		}),
 	);
 	const { admission } = declaration;
 	const admitted = admission === undefined ? undefined : admissionData(admission, `${name}.admission`);
@@ -114,29 +116,6 @@ export function remote<
 }
 
 const REMOTE_KEYS = ["version", "params", "hostAddress", "admission", "state", "methods", "events", "flags"];
-
-/**
- * A flag's label as `MessageSchema` describes a message: JSON data (finite numbers, dense arrays, as it crosses links)
- * of its namespace, key and plain parameters, nothing else.
- */
-function flagLabel(label: unknown, path: string): MessageData {
-	const { namespace, key, params } = (
-		isJsonValue(label) && typeof label === "object" && label !== null ? label : {}
-	) as {
-		namespace?: unknown;
-		key?: unknown;
-		params?: unknown;
-	};
-	// JSON already: a parameter is plain unless it is an object or an array.
-	const plain = (param: unknown) => param === null || typeof param !== "object";
-	if (typeof namespace !== "string" || typeof key !== "string" || !Array.isArray(params) || !params.every(plain)) {
-		throw new Error(`${path}: expected its label as a message ({ namespace, key, params })`);
-	}
-	checkKeys(label, MESSAGE_KEYS, path);
-	return label as MessageData;
-}
-
-const MESSAGE_KEYS = ["namespace", "key", "params"];
 
 /** A remote declaration's members as Chord-owned snapshots, and which of them are grantable. */
 function readRemoteMembers(

@@ -175,7 +175,7 @@ data and decides, and the factory is handed the value. What a caller may do is s
 it, a flag a right that is no member.
 
 ```ts
-// contract.ts (it may import its plugin's `messages.ts`: `import { messages } from "./messages.ts"`)
+// contract.ts (`import { messages } from "./messages.ts"`: see "What a plugin may import")
 export const Transcript = remote("notes.transcript", { version: 1, params: { session: str() },
 	hostAddress: ({ session }) => Session({ id: session }),
 	admission: obj({ mode: oneOf("read", "write") }),
@@ -257,7 +257,7 @@ Refused at build, each with the file, line and rule:
 
 Contract files mention native things (React components, functions) only through `import type`; at runtime they import
 only the API and the plugin's own data-only files. A contract file may import its plugin's `messages.ts` (for flag
-labels): it imports only the API, and its catalog functions are pure.
+labels): it imports only the API, and its catalog functions are pure. This is the rule; the other docs point here.
 
 ## An app's API is a package
 

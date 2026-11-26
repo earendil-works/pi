@@ -139,7 +139,7 @@ describe("declaration checks", () => {
 				hostAddress,
 				flags: { export: { namespace: "n", key: "k", params: [], text: "x" } },
 			},
-			'n.flags.export: unknown key "text"',
+			"n.flags.export: expected its label as a message ({ namespace, key, params })",
 		],
 		[
 			"a schema under methods",
@@ -320,15 +320,6 @@ describe("grantable members and flags (slice 15 §1.1)", () => {
 		expectTypeOf(messages.message("flagExport")).toEqualTypeOf<MessageData<"canvas", "flagExport">>();
 		// @ts-expect-error a key the catalog has not
 		messages.message("flagImport");
-		const labelledByText = () =>
-			remote("canvas.text", {
-				version: 1,
-				params: {},
-				hostAddress,
-				// @ts-expect-error a label is a message, not its text
-				flags: { export: "Export as image" },
-			});
-		expect(labelledByText).toThrow("canvas.text.flags.export: expected its label as a message");
 	});
 
 	it("put grantability and the flag names in the fingerprint, not the labels", () => {

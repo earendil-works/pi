@@ -698,7 +698,9 @@ host.serve(Notes, ({ session }, principal, admitted, self) => ({
   are rights that are no member; the label is a message as data (`MessageData`, §23: `messages.message("flagExport")`
   of the plugin's `defineMessages`, typed by its catalog), which the access UI renders in the viewer's language
   (decision "Flag labels are messages", 2026-11-26); declaration refuses a label that is no message
-  (`MessageSchema`). A contract file may import its plugin's `messages.ts`: it imports only the API. A name is one member or one flag, never two
+  (`MessageSchema`): the declaration checks only the label's shape, `messages.message(key)` checks the key against
+  the catalog (by its type). A contract file may import its plugin's `messages.ts` (`plugin-authoring.md`, "What a
+  plugin may import"). A name is one member or one flag, never two
   (types and declaration). `GrantableName<C>` is the union of a contract's grantable members and flags. A contract
   with grantable members or flags takes an admission (`admit` required, §6). `local` contracts have neither.
 - **Admission** (slice 14; slice 15 §1.2): a remote contract may declare `admission: obj(...)`, the data its factory
