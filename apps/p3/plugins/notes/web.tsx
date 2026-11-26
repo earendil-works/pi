@@ -1,10 +1,10 @@
-// The notes plugin's web facet: the notes kind's view of a notebook (`ThingViews`) and the plugin's catalogs
-// (`Translations`: the page renders its tick's label and the view's texts from them). Who may write is the things
-// plugin's grants, edited in its Settings view; a notebook has no settings of its own.
+// The notes plugin's web facet, contributions only: the notes kind's view of a notebook (`ThingViews`) and the plugin's
+// catalogs (`Translations`: the page renders its tick's label and the view's texts from them). Who may write is the
+// things plugin's grants; the order, the notebook's one setting, gets its form with slice 4's `ThingParts`.
 
 import { defineFacet, Translations } from "@earendil-works/p3/v1";
 import { DescriptionIcon, ThingViews } from "@earendil-works/p3/v1/web";
-import { NotesKind } from "./contract.ts";
+import { NotesKind } from "./kind.ts";
 import { messages } from "./messages.ts";
 import { NotesView } from "./notes-view.tsx";
 

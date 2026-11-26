@@ -14,8 +14,8 @@ import {
 } from "@earendil-works/p3/v1";
 import { ThingsStore } from "../things/contract.server.ts";
 import { serveThing } from "../things/serve.ts";
-import { type Note, NotesKind, type NotesOrder, type NotesPage } from "./contract.ts";
-import { NotesStore, type StoredNote, serveStore } from "./store.ts";
+import { type Note, NotesKind, type NotesOrder, type NotesPage, type NotesSettings } from "./kind.ts";
+import { DEFAULT_SETTINGS, NotesStore, type StoredNote, serveStore } from "./store.ts";
 
 /** How many notes a page of a notebook holds. */
 const PAGE = 50;
@@ -24,23 +24,14 @@ export default defineFacet((host) => {
 	serveStore(host);
 
 	serveThing(host, NotesKind, {
-		// A new notebook starts empty, the last written first: nothing to set up. Its notes and its order go with it.
-		delete: async (thing, ctx) => {
-			await (await ctx.get(NotesStore, {})).clear({ notebook: thing }, ctx);
-		},
-		// Its one setting; the things plugin checked the value against `order`'s schema.
-		configure: async (thing, { order }, ctx) => {
-			if (order !== undefined)
-				await (await ctx.get(NotesStore, {})).setOrder({ notebook: thing, order: order as NotesOrder }, ctx);
-		},
 		// One notebook for one caller. The things plugin admitted them and decides which members they get: `add`, `edit`
 		// and `remove` only with Write. Every caller reads: the name, the pages it loaded, and pages read now.
 		implement: ({ thing }, { caller }, self) => {
 			const store = self.get(NotesStore, {});
 			const things = self.get(ThingsStore, {});
 			const named = self.liveQuery(things.things.one, { thing }, { first: 1 });
-			const set = self.liveQuery(store.orders.of, { notebook: thing }, { first: 1 });
-			const setting = self.derive([set], ([{ rows }]): NotesOrder => rows[0]?.order ?? "newest");
+			const set = self.liveQuery(store.settings.of, { notebook: thing }, { first: 1 });
+			const setting = self.derive([set], ([{ rows }]): NotesOrder => (rows[0] ?? DEFAULT_SETTINGS).order);
 			// A new order is a new list: it starts again at its first page. Until it has switched, it shows its rows
 			// in the order before.
 			const args = self.derive([setting], ([by]) => ({ notebook: thing, order: by }));
@@ -55,6 +46,19 @@ export default defineFacet((host) => {
 				edit: ({ id, text }, ctx) => store.edit({ notebook: thing, id, text, author: caller }, ctx),
 				remove: ({ id }, ctx) => store.remove({ notebook: thing, id }, ctx),
 			};
+		},
+		// A new notebook starts empty, with `DEFAULT_SETTINGS`: nothing to create. Its settings are set where it is
+		// linked; the things plugin checked each value against its state member's schema (`order`: `NotesOrder`).
+		configure: async (thing, settings, ctx) => {
+			const { order } = settings as Partial<NotesSettings>;
+			await (await ctx.get(NotesStore, {})).configure(
+				{ notebook: thing, ...(order === undefined ? {} : { order }) },
+				ctx,
+			);
+		},
+		// Its notes and settings go with it.
+		delete: async (thing, ctx) => {
+			await (await ctx.get(NotesStore, {})).clear({ notebook: thing }, ctx);
 		},
 	});
 });

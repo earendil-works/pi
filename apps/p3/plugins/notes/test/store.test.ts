@@ -8,7 +8,7 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/p3/v1";
 import { kindServer } from "../../things/test/kind-server.ts";
-import { NotesKind } from "../contract.ts";
+import { NotesKind } from "../kind.ts";
 import notesServer from "../server.ts";
 import { NotesStore } from "../store.ts";
 
@@ -46,8 +46,8 @@ describe("the notes store", () => {
 			assert.deepEqual((await store.notes.of.page({ notebook: "a", order: "newest" }, 10, context)).items, []);
 			// A notebook cleared is gone: a write that comes later (begun before the clear) is refused.
 			await assert.rejects(store.add({ notebook: "a", text: "late", author: ANN }, context), /is gone/);
-			await assert.rejects(store.setOrder({ notebook: "a", order: "oldest" }, context), /is gone/);
-			assert.deepEqual((await store.orders.of.page({ notebook: "a" }, 1, context)).items, []);
+			await assert.rejects(store.configure({ notebook: "a", order: "oldest" }, context), /is gone/);
+			assert.deepEqual((await store.settings.of.page({ notebook: "a" }, 1, context)).items, []);
 			assert.equal((await store.notes.of.page({ notebook: "b", order: "newest" }, 10, context)).items.length, 1);
 		} finally {
 			await n.close();

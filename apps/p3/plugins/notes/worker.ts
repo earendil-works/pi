@@ -2,10 +2,11 @@
 // `notes_list` (each notebook's id, name and whether the agent may write there) and `notes_read({ notebook, after })`
 // (a page of notes as JSON) always; `notes_write({ notebook, change })` (add, edit or remove a note) while one of them
 // gives Write, refused naming the notebook on the others. The tools take a notebook's id from `notes_list`, so their
-// descriptions stay fixed whatever notebooks the agent holds. They reach the notebook through the agent's reference,
-// as the session's worker: Write taken back after the tools were offered refuses the write at the call.
+// descriptions stay fixed whatever notebooks the agent holds. They call the agent's held reference (decision 120):
+// Write taken back after the tools were offered refuses the write at the call. Reads and changes answer JSON.
 
 import {
+	type Context,
 	defineFacet,
 	forbidden,
 	invalid,
@@ -13,18 +14,20 @@ import {
 	obj,
 	opt,
 	type Reference,
+	type Static,
 	str,
 	union,
+	type With,
 	withGranted,
 } from "@earendil-works/p3/v1";
 import { defineExtension, defineTool, type Extension } from "@earendil-works/p3/v1/worker";
-import { type HarnessSession, type HeldThing, ThingHarnessParts, thingHarnessPart } from "../things/contract.worker.ts";
-import { NOTES_WRITES, type Notes, NotesKind, NoteText } from "./contract.ts";
+import { type HeldThing, ThingHarnessParts, thingHarnessPart } from "../things/contract.worker.ts";
+import { NOTES_WRITES, type Notes, NotesKind, NoteText } from "./kind.ts";
 
 export default defineFacet((_host, self) => {
 	self.contribute(
 		ThingHarnessParts,
-		thingHarnessPart(NotesKind, (things, session) => ({ extension: notesExtension(things, session) })),
+		thingHarnessPart(NotesKind, (things) => ({ extension: notesExtension(things) })),
 	);
 });
 
@@ -32,11 +35,11 @@ export default defineFacet((_host, self) => {
 type Notebook = HeldThing<typeof Notes>;
 
 /** The agent's notes tools: list and read, and write while one notebook gives Write. */
-function notesExtension(things: readonly Notebook[], session: HarnessSession): Extension {
-	const tools = [listTool(things), readTool(things, session)];
+function notesExtension(things: readonly Notebook[]): Extension {
+	const tools = [listTool(things), readTool(things)];
 	return defineExtension({
-		name: "notes",
-		tools: things.some(({ ref }) => writer(ref) !== undefined) ? [...tools, writeTool(things, session)] : tools,
+		name: NotesKind.name,
+		tools: things.some(({ ref }) => writer(ref) !== undefined) ? [...tools, writeTool(things)] : tools,
 	});
 }
 
@@ -61,7 +64,7 @@ function listTool(things: readonly Notebook[]) {
 }
 
 /** The tool `notes_read`: a page of a notebook's notes, in the notebook's order, as JSON. */
-function readTool(things: readonly Notebook[], session: HarnessSession) {
+function readTool(things: readonly Notebook[]) {
 	return defineTool({
 		name: "notes_read",
 		description:
@@ -74,7 +77,7 @@ function readTool(things: readonly Notebook[], session: HarnessSession) {
 		execute: async ({ notebook, after }, _api, context) => {
 			const { ref } = notebookOf(things, notebook);
 			// A page read now: the agent's reference keeps the pages it holds, whatever the agent reads.
-			const page = await session.call((ctx) => ref.page(after === undefined ? {} : { after }, ctx), context);
+			const page = await ref.page(after === undefined ? {} : { after }, context);
 			return { output: [{ type: "text", text: JSON.stringify(page) }] };
 		},
 	});
@@ -88,39 +91,46 @@ const Change = union([
 ]);
 
 /** The tool `notes_write`: adds, edits or removes a note of a notebook the agent may write in. */
-function writeTool(things: readonly Notebook[], session: HarnessSession) {
+function writeTool(things: readonly Notebook[]) {
 	return defineTool({
 		name: "notes_write",
 		description:
 			"Changes one of your notebooks (`notebook`: its id from `notes_list`, one you may write in), which everyone " +
 			'there sees at once: `change` is `{ kind: "add", text }`, `{ kind: "edit", id, text }` (a note\'s id from ' +
-			'`notes_read`) or `{ kind: "remove", id }`.',
+			'`notes_read`) or `{ kind: "remove", id }`; answers JSON: the new note\'s `{ id }`, else `{}`.',
 		parameters: obj({ notebook: str(), change: Change }),
 		execute: async ({ notebook, change }, _api, context) => {
 			const { thing, ref } = notebookOf(things, notebook);
-			const text = await session.call(async (ctx) => {
-				// Read at the call: Write may have been taken back since the tools were offered.
-				const writes = writer(ref);
-				if (writes === undefined)
-					throw forbidden(`notes: you may not write in the notebook "${ref.name.value}" (${thing})`);
-				switch (change.kind) {
-					case "add":
-						return `Added note ${await writes.add({ text: change.text }, ctx)}.`;
-					case "edit":
-						await writes.edit({ id: change.id, text: change.text }, ctx);
-						return `Edited note ${change.id}.`;
-					case "remove":
-						await writes.remove({ id: change.id }, ctx);
-						return `Removed note ${change.id}.`;
-				}
-			}, context);
-			return { output: [{ type: "text", text }] };
+			// Read at the call: Write may have been taken back since the tools were offered.
+			const writes = writer(ref);
+			if (writes === undefined) {
+				throw forbidden(`notes: you may not write in the notebook "${ref.name.value}" (${thing})`);
+			}
+			const answer = await written(writes, change, context);
+			return { output: [{ type: "text", text: JSON.stringify(answer) }] };
 		},
 	});
 }
 
+/** Makes `change` through `writes`: the new note's `{ id }`, else `{}`. */
+async function written(writes: Writes, change: Static<typeof Change>, context: Context): Promise<{ id?: string }> {
+	switch (change.kind) {
+		case "add":
+			return { id: await writes.add({ text: change.text }, context) };
+		case "edit":
+			await writes.edit({ id: change.id, text: change.text }, context);
+			return {};
+		case "remove":
+			await writes.remove({ id: change.id }, context);
+			return {};
+	}
+}
+
+/** A notebook's members Write gives. */
+type Writes = With<Reference<typeof Notes>, (typeof NOTES_WRITES)[number]>;
+
 /** The notebook's members Write gives, while the agent has it there. */
-function writer(ref: Reference<typeof Notes>) {
+function writer(ref: Reference<typeof Notes>): Writes | undefined {
 	return withGranted(ref, ...NOTES_WRITES);
 }
 

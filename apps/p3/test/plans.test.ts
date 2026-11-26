@@ -93,7 +93,7 @@ describe("the plans of the stores' queries", () => {
 				for (let i = 0; i < 3; i++)
 					await notes.add({ notebook, text: `n${i}`, author: { kind: "person", person: "owner" } }, context);
 			}
-			await notes.setOrder({ notebook: "n1", order: "oldest" }, context);
+			await notes.configure({ notebook: "n1", order: "oldest" }, context);
 			const checklists = await host.get(ChecklistStore, {}, context);
 			for (const checklist of ["c1", "c2"]) {
 				for (let i = 0; i < 3; i++) await checklists.add({ checklist, text: `i${i}` }, context);
@@ -236,7 +236,7 @@ describe("the plans of the stores' queries", () => {
 					pages(notes.notes.of, { notebook: "n1", order: "oldest" }),
 					{ index: `${N}.rows:by_time` },
 				],
-				["orders.of", pages(notes.orders.of, { notebook: "n1" }), {}],
+				["settings.of", pages(notes.settings.of, { notebook: "n1" }), {}],
 				["shapes.of", pages(canvas.shapes.of, { canvas: "b1" }), { index: `${C}.shapes:by_order` }],
 				["items.of", pages(checklists.items.of, { checklist: "c1" }), { index: `${K}.items:by_order` }],
 			];

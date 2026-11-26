@@ -1,8 +1,7 @@
-// The notes plugin's contract: notebooks as a kind of thing (`notes.notes`) and one notebook held in a workspace by a
-// person or an agent (`Notes`, `NotesKind`'s contract). Anyone, people and agents, may make one where they may make
-// things; it may be linked in any number of workspaces, and its notes, keyed by the thing's id, are the same in each.
-// Who may do what is the things plugin's grants: reading is for everyone let in, the one tick Write adds, edits and
-// removes notes.
+// The notes kind (`notes.notes`): notebooks. Anyone, people and agents, may make one; it may be linked in any number
+// of workspaces, its notes, keyed by the thing's id, the same in each. Reading is for everyone let in; the one tick
+// Write adds, edits and removes notes. Its one setting is the order. A new link starts with Write for everyone there
+// and the agents; a Read share's guests read.
 
 import { arr, bool, int, lit, method, obj, oneOf, opt, type Static, str, union } from "@earendil-works/p3/v1";
 import { defineThing } from "../things/kind.ts";
@@ -47,6 +46,9 @@ export const NotesOrder = oneOf("newest", "oldest");
 
 /** The order a notebook shows its notes in (see `NotesOrder`). */
 export type NotesOrder = Static<typeof NotesOrder>;
+
+/** A notebook's settings: what `configure` sets where it is linked (`settings` of the kind). */
+export type NotesSettings = { readonly order: NotesOrder };
 
 /** What Write gives: the members a writer of a notebook is granted. */
 export const NOTES_WRITES = ["add", "edit", "remove"] as const;

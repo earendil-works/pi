@@ -12,19 +12,13 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import {
-	BACKGROUND_CONTEXT as context,
-	isChordError,
-	type P3Principal,
-	type Reference,
-	until,
-} from "@earendil-works/p3/v1";
+import { BACKGROUND_CONTEXT as context, type P3Principal, type Reference, until } from "@earendil-works/p3/v1";
 import { collected, eventually, within } from "../../../test/until.ts";
 import { ThingHooks } from "../../things/contract.server.ts";
 import { OPEN } from "../../things/contract.ts";
 import { ThingKinds } from "../../things/kind.ts";
-import { BY, type KindServer, kindServer, type Person } from "../../things/test/kind-server.ts";
-import { NOTES_WRITES, type Notes, NotesKind } from "../contract.ts";
+import { BY, type KindServer, kindServer, type Person, refused } from "../../things/test/kind-server.ts";
+import { NOTES_WRITES, type Notes, NotesKind } from "../kind.ts";
 import notesServer from "../server.ts";
 import { NotesStore } from "../store.ts";
 
@@ -41,15 +35,6 @@ beforeEach(async () => {
 });
 
 afterEach(() => n.close());
-
-/** What `principal` is granted on notebook `thing` in `where`. */
-const grantedTo = (principal: P3Principal, where: string, thing: string) =>
-	n.holding(principal, where, thing, async (notes) => [...notes.granted].sort());
-
-/** Whether `promise` rejects with a ChordError of `code`. */
-async function refused(promise: Promise<unknown>, code = "forbidden"): Promise<void> {
-	await assert.rejects(promise, (error: unknown) => isChordError(error) && error.code === code);
-}
 
 /** The texts of `notes`' loaded notes, in order. */
 const texts = (notes: Reference<typeof Notes>) => notes.list.value.rows.map(({ text }) => text);
@@ -115,11 +100,11 @@ describe("who may do what in a notebook", () => {
 		const ann = await n.person("Ann", s1);
 		const notebook = await n.thingIn(s1);
 		const writes = [...NOTES_WRITES].sort();
-		assert.deepEqual(await grantedTo(ann, s1, notebook), writes);
-		assert.deepEqual(await grantedTo(AGENT, s1, notebook), writes);
-		await refused(grantedTo({ kind: "worker", session: "s2" }, s1, notebook));
+		assert.deepEqual(await n.granted(ann, s1, notebook), writes);
+		assert.deepEqual(await n.granted(AGENT, s1, notebook), writes);
+		await refused(n.granted({ kind: "worker", session: "s2" }, s1, notebook));
 		const dana = await n.things.createPerson({ name: "Dana", madeBy: BY }, context);
-		await refused(grantedTo({ kind: "person", id: dana, name: "Dana" }, s1, notebook));
+		await refused(n.granted({ kind: "person", id: dana, name: "Dana" }, s1, notebook));
 	});
 
 	it("lets in with @open alone a reader, who reads and pages but has no writing members", async () => {
@@ -152,7 +137,7 @@ describe("who may do what in a notebook", () => {
 		await n.things.setOwner({ person: id, owner: true }, context);
 		const notebook = await n.thingIn(n.pi);
 		await n.tick(n.pi, notebook, { kind: "everyone" }, "write", false);
-		assert.deepEqual(await grantedTo({ kind: "person", id, name: "Olga" }, n.pi, notebook), [...NOTES_WRITES].sort());
+		assert.deepEqual(await n.granted({ kind: "person", id, name: "Olga" }, n.pi, notebook), [...NOTES_WRITES].sort());
 	});
 
 	it("follows the grants live, on the same hold: Write withheld leaves a reader, removed from Pi denied", async () => {
@@ -259,11 +244,11 @@ describe("a notebook's notes", () => {
 		const [notebook, other] = [await n.thingIn(n.pi), await n.thingIn(n.pi)];
 		const elsewhere = await n.holding(ann, n.pi, other, (notes, ctx) => notes.add!({ text: "other" }, ctx));
 		await n.holding(ann, n.pi, notebook, async (notes, ctx) => {
-			await refused(notes.edit!({ id: elsewhere, text: "taken" }, ctx), "invalid");
-			await refused(notes.remove!({ id: elsewhere }, ctx), "invalid");
+			await refused(notes.edit!({ id: elsewhere, text: "taken" }, ctx), "invalid", "noNote");
+			await refused(notes.remove!({ id: elsewhere }, ctx), "invalid", "noNote");
 			const id = await notes.add!({ text: "mine" }, ctx);
 			await notes.remove!({ id }, ctx);
-			await refused(notes.remove!({ id }, ctx), "invalid");
+			await refused(notes.remove!({ id }, ctx), "invalid", "noNote");
 			await refused(notes.add!({ text: "" }, ctx), "invalid");
 			await refused(notes.add!({ text: "x".repeat(10_001) }, ctx), "invalid");
 		});
@@ -454,7 +439,7 @@ describe("a notebook's order", () => {
 		await n.things.unlink({ workspace: n.pi, thing: notebook }, context);
 		const store = await n.host.get(NotesStore, {}, context);
 		await eventually(
-			async () => (await store.orders.of.page({ notebook }, 1, context)).items,
+			async () => (await store.settings.of.page({ notebook }, 1, context)).items,
 			(rows) => rows.length === 0,
 			2000,
 		);
@@ -466,7 +451,7 @@ describe("a notebook's order", () => {
 		const notebook = await n.thingIn(n.pi);
 		await configure(notebook, { order: "newest" });
 		const store = await n.host.get(NotesStore, {}, context);
-		const stored = async () => (await store.orders.of.page({ notebook }, 1, context)).items;
+		const stored = async () => (await store.settings.of.page({ notebook }, 1, context)).items;
 		const hook = (await n.host.registry(ThingHooks, context)).value.get(NotesKind.name)?.value.configure;
 		const started = Promise.withResolvers<void>();
 		const resume = Promise.withResolvers<void>();
@@ -487,7 +472,7 @@ describe("a notebook's order", () => {
 		} finally {
 			resume.resolve();
 		}
-		await assert.rejects(changing, /is gone/);
+		await refused(changing, "invalid", "gone");
 		assert.deepEqual(await stored(), []);
 	});
 });

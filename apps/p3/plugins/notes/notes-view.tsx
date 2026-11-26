@@ -6,6 +6,8 @@ import { Button, TextArea } from "@earendil-works/elanor-react";
 import {
 	BACKGROUND_CONTEXT,
 	type Context,
+	isChordError,
+	type MessageData,
 	type MessagesOf,
 	type Reference,
 	type Translator,
@@ -14,7 +16,7 @@ import {
 } from "@earendil-works/p3/v1";
 import { type ThingViewProps, useHold, useLive, useMessages, useRefState, useWatch } from "@earendil-works/p3/v1/web";
 import { useState } from "react";
-import { type Author, NOTES_WRITES, type Note, Notes } from "./contract.ts";
+import { type Author, NOTES_WRITES, type Note, Notes } from "./kind.ts";
 import { messages } from "./messages.ts";
 import styles from "./notes-view.module.css";
 
@@ -85,8 +87,12 @@ type Action = {
 	run(call: (context: Context) => Promise<unknown>): void;
 };
 
-/** The view's change state and its `run`. */
+/**
+ * The view's change state and its `run`: a failure is kept as the text a person reads (`failureText`). Local until
+ * the web API has the shared hook and `refusalText`.
+ */
 function useAction(): Action {
+	const { t } = useMessages(messages);
 	const [pending, setPending] = useState(false);
 	const [error, setError] = useState<string | undefined>(undefined);
 	return {
@@ -100,11 +106,25 @@ function useAction(): Action {
 				() => setPending(false),
 				(failure: unknown) => {
 					setPending(false);
-					setError(failure instanceof Error ? failure.message : String(failure));
+					setError(failureText(failure, t));
 				},
 			);
 		},
 	};
+}
+
+/**
+ * What a failed change says to a person: the refusal's message (`details.message`, as the notes plugin refuses) in
+ * their language, else the error's own text.
+ */
+function failureText(failure: unknown, t: Texts): string {
+	// A trust boundary: the details came over the link; `t.render` checks the message itself and shows the key of one
+	// it does not know.
+	const details: unknown = isChordError(failure) ? failure.details : undefined;
+	if (typeof details === "object" && details !== null && "message" in details) {
+		return t.render(details.message as MessageData);
+	}
+	return failure instanceof Error ? failure.message : String(failure);
 }
 
 /** The writer's field for a new note and its button. */

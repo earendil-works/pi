@@ -16,7 +16,7 @@ import { within } from "../../../test/until.ts";
 import { ThingHooks } from "../../things/contract.server.ts";
 import { type HeldThing, ThingHarnessParts } from "../../things/contract.worker.ts";
 import { type KindServer, kindServer, runTool, toolNames } from "../../things/test/kind-server.ts";
-import { type Notes, NotesKind } from "../contract.ts";
+import { type Notes, NotesKind } from "../kind.ts";
 import notesServer from "../server.ts";
 
 /** The notes plugin's root. */
@@ -78,8 +78,8 @@ describe("the notes kind's harness part", () => {
 				},
 				context,
 			);
-			const id = /^Added note (.+)\.$/.exec(added)?.[1];
-			assert.ok(id !== undefined, added);
+			const { id } = JSON.parse(added) as { id: string };
+			assert.equal(typeof id, "string", added);
 			await runTool(
 				extension,
 				"notes_write",
@@ -108,7 +108,10 @@ describe("the notes kind's harness part", () => {
 			assert.equal((await read(first.next)).rows.length, 11);
 			assert.equal((await read()).rows.length, 50);
 			assert.deepEqual([holds, held!.ref.list.value.rows.length], [51, 51]);
-			await runTool(extension, "notes_write", { notebook: log, change: { kind: "remove", id } }, context);
+			assert.equal(
+				await runTool(extension, "notes_write", { notebook: log, change: { kind: "remove", id } }, context),
+				"{}",
+			);
 			assert.notEqual((await read()).rows[0].id, id);
 		});
 	});
