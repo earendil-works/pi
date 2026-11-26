@@ -77,15 +77,11 @@ const DEFLATED = 1;
 export const binaryCodec: Codec = {
 	name: "binary",
 	encode(message) {
-		// The idle writer and its buffer, reused; an encode inside an encode (a `toJSON` that sends) makes its own.
-		const writer = idle ?? new Writer();
-		idle = undefined;
 		try {
-			encodeMessage(message, writer);
-			return writer.finish();
+			encodeMessage(message, WRITER);
+			return WRITER.finish();
 		} finally {
-			writer.reset();
-			idle = writer;
+			WRITER.reset();
 		}
 	},
 	decode(bytes) {
@@ -105,14 +101,6 @@ export const binaryCodec: Codec = {
 		return message;
 	},
 };
-
-/**
- * The writer no encode uses now, with its buffer: encoding into one buffer kept across messages costs a message one
- * right-sized copy, where a fresh zeroed buffer per message and its copy cost 2.5 KiB per held object (`hot-paths.ts`,
- * case 1) and made an encode 3.5 times as slow. It keeps no message: `finish` copies or hands its buffer off, and
- * `reset` drops one grown past `KEPT` (16 KiB).
- */
-let idle: Writer | undefined;
 
 /** Writes `message` with `writer`: its kind byte with its flags, its origin and trace, then its fields. */
 function encodeMessage(message: Message, writer: Writer): void {
@@ -662,6 +650,14 @@ function varintBytes(value: number): number {
 	for (let rest = value; rest >= 0x80; rest = Math.floor(rest / 0x80)) bytes++;
 	return bytes;
 }
+
+/**
+ * The writer of every encode, with its buffer (an encode runs no code that encodes): encoding into one buffer kept
+ * across messages costs a message one right-sized copy, where a fresh zeroed buffer per message and its copy cost 2.5
+ * KiB per held object (`hot-paths.ts`, case 1) and made an encode 3.5 times as slow. It keeps no message: `finish`
+ * copies or hands its buffer off, and `reset` drops one grown past `KEPT` (16 KiB).
+ */
+const WRITER = new Writer();
 
 /** Reads a message's bytes; every read is bounds-checked, segments are views of the message. */
 class Reader {

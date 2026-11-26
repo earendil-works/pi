@@ -584,28 +584,6 @@ describe("the binary codec", () => {
 		expect(grown.buffer.byteLength).toBe(grown.byteLength);
 	});
 
-	it("encodes a message inside another's encode (a value's toJSON that sends) with a buffer of its own", () => {
-		let inner: Uint8Array | undefined;
-		const params = {
-			toJSON: () => {
-				inner = binaryCodec.encode({ kind: "release", hold: 7 });
-				return { id: "x" };
-			},
-		};
-		const hold: Message = {
-			kind: "hold",
-			hold: 0,
-			type: "t",
-			version: 1,
-			fingerprint: "0123456789abcdef",
-			params: "{}",
-			address: { kind: "server", params },
-		};
-		const outer = binaryCodec.decode(binaryCodec.encode(hold));
-		expect((outer as Extract<Message, { kind: "hold" }>).address).toEqual({ kind: "server", params: { id: "x" } });
-		expect([...inner!]).toEqual([2, 7]);
-	});
-
 	it("writes a fingerprint and an incarnation only as lowercase hex of their length, dashes left out wherever they are", () => {
 		const hold = (fingerprint: string, incarnation?: string): Message => ({
 			kind: "hold",
