@@ -119,11 +119,18 @@ describe("the plans of the things store's queries", () => {
 				["workspaces.under", pages(things.workspaces.under, { pathPrefix: `${pi}/` }), `${T}.workspaces:under`],
 				["links.here", pages(things.links.here, { workspace: team }), undefined],
 				["links.where", pages(things.links.where, { thing: ids[0]! }), `${T}.links:by_thing`],
-				["members.here", pages(things.members.here, { workspace: team }), undefined],
-				["members.where", pages(things.members.where, { partyKey: person }), `${T}.members:by_party`],
+				["workspaceMembers.here", pages(things.workspaceMembers.here, { workspace: team }), undefined],
 				[
-					"members.ofParties",
-					pages(things.members.ofParties, { workspaces: [team, pi], partyKeys: [person, `group/${group}`] }),
+					"workspaceMembers.where",
+					pages(things.workspaceMembers.where, { partyKey: person }),
+					`${T}.workspace_members:by_party`,
+				],
+				[
+					"workspaceMembers.ofParties",
+					pages(things.workspaceMembers.ofParties, {
+						workspaces: [team, pi],
+						partyKeys: [person, `group/${group}`],
+					}),
 					undefined,
 				],
 				["switches.here", pages(things.switches.here, { workspace: team }), undefined],
@@ -142,8 +149,12 @@ describe("the plans of the things store's queries", () => {
 				["groups.one", pages(things.groups.one, { group }), undefined],
 				["groups.ofIds", pages(things.groups.ofIds, { groups: [group, "none"] }), undefined],
 				["groupManagers.of", pages(things.groupManagers.of, { group }), undefined],
-				["memberships.ofPerson", pages(things.memberships.ofPerson, { person: ann }), `${T}.memberships:by_person`],
-				["memberships.ofGroup", pages(things.memberships.ofGroup, { group }), undefined],
+				[
+					"groupMembers.ofPerson",
+					pages(things.groupMembers.ofPerson, { person: ann }),
+					`${T}.group_members:by_person`,
+				],
+				["groupMembers.ofGroup", pages(things.groupMembers.ofGroup, { group }), undefined],
 			];
 			for (const [name, read, expected] of cases) {
 				const plans = (await Promise.all(read.map((each) => plansOf(each)))).flat();

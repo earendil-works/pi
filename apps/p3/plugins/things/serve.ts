@@ -12,7 +12,7 @@ import {
 	type P3Principal,
 	type Self,
 } from "@earendil-works/p3/v1";
-import { admitThing, type ThingAdmitted } from "./admission.ts";
+import { admitThing } from "./admission.ts";
 import { type ThingHook, ThingHooks } from "./contract.server.ts";
 import type { Caller } from "./contract.ts";
 import { type ThingKind, ThingKinds } from "./kind.ts";
@@ -45,13 +45,14 @@ export function serveThing<C extends Contract>(
 		self.contribute(ThingKinds, Kind.info);
 		self.contribute(ThingHooks, { kind: Kind.name, ...hooks });
 	});
+	// The contract is `defineThing`'s: what Chord hands the factory as admitted is a `ThingCaller` (the things
+	// admission's caller, `granted` a set of its names).
 	const factory = (
 		params: { readonly workspace: string; readonly thing: string },
 		_principal: P3Principal,
-		// The contract is `defineThing`'s: its admission is the things admission, `granted` a set of its names.
-		admitted: Omit<ThingAdmitted<C>, "granted"> & { readonly granted: ReadonlySet<GrantableName<C>> },
+		admitted: ThingCaller<C>,
 		self: Self<P3Principal>,
-	) => implement(params, { caller: admitted.caller, granted: admitted.granted }, self);
+	) => implement(params, admitted, self);
 	// `C` is generic here: Chord's factory and option types cannot be resolved for it; `ThingImplementation` checks the
 	// members against the contract at the call.
 	(host.serve as (type: Contract, factory: unknown, options: unknown) => void)(Kind.contract, factory, {

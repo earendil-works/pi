@@ -183,13 +183,16 @@ describe("people", () => {
 			[kept],
 		);
 		assert.deepEqual(
-			(await store.memberships.ofPerson.page({ person: kim }, 10, context)).items.map(({ group, source }) => [
+			(await store.groupMembers.ofPerson.page({ person: kim }, 10, context)).items.map(({ group, source }) => [
 				group,
 				source,
 			]),
 			[[kept, BY]],
 		);
-		assert.deepEqual((await store.members.where.page({ partyKey: `group/${guests}` }, 10, context)).items, []);
+		assert.deepEqual(
+			(await store.workspaceMembers.where.page({ partyKey: `group/${guests}` }, 10, context)).items,
+			[],
+		);
 		assert.deepEqual((await store.grants.ofParty.page({ partyKey: `group/${guests}` }, 10, context)).items, []);
 		assert.deepEqual((await store.groupManagers.of.page({ group: guests }, 10, context)).items, []);
 	});

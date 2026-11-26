@@ -2,14 +2,21 @@
 // and its own entries (rules 1 to 3), who a caller counts as there (rule 4), and their answer for one thing (rule 5),
 // as ERNDL-1142 states them. Each decision Mario may still turn is one function: a person's own grant first
 // (`precedence`, item 73), a take-away naming a person removing the tick by every route (`takenFromPerson`, 73), and a
-// people switch hiding a person by every route (`hiddenHere`, 73). The index (`access.ts`) computes with these and
-// nothing else.
+// people switch hiding a person by every route (`hiddenHere`, 73), and which own grant takes precedence (`countsAsOwn`,
+// open item 28). The index (`access.ts`) computes with these and nothing else.
+
+import type { TickFor } from "./kind.ts";
 
 /** A party's key (`partyKey`), as the maps in memory are keyed. */
 export type PartyKey = string;
 
 /** Whom a grant's ticks are for, by its party: `agents` for the agents and one session's agent, else `people`. */
 export type Audience = "agents" | "people";
+
+/** The audience of a party of `kind`. */
+export function audienceOf(kind: "everyone" | "agents" | "person" | "group" | "agent"): Audience {
+	return kind === "agents" || kind === "agent" ? "agents" : "people";
+}
 
 /** One grant as one source wrote it, as the rules read it. Several sources' grants of one party add up. */
 export type GrantEntry = {
@@ -43,6 +50,8 @@ export type WorkspaceEntries = {
 export type ThingHere = {
 	readonly kind: string;
 	readonly ticks: ReadonlyMap<PartyKey, ReadonlySet<string>>;
+	/** The parties whose grant here counts as their own for precedence (73, open item 28). */
+	readonly precedes: ReadonlySet<PartyKey>;
 	/** The ticks take-aways at or below the link remove from a person, whatever route they come by (73). */
 	readonly takenFromPersons: ReadonlyMap<PartyKey, ReadonlySet<string>>;
 };
@@ -56,7 +65,7 @@ export type WorkspaceAccess = {
 
 /** What the rules need of the kinds: whom a kind's tick is for (`undefined`: no such tick, R3) and all its ticks. */
 export type KindsLookup = {
-	tickFor(kind: string, tick: string): "agents" | "people" | "all" | undefined;
+	tickFor(kind: string, tick: string): TickFor | undefined;
 	ticksOf(kind: string): readonly string[];
 };
 
@@ -81,6 +90,7 @@ export const NOBODY: Counted = { parties: [], self: undefined };
 const EVERYONE = "everyone";
 const AGENTS = "agents";
 const NO_TICKS: ReadonlyMap<PartyKey, ReadonlySet<string>> = new Map();
+const NO_PARTIES: ReadonlySet<PartyKey> = new Set();
 
 /** What a workspace ends up with (rules 1 to 3): shares with `above` whatever its own entries leave as it is. */
 export function accessHere(above: WorkspaceAccess, own: WorkspaceEntries, kinds: KindsLookup): WorkspaceAccess {
@@ -107,7 +117,12 @@ function thingsHere(
 	for (const [thing, given] of above) {
 		if (own.switches.get(`thing/${thing}`) ?? own.showsThings) here.set(thing, given);
 	}
-	for (const [thing, kind] of own.links) here.set(thing, linkedHere(thing, kind, own.grants, kinds));
+	const giving = new Map<string, GrantEntry[]>();
+	for (const grant of own.grants) {
+		if (grant.gives && own.links.has(grant.thing))
+			giving.set(grant.thing, [...(giving.get(grant.thing) ?? []), grant]);
+	}
+	for (const [thing, kind] of own.links) here.set(thing, linkedHere(kind, giving.get(thing) ?? [], kinds));
 	for (const grant of own.grants) {
 		const given = here.get(grant.thing);
 		if (given === undefined || grant.takenAway.length === 0) continue;
@@ -116,20 +131,39 @@ function thingsHere(
 	return here;
 }
 
-/** A thing linked here: what the giving grants written here give each party (nothing below a link ever adds). */
-function linkedHere(thing: string, kind: string, grants: readonly GrantEntry[], kinds: KindsLookup): ThingHere {
+/**
+ * A thing linked here: what its giving grants written here (`grants`) give each party, and the parties whose grant
+ * counts as their own for precedence (nothing below a link ever adds).
+ */
+function linkedHere(kind: string, grants: readonly GrantEntry[], kinds: KindsLookup): ThingHere {
 	const ticks = new Map<PartyKey, Set<string>>();
+	const precedes = new Set<PartyKey>();
 	for (const grant of grants) {
-		if (grant.thing !== thing || !grant.gives) continue;
 		const own = ticks.get(grant.party) ?? new Set<string>();
+		const before = own.size;
 		for (const tick of grant.ticks) if (isFor(kinds.tickFor(kind, tick), grant.audience)) own.add(tick);
 		ticks.set(grant.party, own);
+		if (countsAsOwn(grant, own.size > before)) precedes.add(grant.party);
 	}
-	return { kind, ticks: ticks.size === 0 ? NO_TICKS : ticks, takenFromPersons: NO_TICKS };
+	return {
+		kind,
+		ticks: ticks.size === 0 ? NO_TICKS : ticks,
+		precedes: precedes.size === 0 ? NO_PARTIES : precedes,
+		takenFromPersons: NO_TICKS,
+	};
+}
+
+/**
+ * Open item 28 (recommended): a grant counts as its party's own for precedence only if it was written empty on purpose
+ * or keeps a tick that counts (`counted`); one whose ticks are all ignored (unknown, or for the other audience) does
+ * not replace what groups and everyone give. Returning `true` would make every grant count.
+ */
+function countsAsOwn(grant: GrantEntry, counted: boolean): boolean {
+	return grant.ticks.length === 0 || counted;
 }
 
 /** Whether a tick for `forWhom` counts for a party of `audience` (an unknown tick counts for nobody). */
-function isFor(forWhom: "agents" | "people" | "all" | undefined, audience: Audience): boolean {
+export function isFor(forWhom: TickFor | undefined, audience: Audience): boolean {
 	return forWhom === "all" || forWhom === audience;
 }
 
@@ -142,7 +176,7 @@ function takenAway(given: ThingHere, grant: GrantEntry): ThingHere {
 	}
 	const takenFromPersons = takenFromPerson(given.takenFromPersons, grant);
 	if (ticks === given.ticks && takenFromPersons === given.takenFromPersons) return given;
-	return { kind: given.kind, ticks, takenFromPersons };
+	return { kind: given.kind, ticks, precedes: given.precedes, takenFromPersons };
 }
 
 /**
@@ -215,7 +249,8 @@ export function answerOf(given: ThingHere, counted: Counted): Answer | undefined
  * it, the union of every counted party's ticks. `undefined`: no counted party has a grant here.
  */
 function precedence(given: ThingHere, counted: Counted): ReadonlySet<string> | undefined {
-	const own = counted.self === undefined ? undefined : given.ticks.get(counted.self);
+	const own =
+		counted.self !== undefined && given.precedes.has(counted.self) ? given.ticks.get(counted.self) : undefined;
 	if (own !== undefined) return own;
 	let union: Set<string> | undefined;
 	for (const party of counted.parties) {
