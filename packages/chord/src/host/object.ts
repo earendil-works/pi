@@ -25,6 +25,7 @@ import type { JsonValue } from "../json.ts";
 import { CHAIN } from "../link/internal.ts";
 import { appended, NO_ITEMS } from "../lists.ts";
 import type { RegistryContribution } from "../registries/internal.ts";
+import { SmallSet } from "../small-set.ts";
 import type { Batch, DeriveSource } from "../state/internal.ts";
 import type { ChordStore } from "../store/store.ts";
 import type { TableDefinition } from "../store/table.ts";
@@ -185,7 +186,7 @@ const RELOAD: NativeCloseReason = { kind: "reload" };
 const WAITING: ObjectState = { kind: "waiting" };
 
 /** No holders listed: what presence gets of an admitted object that is not allowed. */
-const NO_HOLDERS: ReadonlySet<Holder> = new Set();
+const NO_HOLDERS: readonly Holder[] = NO_ITEMS;
 
 /** No dependencies waited for: the shared empty list. */
 const NO_DEPENDENCIES: readonly Dependency[] = [];
@@ -277,8 +278,8 @@ export class ChordObject implements Target {
 	/** This instance's id (uuidv7), minted at its first attempt: a restarted object is a new instance (D4). */
 	#instance: string | undefined;
 	#state: ObjectState = WAITING;
-	/** References and holds of this object. */
-	readonly #holders = new Set<Holder>();
+	/** References and holds of this object (most have one: no `Set` for it). */
+	readonly #holders = new SmallSet<Holder>();
 	/** The dependencies its parked attempt waits for; their objects are followed to find cycles (Q5). */
 	#waitingFor: readonly Dependency[] = NO_DEPENDENCIES;
 	/**
@@ -474,7 +475,7 @@ export class ChordObject implements Target {
 	}
 
 	/** Its holders, for a presence list made after they took it: none while an admitted object is not allowed. */
-	get holders(): ReadonlySet<Holder> {
+	get holders(): Iterable<Holder> {
 		return this.#allowed ? this.#holders : NO_HOLDERS;
 	}
 
@@ -1402,7 +1403,7 @@ export class ChordObject implements Target {
 		if (!this.#allowed) {
 			// An admitted object's first allow, or its first since a denial: presence lists its holders from now on (§19).
 			this.#allowed = true;
-			for (const holder of this.#holders) this.host.referenced(this, holder, this.#context);
+			this.#holders.forEach((holder) => this.host.referenced(this, holder, this.#context));
 		}
 		const { contributions } = attempt;
 		// A restart's kept contributions leave in the batch the new ones enter (F-c), so no reader sees a gap.
@@ -1450,12 +1451,12 @@ export class ChordObject implements Target {
 	 */
 	#unbindUnfit(check: (holder: Holder) => ChordError | undefined): boolean {
 		let unfit: [Holder, ChordError][] | undefined;
-		for (const holder of this.#holders) {
+		this.#holders.forEach((holder) => {
 			const error = check(holder);
-			if (error === undefined) continue;
+			if (error === undefined) return;
 			unfit ??= [];
 			unfit.push([holder, error]);
-		}
+		});
 		if (unfit === undefined) return false;
 		for (const [holder] of unfit) this.#holders.delete(holder);
 		this.host.unreferenced(
@@ -1590,7 +1591,7 @@ export class ChordObject implements Target {
 	/** Tells every holder that the state changed: references first follow what it shows now (`followed`). */
 	#notify(): void {
 		this.#wakeGate();
-		const holders = [...this.#holders];
+		const holders = this.#holders.snapshot();
 		// In one batch when some reference's members move (one frame each, a diamond over several sees one change); no
 		// commit at all for references that used none (activation churn).
 		const retarget = (): void => {
@@ -1638,7 +1639,7 @@ export class ChordObject implements Target {
 		this.#settleFirstOutcome();
 		// Sealed: its instance stops changing; its references take their last values from it.
 		this.#following = false;
-		const holders = [...this.#holders];
+		const holders = this.#holders.snapshot();
 		this.#holders.clear();
 		this.host.unreferenced(this, holders, this.#context);
 		// Its type removed: its references wait with their last values, which they take from the instance shown (still
@@ -1754,7 +1755,7 @@ export class ChordObject implements Target {
 		this.#hasFirstOutcome = true;
 		this.#firstOutcome?.resolve();
 		this.#firstOutcome = undefined;
-		for (const holder of this.#holders) holder.dependent?.dependencyMoved();
+		this.#holders.forEach((holder) => holder.dependent?.dependencyMoved());
 	}
 
 	/** The chain of waits from this activation to `target` (see `Target`), through its parked attempt's dependencies. */
