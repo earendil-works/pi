@@ -373,8 +373,8 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "the create hook is not told who makes the thing",
 		file: "store.ts",
-		find: "create?.(thing, args.input, args.by, ctx);",
-		put: 'create?.(thing, args.input, { kind: "plugin", plugin: "?" }, ctx);',
+		find: "create?.({ thing, input: args.input, by: args.by, workspace: args.workspace }, ctx)",
+		put: 'create?.({ thing, input: args.input, by: { kind: "plugin", plugin: "?" }, workspace: args.workspace }, ctx)',
 	},
 	{
 		name: "a write of a party's rows leaves their older rows as they are",

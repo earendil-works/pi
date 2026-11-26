@@ -127,6 +127,12 @@ describe("the plans of the things store's queries", () => {
 				["workspaces.children", pages(things.workspaces.children, { parent: pi }), `${T}.workspaces:children`],
 				["links.here", pages(things.links.here, { workspace: team }), undefined],
 				["workspaceMembers.here", pages(things.workspaceMembers.here, { workspace: team }), undefined],
+				[
+					"workspaceMembers.where",
+					pages(things.workspaceMembers.where, { partyKey: `person/${ann}` }),
+					`${T}.workspace-members:by_party`,
+				],
+				["groups.ofIds", pages(things.groups.ofIds, { groups: [group, "none"] }), undefined],
 				["switches.here", pages(things.switches.here, { workspace: team }), undefined],
 				["grants.here", pages(things.grants.here, { workspace: team }), undefined],
 				["persons.one", pages(things.persons.one, { person: ann }), undefined],

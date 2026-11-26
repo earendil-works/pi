@@ -324,7 +324,8 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			// A hook that throws leaves nothing, as no row names the thing yet. A crash between the hook and the commit
 			// leaves the kind's content under an id nobody knows (accepted: nothing can reach it).
 			const create = hooks.value.get(args.kind)?.value.create;
-			const answer = (await create?.(thing, args.input, args.by, ctx)) ?? undefined;
+			const answer =
+				(await create?.({ thing, input: args.input, by: args.by, workspace: args.workspace }, ctx)) ?? undefined;
 			let made: string;
 			try {
 				made = await write((tx, changes) => commit(tx, changes, thing, answer), ctx);
@@ -405,8 +406,13 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			create: async ({ defaults, ...args }, ctx) =>
 				make(
 					args,
-					async (tx, changes, thing) => {
-						await writes.make(tx, changes, { ...args, thing, ...(defaults === undefined ? {} : { defaults }) });
+					async (tx, changes, thing, answer) => {
+						await writes.make(tx, changes, {
+							...args,
+							thing,
+							view: answer?.view ?? "",
+							...(defaults === undefined ? {} : { defaults }),
+						});
 						return thing;
 					},
 					ctx,
@@ -420,6 +426,7 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 							thing,
 							parent,
 							showsPeople: answer?.showsPeople ?? showsPeople ?? true,
+							view: answer?.view ?? "",
 							defaultGrants: answer?.defaultGrants,
 							defaults,
 						});
@@ -677,7 +684,7 @@ async function ensurePi(tx: Tx, t: Tables): Promise<null> {
 	putWorkspace(
 		tx,
 		t,
-		{ workspace: crypto.randomUUID(), kind: WorkspaceKind.name, name: "Pi", by, showsPeople: true },
+		{ workspace: crypto.randomUUID(), kind: WorkspaceKind.name, name: "Pi", by, showsPeople: true, view: "" },
 		undefined,
 	);
 	return null;
@@ -699,14 +706,15 @@ function putWorkspace(
 		name,
 		by,
 		showsPeople,
-	}: { workspace: string; kind: string; name: string; by: Source; showsPeople: boolean },
+		view,
+	}: { workspace: string; kind: string; name: string; by: Source; showsPeople: boolean; view: string },
 	parent: { readonly workspace: string; readonly path: readonly string[] } | undefined,
 ): void {
 	tx.put(t.things, {
 		thing: workspace,
 		kind,
 		name,
-		view: "",
+		view,
 		madeBy: by,
 		madeByKey: sourceKey(by),
 		madeAt: Date.now(),
@@ -799,12 +807,21 @@ class Writes {
 			workspace,
 			by,
 			defaults,
-		}: { thing: string; kind: string; name: string; workspace: string; by: Source; defaults?: DefaultsChoice },
+			view = "",
+		}: {
+			thing: string;
+			kind: string;
+			name: string;
+			workspace: string;
+			by: Source;
+			defaults?: DefaultsChoice;
+			view?: string;
+		},
 	): Promise<null> {
 		const item = this.#kind(kind);
 		if (item.value.workspace !== "no") throw invalid("args", `things: a ${kind} is made with createWorkspace`);
 		await this.#mustBeWorkspace(tx, workspace);
-		tx.put(this.#t.things, { thing, kind, name, view: "", madeBy: by, madeByKey: sourceKey(by), madeAt: Date.now() });
+		tx.put(this.#t.things, { thing, kind, name, view, madeBy: by, madeByKey: sourceKey(by), madeAt: Date.now() });
 		this.#linked(tx, workspace, thing, item, item.value.defaultGrants, defaults);
 		this.#giveMaker(tx, workspace, thing, item, by, []);
 		touched.workspaces.add(workspace);
@@ -827,6 +844,7 @@ class Writes {
 			parent: string;
 			by: Source;
 			showsPeople: boolean;
+			view: string;
 			defaultGrants: DefaultGrants | undefined;
 			defaults: DefaultsChoice | undefined;
 		},
@@ -840,7 +858,7 @@ class Writes {
 		if (aboveKind !== undefined && this.#kinds().get(aboveKind)?.value.workspace === "leaf") {
 			throw invalid("args", `things: ${parent} is a leaf`, { message: messages.message("leafHoldsNoWorkspaces") });
 		}
-		putWorkspace(tx, this.#t, { workspace: thing, kind, name, by, showsPeople }, above);
+		putWorkspace(tx, this.#t, { workspace: thing, kind, name, by, showsPeople, view: args.view }, above);
 		const maker = makerParty(by);
 		if (maker !== undefined) {
 			this.#member(tx, thing, maker, by);

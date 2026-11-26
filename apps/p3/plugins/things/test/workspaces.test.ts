@@ -8,16 +8,21 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import {
+	arr,
 	type Ctx,
 	BACKGROUND_CONTEXT as context,
 	defineFacet,
+	local,
 	type P3Principal,
+	type PluginFacet,
 	type Reference,
+	str,
 	until,
 } from "@earendil-works/p3/v1";
-import { eventually, within } from "../../../test/until.ts";
+import { collected, eventually, within } from "../../../test/until.ts";
 import { Gives, ThingsStore } from "../contract.server.ts";
 import { MAKE_ANY, makeTick, type Party, type Source } from "../contract.ts";
+import { make, thingsOfKind } from "../kind-server.ts";
 import {
 	Linkable,
 	Roots,
@@ -34,17 +39,28 @@ import { type World, world } from "./world.ts";
 
 const BY: Source = { kind: "plugin", plugin: "test" };
 
+/** Server code following the boards available in a workspace (`thingsOfKind`). */
+const Follower = local("test.follower", { version: 1, params: { workspace: str() }, members: { things: arr(str()) } });
+const FOLLOWER: PluginFacet<P3Principal> = {
+	name: "test-follower",
+	facet: defineFacet((host) =>
+		host.serve(Follower, ({ workspace }, self) => ({ things: thingsOfKind(Board, workspace, self) })),
+	),
+};
+
 let w: World;
 let store: Reference<typeof ThingsStore>;
 let pi: string;
 
 beforeEach(async () => {
-	w = await world(context, [SPACES]);
+	w = await world(context, [SPACES, FOLLOWER]);
 	store = await w.host.get(ThingsStore, {}, context);
 	pi = (await store.workspaces.children.page({ parent: "" }, 10, context)).items[0]!.workspace;
 	SESSION.answer = undefined;
 	SESSION.made.length = 0;
+	SESSION.told.length = 0;
 	SESSION.gone.length = 0;
+	SESSION.goneFails = 0;
 });
 
 afterEach(() => w.close(context));
@@ -703,3 +719,113 @@ function partyKeyOf(party: Party): string {
 				? `group/${party.group}`
 				: `agent/${party.session}`;
 }
+
+describe("kinds as tokens (slice 1's carry-over)", () => {
+	it("make types its input and makes a workspace kind's through createWorkspace; thingsOfKind follows what is available", async () => {
+		const { fam, robot } = await family();
+		const b = await w.host.root((ctx) => make(Board, { name: "b", workspace: fam, by: BY }, ctx), context);
+		const s = await w.host.root((ctx) => make(TestSession, { name: "s", workspace: fam, by: BY }, ctx), context);
+		assert.equal((await store.workspaces.one.page({ workspace: s }, 1, context)).items[0]?.parent, fam);
+		const follower = await w.host.get(Follower, { workspace: robot }, context);
+		assert.deepEqual(follower.things.value, [b]);
+		const c = await store.create({ kind: Board.name, name: "c", workspace: robot, by: BY }, context);
+		await until(follower.things, (things) => things.length === 2, within("a board linked in the robot", context));
+		assert.deepEqual(follower.things.value, [b, c].toSorted());
+	});
+});
+
+describe("reloads, failures and caches", () => {
+	it("a held Workspace and list keep working across a reload of the things plugin and of a kind's plugin", async () => {
+		const { anna, fam } = await family();
+		await own(fam, party(anna), ["hide", makeTick(Board)]);
+		await as(anna, async (ctx) => {
+			const ref = await ctx.get(Workspace, { workspace: fam });
+			const contents = await ctx.get(WorkspaceContents, { workspace: fam, view: "v" });
+			await w.reload("@earendil-works/p3-things", context);
+			const made = await ref.make!({ kind: Board.name, name: "after" }, ctx);
+			await until(contents.list, (list) => list.rows.some((row) => row.thing === made), within("listed", context));
+			await w.reload(BOARD_PLUGIN, context);
+			await until(ref.state, (state) => state.kind === "live", within("live again", context));
+			assert.deepEqual(ref.makes!.value.includes(Board.name), true);
+			assert.ok(contents.list.value.rows.some((row) => row.thing === made));
+		});
+		assert.deepEqual(w.errors, []);
+	});
+
+	it("a removal cut short by a reload is finished by the store's next object", async () => {
+		const { fam, robot } = await family();
+		await store.create({ kind: Board.name, name: "b", workspace: robot, by: BY }, context);
+		await store.removeWorkspace({ workspace: fam }, context);
+		await w.reload("@earendil-works/p3-things", context);
+		await eventually(
+			() => w.rows("removing").length + w.rows("gone").length,
+			(left) => left === 0,
+		);
+		assert.deepEqual(
+			w.rows("workspaces").map((row) => row.workspace),
+			[pi],
+		);
+	});
+
+	it("a workspaceGone hook that fails is tried again until it succeeds; an archive tells the kinds too", async () => {
+		const { robot } = await family();
+		SESSION.goneFails = 1;
+		await store.workspaceGone({ workspace: robot }, context);
+		await eventually(
+			() => SESSION.gone,
+			(gone) => gone.includes(robot),
+			5000,
+		);
+		await eventually(
+			() => w.rows("gone").length,
+			(left) => left === 0,
+		);
+		// The workspace stays (an archive).
+		assert.equal((await store.workspaces.one.page({ workspace: robot }, 1, context)).items.length, 1);
+	});
+
+	it("a Workspace admission's decision goes with its answer", async () => {
+		const { anna, fam } = await family();
+		const gone = await holding(anna, fam, async (ref) => {
+			const gives = await w.host.get(Gives, { workspace: fam, caller: `person:${anna.id}` }, context);
+			const answer = new WeakRef(gives.answers.value[fam]!);
+			gives.release();
+			await own(fam, party(anna), ["link"]);
+			await until(ref.state, () => ref.link !== undefined, within("the rebind", context));
+			return answer;
+		});
+		assert.ok(await collected([gone]));
+	});
+
+	it("a released list keeps no probe: the index drops it", async () => {
+		const { anna, fam } = await family();
+		const ref = await as(anna, async (ctx) => {
+			const contents = await ctx.get(WorkspaceContents, { workspace: fam, view: "v" });
+			const value = new WeakRef(contents.list.value);
+			return value;
+		});
+		assert.ok(await collected([ref]));
+	});
+});
+
+describe("the create hook (sessions' push 3)", () => {
+	it("is told the thing, its maker and where it is made (a workspace kind: its parent)", async () => {
+		const { leo, fam, robot } = await family();
+		assert.deepEqual(SESSION.told.at(-1), { thing: robot, workspace: fam, by: source(leo) });
+		const d = await store.create({ kind: Defaults.name, name: "d", workspace: robot, by: BY }, context);
+		assert.deepEqual(SESSION.told.at(-1), { thing: d, workspace: robot, by: BY });
+	});
+
+	it("may answer the new thing's own default view, written in the commit that makes it", async () => {
+		const { fam } = await family();
+		SESSION.answer = { view: "sessions.transcript" };
+		const s = await store.createWorkspace({ kind: TestSession.name, name: "s", parent: fam, by: BY }, context);
+		const d = await store.create({ kind: Defaults.name, name: "d", workspace: fam, by: BY }, context);
+		for (const thing of [s, d]) {
+			assert.equal((await store.things.one.page({ thing }, 1, context)).items[0]?.view, "sessions.transcript");
+		}
+		SESSION.answer = undefined;
+		const plain = await store.create({ kind: Defaults.name, name: "p", workspace: fam, by: BY }, context);
+		assert.equal((await store.things.one.page({ thing: plain }, 1, context)).items[0]?.view, "");
+	});
+});

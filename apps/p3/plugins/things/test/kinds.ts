@@ -5,7 +5,7 @@
 
 import { constant, defineFacet, method, obj, type P3Principal, type PluginFacet, str } from "@earendil-works/p3/v1";
 import type { CreateAnswer } from "../contract.server.ts";
-import { MAKE_ANY } from "../contract.ts";
+import { MAKE_ANY, type Source } from "../contract.ts";
 import { defineThing, defineWorkspace } from "../kind.ts";
 import { serveThing } from "../serve.ts";
 
@@ -64,7 +64,7 @@ export const boardFacet = defineFacet((host) => {
 				look: async () => null,
 			};
 		},
-		create: async (thing) => {
+		create: async ({ thing }) => {
 			HOOKS.push(`create ${thing}`);
 			if (FAIL.create) throw new Error("the board could not be made");
 		},
@@ -76,7 +76,15 @@ export const boardFacet = defineFacet((host) => {
 export const BOARD: PluginFacet<P3Principal> = { name: BOARD_PLUGIN, facet: boardFacet };
 
 /** What the test session kind's `create` hook answers (a private session: `CreateAnswer`), and was called with. */
-export const SESSION = { answer: undefined as CreateAnswer | undefined, made: [] as string[], gone: [] as string[] };
+export const SESSION = {
+	answer: undefined as CreateAnswer | undefined,
+	made: [] as string[],
+	/** Each `create` call's `Made`, as the hook was told. */
+	told: [] as { thing: string; workspace: string; by: Source }[],
+	gone: [] as string[],
+	/** How many more `workspaceGone` calls throw. */
+	goneFails: 0,
+};
 
 /**
  * A leaf workspace kind like the session kind (ERNDL-704): Read and Send, the agents `MAKE_ANY` in it (R6), everyone
@@ -118,14 +126,27 @@ export const SPACES_PLUGIN = "p3-test-spaces";
 export const spacesFacet = defineFacet((host) => {
 	serveThing(host, TestSession, {
 		implement: ({ thing }) => ({ title: constant(thing) }),
-		create: async (thing) => {
+		create: async ({ thing, workspace, by }) => {
 			SESSION.made.push(thing);
+			SESSION.told.push({ thing, workspace, by });
 			return SESSION.answer;
 		},
-		workspaceGone: async (workspace) => void SESSION.gone.push(workspace),
+		workspaceGone: async (workspace) => {
+			if (SESSION.goneFails > 0) {
+				SESSION.goneFails--;
+				throw new Error("the session's cleanup failed");
+			}
+			SESSION.gone.push(workspace);
+		},
 	});
 	serveThing(host, Login, { implement: () => ({}) });
-	serveThing(host, Defaults, { implement: () => ({}) });
+	serveThing(host, Defaults, {
+		implement: () => ({}),
+		create: async ({ thing, workspace, by }) => {
+			SESSION.told.push({ thing, workspace, by });
+			return SESSION.answer;
+		},
+	});
 });
 
 /** The workspace tests' kinds' plugin as a host loads it. */
