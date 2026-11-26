@@ -36,7 +36,7 @@ import {
 	wireError,
 } from "../link/internal.ts";
 import { parentOf } from "../telemetry.ts";
-import { Hold } from "./hold.ts";
+import { Hold, holdRequest } from "./hold.ts";
 import type { HostLink } from "./host-link.ts";
 import { endAll, RelayedCall, type RelayedHold } from "./relay.ts";
 
@@ -498,26 +498,14 @@ export class ProviderSide implements EventSender {
 		if (this.#entries.has(message.hold)) throw new Error(`hold ${message.hold}: the id is in use`);
 		if (message.params instanceof DeflatedPart) throw new Error(`hold ${message.hold}: compressed params`);
 		// Whom it acts for is decided here once (`#caller`), never passed on: a relay names it only on a route link.
-		const {
-			kind: _kind,
-			origin: _origin,
-			hold: id,
-			principal: _principal,
-			incarnation: _incarnation,
-			chain,
-			limit: stamped,
-			...fields
-		} = message;
 		const { link } = this;
-		const limit = Math.min(link.limits.decoded, (link.role === "parent" ? stamped : undefined) ?? Infinity);
-		const request = {
-			...fields,
-			...(chain !== undefined && link.trusted ? { chain } : {}),
-			...(limit === Infinity ? {} : { limit }),
-		};
+		const limit = Math.min(link.limits.decoded, (link.role === "parent" ? message.limit : undefined) ?? Infinity);
+		// Its activation chain kept only from a trusted link (Q5), its decoded limit when one applies (Q2).
+		const chain = link.trusted ? message.chain : undefined;
+		const request = holdRequest(message, message.params, chain, limit === Infinity ? undefined : limit);
 		const limits = limit === link.limits.decoded ? link.limits : { part: link.limits.part, decoded: limit };
-		const hold = new Hold(id, this, this.#caller(message), limits);
-		this.#entries.set(id, hold);
+		const hold = new Hold(message.hold, this, this.#caller(message), limits);
+		this.#entries.set(message.hold, hold);
 		hold.start(request);
 	}
 

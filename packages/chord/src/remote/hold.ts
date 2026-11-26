@@ -47,7 +47,7 @@ import {
 	type Message,
 	NO_RETIRED,
 	oversized,
-	parsePart,
+	readUtf8,
 	type StateEntry,
 	wireError,
 } from "../link/internal.ts";
@@ -286,6 +286,7 @@ export class Hold implements Holder, UnboundRequest {
 			return;
 		}
 		let served: Serving;
+		let text: string;
 		try {
 			const oversize = oversized(request.params, link.limits.part);
 			if (oversize !== undefined) throw oversize;
@@ -298,7 +299,10 @@ export class Hold implements Holder, UnboundRequest {
 			}
 			let params: unknown;
 			try {
-				params = parsePart(link.openPart(request.params, this.limits, link.context));
+				// Read as text first (what `parsePart` does): the hold keeps it as its params.
+				const json = link.openPart(request.params, this.limits, link.context);
+				text = typeof json === "string" ? json : readUtf8(json);
+				params = JSON.parse(text);
 			} catch (error) {
 				// Past its limits: the hold's \`too_large/part\`. No JSON: a protocol error, reported, and the link closes.
 				if (isChordError(error, "too_large")) throw error;
@@ -315,7 +319,10 @@ export class Hold implements Holder, UnboundRequest {
 			this.#refuse(request, served.cause);
 			return;
 		}
-		this.#request = owned(request);
+		// Its params as the text they parsed from (strict UTF-8): the same bytes on the wire when it is relayed or placed
+		// again, and owned, no view of the message they came in (which the link's buffers may hold). A copy of the bytes
+		// kept 232 B per hold for a few bytes of JSON.
+		this.#request = holdRequest(request, text, request.chain, request.limit);
 		const { object } = served;
 		this.#object = object;
 		object.hold(this);
@@ -759,6 +766,31 @@ export class Hold implements Holder, UnboundRequest {
 /** Stops following every member of a bound hold. */
 function unfollow(state: Bound): void {
 	for (const { source, subscriber } of state.followed) if (source instanceof Source) source.unsubscribe(subscriber);
+}
+
+/**
+ * A request: `from`'s type, version, fingerprint, address and trace carrier, with `params` and, when given, `chain` and
+ * `limit`. Set field by field in that order: a rest object and spreads per hold cost 0.5 KiB, and kept their fields
+ * out of the object (40 B more per held object).
+ */
+export function holdRequest(
+	from: Pick<HoldRequest, "type" | "version" | "fingerprint" | "address" | "trace">,
+	params: HoldRequest["params"],
+	chain: HoldRequest["chain"],
+	limit: number | undefined,
+): HoldRequest {
+	const { type, version, fingerprint, address, trace } = from;
+	const request: { -readonly [K in keyof HoldRequest]: HoldRequest[K] } = {
+		type,
+		version,
+		fingerprint,
+		params,
+		address,
+	};
+	if (trace !== undefined) request.trace = trace;
+	if (chain !== undefined) request.chain = chain;
+	if (limit !== undefined) request.limit = limit;
+	return request;
 }
 
 /** `request` with its params owned, not a view of the message they came in (which the link's buffers may hold). */
