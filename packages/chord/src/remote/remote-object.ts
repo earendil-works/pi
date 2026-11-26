@@ -176,7 +176,8 @@ export class RemoteObject implements Target {
 	) {
 		this.#host = host;
 		this.contract = contract;
-		this.label = params.key === "" ? contract.name : `${contract.name}(${params.key})`;
+		// One join: a flat string (a template keeps the tree of its concatenations, 96 B per object).
+		this.label = params.key === "" ? contract.name : [contract.name, "(", params.key, ")"].join("");
 		const { name: type, version, fingerprint } = contract;
 		// Its hold is shared work (decision "Shared work"): a root on the host's adapter whatever its first getter's
 		// context, linked to that getter's span when traced; its first hold carries the span's carrier (`#holdTrace`).
