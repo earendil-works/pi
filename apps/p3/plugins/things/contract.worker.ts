@@ -15,7 +15,7 @@ import {
 	type Registry,
 	type TableItem,
 } from "@earendil-works/p3/v1";
-import type { ExecutionEnv, Extension, PromptSection, Provider } from "@earendil-works/p3/v1/worker";
+import type { ConversationId, ExecutionEnv, Extension, PromptSection, Provider } from "@earendil-works/p3/v1/worker";
 import type { ThingKind } from "./kind.ts";
 
 /**
@@ -39,13 +39,13 @@ export type HarnessLocation = { readonly machine: string; readonly folder: strin
  * session's workspace; a part never assumes it equals the session's id), `call`, which runs `fn` as the session's
  * worker (a tool reaches its plugin's objects with it, on the worker or the server), its references released when
  * `fn` settles (`context` is the tool's, Durable's, so cancelling the tool cancels the call), and `location`, where
- * conversation `conversation` (a tool's `api.conversationId`) works now; `undefined`: nowhere (an unknown session).
+ * conversation `conversation` (Durable's id, a tool's `api.conversationId`) works now; `undefined`: nowhere (an unknown session).
  */
 export type HarnessSession = {
 	readonly session: string;
 	readonly workspace: string;
 	call<T>(fn: (ctx: Ctx<P3Principal>) => Promise<T>, context: Context): Promise<T>;
-	location(conversation: string, context: Context): Promise<HarnessLocation | undefined>;
+	location(conversation: ConversationId, context: Context): Promise<HarnessLocation | undefined>;
 };
 
 /**

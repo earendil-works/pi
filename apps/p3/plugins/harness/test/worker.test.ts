@@ -317,10 +317,10 @@ describe("the harness plugin on a worker", () => {
 		await harness();
 		const [session] = sessions;
 		assert.ok(session !== undefined);
-		assert.deepEqual(await session.location("0", context), { machine: "this-device", folder });
+		assert.deepEqual(await session.location(ROOT_CONVERSATION_ID, context), { machine: "this-device", folder });
 		server.row({ location: { environment: "m", folder: "/elsewhere" } });
 		await eventually(
-			() => session.location("0", context),
+			() => session.location(ROOT_CONVERSATION_ID, context),
 			(at) => at?.machine === "m" && at.folder === "/elsewhere",
 		);
 	});
