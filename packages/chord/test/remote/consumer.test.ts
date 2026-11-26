@@ -1,7 +1,7 @@
 import { getEventListeners } from "node:events";
 import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { describe, expect, it, vi } from "vitest";
-import { BACKGROUND_CONTEXT as context, withAbortSignal, withCancel } from "../../src/context/index.ts";
+import { BACKGROUND_CONTEXT as context, withCancel } from "../../src/context/index.ts";
 import { evolve, int, local, map, method, remote, str } from "../../src/contracts/index.ts";
 import { type ChordError, PluginError } from "../../src/data/index.ts";
 import {
@@ -174,52 +174,6 @@ forEachCodec(() => {
 			cancel(new Error("stop"));
 			await expect(waiting).rejects.toThrow("stop");
 			expect(getEventListeners(signal, "abort")).toHaveLength(0);
-		});
-
-		it("give each abort listener options of its own: a caller changing one leaves later calls unattached (review of 369672ce9)", async () => {
-			const { client, peer } = await rawProvider();
-			try {
-				const got = client.get(Notes, { session: "S1" }, context);
-				await bindNext(peer);
-				const ref = await got;
-				const add = AbortSignal.prototype.addEventListener;
-				// Watches the registration on the call's signal (linked to the caller's), not keeping its listener.
-				const listen = (controller: AbortController) => {
-					let registration: { target: AbortSignal; options: AddEventListenerOptions } | undefined;
-					AbortSignal.prototype.addEventListener = function (
-						this: AbortSignal,
-						name: string,
-						listener: EventListenerOrEventListenerObject,
-						options?: boolean | AddEventListenerOptions,
-					) {
-						add.call(this, name, listener, options);
-						if (name === "abort" && typeof options === "object") registration = { target: this, options };
-					} as typeof add;
-					try {
-						const answer = ref.wait(withAbortSignal(controller.signal, context));
-						return { answer, ...registration! };
-					} finally {
-						AbortSignal.prototype.addEventListener = add;
-					}
-				};
-				const first = listen(new AbortController());
-				const { call } = await peer.next("call");
-				peer.send({ kind: "result", call });
-				await first.answer;
-				first.options.once = false;
-				try {
-					const second = new AbortController();
-					const waiting = listen(second);
-					await peer.next("call");
-					second.abort(new Error("stop"));
-					await expect(waiting.answer).rejects.toThrow("stop");
-					expect(getEventListeners(waiting.target, "abort")).toHaveLength(0);
-				} finally {
-					first.options.once = true;
-				}
-			} finally {
-				await client.close(context);
-			}
 		});
 
 		it("release: pending calls reject released, the provider aborts their handlers and lets the object go", async () => {

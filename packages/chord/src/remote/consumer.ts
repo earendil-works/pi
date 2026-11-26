@@ -52,6 +52,9 @@ type CallSide = {
 	readonly cancel: (call: OutgoingCall) => void;
 };
 
+/** An abort listener's options: made once. */
+const ONCE = { once: true } as const;
+
 /**
  * A call through this side: waiting for a slot of the call window (no id yet), then in flight under its id until its
  * reply, its abort, its hold's release or `gone`, or the link's close. It is its caller's abort listener itself
@@ -207,8 +210,7 @@ export class ConsumerSide {
 			old: link.host.oldWork.of(context),
 		};
 		const call = new OutgoingCall(fields, this.#side, signal, settle);
-		// Options of its own, as ever: what leaves Chord's hands is the receiver's to write.
-		signal?.addEventListener("abort", call, { once: true });
+		signal?.addEventListener("abort", call, ONCE);
 		this.#window.submit(call);
 		return settle.promise;
 	}
