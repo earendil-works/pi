@@ -191,20 +191,24 @@ describe("InteractiveMode.shutdown ordering (#5080)", () => {
 	});
 });
 
-// Regression for the `read EIO` crash reports (crash_tty_read_eio).
+// Regression for the `read EIO` crash reports (crash_tty_read_eio) and #12317.
 //
 // When the terminal goes away, stdin reads and setRawMode fail with EIO (pi is
 // left in an orphaned background process group) or ENOTTY (macOS revoked the
-// tty). Node emits these as `error` events on process.stdin. Without a stdin
-// listener they became uncaught exceptions that were recorded as crashes and
-// prompted users to run /bug on the next launch.
+// tty), and writes fail with EIO or EPIPE. On Windows a dead console host sends
+// no signal at all: every write fails with EPIPE. Node emits these as `error`
+// events on the std streams. pi must then shut down like a hangup: let
+// extensions clean up (session_shutdown) without writing to the terminal, then
+// exit with 129, and never record a crash.
 
 type HandlerContext = {
 	isShuttingDown: boolean;
+	terminalLost: boolean;
 	signalCleanupHandlers: Array<() => void>;
+	runtimeHost: { dispose: () => Promise<void> };
 	shutdown: () => Promise<void>;
 	unregisterSignalHandlers: () => void;
-	emergencyTerminalExit: () => never;
+	handleTerminalLost: () => void;
 	uncaughtCrash: (error: Error) => never;
 	recordCrash: () => boolean;
 	getCrashExtensionHint: () => string | undefined;
@@ -215,19 +219,21 @@ type HandlerContext = {
 type InteractiveModePrivates = {
 	registerSignalHandlers(this: HandlerContext): void;
 	unregisterSignalHandlers(this: HandlerContext): void;
-	emergencyTerminalExit(this: HandlerContext): never;
+	handleTerminalLost(this: HandlerContext): void;
 	uncaughtCrash(this: HandlerContext, error: Error): never;
 };
 
 const proto = InteractiveMode.prototype as unknown as InteractiveModePrivates;
 
-function createHandlerContext(): HandlerContext {
+function createHandlerContext(dispose: () => Promise<void>): HandlerContext {
 	const context: HandlerContext = {
 		isShuttingDown: false,
+		terminalLost: false,
 		signalCleanupHandlers: [],
+		runtimeHost: { dispose: vi.fn(dispose) },
 		shutdown: vi.fn(async () => {}),
 		unregisterSignalHandlers: () => proto.unregisterSignalHandlers.call(context),
-		emergencyTerminalExit: () => proto.emergencyTerminalExit.call(context),
+		handleTerminalLost: () => proto.handleTerminalLost.call(context),
 		uncaughtCrash: (error: Error) => proto.uncaughtCrash.call(context, error),
 		recordCrash: vi.fn(() => true),
 		getCrashExtensionHint: () => undefined,
@@ -241,47 +247,82 @@ function errnoError(message: string, code: string): NodeJS.ErrnoException {
 	return Object.assign(new Error(message), { code });
 }
 
-function captureExit(fn: () => void): number | undefined {
-	try {
-		fn();
-	} catch (error) {
-		if (error instanceof ProcessExitError) return error.code;
-		throw error;
-	}
-	throw new Error("expected process.exit");
-}
-
-describe("dead terminal errors on stdin", () => {
+describe("lost terminal", () => {
 	let context: HandlerContext | undefined;
 
 	afterEach(() => {
 		context?.unregisterSignalHandlers();
 		context = undefined;
+		// Drops the pending forced-exit timer, which would call the real process.exit later.
+		vi.useRealTimers();
 		vi.restoreAllMocks();
 	});
 
-	function setup(): HandlerContext {
-		vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-			throw new ProcessExitError(code);
-		}) as typeof process.exit);
+	function setup(dispose: () => Promise<void> = async () => {}) {
+		vi.useFakeTimers();
+		const exit = vi.spyOn(process, "exit").mockImplementation((() => {}) as typeof process.exit);
 		vi.spyOn(console, "error").mockImplementation(() => {});
-		context = createHandlerContext();
+		context = createHandlerContext(dispose);
 		proto.registerSignalHandlers.call(context);
-		return context;
+		return { ctx: context, exit };
 	}
 
 	test.each([
-		["read EIO", "EIO"],
-		["setRawMode EIO", "EIO"],
-		["setRawMode ENOTTY", "ENOTTY"],
-	])("stdin %s exits quietly without recording a crash", (message, code) => {
-		const ctx = setup();
+		["stdin", process.stdin, "read EIO", "EIO"],
+		["stdin", process.stdin, "setRawMode EIO", "EIO"],
+		["stdin", process.stdin, "setRawMode ENOTTY", "ENOTTY"],
+		["stdout", process.stdout, "write EIO", "EIO"],
+		// Windows: the console host exited (#12317).
+		["stdout", process.stdout, "write EPIPE", "EPIPE"],
+	])(
+		"%s %s runs session cleanup, then exits with 129 without recording a crash",
+		async (_name, stream, message, code) => {
+			const { ctx, exit } = setup();
 
-		const exitCode = captureExit(() => process.stdin.emit("error", errnoError(message, code)));
+			stream.emit("error", errnoError(message, code));
+			expect(exit).not.toHaveBeenCalled();
+			await vi.advanceTimersByTimeAsync(0);
 
-		expect(exitCode).toBe(129);
-		expect(ctx.recordCrash).not.toHaveBeenCalled();
-		expect(ctx.ui.stop).not.toHaveBeenCalled();
+			expect(ctx.runtimeHost.dispose).toHaveBeenCalledOnce();
+			expect(exit).toHaveBeenCalledWith(129);
+			expect(ctx.recordCrash).not.toHaveBeenCalled();
+			expect(ctx.ui.stop).not.toHaveBeenCalled();
+		},
+	);
+
+	test("repeated errors run session cleanup once", async () => {
+		const { ctx } = setup();
+
+		process.stdout.emit("error", errnoError("write EPIPE", "EPIPE"));
+		process.stdout.emit("error", errnoError("write EPIPE", "EPIPE"));
+		process.stdin.emit("error", errnoError("read EIO", "EIO"));
+		await vi.advanceTimersByTimeAsync(0);
+
+		expect(ctx.runtimeHost.dispose).toHaveBeenCalledOnce();
+	});
+
+	test("hung session cleanup is cut off by the exit timeout", async () => {
+		const { exit } = setup(() => new Promise(() => {}));
+
+		process.stdout.emit("error", errnoError("write EPIPE", "EPIPE"));
+		await vi.advanceTimersByTimeAsync(4999);
+		expect(exit).not.toHaveBeenCalled();
+		await vi.advanceTimersByTimeAsync(1);
+
+		expect(exit).toHaveBeenCalledWith(129);
+	});
+
+	test("a running shutdown (SIGHUP) is not cut short, only bounded", async () => {
+		const { ctx, exit } = setup();
+		ctx.isShuttingDown = true;
+
+		process.stdout.emit("error", errnoError("write EIO", "EIO"));
+		await vi.advanceTimersByTimeAsync(4999);
+		expect(ctx.runtimeHost.dispose).not.toHaveBeenCalled();
+		expect(exit).not.toHaveBeenCalled();
+		await vi.advanceTimersByTimeAsync(1);
+
+		expect(exit).toHaveBeenCalledWith(129);
 	});
 
 	test("other stdin errors still crash", () => {
@@ -291,26 +332,19 @@ describe("dead terminal errors on stdin", () => {
 		expect(() => process.stdin.emit("error", error)).toThrow(error);
 	});
 
-	test("uncaught dead terminal errors are not recorded as crashes", () => {
-		const ctx = setup();
+	test("uncaught EPIPE from outside the terminal is recorded as a crash (#12317)", () => {
+		// For example a write to the stdin of an exited child process. It used to exit silently with 129.
+		const { ctx, exit } = setup();
 
-		const exitCode = captureExit(() => ctx.uncaughtCrash(errnoError("read EIO", "EIO")));
+		ctx.uncaughtCrash(errnoError("write EPIPE", "EPIPE"));
 
-		expect(exitCode).toBe(129);
-		expect(ctx.recordCrash).not.toHaveBeenCalled();
-	});
-
-	test("other uncaught errors are still recorded as crashes", () => {
-		const ctx = setup();
-
-		const exitCode = captureExit(() => ctx.uncaughtCrash(new Error("boom")));
-
-		expect(exitCode).toBe(1);
+		expect(exit).toHaveBeenCalledWith(1);
 		expect(ctx.recordCrash).toHaveBeenCalledOnce();
+		expect(ctx.runtimeHost.dispose).not.toHaveBeenCalled();
 	});
 
 	test("handlers are removed on unregister", () => {
-		const ctx = setup();
+		const { ctx } = setup();
 		const before = process.stdin.listenerCount("error");
 
 		ctx.unregisterSignalHandlers();

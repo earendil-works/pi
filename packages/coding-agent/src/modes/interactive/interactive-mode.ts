@@ -302,8 +302,11 @@ function isUsageSessionEntry(item: RenderSessionItem): item is Extract<SessionEn
 	return "type" in item && item.type === "usage";
 }
 
+// Error codes on stdin, stdout or stderr that mean the terminal is gone:
 // EIO: tty reads/ioctls from an orphaned background process group, or writes after hangup.
 // ENOTTY: the tty was revoked (macOS) and stdin is no longer a terminal.
+// EPIPE: writes after the reader closed. On Windows this is how a dead console host (conhost,
+// OpenConsole) shows up: no signal is sent, every later write fails and input stops.
 const DEAD_TERMINAL_ERROR_CODES = new Set(["EIO", "EPIPE", "ENOTCONN", "ENOTTY"]);
 
 function isDeadTerminalError(error: unknown): boolean {
@@ -313,6 +316,10 @@ function isDeadTerminalError(error: unknown): boolean {
 	const code = (error as NodeJS.ErrnoException).code;
 	return code !== undefined && DEAD_TERMINAL_ERROR_CODES.has(code);
 }
+
+// How long session cleanup may run after the terminal is lost. Nobody is left to press Ctrl+C or
+// close the window, so a hung session_shutdown handler must not keep a headless pi alive (#4144).
+const TERMINAL_LOST_EXIT_TIMEOUT_MS = 5000;
 
 export function formatCrashExtensionHint(extensionMatches: readonly string[] | undefined): string | undefined {
 	const matches = Array.isArray(extensionMatches)
@@ -4523,6 +4530,7 @@ export class InteractiveMode {
 	 * repaint the final frame while the process is exiting.
 	 */
 	private isShuttingDown = false;
+	private terminalLost = false;
 
 	private async shutdown(options?: { fromSignal?: boolean }): Promise<void> {
 		if (this.isShuttingDown) return;
@@ -4536,9 +4544,9 @@ export class InteractiveMode {
 			// (session_shutdown) BEFORE touching the terminal. Extension teardown
 			// such as removing sockets does not write to the tty, so it must not be
 			// skipped if a later terminal-restore write fails on a dead or stalled
-			// terminal. If the terminal is gone, the restore writes below emit EIO,
-			// which the stdout/stderr error handler turns into emergencyTerminalExit;
-			// the render loop is already idle, so this cannot hot-spin (see #4144).
+			// terminal. If the terminal is gone, dispose() still runs to the end:
+			// the stream error handler only bounds the remaining shutdown with
+			// handleTerminalLost's timeout, and the restore writes fail harmlessly.
 			await this.runtimeHost.dispose();
 			this.themeController.disableAutoSync();
 			await this.ui.terminal.drainInput(1000);
@@ -4572,13 +4580,30 @@ export class InteractiveMode {
 		process.exit(0);
 	}
 
-	private emergencyTerminalExit(): never {
+	/**
+	 * Shut down after the terminal went away (see DEAD_TERMINAL_ERROR_CODES). No output can be shown
+	 * and no input can arrive anymore, so running on would leave a headless process nobody can reach.
+	 * Unix usually sends SIGHUP as well, which starts the signal shutdown; Windows sends no signal when
+	 * the console host exits, so this is its only shutdown path (#12317).
+	 *
+	 * Like the signal shutdown, it settles the session and emits session_shutdown so the aborted turn is
+	 * saved and extensions can stop their work, but it writes nothing to the terminal. A shutdown that
+	 * is already running finishes on its own. Either way the process exits with 129 (128 + SIGHUP)
+	 * after at most TERMINAL_LOST_EXIT_TIMEOUT_MS.
+	 */
+	private handleTerminalLost(): void {
+		if (this.terminalLost) return;
+		this.terminalLost = true;
+		const exit = () => {
+			// dispose() only starts killing a running `!` command (see shutdown()).
+			killTrackedDetachedChildren();
+			process.exit(129);
+		};
+		setTimeout(exit, TERMINAL_LOST_EXIT_TIMEOUT_MS);
+		if (this.isShuttingDown) return;
 		this.isShuttingDown = true;
-		this.unregisterSignalHandlers();
 		killTrackedDetachedChildren();
-		// The terminal is gone. Do not run normal shutdown because TUI and
-		// extension cleanup can write restore sequences and re-trigger EIO.
-		process.exit(129);
+		void this.runtimeHost.dispose().finally(exit);
 	}
 
 	/**
@@ -4588,15 +4613,16 @@ export class InteractiveMode {
 	 * tears down the process while leaving the terminal in raw mode with no
 	 * cursor, requiring `stty sane && reset` to recover.
 	 *
-	 * Unlike emergencyTerminalExit, the terminal is still alive here, so we
+	 * Unlike handleTerminalLost, the terminal is still alive here, so we
 	 * call ui.stop() to restore cooked mode, the cursor, and disable bracketed
 	 * paste / Kitty / modifyOtherKeys sequences.
+	 *
+	 * Terminal errors never get here: they are emitted on the std streams,
+	 * whose error handler takes them. An uncaught EPIPE or EIO comes from
+	 * something else, such as a write to the stdin of an exited child process,
+	 * and is a real crash (#12317).
 	 */
 	private uncaughtCrash(error: Error): never {
-		// A dead terminal is not a pi crash. Do not try to restore it or record it.
-		if (isDeadTerminalError(error)) {
-			this.emergencyTerminalExit();
-		}
 		if (this.isShuttingDown) {
 			process.exit(1);
 		}
@@ -4637,8 +4663,8 @@ export class InteractiveMode {
 			const handler = () => {
 				// SIGHUP no longer hard-exits: graceful shutdown emits session_shutdown
 				// first, then attempts terminal restore. A genuinely dead terminal
-				// surfaces as an EIO on the restore writes, which the stdout/stderr
-				// error handler converts into emergencyTerminalExit (see #4144, #5080).
+				// surfaces as EIO, which the stream error handler turns into a bounded
+				// wait for this shutdown (see #4144, #5080).
 				killTrackedDetachedChildren();
 				void this.shutdown({ fromSignal: true });
 			};
@@ -4647,10 +4673,8 @@ export class InteractiveMode {
 		}
 
 		const terminalErrorHandler = (error: Error) => {
-			if (isDeadTerminalError(error)) {
-				this.emergencyTerminalExit();
-			}
-			throw error;
+			if (!isDeadTerminalError(error)) throw error;
+			this.handleTerminalLost();
 		};
 		// stdin needs the handler too: once the terminal is gone, reads and setRawMode
 		// fail with EIO (orphaned background process group) or ENOTTY (revoked tty).

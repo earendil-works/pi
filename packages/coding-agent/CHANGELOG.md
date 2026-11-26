@@ -15,6 +15,7 @@
 - Fixed closing the console window or terminal tab on Windows skipping `session_shutdown` and leaving commands started by the bash tool running, for example `sleep 300` from `bash -c "sleep 300"`. pi now handles SIGHUP on Windows like on POSIX and waits for `taskkill` to finish before it exits. Quitting with Ctrl+D or `/quit` while a `!` command runs, or ending RPC mode while a `bash` command runs, no longer leaves that command running on Windows either
 - Fixed the `AuthStorage` coalesced-reload test failing intermittently on systems with coarse file timestamps ([#12190](https://github.com/earendil-works/pi/issues/12190))
 - Fixed the `thinkingLevelMap` reference in the models.json schema and docs suggesting pi does not support the `xhigh` and `max` thinking levels; it now says they are opt-in and only offered when mapped, and the model guide explains how to map thinking levels ([#12281](https://github.com/earendil-works/pi/issues/12281))
+- Fixed pi exiting immediately when its terminal goes away without SIGHUP, such as a Windows console host that exits, without saving the aborted turn or emitting `session_shutdown`. pi now runs the same session cleanup as for SIGHUP, without writing to the terminal, and exits with 129 after at most 5 seconds. An uncaught `EPIPE` or `EIO` that does not come from the terminal, such as a write to an exited child process, is now reported as a crash instead of exiting silently ([#12317](https://github.com/earendil-works/pi/issues/12317))
 
 ## [1.6.0] - 2026-11-20
 
