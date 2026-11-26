@@ -569,6 +569,58 @@ describe("the binary codec", () => {
 		expect(medium.buffer.byteLength).toBe(medium.byteLength);
 	});
 
+	it("returns messages that share no buffer: a later encode leaves an earlier message as it was", () => {
+		const first = binaryCodec.encode({ kind: "result", call: 0, value: '"a"' });
+		const copy = [...first];
+		binaryCodec.encode({ kind: "result", call: 1, value: '"bbbbbbbb"' });
+		expect([...first]).toEqual(copy);
+		expect(first.buffer.byteLength).toBe(first.byteLength);
+	});
+
+	it("encodes a message inside another's encode (a value's toJSON that sends) with a buffer of its own", () => {
+		let inner: Uint8Array | undefined;
+		const params = {
+			toJSON: () => {
+				inner = binaryCodec.encode({ kind: "release", hold: 7 });
+				return { id: "x" };
+			},
+		};
+		const hold: Message = {
+			kind: "hold",
+			hold: 0,
+			type: "t",
+			version: 1,
+			fingerprint: "0123456789abcdef",
+			params: "{}",
+			address: { kind: "server", params },
+		};
+		const outer = binaryCodec.decode(binaryCodec.encode(hold));
+		expect((outer as Extract<Message, { kind: "hold" }>).address).toEqual({ kind: "server", params: { id: "x" } });
+		expect([...inner!]).toEqual([2, 7]);
+	});
+
+	it("writes a fingerprint and an incarnation only as lowercase hex of their length, dashes left out wherever they are", () => {
+		const hold = (fingerprint: string, incarnation?: string): Message => ({
+			kind: "hold",
+			hold: 0,
+			type: "t",
+			version: 1,
+			fingerprint,
+			params: "{}",
+			address: server,
+			...(incarnation === undefined ? {} : { incarnation }),
+		});
+		for (const bad of ["0123456789ABCDEF", "0123456789abcde", "0123456789abcdef0", "0123456789abcdeg", ""]) {
+			expect(() => binaryCodec.encode(hold(bad))).toThrow(/^binary: not 8 bytes of hex$/);
+		}
+		const dashed = "0192f5e2-7c3a-7def-8abc-0123456789ab";
+		const decoded = binaryCodec.decode(binaryCodec.encode(hold("0123456789abcdef", dashed.replace("-", "--"))));
+		expect((decoded as Extract<Message, { kind: "hold" }>).incarnation).toBe(dashed);
+		for (const bad of [dashed.slice(1), `${dashed}0`, dashed.toUpperCase(), dashed.replace("0", "x")]) {
+			expect(() => binaryCodec.encode(hold("0123456789abcdef", bad))).toThrow(/^binary: not 16 bytes of hex$/);
+		}
+	});
+
 	it("refuses invalid UTF-8 in strings", () => {
 		expect(() => binaryCodec.decode(new Uint8Array([1, 0, 1, 0xff]))).toThrow();
 	});

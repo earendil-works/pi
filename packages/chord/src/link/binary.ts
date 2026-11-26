@@ -77,21 +77,16 @@ const DEFLATED = 1;
 export const binaryCodec: Codec = {
 	name: "binary",
 	encode(message) {
-		const writer = new Writer();
-		// Encoded on any kind: the message schema, after decoding, refuses an origin on a kind that has none.
-		const origin = (message as { readonly origin?: number }).origin;
-		const trace = message.kind === "hold" || message.kind === "call" ? message.trace : undefined;
-		const old =
-			(message.kind === "call" && message.old === true) || (message.kind === "ack" && message.events !== undefined)
-				? OLD
-				: 0;
-		writer.byte(
-			KIND_BYTES.get(message.kind)! | (origin === undefined ? 0 : ORIGIN) | (trace === undefined ? 0 : TRACE) | old,
-		);
-		if (origin !== undefined) writer.varint(origin);
-		if (trace !== undefined) writer.json(trace);
-		encodeFields(message, writer);
-		return writer.finish();
+		// The idle writer and its buffer, reused; an encode inside an encode (a `toJSON` that sends) makes its own.
+		const writer = idle ?? new Writer();
+		idle = undefined;
+		try {
+			encodeMessage(message, writer);
+			return writer.finish();
+		} finally {
+			writer.reset();
+			idle = writer;
+		}
 	},
 	decode(bytes) {
 		const reader = new Reader(bytes);
@@ -111,11 +106,36 @@ export const binaryCodec: Codec = {
 	},
 };
 
+/**
+ * The writer no encode uses now, with its buffer: encoding into one buffer kept across messages costs a message one
+ * right-sized copy, where a fresh zeroed buffer per message and its copy cost 2.5 KiB per held object (`hot-paths.ts`,
+ * case 1) and made an encode 3.5 times as slow. It keeps no message: `finish` copies or hands its buffer off, and
+ * `reset` drops a grown one.
+ */
+let idle: Writer | undefined;
+
+/** Writes `message` with `writer`: its kind byte with its flags, its origin and trace, then its fields. */
+function encodeMessage(message: Message, writer: Writer): void {
+	// Encoded on any kind: the message schema, after decoding, refuses an origin on a kind that has none.
+	const origin = (message as { readonly origin?: number }).origin;
+	const trace = message.kind === "hold" || message.kind === "call" ? message.trace : undefined;
+	const old =
+		(message.kind === "call" && message.old === true) || (message.kind === "ack" && message.events !== undefined)
+			? OLD
+			: 0;
+	writer.byte(
+		KIND_BYTES.get(message.kind)! | (origin === undefined ? 0 : ORIGIN) | (trace === undefined ? 0 : TRACE) | old,
+	);
+	if (origin !== undefined) writer.varint(origin);
+	if (trace !== undefined) writer.json(trace);
+	encodeFields(message, writer);
+}
+
 function encodeFields(message: Message, writer: Writer): void {
 	switch (message.kind) {
 		case "hello":
 			writer.varint(message.protocol);
-			writer.raw(hex(message.incarnation.replaceAll("-", ""), 16));
+			writer.uuid(message.incarnation);
 			// 0 when absent: no window (a window is at least 1).
 			writer.varint(message.calls ?? 0);
 			return;
@@ -123,7 +143,7 @@ function encodeFields(message: Message, writer: Writer): void {
 			writer.varint(message.hold);
 			writer.string(message.type);
 			writer.varint(message.version);
-			writer.raw(hex(message.fingerprint, 8));
+			writer.hex(message.fingerprint, 8);
 			writer.part(message.params);
 			const { address, principal, incarnation, chain, limit } = message;
 			writer.string(address.kind);
@@ -135,10 +155,10 @@ function encodeFields(message: Message, writer: Writer): void {
 					(limit === undefined ? 0 : LIMIT),
 			);
 			if (principal !== undefined) writer.json(principal);
-			if (incarnation !== undefined) writer.raw(hex(incarnation.replaceAll("-", ""), 16));
+			if (incarnation !== undefined) writer.uuid(incarnation);
 			if (chain !== undefined) {
 				writer.varint(chain.length);
-				for (const instance of chain) writer.raw(hex(instance.replaceAll("-", ""), 16));
+				for (const instance of chain) writer.uuid(instance);
 			}
 			if (limit !== undefined) writer.varint(limit);
 			return;
@@ -346,10 +366,14 @@ const LENGTH_SLOT = 5;
 /** The room left after a large chunk for the fields that follow it. */
 const SPARE = 4096;
 
-/** Writes a message into one growing buffer, right-sized at the end. */
+const DASH = 0x2d;
+
+/** The buffer a writer starts with and keeps across messages: most messages fit (a hold, a `bound`, a state change). */
+const BASE = 4096;
+
+/** Writes messages, one at a time, into one growing buffer; each right-sized at its end. */
 class Writer {
-	/** Large enough for most small messages (a state change, a call), small enough to zero cheaply. */
-	#buffer = new Uint8Array(256);
+	#buffer = new Uint8Array(BASE);
 	#length = 0;
 
 	byte(byte: number): void {
@@ -372,6 +396,43 @@ class Writer {
 		this.#reserve(bytes.byteLength);
 		this.#buffer.set(bytes, this.#length);
 		this.#length += bytes.byteLength;
+	}
+
+	/**
+	 * `text`, lowercase hex of `length` bytes (a fingerprint), as those bytes. Throws on anything else. Read digit by
+	 * digit into the buffer: a pattern test and an array per call cost more than the message's other fields.
+	 */
+	hex(text: string, length: number): void {
+		if (text.length !== length * 2) throw notHex(length);
+		this.#reserve(length);
+		for (let index = 0; index < length; index++) {
+			const high = digit(text.charCodeAt(index * 2));
+			const low = digit(text.charCodeAt(index * 2 + 1));
+			if (high < 0 || low < 0) throw notHex(length);
+			this.#buffer[this.#length + index] = high * 16 + low;
+		}
+		this.#length += length;
+	}
+
+	/**
+	 * A UUID (an incarnation) as its 16 bytes: its lowercase hex digits with every dash left out wherever it is, 32 of
+	 * them. Throws on anything else.
+	 */
+	uuid(text: string): void {
+		this.#reserve(16);
+		let digits = 0;
+		let high = 0;
+		for (let index = 0; index < text.length; index++) {
+			const unit = text.charCodeAt(index);
+			if (unit === DASH) continue;
+			const value = digit(unit);
+			if (value < 0 || digits === 32) throw notHex(16);
+			if (digits % 2 === 0) high = value;
+			else this.#buffer[this.#length + (digits >> 1)] = high * 16 + value;
+			digits++;
+		}
+		if (digits !== 32) throw notHex(16);
+		this.#length += 16;
 	}
 
 	/** A length-prefixed UTF-8 string (`#text`). */
@@ -405,6 +466,13 @@ class Writer {
 	 * message is never copied.
 	 */
 	#text(text: string, scale: 1 | 2): void {
+		if (text.length < LONG) {
+			// ASCII (most names and JSON) is its own UTF-8, its length known: written unit by unit.
+			const start = this.#length;
+			this.varint(text.length * scale);
+			if (this.#ascii(text)) return;
+			this.#length = start;
+		}
 		if (text.length <= SHORT / scale) {
 			this.#reserve(1 + text.length * 3);
 			const { written } = UTF8.encodeInto(text, this.#buffer.subarray(this.#length + 1));
@@ -435,6 +503,24 @@ class Writer {
 			this.#buffer[slot + index] = (length % 0x80) | (index < LENGTH_SLOT - 1 ? 0x80 : 0);
 			length = Math.floor(length / 0x80);
 		}
+	}
+
+	/**
+	 * `text`'s units as bytes when all are ASCII; otherwise nothing written (whatever it wrote is past the length) and
+	 * `false`. No view of the buffer per string, as `encodeInto` needs (0.5 KiB per held object).
+	 */
+	#ascii(text: string): boolean {
+		const units = text.length;
+		this.#reserve(units);
+		const buffer = this.#buffer;
+		const at = this.#length;
+		for (let index = 0; index < units; index++) {
+			const unit = text.charCodeAt(index);
+			if (unit >= 0x80) return false;
+			buffer[at + index] = unit;
+		}
+		this.#length = at + units;
+		return true;
 	}
 
 	/** A payload: its flags, then its part and, when marked, its segments (count, lengths, raw bytes). */
@@ -476,14 +562,21 @@ class Writer {
 	}
 
 	/**
-	 * The message: a view of the buffer, or a right-sized copy when the spare room is meaningful (at least 64 bytes and
-	 * more than an eighth of the message), so a kept message keeps at most that much beyond itself. A large message
-	 * ends within its 4 KiB of room and is not copied.
+	 * The message: a right-sized copy, or for a message that grew the buffer and fills it but for a little (less than
+	 * 64 bytes or an eighth of the message) a view of it, handed off: a large message ends within its 4 KiB of room and
+	 * is not copied, and the writer takes a new buffer (`reset`).
 	 */
 	finish(): Uint8Array {
-		const message = this.#buffer.subarray(0, this.#length);
-		const spare = this.#buffer.byteLength - this.#length;
-		return spare >= 64 && spare * 8 > this.#length ? message.slice() : message;
+		const buffer = this.#buffer;
+		const spare = buffer.byteLength - this.#length;
+		if (buffer.byteLength === BASE || (spare >= 64 && spare * 8 > this.#length)) return buffer.slice(0, this.#length);
+		return buffer.subarray(0, this.#length);
+	}
+
+	/** Ready for the next message: empty, with a base buffer again when this one grew (it is not kept past its message). */
+	reset(): void {
+		this.#length = 0;
+		if (this.#buffer.byteLength !== BASE) this.#buffer = new Uint8Array(BASE);
 	}
 
 	/** Grows the buffer to fit `bytes` more: doubled, or for a large chunk to its end plus room for the small fields after it. */
@@ -586,16 +679,15 @@ class Reader {
 	}
 }
 
-/** Lowercase hex of 8 and 16 bytes: a fingerprint, an incarnation without its dashes. */
-const HEX = new Map([
-	[8, /^[0-9a-f]{16}$/],
-	[16, /^[0-9a-f]{32}$/],
-]);
+/** A lowercase hex digit's value; -1 for any other unit. */
+function digit(unit: number): number {
+	if (unit >= 0x30 && unit <= 0x39) return unit - 0x30;
+	if (unit >= 0x61 && unit <= 0x66) return unit - 0x57;
+	return -1;
+}
 
-/** `length` bytes from lowercase hex (an incarnation without dashes, a fingerprint). */
-function hex(text: string, length: number): Uint8Array {
-	if (!HEX.get(length)!.test(text)) throw new Error(`binary: not ${length} bytes of hex`);
-	return Uint8Array.from({ length }, (_, index) => Number.parseInt(text.slice(index * 2, index * 2 + 2), 16));
+function notHex(length: number): Error {
+	return new Error(`binary: not ${length} bytes of hex`);
 }
 
 function hexText(bytes: Uint8Array): string {
