@@ -54,6 +54,7 @@ import {
 import { appended, NO_ITEMS } from "../lists.ts";
 import { type DeriveSource, Source, type Subscriber } from "../state/internal.ts";
 import { chordMetrics } from "../telemetry.ts";
+import type { WatchCall } from "../watch.ts";
 import type { HostLink } from "./host-link.ts";
 import type { ProviderSide } from "./provider.ts";
 import { RelayedHold } from "./relay.ts";
@@ -67,19 +68,6 @@ type HoldMessage = Extract<Message, { readonly kind: "hold" }>;
  * ones this host honours, sent on as they are when it relays the hold.
  */
 export type HoldRequest = Omit<HoldMessage, "kind" | "origin" | "hold" | "principal" | "incarnation">;
-
-/**
- * A state member a bound hold follows: its index in the bound version, its source and subscription (which feeds this
- * record), its own encoder (R1, path interning) and the ops waiting for a slot of the window.
- */
-type Followed = {
-	readonly index: number;
-	/** Its source (subscribed when it changes, a constant's never). */
-	readonly source: DeriveSource;
-	readonly subscriber: Subscriber;
-	readonly encoder: Encoder;
-	readonly pending: PendingOps;
-};
 
 /**
  * Where a hold stands: `unplaced` in the unbound index until the host's publication places it; `pending` until its
@@ -388,7 +376,7 @@ export class Hold implements Holder, UnboundRequest {
 
 	/** Member `followed` failed with `error`: its failure waits to be sent, replacing one still waiting. */
 	#memberFailed(followed: Followed, error: unknown): void {
-		followed.pending.take();
+		followed.pending?.take();
 		const failure = { member: followed.index, error: wireError(error) };
 		const at = this.#failed.findIndex(({ member }) => member === followed.index);
 		// A new list when one is replaced (rare): a list handed to an entry is never written to.
@@ -551,16 +539,19 @@ export class Hold implements Holder, UnboundRequest {
 	 */
 	entry(context: Context): StateEntry {
 		const { link } = this.#provider;
-		const members = this.#take().map(([{ index, encoder }, ops]) => ({
-			member: index,
-			ops: link.part(jsonPart(encoder.encode(ops)), context),
+		const members = this.#take().map(([followed, ops]) => ({
+			member: followed.index,
+			ops: link.part(jsonPart(followed.encoder.encode(ops)), context),
 		}));
 		return this.#entry(members, context);
 	}
 
 	/** The window is full: this batch's ops join the members' pending queues (raw, never mutated). */
 	queue(): void {
-		for (const [{ pending }, ops] of this.#take()) pending.push(ops);
+		for (const [followed, ops] of this.#take()) {
+			followed.pending ??= new PendingOps();
+			followed.pending.push(ops);
+		}
 	}
 
 	/**
@@ -571,11 +562,14 @@ export class Hold implements Holder, UnboundRequest {
 		const { link } = this.#provider;
 		const members: StateEntry["members"][number][] = [];
 		// Only a bound hold has pending ops.
-		for (const { index, source, encoder, pending } of (this.#state as Bound).followed) {
-			if (pending.size === 0) continue;
+		for (const followed of (this.#state as Bound).followed) {
+			const { index, source, pending } = followed;
+			if (pending === undefined || pending.size === 0) continue;
 			const taken = pending.take();
 			const ops = taken.kind === "replace" ? [["r", source.value] as const] : taken.ops;
-			if (ops.length > 0) members.push({ member: index, ops: link.part(jsonPart(encoder.encode(ops)), context) });
+			if (ops.length > 0) {
+				members.push({ member: index, ops: link.part(jsonPart(followed.encoder.encode(ops)), context) });
+			}
 		}
 		return this.#entry(members, context);
 	}
@@ -698,33 +692,26 @@ export class Hold implements Holder, UnboundRequest {
 	 * consumer stalls); the value after it (a root replacement) replaces the failure. A retirement waits for a value.
 	 */
 	#follow(state: Bound, index: number, source: DeriveSource): void {
-		const followed: Followed = {
-			index,
-			source,
-			subscriber: {
-				advance: (call) => {
-					this.#touch();
-					if (call.kind === "failed") {
-						this.#memberFailed(followed, call.error);
-						return;
-					}
-					this.#memberHealed(index);
-					const { ops, retired } = call;
-					// A retired derive's frame may carry no ops (rule 21): only the flag travels.
-					if (ops.length > 0) this.#changes = appended(this.#changes, [followed, ops]);
-					// A new list per retirement (rare): the shared empty one is never written to.
-					if (retired && !this.#retired.includes(index)) this.#retired = [...this.#retired, index];
-				},
-				// The member's source ended with its object, which ends this hold.
-				end: () => {},
-				endAfterDelivery: () => {},
-			},
-			encoder: encoder(),
-			pending: new PendingOps(),
-		};
+		const followed = new Followed(this, index, source);
 		// A constant never changes: nothing to subscribe to.
-		if (source instanceof Source) source.subscribe(followed.subscriber);
+		if (source instanceof Source) source.subscribe(followed);
 		state.followed = appended(state.followed, followed);
+	}
+
+	/** A call of followed member `followed`'s source (its subscription): fed into this hold's batch (`#follow`). */
+	advanced(followed: Followed, call: WatchCall<JsonValue>): void {
+		this.#touch();
+		if (call.kind === "failed") {
+			this.#memberFailed(followed, call.error);
+			return;
+		}
+		const { index } = followed;
+		this.#memberHealed(index);
+		const { ops, retired } = call;
+		// A retired derive's frame may carry no ops (rule 21): only the flag travels.
+		if (ops.length > 0) this.#changes = appended(this.#changes, [followed, ops]);
+		// A new list per retirement (rare): the shared empty one is never written to.
+		if (retired && !this.#retired.includes(index)) this.#retired = [...this.#retired, index];
 	}
 
 	/** Takes the current batch's changes; the hold is untouched again. */
@@ -779,7 +766,44 @@ export class Hold implements Holder, UnboundRequest {
 
 /** Stops following every member of a bound hold. */
 function unfollow(state: Bound): void {
-	for (const { source, subscriber } of state.followed) if (source instanceof Source) source.unsubscribe(subscriber);
+	for (const followed of state.followed) if (followed.source instanceof Source) followed.source.unsubscribe(followed);
+}
+
+/**
+ * A state member a bound hold follows: its index in the bound version, its source, and the subscriber of its source
+ * itself (its calls go to its hold: `Hold.advanced`); its own encoder (R1, path interning) and the ops waiting for a
+ * slot of the window, each made by its first use (a fresh encoder has no state; most members never wait). A followed
+ * member cost a subscriber record with three closures, an encoder (a set and a map) and a queue up front, about 0.5 KiB.
+ */
+class Followed implements Subscriber {
+	readonly index: number;
+	/** Its source (subscribed when it changes, a constant's never). */
+	readonly source: DeriveSource;
+	/** The ops waiting for a slot of the window, once some waited. */
+	pending: PendingOps | undefined;
+	readonly #hold: Hold;
+	#encoder: Encoder | undefined;
+
+	constructor(hold: Hold, index: number, source: DeriveSource) {
+		this.#hold = hold;
+		this.index = index;
+		this.source = source;
+	}
+
+	/** Its encoder, made by its first encode. */
+	get encoder(): Encoder {
+		this.#encoder ??= encoder();
+		return this.#encoder;
+	}
+
+	advance(call: WatchCall<JsonValue>): void {
+		this.#hold.advanced(this, call);
+	}
+
+	/** The member's source ended with its object, which ends this hold. */
+	end(): void {}
+
+	endAfterDelivery(): void {}
 }
 
 /**

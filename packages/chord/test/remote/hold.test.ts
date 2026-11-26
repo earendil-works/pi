@@ -304,6 +304,10 @@ forEachCodec(() => {
 				const [held, made] = [holds.length, encoders.length];
 				hold(peer, 0, Halves);
 				await peer.next("bound");
+				// A member's encoder is made by its first change: none at the binding.
+				expect(encoders.length - made).toBe(0);
+				peer.send({ kind: "call", call: 0, hold: 0, method: HALVES.methods.set!, args: jsonPart(4) });
+				await peer.next("state");
 				const refs: WeakRef<object>[] = [new WeakRef(providerObject(server)), ...holds.slice(held)];
 				refs.push(...encoders.slice(made));
 				expect(refs).toHaveLength(4);
