@@ -1,7 +1,6 @@
 // The harness test files that take a SQLite storage, run on Durable's storage on Chord's store (`StoreStorage`, slice
 // 6b): `../src/storage/sqlite/node.ts`'s opener is replaced by `test/store-storage-node.ts`; the files are unchanged.
-// Four tests edit or read `SqliteStorage`'s own tables with raw SQL (`tasks`, `durable_metadata`) and are left out, and
-// one checks `SqliteStorage`'s own erasure of freed pages and the WAL, which on the store is the connection's.
+// Four tests edit or read `SqliteStorage`'s own tables with raw SQL (`tasks`, `durable_metadata`) and are left out.
 
 import { fileURLToPath } from "node:url";
 import { defineConfig, mergeConfig } from "vitest/config";
@@ -14,14 +13,13 @@ export default mergeConfig(
 	defineConfig({
 		test: {
 			testNamePattern:
-				/^(?!.*(resumes a retry backoff after reopen|sleeps again for a retry stored as a running phase|polls a checkpoint stored without a thinking level|refuses to create the root of an empty storage|erases what SQLite deleted from the database file and the WAL))/,
+				/^(?!.*(resumes a retry backoff after reopen|sleeps again for a retry stored as a running phase|polls a checkpoint stored without a thinking level|refuses to create the root of an empty storage))/,
 			include: [
 				"test/harness-after-run.test.ts",
 				"test/harness-blocked.test.ts",
 				"test/harness-compaction.test.ts",
 				"test/harness-continue.test.ts",
 				"test/harness-conversations.test.ts",
-				"test/harness-delete-conversations.test.ts",
 				"test/harness-generation-recovery.test.ts",
 				"test/harness-inbox.test.ts",
 				"test/harness-input-entries.test.ts",

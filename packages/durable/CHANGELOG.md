@@ -4,12 +4,12 @@
 
 ### Breaking Changes
 
-- `StorageWrite` has a `conversation.delete` write, `TableCommitChange` (`observeCommits()`) carries it, and `ConversationQuery` has a `parentConversationId` filter. Migration: a custom Storage indexes the filter; one that supports deletion sets `deletesConversations` and stores the write, and passes `{ deletesConversations: true }` to `registerStorageConformance()`, which then checks both; a commit observer that replicates stored state applies it.
-- SQLite storage migrates to schema version 3, IndexedDB storage to database version 2, and `StoreStorage`'s conversations table to version 2, which index forks by their parent. A database opened by this version is refused by an older one.
+- `StorageWrite` has a `conversation.delete` write, `TableCommitChange` (`observeCommits()`) carries it, and `ConversationQuery` has a `parentConversationId` filter, which the Session uses only on a Storage that deletes. Migration: none for a custom Storage that does not delete; one that does sets `deletesConversations`, indexes the filter and stores the write, and passes `{ deletesConversations: true }` to `registerStorageConformance()`, which then checks both; a commit observer that replicates stored state applies it.
+- SQLite storage migrates to schema version 3 and IndexedDB storage to database version 2, which index forks by their parent. A database opened by this version is refused by an older one.
 
 ### Added
 
-- Added `Harness.deleteConversations(ids, context)`, which closes conversations against new work, aborts their work, background work included, and then removes them for good with the conversations their tasks own; a close or crash in between is finished after reopen. It refuses with a typed `DeletionRefused` for the root conversation, a live owner or waiter outside the deletion, a fork left behind, or a storage that cannot erase (JSONL). SQLite erases the freed pages and truncates the WAL with the opt-in `secureDelete` option; `StoreStorage` purges documents with writes its outbox carries ([#11026](https://github.com/earendil-works/pi/issues/11026))
+- Added `Harness.deleteConversations(ids, context)`, which closes conversations against new work, aborts their work, background work included, and then removes them for good with the conversations their tasks own; a close or crash in between is finished after reopen. It refuses with a typed `DeletionRefused` for the root conversation, a live owner or waiter outside the deletion, a fork left behind, or a storage that cannot delete (JSONL, `StoreStorage`). SQLite erases the freed pages and truncates the WAL with the opt-in `secureDelete` option ([#11026](https://github.com/earendil-works/pi/issues/11026))
 - Added `ConversationDeleting`, rejected for new work in a conversation being deleted.
 
 ## [1.6.1] - 2026-11-25

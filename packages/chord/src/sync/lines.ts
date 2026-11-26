@@ -1,8 +1,8 @@
 import type { OutboxCommit } from "../store/outbox.ts";
 
 /**
- * Version of the line envelope. It changes when the envelope changes. The writes inside are in the store outbox's
- * current format and carry no format of their own: `applyBatch()` checks each write, and refuses one it does not know.
+ * Version of the line envelope. It changes when the envelope changes; the writes inside carry the store outbox's own
+ * `format`, which `applyBatch()` checks.
  */
 export const LOG_VERSION = 2;
 

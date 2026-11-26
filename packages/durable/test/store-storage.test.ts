@@ -1,6 +1,5 @@
 // StoreStorage (slice 6b §2): Durable's storage conformance suite on SQLite `:memory:` and across reopen, then what is
-// its own: claims and close, owners sharing a store, the store's semantics for a refused commit, the allocator, and
-// conversation deletion as erasure (no row left, through the outbox and archives, the conversations table's version 2).
+// its own: claims and close, owners sharing a store, the store's semantics for a refused commit, the allocator.
 
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -19,15 +18,12 @@ import {
 	method,
 	obj,
 	openStore,
-	type Step,
 	type Store,
-	StoreOwnerTables,
 	sqliteBackend,
 	str,
 } from "@earendil-works/chord";
 import type { Context } from "@earendil-works/chord/context";
 import { BACKGROUND_CONTEXT, withTelemetry } from "@earendil-works/chord/context";
-import type { JsonValue } from "@earendil-works/chord/json";
 import { openNodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
 import { createModels } from "@earendil-works/pi-ai";
 import { registerStorageConformance } from "@earendil-works/pi-durable/testing";
@@ -38,7 +34,6 @@ import { idFromNumber } from "../src/ids.ts";
 import { type CompactionResult, createRegistry, Harness, LiveDoc, type Tx } from "../src/index.ts";
 import { SessionImpl } from "../src/session/session.ts";
 import { StoreStorage } from "../src/storage/store/index.ts";
-import { ConversationsV1 } from "../src/storage/store/tables.ts";
 import { commitWrites } from "../src/testing/commit-writes.ts";
 import type {
 	CommitResult,
@@ -49,7 +44,6 @@ import type {
 	Seq,
 	Storage,
 	StorageWrite,
-	SubmissionId,
 	TaskId,
 } from "../src/types.ts";
 import { ROOT_CONVERSATION_ID } from "../src/types.ts";
@@ -58,7 +52,6 @@ import { openStoreStorage } from "./store-storage-support.ts";
 const context = BACKGROUND_CONTEXT;
 /** A storage that closes and reopens its store file after every commit (Durable's reopen harness). */
 class ReopeningStorage implements Storage {
-	readonly deletesConversations = true;
 	#current: Storage;
 	readonly #path: string;
 	#closed = false;
@@ -113,36 +106,26 @@ class ReopeningStorage implements Storage {
 	}
 }
 
-registerStorageConformance(
-	{ describe, expect, it },
-	"StoreStorage",
-	async (use) => {
-		const storage = await openStoreStorage(":memory:");
-		try {
-			await use(storage);
-		} finally {
-			await storage.close(context);
-		}
-	},
-	{ deletesConversations: true },
-);
+registerStorageConformance({ describe, expect, it }, "StoreStorage", async (use) => {
+	const storage = await openStoreStorage(":memory:");
+	try {
+		await use(storage);
+	} finally {
+		await storage.close(context);
+	}
+});
 
-registerStorageConformance(
-	{ describe, expect, it },
-	"StoreStorage across reopen",
-	async (use) => {
-		const directory = await mkdtemp(join(tmpdir(), "pi-durable-store-conformance-"));
-		const path = join(directory, "store.sqlite");
-		const storage = new ReopeningStorage(await openStoreStorage(path), path);
-		try {
-			await use(storage);
-		} finally {
-			await storage.close(context);
-			await rm(directory, { recursive: true, force: true });
-		}
-	},
-	{ deletesConversations: true },
-);
+registerStorageConformance({ describe, expect, it }, "StoreStorage across reopen", async (use) => {
+	const directory = await mkdtemp(join(tmpdir(), "pi-durable-store-conformance-"));
+	const path = join(directory, "store.sqlite");
+	const storage = new ReopeningStorage(await openStoreStorage(path), path);
+	try {
+		await use(storage);
+	} finally {
+		await storage.close(context);
+		await rm(directory, { recursive: true, force: true });
+	}
+});
 
 /** A store on `:memory:`. */
 async function memoryStore() {
@@ -342,169 +325,6 @@ describe("archives and batches of Durable data", () => {
 		};
 		expect(await exported(replica)).toEqual(await exported(store));
 		await replica.close(context);
-		await store.close(context);
-	});
-});
-
-/**
- * A conversation forked from the root with a rewindable document changed twice, a task with its own document, an
- * entry with a head marker and a submission, then deleted; returns its ids.
- */
-async function deleted(storage: Storage) {
-	const doomed = await storage.mintId<ConversationId>();
-	const [first, marker] = [await storage.mintId<EntryId>(), await storage.mintId<EntryId>()];
-	const task = await storage.mintId<TaskId<JsonValue>>();
-	const submission = await storage.mintId<SubmissionId>();
-	const [notes, taskNotes] = [await storage.mintId<DocumentId>(), await storage.mintId<DocumentId>()];
-	const scope = { kind: "conversation", conversationId: doomed } as const;
-	const delta = (text: string) =>
-		({
-			type: "document.change",
-			id: notes,
-			content: { kind: "delta", version: 1, ops: [["s", ["text"], text]] },
-		}) as const;
-	await commitWrites(
-		storage,
-		[
-			{ type: "conversation", value: { id: doomed, parent: { conversationId: ROOT_CONVERSATION_ID, at: first } } },
-			{ type: "entry", value: { id: first, conversationId: doomed, kind: "m" } },
-			{ type: "entry", value: { id: marker, conversationId: doomed, kind: "s", head: first } },
-			{
-				type: "task",
-				value: {
-					id: task,
-					conversationId: doomed,
-					kind: "t",
-					version: 1,
-					input: null,
-					state: { status: "terminal", outcome: { status: "aborted" } },
-					background: false,
-					abortRequested: false,
-				},
-			},
-			{
-				type: "submission",
-				value: { id: submission, conversationId: doomed, type: "write", status: "unanswered", reason: "deleted" },
-			},
-			{
-				type: "document.create",
-				record: { id: notes, kind: "notes", scope, history: "rewindable", fork: "asOf" },
-				content: { kind: "base", version: 1, value: { text: "secret" } },
-			},
-			{
-				type: "document.create",
-				record: { id: taskNotes, kind: "notes", scope: { kind: "task", taskId: task } },
-				content: { kind: "base", version: 1, value: { text: "task secret" } },
-			},
-		],
-		context,
-	);
-	await commitWrites(storage, [delta("more secret")], context);
-	await commitWrites(storage, [delta("most secret"), { type: "document.retire", id: notes }], context);
-	await commitWrites(storage, [{ type: "conversation.delete", id: doomed }], context);
-	return { doomed, notes, taskNotes };
-}
-
-/** Every row of every table of `store` (its outbox aside) whose text holds `needle`. */
-async function holding(store: ChordStore, needle: string): Promise<string[]> {
-	return store.read(async (executor) => {
-		const tables = await executor.all<{ readonly name: string }>(
-			"SELECT name FROM sqlite_schema WHERE type = 'table' AND name <> 'chord_outbox'",
-		);
-		const found: string[] = [];
-		for (const { name } of tables) {
-			const rows = await executor.all<object>(`SELECT * FROM "${name}"`);
-			for (const row of rows) if (JSON.stringify(row).includes(needle)) found.push(name);
-		}
-		return found;
-	}, context);
-}
-
-describe("conversation deletion (real erasure)", () => {
-	it("leaves no row of a deleted conversation, its rewindable revisions included; its ids stay claimed", async () => {
-		const { store, storage } = await recorded();
-		const { doomed, notes, taskNotes } = await deleted(storage);
-		expect(await holding(store, "secret")).toEqual([]);
-		const stored = await store.read(
-			(executor) =>
-				executor.all<{ readonly id: number }>(
-					"SELECT id FROM chord_documents WHERE id IN (?, ?) UNION ALL SELECT document_id FROM chord_revisions WHERE document_id IN (?, ?)",
-					notes,
-					taskNotes,
-					notes,
-					taskNotes,
-				),
-			context,
-		);
-		expect(stored).toEqual([]);
-		for (const table of ["conversations", "entries", "entry_heads", "tasks", "submissions"]) {
-			const rows = await store.read(
-				(executor) => executor.all(`SELECT * FROM "harness:${table}" WHERE id <> ?`, ROOT_CONVERSATION_ID),
-				context,
-			);
-			expect(rows).toEqual([]);
-		}
-		await expect(commitWrites(storage, [{ type: "conversation", value: { id: doomed } }], context)).rejects.toThrow(
-			`ID ${doomed} already belongs to conversation`,
-		);
-		await store.close(context);
-	});
-
-	it("travels as writes: a replayed outbox and an export agree, and a trim past it erases it from the outbox", async () => {
-		const { store, storage } = await recorded();
-		await history(storage);
-		await deleted(storage);
-		const exported = async (from: Store) => {
-			const parts = [];
-			for await (const part of from.export(context)) parts.push(part);
-			return parts;
-		};
-		const commits = await store.outbox!.read(0, 1_000, context);
-		const deletion = commits.at(-1)!.writes.map(({ kind }) => kind);
-		expect(deletion.filter((kind) => kind === "document.purge")).toHaveLength(2);
-		expect(deletion.filter((kind) => kind === "deleteWhere")).toHaveLength(4);
-		expect(deletion.at(-1)).toBe("delete");
-		// The commits before the deletion keep the content until the outbox is trimmed past it.
-		expect(JSON.stringify(commits)).toContain("secret");
-		const replica = (await openStore(sqliteBackend(await openNodeSqliteDatabase(":memory:")), context)) as ChordStore;
-		await applyBatch(replica, commits, context);
-		const archive = await exported(store);
-		expect(await exported(replica)).toEqual(archive);
-		expect(JSON.stringify(archive)).not.toContain("secret");
-		const copy = await importStore(sqliteBackend(await openNodeSqliteDatabase(":memory:")), archive, context);
-		expect(await exported(copy)).toEqual(archive);
-		await store.outbox!.trim(store.lastSeq, context);
-		expect(await holding(store, "secret")).toEqual([]);
-		expect(await store.outbox!.read(store.lastSeq, 1_000, context)).toEqual([]);
-		for (const each of [copy, replica, store]) await each.close(context);
-	});
-
-	it("a store of the conversations table's version 1 opens migrated: the fork query finds its rows", async () => {
-		const store = (await memoryStore()) as ChordStore;
-		const claimant = { label: "version 1" };
-		const tables = new StoreOwnerTables(store, "harness", claimant);
-		const conversations = tables.declare(ConversationsV1);
-		await tables.prepare(context);
-		const fork = idFromNumber<ConversationId>(10);
-		const nested = idFromNumber<ConversationId>(11);
-		const at = idFromNumber<EntryId>(5);
-		const records = [
-			{ id: ROOT_CONVERSATION_ID },
-			{ id: fork, parent: { conversationId: ROOT_CONVERSATION_ID, at } },
-			{ id: nested, parent: { conversationId: fork, at } },
-		];
-		const puts = records.map((record) => {
-			const row = conversations.encode({ id: record.id, owner_conversation_id: 0, owner_task_id: 0, record });
-			return { order: "write", apply: async (step: Step) => [await conversations.put(step, row)] } as const;
-		});
-		await store.commit(puts, { admit: () => true, adopt: () => {} }, context);
-		store.claims.release(claimant);
-		const storage = await StoreStorage.open(store, "harness", context);
-		const ids = async (query: Parameters<Storage["scanConversations"]>[0]) =>
-			(await storage.scanConversations(query, 10, undefined, context)).items.map(({ id }) => id);
-		expect(await ids({ parentConversationId: ROOT_CONVERSATION_ID })).toEqual([fork]);
-		expect(await ids({ parentConversationId: fork })).toEqual([nested]);
-		expect(store.table("harness:conversations")).toMatchObject({ version: 2, state: "ready" });
 		await store.close(context);
 	});
 });

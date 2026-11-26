@@ -1,6 +1,5 @@
 // The engine (slice 6a §10, §11, slice 6b §1.5): documents as bases and deltas, their keys in code point order, the
-// history rules at a new base and at retirement (R1), the purge of a namespace whatever its records' history, reads at a
-// point, records inserted as they are.
+// history rules at a new base and at retirement (R1), reads at a point, records inserted as they are.
 
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
@@ -20,8 +19,6 @@ import {
 	listDocuments,
 	listHostRecords,
 	loadDocument,
-	purgeDocument,
-	purgeDocuments,
 	readDocument,
 	retireDocument,
 	retireRecord,
@@ -233,54 +230,6 @@ describe("history rules (R1) and reads at a point", () => {
 		expect(await read((e) => e.all(`SELECT document_id FROM ${TABLES.revisions} WHERE document_id = 20`))).toEqual(
 			[],
 		);
-	});
-});
-
-describe("purges", () => {
-	it("erase every record of a namespace, live and retired, with every revision whatever its history", async () => {
-		const { store, commit, at, read } = await engine();
-		const elsewhere = { ...OWNER, namespace: "kept" };
-		await commit(
-			staged(async (step) => {
-				await insertDocument(step, record(10, "a", "rewindable", step.seq), '{"n":0}');
-				await insertDocument(step, record(11, "b", "latest", step.seq), '{"n":0}');
-				await insertDocument(step, { ...record(12, "a", "rewindable", step.seq), ...elsewhere }, '{"n":0}');
-				return [];
-			}),
-		);
-		await commit(
-			staged(async (step) => {
-				const content = { kind: "delta", version: 1, ops: [["s", ["n"], 1]] } as const;
-				await writeContent(step, 10, "rewindable", 1, content, '[["s",["n"],1]]');
-				await retireRecord(step, (await readDocument(step, 10))!);
-				return [];
-			}),
-		);
-		let purged: unknown;
-		await commit(
-			staged(async (step) => {
-				purged = await purgeDocuments(step, OWNER.owner, OWNER.namespace);
-				return [];
-			}),
-		);
-		expect(purged).toEqual([
-			{ kind: "document.purge", id: 10 },
-			{ kind: "document.purge", id: 11 },
-		]);
-		expect(await read((e) => e.all(`SELECT id FROM ${TABLES.documents}`))).toEqual([{ id: 12 }]);
-		expect(await read((e) => e.all(`SELECT document_id FROM ${TABLES.revisions}`))).toEqual([{ document_id: 12 }]);
-		expect(await read((e) => findDocument(e, at("a"), 1))).toBeUndefined();
-		// The address is free again; a purge of a record no longer stored deletes nothing.
-		let again: number | undefined;
-		await commit(
-			staged(async (step) => {
-				await insertDocument(step, record(13, "b", "latest", step.seq), "{}");
-				again = await purgeDocument(step, 10);
-				return [];
-			}),
-		);
-		expect(again).toBe(0);
-		expect(await store.read((e) => findDocument(e, at("b")), context)).toMatchObject({ id: 13 });
 	});
 });
 

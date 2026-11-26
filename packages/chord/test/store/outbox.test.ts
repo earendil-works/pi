@@ -1,6 +1,5 @@
 // Tests of the outbox (slice 6a §2; decisions "The outbox is optional, internal and versioned", small items 3-4): on,
-// off and kept across opens, its commits in their recorded form, `trim` and its floor, and the formats (the current one
-// written, an older one read, a newer one refused).
+// off and kept across opens, its commits in their recorded form, `trim` and its floor, and the format check.
 
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -9,10 +8,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
 import { openNodeSqliteDatabase } from "../../src/sqlite/node.ts";
 import { sqliteBackend } from "../../src/store/backend.ts";
-import { changeDocument, createDocument, purgeDocuments } from "../../src/store/engine.ts";
+import { changeDocument, createDocument } from "../../src/store/engine.ts";
 import { OUTBOX_FORMAT } from "../../src/store/outbox.ts";
 import { TABLES } from "../../src/store/schema.ts";
-import type { StagedWrite } from "../../src/store/step.ts";
 import { type ChordStore, openStore } from "../../src/store/store.ts";
 import { memoryStore, rejection } from "../support.ts";
 
@@ -146,30 +144,6 @@ describe("the outbox", () => {
 		expect((await read).map(({ seq }) => seq)).toEqual([1]);
 		await trim;
 		expect(store.outbox!.floor).toBe(1);
-		await store.close(context);
-	});
-
-	it("records every commit in the current format and reads a format 1 commit unchanged, a subset", async () => {
-		const open = await onFile();
-		let store = await open(true);
-		await created(store);
-		const purge: StagedWrite = {
-			order: "write",
-			apply: (step) => purgeDocuments(step, ADDRESS.owner, ADDRESS.namespace),
-		};
-		await store.commit([purge], OPEN, context);
-		await store.close(context);
-		const db = await openNodeSqliteDatabase(join(directory!, "store.sqlite"));
-		expect(await db.all(`SELECT format FROM ${TABLES.outbox} ORDER BY seq`)).toEqual([
-			{ format: OUTBOX_FORMAT },
-			{ format: OUTBOX_FORMAT },
-		]);
-		// As an older store recorded it.
-		await db.run(`UPDATE ${TABLES.outbox} SET format = 1 WHERE seq = 1`);
-		await db.close();
-		store = await open();
-		const commits = await store.outbox!.read(0, 10, context);
-		expect(commits.map(({ writes }) => writes[0]!.kind)).toEqual(["document.create", "document.purge"]);
 		await store.close(context);
 	});
 

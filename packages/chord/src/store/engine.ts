@@ -1,7 +1,7 @@
 // The documents engine (S13, slice 6a §8, slice 6b §1.5): one record per incarnation of an address, revisions made of
 // bases and deltas, a history rule per record (R1); its writes inside the commit step, checked by the writes
 // themselves (the partial unique index on the live address, the counted conditional `UPDATE` on the record's
-// revision), the purge that erases a record whatever its history, and its reads, of the current state or at a point.
+// revision), and its reads, of the current state or at a point.
 
 import { apply, type Op } from "../delta/index.ts";
 import type { JsonValue } from "../json.ts";
@@ -65,8 +65,7 @@ export type DocumentRevision = { readonly id: number; readonly seq: number; read
 
 /**
  * The engine's writes as the outbox and archives record them. A creation carries its base in a commit (stored at
- * `createdAt`); in an archive it has none and its `document.revision`s follow it. A purge (outbox format 2, commits
- * only) erases a record, live or retired, with every revision, whatever its history.
+ * `createdAt`); in an archive it has none and its `document.revision`s follow it.
  */
 export type DocumentWrite =
 	| { readonly kind: "document.create"; readonly record: DocumentRecord; readonly base?: DocumentBase }
@@ -77,7 +76,6 @@ export type DocumentWrite =
 			readonly content: DocumentContent;
 	  }
 	| { readonly kind: "document.retire"; readonly id: number; readonly revision: number }
-	| { readonly kind: "document.purge"; readonly id: number }
 	| ({ readonly kind: "document.revision" } & DocumentRevision);
 
 /** A loaded document: its record and its value (a base plus deltas applied once) at a point. */
@@ -257,31 +255,6 @@ async function dropRetired(step: Step, id: number, history: DocumentHistory): Pr
 	if (history === "rewindable") return;
 	if (history === "none") await step.run(`DELETE FROM ${TABLES.documents} WHERE id = ?`, id);
 	await step.run(`DELETE FROM ${TABLES.revisions} WHERE document_id = ?`, id);
-}
-
-/**
- * Purges every record of `owner`'s `namespace` in the step, live and retired, with all their revisions whatever their
- * history (an adapter's erasure: Durable's deleted conversations); returns their `document.purge` writes, by id.
- */
-export async function purgeDocuments(step: Step, owner: string, namespace: string): Promise<DocumentWrite[]> {
-	const rows = await step.all<{ readonly id: number }>(
-		`SELECT id FROM ${TABLES.documents} WHERE owner = ? AND namespace = ? ORDER BY id`,
-		owner,
-		namespace,
-	);
-	const writes: DocumentWrite[] = [];
-	for (const { id } of rows) {
-		await purgeDocument(step, id);
-		writes.push({ kind: "document.purge", id });
-	}
-	return writes;
-}
-
-/** Deletes record `id` and every revision of it in the step; resolves with the records deleted (0 or 1). */
-export async function purgeDocument(step: Step, id: number): Promise<number> {
-	const deleted = await step.runCounted(`DELETE FROM ${TABLES.documents} WHERE id = ?`, id);
-	await step.run(`DELETE FROM ${TABLES.revisions} WHERE document_id = ?`, id);
-	return deleted;
 }
 
 /** Inserts one revision of document `id` at `seq`, `text` its serialized content. */

@@ -1104,7 +1104,7 @@ unknown IDs are skipped, so a repeated call is harmless.
 1. **Closing.** One commit checks the set and refuses with `DeletionRefused`,
    whose `refusal` says why, before anything is aborted or written:
    - `unsupported`: the Storage does not set `deletesConversations`
-     (section 10), as JSONL does not;
+     (section 10), as JSONL and the Chord store do not;
    - `root`: the root conversation, which `root()` would create again with its
      reserved ID;
    - `owner`: a conversation whose owner task, outside the set, is live;
@@ -6688,7 +6688,7 @@ type ScanOrder = "ascending" | "descending";
 type ConversationQuery = {
   readonly ownerConversationId?: ConversationId;
   readonly ownerTaskId?: TaskId;
-  readonly parentConversationId?: ConversationId; // the forks of a conversation
+  readonly parentConversationId?: ConversationId; // the forks; only with deletesConversations
   readonly order?: ScanOrder; // default ascending
 };
 
@@ -6796,7 +6796,7 @@ interface Storage {
    * Session publishes the next commit only once it ran.
    */
   publishing?(publish: () => void, context: Context): void;
-  /** Set when the Storage stores both conversation deletion writes and erases what a deletion removes. */
+  /** Set when the Storage stores conversation.delete and indexes parentConversationId (below). */
   readonly deletesConversations?: true;
   /**
    * Allocate from the one global numeric namespace, above every ID minted since this storage was opened and every ID
@@ -6913,14 +6913,17 @@ A Storage that sets `deletesConversations` stores `conversation.delete`. It
 applies after every other write of its batch, and removes, by the
 conversation's ID, its record, the entries, tasks, and submissions of the
 conversation, and every document incarnation scoped to it or to one of its
-tasks, retired ones and all their content included; an unknown conversation
-is no error. The batches after it in the same call are checked against the
-state it left: a change to a document it removed is refused. The IDs stay
-claimed, so no later write reuses one, and `mintId()` stays above them.
-Storage trusts the Session to delete only conversations without live tasks
-and without forks outside the deletion. Commit observers get the write in the
-publication (`TableCommitChange`), so a replica applies it too. Every Storage
-indexes the `parentConversationId` filter, as it does the owner filters.
+tasks, retired ones and all their content included; an unknown conversation is
+no error. The batches after it in the same call are checked against the state
+it left: a change to a document it removed is refused. The IDs stay claimed:
+`mintId()` stays above them, and the Session never writes one again. Storage
+trusts the Session to delete only conversations without live tasks and without
+forks outside the deletion. Commit observers get the write in the publication
+(`TableCommitChange`), so a replica applies it too. Such a Storage also
+indexes the `parentConversationId` filter, as it does the owner filters, to
+find a deletion's forks. A Storage without the flag gets neither the write nor
+the filter. "Removes" is the records: whether their bytes are overwritten is
+the backend's (section 11).
 
 The semantic conformance suite covers memory, SQLite, and JSONL.
 
@@ -7192,13 +7195,9 @@ so `deleteConversations()` refuses with `unsupported` before it aborts anything.
 
 ### 11.4 Chord store
 
-The store backend (`StoreStorage`) deletes the table rows and purges the
-documents, their revisions included whatever their history, with writes the
-store's outbox carries, so a replica applies the deletion too. The commits
-stored before it keep their writes in the outbox until it is trimmed past the
-deletion. Freed pages and the WAL are the store connection's to erase, as for
-SQLite. Its conversations table is at version 2, which adds the parent
-column.
+The store backend (`StoreStorage`) does not delete conversations yet
+(`deletesConversations` is unset): `deleteConversations()` refuses with
+`unsupported`.
 
 ## 12. API footguns
 

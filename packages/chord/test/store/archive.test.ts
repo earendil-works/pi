@@ -1,10 +1,9 @@
 // Tests of the archive part schema (slice 6a §13, rule 25): every part an export yields passes; a part with an
-// unknown kind, a missing or extra field or a value of another type is refused, naming its position. Then the write
-// schema of a batch's commits: outbox format 2's `document.purge`, which no archive part is.
+// unknown kind, a missing or extra field or a value of another type is refused, naming its position.
 
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
-import { checkPart, checkWrite } from "../../src/store/archive.ts";
+import { checkPart } from "../../src/store/archive.ts";
 import { archiveStore, exported } from "../support.ts";
 
 describe("the archive part schema", () => {
@@ -39,23 +38,5 @@ describe("the archive part schema", () => {
 		],
 	])("refuses %s", (_, part) => {
 		expect(() => checkPart(part, 4, context)).toThrow("import: part 4: not an archive part");
-	});
-});
-
-describe("the write schema of a batch's commits", () => {
-	it("takes a purge, which no archive holds: an archive is the state, a purged record is absent from it", () => {
-		const purge = { kind: "document.purge", id: 7 };
-		expect(checkWrite(purge, "write 0", context)).toBe(purge);
-		expect(() => checkPart(purge, 1, context)).toThrow("import: part 1: not an archive part");
-	});
-
-	it.each<[string, unknown]>([
-		["a purge without an id", { kind: "document.purge" }],
-		["a purge of id 0", { kind: "document.purge", id: 0 }],
-		["a purge with a revision", { kind: "document.purge", id: 7, revision: 1 }],
-	])("refuses %s", (_, write) => {
-		expect(() => checkWrite(write, "batch: commit 0: write 2", context)).toThrow(
-			"batch: commit 0: write 2: not a store write",
-		);
 	});
 });

@@ -451,6 +451,8 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 		}),
 
 		createCase(options, "filters and pages conversations by their fork parent", async (storage) => {
+			// Only a Storage that deletes conversations gets the filter, to find a deletion's forks.
+			if (options.deletesConversations !== true) return;
 			const rootId = await createRoot(storage);
 			const entryId = await storage.mintId<EntryId>();
 			const ownerTask = await storage.mintId<TaskId<JsonValue>>();

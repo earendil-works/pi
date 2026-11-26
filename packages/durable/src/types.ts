@@ -862,6 +862,7 @@ export type ScanOrder = "ascending" | "descending";
 export type ConversationQuery = {
 	readonly ownerConversationId?: ConversationId;
 	readonly ownerTaskId?: TaskId;
+	/** The forks of a conversation; only for a Storage that sets `deletesConversations`, which indexes it. */
 	readonly parentConversationId?: ConversationId;
 	/** Default `ascending`; with a cursor, the cursor's order. */
 	readonly order?: ScanOrder;
@@ -1402,8 +1403,8 @@ export interface Storage {
 	publishing?(publish: () => void, context: Context): void;
 
 	/**
-	 * Set by a Storage that stores `conversation.delete` writes and erases what a deletion removes;
-	 * `Harness.deleteConversations()` refuses without it.
+	 * Set by a Storage that stores `conversation.delete` writes and indexes `ConversationQuery.parentConversationId`;
+	 * `Harness.deleteConversations()` refuses without it, and the Session sends neither to a Storage without it.
 	 */
 	readonly deletesConversations?: true;
 

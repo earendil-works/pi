@@ -1,10 +1,9 @@
 // Durable's records as declared tables of the store (slice 6b D2, §2.2): every row carries its record's indexed columns
 // and the whole record as one `json(...)` cell. Indexed strings that must stay lossless (`kind`, `request_id`) hold
 // Durable's JSON encoding; index columns are never `opt`, so absent values take sentinels no encoded value can be
-// (`0` for an absent owner or parent, which is never an id; `""` for an absent request id: an encoded string starts
-// with `"`).
+// (`0` for an absent owner, which is never an id; `""` for an absent request id: an encoded string starts with `"`).
 
-import { defineTable, evolveTable, int, json, str, unknown } from "@earendil-works/chord";
+import { defineTable, int, json, str, unknown } from "@earendil-works/chord";
 import type { JsonValue } from "@earendil-works/chord/json";
 import type { ConversationRecord, EntryRecord, SubmissionRecord, TaskRecord } from "../../types.ts";
 
@@ -18,25 +17,12 @@ export const RecordIds = defineTable("record_ids", {
 	key: ["id"],
 });
 
-/** The conversations as version 1 stored them: by owner only. */
-export const ConversationsV1 = defineTable("conversations", {
+export const Conversations = defineTable("conversations", {
 	version: 1,
 	columns: { id: int(), owner_conversation_id: int(), owner_task_id: int(), record: record() },
 	key: ["id"],
 	indexes: { by_owner_conversation: ["owner_conversation_id"], by_owner_task: ["owner_task_id"] },
 });
-
-/** Version 2 indexes the forks of a conversation by their parent (a deletion's read), taken from each row's record. */
-export const Conversations = evolveTable(ConversationsV1, (t) =>
-	t
-		.add("parent_conversation_id", int({ default: 0 }))
-		.rows((row) => {
-			// The cell holds a conversation record this storage wrote.
-			const record = row.record as ConversationRecord;
-			return { parent_conversation_id: record.parent?.conversationId ?? 0 };
-		})
-		.index("by_parent", ["parent_conversation_id"]),
-);
 
 export const Entries = defineTable("entries", {
 	version: 1,
@@ -97,7 +83,6 @@ export function conversationRow(value: ConversationRecord): object {
 		id: value.id,
 		owner_conversation_id: value.owner?.conversationId ?? 0,
 		owner_task_id: value.owner?.taskId ?? 0,
-		parent_conversation_id: value.parent?.conversationId ?? 0,
 		record: value,
 	};
 }

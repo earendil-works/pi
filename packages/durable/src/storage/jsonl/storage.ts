@@ -340,11 +340,6 @@ export class JsonlStorage implements Storage {
 		this.writing = writing.promise;
 		try {
 			for (const writes of batches) {
-				// `main.jsonl` is never rewritten, so a deletion could not erase it: none is stored (`deletesConversations`).
-				if (writes.some((write) => write.type === "conversation.delete")) {
-					refused = { error: new Error("JSONL storage does not delete conversations") };
-					break;
-				}
 				let prepared: ReturnType<MemoryStorage["prepareCommit"]>;
 				try {
 					prepared = this.memory.prepareCommit(writes);

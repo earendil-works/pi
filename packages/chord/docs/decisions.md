@@ -1718,8 +1718,7 @@ validation and copies the v2 kernel added around Delta.
   creation and applied at retirement: `none` (Chord's documents and job records: older revisions dropped at a new base,
   row and revisions deleted at retirement, 6a's behaviour, until now called `latest`), `latest` (Durable's session, task
   and latest conversation documents: older revisions dropped, the row kept with `retired_at` at retirement, so reads at
-  a point find it), `rewindable` (everything kept; **superseded in part** by "Erasure in the store": an adapter's purge
-  erases a record whatever its history). `retireDocument` reads the record's `history`; no flag, archives
+  a point find it), `rewindable` (everything kept). `retireDocument` reads the record's `history`; no flag, archives
   and replicas carry it. Rejected: keeping every retired record (one rule, but a dead row per finished job run, two
   with its state, and per retired keyed document, that Chord never reads).
 - **Slice 6b R2: no host kind in store names (owner, 2026-10-27: "what use is host in table names anyways? seems
@@ -3345,8 +3344,7 @@ validation and copies the v2 kernel added around Delta.
   table's layout is part of the store's schema (the store's own migrations at `openStore`); the write vocabulary has a
   `format` number, the archive manifest's `format`, stored per outbox commit (`outbox(seq, format, writes)`);
   `outbox.read` hands out the current format (older commits through the store's pure step functions), a newer format
-  than the code is refused with the data intact, and batches and archives carry it (**superseded in part** by "Erasure
-  in the store": the archive's format is its own, and batches carry none yet). (5) The benchmark gate (S3) is
+  than the code is refused with the data intact, and batches and archives carry it. (5) The benchmark gate (S3) is
   measured without the outbox; its cost per commit is reported separately. Replaces the sync-layer carry-over "outbox
   growth without sync".
 - **Writes, commits, batches, archives (owner, 2026-10-26):** the names of what the outbox, sync and export carry. A
@@ -3809,19 +3807,6 @@ From `research/chord-on-durable-objects.md`, adopted for the Chord v2 kernel bec
 - **A reference makes its named queries on first use (spec `slice-15.md` §5, built 2026-11-25):** bench round 2: a
   reference to a store of 23 named queries cost 8.6 KiB, all of it handles nobody read. A `queries` member is an
   object whose handles are made by their first read and kept; labels are built when asked (6.35 to 1.30 KiB).
-
-- **Erasure in the store (owner, 2026-11; Durable's conversation deletion, pi #11026; design §10 "Erasure"):** (1) An
-  adapter may erase what it keeps: `purgeDocuments` deletes a namespace's records with every revision whatever their
-  `history`, recorded as `document.purge` (supersedes in part slice 6b R1, where `rewindable` keeps everything), and
-  `OwnerTable.delete`/`deleteWhere` delete its rows. A replica applies them; a purge of a record it does not hold is a
-  divergence. (2) Outbox format 2 adds `document.purge`, and every commit is recorded in the current format; format 1
-  commits read unchanged. Rejected: recording each commit in the oldest format that holds it, a downgrade path nobody
-  asked for, which costs a walk over every commit's writes, and an older reader still stops at the first page with a
-  purge. (3) The archive's `format` is its own and stays 1: an archive holds the state, where a purged record is simply
-  absent (supersedes in part "The outbox is optional, internal and versioned" (4), where the two were one number).
-  (4) Sync batches and log lines carry no format yet: `applyBatch()` checks each write and refuses one it does not know
-  (`invalid/args`, data intact); the sync layer adds a format when it is built. (5) Erasure in the store is complete
-  once `outbox.trim` passed the deletion; freed pages and the WAL are the backend connection's.
 
 ## Still valid from `target-design.md`
 
