@@ -19,6 +19,7 @@
 - No `any` unless absolutely necessary.
 - Never tell the members of a typed union apart with `in` (`"report" in entry`): make it a tagged union (a `kind` field) and switch on the tag. `in` is only for values of unknown type at a trust boundary (wire input, files, Node errors), for feature detection, and for stored or frozen wire formats that a version bump would have to change (say so in a comment).
 - No runtime checks of values whose types TypeScript already guarantees (no `typeof`/`instanceof`/`Array.isArray`/shape guards on typed parameters, typed callback results or typed declarations). Validate only at decided trust boundaries (wire input, schema-checked arguments and params).
+- Never compare values by serializing them (`JSON.stringify`, canonical JSON, a joined text key): it allocates on every comparison, also when nothing changed. Compare by identity where the value is shared, else field by field (a set of names: same size and each name in the other). Where a text key is unavoidable (a `Map` key), build it once and keep it.
 - Inline single-line helpers that have only one call site.
 - Check node_modules for external API types; don't guess.
 - **No inline imports** (`await import()`, `import("pkg").Type`, dynamic type imports). Top-level imports only.
