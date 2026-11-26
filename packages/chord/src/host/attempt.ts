@@ -106,7 +106,6 @@ import {
 	type RoutineDeclarations,
 	Routines,
 } from "./routines.ts";
-import { afterTurn, rejectedTurn, resolvedTurn } from "./turns.ts";
 
 /**
  * What a factory declares with. Declarations (`state`, `derive`, `get`, `registry`, `writable`, `events`, `retryOn`,
@@ -861,8 +860,8 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	#runAdmission(admission: ServedAdmission, deadline: Deadline): Promise<NotLive | undefined> {
 		// A reaction one turn later in place of `await undefined` in an async function: the same turns (what it returns,
 		// a value or the park's promise, resolves the outer promise as it resolved the async function's; a throw rejects
-		// it), without the async frame (about 0.8 KiB per attempt). The realm's own promises (`turns.ts`).
-		return afterTurn(resolvedTurn(undefined), () => this.#admission(admission, deadline));
+		// it), without the async frame (about 0.8 KiB per attempt).
+		return Promise.resolve().then(() => this.#admission(admission, deadline));
 	}
 
 	/** `#runAdmission`'s steps, one turn after its start. */
@@ -894,7 +893,7 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		this.#admitted = undefined;
 		// A reaction to the settle in place of awaiting it in an async function: the same turns, without the async
 		// frame (about 0.45 KiB per check).
-		return afterTurn(decision.settle(long, this.#opening), (verdict) => this.#decided(verdict));
+		return decision.settle(long, this.#opening).then((verdict) => this.#decided(verdict));
 	}
 
 	/** What one check of its admission found: allowed, it goes on; denied, it shows `failed { denied }`. */
@@ -1706,17 +1705,17 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	 * A dependency that leaves `live` meanwhile changes nothing (R18 after live).
 	 */
 	#ownSteps(implementation: unknown, deadline: Deadline): Promise<Activation> {
-		// Most attempts open nothing here: their outcome is the realm's promise resolved at once, as this one's was as an
+		// Most attempts open nothing here: their outcome is a promise resolved at once, as this one's was as an
 		// async function that never waited (whose frame cost about 1.2 KiB per activation), and whatever its steps throw
 		// rejects it at once, as it did; `#activate` returns it, which takes the same turns for both.
 		try {
 			const broken = this.#checkOwn(implementation);
-			if (broken !== undefined) return resolvedTurn(broken);
+			if (broken !== undefined) return Promise.resolve(broken);
 			if (this.#readers.length === 0 && this.#natives.length === 0 && this.#follows.length === 0) {
-				return resolvedTurn(this.#computed());
+				return Promise.resolve(this.#computed());
 			}
 		} catch (error) {
-			return rejectedTurn(error);
+			return Promise.reject(error);
 		}
 		return this.#opened(deadline);
 	}

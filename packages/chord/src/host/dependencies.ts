@@ -13,7 +13,6 @@ import type { RegistryValueSource } from "../registries/internal.ts";
 import type { ChordObject } from "./object.ts";
 import { type Failed, LOADING, type RefState } from "./ref-state.ts";
 import type { Binding } from "./reference.ts";
-import { rejectedTurn } from "./turns.ts";
 
 /** One declared dependency: a reference (`self.get`) or a registry's value (`self.registry`). */
 export type Dependency =
@@ -171,8 +170,8 @@ export function pinKeys(
 			}
 		}
 	} catch (error) {
-		// What the async function threw rejected its promise at once: so does this one, the realm's own (`turns.ts`).
-		return rejectedTurn(error);
+		// What the async function threw rejected its promise at once: so does this one.
+		return Promise.reject(error);
 	}
 	return undefined;
 }

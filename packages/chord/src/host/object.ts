@@ -52,7 +52,6 @@ import {
 } from "./reference.ts";
 import { type RetrySource, RetryWakes } from "./retry-on.ts";
 import type { Request } from "./staging.ts";
-import { afterTurn } from "./turns.ts";
 import { uuidv7 } from "./uuid.ts";
 
 /** A `local` contract, as a served type has it. */
@@ -1397,7 +1396,7 @@ export class ChordObject implements Target {
 	#run(attempt: Attempt, ending: Promise<void> | undefined): Promise<void> {
 		// A reaction to the activation in place of awaiting it in an async function: the same turn, without the async
 		// frame (about 0.45 KiB per attempt).
-		return afterTurn(attempt.activate(ending), (outcome) => this.#ran(attempt, outcome));
+		return attempt.activate(ending).then((outcome) => this.#ran(attempt, outcome));
 	}
 
 	/** Takes `attempt`'s activation outcome. */
@@ -1762,7 +1761,7 @@ export class ChordObject implements Target {
 	 * async function: the same turn (successors wait for it), without the async frame (about 0.5 KiB per teardown).
 	 */
 	#reported(closing: Promise<CloseFailed[]>): Promise<void> {
-		return afterTurn(closing, (failures) => {
+		return closing.then((failures) => {
 			// Indexed: most teardowns have none, and a for-of allocates an iterator per list.
 			for (let index = 0; index < failures.length; index++) this.host.report(failures[index]!);
 		});
