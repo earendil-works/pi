@@ -8,6 +8,7 @@ import {
 	bool,
 	type Context,
 	type Ctx,
+	constant,
 	defineRegistry,
 	type FollowObserver,
 	local,
@@ -18,10 +19,12 @@ import {
 	opt,
 	type P3Principal,
 	queries,
+	type Self,
 	type Static,
 	str,
 	type TableItem,
 	unknown,
+	type Watchable,
 } from "@earendil-works/p3/v1";
 import type { Attachment } from "./access.ts";
 import { type Caller, Item, ManagedBy, Party, Source } from "./contract.ts";
@@ -160,6 +163,20 @@ export const Gives = local("things.gives", {
 	params: { workspace: str(), caller: str() },
 	members: { answers: map(Answer) },
 });
+
+/**
+ * What `workspace` gives `caller`, live, for a kind's object whose calls name another thing (Files and Terminals: a
+ * machine). The server (trusted code) is no party anywhere: nothing.
+ */
+export function givesTo(
+	self: Self<P3Principal>,
+	workspace: string,
+	caller: Caller,
+): Watchable<Readonly<Record<string, Static<typeof Answer>>>> {
+	if (caller.kind === "server") return constant({});
+	const key = caller.kind === "person" ? `person:${caller.person}` : `worker:${caller.session}`;
+	return self.get(Gives, { workspace, caller: key }).answers;
+}
 
 /**
  * What the store's object hands admissions: attaching to its index (`Gives` follows it with `self.follow`; `undefined`

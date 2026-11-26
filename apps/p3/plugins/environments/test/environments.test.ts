@@ -34,6 +34,7 @@ import { MACHINE_KIND } from "../contract.ts";
 import { Machine, MachineKind } from "../kind.ts";
 import { MachinesStore } from "../store.ts";
 import { fakeMachine, fakeType } from "./fake-machine.ts";
+import { seeded } from "./seeded.ts";
 
 /** The plugin's directory. */
 const PLUGIN = fileURLToPath(new URL("../", import.meta.url));
@@ -90,7 +91,7 @@ describe("the environments plugin on the server", () => {
 		t = await testPlugin(PLUGIN, { kind: "server", stubs: STUBS }, context);
 		things = await t.host.get(ThingsStore, {}, context);
 		pi = (await things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
-		machine = (await t.host.get(OneThing, { kind: MachineKind.name }, context)).thing.value;
+		machine = await seeded(await t.host.get(OneThing, { kind: MachineKind.name }, context), context);
 	});
 
 	afterEach(() => t.close(context));

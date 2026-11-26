@@ -17,6 +17,9 @@ import { serveStore } from "./store.ts";
 import { serveTerminals } from "./terminal-host.ts";
 import { serveThisDevice, THIS_DEVICE, THIS_DEVICE_TYPE } from "./this-device.ts";
 
+/** This plugin's name: the maker of the seeded machine. */
+const ENVIRONMENTS_PLUGIN = "@earendil-works/p3-environments";
+
 export default defineFacet((host) => {
 	serveStore(host);
 	serveMachines(host);
@@ -26,7 +29,9 @@ export default defineFacet((host) => {
 	serveThing(host, MachineKind, {
 		one: { name: hostname() },
 		implement: ({ thing }, _admitted, self) => ({ info: self.get(MachineInfoHere, { machine: thing }).info }),
-		create: async (thing, input, ctx) => {
+		// The seeded machine (made by this plugin, with no input) is this device's, which stores nothing (machines.ts).
+		create: async (thing, input, by, ctx) => {
+			if (input === undefined && by.kind === "plugin" && by.plugin === ENVIRONMENTS_PLUGIN) return;
 			await (await ctx.get(MachineKeeper, {})).make({ machine: thing, input }, ctx);
 		},
 		// A machine that went takes its connection and terminals with it: nobody could reach them after.

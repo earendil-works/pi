@@ -34,6 +34,7 @@ import { collected, eventually, within } from "../../../test/until.ts";
 import { MachineHosts, type StagedFile } from "../../environments/contract.server.ts";
 import { MACHINE_KIND } from "../../environments/contract.ts";
 import environmentsServer from "../../environments/server.ts";
+import { seeded } from "../../environments/test/seeded.ts";
 import peopleServer from "../../people/server.ts";
 import { Gives, OneThing, ThingsStore } from "../../things/contract.server.ts";
 import { OPEN, type Party, type Source } from "../../things/contract.ts";
@@ -67,8 +68,8 @@ beforeEach(async () => {
 	t = await testPlugin(fileURLToPath(new URL("../", import.meta.url)), { kind: "server", stubs: STUBS }, context);
 	things = await t.host.get(ThingsStore, {}, context);
 	pi = (await things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
-	files = (await t.host.get(OneThing, { kind: FilesKind.name }, context)).thing.value;
-	machine = (await t.host.get(OneThing, { kind: MACHINE_KIND }, context)).thing.value;
+	files = await seeded(await t.host.get(OneThing, { kind: FilesKind.name }, context), context);
+	machine = await seeded(await t.host.get(OneThing, { kind: MACHINE_KIND }, context), context);
 	root = await mkdtemp(join(tmpdir(), "p3-files-test-"));
 	await mkdir(join(root, "src"));
 	await writeFile(join(root, "src", "main.ts"), "console.log(1);\n");
@@ -166,7 +167,7 @@ describe("Files and its ticks", () => {
 		const ann = await person("Ann");
 		assert.deepEqual(await holding(ann, pi, async (f) => [...f.granted].sort()), ["entries", "open", "search"]);
 		assert.equal(
-			(await t.host.get(OneThing, { kind: FilesKind.name }, context)).thing.value,
+			await seeded(await t.host.get(OneThing, { kind: FilesKind.name }, context), context),
 			files,
 			"the same thing on a second hold",
 		);

@@ -25,6 +25,7 @@ import { TERMINAL_BACKLOG, TerminalHosts } from "../../environments/contract.ser
 import { MACHINE_KIND } from "../../environments/contract.ts";
 import environmentsServer from "../../environments/server.ts";
 import { fakeMachine, fakeType } from "../../environments/test/fake-machine.ts";
+import { seeded } from "../../environments/test/seeded.ts";
 import peopleServer from "../../people/server.ts";
 import { OneThing, ThingsStore } from "../../things/contract.server.ts";
 import type { Party, Source } from "../../things/contract.ts";
@@ -69,8 +70,8 @@ beforeEach(async () => {
 	t = await testPlugin(fileURLToPath(new URL("../", import.meta.url)), { kind: "server", stubs: STUBS }, context);
 	things = await t.host.get(ThingsStore, {}, context);
 	pi = (await things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
-	terminals = (await t.host.get(OneThing, { kind: TerminalsKind.name }, context)).thing.value;
-	machine = (await t.host.get(OneThing, { kind: MACHINE_KIND }, context)).thing.value;
+	terminals = await seeded(await t.host.get(OneThing, { kind: TerminalsKind.name }, context), context);
+	machine = await seeded(await t.host.get(OneThing, { kind: MACHINE_KIND }, context), context);
 });
 
 afterEach(async () => {
@@ -151,7 +152,7 @@ describe("Terminals and its ticks", () => {
 		await grant(pi, terminals, { kind: "person", person: ann.id }, ["watch"], false);
 		assert.deepEqual(await holding(ann, async (r) => [...r.granted].sort()), use, "Use alone lists and attaches");
 		await refused(grant(pi, terminals, { kind: "agents" }, ["watch"]), "invalid");
-		assert.equal((await t.host.get(OneThing, { kind: TerminalsKind.name }, context)).thing.value, terminals);
+		assert.equal(await seeded(await t.host.get(OneThing, { kind: TerminalsKind.name }, context), context), terminals);
 	});
 
 	it("Watch without Use sees the list and the bytes and cannot open, type or close; no tick, no member (1174 test 1)", async () => {

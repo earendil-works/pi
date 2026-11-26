@@ -13,6 +13,7 @@ import { MACHINE_KIND } from "../plugins/environments/contract.ts";
 import { Machine } from "../plugins/environments/kind.ts";
 import environmentsServer from "../plugins/environments/server.ts";
 import { fakeMachine, fakeType } from "../plugins/environments/test/fake-machine.ts";
+import { seeded } from "../plugins/environments/test/seeded.ts";
 import { Files, FilesKind } from "../plugins/files/contract.ts";
 import filesServer from "../plugins/files/server.ts";
 import peopleServer from "../plugins/people/server.ts";
@@ -50,7 +51,7 @@ try {
 	const things = await t.host.get(ThingsStore, {}, context);
 	const pi = (await things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
 	const by = { kind: "plugin", plugin: "bench" } as const;
-	const one = async (kind: string) => (await t.host.get(OneThing, { kind }, context)).thing.value;
+	const one = async (kind: string) => await seeded(await t.host.get(OneThing, { kind }, context), context);
 	const machine = await one(MACHINE_KIND);
 	const board = await things.create({ kind: Board.name, name: "b", workspace: pi, by }, context);
 	const files = await one(FilesKind.name);

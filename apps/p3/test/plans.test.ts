@@ -20,6 +20,7 @@ import checklistServer, { ChecklistStore } from "../plugins/checklist/server.ts"
 import codingServer from "../plugins/coding/server.ts";
 import { MACHINE_KIND } from "../plugins/environments/contract.ts";
 import environmentsServer from "../plugins/environments/server.ts";
+import { seeded } from "../plugins/environments/test/seeded.ts";
 import notesServer from "../plugins/notes/server.ts";
 import { NotesStore } from "../plugins/notes/store.ts";
 import peopleServer from "../plugins/people/server.ts";
@@ -88,7 +89,7 @@ describe("the plans of the stores' queries", () => {
 			);
 			const sessions = await host.get(SessionsStore, {}, context);
 			const people = await host.get(PeopleStore, {}, context);
-			const machine = (await host.get(OneThing, { kind: MACHINE_KIND }, context)).thing.value;
+			const machine = await seeded(await host.get(OneThing, { kind: MACHINE_KIND }, context), context);
 			const notes = await host.get(NotesStore, {}, context);
 			// Notebooks are things' ids: three notebooks of three notes each.
 			const notebooks = ["n1", "n2", "n3"];

@@ -16,6 +16,7 @@ import { OneThing } from "../../things/contract.server.ts";
 import thingsServer from "../../things/server.ts";
 import { type MachineHost, MachineHosts, type StagedFile } from "../contract.server.ts";
 import { MACHINE_KIND } from "../contract.ts";
+import { seeded } from "./seeded.ts";
 
 describe("this device's host", () => {
 	let t: TestedPlugin<P3Principal>;
@@ -28,7 +29,7 @@ describe("this device's host", () => {
 			{ name: "@earendil-works/p3-things", facet: thingsServer },
 		];
 		t = await testPlugin(fileURLToPath(new URL("../", import.meta.url)), { kind: "server", stubs }, context);
-		const machine = (await t.host.get(OneThing, { kind: MACHINE_KIND }, context)).thing.value;
+		const machine = await seeded(await t.host.get(OneThing, { kind: MACHINE_KIND }, context), context);
 		at = (await (await t.host.registry(MachineHosts, context)).value(machine, context))!;
 		root = await mkdtemp(join(tmpdir(), "p3-this-device-"));
 	});

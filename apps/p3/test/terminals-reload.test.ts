@@ -17,6 +17,7 @@ import type { ServerRuntime } from "@earendil-works/p3/v1/server";
 import { MACHINE_KIND } from "../plugins/environments/contract.ts";
 import environmentsServer from "../plugins/environments/server.ts";
 import { fakeMachine, fakeType } from "../plugins/environments/test/fake-machine.ts";
+import { seeded } from "../plugins/environments/test/seeded.ts";
 import peopleServer from "../plugins/people/server.ts";
 import { Terminals, TerminalsKind } from "../plugins/terminals/contract.ts";
 import terminalsServer from "../plugins/terminals/server.ts";
@@ -53,8 +54,8 @@ describe("a reload of the terminals plugin", () => {
 		const held = async (ctx: Parameters<Parameters<typeof host.root>[0]>[0]) => {
 			const things = await ctx.get(ThingsStore, {});
 			const pi = (await things.workspaces.children.page({ parent: "" }, 1, ctx)).items[0]!.workspace;
-			const thing = (await ctx.get(OneThing, { kind: TerminalsKind.name })).thing.value;
-			const machine = (await ctx.get(OneThing, { kind: MACHINE_KIND })).thing.value;
+			const thing = await seeded(await ctx.get(OneThing, { kind: TerminalsKind.name }), ctx);
+			const machine = await seeded(await ctx.get(OneThing, { kind: MACHINE_KIND }), ctx);
 			return { terms: await ctx.get(Terminals, { workspace: pi, thing }), machine, ctx };
 		};
 		try {

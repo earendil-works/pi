@@ -21,6 +21,7 @@ import { type TestServer, testServer } from "@earendil-works/p3/v1/testing";
 import { eventually } from "../../../test/until.ts";
 import { MachineHosts } from "../../environments/contract.server.ts";
 import { MACHINE_KIND } from "../../environments/contract.ts";
+import { seeded } from "../../environments/test/seeded.ts";
 import { SignIns } from "../../sign-in/contract.ts";
 import { OneThing, ThingsStore } from "../../things/contract.server.ts";
 import type { Source } from "../../things/contract.ts";
@@ -47,8 +48,8 @@ before(async () => {
 		// The owner, in Pi: the session below is theirs.
 		const [owner] = (await (await ctx.get(PeopleStore, {})).persons.owner.page({}, 1, ctx)).items;
 		await things.putParty({ workspace: pi, party: { kind: "person", person: owner!.id }, source: BY }, ctx);
-		files = (await ctx.get(OneThing, { kind: FilesKind.name })).thing.value;
-		machine = (await ctx.get(OneThing, { kind: MACHINE_KIND })).thing.value;
+		files = await seeded(await ctx.get(OneThing, { kind: FilesKind.name }), ctx);
+		machine = await seeded(await ctx.get(OneThing, { kind: MACHINE_KIND }), ctx);
 	}, context);
 });
 

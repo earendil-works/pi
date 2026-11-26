@@ -14,6 +14,7 @@ import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
 import { MACHINE_KIND } from "../../environments/contract.ts";
 import environmentsServer from "../../environments/server.ts";
 import { fakeMachine, fakeType } from "../../environments/test/fake-machine.ts";
+import { seeded } from "../../environments/test/seeded.ts";
 import peopleServer from "../../people/server.ts";
 import { OneThing, ThingsStore } from "../../things/contract.server.ts";
 import { OPEN } from "../../things/contract.ts";
@@ -47,8 +48,8 @@ describe("Files' routes and the machine's host", () => {
 		t = await testPlugin(fileURLToPath(new URL("../", import.meta.url)), { kind: "server", stubs }, context);
 		const things = await t.host.get(ThingsStore, {}, context);
 		const pi = (await things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
-		const files = (await t.host.get(OneThing, { kind: FilesKind.name }, context)).thing.value;
-		const machine = (await t.host.get(OneThing, { kind: MACHINE_KIND }, context)).thing.value;
+		const files = await seeded(await t.host.get(OneThing, { kind: FilesKind.name }, context), context);
+		const machine = await seeded(await t.host.get(OneThing, { kind: MACHINE_KIND }, context), context);
 		const by = { kind: "plugin", plugin: "test" } as const;
 		address = `${DOWNLOAD_PATH}?${new URLSearchParams({ workspace: pi, thing: files, machine, path: join(root, "file") })}`;
 		person = async (name, withheld) => {

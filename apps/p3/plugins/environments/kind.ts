@@ -5,7 +5,7 @@
 // here". Its own file: other plugins name the kind by `MACHINE_KIND` only, since a plugin may not bundle the things
 // plugin's kind code from another plugin's file.
 
-import { obj, oneOf, type Static, str } from "@earendil-works/p3/v1";
+import { obj, oneOf, type Static, str, unknown } from "@earendil-works/p3/v1";
 import { defineThing } from "../things/kind.ts";
 import { MACHINE_KIND } from "./contract.ts";
 import { messages } from "./messages.ts";
@@ -30,6 +30,8 @@ export type MachineInfo = Static<typeof MachineInfo>;
 export const MachineKind = defineThing(MACHINE_KIND, {
 	version: 1,
 	makers: "plugin",
+	// A machine's type and settings (`{ type, settings }`), checked by the create hook against its type's schema.
+	create: { input: unknown() },
 	state: { info: MachineInfo },
 	ticks: { work: { label: messages.message("tickWork"), for: "agents" } },
 	defaultGrants: { everyone: [], agents: ["work"] },

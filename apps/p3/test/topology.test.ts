@@ -24,6 +24,7 @@ import { Http, PeopleStore, type Router, ServerCommands, SessionsStore } from "@
 import { MachineHosts, TerminalHosts } from "../plugins/environments/contract.server.ts";
 import { MACHINE_KIND } from "../plugins/environments/contract.ts";
 import { Machine } from "../plugins/environments/kind.ts";
+import { seeded } from "../plugins/environments/test/seeded.ts";
 import { DOWNLOAD_PATH, Files, FilesKind, UPLOAD_PATH } from "../plugins/files/contract.ts";
 import { SignIns } from "../plugins/sign-in/contract.ts";
 import { ATTACH_PATH, Terminals, TerminalsKind } from "../plugins/terminals/contract.ts";
@@ -124,7 +125,7 @@ describe("reloads while in use", () => {
 		// A person put into Pi, whom its defaults give Files and Terminals.
 		const [pi, files, terminals, machine, ann] = await t.server.root(async (ctx) => {
 			const things = await ctx.get(ThingsStore, {});
-			const one = async (kind: string) => (await ctx.get(OneThing, { kind })).thing.value;
+			const one = async (kind: string) => await seeded(await ctx.get(OneThing, { kind }), ctx);
 			const root = (await things.workspaces.children.page({ parent: "" }, 1, ctx)).items[0]!.workspace;
 			const by = { kind: "plugin", plugin: "test" } as const;
 			const person = await things.createPerson({ name: "Ann", madeBy: by }, ctx);
@@ -150,7 +151,7 @@ describe("reloads while in use", () => {
 		running = t;
 		const [pi, files, terminals, machine, ann] = await t.server.root(async (ctx) => {
 			const things = await ctx.get(ThingsStore, {});
-			const one = async (kind: string) => (await ctx.get(OneThing, { kind })).thing.value;
+			const one = async (kind: string) => await seeded(await ctx.get(OneThing, { kind }), ctx);
 			const root = (await things.workspaces.children.page({ parent: "" }, 1, ctx)).items[0]!.workspace;
 			const by = { kind: "plugin", plugin: "test" } as const;
 			const person = await things.createPerson({ name: "Ann", madeBy: by }, ctx);
