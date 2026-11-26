@@ -36,6 +36,20 @@ function thrown(fn: () => unknown): unknown {
 }
 
 describe("limits per part", () => {
+	it("check a text within a third of the limit by its length, not by walking it (review of f17e4a999)", () => {
+		const long = `"${"x".repeat(1024 * 1024)}"`;
+		const time = (text: string) => {
+			const started = performance.now();
+			for (let index = 0; index < 200; index++) oversized(text, 16 * 1024 * 1024);
+			return performance.now() - started;
+		};
+		time(long);
+		time('"x"');
+		// Walked, a MiB of text took about a millisecond per check: a served hold's params at every placement.
+		expect(time(long)).toBeLessThan(20 * time('"x"') + 5);
+		expect(oversized(long, 1024 * 1024)?.code).toBe("too_large");
+	});
+
 	it("default to none on trusted links and to 16 MiB on the wire, 64 MiB decoded on untrusted ones", () => {
 		expect(linkLimits(true)).toEqual(NONE);
 		expect(linkLimits(false)).toEqual({ part: 16 * 1024 * 1024, decoded: 64 * 1024 * 1024 });

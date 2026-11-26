@@ -1,3 +1,4 @@
+import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
 import type { Message as PublicMessage } from "../../src/index.ts";
@@ -675,6 +676,21 @@ describe("the binary codec", () => {
 		expect((decoded as Extract<Message, { kind: "state" }>).holds[0]!.failed.map(({ member }) => member)).toEqual([
 			1, 2,
 		]);
+	});
+
+	it("allocates about one frame per encode of a frame a little past the kept buffer (review of f17e4a999)", () => {
+		const gc = runInNewContext("gc") as () => void;
+		const value = new TextEncoder().encode(`"${"x".repeat(1_022)}"`);
+		for (const count of [16, 18, 34]) {
+			const members = Array.from({ length: count }, (_, member) => ({ member, value }));
+			const frame: Message = { kind: "bound", holds: [{ hold: 0, granted: [], members, failed: [] }] };
+			const length = binaryCodec.encode(frame).byteLength;
+			gc();
+			const before = process.memoryUsage().arrayBuffers;
+			for (let index = 0; index < 32; index++) binaryCodec.encode(frame);
+			// Regrown from the kept buffer at every send, an 18 KiB frame took 80 KB of buffers (the base 36 KB).
+			expect((process.memoryUsage().arrayBuffers - before) / 32).toBeLessThan(3 * length);
+		}
 	});
 
 	it("refuses invalid UTF-8 in strings", () => {
