@@ -7,15 +7,15 @@
 // the tools were offered) and for an id that is no notebook of the agent's.
 
 import assert from "node:assert/strict";
-import { after, afterEach, before, beforeEach, describe, it } from "node:test";
+import { afterEach, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { type Ctx, BACKGROUND_CONTEXT as context, type P3Principal, until } from "@earendil-works/p3/v1";
-import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
 import type { Extension } from "@earendil-works/p3/v1/worker";
 import { within } from "../../../test/until.ts";
 import { type HeldThing, ThingHarnessParts } from "../../things/contract.worker.ts";
 import { type KindServer, kindServer, runTool, toolNames } from "../../things/test/kind-server.ts";
 import { type Notes, NotesKind } from "../contract.ts";
+import notesServer from "../server.ts";
 
 /** The notes plugin's root. */
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
@@ -23,19 +23,11 @@ const ROOT = fileURLToPath(new URL("../", import.meta.url));
 /** The session's agent as a party: Write withheld from it by name applies by every route (item 106). */
 const AGENT_PARTY = { kind: "agent", session: "s1" } as const;
 
-/** The worker facet, as a session's worker loads it. */
-let worker: TestedPlugin<P3Principal>;
 let n: KindServer<typeof Notes>;
 let s1: string;
 
-before(async () => {
-	worker = await testPlugin(ROOT, { kind: "worker", session: "s1" }, context);
-});
-
-after(() => worker.close(context));
-
 beforeEach(async () => {
-	n = await kindServer(ROOT, NotesKind, context);
+	n = await kindServer({ name: "@earendil-works/p3-notes", root: ROOT, server: notesServer }, NotesKind, context);
 	s1 = await n.workspace("s1");
 });
 
@@ -45,12 +37,12 @@ afterEach(() => n.close());
 const giving = <T>(
 	things: readonly string[],
 	fn: (extension: Extension, ctx: Ctx<P3Principal>, held: readonly HeldThing<typeof Notes>[]) => Promise<T>,
-) => n.giving(worker, { session: "s1", workspace: s1 }, things, fn);
+) => n.giving({ session: "s1", workspace: s1 }, things, fn);
 
 describe("the notes kind's harness part", () => {
-	it("is the worker facet's one part, for the notes kind", () => {
+	it("is the worker facet's one part, for the notes kind", async () => {
 		assert.deepEqual(
-			worker.contributions(ThingHarnessParts).map(({ value }) => value.kind.name),
+			(await n.part()).contributions(ThingHarnessParts).map(({ value }) => value.kind.name),
 			[NotesKind.name],
 		);
 	});
@@ -60,7 +52,7 @@ describe("the notes kind's harness part", () => {
 		await n.tick(s1, plan, AGENT_PARTY, "write", false);
 		await giving([plan, log], async (extension) => {
 			assert.deepEqual(toolNames(extension), ["notes_list", "notes_read", "notes_write"]);
-			assert.deepEqual(JSON.parse(await runTool(extension, "notes_list", {})), [
+			assert.deepEqual(JSON.parse(await runTool(extension, "notes_list", {}, context)), [
 				{ id: plan, name: "Plan", write: false },
 				{ id: log, name: "Log", write: true },
 			]);
@@ -75,16 +67,31 @@ describe("the notes kind's harness part", () => {
 			for (let i = 0; i < 60; i++) await notes.add!({ text: `old ${i}` }, ctx);
 		});
 		await giving([log], async (extension, ctx, [held]) => {
-			const added = await runTool(extension, "notes_write", {
-				notebook: log,
-				change: { kind: "add", text: "first" },
-			});
+			const added = await runTool(
+				extension,
+				"notes_write",
+				{
+					notebook: log,
+					change: { kind: "add", text: "first" },
+				},
+				context,
+			);
 			const id = /^Added note (.+)\.$/.exec(added)?.[1];
 			assert.ok(id !== undefined, added);
-			await runTool(extension, "notes_write", { notebook: log, change: { kind: "edit", id, text: "edited" } });
+			await runTool(
+				extension,
+				"notes_write",
+				{ notebook: log, change: { kind: "edit", id, text: "edited" } },
+				context,
+			);
 			const read = async (after?: string) =>
 				JSON.parse(
-					await runTool(extension, "notes_read", { notebook: log, ...(after === undefined ? {} : { after }) }),
+					await runTool(
+						extension,
+						"notes_read",
+						{ notebook: log, ...(after === undefined ? {} : { after }) },
+						context,
+					),
 				);
 			await until(held!.ref.list, (list) => list.rows[0]?.text === "edited", within("the edit held", ctx));
 			// The agent's first page, with the note it added on top.
@@ -99,7 +106,7 @@ describe("the notes kind's harness part", () => {
 			assert.equal((await read(first.next)).rows.length, 11);
 			assert.equal((await read()).rows.length, 50);
 			assert.deepEqual([holds, held!.ref.list.value.rows.length], [51, 51]);
-			await runTool(extension, "notes_write", { notebook: log, change: { kind: "remove", id } });
+			await runTool(extension, "notes_write", { notebook: log, change: { kind: "remove", id } }, context);
 			assert.notEqual((await read()).rows[0].id, id);
 		});
 	});
@@ -110,14 +117,14 @@ describe("the notes kind's harness part", () => {
 		await giving([plan, log], async (extension, ctx, held) => {
 			const add = { kind: "add", text: "a note" };
 			await assert.rejects(
-				runTool(extension, "notes_write", { notebook: plan, change: add }),
+				runTool(extension, "notes_write", { notebook: plan, change: add }, context),
 				/may not write in the notebook "Plan"/,
 			);
 			await n.tick(s1, log, AGENT_PARTY, "write", false);
 			const { ref } = held[1]!;
 			await until(ref.state, () => ref.add === undefined, within("Write taken back", ctx));
 			await assert.rejects(
-				runTool(extension, "notes_write", { notebook: log, change: add }),
+				runTool(extension, "notes_write", { notebook: log, change: add }, context),
 				/may not write in the notebook "Log"/,
 			);
 		});
@@ -128,9 +135,9 @@ describe("the notes kind's harness part", () => {
 		const elsewhere = await n.thingIn(n.pi, "Elsewhere");
 		await giving([plan], async (extension) => {
 			for (const notebook of ["nb9", elsewhere]) {
-				await assert.rejects(runTool(extension, "notes_read", { notebook }), /you have no notebook/);
+				await assert.rejects(runTool(extension, "notes_read", { notebook }, context), /you have no notebook/);
 				await assert.rejects(
-					runTool(extension, "notes_write", { notebook, change: { kind: "add", text: "x" } }),
+					runTool(extension, "notes_write", { notebook, change: { kind: "add", text: "x" } }, context),
 					/you have no notebook/,
 				);
 			}

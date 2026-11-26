@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/p3/v1";
 import { kindServer } from "../../things/test/kind-server.ts";
 import { NotesKind } from "../contract.ts";
+import notesServer from "../server.ts";
 import { NotesStore } from "../store.ts";
 
 /** A person as an author. */
@@ -15,11 +16,12 @@ const ANN = { kind: "person", person: "ann" } as const;
 
 describe("the notes store", () => {
 	it("gives each note a unique `at`, the last written newest, in one millisecond or the clock back", async (t) => {
-		const n = await kindServer(fileURLToPath(new URL("../", import.meta.url)), NotesKind, context);
+		const root = fileURLToPath(new URL("../", import.meta.url));
+		const n = await kindServer({ name: "@earendil-works/p3-notes", root, server: notesServer }, NotesKind, context);
 		try {
 			const now = Date.now();
 			const clock = t.mock.method(Date, "now", () => now);
-			const store = await n.t.host.get(NotesStore, {}, context);
+			const store = await n.host.get(NotesStore, {}, context);
 			const first = await store.add({ notebook: "a", text: "1", author: ANN }, context);
 			await store.add({ notebook: "a", text: "2", author: ANN }, context);
 			clock.mock.mockImplementation(() => now - 1000);

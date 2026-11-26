@@ -1,7 +1,7 @@
 // The notes plugin's texts people see: its tick's label (decision 65), as the things plugin's Settings view shows it,
 // and the notebook view's texts. Imported by the contract and by every facet that renders.
 
-import { defineMessages } from "@earendil-works/p3/v1";
+import { defineMessages, formatTime } from "@earendil-works/p3/v1";
 
 /** The notes plugin's messages, by key. */
 export const messages = defineMessages("notes", {
@@ -24,6 +24,7 @@ export const messages = defineMessages("notes", {
 		cancel: "Cancel",
 		byAgent: "An agent",
 		byPi: "Pi",
-		written: (author: string, at: string) => `${author} · ${at}`,
+		written: (author: string, at: number) =>
+			`${author} · ${formatTime(at, { dateStyle: "medium", timeStyle: "short" })}`,
 	},
 });

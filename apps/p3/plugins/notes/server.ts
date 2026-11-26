@@ -1,25 +1,29 @@
 // The notes plugin on the server: the notebooks' store (`store.ts`), one notebook's notes as everyone holding it reads
-// them (`NotebookNotes`), and the kind (`serveThing`). The things plugin makes, links, admits and deletes notebooks;
-// this file says what a notebook is for one caller: its name, its notes with their authors' names, the pages of them
-// the caller loaded, and Write's members. Its notes go when the thing goes (`delete`).
+// them (`NotebookRead`), and the kind (`serveThing`). The things plugin makes, links, admits and deletes notebooks;
+// this file says what a notebook is for one caller: its name, its notes with their authors' names, as far as the
+// caller loaded them, and Write's members. Its notes go when the thing goes (`delete`).
 //
 // One read per notebook, whoever holds it: a hundred people holding one notebook are one list of its notes and one
-// read of its authors' names, not a hundred. Each caller's object shows a prefix of that list, as many pages as it
-// loaded, so one person's "older notes" loads them once for everyone and shows them only to that person.
+// read of its authors' names, not a hundred. Each caller's object keeps where its own view ends (its bound) and shows
+// the shared list down to it; the shared list loads at least as far as the deepest holder asked, and keeps that until
+// its last holder leaves (Chord cannot unload a list's pages: a holder who leaves after reading deep pages leaves them
+// loaded for the others, filtered out of their views).
 
 import {
-	arr,
 	type Context,
 	defineFacet,
 	type FacetHost,
 	int,
 	local,
 	method,
+	nul,
 	obj,
 	type P3Principal,
 	type Reference,
 	type Self,
 	str,
+	union,
+	until,
 	type Watchable,
 } from "@earendil-works/p3/v1";
 import { ThingsStore } from "../things/contract.server.ts";
@@ -31,25 +35,30 @@ import { NotesStore, type StoredNote, serveStore } from "./store.ts";
 const PAGE = 50;
 
 /**
- * One notebook's notes as every caller holding it reads them: its name, its notes loaded so far with their authors'
- * names, and `bounds`, where each loaded page ended (the `at` of its last note when the next page was loaded; a note's
- * `at` is unique in its notebook, so a bound is an exact place that stays where it is when notes move to the top).
- * `more` loads pages until `pages` are bounded.
+ * Where a caller's view of a notebook ends: the `at` of its last note (a note's `at` is unique in its notebook, so it
+ * is an exact place that stays where it is when notes move to the top), `null` for the whole notebook (it had no more
+ * when the caller loaded), `undefined` while the caller has not loaded yet (its first page by count).
  */
-const NotebookNotes = local("notes.notebook", {
+type Bound = number | null | undefined;
+
+/**
+ * One notebook's notes as every caller holding it reads them: its name, and its notes loaded so far with their authors'
+ * names. `load` loads until it holds `rows` notes or the notebook has no more, and answers the `at` of its `rows`-th
+ * note (`null`: it has fewer).
+ */
+const NotebookRead = local("notes.read", {
 	version: 1,
 	params: { thing: str() },
 	members: {
 		name: str(),
 		list: NotesPage,
-		bounds: arr(int()),
-		more: method(obj({ pages: int({ min: 1 }) })),
+		load: method(obj({ rows: int({ min: 1 }) }), union([int(), nul()])),
 	},
 });
 
 export default defineFacet((host) => {
 	serveStore(host);
-	serveNotebook(host);
+	serveRead(host);
 
 	serveThing(host, NotesKind, {
 		// A new notebook starts empty: nothing to set up. Its notes go with it.
@@ -57,25 +66,23 @@ export default defineFacet((host) => {
 			await (await ctx.get(NotesStore, {})).clear({ notebook: thing }, ctx);
 		},
 		// One notebook for one caller. The things plugin admitted them and decides which members they get: `add`, `edit`
-		// and `remove` only with Write. Every caller reads: the name, the pages it loaded, and pages read now.
+		// and `remove` only with Write. Every caller reads: the name, the notes down to its bound, and pages read now.
 		implement: ({ thing }, { caller }, self) => {
 			const store = self.get(NotesStore, {});
 			const things = self.get(ThingsStore, {});
-			const notebook = self.get(NotebookNotes, { thing });
-			const pages = self.writable(1);
+			const read = self.get(NotebookRead, { thing });
+			const bound = self.writable<Bound>(undefined);
+			// The first page's bound, fixed once the shared list holds it; a reload starts it again.
+			self.onLive(async (ctx) => {
+				const first = await read.load({ rows: PAGE }, ctx);
+				if (bound.value === undefined) bound.set(first);
+			});
 			return {
-				name: notebook.name,
-				list: self.derive([notebook.list, notebook.bounds, pages], ([list, bounds, shown]) =>
-					loaded(list, bounds, shown),
-				),
+				name: read.name,
+				list: self.derive([read.list, bound], ([list, at]) => visible(list, at)),
 				more: async (ctx: Context) => {
-					const next = pages.value + 1;
-					// Pages up to `bounds.length + 1` are loaded already: another caller loaded them.
-					if (next > notebook.bounds.value.length + 1) {
-						if (!notebook.list.value.moreAfter) return null;
-						await notebook.more({ pages: next - 1 }, ctx);
-					}
-					pages.set(next);
+					const shown = visible(read.list.value, bound.value).rows.length;
+					bound.set(await read.load({ rows: shown + PAGE }, ctx));
 					return null;
 				},
 				page: ({ after }, ctx) => pageOf(thing, after, store, things, ctx),
@@ -87,12 +94,12 @@ export default defineFacet((host) => {
 	});
 });
 
-/** The first `pages` pages of `list` by `bounds`: the whole list once the caller loaded every bounded page. */
-function loaded(list: NotesPage, bounds: readonly number[], pages: number): NotesPage {
-	if (pages > bounds.length) return list;
-	const bound = bounds[pages - 1]!;
-	const end = list.rows.findIndex((note) => note.at < bound);
-	return end === -1 ? list : { rows: list.rows.slice(0, end), moreAfter: true };
+/** The notes of the shared `list` a caller whose view ends at `bound` sees: a prefix of it. */
+function visible(list: NotesPage, bound: Bound): NotesPage {
+	if (bound === null) return list;
+	const below = bound === undefined ? PAGE : list.rows.findIndex((note) => note.at < bound);
+	const end = below === -1 ? list.rows.length : Math.min(below, list.rows.length);
+	return end === list.rows.length ? list : { rows: list.rows.slice(0, end), moreAfter: true };
 }
 
 /** A page of `thing`'s notes from the start or `after`, with their authors' names, read now. */
@@ -105,35 +112,35 @@ async function pageOf(
 ): Promise<{ rows: Note[]; next?: string }> {
 	const found = await store.notes.of.page({ notebook: thing }, PAGE, ctx, after === undefined ? {} : { after });
 	const persons = authors(found.items);
-	const names = await things.persons.ofIds.page({ persons }, persons.length + 1, ctx);
-	return { rows: named(found.items, names.items), ...(found.next === undefined ? {} : { next: found.next }) };
+	// No person among the authors: no names to read.
+	const names = persons.length === 0 ? [] : (await things.persons.ofIds.page({ persons }, persons.length, ctx)).items;
+	return { rows: named(found.items, names), ...(found.next === undefined ? {} : { next: found.next }) };
 }
 
-/** Serves `NotebookNotes` on `host`. */
-function serveNotebook(host: FacetHost<P3Principal>): void {
-	host.serve(NotebookNotes, ({ thing }, self) => {
+/** Serves `NotebookRead` on `host`. */
+function serveRead(host: FacetHost<P3Principal>): void {
+	host.serve(NotebookRead, ({ thing }, self) => {
 		const store = self.get(NotesStore, {});
 		const things = self.get(ThingsStore, {});
 		const found = self.liveQuery(things.things.one, { thing }, { first: 1 });
 		const list = self.list("notes", [[store.notes.of, { notebook: thing }]], { first: PAGE });
-		const bounds = self.writable<number[]>([]);
-		// The page another caller is loading: a caller asking meanwhile waits for it before it counts the pages.
-		let loading: Promise<unknown> = Promise.resolve();
+		// The most notes a holder asked for. The routine below loads them, one page at a time, with this object's own
+		// context: a caller that stops waiting stops nobody else's load.
+		const wanted = self.writable(PAGE);
+		const short = self.derive(
+			[wanted, list.value],
+			([rows, loaded]) => loaded.moreAfter && loaded.rows.length < rows,
+		);
+		self.on(short, async (_change, ctx) => {
+			while (list.value.value.moreAfter && list.value.value.rows.length < wanted.value) await list.more(ctx);
+		});
 		return {
 			name: self.derive([found], ([{ rows }]) => rows[0]?.name ?? ""),
 			list: withNames(list.value, things, self),
-			// A writable is the object's own; its value goes out as state through a derive.
-			bounds: self.derive([bounds], ([value]) => value),
-			more: async ({ pages }, ctx) => {
-				await loading.catch(() => undefined);
-				while (bounds.value.length < pages && list.value.value.moreAfter) {
-					const last = list.value.value.rows.at(-1);
-					if (last === undefined) break;
-					bounds.set([...bounds.value, last.at]);
-					loading = list.more(ctx);
-					await loading;
-				}
-				return null;
+			load: async ({ rows }, ctx) => {
+				if (rows > wanted.value) wanted.set(rows);
+				const loaded = await until(list.value, (now) => now.rows.length >= rows || !now.moreAfter, ctx);
+				return loaded.rows[rows - 1]?.at ?? null;
 			},
 		};
 	});
@@ -146,7 +153,8 @@ function authors(notes: readonly StoredNote[]): string[] {
 
 /**
  * How many names the read of a notebook's authors may hold: every one, as its arguments (the distinct authors of the
- * loaded notes, each read by key) bound it.
+ * loaded notes, each read by key) bound it. They are the parameters of one statement: past SQLite's limit of 32,766
+ * distinct authors among the loaded notes the read fails, visibly.
  */
 const EVERY = Number.MAX_SAFE_INTEGER;
 

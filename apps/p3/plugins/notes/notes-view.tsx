@@ -39,7 +39,7 @@ export function NotesView(props: ThingViewProps) {
 	if (state?.kind === "failed" || state?.kind === "ended") return <p className={styles.note}>{t("unavailable")}</p>;
 	return (
 		<section
-			aria-label={t("untitled")}
+			aria-label={name || t("untitled")}
 			className={styles.notes}
 			data-notes={live === undefined ? "loading" : writer === undefined ? "reader" : "writer"}
 		>
@@ -49,7 +49,7 @@ export function NotesView(props: ThingViewProps) {
 					<span className={styles.readOnly}>{t("readOnly")}</span>
 				) : null}
 			</p>
-			{writer === undefined ? null : <AddNote action={action} t={t} writer={writer} />}
+			{writer === undefined ? null : <AddNote action={action} writer={writer} />}
 			{list === undefined ? (
 				<p className={styles.note}>{t("loading")}</p>
 			) : list.rows.length === 0 ? (
@@ -57,7 +57,7 @@ export function NotesView(props: ThingViewProps) {
 			) : (
 				<ul className={styles.list}>
 					{list.rows.map((note) => (
-						<NoteItem action={action} key={note.id} note={note} t={t} writer={writer} />
+						<NoteItem action={action} key={note.id} note={note} writer={writer} />
 					))}
 				</ul>
 			)}
@@ -108,9 +108,9 @@ function useAction(): Action {
 }
 
 /** The writer's field for a new note and its button. */
-function AddNote(props: { readonly writer: Writer; readonly action: Action; readonly t: Texts }) {
+function AddNote(props: { readonly writer: Writer; readonly action: Action }) {
 	const [text, setText] = useState("");
-	const { t } = props;
+	const { t } = useMessages(messages);
 	const add = () => {
 		const note = text.trim();
 		if (note === "") return;
@@ -144,14 +144,10 @@ function AddNote(props: { readonly writer: Writer; readonly action: Action; read
 }
 
 /** One note: its text, who wrote it and when; a writer edits it in place or removes it. */
-function NoteItem(props: {
-	readonly note: Note;
-	readonly writer: Writer | undefined;
-	readonly action: Action;
-	readonly t: Texts;
-}) {
+function NoteItem(props: { readonly note: Note; readonly writer: Writer | undefined; readonly action: Action }) {
 	const [editing, setEditing] = useState<string | undefined>(undefined);
-	const { note, writer, action, t } = props;
+	const { note, writer, action } = props;
+	const { t } = useMessages(messages);
 	return (
 		<li className={styles.item} data-note={note.id}>
 			{editing === undefined || writer === undefined ? (
@@ -169,9 +165,7 @@ function NoteItem(props: {
 				/>
 			)}
 			<div className={styles.meta}>
-				<span className={styles.by}>
-					{t("written", authorName(note.author, t), new Date(note.at).toLocaleString())}
-				</span>
+				<span className={styles.by}>{t("written", authorName(note.author, t), note.at)}</span>
 				{writer === undefined ? null : editing === undefined ? (
 					<>
 						<Button density="compact" hierarchy="tertiary" onClick={() => setEditing(note.text)}>
