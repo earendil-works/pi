@@ -278,6 +278,15 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			commit: (tx: Tx, changes: Changes, thing: string) => Promise<string>,
 			ctx: Ctx<P3Principal>,
 		): Promise<string> => {
+			// A trust boundary of the kind's: its input, given or not, is checked against the schema it declared, read
+			// from the registry the hook is read from (a kind's plugin reloading: one generation, never the index's).
+			const schema = kinds.value.get(args.kind)?.value.input;
+			if (schema === undefined) {
+				if (args.input !== undefined) throw invalid("args", `things: ${args.kind} takes no input`);
+			} else {
+				const failed = checkValue(schema, args.input);
+				if (failed !== undefined) throw invalid("args", `things: input of ${args.kind}: ${failed}`);
+			}
 			const thing = crypto.randomUUID();
 			// A hook that throws leaves nothing, as no row names the thing yet. A crash between the hook and the commit
 			// leaves the kind's content under an id nobody knows (accepted: nothing can reach it).
@@ -359,23 +368,15 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		});
 		return {
 			...q,
-			create: async (args, ctx) => {
-				// A trust boundary of the kind's: its input is checked against the schema it declared.
-				const input = kindTable().get(args.kind)?.value.input;
-				if (args.input !== undefined) {
-					if (input === undefined) throw invalid("args", `things: ${args.kind} takes no input`);
-					const failed = checkValue(input, args.input);
-					if (failed !== undefined) throw invalid("args", `things: input of ${args.kind}: ${failed}`);
-				}
-				return make(
+			create: async (args, ctx) =>
+				make(
 					args,
 					async (tx, changes, thing) => {
 						await writes.make(tx, changes, { ...args, thing });
 						return thing;
 					},
 					ctx,
-				);
-			},
+				),
 			ensure: ({ kind }, ctx) => seedKind(kind, ctx),
 			link: (args, ctx) => write((tx, touched) => writes.link(tx, touched, args), ctx),
 			unlink: (args, ctx) => write((tx, touched) => writes.unlink(tx, touched, args), ctx),
@@ -823,11 +824,12 @@ class Writes {
 
 	/**
 	 * Writes back the rows of `key`'s source for its party on its thing in its workspace that are at an older ticks
-	 * version than `info`'s: the rows of one `gives` value and version migrate together (`ticksNow`), the old ones go,
-	 * the migrated ones are put at the version now unless a row of that tick is there already (written since, it wins).
-	 * Withheld rows go first: where a given and a withheld old tick migrate to one tick, it stays withheld, as the
-	 * index reads them (a row's key has no `gives`, so only one of the two can stand). Rows that cannot be read now (a
-	 * migration that throws, a newer version) are left as they are.
+	 * version than `info`'s, planned from the rows as they are: the named ticks of one `gives` value and version migrate
+	 * together (`ticksNow`; a group of reserved ticks only, `OPEN`, never calls the migration), reserved ticks stay as
+	 * they are. Every converted row goes first, then the outputs are put at the version now; where a given and a
+	 * withheld output meet at one tick it stays withheld, as the index reads them (a row's key has no `gives`, so only
+	 * one can stand). Rows that cannot be read now (a migration that throws, a newer version) are left as they are;
+	 * an output meeting one is not put, unless it withholds what that row (giving nothing now) would give.
 	 */
 	async #upgrade(
 		tx: Tx,
@@ -849,27 +851,34 @@ class Writes {
 			if (group === undefined) older.set(key, [row]);
 			else group.push(row);
 		}
-		const withheldFirst = [...older.values()].sort((a, b) => Number(a[0]!.gives) - Number(b[0]!.gives));
-		for (const group of withheldFirst) {
+		const outputs = new Map<string, (typeof rows)[number]>();
+		const unreadable = new Map<string, (typeof rows)[number]>();
+		for (const group of older.values()) {
 			const first = group[0]!;
-			// Reserved ticks (`OPEN`) mean the same at every version: written back as they are.
 			const named = group.filter(({ tick }) => !tick.startsWith(RESERVED)).map(({ tick }) => tick);
 			let now: readonly string[];
 			try {
-				now = ticksNow(info, named, first.ticksVersion);
+				now = named.length === 0 ? [] : ticksNow(info, named, first.ticksVersion);
 			} catch {
+				for (const row of group) unreadable.set(row.tick, row);
 				continue;
 			}
 			const reserved = group.filter(({ tick }) => tick.startsWith(RESERVED)).map(({ tick }) => tick);
 			for (const row of group)
 				tx.delete(this.#t.grants, { workspace, thing, partyKey: party, tick: row.tick, sourceKey: source });
 			for (const tick of [...now, ...reserved]) {
-				// A row already at the version now beats a migrated withheld one; both exist only after a write-back
-				// failed for this group earlier (its migration threw then): accepted.
-				if (current.has(tick)) continue;
-				current.add(tick);
-				tx.put(this.#t.grants, { ...first, tick, ticksVersion: info.ticksVersion });
+				const before = outputs.get(tick);
+				if (before === undefined || (before.gives && !first.gives))
+					outputs.set(tick, { ...first, tick, ticksVersion: info.ticksVersion });
 			}
+		}
+		for (const [tick, row] of outputs) {
+			// A row already at the version now beats a migrated withheld one; both exist only after a write-back
+			// failed for this group earlier (its migration threw then): accepted.
+			if (current.has(tick)) continue;
+			const kept = unreadable.get(tick);
+			if (kept !== undefined && (row.gives || !kept.gives)) continue;
+			tx.put(this.#t.grants, row);
 		}
 	}
 

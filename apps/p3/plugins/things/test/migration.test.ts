@@ -285,6 +285,42 @@ describe("writing stored ticks back", () => {
 		assert.deepEqual(gives.answers.value[thing]?.ticks, ["read"]);
 		gives.release();
 	});
+
+	it("a migrated tick named like another old row is kept: the old rows go first, then the new ones are put", async () => {
+		const ada = await personIn("Ada");
+		const thing = await store.create({ kind: Board.name, name: "b", workspace: pi, by: BY }, context);
+		await write(thing, ada.party, ["write"], false);
+		await write(thing, ada.party, ["draw", "read"], true);
+		// Write became Read, Read became Write, Draw became Paint: the withheld Read lands where the old Read was.
+		const swap = (ticks: readonly string[]) =>
+			ticks.map((tick) => ({ write: "read", read: "write", draw: "paint" })[tick] ?? tick);
+		const gives = await w.host.get(Gives, { workspace: pi, caller: `person:${ada.id}` }, context);
+		await w.reload(BOARD_PLUGIN, context, facetOf(next(2, swap)));
+		await until(gives.answers, (answers) => answers[thing]?.ticksVersion === 2, within("version 2", context));
+		gives.release();
+		await write(thing, ada.party, ["paint"], true);
+		assert.deepEqual(rowsOf(thing, ada.party), ["!read/2", "paint/2", "write/2"]);
+	});
+
+	it("a party let in by `OPEN` only: its write-back calls no migration and makes no tick", async () => {
+		const ada = await personIn("Ada");
+		const thing = await store.create({ kind: Board.name, name: "b", workspace: pi, by: BY }, context);
+		await write(thing, ada.party, [OPEN], true);
+		// A migration that makes Paint out of nothing: never called without a named tick.
+		const seen: string[][] = [];
+		const fromNothing = (ticks: readonly string[]) => {
+			seen.push([...ticks]);
+			return ticks.length === 0 ? ["paint"] : [...ticks];
+		};
+		const gives = await w.host.get(Gives, { workspace: pi, caller: `person:${ada.id}` }, context);
+		await w.reload(BOARD_PLUGIN, context, facetOf(next(2, fromNothing)));
+		await until(gives.answers, (answers) => answers[thing]?.ticksVersion === 2, within("version 2", context));
+		assert.ok(!gives.answers.value[thing]?.ticks.includes("paint"));
+		gives.release();
+		await write(thing, ada.party, ["read"], true);
+		assert.deepEqual(rowsOf(thing, ada.party), ["@open/2", "read/2"]);
+		assert.ok(!seen.some((ticks) => ticks.length === 0), JSON.stringify(seen));
+	});
 });
 
 describe("a kind's new ticks version while it loads", () => {

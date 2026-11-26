@@ -100,7 +100,8 @@ export const ThingsStore = local("things.store", {
 		/**
 		 * Makes a thing of `kind` in `workspace`: the kind's `create` hook first, with the new id (item 34), then one
 		 * commit: the thing, its link, the kind's default grants, and every tick for its maker (`by`, a person or a
-		 * session's agent; item 90). Answers its id.
+		 * session's agent; item 90). `input` is checked against the kind's `create.input` before the hook runs (left
+		 * out too: a kind with a schema always gets a valid input, a kind without one takes none). Answers its id.
 		 */
 		create: method(obj({ kind: str(), name: str(), workspace: str(), by: Source, input: opt(unknown()) }), str()),
 		/**

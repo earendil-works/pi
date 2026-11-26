@@ -389,10 +389,40 @@ const MUTATIONS: readonly Mutation[] = [
 		put: "",
 	},
 	{
-		name: "older rows written back in their order: a given tick wins over a withheld one it merges with",
+		name: "a given output wins over a withheld one at one tick on write-back",
 		file: "store.ts",
-		find: "const withheldFirst = [...older.values()].sort((a, b) => Number(a[0]!.gives) - Number(b[0]!.gives));",
-		put: "const withheldFirst = [...older.values()].sort((a, b) => Number(b[0]!.gives) - Number(a[0]!.gives));",
+		find: "if (before === undefined || (before.gives && !first.gives))",
+		put: "if (before === undefined || (!before.gives && first.gives))",
+	},
+	{
+		name: "a group of reserved ticks only goes through the migration on write-back",
+		file: "store.ts",
+		find: "now = named.length === 0 ? [] : ticksNow(info, named, first.ticksVersion);",
+		put: "now = ticksNow(info, named, first.ticksVersion);",
+	},
+	{
+		name: "each older group's rows are deleted and put in turn, not all deleted first",
+		file: "store.ts",
+		find: "\t\t\t\t\toutputs.set(tick, { ...first, tick, ticksVersion: info.ticksVersion });",
+		put: "\t\t\t\t\ttx.put(this.#t.grants, { ...first, tick, ticksVersion: info.ticksVersion });",
+	},
+	{
+		name: "a missing create input is not checked against the kind's schema",
+		file: "store.ts",
+		find: "const failed = checkValue(schema, args.input);",
+		put: "const failed = args.input === undefined ? undefined : checkValue(schema, args.input);",
+	},
+	{
+		name: "create's input is checked against the index's kinds, not the hook's registry",
+		file: "store.ts",
+		find: "const schema = kinds.value.get(args.kind)?.value.input;",
+		put: "const schema = kindTable().get(args.kind)?.value.input;",
+	},
+	{
+		name: "OneThing names a plugin-made thing of a kind that asks for none",
+		file: "one.ts",
+		find: 'table.get(kind)?.value.one === undefined ? "" : (page.rows[0]?.thing ?? "")',
+		put: 'page.rows[0]?.thing ?? ""',
 	},
 	{
 		name: "the start's seed runs before the lifecycle serves",
