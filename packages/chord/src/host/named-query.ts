@@ -6,17 +6,17 @@
 import type { Context } from "../context/index.ts";
 import type { QueryPage } from "../contracts/index.ts";
 import type { QueriesData, Snapshot } from "../contracts/internal.ts";
-import { check, validatorFor } from "../data/internal.ts";
+import { canonicalJsonOnly, check, validatorFor } from "../data/internal.ts";
 import type { JsonValue } from "../json.ts";
 import type { ColumnSet } from "../store/column-set.ts";
 import type { ScalarColumn } from "../store/columns.ts";
 import { partnerName } from "../store/expression.ts";
-import type { LiveTarget } from "../store/live-query.ts";
 import type { QuerySpec } from "../store/open-query.ts";
 import { readPage } from "../store/page.ts";
 import { Query } from "../store/query.ts";
 import { type Projection, ReadPlan, type ShapeSlot, type StoredRead } from "../store/read-plan.ts";
 import { decodeScalar, versionColumn } from "../store/rows.ts";
+import { type LiveTarget, SharedReads, type Sharing } from "../store/shared-read.ts";
 import type { TableHandle } from "../store/table-handle.ts";
 import type { Binding } from "./reference.ts";
 
@@ -69,6 +69,8 @@ export class OwnQuery extends NamedQueryHandle {
 	readonly #map: ((row: unknown, partner: PartnerRow) => unknown) | undefined;
 	/** Where its live reads share their plans' shape (a page, read once, takes none). */
 	readonly #shapes: ShapeSlot = { last: undefined };
+	/** Its open shared reads by shape and arguments: they go with it (with the provider's attempt). */
+	readonly #shared = new SharedReads();
 	/** The schema of its arguments: its own (a private query), or the contract's once its member was checked. */
 	#args: Snapshot | undefined;
 	#listed = false;
@@ -118,9 +120,15 @@ export class OwnQuery extends NamedQueryHandle {
 		this.#listed = true;
 	}
 
-	/** What reading this query for `args` reads: `args` checked (a trust boundary), the query built and checked. */
-	target(args: unknown, context: Context): LiveTarget {
-		return new OwnTarget(this, this.#build(args, context), this.#projection, this.#shapes);
+	/**
+	 * What reading this query for `args` reads: `args` checked (a trust boundary), the query built and checked, shared
+	 * with the other readers of these arguments by their canonical JSON.
+	 */
+	target(args: unknown, context: Context): NamedTarget {
+		const query = this.#build(args, context);
+		// A schema without a type checks nothing: what is no JSON is refused here, in the walk that makes the key.
+		const key = canonicalJsonOnly(args, context);
+		return new OwnTarget(this, query, this.#projection, this.#shapes, this.#shared, key);
 	}
 
 	/** One page, read once: not live. */
@@ -170,29 +178,49 @@ export class OwnQuery extends NamedQueryHandle {
 	}
 }
 
+/** What a named query's reader reads: a target shared by its arguments. */
+export type NamedTarget = LiveTarget & { readonly sharing: Sharing };
+
 /**
- * What a live read of a named query reads: the query built for its arguments, kept open as its own spec, decoding
- * by its declaration. A class: a spec object and a decoding closure cost 208 B per read, this 72 B.
+ * What a live read of a named query reads: the query built for its arguments, kept open as its own spec and shared
+ * as its own sharing, decoding by its declaration. A class: a spec object and a decoding closure cost 208 B per read,
+ * this 72 B.
  */
-class OwnTarget implements LiveTarget, QuerySpec {
+class OwnTarget implements NamedTarget, QuerySpec, Sharing {
 	readonly query: Query;
 	readonly table: string;
 	readonly projection: Projection;
 	readonly owner: TableHandle;
 	readonly shapes: ShapeSlot;
+	readonly shared: SharedReads;
+	readonly args: string;
 	readonly #own: OwnQuery;
 
-	constructor(own: OwnQuery, query: Query, projection: Projection, shapes: ShapeSlot) {
+	constructor(
+		own: OwnQuery,
+		query: Query,
+		projection: Projection,
+		shapes: ShapeSlot,
+		shared: SharedReads,
+		args: string,
+	) {
 		this.#own = own;
 		this.query = query;
 		this.table = own.handle.sql.table;
 		this.projection = projection;
 		this.owner = own.handle;
 		this.shapes = shapes;
+		this.shared = shared;
+		this.args = args;
 	}
 
 	/** It is its own spec. */
 	get spec(): QuerySpec {
+		return this;
+	}
+
+	/** It is its own sharing. */
+	get sharing(): Sharing {
 		return this;
 	}
 
