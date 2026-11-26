@@ -18,6 +18,7 @@ import {
 } from "@earendil-works/p3/v1";
 import { ThingsStore } from "./contract.server.ts";
 import { Group, partyKey, type Source } from "./contract.ts";
+import { THINGS } from "./people.ts";
 
 /** The calls the group's own tick gives. */
 const CALLS = ["addMember", "removeMember", "rename", "setManagers", "remove"] as const;
@@ -46,10 +47,7 @@ export function serveGroup(host: FacetHost<P3Principal>): void {
 			const info = self.liveQuery(store.groups.one, { group }, { first: 1 });
 			const members = self.liveQuery(store.groupMembersNamed.ofGroup, { group }, { first: EVERY });
 			const managers = self.liveQuery(store.groupManagers.of, { group }, { first: EVERY });
-			const by: Source =
-				principal.kind === "person"
-					? { kind: "person", person: principal.id }
-					: { kind: "plugin", plugin: "@earendil-works/p3-things" };
+			const by: Source = principal.kind === "person" ? { kind: "person", person: principal.id } : THINGS;
 			return {
 				info: self.derive([info], ([{ rows }]) => {
 					const row = rows[0];

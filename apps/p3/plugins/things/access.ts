@@ -270,16 +270,16 @@ export class AccessIndex {
 	}
 
 	/**
-	 * The parties present in each of `workspaces` (rule 3), persons hidden there by every route left out (item 106):
-	 * loaded as a question loads them, one operation in the queue.
+	 * The parties present in any of `workspaces` (rule 3), a person hidden in one by every route left out there (item
+	 * 106): loaded as a question loads them, one operation in the queue.
 	 */
-	parties(workspaces: readonly string[], context: Context): Promise<ReadonlyMap<string, ReadonlySet<string>>> {
+	parties(workspaces: Iterable<string>, context: Context): Promise<ReadonlySet<string>> {
 		return this.#run(async () => {
-			const parties = new Map<string, ReadonlySet<string>>();
+			const parties = new Set<string>();
 			for (const workspace of workspaces) {
 				await this.#ensure(workspace, context);
 				const { present, hidden } = this.#accessOf(workspace, context);
-				parties.set(workspace, hidden.size === 0 ? present : new Set([...present].filter((p) => !hidden.has(p))));
+				for (const party of present) if (!hidden.has(party)) parties.add(party);
 			}
 			return parties;
 		});

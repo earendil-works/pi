@@ -33,6 +33,9 @@ import {
 } from "./contract.ts";
 import { messages } from "./messages.ts";
 
+/** The source of what the things plugin itself writes: Pi, the first start's owner, a workspace's Guests group. */
+export const THINGS: Source = { kind: "plugin", plugin: "@earendil-works/p3-things" };
+
 /** A person's id and name, joined to their memberships' rows (a group's members, with names). */
 export const PersonColumns = defineColumns("things.person-columns", {
 	columns: { person: str(), name: str() },
@@ -164,7 +167,7 @@ export class PeopleWrites {
 	}
 
 	/** Makes a person (no owner flag), made by `madeBy`; answers their id. */
-	createPerson(tx: Tx, { name, madeBy }: { name: string; madeBy: Source }): string {
+	async createPerson(tx: Tx, { name, madeBy }: { name: string; madeBy: Source }): Promise<string> {
 		const person = crypto.randomUUID();
 		tx.put(this.#t.persons, { person, name, owner: 0, madeBy, madeByKey: sourceKey(madeBy) });
 		return person;
@@ -174,21 +177,12 @@ export class PeopleWrites {
 	 * The owner's person, made once, at the store's first start, named "Owner" (people rename it; the people plugin's
 	 * owner replaces it meanwhile: `adoptOwner`).
 	 */
-	async ensureOwner(tx: Tx): Promise<void> {
-		const owners = await tx.page(
-			this.#t.persons,
-			query(Persons).where((p) => eq(p.owner, 1)),
-			1,
-		);
-		if (owners.items.length > 0) return;
-		const by: Source = { kind: "plugin", plugin: "@earendil-works/p3-things" };
-		tx.put(this.#t.persons, {
-			person: crypto.randomUUID(),
-			name: "Owner",
-			owner: 1,
-			madeBy: by,
-			madeByKey: sourceKey(by),
-		});
+	async ensureOwner(tx: Tx): Promise<null> {
+		const owners = await this.#owners(tx, 1);
+		if (owners.items.length > 0) return null;
+		const person = crypto.randomUUID();
+		tx.put(this.#t.persons, { person, name: "Owner", owner: 1, madeBy: THINGS, madeByKey: sourceKey(THINGS) });
+		return null;
 	}
 
 	/**
@@ -202,7 +196,7 @@ export class PeopleWrites {
 		if (row === undefined) tx.put(this.#t.persons, { person, name, owner: 1, madeBy: by, madeByKey: sourceKey(by) });
 		else tx.update(this.#t.persons, { person }, { owner: 1 });
 		touched.persons.add(person);
-		const own = sourceKey({ kind: "plugin", plugin: "@earendil-works/p3-things" });
+		const own = sourceKey(THINGS);
 		for await (const ghost of tx.rows(
 			this.#t.persons,
 			query(Persons).where((p) => eq(p.owner, 1)),
@@ -216,35 +210,37 @@ export class PeopleWrites {
 	}
 
 	/** Renames person `person`. */
-	async renamePerson(tx: Tx, person: string, name: string): Promise<void> {
+	async renamePerson(tx: Tx, person: string, name: string): Promise<null> {
 		await this.#mustBePerson(tx, person);
 		tx.update(this.#t.persons, { person }, { name });
+		return null;
 	}
 
 	/** Gives or takes the owner flag; the last owner keeps it. */
-	async setOwner(tx: Tx, touched: Touched, { person, owner }: { person: string; owner: boolean }): Promise<void> {
+	async setOwner(tx: Tx, touched: Touched, { person, owner }: { person: string; owner: boolean }): Promise<null> {
 		const row = await tx.get(this.#t.persons, { person });
 		if (row === undefined) throw invalid("args", `things: no person ${person}`);
-		if (!owner && row.owner === 1 && !(await this.#twoOwners(tx))) {
+		if (!owner && row.owner === 1 && (await this.#owners(tx, 2)).items.length < 2) {
 			throw invalid("args", "things: a Pi needs at least one owner", { message: messages.message("lastOwner") });
 		}
 		tx.update(this.#t.persons, { person }, { owner: owner ? 1 : 0 });
 		touched.persons.add(person);
+		return null;
 	}
 
 	/**
 	 * Makes a group managed by `managedBy`, outside or not; `managers` get its own tick (its maker, for a group people
 	 * manage). Answers its id.
 	 */
-	makeGroup(
+	async makeGroup(
 		tx: Tx,
 		{
 			name,
 			managedBy,
 			outside,
-			managers,
-		}: { name: string; managedBy: ManagedBy; outside: boolean; managers: Party[] },
-	): string {
+			managers = [],
+		}: { name: string; managedBy: ManagedBy; outside: boolean; managers?: Party[] },
+	): Promise<string> {
 		const group = crypto.randomUUID();
 		tx.put(this.#t.groups, { group, name, managedBy, managedByKey: managedByKey(managedBy), outside });
 		for (const party of managers) tx.put(this.#t.groupManagers, { group, partyKey: partyKey(party), party });
@@ -252,16 +248,18 @@ export class PeopleWrites {
 	}
 
 	/** Renames group `group`. */
-	async renameGroup(tx: Tx, group: string, name: string): Promise<void> {
+	async renameGroup(tx: Tx, group: string, name: string): Promise<null> {
 		await this.#mustBeGroup(tx, group);
 		tx.update(this.#t.groups, { group }, { name });
+		return null;
 	}
 
 	/** Replaces who has group `group`'s own tick with `parties` (none: only server code changes it then). */
-	async setGroupManagers(tx: Tx, group: string, parties: readonly Party[]): Promise<void> {
+	async setGroupManagers(tx: Tx, group: string, parties: readonly Party[]): Promise<null> {
 		await this.#mustBeGroup(tx, group);
 		tx.deleteWhere(this.#t.groupManagers, (m) => eq(m.group, group));
 		for (const party of parties) tx.put(this.#t.groupManagers, { group, partyKey: partyKey(party), party });
+		return null;
 	}
 
 	/** Puts `person` into `group` as `source` did (a second source: a second row). */
@@ -269,31 +267,29 @@ export class PeopleWrites {
 		tx: Tx,
 		touched: Touched,
 		{ group, person, source }: { group: string; person: string; source: Source },
-	): Promise<void> {
+	): Promise<null> {
 		await this.#mustBeGroup(tx, group);
 		await this.#mustBePerson(tx, person);
 		tx.put(this.#t.groupMembers, { group, person, source, sourceKey: sourceKey(source) });
 		touched.persons.add(person);
+		return null;
 	}
 
 	/** Takes `source`'s row of `person` in `group` away (another source's row keeps them in). */
-	removeFromGroup(
+	async removeFromGroup(
 		tx: Tx,
 		touched: Touched,
 		{ group, person, source }: { group: string; person: string; source: Source },
-	): void {
+	): Promise<null> {
 		tx.delete(this.#t.groupMembers, { group, person, sourceKey: sourceKey(source) });
 		touched.persons.add(person);
+		return null;
 	}
 
-	/** Whether at least two persons have the owner flag (one of them may give it up). */
-	async #twoOwners(tx: Tx): Promise<boolean> {
-		const owners = await tx.page(
-			this.#t.persons,
-			query(Persons).where((p) => eq(p.owner, 1)),
-			2,
-		);
-		return owners.items.length > 1;
+	/** The first `count` persons with the owner flag (index `by_owner`). */
+	#owners(tx: Tx, count: number) {
+		const owners = query(Persons).where((p) => eq(p.owner, 1));
+		return tx.page(this.#t.persons, owners, count);
 	}
 
 	/** Throws (`invalid`) unless person `person` exists. */

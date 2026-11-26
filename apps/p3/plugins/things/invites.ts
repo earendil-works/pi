@@ -7,51 +7,34 @@
 import { and, eq, invalid, query, type Tx } from "@earendil-works/p3/v1";
 import { hashToken, matchesHash, newToken } from "@earendil-works/p3/v1/server";
 import type { Touched } from "./access.ts";
+import type { Invited, InviteInput } from "./contract.server.ts";
 import { managedByKey, type Party, type Source, sourceKey } from "./contract.ts";
-import { Groups, type PeopleTables, type PeopleWrites } from "./people.ts";
+import { Groups, type PeopleTables, type PeopleWrites, THINGS } from "./people.ts";
 
 /** How long a link is valid unless it says: 7 days (R39). */
 const DEFAULT_EXPIRES = 7 * 24 * 60 * 60_000;
 
-/** What an invite link is made with. */
-export type InviteArgs = {
-	readonly workspace: string;
-	readonly name: string;
-	readonly as: "member" | "guest";
-	readonly expires?: number;
-	readonly uses?: "one" | "several";
-	readonly group?: string;
-	readonly by: Source;
+/** What invite links need of the store's writes on workspaces, under the same transaction. */
+export type Places = {
+	putParty(tx: Tx, touched: Touched, args: { workspace: string; party: Party; source: Source }): Promise<null>;
+	mustBeWorkspace(tx: Tx, workspace: string): Promise<void>;
 };
-
-/** Whom a redeemed link signs in. */
-export type Invited = { readonly person: string; readonly name: string };
-
-/** What redeeming needs of the store's other writes: putting a party into a workspace, under the same transaction. */
-export type PutParty = (
-	tx: Tx,
-	touched: Touched,
-	args: { workspace: string; party: Party; source: Source },
-) => Promise<null>;
-
-/** The source of what the things plugin itself writes (a workspace's Guests group put into it). */
-const THINGS: Source = { kind: "plugin", plugin: "@earendil-works/p3-things" };
 
 /** The writes of invite links inside a store transaction; none checks a caller. */
 export class InviteWrites {
 	readonly #t: PeopleTables;
 	readonly #people: PeopleWrites;
-	readonly #putParty: PutParty;
+	readonly #places: Places;
 
-	constructor(t: PeopleTables, people: PeopleWrites, putParty: PutParty) {
+	constructor(t: PeopleTables, people: PeopleWrites, places: Places) {
 		this.#t = t;
 		this.#people = people;
-		this.#putParty = putParty;
+		this.#places = places;
 	}
 
-	/** Writes a new link (the workspace and group must exist: `mustExist`); answers `<invite>.<secret>`. */
-	async create(tx: Tx, args: InviteArgs, mustExist: (tx: Tx, workspace: string) => Promise<void>): Promise<string> {
-		await mustExist(tx, args.workspace);
+	/** Writes a new link (the workspace and group must exist); answers `<invite>.<secret>`. */
+	async create(tx: Tx, args: InviteInput): Promise<string> {
+		await this.#places.mustBeWorkspace(tx, args.workspace);
 		if (args.group !== undefined && (await tx.get(this.#t.groups, { group: args.group })) === undefined) {
 			throw invalid("args", `things: no group ${args.group}`);
 		}
@@ -74,33 +57,34 @@ export class InviteWrites {
 
 	/**
 	 * Redeems `link` for `person` (signed in) or a new person made by the link's maker: puts them in as the link says;
-	 * a link for one use goes. `undefined` for a link that is unknown, expired (it goes) or whose secret does not match.
+	 * a link for one use goes. `null` for a link that is unknown, expired (it goes) or whose secret does not match.
 	 */
-	async redeem(tx: Tx, touched: Touched, link: string, person: string | undefined): Promise<Invited | undefined> {
+	async redeem(tx: Tx, touched: Touched, link: string, person: string | undefined): Promise<Invited | null> {
 		const dot = link.indexOf(".");
-		if (dot <= 0) return undefined;
+		if (dot <= 0) return null;
 		const invite = link.slice(0, dot);
 		const row = await tx.get(this.#t.invites, { invite });
-		if (row === undefined || !matchesHash(link.slice(dot + 1), row.hash)) return undefined;
+		if (row === undefined || !matchesHash(link.slice(dot + 1), row.hash)) return null;
 		if (row.expires <= Date.now() || !row.several) tx.delete(this.#t.invites, { invite });
-		if (row.expires <= Date.now()) return undefined;
+		if (row.expires <= Date.now()) return null;
 		const who = await this.#redeemer(tx, person, row.name, row.by);
-		if (who === undefined) return undefined;
+		if (who === undefined) return null;
 		const party: Party = { kind: "person", person: who.person };
-		if (row.as === "member") await this.#putParty(tx, touched, { workspace: row.workspace, party, source: row.by });
+		const { workspace, by: source } = row;
+		if (row.as === "member") await this.#places.putParty(tx, touched, { workspace, party, source });
 		else {
-			const guests = await this.#guestsOf(tx, touched, row.workspace);
-			await this.#people.addToGroup(tx, touched, { group: guests, person: who.person, source: row.by });
+			const guests = await this.#guestsOf(tx, touched, workspace);
+			await this.#people.addToGroup(tx, touched, { group: guests, person: who.person, source });
 		}
 		if (row.group !== "" && (await tx.get(this.#t.groups, { group: row.group })) !== undefined) {
-			await this.#people.addToGroup(tx, touched, { group: row.group, person: who.person, source: row.by });
+			await this.#people.addToGroup(tx, touched, { group: row.group, person: who.person, source });
 		}
 		return who;
 	}
 
 	/** The person a link is redeemed for: `person` if they exist, else a new one named `name`, made by `by`. */
 	async #redeemer(tx: Tx, person: string | undefined, name: string, by: Source): Promise<Invited | undefined> {
-		if (person === undefined) return { person: this.#people.createPerson(tx, { name, madeBy: by }), name };
+		if (person === undefined) return { person: await this.#people.createPerson(tx, { name, madeBy: by }), name };
 		const row = await tx.get(this.#t.persons, { person });
 		return row === undefined ? undefined : { person, name: row.name };
 	}
@@ -115,13 +99,9 @@ export class InviteWrites {
 		);
 		const existing = found.items[0]?.group;
 		if (existing !== undefined) return existing;
-		const group = this.#people.makeGroup(tx, {
-			name: "Guests",
-			managedBy: { kind: "workspace", workspace },
-			outside: true,
-			managers: [],
-		});
-		await this.#putParty(tx, touched, { workspace, party: { kind: "group", group }, source: THINGS });
+		const managedBy = { kind: "workspace", workspace } as const;
+		const group = await this.#people.makeGroup(tx, { name: "Guests", managedBy, outside: true });
+		await this.#places.putParty(tx, touched, { workspace, party: { kind: "group", group }, source: THINGS });
 		return group;
 	}
 }

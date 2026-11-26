@@ -705,8 +705,8 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "a guest's link puts them in as a member",
 		file: "invites.ts",
-		find: 'if (row.as === "member") await this.#putParty',
-		put: "if (true) await this.#putParty",
+		find: 'if (row.as === "member") await this.#places.putParty',
+		put: "if (true) await this.#places.putParty",
 	},
 	{
 		name: "a link for one use is used again",
@@ -717,14 +717,14 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "an expired link is redeemed",
 		file: "invites.ts",
-		find: "if (row.expires <= Date.now()) return undefined;",
+		find: "if (row.expires <= Date.now()) return null;",
 		put: "",
 	},
 	{
 		name: "a link's secret is not checked",
 		file: "invites.ts",
-		find: "if (row === undefined || !matchesHash(link.slice(dot + 1), row.hash)) return undefined;",
-		put: "if (row === undefined) return undefined;",
+		find: "if (row === undefined || !matchesHash(link.slice(dot + 1), row.hash)) return null;",
+		put: "if (row === undefined) return null;",
 	},
 	{
 		name: "a person with the owner flag is removed",

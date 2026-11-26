@@ -281,7 +281,7 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			},
 			hooks: () => hooks.value,
 		});
-		const invites = new InviteWrites(t, people, (tx, touched, args) => writes.putParty(tx, touched, args));
+		const invites = new InviteWrites(t, people, writes);
 		const lifecycle = new Lifecycle({
 			table: pending,
 			write: (fn, ctx) => write((tx) => fn(tx), ctx),
@@ -515,51 +515,25 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 					touched.members.add(partyKey(party));
 					return null;
 				}, ctx),
-			createPerson: (args, ctx) => write(async (tx) => people.createPerson(tx, args), ctx),
-			renamePerson: ({ person, name }, ctx) =>
-				write(async (tx) => {
-					await people.renamePerson(tx, person, name);
-					return null;
-				}, ctx),
-			setOwner: (args, ctx) =>
-				write(async (tx, touched) => {
-					await people.setOwner(tx, touched, args);
-					return null;
-				}, ctx),
+			createPerson: (args, ctx) => write((tx) => people.createPerson(tx, args), ctx),
+			renamePerson: ({ person, name }, ctx) => write((tx) => people.renamePerson(tx, person, name), ctx),
+			setOwner: (args, ctx) => write((tx, touched) => people.setOwner(tx, touched, args), ctx),
 			removePerson: ({ person }, ctx) => write((tx, touched) => writes.removePerson(tx, touched, person), ctx),
-			makeGroup: ({ managers, ...args }, ctx) =>
-				write(async (tx) => people.makeGroup(tx, { ...args, managers: managers ?? [] }), ctx),
-			renameGroup: ({ group, name }, ctx) =>
-				write(async (tx) => {
-					await people.renameGroup(tx, group, name);
-					return null;
-				}, ctx),
-			setGroupManagers: ({ group, parties }, ctx) =>
-				write(async (tx) => {
-					await people.setGroupManagers(tx, group, parties);
-					return null;
-				}, ctx),
+			makeGroup: (args, ctx) => write((tx) => people.makeGroup(tx, args), ctx),
+			renameGroup: ({ group, name }, ctx) => write((tx) => people.renameGroup(tx, group, name), ctx),
+			setGroupManagers: ({ group, parties }, ctx) => write((tx) => people.setGroupManagers(tx, group, parties), ctx),
 			removeGroup: ({ group }, ctx) => write((tx, touched) => writes.removeGroup(tx, touched, group), ctx),
-			addToGroup: (args, ctx) =>
-				write(async (tx, touched) => {
-					await people.addToGroup(tx, touched, args);
-					return null;
-				}, ctx),
-			removeFromGroup: (args, ctx) =>
-				write(async (tx, touched) => {
-					people.removeFromGroup(tx, touched, args);
-					return null;
-				}, ctx),
+			addToGroup: (args, ctx) => write((tx, touched) => people.addToGroup(tx, touched, args), ctx),
+			removeFromGroup: (args, ctx) => write((tx, touched) => people.removeFromGroup(tx, touched, args), ctx),
 			picker: async ({ workspace, person, query: text }, ctx) => {
 				const offered = await offeredTo(q, index!, { workspace, person }, ctx);
 				return namesOf(q, offered, text, ctx);
 			},
 			offers: async ({ workspace, person, party }, ctx) =>
 				(await offeredTo(q, index!, { workspace, person }, ctx)).has(partyKey(party)),
-			createInvite: (args, ctx) =>
-				write((tx) => invites.create(tx, args, (at, workspace) => writes.mustBeWorkspace(at, workspace)), ctx),
-			redeemInvite: async ({ secret, person }, ctx) =>
-				(await write((tx, touched) => invites.redeem(tx, touched, secret, person), ctx)) ?? null,
+			createInvite: (args, ctx) => write((tx) => invites.create(tx, args), ctx),
+			redeemInvite: ({ secret, person }, ctx) =>
+				write((tx, touched) => invites.redeem(tx, touched, secret, person), ctx),
 			deleteEverythingFrom: ({ source }, ctx) =>
 				write((tx, touched) => writes.deleteEverythingFrom(tx, touched, sourceKey(source)), ctx),
 		};
@@ -860,6 +834,21 @@ async function deleteTold<C extends Columns, K extends readonly string[]>(
 ): Promise<void> {
 	for await (const row of tx.rows(table, query(definition).where(where))) told.add(String(row[column]));
 	tx.deleteWhere(table, where);
+}
+
+/** A text column of a table, as a query's callbacks name it. */
+type TextRef = ColumnRefs<{ text: ReturnType<typeof str> }>["text"];
+
+/** `table`'s rows whose `column` is one of `values`: an index search (IN), in that column's order (no sort). */
+function rowsNaming<C extends Columns, K extends readonly string[]>(
+	tx: Tx,
+	table: Table<C, K>,
+	definition: TableDefinition<C, K>,
+	column: (row: ColumnRefs<C>) => TextRef,
+	values: readonly string[],
+) {
+	const naming = query(definition).where((row) => inArray(column(row), values));
+	return tx.rows(table, naming.orderBy(column, "asc"));
 }
 
 /** The store's writes inside a transaction: each says what it touched; none checks a caller (server code). */
@@ -1362,18 +1351,8 @@ class Writes {
 	/** Removes `group`: its members, its managers, every workspace entry and grant naming it, its row. */
 	async removeGroup(tx: Tx, touched: Touched, group: string): Promise<null> {
 		const t = this.#t;
-		const party = partyKey({ kind: "group", group });
 		await deleteTold(tx, t.groupMembers, GroupMembers, (r) => eq(r.group, group), touched.persons, "person");
-		await deleteTold(
-			tx,
-			t.workspaceMembers,
-			WorkspaceMembers,
-			(r) => eq(r.partyKey, party),
-			touched.workspaces,
-			"workspace",
-		);
-		await deleteTold(tx, t.grants, Grants, (r) => eq(r.partyKey, party), touched.workspaces, "workspace");
-		await deleteTold(tx, t.switches, Switches, (r) => eq(r.itemKey, party), touched.workspaces, "workspace");
+		await this.#unname(tx, touched, partyKey({ kind: "group", group }));
 		tx.deleteWhere(t.groupManagers, (m) => eq(m.group, group));
 		tx.delete(t.groups, { group });
 		return null;
@@ -1409,61 +1388,27 @@ class Writes {
 		const owns = persons.map((person) => sourceKey({ kind: "person", person }));
 		// Party and source keys of a person are the same text (`person/<id>`): one map back to the person.
 		const personOf = new Map(persons.map((person) => [partyKey({ kind: "person", person }), person]));
+		const groups = new Set([...removed].map((group) => partyKey({ kind: "group", group })));
 		const gone = (row: { sourceKey: string; group?: string; partyKey?: string }) =>
 			row.sourceKey === key ||
 			(row.group !== undefined && removed.has(row.group)) ||
-			(row.partyKey?.startsWith("group/") === true && removed.has(row.partyKey.slice("group/".length)));
+			(row.partyKey !== undefined && groups.has(row.partyKey));
 		const left = new Set<string>();
-		for await (const row of tx.rows(
-			t.groupMembers,
-			query(GroupMembers)
-				.where((r) => inArray(r.person, persons))
-				.orderBy((r) => r.person, "asc"),
-		)) {
+		for await (const row of rowsNaming(tx, t.groupMembers, GroupMembers, (r) => r.person, persons)) {
 			if (!gone(row)) left.add(row.person);
 		}
 		const byParty = [
-			tx.rows(
-				t.workspaceMembers,
-				query(WorkspaceMembers)
-					.where((r) => inArray(r.partyKey, parties))
-					.orderBy((r) => r.partyKey, "asc"),
-			),
-			tx.rows(
-				t.grants,
-				query(Grants)
-					.where((r) => inArray(r.partyKey, parties))
-					.orderBy((r) => r.partyKey, "asc"),
-			),
+			rowsNaming(tx, t.workspaceMembers, WorkspaceMembers, (r) => r.partyKey, parties),
+			rowsNaming(tx, t.grants, Grants, (r) => r.partyKey, parties),
 		];
 		for (const rows of byParty) for await (const row of rows) if (!gone(row)) left.add(personOf.get(row.partyKey)!);
 		const bySource = [
-			tx.rows(
-				t.grants,
-				query(Grants)
-					.where((r) => inArray(r.sourceKey, owns))
-					.orderBy((r) => r.sourceKey, "asc"),
-			),
-			tx.rows(
-				t.groupMembers,
-				query(GroupMembers)
-					.where((r) => inArray(r.sourceKey, owns))
-					.orderBy((r) => r.sourceKey, "asc"),
-			),
-			tx.rows(
-				t.workspaceMembers,
-				query(WorkspaceMembers)
-					.where((r) => inArray(r.sourceKey, owns))
-					.orderBy((r) => r.sourceKey, "asc"),
-			),
+			rowsNaming(tx, t.grants, Grants, (r) => r.sourceKey, owns),
+			rowsNaming(tx, t.groupMembers, GroupMembers, (r) => r.sourceKey, owns),
+			rowsNaming(tx, t.workspaceMembers, WorkspaceMembers, (r) => r.sourceKey, owns),
 		];
 		for (const rows of bySource) for await (const row of rows) if (!gone(row)) left.add(personOf.get(row.sourceKey)!);
-		for await (const row of tx.rows(
-			t.groupManagers,
-			query(GroupManagers)
-				.where((r) => inArray(r.partyKey, parties))
-				.orderBy((r) => r.partyKey, "asc"),
-		)) {
+		for await (const row of rowsNaming(tx, t.groupManagers, GroupManagers, (r) => r.partyKey, parties)) {
 			if (!removed.has(row.group)) left.add(personOf.get(row.partyKey)!);
 		}
 		return left;
@@ -1477,18 +1422,18 @@ class Writes {
 		const t = this.#t;
 		const party = partyKey({ kind: "person", person });
 		await deleteTold(tx, t.groupMembers, GroupMembers, (r) => eq(r.person, person), touched.persons, "person");
-		await deleteTold(
-			tx,
-			t.workspaceMembers,
-			WorkspaceMembers,
-			(r) => eq(r.partyKey, party),
-			touched.workspaces,
-			"workspace",
-		);
-		await deleteTold(tx, t.grants, Grants, (r) => eq(r.partyKey, party), touched.workspaces, "workspace");
-		await deleteTold(tx, t.switches, Switches, (r) => eq(r.itemKey, party), touched.workspaces, "workspace");
+		await this.#unname(tx, touched, party);
 		tx.deleteWhere(t.groupManagers, (r) => eq(r.partyKey, party));
 		this.#forget(tx, touched, person);
+	}
+
+	/** Deletes every workspace entry, grant and switch naming the party with key `party`, whoever wrote it. */
+	async #unname(tx: Tx, touched: Touched, party: string): Promise<void> {
+		const t = this.#t;
+		const { workspaces } = touched;
+		await deleteTold(tx, t.workspaceMembers, WorkspaceMembers, (r) => eq(r.partyKey, party), workspaces, "workspace");
+		await deleteTold(tx, t.grants, Grants, (r) => eq(r.partyKey, party), workspaces, "workspace");
+		await deleteTold(tx, t.switches, Switches, (r) => eq(r.itemKey, party), workspaces, "workspace");
 	}
 
 	/**

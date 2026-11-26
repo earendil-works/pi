@@ -29,10 +29,9 @@ export async function offeredTo(
 		}
 	}
 	// A party put in somewhere is present there (no switch hides what is put in where the switch is).
-	const parties = await index.parties([...where], context);
 	const offered = new Set<string>();
-	for (const present of parties.values()) {
-		for (const party of present) if (party.startsWith("person/") || party.startsWith("group/")) offered.add(party);
+	for (const party of await index.parties(where, context)) {
+		if (party.startsWith("person/") || party.startsWith("group/")) offered.add(party);
 	}
 	return offered;
 }

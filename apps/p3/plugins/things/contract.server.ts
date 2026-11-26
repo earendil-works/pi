@@ -130,6 +130,26 @@ export const Answer = obj({
 /** A person or group the picker offers: the party and its name. */
 export const PartyInfo = obj({ party: Party, name: str() });
 
+/**
+ * What an invite link is made with (R39): into `workspace`, made by `by`, `as` a member or a guest, valid `expires`
+ * milliseconds (7 days by default), spent by its first use unless `uses` is `several`, its redeemer also put into
+ * `group`.
+ */
+export const InviteInput = obj({
+	workspace: str(),
+	name: str({ min: 1, max: 200 }),
+	as: oneOf("member", "guest"),
+	expires: opt(int({ min: 1 })),
+	uses: opt(oneOf("one", "several")),
+	group: opt(str()),
+	by: Source,
+});
+export type InviteInput = Static<typeof InviteInput>;
+
+/** Whom a redeemed invite link signs in. */
+export const Invited = obj({ person: str(), name: str() });
+export type Invited = Static<typeof Invited>;
+
 /** A person in a group as the group's page lists them: with their name. */
 export const GroupMemberNameRow = obj({ group: str(), person: str(), name: str(), source: Source });
 
@@ -273,30 +293,15 @@ export const ThingsStore = local("things.store", {
 		/** Whether the picker offers `person` the party `party` in `workspace` (what `putParty` and `addMember` check). */
 		offers: method(obj({ workspace: str(), person: str(), party: Party }), bool()),
 		/**
-		 * An invite link into `workspace` (R39), made by `by`: `as` a member or a guest, valid `expires` milliseconds
-		 * (7 days by default), spent by its first use unless `uses` is `several`, its redeemer also put into `group`.
-		 * Answers the link's secret (kept hashed only); `invalid` for a workspace or group that does not exist.
+		 * Writes an invite link; answers its secret (kept hashed only); `invalid` for a workspace or group that does not
+		 * exist.
 		 */
-		createInvite: method(
-			obj({
-				workspace: str(),
-				name: str({ min: 1, max: 200 }),
-				as: oneOf("member", "guest"),
-				expires: opt(int({ min: 1 })),
-				uses: opt(oneOf("one", "several")),
-				group: opt(str()),
-				by: Source,
-			}),
-			str(),
-		),
+		createInvite: method(InviteInput, str()),
 		/**
 		 * Redeems an invite link's secret for `person` (signed in already) or, left out, a new person named as the link
 		 * says, made by its maker; answers whom to sign in, `null` for a secret used up, expired or unknown.
 		 */
-		redeemInvite: method(
-			obj({ secret: str(), person: opt(str()) }),
-			union([obj({ person: str(), name: str() }), nul()]),
-		),
+		redeemInvite: method(obj({ secret: str(), person: opt(str()) }), union([Invited, nul()])),
 		removeFromGroup: method(obj({ group: str(), person: str(), source: Source })),
 		/**
 		 * The cleanup when a source goes, one commit: what `source` wrote (grants, group members, workspace members), the
