@@ -6,7 +6,7 @@
 // one card per party on a phone.
 
 import { Button, Checkbox, Menu, Popover, SelectionControlAndLabel, Table } from "@earendil-works/elanor-react";
-import { BACKGROUND_CONTEXT, withGranted } from "@earendil-works/p3/v1";
+import { BACKGROUND_CONTEXT, type MessagesOf, type Translator, withGranted } from "@earendil-works/p3/v1";
 import {
 	CancelIcon,
 	CheckIcon,
@@ -241,24 +241,7 @@ function CellSource(props: {
 	const { t } = useMessages(page);
 	const rows = props.cell?.here ?? [];
 	if (rows.length === 0) return null;
-	const said = rows.map((row) => {
-		if (!row.inEffect) return t("notInEffect");
-		if (row.kindDefault) return t("kindDefault");
-		switch (row.source.kind) {
-			case "person": {
-				const name = props.personName(row.source.person);
-				return name === undefined ? t("byPerson") : t("byNamed", name);
-			}
-			case "agent":
-				return t("byAgent");
-			case "thing":
-				return t("byShare");
-			case "identity":
-				return t("bySignIn");
-			case "plugin":
-				return t("byPlugin");
-		}
-	});
+	const said = rows.map((row) => sourceText(row, props.personName, t));
 	return (
 		<span
 			className={styles.source}
@@ -267,6 +250,30 @@ function CellSource(props: {
 			{said.join(", ")}
 		</span>
 	);
+}
+
+/** What one row here says of where it comes from. */
+function sourceText(
+	row: Cell["here"][number],
+	personName: (person: string) => string | undefined,
+	t: Translator<"things.page", MessagesOf<typeof page>>,
+): string {
+	if (!row.inEffect) return t("notInEffect");
+	if (row.kindDefault) return t("kindDefault");
+	switch (row.source.kind) {
+		case "person": {
+			const name = personName(row.source.person);
+			return name === undefined ? t("byPerson") : t("byNamed", name);
+		}
+		case "agent":
+			return t("byAgent");
+		case "thing":
+			return t("byShare");
+		case "identity":
+			return t("bySignIn");
+		case "plugin":
+			return t("byPlugin");
+	}
 }
 
 /** The text each look reads as. */

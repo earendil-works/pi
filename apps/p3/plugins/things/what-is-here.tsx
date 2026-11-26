@@ -13,6 +13,7 @@ import {
 	useHold,
 	useLive,
 	useMessages,
+	usePageState,
 	useRegistry,
 	useWatch,
 } from "@earendil-works/p3/v1/web";
@@ -38,7 +39,8 @@ export function WhatIsHere(props: { readonly workspace: string }) {
 	const errorText = useErrorText();
 	const [failure, setFailure] = useState<string | undefined>(undefined);
 	const Picker = useComponent(AddThing);
-	const [adding, setAdding] = useState(false);
+	// Kept in page state: a reload of this plugin keeps the picker open.
+	const [adding, setAdding] = usePageState(`things.adding.${props.workspace}`, false);
 	return (
 		<section className={styles.part} data-what-is-here="">
 			<div className={styles.partHead}>

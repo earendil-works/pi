@@ -35,7 +35,7 @@ import {
 	parsePaneTree,
 	sameTree,
 } from "../layout/contract.web.tsx";
-import { TargetView, type ThingViewProps, useScreenId, Views, viewsKey } from "../things/contract.web.tsx";
+import { TargetView, type ThingViewProps, useNames, useScreenId, Views, viewsKey } from "../things/contract.web.tsx";
 import { WorkspaceContents } from "../things/workspace.ts";
 import { messages } from "./messages.ts";
 import styles from "./session-view.module.css";
@@ -60,6 +60,7 @@ function SessionPanes(props: { readonly session: string; readonly person: string
 	const Layout = useComponent(PaneLayout);
 	const Target = useComponent(TargetView);
 	const views = useRegistry(Views);
+	const names = useNames();
 	const list = useWatch(useLive(useHold(WorkspaceContents, { workspace: session, view: useScreenId() }))?.list);
 	const things = useMemo(
 		() =>
@@ -69,22 +70,24 @@ function SessionPanes(props: { readonly session: string; readonly person: string
 		[list, views],
 	);
 	const [tree, setTree] = useLayout(session, props.person);
-	const seen = useRef<Set<string> | undefined>(undefined);
+	// The things available when the list last changed: one that comes (made, added, shown again) is new.
+	const previous = useRef<ReadonlySet<string> | undefined>(undefined);
+	const view = route.kind === "target" ? route.view : undefined;
+	// A pane's address keeps the view the session is shown in (`?view=`).
 	const at = (thing: string | undefined) =>
-		targetPath({ kind: "workspace", workspace: session }, { rest: thing === undefined ? [] : [thing] });
+		targetPath({ kind: "workspace", workspace: session }, { rest: thing === undefined ? [] : [thing], view });
 	const tidied = list === undefined ? tree : tidiedTree(tree, new Set(things.map(({ thing }) => thing)));
 	// biome-ignore lint/correctness/useExhaustiveDependencies: `at` and `setTree` are made anew each render; what they read is listed.
 	useEffect(() => {
 		if (list === undefined) return;
 		let next = tidied;
-		// A thing that appears while the page is open opens beside the transcript, without taking the focus; not those
-		// the session had when the page first saw it.
-		if (seen.current === undefined) seen.current = new Set(things.map(({ thing }) => thing));
-		for (const { thing } of things) {
-			if (seen.current.has(thing)) continue;
-			seen.current.add(thing);
-			next = openPane(next, thing, TRANSCRIPT);
+		// A thing that appears while the page is open (made, added, shown again) opens beside the transcript, without
+		// taking the focus; not those the session had when the page first saw it, nor one the person closed.
+		const now = new Set(things.map(({ thing }) => thing));
+		if (previous.current !== undefined) {
+			for (const thing of now) if (!previous.current.has(thing)) next = openPane(next, thing, TRANSCRIPT);
 		}
+		previous.current = now;
 		// The route's pane shows in its group; one the session no longer has leaves for the transcript.
 		const focus = active ?? TRANSCRIPT;
 		if (focus !== TRANSCRIPT && !things.some(({ thing }) => thing === focus)) redirect(at(undefined));
@@ -98,9 +101,9 @@ function SessionPanes(props: { readonly session: string; readonly person: string
 			closable: false,
 			render: () => <TranscriptPane key={session} session={session} />,
 		},
-		...things.map(({ thing, name }) => ({
+		...things.map(({ thing, kind, name }) => ({
 			id: thing,
-			title: name,
+			title: names.thing(kind, name),
 			closable: true,
 			render: () => (
 				<div className={styles.paneScroll}>

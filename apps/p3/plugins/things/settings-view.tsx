@@ -15,9 +15,9 @@ import {
 	useHold,
 	useLive,
 	useMessages,
+	usePageState,
 	useWatch,
 } from "@earendil-works/p3/v1/web";
-import { useState } from "react";
 import { Invite, useNames } from "./contract.web.tsx";
 import { page } from "./page-messages.ts";
 import styles from "./things.module.css";
@@ -48,8 +48,9 @@ function WorkspaceSettings(props: { readonly workspace: string }) {
 	const { t } = useMessages(page);
 	const ref = useLive(useHold(Workspace, { workspace: props.workspace }));
 	const info = useWatch(ref?.info);
-	const [part, setPart] = useState<Part>("may");
-	const [inviting, setInviting] = useState(false);
+	// Kept in page state, per workspace: a reload of this plugin keeps the open tab and the open dialog.
+	const [part, setPart] = usePageState<Part>(`things.settings.part.${props.workspace}`, "may");
+	const [inviting, setInviting] = usePageState(`things.settings.inviting.${props.workspace}`, false);
 	const InviteDialog = useComponent(Invite);
 	const names = useNames();
 	const mayInvite = withGranted(ref, "putParty") !== undefined || withGranted(ref, "inviteLink") !== undefined;

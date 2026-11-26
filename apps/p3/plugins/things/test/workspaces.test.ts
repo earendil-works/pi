@@ -466,26 +466,25 @@ describe("a private workspace (115)", () => {
 	});
 });
 
-describe("default grants left ticked (93)", () => {
-	it("linking a board with the agents' Read unticked writes only everyone's", async () => {
+describe("default grants without what the person removed (93)", () => {
+	it("linking a board with the agents' Read removed writes only everyone's; a removed tick not offered is ignored", async () => {
 		const { fam } = await family();
 		const b = await store.create({ kind: Board.name, name: "b", workspace: pi, by: BY }, context);
-		await store.link({ workspace: fam, thing: b, defaults: { everyone: ["read"], agents: [] } }, context);
+		await store.link({ workspace: fam, thing: b, defaults: { without: { agents: ["read"] } } }, context);
 		const rows = w.rows("grants").filter((row) => row.thing === b && row.workspace === fam);
 		assert.deepEqual(
 			rows.map((row) => JSON.parse(String(row.party)).kind),
 			["everyone"],
 		);
-		await assert.rejects(
-			store.link(
-				{
-					workspace: fam,
-					thing: await store.create({ kind: Board.name, name: "c", workspace: pi, by: BY }, context),
-					defaults: { everyone: ["draw"], agents: [] },
-				},
-				context,
-			),
-			/no default/,
+		const c = await store.create({ kind: Board.name, name: "c", workspace: pi, by: BY }, context);
+		await store.link({ workspace: fam, thing: c, defaults: { without: { everyone: ["draw"] } } }, context);
+		assert.deepEqual(
+			w
+				.rows("grants")
+				.filter((row) => row.thing === c && row.workspace === fam)
+				.map((row) => JSON.parse(String(row.party)).kind)
+				.sort(),
+			["agents", "everyone"],
 		);
 	});
 });

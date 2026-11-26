@@ -21,6 +21,7 @@ import {
 	useHold,
 	useLive,
 	useMessages,
+	usePageState,
 	useRegistry,
 	useWatch,
 } from "@earendil-works/p3/v1/web";
@@ -46,15 +47,28 @@ export function AddThingDialog(props: {
 }) {
 	const { t } = useMessages(page);
 	const info = useWatch(useLive(useHold(Workspace, { workspace: props.workspace }))?.info);
-	const [chosen, setChosen] = useState<Offer | undefined>(undefined);
+	// Kept in page state, per workspace: a reload of a plugin keeps what the person chose and typed.
+	const [chosen, setChosen] = usePageState<Offer | undefined>(`things.add.chosen.${props.workspace}`, undefined);
+	const names = useNames();
+	// Closed or done, the dialog starts afresh the next time.
+	const close = () => {
+		setChosen(undefined);
+		props.onClose();
+	};
+	const added = (thing: string) => {
+		setChosen(undefined);
+		props.onAdded(thing);
+	};
 	return (
-		<Modal.Root onOpenChange={(open) => (open ? undefined : props.onClose())} open>
+		<Modal.Root onOpenChange={(open) => (open ? undefined : close())} open>
 			<Modal.Portal>
 				<Modal.Backdrop />
 				<Modal.Viewport>
 					<Modal.Popup className={styles.dialog} data-add-thing-dialog="">
 						<Stack align="start" direction="row" gap="auto">
-							<Modal.Title>{t("addToWorkspace", info?.name ?? "")}</Modal.Title>
+							<Modal.Title>
+								{t("addToWorkspace", info === undefined ? "" : names.thing(info.kind, info.name))}
+							</Modal.Title>
 							<Modal.Close render={<IconButton aria-label={t("close")} />}>
 								<CloseIcon />
 							</Modal.Close>
@@ -64,7 +78,7 @@ export function AddThingDialog(props: {
 						) : (
 							<Confirm
 								offer={chosen}
-								onAdded={props.onAdded}
+								onAdded={added}
 								onBack={() => setChosen(undefined)}
 								workspace={props.workspace}
 							/>
@@ -170,16 +184,16 @@ function Confirm(props: {
 	const Create = useRegistry(ThingParts)?.get(offer.thingKind.name)?.value.Create;
 	const text = useMessageText();
 	const names = useNames();
-	const [name, setName] = useState("");
+	const [name, setName] = usePageState(`things.add.name.${props.workspace}`, "");
 	const [input, setInput] = useState<JsonValue | undefined>(undefined);
 	const grants = offer.thingKind.defaultGrants;
-	const [kept, setKept] = useState<DefaultsChoice>({
-		everyone: [...(grants.everyone ?? [])],
-		agents: [...(grants.agents ?? [])],
-	});
-	// Whether the person changed the defaults: untouched, none are sent and the kind (or its create hook, which may
-	// answer other ones, a private workspace's) decides.
-	const [touched, setTouched] = useState(false);
+	// What the person removed from the defaults, per party (decision of review round 1): the store writes what the kind
+	// or its create hook offers minus these, so the preview's list can differ from the offer (a private session) and
+	// nothing is refused. Ticked again, a tick is not removed.
+	const [removed, setRemoved] = useState<{ readonly everyone: readonly string[]; readonly agents: readonly string[] }>(
+		{ everyone: [], agents: [] },
+	);
+	const [pending, setPending] = useState(false);
 	const [failure, setFailure] = useState<string | undefined>(undefined);
 	const errorText = useErrorText();
 	// A Make tick (item 114) reads as what it lets do; a kind's own tick by its label.
@@ -190,17 +204,26 @@ function Confirm(props: {
 		const found = offer.thingKind.ticks.find((each) => each.name === tick);
 		return found === undefined ? tick : text(found.label);
 	};
-	const toggle = (party: "everyone" | "agents", tick: string, on: boolean) => {
-		setTouched(true);
-		setKept({ ...kept, [party]: on ? [...kept[party], tick] : kept[party].filter((each) => each !== tick) });
+	const toggle = (party: "everyone" | "agents", tick: string, on: boolean) =>
+		setRemoved({
+			...removed,
+			[party]: on ? removed[party].filter((each) => each !== tick) : [...removed[party], tick],
+		});
+	const without = {
+		...(removed.everyone.length === 0 ? {} : { everyone: [...removed.everyone] }),
+		...(removed.agents.length === 0 ? {} : { agents: [...removed.agents] }),
 	};
-	const defaults = touched ? { defaults: kept } : {};
-	const ready = offer.kind === "link" || Create === undefined || input !== undefined;
+	const defaults = Object.keys(without).length === 0 ? {} : { defaults: { without } };
+	// The grant is read live: Make or Link taken away while the dialog is open disables Add and says why.
+	const allowed = offer.kind === "make" ? maker !== undefined : linker !== undefined;
+	const ready = allowed && !pending && (offer.kind === "link" || Create === undefined || input !== undefined);
 	const confirm = () => {
+		if (!ready) return;
 		setFailure(undefined);
+		setPending(true);
 		const done =
 			offer.kind === "make"
-				? maker?.make(
+				? maker!.make(
 						{
 							kind: offer.thingKind.name,
 							name: name.trim(),
@@ -209,8 +232,18 @@ function Confirm(props: {
 						},
 						BACKGROUND_CONTEXT,
 					)
-				: linker?.link({ thing: offer.thing, ...defaults }, BACKGROUND_CONTEXT).then(() => offer.thing);
-		done?.then(props.onAdded, (error: unknown) => setFailure(errorText(error)));
+				: linker!.link({ thing: offer.thing, ...defaults }, BACKGROUND_CONTEXT).then(() => offer.thing);
+		done.then(
+			(thing) => {
+				setPending(false);
+				setName("");
+				props.onAdded(thing);
+			},
+			(error: unknown) => {
+				setPending(false);
+				setFailure(errorText(error));
+			},
+		);
 	};
 	return (
 		<div className={styles.picker} data-add-confirm={offerKey(offer)}>
@@ -241,7 +274,7 @@ function Confirm(props: {
 							<SelectionControlAndLabel
 								control={
 									<Checkbox.Root
-										checked={kept[party].includes(tick)}
+										checked={!removed[party].includes(tick)}
 										data-add-default={`${party}/${tick}`}
 										onCheckedChange={(on) => toggle(party, tick, on)}
 									>
@@ -257,11 +290,22 @@ function Confirm(props: {
 				),
 			)}
 			{failure === undefined ? null : <p className={styles.error}>{t("failed", failure)}</p>}
+			{allowed ? null : (
+				<p className={styles.error} data-add-not-allowed="">
+					{t(offer.kind === "make" ? "mayNotMakeHere" : "mayNotLinkHere")}
+				</p>
+			)}
 			<Modal.Actions>
 				<Button hierarchy="tertiary" onClick={props.onBack}>
 					{t("back")}
 				</Button>
-				<Button data-add-confirm-button="" disabled={!ready} hierarchy="primary" onClick={confirm}>
+				<Button
+					data-add-confirm-button=""
+					disabled={!ready}
+					hierarchy="primary"
+					onClick={confirm}
+					pending={pending}
+				>
 					{t("add")}
 				</Button>
 			</Modal.Actions>

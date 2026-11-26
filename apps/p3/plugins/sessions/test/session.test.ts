@@ -327,18 +327,36 @@ describe("the session defaults", () => {
 	});
 
 	// Astra, round 1 (must 2): making a session in a private-by-default workspace with the add dialog untouched (it
-	// sends the kind's own defaults for everyone and the agents) works, and writes no grant for everyone.
+	// sends no defaults) works, and writes no grant for everyone.
 	it("makes a private session with the add dialog's untouched defaults, with no grant row for everyone", async () => {
 		const { leo, fam } = await family();
 		await defaultsIn(fam, PRIVATE);
 		const session = await as(leo, async (ctx) => {
 			const workspace = withGranted(await ctx.get(Workspace, { workspace: fam }), "make")!;
-			const defaults = { everyone: ["read", "send"], agents: ["@make:*"] };
-			return workspace.make({ kind: SessionKind.name, name: "one", input: {}, defaults }, ctx);
+			return workspace.make({ kind: SessionKind.name, name: "one", input: {} }, ctx);
 		});
 		assert.equal((await store.workspaces.one.page({ workspace: session }, 1, context)).items[0]?.showsPeople, false);
 		assert.deepEqual(
 			w.rows("grants").filter((row) => row.workspace === session && row.partyKey === "everyone"),
+			[],
+		);
+	});
+
+	// Fable, page round 1: the dialog previews the kind's declared defaults; Leo unticks the agents' Make there. The
+	// removal is taken from what the create hook offers (a private session's), never refused.
+	it("makes a private session when the person unticked a default in the add dialog", async () => {
+		const { leo, fam } = await family();
+		await defaultsIn(fam, PRIVATE);
+		const session = await as(leo, async (ctx) => {
+			const workspace = withGranted(await ctx.get(Workspace, { workspace: fam }), "make")!;
+			const defaults = { without: { everyone: ["read"], agents: ["@make:*"] } };
+			return workspace.make({ kind: SessionKind.name, name: "touched", input: {}, defaults }, ctx);
+		});
+		assert.equal(typeof session, "string");
+		assert.deepEqual(
+			w
+				.rows("grants")
+				.filter((row) => row.workspace === session && row.thing === session && row.partyKey === "agents"),
 			[],
 		);
 	});

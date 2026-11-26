@@ -216,7 +216,7 @@ export const ThingsStore = local("things.store", {
 		 */
 		ensure: method(obj({ kind: str() }), str()),
 		/**
-		 * Links a thing into a workspace, with its kind's default grants there (`defaults`: those left ticked, item 93; a
+		 * Links a thing into a workspace, with its kind's default grants there (`defaults`: without those the person removed, item 93; a
 		 * workspace is placed by its parent, never linked).
 		 */
 		link: method(obj({ workspace: str(), thing: str(), defaults: opt(DefaultsChoice) })),
@@ -404,8 +404,8 @@ export type ThingHook = {
 
 /**
  * What a kind's `create` hook may answer: the new thing's own default view; for a workspace kind also the new
- * workspace's default grants instead of the kind's (a private session, decisions 17, 93; the person's `defaults`
- * choice applies within them), and whether people from above are shown in it.
+ * workspace's default grants instead of the kind's (a private session, decisions 17, 93; what the person's `defaults`
+ * removes is taken from them), and whether people from above are shown in it.
  */
 export type CreateAnswer = {
 	readonly defaultGrants?: DefaultGrants;

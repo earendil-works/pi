@@ -36,10 +36,14 @@ export const Origin = union([
 /** Where something comes from (see `Origin`). */
 export type Origin = Static<typeof Origin>;
 
-/** Which of a kind's default grants a new link writes (item 93): the ticks left ticked for everyone and for agents. */
-export const DefaultsChoice = obj({ everyone: arr(str()), agents: arr(str()) });
+/**
+ * What the person removed from a kind's default grants in the add dialog (item 93, review round 1): per party the ticks
+ * not to write. The store writes what the kind or its create hook offers minus these; a tick the offer lacks is
+ * ignored. Untouched: no `defaults` at all.
+ */
+export const DefaultsChoice = obj({ without: obj({ everyone: opt(arr(str())), agents: opt(arr(str())) }) });
 
-/** Which of a kind's default grants a new link writes (see `DefaultsChoice`). */
+/** What the person removed from a kind's default grants (see `DefaultsChoice`). */
 export type DefaultsChoice = Static<typeof DefaultsChoice>;
 
 /** A party as the picker offers it: whom, and their name. */

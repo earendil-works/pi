@@ -4,9 +4,10 @@
 // a group's body near an edge to split that group on that side, onto its middle to move into it; the drop's place is
 // shown while dragging, Escape cancels. A click on a tab shows it.
 
-import { CloseIcon } from "@earendil-works/p3/v1/web";
+import { CloseIcon, useMessages } from "@earendil-works/p3/v1/web";
 import { Fragment, type PointerEvent as ReactPointerEvent, useRef, useState } from "react";
 import type { Pane, PaneLayoutProps } from "./contract.web.tsx";
+import { messages } from "./messages.ts";
 import { closeShownPane, showPane } from "./pane-layout.tsx";
 import styles from "./pane-splits.module.css";
 import {
@@ -199,6 +200,7 @@ function Divider(props: {
 	readonly shared: Shared;
 }) {
 	const { split, path, index, shared } = props;
+	const { t } = useMessages(messages);
 	const row = split.direction === "row";
 	const resize = (delta: number) => {
 		const latest = shared.latest.current;
@@ -231,7 +233,7 @@ function Divider(props: {
 	return (
 		// biome-ignore lint/a11y/useSemanticElements: a focusable separator is the ARIA pattern for a splitter; <hr> takes no focus.
 		<div
-			aria-label="Resize"
+			aria-label={t("resize")}
 			aria-orientation={row ? "vertical" : "horizontal"}
 			aria-valuemax={90}
 			aria-valuemin={10}
@@ -255,6 +257,7 @@ function Divider(props: {
 /** A group: its tab bar (with the drop's place while a tab is dragged over it) and its active pane. */
 function GroupView(props: { readonly group: PaneGroup; readonly shared: Shared }) {
 	const { group, shared } = props;
+	const { t } = useMessages(messages);
 	const target = shared.drag?.target?.group === group.id ? shared.drag.target : undefined;
 	const insertAt = target?.kind === "tabs" ? target.index : undefined;
 	const active = group.active === null ? undefined : shared.panes.get(group.active);
@@ -282,7 +285,7 @@ function GroupView(props: { readonly group: PaneGroup; readonly shared: Shared }
 								</button>
 								{pane.closable ? (
 									<button
-										aria-label={`Close ${pane.title}`}
+										aria-label={t("close", pane.title)}
 										className={styles.close}
 										data-pane-close={id}
 										onClick={() => closeShownPane(shared.latest.current, id)}

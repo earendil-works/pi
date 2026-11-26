@@ -912,7 +912,7 @@ class Writes {
 	 * Workspace `thing` of workspace kind `kind` under `parent` (never a leaf), its kind's `create` hook already run:
 	 * its thing row and line (its path the parent's and itself); its maker's every tick and `MAKE_ANY` at itself and
 	 * its maker put in (items 88, 90, 115); a leaf's agent put in (`agent/<id>`: its session's agent is present there);
-	 * its default grants at itself (the hook's answer's, else the kind's; those left ticked in `defaults`).
+	 * its default grants at itself (the hook's answer's, else the kind's; without those `defaults` removes).
 	 */
 	async workspace(
 		tx: Tx,
@@ -1049,7 +1049,7 @@ class Writes {
 
 	/**
 	 * Links `thing` into `workspace` with its kind's default grants (once; a kind of `workspaces: "one"` once at all),
-	 * those left ticked in `defaults` (item 93). A workspace is placed by its parent, never linked.
+	 * without those `defaults` removes (item 93). A workspace is placed by its parent, never linked.
 	 */
 	async link(
 		tx: Tx,
@@ -1504,7 +1504,7 @@ class Writes {
 		touched.signedOut.push(person);
 	}
 
-	/** The link of `thing` in `workspace`, with default grants `granted` (those left ticked in `defaults`). */
+	/** The link of `thing` in `workspace`, with default grants `granted` (without those `defaults` removes). */
 	#linked(
 		tx: Tx,
 		workspace: string,
@@ -1519,8 +1519,9 @@ class Writes {
 
 	/**
 	 * Default grants `granted` of `item`'s kind on `thing` in `workspace` (source: the kind's plugin, item 93), each
-	 * party's only with the ticks `defaults` left ticked (`OPEN` stands for a default of none); a choice naming a tick
-	 * the defaults do not is refused.
+	 * party's without the ticks `defaults` names (`OPEN` stands for a default of none); a removed tick the offer does
+	 * not have is ignored, so what the person saw (the kind's declared defaults) and what is offered (its create hook's
+	 * answer) may differ.
 	 */
 	#defaults(
 		tx: Tx,
@@ -1532,17 +1533,13 @@ class Writes {
 	): void {
 		const source: Source = { kind: "plugin", plugin: item.plugin };
 		const parties = [
-			[{ kind: "everyone" }, granted.everyone, defaults?.everyone],
-			[{ kind: "agents" }, granted.agents, defaults?.agents],
+			[{ kind: "everyone" }, granted.everyone, defaults?.without.everyone],
+			[{ kind: "agents" }, granted.agents, defaults?.without.agents],
 		] as const;
-		for (const [party, ticks, kept] of parties) {
+		for (const [party, ticks, removed] of parties) {
 			if (ticks === undefined) continue;
 			const offered = ticks.length === 0 ? [OPEN] : ticks;
-			for (const tick of kept ?? []) {
-				if (!offered.includes(tick))
-					throw invalid("args", `things: ${tick} is no default of ${item.value.name} for ${party.kind}`);
-			}
-			const written = kept === undefined ? offered : offered.filter((tick) => kept.includes(tick));
+			const written = removed === undefined ? offered : offered.filter((tick) => !removed.includes(tick));
 			for (const tick of written) {
 				// What a workspace kind's defaults or its create hook's answer name is checked as a written grant is (93,
 				// 114): a tick of the kind for that party, `OPEN`, or on a workspace's own thing a Make tick of a
