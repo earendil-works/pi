@@ -1,150 +1,136 @@
-// The notes kind's harness part: the worker facet contributes it to `ThingHarnessParts`; given the notebooks an agent
-// holds (real references, held as the session's worker on a server with the things plugin), it offers `notes_list`
-// and `notes_read` always and `notes_write` while one notebook gives Write; `notes_list` names each notebook with its
-// id and whether the agent may write there; `notes_read` shows the notes with their ids and authors, page by page;
-// `notes_write` adds, edits and removes, refused naming the notebook where Write is not given (also when it was taken
-// back after the tools were offered) and for an id that is no notebook of the agent's.
+// The notes kind's harness part, as the worker facet contributes it to `ThingHarnessParts`, given the notebooks an
+// agent holds (real references, held as the session's worker on a server with the things plugin, `kindServer`): it
+// offers `notes_list` and `notes_read` always and `notes_write` while one notebook gives Write; `notes_list` names
+// each notebook with its id and whether the agent may write there; `notes_read` answers a page as JSON, read now, so
+// the agent's own reference keeps its pages however often it reads (Astra: it grew with each read); `notes_write`
+// adds, edits and removes, refused naming the notebook where Write is not given (also when it was taken back after
+// the tools were offered) and for an id that is no notebook of the agent's.
 
 import assert from "node:assert/strict";
-import { afterEach, beforeEach, describe, it } from "node:test";
+import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { type Ctx, BACKGROUND_CONTEXT as context, type P3Principal, until } from "@earendil-works/p3/v1";
-import { testPlugin } from "@earendil-works/p3/v1/testing";
+import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
 import type { Extension } from "@earendil-works/p3/v1/worker";
 import { within } from "../../../test/until.ts";
-import { type HarnessSession, type HeldThing, ThingHarnessParts } from "../../things/contract.worker.ts";
-import { Notes, NotesKind } from "../contract.ts";
-import { notesExtension } from "../worker.ts";
-import { type Notebooks, notebooks } from "./notebooks.ts";
+import { type HeldThing, ThingHarnessParts } from "../../things/contract.worker.ts";
+import { type KindServer, kindServer, runTool, toolNames } from "../../things/test/kind-server.ts";
+import { type Notes, NotesKind } from "../contract.ts";
 
-/** The session's agent. */
-const AGENT: P3Principal = { kind: "worker", session: "s1" };
+/** The notes plugin's root. */
+const ROOT = fileURLToPath(new URL("../", import.meta.url));
 
-let n: Notebooks;
+/** The session's agent as a party: Write withheld from it by name applies by every route (item 106). */
+const AGENT_PARTY = { kind: "agent", session: "s1" } as const;
+
+/** The worker facet, as a session's worker loads it. */
+let worker: TestedPlugin<P3Principal>;
+let n: KindServer<typeof Notes>;
 let s1: string;
 
+before(async () => {
+	worker = await testPlugin(ROOT, { kind: "worker", session: "s1" }, context);
+});
+
+after(() => worker.close(context));
+
 beforeEach(async () => {
-	n = await notebooks();
+	n = await kindServer(ROOT, NotesKind, context);
 	s1 = await n.workspace("s1");
 });
 
 afterEach(() => n.close());
 
-/** The agent's session as the part gets it: its calls run as the session's worker. */
-function session(): HarnessSession {
-	return { session: "s1", workspace: s1, call: (fn, ctx) => n.t.root(fn, ctx, { principal: AGENT }) };
-}
-
-/** Runs `fn` with the agent holding notebooks `things` in s1: the part's extension for them, and the held things. */
-function giving<T>(
+/** Runs `fn` with s1's agent holding notebooks `things` there: the part's extension for them, and the held things. */
+const giving = <T>(
 	things: readonly string[],
 	fn: (extension: Extension, ctx: Ctx<P3Principal>, held: readonly HeldThing<typeof Notes>[]) => Promise<T>,
-) {
-	return n.t.root(
-		async (ctx) => {
-			const held: HeldThing<typeof Notes>[] = [];
-			for (const thing of things)
-				held.push({ thing, workspace: s1, ref: await ctx.get(Notes, { workspace: s1, thing }) });
-			return fn(notesExtension(held, session()), ctx, held);
-		},
-		context,
-		{ principal: AGENT },
-	);
-}
-
-/** Runs tool `name` of `extension` with `args`; its output's text. */
-async function run(extension: Extension, name: string, args: object): Promise<string> {
-	const tool = extension.tools?.find((each) => each.name === name);
-	assert.ok(tool !== undefined, name);
-	// The notes tools use neither Durable's execution API nor arguments beyond their schema's.
-	const result = await tool.execute(args as never, {} as never, context);
-	// A park has no output: the notes tools never park.
-	return (result.output ?? []).map((part) => (part.type === "text" ? part.text : "")).join("");
-}
-
-/** The names of `extension`'s tools. */
-const names = (extension: Extension) => extension.tools?.map((tool) => tool.name).toSorted();
+) => n.giving(worker, { session: "s1", workspace: s1 }, things, fn);
 
 describe("the notes kind's harness part", () => {
-	it("is contributed by the worker facet", async () => {
-		const t = await testPlugin(
-			fileURLToPath(new URL("../", import.meta.url)),
-			{ kind: "worker", session: "s1" },
-			context,
+	it("is the worker facet's one part, for the notes kind", () => {
+		assert.deepEqual(
+			worker.contributions(ThingHarnessParts).map(({ value }) => value.kind.name),
+			[NotesKind.name],
 		);
-		try {
-			// The facet as the plugin tier builds it: its own module, so compared by kind.
-			assert.deepEqual(
-				t.contributions(ThingHarnessParts).map(({ value }) => value.kind.name),
-				[NotesKind.name],
-			);
-		} finally {
-			await t.close(context);
-		}
 	});
 
 	it("offers notes_write while one notebook gives Write, and lists which", async () => {
-		const [plan, log] = [await n.notebookIn(s1, "Plan"), await n.notebookIn(s1, "Log")];
-		await n.write(s1, plan, { kind: "agents" }, false);
+		const [plan, log] = [await n.thingIn(s1, "Plan"), await n.thingIn(s1, "Log")];
+		await n.tick(s1, plan, AGENT_PARTY, "write", false);
 		await giving([plan, log], async (extension) => {
-			assert.deepEqual(names(extension), ["notes_list", "notes_read", "notes_write"]);
-			assert.deepEqual(JSON.parse(await run(extension, "notes_list", {})), [
+			assert.deepEqual(toolNames(extension), ["notes_list", "notes_read", "notes_write"]);
+			assert.deepEqual(JSON.parse(await runTool(extension, "notes_list", {})), [
 				{ id: plan, name: "Plan", write: false },
 				{ id: log, name: "Log", write: true },
 			]);
 		});
-		await giving([plan], async (extension) => assert.deepEqual(names(extension), ["notes_list", "notes_read"]));
+		await giving([plan], async (extension) => assert.deepEqual(toolNames(extension), ["notes_list", "notes_read"]));
 	});
 
-	it("adds, edits and removes notes, and reads them with their ids and authors, page by page", async () => {
-		const log = await n.notebookIn(s1, "Log");
+	it("adds, edits and removes notes, and reads them as JSON a page at a time; the agent's hold stays", async () => {
+		const log = await n.thingIn(s1, "Log");
 		const ann = await n.person("Ann", s1);
 		await n.holding(ann, s1, log, async (notes, ctx) => {
-			for (let i = 0; i < 50; i++) await notes.add!({ text: `old ${i}` }, ctx);
+			for (let i = 0; i < 60; i++) await notes.add!({ text: `old ${i}` }, ctx);
 		});
-		await giving([log], async (extension) => {
-			const added = await run(extension, "notes_write", { notebook: log, change: { kind: "add", text: "first" } });
+		await giving([log], async (extension, ctx, [held]) => {
+			const added = await runTool(extension, "notes_write", {
+				notebook: log,
+				change: { kind: "add", text: "first" },
+			});
 			const id = /^Added note (.+)\.$/.exec(added)?.[1];
 			assert.ok(id !== undefined, added);
-			await run(extension, "notes_write", { notebook: log, change: { kind: "edit", id, text: "edited" } });
-			const read = await run(extension, "notes_read", { notebook: log });
-			const lines = read.split("\n");
-			assert.match(lines[0]!, new RegExp(`^- \\[${id}\\] \\S+ the agent of session s1: edited$`));
-			assert.match(lines[1]!, / Ann: old 49$/);
-			assert.equal(lines.at(-1), "(older notes follow: read more pages)");
-			assert.equal((await run(extension, "notes_read", { notebook: log, pages: 2 })).split("\n").length, 51);
-			await run(extension, "notes_write", { notebook: log, change: { kind: "remove", id } });
-			assert.doesNotMatch(await run(extension, "notes_read", { notebook: log }), /edited/);
+			await runTool(extension, "notes_write", { notebook: log, change: { kind: "edit", id, text: "edited" } });
+			const read = async (after?: string) =>
+				JSON.parse(
+					await runTool(extension, "notes_read", { notebook: log, ...(after === undefined ? {} : { after }) }),
+				);
+			await until(held!.ref.list, (list) => list.rows[0]?.text === "edited", within("the edit held", ctx));
+			// The agent's first page, with the note it added on top.
+			const holds = held!.ref.list.value.rows.length;
+			const first = await read();
+			const { id: latest, text, author } = first.rows[0];
+			assert.deepEqual([latest, text, author], [id, "edited", { kind: "agent", session: "s1" }]);
+			assert.deepEqual(first.rows[1].author, { kind: "person", person: ann.id, name: "Ann" });
+			const second = await read(first.next);
+			assert.deepEqual([first.rows.length, second.rows.length, second.next], [50, 11, undefined]);
+			// Read again and again: each read is its own; what the agent holds keeps its first page.
+			assert.equal((await read(first.next)).rows.length, 11);
+			assert.equal((await read()).rows.length, 50);
+			assert.deepEqual([holds, held!.ref.list.value.rows.length], [51, 51]);
+			await runTool(extension, "notes_write", { notebook: log, change: { kind: "remove", id } });
+			assert.notEqual((await read()).rows[0].id, id);
 		});
 	});
 
 	it("refuses to write where Write is not given, also when taken back after offering, naming the notebook", async () => {
-		const [plan, log] = [await n.notebookIn(s1, "Plan"), await n.notebookIn(s1, "Log")];
-		await n.write(s1, plan, { kind: "agents" }, false);
+		const [plan, log] = [await n.thingIn(s1, "Plan"), await n.thingIn(s1, "Log")];
+		await n.tick(s1, plan, AGENT_PARTY, "write", false);
 		await giving([plan, log], async (extension, ctx, held) => {
 			const add = { kind: "add", text: "a note" };
 			await assert.rejects(
-				run(extension, "notes_write", { notebook: plan, change: add }),
+				runTool(extension, "notes_write", { notebook: plan, change: add }),
 				/may not write in the notebook "Plan"/,
 			);
-			await n.write(s1, log, { kind: "agents" }, false);
+			await n.tick(s1, log, AGENT_PARTY, "write", false);
 			const { ref } = held[1]!;
 			await until(ref.state, () => ref.add === undefined, within("Write taken back", ctx));
 			await assert.rejects(
-				run(extension, "notes_write", { notebook: log, change: add }),
+				runTool(extension, "notes_write", { notebook: log, change: add }),
 				/may not write in the notebook "Log"/,
 			);
 		});
 	});
 
 	it("refuses an id that is no notebook of the agent's", async () => {
-		const plan = await n.notebookIn(s1, "Plan");
-		const elsewhere = await n.notebookIn(n.pi, "Elsewhere");
+		const plan = await n.thingIn(s1, "Plan");
+		const elsewhere = await n.thingIn(n.pi, "Elsewhere");
 		await giving([plan], async (extension) => {
 			for (const notebook of ["nb9", elsewhere]) {
-				await assert.rejects(run(extension, "notes_read", { notebook }), /you have no notebook/);
+				await assert.rejects(runTool(extension, "notes_read", { notebook }), /you have no notebook/);
 				await assert.rejects(
-					run(extension, "notes_write", { notebook, change: { kind: "add", text: "x" } }),
+					runTool(extension, "notes_write", { notebook, change: { kind: "add", text: "x" } }),
 					/you have no notebook/,
 				);
 			}

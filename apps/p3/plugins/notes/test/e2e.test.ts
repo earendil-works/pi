@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { BACKGROUND_CONTEXT as context, type Reference, until } from "@earendil-works/p3/v1";
+import type { RolloutResult } from "@earendil-works/p3/v1/server";
 import { type TestServer, testServer } from "@earendil-works/p3/v1/testing";
 import { within } from "../../../test/until.ts";
 import { ThingsStore } from "../../things/contract.server.ts";
@@ -37,6 +38,18 @@ async function shows(notes: Reference<typeof Notes>, text: string, name: string)
 		({ rows: [first] }) => first?.text === text && first.author.kind === "person" && first.author.name === name,
 		within(`"${text}" by ${name}`, context, 10_000),
 	);
+}
+
+/** What the server's step of `applied` reloaded: the changed plugins, and how many held notebooks restarted. */
+function restarted(applied: RolloutResult) {
+	const [host] = applied.steps.find(({ name }) => name === "server")?.hosts ?? [];
+	assert.equal(host?.kind, "reloaded");
+	const { plugins, objects } = host.report;
+	return {
+		changed: plugins.changed,
+		notebooks: objects.filter(({ object, kind }) => kind === "restarted" && object.startsWith(`${NotesKind.name}(`))
+			.length,
+	};
 }
 
 describe("the notes end to end", () => {
@@ -70,9 +83,13 @@ describe("the notes end to end", () => {
 		assert.deepEqual([bens.name.value, bens.add, bens.granted.size], ["Plan", undefined, 0]);
 		await anns.add!({ text: "before the reload" }, context);
 		await shows(bens, "before the reload", "Ann");
-		// A real edit of the server facet, applied as `p3 apply` does once the watcher saw it.
+		// A real edit of the server facet (a comment alone builds the same script, which reloads nothing), applied as
+		// `p3 apply` does once the watcher saw it.
 		const file = join(root, "notes", "server.ts");
-		await writeFile(file, `${await readFile(file, "utf8")}\n// edited\n`);
+		const source = await readFile(file, "utf8");
+		const edited = source.replace("const PAGE = 50;", "const PAGE = 40;");
+		assert.notEqual(edited, source);
+		await writeFile(file, edited);
 		await until(
 			t.plugins,
 			(marks) => marks.dirty.includes("@earendil-works/p3-notes"),
@@ -80,6 +97,7 @@ describe("the notes end to end", () => {
 		);
 		const applied = await t.apply(context);
 		assert.equal(applied.stopped, undefined);
+		assert.deepEqual(restarted(applied), { changed: ["@earendil-works/p3-notes"], notebooks: 2 });
 		await until(
 			anns.state,
 			(state) => state.kind === "live" && anns.add !== undefined,

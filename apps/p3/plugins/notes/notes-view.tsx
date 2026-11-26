@@ -3,55 +3,61 @@
 // follows the admission live: Write taken back turns it into the reader's at once, on the same hold.
 
 import { Button, TextArea } from "@earendil-works/elanor-react";
-import { BACKGROUND_CONTEXT, type Context, Me, type Reference, type With, withGranted } from "@earendil-works/p3/v1";
-import { useHold, useLive, useRefState, useWatch } from "@earendil-works/p3/v1/web";
+import {
+	BACKGROUND_CONTEXT,
+	type Context,
+	type MessagesOf,
+	type Reference,
+	type Translator,
+	type With,
+	withGranted,
+} from "@earendil-works/p3/v1";
+import { type ThingViewProps, useHold, useLive, useMessages, useRefState, useWatch } from "@earendil-works/p3/v1/web";
 import { useState } from "react";
 import { type Author, NOTES_WRITES, type Note, Notes } from "./contract.ts";
+import { messages } from "./messages.ts";
 import styles from "./notes-view.module.css";
 
-/** Who is looking: a person (the owner among them) by id, or nobody known yet. */
-type Viewer = { readonly id: string } | undefined;
-
 /** A writer's members, as the view calls them. */
-type Editor = With<Reference<typeof Notes>, (typeof NOTES_WRITES)[number]>;
+type Writer = With<Reference<typeof Notes>, (typeof NOTES_WRITES)[number]>;
 
-/** Notebook `thing` of session `session`, as the viewer's admission allows. */
-export function NotesView(props: { readonly session: string; readonly thing: string }) {
+/** The view's texts in the viewer's language. */
+type Texts = Translator<"notes", MessagesOf<typeof messages>>;
+
+/** Notebook `thing`, as the viewer's admission allows. */
+export function NotesView(props: ThingViewProps) {
 	// Until sessions are workspaces (slice 5) a notebook is held in the workspace named by the session's id.
 	const ref = useHold(Notes, { workspace: props.session, thing: props.thing });
 	const live = useLive(ref);
-	const editor = withGranted(live, ...NOTES_WRITES);
+	const writer = withGranted(live, ...NOTES_WRITES);
 	const state = useRefState(ref);
 	const list = useWatch(live?.list);
 	const name = useWatch(live?.name);
-	const me = useWatch(useLive(useHold(Me, {}))?.me);
 	const action = useAction();
-	const viewer: Viewer = me?.kind === "person" ? { id: me.id } : undefined;
-	if (state?.kind === "failed" && state.cause.kind === "denied") {
-		return <p className={styles.note}>You may not read these notes.</p>;
-	}
-	if (state?.kind === "failed" || state?.kind === "ended") {
-		return <p className={styles.note}>These notes cannot be shown now.</p>;
-	}
+	const { t } = useMessages(messages);
+	if (state?.kind === "failed" && state.cause.kind === "denied") return <p className={styles.note}>{t("denied")}</p>;
+	if (state?.kind === "failed" || state?.kind === "ended") return <p className={styles.note}>{t("unavailable")}</p>;
 	return (
 		<section
-			aria-label="Notes"
+			aria-label={t("untitled")}
 			className={styles.notes}
-			data-notes={live === undefined ? "loading" : editor === undefined ? "reader" : "writer"}
+			data-notes={live === undefined ? "loading" : writer === undefined ? "reader" : "writer"}
 		>
 			<p className={styles.title} data-notes-name="">
-				{name ?? "Notes"}
-				{live !== undefined && editor === undefined ? <span className={styles.readOnly}>Read only</span> : null}
+				{name || t("untitled")}
+				{live !== undefined && writer === undefined ? (
+					<span className={styles.readOnly}>{t("readOnly")}</span>
+				) : null}
 			</p>
-			{editor === undefined ? null : <AddNote action={action} editor={editor} />}
+			{writer === undefined ? null : <AddNote action={action} t={t} writer={writer} />}
 			{list === undefined ? (
-				<p className={styles.note}>Loading…</p>
+				<p className={styles.note}>{t("loading")}</p>
 			) : list.rows.length === 0 ? (
-				<p className={styles.note}>No notes yet.</p>
+				<p className={styles.note}>{t("empty")}</p>
 			) : (
 				<ul className={styles.list}>
 					{list.rows.map((note) => (
-						<NoteItem action={action} editor={editor} key={note.id} note={note} viewer={viewer} />
+						<NoteItem action={action} key={note.id} note={note} t={t} writer={writer} />
 					))}
 				</ul>
 			)}
@@ -63,7 +69,7 @@ export function NotesView(props: { readonly session: string; readonly thing: str
 					onClick={() => action.run((ctx) => live.more(ctx))}
 					pending={action.pending}
 				>
-					Older notes
+					{t("older")}
 				</Button>
 			) : null}
 			{action.error === undefined ? null : <p className={styles.error}>{action.error}</p>}
@@ -101,25 +107,26 @@ function useAction(): Action {
 	};
 }
 
-/** The editor's field for a new note and its button. */
-function AddNote(props: { readonly editor: Editor; readonly action: Action }) {
+/** The writer's field for a new note and its button. */
+function AddNote(props: { readonly writer: Writer; readonly action: Action; readonly t: Texts }) {
 	const [text, setText] = useState("");
+	const { t } = props;
 	const add = () => {
 		const note = text.trim();
 		if (note === "") return;
 		props.action.run(async (ctx) => {
-			await props.editor.add({ text: note }, ctx);
+			await props.writer.add({ text: note }, ctx);
 			setText("");
 		});
 	};
 	return (
 		<div className={styles.add}>
 			<TextArea
-				aria-label="New note"
+				aria-label={t("newNote")}
 				className={styles.field}
 				data-note-new=""
 				onValueChange={setText}
-				placeholder="A new note"
+				placeholder={t("newNotePlaceholder")}
 				rows={2}
 				value={text}
 			/>
@@ -130,33 +137,30 @@ function AddNote(props: { readonly editor: Editor; readonly action: Action }) {
 				onClick={add}
 				pending={props.action.pending}
 			>
-				Add
+				{t("add")}
 			</Button>
 		</div>
 	);
 }
 
-/** One note: its text, who wrote it and when; an editor edits it in place or removes it. */
+/** One note: its text, who wrote it and when; a writer edits it in place or removes it. */
 function NoteItem(props: {
 	readonly note: Note;
-	readonly editor: Editor | undefined;
-	readonly viewer: Viewer;
+	readonly writer: Writer | undefined;
 	readonly action: Action;
+	readonly t: Texts;
 }) {
 	const [editing, setEditing] = useState<string | undefined>(undefined);
-	const { note, editor } = props;
-	const run = (call: (editor: Editor, context: Context) => Promise<unknown>) => {
-		if (editor !== undefined) props.action.run((ctx) => call(editor, ctx));
-	};
+	const { note, writer, action, t } = props;
 	return (
 		<li className={styles.item} data-note={note.id}>
-			{editing === undefined || editor === undefined ? (
+			{editing === undefined || writer === undefined ? (
 				<p className={styles.text} data-note-text="">
 					{note.text}
 				</p>
 			) : (
 				<TextArea
-					aria-label="Note"
+					aria-label={t("note")}
 					className={styles.field}
 					data-note-edit=""
 					onValueChange={setEditing}
@@ -166,21 +170,21 @@ function NoteItem(props: {
 			)}
 			<div className={styles.meta}>
 				<span className={styles.by}>
-					{authorName(note.author, props.viewer)} · {new Date(note.at).toLocaleString()}
+					{t("written", authorName(note.author, t), new Date(note.at).toLocaleString())}
 				</span>
-				{editor === undefined ? null : editing === undefined ? (
+				{writer === undefined ? null : editing === undefined ? (
 					<>
 						<Button density="compact" hierarchy="tertiary" onClick={() => setEditing(note.text)}>
-							Edit
+							{t("edit")}
 						</Button>
 						<Button
 							data-note-remove=""
 							density="compact"
 							hierarchy="tertiary"
-							onClick={() => run((notes, ctx) => notes.remove({ id: note.id }, ctx))}
+							onClick={() => action.run((ctx) => writer.remove({ id: note.id }, ctx))}
 							semantic="negative"
 						>
-							Delete
+							{t("remove")}
 						</Button>
 					</>
 				) : (
@@ -191,16 +195,16 @@ function NoteItem(props: {
 							disabled={editing.trim() === ""}
 							hierarchy="secondary"
 							onClick={() =>
-								run(async (notes, ctx) => {
-									await notes.edit({ id: note.id, text: editing.trim() }, ctx);
+								action.run(async (ctx) => {
+									await writer.edit({ id: note.id, text: editing.trim() }, ctx);
 									setEditing(undefined);
 								})
 							}
 						>
-							Save
+							{t("save")}
 						</Button>
 						<Button density="compact" hierarchy="tertiary" onClick={() => setEditing(undefined)}>
-							Cancel
+							{t("cancel")}
 						</Button>
 					</>
 				)}
@@ -209,14 +213,14 @@ function NoteItem(props: {
 	);
 }
 
-/** How the view names a note's author: the viewer as "You", a person by name, an agent, the Pi itself. */
-function authorName(author: Author, viewer: Viewer): string {
+/** How the view names a note's author: a person by name, an agent, the Pi itself. */
+function authorName(author: Author, t: Texts): string {
 	switch (author.kind) {
 		case "person":
-			return viewer?.id === author.person ? "You" : author.name;
+			return author.name;
 		case "agent":
-			return "The agent";
+			return t("byAgent");
 		case "server":
-			return "Pi";
+			return t("byPi");
 	}
 }

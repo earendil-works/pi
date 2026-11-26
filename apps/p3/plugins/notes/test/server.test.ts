@@ -1,23 +1,44 @@
-// The notes plugin on the server (`testPlugin`, beside the things plugin's server facet): the kind (registered with the
-// things plugin, made by anyone, linked in many workspaces, Write by default for everyone and the agents, guests
-// reading; its notes dropped when the notebook goes with its last link), the one admission (a person put in and the
-// session's agent get Write; Write withheld leaves a reader on the same hold, live; nobody else is admitted), notes
-// keyed by the notebook (the same in every workspace it is linked in), authors as the admission says with persons'
-// names read by id, edits and removals, refusals, and the list with `more`.
+// The notes plugin on the server (`kindServer`: its server facet beside the things plugin's): the kind (registered by
+// its plugin, made by anyone; its notes dropped when the notebook goes with its last link, also when its delete runs
+// again), the one admission (a person put in and the session's agent get Write; `@open` alone, or Write withheld,
+// leaves a reader on the same hold, live; the owner gets Write without being put in; a notebook hidden in a workspace,
+// or a caller removed, is denied), notes keyed by the notebook (the same in every workspace it is linked in), authors
+// as the admission says with persons' names read by id (any number of them), edits and removals, refusals, each
+// caller's pages of one shared list, and a page read now (`page`). The cost of one shared read, whoever holds the
+// notebook, is counted on a host with telemetry (`world`). Authors' names following a rename wait for people's names
+// to be editable (the things store cannot rename a person yet).
 
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { BACKGROUND_CONTEXT as context, isChordError, type P3Principal, until } from "@earendil-works/p3/v1";
-import { eventually, within } from "../../../test/until.ts";
+import { fileURLToPath } from "node:url";
+import {
+	type Ctx,
+	BACKGROUND_CONTEXT as context,
+	isChordError,
+	type P3Principal,
+	type Reference,
+	until,
+} from "@earendil-works/p3/v1";
+import { collected, eventually, within } from "../../../test/until.ts";
+import { ThingHooks, ThingsStore } from "../../things/contract.server.ts";
+import { OPEN } from "../../things/contract.ts";
 import { ThingKinds } from "../../things/kind.ts";
-import { NOTES_WRITES, NotesKind } from "../contract.ts";
+import { BY, type KindServer, kindServer, type Person } from "../../things/test/kind-server.ts";
+import { world } from "../../things/test/world.ts";
+import { NOTES_WRITES, Notes, NotesKind } from "../contract.ts";
+import notesServer from "../server.ts";
 import { NotesStore } from "../store.ts";
-import { BY, type Notebooks, notebooks } from "./notebooks.ts";
 
-let n: Notebooks;
+/** The notes plugin's root. */
+const ROOT = fileURLToPath(new URL("../", import.meta.url));
+
+/** The session's agent of workspace `s1`. */
+const AGENT: P3Principal = { kind: "worker", session: "s1" };
+
+let n: KindServer<typeof Notes>;
 
 beforeEach(async () => {
-	n = await notebooks();
+	n = await kindServer(ROOT, NotesKind, context);
 });
 
 afterEach(() => n.close());
@@ -31,38 +52,37 @@ async function refused(promise: Promise<unknown>, code = "forbidden"): Promise<v
 	await assert.rejects(promise, (error: unknown) => isChordError(error) && error.code === code);
 }
 
+/** The texts of `notes`' loaded notes, in order. */
+const texts = (notes: Reference<typeof Notes>) => notes.list.value.rows.map(({ text }) => text);
+
+/** Adds `count` notes `n0`, `n1`, … to `thing` in Pi as `who`. */
+async function fill(who: Person, thing: string, count: number): Promise<void> {
+	await n.holding(who, n.pi, thing, async (notes, ctx) => {
+		for (let i = 0; i < count; i++) await notes.add!({ text: `n${i}` }, ctx);
+	});
+}
+
 describe("the kind", () => {
-	it("is registered with the things plugin as declared: anyone makes, many workspaces, Write by default", async () => {
+	it("is registered by the notes plugin, made by anyone", async () => {
 		const entry = (await n.t.host.registry(ThingKinds, context)).value.get(NotesKind.name);
-		assert.equal(entry?.plugin, "@earendil-works/p3-notes");
-		const { makers, workspaces, ticks, defaultGrants } = entry.value;
-		assert.deepEqual(
-			{ makers, workspaces, ticks: ticks.map(({ name, for: forWhom }) => [name, forWhom]), defaultGrants },
-			{
-				makers: "anyone",
-				workspaces: "many",
-				ticks: [["write", "all"]],
-				defaultGrants: { everyone: ["write"], agents: ["write"], guests: [] },
-			},
-		);
-		assert.deepEqual(NotesKind.gives.get("write"), NOTES_WRITES);
+		assert.deepEqual([entry?.plugin, entry?.value.makers], ["@earendil-works/p3-notes", "anyone"]);
 	});
 
-	it("names a notebook by its thing, else Notes, and follows a rename", async () => {
+	it("names a notebook by its thing, empty while it has none, and follows a rename", async () => {
 		const ann = await n.person("Ann");
-		const named = await n.notebookIn(n.pi, "Plan");
-		const unnamed = await n.notebookIn(n.pi);
+		const named = await n.thingIn(n.pi, "Plan");
+		const unnamed = await n.thingIn(n.pi);
 		assert.equal(await n.holding(ann, n.pi, named, async (notes) => notes.name.value), "Plan");
 		await n.holding(ann, n.pi, unnamed, async (notes, ctx) => {
-			assert.equal(notes.name.value, "Notes");
+			assert.equal(notes.name.value, "");
 			await n.things.rename({ thing: unnamed, name: "Ideas" }, context);
 			await until(notes.name, (name) => name === "Ideas", within("the new name", ctx));
 		});
 	});
 
-	it("drops a notebook's notes when it goes with its last link, and only its", async () => {
+	it("drops a notebook's notes when it goes with its last link, and only its; its delete may run again", async () => {
 		const ann = await n.person("Ann");
-		const [notebook, other] = [await n.notebookIn(n.pi), await n.notebookIn(n.pi)];
+		const [notebook, other] = [await n.thingIn(n.pi), await n.thingIn(n.pi)];
 		await n.holding(ann, n.pi, notebook, (notes, ctx) => notes.add!({ text: "gone" }, ctx));
 		await n.holding(ann, n.pi, other, (notes, ctx) => notes.add!({ text: "kept" }, ctx));
 		await n.things.unlink({ workspace: n.pi, thing: notebook }, context);
@@ -73,6 +93,9 @@ describe("the kind", () => {
 			(rows) => rows.length === 0,
 			2000,
 		);
+		// The things plugin runs a delete again after a failure or a restart: a second run finds nothing and succeeds.
+		const hook = (await n.t.host.registry(ThingHooks, context)).value.get(NotesKind.name)?.value.delete;
+		await n.t.root((ctx) => hook!(notebook, ctx), context);
 		assert.deepEqual(
 			(await stored(other)).map(({ text }) => text),
 			["kept"],
@@ -84,29 +107,57 @@ describe("who may do what in a notebook", () => {
 	it("gives a person put in and the session's agent Write; nobody outside is let in", async () => {
 		const s1 = await n.workspace("s1");
 		const ann = await n.person("Ann", s1);
-		const notebook = await n.notebookIn(s1);
+		const notebook = await n.thingIn(s1);
 		const writes = [...NOTES_WRITES].sort();
 		assert.deepEqual(await grantedTo(ann, s1, notebook), writes);
-		assert.deepEqual(await grantedTo({ kind: "worker", session: "s1" }, s1, notebook), writes);
+		assert.deepEqual(await grantedTo(AGENT, s1, notebook), writes);
 		await refused(grantedTo({ kind: "worker", session: "s2" }, s1, notebook));
 		const dana = await n.things.createPerson({ name: "Dana", madeBy: BY }, context);
 		await refused(grantedTo({ kind: "person", id: dana, name: "Dana" }, s1, notebook));
 	});
 
-	it("follows the grants live on the same hold: Write withheld leaves a reader, removed from Pi denied", async () => {
+	it("lets in with @open alone a reader, who reads and pages but has no writing members", async () => {
 		const ann = await n.person("Ann");
-		const notebook = await n.notebookIn(n.pi);
+		const notebook = await n.thingIn(n.pi);
+		await fill(ann, notebook, 2);
+		const everyone = { kind: "everyone" } as const;
+		// The kind's Write row of everyone replaced by one of no tick (`OPEN`).
+		await n.things.setGrants(
+			{
+				source: { kind: "plugin", plugin: "@earendil-works/p3-notes" },
+				grants: [{ workspace: n.pi, thing: notebook, party: everyone, tick: "write" }],
+			},
+			context,
+		);
+		await n.tick(n.pi, notebook, everyone, OPEN, true);
+		await n.holding(ann, n.pi, notebook, async (notes, ctx) => {
+			assert.deepEqual(
+				[notes.add, notes.edit, notes.remove, notes.granted.size],
+				[undefined, undefined, undefined, 0],
+			);
+			assert.deepEqual(texts(notes), ["n1", "n0"]);
+			assert.equal((await notes.page({}, ctx)).rows.length, 2);
+			await notes.more(ctx);
+		});
+	});
+
+	it("gives the owner Write without being put in, also where Write is withheld from everyone", async () => {
+		const id = await n.things.createPerson({ name: "Olga", madeBy: BY }, context);
+		await n.things.setOwner({ person: id, owner: true }, context);
+		const notebook = await n.thingIn(n.pi);
+		await n.tick(n.pi, notebook, { kind: "everyone" }, "write", false);
+		assert.deepEqual(await grantedTo({ kind: "person", id, name: "Olga" }, n.pi, notebook), [...NOTES_WRITES].sort());
+	});
+
+	it("follows the grants live, on the same hold: Write withheld leaves a reader, removed from Pi denied", async () => {
+		const ann = await n.person("Ann");
+		const notebook = await n.thingIn(n.pi);
 		await n.holding(ann, n.pi, notebook, async (notes, ctx) => {
 			await notes.add!({ text: "first" }, ctx);
-			await n.write(n.pi, notebook, { kind: "person", person: ann.id }, false);
+			await n.tick(n.pi, notebook, { kind: "person", person: ann.id }, "write", false);
 			await until(notes.state, (state) => state.kind === "live" && notes.add === undefined, within("a reader", ctx));
 			assert.deepEqual([notes.edit, notes.remove, notes.granted.size], [undefined, undefined, 0]);
-			// A reader still reads, and loads older notes.
-			assert.deepEqual(
-				notes.list.value.rows.map(({ text }) => text),
-				["first"],
-			);
-			await notes.more(ctx);
+			assert.deepEqual(texts(notes), ["first"]);
 			await n.things.removeParty({ workspace: n.pi, party: { kind: "person", person: ann.id } }, context);
 			await until(
 				notes.state,
@@ -115,6 +166,23 @@ describe("who may do what in a notebook", () => {
 			);
 		});
 	});
+
+	it("denies a notebook hidden in a workspace there, live, and still lets it in where it is shown", async () => {
+		const s1 = await n.workspace("s1");
+		const ann = await n.person("Ann", s1);
+		await n.things.putParty({ workspace: n.pi, party: { kind: "person", person: ann.id }, source: BY }, context);
+		const notebook = await n.thingIn(n.pi, "Plan");
+		await n.holding(ann, s1, notebook, async (notes, ctx) => {
+			assert.equal(notes.name.value, "Plan");
+			await n.things.setSwitch({ workspace: s1, item: { kind: "thing", thing: notebook }, shown: false }, context);
+			await until(
+				notes.state,
+				(state) => state.kind === "failed" && state.cause.kind === "denied",
+				within("hidden in s1", ctx),
+			);
+		});
+		assert.equal(await n.holding(ann, n.pi, notebook, async (notes) => notes.name.value), "Plan");
+	});
 });
 
 describe("a notebook's notes", () => {
@@ -122,13 +190,12 @@ describe("a notebook's notes", () => {
 		const [s1, s2] = [await n.workspace("s1"), await n.workspace("s2")];
 		const ann = await n.person("Ann", s1);
 		await n.things.putParty({ workspace: s2, party: { kind: "person", person: ann.id }, source: BY }, context);
-		const shared = await n.notebookIn(s1, "Plan");
+		const shared = await n.thingIn(s1, "Plan");
 		await n.things.link({ workspace: s2, thing: shared, by: BY }, context);
-		await n.write(s2, shared, { kind: "person", person: ann.id }, false);
+		await n.tick(s2, shared, { kind: "person", person: ann.id }, "write", false);
 		const id = await n.holding(ann, s1, shared, (notes, ctx) => notes.add!({ text: "linked twice" }, ctx));
 		await n.holding(ann, s2, shared, async (notes) => {
 			assert.equal(notes.add, undefined);
-			assert.equal(notes.name.value, "Plan");
 			assert.deepEqual(
 				notes.list.value.rows.map((note) => [note.id, note.text]),
 				[[id, "linked twice"]],
@@ -139,12 +206,10 @@ describe("a notebook's notes", () => {
 	it("show who wrote them last as the admission says, persons by their names, the last written first", async () => {
 		const s1 = await n.workspace("s1");
 		const [ann, ben] = [await n.person("Ann", s1), await n.person("Ben", s1)];
-		const notebook = await n.notebookIn(s1);
+		const notebook = await n.thingIn(s1);
 		await n.holding(ben, s1, notebook, async (watching, outer) => {
 			const first = await n.holding(ann, s1, notebook, (notes, ctx) => notes.add!({ text: "Ann's" }, ctx));
-			await n.holding({ kind: "worker", session: "s1" }, s1, notebook, (notes, ctx) =>
-				notes.add!({ text: "the agent's" }, ctx),
-			);
+			await n.holding(AGENT, s1, notebook, (notes, ctx) => notes.add!({ text: "the agent's" }, ctx));
 			await until(watching.list, (list) => list.rows.length === 2, within("two notes", outer));
 			assert.deepEqual(
 				watching.list.value.rows.map(({ text, author }) => [text, author]),
@@ -163,9 +228,29 @@ describe("a notebook's notes", () => {
 		});
 	});
 
+	it("name any number of authors (Astra: 1,001 persons among the loaded notes)", async () => {
+		const notebook = await n.thingIn(n.pi, "Team journal");
+		const viewer = await n.person("Viewer");
+		const store = await n.t.host.get(NotesStore, {}, context);
+		for (let i = 0; i < 1001; i++) {
+			const person = await n.things.createPerson({ name: `Author ${i}`, madeBy: BY }, context);
+			await store.add({ notebook, text: `entry ${i}`, author: { kind: "person", person } }, context);
+		}
+		await n.holding(viewer, n.pi, notebook, async (notes, ctx) => {
+			while (notes.list.value.moreAfter) await notes.more(ctx);
+			const rows = notes.list.value.rows;
+			const oldest = rows.at(-1);
+			assert.equal(rows.length, 1001);
+			assert.deepEqual(
+				[oldest?.text, oldest?.author.kind === "person" && oldest.author.name],
+				["entry 0", "Author 0"],
+			);
+		});
+	});
+
 	it("refuses a note of another notebook, one that is gone, and texts outside the schema", async () => {
 		const ann = await n.person("Ann");
-		const [notebook, other] = [await n.notebookIn(n.pi), await n.notebookIn(n.pi)];
+		const [notebook, other] = [await n.thingIn(n.pi), await n.thingIn(n.pi)];
 		const elsewhere = await n.holding(ann, n.pi, other, (notes, ctx) => notes.add!({ text: "other" }, ctx));
 		await n.holding(ann, n.pi, notebook, async (notes, ctx) => {
 			await refused(notes.edit!({ id: elsewhere, text: "taken" }, ctx), "invalid");
@@ -176,27 +261,159 @@ describe("a notebook's notes", () => {
 			await refused(notes.add!({ text: "" }, ctx), "invalid");
 			await refused(notes.add!({ text: "x".repeat(10_001) }, ctx), "invalid");
 		});
-		assert.deepEqual(
-			await n.holding(ann, n.pi, other, async (notes) => notes.list.value.rows.map(({ text }) => text)),
-			["other"],
-		);
+		assert.deepEqual(await n.holding(ann, n.pi, other, async (notes) => texts(notes)), ["other"]);
+	});
+});
+
+describe("a notebook's pages", () => {
+	it("are each caller's: one caller's older notes load once and show only to it", async () => {
+		const [ann, ben] = [await n.person("Ann"), await n.person("Ben")];
+		const notebook = await n.thingIn(n.pi);
+		await fill(ann, notebook, 120);
+		await n.holding(ben, n.pi, notebook, async (bens, outer) => {
+			await n.holding(ann, n.pi, notebook, async (notes, ctx) => {
+				assert.deepEqual([notes.list.value.rows.length, notes.list.value.moreAfter], [50, true]);
+				await notes.more(ctx);
+				assert.deepEqual([notes.list.value.rows.length, bens.list.value.rows.length], [100, 50]);
+				await bens.more(outer);
+				await bens.more(outer);
+				await notes.more(ctx);
+				assert.deepEqual(
+					texts(notes),
+					Array.from({ length: 120 }, (_, i) => `n${119 - i}`),
+				);
+				assert.deepEqual(texts(bens), texts(notes));
+				assert.deepEqual([notes.list.value.moreAfter, bens.list.value.moreAfter], [false, false]);
+			});
+		});
 	});
 
-	it("loads a page of 50, the last written first, and the next with more", async () => {
+	it("load once when two callers ask at the same time, each with its page when its more resolves", async () => {
+		const [ann, ben] = [await n.person("Ann"), await n.person("Ben")];
+		const notebook = await n.thingIn(n.pi);
+		await fill(ann, notebook, 120);
+		await n.holding(ben, n.pi, notebook, async (bens, outer) => {
+			await n.holding(ann, n.pi, notebook, async (notes, ctx) => {
+				const anns = notes.more(ctx);
+				// Ben's asks while Ann's loads: his resolves with the page hers loads, never before it.
+				await bens.more(outer);
+				assert.equal(bens.list.value.rows.length, 100);
+				await anns;
+				assert.equal(notes.list.value.rows.length, 100);
+				await notes.more(ctx);
+				assert.deepEqual([notes.list.value.rows.length, bens.list.value.rows.length], [120, 100]);
+			});
+		});
+	});
+
+	it("keep each caller's oldest note when notes move to the top: no gap, no duplicate", async () => {
+		const [ann, ben] = [await n.person("Ann"), await n.person("Ben")];
+		const notebook = await n.thingIn(n.pi);
+		await fill(ann, notebook, 120);
+		await n.holding(ben, n.pi, notebook, async (bens, outer) => {
+			await n.holding(ann, n.pi, notebook, async (notes, ctx) => {
+				await notes.more(ctx);
+				const oldest = notes.list.value.rows.at(-1)!;
+				// Three new notes and an edit of the oldest of Ben's page: Ann's two pages end at the same note.
+				for (const text of ["a", "b", "c"]) await notes.add!({ text }, ctx);
+				const benOldest = bens.list.value.rows.at(-1)!;
+				await notes.edit!({ id: benOldest.id, text: "moved" }, ctx);
+				await until(notes.list, (list) => list.rows[0]?.text === "moved", within("the edit", ctx));
+				const rows = notes.list.value.rows;
+				assert.equal(rows.at(-1)?.id, oldest.id);
+				assert.equal(new Set(rows.map(({ id }) => id)).size, rows.length);
+				assert.equal(rows.length, 103);
+				await until(bens.list, (list) => list.rows[0]?.text === "moved", within("Ben's edit", outer));
+				assert.equal(bens.list.value.rows.length, 53);
+			});
+		});
+	});
+
+	it("can be read a page at a time without changing what the caller holds", async () => {
 		const ann = await n.person("Ann");
-		const notebook = await n.notebookIn(n.pi);
+		const notebook = await n.thingIn(n.pi);
+		await fill(ann, notebook, 120);
 		await n.holding(ann, n.pi, notebook, async (notes, ctx) => {
-			for (let i = 0; i < 60; i++) await notes.add!({ text: `n${i}` }, ctx);
-		});
-		await n.holding(ann, n.pi, notebook, async (notes, ctx) => {
-			assert.equal(notes.list.value.rows.length, 50);
-			assert.equal(notes.list.value.moreAfter, true);
-			await notes.more(ctx);
+			const first = await notes.page({}, ctx);
+			assert.equal(first.rows.length, 50);
+			const second = await notes.page({ after: first.next! }, ctx);
+			const third = await notes.page({ after: second.next! }, ctx);
 			assert.deepEqual(
-				notes.list.value.rows.map(({ text }) => text),
-				Array.from({ length: 60 }, (_, i) => `n${59 - i}`),
+				[...first.rows, ...second.rows, ...third.rows].map(({ text }) => text),
+				Array.from({ length: 120 }, (_, i) => `n${119 - i}`),
 			);
-			assert.equal(notes.list.value.moreAfter, false);
+			assert.equal(third.next, undefined);
+			assert.deepEqual(first.rows[0]?.author, { kind: "person", person: ann.id, name: "Ann" });
+			assert.equal(notes.list.value.rows.length, 50);
 		});
+	});
+});
+
+describe("the cost of a notebook's read", () => {
+	it("is one run of its list per note, however many hold it; a note by a shown author reads no names", async () => {
+		const w = await world(context, [{ name: "@earendil-works/p3-notes", facet: notesServer }]);
+		try {
+			const things = await w.host.get(ThingsStore, {}, context);
+			const pi = (await things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
+			const persons: Person[] = [];
+			for (const name of ["Ann", "Ben", "Cy"]) {
+				const id = await things.createPerson({ name, madeBy: BY }, context);
+				await things.putParty({ workspace: pi, party: { kind: "person", person: id }, source: BY }, context);
+				persons.push({ kind: "person", id, name });
+			}
+			const thing = await things.create({ kind: NotesKind.name, name: "", workspace: pi, by: BY }, context);
+			const at = { workspace: pi, thing };
+			const held: { notes: Reference<typeof Notes>; ctx: Ctx<P3Principal> }[] = [];
+			const released = Promise.withResolvers<void>();
+			const holds = persons.map((principal) =>
+				w.host.root(
+					async (ctx) => {
+						held.push({ notes: await ctx.get(Notes, at), ctx });
+						await released.promise;
+					},
+					context,
+					{ principal },
+				),
+			);
+			await eventually(
+				async () => held.length,
+				(count) => count === 3,
+				2000,
+			);
+			const [ann, ben] = held;
+			const all = (text: string) =>
+				Promise.all(
+					held.map(({ notes, ctx }) =>
+						until(notes.list, (list) => list.rows[0]?.text === text, within(text, ctx)),
+					),
+				);
+			await ann!.notes.add!({ text: "first" }, ann!.ctx);
+			await all("first");
+			const runs = () => w.count("chord.query.runs");
+			const before = runs();
+			await ann!.notes.add!({ text: "second" }, ann!.ctx);
+			await all("second");
+			assert.equal(runs() - before, 1, "the shared list only");
+			const again = runs();
+			await ben!.notes.add!({ text: "Ben's" }, ben!.ctx);
+			await all("Ben's");
+			assert.equal(runs() - again, 2, "the shared list and the names, once");
+			released.resolve();
+			await Promise.all(holds);
+		} finally {
+			await w.close(context);
+		}
+	});
+});
+
+describe("a released notebook", () => {
+	it("is collected with its shared read", async () => {
+		const ann = await n.person("Ann");
+		const notebook = await n.thingIn(n.pi);
+		const refs: WeakRef<object>[] = [];
+		await n.holding(ann, n.pi, notebook, async (notes) => {
+			refs.push(new WeakRef(notes), new WeakRef(notes.list));
+		});
+		assert.ok(await collected(refs));
 	});
 });
