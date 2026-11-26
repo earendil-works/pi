@@ -242,16 +242,23 @@ const COMBINATIONS = 32;
 function bucketOf(read: Read): { readonly columns: string[]; readonly combinations: SqliteValue[][] } | undefined {
 	const { plan } = read;
 	if (read.what.kind === "count") return undefined;
-	if (plan.uses.filter((use) => use.table === plan.table).length > 1) return undefined;
+	let own = 0;
+	for (const use of plan.uses) if (use.table === plan.table) own++;
+	if (own > 1) return undefined;
 	const columns: string[] = [];
 	let combinations: SqliteValue[][] = [[]];
-	for (const [column, values] of [...plan.equalities].sort(([a], [b]) => (a < b ? -1 : 1))) {
+	// Sorted by column: one term (most reads) is sorted already.
+	const terms =
+		plan.equalities.length > 1 ? [...plan.equalities].sort(([a], [b]) => (a < b ? -1 : 1)) : plan.equalities;
+	for (const [column, values] of terms) {
 		// An empty `in` matches no row: no bucket of it (a bucket without values would be dropped by its first leaver).
 		if (values.length === 0 || combinations.length * values.length > COMBINATIONS) continue;
 		columns.push(column);
 		combinations = combinations.flatMap((prefix) => values.map((value) => [...prefix, value]));
 	}
 	if (columns.length === 0) return undefined;
+	// One combination (every term one value: most reads) is once already.
+	if (combinations.length === 1) return { columns, combinations };
 	const seen: TupleMap<true> = new Map();
 	const once = combinations.filter((values) => {
 		if (getTuple(seen, values) !== undefined) return false;
