@@ -4,7 +4,9 @@
 // through a grant the app gets with the shared Radius credential; when the origin's view cookie has expired it sends
 // the page to Radius's `/pi/forward`, and the app gets a fresh grant instead; while the page is open, the app renews
 // that cookie before it expires (ViewCookie.swift). A window keeps the pages of its recent brains (PiWindowController),
-// so switching tabs is instant. Every page gets the host bridge (HostBridge.swift).
+// so switching tabs is instant. Every page gets the host bridge (HostBridge.swift). A load the app hands elsewhere (an
+// address off the Pi, also one a redirect leads to, goes to the browser; a file becomes a download) leaves the page as
+// it was; a window opened for nothing but that load closes again.
 import AppKit
 import WebKit
 
@@ -20,6 +22,8 @@ final class BrainPage: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadD
 	private var loaded = false
 	private var connecting = false
 	private var signInWithToken = false
+	/// The current main-frame load went to the browser or became a download, by the app's own decision.
+	private var handedOff = false
 	/// A remote Pi's forwarded origin, learned from its first grant URL.
 	private var remoteOrigin: URL?
 	/// Renews a remote Pi's view cookie while the page is open (ViewCookie.swift).
@@ -216,7 +220,11 @@ final class BrainPage: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadD
 
 	func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
 		guard let url = action.request.url else { return .cancel }
-		if action.shouldPerformDownload { return .download }
+		let mainFrame = action.targetFrame?.isMainFrame == true
+		if action.shouldPerformDownload {
+			if mainFrame { handedOff = true }
+			return .download
+		}
 		if ["about", "blob", "data"].contains(url.scheme) { return .allow }
 		// Frames inside the page (artifact previews) are the page's business; its CSP limits them.
 		if let frame = action.targetFrame, !frame.isMainFrame { return .allow }
@@ -231,6 +239,7 @@ final class BrainPage: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadD
 			return .cancel
 		}
 		guard owns(url) else {
+			if mainFrame { handedOff = true }
 			NSWorkspace.shared.open(url)
 			return .cancel
 		}
@@ -244,7 +253,9 @@ final class BrainPage: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadD
 
 	func webView(_ webView: WKWebView, decidePolicyFor response: WKNavigationResponse) async -> WKNavigationResponsePolicy {
 		let disposition = (response.response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Disposition") ?? ""
-		return response.canShowMIMEType && !disposition.lowercased().hasPrefix("attachment") ? .allow : .download
+		if response.canShowMIMEType && !disposition.lowercased().hasPrefix("attachment") { return .allow }
+		if response.isForMainFrame { handedOff = true }
+		return .download
 	}
 
 	func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
@@ -253,6 +264,10 @@ final class BrainPage: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadD
 
 	func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
 		download.delegate = self
+	}
+
+	func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+		handedOff = false
 	}
 
 	func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
@@ -265,9 +280,23 @@ final class BrainPage: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadD
 	}
 
 	func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-		if (error as NSError).code == NSURLErrorCancelled { return }
+		let error = error as NSError
+		if error.code == NSURLErrorCancelled { return }
+		// A policy decision of the app's ended the load (WebKitErrorFrameLoadInterruptedByPolicyChange, a legacy WebKit
+		// constant Swift does not see): the browser or a download took it, or a remote Pi loads a fresh grant instead.
+		if error.domain == "WebKitErrorDomain" && error.code == 102 {
+			if handedOff && webView.backForwardList.currentItem == nil { handedOffFirstLoad() }
+			return
+		}
 		loaded = false
 		placeholder.show(title: "Cannot reach Pi", detail: error.localizedDescription, action: "Try Again")
+	}
+
+	/// The page's first load went to the browser or became a download: a window opened for it closes, a tab says so.
+	private func handedOffFirstLoad() {
+		if host.closeIfOnly(self) { return }
+		loaded = false
+		placeholder.show(title: "Opened outside Pi", detail: nil, action: "Try Again")
 	}
 
 	func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
