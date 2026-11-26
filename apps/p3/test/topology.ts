@@ -37,6 +37,7 @@ import runnerWorker from "../plugins/runner/worker.ts";
 import sessionsServer from "../plugins/sessions/server.ts";
 import sessionsWorker from "../plugins/sessions/worker.ts";
 import signInServer from "../plugins/sign-in/server.ts";
+import thingsServer from "../plugins/things/server.ts";
 import { SERVER, workerPrincipal } from "../src/app.ts";
 import { admitRoute, serverCoreFacet } from "../src/server.ts";
 import { workerCoreFacet } from "../src/worker.ts";
@@ -58,6 +59,8 @@ const SERVER_PLUGINS: readonly Plugin[] = [
 	{ name: "@earendil-works/p3-runner", facet: runnerServer },
 	{ name: "@earendil-works/p3-sessions", facet: sessionsServer },
 	{ name: "@earendil-works/p3-sign-in", facet: signInServer },
+	// The things plugin: it serves the registry the people plugin hands its owner to (ERNDL-1144's bridge).
+	{ name: "@earendil-works/p3-things", facet: thingsServer },
 ];
 
 /** A worker's plugins, by name. */

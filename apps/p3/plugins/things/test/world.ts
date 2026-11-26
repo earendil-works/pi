@@ -12,6 +12,7 @@ import {
 	type ChordStore,
 	type Context,
 	createHost,
+	defineFacet,
 	type Facet,
 	type Host,
 	type HostError,
@@ -21,12 +22,28 @@ import {
 	Server,
 	sqliteBackend,
 } from "@earendil-works/p3/v1";
+import { ServerRuntime } from "@earendil-works/p3/v1/server";
 import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
+import { SignIns } from "../../sign-in/contract.ts";
 import thingsServer from "../server.ts";
 import { BOARD } from "./kinds.ts";
 
 /** The things plugin as a host loads it. */
 export const THINGS: PluginFacet<P3Principal> = { name: "@earendil-works/p3-things", facet: thingsServer };
+
+/**
+ * The base's `ServerRuntime` as far as the things plugin reads it (the machine's user names the owner's person at
+ * the first start); a real server's base contributes the whole value.
+ */
+export const RUNTIME: PluginFacet<P3Principal> = {
+	name: "p3.server",
+	// The things store reads `machine` only: the rest of a server's runtime is no part of these tests.
+	facet: defineFacet((host) =>
+		host.serve(ServerRuntime, {
+			compose: () => ({ machine: { user: "ann", hostname: "test" } }) as unknown as ServerRuntime,
+		}),
+	),
+};
 
 /** A running test host. */
 export type World = {
@@ -59,7 +76,7 @@ export async function world(context: Context, more: readonly PluginFacet<P3Princ
 		readyTimeout: 5000,
 		onError: (error) => errors.push(error),
 	});
-	let facets: readonly PluginFacet<P3Principal>[] = [THINGS, BOARD, ...more];
+	let facets: readonly PluginFacet<P3Principal>[] = [RUNTIME, THINGS, BOARD, ...more];
 	const loaded = await host.load(facets, context);
 	if (loaded.failed.length > 0) throw new Error("world: plugins failed", { cause: loaded.failed[0]!.error });
 	return {
@@ -95,4 +112,46 @@ export function storedRows(path: string, table: string): Record<string, SQLOutpu
 	} finally {
 		database.close();
 	}
+}
+
+/** A sign-in as the stub keeps it. */
+type SignIn = {
+	id: string;
+	label: string;
+	kind: "browser" | "device";
+	principal: P3Principal;
+	created: number;
+	lastUsed: number;
+};
+
+/**
+ * A stand-in for the sign-in plugin's `SignIns` (the store ends a removed person's sign-ins through it): `issue`
+ * signs a principal in, `revoked` lists the ids ended, in order.
+ */
+export function signInsStub(): { readonly plugin: PluginFacet<P3Principal>; readonly revoked: string[] } {
+	const revoked: string[] = [];
+	const plugin: PluginFacet<P3Principal> = {
+		name: "test.sign-in",
+		facet: defineFacet((host) =>
+			host.serve(SignIns, (_params, self) => {
+				const list = self.writable<SignIn[]>([]);
+				return {
+					list: self.derive([list], ([value]) => value),
+					issue: async ({ principal, label }) => {
+						const id = crypto.randomUUID();
+						const signIn: SignIn = { id, label, kind: "browser", principal, created: 0, lastUsed: 0 };
+						list.set([...list.value, signIn]);
+						return { id, token: id, cookie: "" };
+					},
+					verify: async () => null,
+					revoke: async (id) => {
+						revoked.push(id);
+						list.set(list.value.filter((signIn) => signIn.id !== id));
+						return null;
+					},
+				};
+			}),
+		),
+	};
+	return { plugin, revoked };
 }

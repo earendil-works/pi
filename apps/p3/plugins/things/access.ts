@@ -269,6 +269,22 @@ export class AccessIndex {
 		});
 	}
 
+	/**
+	 * The parties present in each of `workspaces` (rule 3), persons hidden there by every route left out (item 106):
+	 * loaded as a question loads them, one operation in the queue.
+	 */
+	parties(workspaces: readonly string[], context: Context): Promise<ReadonlyMap<string, ReadonlySet<string>>> {
+		return this.#run(async () => {
+			const parties = new Map<string, ReadonlySet<string>>();
+			for (const workspace of workspaces) {
+				await this.#ensure(workspace, context);
+				const { present, hidden } = this.#accessOf(workspace, context);
+				parties.set(workspace, hidden.size === 0 ? present : new Set([...present].filter((p) => !hidden.has(p))));
+			}
+			return parties;
+		});
+	}
+
 	/** Drops every workspace with no view at or below it and every person nobody watches as. */
 	forgetUnwatched(): void {
 		const keep = new Set<string>();

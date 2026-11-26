@@ -31,7 +31,7 @@ import { OPEN, type Party, type Source } from "../contract.ts";
 import { defineThing, ThingKinds } from "../kind.ts";
 import { serveThing } from "../serve.ts";
 import { BOARD, BOARD_PLUGIN, Board } from "./kinds.ts";
-import { THINGS, type World, world } from "./world.ts";
+import { RUNTIME, THINGS, type World, world } from "./world.ts";
 
 const BY: Source = { kind: "plugin", plugin: "test" };
 const label = (key: string) => ({ namespace: "test", key, params: [] });
@@ -459,7 +459,7 @@ describe("a kind's new ticks version while it loads", () => {
 			await host.close(context);
 			await database.close(context);
 		});
-		await host.load([THINGS, marker(1)], context);
+		await host.load([RUNTIME, THINGS, marker(1)], context);
 		const s = await host.get(ThingsStore, {}, context);
 		const root = (await s.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
 		const leaf = await s.createWorkspace({ parent: root, name: "leaf", kind: "things.workspace", by: BY }, context);
@@ -483,7 +483,7 @@ describe("a kind's new ticks version while it loads", () => {
 		const pending = host.get(Gives, { workspace: leaf, caller: `person:${p}` }, context);
 		await reached.promise;
 		const kinds = await host.registry(ThingKinds, context);
-		const reloading = host.reload([THINGS, marker(2)], context);
+		const reloading = host.reload([RUNTIME, THINGS, marker(2)], context);
 		try {
 			await until(
 				kinds,
