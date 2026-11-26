@@ -1,15 +1,25 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { APP_NAME } from "../src/config.ts";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR } from "../src/config.ts";
 import type { SessionManager } from "../src/core/session-manager.ts";
 import { formatResumeCommand } from "../src/modes/interactive/interactive-mode.ts";
 
 const tempDirs: string[] = [];
 const originalStdoutIsTTY = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+const originalAgentDir = process.env[ENV_AGENT_DIR];
+
+beforeEach(() => {
+	delete process.env[ENV_AGENT_DIR];
+});
 
 afterEach(() => {
+	if (originalAgentDir === undefined) {
+		delete process.env[ENV_AGENT_DIR];
+	} else {
+		process.env[ENV_AGENT_DIR] = originalAgentDir;
+	}
 	if (originalStdoutIsTTY) {
 		Object.defineProperty(process.stdout, "isTTY", originalStdoutIsTTY);
 	} else {
@@ -101,6 +111,31 @@ describe("formatResumeCommand", () => {
 		expect(formatResumeCommand(sessionManager)).toBe(
 			`${APP_NAME} --session-dir '/tmp/custom pi'\\''s sessions' --session test-session`,
 		);
+	});
+
+	it("includes a non-default agent dir, which the environment would not carry to a resumed process", () => {
+		setStdoutIsTTY(true);
+		process.env[ENV_AGENT_DIR] = "/tmp/custom-pi-agent";
+		const sessionFile = createTempFile();
+		const sessionManager = createSessionManager({
+			sessionFile,
+			sessionId: "test-session",
+			sessionDir: "/tmp/custom-pi-agent/sessions",
+			usesDefaultSessionDir: false,
+		});
+
+		expect(formatResumeCommand(sessionManager)).toBe(
+			`${APP_NAME} --agent-dir /tmp/custom-pi-agent --session-dir /tmp/custom-pi-agent/sessions --session test-session`,
+		);
+	});
+
+	it("leaves out an agent dir that names the default one", () => {
+		setStdoutIsTTY(true);
+		process.env[ENV_AGENT_DIR] = join(homedir(), CONFIG_DIR_NAME, "agent");
+		const sessionFile = createTempFile();
+		const sessionManager = createSessionManager({ sessionFile, sessionId: "test-session" });
+
+		expect(formatResumeCommand(sessionManager)).toBe(`${APP_NAME} --session test-session`);
 	});
 
 	it("returns undefined when stdout is not a TTY", () => {
