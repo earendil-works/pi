@@ -2,8 +2,9 @@
 // the session's worker, so its worker learns which things to hold without asking the index itself (`Gives` is server
 // code's only).
 
-import { AgentThings, callerKey, type FacetHost, forbidden, type P3Principal } from "@earendil-works/p3/v1";
+import { callerKey, type FacetHost, forbidden, type P3Principal } from "@earendil-works/p3/v1";
 import { Gives } from "../things/contract.server.ts";
+import { AgentThings } from "./contract.ts";
 
 /** Serves `AgentThings` on `host`: for a session's worker only, its agent's things in its session's workspace. */
 export function serveAgentThings(host: FacetHost<P3Principal>): void {
@@ -12,10 +13,10 @@ export function serveAgentThings(host: FacetHost<P3Principal>): void {
 		const gives = self.get(Gives, { workspace: principal.session, caller: callerKey(principal) });
 		return {
 			things: self.derive([gives.answers], ([answers]) =>
+				// By id (each once): the order the worker holds them in, the same at every change.
 				Object.entries(answers)
-					.map(([thing, { kind }]) => ({ thing, kind }))
-					// By id: the order the worker holds them in, the same at every change.
-					.sort((a, b) => (a.thing < b.thing ? -1 : a.thing > b.thing ? 1 : 0)),
+					.sort(([a], [b]) => (a < b ? -1 : 1))
+					.map(([thing, { kind }]) => ({ thing, kind })),
 			),
 		};
 	});
