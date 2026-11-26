@@ -659,7 +659,7 @@ class Writer {
 	/**
 	 * A text did not fit (its UTF-8 is longer than its units): at the message's first such shortfall the whole message
 	 * is sized once, every text at its exact UTF-8 (Node's `Buffer`) or else at three bytes a unit, so no later text
-	 * of it falls short again; after that, `bytes` more as asked.
+	 * of it falls short again; after that, grown as any field.
 	 */
 	#shortOfText(bytes: number): void {
 		const message = this.#message;
@@ -669,7 +669,8 @@ class Writer {
 			this.#exactly(Math.max(bytes, partsLength(message, utf8) - this.#length));
 			return;
 		}
-		this.#exactly(bytes);
+		// Sized once already (a field past its estimate: a failure's details): grown geometrically, never exactly.
+		this.#reserve(bytes);
 	}
 
 	/**
@@ -697,11 +698,9 @@ class Writer {
 		if (needed <= this.#buffer.byteLength) return;
 		const kept = this.#buffer === this.#kept;
 		let size = Math.max(this.#buffer.byteLength * 2, needed + SPARE);
-		// Leaving the kept buffer: what it needs and room for its small fields (`expect` sized a frame of large parts);
-		// a buffer of its own that falls short (a text's UTF-8 longer than its units) grows by a quarter, still
-		// amortized, not doubled: it is about a frame's size already.
+		// Leaving the kept buffer: what it needs and room for its small fields (`expect` sized a frame of large parts); a
+		// buffer of its own that still falls short (a field past its estimate) doubles, as the base's did.
 		if (kept && size > KEPT) size = needed + SPARE;
-		else if (!kept) size = Math.max(needed + SPARE, this.#buffer.byteLength + (this.#buffer.byteLength >> 2));
 		const grown = new Uint8Array(size);
 		grown.set(this.#buffer.subarray(0, this.#length));
 		this.#buffer = grown;
@@ -716,14 +715,16 @@ function partsLength(message: Message, count: (text: string) => number): number 
 	switch (message.kind) {
 		case "bound":
 			for (const { hold, granted, members, failed } of message.holds) {
-				bytes += varintBytes(hold) + varintBytes(granted.length) + varintBytes(members.length) + failures(failed);
+				bytes +=
+					varintBytes(hold) + varintBytes(granted.length) + varintBytes(members.length) + failures(failed, count);
 				for (const index of granted) bytes += varintBytes(index);
 				for (const { member, value } of members) bytes += varintBytes(member) + partLength(value, count);
 			}
 			return bytes;
 		case "state":
 			for (const { hold, members, failed, retired } of message.holds) {
-				bytes += varintBytes(hold) + varintBytes(members.length) + failures(failed) + varintBytes(retired.length);
+				bytes +=
+					varintBytes(hold) + varintBytes(members.length) + failures(failed, count) + varintBytes(retired.length);
 				for (const index of retired) bytes += varintBytes(index);
 				for (const { member, ops } of members) bytes += varintBytes(member) + partLength(ops, count);
 			}
@@ -744,8 +745,28 @@ function partsLength(message: Message, count: (text: string) => number): number 
 }
 
 /** What a hold's failed members take, by a bound: their count, and per failure its index and its error's JSON. */
-function failures(failed: readonly FailedMember[]): number {
-	return varintBytes(failed.length * 2 + 1) + failed.length * 256;
+function failures(failed: readonly FailedMember[], count: (text: string) => number): number {
+	let bytes = varintBytes(failed.length * 2 + 1);
+	// Per failure its index and its error's JSON: its texts by their lengths, its details one level deep (the texts of
+	// their own fields; anything deeper by a 64 B allowance), and 72 B for the rest; nothing is stringified.
+	for (const { error } of failed) {
+		const fields = (error.kind === "plugin" ? error : error.error) as Record<string, unknown>;
+		bytes += 72 + fieldsLength(fields, count);
+		if (typeof fields.details === "object" && fields.details !== null) {
+			bytes += fieldsLength(fields.details as Record<string, unknown>, count);
+		}
+	}
+	return bytes;
+}
+
+/** The JSON of an object's own fields, by a bound: each text by its length, each other value by 64 B, its key. */
+function fieldsLength(fields: Record<string, unknown>, count: (text: string) => number): number {
+	let bytes = 0;
+	for (const key in fields) {
+		const value = fields[key];
+		bytes += key.length + 4 + (typeof value === "string" ? count(value) + 2 : 64);
+	}
+	return bytes;
 }
 
 /** What a part takes on the wire with its length prefix (a text by its units: exact for ASCII, its UTF-8 may be longer). */

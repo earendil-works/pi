@@ -756,6 +756,26 @@ describe("the binary codec", () => {
 		expect((process.memoryUsage().arrayBuffers - before) / 4).toBeLessThan(1.6 * length);
 	});
 
+	it("allocates under two frames for a state of 256 failed members with 1 KiB errors (review of 98a93c706)", () => {
+		const gc = runInNewContext("gc") as () => void;
+		const failed = Array.from({ length: 256 }, (_, member) => ({
+			member,
+			error: {
+				kind: "plugin" as const,
+				code: "ELOAD",
+				message: `could not load member ${member}`,
+				details: { reason: `failed to parse schema at ${"segment/".repeat(120)}${member}` },
+			},
+		}));
+		const frame: Message = { kind: "state", holds: [{ hold: 1, members: [], retired: [], failed }] };
+		const length = binaryCodec.encode(frame).byteLength;
+		gc();
+		const before = process.memoryUsage().arrayBuffers;
+		for (let index = 0; index < 4; index++) binaryCodec.encode(frame);
+		// Grown by exactly each error once sized, the frame so far was copied 256 times: 31 frames.
+		expect((process.memoryUsage().arrayBuffers - before) / 4).toBeLessThan(2 * length);
+	});
+
 	it("refuses invalid UTF-8 in strings", () => {
 		expect(() => binaryCodec.decode(new Uint8Array([1, 0, 1, 0xff]))).toThrow();
 	});
