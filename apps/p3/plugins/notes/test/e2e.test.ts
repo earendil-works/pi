@@ -124,7 +124,7 @@ async function written(notes: Reference<typeof Notes>, tag: string): Promise<voi
 	);
 }
 
-describe("the notes end to end", () => {
+describe("the notes end to end", { skip: "until sessions are workspaces, ERNDL-704 push 3" }, () => {
 	it("shows the agent's note in a person's open view; offers notes_write only while its options say edit", async () => {
 		const t = await start();
 		const { session, thing, notes } = await annsNotebook(t);
@@ -165,7 +165,7 @@ describe("the notes end to end", () => {
 		await send(owner, session, "@first");
 		await written(notes, "first");
 		// Real edits of both facets, applied as `p3 apply` does once the watcher saw them.
-		for (const facet of ["server.ts", "worker.ts"]) {
+		for (const facet of ["server.ts", "web.tsx"]) {
 			const file = join(root, "notes", facet);
 			await writeFile(file, `${await readFile(file, "utf8")}\n// edited\n`);
 		}

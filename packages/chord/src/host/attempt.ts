@@ -39,8 +39,9 @@ import type { Writable } from "../state/index.ts";
 import { type Dependent, Derive, type DeriveSource, WritableSource } from "../state/internal.ts";
 import { checkExposedOnce } from "../store/column-set.ts";
 import type { Columns, RowOf } from "../store/columns.ts";
-import { checkLiveQuery, LiveQuery, type LiveTarget } from "../store/live-query.ts";
+import { checkLiveQuery, LiveQuery } from "../store/live-query.ts";
 import type { Query } from "../store/query.ts";
+import type { LiveTarget } from "../store/shared-read.ts";
 import type { Order } from "../store/sql.ts";
 import { tableSqlName } from "../store/sql.ts";
 import type { ChordStore } from "../store/store.ts";
@@ -574,6 +575,8 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		const target: LiveTarget = {
 			// The query is of `handle`'s table (checked above); every column of the row is read.
 			spec: { query: q as unknown as Query, table: handle.sql.table, projection: {}, owner: handle },
+			// The owner's own window: nobody shares it.
+			sharing: undefined,
 			// A table's rows hold its columns' values: scalars and JSON.
 			decode: (stored, context) => rows.decode(stored, context) as JsonValue,
 		};

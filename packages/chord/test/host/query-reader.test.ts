@@ -12,6 +12,8 @@ import { defineColumns } from "../../src/store/column-set.ts";
 import { eq, exists } from "../../src/store/expression.ts";
 import { LiveQuery } from "../../src/store/live-query.ts";
 import { query } from "../../src/store/query.ts";
+import { Read } from "../../src/store/read.ts";
+import { SharedRead } from "../../src/store/shared-read.ts";
 import type { ChordStore } from "../../src/store/store.ts";
 import { defineTable } from "../../src/store/table.ts";
 import {
@@ -643,4 +645,77 @@ describe("memory", () => {
 		await store.close(context);
 		await expectCollected(...mine);
 	});
+});
+
+describe("a shared read's loads (review round 2, Astra)", () => {
+	for (const end of ["its last reader leaving", "its provider retiring"] as const) {
+		it(`two overlapping loads are both aborted at ${end}: a late failure of the older one fails no store`, async () => {
+			const store = await memoryStore();
+			const host = createHost({ store, onError: () => {} });
+			const made = instancesOf(SharedRead, "subscribe");
+			const Held = local("test.held-tagged", {
+				version: 1,
+				params: { key: str() },
+				members: { notes: obj({ rows: arr(Note), more: bool() }) },
+			});
+			const plugins = [
+				{
+					name: "@test/tagged",
+					facet: defineFacet((h) => {
+						serveTagged(h);
+						h.serve(Held, (_, self) => ({
+							notes: self.liveQuery(self.get(TaggedNotes, {}).notes.tagged, { tag: "different" }, { first: 5 }),
+						}));
+					}),
+				},
+				{ name: "@test/tags", facet: defineFacet(serveTags) },
+			];
+			const fetch = Read.prototype.fetch;
+			const held = Promise.withResolvers<void>();
+			const entered = Promise.withResolvers<void>();
+			try {
+				await host.load(plugins, context);
+				const tags = await host.get(TagStore, {}, context);
+				const view = await host.get(Held, { key: "one" }, context);
+				const read = made.at(-1)!.deref()!;
+				const signals: (AbortSignal | undefined)[] = [];
+				Read.prototype.fetch = async function (this: Read, ...args: Parameters<Read["fetch"]>) {
+					if (this.plan.query !== read.query.spec.query) return fetch.apply(this, args);
+					signals.push(args[1].abortSignal);
+					const first = signals.length === 1;
+					const run = await fetch.apply(this, args);
+					if (first) {
+						entered.resolve();
+						await held.promise;
+						throw new Error("delayed old SELECT");
+					}
+					return run;
+				};
+				// The tags' table is held and ready twice: two loads of the read, the first one still running.
+				const table = store.reads.get(TagSet.name)!.table;
+				store.reads.hold(table);
+				store.reads.ready(table);
+				await entered.promise;
+				store.reads.hold(table);
+				store.reads.ready(table);
+				await flushed();
+				expect(signals).toHaveLength(2);
+				if (end === "its provider retiring") store.reads.retire(read.query.spec.owner);
+				else view.release();
+				await flushed();
+				expect(read.query.closed).toBe(true);
+				held.resolve();
+				await flushed();
+				// The store is not stopped: an unrelated write commits.
+				await tags.tag({ note: 12, tag: "other table" }, context);
+				// The older load was aborted (the newer one had ended).
+				expect(signals[0]?.aborted).toBe(true);
+			} finally {
+				held.resolve();
+				Read.prototype.fetch = fetch;
+				await host.close(context);
+				await store.close(context);
+			}
+		});
+	}
 });

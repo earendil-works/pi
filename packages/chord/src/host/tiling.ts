@@ -5,11 +5,11 @@
 
 import type { Context } from "../context/index.ts";
 import { compareScalar } from "../store/evaluate.ts";
-import type { LiveTarget } from "../store/live-query.ts";
 import { OpenQuery, type OpenRead, type ReadSite } from "../store/open-query.ts";
 import type { ReadRun } from "../store/read.ts";
 import type { Position, Range, StoredRead } from "../store/read-plan.ts";
 import type { Scalar } from "../store/rows.ts";
+import type { LiveTarget } from "../store/shared-read.ts";
 import type { Order } from "../store/sql.ts";
 
 /** One page: the rows after `after` through `through` (the last page has none: it is open at its end). */
@@ -54,7 +54,7 @@ export class Tiling {
 
 	constructor(site: ReadSite, target: LiveTarget, first: number, owner: TilingOwner, context: Context) {
 		this.target = target;
-		this.#query = new OpenQuery(site, target.spec, "rows", () => owner.rebound(), context);
+		this.#query = new OpenQuery(site, target.spec, "rows", owner, context);
 		this.#first = first;
 		this.#order = target.spec.query.order;
 		this.#owner = owner;
@@ -141,7 +141,7 @@ export class Tiling {
 			after = through;
 		}
 		if (open || bookmarks.length === 0) this.#pages.push(this.#page(after, undefined));
-		await Promise.all(this.#pages.map((page) => page.read.load()));
+		await Promise.all(this.#pages.map((page) => page.read.load(this.context)));
 	}
 
 	/** Loads the next page behind a bounded last page; with an open last page there is nothing more to load. */
@@ -150,7 +150,7 @@ export class Tiling {
 		if (last === undefined || last.through === undefined) return;
 		const page = this.#page(last.through, undefined);
 		this.#pages.push(page);
-		await page.read.load();
+		await page.read.load(this.context);
 	}
 
 	/** Closes its query: no commit runs its pages again. */
@@ -225,7 +225,7 @@ export class Tiling {
 			if (known !== undefined && page.after !== undefined && this.#compare(page.after, known) >= 0) {
 				page.read.close();
 				const again = this.#page(page.after, page.through);
-				void again.read.load();
+				void again.read.load(this.context);
 				return again;
 			}
 			const kept = page.rows.filter((row) => !this.#inside(this.#position(row), retired));
@@ -273,7 +273,7 @@ export class Tiling {
 			if (unread) {
 				const rest = this.#page(after, page.through);
 				pages.push(rest);
-				void rest.read.load();
+				void rest.read.load(this.context);
 			}
 		}
 		this.#pages = this.#merged(pages);

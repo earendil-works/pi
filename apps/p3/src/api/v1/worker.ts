@@ -2,7 +2,7 @@
 // what keeps it alive (`WorkerBusy`), both served by the base; the built-in plugins' worker contracts p3 promises; and
 // the parts of Durable and pi-ai worker plugins build on (one instance per worker, the versions p3 ships: a plugin
 // inlines neither). `Harness`, `StoreStorage`, `createRegistry` and `createModels` are for p3's own harness plugin and
-// outside v1's promise: a plugin gives the agent tools only through a thing (`ThingExtensions`).
+// outside v1's promise: a plugin gives the agent tools only through a thing (the things plugin's `ThingHarnessParts`).
 
 import { type ChordStore, defineRegistry, type Host } from "@earendil-works/chord";
 import type { P3Principal } from "../../app.ts";
@@ -34,11 +34,15 @@ export {
 // Until real provider logins (ERNDL-705): a deployment's own login plugin builds on it. Outside v1's promise.
 export { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
 export {
+	AssistantEntry,
 	type Conversation,
 	type ConversationId,
 	type ConversationView,
+	configure,
 	createRegistry,
+	defineDoc,
 	defineExtension,
+	defineTask,
 	defineTool,
 	type EntryId,
 	type Extension,
@@ -46,10 +50,13 @@ export {
 	hook,
 	LiveDoc,
 	type LiveState,
+	type PromptSection,
 	type Registry,
 	ROOT_CONVERSATION_ID,
 	section,
 	type TaskGraph,
+	type TaskRuntime,
+	type ToolExecutionApi,
 } from "@earendil-works/pi-durable";
 export type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 export { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";

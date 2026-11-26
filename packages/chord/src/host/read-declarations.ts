@@ -4,13 +4,14 @@
 
 import type { Context } from "../context/index.ts";
 import type { Snapshot } from "../contracts/internal.ts";
-import { snapshotArguments } from "../contracts/internal.ts";
+import { queryArguments } from "../contracts/internal.ts";
 import { ChordError } from "../data/index.ts";
 import { asChordError, waitingFor } from "../data/internal.ts";
 import type { JsonValue } from "../json.ts";
 import type { Batch, Dependent, FramedOwner } from "../state/internal.ts";
-import { LiveQuery, type LiveShape } from "../store/live-query.ts";
+import { LiveQuery } from "../store/live-query.ts";
 import type { ReadSite } from "../store/open-query.ts";
+import type { LiveShape } from "../store/shared-read.ts";
 import type { ChordStore } from "../store/store.ts";
 import { type Blocked, type Parking, waitingOn } from "./dependencies.ts";
 import type { AnyHost } from "./host.ts";
@@ -73,7 +74,7 @@ export function namedBuilders(label: string, builders: unknown): NamedBuilder[] 
 	return Object.entries(builders).map(([name, entry]) => {
 		const [schema, builder]: readonly unknown[] = Array.isArray(entry) ? entry : [undefined, entry];
 		if (typeof builder !== "function") throw new Error(`${label}: self.queries: "${name}" has no builder`);
-		const args = schema === undefined ? undefined : snapshotArguments(schema, `${label}: query "${name}": args`);
+		const args = schema === undefined ? undefined : queryArguments(schema, `${label}: query "${name}": args`);
 		// The builder is plugin code: what it returns is checked when a read opens.
 		return { name, builder: builder as (args: unknown) => unknown, args };
 	});
