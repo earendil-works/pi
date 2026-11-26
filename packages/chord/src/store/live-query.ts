@@ -11,9 +11,10 @@ import type { SqliteValue } from "../sqlite/index.ts";
 import { type FramedOwner, FramedSource } from "../state/internal.ts";
 import { OpenQuery, type OpenRead, type QuerySpec, type ReadSite } from "./open-query.ts";
 import type { Query } from "./query.ts";
-import { identity, type ReadKind, type ReadResult, type ReadRun } from "./read.ts";
+import type { ReadKind, ReadResult, ReadRun } from "./read.ts";
 import type { Range, StoredRead } from "./read-plan.ts";
 import type { TableDefinition } from "./table.ts";
+import { getRow, setRow, type TupleMap } from "./tuples.ts";
 
 /**
  * What a live source reads: a query to keep open, and how a stored row of it becomes the value's row (decoded,
@@ -160,7 +161,7 @@ type Decoded = {
 };
 
 /** No rows decoded yet: the shared empty map. */
-const NO_ROWS: ReadonlyMap<unknown, Decoded> = new Map();
+const NO_ROWS: TupleMap<Decoded> = new Map();
 
 const NO_COLUMNS: readonly string[] = [];
 
@@ -171,21 +172,21 @@ const NO_COLUMNS: readonly string[] = [];
  * removal, not a comparison of every row with every other).
  */
 export class DecodedRows {
-	#byKey: ReadonlyMap<unknown, Decoded> = NO_ROWS;
+	/** By key, as tuples of the key's values. */
+	#byKey: TupleMap<Decoded> = NO_ROWS;
 	/** The columns of the row decoded last: rows of one statement share them, so their entries share the list. */
 	#columns: readonly string[] = NO_COLUMNS;
 
 	/** The rows of `stored` as `target` decodes them, unchanged ones reused; a row the code cannot read throws. */
 	decode(stored: readonly StoredRead[], target: LiveTarget, context: Context): JsonValue[] {
 		const key = target.spec.query.table.key;
-		const byKey = new Map<unknown, Decoded>();
+		const byKey: TupleMap<Decoded> = new Map();
 		// `map`: a list of exactly its rows (the value keeps it; one pushed to reserves room for 16 more).
 		const rows = stored.map((each) => {
-			const id = identity(key, each);
-			let decoded = this.#byKey.get(id);
+			let decoded = getRow(this.#byKey, key, each);
 			// Unchanged: the entry is kept as it is (its values are the new row's in its columns).
 			if (decoded === undefined || !sameStored(decoded, each)) decoded = this.#decoded(each, target, context);
-			byKey.set(id, decoded);
+			setRow(byKey, key, each, decoded);
 			return decoded.row;
 		});
 		this.#byKey = byKey;

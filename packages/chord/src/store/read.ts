@@ -3,9 +3,10 @@
 // in its step. What a read does with its rows is its sink's business (a live query's rows, a list's page, a count).
 
 import type { Context } from "../context/index.ts";
-import type { SqliteExecutor, SqliteValue } from "../sqlite/index.ts";
+import type { SqliteExecutor } from "../sqlite/index.ts";
 import { chordMetrics } from "../telemetry.ts";
 import type { Position, Range, ReadPlan, StoredRead, Use } from "./read-plan.ts";
+import { addRow, type TupleSet, tupleSet } from "./tuples.ts";
 
 /**
  * The rows of one run, at most the range's `limit`; `more` says a further row followed inside the range. The keys
@@ -24,10 +25,10 @@ export type ReadResult = {
  */
 export type KeptRows = {
 	readonly kind: "rows";
-	/** The own keys of the fetched rows, each as `identityOf` its key values. */
-	readonly keys: ReadonlySet<unknown>;
-	/** Per use of another table, the fetched rows' values of the own columns it pairs by, each as `identityOf` them. */
-	readonly paired: ReadonlyMap<Use, ReadonlySet<unknown>>;
+	/** The own keys of the fetched rows: tuples of the key's values. */
+	readonly keys: TupleSet;
+	/** Per use of another table, the fetched rows' values of the own columns it pairs by (`Use.pairs`), as tuples. */
+	readonly paired: ReadonlyMap<Use, TupleSet>;
 	/** The position of the row past `limit`, when there is one: the read's range ends there. */
 	readonly past: Position | undefined;
 };
@@ -103,7 +104,7 @@ export class Read {
 	 * The keys of the rows a skip test of this read may compare against: its adopted run's, and a group's run not
 	 * adopted yet; `undefined` while some such run is no rows (loading, failed, a count): then no write can be ruled out.
 	 */
-	kept(): readonly ReadonlySet<unknown>[] | undefined {
+	kept(): readonly TupleSet[] | undefined {
 		const adopted = this.#adopted;
 		const tentative = this.#tentative?.run;
 		if (adopted?.kind !== "rows" || (tentative !== undefined && tentative.kind !== "rows")) return undefined;
@@ -170,17 +171,17 @@ export class Read {
 	#result(stored: readonly StoredRead[], range: Range): ReadResult {
 		const { plan } = this;
 		const keyColumns = plan.query.table.key;
-		const keys = new Set<unknown>();
+		const keys = tupleSet(keyColumns.length);
 		// Made by the first use that pairs: a read of its own table alone (most reads) shares the empty map.
-		let paired: Map<Use, Set<unknown>> | undefined;
+		let paired: Map<Use, TupleSet> | undefined;
 		for (const use of plan.uses) {
 			if (use.role === "own" || use.pairs === undefined) continue;
 			paired ??= new Map();
-			paired.set(use, new Set());
+			paired.set(use, tupleSet(use.pairs.length));
 		}
 		for (const row of stored) {
-			keys.add(identity(keyColumns, row));
-			if (paired !== undefined) for (const [use, values] of paired) values.add(identity(use.pairs!, row));
+			addRow(keys, keyColumns, row);
+			if (paired !== undefined) for (const [use, values] of paired) addRow(values, use.pairs!, row);
 		}
 		const more = stored.length > range.limit;
 		const past = more ? plan.order.columns.map((name) => stored[range.limit]![name]!) : undefined;
@@ -195,20 +196,4 @@ function keptOf(run: ReadRun): Kept | undefined {
 }
 
 /** No use pairs with another table: the shared empty map. */
-const NOTHING_PAIRED: ReadonlyMap<Use, ReadonlySet<unknown>> = new Map();
-
-/**
- * The identity of `row` in `columns`, for a set or a map of rows of one read: the value itself for one column (most
- * keys: no text is built per row), `identityOf` the values for several.
- */
-export function identity(
-	columns: readonly string[],
-	row: { readonly [column: string]: SqliteValue | undefined },
-): unknown {
-	return columns.length === 1 ? row[columns[0]!] : JSON.stringify(columns.map((name) => row[name]));
-}
-
-/** The identity of `values`, as `identity` gives it for a row holding them. */
-export function identityOf(values: readonly SqliteValue[]): unknown {
-	return values.length === 1 ? values[0] : JSON.stringify(values);
-}
+const NOTHING_PAIRED: ReadonlyMap<Use, TupleSet> = new Map();

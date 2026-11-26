@@ -6,9 +6,10 @@
 import type { Context } from "../context/index.ts";
 import type { SqliteValue } from "../sqlite/index.ts";
 import { chordMetrics } from "../telemetry.ts";
-import { identityOf, type KeptRows, type Read } from "./read.ts";
+import type { KeptRows, Read } from "./read.ts";
 import type { Use } from "./read-plan.ts";
 import type { Step } from "./step.ts";
+import { hasTuple } from "./tuples.ts";
 
 /**
  * One write of a transaction as the skip test reads it. A single-key write names its key and, for an `update`, the
@@ -73,7 +74,7 @@ async function skipped(
 	const values = use.pairedBy.map((name) => change.key[name]!);
 	const fetched = use.role === "own" ? result.keys : result.paired.get(use);
 	// Before: a fetched row the written row pairs with decided the result (unknown pairs count as one).
-	if (fetched === undefined || fetched.has(identityOf(values))) return false;
+	if (fetched === undefined || hasTuple(fetched, values)) return false;
 	// After. A row that was not in the result cannot enter it by leaving (its own delete, its partner's), nor by an
 	// `update` of columns that decide neither membership nor position. An `exists` row's delete or update can bring
 	// its own rows in (`not(exists(…))`): only the probe tells.

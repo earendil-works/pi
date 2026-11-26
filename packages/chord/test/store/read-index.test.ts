@@ -11,7 +11,7 @@ import { Batch } from "../../src/state/internal.ts";
 import { and, eq, inArray } from "../../src/store/expression.ts";
 import { OpenQuery, type OpenRead } from "../../src/store/open-query.ts";
 import { type Query, query } from "../../src/store/query.ts";
-import { identityOf, type Read, type ReadKind, type ReadRun } from "../../src/store/read.ts";
+import type { Read, ReadKind, ReadRun } from "../../src/store/read.ts";
 import { ReadIndex } from "../../src/store/read-index.ts";
 import { ReadRefresh } from "../../src/store/reads.ts";
 import type { KeyedChange } from "../../src/store/skip.ts";
@@ -20,6 +20,7 @@ import type { ChordStore } from "../../src/store/store.ts";
 import { defineTable } from "../../src/store/table.ts";
 import { TableChanges } from "../../src/store/table-changes.ts";
 import type { TableHandle } from "../../src/store/table-handle.ts";
+import { hasTuple } from "../../src/store/tuples.ts";
 import { expectCollected, memoryStore, metered, tableIn } from "../support.ts";
 import {
 	closeWorld,
@@ -420,7 +421,12 @@ describe("the differential check", () => {
 				const kept = read.kept() ?? [];
 				const key = read.plan.query.table.key;
 				const held = its.filter((change) =>
-					kept.some((keys) => keys.has(identityOf(key.map((name) => change.key[name]!)))),
+					kept.some((keys) =>
+						hasTuple(
+							keys,
+							key.map((name) => change.key[name]!),
+						),
+					),
 				);
 				if (held.length === 0) into.delete(read);
 				else into.set(read, held);
