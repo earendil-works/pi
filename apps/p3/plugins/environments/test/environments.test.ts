@@ -1,17 +1,15 @@
 // The environments plugin: this device's machine is a thing made in Pi once, also after a restart (end to end); the
 // machine kind lets people in with no tick and gives agents Work here, for agents only; `reachMachine` lets a person
 // with any answer and an agent with Work here reach a machine's host, and refuses the others with their message;
-// `Environments` is the owner's (plugin tier); on a worker, `ExecutionEnvironments` gives a location on this device's
-// machine a Node environment in its folder and nothing for another machine (plugin tier, a stand-in server).
+// `Environments` is the owner's (plugin tier); on a worker the plugin contributes the machine kind's part, the one part
+// that gives environments (plugin tier).
 
 import assert from "node:assert/strict";
-import { hostname, tmpdir } from "node:os";
+import { hostname } from "node:os";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
-	constant,
 	BACKGROUND_CONTEXT as context,
-	defineFacet,
 	Environments,
 	isChordError,
 	obj,
@@ -23,11 +21,11 @@ import {
 } from "@earendil-works/p3/v1";
 import { PeopleStore } from "@earendil-works/p3/v1/server";
 import { type TestedPlugin, testPlugin, testServer } from "@earendil-works/p3/v1/testing";
-import { ExecutionEnvironments } from "@earendil-works/p3/v1/worker";
 import { collected, eventually, within } from "../../../test/until.ts";
 import peopleServer from "../../people/server.ts";
 import { OneThing, ThingsStore } from "../../things/contract.server.ts";
 import type { Source } from "../../things/contract.ts";
+import { ThingHarnessParts } from "../../things/contract.worker.ts";
 import thingsServer from "../../things/server.ts";
 import { MachineHosts, reachMachine } from "../contract.server.ts";
 import { MACHINE_KIND } from "../contract.ts";
@@ -241,24 +239,14 @@ describe("the environments plugin on the server", () => {
 });
 
 describe("the environments plugin on a worker", () => {
-	it("resolves a location on this device's machine to its folder, and no other machine", async () => {
-		const server = defineFacet((host) => host.serve(ThisDevice, () => ({ machine: constant("m1") })));
-		const t = await testPlugin(
-			PLUGIN,
-			{ kind: "worker", session: "s1", server: [{ name: "stand-in", facet: server }] },
-			context,
-		);
+	it("contributes the machine kind's part, as giving environments, and nothing else gives one (round 1, must 3)", async () => {
+		const t = await testPlugin(PLUGIN, { kind: "worker", session: "s1" }, context);
 		try {
-			const here = { environment: "m1", folder: tmpdir() };
-			// The resolver is contributed once the server answered.
-			const resolve = await until(
-				await t.host.registry(ExecutionEnvironments, context),
-				(composed) => composed(here, context) !== undefined,
-				within("this device's resolver", context),
+			const parts = t.contributions(ThingHarnessParts);
+			assert.deepEqual(
+				parts.map(({ value }) => [value.kind.name, value.givesEnv]),
+				[[MachineKind.name, true]],
 			);
-			const env = resolve(here, context);
-			assert.equal(env?.cwd, tmpdir());
-			assert.equal(resolve({ environment: "elsewhere", folder: "/" }, context), undefined);
 		} finally {
 			await t.close(context);
 		}

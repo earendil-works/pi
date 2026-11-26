@@ -1,5 +1,6 @@
 // The machine kind's harness part, called as the harness calls it (stand-in references with their grants and info):
-// a location on a held machine with Work here gets a Node environment in its folder; a machine held without Work
+// it is registered as giving environments; a location on a held machine with Work here gets a Node environment in
+// its folder; a machine held without Work
 // here, or not held, gets none; the prompt line names the machine of the conversation's location (not the first one
 // held) and the folder, or says no machine is available.
 
@@ -32,12 +33,16 @@ const given = (...things: HeldThing<typeof Machine>[]) => machinePart.part(thing
 
 /** The prompt line of `contribution` for environment `env`. */
 async function line(contribution: ReturnType<typeof given>, env: { cwd: string } | undefined) {
-	const [section] = contribution.prompt ?? [];
+	const [section] = contribution.extension?.sections ?? [];
 	// The section reads only `conversationId` and `env` of its input.
 	return section?.render({ conversationId: 1, env } as never, context);
 }
 
 describe("the machine's harness part", () => {
+	it("is registered as giving environments", () => {
+		assert.equal(machinePart.givesEnv, true);
+	});
+
 	it("gives a Node environment in the folder of a location on a held machine with Work here", async () => {
 		const contribution = given(held("m1", "slayer", "work"));
 		const env = await contribution.env?.({ machine: "m1", folder: "/tmp" }, context);

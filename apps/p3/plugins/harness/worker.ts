@@ -2,7 +2,7 @@
 // session's agent holds. One host-lifetime object opens it once the session's row arrived (`SessionFacts`), with a
 // registry, models and an environment kept in step with the things the worker holds as the agent (`HeldThings`) and
 // the kinds' parts (`ThingHarnessParts`, `agent-parts.ts`); the environment at the session's location is a kind's (a
-// machine's), and until a kind gives environments, the environments plugin's. It resumes the work left only for a session that is not archived. It
+// machine's: none where no held thing gives one). It resumes the work left only for a session that is not archived. It
 // contributes the open harness (`SessionHarness`), whose `submit` is the one way to start work, reports the session's
 // state to the server on each transition (`activity.ts`) and keeps the worker alive while working (`WorkerBusy`).
 // It contributes the subagents' part (`subagents.ts`), whose tasks it installs always.
@@ -26,8 +26,6 @@ import {
 import {
 	type Conversation,
 	type ConversationId,
-	type EnvironmentResolver,
-	ExecutionEnvironments,
 	Harness,
 	LiveDoc,
 	type OpenHarness,
@@ -59,11 +57,10 @@ export default defineFacet((host, facet) => {
 		const runtime = self.registry(WorkerRuntime);
 		const parts = self.registry(ThingHarnessParts);
 		const held = self.registry(HeldThings);
-		const environments = self.registry(ExecutionEnvironments);
 		// Declared, so the harness opens only once the session's row is known.
 		const facts = self.get(SessionFacts, {});
 		const opened = self.open(
-			(opening) => openAgent({ runtime: runtime.value, facts, parts, held, environments }, opening),
+			(opening) => openAgent({ runtime: runtime.value, facts, parts, held }, opening),
 			({ durable }, _reason, context) => durable.close(context),
 		);
 		const graph = self.follow((observer, context) => opened.value.durable.observeTaskGraph(observer, context));
@@ -147,20 +144,18 @@ export default defineFacet((host, facet) => {
 });
 
 /**
- * What the harness is opened from: the worker, the session's facts, the kinds' parts, what the worker holds and the
- * environments.
+ * What the harness is opened from: the worker, the session's facts, the kinds' parts and what the worker holds.
  */
 type Sources = {
 	readonly runtime: WorkerRuntime;
 	readonly facts: Reference<typeof SessionFacts>;
 	readonly parts: RegistryValue<Parts>;
 	readonly held: RegistryValue<Held | undefined>;
-	readonly environments: RegistryValue<EnvironmentResolver>;
 };
 
 /** The session's agent: what it holds applied, then Durable opened over it (paused). */
 async function openAgent(sources: Sources, opening: Context): Promise<{ durable: Harness; things: AgentParts }> {
-	const { runtime, facts, parts, held, environments } = sources;
+	const { runtime, facts, parts, held } = sources;
 	const { session, host: worker, store } = runtime;
 	// Every conversation works at the session's location until slice 5 gives each its own.
 	const location = (): HarnessLocation | undefined => {
@@ -184,16 +179,11 @@ async function openAgent(sources: Sources, opening: Context): Promise<{ durable:
 			models: () => things.models,
 			registry: things.registry,
 			// The environment at the session's location (per conversation with slice 5), read at each use; it never
-			// changes while a tool call runs. Once a kind gives environments (a machine's), only kinds do: a location on
-			// no machine the agent holds has none. Until then, the environments plugin's resolver.
+			// changes while a tool call runs. Only kinds give environments (a machine's): a location on no machine the
+			// agent holds with what that machine asks (Work here) has none, and nothing falls back.
 			env: (_target, context) => {
 				const at = location();
-				if (at === undefined) return undefined;
-				// Until a part that gives environments is registered at all (the machine kind; env4 removes this with
-				// ERNDL-1172): the environments plugin's resolver. From then on only parts: none withheld, none given.
-				const machines = [...parts.value.values()].some(({ value }) => value.givesEnv);
-				if (!machines) return environments.value({ environment: at.machine, folder: at.folder }, context);
-				return things.env(at, context);
+				return at === undefined ? undefined : things.env(at, context);
 			},
 			onReport: (report) => reportError(`p3 harness: session ${session}`, report, BACKGROUND_CONTEXT),
 		},

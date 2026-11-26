@@ -1,7 +1,7 @@
 // Stand-ins for the plugin tier of the harness (and the transcript) on a session's worker: on a stand-in server, its
 // `SessionFacts` (a row the test changes, and the reports it records) and `SessionAccess` (each caller's access, as
-// the test sets it); on the worker, this device's `ExecutionEnvironments` (a folder of
-// the test's), the holding (`HeldThings`: what the test says the agent holds, an unchanged kind's list kept by
+// the test sets it); on the worker, this device's machine (`test.device`, a part that gives the environment of a
+// location on machine `this-device`, held always), the holding (`HeldThings`: what the test says the agent holds, an unchanged kind's list kept by
 // identity) and a scripted login's kind (`test.login`: a pi-ai faux provider per thing answering from its script,
 // each request recorded, and with `tool` the tool `test_session`, which reads the session's title through the
 // session's `call`). The real things plugin's worker facet (the registries) and the tools plugin's (the coding tools'
@@ -30,7 +30,6 @@ import {
 import {
 	defineTool,
 	type ExecutionEnv,
-	ExecutionEnvironments,
 	fauxAssistantMessage,
 	fauxProvider,
 	fauxText,
@@ -108,6 +107,12 @@ export type Server = {
 	slow(release: Promise<void>): void;
 };
 
+/** This device's machine kind, as the stand-ins have it. */
+const DeviceKind = defineThing("test.device", { version: 1, ticks: {} });
+
+/** This device's machine, held always (beside what a case holds). */
+const DEVICE: Holding = { kind: DeviceKind.name, held: heldThing("this-device", []) };
+
 /** A session row of `id` working in `folder`. */
 export function sessionRow(id: string, folder: string): SessionRow {
 	return {
@@ -161,7 +166,7 @@ export function standIns(
 	{ ready = true }: { readonly ready?: boolean } = {},
 ): { stubs: PluginFacet<P3Principal>[]; server: PluginFacet<P3Principal>[]; control: Server } {
 	let rowValue = row;
-	let grouped = group(held, new Map());
+	let grouped = group([...held, DEVICE], new Map());
 	// Not ready: the holding contributes `undefined` until the test holds something.
 	let heldValue: Held | undefined = ready ? grouped : undefined;
 	let release: Promise<void> = Promise.resolve();
@@ -178,7 +183,7 @@ export function standIns(
 			for (const writable of rows) writable.set(rowValue);
 		},
 		hold: (next) => {
-			grouped = group(next, grouped);
+			grouped = group([...next, DEVICE], grouped);
 			heldValue = grouped;
 			for (const writable of holdings) writable.set(heldValue);
 		},
@@ -211,11 +216,19 @@ export function standIns(
 			return { access: self.derive([access], ([value]) => value) };
 		});
 	});
-	const device = defineFacet((host, self) => {
-		host.serve(ExecutionEnvironments, {
-			compose: (table) => (location, context) => table[0]?.value(location, context),
-		});
-		self.contribute(ExecutionEnvironments, (location) => new NodeExecutionEnv({ cwd: location.folder }));
+	// This device's machine, as the machine kind's part gives it: its environment in the location's folder.
+	const device = defineFacet((_host, self) => {
+		self.contribute(
+			ThingHarnessParts,
+			thingHarnessPart(
+				DeviceKind,
+				() => ({
+					env: (location) =>
+						location.machine === "this-device" ? new NodeExecutionEnv({ cwd: location.folder }) : undefined,
+				}),
+				{ env: "gives" },
+			),
+		);
 	});
 	const holding = defineFacet((host) => {
 		contribute(host, "test.holding", (self) => {

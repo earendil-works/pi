@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { BACKGROUND_CONTEXT as context, isChordError, type P3Principal, until } from "@earendil-works/p3/v1";
+import { constant, BACKGROUND_CONTEXT as context, isChordError, type P3Principal, until } from "@earendil-works/p3/v1";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
 import {
 	LiveDoc,
@@ -24,7 +24,10 @@ import {
 	WorkerBusy,
 } from "@earendil-works/p3/v1/worker";
 import { eventually, within } from "../../../test/until.ts";
+import { MachineKind } from "../../environments/kind.ts";
+import environmentsWorker from "../../environments/worker.ts";
 import type { HarnessSession } from "../../things/contract.worker.ts";
+import { held as heldThing } from "../../things/test/part.ts";
 import {
 	coding,
 	type Extra,
@@ -321,6 +324,40 @@ describe("the harness plugin on a worker", () => {
 		assert.match(results[1] ?? "", /No execution environment/, "none on a machine the part does not give");
 		// Astra and Opus, round 1: the machine let go of (Work withheld) leaves no environment, no fallback.
 		assert.match(results[2] ?? "", /No execution environment/, "a machine part registered: no fallback");
+	});
+
+	it("runs no tool on a machine whose Work here is withheld: the real machine part, nothing falls back (ERNDL-1172)", async () => {
+		const script = [runs("where", "pwd"), says("", "done")];
+		const info = constant({ name: "box", type: "local", status: "ready" });
+		const machine = (granted: string[]): Holding => ({
+			kind: MachineKind.name,
+			held: heldThing("m", granted, { info }),
+		});
+		const held = [login("login", "faux", script), coding(), machine(["work"])];
+		const { stubs, server, control } = standIns(
+			{ ...sessionRow(SESSION, folder), location: { environment: "m", folder } },
+			held,
+		);
+		harnessControl = control;
+		t = await testPlugin(
+			fileURLToPath(new URL("../", import.meta.url)),
+			{
+				kind: "worker",
+				session: SESSION,
+				stubs: [...stubs, { name: "@earendil-works/p3-environments", facet: environmentsWorker }],
+				server,
+			},
+			context,
+		);
+		await ask("where");
+		// Round 1's must 3 (Opus, Astra): Work here withheld from the agent, the machine stays held without it.
+		control.hold([held[0]!, held[1]!, machine([])]);
+		await ask("where now");
+		const results = requests()
+			.filter(({ last }) => !last.startsWith("where"))
+			.map(({ last }) => last.trim());
+		assert.equal(results[0], folder, "with Work here the tool runs in the location's folder");
+		assert.match(results[1] ?? "", /No execution environment/, "without it there is none");
 	});
 
 	it("tells a part where a conversation works: the session's location, live", async () => {
