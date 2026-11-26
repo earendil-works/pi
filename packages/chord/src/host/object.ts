@@ -17,7 +17,7 @@ import { awaitWithContext, type Context } from "../context/index.ts";
 import type { Contract, ParamsOf } from "../contracts/index.ts";
 import { type ContractShape, NO_GRANTS } from "../contracts/internal.ts";
 import { ChordError, type FailureCause, type Principal } from "../data/index.ts";
-import { asChordError, binds, invalid, type Provider, sameCause } from "../data/internal.ts";
+import { asChordError, binds, invalid, type Provider, sameCause, stackless } from "../data/internal.ts";
 import { Documents, type DocumentsOwner, type KeyedSlot, type TransactionCancelled } from "../documents/internal.ts";
 import type { JobDefinition } from "../jobs/index.ts";
 import { JobRecords } from "../jobs/internal.ts";
@@ -1038,7 +1038,7 @@ export class ChordObject implements Target {
 	/** What a change of its admission rejects running calls with: `forbidden/revoked` for a denial, else `unavailable`. */
 	#readmitted(denial: ChordError | undefined): ChordError {
 		if (denial !== undefined) return revoked(this.label, denial);
-		return new ChordError({ code: "unavailable", message: `${this.label}: its admission changed` });
+		return stackless({ code: "unavailable", message: `${this.label}: its admission changed` });
 	}
 
 	/**
@@ -1353,12 +1353,12 @@ export class ChordObject implements Target {
 
 	/** The `released` error of an attempt a reload replaced. */
 	#reloaded(): ChordError {
-		return new ChordError({ code: "released", reason: "ended", message: `${this.label}: replaced by a reload` });
+		return stackless({ code: "released", reason: "ended", message: `${this.label}: replaced by a reload` });
 	}
 
 	/** The `released` error of this object. */
 	ended(): ChordError {
-		return new ChordError({ code: "released", reason: "ended", message: `${this.label}: ended` });
+		return stackless({ code: "released", reason: "ended", message: `${this.label}: ended` });
 	}
 
 	/** Runs `attempt`'s activation once `ending` (its predecessors' teardowns, if any) finished; takes its outcome. */

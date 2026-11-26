@@ -19,7 +19,7 @@ import {
 	NO_GRANTS,
 } from "../contracts/internal.ts";
 import { ChordError, type FailureCause, isChordError } from "../data/index.ts";
-import { asChordError, invalid } from "../data/internal.ts";
+import { asChordError, invalid, stackless } from "../data/internal.ts";
 import {
 	type AnyHost,
 	type Attachable,
@@ -242,7 +242,7 @@ export class RemoteObject implements Target {
 			this.#hold?.side.cancelCalls(this.#hold.id, binding, this.label);
 			return;
 		}
-		const error = new ChordError({ code: "released", message: `${this.label}: released` });
+		const error = stackless({ code: "released", message: `${this.label}: released` });
 		// Out of the table before anything else runs: a reference made from here on holds anew.
 		this.#unpublish();
 		this.#hold?.side.release(this.#hold.id, error);
@@ -473,8 +473,7 @@ export class RemoteObject implements Target {
 		unplaced.attach(own);
 		this.#bindings.delete(binding);
 		binding.transfer(own);
-		if (this.#bindings.size === 0)
-			this.#end(new ChordError({ code: "released", message: `${this.label}: released` }));
+		if (this.#bindings.size === 0) this.#end(stackless({ code: "released", message: `${this.label}: released` }));
 		own.#place();
 	}
 

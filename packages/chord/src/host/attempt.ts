@@ -20,7 +20,7 @@ import type {
 } from "../contracts/index.ts";
 import { contractData, currentVersion, NO_GRANTS, type ShapeOf, versionAt } from "../contracts/internal.ts";
 import { ChordError, type FailureCause, type Principal } from "../data/index.ts";
-import { asChordError, checkArgs, checkParams, invalid, openFailure, type Value } from "../data/internal.ts";
+import { asChordError, checkArgs, checkParams, invalid, openFailure, stackless, type Value } from "../data/internal.ts";
 import type { HandleOf, JsonObject, KeyedBy, StateDefinition, Tx } from "../documents/index.ts";
 import {
 	type AnyDefinition,
@@ -1050,9 +1050,7 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	/** Its routines stop (their ctx aborted); their running calls are waited for by the drain. */
 	stopRoutines(): void {
 		this.#reload().routinesStopped = true;
-		this.#stopRoutines(
-			new ChordError({ code: "released", reason: "ended", message: `${this.#object.label}: reloaded` }),
-		);
+		this.#stopRoutines(stackless({ code: "released", reason: "ended", message: `${this.#object.label}: reloaded` }));
 	}
 
 	/**

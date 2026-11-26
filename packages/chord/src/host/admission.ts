@@ -11,7 +11,7 @@ import type { Context } from "../context/index.ts";
 import type { AllowedOf, Contract, NamedQuery, ParamsOf } from "../contracts/index.ts";
 import { NO_GRANTS } from "../contracts/internal.ts";
 import { ChordError, forbidden, type MessageData, type Principal } from "../data/index.ts";
-import { asChordError, canonicalJson, checkParams, isMessageData } from "../data/internal.ts";
+import { asChordError, canonicalJson, checkParams, isMessageData, stackless } from "../data/internal.ts";
 import type { JsonValue } from "../json.ts";
 import { appended, NO_ITEMS } from "../lists.ts";
 import type { Registry, RegistryValue } from "../registries/index.ts";
@@ -321,7 +321,7 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 		if (this.#released) return;
 		this.#released = true;
 		const { label } = this.#owner;
-		const ended = new ChordError({ code: "released", reason: "ended", message: `${label}: its admission ended` });
+		const ended = stackless({ code: "released", reason: "ended", message: `${label}: its admission ended` });
 		this.#unfollow();
 		const source = this.#source;
 		if (source instanceof Source) source.dependents.delete(this);

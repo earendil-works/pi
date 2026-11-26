@@ -10,7 +10,7 @@
 import type { TelemetryContext } from "@earendil-works/pi-telemetry";
 import { type Context, withAbortSignal } from "../context/index.ts";
 import { ChordError, type FailureCause, isChordError, type Principal } from "../data/index.ts";
-import { asChordError } from "../data/internal.ts";
+import { asChordError, stackless } from "../data/internal.ts";
 import {
 	asRemoteOldWork,
 	type Caller,
@@ -161,7 +161,7 @@ export class ProviderSide implements EventSender {
 		const closing = this.link.host.closing;
 		const entries = [...this.#entries.values()];
 		this.#entries.clear();
-		const closed = new ChordError({ code: "unavailable", message: "the link closed" });
+		const closed = stackless({ code: "unavailable", message: "the link closed" });
 		const relayed: RelayedCall[] = [];
 		for (const call of this.#calls.values()) {
 			if (call.kind === "served") call.abort.abort(closed);
@@ -282,7 +282,7 @@ export class ProviderSide implements EventSender {
 				const error =
 					forwarded.kind === "failed"
 						? this.#failure(hold, forwarded.cause)
-						: new ChordError({ code: "unavailable", message: `hold ${hold.id}: rebinding` });
+						: stackless({ code: "unavailable", message: `hold ${hold.id}: rebinding` });
 				this.#rejectRelayed(hold, error, "queued");
 				this.send(forwarded);
 			}
@@ -346,7 +346,7 @@ export class ProviderSide implements EventSender {
 	 */
 	forget(hold: Hold | RelayedHold, error?: ChordError): void {
 		if (this.#entries.get(hold.id) === hold) this.#entries.delete(hold.id);
-		const reason = error ?? new ChordError({ code: "released", message: `hold ${hold.id}: released` });
+		const reason = error ?? stackless({ code: "released", message: `hold ${hold.id}: released` });
 		let relayed: RelayedCall[] | undefined;
 		for (const [id, call] of this.#calls) {
 			if (call.hold !== hold) continue;
@@ -699,7 +699,7 @@ export class ProviderSide implements EventSender {
 				for (const id of sender.holds) {
 					const hold = this.#relayedHold(id, sender.from);
 					if (hold === undefined) continue;
-					const error = new ChordError({ code: "unavailable", message: `hold ${id}: rebound` });
+					const error = stackless({ code: "unavailable", message: `hold ${id}: rebound` });
 					this.#rejectRelayed(hold, error, "queued");
 				}
 				break;

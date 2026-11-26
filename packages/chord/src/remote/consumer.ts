@@ -11,7 +11,7 @@ import type { TelemetryCarrier } from "@earendil-works/pi-telemetry";
 import type { Context } from "../context/index.ts";
 import { type MethodData, takesNoArgs } from "../contracts/internal.ts";
 import { ChordError, isChordError } from "../data/index.ts";
-import { asChordError } from "../data/internal.ts";
+import { asChordError, stackless } from "../data/internal.ts";
 import { revoked } from "../host/internal.ts";
 import {
 	type BoundEntry,
@@ -186,7 +186,7 @@ export class ConsumerSide {
 			this.#link.send({ kind: "abort", call: id });
 		}
 		for (const _ of sent) this.#window.freed();
-		const error = new ChordError({ code: "released", message: `${label}: released` });
+		const error = stackless({ code: "released", message: `${label}: released` });
 		for (const call of waiting) call.reject(error);
 		for (const [, call] of sent) call.reject(error);
 	}
@@ -273,7 +273,7 @@ export class ConsumerSide {
 
 	/** The link closed: calls in flight and waiting reject `unavailable` (never resent, §7); the tables are dropped. */
 	closed(): void {
-		const error = new ChordError({ code: "unavailable", message: "the link closed" });
+		const error = stackless({ code: "unavailable", message: "the link closed" });
 		const calls = [...this.#calls.values(), ...this.#window.clear()];
 		this.#calls.clear();
 		this.#entries.clear();
@@ -436,7 +436,7 @@ export class ConsumerSide {
 	#loading(hold: number): void {
 		const holder = this.#entries.get(hold);
 		if (holder === undefined) return;
-		const error = new ChordError({ code: "unavailable", message: `hold ${hold}: rebinding` });
+		const error = stackless({ code: "unavailable", message: `hold ${hold}: rebinding` });
 		for (const call of this.#window.removeHold(hold)) call.reject(error);
 		holder.loading();
 	}

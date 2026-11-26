@@ -6,7 +6,21 @@ import {
 	chordErrorFromJson,
 	invalid,
 	PROTOCOL_VERSION,
+	stackless,
 } from "../../src/data/internal.ts";
+
+describe("stackless", () => {
+	it("makes a ChordError with its code, reason and message, and no frame in its stack", () => {
+		const limit = Error.stackTraceLimit;
+		const error = stackless({ code: "released", reason: "ended", message: "a thing: ended" });
+		expect(isChordError(error, "released")).toBe(true);
+		expect([error.code, error.reason, error.message]).toEqual(["released", "ended", "a thing: ended"]);
+		expect(error.stack).toBe("ChordError: a thing: ended");
+		// The limit is the caller's again: an error made right after has its frames.
+		expect(Error.stackTraceLimit).toBe(limit);
+		expect(new ChordError({ code: "gone", message: "m" }).stack).toContain("errors.test.ts");
+	});
+});
 
 describe("ChordError", () => {
 	it("is a tagged union: a wrong pairing is a type error", () => {

@@ -76,6 +76,24 @@ export type ChordError = ChordErrorClass & ChordErrorJson;
  */
 export const ChordError = ChordErrorClass as new (init: ChordErrorJson, options?: ErrorOptions) => ChordError;
 
+/**
+ * A ChordError made where something ends (an object, a reference, a hold, a link) to reject whoever still waits on
+ * it, often nobody: made without a stack. Its stack would name Chord's code that ended the thing, never the caller
+ * the error reaches, and capturing and formatting it was a quarter of the time an object's rebuild takes.
+ */
+export function stackless(init: ChordErrorJson): ChordError {
+	const limit = frames.stackTraceLimit;
+	frames.stackTraceLimit = 0;
+	try {
+		return new ChordError(init);
+	} finally {
+		frames.stackTraceLimit = limit;
+	}
+}
+
+/** V8's count of frames a new error captures (Node, workerd, Chrome); another engine ignores it and captures as ever. */
+const frames: ErrorConstructor & { stackTraceLimit?: number } = Error;
+
 /** Whether `error` is a ChordError, optionally with the given code. */
 export function isChordError<C extends ChordErrorCode = ChordErrorCode>(
 	error: unknown,

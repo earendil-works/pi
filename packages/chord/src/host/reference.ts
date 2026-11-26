@@ -26,7 +26,7 @@ import {
 	takesNoArgs,
 } from "../contracts/internal.ts";
 import { ChordError, type FailureCause, type Principal } from "../data/index.ts";
-import { invalid, sameCause } from "../data/internal.ts";
+import { invalid, sameCause, stackless } from "../data/internal.ts";
 import { Keyed, type KeyedSlot, type SealToken, Singleton } from "../documents/internal.ts";
 import type { JsonValue } from "../json.ts";
 import { RETRY_HOPS } from "../link/internal.ts";
@@ -1092,7 +1092,7 @@ export class Binding implements Holder, UnboundRequest {
 
 	/** The error of this reference's release by its holder (`released`, no reason). */
 	#released(): ChordError {
-		return new ChordError({ code: "released", message: `${this.#name}: released` });
+		return stackless({ code: "released", message: `${this.#name}: released` });
 	}
 }
 
