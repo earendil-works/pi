@@ -97,6 +97,11 @@ slice spec's section citations are for orientation, not a reading limit (owner, 
 - **Slice 15, lazy named queries** (built 2026-11-25, `slice-15.md` §5): a reference's `queries` member makes its
   `ReferenceQuery`s on first use (`referenceQueries` in `host/named-query.ts`, a class per member and contract
   version, cached weakly), labels built when asked; `test/bench/reference-heap.ts`.
+- **Erasure** (built 2026-11-26 for Durable's conversation deletion, pi #11026; design §10 "Erasure"): outbox format 2
+  with `document.purge` (`store/engine.ts` `purgeDocuments`, `purgeDocument`; the applier and the batch write
+  schema), `OwnerTable.encodeKey`, `delete` and `deleteWhere` (`store/adapter.ts`); Durable's `StoreStorage`
+  deletes conversations with it (its conversations table at version 2: `parent_conversation_id`);
+  example 79.
 - **Chord's shared code** (upstream pi): `src/watch.ts` (`Watch`, `NativeWatch`, `WatchHandle`, `WatchEnd`,
   `NativeWatchable`), Delta (`track`, `diffRevisions`, `applyImmutable`, encoders, `PendingOps`, `appendText`),
   context, JSON, output, SQLite drivers.
@@ -399,6 +404,11 @@ Left by the first part itself:
 
 - Upload, acknowledgement and `store.outbox.trim`, epochs, pull-back, the split (S5, S7); a store opened with an
   outbox (decision "The outbox is optional, internal and versioned") starts its sync from an archive.
+- **Erasure waits for the trim** (design §10 "Erasure"): a deletion's data stays in the outbox's earlier commits
+  until `trim` passes it; the sync layer trims after the remote acknowledged, and the remote's copy of those commits
+  is the remote's to erase. Nothing trims a store without sync yet: an app with an outbox and no sync trims itself.
+- **A format on batches** (decision "Erasure in the store" (4)): sync batches and log lines carry the outbox format
+  they were read in, and `applyBatch()` refuses a newer one as `outbox.read` does.
 - Snapshot reads for large exports on a second SQLite connection (S4), if exports get large.
 
 ### Outside the slices

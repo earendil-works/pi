@@ -2,6 +2,7 @@
 // the recorded form of every table write, the staged writes a transaction or an activation hands the commit step
 // (their SQL rendered at staging, rule 8), and the appliers of the schema writes, which render DDL from the record.
 
+import type { SqliteValue } from "../sqlite/index.ts";
 import type { TableRecord } from "./catalog.ts";
 import type { ColumnRecord } from "./columns.ts";
 import type { SetNode, WhereNode } from "./expression.ts";
@@ -168,12 +169,20 @@ export function stageDeleteWhere(statement: Statement, table: string, where: Whe
 function counted(statement: Statement, record: (count: number) => TableWrite): StagedWrite {
 	return {
 		order: "write",
-		apply: async (step) => {
-			const count = await step.runCounted(statement.sql, ...statement.params);
-			step.rows += count;
-			return [record(count)];
-		},
+		apply: async (step) => [await applyCounted(step, statement.sql, statement.params, record)],
 	};
+}
+
+/** Runs a counted statement in `step`, its rows counted, and returns its write as recorded, with the count. */
+export async function applyCounted(
+	step: Step,
+	sql: string,
+	params: readonly SqliteValue[],
+	record: (count: number) => TableWrite,
+): Promise<TableWrite> {
+	const count = await step.runCounted(sql, ...params);
+	step.rows += count;
+	return record(count);
 }
 
 /** Applies a `table` write: `CREATE TABLE` when the store does not have the table yet, then its record. */

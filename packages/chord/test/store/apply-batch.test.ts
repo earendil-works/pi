@@ -1,6 +1,6 @@
 // Tests of batch apply (slice 6b §1.6, S5, S17): a store's outbox replayed into an empty store gives the same archive,
-// manifest included; every write kind (an adapter's create-plus-retire and change-plus-retire too); the refusals (claims held, seqs that do not follow, writes the records refuse)
-// and the divergence of a recorded count.
+// manifest included; every write kind (an adapter's create-plus-retire, change-plus-retire and purge too); the refusals
+// (claims held, seqs that do not follow, writes the records refuse) and the divergence of a recorded count or of a purge.
 
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
@@ -12,6 +12,7 @@ import {
 	type DocumentRecord,
 	type DocumentWrite,
 	insertDocument,
+	purgeDocuments,
 	readDocument,
 	retireDocument,
 	retireRecord,
@@ -75,7 +76,8 @@ async function everyKind(): Promise<ChordStore> {
 
 /**
  * What only an adapter writes (Durable's commits): a rewindable creation retired in its own commit (an empty
- * lifetime), and a change with the retirement of the same record in one commit.
+ * lifetime), a change with the retirement of the same record in one commit, and a purge of another namespace's
+ * rewindable record with its history.
  */
 async function durableShaped(store: ChordStore): Promise<void> {
 	const address = { owner: "app.durable", namespace: "session", kind: "notes" };
@@ -122,6 +124,23 @@ async function durableShaped(store: ChordStore): Promise<void> {
 		},
 	};
 	await store.commit([changeAndRetire], OPEN, context);
+	const erased = { ...address, namespace: "erased" };
+	const purge: StagedWrite = { order: "write", apply: (step) => purgeDocuments(step, erased.owner, erased.namespace) };
+	await store.commit(
+		[
+			{
+				order: "write",
+				apply: async (step) => {
+					const record = { ...made(step.ids.mint(), "x", step.seq, false), namespace: erased.namespace };
+					await insertDocument(step, record, '{"n":0}');
+					return [{ kind: "document.create", record, base }];
+				},
+			},
+		],
+		OPEN,
+		context,
+	);
+	await store.commit([purge], OPEN, context);
 }
 
 /** Every commit of `store`'s outbox. */
@@ -139,6 +158,7 @@ describe("replay", () => {
 				"alter",
 				"document.change",
 				"document.create",
+				"document.purge",
 				"document.retire",
 				"dropIndex",
 				"index",
@@ -286,5 +306,28 @@ describe("refusals", () => {
 		expect(String(await rejection(applyBatch(replica, diverging, context)))).toContain("recorded");
 		expect(await rejection(applyBatch(replica, all, context))).toMatchObject({ code: "invalid", reason: "args" });
 		expect(replica.lastSeq).toBe(0);
+	});
+
+	it("a purge of a record the replica does not hold marks the store diverged (S17)", async () => {
+		const all = await commits(await everyKind());
+		const index = all.findIndex(({ writes }) => writes.some(({ kind }) => kind === "document.purge"));
+		const diverging = structuredClone(all);
+		const write = diverging[index]!.writes.find(({ kind }) => kind === "document.purge") as { id: number };
+		write.id = 9_999;
+		const replica = await memoryStore();
+		expect(String(await rejection(applyBatch(replica, diverging, context)))).toContain("document 9999 is not stored");
+		expect(await rejection(applyBatch(replica, all, context))).toMatchObject({ code: "invalid", reason: "args" });
+	});
+
+	it("a purge of a record the replica holds at another revision marks the store diverged (S17)", async () => {
+		const all = await commits(await everyKind());
+		const index = all.findIndex(({ writes }) => writes.some(({ kind }) => kind === "document.purge"));
+		const diverging = structuredClone(all);
+		const write = diverging[index]!.writes.find(({ kind }) => kind === "document.purge") as { revision: number };
+		write.revision += 1;
+		const replica = await memoryStore();
+		expect(String(await rejection(applyBatch(replica, diverging, context)))).toContain(
+			`is not stored at revision ${write.revision}`,
+		);
 	});
 });

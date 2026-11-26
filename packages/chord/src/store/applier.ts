@@ -14,6 +14,7 @@ import {
 	type DocumentWrite,
 	insertDocument,
 	insertRevision,
+	purgeDocument,
 	type RevisionContent,
 	readDocument,
 	retireRecord,
@@ -67,7 +68,10 @@ export async function applyWrite(step: Step, write: StoreWrite, what: string): P
 	}
 }
 
-/** Applies a document write: a creation, a change or a retirement on its recorded revision, an archive's revision. */
+/**
+ * Applies a document write: a creation, a change or a retirement on its recorded revision, a purge of a stored record,
+ * an archive's revision.
+ */
 async function applyDocument(step: Step, write: DocumentWrite, what: string): Promise<void> {
 	switch (write.kind) {
 		case "document.create":
@@ -87,6 +91,10 @@ async function applyDocument(step: Step, write: DocumentWrite, what: string): Pr
 		}
 		case "document.retire":
 			await retireRecord(step, await liveAt(step, write.id, write.revision, what));
+			return;
+		case "document.purge":
+			if ((await purgeDocument(step, write.id, write.revision)) !== 1)
+				throw new Diverged(`${what}: document ${write.id} is not stored at revision ${write.revision}`);
 			return;
 	}
 }
