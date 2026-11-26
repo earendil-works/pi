@@ -13,16 +13,16 @@ const Kind = defineThing("test.kind", {
 	version: 3,
 	state: { title: str(), secret: str() },
 	methods: { look: method(), change: method() },
-	flags: { export: label("flagExport") },
 	ticks: {
 		see: { label: label("see"), for: "people", gives: ["secret"] },
 		edit: { label: label("edit"), gives: ["change", "export"] },
+		export: { label: label("export") },
 	},
 	defaultGrants: { everyone: ["see"] },
 });
 
 describe("a kind", () => {
-	it("declares a remote contract of its members: those no tick gives plain, the others grantable, the flags", () => {
+	it("declares a remote contract of its members (those no tick gives plain, the others grantable), its flag ticks flags", () => {
 		assert.equal(Kind.contract.name, "test.kind");
 		assert.equal(Kind.contract.version, 3);
 		const { state, methods, events } = memberNames(Kind.contract);
@@ -41,44 +41,49 @@ describe("a kind", () => {
 			ticks: [
 				{ name: "see", label: label("see"), for: "people" },
 				{ name: "edit", label: label("edit"), for: "all" },
+				{ name: "export", label: label("export"), for: "all" },
 			],
 			defaultGrants: { everyone: ["see"] },
 		});
 	});
 
-	it("refuses a tick giving what the kind lacks, and a flag no tick gives (decision 95)", () => {
+	it("refuses a tick giving what the kind lacks, a flag tick named like a member, a default grant for the wrong party", () => {
 		const declare = (declaration: object) =>
-			(defineThing as (name: string, declaration: object) => unknown)("test.bad", declaration);
+			(defineThing as (name: string, declaration: object) => unknown)("test.bad", {
+				version: 1,
+				methods: { look: method() },
+				...declaration,
+			});
+		assert.throws(
+			() => declare({ ticks: { see: { label: label("see"), gives: ["peek"] } } }),
+			/"peek" is no member or flag tick/,
+		);
+		assert.throws(() => declare({ ticks: { look: { label: label("look") } } }), /a flag tick is named like a member/);
 		assert.throws(
 			() =>
 				declare({
-					version: 1,
-					methods: { look: method() },
-					ticks: { see: { label: label("see"), gives: ["peek"] } },
+					ticks: { bash: { label: label("bash"), for: "agents", gives: ["look"] } },
+					defaultGrants: { everyone: ["bash"] },
 				}),
-			/"peek" is no member or flag/,
+			/defaultGrants.everyone: "bash" is no tick for everyone/,
 		);
-		assert.throws(
-			() =>
-				declare({
-					version: 1,
-					methods: { look: method() },
-					flags: { export: label("x") },
-					ticks: { see: { label: label("see"), gives: ["look"] } },
-				}),
-			/flags.export: no tick gives it/,
-		);
-		// A member or flag in several ticks is fine; a member no tick gives is plain.
+		// A member or flag tick in several ticks is fine; a member no tick gives is plain.
 		const both = defineThing("test.both", {
 			version: 1,
 			methods: { look: method(), plain: method() },
-			ticks: { a: { label: label("a"), gives: ["look"] }, b: { label: label("b"), gives: ["look"] } },
+			ticks: {
+				a: { label: label("a"), gives: ["look", "f"] },
+				b: { label: label("b"), gives: ["look", "f"] },
+				f: { label: label("f") },
+			},
 		});
-		assert.deepEqual(both.all, ["look"]);
+		assert.deepEqual(both.all.toSorted(), ["f", "look"]);
 	});
 
 	it("expands tick names into the members and flags they give, each once; an unknown tick gives nothing", () => {
 		assert.deepEqual(expand(Kind, ["edit", "see", "edit"]).sort(), ["change", "export", "secret"]);
+		// A flag tick gives itself.
+		assert.deepEqual(expand(Kind, ["export"]), ["export"]);
 		assert.deepEqual(expand(Kind, ["fly"]), []);
 	});
 });

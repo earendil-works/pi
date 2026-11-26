@@ -82,8 +82,9 @@ export type Motion = Static<typeof Motion>;
 /**
  * A board (`canvas.board`): its name (its thing's; "Canvas" while it has none), its shapes loaded so far, oldest
  * first, with `more` for the next page, and everyone's motion where it is held as events; `point` and `leave` show
- * the caller's own pointer to the others there. Draw gives `add` and `remove` (one's own shapes); Moderate, for people,
- * gives `clear` and the flag `removeAny` (anyone's shapes). A new link starts with Draw for everyone and the agents.
+ * the caller's own pointer to the others there. Draw gives `add`, `remove` (one's own shapes) and the flag `export`
+ * (exporting the board as an image, the page's); Moderate, for people, gives `clear` and the flag `removeAny`
+ * (anyone's shapes). A new link starts with Draw for everyone and the agents.
  */
 export const CanvasKind = defineThing("canvas.board", {
 	version: 1,
@@ -105,10 +106,12 @@ export const CanvasKind = defineThing("canvas.board", {
 		clear: method(),
 	},
 	events: { motion: Motion },
-	flags: { removeAny: messages.message("flagRemoveAny") },
 	ticks: {
-		draw: { label: messages.message("tickDraw"), for: "all", gives: ["add", "remove"] },
+		draw: { label: messages.message("tickDraw"), for: "all", gives: ["add", "remove", "export"] },
 		moderate: { label: messages.message("tickModerate"), for: "people", gives: ["clear", "removeAny"] },
+		// Flag ticks (decision 97): rights that are no member, given by the ticks above or on their own.
+		export: { label: messages.message("tickExport") },
+		removeAny: { label: messages.message("tickRemoveAny"), for: "people" },
 	},
 	defaultGrants: { everyone: ["draw"], agents: ["draw"] },
 });
