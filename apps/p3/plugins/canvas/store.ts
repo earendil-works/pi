@@ -54,12 +54,6 @@ const Shapes = defineTable("canvas.shapes", {
 export function serveStore(host: FacetHost<P3Principal>): void {
 	host.serve(CanvasStore, (_params, self) => {
 		const shapes = self.table(Shapes);
-		// The last `seq` this attempt gave: shapes added in one millisecond keep the order they were added in.
-		let last = 0;
-		const next = () => {
-			last = Math.max(Date.now() * 1000, last + 1);
-			return last;
-		};
 		return {
 			shapes: self.queries(
 				shapes,
@@ -75,8 +69,15 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			add: async ({ canvas, shapes: added, author }, ctx) => {
 				const ids = added.map(() => crypto.randomUUID());
 				await self.tx(async (tx) => {
+					// After the canvas's last stored shape, whatever this process's clock or an earlier attempt gave
+					// (Sol, round 1): a reload or a clock gone back keeps the order shapes were added in.
+					const newest = query(Shapes)
+						.where((shape) => eq(shape.canvas, canvas))
+						.orderBy((shape) => shape.seq, "desc");
+					const [last] = (await tx.page(shapes, newest, 1)).items;
+					let seq = Math.max(Date.now() * 1000, (last?.seq ?? 0) + 1);
 					added.forEach((shape, at) => {
-						tx.put(shapes, { canvas, id: ids[at]!, seq: next(), author, shape });
+						tx.put(shapes, { canvas, id: ids[at]!, seq: seq++, author, shape });
 					});
 					return null;
 				}, ctx);
