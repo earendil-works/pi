@@ -17,7 +17,7 @@ import { promisify } from "node:util";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { ownerClient, ownerCookie } from "@earendil-works/p3/v1/testing";
 import { Sessions, SessionWorker } from "../../plugins/sessions/contract.ts";
-import { childrenOf, coding, launch } from "../support.ts";
+import { childrenOf, coding, launch, offline } from "../support.ts";
 import { eventually } from "../until.ts";
 
 const run = promisify(execFile);
@@ -61,7 +61,7 @@ describe("the installed release", () => {
 		const home = join(root, "home");
 		await mkdir(home);
 		const p3 = (...args: string[]) =>
-			run(process.execPath, [...P3, ...args], { env: { ...process.env, HOME: home } });
+			run(process.execPath, [...P3, ...args], { env: offline({ ...process.env, HOME: home }) });
 		const started = await p3("--port", "0");
 		assert.match(started.stdout, /port \d+\. Open http:\/\/127\.0\.0\.1:\d+\/_p3\/owner#/);
 		assert.match((await p3("status")).stdout, /running/);

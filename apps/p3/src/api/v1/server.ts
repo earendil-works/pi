@@ -57,8 +57,10 @@ export type ServerRuntime = {
 	/** How long a worker idles before it stops itself. */
 	readonly workerIdleMs: number;
 	/**
-	 * Where the providers' types request their model catalogs (pi.dev unless `P3_CATALOG_URL` says otherwise);
-	 * `undefined`: nowhere, no catalog request leaves the server (a test's host unless it sets its own).
+	 * Where the providers' types request their model catalogs (pi.dev unless `P3_CATALOG_URL` names another place;
+	 * empty or `off`: none); `undefined`: nowhere, no catalog request leaves the server (a test's host unless it sets
+	 * its own). The catalog server is trusted with model metadata only (names, limits, prices, new models): a model's
+	 * endpoint, headers and API stay the shipped provider's, so it never chooses where a login's key is sent.
 	 */
 	readonly catalogBaseUrl: string | undefined;
 	/** The worker plugins' current scripts: what a worker starts with, and what a reload ships. */

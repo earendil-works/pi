@@ -23,6 +23,7 @@ import {
 	openStore,
 	type P3Principal,
 	type PluginFacet,
+	type Provider,
 	Server,
 	sqliteBackend,
 	withCancel,
@@ -52,6 +53,7 @@ async function served(t: TestContext, more: readonly PluginFacet<P3Principal>[] 
 	t.after(() => w.close(context));
 	return {
 		store: () => w.host.get(LoginStore, {}, context),
+		catalogs: () => w.host.get(CatalogStore, {}, context),
 		reload: () => w.reload(PROVIDERS, context),
 		stored: (thing: string) => {
 			const database = new DatabaseSync(w.path, { readOnly: true });
@@ -66,13 +68,40 @@ async function served(t: TestContext, more: readonly PluginFacet<P3Principal>[] 
 }
 
 /** A provider (`id`) with the OAuth `oauth` (its sign-in refused: the tests store credentials themselves). */
-function oauthProvider(id: string, oauth: Omit<OAuthAuth, "name" | "login">): PluginFacet<P3Principal> {
+function oauthProvider(
+	id: string,
+	oauth: Omit<OAuthAuth, "name" | "login">,
+	filterModels?: Provider["filterModels"],
+): PluginFacet<P3Principal> {
 	const base = fauxProvider({ provider: id, api: id, models: [{ id: "m" }] }).provider;
 	const login = async (): Promise<never> => {
 		throw new Error("no sign-in");
 	};
 	const auth = { oauth: { name: id, login, ...oauth } };
-	return { name: id, facet: defineFacet((_host, self) => self.contribute(LoginProviders, [{ ...base, auth }])) };
+	const provider = { ...base, auth, ...(filterModels === undefined ? {} : { filterModels }) };
+	return { name: id, facet: defineFacet((_host, self) => self.contribute(LoginProviders, [provider])) };
+}
+
+/**
+ * A provider (`cutting`) whose accounts have only the models not named `drop-…`, whose refresh waits for `release`
+ * after it began (`entered`) and rotates the token.
+ */
+function cutting() {
+	const entered = Promise.withResolvers<void>();
+	const release = Promise.withResolvers<void>();
+	const plugin = oauthProvider(
+		"cutting",
+		{
+			refresh: async (credential) => {
+				entered.resolve();
+				await release.promise;
+				return { ...credential, access: "rotated", refresh: "rotated", expires: Date.now() + 3_600_000 };
+			},
+			toAuth: async (credential) => ({ apiKey: credential.access }),
+		},
+		(models) => models.filter(({ id }) => !id.startsWith("drop-")),
+	);
+	return { entered, release, plugin };
 }
 
 /**
@@ -134,7 +163,7 @@ describe("the store's statements", () => {
 			{ name: "@earendil-works/p3-things", facet: thingsServer },
 			...providerFacets(new Set(), () => host),
 		];
-		await host.load([...facets, gated().plugin], context);
+		await host.load([...facets, gated().plugin, cutting().plugin], context);
 		const store = await host.get(LoginStore, {}, context);
 		await store.create({ thing: "t1", provider: FAUX_PROVIDER, credential: CREDENTIAL }, context);
 		await store.replace({ thing: "t1", provider: FAUX_PROVIDER, credential: CREDENTIAL }, context);
@@ -146,8 +175,15 @@ describe("the store's statements", () => {
 		await store.remove({ thing: "t1" }, context);
 		// The types' catalogs: a write and a read by provider (the login's models read it, `authorize`'s cut too).
 		const catalogs = await host.get(CatalogStore, {}, context);
-		await catalogs.write({ provider: "gated", entry: { models: [], lastModified: 0, checkedAt: 1 } }, context);
+		await catalogs.write({ provider: "gated", entry: { models: [], lastModified: 0 }, at: 1 }, context);
+		await catalogs.checked({ provider: "gated", at: 2 }, context);
+		await catalogs.failed({ provider: "gated", at: 3 }, context);
+		await catalogs.failed({ provider: "other", at: 3 }, context);
+		assert.deepEqual(await catalogs.status({ provider: "gated" }, context), { checkedAt: 2, failedAt: 3 });
 		assert.equal((await catalogs.catalogs.one.page({ provider: "gated" }, 1, context)).items.length, 1);
+		// A new catalog's recut reads the provider's logins by its index.
+		await store.create({ thing: "t3", provider: "cutting", credential: valid("c") }, context);
+		await store.recut({ provider: "cutting" }, context);
 		const lookups = [...seen].filter((sql) => /^(SELECT|UPDATE|DELETE)\b/.test(sql));
 		assert.ok(lookups.length > 0);
 		for (const sql of lookups) {
@@ -232,6 +268,35 @@ describe("credentials while a refresh runs", () => {
 });
 
 describe("a rotation", () => {
+	it("is cut over the catalog stored while its refresh ran (Astra, round 1 of the catalog)", async (t) => {
+		const { entered, release, plugin } = cutting();
+		const host = await served(t, [plugin]);
+		const store = await host.store();
+		await store.create({ thing: "t", provider: "cutting", credential: OLD }, context);
+		const first = store.authorize({ thing: "t" }, context);
+		await entered.promise;
+		// A new catalog of the type, stored and recut as its run does, while the refresh holds the old credential.
+		const catalogs = await host.catalogs();
+		const shipped = fauxProvider({
+			provider: "cutting",
+			api: "cutting",
+			models: [{ id: "m" }],
+		}).provider.getModels()[0]!;
+		const models = [
+			{ ...shipped, id: "new" },
+			{ ...shipped, id: "drop-new" },
+		];
+		await catalogs.write(
+			{ provider: "cutting", entry: { models, lastModified: Date.now() }, at: Date.now() },
+			context,
+		);
+		await store.recut({ provider: "cutting" }, context);
+		release.resolve();
+		assert.equal((await first).auth.apiKey, "rotated");
+		const [row] = (await store.logins.one.page({ thing: "t" }, 1, context)).items;
+		assert.deepEqual(row?.models, ["m", "new"]);
+	});
+
 	it("is stored, its lease released, when its provider cannot tell the account's models (Astra)", async (t) => {
 		const base = fauxProvider({ provider: "unlisted", api: "unlisted", models: [{ id: "m" }] }).provider;
 		const unlisted = {

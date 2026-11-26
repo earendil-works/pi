@@ -5,23 +5,25 @@
 // maker finished; a deleted one's credential goes with it. A login's models are its type's catalog cut to its account.
 
 import {
+	type Api,
 	type Ctx,
 	defineFacet,
 	invalid,
 	type JsonValue,
+	type Model,
 	type P3Principal,
 	type RegistryValue,
 	type Self,
 	type Watchable,
 } from "@earendil-works/p3/v1";
-import { builtinProviders, getBuiltinModelDataGeneratedAt } from "@earendil-works/p3/v1/server";
+import { builtinProviders } from "@earendil-works/p3/v1/server";
 import { serveThing } from "../things/serve.ts";
-import { builtinCatalogs } from "./builtin-catalogs.ts";
-import { overlay } from "./catalog.ts";
+import { serveBuiltinCatalogs } from "./builtin-catalogs.ts";
+import { typeModels } from "./catalog.ts";
 import { serveCatalogStore } from "./catalog-store.ts";
-import { type CatalogRow, CatalogStore, type LoginRow, LoginStore, SignIns } from "./contract.server.ts";
+import { CatalogStore, type LoginRow, LoginStore, SignIns } from "./contract.server.ts";
 import { type LoginInfo, LoginKind } from "./kind.ts";
-import { LoginCatalogs, serveLoginCatalogs } from "./login-catalogs.ts";
+import { serveLoginCatalogs } from "./login-catalogs.ts";
 import { LoginProviders, type ProviderMap, serveLoginProviders } from "./login-providers.ts";
 import { ownerOf } from "./logins.ts";
 import { serveSignIn } from "./sign-in.ts";
@@ -33,9 +35,7 @@ export default defineFacet((host, self) => {
 	self.contribute(LoginProviders, builtins);
 	serveCatalogStore(host);
 	serveLoginCatalogs(host);
-	self.contribute(LoginCatalogs, builtinCatalogs(builtins));
-	// The shipped model data's date: a stored catalog is laid over it only when newer.
-	const shipped = getBuiltinModelDataGeneratedAt();
+	serveBuiltinCatalogs(host, builtins);
 	serveStore(host);
 	serveSignIn(host);
 	serveThing(host, LoginKind, {
@@ -46,16 +46,21 @@ export default defineFacet((host, self) => {
 			// Its type's stored catalog (none to read while its row is not there).
 			const provider = self.derive([row], ([{ rows }]) => ({ provider: rows[0]?.provider ?? "" }));
 			const catalog = self.liveQuery(self.get(CatalogStore, {}).catalogs.one, provider, { first: 1 });
+			// The chat models of its account: its type's catalog cut to the ids the account has; none while no plugin
+			// offers the provider. Computed once for `login` and `catalog`. pi-ai's definitions are plain data: JSON.
+			const models = self.derive([row, providers, catalog], ([{ rows }, offered, entries]) => {
+				const found = rows[0];
+				const type = found === undefined ? undefined : offered.get(found.provider)?.value;
+				if (found === undefined || type === undefined) return [];
+				const all = typeModels(type, entries.rows[0]?.entry);
+				const { models: has } = found;
+				return (has === null ? all : all.filter(({ id }) => has.includes(id))) as unknown as JsonValue[];
+			});
 			return {
-				login: loginOf(row, providers, catalog, shipped, self),
-				// pi-ai's definitions are plain data: its catalogs are JSON. Whatever the status (shown only): a login whose
-				// refresh failed is refused by `authorize` for a while, then a request tries again, which needs a model.
-				catalog: () =>
-					self.derive([row, providers, catalog], ([{ rows }, offered, entries]) => {
-						const found = rows[0];
-						if (found === undefined) return [];
-						return modelsOf(found, offered, entries.rows[0], shipped) as unknown as JsonValue[];
-					}),
+				login: loginOf(row, providers, models, self),
+				// Whatever the status (shown only): a login whose refresh failed is refused by `authorize` for a while, then
+				// a request tries again, which needs a model.
+				catalog: () => models,
 				authorize: (_args: Record<never, never>, ctx: Ctx<P3Principal>) => store.authorize({ thing }, ctx),
 			};
 		},
@@ -72,18 +77,14 @@ export default defineFacet((host, self) => {
 	});
 });
 
-/**
- * A login as everyone admitted sees it, live: its row, and its provider's name and its account's models (its type's
- * stored `catalog` laid over the models shipped at `shipped`).
- */
+/** A login as everyone admitted sees it, live: its row, its provider's name and its account's `models`. */
 function loginOf(
 	row: Watchable<{ rows: LoginRow[] }>,
 	providers: RegistryValue<ProviderMap>,
-	catalog: Watchable<{ rows: CatalogRow[] }>,
-	shipped: number | undefined,
+	models: Watchable<JsonValue[]>,
 	self: Self<P3Principal>,
 ): Watchable<LoginInfo | null> {
-	return self.derive([row, providers, catalog], ([{ rows }, offered, entries]): LoginInfo | null => {
+	return self.derive([row, providers, models], ([{ rows }, offered, account]): LoginInfo | null => {
 		const found = rows[0];
 		if (found === undefined) return null;
 		return {
@@ -91,7 +92,8 @@ function loginOf(
 			providerName: offered.get(found.provider)?.value.name ?? found.provider,
 			method: found.method,
 			status: found.status,
-			models: modelsOf(found, offered, entries.rows[0], shipped).map(({ id, name, reasoning, contextWindow }) => ({
+			// The account's models are pi-ai's definitions (`models` above).
+			models: (account as unknown as Model<Api>[]).map(({ id, name, reasoning, contextWindow }) => ({
 				id,
 				name,
 				reasoning,
@@ -99,15 +101,4 @@ function loginOf(
 			})),
 		};
 	});
-}
-
-/**
- * The chat models of login `row`'s account: its type's catalog (`catalog` laid over the models shipped at `shipped`)
- * cut to the ids its account has; none while no plugin offers the provider.
- */
-function modelsOf(row: LoginRow, offered: ProviderMap, catalog: CatalogRow | undefined, shipped: number | undefined) {
-	const provider = offered.get(row.provider)?.value;
-	const all = provider === undefined ? [] : overlay(provider.getModels(), catalog?.entry, shipped);
-	const { models } = row;
-	return models === null ? all : all.filter(({ id }) => models.includes(id));
 }

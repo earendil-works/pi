@@ -67,7 +67,10 @@ const STOP_MS = 10_000;
 /** How long an apply may take: it builds every changed plugin and reloads every running worker. */
 const APPLY_MS = 5 * 60_000;
 
-/** Where the providers' types request their model catalogs unless `P3_CATALOG_URL` names another place. */
+/**
+ * Where the providers' types request their model catalogs: pi.dev, unless `P3_CATALOG_URL` names another place, or
+ * is empty or `off` (no catalog request leaves the server: the shipped models only).
+ */
 const CATALOG_URL = "https://pi.dev";
 
 /** No holder of a socket (also for a data directory that does not exist). */
@@ -165,7 +168,7 @@ async function serve(path: string, port: number | undefined): Promise<void> {
 			port: port ?? kept.port,
 			version: version(),
 			worker: WORKER,
-			catalogBaseUrl: process.env.P3_CATALOG_URL ?? CATALOG_URL,
+			catalogBaseUrl: catalogUrlOf(process.env.P3_CATALOG_URL),
 			onStop: (why) => end(why.kind === "stopped" ? 0 : 1),
 			onError: (error) => reportError(`p3: ${error.kind}`, error.error, context),
 		},
@@ -180,6 +183,12 @@ async function serve(path: string, port: number | undefined): Promise<void> {
 	const link = supervised ? "" : `. Open ${await ownerLink(dataDir)}`;
 	console.log(`p3 on ${server.dataDir}, port ${server.port}${link}`);
 	process.send?.("listening");
+}
+
+/** The catalog address `P3_CATALOG_URL` names (`value`): pi.dev when unset, none when empty or `off`. */
+function catalogUrlOf(value: string | undefined): string | undefined {
+	if (value === undefined) return CATALOG_URL;
+	return value === "" || value === "off" ? undefined : value;
 }
 
 /** Starts the server in the background under its supervisor unless it runs, and prints its port and an owner link. */

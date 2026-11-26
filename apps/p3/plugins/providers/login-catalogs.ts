@@ -1,11 +1,13 @@
 // The provider types' model catalogs on the server: a registry of the catalog of every provider type that keeps one
-// (`LoginCatalogs`: the built-in types', and what other plugins add), and their runs. Every registered catalog runs
-// from the server's start (and its plugin's reload) until its contribution is withdrawn or replaced, with its
-// provider's stored entry (`CatalogStore`) and the network the server allows (`ServerRuntime.catalogBaseUrl`); when
-// it requests is its own decision (decision 118, Mario: the type decides when it needs updating).
+// (`LoginCatalogs`: the built-in types', `builtin-catalogs.ts`), and their runs. Every registered catalog runs from
+// the server's start (and its plugin's reload) until its contribution is withdrawn or replaced, with its provider's
+// stored catalog (`CatalogStore`); when it requests, and from where, is its own decision (decision 118, Mario: the type
+// decides when it needs updating). A new body it stores works the provider's logins' accounts out again over it
+// (`LoginStore.recut`). The registry is this plugin's own until the type families (117) make it an API.
 
 import {
 	BACKGROUND_CONTEXT,
+	type Context,
 	contribute,
 	defineRegistry,
 	type FacetHost,
@@ -17,26 +19,30 @@ import {
 	untilAborted,
 	withAbortSignal,
 } from "@earendil-works/p3/v1";
-import { formatUserAgent, ServerRuntime } from "@earendil-works/p3/v1/server";
-import type { CatalogNetwork } from "./catalog.ts";
-import { type CatalogEntry, CatalogStore } from "./contract.server.ts";
+import { type CatalogEntry, type CatalogStatus, CatalogStore, LoginStore } from "./contract.server.ts";
 
 /**
- * What a provider type's catalog runs with: its provider's stored entry (read, and written whole), the network
- * (`undefined`: none, no request may leave the server), and a signal that ends the run (its contribution withdrawn or
- * replaced, the server's stop).
+ * What a provider type's catalog runs with: its provider's stored catalog (its body, read when a request needs it,
+ * and its timing) and a signal that ends the run (its contribution withdrawn or replaced, the server's stop).
  */
 export type CatalogContext = {
-	readonly store: { read(): Promise<CatalogEntry | undefined>; write(entry: CatalogEntry): Promise<void> };
-	readonly network: CatalogNetwork | undefined;
+	readonly store: {
+		/** When the catalog was last answered and failed (`null`: none stored). */
+		status(): Promise<CatalogStatus | null>;
+		/** The stored body (`undefined`: none). */
+		read(): Promise<CatalogEntry | undefined>;
+		/** Stores a new body, answered at `at`. */
+		write(entry: CatalogEntry, at: number): Promise<void>;
+		/** The stored body answered unchanged at `at`. */
+		checked(at: number): Promise<void>;
+		/** A request failed at `at`. */
+		failed(at: number): Promise<void>;
+	};
 	readonly signal: AbortSignal;
 };
 
-/** A provider type's catalog: it keeps provider `provider`'s stored entry current, deciding itself when. */
-export type LoginCatalog = {
-	readonly provider: string;
-	readonly catalog: (context: CatalogContext) => Promise<void>;
-};
+/** A provider type's catalog: it keeps provider `provider`'s stored catalog current, deciding itself when (`run`). */
+export type LoginCatalog = { readonly provider: string; readonly run: (context: CatalogContext) => Promise<void> };
 
 /** The catalogs, by provider id, each with its plugin. */
 export type CatalogMap = ReadonlyMap<string, TableItem<LoginCatalog>>;
@@ -54,60 +60,56 @@ export function serveLoginCatalogs(host: FacetHost<P3Principal>): void {
 			keyedEntries(table, (offered) => Object.fromEntries(offered.map((item) => [item.provider, item])), report),
 	});
 	contribute(host, "providers.catalog-runs", (self) => {
-		const registered = self.registry(LoginCatalogs);
-		const runtime = self.registry(ServerRuntime);
-		const store = self.get(CatalogStore, {});
-		self.onLive(async (ctx) => {
-			const { catalogBaseUrl } = runtime.value;
-			// The bundled pi-ai's version: pi.dev serves the newest catalog published for it.
-			const network =
-				catalogBaseUrl === undefined ? undefined : { baseUrl: catalogBaseUrl, userAgent: formatUserAgent() };
-			const runs = new Map<string, { readonly catalog: LoginCatalog; readonly stop: AbortController }>();
-			/** Starts the catalogs `catalogs` holds, and stops the ones it no longer holds or replaced. */
-			const follow = (catalogs: CatalogMap) => {
-				for (const [provider, run] of runs) {
-					if (catalogs.get(provider)?.value === run.catalog) continue;
-					run.stop.abort();
-					runs.delete(provider);
-				}
-				for (const [provider, { value: catalog }] of catalogs) {
-					if (runs.has(provider)) continue;
-					const stop = new AbortController();
-					runs.set(provider, { catalog, stop });
-					const signal =
-						ctx.abortSignal === undefined ? stop.signal : AbortSignal.any([stop.signal, ctx.abortSignal]);
-					catalog.catalog({ store: storeOf(provider, store, signal), network, signal }).catch(() => {
+		const stores = { catalogs: self.get(CatalogStore, {}), logins: self.get(LoginStore, {}) };
+		const runs = new Map<string, { readonly catalog: LoginCatalog; readonly stop: AbortController }>();
+		/** Ends every run with the object (a reload, the server's stop). */
+		const ended = new AbortController();
+		self.onLive((ctx) => untilAborted(ctx).finally(() => ended.abort()));
+		// Starts the catalogs registered now (at the start, and whenever a plugin adds, replaces or withdraws one), and
+		// stops the ones no longer registered or replaced.
+		self.on(self.registry(LoginCatalogs), ({ value: catalogs }: { value: CatalogMap }) => {
+			for (const [provider, run] of runs) {
+				if (catalogs.get(provider)?.value === run.catalog) continue;
+				run.stop.abort();
+				runs.delete(provider);
+			}
+			for (const [provider, { value: catalog }] of catalogs) {
+				if (runs.has(provider)) continue;
+				const stop = new AbortController();
+				runs.set(provider, { catalog, stop });
+				const signal = AbortSignal.any([stop.signal, ended.signal]);
+				const context = withAbortSignal(signal, BACKGROUND_CONTEXT);
+				// A run that throws at once, too, ends alone: the next one still starts.
+				Promise.resolve()
+					.then(() => catalog.run({ store: storeOf(provider, stores, context), signal }))
+					.catch(() => {
 						// A type's run failing is no error of the server's; its text may be anything: a fixed reason.
-						if (!signal.aborted) reportError(`providers: ${provider}: its catalog stopped`, "a failure", ctx);
+						if (!signal.aborted) reportError(`providers: ${provider}: its catalog stopped`, "a failure", context);
 					});
-				}
-			};
-			const watch = await registered.watch(ctx);
-			try {
-				follow(watch.value);
-				watch.start(async (call) => {
-					if (call.kind === "value") follow(call.value);
-				});
-				await untilAborted(ctx);
-			} finally {
-				await watch.stop();
-				for (const run of runs.values()) run.stop.abort();
 			}
 		});
 	});
 }
 
-/** Provider `provider`'s stored entry as its catalog reads and writes it, within `signal`. */
+/** Provider `provider`'s stored catalog as its run reads and writes it, within `context` (its run's). */
 function storeOf(
 	provider: string,
-	store: Reference<typeof CatalogStore>,
-	signal: AbortSignal,
+	stores: { readonly catalogs: Reference<typeof CatalogStore>; readonly logins: Reference<typeof LoginStore> },
+	context: Context,
 ): CatalogContext["store"] {
-	const context = withAbortSignal(signal, BACKGROUND_CONTEXT);
+	const { catalogs, logins } = stores;
 	return {
-		read: async () => (await store.catalogs.one.page({ provider }, 1, context)).items[0]?.entry,
-		write: async (entry) => {
-			await store.write({ provider, entry }, context);
+		status: () => catalogs.status({ provider }, context),
+		read: async () => (await catalogs.catalogs.one.page({ provider }, 1, context)).items[0]?.entry,
+		write: async (entry, at) => {
+			await catalogs.write({ provider, entry, at }, context);
+			await logins.recut({ provider }, context);
+		},
+		checked: async (at) => {
+			await catalogs.checked({ provider, at }, context);
+		},
+		failed: async (at) => {
+			await catalogs.failed({ provider, at }, context);
 		},
 	};
 }

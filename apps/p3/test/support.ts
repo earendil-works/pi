@@ -58,9 +58,10 @@ export async function scriptFaux(
 
 /**
  * A coding session titled `title` in `folder`, made by the owner of `client`, with the faux login made in it by
- * `server` (the test server's host; `scriptFaux`), whose agent works until `folder` has a file `gate` (`openGate`): the faux login answers every
- * request with a bash call waiting for it (a run cut off asks again and waits again) until the gate is open. Its row
- * says `working` because the harness says so, as for any run: a test never reports a state the harness owns.
+ * `server` (the test server's host; `scriptFaux`), whose agent works until `folder` has a file `gate` (`openGate`):
+ * the faux login answers every request with a bash call waiting for it (a run cut off asks again and waits again)
+ * until the gate is open. Its row says `working` because the harness says so, as for any run: a test never reports a
+ * state the harness owns.
  */
 export async function gatedSession(
 	server: Host<P3Principal>,
@@ -130,6 +131,14 @@ export type Launched = {
 };
 
 /**
+ * `env` with the providers' catalog requests off (`P3_CATALOG_URL=off`) unless it names a catalog itself: a test's p3
+ * never reaches pi.dev.
+ */
+export function offline(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+	return env.P3_CATALOG_URL === undefined ? { ...env, P3_CATALOG_URL: "off" } : env;
+}
+
+/**
  * Launches `p3 server` on `dataDir` on a free port, `command` being Node's arguments that run `p3` (a checkout's
  * `COMMAND`, or an installed release's `p3.js`), with `env` (this process's by default); resolves once it printed its
  * port and owner link.
@@ -141,7 +150,7 @@ export async function launch(
 ): Promise<Launched> {
 	const child = spawn(process.execPath, [...command, "server", "--dir", dataDir, "--port", "0"], {
 		stdio: ["ignore", "pipe", "inherit"],
-		env,
+		env: offline(env),
 	});
 	const exited = new Promise<number | null>((resolve) => child.once("exit", resolve));
 	const port = await new Promise<number>((resolve, reject) => {
