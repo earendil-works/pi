@@ -32,13 +32,15 @@ type Filed = Read | Set<Read>;
 /** The reads of one bucket shape on a table: by their columns' values, as tuples. */
 type Group = { readonly name: string; readonly columns: readonly string[]; readonly byValues: TupleMap<Filed> };
 
-/**
- * A filed read's entries: its table's index, its group there, the key sets it is filed by. Its bucket's combinations
- * are made again when it leaves (from its plan, which does not change), not kept.
- */
+/** A filed read's entries: its table's index, its group and value combinations there, the key sets it is filed by. */
 type Filing = {
 	readonly index: TableIndex;
 	readonly group: Group;
+	/**
+	 * Its bucket's combinations one after another, `group.columns.length` values each: one list of exactly their
+	 * values (a list per combination would cost 56 B more than the identities this replaced).
+	 */
+	readonly combined: readonly SqliteValue[];
 	/** `undefined`: no result to rule a write out by; the read is unindexed until it has one. */
 	kept: readonly TupleSet[] | undefined;
 };
@@ -64,7 +66,7 @@ export class ReadIndex implements KeptKeysWatcher {
 		const group = index.group(bucket.columns);
 		for (const values of bucket.combinations) addTo(group.byValues, values, read);
 		// Filed by no keys yet: `kept` files it by its result, or as a candidate of every write while it has none.
-		this.#filings.set(read, { index, group, kept: NO_KEYS });
+		this.#filings.set(read, { index, group, combined: flattened(bucket.combinations), kept: NO_KEYS });
 		read.watchKept(this);
 		this.kept(read);
 	}
@@ -81,7 +83,10 @@ export class ReadIndex implements KeptKeysWatcher {
 		this.#filings.delete(read);
 		read.watchKept(undefined);
 		const { index, group } = filing;
-		for (const values of bucketOf(read)!.combinations) removeFrom(group.byValues, values, read);
+		const length = group.columns.length;
+		for (let at = 0; at < filing.combined.length; at += length) {
+			removeFrom(group.byValues, filing.combined.slice(at, at + length), read);
+		}
 		if (group.byValues.size === 0) index.drop(group);
 		this.#unkeep(read, filing);
 		if (index.isEmpty()) this.#tables.delete(read.plan.table);
@@ -254,6 +259,16 @@ function bucketOf(read: Read): { readonly columns: string[]; readonly combinatio
 		return true;
 	});
 	return { columns, combinations: once };
+}
+
+/** `lists` one after another in one list of exactly their values. */
+function flattened(lists: readonly (readonly SqliteValue[])[]): SqliteValue[] {
+	let length = 0;
+	for (const list of lists) length += list.length;
+	const values = new Array<SqliteValue>(length);
+	let at = 0;
+	for (const list of lists) for (let index = 0; index < list.length; index++) values[at++] = list[index]!;
+	return values;
 }
 
 /** Adds `change` to each read `filed` holds, in the order they were filed. */
