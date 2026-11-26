@@ -253,18 +253,14 @@ function ownHere(own: WorkspaceEntries, kinds: KindsLookup): OwnHere {
 	return { ...thing, id: own.id, makesWithheld };
 }
 
-/** Whom a Make tick is for (item 114): its kind's `makers` (anyone: all, people: people); `undefined`: nobody. */
-function makeTickFor(tick: string, kinds: KindsLookup): TickFor | undefined {
-	const kind = kindOfMakeTick(tick)!;
-	if (kind === "*") return "all";
-	switch (kinds.makersOf(kind)) {
-		case "anyone":
-			return "all";
-		case "people":
-			return "people";
-		default:
-			return undefined;
-	}
+/**
+ * Whom the Make tick of kind `made` (`*`: every kind) is for (item 114): its kind's `makers` (anyone: all, people:
+ * people); `undefined`: nobody (a kind that is not registered, or that only its plugin makes).
+ */
+export function makeTickFor(made: string, makersOf: (kind: string) => Makers | undefined): TickFor | undefined {
+	if (made === "*") return "all";
+	const makers = makersOf(made);
+	return makers === "anyone" ? "all" : makers === "people" ? "people" : undefined;
 }
 
 /**
@@ -279,7 +275,7 @@ function linkedHere(kind: string, at: string, grants: readonly GrantEntry[], kin
 		const forWhom = !isReserved(grant.tick)
 			? kinds.tickFor(kind, grant.tick)
 			: kindOfMakeTick(grant.tick) !== undefined && kinds.sortOf(kind) !== "no"
-				? makeTickFor(grant.tick, kinds)
+				? makeTickFor(kindOfMakeTick(grant.tick)!, kinds.makersOf)
 				: undefined;
 		if (!open && !isFor(forWhom, grant.audience)) continue;
 		const own = ticks.get(grant.party) ?? new Set<string>();

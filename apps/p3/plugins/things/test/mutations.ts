@@ -93,8 +93,8 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "hide accepts a thing linked here",
 		file: "workspace-object.ts",
-		find: "(here.some((link) => link.workspace === workspace)) {",
-		put: "(here.some((link) => link.workspace === workspace) && false) {",
+		find: "if ((await linkedIn(store, hidden, ctx)).includes(workspace)) {",
+		put: "if ((await linkedIn(store, hidden, ctx)).includes(workspace) && false) {",
 	},
 	{
 		name: "make does not check makes",
@@ -434,7 +434,7 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "a tick is given to whom it is not for",
 		file: "store.ts",
-		find: "if (gives === true && declared !== undefined && !isFor(declared.for, audienceOf(party.kind))) {",
+		find: "if (gives === true && forWhom !== undefined && !isFor(forWhom, audienceOf(party.kind))) {",
 		put: "if (false) {",
 	},
 	{
@@ -464,8 +464,8 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "a reserved tick other than `OPEN` is written (113)",
 		file: "store.ts",
-		find: "if (gives !== undefined && tick !== OPEN && declared === undefined) {",
-		put: 'if (gives !== undefined && !tick.startsWith("@") && declared === undefined) {',
+		find: "if (gives !== undefined && tick !== OPEN && forWhom === undefined) {",
+		put: 'if (gives !== undefined && !tick.startsWith("@") && forWhom === undefined) {',
 	},
 	{
 		name: "a plugin's one thing is made again by every ensure",
@@ -554,8 +554,8 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "a withheld row of a tick the kind lacks is written",
 		file: "store.ts",
-		find: "if (gives !== undefined && tick !== OPEN && declared === undefined) {",
-		put: "if (gives === true && tick !== OPEN && declared === undefined) {",
+		find: "if (gives !== undefined && tick !== OPEN && forWhom === undefined) {",
+		put: "if (gives === true && tick !== OPEN && forWhom === undefined) {",
 	},
 	// ---- the lifecycle ----
 	{

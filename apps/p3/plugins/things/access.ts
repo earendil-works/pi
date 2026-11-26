@@ -52,7 +52,7 @@ export type Touched = { readonly workspaces: Set<string>; readonly persons: Set<
 /** An attached watcher: the answers now, and how to stop. */
 export type Attachment = { readonly value: Answers; detach(): void };
 
-/** What a probe's computation reads, synchronously, of what is loaded (its `prepare` loaded what it needs). */
+/** What a probe's computation reads of what is loaded. */
 export type Look = {
 	/** What loaded workspace `workspace` ends up with (`GONE` for one not loaded or not there). */
 	access(workspace: string): WorkspaceAccess;
@@ -64,7 +64,7 @@ export type Look = {
 	person(person: string): PersonEntries | undefined;
 };
 
-/** How a probe's `prepare` loads what its computation reads: a workspace with its ancestors, a person. */
+/** How a probe's computation loads what it reads: a workspace with its ancestors, a person. */
 export type Load = {
 	workspace(id: string): Promise<void>;
 	person(id: string): Promise<void>;
@@ -73,25 +73,28 @@ export type Load = {
 /**
  * A value computed over the index, followed (a list of a workspace's contents, a caller's roots): asked again after
  * every commit that touched `workspace` or a workspace above it (`scope: "here"`), or anything (`"any"`: what depends
- * on workspaces below or elsewhere), and after any person or the kinds changed. `prepare` loads what `compute` reads,
- * before each computation; `compute` is pure over what is loaded and answers a new value whenever it differs (`same`
- * says whether it does). `watched` and `persons` name what it keeps loaded.
+ * on workspaces below or elsewhere), and after any person, a thing's name or the kinds changed. `compute` loads what
+ * it reads beyond `workspace`, its ancestors and `caller` (a person), which the index loads for it, and answers a new
+ * value; what it loaded stays loaded while the probe is attached. Only a value that differs is told.
  */
-export type Probe<T> = {
+export type Probe<T extends JsonValue> = {
 	readonly workspace: string;
 	readonly scope: "here" | "any";
-	prepare(load: Load, look: Look, context: Context): Promise<void>;
-	compute(look: Look): T;
-	same(a: T, b: T): boolean;
-	watched(): Iterable<string>;
-	persons(): Iterable<string>;
+	readonly caller: Caller;
+	compute(look: Look, load: Load, context: Context): Promise<T>;
 };
 
 /** A probe attached: its value now, and how to stop. */
 export type ProbeAttachment<T> = { readonly value: T; detach(): void };
 
-/** One attached probe: what it computes, whom it tells, the value last told. */
-type ProbeView = { readonly probe: Probe<unknown>; readonly observer: FollowObserver<unknown>; last: unknown };
+/** One attached probe: what it computes, whom it tells, the value last told, and what its last computation loaded. */
+type ProbeView = {
+	readonly probe: Probe<JsonValue>;
+	readonly observer: FollowObserver<unknown>;
+	last: JsonValue;
+	workspaces: Set<string>;
+	persons: Set<string>;
+};
 
 /** A workspace in memory: its entries (`undefined`: it does not exist) and its result once computed. */
 type Loaded = { entries: WorkspaceEntries | undefined; access: WorkspaceAccess | undefined };
@@ -185,7 +188,7 @@ export class AccessIndex {
 	 * Attaches `observer` to `probe`'s value: loads what it needs, computes it, and tells the observer each changed
 	 * value from then on, until `detach`. `undefined` once it closed.
 	 */
-	probe<T>(
+	probe<T extends JsonValue>(
 		probe: Probe<T>,
 		observer: FollowObserver<unknown>,
 		context: Context,
@@ -193,10 +196,9 @@ export class AccessIndex {
 		if (!this.open) return Promise.resolve(undefined);
 		return this.#run(async () => {
 			if (!this.open) return undefined;
-			await this.#ensure(probe.workspace, context);
-			await probe.prepare(this.#load(context), this.#look(context), context);
+			const view: ProbeView = { probe, observer, last: null, workspaces: new Set(), persons: new Set() };
+			view.last = await this.#compute(view, context);
 			if (this.#closed) return undefined;
-			const view: ProbeView = { probe, observer, last: probe.compute(this.#look(context)) };
 			this.#probes.add(view);
 			return { value: view.last as T, detach: () => this.#probes.delete(view) };
 		});
@@ -245,9 +247,9 @@ export class AccessIndex {
 		const keep = new Set<string>();
 		const persons = new Set(this.#viewsOf.keys());
 		const watching = [...this.#viewsAt.keys()];
-		for (const { probe } of this.#probes) {
-			watching.push(probe.workspace, ...probe.watched());
-			for (const person of probe.persons()) persons.add(person);
+		for (const view of this.#probes) {
+			watching.push(...view.workspaces);
+			for (const person of view.persons) persons.add(person);
 		}
 		for (const watched of watching) {
 			for (let at = watched; at !== "" && !keep.has(at); at = this.#workspaces.get(at)?.entries?.parent ?? "") {
@@ -311,37 +313,53 @@ export class AccessIndex {
 	}
 
 	/**
-	 * Asks each of `views` again (its `prepare`, then its computation) and tells its observer a changed value; a load
-	 * that fails recovers (nothing half read is told), an observer that throws is reported.
+	 * Asks each of `views` again and tells its observer a changed value; a computation that fails recovers (nothing
+	 * half read is told), an observer that throws is reported.
 	 */
 	async #askProbes(views: ReadonlySet<ProbeView>): Promise<void> {
 		for (const view of views) {
 			if (!this.#probes.has(view)) continue;
+			let value: JsonValue;
 			try {
-				await this.#ensure(view.probe.workspace, this.#context);
-				await view.probe.prepare(this.#load(this.#context), this.#look(this.#context), this.#context);
+				value = await this.#compute(view, this.#context);
 			} catch (error) {
 				this.#recover(error);
 				return;
 			}
-			const value = view.probe.compute(this.#look(this.#context));
-			if (view.probe.same(view.last, value)) continue;
+			if (sameJson(view.last, value)) continue;
 			view.last = value;
 			try {
 				// The whole value replaced: a holder over a link applies the ops, so an empty list would change nothing there.
-				view.observer.advance(
-					{ kind: "value", value, ops: [["r", value as JsonValue]], retired: false },
-					this.#context,
-				);
+				view.observer.advance({ kind: "value", value, ops: [["r", value]], retired: false }, this.#context);
 			} catch (error) {
 				reportError("things: a probe's watcher of the access index failed", error, this.#context);
 			}
 		}
 	}
 
-	/** What a probe's `prepare` loads through. */
-	#load(context: Context): Load {
-		return { workspace: (id) => this.#ensure(id, context), person: (id) => this.#ensurePerson(id, context) };
+	/**
+	 * `view`'s probe's value now: its workspace with its ancestors and its caller (a person) loaded first; what the
+	 * computation loads besides is remembered as what the view keeps loaded.
+	 */
+	async #compute(view: ProbeView, context: Context): Promise<JsonValue> {
+		const { workspace, caller } = view.probe;
+		const workspaces = new Set<string>();
+		const persons = new Set<string>();
+		const load: Load = {
+			workspace: (id) => {
+				workspaces.add(id);
+				return this.#ensure(id, context);
+			},
+			person: (id) => {
+				persons.add(id);
+				return this.#ensurePerson(id, context);
+			},
+		};
+		await load.workspace(workspace);
+		if (caller.kind === "person") await load.person(caller.person);
+		view.workspaces = workspaces;
+		view.persons = persons;
+		return view.probe.compute(this.#look(context), load, context);
 	}
 
 	/** What a probe's computation reads. */
@@ -601,4 +619,14 @@ function addTo<T>(sets: Map<string, Set<T>>, key: string, value: T): void {
 function removeFrom<T>(sets: Map<string, Set<T>>, key: string, value: T): void {
 	const set = sets.get(key);
 	if (set?.delete(value) && set.size === 0) sets.delete(key);
+}
+
+/** Whether two JSON values are the same, field by field. */
+function sameJson(a: unknown, b: unknown): boolean {
+	if (a === b) return true;
+	if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+	if (Array.isArray(a)) return Array.isArray(b) && a.length === b.length && a.every((item, i) => sameJson(item, b[i]));
+	const keys = Object.keys(a);
+	if (Array.isArray(b) || keys.length !== Object.keys(b).length) return false;
+	return keys.every((key) => sameJson((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]));
 }

@@ -2,10 +2,10 @@
 // children, what is here, who is here, what may be linked here, one thing as it is available here, and who may do what
 // with a thing here. Each is computed over the access index as a probe (`access.ts`), live: asked again after every
 // commit it can depend on, told only when it changed; names and other display columns are joined from the store by
-// named queries. Admitted by the caller's answer on the workspace: anyone present (WhoMay too, read-only: changing a
-// cell is `Workspace.setTick`, Manage access; decided against R40 for the Settings view); ThingInfo by an answer on the
-// thing. No list names a workspace the caller is not present in (item 96). The lists are bounded by one workspace (its
-// contents, its people, its children), each read whole: a list has no further pages.
+// named queries. Admitted by the caller's answer on the workspace (anyone present; ThingInfo: an answer on the thing;
+// WhoMay too is read by anyone present, only `Workspace.setTick` needs Manage access). No list names a workspace the
+// caller is not present in (item 96). The lists are bounded by one workspace (its contents, its people, its children),
+// each read whole: a list has no further pages.
 
 import {
 	type Admission,
@@ -16,20 +16,19 @@ import {
 	deny,
 	type FacetHost,
 	type JsonValue,
-	type NamedQuery,
 	type P3Principal,
 	type Reference,
 	type Self,
 	until,
 	type Watchable,
 } from "@earendil-works/p3/v1";
-import type { Look, Probe } from "./access.ts";
+import type { Answers, Look, Probe } from "./access.ts";
 import { callerOf } from "./admission.ts";
 import { AccessHandles, Gives, ThingsStore } from "./contract.server.ts";
-import { type Caller, OPEN, type Party, partyKey, partyOf } from "./contract.ts";
+import { type Caller, kindOfMakeTick, MAKE_ANY, makeTick, OPEN, type Party, partyKey, partyOf } from "./contract.ts";
 import { type KindInfo, ThingKinds } from "./kind.ts";
 import { messages } from "./messages.ts";
-import { readAll } from "./reader.ts";
+import { readAll, readWhole } from "./reader.ts";
 import type { ThingHere } from "./rules.ts";
 import {
 	type Cell,
@@ -59,17 +58,13 @@ type PartyItem = { party: Party; from: Origin; hidden: boolean };
 export function serveLists(host: FacetHost<P3Principal>): void {
 	host.serve(Roots, (_params, principal, self) => {
 		const store = self.get(ThingsStore, {});
-		const caller = callerOf(principal);
-		const rows = followProbe(self, () => rootsProbe(store, caller));
-		return { list: self.derive([rows], ([items]) => ({ rows: items, moreAfter: false })), more: async () => null };
+		return listOf(self, () => rootsProbe(store, callerOf(principal)));
 	});
 	host.serve(
 		WorkspaceChildren,
 		({ workspace }, principal, _admitted, self) => {
 			const store = self.get(ThingsStore, {});
-			const caller = callerOf(principal);
-			const rows = followProbe(self, () => childrenProbe(store, workspace, caller));
-			return { list: self.derive([rows], ([items]) => ({ rows: items, moreAfter: false })), more: async () => null };
+			return listOf(self, () => childrenProbe(store, workspace, callerOf(principal)));
 		},
 		{ admit: admitPresent },
 	);
@@ -77,9 +72,7 @@ export function serveLists(host: FacetHost<P3Principal>): void {
 		WorkspaceContents,
 		({ workspace }, principal, _admitted, self) => {
 			const store = self.get(ThingsStore, {});
-			const caller = callerOf(principal);
-			const rows = followProbe(self, () => named(store, contentsProbe(workspace, caller)));
-			return { list: self.derive([rows], ([items]) => ({ rows: items, moreAfter: false })), more: async () => null };
+			return listOf(self, () => named(store, contentsProbe(workspace, callerOf(principal))));
 		},
 		{ admit: admitPresent },
 	);
@@ -87,9 +80,7 @@ export function serveLists(host: FacetHost<P3Principal>): void {
 		WorkspacePeople,
 		({ workspace }, principal, _admitted, self) => {
 			const store = self.get(ThingsStore, {});
-			const caller = callerOf(principal);
-			const rows = followProbe(self, () => withParties(store, peopleProbe(workspace, caller)));
-			return { list: self.derive([rows], ([items]) => ({ rows: items, moreAfter: false })), more: async () => null };
+			return listOf(self, () => withParties(store, peopleProbe(workspace, callerOf(principal))));
 		},
 		{ admit: admitPresent },
 	);
@@ -97,18 +88,7 @@ export function serveLists(host: FacetHost<P3Principal>): void {
 		Linkable,
 		({ workspace, query }, principal, _admitted, self) => {
 			const store = self.get(ThingsStore, {});
-			const caller = callerOf(principal);
-			const rows = followProbe(self, () => named(store, linkableProbe(workspace, caller)));
-			const prefix = query.toLowerCase();
-			return {
-				list: self.derive([rows], ([items]) => ({
-					rows: items
-						.filter(({ name }) => name.toLowerCase().startsWith(prefix))
-						.map(({ thing, kind, name, from }) => ({ thing, kind, name, from })),
-					moreAfter: false,
-				})),
-				more: async () => null,
-			};
+			return listOf(self, () => named(store, linkableProbe(workspace, callerOf(principal))), query.toLowerCase());
 		},
 		{ admit: admitPresent },
 	);
@@ -116,8 +96,7 @@ export function serveLists(host: FacetHost<P3Principal>): void {
 		ThingInfo,
 		({ workspace, thing }, principal, _admitted, self) => {
 			const store = self.get(ThingsStore, {});
-			const caller = callerOf(principal);
-			const found = followProbe(self, () => thingProbe(workspace, thing, caller));
+			const found = followProbe(self, () => thingProbe(workspace, thing, callerOf(principal)));
 			const row = self.liveQuery(store.things.one, { thing }, { first: 1 });
 			return {
 				info: self.derive([found, row], ([here, rows]) => {
@@ -132,7 +111,7 @@ export function serveLists(host: FacetHost<P3Principal>): void {
 				}),
 			};
 		},
-		{ admit: admitAnswer },
+		{ admit: admitWhen((answers, { thing }) => answers[thing] !== undefined) },
 	);
 	host.serve(
 		WhoMay,
@@ -140,8 +119,7 @@ export function serveLists(host: FacetHost<P3Principal>): void {
 			const store = self.get(ThingsStore, {});
 			const kinds = self.registry(ThingKinds);
 			const probe = whoMayProbe(workspace, thing, callerOf(principal), () => kinds.value);
-			const table = followProbe(self, () => withRowsNamed(store, probe));
-			return { table };
+			return { table: followProbe(self, () => withRowsNamed(store, probe)) };
 		},
 		{ admit: admitPresent },
 	);
@@ -165,25 +143,35 @@ function followProbe<T extends JsonValue>(self: Self<P3Principal>, make: () => P
 	});
 }
 
-/** Admits anyone present in the workspace: who has an answer on its own thing (item 88). */
-function admitPresent(
-	{ workspace }: { readonly workspace: string },
-	principal: P3Principal,
-	self: AdmitSelf,
-): Watchable<Admission<Record<never, never>>> {
-	const gives = self.get(Gives, { workspace, caller: callerKey(principal) }).answers;
-	return self.derive([gives], ([answers]) => (answers[workspace] === undefined ? NOT_PRESENT : ALLOWED));
+/**
+ * A list's members over the probe `make` builds: its rows whole (a list is bounded by one workspace: no further pages),
+ * those whose name starts with `prefix` (lower case; a list of named rows).
+ */
+function listOf<T extends JsonValue & { readonly name?: string }>(
+	self: Self<P3Principal>,
+	make: () => Probe<T[]>,
+	prefix = "",
+) {
+	const rows = followProbe(self, make);
+	return {
+		list: self.derive([rows], ([items]) => ({
+			rows: prefix === "" ? items : items.filter(({ name }) => name?.toLowerCase().startsWith(prefix) === true),
+			moreAfter: false,
+		})),
+		more: async () => null,
+	};
 }
 
-/** Admits whoever has an answer on `thing` in `workspace` (one with no tick too). */
-function admitAnswer(
-	{ workspace, thing }: { readonly workspace: string; readonly thing: string },
-	principal: P3Principal,
-	self: AdmitSelf,
-): Watchable<Admission<Record<never, never>>> {
-	const gives = self.get(Gives, { workspace, caller: callerKey(principal) }).answers;
-	return self.derive([gives], ([answers]) => (answers[thing] === undefined ? NOT_PRESENT : ALLOWED));
+/** An admission by what the workspace gives the caller: `lets` says whether its answers let them in. */
+function admitWhen<P extends { readonly workspace: string }>(lets: (answers: Answers, params: P) => boolean) {
+	return (params: P, principal: P3Principal, self: AdmitSelf): Watchable<Admission<Record<never, never>>> => {
+		const gives = self.get(Gives, { workspace: params.workspace, caller: callerKey(principal) }).answers;
+		return self.derive([gives], ([answers]) => (lets(answers, params) ? ALLOWED : NOT_PRESENT));
+	};
 }
+
+/** Admits anyone present in the workspace: who has an answer on its own thing (item 88). */
+const admitPresent = admitWhen((answers, { workspace }) => answers[workspace] !== undefined);
 
 const ALLOWED = allow({});
 const NOT_PRESENT = deny("things: nothing given here", messages.message("notGiven"));
@@ -199,27 +187,6 @@ function originOf(look: Look, workspace: string, at: string, above: readonly str
 function aboveOf(look: Look, workspace: string, caller: Caller): readonly string[] {
 	return look.answer(workspace, workspace, caller)?.above ?? [];
 }
-
-/** Whether two lists are the same, item by item, by `same`. */
-function sameList<T>(a: readonly T[], b: readonly T[], same: (x: T, y: T) => boolean): boolean {
-	return a.length === b.length && a.every((item, i) => same(item, b[i]!));
-}
-
-/** Whether two origins are the same. */
-function sameOrigin(a: Origin, b: Origin): boolean {
-	if (a.kind !== b.kind) return false;
-	return a.kind !== "above" || b.kind !== "above" || (a.workspace === b.workspace && a.name === b.name);
-}
-
-const sameWorkspaces = (a: WorkspaceItem[], b: WorkspaceItem[]) =>
-	sameList(a, b, (x, y) => x.workspace === y.workspace && x.kind === y.kind && x.name === y.name);
-
-const sameThings = (a: ThingItem[], b: ThingItem[]) =>
-	sameList(
-		a,
-		b,
-		(x, y) => x.thing === y.thing && x.kind === y.kind && x.hidden === y.hidden && sameOrigin(x.from, y.from),
-	);
 
 /** A workspace in a list, from what the index loaded of it. */
 function itemOf(look: Look, workspace: string): WorkspaceItem {
@@ -238,63 +205,50 @@ function byName(a: WorkspaceItem, b: WorkspaceItem): number {
  * person or agent, their groups); presence comes only from there, so every root is among them.
  */
 function rootsProbe(store: Store, caller: Caller): Probe<WorkspaceItem[]> {
-	let root = "";
-	let candidates: readonly string[] = [];
 	return {
 		workspace: "",
 		scope: "any",
-		prepare: async (load, _look, ctx) => {
-			root = (await readAll(store.workspaces.children, { parent: "" }, ctx))[0]?.workspace ?? "";
+		caller,
+		compute: async (look, load, ctx) => {
+			const root = (await readAll(store.workspaces.children, { parent: "" }, ctx))[0]?.workspace ?? "";
 			const keys = [partyKey(caller.kind === "server" ? { kind: "everyone" } : caller)];
 			if (caller.kind === "person") {
-				await load.person(caller.person);
 				for (const { group } of await readAll(store.groupMembers.ofPerson, { person: caller.person }, ctx))
 					keys.push(partyKey({ kind: "group", group }));
 			}
-			const found = new Set<string>();
+			const candidates = new Set<string>();
 			for (const key of keys) {
 				for (const { workspace } of await readAll(store.workspaceMembers.where, { partyKey: key }, ctx))
-					found.add(workspace);
+					candidates.add(workspace);
 			}
-			candidates = [...found];
 			for (const workspace of [root, ...candidates]) await load.workspace(workspace);
-		},
-		compute: (look) => {
 			const everything =
 				caller.kind === "server" || (caller.kind === "person" && look.person(caller.person)?.owner === true);
 			if (everything) return root === "" ? [] : [itemOf(look, root)];
-			const roots = candidates.filter((workspace) => {
+			const roots = [...candidates].filter((workspace) => {
 				const answer = look.answer(workspace, workspace, caller);
 				const parent = look.entries(workspace)?.parent ?? "";
 				return answer !== undefined && !(answer.above ?? []).includes(parent);
 			});
-			return [...new Set(roots)].map((workspace) => itemOf(look, workspace)).sort(byName);
+			return roots.map((workspace) => itemOf(look, workspace)).sort(byName);
 		},
-		same: sameWorkspaces,
-		watched: () => [root, ...candidates],
-		persons: () => (caller.kind === "person" ? [caller.person] : []),
 	};
 }
 
 /** The workspaces right below `workspace` that `caller` is present in. */
 function childrenProbe(store: Store, workspace: string, caller: Caller): Probe<WorkspaceItem[]> {
-	let children: readonly string[] = [];
 	return {
 		workspace,
 		scope: "any",
-		prepare: async (load, _look, ctx) => {
-			if (caller.kind === "person") await load.person(caller.person);
-			children = (await readAll(store.workspaces.children, { parent: workspace }, ctx)).map((row) => row.workspace);
-			for (const child of children) await load.workspace(child);
+		caller,
+		compute: async (look, load, ctx) => {
+			const children = await readAll(store.workspaces.children, { parent: workspace }, ctx);
+			for (const child of children) await load.workspace(child.workspace);
+			return children
+				.filter((child) => look.answer(child.workspace, child.workspace, caller) !== undefined)
+				.map((child) => itemOf(look, child.workspace))
+				.sort(byName);
 		},
-		compute: (look) =>
-			children
-				.filter((child) => look.answer(child, child, caller) !== undefined)
-				.map((child) => itemOf(look, child))
-				.sort(byName),
-		same: sameWorkspaces,
-		watched: () => children,
-		persons: () => (caller.kind === "person" ? [caller.person] : []),
 	};
 }
 
@@ -306,10 +260,8 @@ function contentsProbe(workspace: string, caller: Caller): Probe<ThingItem[]> {
 	return {
 		workspace,
 		scope: "here",
-		prepare: async (load) => {
-			if (caller.kind === "person") await load.person(caller.person);
-		},
-		compute: (look) => {
+		caller,
+		compute: async (look) => {
 			const above = aboveOf(look, workspace, caller);
 			const access = look.access(workspace);
 			const rows: ThingItem[] = [];
@@ -329,9 +281,6 @@ function contentsProbe(workspace: string, caller: Caller): Probe<ThingItem[]> {
 			}
 			return rows.sort((a, b) => Number(a.hidden) - Number(b.hidden) || a.thing.localeCompare(b.thing));
 		},
-		same: sameThings,
-		watched: () => [],
-		persons: () => (caller.kind === "person" ? [caller.person] : []),
 	};
 }
 
@@ -343,10 +292,8 @@ function peopleProbe(workspace: string, caller: Caller): Probe<PartyItem[]> {
 	return {
 		workspace,
 		scope: "here",
-		prepare: async (load) => {
-			if (caller.kind === "person") await load.person(caller.person);
-		},
-		compute: (look) => {
+		caller,
+		compute: async (look) => {
 			const above = aboveOf(look, workspace, caller);
 			const entries = look.entries(workspace);
 			const present = look.access(workspace).present;
@@ -367,14 +314,6 @@ function peopleProbe(workspace: string, caller: Caller): Probe<PartyItem[]> {
 				(a, b) => Number(a.hidden) - Number(b.hidden) || partyKey(a.party).localeCompare(partyKey(b.party)),
 			);
 		},
-		same: (a, b) =>
-			sameList(
-				a,
-				b,
-				(x, y) => partyKey(x.party) === partyKey(y.party) && x.hidden === y.hidden && sameOrigin(x.from, y.from),
-			),
-		watched: () => [],
-		persons: () => (caller.kind === "person" ? [caller.person] : []),
 	};
 }
 
@@ -382,29 +321,24 @@ function peopleProbe(workspace: string, caller: Caller): Probe<PartyItem[]> {
  * R37 with R9: the things `caller` may link into `workspace`: those linked in a workspace above where they have Link,
  * not linked here already.
  */
-function linkableProbe(workspace: string, caller: Caller): Probe<ThingItem[]> {
+function linkableProbe(workspace: string, caller: Caller): Probe<Omit<ThingItem, "hidden">[]> {
 	return {
 		workspace,
 		scope: "here",
-		prepare: async (load) => {
-			if (caller.kind === "person") await load.person(caller.person);
-		},
-		compute: (look) => {
+		caller,
+		compute: async (look) => {
 			const above = aboveOf(look, workspace, caller);
 			const here = look.entries(workspace)?.links;
-			const rows: ThingItem[] = [];
+			const rows: Omit<ThingItem, "hidden">[] = [];
 			for (let at = look.entries(workspace)?.parent ?? ""; at !== ""; at = look.entries(at)?.parent ?? "") {
 				if (look.answer(at, at, caller)?.ticks.includes("link") !== true) continue;
 				for (const [thing, kind] of look.entries(at)?.links ?? []) {
 					if (here?.has(thing) === true || rows.some((row) => row.thing === thing)) continue;
-					rows.push({ thing, kind, from: originOf(look, workspace, at, above), hidden: false });
+					rows.push({ thing, kind, from: originOf(look, workspace, at, above) });
 				}
 			}
 			return rows.sort((a, b) => a.thing.localeCompare(b.thing));
 		},
-		same: sameThings,
-		watched: () => [],
-		persons: () => (caller.kind === "person" ? [caller.person] : []),
 	};
 }
 
@@ -413,19 +347,14 @@ function thingProbe(workspace: string, thing: string, caller: Caller): Probe<{ k
 	return {
 		workspace,
 		scope: "here",
-		prepare: async (load) => {
-			if (caller.kind === "person") await load.person(caller.person);
-		},
-		compute: (look) => {
+		caller,
+		compute: async (look) => {
 			const access = look.access(workspace);
 			if (thing === workspace) return access.own === undefined ? null : { kind: access.own.kind, from: HERE };
 			const given = access.things.get(thing);
 			if (given === undefined || look.answer(workspace, thing, caller) === undefined) return null;
 			return { kind: given.kind, from: originOf(look, workspace, given.at, aboveOf(look, workspace, caller)) };
 		},
-		same: (a, b) => a === b || (a !== null && b !== null && a.kind === b.kind && sameOrigin(a.from, b.from)),
-		watched: () => [],
-		persons: () => (caller.kind === "person" ? [caller.person] : []),
 	};
 }
 
@@ -452,25 +381,20 @@ function whoMayProbe(
 	caller: Caller,
 	kindTable: () => ReadonlyMap<string, { readonly plugin: string; readonly value: KindInfo }>,
 ): Probe<WhoMayValue> {
-	let persons: readonly string[] = [];
 	return {
 		workspace,
 		scope: "here",
-		prepare: async (load, look) => {
-			if (caller.kind === "person") await load.person(caller.person);
-			// The persons whose cells say "has": those present here and those a row here names, loaded so their answers
-			// can be computed.
-			const entries = look.entries(workspace);
-			const named = [...look.access(workspace).present, ...(entries?.grants ?? []).map((row) => row.party)];
-			persons = [
-				...new Set(named.filter((key) => key.startsWith("person/")).map((key) => key.slice("person/".length))),
-			];
-			for (const person of persons) await load.person(person);
-		},
-		compute: (look) => {
+		caller,
+		compute: async (look, load) => {
 			const kinds = kindTable();
 			const access = look.access(workspace);
 			const entries = look.entries(workspace);
+			// The persons whose cells say "has": those present here and those a row here names, loaded so their answers
+			// can be computed.
+			for (const key of [...access.present, ...(entries?.grants ?? []).map((row) => row.party)]) {
+				const party = partyOf(key);
+				if (party.kind === "person") await load.person(party.person);
+			}
 			const own = thing === workspace;
 			const given: ThingHere | undefined = own ? access.own : access.things.get(thing);
 			const kind = given === undefined ? undefined : kinds.get(given.kind);
@@ -482,8 +406,8 @@ function whoMayProbe(
 			}));
 			const tickNames = ticks.map(({ name }) => name);
 			if (own) {
-				const makes = new Set(["@make:*", ...[...kinds.keys()].map((name) => `@make:${name}`)]);
-				for (const row of rowsHere) if (row.tick.startsWith("@make:")) makes.add(row.tick);
+				const makes = new Set([MAKE_ANY, ...[...kinds.keys()].map((name) => makeTick({ name }))]);
+				for (const row of rowsHere) if (kindOfMakeTick(row.tick) !== undefined) makes.add(row.tick);
 				tickNames.push(...makes);
 			}
 			const parties = new Map<string, Party>([
@@ -517,9 +441,6 @@ function whoMayProbe(
 				rows,
 			};
 		},
-		same: sameJson,
-		watched: () => [],
-		persons: () => (caller.kind === "person" ? [...persons, caller.person] : persons),
 	};
 }
 
@@ -542,40 +463,25 @@ function hasTick(
 			party.kind === "person" ? { kind: "person", person: party.person } : { kind: "agent", session: party.session };
 		const answer = look.answer(workspace, thing, caller);
 		if (tick === OPEN) return answer !== undefined;
-		if (tick.startsWith("@make:")) return given.ticks.get(key)?.has(tick) === true;
+		if (kindOfMakeTick(tick) !== undefined) return given.ticks.get(key)?.has(tick) === true;
 		return answer?.ticks.includes(tick) === true;
 	}
 	if (tick === OPEN) return given.ticks.has(key);
 	return given.ticks.get(key)?.has(tick) === true;
 }
 
-/** Whether two JSON values are the same, field by field. */
-function sameJson(a: unknown, b: unknown): boolean {
-	if (a === b) return true;
-	if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
-	if (Array.isArray(a)) return Array.isArray(b) && a.length === b.length && a.every((item, i) => sameJson(item, b[i]));
-	const keys = Object.keys(a);
-	if (Array.isArray(b) || keys.length !== Object.keys(b).length) return false;
-	return keys.every((key) => sameJson((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]));
-}
-
-/**
- * `probe` with each row's thing named: the names are read before each computation (a rename touches the things it
- * renames, which asks every probe again), so a list shows them live.
- */
+/** `probe` with each row's thing named: the names are read at each computation (a rename asks every probe again). */
 function named<T extends { readonly thing: string }>(store: Store, probe: Probe<T[]>): Probe<(T & { name: string })[]> {
-	let names: ReadonlyMap<string, string> = new Map();
 	return {
 		...probe,
-		prepare: async (load, look, ctx) => {
-			await probe.prepare(load, look, ctx);
-			const things = probe.compute(look).map(({ thing }) => thing);
-			names = new Map(
+		compute: async (look, load, ctx) => {
+			const rows = await probe.compute(look, load, ctx);
+			const things = rows.map(({ thing }) => thing);
+			const names = new Map(
 				(await readWhole(store.things.ofIds, { things }, ctx)).map(({ thing, name }) => [thing, name]),
 			);
+			return rows.map((row) => ({ ...row, name: names.get(row.thing) ?? "" }));
 		},
-		compute: (look) => probe.compute(look).map((row) => ({ ...row, name: names.get(row.thing) ?? "" })),
-		same: (a, b) => probe.same(a, b) && a.every((row, i) => row.name === b[i]!.name),
 	};
 }
 
@@ -597,60 +503,42 @@ async function partiesNamed(
 	]);
 }
 
-/** `probe` with each row's party named and marked outside (a group's), read before each computation. */
+/** `rows` with each one's party named and marked outside (a group's). */
+async function withNames<T extends { readonly party: Party }>(
+	store: Store,
+	rows: readonly T[],
+	ctx: Context,
+): Promise<(T & { name: string; outside: boolean })[]> {
+	const names = await partiesNamed(
+		store,
+		rows.map(({ party }) => party),
+		ctx,
+	);
+	return rows.map((row) => {
+		const found = names.get(partyKey(row.party));
+		return { ...row, name: found?.name ?? "", outside: found?.outside ?? false };
+	});
+}
+
+/** `probe` with each row's party named and marked outside, read at each computation. */
 function withParties<T extends { readonly party: Party }>(
 	store: Store,
 	probe: Probe<T[]>,
 ): Probe<(T & { name: string; outside: boolean })[]> {
-	let names: ReadonlyMap<string, { readonly name: string; readonly outside: boolean }> = new Map();
 	return {
 		...probe,
-		prepare: async (load, look, ctx) => {
-			await probe.prepare(load, look, ctx);
-			names = await partiesNamed(
-				store,
-				probe.compute(look).map(({ party }) => party),
-				ctx,
-			);
-		},
-		compute: (look) =>
-			probe.compute(look).map((row) => {
-				const found = names.get(partyKey(row.party));
-				return { ...row, name: found?.name ?? "", outside: found?.outside ?? false };
-			}),
-		same: (a, b) => probe.same(a, b) && a.every((row, i) => row.name === b[i]!.name && row.outside === b[i]!.outside),
+		compute: async (look, load, ctx) => withNames(store, await probe.compute(look, load, ctx), ctx),
 	};
 }
 
-/** The who-may `probe` with each row's party named, read before each computation. */
+/** The who-may `probe` with each row's party named, read at each computation. */
 function withRowsNamed(store: Store, probe: Probe<WhoMayValue>): Probe<WhoMayValue> {
-	let names: ReadonlyMap<string, { readonly name: string }> = new Map();
 	return {
 		...probe,
-		prepare: async (load, look, ctx) => {
-			await probe.prepare(load, look, ctx);
-			names = await partiesNamed(
-				store,
-				probe.compute(look).rows.map(({ party }) => party),
-				ctx,
-			);
-		},
-		compute: (look) => {
-			const value = probe.compute(look);
-			return {
-				...value,
-				rows: value.rows.map((row) => ({ ...row, name: names.get(partyKey(row.party))?.name ?? "" })),
-			};
+		compute: async (look, load, ctx) => {
+			const value = await probe.compute(look, load, ctx);
+			const rows = await withNames(store, value.rows, ctx);
+			return { ...value, rows: rows.map(({ outside: _outside, ...row }) => row) };
 		},
 	};
 }
-
-/** Every item of `named` for `args`, which the list it names bounds: past `WHOLE` it fails closed. */
-async function readWhole<T, A>(query: NamedQuery<T, A>, args: A, ctx: Context): Promise<T[]> {
-	const page = await query.page(args, WHOLE, ctx);
-	if (page.next !== undefined) throw new Error(`things: more than ${WHOLE} rows in one list`);
-	return page.items;
-}
-
-/** How many rows one list's names are read in at most: the list is bounded by one workspace. */
-const WHOLE = 5000;

@@ -55,13 +55,13 @@ import {
 	Source as SourceSchema,
 	sourceKey,
 } from "./contract.ts";
-import { type DefaultGrants, type KindInfo, ThingKinds, type TickFor } from "./kind.ts";
+import { type DefaultGrants, type KindInfo, ThingKinds } from "./kind.ts";
 import { Lifecycle, Pending } from "./lifecycle.ts";
 import { messages } from "./messages.ts";
 import { ticksNow } from "./migration.ts";
 import { type Kinds, lookupOf, readerOf } from "./reader.ts";
 import { Gone, Removal, Removing } from "./removal.ts";
-import { audienceOf, isFor } from "./rules.ts";
+import { audienceOf, isFor, makeTickFor } from "./rules.ts";
 import type { DefaultsChoice } from "./workspace.ts";
 import { THINGS_PLUGIN, WorkspaceKind } from "./workspaces.ts";
 
@@ -284,7 +284,7 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			removing,
 			gone,
 			read: (fn, ctx) => self.tx(fn, ctx),
-			under: (tx, pathPrefix) => writes.under(tx, pathPrefix),
+			under: async (pathPrefix, ctx) => (await q.workspaces.under.page({ pathPrefix }, 1, ctx)).items[0]?.workspace,
 			clear: async (workspace, removed, ctx) => {
 				await write(async (tx, changes) => {
 					await writes.clear(tx, changes, workspace);
@@ -686,7 +686,7 @@ function namedQueries(self: StoreSelf<P3Principal>, t: Tables) {
 /** Makes Pi, the root workspace, unless it exists. */
 async function ensurePi(tx: Tx, t: Tables): Promise<null> {
 	if ((await rootOf(tx, t)) !== undefined) return null;
-	const by: Source = { kind: "plugin", plugin: "@earendil-works/p3-things" };
+	const by: Source = { kind: "plugin", plugin: THINGS_PLUGIN };
 	putWorkspace(
 		tx,
 		t,
@@ -892,15 +892,6 @@ class Writes {
 		return line.pathText;
 	}
 
-	/** One workspace under `pathPrefix` that still has its line (index `under`). */
-	async under(tx: Tx, pathPrefix: string): Promise<string | undefined> {
-		// Index `under`, in its order.
-		const below = query(Workspaces)
-			.where((w) => prefix(w.pathText, pathPrefix))
-			.orderBy((w) => w.pathText, "asc");
-		return (await tx.page(this.#t.workspaces, below, 1)).items[0]?.workspace;
-	}
-
 	/**
 	 * Clears workspace `workspace` (cut, or below a cut line): its links (a thing linked nowhere else goes, with its
 	 * delete hook), every grant, switch and member written there, the entries naming a leaf's agent elsewhere, its line
@@ -915,12 +906,7 @@ class Writes {
 			t.links,
 			query(Links).where((l) => eq(l.workspace, workspace)),
 		)) {
-			const where = await tx.page(
-				t.links,
-				query(Links).where((l) => eq(l.thing, link.thing)),
-				2,
-			);
-			if (where.items.every((other) => other.workspace === workspace)) going.push(link);
+			if (await this.#linkedOnlyIn(tx, workspace, link.thing)) going.push(link);
 		}
 		for (const { thing, of } of going) await this.removeThing(tx, touched, thing, of);
 		tx.deleteWhere(t.links, (l) => eq(l.workspace, workspace));
@@ -1002,14 +988,18 @@ class Writes {
 		tx.deleteWhere(this.#t.grants, (g) => and(eq(g.workspace, workspace), eq(g.thing, thing)));
 		tx.delete(this.#t.links, { workspace, thing });
 		touched.workspaces.add(workspace);
+		if (await this.#linkedOnlyIn(tx, workspace, thing)) await this.removeThing(tx, touched, thing, link.of);
+		return null;
+	}
+
+	/** Whether `thing` is linked nowhere but in `workspace` (index `by_thing`): with that link it goes. */
+	async #linkedOnlyIn(tx: Tx, workspace: string, thing: string): Promise<boolean> {
 		const links = await tx.page(
 			this.#t.links,
 			query(Links).where((l) => eq(l.thing, thing)),
 			2,
 		);
-		if (links.items.every((other) => other.workspace === workspace))
-			await this.removeThing(tx, touched, thing, link.of);
-		return null;
+		return links.items.every((other) => other.workspace === workspace);
 	}
 
 	/**
@@ -1107,18 +1097,18 @@ class Writes {
 			if (kind === undefined) throw invalid("args", `things: no thing ${thing}`);
 			const info = this.#kind(kind).value;
 			const made = kindOfMakeTick(tick);
-			const declared =
+			const forWhom =
 				made === undefined
-					? info.ticks.find(({ name }) => name === tick)
+					? info.ticks.find(({ name }) => name === tick)?.for
 					: own && info.workspace !== "no"
-						? this.#makeTick(made, tick)
+						? makeTickFor(made, (kind) => this.#kinds().get(kind)?.value.makers)
 						: undefined;
 			// A row is removed whatever its tick (one the kind lost too); written, its tick must be the kind's, `OPEN`,
 			// or on a workspace's own grants a Make tick of a registered kind (item 114).
-			if (gives !== undefined && tick !== OPEN && declared === undefined) {
+			if (gives !== undefined && tick !== OPEN && forWhom === undefined) {
 				throw invalid("args", `things: ${kind} has no tick ${tick}`);
 			}
-			if (gives === true && declared !== undefined && !isFor(declared.for, audienceOf(party.kind))) {
+			if (gives === true && forWhom !== undefined && !isFor(forWhom, audienceOf(party.kind))) {
 				throw invalid("args", `things: ${tick} of ${kind} cannot be given to ${partyKey(party)}`, {
 					message: messages.message("tickNotFor", tick, partyKey(party)),
 				});
@@ -1201,22 +1191,6 @@ class Writes {
 	}
 
 	/**
-	 * Make tick `tick` of kind `made` (`*`: every kind) as a tick a grant may name: whom it is for, from the kind's
-	 * `makers` (item 114); `undefined` for a kind that is not registered or that only its plugin makes.
-	 */
-	#makeTick(made: string, tick: string): { readonly name: string; readonly for: TickFor } | undefined {
-		if (made === "*") return { name: tick, for: "all" };
-		switch (this.#kinds().get(made)?.value.makers) {
-			case "anyone":
-				return { name: tick, for: "all" };
-			case "people":
-				return { name: tick, for: "people" };
-			default:
-				return undefined;
-		}
-	}
-
-	/**
 	 * One checkbox (item 112): every row of `party`'s `tick` on `thing` written in `workspace`, whatever its source, goes;
 	 * then `source`'s one row, if `gives` says one (checked as `setGrants` checks it).
 	 */
@@ -1245,13 +1219,7 @@ class Writes {
 			throw invalid("args", `things: ${party.kind} is no party one puts in`);
 		}
 		await this.#mustBeWorkspace(tx, workspace);
-		tx.put(this.#t.workspaceMembers, {
-			workspace,
-			partyKey: partyKey(party),
-			party,
-			source,
-			sourceKey: sourceKey(source),
-		});
+		this.#member(tx, workspace, party, source);
 		touched.workspaces.add(workspace);
 		return null;
 	}

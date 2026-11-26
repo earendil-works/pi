@@ -705,15 +705,16 @@ describe("the lists (R34 to R38)", () => {
 		const { anna, leo, fam } = await family();
 		const sketch = await store.create({ kind: Board.name, name: "sketch", workspace: fam, by: BY }, context);
 		await own(fam, party(anna), ["manageAccess"]);
-		await holding(leo, fam, async () => undefined);
-		// Anyone present reads it (decided against R40); without Manage access they cannot change a cell.
-		await holding(leo, fam, async (ref, ctx) => {
-			assert.equal(ref.setTick, undefined);
-			const read = await ctx.get(WhoMay, { workspace: fam, thing: sketch });
-			assert.ok(read.table.value.rows.some((row) => row.party.kind === "everyone"));
+		// Read by anyone present (Leo has no Manage access: he reads the table and cannot change a cell); nobody outside.
+		await as(leo, async (ctx) => {
+			const who = await ctx.get(WhoMay, { workspace: fam, thing: sketch });
+			assert.ok(who.table.value.rows.some((row) => row.party.kind === "everyone"));
+			assert.equal((await ctx.get(Workspace, { workspace: fam })).setTick, undefined);
 		});
-		const kim = await person("Kim");
-		await as(kim, (ctx) => assert.rejects(ctx.get(WhoMay, { workspace: fam, thing: sketch }, { readyTimeout: 200 })));
+		const stranger = await person("Stranger");
+		await as(stranger, (ctx) =>
+			assert.rejects(ctx.get(WhoMay, { workspace: fam, thing: sketch }, { readyTimeout: 200 })),
+		);
 		await listOf(anna, async (ctx) => {
 			const who = await ctx.get(WhoMay, { workspace: fam, thing: sketch });
 			const table = who.table.value;

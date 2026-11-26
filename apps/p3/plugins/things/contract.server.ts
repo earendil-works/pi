@@ -11,6 +11,7 @@ import {
 	defineRegistry,
 	type FollowObserver,
 	int,
+	type JsonValue,
 	local,
 	map,
 	method,
@@ -273,7 +274,7 @@ export type AccessHandle = {
 		context: Context,
 	): Promise<Attachment | undefined>;
 	/** Attaches `observer` to a probe over the index (a list's rows, live); `undefined` once the index closed. */
-	probe<T>(
+	probe<T extends JsonValue>(
 		probe: Probe<T>,
 		observer: FollowObserver<unknown>,
 		context: Context,

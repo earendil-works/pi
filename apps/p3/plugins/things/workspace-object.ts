@@ -24,6 +24,7 @@ import { Gives, ThingsStore, type WorkspaceRow } from "./contract.server.ts";
 import type { Source } from "./contract.ts";
 import { ThingKinds, WORKSPACE_TICKS, type WorkspaceTick } from "./kind.ts";
 import { messages } from "./messages.ts";
+import { readWhole } from "./reader.ts";
 import type { Answer } from "./rules.ts";
 import { Workspace, type WorkspaceInfo } from "./workspace.ts";
 import { THINGS_PLUGIN } from "./workspaces.ts";
@@ -67,25 +68,18 @@ export function serveWorkspace(host: FacetHost<P3Principal>): void {
 							message: messages.message("mayNotMake", kind),
 						});
 					}
-					const args = {
-						kind,
-						name: name ?? "",
-						by,
-						...(input === undefined ? {} : { input }),
-						...(defaults === undefined ? {} : { defaults }),
-					};
+					const args = { kind, name: name ?? "", by, input, defaults };
 					return kinds.value.get(kind)?.value.workspace === "no"
 						? store.create({ ...args, workspace }, ctx)
 						: store.createWorkspace({ ...args, parent: workspace }, ctx);
 				},
 				link: async ({ thing: linked, defaults }, ctx) => {
 					await mayLink(store, linked, principal, ctx);
-					await store.link({ workspace, thing: linked, ...(defaults === undefined ? {} : { defaults }) }, ctx);
+					await store.link({ workspace, thing: linked, defaults }, ctx);
 					return null;
 				},
 				unlink: async ({ thing: unlinked }, ctx) => {
-					const where = (await store.links.where.page({ thing: unlinked }, 1000, ctx)).items;
-					if (where.some((link) => link.workspace === workspace)) {
+					if ((await linkedIn(store, unlinked, ctx)).includes(workspace)) {
 						await store.unlink({ workspace, thing: unlinked }, ctx);
 						return null;
 					}
@@ -95,8 +89,7 @@ export function serveWorkspace(host: FacetHost<P3Principal>): void {
 					return null;
 				},
 				hide: async ({ thing: hidden, shown }, ctx) => {
-					const here = (await store.links.where.page({ thing: hidden }, 1000, ctx)).items;
-					if (here.some((link) => link.workspace === workspace)) {
+					if ((await linkedIn(store, hidden, ctx)).includes(workspace)) {
 						throw invalid("args", `things: ${hidden} is linked in ${workspace}, not from above`, {
 							message: messages.message("fromAboveOnly"),
 						});
@@ -110,15 +103,7 @@ export function serveWorkspace(host: FacetHost<P3Principal>): void {
 				},
 				configure: async ({ thing: configured, name, view, settings }, ctx) => {
 					await mustBeHere(store, workspace, configured, ctx);
-					await store.configure(
-						{
-							thing: configured,
-							...(name === undefined ? {} : { name }),
-							...(view === undefined ? {} : { view }),
-							...(settings === undefined ? {} : { settings }),
-						},
-						ctx,
-					);
+					await store.configure({ thing: configured, name, view, settings }, ctx);
 					return null;
 				},
 				// Manage people's picker, invite links and groups are slice 3's (ERNDL-1144).
@@ -142,17 +127,7 @@ export function serveWorkspace(host: FacetHost<P3Principal>): void {
 					return null;
 				},
 				setTick: async ({ thing: ticked, party, tick, gives: given }, ctx) => {
-					await store.setTick(
-						{
-							workspace,
-							thing: ticked,
-							party,
-							tick,
-							...(given === undefined ? {} : { gives: given }),
-							source: by,
-						},
-						ctx,
-					);
+					await store.setTick({ workspace, thing: ticked, party, tick, gives: given, source: by }, ctx);
 					return null;
 				},
 			};
@@ -222,11 +197,16 @@ async function mayLink(
 ): Promise<void> {
 	if (principal.kind === "server") return;
 	const caller = callerKey(principal);
-	for (const { workspace } of (await store.links.where.page({ thing }, 1000, ctx)).items) {
+	for (const workspace of await linkedIn(store, thing, ctx)) {
 		const answer = await store.answerOf({ workspace, thing: workspace, caller }, ctx);
 		if (answer?.ticks.includes("link") === true) return;
 	}
 	throw invalid("args", `things: no Link where ${thing} is linked now`, { message: messages.message("mayNotLink") });
+}
+
+/** The workspaces `thing` is linked in, read whole (what "linked here" and R9 are decided by). */
+async function linkedIn(store: Reference<typeof ThingsStore>, thing: string, ctx: Ctx<P3Principal>): Promise<string[]> {
+	return (await readWhole(store.links.where, { thing }, ctx)).map(({ workspace }) => workspace);
 }
 
 /** Throws unless `thing` is `workspace` itself, linked in it, or a workspace right below it. */
@@ -237,7 +217,7 @@ async function mustBeHere(
 	ctx: Ctx<P3Principal>,
 ): Promise<void> {
 	if (thing === workspace) return;
-	if ((await store.links.where.page({ thing }, 1000, ctx)).items.some((link) => link.workspace === workspace)) return;
+	if ((await linkedIn(store, thing, ctx)).includes(workspace)) return;
 	if ((await store.workspaces.one.page({ workspace: thing }, 1, ctx)).items[0]?.parent === workspace) return;
 	throw notLinkedHere(thing, workspace);
 }
