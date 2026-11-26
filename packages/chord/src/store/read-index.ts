@@ -21,13 +21,11 @@ type Filed = Read | Set<Read>;
 /** The reads of one bucket shape on a table: by the identity of their columns' values. */
 type Group = { readonly name: string; readonly columns: readonly string[]; readonly byValues: Map<unknown, Filed> };
 
-/**
- * A filed read's entries: its table's index, its group there, the key sets it is filed by. Its bucket's value
- * identities are made again from its plan (which does not change) when it leaves, not kept (56 B per read).
- */
+/** A filed read's entries: its table's index, its group and value identities there, the key sets it is filed by. */
 type Filing = {
 	readonly index: TableIndex;
 	readonly group: Group;
+	readonly identities: readonly unknown[];
 	/** `undefined`: no result to rule a write out by; the read is unindexed until it has one. */
 	kept: readonly ReadonlySet<unknown>[] | undefined;
 };
@@ -53,7 +51,7 @@ export class ReadIndex implements KeptKeysWatcher {
 		const group = index.group(bucket.columns);
 		for (const id of bucket.identities) addTo(group.byValues, id, read);
 		// Filed by no keys yet: `kept` files it by its result, or as a candidate of every write while it has none.
-		this.#filings.set(read, { index, group, kept: NO_KEYS });
+		this.#filings.set(read, { index, group, identities: bucket.identities, kept: NO_KEYS });
 		read.watchKept(this);
 		this.kept(read);
 	}
@@ -70,7 +68,7 @@ export class ReadIndex implements KeptKeysWatcher {
 		this.#filings.delete(read);
 		read.watchKept(undefined);
 		const { index, group } = filing;
-		for (const id of bucketOf(read)!.identities) removeFrom(group.byValues, id, read);
+		for (const id of filing.identities) removeFrom(group.byValues, id, read);
 		if (group.byValues.size === 0) index.drop(group);
 		this.#unkeep(read, filing);
 		if (index.isEmpty()) this.#tables.delete(read.plan.table);
