@@ -128,7 +128,8 @@ export default defineFacet((host) => {
 			if (coordinated === undefined) throw new Error("create needs either a project or a cwd");
 			if (query.env !== undefined) return { env, cwd: placeOf(coordinated, env) };
 			const place = projects.projects.value.find((each) => each.name === coordinated)?.places[0];
-			if (!place) throw new Error(`Project "${coordinated}" has no place`);
+			// Projects always have a place: none means not live (archived while this coordinator was restored on its own).
+			if (!place) throw new Error(`Project "${coordinated}" is archived; create needs either a project or a cwd`);
 			return { env: place.env, cwd: place.path };
 		};
 

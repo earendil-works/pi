@@ -491,14 +491,17 @@ function Sidebar() {
 		[],
 	);
 	const drawerRows = useMemo<DrawerRows>(() => ({ sessions: rows, listApart }), [rows, listApart]);
-	// Each project's coordinator: its project's row stands for it, so it is left out of the rollups too.
+	// Each live project's coordinator: its project's row stands for it, so it is left out of the rollups too. One
+	// restored on its own while its project is archived has no row of its own: it shows as any member does then, in no
+	// project.
 	const coordinatorsHeld = useObject(ProjectCoordinators, owner ? {} : undefined);
 	const coordinatorSessions = useReadable(kept(coordinatorsHeld)?.sessions);
-	const rolledUp = useMemo(() => {
-		const hidden = new Set([...Object.values(apart).flat(), ...Object.values(coordinatorSessions ?? {})]);
-		return hidden.size ? rows.filter((row) => !hidden.has(row.id)) : rows;
-	}, [rows, apart, coordinatorSessions]);
 	const { onSearch, projects } = data;
+	const rolledUp = useMemo(() => {
+		const standing = (projects ?? []).flatMap((project) => coordinatorSessions?.[project.name] ?? []);
+		const hidden = new Set([...Object.values(apart).flat(), ...standing]);
+		return hidden.size ? rows.filter((row) => !hidden.has(row.id)) : rows;
+	}, [rows, apart, coordinatorSessions, projects]);
 	// The owner's sessions are grouped by project: until the projects and their coordinators are known, they would all
 	// show without one (a coordinator among its project's sessions), then jump into their places.
 	const projectsUnknown = owner && (projects === undefined || coordinatorSessions === undefined);

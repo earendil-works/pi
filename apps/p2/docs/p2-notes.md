@@ -1148,8 +1148,9 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
     otherwise `open`, which makes or restores it: the row says "Opening…" meanwhile, one open per project, and the page
     goes there only if the reader has not navigated since), the chevron after the name (`Toggle`, `.group-toggle`)
     shows or hides the sessions. The row is selected while the coordinator shows, its folder framed while it works
-    (`IconMarker`), bold with a dot for its unread answer. Coordinators are left out of every rollup and list page, and
-    the sections and every owner's list page wait for the map. Delete project… counts the project's sessions without
+    (`IconMarker`), bold with a dot for its unread answer. Live projects' coordinators are left out of every rollup and
+    list page (one restored on its own while its project is archived shows in no project, as any member does then; its
+    `create` without a cwd is refused), and the sections and every owner's list page wait for the map. Delete project… counts the project's sessions without
     its coordinator and says the coordinator is archived; an open coordinator gives way to the new-session screen first.
   - **Project commands and drag and drop** (`project-commands.tsx`, `sidebar/drag.ts`, owner): a project's group row
     is the command menu's target `project` (hovered or focused; a long press; its ⋯, shown on hover with a fine

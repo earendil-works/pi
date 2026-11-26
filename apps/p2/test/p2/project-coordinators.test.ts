@@ -237,6 +237,15 @@ describe("project coordinators", () => {
 		await projects.archive({ name: "busy" }, BACKGROUND_CONTEXT);
 		const busy = (await archiving).id;
 		await until(sessions.sessions, () => row(busy)?.archivedAt !== null);
+		// Restored on its own while its project is archived: it starts nothing in that project.
+		await sessions.restore({ id: busy }, BACKGROUND_CONTEXT);
+		await until(sessions.sessions, () => row(busy)?.archivedAt === null);
+		await assert.rejects(
+			broker(busy, "archived-project", { action: "create", message: "x" }),
+			/Project "busy" is archived/,
+		);
+		await sessions.archive({ id: busy }, BACKGROUND_CONTEXT);
+		await until(sessions.sessions, () => row(busy)?.archivedAt !== null);
 		await projects.restore({ name: "busy" }, BACKGROUND_CONTEXT);
 		await until(sessions.sessions, () => row(busy)?.archivedAt === null);
 
