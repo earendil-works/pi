@@ -3,24 +3,30 @@
 // candidate of every write. The differential check: over random commits of 1 to 5,000 writes every read stays equal to
 // a fresh run of its statement, and an index that leaves out its bucket lookups fails it.
 
+import { DatabaseSync } from "node:sqlite";
+import { setFlagsFromString } from "node:v8";
+import { runInNewContext } from "node:vm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Context } from "../../src/context/index.ts";
 import { BACKGROUND_CONTEXT } from "../../src/context/index.ts";
 import { int, str } from "../../src/contracts/index.ts";
+import { NodeSqliteDatabase } from "../../src/sqlite/node.ts";
 import { Batch } from "../../src/state/internal.ts";
+import { sqliteBackend } from "../../src/store/backend.ts";
 import { and, eq, inArray } from "../../src/store/expression.ts";
 import { OpenQuery, type OpenRead } from "../../src/store/open-query.ts";
 import { type Query, query } from "../../src/store/query.ts";
-import type { Read, ReadKind, ReadRun } from "../../src/store/read.ts";
+import { identityOf, Read, type ReadKind, type ReadRun } from "../../src/store/read.ts";
 import { ReadIndex } from "../../src/store/read-index.ts";
+import { ReadPlan } from "../../src/store/read-plan.ts";
 import { ReadRefresh } from "../../src/store/reads.ts";
 import type { KeyedChange } from "../../src/store/skip.ts";
 import type { StagedWrite } from "../../src/store/step.ts";
 import type { ChordStore } from "../../src/store/store.ts";
+import { openStore } from "../../src/store/store.ts";
 import { defineTable } from "../../src/store/table.ts";
 import { TableChanges } from "../../src/store/table-changes.ts";
 import type { TableHandle } from "../../src/store/table-handle.ts";
-import { hasTuple } from "../../src/store/tuples.ts";
 import { expectCollected, memoryStore, metered, tableIn } from "../support.ts";
 import {
 	closeWorld,
@@ -33,6 +39,7 @@ import {
 	SessionColumns,
 	Sessions,
 	staleReads,
+	Teams,
 	type World,
 } from "./read-world.ts";
 
@@ -421,12 +428,7 @@ describe("the differential check", () => {
 				const kept = read.kept() ?? [];
 				const key = read.plan.query.table.key;
 				const held = its.filter((change) =>
-					kept.some((keys) =>
-						hasTuple(
-							keys,
-							key.map((name) => change.key[name]!),
-						),
-					),
+					kept.some((keys) => keys.has(identityOf(key.map((name) => change.key[name]!)))),
 				);
 				if (held.length === 0) into.delete(read);
 				else into.set(read, held);
@@ -442,3 +444,100 @@ describe("the differential check", () => {
 		}
 	}, 60_000);
 });
+
+describe("composite keys, compared by the base's identity (hot-path review)", () => {
+	// astra2, 59f96e2fb: keys of several columns compared as paths of maps were the base's identity no more.
+	for (const indexed of [false, true]) {
+		it(`a delete removes a composite-key row on a backend returning integers as bigints, indexed ${indexed}`, async () => {
+			const sqlite = new DatabaseSync(":memory:");
+			const prepare = sqlite.prepare.bind(sqlite);
+			sqlite.prepare = (sql: string) => {
+				const statement = prepare(sql);
+				if (sql.startsWith("SELECT ") && sql.includes('FROM "app.store:points"')) statement.setReadBigInts(true);
+				return statement;
+			};
+			const store = (await openStore(
+				sqliteBackend(new NodeSqliteDatabase(sqlite)),
+				BACKGROUND_CONTEXT,
+			)) as ChordStore;
+			const Points = defineTable("points", {
+				version: 1,
+				columns: { session: str(), id: int(), title: str() },
+				key: ["session", "id"],
+			});
+			const handle = await tableIn(store, Points);
+			const w = {
+				store,
+				handles: { points: handle },
+				reads: [],
+				batch: new Batch(() => {}, undefined),
+			} as never as World;
+			try {
+				const q = indexed ? query(Points).where((t) => eq(t.session, "room")) : query(Points);
+				const what = { kind: "rows", range: { limit: 20 } } as const;
+				const read = await openRead(w, { name: "open", query: q, table: Points, what }, BACKGROUND_CONTEXT);
+				await commit(w, BACKGROUND_CONTEXT, (changes) =>
+					changes(Points).put({ session: "room", id: 17, title: "point" }),
+				);
+				await commit(w, BACKGROUND_CONTEXT, (changes) => changes(Points).delete({ session: "room", id: 17 }));
+				const fresh = await store.read(
+					(executor) => read.open.read!.fetch(executor, BACKGROUND_CONTEXT),
+					BACKGROUND_CONTEXT,
+				);
+				expect(fresh).toMatchObject({ kind: "rows", result: { rows: [] } });
+				expect(read.latest).toMatchObject({ kind: "rows", result: { rows: [] } });
+			} finally {
+				for (const read of w.reads) read.query.close();
+				await store.close(BACKGROUND_CONTEXT);
+			}
+		});
+	}
+
+	it("a read's kept keys count its fetched keys, not their first columns", async () => {
+		const w = await opened(BACKGROUND_CONTEXT, []);
+		await commit(w, BACKGROUND_CONTEXT, (changes) => {
+			changes(Teams).put({ team: "a", session: "1" });
+			changes(Teams).put({ team: "a", session: "2" });
+		});
+		const what = { kind: "rows", range: { limit: 20 } } as const;
+		await openRead(w, { name: "teams", query: query(Teams), table: Teams, what }, BACKGROUND_CONTEXT);
+		const read = w.store.reads.on(w.handles.teams.sql.table)?.values().next().value;
+		expect(read?.kept()?.[0]?.size).toBe(2);
+	});
+
+	it("six more integer columns in a composite key do not quadruple a filed read's retained memory", () => {
+		const count = 12_000;
+		const bytes = (width: number): number => {
+			const key = Array.from({ length: width }, (_, at) => `c${at}`);
+			const columns = { ...Object.fromEntries(key.map((name) => [name, int()])), active: str() };
+			const definition = defineTable("record", { version: 1, columns, key: key as never });
+			const q = query(definition).where((t) => eq((t as never as { active: never }).active, "yes" as never));
+			const plan = new ReadPlan(q as never, "record", {}, "rows", new Map());
+			const rows = Array.from({ length: count }, (_, at) =>
+				Object.fromEntries([...key.map((name) => [name, at]), ["active", "yes"]]),
+			);
+			const measured: number[] = [];
+			for (let round = 0; round < 3; round++) {
+				const index = new ReadIndex();
+				const read = new Read(plan, { kind: "rows", range: { limit: count } }, { adopt() {} }, 0);
+				const before = heapNow();
+				index.add(read);
+				read.know(rows);
+				measured.push((heapNow() - before) / count);
+				index.delete(read);
+				read.forget();
+			}
+			return measured.sort((a, b) => a - b)[1]!;
+		};
+		expect(bytes(8) / bytes(2)).toBeLessThan(4);
+	});
+});
+
+/** The heap in use after collections, at once (no turn of the event loop: what is measured stays reachable). */
+function heapNow(): number {
+	for (let round = 0; round < 3; round++) gcNow();
+	return process.memoryUsage().heapUsed;
+}
+
+setFlagsFromString("--expose-gc");
+const gcNow = runInNewContext("gc") as () => void;

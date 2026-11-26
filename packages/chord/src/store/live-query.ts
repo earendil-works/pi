@@ -11,10 +11,9 @@ import type { SqliteValue } from "../sqlite/index.ts";
 import { type FramedOwner, FramedSource } from "../state/internal.ts";
 import { OpenQuery, type OpenRead, type QuerySpec, type ReadSite } from "./open-query.ts";
 import type { Query } from "./query.ts";
-import type { ReadResult, ReadRun, ReadSink } from "./read.ts";
+import { identity, type ReadResult, type ReadRun, type ReadSink } from "./read.ts";
 import type { Range, StoredRead } from "./read-plan.ts";
 import type { TableDefinition } from "./table.ts";
-import { getRow, setRow, type TupleMap } from "./tuples.ts";
 
 /**
  * What a live source reads: a query to keep open, and how a stored row of it becomes the value's row (decoded,
@@ -200,7 +199,7 @@ class KeptRow {
 type Entry = Decoded | KeptRow;
 
 /** No rows decoded yet: the shared empty map. */
-const NO_ROWS: TupleMap<Entry> = new Map();
+const NO_ROWS: ReadonlyMap<unknown, Entry> = new Map();
 
 const NO_COLUMNS: readonly string[] = [];
 
@@ -216,8 +215,9 @@ export class DecodedRows {
 	 * row, a dictionary-mode object of node:sqlite's), or the row itself (a list: its pages keep their rows).
 	 */
 	readonly #keeps: "values" | "rows";
-	/** By key, as tuples of the key's values; the one entry itself after a run of one row (a map of one costs 184 B). */
-	#byKey: TupleMap<Entry> | Entry = NO_ROWS;
+	/** By key (`identity`); the one entry itself after a run of one row (a map of one costs 184 B), its key `#oneId`. */
+	#byKey: ReadonlyMap<unknown, Entry> | Entry = NO_ROWS;
+	#oneId: unknown;
 	/** The columns of the row decoded last: rows of one statement share them, so their entries share the list. */
 	#columns: readonly string[] = NO_COLUMNS;
 
@@ -230,34 +230,39 @@ export class DecodedRows {
 	decode(stored: readonly StoredRead[], target: LiveTarget, context: Context): JsonValue[] {
 		const key = target.spec.query.table.key;
 		if (stored.length === 1) {
-			const one = this.#reused(key, stored[0]!, target, context);
-			this.#byKey = one;
-			return [one.row];
+			const one = stored[0]!;
+			const id = identity(key, one);
+			const entry = this.#reused(id, one, target, context);
+			this.#byKey = entry;
+			this.#oneId = id;
+			return [entry.row];
 		}
-		const byKey: TupleMap<Entry> = new Map();
+		const byKey = new Map<unknown, Entry>();
 		// `map`: a list of exactly its rows (the value keeps it; one pushed to reserves room for 16 more).
 		const rows = stored.map((each) => {
-			const decoded = this.#reused(key, each, target, context);
-			setRow(byKey, key, each, decoded);
+			const id = identity(key, each);
+			const decoded = this.#reused(id, each, target, context);
+			byKey.set(id, decoded);
 			return decoded.row;
 		});
 		this.#byKey = byKey;
+		this.#oneId = undefined;
 		return rows;
 	}
 
 	/** Forgets the last value's rows: another target decodes its own way, nothing of the previous one is reused. */
 	reset(): void {
 		this.#byKey = NO_ROWS;
+		this.#oneId = undefined;
 	}
 
 	/**
 	 * The entry of `stored`: the last value's row of its key when its stored columns are all the same, else decoded.
 	 * Kept values stay the entry as it is; a kept row is replaced by the new one, which the next run is compared with.
 	 */
-	#reused(key: readonly string[], stored: StoredRead, target: LiveTarget, context: Context): Entry {
+	#reused(id: unknown, stored: StoredRead, target: LiveTarget, context: Context): Entry {
 		const before = this.#byKey;
-		const entry =
-			before instanceof Map ? getRow(before, key, stored) : holdsKey(before, key, stored) ? before : undefined;
+		const entry = before instanceof Map ? before.get(id) : sameKey(this.#oneId, id) ? (before as Entry) : undefined;
 		if (entry instanceof KeptRow) {
 			// The same stored row (a list's page that did not run again hands its rows again): unchanged, a row being
 			// plain data the backend does not change (`sqliteBackend`); no comparison of its columns (1,000 loaded rows
@@ -302,22 +307,10 @@ export class DecodedRows {
 	}
 }
 
-/** Whether `entry` came from a row of `stored`'s key: its values in the key columns are `stored`'s (as a map keys). */
-function holdsKey(entry: Entry, key: readonly string[], stored: StoredRead): boolean {
-	for (let index = 0; index < key.length; index++) {
-		let a: unknown;
-		if (entry instanceof KeptRow) a = entry.stored[key[index]!];
-		else {
-			const at = entry.columns.indexOf(key[index]!);
-			if (at < 0) return false;
-			a = entry.values[at];
-		}
-		const b = stored[key[index]!];
-		// SameValueZero, as a map's keys: `NaN` is `NaN`.
-		// biome-ignore lint/suspicious/noSelfCompare: NaN is the one value unequal to itself.
-		if (!(a === b || (a !== a && b !== b))) return false;
-	}
-	return true;
+/** Whether two keys (`identity`) are one, as a map's keys are: SameValueZero (`NaN` is `NaN`, `-0` is `0`). */
+function sameKey(a: unknown, b: unknown): boolean {
+	// biome-ignore lint/suspicious/noSelfCompare: NaN is the one value unequal to itself.
+	return a === b || (a !== a && b !== b);
 }
 
 /**

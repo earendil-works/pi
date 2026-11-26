@@ -6,21 +6,10 @@
 // after is one the skip test would skip.
 
 import type { SqliteValue } from "../sqlite/index.ts";
-import type { KeptKeysWatcher, Read } from "./read.ts";
+import { identity, identityOf, type KeptKeysWatcher, type Read } from "./read.ts";
 import type { KeyedChange } from "./skip.ts";
 import { quote } from "./sql.ts";
 import type { Step } from "./step.ts";
-import {
-	deleteTuple,
-	eachTuple,
-	getRow,
-	getTuple,
-	hasTuple,
-	setRow,
-	setTuple,
-	type TupleMap,
-	type TupleSet,
-} from "./tuples.ts";
 
 /**
  * The reads filed under one value: the read itself while it is the only one, a set of them from the second on. Most
@@ -29,20 +18,16 @@ import {
  */
 type Filed = Read | Set<Read>;
 
-/** The reads of one bucket shape on a table: by their columns' values, as tuples. */
-type Group = { readonly name: string; readonly columns: readonly string[]; readonly byValues: TupleMap<Filed> };
+/** The reads of one bucket shape on a table: by the identity of their columns' values. */
+type Group = { readonly name: string; readonly columns: readonly string[]; readonly byValues: Map<unknown, Filed> };
 
-/** A filed read's entries: its table's index, its group and value combinations there, the key sets it is filed by. */
+/** A filed read's entries: its table's index, its group and value identities there, the key sets it is filed by. */
 type Filing = {
 	readonly index: TableIndex;
 	readonly group: Group;
-	/**
-	 * Its bucket's combinations one after another, `group.columns.length` values each: one list of exactly their
-	 * values (a list per combination would cost 56 B more than the identities this replaced).
-	 */
-	readonly combined: readonly SqliteValue[];
+	readonly identities: readonly unknown[];
 	/** `undefined`: no result to rule a write out by; the read is unindexed until it has one. */
-	kept: readonly TupleSet[] | undefined;
+	kept: readonly ReadonlySet<unknown>[] | undefined;
 };
 
 /**
@@ -64,9 +49,9 @@ export class ReadIndex implements KeptKeysWatcher {
 		const index = this.#index(plan.table);
 		index.key = plan.query.table.key;
 		const group = index.group(bucket.columns);
-		for (const values of bucket.combinations) addTo(group.byValues, values, read);
+		for (const id of bucket.identities) addTo(group.byValues, id, read);
 		// Filed by no keys yet: `kept` files it by its result, or as a candidate of every write while it has none.
-		this.#filings.set(read, { index, group, combined: flattened(bucket.combinations), kept: NO_KEYS });
+		this.#filings.set(read, { index, group, identities: bucket.identities, kept: NO_KEYS });
 		read.watchKept(this);
 		this.kept(read);
 	}
@@ -83,10 +68,7 @@ export class ReadIndex implements KeptKeysWatcher {
 		this.#filings.delete(read);
 		read.watchKept(undefined);
 		const { index, group } = filing;
-		const length = group.columns.length;
-		for (let at = 0; at < filing.combined.length; at += length) {
-			removeFrom(group.byValues, filing.combined.slice(at, at + length), read);
-		}
+		for (const id of filing.identities) removeFrom(group.byValues, id, read);
 		if (group.byValues.size === 0) index.drop(group);
 		this.#unkeep(read, filing);
 		if (index.isEmpty()) this.#tables.delete(read.plan.table);
@@ -101,9 +83,8 @@ export class ReadIndex implements KeptKeysWatcher {
 		const before = filing.kept;
 		filing.kept = kept;
 		const { index } = filing;
-		const length = index.key!.length;
 		if (kept === undefined) {
-			for (const keys of before ?? NO_KEYS) eachTuple(keys, length, (key) => removeFrom(index.kept, key, read));
+			for (const keys of before ?? NO_KEYS) for (const key of keys) removeFrom(index.kept, key, read);
 			index.unindexed.add(read);
 			return;
 		}
@@ -112,11 +93,9 @@ export class ReadIndex implements KeptKeysWatcher {
 		// keys it keeps again (a run of 100 rows keeps 99 of them): a key it no longer keeps loses it; a key it keeps
 		// has it last among the reads filed there.
 		for (const keys of before ?? NO_KEYS) {
-			eachTuple(keys, length, (key) => {
-				if (!keepsKey(kept, key)) removeFrom(index.kept, key, read);
-			});
+			for (const key of keys) if (!keepsKey(kept, key)) removeFrom(index.kept, key, read);
 		}
-		for (const keys of kept) eachTuple(keys, length, (key) => refile(index.kept, key, read));
+		for (const keys of kept) for (const key of keys) refile(index.kept, key, read);
 	}
 
 	/**
@@ -136,31 +115,29 @@ export class ReadIndex implements KeptKeysWatcher {
 		// No read was ever filed by a bucket here: every read of the table is unindexed.
 		if (key === undefined) return index.unindexed;
 		const lookup = index.lookup(table);
-		// The rows after the writes by key: `null` for a key whose row is gone.
-		const after: TupleMap<RowValues | null> = new Map();
+		const after = new Map<unknown, RowValues | undefined>();
 		for (const change of changes) {
-			addChanges(into, getRow(index.kept, key, change.key), change);
+			const id = identityOf(key.map((name) => change.key[name]!));
+			addChanges(into, index.kept.get(id), change);
 			if (change.kind === "delete" || index.groups.size === 0) continue;
-			let row = getRow(after, key, change.key);
-			if (row === undefined) {
+			let row = after.get(id);
+			if (!after.has(id)) {
 				// One lookup per written key, only when a bucket fixes a column outside the key.
 				row =
 					lookup === undefined
 						? change.key
-						: ((await step.get<RowValues>(lookup, ...key.map((name) => change.key[name]!))) ?? null);
-				setRow(after, key, change.key, row);
+						: await step.get<RowValues>(lookup, ...key.map((name) => change.key[name]!));
+				after.set(id, row);
 			}
-			if (row === null) continue;
+			if (row === undefined) continue;
 			for (const group of index.groups.values())
-				addChanges(into, getRow(group.byValues, group.columns, row), change);
+				addChanges(into, group.byValues.get(identity(group.columns, row)), change);
 		}
 		return index.unindexed;
 	}
 
 	#unkeep(read: Read, filing: Filing): void {
-		const { index } = filing;
-		for (const keys of filing.kept ?? NO_KEYS)
-			eachTuple(keys, index.key!.length, (key) => removeFrom(index.kept, key, read));
+		for (const keys of filing.kept ?? NO_KEYS) for (const key of keys) removeFrom(filing.index.kept, key, read);
 	}
 
 	#index(table: string): TableIndex {
@@ -172,7 +149,7 @@ export class ReadIndex implements KeptKeysWatcher {
 type RowValues = { readonly [column: string]: SqliteValue };
 
 const NO_READS: ReadonlySet<Read> = new Set();
-const NO_KEYS: readonly TupleSet[] = [];
+const NO_KEYS: readonly ReadonlySet<unknown>[] = [];
 
 /** The index of one table: its unindexed reads, its buckets by shape, and the reads by the keys they keep. */
 class TableIndex {
@@ -182,8 +159,7 @@ class TableIndex {
 	readonly unindexed = new Set<Read>();
 	/** The groups by their columns, joined. */
 	readonly groups = new Map<string, Group>();
-	/** The reads by the keys they keep, as tuples of the key's values. */
-	readonly kept: TupleMap<Filed> = new Map();
+	readonly kept = new Map<unknown, Filed>();
 	/** Counts the changes of `groups`: the lookup is rendered again after one, not compared by a text key per commit. */
 	#changes = 0;
 	/** The statement reading the buckets' columns back by key, for the groups as they were at its change. */
@@ -194,7 +170,7 @@ class TableIndex {
 		const name = columns.join(",");
 		let group = this.groups.get(name);
 		if (group === undefined) {
-			group = { name, columns, byValues: new Map() as TupleMap<Filed> };
+			group = { name, columns, byValues: new Map() };
 			this.groups.set(name, group);
 			this.#changes++;
 		}
@@ -236,10 +212,10 @@ class TableIndex {
 const COMBINATIONS = 32;
 
 /**
- * The bucket of `read` on its own table: the columns its condition fixes and every combination of their values, each
- * once; `undefined` when it has none, uses its own table twice (an `exists` over it), or counts.
+ * The bucket of `read` on its own table: the columns its condition fixes and the identity of every combination of
+ * their values; `undefined` when it has none, uses its own table twice (an `exists` over it), or counts.
  */
-function bucketOf(read: Read): { readonly columns: string[]; readonly combinations: SqliteValue[][] } | undefined {
+function bucketOf(read: Read): { readonly columns: string[]; readonly identities: unknown[] } | undefined {
 	const { plan } = read;
 	if (read.what.kind === "count") return undefined;
 	let own = 0;
@@ -257,25 +233,7 @@ function bucketOf(read: Read): { readonly columns: string[]; readonly combinatio
 		combinations = combinations.flatMap((prefix) => values.map((value) => [...prefix, value]));
 	}
 	if (columns.length === 0) return undefined;
-	// One combination (every term one value: most reads) is once already.
-	if (combinations.length === 1) return { columns, combinations };
-	const seen: TupleMap<true> = new Map();
-	const once = combinations.filter((values) => {
-		if (getTuple(seen, values) !== undefined) return false;
-		setTuple(seen, values, true);
-		return true;
-	});
-	return { columns, combinations: once };
-}
-
-/** `lists` one after another in one list of exactly their values. */
-function flattened(lists: readonly (readonly SqliteValue[])[]): SqliteValue[] {
-	let length = 0;
-	for (const list of lists) length += list.length;
-	const values = new Array<SqliteValue>(length);
-	let at = 0;
-	for (const list of lists) for (let index = 0; index < list.length; index++) values[at++] = list[index]!;
-	return values;
+	return { columns, identities: [...new Set(combinations.map(identityOf))] };
 }
 
 /** Adds `change` to each read `filed` holds, in the order they were filed. */
@@ -292,32 +250,32 @@ function addChange(into: Map<Read, KeyedChange[]>, read: Read, change: KeyedChan
 	else if (changes.at(-1) !== change) changes.push(change);
 }
 
-function addTo(map: TupleMap<Filed>, values: readonly SqliteValue[], read: Read): void {
-	const filed = getTuple(map, values);
-	if (filed === undefined) setTuple(map, values, read);
+function addTo<K>(map: Map<K, Filed>, key: K, read: Read): void {
+	const filed = map.get(key);
+	if (filed === undefined) map.set(key, read);
 	else if (filed instanceof Set) filed.add(read);
-	else if (filed !== read) setTuple(map, values, new Set([filed, read]));
+	else if (filed !== read) map.set(key, new Set([filed, read]));
 }
 
 /** Whether one of the key sets `kept` holds `key`. */
-function keepsKey(kept: readonly TupleSet[], key: readonly SqliteValue[]): boolean {
-	for (const keys of kept) if (hasTuple(keys, key)) return true;
+function keepsKey(kept: readonly ReadonlySet<unknown>[], key: unknown): boolean {
+	for (const keys of kept) if (keys.has(key)) return true;
 	return false;
 }
 
 /** Files `read` under `key` as the last read there: added, or moved behind the reads filed after it. */
-function refile(map: TupleMap<Filed>, key: readonly SqliteValue[], read: Read): void {
-	const filed = getTuple(map, key);
+function refile<K>(map: Map<K, Filed>, key: K, read: Read): void {
+	const filed = map.get(key);
 	if (filed === read) return;
 	if (filed instanceof Set && filed.delete(read)) filed.add(read);
 	else addTo(map, key, read);
 }
 
-function removeFrom(map: TupleMap<Filed>, values: readonly SqliteValue[], read: Read): void {
-	const filed = getTuple(map, values);
+function removeFrom<K>(map: Map<K, Filed>, key: K, read: Read): void {
+	const filed = map.get(key);
 	if (filed === undefined) return;
 	if (filed instanceof Set) {
 		filed.delete(read);
-		if (filed.size === 0) deleteTuple(map, values);
-	} else if (filed === read) deleteTuple(map, values);
+		if (filed.size === 0) map.delete(key);
+	} else if (filed === read) map.delete(key);
 }
