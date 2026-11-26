@@ -185,6 +185,23 @@ forEachCodec(() => {
 		});
 	});
 
+	describe("a re-hold's params (review of ea8b75a43)", () => {
+		it("names the params the reference was made with, though the app changed its object since", async () => {
+			const { client, peer } = await rawProvider();
+			const params = { session: "S1" };
+			const ref = client.hold(Notes, params, context);
+			await bindNext(peer);
+			params.session = "S2";
+			peer.close();
+			await transported();
+			const next = await rawParent(client);
+			const { params: part } = await next.next("hold");
+			expect(partValue(part)).toEqual({ session: "S1" });
+			ref.release();
+			await client.close(context);
+		});
+	});
+
 	describe("a decoded state frame (reviews of 97f229c90)", () => {
 		/** A remote object of `count` members, bound, then sent one state frame of all of them through `observe`'s codec. */
 		const frame = async (count: number, observe: (members: StateEntry["members"]) => void, retired: number[]) => {

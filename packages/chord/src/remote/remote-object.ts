@@ -149,6 +149,11 @@ export class RemoteObject implements Target {
 	readonly #host: AnyHost;
 	/** The address its holds name (its host's, as its type's `hostAddress` computed it). */
 	readonly #address: WireAddress;
+	/**
+	 * Its params' JSON, made when the reference was: every hold names the params it was made with, whatever the
+	 * application does to its params object later.
+	 */
+	readonly #paramsPart: string;
 	/** Whom its reference acts for: named on route links (`actingFor`). */
 	readonly caller: Caller;
 	/** Its params as L1 checked them, for placing it anew (a private retry after a part past the limits). */
@@ -211,6 +216,7 @@ export class RemoteObject implements Target {
 			this.#firstHold = carrierOf(this.#holding.span);
 		}
 		this.#address = address;
+		this.#paramsPart = jsonPart(params.params);
 		this.caller = caller;
 		this.#params = params;
 		this.#path = path;
@@ -228,12 +234,13 @@ export class RemoteObject implements Target {
 	}
 
 	/**
-	 * What its holds ask for: the params as a part (checked by L1 when the reference was made), the address. Made for
-	 * each hold (a first one, a re-hold): kept, it cost 96 B per object for one message per link.
+	 * What its holds ask for: the params as a part (checked by L1 and encoded when the reference was made), the
+	 * address. Made for each hold (a first one, a re-hold): kept, its record cost 64 B per object for one message per
+	 * link.
 	 */
 	get request(): HoldRequest {
 		const { name: type, version, fingerprint } = this.contract;
-		return { type, version, fingerprint, params: jsonPart(this.#params.params), address: this.#address };
+		return { type, version, fingerprint, params: this.#paramsPart, address: this.#address };
 	}
 
 	/** Over a link the provider decides what each version sees: its state as it is. */
