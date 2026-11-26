@@ -11,7 +11,7 @@ import type { SqliteValue } from "../sqlite/index.ts";
 import { type FramedOwner, FramedSource } from "../state/internal.ts";
 import { OpenQuery, type OpenRead, type QuerySpec, type ReadSite } from "./open-query.ts";
 import type { Query } from "./query.ts";
-import type { ReadKind, ReadResult, ReadRun } from "./read.ts";
+import type { ReadResult, ReadRun, ReadSink } from "./read.ts";
 import type { Range, StoredRead } from "./read-plan.ts";
 import type { TableDefinition } from "./table.ts";
 import { getRow, setRow, type TupleMap } from "./tuples.ts";
@@ -43,9 +43,6 @@ export function checkLiveQuery(table: TableDefinition, q: Query, limit: unknown,
 		throw invalid("args", `${label}: self.query: a limit is required, a positive integer`);
 	}
 }
-
-/** One of a live query's reads, open, with the query it is of and what it reads. */
-type Reading = { readonly query: OpenQuery; readonly read: OpenRead; readonly target: LiveTarget };
 
 /**
  * A live query as a JSON source (a state member, a derive source, an `on` source): the rows of one range of a query,
@@ -85,12 +82,7 @@ export class LiveQuery extends FramedSource {
 	read(target: LiveTarget, context: Context): Promise<ReadRun | undefined> {
 		if (this.detached) return Promise.resolve(undefined);
 		this.#next?.query.close();
-		const shape = this.#shape;
-		// A binding changed: its one read runs again (a failure is a failed run handed to it; nothing awaits the run).
-		const rebound = (): void => void reading.read.load();
-		const query = new OpenQuery(this.#site, target.spec, shape.kind, rebound, context);
-		const what: ReadKind = shape.kind === "count" ? shape : { kind: "rows", range: shape.range };
-		const reading: Reading = { query, target, read: query.read(what, { adopt: (run) => this.#adopt(reading, run) }) };
+		const reading = new Reading(this, this.#site, this.#shape, target, context);
 		this.#next = reading;
 		return reading.read.load();
 	}
@@ -120,10 +112,10 @@ export class LiveQuery extends FramedSource {
 	}
 
 	/**
-	 * Takes a run of one of its reads, inside a batch. The first run of a new read makes it the current one. A failed
-	 * run, and a row the code cannot read, make the query a failed member.
+	 * Takes a run of one of its reads, inside a batch (called by the reading). The first run of a new read makes it the
+	 * current one. A failed run, and a row the code cannot read, make the query a failed member.
 	 */
-	#adopt(reading: Reading, run: ReadRun): void {
+	adopted(reading: Reading, run: ReadRun): void {
 		if (this.detached) return;
 		if (reading === this.#next) {
 			this.#current?.query.close();
@@ -146,6 +138,30 @@ export class LiveQuery extends FramedSource {
 		} catch (error) {
 			this.failWith(error);
 		}
+	}
+}
+
+/**
+ * One of a live query's reads, open, with the query it is of and what it reads; the sink of its runs. A class: an
+ * object and a closure as its sink cost 88 B per read.
+ */
+class Reading implements ReadSink {
+	readonly query: OpenQuery;
+	readonly target: LiveTarget;
+	readonly read: OpenRead;
+	readonly #live: LiveQuery;
+
+	constructor(live: LiveQuery, site: ReadSite, shape: LiveShape, target: LiveTarget, context: Context) {
+		this.#live = live;
+		this.target = target;
+		// A binding changed: its one read runs again (a failure is a failed run handed to it; nothing awaits the run).
+		this.query = new OpenQuery(site, target.spec, shape.kind, () => void this.read.load(), context);
+		// A shape of rows is what the read reads (its range), a count is one: no read kind made per read.
+		this.read = this.query.read(shape, this);
+	}
+
+	adopt(run: ReadRun): void {
+		this.#live.adopted(this, run);
 	}
 }
 
