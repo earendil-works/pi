@@ -32,7 +32,7 @@ import type { TableDefinition } from "../store/table.ts";
 import { chordMetrics } from "../telemetry.ts";
 import { refusal } from "./adapted.ts";
 import { type AdmitSelf, type AdmittedValue, type Allowed, revoked, type Verdict } from "./admission.ts";
-import { type Activation, Attempt, type PinnedKey, type Self } from "./attempt.ts";
+import { Attempt, type PinnedKey, type Self } from "./attempt.ts";
 import type { Caller } from "./ctx.ts";
 import type { Dependency } from "./dependencies.ts";
 import type { AnyHost } from "./host.ts";
@@ -237,13 +237,6 @@ class ObjectDocuments implements DocumentsOwner {
 }
 
 /**
- * One object. Each attempt is a fresh `Attempt`; the documents, the line, the job runs and the holders outlive it. An
- * attempt parked on its dependencies waits for them without a timer; a transient failure (its own) is retried after its
- * backoff window, or at once when a reference asks (`retry`); a broken one stays failed until a reference asks.
- * The object ends with its last reference, a live one after its type's `linger` (never, for a host-lifetime object),
- * or when the host closes.
- */
-/**
  * What an object has only for features few objects use (jobs, the start barrier, wake signals, restarts and reload
  * cycles, calls waiting at the gate, lists), made by the first of them: a field each cost every object 8 B for as long
  * as it lives.
@@ -284,6 +277,13 @@ type ObjectExtras = {
 	lists: Map<string, ListMemory> | undefined;
 };
 
+/**
+ * One object. Each attempt is a fresh `Attempt`; the documents, the line, the job runs and the holders outlive it. An
+ * attempt parked on its dependencies waits for them without a timer; a transient failure (its own) is retried after its
+ * backoff window, or at once when a reference asks (`retry`); a broken one stays failed until a reference asks.
+ * The object ends with its last reference, a live one after its type's `linger` (never, for a host-lifetime object),
+ * or when the host closes.
+ */
 export class ChordObject implements Target {
 	/** An object on this host (a reference's target that is not held over a link). */
 	readonly kind = "local";
@@ -1393,14 +1393,8 @@ export class ChordObject implements Target {
 	}
 
 	/** Runs `attempt`'s activation once `ending` (its predecessors' teardowns, if any) finished; takes its outcome. */
-	#run(attempt: Attempt, ending: Promise<void> | undefined): Promise<void> {
-		// A reaction to the activation in place of awaiting it in an async function: the same turn, without the async
-		// frame (about 0.45 KiB per attempt).
-		return attempt.activate(ending).then((outcome) => this.#ran(attempt, outcome));
-	}
-
-	/** Takes `attempt`'s activation outcome. */
-	#ran(attempt: Attempt, outcome: Activation): void {
+	async #run(attempt: Attempt, ending: Promise<void> | undefined): Promise<void> {
+		const outcome = await attempt.activate(ending);
 		this.#trigger = attempt.activationSpan ?? this.#trigger;
 		// The object may have ended after the activation's last step.
 		if (this.#state.kind !== "activating" || this.#state.attempt !== attempt) {
@@ -1756,15 +1750,9 @@ export class ChordObject implements Target {
 		return failures;
 	}
 
-	/**
-	 * Reports the close failures of a teardown nobody waits for. A reaction to `closing` in place of awaiting it in an
-	 * async function: the same turn (successors wait for it), without the async frame (about 0.5 KiB per teardown).
-	 */
-	#reported(closing: Promise<CloseFailed[]>): Promise<void> {
-		return closing.then((failures) => {
-			// Indexed: most teardowns have none, and a for-of allocates an iterator per list.
-			for (let index = 0; index < failures.length; index++) this.host.report(failures[index]!);
-		});
+	/** Reports the close failures of a teardown nobody waits for. */
+	async #reported(closing: Promise<CloseFailed[]>): Promise<void> {
+		for (const failure of await closing) this.host.report(failure);
 	}
 
 	/**
