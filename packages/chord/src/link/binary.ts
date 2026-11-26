@@ -715,16 +715,14 @@ function partsLength(message: Message, count: (text: string) => number): number 
 	switch (message.kind) {
 		case "bound":
 			for (const { hold, granted, members, failed } of message.holds) {
-				bytes +=
-					varintBytes(hold) + varintBytes(granted.length) + varintBytes(members.length) + failures(failed, count);
+				bytes += varintBytes(hold) + varintBytes(granted.length) + varintBytes(members.length) + failures(failed);
 				for (const index of granted) bytes += varintBytes(index);
 				for (const { member, value } of members) bytes += varintBytes(member) + partLength(value, count);
 			}
 			return bytes;
 		case "state":
 			for (const { hold, members, failed, retired } of message.holds) {
-				bytes +=
-					varintBytes(hold) + varintBytes(members.length) + failures(failed, count) + varintBytes(retired.length);
+				bytes += varintBytes(hold) + varintBytes(members.length) + failures(failed) + varintBytes(retired.length);
 				for (const index of retired) bytes += varintBytes(index);
 				for (const { member, ops } of members) bytes += varintBytes(member) + partLength(ops, count);
 			}
@@ -744,29 +742,12 @@ function partsLength(message: Message, count: (text: string) => number): number 
 	}
 }
 
-/** What a hold's failed members take, by a bound: their count, and per failure its index and its error's JSON. */
-function failures(failed: readonly FailedMember[], count: (text: string) => number): number {
-	let bytes = varintBytes(failed.length * 2 + 1);
-	// Per failure its index and its error's JSON: its texts by their lengths, its details one level deep (the texts of
-	// their own fields; anything deeper by a 64 B allowance), and 72 B for the rest; nothing is stringified.
-	for (const { error } of failed) {
-		const fields = (error.kind === "plugin" ? error : error.error) as Record<string, unknown>;
-		bytes += 72 + fieldsLength(fields, count);
-		if (typeof fields.details === "object" && fields.details !== null) {
-			bytes += fieldsLength(fields.details as Record<string, unknown>, count);
-		}
-	}
-	return bytes;
-}
-
-/** The JSON of an object's own fields, by a bound: each text by its length, each other value by 64 B, its key. */
-function fieldsLength(fields: Record<string, unknown>, count: (text: string) => number): number {
-	let bytes = 0;
-	for (const key in fields) {
-		const value = fields[key];
-		bytes += key.length + 4 + (typeof value === "string" ? count(value) + 2 : 64);
-	}
-	return bytes;
+/**
+ * What a hold's failed members take, by a small bound: their count, and per failure its index and a flat 64 B for its
+ * error, which is not read (a peer may send any JSON there): a longer error grows the buffer, doubling, as the base's.
+ */
+function failures(failed: readonly FailedMember[]): number {
+	return varintBytes(failed.length * 2 + 1) + failed.length * 72;
 }
 
 /** What a part takes on the wire with its length prefix (a text by its units: exact for ASCII, its UTF-8 may be longer). */
