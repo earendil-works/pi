@@ -79,4 +79,16 @@ describe("cursors", () => {
 		expect(() => decodeCursor(T, "app:edits", order, encodeCursor("app:edits", order, ["x", "a", 2]))).toThrow(args);
 		expect(() => decodeCursor(T, "app:edits", order, encodeCursor("app:edits", order, [5, "a"]))).toThrow(args);
 	});
+
+	it("name their order's columns as a list of the same names, compared name by name (hot-path pass)", () => {
+		const forged = (o: unknown) =>
+			btoa(JSON.stringify({ t: "app:edits", o, d: "desc", v: [5, "a", 2] }))
+				.replaceAll("+", "-")
+				.replaceAll("/", "_")
+				.replace(/=+$/, "");
+		expect(decodeCursor(T, "app:edits", order, forged(order.columns))).toEqual([5, "a", 2]);
+		for (const o of [[...order.columns, "x"], order.columns.slice(1), order.columns.join(","), { 0: "at" }, null]) {
+			expect(() => decodeCursor(T, "app:edits", order, forged(o))).toThrow(args);
+		}
+	});
 });

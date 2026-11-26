@@ -241,11 +241,21 @@ export function decodeCursor(
 	}
 	// Wire input: every field is checked below.
 	const { t, o, d, v } = (decoded ?? {}) as { t?: unknown; o?: unknown; d?: unknown; v?: unknown };
-	if (t !== sqlName || d !== order.direction || JSON.stringify(o) !== JSON.stringify(order.columns)) refuse();
+	if (t !== sqlName || d !== order.direction || !sameColumns(o, order.columns)) refuse();
 	if (!Array.isArray(v) || v.length !== order.columns.length) return refuse();
 	return order.columns.map((name, index) => {
 		const type = column(name)!.type;
 		// Order columns are non-opt `str` or `int` (checked when the query was built).
 		return checkScalar(type as "str" | "int", v[index], `${table.name}: cursor`) as string | number;
 	});
+}
+
+/**
+ * Whether a cursor's `o` (wire input, parsed JSON) names `columns`, in order: a list of the same strings. Compared
+ * name by name, as their JSON compared before (no text made per page read).
+ */
+function sameColumns(o: unknown, columns: readonly string[]): boolean {
+	if (!Array.isArray(o) || o.length !== columns.length) return false;
+	for (let at = 0; at < columns.length; at++) if (o[at] !== columns[at]) return false;
+	return true;
 }
