@@ -163,6 +163,13 @@ describe("what the parties get", () => {
 		assert.equal(await ticks(c.club, c.plan, `person:${c.ada}`), undefined);
 	});
 
+	it("a person taken out of a workspace loses what they got there, live", async () => {
+		assert.deepEqual(await ticks(c.team, c.sketch, `person:${c.ada}`), ["draw"]);
+		await store.removeParty({ workspace: c.team, party: person(c.ada) }, context);
+		assert.equal(await ticks(c.team, c.sketch, `person:${c.ada}`), undefined);
+		assert.equal(await ticks(c.fix, c.sketch, `person:${c.ada}`), undefined);
+	});
+
 	it("a member who is also a guest loses nothing (scenario 9)", async () => {
 		const guests = await store.makeGroup(
 			{ name: "guests", managedBy: { kind: "thing", thing: "share" }, outside: true },
@@ -205,6 +212,16 @@ describe("below a link only less", () => {
 		await takeAway(c.club, c.plan, person(c.kim), ["write"]);
 		assert.deepEqual(await ticks(c.club, c.plan, `person:${c.kim}`), ["draw"]);
 		assert.deepEqual(await ticks(c.club, c.plan, `person:${c.jo}`), ["draw", "write"]);
+	});
+
+	it("unlinking a thing where it is not linked changes nothing: the take-aways written there stay", async () => {
+		assert.deepEqual(await ticks(c.fix, c.sketch, `worker:${c.fix}`), []);
+		await store.unlink({ workspace: c.fix, thing: c.sketch }, context);
+		assert.deepEqual(await ticks(c.fix, c.sketch, `worker:${c.fix}`), []);
+		assert.equal(
+			w.rows("grants").filter(({ workspace, thing }) => workspace === c.fix && thing === c.sketch).length,
+			1,
+		);
 	});
 
 	it("unlink takes the link's grants; a take-away further below stays and applies again when it comes back (scenario 14)", async () => {

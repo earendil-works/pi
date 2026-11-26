@@ -29,14 +29,14 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "a link does not replace what came from above",
 		file: "rules.ts",
-		find: "for (const [thing, kind] of own.links) here.set(thing, linkedHere(thing, kind, own.grants, kinds));",
-		put: "for (const [thing, kind] of own.links) if (!here.has(thing)) here.set(thing, linkedHere(thing, kind, own.grants, kinds));",
+		find: "for (const [thing, kind] of own.links) here.set(thing, linkedHere(kind, giving.get(thing) ?? [], kinds));",
+		put: "for (const [thing, kind] of own.links) if (!here.has(thing)) here.set(thing, linkedHere(kind, giving.get(thing) ?? [], kinds));",
 	},
 	{
 		name: "a giving grant below the link counts",
 		file: "rules.ts",
-		find: "if (given === undefined || grant.takenAway.length === 0) continue;",
-		put: "if (given !== undefined && grant.gives && !own.links.has(grant.thing)) here.set(grant.thing, { ...given, ticks: new Map(given.ticks).set(grant.party, new Set([...(given.ticks.get(grant.party) ?? []), ...grant.ticks])) });\n\t\tif (given === undefined || grant.takenAway.length === 0) continue;",
+		find: "\t\tif (grant.takenAway.length === 0) continue;\n\t\tconst thing = grant.thing;\n\t\tconst given = here.get(thing);",
+		put: "\t\tconst below = here.get(grant.thing);\n\t\tif (below !== undefined && grant.gives && !own.links.has(grant.thing)) here.set(grant.thing, { ...below, ticks: new Map(below.ticks).set(grant.party, new Set([...(below.ticks.get(grant.party) ?? []), ...grant.ticks])) });\n\t\tif (grant.takenAway.length === 0) continue;\n\t\tconst thing = grant.thing;\n\t\tconst given = here.get(thing);",
 	},
 	{
 		name: "grants of several sources do not add up",
@@ -71,8 +71,8 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "an agent that is not present counts as the agents",
 		file: "rules.ts",
-		find: "return access.present.has(agent) ? { parties: [agent, AGENTS], self: undefined } : NOBODY;",
-		put: "return { parties: [agent, AGENTS], self: undefined };",
+		find: "return access.present.has(agent) ? { parties: [agent, AGENTS], person: undefined } : NOBODY;",
+		put: "return { parties: [agent, AGENTS], person: undefined };",
 	},
 	{
 		name: "a tick for the other audience, or one the kind lacks, counts",
@@ -87,19 +87,25 @@ const MUTATIONS: readonly Mutation[] = [
 		put: "if (own.size > 0) ticks.set(grant.party, own);",
 	},
 	{
-		name: "a person's own grant does not replace what groups and everyone give (73)",
+		name: "a person's own grant replaces what groups and everyone give (precedence, gone with item 106)",
 		file: "rules.ts",
-		find: "if (own !== undefined) return own;",
-		put: "",
+		find: "for (const party of counted.parties) {",
+		put: "for (const party of counted.person !== undefined && given.ticks.has(counted.person) ? [counted.person] : counted.parties) {",
 	},
 	{
-		name: "a take-away naming a person removes from their own grant only (73)",
+		name: "a take-away naming a person removes from their own grant only (106)",
 		file: "rules.ts",
 		find: 'if (!grant.party.startsWith("person/")) return taken;',
 		put: "return taken;",
 	},
 	{
-		name: "a people switch hides a person's own party only (73)",
+		name: "a take-away naming a person is not applied to their answer (106)",
+		file: "rules.ts",
+		find: "const taken = counted.person === undefined ? undefined : given.takenFromPersons.get(counted.person);",
+		put: "const taken = undefined as ReadonlySet<string> | undefined;",
+	},
+	{
+		name: "a people switch hides a person's own party only (106)",
 		file: "rules.ts",
 		find: "if (access.hidden.has(person)) return NOBODY;",
 		put: "",
@@ -120,19 +126,19 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "a touched workspace's entries are not read again",
 		file: "access.ts",
-		find: "\t\t\t\tif (loaded === undefined) continue;\n\t\t\t\tloaded.entries = await this.#reader.workspace(id, context);",
-		put: "\t\t\t\tif (loaded === undefined) continue;",
+		find: "let entries = await this.#reader.workspace(id, this.#context);",
+		put: "let entries = this.#workspaces.get(id)?.entries;",
 	},
 	{
 		name: "a workspace made since it was asked about loads no ancestors",
 		file: "access.ts",
-		find: "\t\t\t\tawait this.#ensure(id, context);\n",
-		put: "",
+		find: 'while (entries !== undefined && entries.parent !== "" && !this.#workspaces.has(entries.parent)) {',
+		put: "while (false as boolean) {",
 	},
 	{
 		name: "a touched person is not read again",
 		file: "access.ts",
-		find: "if (this.#persons.has(id)) this.#persons.set(id, await this.#reader.person(id, context));",
+		find: "if (this.#persons.has(id)) read.persons.set(id, await this.#reader.person(id, this.#context));",
 		put: "",
 	},
 	{
@@ -172,16 +178,28 @@ const MUTATIONS: readonly Mutation[] = [
 		put: "",
 	},
 	{
+		name: "a view detached by another's observer is still told",
+		file: "access.ts",
+		find: "if (!this.#views.has(view)) continue;",
+		put: "",
+	},
+	{
 		name: "forgetting drops watched workspaces too",
 		file: "access.ts",
 		find: "for (const id of this.#workspaces.keys()) if (!keep.has(id)) this.#workspaces.delete(id);",
 		put: "for (const id of this.#workspaces.keys()) this.#workspaces.delete(id);",
 	},
 	{
+		name: "unwatched persons do not count against the budget",
+		file: "access.ts",
+		find: "if (this.#workspaces.size + this.#persons.size > this.#forgetWhenAbove) this.forgetUnwatched();",
+		put: "if (this.#workspaces.size > this.#forgetWhenAbove) this.forgetUnwatched();",
+	},
+	{
 		name: "the kinds changing reads nothing again (no migration)",
 		file: "access.ts",
-		find: "\t\t\t\tloaded.entries = await this.#reader.workspace(id, context);\n\t\t\t\tloaded.access = undefined;",
-		put: "\t\t\t\tloaded.access = undefined;",
+		find: "const read = await this.#reread(new Set(this.#workspaces.keys()), new Set());",
+		put: "const read = await this.#reread(new Set(), new Set());",
 	},
 	{
 		name: "the queue keeps the last attachment's answers",
@@ -189,12 +207,48 @@ const MUTATIONS: readonly Mutation[] = [
 		find: "this.#queue = run.then(\n\t\t\t() => undefined,\n\t\t\t() => undefined,\n\t\t);",
 		put: "this.#queue = run.catch(() => undefined);",
 	},
+	{
+		name: "a commit runs beside the index's loads, not in its queue (Astra 1)",
+		file: "access.ts",
+		find: "commit<R>(transaction: (touched: Touched) => Promise<R>): Promise<R> {\n\t\treturn this.#run(async () => {",
+		put: "commit<R>(transaction: (touched: Touched) => Promise<R>): Promise<R> {\n\t\treturn (async (run: () => Promise<R>) => run())(async () => {",
+	},
+	{
+		name: "an attach that loaded while the index closed registers anyway (Astra 6)",
+		file: "access.ts",
+		find: "\t\t\t// Closed while it loaded: the close's sweep has passed, nothing may attach behind it.\n\t\t\tif (this.#closed) return undefined;\n",
+		put: "",
+	},
+	{
+		name: "a failed re-read keeps what it had in memory (Astra 2)",
+		file: "access.ts",
+		find: "\t\t\tthis.#recover(error);\n\t\t\treturn undefined;",
+		put: "\t\t\treturn undefined;",
+	},
 	// ---- the store ----
 	{
 		name: "unlink leaves the link's grants",
 		file: "store.ts",
 		find: "tx.deleteWhere(this.#t.grants, (g) => and(eq(g.workspace, workspace), eq(g.thing, thing)));",
 		put: "",
+	},
+	{
+		name: "unlink of a thing not linked here deletes the take-aways written there (Opus)",
+		file: "store.ts",
+		find: "\t\tif (link === undefined) return null;\n\t\ttx.deleteWhere(this.#t.grants, (g) => and(eq(g.workspace, workspace), eq(g.thing, thing)));",
+		put: "\t\ttx.deleteWhere(this.#t.grants, (g) => and(eq(g.workspace, workspace), eq(g.thing, thing)));\n\t\ttouched.workspaces.add(workspace);\n\t\tif (link === undefined) return null;",
+	},
+	{
+		name: "removeParty does not say which workspace it touched (Opus)",
+		file: "store.ts",
+		find: "\t\t\t\t\ttx.delete(t.workspaceMembers, { workspace, partyKey: partyKey(party) });\n\t\t\t\t\ttouched.workspaces.add(workspace);",
+		put: "\t\t\t\t\ttx.delete(t.workspaceMembers, { workspace, partyKey: partyKey(party) });",
+	},
+	{
+		name: "a kind of one workspace is linked anywhere (Opus)",
+		file: "store.ts",
+		find: 'if (item.value.workspaces === "one" && elsewhere.items.length > 0) {',
+		put: "if (false as boolean) {",
 	},
 	{
 		name: "the maker gets no grant (item 90)",
@@ -229,14 +283,53 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "deleteEverythingFrom does not say which persons it touched",
 		file: "store.ts",
-		find: 'await deleteTold(tx, t.memberships, Memberships, (r) => eq(r.sourceKey, key), touched.persons, "person");',
-		put: 'await deleteTold(tx, t.memberships, Memberships, (r) => eq(r.sourceKey, key), new Set(), "person");',
+		find: 'await deleteTold(tx, t.groupMembers, GroupMembers, (r) => eq(r.sourceKey, key), touched.persons, "person");',
+		put: 'await deleteTold(tx, t.groupMembers, GroupMembers, (r) => eq(r.sourceKey, key), new Set(), "person");',
 	},
 	{
-		name: "a grant of an older kind version is read as it is",
+		name: "a commit that fails after the create hook leaves what the hook made (item 34)",
 		file: "store.ts",
-		find: "if (info === undefined || info.version === version) return [{ ...entry, ticks, takenAway }];",
-		put: "return [{ ...entry, ticks, takenAway }];",
+		find: "await lifecycle.undo(thing, args.kind);",
+		put: "",
+	},
+	// ---- the lifecycle ----
+	{
+		name: "a failed delete hook is tried again only at the next start",
+		file: "lifecycle.ts",
+		find: "\t\t\treturn false;",
+		put: "\t\t\treturn true;",
+	},
+	{
+		name: "a delete whose kind no plugin contributes is taken as done",
+		file: "lifecycle.ts",
+		find: "if (entry === undefined) return true;",
+		put: "if (entry === undefined) {\n\t\t\tawait this.#store.write(async (tx) => {\n\t\t\t\ttx.delete(this.#store.table, { thing });\n\t\t\t\treturn null;\n\t\t\t}, ctx);\n\t\t\treturn true;\n\t\t}",
+	},
+	// ---- the reader ----
+	{
+		name: "a grant of an older ticks version is read as it is (item 105)",
+		file: "reader.ts",
+		find: 'if (info === undefined || info.ticksVersion === ticksVersion) return { kind: "read", ticks: { ticks, takenAway } };',
+		put: 'return { kind: "read", ticks: { ticks, takenAway } };',
+	},
+	{
+		name: "a grant that counts for nothing is reported at every read",
+		file: "reader.ts",
+		find: "if (!reported.has(key)) {",
+		put: "if (true) {",
+	},
+	{
+		name: "a migration that throws fails the read instead of refusing the grant (decision 33)",
+		file: "reader.ts",
+		find: '\t} catch (error) {\n\t\treturn { kind: "refused", why: error };\n\t}',
+		put: "\t} finally {\n\t}",
+	},
+	// ---- kinds ----
+	{
+		name: "a tick may give a tick that gives of its own (Opus)",
+		file: "kind.ts",
+		find: "if (!members.has(gives) && !flags.has(gives))",
+		put: "if (!members.has(gives) && declaration.ticks[gives] === undefined)",
 	},
 	// ---- the admission ----
 	{
@@ -248,7 +341,9 @@ const MUTATIONS: readonly Mutation[] = [
 ];
 
 /** The plugin's tests every mutation runs. */
-const TESTS = ["access", "rules", "admission", "store", "server"].map((name) => `plugins/things/test/${name}.test.ts`);
+const TESTS = ["access", "rules", "admission", "store", "kind", "plans", "server"].map(
+	(name) => `plugins/things/test/${name}.test.ts`,
+);
 
 const P3 = resolve(import.meta.dirname, "../../..");
 const REPOSITORY = resolve(P3, "../..");

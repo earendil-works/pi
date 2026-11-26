@@ -1,6 +1,7 @@
 // Kinds (`defineThing`, `expand`): the contract a kind declares (params `{ workspace, thing }` on the server, the
 // things admission; a member no tick gives plain, the others grantable; flags with their labels), its data with the
-// defaults, and tick names turned into members and flags, unknown ones giving nothing (R3).
+// defaults, the declaration checked by its types and again at run time (for JavaScript callers), and tick names turned
+// into members and flags, unknown ones giving nothing (R3).
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
@@ -59,6 +60,14 @@ describe("a kind", () => {
 			/"peek" is no member or flag tick/,
 		);
 		assert.throws(() => declare({ ticks: { look: { label: label("look") } } }), /a flag tick is named like a member/);
+		// A tick gives members and flag ticks only, never a tick that gives of its own (decision 97).
+		assert.throws(
+			() =>
+				declare({
+					ticks: { a: { label: label("a"), gives: ["b"] }, b: { label: label("b"), gives: ["look"] } },
+				}),
+			/"b" is no member or flag tick/,
+		);
 		assert.throws(
 			() =>
 				declare({
@@ -78,6 +87,43 @@ describe("a kind", () => {
 			},
 		});
 		assert.deepEqual(both.all.toSorted(), ["f", "look"]);
+		// A member in two ticks is lost only when both are gone.
+		assert.deepEqual(expand(both, ["b"]).toSorted(), ["f", "look"]);
+		assert.deepEqual(expand(both, []), []);
+	});
+
+	it("types its declaration: what a tick gives, what a default grant names, which names are grantable", () => {
+		const typed = (declare: () => unknown) => assert.throws(declare);
+		typed(() =>
+			defineThing("test.typed", {
+				version: 1,
+				methods: { look: method() },
+				// @ts-expect-error: "peek" is no member or flag tick.
+				ticks: { see: { label: label("see"), gives: ["peek"] } },
+			}),
+		);
+		typed(() =>
+			defineThing("test.typed", {
+				version: 1,
+				methods: { look: method() },
+				// @ts-expect-error: `b` gives of its own, so it is no flag tick another tick can give.
+				ticks: { a: { label: label("a"), gives: ["b"] }, b: { label: label("b"), gives: ["look"] } },
+			}),
+		);
+		typed(() =>
+			defineThing("test.typed", {
+				version: 1,
+				methods: { look: method() },
+				ticks: { see: { label: label("see"), gives: ["look"] } },
+				// @ts-expect-error: "fly" is no tick of the kind.
+				defaultGrants: { everyone: ["fly"] },
+			}),
+		);
+		const grantable: readonly ("change" | "export" | "secret")[] = Kind.all;
+		assert.equal(grantable.length, 3);
+		// @ts-expect-error: `title` no tick gives: it is plain, never granted.
+		const plain: (typeof Kind.all)[number] = "title";
+		assert.equal(plain, "title");
 	});
 
 	it("expands tick names into the members and flags they give, each once; an unknown tick gives nothing", () => {
