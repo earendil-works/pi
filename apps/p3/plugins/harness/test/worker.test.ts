@@ -284,22 +284,28 @@ describe("the harness plugin on a worker", () => {
 		);
 	});
 
-	it("runs the tools in the environment a part gives, else at the session's location", async () => {
+	it("runs the tools where a part gives the location's environment; none there: none; no such part: the location's", async () => {
 		const elsewhere = join(folder, "machine");
 		await mkdir(elsewhere);
 		const script = [runs("where", "pwd"), says("", "done")];
 		const held = [login("login", "faux", script), coding(), other("test.machine", "m")];
-		const server = await start(held, {}, [
-			{ kind: "test.machine", env: () => new NodeExecutionEnv({ cwd: elsewhere }) },
+		// The machine part gives machine `m`'s environment only, in its own folder.
+		const machine = (location: { machine: string }) =>
+			location.machine === "m" ? new NodeExecutionEnv({ cwd: elsewhere }) : undefined;
+		const server = await start(held, { location: { environment: "m", folder } }, [
+			{ kind: "test.machine", env: machine },
 		]);
 		await ask("where");
+		server.row({ location: { environment: "other", folder } });
+		await ask("where then");
 		server.hold([held[0]!, held[1]!]);
 		await ask("where now");
-		const results = requests().filter(({ last }) => last.startsWith("/"));
-		assert.deepEqual(
-			results.map(({ last }) => last.trim()),
-			[elsewhere, folder],
-		);
+		const results = requests()
+			.filter(({ last }) => !last.startsWith("where"))
+			.map(({ last }) => last.trim());
+		assert.equal(results[0], elsewhere);
+		assert.match(results[1] ?? "", /No execution environment/, "none on a machine the part does not give");
+		assert.equal(results[2], folder, "no machine part: the environments plugin's");
 	});
 
 	it("starts a subagent, a copy without the subagent tools, whose answer comes back; Use withheld: no tools", async () => {

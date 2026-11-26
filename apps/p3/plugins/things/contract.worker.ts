@@ -43,14 +43,21 @@ export type HarnessSession = {
 	call<T>(fn: (ctx: Ctx<P3Principal>) => Promise<T>, context: Context): Promise<T>;
 };
 
+/** Where a conversation works: a machine (its thing's id) and a folder on it (decision 24). */
+export type HarnessLocation = { readonly machine: string; readonly folder: string };
+
 /**
  * What the things of one kind give the agent together: a Durable extension (its tools take the thing they act on as an
- * argument, and a list tool names the things, so descriptions stay fixed text), the execution environment the agent's
- * tools run in (a machine's), model providers (a login's, one per thing) and system prompt sections.
+ * argument, and a list tool names the things, so descriptions stay fixed text), the execution environment at a
+ * conversation's location (a machine's: `undefined` for a location on a machine it does not give, at each use), model
+ * providers (a login's, one per thing) and system prompt sections.
  */
 export type HarnessContribution = {
 	readonly extension?: Extension;
-	readonly env?: ExecutionEnv;
+	readonly env?: (
+		location: HarnessLocation,
+		context: Context,
+	) => ExecutionEnv | undefined | Promise<ExecutionEnv | undefined>;
 	readonly providers?: readonly Provider[];
 	readonly prompt?: readonly PromptSection[];
 };

@@ -1,8 +1,8 @@
 // The harness plugin on a session's worker: Durable's harness on the session's store, which gets exactly what the
 // session's agent holds. One host-lifetime object opens it once the session's row arrived (`SessionFacts`), with a
 // registry, models and an environment kept in step with the things the worker holds as the agent (`HeldThings`) and
-// the kinds' parts (`ThingHarnessParts`, `agent-things.ts`); without a kind that gives an environment, the agent's
-// tools run at the session's location. It resumes the work left only for a session that is not archived. It
+// the kinds' parts (`ThingHarnessParts`, `agent-things.ts`); the environment at the session's location is a kind's (a
+// machine's), and until a kind gives environments, the environments plugin's. It resumes the work left only for a session that is not archived. It
 // contributes the open harness (`SessionHarness`), whose `submit` is the one way to start work, reports the session's
 // state to the server on each transition (`activity.ts`) and keeps the worker alive while working (`WorkerBusy`).
 // It contributes the subagents' part (`subagents.ts`), whose tasks it installs always.
@@ -146,13 +146,14 @@ async function openAgent(sources: Sources, opening: Context): Promise<{ durable:
 		{
 			models: () => things.models,
 			registry: things.registry,
-			// A kind's environment (a machine's) first, else the session's location, read at each use; neither changes
-			// while a tool call runs.
+			// The environment at the session's location (per conversation with slice 5), read at each use; it never
+			// changes while a tool call runs. Once a kind gives environments (a machine's), only kinds do: a location on
+			// no machine the agent holds has none. Until then, the environments plugin's resolver.
 			env: (_target, context) => {
-				const given = things.env;
-				if (given !== undefined) return given;
 				const row = facts.session.value;
-				return row === null ? undefined : environments.value(row.location, context);
+				if (row === null) return undefined;
+				if (!things.givesEnv) return environments.value(row.location, context);
+				return things.env({ machine: row.location.environment, folder: row.location.folder }, context);
 			},
 			onReport: (report) => reportError(`p3 harness: session ${session}`, report, BACKGROUND_CONTEXT),
 		},

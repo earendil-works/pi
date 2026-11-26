@@ -40,6 +40,7 @@ import {
 	NodeExecutionEnv,
 } from "@earendil-works/p3/v1/worker";
 import {
+	type HarnessLocation,
 	type Held,
 	type HeldThing,
 	HeldThings,
@@ -142,7 +143,11 @@ export function other(kind: string, thing: string): Holding {
 }
 
 /** A part a case adds beside the others: the kind's name, and what it gives (a prompt section, an environment). */
-export type Extra = { readonly kind: string; readonly prompt?: string; readonly env?: () => ExecutionEnv };
+export type Extra = {
+	readonly kind: string;
+	readonly prompt?: string;
+	readonly env?: (location: HarnessLocation) => ExecutionEnv | undefined;
+};
 
 /** The stand-ins (plus the things and tools plugins) for session `row.id`, the extra parts, and the controls. */
 export function standIns(
@@ -243,7 +248,7 @@ export function standIns(
 					count(kind);
 					return {
 						...(prompt === undefined ? {} : { prompt: [{ key: "test-extra", render: () => prompt }] }),
-						...(env === undefined ? {} : { env: env() }),
+						...(env === undefined ? {} : { env }),
 					};
 				}),
 			);

@@ -6,7 +6,7 @@
 // things (by identity: the holding keeps an unchanged kind's array) or its part changed; a kind no longer held is
 // uninstalled.
 
-import { BACKGROUND_CONTEXT, reportError, type TableItem } from "@earendil-works/p3/v1";
+import { BACKGROUND_CONTEXT, type Context, reportError, type TableItem } from "@earendil-works/p3/v1";
 import {
 	createModels,
 	createRegistry,
@@ -17,7 +17,14 @@ import {
 	type Provider,
 	type Registry,
 } from "@earendil-works/p3/v1/worker";
-import type { HarnessSession, Held, HeldThing, ThingHarnessPart } from "../things/contract.worker.ts";
+import type {
+	HarnessContribution,
+	HarnessLocation,
+	HarnessSession,
+	Held,
+	HeldThing,
+	ThingHarnessPart,
+} from "../things/contract.worker.ts";
 
 /** The kinds' parts by kind name (the composed `ThingHarnessParts`). */
 export type Parts = ReadonlyMap<string, TableItem<ThingHarnessPart>>;
@@ -31,7 +38,7 @@ type Given = {
 	readonly part: ThingHarnessPart;
 	readonly extension: Extension | undefined;
 	readonly providers: readonly Provider[];
-	readonly env: ExecutionEnv | undefined;
+	readonly env: HarnessContribution["env"];
 };
 
 /** The agent's registry, models and environment over the things it holds. */
@@ -55,9 +62,18 @@ export class AgentThings {
 		return this.#models;
 	}
 
-	/** The environment the first kind that gives one gives (a machine's); `undefined`: none does. */
-	get env(): ExecutionEnv | undefined {
-		for (const given of this.#given.values()) if (given.env !== undefined) return given.env;
+	/** Whether a kind gives environments (a machine's): then only kinds do, the location's resolver no more. */
+	get givesEnv(): boolean {
+		for (const given of this.#given.values()) if (given.env !== undefined) return true;
+		return false;
+	}
+
+	/** The environment at `location`: the first kind's that gives one there; `undefined`: none does. */
+	async env(location: HarnessLocation, context: Context): Promise<ExecutionEnv | undefined> {
+		for (const given of this.#given.values()) {
+			const env = await given.env?.(location, context);
+			if (env !== undefined) return env;
+		}
 		return undefined;
 	}
 
