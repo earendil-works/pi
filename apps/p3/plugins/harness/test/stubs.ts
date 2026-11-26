@@ -104,7 +104,7 @@ export type Server = {
 	 */
 	hold(things: readonly Holding[]): void;
 	/** Sets a caller's ticks on the session by key (`person:<id>`); `null` (and unset): given nothing. */
-	ticks(caller: string, ticks: readonly string[] | null): void;
+	ticks(caller: string, ticks: readonly string[] | null, kind?: string): void;
 	/** Makes the next reports wait until `release` resolves (a slow server). */
 	slow(release: Promise<void>): void;
 };
@@ -168,9 +168,10 @@ export function standIns(
 	const holdings = new Set<Writable<Held | undefined>>();
 	const given = new Map<string, readonly string[]>([["person:owner", ["read", "send", "stop", "manage"]]]);
 	const answers = new Set<{ caller: string; answer: Writable<{ kind: string; ticks: string[] } | null> }>();
+	const kinds = new Map<string, string>();
 	const answerOf = (caller: string) => {
 		const ticks = given.get(caller);
-		return ticks === undefined ? null : { kind: SessionKind.name, ticks: [...ticks] };
+		return ticks === undefined ? null : { kind: kinds.get(caller) ?? SessionKind.name, ticks: [...ticks] };
 	};
 	const control: Server = {
 		reports: [],
@@ -185,9 +186,11 @@ export function standIns(
 			heldValue = grouped;
 			for (const writable of holdings) writable.set(heldValue);
 		},
-		ticks: (caller, ticks) => {
+		ticks: (caller, ticks, kind) => {
 			if (ticks === null) given.delete(caller);
 			else given.set(caller, ticks);
+			if (kind === undefined) kinds.delete(caller);
+			else kinds.set(caller, kind);
 			for (const each of answers) if (each.caller === caller) each.answer.set(answerOf(caller));
 		},
 		slow: (next) => {

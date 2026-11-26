@@ -111,21 +111,23 @@ messages.message("…") }`, the label a message of the plugin's `messages.ts`, w
 `plugin-authoring.md`, "What a plugin may import"). A worker reading its own session gets its own contract.
 
 ```ts
-// contract.ts: what other plugins and facets import. A session is a session workspace (a kind of the things plugin):
-// its ticks are its rights, its row a state member for everyone let in, Manage gives the changes.
+// kind.ts: the session kind. A session is a session workspace (a kind of the things plugin): its ticks are its rights,
+// its row a state member for everyone let in, Manage gives the changes. contract.ts holds what it is as data.
 export const SessionKind = defineWorkspace("sessions.session", { version: 1, leaf: true, makers: "anyone",
 	state: { row: SessionRow },
-	methods: { rename: method(obj({ title: Title })), archive: method(), restore: method(), setModel: … },
+	methods: { archive: method(), restore: method(), setModel: … },              // its name: Configure in the parent
 	ticks: { read: { label: messages.message("tickRead") }, send: { …, for: "people" }, stop: { …, for: "people" },
-		manage: { …, for: "people", gives: ["rename", "archive", "restore", "setModel"] } },
+		manage: { …, for: "people", gives: ["archive", "restore", "setModel"] } },
 	defaultGrants: { agents: [MAKE_ANY], everyone: ["read", "send"], guests: ["read"] },
 	create: { input: obj({ location: opt(Location) }) } });
+
+// contract.ts: what the plugin's facets and other plugins import (the worker's own facts among them)
 export const SessionFacts = remote("sessions.facts", { version: 1, params: {}, hostAddress: () => Server(),
 	state: { session: union([SessionRow, nul()]) }, methods: { report: method(obj({ state: SessionState })) } });
 
 // contract.server.ts: the store, for server facets only; other objects read its named queries
 export const SessionsStore = local("sessions.store", { version: 1, params: {}, members: {
-	sessions: queries(SessionRecord, { one: obj({ id: str() }) }),
+	sessions: queries(SessionRow, { one: obj({ id: str() }) }),
 	insert: method(obj({ id: str(), location: opt(Location), model: … })), archive: …, report: …, working: … } });
 ```
 
@@ -160,7 +162,7 @@ serveThing(host, SessionKind, {
 	implement: ({ thing: session }, _admitted, self) => ({        // the things plugin admitted the caller
 		row: self.derive([sessionRow(session, self)], ([row]) => row ?? missing(session)),
 		archive: async (ctx) => { await store.archive({ session }, ctx); return null; },   // Manage only: Chord keeps it
-		// rename, restore, setModel …                                                  // from the others
+		// restore, setModel …                                                          // from the others
 	}),
 	// Before the workspace's commit: the row, and what the nearest session defaults say of the new workspace.
 	create: async ({ thing, input, by, workspace }, ctx) => { … return { defaultGrants, showsPeople, view }; },

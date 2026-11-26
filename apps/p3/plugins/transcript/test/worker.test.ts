@@ -283,4 +283,19 @@ describe("the transcript plugin on a worker", () => {
 			{ principal: ALICE },
 		);
 	});
+
+	// Opus, round 2: an answer on a workspace that is no session (a plain workspace) admits nothing on its worker.
+	it("denies a caller whose answer is on a workspace of another kind", async () => {
+		server.ticks("person:alice", ["read"], "things.workspace");
+		await t.root(
+			async (ctx) => {
+				const held = await ctx
+					.get(Transcript, { session: SESSION }, { readyTimeout: 1000 })
+					.catch((error) => error);
+				assert.ok(isChordError(held) && held.code === "forbidden", String(held));
+			},
+			context,
+			{ principal: ALICE },
+		);
+	});
 });

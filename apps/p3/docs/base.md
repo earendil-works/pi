@@ -33,17 +33,20 @@ const id = await workspace.make({ kind: SessionKind.name, name: "Fix the build",
   tick of the new session and is put in (decisions 88, 90, 115); its agent is put in too, with Make for the content
   kinds only (R6).
 - **Its ticks** are the workspace ticks and the session kind's own: **Read** (the transcript), **Send** (the
-  composer), **Stop**, **Manage** (rename, archive, restore, the model). The transcript is no thing (decision 76).
-- **Shared or private** comes from the nearest session defaults thing (`sessions.defaults`) the maker sees in the
-  parent (decisions 75, 93): shared gives everyone here Read and Send; private gives everyone nothing and hides
-  people from above. The defaults also give the new session its model and the view it opens with. The sessions
+  composer), **Stop**, **Manage** (archive, restore, the model). Its name is its thing's, changed with Configure in
+  its parent (decision 80). The transcript is no thing (decision 76).
+- **Shared or private** comes from the nearest session defaults thing (`sessions.defaults`) available in the parent
+  (decisions 75, 93; one `Gives` read as the server, switches applied): shared gives everyone here Read and Send;
+  private writes no grant for everyone and hides people from above. The defaults also give the new session its
+  model (metadata until the model picker asks the agent's model with it) and the view it opens with. The sessions
   plugin seeds one defaults thing in Pi (shared).
-- **Its row** (`SessionRow`: title, parent, location, state, last touch, archived, model) is the session kind's state,
-  for everyone let in: `SessionObject` held at `{ workspace: id, thing: id }`. Its title is its thing's name. The
-  worker reports the state (`SessionFacts.report`); the waker starts the workers of `working` sessions after a
-  restart.
-- **Archiving** needs the session's Manage; it tells every kind the workspace is gone (a session's terminals end).
-  **Unlinking** it from its parent needs Link there (decision 104); the session goes with its row.
+- **Its row** (`SessionRow`: location, state, last touch, archived, model) is the session kind's state, for everyone
+  let in: `SessionObject` held at `{ workspace: id, thing: id }`. The worker reports the state
+  (`SessionFacts.report`); the waker starts the workers of `working` sessions after a restart.
+- **Archiving** needs the session's Manage and is one commit of the row: the worker stops the run under way as Stop
+  does (decision 122) and starts no work; the kinds keep what they keep for the session (its terminals). A restore
+  resumes nothing by itself. **Unlinking** it from its parent needs Link there (decision 104); the session goes with
+  its row, and the kinds are told (`workspaceGone`).
 - **Lists** of sessions are the things plugin's lists of a workspace's children (`WorkspaceChildren`), filtered by
   presence. Listing starts no worker.
 - **Where it works:** the make's `location`, or (left out) this device in a folder of its own,

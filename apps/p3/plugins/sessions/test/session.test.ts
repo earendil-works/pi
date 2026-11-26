@@ -390,4 +390,22 @@ describe("the session defaults", () => {
 			assert.deepEqual(await nearestDefaults(fam, gate), far);
 		}, context);
 	});
+
+	// Opus, round 2: the defaults available where the session is made, switches applied.
+	it("passes over a nearer defaults thing hidden where the session is made", async () => {
+		const { leo, fam } = await family();
+		const anna = await person("Anna");
+		await put(fam, anna);
+		const hidden = await defaultsIn(fam, PRIVATE);
+		const robot = await store.createWorkspace(
+			{ kind: WorkspaceKind.name, name: "Robot", parent: fam, by: BY },
+			context,
+		);
+		await put(robot, leo);
+		await own(robot, party(leo), [makeTick(SessionKind)]);
+		assert.equal(await answerOn(await makeSession(leo, robot, "before"), `person:${anna.id}`), undefined);
+		await store.setSwitch({ workspace: robot, item: { kind: "thing", thing: hidden }, shown: false }, context);
+		// Family's private defaults are hidden in Robot: Pi's shared ones apply.
+		assert.ok(await answerOn(await makeSession(leo, robot, "after"), `person:${anna.id}`));
+	});
 });
