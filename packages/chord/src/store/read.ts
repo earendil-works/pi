@@ -6,7 +6,7 @@ import type { Context } from "../context/index.ts";
 import type { SqliteExecutor } from "../sqlite/index.ts";
 import { chordMetrics } from "../telemetry.ts";
 import type { Position, Range, ReadPlan, StoredRead, Use } from "./read-plan.ts";
-import { addRow, type TupleSet, tupleSet } from "./tuples.ts";
+import { type TupleSet, tuplesOf } from "./tuples.ts";
 
 /**
  * The rows of one run, at most the range's `limit`; `more` says a further row followed inside the range. The keys
@@ -180,17 +180,13 @@ export class Read {
 	#result(stored: readonly StoredRead[], range: Range): ReadResult {
 		const { plan } = this;
 		const keyColumns = plan.query.table.key;
-		const keys = tupleSet(keyColumns.length);
+		const keys = tuplesOf(keyColumns, stored);
 		// Made by the first use that pairs: a read of its own table alone (most reads) shares the empty map.
 		let paired: Map<Use, TupleSet> | undefined;
 		for (const use of plan.uses) {
 			if (use.role === "own" || use.pairs === undefined) continue;
 			paired ??= new Map();
-			paired.set(use, tupleSet(use.pairs.length));
-		}
-		for (const row of stored) {
-			addRow(keys, keyColumns, row);
-			if (paired !== undefined) for (const [use, values] of paired) addRow(values, use.pairs!, row);
+			paired.set(use, tuplesOf(use.pairs, stored));
 		}
 		const more = stored.length > range.limit;
 		const past = more ? plan.order.columns.map((name) => stored[range.limit]![name]!) : undefined;

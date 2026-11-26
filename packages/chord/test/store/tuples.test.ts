@@ -11,10 +11,12 @@ import {
 	getTuple,
 	hasRow,
 	hasTuple,
+	OneTuple,
 	setRow,
 	setTuple,
 	type TupleMap,
 	tupleSet,
+	tuplesOf,
 } from "../../src/store/tuples.ts";
 
 const VALUES: readonly SqliteValue[] = ["a", "b", "", "1", 1, 0, 2.5, -1, null];
@@ -73,6 +75,31 @@ describe("tuple sets and maps", () => {
 			expect(map.size).toBe(0);
 		});
 	}
+
+	it("made of rows, hold exactly their tuples: one row's without a set, several in one", () => {
+		const next = random(7);
+		for (const length of [1, 2, 3]) {
+			const columns = COLUMNS.slice(0, length);
+			for (let round = 0; round < 200; round++) {
+				const count = Math.floor(next() * 4);
+				const rows = Array.from({ length: count }, () =>
+					Object.fromEntries(columns.map((c) => [c, VALUES[Math.floor(next() * VALUES.length)]!])),
+				);
+				const set = tuplesOf(columns, rows);
+				expect(set instanceof OneTuple).toBe(count === 1);
+				const reference = new Set(rows.map((row) => JSON.stringify(columns.map((c) => row[c]))));
+				for (const value of VALUES) {
+					const values = Array.from({ length }, (_, at) => (at === 0 ? value : rows[0]?.[columns[at]!]) ?? null);
+					expect(hasTuple(set, values)).toBe(reference.has(JSON.stringify(values)));
+					const row = Object.fromEntries(columns.map((c, at) => [c, values[at]!]));
+					expect(hasRow(set, columns, row)).toBe(reference.has(JSON.stringify(values)));
+				}
+				const visited: string[] = [];
+				eachTuple(set, length, (values) => visited.push(JSON.stringify(values)));
+				expect(visited.sort()).toEqual([...reference].sort());
+			}
+		}
+	});
 
 	it("tells 0 from '0', null from 'null', and holds -0 as 0, as the JSON did", () => {
 		const set = tupleSet(2);
