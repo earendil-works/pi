@@ -15,6 +15,7 @@ import {
 	BACKGROUND_CONTEXT as context,
 	defineFacet,
 	isChordError,
+	obj,
 	type P3Principal,
 	type Reference,
 	until,
@@ -22,7 +23,7 @@ import {
 import { Http, type HttpRequest } from "@earendil-works/p3/v1/server";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
 import { within } from "../../../test/until.ts";
-import { MachineHosts, type Pty, type PtyOptions, TERMINAL_BACKLOG } from "../../environments/contract.server.ts";
+import { MachineTypes, type Pty, type PtyOptions, TERMINAL_BACKLOG } from "../../environments/contract.server.ts";
 import { MACHINE_KIND } from "../../environments/contract.ts";
 import environmentsServer from "../../environments/server.ts";
 import peopleServer from "../../people/server.ts";
@@ -56,45 +57,51 @@ const started: FakePty[] = [];
 let gate: Promise<void> | undefined;
 
 /**
- * A stand-in for this device's terminals: its plugin name sorts first, so its host answers for every machine before
- * the environments plugin's, whose terminals are pending.
+ * A stand-in for this device's machine type: its plugin name sorts first, so it wins the type's name over the
+ * environments plugin's, whose terminals are pending.
  */
 const fakeHost = defineFacet((_host, self) => {
-	self.contribute(MachineHosts, () => ({
-		env: undefined as never,
-		hidden: [],
-		listNames: async () => [],
-		createFile: () => Promise.reject(new Error("no files here")),
-		openPty: async (options) => {
-			await gate;
-			let exited: (code: number) => void = () => {};
-			let ended: () => void = () => {};
-			const fake: FakePty & Pty = {
-				options,
-				typed: [],
-				size: [options.columns, options.rows],
-				closed: false,
-				say: (text) => options.onData(new TextEncoder().encode(text)),
-				exit: (code) => exited(code),
-				write: (data) => void fake.typed.push(data),
-				resize: (columns, rows) => {
-					fake.size = [columns, rows];
-				},
-				close: () => {
-					fake.closed = true;
-					ended();
-				},
-				ended: new Promise((resolve) => {
-					ended = resolve;
-				}),
-				exited: new Promise((resolve) => {
-					exited = resolve;
-				}),
-			};
-			started.push(fake);
-			return fake;
-		},
-	}));
+	self.contribute(MachineTypes, {
+		type: "local",
+		label: { namespace: "test", key: "fake", params: [] },
+		settings: obj({}),
+		connect: async () => ({
+			env: undefined as never,
+			hidden: [],
+			listNames: async () => [],
+			createFile: () => Promise.reject(new Error("no files here")),
+			close: async () => {},
+			openPty: async (options: PtyOptions) => {
+				await gate;
+				let exited: (code: number) => void = () => {};
+				let ended: () => void = () => {};
+				const fake: FakePty & Pty = {
+					options,
+					typed: [],
+					size: [options.columns, options.rows],
+					closed: false,
+					say: (text) => options.onData(new TextEncoder().encode(text)),
+					exit: (code) => exited(code),
+					write: (data) => void fake.typed.push(data),
+					resize: (columns, rows) => {
+						fake.size = [columns, rows];
+					},
+					close: () => {
+						fake.closed = true;
+						ended();
+					},
+					ended: new Promise((resolve) => {
+						ended = resolve;
+					}),
+					exited: new Promise((resolve) => {
+						exited = resolve;
+					}),
+				};
+				started.push(fake);
+				return fake;
+			},
+		}),
+	});
 });
 
 /** What the terminals plugin's server facet uses of other plugins. */

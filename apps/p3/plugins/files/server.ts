@@ -27,34 +27,35 @@ export default defineFacet((host) => {
 		implement: ({ workspace, thing }, { caller }, self) => {
 			const hosts = self.registry(MachineHosts);
 			const answers = givesTo(self, workspace, caller);
-			const reach = (machine: string) => reachMachine(machine, caller, answers.value[machine], hosts.value);
+			const reach = (machine: string, ctx: Context) =>
+				reachMachine(machine, caller, answers.value[machine], hosts.value, ctx);
 			const address = (route: string, machine: string, path: string) =>
 				`${route}?${new URLSearchParams({ workspace, thing, machine, path })}`;
 			return {
 				entries: async ({ machine, path, after }, ctx) => {
-					const at = reach(machine);
+					const at = await reach(machine, ctx);
 					return paged(at, await placed(at, path, ctx), after, ctx);
 				},
 				search: async ({ machine, path, query }, ctx) => {
-					const at = reach(machine);
+					const at = await reach(machine, ctx);
 					return searched(at, await placed(at, path, ctx), query.toLowerCase(), ctx);
 				},
 				open: async ({ machine, path }, ctx) => {
-					await placed(reach(machine), path, ctx);
+					await placed(await reach(machine, ctx), path, ctx);
 					return { url: address(DOWNLOAD_PATH, machine, path) };
 				},
 				upload: async ({ machine, path }, ctx) => {
-					await placedNew(reach(machine), path, ctx);
+					await placedNew(await reach(machine, ctx), path, ctx);
 					return { url: address(UPLOAD_PATH, machine, path) };
 				},
 				rename: async ({ machine, from, to }, ctx) => {
-					const at = reach(machine);
+					const at = await reach(machine, ctx);
 					const source = await placedEntry(at, from, ctx);
 					must(await at.env.renameFile(source.path, await placedNew(at, to, ctx), ctx));
 					return null;
 				},
 				remove: async ({ machine, path }, ctx) => {
-					const at = reach(machine);
+					const at = await reach(machine, ctx);
 					const entry = await placedEntry(at, path, ctx);
 					// `rm` takes a link itself, never what it points to.
 					must(await at.env.remove(entry.path, { recursive: entry.kind === "directory" }, ctx));

@@ -1,14 +1,15 @@
 // The environments plugin's contract: the machines sessions work on, as other plugins name them. A machine is a thing
-// (the kind: kind.ts); a session's location names a machine's thing id and a folder on it. This device's machine is
-// the kind's one thing in Pi (`OneThing` with `MACHINE_KIND`). `/v1` re-exports this file.
+// of one family kind (kind.ts; its types: `MachineTypes`); a session's location names a machine's thing id and a
+// folder on it. This device's machine is the kind's one thing in Pi (`OneThing` with `MACHINE_KIND`). `/v1`
+// re-exports this file.
 
-import { arr, obj, oneOf, remote, Server, type Static, str } from "@earendil-works/p3/v1";
+import { arr, obj, remote, Server, type Static, str } from "@earendil-works/p3/v1";
 
-/** The kind of this device's machine (`MachineKind`, the plugin's own): what `OneThing` names to find it. */
-export const MACHINE_KIND = "environments.local";
+/** The machines' family kind (`MachineKind`, the plugin's own): what `OneThing` names to find this device's machine. */
+export const MACHINE_KIND = "environments.machine";
 
-/** A machine as the owner's list shows it: its thing id, its name and its kind. */
-export const Environment = obj({ id: str(), name: str({ max: 200 }), kind: oneOf("local") });
+/** A machine as the owner's list shows it: its thing id, its name and its type (a `MachineTypes` entry's name). */
+export const Environment = obj({ id: str(), name: str({ max: 200 }), type: str() });
 
 /** A machine as the owner's list shows it (see `Environment`). */
 export type Environment = Static<typeof Environment>;

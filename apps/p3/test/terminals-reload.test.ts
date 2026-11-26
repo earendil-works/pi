@@ -12,9 +12,9 @@ import { describe, it } from "node:test";
 import { createHost, openStore, sqliteBackend } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { NodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
-import { defineFacet, type P3Principal, Server, until } from "@earendil-works/p3/v1";
+import { defineFacet, obj, type P3Principal, Server, until } from "@earendil-works/p3/v1";
 import type { ServerRuntime } from "@earendil-works/p3/v1/server";
-import { MachineHosts, type PtyOptions } from "../plugins/environments/contract.server.ts";
+import { MachineTypes, type PtyOptions } from "../plugins/environments/contract.server.ts";
 import { MACHINE_KIND } from "../plugins/environments/contract.ts";
 import environmentsServer from "../plugins/environments/server.ts";
 import peopleServer from "../plugins/people/server.ts";
@@ -29,18 +29,24 @@ describe("a reload of the terminals plugin", () => {
 	it("kills no running terminal, and lists it again", async () => {
 		const killed: string[] = [];
 		const fake = defineFacet((_host, self) => {
-			self.contribute(MachineHosts, () => ({
-				env: undefined as never,
-				hidden: [],
-				listNames: async () => [],
-				createFile: () => Promise.reject(new Error("no files here")),
-				openPty: async (options: PtyOptions) => ({
-					write: () => {},
-					resize: () => {},
-					close: () => void killed.push(options.cwd),
-					exited: new Promise<number>(() => {}),
+			self.contribute(MachineTypes, {
+				type: "local",
+				label: { namespace: "test", key: "fake", params: [] },
+				settings: obj({}),
+				connect: async () => ({
+					env: undefined as never,
+					hidden: [],
+					listNames: async () => [],
+					createFile: () => Promise.reject(new Error("no files here")),
+					close: async () => {},
+					openPty: async (options: PtyOptions) => ({
+						write: () => {},
+						resize: () => {},
+						close: () => void killed.push(options.cwd),
+						exited: new Promise<number>(() => {}),
+					}),
 				}),
-			}));
+			});
 		});
 		const store = await openStore(sqliteBackend(new NodeSqliteDatabase(new DatabaseSync(":memory:"))), context);
 		const errors: unknown[] = [];

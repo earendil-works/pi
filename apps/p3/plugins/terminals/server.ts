@@ -2,15 +2,14 @@
 // caller and registers the kind) over the machines' terminal host (the environments plugin's `TerminalHosts`, which
 // runs the programs for its whole lifetime, so a reload of this plugin loses none), and the attach route (attach.ts).
 // A terminal belongs to its Terminals thing and workspace (the host's owner key); each caller sees the ones of its
-// workspace on machines it may use there, reached as the caller (`reachMachine`, through the things plugin's index).
+// workspace on machines it may use there, checked for the caller (`checkMachine`, through the things plugin's index).
 // Anyone with Use types in any terminal here: limiting an agent to the terminals it opened is a limit, postponed
 // (decision 89). A Terminals thing that goes takes its terminals with it (its delete hook).
 
 import { defineFacet, forbidden, invalid } from "@earendil-works/p3/v1";
 import {
-	MachineHosts,
+	checkMachine,
 	machineAvailable,
-	reachMachine,
 	type TerminalHost,
 	TerminalHosts,
 	TerminalKeeper,
@@ -30,7 +29,6 @@ export default defineFacet((host) => {
 		one: { name: "Terminals" },
 		implement: ({ workspace, thing }, { caller }, self) => {
 			const terminals = self.registry(TerminalHosts);
-			const hosts = self.registry(MachineHosts);
 			const answers = givesTo(self, workspace, caller);
 			const owner = `${thing}/${workspace}`;
 			const list = self.get(TerminalList, { owner }).terminals;
@@ -51,7 +49,7 @@ export default defineFacet((host) => {
 			/** Terminal `id` as the caller may use it: here, on a machine available to the caller. */
 			const usable = (id: string) => {
 				const { machine } = here(id);
-				reachMachine(machine, caller, answers.value[machine], hosts.value);
+				checkMachine(machine, caller, answers.value[machine]);
 				return id;
 			};
 			return {
@@ -66,7 +64,7 @@ export default defineFacet((host) => {
 					data: Buffer.from(at().tail(usable(terminal)).bytes).toString("base64"),
 				}),
 				open: async ({ machine, folder, columns, rows }, ctx) => {
-					reachMachine(machine, caller, answers.value[machine], hosts.value);
+					checkMachine(machine, caller, answers.value[machine]);
 					if (!folder.startsWith("/")) {
 						throw invalid("args", `terminals: ${folder} is not absolute`, {
 							message: messages.message("notAbsolute"),

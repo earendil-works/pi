@@ -1,10 +1,12 @@
-// The environments plugin's contract for server facets: what server code reaches a machine through. `MachineHosts`
-// gives a machine's files and commands (`ExecutionEnv`, plus the two file operations Files needs that it lacks) and
-// starts its programs in pseudo-terminals (`Pty`); `TerminalHost` runs the terminals of every machine, keyed by
-// terminal id, for the plugin's lifetime, so a reload of the plugin that shows them loses none. `reachMachine` is how
-// Files and Terminals check, through the things plugin's index, that the caller may use a machine in a workspace
-// before they touch it. This device's machine is the kind's one thing (`OneThing`, the things plugin's). `/v1/server`
-// re-exports it.
+// The environments plugin's contract for server facets: what server code reaches a machine through. A machine is a
+// thing of one family kind (decision 117) whose type other plugins contribute (`MachineTypes`: its label, its settings'
+// schema, and `connect`, which gives the machine's host); this device is the first type. `MachineHosts` gives a
+// machine's host, connected from its type and settings: its files and commands (`ExecutionEnv`, plus the two file
+// operations Files needs that it lacks) and its programs in pseudo-terminals (`Pty`). `TerminalHost` runs the
+// terminals of every machine, keyed by terminal id, for the plugin's lifetime, so a reload of the plugin that shows
+// them loses none. `checkMachine` and `reachMachine` are how Files and Terminals check, through the things plugin's
+// index, that the caller may use a machine in a workspace before they touch it. This device's machine is the kind's
+// one thing (`OneThing`, the things plugin's). `/v1/server` re-exports it.
 
 import {
 	arr,
@@ -14,11 +16,14 @@ import {
 	int,
 	lit,
 	local,
+	type MessageData,
 	method,
 	nul,
 	obj,
+	type Schema,
 	type Static,
 	str,
+	type TableItem,
 	union,
 } from "@earendil-works/p3/v1";
 import type { ExecutionEnv } from "@earendil-works/p3/v1/server";
@@ -57,10 +62,11 @@ export type NewFile = {
 };
 
 /**
- * A machine as server code uses it: its files and commands, the folders never shown (Pi's own data folder on this
- * device), a folder's names and kinds in one read (`listNames`: no entry is read, for paging a large folder), a new
- * file created exclusively (`createFile`: refused when the name exists, a symbolic link included, so it never writes
- * through one), and its programs in pseudo-terminals.
+ * A machine as server code uses it, connected: its files and commands, the folders never shown (Pi's own data folder
+ * on this device), a folder's names and kinds in one read (`listNames`: no entry is read, for paging a large folder), a
+ * new file created exclusively (`createFile`: refused when the name exists, a symbolic link included, so it never
+ * writes through one), its programs in pseudo-terminals, and `close`, which ends the connection (its settings changed,
+ * the machine or the plugin went).
  */
 export type MachineHost = {
 	readonly env: ExecutionEnv;
@@ -68,12 +74,34 @@ export type MachineHost = {
 	listNames(folder: string, context: Context): Promise<readonly NameEntry[]>;
 	createFile(path: string, context: Context): Promise<NewFile>;
 	openPty(options: PtyOptions, context: Context): Promise<Pty>;
+	close(context: Context): Promise<void>;
 };
 
-/** Gives the host of machine `machine` (a thing id), or `undefined` when this contribution does not serve it. */
-export type MachineHostResolver = (machine: string) => MachineHost | undefined;
+/**
+ * A machine type (decision 117): its name (what a machine stores), its label in the picker that makes a machine, the
+ * schema its settings are checked against when written, and `connect`, which gives the host of a machine with
+ * `settings` (of that schema). A type's form on the page comes with the views.
+ */
+export type MachineType = {
+	readonly type: string;
+	readonly label: MessageData;
+	readonly settings: Schema;
+	connect(settings: unknown, context: Context): Promise<MachineHost>;
+};
 
-/** The machines' hosts: each machine kind's plugin contributes a resolver; the first that answers wins. */
+/** The machine types, by name: other plugins contribute them (the first by plugin name wins a name). */
+export const MachineTypes = defineRegistry<MachineType, ReadonlyMap<string, TableItem<MachineType>>>(
+	"environments.machine-types",
+	{ version: 1 },
+);
+
+/**
+ * The host of machine `machine` (a thing id), connected once per settings and kept; `undefined` when the machine is
+ * not there or its type is not installed (it shows unavailable).
+ */
+export type MachineHostResolver = (machine: string, context: Context) => Promise<MachineHost | undefined>;
+
+/** The machines' hosts: the environments plugin's one contribution. */
 export const MachineHosts = defineRegistry<MachineHostResolver, MachineHostResolver>("environments.hosts", {
 	version: 1,
 });
@@ -207,23 +235,28 @@ export function machineAvailable(caller: Caller, answer: MachineAnswer): boolean
 	}
 }
 
+/** Refuses `caller` machine `machine`, given its answer on it in a workspace, unless `machineAvailable`. */
+export function checkMachine(machine: string, caller: Caller, answer: MachineAnswer): void {
+	if (machineAvailable(caller, answer)) return;
+	const agent = caller.kind === "agent" && answer !== undefined;
+	throw forbidden(`environments: machine ${machine} is not available to the caller here`, {
+		message: messages.message(agent ? "noWork" : "notHere"),
+	});
+}
+
 /**
- * The host of machine `machine` for `caller` in a workspace, given its answer on it there (`machineAvailable`).
- * Refuses with the message the person sees otherwise.
+ * The host of machine `machine` for `caller` in a workspace, given its answer on it there (`checkMachine`).
+ * Refuses with the message the person sees otherwise, also when the machine is unavailable (its type not installed).
  */
-export function reachMachine(
+export async function reachMachine(
 	machine: string,
 	caller: Caller,
 	answer: MachineAnswer,
 	hosts: MachineHostResolver,
-): MachineHost {
-	if (!machineAvailable(caller, answer)) {
-		const agent = caller.kind === "agent" && answer !== undefined;
-		throw forbidden(`environments: machine ${machine} is not available to the caller here`, {
-			message: messages.message(agent ? "noWork" : "notHere"),
-		});
-	}
-	const host = hosts(machine);
+	context: Context,
+): Promise<MachineHost> {
+	checkMachine(machine, caller, answer);
+	const host = await hosts(machine, context);
 	if (host === undefined) {
 		throw forbidden(`environments: machine ${machine} is not available here`, {
 			message: messages.message("notHere"),

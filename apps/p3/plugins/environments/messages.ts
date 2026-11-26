@@ -7,6 +7,9 @@ import { defineMessages } from "@earendil-works/p3/v1";
 export const messages = defineMessages("environments", {
 	en: {
 		tickWork: "Work here",
+		thisDevice: "This device",
+		noType: (type: string) => `There is no machine type ${type} here.`,
+		badSettings: (reason: string) => `These settings do not fit the machine type: ${reason}`,
 		notHere: "This machine is not available here.",
 		noWork: "Agents may not work on this machine here.",
 		noTerminals: "Terminals on this machine are not there yet.",

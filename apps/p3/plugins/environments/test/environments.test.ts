@@ -14,21 +14,25 @@ import {
 	defineFacet,
 	Environments,
 	isChordError,
+	obj,
 	type P3Principal,
 	type Reference,
+	str,
 	ThisDevice,
 	until,
 } from "@earendil-works/p3/v1";
 import { PeopleStore } from "@earendil-works/p3/v1/server";
 import { type TestedPlugin, testPlugin, testServer } from "@earendil-works/p3/v1/testing";
 import { ExecutionEnvironments } from "@earendil-works/p3/v1/worker";
-import { within } from "../../../test/until.ts";
+import { eventually, within } from "../../../test/until.ts";
 import peopleServer from "../../people/server.ts";
 import { OneThing, ThingsStore } from "../../things/contract.server.ts";
 import type { Source } from "../../things/contract.ts";
 import thingsServer from "../../things/server.ts";
-import { MachineHosts, reachMachine } from "../contract.server.ts";
+import { MachineHosts, MachineTypes, reachMachine } from "../contract.server.ts";
+import { MACHINE_KIND } from "../contract.ts";
 import { Machine, MachineKind } from "../kind.ts";
+import { MachinesStore } from "../store.ts";
 
 /** The plugin's directory. */
 const PLUGIN = fileURLToPath(new URL("../", import.meta.url));
@@ -37,7 +41,32 @@ const PLUGIN = fileURLToPath(new URL("../", import.meta.url));
 const BY: Source = { kind: "plugin", plugin: "test" };
 
 /** What the server facet uses of other plugins. */
+/** What the test type's machines did: connections made and ended, by settings' host. */
+const typeLog: string[] = [];
+
+/** A machine type of the test's (`remote`), whose settings name a host. */
+const remoteType = defineFacet((_host, self) => {
+	self.contribute(MachineTypes, {
+		type: "remote",
+		label: { namespace: "test", key: "remote", params: [] },
+		settings: obj({ host: str() }),
+		connect: async (settings) => {
+			const { host } = settings as { host: string };
+			typeLog.push(`connect ${host}`);
+			return {
+				env: undefined as never,
+				hidden: [],
+				listNames: async () => [],
+				createFile: () => Promise.reject(new Error("no files")),
+				openPty: () => Promise.reject(new Error("no terminals")),
+				close: async () => void typeLog.push(`close ${host}`),
+			};
+		},
+	});
+});
+
 const STUBS = [
+	{ name: "@earendil-works/p3-a-remote-type", facet: remoteType },
 	{ name: "@earendil-works/p3-people", facet: peopleServer },
 	{ name: "@earendil-works/p3-things", facet: thingsServer },
 ];
@@ -50,10 +79,10 @@ describe("this device's machine", () => {
 			const listed = async () => (await (await t.client(context)).get(Environments, {}, context)).environments.value;
 			const device = async () => (await (await t.client(context)).get(ThisDevice, {}, context)).machine.value;
 			const machine = await device();
-			assert.deepEqual(await listed(), [{ id: machine, name: hostname(), kind: "local" }]);
+			assert.deepEqual(await listed(), [{ id: machine, name: hostname(), type: "local" }]);
 			t = await first.restart(context);
 			assert.equal(await device(), machine);
-			assert.deepEqual(await listed(), [{ id: machine, name: hostname(), kind: "local" }]);
+			assert.deepEqual(await listed(), [{ id: machine, name: hostname(), type: "local" }]);
 		} finally {
 			await t.close(context);
 		}
@@ -95,7 +124,7 @@ describe("the environments plugin on the server", () => {
 
 	it("lets a person in with no tick and gives the agents Work here; never a person", async () => {
 		await things.putParty({ workspace: pi, party: { kind: "agent", session: "s1" }, source: BY }, context);
-		const info = { name: hostname(), status: "ready" };
+		const info = { name: hostname(), type: "local", status: "ready" };
 		assert.deepEqual(await held(await person("Ann")), { granted: [], info });
 		assert.deepEqual(await held({ kind: "worker", session: "s1" }), { granted: ["work"], info });
 		const grant = { workspace: pi, thing: machine, party: { kind: "everyone" }, tick: "work", gives: true } as const;
@@ -106,21 +135,81 @@ describe("the environments plugin on the server", () => {
 
 	it("reaches a machine's host for a person with an answer and an agent with Work here, else refuses", async () => {
 		const hosts = (await t.host.registry(MachineHosts, context)).value;
-		const local = reachMachine(machine, { kind: "person", person: "p" }, { ticks: [] }, hosts);
+		const local = await reachMachine(machine, { kind: "person", person: "p" }, { ticks: [] }, hosts, context);
 		assert.equal(local.env.cwd.length > 0, true);
-		assert.equal(reachMachine(machine, { kind: "agent", session: "s" }, { ticks: ["work"] }, hosts), local);
-		assert.equal(reachMachine(machine, { kind: "server" }, undefined, hosts), local);
+		assert.equal(
+			await reachMachine(machine, { kind: "agent", session: "s" }, { ticks: ["work"] }, hosts, context),
+			local,
+		);
+		assert.equal(await reachMachine(machine, { kind: "server" }, undefined, hosts, context), local);
 		const refusals: [Parameters<typeof reachMachine>[1], { ticks: string[] } | undefined, string][] = [
 			[{ kind: "person", person: "p" }, undefined, "notHere"],
 			[{ kind: "agent", session: "s" }, { ticks: [] }, "noWork"],
 		];
 		for (const [caller, answer, key] of refusals) {
-			assert.throws(
-				() => reachMachine(machine, caller, answer, hosts),
+			await assert.rejects(
+				reachMachine(machine, caller, answer, hosts, context),
 				(error) => isChordError(error, "forbidden") && JSON.stringify(error.details).includes(`"${key}"`),
 			);
 		}
-		assert.throws(() => reachMachine("elsewhere", { kind: "server" }, undefined, hosts), /not available here/);
+		await assert.rejects(
+			reachMachine("elsewhere", { kind: "server" }, undefined, hosts, context),
+			/not available here/,
+		);
+	});
+
+	describe("a family of types (decision 117)", () => {
+		/** Makes a machine from `input` in Pi, as a plugin does; its id. */
+		const make = (input: unknown) =>
+			things.create({ kind: MACHINE_KIND, name: "box", workspace: pi, by: BY, input }, context);
+
+		it("makes a machine of a type with checked settings, connects it once and ends it with the machine", async () => {
+			typeLog.length = 0;
+			const box = await make({ type: "remote", settings: { host: "box.lan" } });
+			const hosts = (await t.host.registry(MachineHosts, context)).value;
+			const first = await hosts(box, context);
+			assert.equal(await hosts(box, context), first, "one connection");
+			const info = await t.root(async (ctx) => {
+				const ref = await ctx.get(Machine, { workspace: pi, thing: box });
+				return until(ref.info, (value) => value.type === "remote", within("its info", ctx));
+			}, context);
+			assert.deepEqual(info, { name: "box", type: "remote", status: "ready" });
+			await things.unlink({ workspace: pi, thing: box }, context);
+			// The delete hook runs after the commit that removed the machine.
+			await eventually(
+				() => [...typeLog],
+				(log) => log.includes("close box.lan"),
+				2000,
+			);
+			assert.deepEqual(typeLog, ["connect box.lan", "close box.lan"]);
+			assert.equal(await hosts(box, context), undefined);
+		});
+
+		it("refuses a type that is not installed, and settings that do not fit", async () => {
+			const refusedWith = (input: unknown, key: string) =>
+				assert.rejects(
+					make(input),
+					(error) => isChordError(error, "invalid") && JSON.stringify(error.details).includes(`"${key}"`),
+				);
+			await refusedWith({ type: "ssh", settings: {} }, "noType");
+			await refusedWith({ type: "remote", settings: { port: 22 } }, "badSettings");
+			await refusedWith(undefined, "noType");
+		});
+
+		it("keeps a machine whose type is gone, unavailable", async () => {
+			const box = await make({ type: "remote", settings: { host: "box.lan" } });
+			await (await t.host.get(MachinesStore, {}, context)).put(
+				{ machine: box, type: "gone", settings: {} },
+				context,
+			);
+			const hosts = (await t.host.registry(MachineHosts, context)).value;
+			assert.equal(await hosts(box, context), undefined);
+			const info = await t.root(
+				async (ctx) => (await ctx.get(Machine, { workspace: pi, thing: box })).info.value,
+				context,
+			);
+			assert.deepEqual(info, { name: "box", type: "gone", status: "unavailable" });
+		});
 	});
 
 	it("gives the owner the machines, and nobody else", async () => {

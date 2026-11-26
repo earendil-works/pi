@@ -68,18 +68,13 @@ export class Terminals implements TerminalHost {
 
 	async open(request: TerminalRequest, context: Context): Promise<string> {
 		const { owner, machine, folder, columns, rows, openedBy, max } = request;
-		const at = this.#hosts()(machine);
-		if (this.#ended || at === undefined) {
-			throw forbidden(`environments: machine ${machine} runs no terminals here`, {
-				message: messages.message("notHere"),
-			});
-		}
+		if (this.#ended) throw notHere(machine);
 		let pendingOwn = 0;
 		for (const pending of this.#pending) if (pending.owner === owner) pendingOwn++;
 		if (this.list(owner).length + pendingOwn >= max || this.#terminals.size + this.#pending.size >= MAX_HOSTED) {
 			throw forbidden(`environments: too many terminals for ${owner}`, { message: messages.message("tooMany") });
 		}
-		// The slot is taken before the await, so two opens cannot both pass the count.
+		// The slot is taken before the first await, so two opens cannot both pass the count.
 		const pending: Pending = { owner, machine, cancelled: false };
 		this.#pending.add(pending);
 		const id = crypto.randomUUID();
@@ -99,6 +94,8 @@ export class Terminals implements TerminalHost {
 		};
 		let pty: Pty;
 		try {
+			const at = await this.#hosts()(machine, context);
+			if (at === undefined) throw notHere(machine);
 			pty = await at.openPty({ cwd: folder, columns, rows, onData }, context);
 		} finally {
 			this.#pending.delete(pending);
@@ -207,6 +204,13 @@ export class Terminals implements TerminalHost {
 		else this.#lists.set(owner, rows);
 		for (const listener of this.#watchers.get(owner) ?? []) listener(rows.length === 0 ? NONE : rows);
 	}
+}
+
+/** The refusal of a machine that is not there (gone, or its type not installed). */
+function notHere(machine: string) {
+	return forbidden(`environments: machine ${machine} runs no terminals here`, {
+		message: messages.message("notHere"),
+	});
 }
 
 /** Wakes everyone waiting for `hosted`'s output. */

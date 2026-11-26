@@ -37,7 +37,7 @@ function hosted() {
 			return fake;
 		},
 	} as unknown as MachineHost;
-	const terminals = new Terminals(() => (id) => (id === "m1" ? machine : undefined));
+	const terminals = new Terminals(() => async (id) => (id === "m1" ? machine : undefined));
 	return { terminals, started, state };
 }
 

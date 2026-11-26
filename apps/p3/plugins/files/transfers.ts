@@ -48,7 +48,7 @@ async function download(request: HttpRequest, hosts: MachineHostResolver, ctx: C
 	const { workspace, thing, machine, path } = target;
 	// The request's scope is the person's: the reference is admitted as them, and held while the body is read.
 	const files = await ctx.get(Files, { workspace, thing }).catch(() => undefined);
-	const at = hosts(machine);
+	const at = await hosts(machine, ctx);
 	if (files?.open === undefined || at === undefined) return { kind: "error", status: 403 };
 	const check = async (context: Ctx) => {
 		const open = files.open;
@@ -99,7 +99,7 @@ async function upload(request: HttpRequest, hosts: MachineHostResolver, ctx: Ctx
 	if (target === undefined) return { kind: "error", status: 400 };
 	const { workspace, thing, machine, path } = target;
 	const files = await ctx.get(Files, { workspace, thing }).catch(() => undefined);
-	const at = hosts(machine);
+	const at = await hosts(machine, ctx);
 	if (files?.upload === undefined || at === undefined) return { kind: "error", status: 403 };
 	const check = async () => {
 		const send = files.upload;
