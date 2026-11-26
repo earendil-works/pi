@@ -67,12 +67,18 @@ async function openReads(handle: TableHandle, count: number, q: (index: number) 
 	const runs: ReadRun[][] = [];
 	for (let index = 0; index < count; index++) {
 		const spec = { query: q(index), table: handle.sql.table, projection: {}, owner };
-		const opened = new OpenQuery({ store: store!, batch }, spec, what?.kind ?? "rows", () => {}, BACKGROUND_CONTEXT);
+		const opened = new OpenQuery(
+			{ store: store!, batch },
+			spec,
+			what?.kind ?? "rows",
+			{ rebound: () => {} },
+			BACKGROUND_CONTEXT,
+		);
 		const adopted: ReadRun[] = [];
 		const open = opened.read(what ?? { kind: "rows", range: { limit: 20 } }, {
 			adopt: (run) => void adopted.push(run),
 		});
-		await open.load();
+		await open.load(BACKGROUND_CONTEXT);
 		queries.push(opened);
 		opens.push(open);
 		runs.push(adopted);
@@ -163,8 +169,16 @@ describe("candidates", () => {
 				projection: {},
 				owner: {},
 			};
-			const opened = new OpenQuery({ store: store!, batch }, spec, "rows", () => {}, BACKGROUND_CONTEXT);
-			await opened.read({ kind: "rows", range: { limit: 20 } }, { adopt: () => void log.push(index) }).load();
+			const opened = new OpenQuery(
+				{ store: store!, batch },
+				spec,
+				"rows",
+				{ rebound: () => {} },
+				BACKGROUND_CONTEXT,
+			);
+			await opened
+				.read({ kind: "rows", range: { limit: 20 } }, { adopt: () => void log.push(index) })
+				.load(BACKGROUND_CONTEXT);
 			return opened;
 		};
 		const meter = await metered();
@@ -194,8 +208,16 @@ describe("candidates", () => {
 		const log: string[] = [];
 		const open = async (name: string, q: Query) => {
 			const spec = { query: q, table: entries.sql.table, projection: {}, owner: {} };
-			const opened = new OpenQuery({ store: store!, batch }, spec, "rows", () => {}, BACKGROUND_CONTEXT);
-			await opened.read({ kind: "rows", range: { limit: 20 } }, { adopt: () => void log.push(name) }).load();
+			const opened = new OpenQuery(
+				{ store: store!, batch },
+				spec,
+				"rows",
+				{ rebound: () => {} },
+				BACKGROUND_CONTEXT,
+			);
+			await opened
+				.read({ kind: "rows", range: { limit: 20 } }, { adopt: () => void log.push(name) })
+				.load(BACKGROUND_CONTEXT);
 			return opened;
 		};
 		const meter = await metered();
@@ -304,7 +326,7 @@ describe("candidates", () => {
 			projection: {},
 			owner: {},
 		};
-		const opened = new OpenQuery({ store, batch }, spec, "rows", () => {}, BACKGROUND_CONTEXT);
+		const opened = new OpenQuery({ store, batch }, spec, "rows", { rebound: () => {} }, BACKGROUND_CONTEXT);
 		const runs: ReadRun[] = [];
 		// Registered, not loaded: a commit of another session's row runs it.
 		opened.read({ kind: "rows", range: { limit: 5 } }, { adopt: (run) => void runs.push(run) });
