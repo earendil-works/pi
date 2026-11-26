@@ -158,6 +158,9 @@ const mainResult = await build({
 	...commonBuildOptions(),
 	entryNames: "[name]",
 	entryPoints: {
+		// Its own entry, so esbuild keeps it and what it imports out of the chunk with main(): splitting groups modules
+		// by the entries that reach them, and a shared chunk runs in full before the code that imports it.
+		"agent-dir-setup": join(codingAgentDistDir, "cli", "agent-dir-setup.js"),
 		"cli-runtime": join(codingAgentDistDir, "cli.js"),
 		index: join(codingAgentDistDir, "index.js"),
 		"rpc-entry": join(codingAgentDistDir, "rpc-entry.js"),
@@ -240,6 +243,20 @@ if (dirname(imageResizeOutput) !== dirname(imageResizeWorkerOutput)) {
 // getCodemodeWorkerUrl() in config.ts resolves the worker next to its own chunk.
 if (dirname(configOutput) !== dirname(bedrockLoaderOutput)) {
 	throw new Error("config.ts and the codemode worker were emitted into different directories");
+}
+
+// The CLI and RPC entries import cli/agent-dir-setup.ts first, so --agent-dir is set before any module that reads
+// the agent dir when it loads. That holds only while nothing the setup imports contains main().
+const agentDirSetupOutput = findContainingOutput(mainResult.metafile, "packages/coding-agent/dist/cli/agent-dir-setup.js");
+const mainOutput = findContainingOutput(mainResult.metafile, "packages/coding-agent/dist/main.js");
+const agentDirSetupImports = new Set([relative(repoRoot, agentDirSetupOutput).replaceAll("\\", "/")]);
+for (const outputPath of agentDirSetupImports) {
+	for (const imported of mainResult.metafile.outputs[outputPath].imports) {
+		if (imported.kind === "import-statement" && !imported.external) agentDirSetupImports.add(imported.path);
+	}
+}
+if (agentDirSetupImports.has(relative(repoRoot, mainOutput).replaceAll("\\", "/"))) {
+	throw new Error("cli/agent-dir-setup.ts imports the chunk with main(), so it would run after the modules it must precede");
 }
 
 const metafiles = [mainResult.metafile, lazyResult.metafile, codemodeWorkerResult.metafile];

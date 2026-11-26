@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { normalizeSessionName, parseArgs, takeAgentDirArg } from "../src/cli/args.ts";
+import { normalizeSessionName, parseArgs } from "../src/cli/args.ts";
 
 describe("parseArgs", () => {
 	describe("--version flag", () => {
@@ -566,52 +566,6 @@ describe("parseArgs", () => {
 			expect(result.thinking).toBe("high");
 			expect(result.fileArgs).toEqual(["prompt.md"]);
 			expect(result.messages).toEqual(["Do the task"]);
-		});
-	});
-});
-
-describe("takeAgentDirArg", () => {
-	test("returns the arguments unchanged without --agent-dir", () => {
-		expect(takeAgentDirArg(["--session", "abc"])).toEqual({
-			kind: "ok",
-			args: ["--session", "abc"],
-			agentDir: undefined,
-		});
-	});
-
-	test("takes the flag out in any position, so subcommands still come first", () => {
-		expect(takeAgentDirArg(["--agent-dir", "/tmp/agent", "install", "npm:foo"])).toEqual({
-			kind: "ok",
-			args: ["install", "npm:foo"],
-			agentDir: "/tmp/agent",
-		});
-		expect(takeAgentDirArg(["--session", "abc", "--agent-dir", "/tmp/agent"])).toEqual({
-			kind: "ok",
-			args: ["--session", "abc"],
-			agentDir: "/tmp/agent",
-		});
-	});
-
-	test("the last --agent-dir wins", () => {
-		expect(takeAgentDirArg(["--agent-dir", "/a", "--agent-dir", "/b"])).toEqual({
-			kind: "ok",
-			args: [],
-			agentDir: "/b",
-		});
-	});
-
-	test("leaves arguments after -- as messages", () => {
-		expect(takeAgentDirArg(["-p", "--", "--agent-dir", "/a"])).toEqual({
-			kind: "ok",
-			args: ["-p", "--", "--agent-dir", "/a"],
-			agentDir: undefined,
-		});
-	});
-
-	test("reports a missing directory", () => {
-		expect(takeAgentDirArg(["--agent-dir"])).toEqual({
-			kind: "error",
-			message: "--agent-dir requires a directory",
 		});
 	});
 });

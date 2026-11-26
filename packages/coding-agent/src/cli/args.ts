@@ -69,34 +69,6 @@ export function normalizeSessionName(value: string): string | undefined {
 	return name.length > 0 ? name : undefined;
 }
 
-/** The arguments without `--agent-dir <dir>`, and the directory it named (the last one wins). */
-export type AgentDirArg =
-	| { kind: "ok"; args: string[]; agentDir: string | undefined }
-	| { kind: "error"; message: string };
-
-/**
- * Take `--agent-dir <dir>` out of the arguments. main() applies it before it recognizes subcommands, so the flag
- * works in any position, also in `pi --agent-dir <dir> install <source>`. Arguments after `--` are messages.
- */
-export function takeAgentDirArg(args: string[]): AgentDirArg {
-	const rest: string[] = [];
-	let agentDir: string | undefined;
-	for (let i = 0; i < args.length; i++) {
-		const arg = args[i];
-		if (arg === "--") {
-			rest.push(...args.slice(i));
-			break;
-		}
-		if (arg !== "--agent-dir") {
-			rest.push(arg);
-			continue;
-		}
-		agentDir = args[++i];
-		if (!agentDir) return { kind: "error", message: "--agent-dir requires a directory" };
-	}
-	return { kind: "ok", args: rest, agentDir };
-}
-
 export function parseArgs(args: string[]): Args {
 	const result: Args = {
 		messages: [],

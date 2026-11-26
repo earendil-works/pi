@@ -72,7 +72,7 @@ export function getToolPath(tool: "fd" | "rg"): string | null {
 	const config = TOOLS[tool];
 	if (!config) return null;
 
-	// Check our tools directory first. Read per call, not at import: main() applies --agent-dir after this module loads.
+	// Check our tools directory first. Read per call, not at import: callers of the exported main() apply --agent-dir after this module loads.
 	const localPath = join(getBinDir(), config.binaryName + (platform() === "win32" ? ".exe" : ""));
 	if (existsSync(localPath)) {
 		return localPath;
