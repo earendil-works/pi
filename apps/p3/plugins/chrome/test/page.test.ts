@@ -38,7 +38,7 @@ import { assertGranted } from "../../../test/granted.ts";
 import { FauxInboxStore } from "../../../test/plugins/faux-inbox/contract.ts";
 import { FauxLogin, type Step } from "../../../test/plugins/faux-login/contract.ts";
 import { eventually, within } from "../../../test/until.ts";
-import { CanvasKind } from "../../canvas/contract.ts";
+import { ChecklistKind } from "../../checklist/contract.ts";
 import { BROWSER_SKIP, Browser, DESKTOP, PHONE } from "./browser.ts";
 
 /** The checkout's built-in plugins, which the test copies and edits. */
@@ -262,16 +262,16 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		const tools = '[data-thing="tools.coding"][data-by="followed"]';
 		await browser.wait(`document.querySelector('${tools} [data-whose]')?.textContent === "From you"`);
 		assert.deepEqual(await menuItems(tools), ["rename", "options"]);
-		// "+": a canvas, this session's content, made at once and named after its kind; then renamed.
-		const before = await thingIds("canvas.board");
+		// "+": a checklist, this session's content, made at once and named after its kind; then renamed.
+		const before = await thingIds("checklist.checklist");
 		await press("[data-add-open]");
-		await browser.click('[data-add-popup] [data-new-kind="canvas.board"]');
+		await browser.click('[data-add-popup] [data-new-kind="checklist.checklist"]');
 		await browser.wait(
-			`[...document.querySelectorAll('[data-thing="canvas.board"]')].some((e) => !${JSON.stringify(before)}.includes(e.dataset.thingId))`,
+			`[...document.querySelectorAll('[data-thing="checklist.checklist"]')].some((e) => !${JSON.stringify(before)}.includes(e.dataset.thingId))`,
 		);
-		boardId = (await thingIds("canvas.board")).find((id) => !before.includes(id))!;
+		boardId = (await thingIds("checklist.checklist")).find((id) => !before.includes(id))!;
 		const row = `[data-thing-id="${boardId}"]`;
-		await browser.wait(`document.querySelector('${row} [data-thing-name]')?.textContent === "Canvas"`);
+		await browser.wait(`document.querySelector('${row} [data-thing-name]')?.textContent === "Checklist"`);
 		await browser.wait(`document.querySelector('${row} [data-whose]')?.textContent === "This session's"`);
 		await rename(row, "Board");
 		// "Keep": the owner gives it to themselves; it stays in the session.
@@ -681,8 +681,8 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 	});
 
 	it("lays the panes out: a thing opens beside the transcript, a tab dragged to an edge splits, dividers resize", async () => {
-		// The owner, on a desktop, with a canvas beside their notebook; their layout of this session starts over.
-		const canvas = await (await writerOf(owner, session)).create({ kind: CanvasKind.name }, context);
+		// The owner, on a desktop, with a checklist beside their notebook; their layout of this session starts over.
+		const checklist = await (await writerOf(owner, session)).create({ kind: ChecklistKind.name }, context);
 		await browser.signOut();
 		await browser.signIn(origin, await t.cookie(context));
 		await browser.size(DESKTOP);
@@ -698,16 +698,16 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await browser.wait(`location.pathname === "/coding/${session}/${ownerNotes}"`);
 		await browser.wait(`document.querySelectorAll("[data-pane-group]").length === 2`);
 		await browser.wait(`document.querySelector('[data-pane-body][data-pane="${ownerNotes}"] [data-notes]')`);
-		// The canvas joins the notebook's group, active there.
+		// The checklist joins the notebook's group, active there.
 		await browser.click("[data-things-open]");
 		await browser.settled("[data-things-dialog]");
-		await press(`[data-thing-id="${canvas}"] [data-row-open]`);
-		await browser.wait(`document.querySelector('[data-pane-body][data-pane="${canvas}"]')`);
+		await press(`[data-thing-id="${checklist}"] [data-row-open]`);
+		await browser.wait(`document.querySelector('[data-pane-body][data-pane="${checklist}"]')`);
 		// The dialog's backdrop fades out over the panes: a drag waits until it is gone.
 		await browser.wait(
 			`document.querySelector("[data-things-dialog]") === null && document.querySelector("[data-ending-style]") === null`,
 		);
-		const right = `[data-pane-group]:has([data-pane-tab="${canvas}"])`;
+		const right = `[data-pane-group]:has([data-pane-tab="${checklist}"])`;
 		await browser.wait(`document.querySelector('${right} [data-pane-tab="${ownerNotes}"]')`);
 		await browser.screenshot(join(SHOTS, "18-panes-desktop.png"));
 		// The notebook's tab dragged to the right edge of its group's pane: a third column.
@@ -758,10 +758,10 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 			browser.evaluate<string[]>(
 				`[...document.querySelectorAll("[data-pane-chip]")].map((e) => e.dataset.paneChip)`,
 			);
-		// Every pane of the tree, in its order: the transcript, the canvas, the notebook.
+		// Every pane of the tree, in its order: the transcript, the checklist, the notebook.
 		await browser.wait(`document.querySelectorAll("[data-pane-chip]").length === 3`);
-		const [, canvas] = await chips();
-		assert.deepEqual(await chips(), ["transcript", canvas, ownerNotes]);
+		const [, checklist] = await chips();
+		assert.deepEqual(await chips(), ["transcript", checklist, ownerNotes]);
 		await browser.wait(`document.querySelector('[data-pane-chip="${ownerNotes}"][data-active]')`);
 		assert.equal(await browser.evaluate("document.querySelectorAll('[data-pane-body]').length"), 1);
 		await browser.settled("[data-pane-body]");
@@ -770,38 +770,38 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await browser.click('[data-pane-chip="transcript"] [role="tab"]');
 		await browser.wait(`location.pathname === "/coding/${session}"`);
 		await browser.wait(`document.querySelector('[data-pane-body][data-pane="transcript"] [data-transcript]')`);
-		// A swipe to the left goes to the next pane, the canvas.
+		// A swipe to the left goes to the next pane, the checklist.
 		const body = await browser.box("[data-pane-body]");
 		await browser.swipe(body.x + body.width * 0.8, body.y + 120, body.x + body.width * 0.2, body.y + 130);
-		await browser.wait(`location.pathname === "/coding/${session}/${canvas}"`);
-		await browser.wait(`document.querySelector('[data-pane-chip="${canvas}"][data-active]')`);
+		await browser.wait(`location.pathname === "/coding/${session}/${checklist}"`);
+		await browser.wait(`document.querySelector('[data-pane-chip="${checklist}"][data-active]')`);
 		await browser.settled("[data-pane-body]");
 		await shots("21-swiped-phone");
-		// Its chip's × closes the canvas; the notebook, its neighbour in its group, shows.
-		await browser.click(`[data-pane-close="${canvas}"]`);
+		// Its chip's × closes the checklist; the notebook, its neighbour in its group, shows.
+		await browser.click(`[data-pane-close="${checklist}"]`);
 		await browser.wait(`document.querySelectorAll("[data-pane-chip]").length === 2`);
 		await browser.wait(`location.pathname === "/coding/${session}/${ownerNotes}"`);
-		// The same tree on the desktop: the canvas is gone there too.
+		// The same tree on the desktop: the checklist is gone there too.
 		await browser.size(DESKTOP);
 		await browser.wait(`document.querySelector('[data-pane-layout="split"]')`);
-		await browser.wait(`document.querySelector('[data-pane-tab="${canvas}"]') === null`);
+		await browser.wait(`document.querySelector('[data-pane-tab="${checklist}"]') === null`);
 		await browser.wait(`document.querySelectorAll("[data-pane-group]").length === 2`);
 	});
 
-	it("names things: two canvases made and renamed show as two tabs, and a tab follows a rename", async () => {
+	it("names things: two checklists made and renamed show as two tabs, and a tab follows a rename", async () => {
 		await browser.size(DESKTOP);
 		await browser.open(`${origin}/coding/${session}`);
-		/** Makes a canvas with the sheet's "+" (named "Canvas") and renames it `name`; answers its id. */
+		/** Makes a checklist with the sheet's "+" (named "Checklist") and renames it `name`; answers its id. */
 		const add = async (name: string): Promise<string> => {
 			await browser.click("[data-things-open]");
 			await browser.settled("[data-things-dialog]");
-			const before = await thingIds("canvas.board");
+			const before = await thingIds("checklist.checklist");
 			await press("[data-add-open]");
-			await browser.click('[data-add-popup] [data-new-kind="canvas.board"]');
+			await browser.click('[data-add-popup] [data-new-kind="checklist.checklist"]');
 			await browser.wait(
-				`[...document.querySelectorAll('[data-thing="canvas.board"]')].some((e) => !${JSON.stringify(before)}.includes(e.dataset.thingId))`,
+				`[...document.querySelectorAll('[data-thing="checklist.checklist"]')].some((e) => !${JSON.stringify(before)}.includes(e.dataset.thingId))`,
 			);
-			const made = (await thingIds("canvas.board")).find((id) => !before.includes(id))!;
+			const made = (await thingIds("checklist.checklist")).find((id) => !before.includes(id))!;
 			await rename(`[data-thing-id="${made}"]`, name);
 			return made;
 		};
