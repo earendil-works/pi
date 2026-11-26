@@ -3792,7 +3792,7 @@ From `research/chord-on-durable-objects.md`, adopted for the Chord v2 kernel bec
   equal to a fresh run after every commit) with a mutation check.
 
 - **Identical live reads share one source (owner, 2026-11-26: "fix the mechanism, never work around it in plugins";
-  ERNDL-1176; bench `test/bench/identical-reads.ts`; review round 1 by Opus, Astra and Fable):** the problem: 100
+  ERNDL-1176; bench `test/bench/identical-reads.ts`; review rounds 1 and 2 by Opus, Astra and Fable):** the problem: 100
   callers each with their own object reading the same named query, arguments and window made 100 `OpenQuery`s and
   `Read`s, and every write ran, decoded and diffed it 100 times (notes 8 ms, a 500-item checklist 45 ms per write),
   against 1.5 ms for one shared object. The rule: readers of the same provider instance's named query (its `OwnQuery`,
@@ -3803,15 +3803,17 @@ From `research/chord-on-durable-objects.md`, adopted for the Chord v2 kernel bec
   one takes its current value at once (and waits for nothing once there is one); the last one to leave closes it, and
   a run adopted after that is decoded for nobody. What a shared read keeps (round 1): nothing of the reader that made
   it (a site of the store and batch and a context of the adapter's metrics, one per `SharedReads`), not its first
-  run's stored rows (subscribers await a promise that carries nothing), and each of its loads runs under a signal of
-  its own, aborted when it closes (its last reader left, its provider retired), so a load still running then fails
-  as aborted, not as the store's failure. Framed sources handed the same two values in one commit diff them once
+  run's stored rows (subscribers await one promise that carries nothing, settled by the first outcome or the first
+  run's end, whichever comes first), and each load has its own signal: an overtaken load (a rebind's next one started)
+  and a closed read's load (its last reader left, its provider retired) are aborted, so a late failure of theirs is no
+  failure of the store (round 2). Framed sources handed the same two values in one commit diff them once
   (`Batch.diffs`, by the earlier value, emptied with the commit: a cache kept past it chained every later value to
   an earlier one somebody held). Arguments are keys (round 1, Astra): **a query's argument schema is JSON only**
   (a `bytes()` leaf is refused at declaration, for a contract's and a private query's, as for admissions and
-  events), and builders read arguments as canonical JSON does (key order immaterial, an order that matters is an
-  array; `-0` is `0`). A schema node without a type still accepts what plugin code passes unchecked by the types, as
-  for admissions and events. Arguments that change move a reader between reads; a provider's retirement closes the
+  events), and what is no JSON (bytes, a function, `undefined`, a number that is not finite, an object of a class)
+  is refused `invalid/args` in the walk that makes the key, also past a schema that checks nothing (round 2, Astra);
+  builders read arguments as canonical JSON does (key order immaterial, an order that matters is an array; `-0` is
+  `0`). Arguments that change move a reader between reads; a provider's retirement closes the
   read for all its readers, which move to one read of the successor; a shared run is counted once (in the commit's
   context). The owner's own window (`self.query`) is not shared. Lists come next (their pages shared while their
   bookmarks are equal).

@@ -58,7 +58,7 @@ async function world(sessions: number, rows: number) {
 			owner: handle,
 		};
 		const opened = new OpenQuery({ store, batch }, spec, "rows", { rebound: () => {} }, BACKGROUND_CONTEXT);
-		await opened.read({ kind: "rows", range: { limit: 20 } }, { adopt: () => {} }).load();
+		await opened.read({ kind: "rows", range: { limit: 20 } }, { adopt: () => {} }).load(BACKGROUND_CONTEXT);
 	}
 	return { store, handle, batch };
 }

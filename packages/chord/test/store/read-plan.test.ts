@@ -431,7 +431,7 @@ describe("a named query's shape, shared (hot-path pass)", () => {
 		const open = new OpenQuery({ store, batch }, spec, "rows", { rebound: () => {} }, context);
 		const runs: ReadRun[] = [];
 		const read = open.read({ kind: "rows", range: { limit: 10 } }, { adopt: (run) => void runs.push(run) });
-		await read.load();
+		await read.load(context);
 		return {
 			open,
 			read,
@@ -569,7 +569,7 @@ describe("a named query's shape, shared (hot-path pass)", () => {
 		expect(await costOf(teams, batch, (changes) => changes.put({ team: "u20", session: "s2" }))).toEqual([0, 1, 1]);
 
 		bind(byTeam);
-		await club.read.load();
+		await club.read.load(context);
 		expect(existsUse().stable).toBe(false);
 		const unstable = club.plan().uses;
 		const family = await opened(inTeams("family"), slot, tables, batch);
@@ -578,7 +578,7 @@ describe("a named query's shape, shared (hot-path pass)", () => {
 		expect(await costOf(byTeam, batch, (changes) => changes.put({ team: "u20", session: "s2" }))).toEqual([2, 0, 0]);
 
 		bind(retyped);
-		await club.read.load();
+		await club.read.load(context);
 		expect(club.runs.at(-1)).toMatchObject({ kind: "failed" });
 		expect(((club.runs.at(-1) as Extract<ReadRun, { kind: "failed" }>).error as Error).message).toBe(
 			'column "session" of column set "club.team-sessions" is not what this read was written for',
@@ -588,8 +588,8 @@ describe("a named query's shape, shared (hot-path pass)", () => {
 		expect(await costOf(retyped, batch, (changes) => changes.put({ team: "u20", session: 2 }))).toEqual([0, 0, 0]);
 
 		bind(teams);
-		await club.read.load();
-		await family.read.load();
+		await club.read.load(context);
+		await family.read.load(context);
 		expect(existsUse().stable).toBe(true);
 		expect(club.plan().uses).not.toBe(unstable);
 		expect(family.plan().uses).toBe(club.plan().uses);

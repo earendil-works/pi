@@ -6,7 +6,7 @@
 // made it, and failing no store with a run still underway. Round 1's reproductions (Opus, Astra, Fable) are here.
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
-import { arr, bool, bytes, int, local, method, obj, queries, str, union } from "../../src/contracts/index.ts";
+import { arr, bool, bytes, int, local, method, obj, queries, str, union, unknown } from "../../src/contracts/index.ts";
 import { Attempt } from "../../src/host/attempt.ts";
 import { createHost, defineFacet, type FacetHost, type Host } from "../../src/host/index.ts";
 import { OwnQuery } from "../../src/host/named-query.ts";
@@ -357,6 +357,57 @@ describe("a run still underway (round 1)", () => {
 		}
 	});
 
+	it("a load a rebind overtook, failing after the last reader left, fails no store (Fable, round 2)", async () => {
+		const { notes, readers, reads, close } = await hosted();
+		const [reader] = await readers("a", 1);
+		const from = shared.length;
+		const held = holdFirstFetch(new Error("backend read failed after release"));
+		try {
+			// The reads of board "c" start; the first one's first run is held.
+			const showing = reader!.show("c", context);
+			await held.fetched;
+			await showing;
+			// A binding changed meanwhile (a set bound, a table ready after a migration): each read loads again.
+			for (const read of madeSince(from)) read.rebound();
+			await flushed();
+			reader!.release();
+			await flushed();
+			expect(reads()).toBe(0);
+			held.release();
+			await flushed();
+			// The store is not stopped: an unrelated write commits.
+			await notes.put({ id: 12, board: "d", text: "n12" }, context);
+		} finally {
+			held.release();
+			await close();
+		}
+	});
+
+	it("readers waiting on the first run go on when a commit's run overtakes it (Astra, round 2)", async () => {
+		const { host, notes, close } = await hosted();
+		const held = holdFirstFetch();
+		try {
+			const first = host.hold(Reader, { caller: "first", board: "a", first: 2 }, context);
+			await held.fetched;
+			const early = host.hold(Reader, { caller: "early", board: "a", first: 2 }, context);
+			await flushed();
+			await notes.put({ id: 7, board: "a", text: "n7" }, context);
+			const late = host.hold(Reader, { caller: "late", board: "a", first: 2 }, context);
+			await flushed();
+			// The first run is still held: every reader is live with the commit's run.
+			for (const reader of [first, early, late]) {
+				expect(reader.state.value).toEqual({ kind: "live" });
+				expect(reader.notes.value.rows[0]).toMatchObject({ id: 7 });
+			}
+			first.release();
+			early.release();
+			late.release();
+		} finally {
+			held.release();
+			await close();
+		}
+	});
+
 	it("a reader joining after a newer run was adopted is live at once, whatever the first run does (Astra 5a, Opus S3)", async () => {
 		const { host, notes, close } = await hosted();
 		const held = holdFirstFetch();
@@ -559,5 +610,49 @@ describe("arguments as keys (round 1, Astra 4)", () => {
 		expect(errors).toEqual(['test.own-bytes: query "find": args: a query\'s arguments are JSON only (no bytes())']);
 		await host.close(context);
 		await store.close(context);
+	});
+
+	it("what is no JSON is refused as a query's arguments past a schema that checks nothing (Astra, round 2)", async () => {
+		// Bytes and `{ "0": 7 }` have one canonical JSON: had both been taken, the second reader got the first's rows.
+		const Find = local("test.find", {
+			version: 1,
+			params: {},
+			members: { q: queries(Note, { find: unknown() }), seed: method() },
+		});
+		const Counting = local("test.counting", { version: 1, params: { asBytes: bool() }, members: { count: int() } });
+		const store = await memoryStore();
+		const host = createHost({ store, onError: () => {} });
+		const facet = defineFacet((h) => {
+			h.serve(Find, (_, self) => {
+				const table = self.table(Notes);
+				return {
+					q: self.queries(
+						table,
+						{ map: (row) => ({ id: row.id, text: row.text }) },
+						{ find: (x: unknown) => query(Notes).where((n) => eq(n.board, x instanceof Uint8Array ? "a" : "b")) },
+					),
+					seed: async (ctx) => {
+						await self.tx(async (tx) => tx.put(table, { id: 1, board: "a", text: "n" }), ctx);
+						return null;
+					},
+				};
+			});
+			h.serve(Counting, ({ asBytes }, self) => ({
+				count: self.count(self.get(Find, {}).q.find, asBytes ? new Uint8Array([7]) : { "0": 7 }),
+			}));
+		});
+		try {
+			await host.load([{ name: "@test/find", facet }], context);
+			await (await host.get(Find, {}, context)).seed(context);
+			await expect(host.get(Counting, { asBytes: true }, context)).rejects.toMatchObject({
+				code: "invalid",
+				reason: "args",
+				message: expect.stringContaining("a query's arguments are JSON only, not bytes"),
+			});
+			expect((await host.get(Counting, { asBytes: false }, context)).count.value).toBe(0);
+		} finally {
+			await host.close(context);
+			await store.close(context);
+		}
 	});
 });

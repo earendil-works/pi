@@ -5,7 +5,7 @@
 
 import type { Context } from "../context/index.ts";
 import { ChordError, invalid } from "../data/index.ts";
-import { canonicalJson } from "../data/internal.ts";
+import { canonicalJsonOnly } from "../data/internal.ts";
 import type { JsonValue } from "../json.ts";
 import { type Batch, type Dependent, type DeriveSource, type FramedSource, Source } from "../state/internal.ts";
 import type { LiveTarget } from "../store/shared-read.ts";
@@ -192,9 +192,9 @@ export class GivenQuery implements Dependent {
 			this.#checking = false;
 			let now: string | undefined;
 			try {
-				now = canonicalJson(this.#value(), context);
+				now = canonicalJsonOnly(this.#value(), context);
 			} catch {
-				// Arguments that cannot be computed: the reader tries to read and shows that failure.
+				// Arguments that cannot be computed, or are no JSON: the reader tries to read and shows that failure.
 				now = undefined;
 			}
 			if (now === undefined || now !== this.#read) this.#moved?.();

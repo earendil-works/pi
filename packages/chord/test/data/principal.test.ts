@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT } from "../../src/context/index.ts";
-import { canonicalJson, principalJson, principalKey, samePrincipal } from "../../src/data/internal.ts";
+import {
+	canonicalJson,
+	canonicalJsonOnly,
+	principalJson,
+	principalKey,
+	samePrincipal,
+} from "../../src/data/internal.ts";
 import { counted, expectCollected, metered } from "../support.ts";
 
 describe("canonicalJson", () => {
@@ -26,6 +32,29 @@ describe("canonicalJson", () => {
 			validations: 0,
 			compilations: 0,
 		});
+	});
+});
+
+describe("canonicalJsonOnly", () => {
+	it("writes JSON as canonicalJson does, and refuses in the same walk what is none (a query's arguments)", () => {
+		expect(canonicalJsonOnly({ b: 1, a: [{ d: -0, c: null }] }, BACKGROUND_CONTEXT)).toBe(
+			canonicalJson({ b: 1, a: [{ d: -0, c: null }] }, BACKGROUND_CONTEXT),
+		);
+		const refused = (value: unknown): string => {
+			try {
+				canonicalJsonOnly(value, BACKGROUND_CONTEXT);
+				return "taken";
+			} catch (error) {
+				return (error as Error).message;
+			}
+		};
+		expect(refused(new Uint8Array([7]))).toContain("not bytes");
+		expect(refused({ deep: [1, new Uint8Array([7])] })).toContain("not bytes");
+		expect(refused([1, undefined])).toContain("not undefined");
+		expect(refused({ f: () => {} })).toContain("JSON only");
+		expect(refused({ n: Number.NaN })).toContain("not NaN");
+		expect(refused({ at: new Date(0) })).toContain("not an object of a class");
+		expect(refused({ fine: [1, "a", true, null, {}] })).toBe("taken");
 	});
 });
 

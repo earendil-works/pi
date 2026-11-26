@@ -77,9 +77,9 @@ async function opened(handle: TableHandle, q = TAGGED) {
 	const batch = new Batch(() => {}, undefined);
 	const spec = { query: q, table: handle.sql.table, projection: {}, owner: handle };
 	// A binding changed: its one read runs again, as a live query's.
-	const opened = new OpenQuery({ store, batch }, spec, "rows", { rebound: () => void open.load() }, context);
+	const opened = new OpenQuery({ store, batch }, spec, "rows", { rebound: () => void open.load(context) }, context);
 	const open = opened.read({ kind: "rows", range: { limit: 5 } }, { adopt: (run) => void runs.push(run) });
-	await open.load();
+	await open.load(context);
 	return { open, query: opened, runs, batch };
 }
 
@@ -297,7 +297,7 @@ describe("the index and the refresh", () => {
 		const late = opened_.read({ kind: "rows", range: { limit: 5 } }, { adopt: (run) => void runs.push(run) });
 		const known = opened_.readKnown({ limit: 5 }, [], { adopt: (run) => void runs.push(run) });
 		expect([late.read, known.read, store.reads.on(notes.sql.table)]).toEqual([undefined, undefined, undefined]);
-		expect(await late.load()).toBeUndefined();
+		expect(await late.load(context)).toBeUndefined();
 		await put(notes, { id: 1, text: "t" }, batch);
 		expect(runs).toEqual([]);
 	});

@@ -141,7 +141,7 @@ export class Tiling {
 			after = through;
 		}
 		if (open || bookmarks.length === 0) this.#pages.push(this.#page(after, undefined));
-		await Promise.all(this.#pages.map((page) => page.read.load()));
+		await Promise.all(this.#pages.map((page) => page.read.load(this.context)));
 	}
 
 	/** Loads the next page behind a bounded last page; with an open last page there is nothing more to load. */
@@ -150,7 +150,7 @@ export class Tiling {
 		if (last === undefined || last.through === undefined) return;
 		const page = this.#page(last.through, undefined);
 		this.#pages.push(page);
-		await page.read.load();
+		await page.read.load(this.context);
 	}
 
 	/** Closes its query: no commit runs its pages again. */
@@ -225,7 +225,7 @@ export class Tiling {
 			if (known !== undefined && page.after !== undefined && this.#compare(page.after, known) >= 0) {
 				page.read.close();
 				const again = this.#page(page.after, page.through);
-				void again.read.load();
+				void again.read.load(this.context);
 				return again;
 			}
 			const kept = page.rows.filter((row) => !this.#inside(this.#position(row), retired));
@@ -273,7 +273,7 @@ export class Tiling {
 			if (unread) {
 				const rest = this.#page(after, page.through);
 				pages.push(rest);
-				void rest.read.load();
+				void rest.read.load(this.context);
 			}
 		}
 		this.#pages = this.#merged(pages);

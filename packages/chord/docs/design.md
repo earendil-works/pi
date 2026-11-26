@@ -1700,9 +1700,9 @@ index and commit index, one skip test, one run, one decode and one value per wri
 frames diff it once in the commit). A later reader takes the read's current value at once, with no run. Arguments
 that change move a reader to the read of its new key; the provider's restart moves every reader to one read of its
 successor; the last reader to leave closes the read. A shared read keeps nothing of the reader that made it (its
-site, its context, its signal): its loads run under a signal of its own, aborted when it closes. So that equal
-arguments are one key, **a query's arguments are JSON only** (a `bytes()` leaf in their schema is refused at
-declaration) and **a builder reads them as canonical JSON does**: the order of an object's keys is no part of them
+site, its context, its signal): each load has its own signal, and an overtaken or closed read's loads are aborted. So
+that equal arguments are one key, **a query's arguments are JSON only** (a `bytes()` leaf in their schema is refused
+at declaration, a value that is no JSON when the key is made) and **a builder reads them as canonical JSON does**: the order of an object's keys is no part of them
 (an order that matters is an array), and `-0` is `0`. Lists do not share their pages yet (`slices.md`, "Carry-over").
 
 **Named queries** (slice 14, `slice-14.md` §3): a `local` contract lists them, `members: { sessions:

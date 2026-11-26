@@ -6,6 +6,7 @@
 
 import { BACKGROUND_CONTEXT, type Context, withAbortSignal, withTelemetry } from "../context/index.ts";
 import type { JsonValue } from "../json.ts";
+import { SmallSet } from "../small-set.ts";
 import { countingOnly } from "../telemetry.ts";
 import { DecodedRows } from "./decoded-rows.ts";
 import { OpenQuery, type OpenRead, type QueryOwner, type QuerySpec, type ReadSite } from "./open-query.ts";
@@ -96,14 +97,13 @@ export class SharedRead implements ReadSink, QueryOwner {
 	readonly #key: string;
 	/** A count's read has no rows to decode. */
 	readonly #rows: DecodedRows | undefined;
-	/** Its subscribers: one without a set (a set of one costs 152 B), in a set from the second on. */
-	#one: ReadSubscriber | undefined;
-	#more: Set<ReadSubscriber> | undefined;
+	readonly #subscribers = new SmallSet<ReadSubscriber>();
 	/**
-	 * Its first run while it runs and nothing was adopted: what a subscriber awaits then. It carries nothing (not the
-	 * run, whose stored rows nobody keeps).
+	 * What its subscribers await until it has an outcome or its first run ended (a table it reads held), whichever
+	 * comes first: one promise for all of them, so a commit's run overtaking the first run lets every waiting one go
+	 * on. It carries nothing (not the run, whose stored rows nobody keeps).
 	 */
-	#first: Promise<void> | undefined;
+	#waiting: PromiseWithResolvers<void> | undefined = Promise.withResolvers<void>();
 	/** What its last adopted run gave; `undefined` before its first. */
 	#outcome: ReadOutcome | undefined;
 	/** The cancellation of the load running now, if one is: aborted when the read closes. */
@@ -117,10 +117,7 @@ export class SharedRead implements ReadSink, QueryOwner {
 		this.query = new OpenQuery(site, target.spec, shape.kind, this, context);
 		// A shape of rows is what the read reads (its range), a count is one: no read kind made per read.
 		this.#read = this.query.read(shape, this);
-		const first = this.#load().then(() => {
-			if (this.#first === first) this.#first = undefined;
-		});
-		if (this.#outcome === undefined) this.#first = first;
+		void this.#load().then(() => this.#settle());
 	}
 
 	/**
@@ -128,26 +125,20 @@ export class SharedRead implements ReadSink, QueryOwner {
 	 * subscribed already takes nothing new. Resolves once the read has an outcome or its first run ended.
 	 */
 	subscribe(subscriber: ReadSubscriber, context: Context): Promise<void> {
-		if (this.#one === subscriber || this.#more?.has(subscriber) === true) return this.#first ?? SETTLED;
-		if (this.#more !== undefined) this.#more.add(subscriber);
-		else if (this.#one === undefined) this.#one = subscriber;
-		else {
-			this.#more = new Set([this.#one, subscriber]);
-			this.#one = undefined;
-		}
+		const subscribers = this.#subscribers;
 		const outcome = this.#outcome;
-		if (outcome !== undefined) this.query.site.batch.within(() => subscriber.adopted(this, outcome), context);
-		return this.#first ?? SETTLED;
+		const before = subscribers.size;
+		subscribers.add(subscriber);
+		if (outcome !== undefined && subscribers.size > before) {
+			this.query.site.batch.within(() => subscriber.adopted(this, outcome), context);
+		}
+		return this.#waiting?.promise ?? SETTLED;
 	}
 
 	/** `subscriber` takes nothing more; the last one to leave closes the read. */
 	unsubscribe(subscriber: ReadSubscriber): void {
-		const more = this.#more;
-		if (more !== undefined) {
-			if (!more.delete(subscriber) || more.size > 0) return;
-			this.#more = undefined;
-		} else if (this.#one === subscriber) this.#one = undefined;
-		else return;
+		const subscribers = this.#subscribers;
+		if (!subscribers.delete(subscriber) || subscribers.size > 0) return;
 		this.query.close();
 		this.#target.sharing?.shared.closed(this.#key);
 	}
@@ -157,7 +148,7 @@ export class SharedRead implements ReadSink, QueryOwner {
 		void this.#load();
 	}
 
-	/** Its query closed (its last reader left, its provider retired): a load still running fails as aborted. */
+	/** Its query closed (its last reader left, its provider retired): the load running now is aborted. */
 	closed(): void {
 		this.#loading?.abort();
 	}
@@ -168,19 +159,26 @@ export class SharedRead implements ReadSink, QueryOwner {
 	 * compile fails at once) is kept for it.
 	 */
 	adopt(run: ReadRun): void {
-		const more = this.#more;
-		const one = this.#one;
-		if (more === undefined && one === undefined && this.query.closed) return;
+		const subscribers = this.#subscribers;
+		if (subscribers.size === 0 && this.query.closed) return;
 		const outcome = this.#outcomeOf(run);
 		this.#outcome = outcome;
-		this.#first = undefined;
-		if (more !== undefined) for (const subscriber of more) subscriber.adopted(this, outcome);
-		else one?.adopted(this, outcome);
+		subscribers.forEach((subscriber) => {
+			subscriber.adopted(this, outcome);
+		});
+		this.#settle();
+	}
+
+	/** Its subscribers waiting for an outcome or the first run's end go on. */
+	#settle(): void {
+		this.#waiting?.resolve();
+		this.#waiting = undefined;
 	}
 
 	/**
-	 * One run outside the commit queue. A shared read's runs under a signal of their own, aborted when it closes (its
-	 * last reader left, its provider retired): a load still running then fails as aborted, not as the store's failure.
+	 * One run outside the commit queue. Each load of a shared read has its own signal: a load overtaken by the next one
+	 * (a binding changed: its run is dropped) and the one running when the read closes (its last reader left, its
+	 * provider retired) are aborted, so a late failure of theirs is no failure of the store.
 	 */
 	async #load(): Promise<void> {
 		const { context } = this.query;
@@ -189,6 +187,8 @@ export class SharedRead implements ReadSink, QueryOwner {
 			return;
 		}
 		const cancel = new AbortController();
+		// The load still running was overtaken: it ends now, not at the close.
+		this.#loading?.abort();
 		this.#loading = cancel;
 		try {
 			await this.#read.load(withAbortSignal(cancel.signal, context));

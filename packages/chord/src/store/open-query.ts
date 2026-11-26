@@ -223,10 +223,10 @@ export class OpenRead implements RunSink {
 	/**
 	 * Runs it once, outside the commit queue, and adopts the run in a batch; resolves with that run, `undefined` when
 	 * a commit's run overtook it, a table it reads is held (it runs when the table is ready), or it was closed. Nothing
-	 * throws: a query that does not compile and a run that fails are failed runs. It runs under `context`, its query's
-	 * by default (a shared read gives each load its own signal).
+	 * throws: a query that does not compile and a run that fails are failed runs. It runs under `context` (its query's,
+	 * or with a signal of the load's own: a shared read's).
 	 */
-	async load(context: Context = this.#query.context): Promise<ReadRun | undefined> {
+	async load(context: Context): Promise<ReadRun | undefined> {
 		const { site, compiled } = this.#query;
 		if (this.#closed) return undefined;
 		if (compiled.kind === "failed") {

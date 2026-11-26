@@ -6,7 +6,7 @@
 import type { Context } from "../context/index.ts";
 import type { QueryPage } from "../contracts/index.ts";
 import type { QueriesData, Snapshot } from "../contracts/internal.ts";
-import { canonicalJson, check, validatorFor } from "../data/internal.ts";
+import { canonicalJsonOnly, check, validatorFor } from "../data/internal.ts";
 import type { JsonValue } from "../json.ts";
 import type { ColumnSet } from "../store/column-set.ts";
 import type { ScalarColumn } from "../store/columns.ts";
@@ -126,8 +126,8 @@ export class OwnQuery extends NamedQueryHandle {
 	 */
 	target(args: unknown, context: Context): NamedTarget {
 		const query = this.#build(args, context);
-		// Checked by the schema: JSON.
-		const key = canonicalJson(args as JsonValue, context);
+		// A schema without a type checks nothing: what is no JSON is refused here, in the walk that makes the key.
+		const key = canonicalJsonOnly(args, context);
 		return new OwnTarget(this, query, this.#projection, this.#shapes, this.#shared, key);
 	}
 

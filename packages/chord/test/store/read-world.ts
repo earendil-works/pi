@@ -350,7 +350,7 @@ export async function openRead(w: World, shape: Shape, context: Context): Promis
 	// The sink writes through `entry`: the listed object is that one.
 	const read = Object.assign(entry, { name, query: opened, open });
 	w.reads.push(read);
-	await open.load();
+	await open.load(context);
 	return read;
 }
 

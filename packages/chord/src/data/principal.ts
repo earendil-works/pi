@@ -3,6 +3,7 @@
 import type { Context } from "../context/index.ts";
 import type { JsonValue } from "../json.ts";
 import { chordMetrics } from "../telemetry.ts";
+import { invalid } from "./errors.ts";
 
 /** An app's principal: plain JSON with a `kind`. Chord never persists it. */
 export type Principal = { readonly kind: string; readonly [field: string]: JsonValue };
@@ -64,22 +65,51 @@ function customKeyCache(customKey: PrincipalKeyFunction<never>): WeakMap<Princip
  * is kept as the tree of its pieces (several times its size).
  */
 export function canonicalJson(value: JsonValue, context: Context): string {
+	return canonicalText(value, TAKES_ANY, context);
+}
+
+/**
+ * `canonicalJson` of a value that must be JSON, refusing in the same walk what is none (`invalid/args`: bytes, a
+ * function, `undefined`, a number that is not finite, an object that is no plain one): a named query's arguments,
+ * which plugin code may pass past a schema that checks nothing (readers with equal texts share one read).
+ */
+export function canonicalJsonOnly(value: unknown, context: Context): string {
+	return canonicalText(value as JsonValue, refuseNonJson, context);
+}
+
+/** What a canonical walk does with each value before writing it: nothing, or refuse it. */
+type Check = (value: unknown) => void;
+
+const TAKES_ANY: Check = () => {};
+
+function refuseNonJson(value: unknown): void {
+	if (value === null || typeof value === "string" || typeof value === "boolean") return;
+	if (typeof value === "number" && Number.isFinite(value)) return;
+	if (typeof value === "object" && (Array.isArray(value) || Object.getPrototypeOf(value) === Object.prototype)) return;
+	const what =
+		value instanceof Uint8Array ? "bytes" : typeof value === "object" ? "an object of a class" : String(value);
+	throw invalid("args", `a query's arguments are JSON only, not ${what}`);
+}
+
+function canonicalText(value: JsonValue, check: Check, context: Context): string {
 	chordMetrics(context.telemetry.metrics).counter("chord.data.walks").add(1);
+	check(value);
 	// JSON.stringify writes -0 as 0.
 	if (value === null || typeof value !== "object") return JSON.stringify(value);
 	const parts: string[] = [];
-	canonical(value, parts);
+	canonical(value, parts, check);
 	return parts.join("");
 }
 
-/** Appends the canonical text of the array or object `value` to `parts`. */
-function canonical(value: JsonValue[] | { readonly [key: string]: JsonValue }, parts: string[]): void {
+/** Appends the canonical text of the array or object `value` to `parts`, each value inside it checked first. */
+function canonical(value: JsonValue[] | { readonly [key: string]: JsonValue }, parts: string[], check: Check): void {
 	if (Array.isArray(value)) {
 		parts.push("[");
 		for (const [index, item] of value.entries()) {
 			if (index > 0) parts.push(",");
+			check(item);
 			// What is no JSON (`undefined` in a list of plugin code's making) is written as nothing, as a join writes it.
-			if (item !== null && typeof item === "object") canonical(item, parts);
+			if (item !== null && typeof item === "object") canonical(item, parts, check);
 			else parts.push(JSON.stringify(item) ?? "");
 		}
 		parts.push("]");
@@ -89,7 +119,8 @@ function canonical(value: JsonValue[] | { readonly [key: string]: JsonValue }, p
 	for (const [index, key] of Object.keys(value).sort().entries()) {
 		parts.push(index > 0 ? "," : "", JSON.stringify(key), ":");
 		const field = value[key]!;
-		if (field !== null && typeof field === "object") canonical(field, parts);
+		check(field);
+		if (field !== null && typeof field === "object") canonical(field, parts, check);
 		else parts.push(`${JSON.stringify(field)}`);
 	}
 	parts.push("}");

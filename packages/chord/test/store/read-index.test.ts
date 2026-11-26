@@ -78,7 +78,7 @@ async function openReads(handle: TableHandle, count: number, q: (index: number) 
 		const open = opened.read(what ?? { kind: "rows", range: { limit: 20 } }, {
 			adopt: (run) => void adopted.push(run),
 		});
-		await open.load();
+		await open.load(BACKGROUND_CONTEXT);
 		queries.push(opened);
 		opens.push(open);
 		runs.push(adopted);
@@ -176,7 +176,9 @@ describe("candidates", () => {
 				{ rebound: () => {} },
 				BACKGROUND_CONTEXT,
 			);
-			await opened.read({ kind: "rows", range: { limit: 20 } }, { adopt: () => void log.push(index) }).load();
+			await opened
+				.read({ kind: "rows", range: { limit: 20 } }, { adopt: () => void log.push(index) })
+				.load(BACKGROUND_CONTEXT);
 			return opened;
 		};
 		const meter = await metered();
@@ -213,7 +215,9 @@ describe("candidates", () => {
 				{ rebound: () => {} },
 				BACKGROUND_CONTEXT,
 			);
-			await opened.read({ kind: "rows", range: { limit: 20 } }, { adopt: () => void log.push(name) }).load();
+			await opened
+				.read({ kind: "rows", range: { limit: 20 } }, { adopt: () => void log.push(name) })
+				.load(BACKGROUND_CONTEXT);
 			return opened;
 		};
 		const meter = await metered();
