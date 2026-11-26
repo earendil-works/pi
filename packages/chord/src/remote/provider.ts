@@ -119,6 +119,8 @@ export class ProviderSide implements EventSender {
 	readonly #tickets: EventTicket[] = [];
 	/** This host's own `event` messages in flight: at most the host's `eventWindow`. */
 	#eventsInFlight = 0;
+	/** Whom the holds of a link other than the parent act for: the link's principal and the peer's incarnation. */
+	#linkCaller: Caller | undefined;
 
 	constructor(link: HostLink, origin: number, limit: number | undefined) {
 		this.link = link;
@@ -515,7 +517,11 @@ export class ProviderSide implements EventSender {
 	 */
 	#caller(message: Extract<Message, { readonly kind: "hold" }>): Caller {
 		const { link } = this;
-		if (link.role !== "parent") return { principal: link.principal, incarnation: link.peer };
+		// One for every hold of the side (the peer's `hello` came before any hold): callers are read, never compared.
+		if (link.role !== "parent") {
+			this.#linkCaller ??= { principal: link.principal, incarnation: link.peer };
+			return this.#linkCaller;
+		}
 		// The message schema checked a principal's shape on an untrusted link; a trusted parent is believed.
 		const principal = (message.principal as Caller["principal"]) ?? link.principal;
 		return { principal, incarnation: message.incarnation ?? link.peer };
