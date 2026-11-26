@@ -693,6 +693,28 @@ describe("the binary codec", () => {
 		}
 	});
 
+	it("allocates about one frame for a mid-size frame right after a much larger one (review of 4b2ae2444)", () => {
+		const gc = runInNewContext("gc") as () => void;
+		const part = (bytes: number) => new TextEncoder().encode(`"${"x".repeat(bytes - 2)}"`);
+		const bound = (members: { member: number; value: Uint8Array }[]): Message => ({
+			kind: "bound",
+			holds: [{ hold: 0, granted: [], members, failed: [] }],
+		});
+		const large = bound([{ member: 0, value: part(1024 * 1024) }]);
+		const mid = bound(Array.from({ length: 20 }, (_, member) => ({ member, value: part(1024) })));
+		const length = binaryCodec.encode(mid).byteLength;
+		let allocated = 0;
+		for (let round = 0; round < 20; round++) {
+			binaryCodec.encode(large);
+			gc();
+			const before = process.memoryUsage().arrayBuffers;
+			binaryCodec.encode(mid);
+			allocated += process.memoryUsage().arrayBuffers - before;
+		}
+		// Sized from the large frame before it, each mid-size frame took a MiB.
+		expect(allocated / 20).toBeLessThan(3 * length);
+	});
+
 	it("refuses invalid UTF-8 in strings", () => {
 		expect(() => binaryCodec.decode(new Uint8Array([1, 0, 1, 0xff]))).toThrow();
 	});
