@@ -48,8 +48,8 @@ export const WorkspaceMemberRow = obj({ workspace: str(), party: Party, source: 
 export const SwitchRow = obj({ workspace: str(), item: Item, shown: bool() });
 
 /**
- * One source's grant on a thing for a party, written in a workspace: whether it gives (perhaps no tick), the ticks it
- * gives, the ticks it takes from what comes from above, the thing's kind and the kind's ticks version they were written at.
+ * One row of a grant (item 112): one source's tick on a thing for a party, written in a workspace, given or withheld,
+ * with the thing's kind and the kind's ticks version it was written at. `tick` is a tick of the kind or `OPEN`.
  */
 export const GrantRow = obj({
 	workspace: str(),
@@ -58,22 +58,23 @@ export const GrantRow = obj({
 	ticksVersion: num(),
 	party: Party,
 	source: Source,
+	tick: str(),
 	gives: bool(),
-	ticks: arr(str()),
-	takenAway: arr(str()),
 });
 
-/** A grant as a source writes it: `gives: false` with no take-away removes the source's grant. */
+/**
+ * One row of a grant as a source writes it: `gives` the tick (where the thing is linked), withholds it (`false`: there
+ * and below, by every route for a person), or, left out, removes the source's row.
+ */
 export const GrantInput = obj({
 	workspace: str(),
 	thing: str(),
 	party: Party,
-	gives: bool(),
-	ticks: arr(str()),
-	takenAway: arr(str()),
+	tick: str(),
+	gives: opt(bool()),
 });
 
-/** A grant as a source writes it (see `GrantInput`). */
+/** One row of a grant as a source writes it (see `GrantInput`). */
 export type GrantInput = Static<typeof GrantInput>;
 
 /** A person: their id, name, whether they have the owner flag, and who made them. */
@@ -114,7 +115,10 @@ export const ThingsStore = local("things.store", {
 		/** Shows or hides a thing or party from above; `shown` left out removes the switch (the default decides). */
 		setSwitch: method(obj({ workspace: str(), item: Item, shown: opt(bool()) })),
 		setDefaults: method(obj({ workspace: str(), showsThings: opt(bool()), showsPeople: opt(bool()) })),
-		/** Writes `source`'s grants (a source rewrites only its own): a giving one only where the thing is linked. */
+		/**
+		 * Writes `source`'s grant rows (a source rewrites only its own), all or none: a giving one only where the thing is
+		 * linked, a tick only to whom it is for.
+		 */
 		setGrants: method(obj({ source: Source, grants: arr(GrantInput) })),
 		putParty: method(obj({ workspace: str(), party: Party, source: Source })),
 		removeParty: method(obj({ workspace: str(), party: Party })),

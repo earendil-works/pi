@@ -6,7 +6,6 @@
 
 import {
 	and,
-	arr,
 	bool,
 	type ColumnRefs,
 	type Columns,
@@ -37,6 +36,7 @@ import {
 	itemKey,
 	ManagedBy,
 	managedByKey,
+	OPEN,
 	Party,
 	partyKey,
 	type Source,
@@ -116,9 +116,9 @@ const Switches = defineTable("things.switches", {
 });
 
 /**
- * One source's grant on a thing for a party, written in a workspace: whether it gives, its ticks, its take-aways, and
- * the kind's ticks version they were written at (item 105). By source (its cleanup), by party (a deleted group's), by thing (a
- * deleted thing's, wherever written).
+ * One row of a grant (item 112): one source's tick on a thing for a party, written in a workspace, given or withheld,
+ * at the kind's ticks version it was written at (item 105). By source (its cleanup), by party (a deleted group's), by
+ * thing (a deleted thing's, wherever written).
  */
 const Grants = defineTable("things.grants", {
 	version: 1,
@@ -127,14 +127,13 @@ const Grants = defineTable("things.grants", {
 		thing: str(),
 		partyKey: str(),
 		party: json(Party, { version: 1 }),
+		tick: str(),
+		gives: bool(),
+		ticksVersion: int(),
 		source: json(SourceSchema, { version: 1 }),
 		sourceKey: str(),
-		gives: bool(),
-		ticks: json(arr(str()), { version: 1 }),
-		takenAway: json(arr(str()), { version: 1 }),
-		ticksVersion: int(),
 	},
-	key: ["workspace", "thing", "partyKey", "sourceKey"],
+	key: ["workspace", "thing", "partyKey", "tick", "sourceKey"],
 	indexes: { by_source: ["sourceKey"], by_party: ["partyKey"], by_thing: ["thing"] },
 });
 
@@ -390,7 +389,7 @@ function namedQueries(self: StoreSelf<P3Principal>, t: Tables) {
 		grants: self.queries(
 			t.grants,
 			{
-				map: ({ workspace, thing, party, source, gives, ticks, takenAway, ticksVersion }, partner) => ({
+				map: ({ workspace, thing, party, source, tick, gives, ticksVersion }, partner) => ({
 					workspace,
 					thing,
 					// The joined set is `ThingColumns`: its `kind` is a string.
@@ -398,9 +397,8 @@ function namedQueries(self: StoreSelf<P3Principal>, t: Tables) {
 					ticksVersion,
 					party,
 					source,
+					tick,
 					gives,
-					ticks,
-					takenAway,
 				}),
 			},
 			{
@@ -522,7 +520,7 @@ class Writes {
 			const ticks = item.value.ticks
 				.filter((tick) => isFor(tick.for, audienceOf(maker.kind)))
 				.map((tick) => tick.name);
-			this.#grant(tx, workspace, thing, maker, by, { gives: true, ticks, takenAway: [] }, item.value.ticksVersion);
+			this.#give(tx, workspace, thing, maker, by, ticks, item.value.ticksVersion);
 		}
 		touched.workspaces.add(workspace);
 		return null;
@@ -633,18 +631,18 @@ class Writes {
 	}
 
 	/**
-	 * Writes `source`'s grants: each at its kind's version now; one that neither gives nor takes away is removed. A
-	 * giving grant only where the thing is linked (R15), every tick one its kind has, given only to whom it is for (R2).
+	 * Writes `source`'s grant rows, each at its kind's ticks version now; one without `gives` is removed, whatever its
+	 * tick. A written row's tick is one its kind has or `OPEN` (no other reserved tick, item 113); a giving one only
+	 * where the thing is linked (R15), given only to whom it is for (R2).
 	 */
 	async setGrants(
 		tx: Tx,
 		touched: Touched,
 		{ source, grants }: { source: Source; grants: GrantInput[] },
 	): Promise<null> {
-		for (const grant of grants) {
-			const { workspace, thing, party, gives, ticks, takenAway } = grant;
+		for (const { workspace, thing, party, tick, gives } of grants) {
 			const link = await tx.get(this.#t.links, { workspace, thing });
-			if (gives && link === undefined) {
+			if (gives === true && link === undefined) {
 				throw invalid("args", `things: ${thing} is not linked in ${workspace}: ticks are given where it is`, {
 					message: messages.message("belowLink", workspace),
 				});
@@ -652,20 +650,19 @@ class Writes {
 			const kind = link?.of ?? (await tx.get(this.#t.things, { thing }))?.kind;
 			if (kind === undefined) throw invalid("args", `things: no thing ${thing}`);
 			const info = this.#kind(kind).value;
-			for (const tick of [...ticks, ...takenAway]) {
-				if (!info.ticks.some(({ name }) => name === tick))
-					throw invalid("args", `things: ${kind} has no tick ${tick}`);
+			const declared = info.ticks.find(({ name }) => name === tick);
+			// A row is removed whatever its tick (one the kind lost too); written, its tick must be the kind's or `OPEN`.
+			if (gives !== undefined && tick !== OPEN && declared === undefined) {
+				throw invalid("args", `things: ${kind} has no tick ${tick}`);
 			}
-			for (const tick of ticks) {
-				if (!isFor(info.ticks.find(({ name }) => name === tick)!.for, audienceOf(party.kind))) {
-					throw invalid("args", `things: ${tick} of ${kind} cannot be given to ${partyKey(party)}`, {
-						message: messages.message("tickNotFor", tick, partyKey(party)),
-					});
-				}
+			if (gives === true && declared !== undefined && !isFor(declared.for, audienceOf(party.kind))) {
+				throw invalid("args", `things: ${tick} of ${kind} cannot be given to ${partyKey(party)}`, {
+					message: messages.message("tickNotFor", tick, partyKey(party)),
+				});
 			}
-			if (!gives && takenAway.length === 0) {
-				tx.delete(this.#t.grants, { workspace, thing, partyKey: partyKey(party), sourceKey: sourceKey(source) });
-			} else this.#grant(tx, workspace, thing, party, source, { gives, ticks, takenAway }, info.ticksVersion);
+			const key = { workspace, thing, partyKey: partyKey(party), tick, sourceKey: sourceKey(source) };
+			if (gives === undefined) tx.delete(this.#t.grants, key);
+			else this.#grant(tx, workspace, thing, party, source, tick, gives, info.ticksVersion);
 			touched.workspaces.add(workspace);
 		}
 		return null;
@@ -763,19 +760,34 @@ class Writes {
 			[{ kind: "agents" }, defaultGrants.agents],
 		] as const;
 		for (const [party, ticks] of parties) {
-			if (ticks !== undefined)
-				this.#grant(tx, workspace, thing, party, source, { gives: true, ticks, takenAway: [] }, ticksVersion);
+			if (ticks !== undefined) this.#give(tx, workspace, thing, party, source, ticks, ticksVersion);
 		}
 	}
 
-	/** Puts one grant, its ticks written at the kind's ticks version `ticksVersion` (item 105). */
+	/** Gives `party` `ticks` (none: `OPEN`, item 113) on `thing` in `workspace`: one row each. */
+	#give(
+		tx: Tx,
+		workspace: string,
+		thing: string,
+		party: Party,
+		source: Source,
+		ticks: readonly string[],
+		ticksVersion: number,
+	): void {
+		for (const tick of ticks.length === 0 ? [OPEN] : ticks) {
+			this.#grant(tx, workspace, thing, party, source, tick, true, ticksVersion);
+		}
+	}
+
+	/** Puts one grant row, its tick written at the kind's ticks version `ticksVersion` (item 105). */
 	#grant(
 		tx: Tx,
 		workspace: string,
 		thing: string,
 		party: Party,
 		source: Source,
-		{ gives, ticks, takenAway }: { gives: boolean; ticks: readonly string[]; takenAway: readonly string[] },
+		tick: string,
+		gives: boolean,
 		ticksVersion: number,
 	): void {
 		tx.put(this.#t.grants, {
@@ -783,12 +795,11 @@ class Writes {
 			thing,
 			partyKey: partyKey(party),
 			party,
+			tick,
+			gives,
+			ticksVersion,
 			source,
 			sourceKey: sourceKey(source),
-			gives,
-			ticks: [...ticks],
-			takenAway: [...takenAway],
-			ticksVersion,
 		});
 	}
 

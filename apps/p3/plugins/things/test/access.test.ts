@@ -16,7 +16,7 @@ import {
 } from "@earendil-works/p3/v1";
 import { AccessIndex, type Answers, type Reader } from "../access.ts";
 import { Gives, ThingsStore } from "../contract.server.ts";
-import type { Party, Source } from "../contract.ts";
+import { OPEN, type Party, type Source } from "../contract.ts";
 import { lookupOf, readerOf } from "../reader.ts";
 import { ABOVE_THE_ROOT, accessHere } from "../rules.ts";
 import { BOARD_PLUGIN, Board } from "./kinds.ts";
@@ -82,6 +82,8 @@ class Run {
 	/** A workspace, more often one made early (near the root). */
 	nearTheRoot = () => this.pick(this.workspaces.slice(0, 1 + this.below(1 + this.below(this.workspaces.length))));
 	someTicks = () => [...new Set(TICKS.filter(() => this.chance(0.2)))];
+	/** A tick of the test kind, or now and then `OPEN`. */
+	someTick = () => (this.chance(0.12) ? OPEN : this.pick(TICKS));
 
 	someMember(): Party {
 		const roll = this.random();
@@ -190,14 +192,10 @@ class Run {
 			this.links.push({ workspace, thing });
 			const plugin: Source = { kind: "plugin", plugin: BOARD_PLUGIN };
 			for (const party of [{ kind: "everyone" }, { kind: "agents" }] as const) {
-				if (this.chance(0.8))
-					await s.setGrants(
-						{
-							source: plugin,
-							grants: [{ workspace, thing, party, gives: true, ticks: this.someTicks(), takenAway: [] }],
-						},
-						context,
-					);
+				if (this.chance(0.8)) {
+					const grants = this.someTicks().map((tick) => ({ workspace, thing, party, tick, gives: true }));
+					await s.setGrants({ source: plugin, grants }, context);
+				}
 			}
 		} else if (roll < 27) {
 			await s.unlink(this.someLink(), context);
@@ -222,25 +220,26 @@ class Run {
 			);
 		} else if (roll < 66) {
 			const link = this.someLink();
+			// Given, or the source's row removed.
 			const grants = Array.from({ length: this.chance(0.2) ? 3 : 1 }, () => ({
 				...link,
 				party: this.someParty(),
-				gives: this.chance(0.9),
-				ticks: this.someTicks(),
-				takenAway: [],
+				tick: this.someTick(),
+				...(this.chance(0.85) ? { gives: true } : {}),
 			}));
 			await s.setGrants({ source: this.pick(this.sources), grants }, context);
 		} else if (roll < 76) {
 			const link = this.someLink();
-			const grant = {
-				workspace: this.atOrBelow(link.workspace),
+			// Withheld at or below the link, or the source's row removed.
+			const [workspace, party] = [this.atOrBelow(link.workspace), this.someParty()];
+			const grants = Array.from({ length: this.chance(0.3) ? 2 : 1 }, () => ({
+				workspace,
 				thing: link.thing,
-				party: this.someParty(),
-				gives: false,
-				ticks: [],
-				takenAway: this.someTicks(),
-			};
-			await s.setGrants({ source: this.pick(this.sources), grants: [grant] }, context);
+				party,
+				tick: this.someTick(),
+				...(this.chance(0.85) ? { gives: false } : {}),
+			}));
+			await s.setGrants({ source: this.pick(this.sources), grants }, context);
 		} else if (roll < 84) {
 			await s.addToGroup(
 				{ group: this.pick(this.groups), person: this.pick(this.persons), source: this.pick(this.sources) },
@@ -466,9 +465,8 @@ describe("the index's own mechanics", () => {
 									thing: "sketch",
 									party: "everyone",
 									audience: "people",
+									tick: "read",
 									gives: true,
-									ticks: ["read"],
-									takenAway: [],
 								},
 							]
 						: [],
@@ -630,9 +628,8 @@ describe("round 1's reproductions (Astra)", () => {
 			},
 			party: "everyone",
 			audience: "people" as const,
+			tick: "a",
 			gives: true,
-			ticks: ["a"],
-			takenAway: [],
 		}));
 		accessHere(ABOVE_THE_ROOT, { ...rows(...ids), grants }, kinds);
 		assert.ok(visits <= 2 * n, `${visits} reads of a grant's thing for ${n} links and ${n} grants`);

@@ -1,10 +1,12 @@
 // The rules of access, without any state: what a workspace ends up with, from what the workspace above ends up with
 // and its own entries (rules 1 to 3), who a caller counts as there (rule 4), and their answer for one thing (rule 5),
-// as ERNDL-1142 states them. Ticks add up over every party a caller counts as (item 106: no precedence). Two rules keep
-// one person from something, each one function: a take-away naming a person removes the tick from them by every route
-// (`takenFromPerson`), and a people switch naming a person hides them by every route (`hiddenHere`). The index
-// (`access.ts`) computes with these and nothing else.
+// as ERNDL-1142 states them, over grant rows of one tick each (item 112; `OPEN` lets in with no tick, item 113). Ticks
+// add up over every party a caller counts as (item 106: no precedence). Two rules keep one person from something, each
+// one function: a tick withheld from a person (`OPEN` too) is withheld by every route (`takenFromPerson`), and a
+// people switch naming a person hides them by every route (`hiddenHere`). The index (`access.ts`) computes with these
+// and nothing else.
 
+import { OPEN } from "./contract.ts";
 import type { TickFor } from "./kind.ts";
 
 /** A party's key (`partyKey`), as the maps in memory are keyed. */
@@ -18,15 +20,17 @@ export function audienceOf(kind: "everyone" | "agents" | "person" | "group" | "a
 	return kind === "agents" || kind === "agent" ? "agents" : "people";
 }
 
-/** One grant as one source wrote it, as the rules read it. Several sources' grants of one party add up. */
+/**
+ * One grant row as the rules read it (item 112): one tick (of the thing's kind, or `OPEN`) given to a party or
+ * withheld from it, as one source wrote it. Several sources' rows of one party add up.
+ */
 export type GrantEntry = {
 	readonly thing: string;
 	readonly party: PartyKey;
 	readonly audience: Audience;
-	/** A grant (perhaps of no tick; R10), or only a take-away. */
+	readonly tick: string;
+	/** Given (counts where the thing is linked), or withheld (there and below). */
 	readonly gives: boolean;
-	readonly ticks: readonly string[];
-	readonly takenAway: readonly string[];
 };
 
 /** What is written about one workspace (read from disk when first needed). */
@@ -46,11 +50,14 @@ export type WorkspaceEntries = {
 	readonly grants: readonly GrantEntry[];
 };
 
-/** What one thing available in a workspace gives: its kind, the ticks per party, and what is taken from persons. */
+/**
+ * What one thing available in a workspace gives: its kind, the parties let in with their ticks (perhaps none), and
+ * what is withheld from persons.
+ */
 export type ThingHere = {
 	readonly kind: string;
 	readonly ticks: ReadonlyMap<PartyKey, ReadonlySet<string>>;
-	/** The ticks take-aways at or below the link remove from a person, whatever route they come by (item 106). */
+	/** The ticks rows at or below the link withhold from a person by every route (item 106); `OPEN` among them: denied. */
 	readonly takenFromPersons: ReadonlyMap<PartyKey, ReadonlySet<string>>;
 };
 
@@ -103,9 +110,9 @@ export function accessHere(above: WorkspaceAccess, own: WorkspaceEntries, kinds:
 
 /**
  * Rules 1 and 2: the things available here and what each party gets. From above: what is shown here (the switch for
- * it, else the default). Linked here: the giving grants written here, replacing what came from above; sources add up;
- * a tick the kind lacks, or one for the other audience, counts for nothing. Taken away here: removed from that party;
- * a person's take-away also by every route. A map from above is shared, so it is copied, never changed.
+ * it, else the default). Linked here: the giving rows written here, replacing what came from above; sources add up; a
+ * tick the kind lacks, or one for the other audience, counts for nothing. Withheld here: removed from that party; from
+ * a person also by every route. A map from above is shared, so it is copied, never changed.
  */
 function thingsHere(
 	above: WorkspaceAccess["things"],
@@ -128,20 +135,25 @@ function thingsHere(
 	}
 	for (const [thing, kind] of own.links) here.set(thing, linkedHere(kind, giving.get(thing) ?? [], kinds));
 	for (const grant of own.grants) {
-		if (grant.takenAway.length === 0) continue;
+		if (grant.gives) continue;
 		const thing = grant.thing;
 		const given = here.get(thing);
-		if (given !== undefined) here.set(thing, takenAway(given, grant));
+		if (given !== undefined) here.set(thing, withheld(given, grant));
 	}
 	return here;
 }
 
-/** A thing linked here: what its giving grants written here (`grants`) give each party (nothing below a link adds). */
+/**
+ * A thing linked here: the parties its giving rows written here (`grants`) let in, each with its ticks (nothing below
+ * a link adds). `OPEN` lets its party in with no tick; a tick that counts lets it in with that tick (item 113).
+ */
 function linkedHere(kind: string, grants: readonly GrantEntry[], kinds: KindsLookup): ThingHere {
 	const ticks = new Map<PartyKey, Set<string>>();
 	for (const grant of grants) {
+		const open = grant.tick === OPEN;
+		if (!open && !isFor(kinds.tickFor(kind, grant.tick), grant.audience)) continue;
 		const own = ticks.get(grant.party) ?? new Set<string>();
-		for (const tick of grant.ticks) if (isFor(kinds.tickFor(kind, tick), grant.audience)) own.add(tick);
+		if (!open) own.add(grant.tick);
 		ticks.set(grant.party, own);
 	}
 	return { kind, ticks: ticks.size === 0 ? NO_TICKS : ticks, takenFromPersons: NO_TICKS };
@@ -152,12 +164,20 @@ export function isFor(forWhom: TickFor | undefined, audience: Audience): boolean
 	return forWhom === "all" || forWhom === audience;
 }
 
-/** `given` with `grant`'s take-away applied: a new value whenever anything changes. */
-function takenAway(given: ThingHere, grant: GrantEntry): ThingHere {
-	const before = given.ticks.get(grant.party);
+/**
+ * `given` with `grant`'s withheld tick applied: its party loses the tick (`OPEN`: is let in no more); a new value
+ * whenever anything changes.
+ */
+function withheld(given: ThingHere, grant: GrantEntry): ThingHere {
+	const { party, tick } = grant;
+	const before = given.ticks.get(party);
 	let ticks = given.ticks;
-	if (before !== undefined && grant.takenAway.some((tick) => before.has(tick))) {
-		ticks = new Map(ticks).set(grant.party, new Set([...before].filter((tick) => !grant.takenAway.includes(tick))));
+	if (before !== undefined && tick === OPEN) {
+		const left = new Map(ticks);
+		left.delete(party);
+		ticks = left;
+	} else if (before?.has(tick) === true) {
+		ticks = new Map(ticks).set(party, new Set([...before].filter((each) => each !== tick)));
 	}
 	const takenFromPersons = takenFromPerson(given.takenFromPersons, grant);
 	if (ticks === given.ticks && takenFromPersons === given.takenFromPersons) return given;
@@ -165,14 +185,15 @@ function takenAway(given: ThingHere, grant: GrantEntry): ThingHere {
 }
 
 /**
- * Item 106: a take-away naming a person removes the tick from them by every route (their own entry, their groups',
- * everyone's), whether or not they are put in by name. Returning `taken` as it is would make it remove from the
- * person's own grant only.
+ * Item 106: a tick withheld from a person is withheld from them by every route (their own entry, their groups',
+ * everyone's), whether or not they are put in by name. Returning `taken` as it is would withhold it from the person's
+ * own entry only.
  */
 function takenFromPerson(taken: ThingHere["takenFromPersons"], grant: GrantEntry): ThingHere["takenFromPersons"] {
 	if (!grant.party.startsWith("person/")) return taken;
 	const before = taken.get(grant.party);
-	return new Map(taken).set(grant.party, new Set([...(before ?? []), ...grant.takenAway]));
+	if (before?.has(grant.tick) === true) return taken;
+	return new Map(taken).set(grant.party, new Set([...(before ?? []), grant.tick]));
 }
 
 /** Rule 3: the parties present here: its members, and those present above that are shown here. */
@@ -222,10 +243,12 @@ export function agentCounts(access: WorkspaceAccess, agent: PartyKey): Counted {
 }
 
 /**
- * Rule 5 (not for an owner): the union of the ticks of every counted party given anything here, less what take-aways
- * naming the caller's person removed; `undefined` when no counted party is given anything.
+ * Rule 5 (not for an owner): the union of the ticks of every counted party let in here, less what is withheld from
+ * the caller's person; `undefined` when no counted party is let in, or `OPEN` is withheld from their person.
  */
 export function answerOf(given: ThingHere, counted: Counted): Answer | undefined {
+	const taken = counted.person === undefined ? undefined : given.takenFromPersons.get(counted.person);
+	if (taken?.has(OPEN) === true) return undefined;
 	let union: Set<string> | undefined;
 	for (const party of counted.parties) {
 		const ticks = given.ticks.get(party);
@@ -234,7 +257,6 @@ export function answerOf(given: ThingHere, counted: Counted): Answer | undefined
 		for (const tick of ticks) union.add(tick);
 	}
 	if (union === undefined) return undefined;
-	const taken = counted.person === undefined ? undefined : given.takenFromPersons.get(counted.person);
 	const kept = taken === undefined ? [...union] : [...union].filter((tick) => !taken.has(tick));
 	return { ticks: kept.sort() };
 }

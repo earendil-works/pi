@@ -35,8 +35,8 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "a giving grant below the link counts",
 		file: "rules.ts",
-		find: "\t\tif (grant.takenAway.length === 0) continue;\n\t\tconst thing = grant.thing;\n\t\tconst given = here.get(thing);",
-		put: "\t\tconst below = here.get(grant.thing);\n\t\tif (below !== undefined && grant.gives && !own.links.has(grant.thing)) here.set(grant.thing, { ...below, ticks: new Map(below.ticks).set(grant.party, new Set([...(below.ticks.get(grant.party) ?? []), ...grant.ticks])) });\n\t\tif (grant.takenAway.length === 0) continue;\n\t\tconst thing = grant.thing;\n\t\tconst given = here.get(thing);",
+		find: "\t\tif (grant.gives) continue;\n\t\tconst thing = grant.thing;\n\t\tconst given = here.get(thing);",
+		put: "\t\tconst below = here.get(grant.thing);\n\t\tif (below !== undefined && grant.gives && !own.links.has(grant.thing)) here.set(grant.thing, { ...below, ticks: new Map(below.ticks).set(grant.party, new Set([...(below.ticks.get(grant.party) ?? []), grant.tick])) });\n\t\tif (grant.gives) continue;\n\t\tconst thing = grant.thing;\n\t\tconst given = here.get(thing);",
 	},
 	{
 		name: "grants of several sources do not add up",
@@ -45,16 +45,16 @@ const MUTATIONS: readonly Mutation[] = [
 		put: "const own = new Set<string>();",
 	},
 	{
-		name: "a take-away changes the set shared with the workspace above",
+		name: "a withheld tick changes the set shared with the workspace above",
 		file: "rules.ts",
-		find: "ticks = new Map(ticks).set(grant.party, new Set([...before].filter((tick) => !grant.takenAway.includes(tick))));",
-		put: "for (const tick of grant.takenAway) (before as Set<string>).delete(tick);",
+		find: "ticks = new Map(ticks).set(party, new Set([...before].filter((each) => each !== tick)));",
+		put: "(before as Set<string>).delete(tick);",
 	},
 	{
-		name: "a take-away removes from every party",
+		name: "a withheld tick is withheld from every party",
 		file: "rules.ts",
-		find: "ticks = new Map(ticks).set(grant.party, new Set([...before].filter((tick) => !grant.takenAway.includes(tick))));",
-		put: "ticks = new Map([...ticks].map(([party, set]) => [party, new Set([...set].filter((tick) => !grant.takenAway.includes(tick)))]));",
+		find: "ticks = new Map(ticks).set(party, new Set([...before].filter((each) => each !== tick)));",
+		put: "ticks = new Map([...ticks].map(([each, set]) => [each, new Set([...set].filter((one) => one !== tick))]));",
 	},
 	{
 		name: "a party's switch is ignored",
@@ -77,8 +77,8 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "a tick for the other audience, or one the kind lacks, counts",
 		file: "rules.ts",
-		find: "if (isFor(kinds.tickFor(kind, tick), grant.audience)) own.add(tick);",
-		put: "own.add(tick);",
+		find: "if (!open && !isFor(kinds.tickFor(kind, grant.tick), grant.audience)) continue;",
+		put: "",
 	},
 	{
 		name: "a giving grant of no tick lets nobody in (R10)",
@@ -93,13 +93,13 @@ const MUTATIONS: readonly Mutation[] = [
 		put: "for (const party of counted.person !== undefined && given.ticks.has(counted.person) ? [counted.person] : counted.parties) {",
 	},
 	{
-		name: "a take-away naming a person removes from their own grant only (106)",
+		name: "a tick withheld from a person is withheld from their own entry only (106)",
 		file: "rules.ts",
 		find: 'if (!grant.party.startsWith("person/")) return taken;',
 		put: "return taken;",
 	},
 	{
-		name: "a take-away naming a person is not applied to their answer (106)",
+		name: "a tick withheld from a person is not withheld from their answer (106)",
 		file: "rules.ts",
 		find: "const taken = counted.person === undefined ? undefined : given.takenFromPersons.get(counted.person);",
 		put: "const taken = undefined as ReadonlySet<string> | undefined;",
@@ -115,6 +115,30 @@ const MUTATIONS: readonly Mutation[] = [
 		file: "rules.ts",
 		find: "for (const person of put) hidden.delete(person);",
 		put: "",
+	},
+	{
+		name: "`OPEN` withheld from a person keeps them out only by their own entry (113)",
+		file: "rules.ts",
+		find: "if (taken?.has(OPEN) === true) return undefined;",
+		put: "",
+	},
+	{
+		name: "`OPEN` withheld lets the party in still (113)",
+		file: "rules.ts",
+		find: "if (before !== undefined && tick === OPEN) {",
+		put: "if (false as boolean) {",
+	},
+	{
+		name: "`OPEN` given lets nobody in (113)",
+		file: "rules.ts",
+		find: "const open = grant.tick === OPEN;",
+		put: "const open = false;",
+	},
+	{
+		name: "a row of a tick that counts for nothing lets its party in (113)",
+		file: "rules.ts",
+		find: "if (!open && !isFor(kinds.tickFor(kind, grant.tick), grant.audience)) continue;",
+		put: "if (!open && !isFor(kinds.tickFor(kind, grant.tick), grant.audience)) {\n\t\t\tticks.set(grant.party, ticks.get(grant.party) ?? new Set());\n\t\t\tcontinue;\n\t\t}",
 	},
 	// ---- the index ----
 	{
@@ -233,7 +257,7 @@ const MUTATIONS: readonly Mutation[] = [
 		put: "",
 	},
 	{
-		name: "unlink of a thing not linked here deletes the take-aways written there (Opus)",
+		name: "unlink of a thing not linked here deletes the rows withheld there (Opus)",
 		file: "store.ts",
 		find: "\t\tif (link === undefined) return null;\n\t\ttx.deleteWhere(this.#t.grants, (g) => and(eq(g.workspace, workspace), eq(g.thing, thing)));",
 		put: "\t\ttx.deleteWhere(this.#t.grants, (g) => and(eq(g.workspace, workspace), eq(g.thing, thing)));\n\t\ttouched.workspaces.add(workspace);\n\t\tif (link === undefined) return null;",
@@ -259,19 +283,19 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "a link starts with no default grants",
 		file: "store.ts",
-		find: "if (ticks !== undefined)\n",
-		put: "if (ticks === null)\n",
+		find: "if (ticks !== undefined) this.#give(",
+		put: "if (ticks === null) this.#give(",
 	},
 	{
 		name: "a giving grant is written below a link",
 		file: "store.ts",
-		find: "if (gives && link === undefined) {",
-		put: "if (gives && link === undefined && false) {",
+		find: "if (gives === true && link === undefined) {",
+		put: "if (gives === true && link === undefined && false) {",
 	},
 	{
 		name: "a tick is given to whom it is not for",
 		file: "store.ts",
-		find: "if (!isFor(info.ticks.find(({ name }) => name === tick)!.for, audienceOf(party.kind))) {",
+		find: "if (gives === true && declared !== undefined && !isFor(declared.for, audienceOf(party.kind))) {",
 		put: "if (false) {",
 	},
 	{
@@ -292,6 +316,18 @@ const MUTATIONS: readonly Mutation[] = [
 		find: "await lifecycle.undo(thing, args.kind);",
 		put: "",
 	},
+	{
+		name: "an empty default grant lets nobody in (no `OPEN` row, 113)",
+		file: "store.ts",
+		find: "for (const tick of ticks.length === 0 ? [OPEN] : ticks) {",
+		put: "for (const tick of ticks) {",
+	},
+	{
+		name: "a reserved tick other than `OPEN` is written (113)",
+		file: "store.ts",
+		find: "if (gives !== undefined && tick !== OPEN && declared === undefined) {",
+		put: 'if (gives !== undefined && !tick.startsWith("@") && declared === undefined) {',
+	},
 	// ---- the lifecycle ----
 	{
 		name: "a failed delete hook is tried again only at the next start",
@@ -309,8 +345,8 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "a grant of an older ticks version is read as it is (item 105)",
 		file: "reader.ts",
-		find: 'if (info === undefined || info.ticksVersion === ticksVersion) return { kind: "read", ticks: { ticks, takenAway } };',
-		put: 'return { kind: "read", ticks: { ticks, takenAway } };',
+		find: "if (info === undefined || info.ticksVersion === ticksVersion || tick.startsWith(RESERVED)) {",
+		put: "if (true) {",
 	},
 	{
 		name: "a grant that counts for nothing is reported at every read",

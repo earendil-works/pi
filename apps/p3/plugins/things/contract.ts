@@ -5,6 +5,15 @@
 
 import { lit, obj, type Static, str, union } from "@earendil-works/p3/v1";
 
+/** The prefix of the reserved tick names (item 113): a kind's own tick names cannot start with it. */
+export const RESERVED = "@";
+
+/**
+ * The reserved tick that lets a party open a thing with no ticks (given), or keeps it from opening it by every route
+ * (withheld; item 113). Any giving row of a tick of the kind lets the party in too.
+ */
+export const OPEN = "@open";
+
 /**
  * Who wrote something: a person by hand, a session's agent (a thing it made), a thing (a share, a bot: it goes with it),
  * a sign-in provider, a plugin.
