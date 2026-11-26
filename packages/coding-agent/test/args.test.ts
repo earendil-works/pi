@@ -569,3 +569,60 @@ describe("parseArgs", () => {
 		});
 	});
 });
+
+describe("parseArgs resumeFlags", () => {
+	test("records restriction and resource flags as typed, in order, with their values", () => {
+		const result = parseArgs([
+			"-t",
+			"read,grep",
+			"--no-extensions",
+			"-e",
+			"./ext.ts",
+			"--extension",
+			"/abs/other.ts",
+			"--skill",
+			"./skills",
+			"--append-system-prompt",
+			"Be terse",
+			"-na",
+		]);
+
+		expect(result.resumeFlags).toEqual([
+			"-t",
+			"read,grep",
+			"--no-extensions",
+			"-e",
+			"./ext.ts",
+			"--extension",
+			"/abs/other.ts",
+			"--skill",
+			"./skills",
+			"--append-system-prompt",
+			"Be terse",
+			"-na",
+		]);
+	});
+
+	test("leaves out flags kept in the session, session pickers, secrets, cosmetics and messages", () => {
+		const result = parseArgs([
+			"--model",
+			"sonnet",
+			"--thinking",
+			"high",
+			"--api-key",
+			"secret",
+			"--session",
+			"abc",
+			"-c",
+			"--offline",
+			"--tools",
+			"read",
+			"@notes.md",
+			"hello",
+			"--",
+			"--no-tools",
+		]);
+
+		expect(result.resumeFlags).toEqual(["--tools", "read"]);
+	});
+});
