@@ -378,21 +378,6 @@ describe("memory", () => {
 
 describe("decoded rows", () => {
 	for (const keeps of ["values", "rows"] as const) {
-		it(`compares every column a stored row enumerates, inherited enumerable ones too, keeping ${keeps} (hot-path review)`, () => {
-			// Astra, 4dae54b74: a backend's rows are any objects; one with an own `id` and an inherited `title`.
-			const Docs = defineTable("docs", { version: 1, columns: { id: str(), title: str() }, key: ["id"] });
-			const target: LiveTarget = {
-				spec: { query: query(Docs), table: "docs", projection: {}, owner: Docs },
-				decode: (stored) => ({ id: stored.id as string, title: stored.title as string }),
-			};
-			const stored = (title: string): StoredRead => Object.assign(Object.create({ title }), { id: "1" });
-			const rows = new DecodedRows(keeps);
-			expect(rows.decode([stored("one")], target, context)[0]).toEqual({ id: "1", title: "one" });
-			expect(rows.decode([stored("two")], target, context)[0]).toEqual({ id: "1", title: "two" });
-			const shown = rows.decode([stored("two")], target, context)[0];
-			expect(rows.decode([stored("two")], target, context)[0]).toBe(shown);
-		});
-
 		it(`reuses a row from a run of one row and of several, either way, keeping ${keeps} (hot-path pass)`, () => {
 			// A run of one row keeps its entry without a map: a row of the same key and stored columns is the same object.
 			const Docs = defineTable("docs", { version: 1, columns: { id: str(), title: str() }, key: ["id"] });

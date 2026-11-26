@@ -206,8 +206,6 @@ type Entry = Decoded | KeptRow;
 /** No rows decoded yet: the shared empty map. */
 const NO_ROWS: ReadonlyMap<unknown, Entry> = new Map();
 
-const NO_COLUMNS: readonly string[] = [];
-
 /**
  * The decoded rows of a live source's last value, by key: a row whose stored columns are all the same in the next
  * run is that value's object (one comparison per selected column), any other is decoded. So a frame, the diff from
@@ -223,8 +221,8 @@ export class DecodedRows {
 	/** By key (`identity`); the one entry itself after a run of one row (a map of one costs 184 B), its key `#oneId`. */
 	#byKey: ReadonlyMap<unknown, Entry> | Entry = NO_ROWS;
 	#oneId: unknown;
-	/** The columns of the row decoded last: rows of one statement share them, so their entries share the list. */
-	#columns: readonly string[] = NO_COLUMNS;
+	/** The columns of the rows decoded since the last reset: their entries share the list. */
+	#columns: readonly string[] | undefined;
 
 	/** `keeps` the values of a stored row (a live query's), or the row itself (a list's, by default). */
 	constructor(keeps: "values" | "rows" = "rows") {
@@ -262,6 +260,7 @@ export class DecodedRows {
 	reset(): void {
 		this.#byKey = NO_ROWS;
 		this.#oneId = undefined;
+		this.#columns = undefined;
 	}
 
 	/**
@@ -270,7 +269,7 @@ export class DecodedRows {
 	 */
 	#reused(id: unknown, stored: StoredRead, target: LiveTarget, context: Context): Entry {
 		const before = this.#byKey;
-		const entry = before instanceof Map ? before.get(id) : sameKey(this.#oneId, id) ? (before as Entry) : undefined;
+		const entry = before instanceof Map ? before.get(id) : this.#oneId === id ? (before as Entry) : undefined;
 		if (entry instanceof KeptRow) {
 			// The same stored row (a list's page that did not run again hands its rows again): unchanged, a row being
 			// plain data the backend does not change (`sqliteBackend`); no comparison of its columns (1,000 loaded rows
@@ -294,31 +293,13 @@ export class DecodedRows {
 	}
 
 	/**
-	 * The columns of `stored` as `for…in` enumerates them (its own and inherited enumerable ones, as the comparison of
-	 * two stored rows did): the list of the row decoded last when it has the same.
+	 * The columns of the stored rows: one list for every row decoded since the last reset, taken from the first, as
+	 * the rows of one statement have the same columns (the backend contract, `sqliteBackend`).
 	 */
 	#columnsOf(stored: StoredRead): readonly string[] {
-		const last = this.#columns;
-		let at = 0;
-		let same = true;
-		for (const column in stored) {
-			if (last[at] !== column) same = false;
-			at++;
-		}
-		if (same && at === last.length) return last;
-		// Of exactly its length: a list pushed to reserves room for 16 more (152 B for two columns).
-		const columns = new Array<string>(at);
-		at = 0;
-		for (const column in stored) columns[at++] = column;
-		this.#columns = columns;
-		return columns;
+		this.#columns ??= Object.keys(stored);
+		return this.#columns;
 	}
-}
-
-/** Whether two keys (`identity`) are one, as a map's keys are: SameValueZero (`NaN` is `NaN`, `-0` is `0`). */
-function sameKey(a: unknown, b: unknown): boolean {
-	// biome-ignore lint/suspicious/noSelfCompare: NaN is the one value unequal to itself.
-	return a === b || (a !== a && b !== b);
 }
 
 /**
