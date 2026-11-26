@@ -11,18 +11,7 @@ import type { Context } from "../context/index.ts";
 import type { AllowedOf, Contract, NamedQuery, ParamsOf } from "../contracts/index.ts";
 import { NO_GRANTS } from "../contracts/internal.ts";
 import { ChordError, forbidden, type MessageData, type Principal } from "../data/index.ts";
-import {
-	asChordError,
-	canonicalText,
-	checkParams,
-	copyPlainJson,
-	defineField,
-	isMessageData,
-	type PlainComparison,
-	samePlainFields,
-	samePlainJson,
-	stackless,
-} from "../data/internal.ts";
+import { asChordError, checkParams, copyJson, isMessageData, sameJson, stackless } from "../data/internal.ts";
 import type { JsonValue } from "../json.ts";
 import { appended, NO_ITEMS } from "../lists.ts";
 import type { Registry, RegistryValue } from "../registries/index.ts";
@@ -167,8 +156,6 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 	#decided: Decided | undefined;
 	/** Whether a change of its source waits for the current batch's flush: one check per batch. */
 	#flushing = false;
-	/** The pairs of a read's top-level fields, reused by the next read (`#takeFields`); made by the first with fields. */
-	#scratch: unknown[] | undefined;
 	/** Follows a live query it waits on: its next adoption checks again. Made by the first settle with live queries. */
 	#readerWake: Dependent | undefined;
 	#released = false;
@@ -464,163 +451,59 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 	}
 
 	/**
-	 * An object's allowed value, read in the order it was before the hot-path pass (`{ granted, ...data } = value`, the
-	 * names checked in the list's own iteration and deduped in a second one, then the walk counted, then the data
-	 * walked): its `granted` (a property read, whatever its enumerability), its top-level fields, the names checked (a
-	 * refused value is broken and counts no walk) and taken, the walk counted (telemetry runs code of anyone's: what it
-	 * changes of the value now is not this read's), then the data compared. Against a last allow kept plain, an equal
-	 * read allocates nothing: the fields go into the decision's scratch list, the names are compared with the kept ones
-	 * in their second pass; anything else is `#adoptAllow`'s.
+	 * An object's allowed value: an object whose `granted` is none or a list of the contract's grants (else it breaks
+	 * and counts no walk), compared with what the last allow kept, Chord's own copy made when the decision changed: the
+	 * names against the kept ones (in any order, repeated or not), the other fields against the copy. An equal read is
+	 * that decision and allocates nothing; any other makes the new one.
 	 */
 	#allowObject(value: JsonValue, grants: readonly string[], label: string, context: Context): Verdict {
 		if (typeof value !== "object" || value === null || Array.isArray(value)) {
 			return brokenRead("its admission's value is an object (allow({ granted, ...data }))", label);
 		}
-		const listed: unknown = value.granted;
-		const last = this.#lastAllow();
-		const fields = last?.kind === "allowPlain" ? this.#takeFields(value) : undefined;
-		try {
-			// No plain last allow, or more fields than a scratch list holds: the data as a rest copy made it.
-			const data = fields === undefined ? dataOf(value) : undefined;
-			if (listed !== undefined) {
-				if (!Array.isArray(listed)) return brokenRead("its admission's granted is a list of names", label);
-				const refused = refusedNames(listed, grants, label);
-				if (refused !== undefined) return refused;
+		const listed = value.granted;
+		if (listed !== undefined) {
+			if (!Array.isArray(listed)) return brokenRead("its admission's granted is a list of names", label);
+			// Indexed: a for-of allocates an iterator per list.
+			for (let index = 0; index < listed.length; index++) {
+				const name = listed[index];
+				if (typeof name !== "string" || !grants.includes(name)) {
+					return brokenRead(
+						`its admission granted ${JSON.stringify(name)}: no grantable member or flag of its contract`,
+						label,
+					);
+				}
 			}
-			const kept = last === undefined ? NO_ITEMS : namesOf(last.verdict.granted);
-			const sameGrants =
-				last?.kind === "allowPlain" && sameNames(listed as readonly unknown[] | undefined, kept) === "equal";
-			// The second pass over the names, as `[...new Set(listed)].sort()` made it (a list's iterator may throw).
-			const names = sameGrants ? kept : listed === undefined ? NO_ITEMS : [...new Set(listed as string[])].sort();
-			countWalk(context);
-			if (last?.kind === "allowPlain" && fields !== undefined) {
-				if (sameGrants && samePlainFields(last.data, fields.list, fields.count) === "equal") return last.verdict;
-				return this.#adoptAllow(fieldsData(value, fields), names, grants, last);
-			}
-			// Taken above when no plain allow was kept.
-			return this.#adoptAllow(data!, names, grants, last);
-		} finally {
-			if (fields !== undefined) this.#giveFields(fields);
 		}
-	}
-
-	/**
-	 * `value`'s own enumerable string-keyed fields but `granted`, as key and value pairs in the decision's scratch list
-	 * (taken: a read nested in this one makes its own); `undefined` for more than 128 (the caller copies them then).
-	 */
-	#takeFields(value: { readonly [field: string]: JsonValue }): Fields | undefined {
-		let list = this.#scratch;
-		this.#scratch = undefined;
-		let count = 0;
-		for (const key in value) {
-			if (key === "granted" || !isEnumerable.call(value, key)) continue;
-			if (count === 256) {
-				if (list !== undefined) this.#giveFields({ list, count });
-				return undefined;
-			}
-			list ??= [];
-			list[count++] = key;
-			list[count++] = value[key];
-		}
-		return { list: list ?? NO_ITEMS, count };
-	}
-
-	/** Puts the scratch list back, its pairs cleared: it keeps nothing of a plugin's value between reads. */
-	#giveFields({ list, count }: Fields): void {
-		if (list.length === 0) return;
-		(list as unknown[]).fill(undefined, 0, count);
-		this.#scratch = list as unknown[];
-	}
-
-	/** The last decision when it was an allow. */
-	#lastAllow(): DecidedAllow | undefined {
-		const decided = this.#decided;
-		return decided?.kind === "allowPlain" || decided?.kind === "allowText" ? decided : undefined;
-	}
-
-	/** A route's allowed value, passed on as it is: compared with the last one's copy, else as `#adoptAllow` does. */
-	#allowRoute(value: JsonValue): Allowed {
-		const last = this.#lastAllow();
-		if (last?.kind === "allowPlain" && samePlainJson(last.data, value) === "equal") return last.verdict;
-		const copy = copyPlainJson(value);
-		if (copy !== undefined && last?.kind !== "allowText") {
-			if (last !== undefined && samePlainJson(last.data, copy) === "equal") return last.verdict;
-			const verdict: Allowed = { kind: "allow", value, granted: NO_GRANTS };
-			this.#decided = { kind: "allowPlain", verdict, data: copy };
-			return verdict;
-		}
-		const key = canonicalText(value);
-		if (last !== undefined && key === keptText(last)) return last.verdict;
-		const verdict: Allowed = { kind: "allow", value, granted: NO_GRANTS };
-		this.#decided = { kind: "allowText", verdict, key };
-		return verdict;
-	}
-
-	/**
-	 * An object's allow that is not the last one's plain value: its `data` (own enumerable fields but `granted`, taken
-	 * before the walk was counted) and its `names` (sorted, without duplicates) compared with the last allow by Chord's
-	 * copies when both are plain JSON, else by canonical JSON's text, made now (it throws where it threw) and kept.
-	 * Equal, the last verdict; else a new one, its copy or text kept.
-	 */
-	#adoptAllow(
-		data: { readonly [field: string]: JsonValue },
-		names: readonly string[],
-		grants: readonly string[],
-		last: DecidedAllow | undefined,
-	): Allowed {
-		const copy = copyPlainJson(data);
-		let key: string | undefined;
-		if (copy !== undefined && last?.kind !== "allowText") {
-			if (
-				last !== undefined &&
-				sameList(namesOf(last.verdict.granted), names) &&
-				samePlainJson(last.data, copy) === "equal"
-			) {
-				return last.verdict;
-			}
-		} else {
-			key = canonicalText(normalOf(data, names));
-			if (last !== undefined && key === keptText(last)) return last.verdict;
-		}
+		countWalk(context);
+		const last = this.#decided?.kind === "allow" ? this.#decided : undefined;
+		const kept = last === undefined ? NO_ITEMS : namesOf(last.verdict.granted);
+		// Checked above: grants.
+		const names = namesOfListed(listed as readonly string[] | undefined, kept);
+		if (last !== undefined && names === kept && sameJson(last.data, value, "granted")) return last.verdict;
+		const { granted: _, ...data } = value;
 		const granted = names.length === 0 ? NO_GRANTS : grantedSet(grants, names);
-		// What the factory is handed: the data's copy of its own (`dataOf`), with the set.
-		defineField(data, "granted", granted);
-		const verdict: Allowed = { kind: "allow", value: data as AdmittedValue, granted };
-		this.#decided =
-			key === undefined ? { kind: "allowPlain", verdict, data: copy } : { kind: "allowText", verdict, key };
+		const verdict: Allowed = { kind: "allow", value: { ...data, granted } as AdmittedValue, granted };
+		this.#decided = { kind: "allow", verdict, data: copyJson(data) };
 		return verdict;
 	}
 
-	/**
-	 * A denial (its message checked, its walk counted): compared with the last denial of the same reason by the copy of
-	 * its message (plain JSON), else by the text of its reason and message as before, made now and kept.
-	 */
+	/** A route's allowed value, passed on as it is: compared with the last one's copy. */
+	#allowRoute(value: JsonValue): Allowed {
+		const last = this.#decided?.kind === "allow" ? this.#decided : undefined;
+		if (last !== undefined && sameJson(last.data, value)) return last.verdict;
+		const verdict: Allowed = { kind: "allow", value, granted: NO_GRANTS };
+		this.#decided = { kind: "allow", verdict, data: copyJson(value) };
+		return verdict;
+	}
+
+	/** A denial (its message checked, its walk counted): the last one when its reason and message are the same. */
 	#deny(reason: string, message: unknown): Denied {
-		const decided = this.#decided;
-		// Another reason is another decision.
-		const last =
-			(decided?.kind === "denyPlain" || decided?.kind === "denyText") && decided.reason === reason
-				? decided
-				: undefined;
-		if (last?.kind === "denyPlain" && sameMessage(last.message, message)) return last.verdict;
-		const copy = message === undefined ? undefined : copyPlainJson(message);
-		let key: string | undefined;
-		if ((message === undefined || copy !== undefined) && last?.kind !== "denyText") {
-			if (last !== undefined && sameMessage(last.message, copy)) return last.verdict;
-		} else {
-			// A structured key: a reason ending like a message's JSON is not that message.
-			key = denyText(reason, message);
-			const kept =
-				last === undefined ? undefined : last.kind === "denyText" ? last.key : denyText(reason, last.message);
-			if (last !== undefined && key === kept) return last.verdict;
-		}
+		const last = this.#decided?.kind === "deny" ? this.#decided : undefined;
+		if (last !== undefined && last.reason === reason && sameMessage(last.message, message)) return last.verdict;
 		// Checked by the caller: a message as data.
 		const details = message === undefined ? undefined : { message: message as MessageData };
 		const verdict: Denied = { kind: "deny", error: forbidden(reason, details) };
-		this.#decided =
-			key === undefined
-				? { kind: "denyPlain", verdict, reason, message: copy }
-				: { kind: "denyText", verdict, reason, key };
+		this.#decided = { kind: "deny", verdict, reason, message: copyJson(message) };
 		return verdict;
 	}
 
@@ -634,71 +517,68 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 	}
 }
 
-/**
- * The first name of `listed` that is no grant of its contract, as what breaks (slice 15 §1.2; plugin code, bundled
- * without type checks), naming the contract and the name; `undefined` when every one is. Iterated as before the
- * hot-path pass, by the list's own iterator; a plain list (`Array.prototype`'s iterator) by index, which reads the
- * same and allocates no iterator.
- */
-function refusedNames(
-	listed: readonly unknown[],
-	grants: readonly string[],
-	label: string,
-): Extract<Verdict, { readonly kind: "broken" }> | undefined {
-	if (plainIteration(listed)) {
-		for (let index = 0; index < listed.length; index++) {
-			const refused = refusedName(listed[index], grants, label);
-			if (refused !== undefined) return refused;
-		}
-		return undefined;
-	}
-	for (const name of listed) {
-		const refused = refusedName(name, grants, label);
-		if (refused !== undefined) return refused;
-	}
-	return undefined;
-}
-
-/** Whether `list` iterates as an index walk does: `Array.prototype`'s, with its iterator. */
-function plainIteration(list: readonly unknown[]): boolean {
-	return Object.getPrototypeOf(list) === Array.prototype && list[Symbol.iterator] === ARRAY_VALUES;
-}
-
-const ARRAY_VALUES = Array.prototype[Symbol.iterator];
-
-function refusedName(
-	name: unknown,
-	grants: readonly string[],
-	label: string,
-): Extract<Verdict, { readonly kind: "broken" }> | undefined {
-	if (typeof name === "string" && grants.includes(name)) return undefined;
-	return brokenRead(
-		`its admission granted ${JSON.stringify(name)}: no grantable member or flag of its contract`,
-		label,
-	);
-}
-
 function brokenRead(message: string, label: string): Extract<Verdict, { readonly kind: "broken" }> {
 	return { kind: "broken", error: asChordError(new Error(message), label) };
 }
 
 /**
- * Whether `listed` (checked: none, or a list of grants) names exactly `kept` (sorted, without duplicates): absent and
- * empty are no names, repeated names and their order do not count. A bit per kept name, no allocation; `odd` for a
- * list that does not iterate as an index walk or more than 31 kept names (the caller reads it as before then).
+ * The names of a checked `listed` sorted and without duplicates (`[...new Set(listed)].sort()`), or `kept` itself when
+ * those are its names: absent and empty are no names, repeated names and their order do not count. Against up to 60
+ * kept names a bit per name, no allocation for an equal list; a new short list is sorted by insertion (a sort's work
+ * list cost 0.8 KiB for two names).
  */
-function sameNames(listed: readonly unknown[] | undefined, kept: readonly string[]): PlainComparison {
-	if (listed === undefined) return kept.length === 0 ? "equal" : "different";
-	if (kept.length > 31 || !plainIteration(listed)) return "odd";
-	let seen = 0;
-	for (let index = 0; index < listed.length; index++) {
-		// `kept` is Chord's: no method of the plugin's list is called.
-		const at = kept.indexOf(listed[index] as string);
-		if (at < 0) return "different";
-		seen |= 1 << at;
+function namesOfListed(listed: readonly string[] | undefined, kept: readonly string[]): readonly string[] {
+	if (listed === undefined) return kept.length === 0 ? kept : NO_ITEMS;
+	if (kept.length > 2 * BITS || listed.length > SHORT_NAMES) {
+		const names = [...new Set(listed)].sort();
+		return sameList(names, kept) ? kept : names;
 	}
-	// 2 ** 31 - 1, not (1 << 31) - 1: a shift by 31 is negative.
-	return seen === 2 ** kept.length - 1 ? "equal" : "different";
+	// Two words of 30 bits: small integers in every tier of V8 (a 31st bit made 31 names five times slower than 30
+	// once the code left its optimized form).
+	let low = 0;
+	let high = 0;
+	for (let index = 0; index < listed.length; index++) {
+		const at = kept.indexOf(listed[index]!);
+		if (at >= BITS) high |= 1 << (at - BITS);
+		else if (at >= 0) low |= 1 << at;
+		else {
+			// Another name: the names before it are the kept ones seen so far.
+			const names = keptSeen(kept, low, high);
+			for (let rest = index; rest < listed.length; rest++) inserted(names, listed[rest]!);
+			return names;
+		}
+	}
+	const all =
+		kept.length <= BITS
+			? low === 2 ** kept.length - 1 && high === 0
+			: low === 2 ** BITS - 1 && high === 2 ** (kept.length - BITS) - 1;
+	return all ? kept : keptSeen(kept, low, high);
+}
+
+/** The bits of one word of seen names. */
+const BITS = 30;
+
+/** A list of names this long at most is sorted by insertion; a longer one by a set and a sort. */
+const SHORT_NAMES = 64;
+
+/** The kept names whose bits `low` and `high` have, in their (sorted) order. */
+function keptSeen(kept: readonly string[], low: number, high: number): string[] {
+	const names: string[] = [];
+	for (let at = 0; at < kept.length; at++) {
+		const seen = at < BITS ? low & (1 << at) : high & (1 << (at - BITS));
+		if (seen !== 0) names.push(kept[at]!);
+	}
+	return names;
+}
+
+/** Inserts `name` into the sorted `names` unless it is there (the order of a default sort: by UTF-16 code units). */
+function inserted(names: string[], name: string): void {
+	let at = names.length;
+	while (at > 0 && names[at - 1]! > name) at--;
+	if (at > 0 && names[at - 1] === name) return;
+	names.push(name);
+	for (let index = names.length - 1; index > at; index--) names[index] = names[index - 1]!;
+	names[at] = name;
 }
 
 /** Whether two of Chord's sorted name lists are the same. */
@@ -708,87 +588,27 @@ function sameList(a: readonly string[], b: readonly string[]): boolean {
 	return true;
 }
 
-/**
- * The data of an allowed value as before the hot-path pass (`{ granted, ...data } = value`, without its second read
- * of `granted`): its own enumerable fields but `granted`, symbols too, in their order.
- */
-function dataOf(value: { readonly [field: string]: JsonValue }): { readonly [field: string]: JsonValue } {
-	const data: { [field: string | symbol]: unknown } = {};
-	for (const key of Reflect.ownKeys(value)) {
-		if (key === "granted" || !isEnumerable.call(value, key)) continue;
-		defineField(data, key, (value as { readonly [field: string | symbol]: unknown })[key]);
-	}
-	return data as { readonly [field: string]: JsonValue };
-}
-
-/** The pairs of a read's top-level fields taken into a scratch list (`#takeFields`): `count` entries of `list`. */
-type Fields = { readonly list: readonly unknown[]; readonly count: number };
-
-/**
- * The data `dataOf` makes, from fields taken before the walk was counted (in `Object.keys` order, which is their
- * order among the own keys) and the value's own enumerable symbol-keyed ones after them.
- */
-function fieldsData(value: object, { list, count }: Fields): { readonly [field: string]: JsonValue } {
-	const data: { [field: string | symbol]: unknown } = {};
-	for (let index = 0; index < count; index += 2) defineField(data, list[index] as string, list[index + 1]);
-	for (const symbol of Object.getOwnPropertySymbols(value)) {
-		if (isEnumerable.call(value, symbol))
-			defineField(data, symbol, (value as { readonly [field: symbol]: unknown })[symbol]);
-	}
-	return data as { readonly [field: string]: JsonValue };
-}
-
-const isEnumerable = Object.prototype.propertyIsEnumerable;
-
-/** What canonical JSON was made of for an allow before the hot-path pass: the data, with `granted` when it grants. */
-function normalOf(data: { readonly [field: string]: unknown }, names: readonly string[]): JsonValue {
-	return (names.length === 0 ? data : { ...data, granted: names }) as JsonValue;
-}
-
-/** The text of the last allow: kept, or made from Chord's own plain copy (which runs no code of anyone's). */
-function keptText(last: DecidedAllow): string {
-	if (last.kind === "allowText") return last.key;
-	const { data, verdict } = last;
-	// A route's copy is its value (it grants nothing); an object's its data, with the names it granted.
-	const names = namesOf(verdict.granted);
-	return canonicalText(
-		names.length === 0 ? (data as JsonValue) : normalOf(data as { readonly [field: string]: unknown }, names),
-	);
-}
-
-/** A denial's text: its reason, and its message when it has one. */
-function denyText(reason: string, message: unknown): string {
-	// A message as data (checked), or Chord's plain copy of one.
-	return canonicalText(message === undefined ? [reason] : [reason, message as MessageData]);
-}
-
 /** Whether a denial's message is the kept one (Chord's copy): both none, or the same message as data. */
 function sameMessage(kept: unknown, message: unknown): boolean {
 	if (kept === undefined || message === undefined) return kept === message;
-	return samePlainJson(kept, message) === "equal";
+	return sameJson(kept, message);
 }
 
-/** One walk of a decision's value per read, as canonical JSON counted it, before anything can throw. */
+/** One walk of a decision's value per read, as canonical JSON counted it. */
 function countWalk(context: Context): void {
 	chordMetrics(context.telemetry.metrics).counter("chord.data.walks").add(1);
 }
 
 /**
- * The last allow a decision read: its verdict and what the next read is compared with, all of it Chord's own, made when
- * the decision changed (never a reference into the plugin's value, which may change or go): its names (the verdict's
- * set) and a copy of its plain JSON (an object's data, a route's value), or the canonical JSON text made at that read.
+ * What a decision read last, all of it Chord's own, made when the decision changed (never the plugin's object, which
+ * it may change in place or let go): its verdict and a copy of what the next read is compared with (an object's data
+ * without `granted`, whose names are the verdict's set; a route's value; a denial's reason and message). Once
+ * released, only the verdict.
  */
-type DecidedAllow =
-	| { readonly kind: "allowPlain"; readonly verdict: Allowed; readonly data: unknown }
-	| { readonly kind: "allowText"; readonly verdict: Allowed; readonly key: string };
-
-/** The last denial a decision read: its reason, a copy of its plain message (or none) or its text, and its verdict. */
-type DecidedDeny =
-	| { readonly kind: "denyPlain"; readonly verdict: Denied; readonly reason: string; readonly message: unknown }
-	| { readonly kind: "denyText"; readonly verdict: Denied; readonly reason: string; readonly key: string };
-
-/** What a decision read last: an allow or a denial; once released, only the verdict. */
-type Decided = DecidedAllow | DecidedDeny | { readonly kind: "released"; readonly verdict: Allowed | Denied };
+type Decided =
+	| { readonly kind: "allow"; readonly verdict: Allowed; readonly data: unknown }
+	| { readonly kind: "deny"; readonly verdict: Denied; readonly reason: string; readonly message: unknown }
+	| { readonly kind: "released"; readonly verdict: Allowed | Denied };
 
 /**
  * The set of `names` (sorted, without duplicates, not empty, of the contract whose grantable names are `grants`): one

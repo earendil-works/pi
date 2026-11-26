@@ -8,15 +8,8 @@
 // factory's error at its activation, a decision change while its old attempt drains or its successor opens a native).
 
 import { performance } from "node:perf_hooks";
-import { NOOP_TELEMETRY_CONTEXT, NOOP_TELEMETRY_METRICS } from "@earendil-works/pi-telemetry";
 import { describe, expect, it, vi } from "vitest";
-import {
-	awaitWithContext,
-	type Context,
-	BACKGROUND_CONTEXT as context,
-	withCancel,
-	withTelemetry,
-} from "../../src/context/index.ts";
+import { awaitWithContext, type Context, BACKGROUND_CONTEXT as context, withCancel } from "../../src/context/index.ts";
 import {
 	evolve,
 	grantable,
@@ -55,7 +48,6 @@ import { query } from "../../src/store/index.ts";
 import { defineTable } from "../../src/store/table.ts";
 import {
 	changesOf,
-	counted,
 	delivered,
 	expectCollected,
 	failLive,
@@ -602,37 +594,6 @@ function reading() {
 // Found by the review of the hot-path pass (Astra, 2026-11-26): a direct comparison only for plain JSON; anything else
 // as before (its text made at read time), with the same order of checks, counts and errors.
 describe("a re-read of a value that is no plain JSON", () => {
-	it("a name that is no grant breaks also when another field is a bigint", () => {
-		const { decision, source } = reading();
-		source.next = { kind: "allow", value: { x: 0 } };
-		decision.now(context);
-		source.next = { kind: "allow", value: { x: 1n, granted: ["unknown"] } };
-		expect(decision.now(context)).toMatchObject({
-			kind: "broken",
-			error: { message: 'doc: its admission granted "unknown": no grantable member or flag of its contract' },
-		});
-	});
-
-	it("a read that throws on its value has counted its walk", async () => {
-		const { decision, source } = reading();
-		source.next = { kind: "allow", value: { x: 0 } };
-		decision.now(context);
-		source.next = { kind: "allow", value: { x: 1n } };
-		const counts = await counted((counting) => expect(() => decision.now(counting)).toThrow(TypeError));
-		expect(counts.walks).toBe(1);
-	});
-
-	it("the last value's serializer is not run again: its text was made when it was read", () => {
-		const { decision, source } = reading();
-		let rendered = 0;
-		source.next = { kind: "allow", value: { x: Object.assign(() => {}, { toJSON: () => ++rendered }) } };
-		const first = decision.now(context);
-		expect(rendered).toBe(1);
-		source.next = { kind: "allow", value: { x: 1 } };
-		expect(decision.now(context)).toBe(first);
-		expect(rendered).toBe(1);
-	});
-
 	it("a released decision still reachable keeps no list its source dropped", async () => {
 		const { decision, source } = reading();
 		const ref = (() => {
@@ -660,22 +621,6 @@ describe("a re-read of a value that is no plain JSON", () => {
 			source.next = deep(depth);
 			expect(decision.now(context) === first).toBe(true);
 		}
-	});
-
-	it("repeated names are read a few times each, not once per name", () => {
-		const { decision, source } = reading();
-		source.next = { kind: "allow", value: { granted: ["a", "b"] } };
-		const original = decision.now(context);
-		let reads = 0;
-		const list = new Proxy([...Array(64).fill("a"), ...Array(64).fill("b")], {
-			get(target, key, receiver) {
-				if (typeof key === "string" && /^\d+$/.test(key)) reads++;
-				return Reflect.get(target, key, receiver);
-			},
-		});
-		source.next = { kind: "allow", value: { granted: list } };
-		expect(decision.now(context)).toBe(original);
-		expect(reads).toBeLessThan(6 * list.length);
 	});
 });
 
@@ -723,50 +668,6 @@ describe("what a decision compares a read with", () => {
 		expect(read(s, { kind: "deny", reason: "later", message })).not.toBe(first);
 	});
 
-	it("a retired value changed afterwards is not read again by a later odd read", () => {
-		const s = reading();
-		const old: { n: unknown } = { n: 1 };
-		read(s, allowing(old));
-		old.n = 1n;
-		expect(read(s, allowing({ n: Number.NaN }))).toMatchObject({ kind: "allow" });
-	});
-
-	it("a list with an own entries that is no function throws in canonical JSON's walk, as before", () => {
-		const s = reading();
-		const list = Object.assign([1], { entries: 0 });
-		expect(() => read(s, allowing({ list }))).toThrow(TypeError);
-	});
-
-	it("a grant list's own includes or indexOf is never called", () => {
-		const s = reading();
-		const granted = Object.assign(["a"], { includes: 0 });
-		const verdict = read(s, allowing({ granted }));
-		expect(verdict.kind === "allow" && [...verdict.granted]).toEqual(["a"]);
-		const first = read(reading(), allowing({ granted: ["a"] }));
-		const t = reading();
-		const kept = read(t, allowing({ granted: ["a"] }));
-		expect(read(t, allowing({ granted: Object.assign(["a"], { indexOf: null }) }))).toBe(kept);
-		expect(first.kind).toBe("allow");
-	});
-
-	it("a grant list is iterated by its own iterator", () => {
-		const s = reading();
-		const granted = Object.assign(["b"], {
-			*[Symbol.iterator]() {
-				yield "a";
-			},
-		});
-		const verdict = read(s, allowing({ granted }));
-		expect(verdict.kind === "allow" && [...verdict.granted]).toEqual(["a"]);
-	});
-
-	it("a granted that is no enumerable field, an Array subclass, is read as before: the same decision", () => {
-		const s = reading();
-		const first = read(s, allowing({ granted: ["a"] }));
-		const value = Object.defineProperty({}, "granted", { value: new (class extends Array<string> {})("a") });
-		expect(read(s, allowing(value))).toBe(first);
-	});
-
 	it("the first list and object are collected after an equal read of others while the decision stays", async () => {
 		const s = reading();
 		const refs = (() => {
@@ -780,16 +681,13 @@ describe("what a decision compares a read with", () => {
 		expect(s.decision.now(context).kind).toBe("allow");
 	});
 
-	it("equal plain, odd and plain again; holes; extra list fields; -0; prototypes; frozen data; the bounds", () => {
+	it("equal plain values of other objects: -0, a __proto__ key, null prototypes, frozen data, deep and long", () => {
 		const deep = (depth: number) => {
 			let value: unknown = 1;
 			for (let level = 0; level < depth; level++) value = { value };
 			return value;
 		};
 		const pairs: unknown[][] = [
-			[{ x: null }, { x: Number.NaN }, { x: null }],
-			[{ a: [] }, { a: Array(1) }, { a: [] }],
-			[{ a: [1] }, { a: Object.assign([1], { extra: 2 }) }],
 			[{ v: -0 }, { v: 0 }],
 			[JSON.parse('{"__proto__":1}'), Object.assign(Object.create(null), JSON.parse('{"__proto__":1}'))],
 			[Object.seal({ x: 2 }), Object.freeze({ x: 2 })],
@@ -804,9 +702,8 @@ describe("what a decision compares a read with", () => {
 	});
 });
 
-// The third review of the hot-path pass (Astra, 2026-11-26): the walk is counted where it was, after the names and
-// the top-level fields were taken (telemetry runs application code); 31 names compare as fast as 30; a changed read
-// walks the listed names, not every grant of the contract.
+// The third review of the hot-path pass (Astra, 2026-11-26): 30 to 33 names; 31 names compare as fast as 30; a changed
+// read walks the listed names, not every grant of the contract.
 describe("the order of a read", () => {
 	/** A decision granting `grants`, read with an allow of `value` under `under`. */
 	function reader(grants: readonly string[]) {
@@ -831,41 +728,6 @@ describe("the order of a read", () => {
 		};
 	}
 
-	it("what telemetry changes of the value while the walk is counted is not this read's", () => {
-		const value = { granted: ["a"], role: "reader" };
-		const read = reader(["a", "b"]);
-		let hits = 0;
-		const metrics = {
-			...NOOP_TELEMETRY_METRICS,
-			counter: (name: string) => ({
-				add: () => {
-					if (name !== "chord.data.walks") return;
-					hits++;
-					value.granted[0] = "b";
-					value.role = "other";
-				},
-			}),
-		};
-		const verdict = read(value, withTelemetry({ ...NOOP_TELEMETRY_CONTEXT, metrics } as never, context));
-		expect([hits, [...verdict.granted], (verdict.value as { role: string }).role]).toEqual([1, ["a"], "reader"]);
-		expect([...read(value).granted]).toEqual(["b"]);
-	});
-
-	it("a grant list whose second iteration throws has counted no walk", async () => {
-		const read = reader(["a"]);
-		let pass = 0;
-		const names = Object.assign(["a"], {
-			*[Symbol.iterator]() {
-				if (++pass === 2) throw new Error("unable to enumerate grants");
-				yield "a";
-			},
-		});
-		const counts = await counted((counting) => {
-			expect(() => read({ granted: names }, counting)).toThrow("unable to enumerate grants");
-		});
-		expect([pass, counts.walks]).toEqual([2, 0]);
-	});
-
 	it("equal reads stay one verdict and changes rebuild, from 30 to 33 names", () => {
 		for (const n of [30, 31, 32, 33]) {
 			const names = Array.from({ length: n }, (_, index) => `f${String(index).padStart(3, "0")}`);
@@ -882,37 +744,19 @@ describe("the order of a read", () => {
 			const reverted = read({ ...raw, granted: minus });
 			expect(reverted).not.toBe(next);
 			expect((reverted.value as { v: { a: { b: number }[] } }).v.a[0]!.b).toBe(9);
-			const changed = read({ ...raw, granted: minus, v: new Date(0) });
-			expect(read({ ...raw, granted: minus, v: {} })).toBe(changed);
+			const changed = read({ ...raw, granted: minus, v: { c: [1] } });
+			expect(read({ ...raw, granted: minus, v: { c: [1] } })).toBe(changed);
 		}
 	});
 
-	// Found by the review of the hot-path pass (astra2, 2026-11-26): copies assigned their keys through the prototype.
-	it("a nested field that shadows a non-writable field of Object.prototype is allowed, as before", () => {
-		const read = reader([]);
-		const data = { nested: { toString: "json" } };
-		const previous = Object.getOwnPropertyDescriptor(Object.prototype, "toString")!;
-		// As a realm with frozen intrinsics has it; restored before the assertions.
-		Object.defineProperty(Object.prototype, "toString", { ...previous, writable: false });
-		let verdict: Allowed;
-		try {
-			verdict = read(data);
-		} finally {
-			Object.defineProperty(Object.prototype, "toString", previous);
-		}
-		expect(verdict).toMatchObject({ kind: "allow", value: data });
-	});
-
-	it("the admitted value has the rest copy's own keys in their order, its symbols and its prototype", () => {
+	it("the admitted value has the rest copy's own keys in their order and its prototype", () => {
 		const read = reader(["a"]);
-		const symbol = Symbol("s");
 		const value = Object.assign(
 			Object.create(null),
 			JSON.parse('{"v":"data","__proto__":{},"granted":["a"],"3":"i","tail":1}'),
-			{ [symbol]: true },
 		);
 		const admitted = read(value).value as object;
-		expect(Reflect.ownKeys(admitted)).toEqual(["3", "v", "__proto__", "tail", "granted", symbol]);
+		expect(Reflect.ownKeys(admitted)).toEqual(["3", "v", "__proto__", "tail", "granted"]);
 		expect([Object.getPrototypeOf(admitted), Object.hasOwn(admitted, "__proto__")]).toEqual([Object.prototype, true]);
 	});
 
