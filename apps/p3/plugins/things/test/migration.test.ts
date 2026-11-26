@@ -312,6 +312,32 @@ describe("writing stored ticks back", () => {
 		assert.deepEqual(rowsOf(thing, ada.party), ["!read/2", "paint/2", "write/2"]);
 	});
 
+	it("a withheld old tick written back over a row of it at the version now: withheld, as it reads", async (t) => {
+		t.mock.method(console, "error", () => {});
+		const ada = await personIn("Ada");
+		const thing = await store.create({ kind: Board.name, name: "b", workspace: pi, by: BY }, context);
+		await write(thing, ada.party, ["draw"], false);
+		// Version 2 with a migration that throws for Draw (a plugin bug): her withheld row is refused, kept on disk.
+		const throwing = (ticks: readonly string[]) => {
+			if (ticks.includes("draw")) throw new Error("cannot migrate draw");
+			return rename(ticks);
+		};
+		const gives = await w.host.get(Gives, { workspace: pi, caller: `person:${ada.id}` }, context);
+		await w.reload(BOARD_PLUGIN, context, facetOf(next(2, throwing)));
+		await until(gives.answers, (answers) => answers[thing]?.ticksVersion === 2, within("version 2", context));
+		// The same source gives her Paint at version 2 beside it.
+		await write(thing, ada.party, ["paint"], true);
+		assert.deepEqual(rowsOf(thing, ada.party), ["!draw/1", "paint/2"]);
+		// The plugin's fix at the same ticks version: her old row reads as a withheld Paint, which wins.
+		await w.reload(BOARD_PLUGIN, context, facetOf(next(2, rename)));
+		await until(gives.answers, (answers) => answers[thing]?.ticks.join() === "read", within("withheld", context));
+		// Her next write writes the old row back: Paint stays withheld.
+		await write(thing, ada.party, ["read"], true);
+		assert.deepEqual(rowsOf(thing, ada.party), ["!paint/2", "read/2"]);
+		assert.deepEqual(gives.answers.value[thing]?.ticks, ["read"]);
+		gives.release();
+	});
+
 	it("a party let in by `OPEN` only: its write-back calls no migration and makes no tick", async () => {
 		const ada = await personIn("Ada");
 		const thing = await store.create({ kind: Board.name, name: "b", workspace: pi, by: BY }, context);

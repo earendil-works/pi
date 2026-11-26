@@ -2,10 +2,13 @@
 // entry imports lazily out of the entry. The whole build into `dist/`, installed, is tested by `test/release/`.
 
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { build } from "esbuild";
 import { bundleOptions, checkExternals, checkLean, checkPlacement, checkVersions } from "../scripts/build-release.ts";
 
@@ -21,7 +24,7 @@ describe("the build's guards", () => {
 	});
 
 	it("refuse an import left to node_modules that the package does not ship, naming it", () => {
-		checkExternals(importing("node:fs", "fs", "esbuild", "bufferutil", "utf-8-validate"));
+		checkExternals(importing("node:fs", "fs", "esbuild", "bufferutil", "utf-8-validate", "kerberos"));
 		assert.throws(
 			() => checkExternals(importing("node:fs", "left-pad", "ws", "left-pad")),
 			/the bundle left unexpected external imports: left-pad, ws$/,
@@ -61,6 +64,37 @@ describe("the build's guards", () => {
 
 	// The owner, 2026-11-16 (the worker-only entry with splitting kept): one build per process, and inside it what an
 	// entry imports lazily stays a chunk of its own, not loaded at the process's start.
+	// Astra, review of the provider logins (round 1): pi-ai imports its OAuth flows and Bedrock through a variable
+	// specifier unless the API registers them, and a bundle cannot follow it: the first sign-in or refresh failed with
+	// ERR_MODULE_NOT_FOUND.
+	it("bundle pi-ai's providers so their OAuth flows and Bedrock's SDK load on first use", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "p3-providers-"));
+		try {
+			const api = (module: string) => fileURLToPath(new URL(`../src/api/v1/${module}.ts`, import.meta.url));
+			const entry = [
+				`import { builtinProviders } from ${JSON.stringify(api("server"))};`,
+				`import { loadProvider } from ${JSON.stringify(api("worker"))};`,
+				'const oauth = builtinProviders().find(({ id }) => id === "anthropic").auth.oauth;',
+				'const auth = await oauth.toAuth({ type: "oauth", access: "a-token", refresh: "r", expires: 0 });',
+				'const bedrock = await loadProvider("amazon-bedrock");',
+				// Bedrock's SDK calls onPayload before it sends anything: offline, its request code ran.
+				"const message = { role: 'user', content: 'x', timestamp: 0 };",
+				"const sent = await bedrock.streamSimple(bedrock.getModels()[0], { messages: [message] },",
+				"\t{ apiKey: 'synthetic', onPayload: () => { throw new Error('offline: nothing sent'); } }).result();",
+				"console.log(JSON.stringify({ auth, bedrock: sent.errorMessage }));",
+			];
+			await writeFile(join(dir, "entry.ts"), entry.join("\n"));
+			const dist = join(dir, "dist");
+			await build({ ...bundleOptions(dist), entryPoints: { entry: join(dir, "entry.ts") } });
+			const { stdout } = await promisify(execFile)(process.execPath, [join(dist, "entry.js")]);
+			const shown = JSON.parse(stdout.trim().split("\n").at(-1)!) as { auth: object; bedrock: string };
+			assert.match(shown.bedrock, /offline: nothing sent/);
+			assert.ok(JSON.stringify(shown.auth).includes("a-token"), stdout);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
 	it("keep what an entry imports lazily in a chunk of its own, out of the entry", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "p3-split-"));
 		try {
@@ -115,17 +149,32 @@ describe("the build's guards", () => {
 			);
 		}
 		assert.throws(() => checkLean(bundle([], []), "supervisor.js"), /no output supervisor\.js/);
-		// A chunk the worker loads lazily counts as much as its entry.
-		const lazily = bundle([], []);
-		const chunk = {
-			bytes: 1,
-			exports: [],
-			imports: [],
-			inputs: { "../../node_modules/ws/lib/websocket.js": { bytesInOutput: 1 } },
-		};
+		// A chunk the worker loads lazily may hold Node's HTTP and `ws` (a provider SDK's, loaded on its first request);
+		// imported statically it counts as much as its entry; the server's own code counts in any chunk.
+		const withChunk = (kind: "import-statement" | "dynamic-import", inputs: string[]) => ({
+			outputs: {
+				"dist/worker.js": {
+					bytes: 1,
+					exports: [],
+					imports: [{ path: "dist/chunks/sdk-X.js", kind }],
+					inputs: {},
+				},
+				"dist/chunks/sdk-X.js": {
+					bytes: 1,
+					exports: [],
+					imports: [{ path: "node:https", kind: "import-statement" as const, external: true }],
+					inputs: Object.fromEntries(inputs.map((input) => [input, { bytesInOutput: 1 }])),
+				},
+			},
+		});
+		checkLean(withChunk("dynamic-import", ["../../node_modules/ws/lib/websocket.js"]), "worker.js");
 		assert.throws(
-			() => checkLean({ outputs: { ...lazily.outputs, "dist/chunks/lazy-X.js": chunk } }, "worker.js"),
-			/worker\.js holds the server's .*ws\/lib\/websocket\.js/,
+			() => checkLean(withChunk("import-statement", ["../../node_modules/ws/lib/websocket.js"]), "worker.js"),
+			/worker\.js holds the server's .*ws\/lib\/websocket\.js, node:https/,
+		);
+		assert.throws(
+			() => checkLean(withChunk("dynamic-import", [`${chord}/node/http/http.ts`]), "worker.js"),
+			/worker\.js holds the server's .*http\/http\.ts/,
 		);
 	});
 

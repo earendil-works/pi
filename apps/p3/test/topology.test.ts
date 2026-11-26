@@ -230,8 +230,9 @@ describe("counted work", () => {
 		await owner.get(SessionWorker, { session: a }, context);
 		const before = [t.count("chord.query.runs"), t.count("chord.query.probes")];
 		await sessions.rename({ session: a, title: "A2" }, context);
-		// The list's page and session A's two reads (its worker's row and its route's); B's run not, and ask nothing.
-		assert.deepEqual([t.count("chord.query.runs") - before[0]!, t.count("chord.query.probes") - before[1]!], [3, 0]);
+		// The list's page and session A's row, which its worker and its route read as one shared read (Chord shares
+		// identical live reads); B's run not, and ask nothing.
+		assert.deepEqual([t.count("chord.query.runs") - before[0]!, t.count("chord.query.probes") - before[1]!], [2, 0]);
 		assert.equal(workerB.session.value?.title, "B");
 	});
 
@@ -243,16 +244,16 @@ describe("counted work", () => {
 		const probe = await owner.get(Probe, { session: a }, context);
 		const before = [t.count("chord.query.runs"), t.count("chord.query.probes")];
 		await probe.report({ state: "working" }, context);
-		// As a rename: the list's page and session A's two reads (its worker's row and its route's); B's not.
-		assert.deepEqual([t.count("chord.query.runs") - before[0]!, t.count("chord.query.probes") - before[1]!], [3, 0]);
+		// As a rename: the list's page and session A's shared row read; B's not.
+		assert.deepEqual([t.count("chord.query.runs") - before[0]!, t.count("chord.query.probes") - before[1]!], [2, 0]);
 		assert.equal(list.list.value.rows.find(({ id }) => id === a)?.state, "working");
 	});
 
 	// The route's admission and the worker's `admitSession` share one standing (the owner's person's: the session's row,
-	// the person's row, their groups and the session's members); the worker's facts read what the session has (its
-	// row, its links, its members, the followed person's row and groups, and their things "in all my sessions") and
-	// its things' default and the agent's options.
-	it("a hold of a session's worker costs twelve reads: the owner's standing and its worker's facts; a second hold none", async () => {
+	// the person's row, their groups and the session's members); the worker's facts read only the session's row now (no
+	// things feed, ERNDL-704), which is the standing's same live read, shared (Chord shares identical live reads,
+	// ERNDL-1176): five runs.
+	it("a hold of a session's worker costs five reads: the owner's standing and its worker's row; a second hold none", async () => {
 		const { t, owner, id } = await withSession();
 		await owner.get(SessionsList, { app: "coding", set: "active", view: "v" }, context);
 		const counted = () => [t.count("chord.query.runs"), t.count("chord.query.probes")];
@@ -263,7 +264,7 @@ describe("counted work", () => {
 		const after = counted();
 		assert.deepEqual(
 			[second[0]! - first[0]!, second[1]! - first[1]!, after[0]! - second[0]!, after[1]! - second[1]!],
-			[12, 0, 0, 0],
+			[5, 0, 0, 0],
 		);
 	});
 });

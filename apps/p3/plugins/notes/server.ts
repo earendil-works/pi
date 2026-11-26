@@ -1,96 +1,135 @@
-// The notes plugin on the server: the notebooks' store (`store.ts`), and the kind (`serveThing`): content any writer
-// of a session or its agent makes there, its notes cleared with its thing (`delete`), and `Notes`, one notebook of a
-// session for whom `admitThing` admits: an editor (write access and options that say `edit`) or a reader. A notebook
-// is a thing: its notes are keyed by the thing's id, its name is the thing's. A note's author is who `Me` says the
-// caller is, asked as the caller at each write; authors' names are read by id, live, never copied into the notes.
+// The notes plugin on the server: the notebooks' store (`store.ts`) and the kind (`serveThing`). The things plugin
+// makes, links, admits and deletes notebooks; this file says what a notebook is for one caller: its name, its notes
+// with their authors' names, in its order (its one setting, `configure`), the pages of them the caller loaded (one
+// Chord list per caller), a page read now, and Write's members. Its notes go when the thing goes (`delete`).
 
-import { type Ctx, defineFacet, Me, type P3Principal, type Self, type Watchable } from "@earendil-works/p3/v1";
-import { PeopleStore, SessionsStore, serveThing } from "@earendil-works/p3/v1/server";
-import { type Author, NOTES_EDITS, type Note, Notes, NotesKind } from "./contract.ts";
-import { NotesStore, serveStore } from "./store.ts";
+import {
+	type Context,
+	defineFacet,
+	invalid,
+	type P3Principal,
+	type Reference,
+	type Self,
+	type Watchable,
+} from "@earendil-works/p3/v1";
+import { ThingsStore } from "../things/contract.server.ts";
+import { serveThing } from "../things/serve.ts";
+import { type Note, NotesKind, type NotesOrder, type NotesPage, type NotesSettings } from "./kind.ts";
+import { DEFAULT_SETTINGS, NotesStore, type StoredNote, serveStore } from "./store.ts";
 
 /** How many notes a page of a notebook holds. */
 const PAGE = 50;
-
-/**
- * How many authors' names a notebook's view reads at most: the persons among the loaded notes' authors, read whole;
- * a view that loaded notes of more fails its list (closed and visible, never a part of the names).
- */
-const READ_WHOLE = 1000;
-
-/** What a notebook whose thing has no name shows: its kind's title. */
-const TITLE = "Notes";
 
 export default defineFacet((host) => {
 	serveStore(host);
 
 	serveThing(host, NotesKind, {
-		title: TITLE,
-		creation: "content",
-		// A notebook starts empty; its notes go with it.
+		// One notebook for one caller. The things plugin admitted them and decides which members they get: `add`, `edit`
+		// and `remove` only with Write. Every caller reads: the name, the pages it loaded, and pages read now.
+		implement: ({ thing }, { caller }, self) => {
+			const store = self.get(NotesStore, {});
+			const things = self.get(ThingsStore, {});
+			const named = self.liveQuery(things.things.one, { thing }, { first: 1 });
+			const set = self.liveQuery(store.settings.of, { notebook: thing }, { first: 1 });
+			const setting = self.derive([set], ([{ rows }]): NotesOrder => (rows[0] ?? DEFAULT_SETTINGS).order);
+			// A new order is a new list: it starts again at its first page. Until it has switched, it shows its rows
+			// in the order before.
+			const args = self.derive([setting], ([by]) => ({ notebook: thing, order: by }));
+			const list = self.list("notes", [[store.notes.of, args]], { first: PAGE });
+			return {
+				name: self.derive([named], ([{ rows }]) => rows[0]?.name ?? ""),
+				order: self.derive([list.value, setting], ([{ rows }, by]) => shownOrder(rows, by)),
+				list: withNames(list.value, things, self),
+				more: (ctx: Context) => list.more(ctx),
+				page: ({ after }, ctx) => pageOf({ notebook: thing, order: setting.value }, after, store, things, ctx),
+				add: ({ text }, ctx) => store.add({ notebook: thing, text, author: caller }, ctx),
+				edit: ({ id, text }, ctx) => store.edit({ notebook: thing, id, text, author: caller }, ctx),
+				remove: ({ id }, ctx) => store.remove({ notebook: thing, id }, ctx),
+			};
+		},
+		// A new notebook starts empty, with `DEFAULT_SETTINGS`: nothing to create. Its settings are set where it is
+		// linked; the things plugin checked each value against its state member's schema (`order`: `NotesOrder`).
+		configure: async (thing, settings, ctx) => {
+			const { order } = settings as Partial<NotesSettings>;
+			await (await ctx.get(NotesStore, {})).configure(
+				{ notebook: thing, ...(order === undefined ? {} : { order }) },
+				ctx,
+			);
+		},
+		// Its notes and settings go with it.
 		delete: async (thing, ctx) => {
 			await (await ctx.get(NotesStore, {})).clear({ notebook: thing }, ctx);
-		},
-		object: {
-			contract: Notes,
-			// An editor writes in the session and its options say `edit`.
-			grants: ({ access, options }) => (access === "write" && options.edit ? NOTES_EDITS : []),
-			factory: ({ thing }, _admitted, self) => {
-				const notebook = thing;
-				const store = self.get(NotesStore, {});
-				const named = self.liveQuery(self.get(SessionsStore, {}).things.one, { id: thing }, { first: 1 });
-				const list = self.list("notes", [[store.notes.of, { notebook }]], { first: PAGE });
-				return {
-					name: self.derive([named], ([{ rows }]) => rows[0]?.name || TITLE),
-					list: shown(list.value, self),
-					more: (ctx: Ctx<P3Principal>) => list.more(ctx),
-					add: async ({ text }, ctx) => store.add({ notebook, text, author: await authorKey(ctx) }, ctx),
-					edit: async ({ id, text }, ctx) => store.edit({ notebook, id, text, author: await authorKey(ctx) }, ctx),
-					remove: ({ id }, ctx) => store.remove({ notebook, id }, ctx),
-				};
-			},
 		},
 	});
 });
 
-/** The caller's key as an author, as `Me` answers it for them. */
-async function authorKey(ctx: Ctx<P3Principal>): Promise<string> {
-	const me = (await ctx.get(Me, {})).me.value;
-	switch (me.kind) {
-		case "person":
-			return `person:${me.id}`;
-		case "agent":
-			return "agent";
-	}
+/**
+ * The order `rows` are in: told by their first two (`at` is unique in a notebook); fewer look the same in both orders,
+ * so they are in `setting`'s.
+ */
+function shownOrder(rows: readonly StoredNote[], setting: NotesOrder): NotesOrder {
+	const [first, second] = rows;
+	if (first === undefined || second === undefined) return setting;
+	return first.at > second.at ? "newest" : "oldest";
 }
 
-/** A note as the store keeps it. */
-type StoredNote = { readonly id: string; readonly text: string; readonly at: number; readonly author: string };
+/**
+ * A page of a notebook's notes in an order, from the start or `after`, with their authors' names, read now. A page's
+ * `next` names its order (`<order>:<cursor>`): an `after` of another order is refused with what to do.
+ */
+async function pageOf(
+	of: { readonly notebook: string; readonly order: NotesOrder },
+	after: string | undefined,
+	store: Reference<typeof NotesStore>,
+	things: Reference<typeof ThingsStore>,
+	ctx: Context,
+): Promise<{ order: NotesOrder; rows: Note[]; next?: string }> {
+	const prefix = `${of.order}:`;
+	// `after` is the caller's (an agent's): a cursor of another order, or none of ours, is refused.
+	if (after !== undefined && !after.startsWith(prefix)) {
+		throw invalid("args", "notes: the notebook's order changed; read again from the start (without after)");
+	}
+	const cursor = after?.slice(prefix.length);
+	const found = await store.notes.of.page(of, PAGE, ctx, cursor === undefined ? {} : { after: cursor });
+	const persons = authors(found.items);
+	// No person among the authors: no names to read.
+	const names = persons.length === 0 ? [] : (await things.persons.ofIds.page({ persons }, persons.length, ctx)).items;
+	const next = found.next === undefined ? {} : { next: `${prefix}${found.next}` };
+	return { order: of.order, rows: withAuthors(found.items, names), ...next };
+}
 
-/** An author key's prefix for a person. */
-const PERSON = "person:";
+/** The persons among `notes`' authors, each once, sorted: the same authors are the same arguments. */
+function authors(notes: readonly StoredNote[]): string[] {
+	return [...new Set(notes.flatMap(({ author }) => (author.kind === "person" ? [author.person] : [])))].sort();
+}
 
-/** A notebook's loaded notes with their authors, persons by their names now (read by id, following the notes). */
-function shown(
+/**
+ * How many names the read of a notebook's authors may hold: every one, as its arguments (the distinct authors of the
+ * caller's loaded notes, each read by key) bound it. They are the parameters of one statement: past SQLite's limit of
+ * 32,766 distinct authors among the loaded notes the read fails, visibly.
+ */
+const EVERY = Number.MAX_SAFE_INTEGER;
+
+/** A caller's loaded notes with their authors, persons by their names now (read by id, following the notes). */
+function withNames(
 	list: Watchable<{ rows: readonly StoredNote[]; moreAfter: boolean }>,
+	things: Reference<typeof ThingsStore>,
 	self: Self<P3Principal>,
-): Watchable<{ rows: Note[]; moreAfter: boolean }> {
-	const ids = self.derive([list], ([{ rows }]) => ({
-		ids: [...new Set(rows.flatMap(({ author }) => (author.startsWith(PERSON) ? [author.slice(PERSON.length)] : [])))],
+): Watchable<NotesPage> {
+	const ids = self.derive([list], ([{ rows }]) => ({ persons: authors(rows) }));
+	const persons = self.liveQuery(things.persons.ofIds, ids, { first: EVERY });
+	return self.derive([list, persons], ([{ rows, moreAfter }, found]) => ({
+		rows: withAuthors(rows, found.rows),
+		moreAfter,
 	}));
-	const persons = self.liveQuery(self.get(PeopleStore, {}).persons.ofIds, ids, { first: READ_WHOLE });
-	return self.derive([list, persons], ([{ rows, moreAfter }, found]) => {
-		if (found.more) throw new Error(`notes: the loaded notes have more than ${READ_WHOLE} authors`);
-		const names = new Map(found.rows.map(({ id, name }) => [id, name]));
-		return { rows: rows.map((note) => ({ ...note, author: authorOf(note.author, names) })), moreAfter };
-	});
 }
 
-/** The author of key `key` (written by `authorKey`); a person who left shows their id. */
-function authorOf(key: string, names: ReadonlyMap<string, string>): Author {
-	if (key.startsWith(PERSON)) {
-		const id = key.slice(PERSON.length);
-		return { kind: "person", id, name: names.get(id) ?? id };
-	}
-	return { kind: "agent" };
+/** `notes` with their authors named by `persons`; a person the things store does not have shows their id. */
+function withAuthors(notes: readonly StoredNote[], persons: readonly { person: string; name: string }[]): Note[] {
+	const names = new Map(persons.map(({ person, name }) => [person, name]));
+	return notes.map(({ author, ...note }) =>
+		author.kind === "person"
+			? { ...note, author: { ...author, name: names.get(author.person) ?? author.person } }
+			: { ...note, author },
+	);
 }

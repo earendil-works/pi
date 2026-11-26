@@ -269,7 +269,13 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			const result = await index!.commit((touched) => self.tx((tx) => fn(tx, { ...touched, retired }), ctx));
 			for (const { thing, kind } of retired) {
 				lifecycle.retire(thing, kind);
-				if (hooks.value.get(kind)?.value.one !== undefined && live !== undefined) void seedKind(kind, live);
+				if (hooks.value.get(kind)?.value.one !== undefined && live !== undefined) {
+					// Made again under the store's own context; a failure is reported (the next start seeds it).
+					const own = live;
+					seedKind(kind, own).catch((error) =>
+						reportError(`things: the seeded thing of ${kind}, made again`, error, own),
+					);
+				}
 			}
 			return result;
 		};
@@ -1138,8 +1144,9 @@ class Writes {
 	 * together (`ticksNow`; a group of reserved ticks only, `OPEN`, never calls the migration), reserved ticks stay as
 	 * they are. Every converted row goes first, then the outputs are put at the version now; where a given and a
 	 * withheld output meet at one tick it stays withheld, as the index reads them (a row's key has no `gives`, so only
-	 * one can stand). Rows that cannot be read now (a migration that throws, a newer version) are left as they are;
-	 * an output meeting one is not put, unless it withholds what that row (giving nothing now) would give.
+	 * one can stand). Rows that cannot be read now (a migration that throws, a newer version) are left as they are. An
+	 * output meeting a row of its tick that stays (at the version now, or one that cannot be read) is not put, unless
+	 * it withholds what that row gives.
 	 */
 	async #upgrade(
 		tx: Tx,
@@ -1152,7 +1159,9 @@ class Writes {
 		);
 		const rows = [];
 		for await (const row of tx.rows(this.#t.grants, mine)) rows.push(row);
-		const current = new Set(rows.filter((row) => row.ticksVersion === info.ticksVersion).map(({ tick }) => tick));
+		const current = new Map(
+			rows.filter((row) => row.ticksVersion === info.ticksVersion).map((row) => [row.tick, row]),
+		);
 		const older = new Map<string, typeof rows>();
 		for (const row of rows) {
 			if (row.ticksVersion === info.ticksVersion) continue;
@@ -1183,11 +1192,10 @@ class Writes {
 			}
 		}
 		for (const [tick, row] of outputs) {
-			// A row already at the version now beats a migrated withheld one; both exist only after a write-back
-			// failed for this group earlier (its migration threw then): accepted.
-			if (current.has(tick)) continue;
-			const kept = unreadable.get(tick);
-			if (kept !== undefined && (row.gives || !kept.gives)) continue;
+			// A row of the tick there already (at the version now, or one that cannot be read) stays, unless the output
+			// withholds what it gives: withheld wins, as the index reads them.
+			const there = current.get(tick) ?? unreadable.get(tick);
+			if (there !== undefined && (row.gives || !there.gives)) continue;
 			tx.put(this.#t.grants, row);
 		}
 	}

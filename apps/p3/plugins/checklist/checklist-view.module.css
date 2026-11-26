@@ -1,10 +1,15 @@
-/* One checklist: its items with their boxes, the field for a new item below them; and its options form. */
+/* One checklist: its name, its items with their boxes, the field for a new item below them. */
 
 .checklist {
 	display: flex;
 	flex-direction: column;
 	gap: var(--semantic-dimension-space-gap-small);
 	padding: var(--semantic-dimension-space-padding-small);
+}
+
+.title {
+	margin: 0;
+	font: var(--semantic-typography-ui-primary);
 }
 
 .items {
@@ -22,8 +27,7 @@
 	text-decoration: line-through;
 }
 
-.add,
-.options {
+.add {
 	display: flex;
 	flex-wrap: wrap;
 	align-items: center;

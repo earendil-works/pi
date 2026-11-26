@@ -4,7 +4,7 @@
 // remove one's own) and Moderate (people only: clear the board, remove anyone's shapes). Committed shapes are rows on
 // the server; cursors and the shapes people are drawing travel as events, lossy and never stored.
 
-import { arr, bool, lit, method, nul, num, obj, type Static, str, union } from "@earendil-works/p3/v1";
+import { arr, bool, lit, method, nul, num, obj, opt, type Static, str, union } from "@earendil-works/p3/v1";
 import { defineThing } from "../things/kind.ts";
 import { messages } from "./messages.ts";
 
@@ -87,11 +87,16 @@ export type Motion = Static<typeof Motion>;
  * (anyone's shapes). A new link starts with Draw for everyone and the agents.
  */
 export const CanvasKind = defineThing("canvas.board", {
-	version: 1,
+	version: 2,
 	makers: "anyone",
 	state: { name: str(), shapes: obj({ rows: arr(PlacedShape), moreAfter: bool() }) },
 	methods: {
 		more: method(),
+		/**
+		 * A page of the shapes read now, oldest first, from the start or `after` (a page's `next`), not followed: what an
+		 * agent's tool reads without growing the caller's loaded pages.
+		 */
+		page: method(obj({ after: opt(str()) }), obj({ rows: arr(PlacedShape), next: opt(str()) })),
 		/** Shows the caller's pointer at `x`, `y` to everyone on the board (a viewer's draft is dropped). */
 		point: method(Pointer),
 		/** Takes the caller's pointer off the board. */

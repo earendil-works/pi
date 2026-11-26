@@ -1446,3 +1446,64 @@ ending +31, −35 and −9 KiB; a round's work peaks at 11 MiB). Every cache of 
   `holders` is an `Iterable`.
 
 Lines: `packages/chord/src` +2,725 −929.
+
+## Identical live reads (2026-11-26)
+
+Decision "Identical live reads share one source" (ERNDL-1176). `test/bench/identical-reads.ts`: N callers each hold
+their own reader object with the same `self.liveQuery(named, args, { first })` or `self.list(...)`, one write, the
+time until the last caller's watch has it.
+
+- **Loads:**
+  - notes: 51 rows, a window of the newest 50; the write adds a row at the top.
+  - checklist: 500 items in one window; the write ticks the last one.
+- **Where the callers are:**
+  - local: N objects on the server, watched there;
+  - remote: N client hosts over memory links, in the same process.
+- **How it was measured:** Node 26.11.1, CPUs 0 to 14 with a busy loop on CPU 15, load average about 5. Each run
+  makes 20 warm writes after a cold one and takes the median. The table is the median of 3 rounds, alternating
+  9a4dcacb7 (before) and the change (after) run by run.
+- **Heap per extra holder:** (H_N − H_1) / (N − 1), with H_k the settled process heap with k holders watching. Remote
+  includes the client hosts. At N = 1 the cell is the whole settled heap.
+- **Counts:** query runs and rows read per write on the server.
+- **Lists:** not shared yet (`slices.md`, "Carry-over"); their rows are the control.
+
+Each cell is before → after.
+
+| load | read | where | N | to the last delivery (ms) | heap per extra holder (KiB) | query runs | rows read |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| notes | live | local | 1 | 0.25 → 0.25 | 15.0 → 15.0 MiB total | 1 → 1 | 51 → 51 |
+| notes | live | local | 10 | 0.9 → 0.26 | 91.8 → 56.3 | 10 → 1 | 510 → 51 |
+| notes | live | local | 100 | 7.51 → 0.3 | 31.9 → 13 | 100 → 1 | 5100 → 51 |
+| notes | live | remote | 1 | 0.35 → 0.35 | 15.2 → 15.3 MiB total | 1 → 1 | 51 → 51 |
+| notes | live | remote | 10 | 1.15 → 0.54 | 147 → 112 | 10 → 1 | 510 → 51 |
+| notes | live | remote | 100 | 8.12 → 1.57 | 53.9 → 35.3 | 100 → 1 | 5100 → 51 |
+| notes | list | local | 1 | 0.21 → 0.21 | 15.0 → 15.1 MiB total | 1 → 1 | 62 → 62 |
+| notes | list | local | 10 | 1.03 → 1.05 | 112.3 → 112.3 | 10 → 10 | 620 → 620 |
+| notes | list | local | 100 | 8.9 → 8.85 | 49.5 → 49.5 | 100 → 100 | 6200 → 6200 |
+| notes | list | remote | 1 | 0.3 → 0.32 | 15.3 → 15.3 MiB total | 1 → 1 | 62 → 62 |
+| notes | list | remote | 10 | 1.26 → 1.27 | 168 → 168.2 | 10 → 10 | 620 → 620 |
+| notes | list | remote | 100 | 9.37 → 10.12 | 71.6 → 71.7 | 100 → 100 | 6200 → 6200 |
+| checklist | live | local | 1 | 0.58 → 0.58 | 15.3 → 15.3 MiB total | 1 → 1 | 500 → 500 |
+| checklist | live | local | 10 | 4.19 → 0.58 | 230.5 → 58.4 | 10 → 1 | 5000 → 500 |
+| checklist | live | local | 100 | 42.66 → 0.65 | 159.4 → 13 | 100 → 1 | 50000 → 500 |
+| checklist | live | remote | 1 | 0.67 → 0.67 | 15.6 → 15.6 MiB total | 1 → 1 | 500 → 500 |
+| checklist | live | remote | 10 | 4.47 → 0.94 | 312.2 → 141.5 | 10 → 1 | 5000 → 500 |
+| checklist | live | remote | 100 | 46.26 → 1.8 | 209.6 → 63.5 | 100 → 1 | 50000 → 500 |
+| checklist | list | local | 1 | 0.72 → 0.71 | 15.4 → 15.5 MiB total | 1 → 1 | 500 → 500 |
+| checklist | list | local | 10 | 5.08 → 5.14 | 369 → 369 | 10 → 10 | 5000 → 5000 |
+| checklist | list | local | 100 | 53.02 → 53.24 | 294.8 → 294.7 | 100 → 100 | 50000 → 50000 |
+| checklist | list | remote | 1 | 0.76 → 0.75 | 15.7 → 15.7 MiB total | 1 → 1 | 500 → 500 |
+| checklist | list | remote | 10 | 5.34 → 5.21 | 451.8 → 451.3 | 10 → 10 | 5000 → 5000 |
+| checklist | list | remote | 100 | 54.96 → 54.03 | 345.1 → 345.3 | 100 → 100 | 50000 → 50000 |
+
+- **N = 1 is not slower,** and its heap is the same.
+- **At N = 100,** every reader of the window takes one run of 51 or 500 rows instead of 100 of them.
+- **What stays linear in N:** each object's frame and each hold's encode (100 encodes at N = 100).
+
+`test/bench/hold-heap.ts` (heap per object, 1,000 objects after a warm-up of 1,000; before is 9a4dcacb7):
+
+| Case | before | after |
+| --- | --- | --- |
+| 4, a local object with a live query of its own (each object its own window) | 6.81 KiB | 6.89 KiB |
+| 9 (new), a local object whose live query every object of it shares | 6.81 KiB | 4.92 KiB |
+

@@ -32,14 +32,29 @@ export {
 	withCancel,
 } from "@earendil-works/chord/context";
 export type { JsonValue } from "@earendil-works/chord/json";
+// pi-ai's types of providers and their auth, for every kind's facets (a value of them comes from `/v1/server` or
+// `/v1/worker`).
+export type {
+	Api,
+	AuthContext,
+	AuthEvent,
+	AuthPrompt,
+	AuthResult,
+	Credential,
+	CredentialStore,
+	Model,
+	OAuthAuth,
+	Provider,
+	ProviderAuth,
+} from "@earendil-works/pi-ai";
 // The contracts p3 promises to third-party plugins (Chord decision "The app kit, point 5"): the built-in plugins'
 // own files, re-exported; a plugin built against `/v1` keeps v1's contracts.
 export * from "../../../plugins/apps/contract.ts";
 export * from "../../../plugins/environments/contract.ts";
 export * from "../../../plugins/people/contract.ts";
+export { LoginProviders } from "../../../plugins/providers/login-providers.ts";
 export * from "../../../plugins/sessions/contract.ts";
 export * from "../../../plugins/things/workspace.ts";
-export * from "../../../plugins/tools/contract.ts";
 export * from "../../../plugins/transcript/contract.ts";
 export { callerKey, P3Principal } from "../../app.ts";
 export { forward } from "./forward.ts";
