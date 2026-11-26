@@ -216,8 +216,10 @@ export class DecodedRows {
 			at++;
 		}
 		if (same && at === last.length) return last;
-		const columns: string[] = [];
-		for (const column in stored) columns.push(column);
+		// Of exactly its length: a list pushed to reserves room for 16 more (152 B for two columns).
+		const columns = new Array<string>(at);
+		at = 0;
+		for (const column in stored) columns[at++] = column;
 		this.#columns = columns;
 		return columns;
 	}
