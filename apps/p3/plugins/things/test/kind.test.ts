@@ -37,13 +37,13 @@ describe("a kind", () => {
 			workspaces: "many",
 			makers: "plugin",
 			stacking: "all",
-			workspace: "no",
 			ticks: [
 				{ name: "see", label: label("see"), for: "people" },
 				{ name: "edit", label: label("edit"), for: "all" },
 				{ name: "export", label: label("export"), for: "all" },
 			],
 			defaultGrants: { everyone: ["see"] },
+			ticksVersion: 1,
 		});
 	});
 

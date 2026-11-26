@@ -128,17 +128,15 @@ export function answerFrom(
 		const forPeople = [...(kinds.get(state.kind) ?? [])].filter(([, forWhom]) => forWhom !== "agents");
 		return { ticks: forPeople.map(([tick]) => tick).sort() };
 	}
-	const { parties, self } = counted(all, caller, state);
+	const parties = counted(all, caller, state);
 	let ticks: string[] | undefined;
-	if (self !== undefined && state.ticks.has(self)) ticks = state.ticks.get(self);
-	else {
-		for (const party of parties) {
-			const own = state.ticks.get(party);
-			if (own !== undefined) ticks = [...(ticks ?? []), ...own.filter((tick) => !(ticks ?? []).includes(tick))];
-		}
+	for (const party of parties) {
+		const own = state.ticks.get(party);
+		if (own !== undefined) ticks = [...(ticks ?? []), ...own.filter((tick) => !(ticks ?? []).includes(tick))];
 	}
 	if (ticks === undefined) return undefined;
-	const taken = self === undefined ? [] : (state.taken.get(self) ?? []);
+	// A take-away naming the caller's person applies whatever route they count by (item 106).
+	const taken = caller.kind === "person" ? (state.taken.get(`person/${caller.person}`) ?? []) : [];
 	return { ticks: ticks.filter((tick) => !taken.includes(tick)).sort() };
 }
 
@@ -200,16 +198,14 @@ function walk(all: Everything, kinds: KindTicks, workspace: string, thing: strin
 	return state;
 }
 
-/** Rule 4: whom the caller counts as, and their own person if counted. */
-function counted(all: Everything, caller: Caller, state: State): { parties: string[]; self: string | undefined } {
+/** Rule 4: whom the caller counts as. */
+function counted(all: Everything, caller: Caller, state: State): string[] {
 	if (caller.kind === "agent") {
 		const self = `agent/${caller.session}`;
-		return state.present.includes(self)
-			? { parties: [self, "agents"], self: undefined }
-			: { parties: [], self: undefined };
+		return state.present.includes(self) ? [self, "agents"] : [];
 	}
 	const self = `person/${caller.person}`;
-	if (state.hidden.includes(self)) return { parties: [], self: undefined };
+	if (state.hidden.includes(self)) return [];
 	const parties: string[] = [];
 	let everyone = false;
 	if (state.present.includes(self)) {
@@ -224,5 +220,5 @@ function counted(all: Everything, caller: Caller, state: State): { parties: stri
 		if (!group.outside) everyone = true;
 	}
 	if (everyone) parties.push("everyone");
-	return { parties, self: parties.includes(self) ? self : undefined };
+	return parties;
 }

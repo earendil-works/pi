@@ -12,17 +12,14 @@ import {
 	type Columns,
 	type Condition,
 	type Context,
-	type Ctx,
 	defineColumns,
 	defineTable,
 	eq,
 	type FacetHost,
-	inArray,
 	int,
 	invalid,
 	json,
 	type P3Principal,
-	prefix,
 	query,
 	type RowOf,
 	type StoreSelf,
@@ -58,7 +55,7 @@ const WORKSPACE_KIND = "things.workspace";
 /** A thing's id and kind, joined to its grants (the kind their ticks are of). */
 const ThingColumns = defineColumns("things.thing-columns", { columns: { thing: str(), kind: str() }, key: ["thing"] });
 
-/** Every thing, a workspace too: its kind, name, who made it and when. By maker; by kind. */
+/** Every thing, a workspace too: its kind, name, who made it and when. */
 const Things = defineTable("things.things", {
 	version: 1,
 	columns: {
@@ -70,13 +67,11 @@ const Things = defineTable("things.things", {
 		madeAt: int(),
 	},
 	key: ["thing"],
-	indexes: { by_maker: ["madeByKey"], by_kind: ["kind"] },
 	exposes: ThingColumns,
 });
 
 /**
- * The tree: each workspace's parent (`""`: Pi, the root), its two defaults, and its path (the root first, itself last;
- * as text, each id followed by `/`, for prefix searches). Children by parent; a subtree by path.
+ * The tree: each workspace's parent (`""`: Pi, the root) and its two defaults. Children by parent.
  */
 const Workspaces = defineTable("things.workspaces", {
 	version: 1,
@@ -85,11 +80,9 @@ const Workspaces = defineTable("things.workspaces", {
 		parent: str(),
 		showsThings: bool(),
 		showsPeople: bool(),
-		path: json(arr(str()), { version: 1 }),
-		pathText: str(),
 	},
 	key: ["workspace"],
-	indexes: { children: ["parent", "workspace"], under: ["pathText"] },
+	indexes: { children: ["parent", "workspace"] },
 });
 
 /** A thing linked into a workspace, with its kind (no second read for it). By thing: where it is linked. */
@@ -124,7 +117,7 @@ const Switches = defineTable("things.switches", {
 
 /**
  * One source's grant on a thing for a party, written in a workspace: whether it gives, its ticks, its take-aways, and
- * the kind's version they were written at (item 91). By source (its cleanup), by party (a deleted group's), by thing (a
+ * the kind's ticks version they were written at (item 105). By source (its cleanup), by party (a deleted group's), by thing (a
  * deleted thing's, wherever written).
  */
 const Grants = defineTable("things.grants", {
@@ -139,7 +132,7 @@ const Grants = defineTable("things.grants", {
 		gives: bool(),
 		ticks: json(arr(str()), { version: 1 }),
 		takenAway: json(arr(str()), { version: 1 }),
-		version: int(),
+		ticksVersion: int(),
 	},
 	key: ["workspace", "thing", "partyKey", "sourceKey"],
 	indexes: { by_source: ["sourceKey"], by_party: ["partyKey"], by_thing: ["thing"] },
@@ -156,7 +149,7 @@ const Persons = defineTable("things.persons", {
 		madeByKey: str(),
 	},
 	key: ["person"],
-	indexes: { by_name: ["name"], by_owner: ["owner"], by_maker: ["madeByKey"] },
+	indexes: { by_owner: ["owner"] },
 });
 
 /** A group's id and whether it is outside, joined to its members' rows. */
@@ -180,13 +173,6 @@ const Groups = defineTable("things.groups", {
 	exposes: GroupColumns,
 });
 
-/** The parties with a group's own tick (decision 68): read by the people flows only, never by the index. */
-const GroupManagers = defineTable("things.group_managers", {
-	version: 1,
-	columns: { group: str(), partyKey: str(), party: json(Party, { version: 1 }) },
-	key: ["group", "partyKey"],
-});
-
 /** A person in a group, as one source put them there (two sources: two rows). By person; by source. */
 const GroupMembers = defineTable("things.group_members", {
 	version: 1,
@@ -207,7 +193,6 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			grants: self.table(Grants),
 			persons: self.table(Persons),
 			groups: self.table(Groups),
-			managers: self.table(GroupManagers),
 			groupMembers: self.table(GroupMembers),
 		};
 		const pending = self.table(Pending);
@@ -254,18 +239,10 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		const lifecycle = new Lifecycle({
 			table: pending,
 			write: (fn, ctx) => write((tx) => fn(tx), ctx),
-			remove: async (thing, kind, ctx) => {
-				await write(async (tx, changes) => {
-					if ((await tx.get(t.things, { thing })) !== undefined)
-						await writes.removeThing(tx, changes, thing, kind);
-					else tx.delete(pending, { thing });
-					return null;
-				}, ctx);
-			},
 			pending: (ctx) =>
 				self.tx(async (tx) => {
 					const rows = [];
-					// The whole table: what waits for a hook is few rows, read at the start and when the hooks change.
+					// The whole table: what waits for a delete hook is few rows, read at the start and when the hooks change.
 					for await (const row of tx.rows(pending, query(Pending))) rows.push(row);
 					return rows;
 				}, ctx),
@@ -279,39 +256,22 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			await index?.kindsChanged();
 		});
 		self.on(hooks, () => lifecycle.resume());
-		/** Makes a thing in one commit (`make`), then runs its kind's create hook. */
-		const made = async (
-			commit: (tx: Tx, changes: Changes) => Promise<{ readonly thing: string; readonly made: boolean }>,
-			kind: string,
-			input: unknown,
-			ctx: Ctx<P3Principal>,
-		) => {
-			const { thing, made: isNew } = await write(commit, ctx);
-			if (isNew) await lifecycle.created(thing, kind, input, ctx);
-			return thing;
-		};
 		return {
 			...q,
-			create: (args, ctx) =>
-				made(
-					async (tx, changes) => ({ thing: await writes.make(tx, changes, args), made: true }),
-					args.kind,
-					args.input,
-					ctx,
-				),
-			ensure: ({ kind, name, workspace, plugin }, ctx) =>
-				made(
-					async (tx, changes) => {
-						const by: Source = { kind: "plugin", plugin };
-						const ofPlugin = query(Things).where((r) => and(eq(r.madeByKey, sourceKey(by)), eq(r.kind, kind)));
-						const [found] = (await tx.page(t.things, ofPlugin, 1)).items;
-						if (found !== undefined) return { thing: found.thing, made: false };
-						return { thing: await writes.make(tx, changes, { kind, name, workspace, by }), made: true };
-					},
-					kind,
-					undefined,
-					ctx,
-				),
+			create: async (args, ctx) => {
+				const thing = crypto.randomUUID();
+				// The kind prepares what is in it first, under the new id (item 34): a hook that throws leaves nothing, as no
+				// row names the thing yet. A crash between the hook and the commit leaves the kind's content under an id
+				// nobody knows (accepted: nothing can reach it).
+				await hooks.value.get(args.kind)?.value.create?.(thing, args.input, ctx);
+				try {
+					await write((tx, changes) => writes.make(tx, changes, { ...args, thing }), ctx);
+				} catch (error) {
+					await lifecycle.undo(thing, args.kind);
+					throw error;
+				}
+				return thing;
+			},
 			link: (args, ctx) => write((tx, touched) => writes.link(tx, touched, args), ctx),
 			unlink: (args, ctx) => write((tx, touched) => writes.unlink(tx, touched, args), ctx),
 			rename: ({ thing, name }, ctx) => write(async (tx) => writes.rename(tx, thing, name), ctx),
@@ -351,12 +311,6 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 					touched.persons.add(person);
 					return null;
 				}, ctx),
-			setGroupManagers: ({ group, parties }, ctx) =>
-				write(async (tx) => {
-					tx.deleteWhere(t.managers, (m) => eq(m.group, group));
-					for (const party of parties) tx.put(t.managers, { group, partyKey: partyKey(party), party });
-					return null;
-				}, ctx),
 			deleteEverythingFrom: ({ source }, ctx) =>
 				write((tx, touched) => writes.deleteEverythingFrom(tx, touched, sourceKey(source)), ctx),
 		};
@@ -379,7 +333,6 @@ type Tables = {
 	readonly grants: TableOf<typeof Grants>;
 	readonly persons: TableOf<typeof Persons>;
 	readonly groups: TableOf<typeof Groups>;
-	readonly managers: TableOf<typeof GroupManagers>;
 	readonly groupMembers: TableOf<typeof GroupMembers>;
 };
 
@@ -392,24 +345,12 @@ function namedQueries(self: StoreSelf<P3Principal>, t: Tables) {
 			{
 				// The key.
 				one: ({ thing }: { thing: string }) => query(Things).where((r) => eq(r.thing, thing)),
-				// The key, IN.
-				ofIds: ({ things }: { things: string[] }) => query(Things).where((r) => inArray(r.thing, things)),
-				// Index `by_maker`, then the key.
-				madeBy: ({ sourceKey: key }: { sourceKey: string }) => query(Things).where((r) => eq(r.madeByKey, key)),
-				// Index `by_kind`, then the key.
-				ofKind: ({ kind }: { kind: string }) => query(Things).where((r) => eq(r.kind, kind)),
 			},
 		),
 		workspaces: self.queries(
 			t.workspaces,
 			{
-				map: ({ workspace, parent, showsThings, showsPeople, path }) => ({
-					workspace,
-					parent,
-					showsThings,
-					showsPeople,
-					path,
-				}),
+				map: ({ workspace, parent, showsThings, showsPeople }) => ({ workspace, parent, showsThings, showsPeople }),
 			},
 			{
 				// The key.
@@ -419,11 +360,6 @@ function namedQueries(self: StoreSelf<P3Principal>, t: Tables) {
 					query(Workspaces)
 						.where((w) => eq(w.parent, parent))
 						.orderBy((w) => w.workspace, "asc"),
-				// Index `under`: the subtree whose path text starts with `pathPrefix`, in path order.
-				under: ({ pathPrefix }: { pathPrefix: string }) =>
-					query(Workspaces)
-						.where((w) => prefix(w.pathText, pathPrefix))
-						.orderBy((w) => w.pathText, "asc"),
 			},
 		),
 		links: self.queries(
@@ -432,8 +368,6 @@ function namedQueries(self: StoreSelf<P3Principal>, t: Tables) {
 			{
 				// The key's prefix.
 				here: ({ workspace }: { workspace: string }) => query(Links).where((l) => eq(l.workspace, workspace)),
-				// Index `by_thing`, then the key.
-				where: ({ thing }: { thing: string }) => query(Links).where((l) => eq(l.thing, thing)),
 			},
 		),
 		workspaceMembers: self.queries(
@@ -443,14 +377,6 @@ function namedQueries(self: StoreSelf<P3Principal>, t: Tables) {
 				// The key's prefix.
 				here: ({ workspace }: { workspace: string }) =>
 					query(WorkspaceMembers).where((m) => eq(m.workspace, workspace)),
-				// Index `by_party`, then the key.
-				where: ({ partyKey: key }: { partyKey: string }) =>
-					query(WorkspaceMembers).where((m) => eq(m.partyKey, key)),
-				// The key, IN on both its columns (a page of children and the caller's parties).
-				ofParties: ({ workspaces, partyKeys }: { workspaces: string[]; partyKeys: string[] }) =>
-					query(WorkspaceMembers).where((m) =>
-						and(inArray(m.workspace, workspaces), inArray(m.partyKey, partyKeys)),
-					),
 			},
 		),
 		switches: self.queries(
@@ -458,21 +384,18 @@ function namedQueries(self: StoreSelf<P3Principal>, t: Tables) {
 			{ map: ({ workspace, item, shown }) => ({ workspace, item, shown }) },
 			{
 				// The key's prefix.
-				here: ({ workspace }: { workspace: string }) => query(Switches).where((s) => eq(s.workspace, workspace)),
-				// The key, IN on both its columns.
-				ofItems: ({ workspaces, itemKeys }: { workspaces: string[]; itemKeys: string[] }) =>
-					query(Switches).where((s) => and(inArray(s.workspace, workspaces), inArray(s.itemKey, itemKeys))),
+				here: ({ workspace }: { workspace: string }) => query(Switches).where((w) => eq(w.workspace, workspace)),
 			},
 		),
 		grants: self.queries(
 			t.grants,
 			{
-				map: ({ workspace, thing, party, source, gives, ticks, takenAway, version }, partner) => ({
+				map: ({ workspace, thing, party, source, gives, ticks, takenAway, ticksVersion }, partner) => ({
 					workspace,
 					thing,
 					// The joined set is `ThingColumns`: its `kind` is a string.
 					kind: partner.kind as string,
-					version,
+					ticksVersion,
 					party,
 					source,
 					gives,
@@ -486,21 +409,6 @@ function namedQueries(self: StoreSelf<P3Principal>, t: Tables) {
 					query(Grants)
 						.where((g) => eq(g.workspace, workspace))
 						.join(ThingColumns, (g) => ({ thing: g.thing })),
-				// The key's prefix.
-				of: ({ workspace, thing }: { workspace: string; thing: string }) =>
-					query(Grants)
-						.where((g) => and(eq(g.workspace, workspace), eq(g.thing, thing)))
-						.join(ThingColumns, (g) => ({ thing: g.thing })),
-				// Index `by_party`, then the key.
-				ofParty: ({ partyKey: key }: { partyKey: string }) =>
-					query(Grants)
-						.where((g) => eq(g.partyKey, key))
-						.join(ThingColumns, (g) => ({ thing: g.thing })),
-				// Index `by_thing`, then the key.
-				ofThing: ({ thing }: { thing: string }) =>
-					query(Grants)
-						.where((g) => eq(g.thing, thing))
-						.join(ThingColumns, (g) => ({ thing: g.thing })),
 			},
 		),
 		persons: self.queries(
@@ -509,28 +417,6 @@ function namedQueries(self: StoreSelf<P3Principal>, t: Tables) {
 			{
 				// The key.
 				one: ({ person }: { person: string }) => query(Persons).where((p) => eq(p.person, person)),
-				// The key, IN.
-				ofIds: ({ persons }: { persons: string[] }) => query(Persons).where((p) => inArray(p.person, persons)),
-				// Index `by_owner`: the persons whose flag is set, then the key.
-				owners: (_args: Record<never, never>) => query(Persons).where((p) => eq(p.owner, 1)),
-			},
-		),
-		groups: self.queries(
-			t.groups,
-			{ map: ({ group, name, managedBy, outside }) => ({ group, name, managedBy, outside }) },
-			{
-				// The key.
-				one: ({ group }: { group: string }) => query(Groups).where((g) => eq(g.group, group)),
-				// The key, IN.
-				ofIds: ({ groups }: { groups: string[] }) => query(Groups).where((g) => inArray(g.group, groups)),
-			},
-		),
-		groupManagers: self.queries(
-			t.managers,
-			{ map: ({ group, party }) => ({ group, party }) },
-			{
-				// The key's prefix.
-				of: ({ group }: { group: string }) => query(GroupManagers).where((m) => eq(m.group, group)),
 			},
 		),
 		groupMembers: self.queries(
@@ -540,15 +426,10 @@ function namedQueries(self: StoreSelf<P3Principal>, t: Tables) {
 				map: ({ group, person, source }, partner) => ({ group, person, source, outside: partner.outside === true }),
 			},
 			{
-				// Index `by_person`, then the key; each joined with its group by key (a membership of no group: none).
+				// Index `by_person`, then the key; each joined with its group by key (a member of no group: none).
 				ofPerson: ({ person }: { person: string }) =>
 					query(GroupMembers)
 						.where((m) => eq(m.person, person))
-						.join(GroupColumns, (m) => ({ group: m.group })),
-				// The key's prefix.
-				ofGroup: ({ group }: { group: string }) =>
-					query(GroupMembers)
-						.where((m) => eq(m.group, group))
 						.join(GroupColumns, (m) => ({ group: m.group })),
 			},
 		),
@@ -560,26 +441,24 @@ async function ensurePi(tx: Tx, t: Tables): Promise<null> {
 	const roots = query(Workspaces).where((w) => eq(w.parent, ""));
 	if ((await tx.page(t.workspaces, roots, 1)).items.length > 0) return null;
 	const by: Source = { kind: "plugin", plugin: "@earendil-works/p3-things" };
-	putWorkspace(tx, t, { kind: WORKSPACE_KIND, name: "Pi", by, showsPeople: true }, undefined);
+	putWorkspace(tx, t, { kind: WORKSPACE_KIND, name: "Pi", by, showsPeople: true }, "");
 	return null;
 }
 
-/** Puts a new workspace's thing row and line under `parent` (none: the root); answers its id. */
+/** Puts a new workspace's thing row and line under `parent` (`""`: the root); answers its id. */
 function putWorkspace(
 	tx: Tx,
 	t: Tables,
 	{ kind, name, by, showsPeople }: { kind: string; name: string; by: Source; showsPeople: boolean },
-	parent: { readonly workspace: string; readonly path: string[]; readonly pathText: string } | undefined,
+	parent: string,
 ): string {
 	const workspace = crypto.randomUUID();
 	tx.put(t.things, { thing: workspace, kind, name, madeBy: by, madeByKey: sourceKey(by), madeAt: Date.now() });
 	tx.put(t.workspaces, {
 		workspace,
-		parent: parent?.workspace ?? "",
+		parent,
 		showsThings: true,
 		showsPeople,
-		path: [...(parent?.path ?? []), workspace],
-		pathText: `${parent?.pathText ?? ""}${workspace}/`,
 	});
 	return workspace;
 }
@@ -622,30 +501,31 @@ class Writes {
 		this.#kinds = kinds;
 	}
 
-	/**
-	 * A thing of `kind` linked in `workspace`: its row, the link with the default grants, every tick for its maker, and
-	 * its create hook pending (`lifecycle.ts`).
-	 */
+	/** Thing `thing` of `kind` linked in `workspace`: its row, the link with the default grants, every tick for its maker. */
 	async make(
 		tx: Tx,
 		touched: Touched,
-		{ kind, name, workspace, by }: { kind: string; name: string; workspace: string; by: Source },
-	): Promise<string> {
+		{
+			thing,
+			kind,
+			name,
+			workspace,
+			by,
+		}: { thing: string; kind: string; name: string; workspace: string; by: Source },
+	): Promise<null> {
 		const item = this.#kind(kind);
 		await this.#mustBeWorkspace(tx, workspace);
-		const thing = crypto.randomUUID();
 		tx.put(this.#t.things, { thing, kind, name, madeBy: by, madeByKey: sourceKey(by), madeAt: Date.now() });
-		tx.put(this.#t.pending, { thing, kind, step: "create" });
 		this.#linked(tx, workspace, thing, item);
 		const maker = makerParty(by);
 		if (maker !== undefined) {
 			const ticks = item.value.ticks
 				.filter((tick) => isFor(tick.for, audienceOf(maker.kind)))
 				.map((tick) => tick.name);
-			this.#grant(tx, workspace, thing, maker, by, { gives: true, ticks, takenAway: [] }, item.value.version);
+			this.#grant(tx, workspace, thing, maker, by, { gives: true, ticks, takenAway: [] }, item.value.ticksVersion);
 		}
 		touched.workspaces.add(workspace);
-		return thing;
+		return null;
 	}
 
 	/** Links `thing` into `workspace` with its kind's default grants (once; a kind of `workspaces: "one"` once at all). */
@@ -696,7 +576,7 @@ class Writes {
 		await deleteTold(tx, t.grants, Grants, (g) => eq(g.thing, thing), touched.workspaces, "workspace");
 		await deleteTold(tx, t.switches, Switches, (w) => eq(w.itemKey, item), touched.workspaces, "workspace");
 		tx.delete(this.#t.things, { thing });
-		tx.put(this.#t.pending, { thing, kind, step: "retire" });
+		tx.put(this.#t.pending, { thing, kind });
 		touched.retired.push({ thing, kind });
 		return null;
 	}
@@ -708,15 +588,14 @@ class Writes {
 		return null;
 	}
 
-	/** A workspace of `kind` under `parent`: its thing row and its line, with its path. */
+	/** A workspace of `kind` under `parent`: its thing row and its line. */
 	async workspace(
 		tx: Tx,
 		touched: Touched,
 		args: { kind: string; name: string; parent: string; by: Source; showsPeople?: boolean },
 	): Promise<string> {
-		const parent = await tx.get(this.#t.workspaces, { workspace: args.parent });
-		if (parent === undefined) throw invalid("args", `things: no workspace ${args.parent}`);
-		const workspace = putWorkspace(tx, this.#t, { ...args, showsPeople: args.showsPeople ?? true }, parent);
+		await this.#mustBeWorkspace(tx, args.parent);
+		const workspace = putWorkspace(tx, this.#t, { ...args, showsPeople: args.showsPeople ?? true }, args.parent);
 		touched.workspaces.add(workspace);
 		return workspace;
 	}
@@ -786,7 +665,7 @@ class Writes {
 			}
 			if (!gives && takenAway.length === 0) {
 				tx.delete(this.#t.grants, { workspace, thing, partyKey: partyKey(party), sourceKey: sourceKey(source) });
-			} else this.#grant(tx, workspace, thing, party, source, { gives, ticks, takenAway }, info.version);
+			} else this.#grant(tx, workspace, thing, party, source, { gives, ticks, takenAway }, info.ticksVersion);
 			touched.workspaces.add(workspace);
 		}
 		return null;
@@ -834,7 +713,7 @@ class Writes {
 
 	/**
 	 * Removes what the source with key `key` wrote (grants, group members, workspace members) and the groups it manages, with every
-	 * membership in them, every `members` entry and grant naming them, whoever wrote it, and their managers.
+	 * member of them, every workspace entry and grant naming them, whoever wrote it.
 	 */
 	async deleteEverythingFrom(tx: Tx, touched: Touched, key: string): Promise<null> {
 		const t = this.#t;
@@ -857,7 +736,7 @@ class Writes {
 		return null;
 	}
 
-	/** Removes `group`: its members, every workspace entry and grant naming it, its managers, its row. */
+	/** Removes `group`: its members, every workspace entry and grant naming it, its row. */
 	async #removeGroup(tx: Tx, touched: Touched, group: string): Promise<void> {
 		const t = this.#t;
 		const party = partyKey({ kind: "group", group });
@@ -871,13 +750,12 @@ class Writes {
 			"workspace",
 		);
 		await deleteTold(tx, t.grants, Grants, (r) => eq(r.partyKey, party), touched.workspaces, "workspace");
-		tx.deleteWhere(t.managers, (r) => eq(r.group, group));
 		tx.delete(t.groups, { group });
 	}
 
 	/** The link of `thing` in `workspace`, with its kind's default grants (source: the kind's plugin). */
 	#linked(tx: Tx, workspace: string, thing: string, item: TableItem<KindInfo>): void {
-		const { name, defaultGrants, version } = item.value;
+		const { name, defaultGrants, ticksVersion } = item.value;
 		tx.put(this.#t.links, { workspace, thing, of: name });
 		const source: Source = { kind: "plugin", plugin: item.plugin };
 		const parties = [
@@ -886,11 +764,11 @@ class Writes {
 		] as const;
 		for (const [party, ticks] of parties) {
 			if (ticks !== undefined)
-				this.#grant(tx, workspace, thing, party, source, { gives: true, ticks, takenAway: [] }, version);
+				this.#grant(tx, workspace, thing, party, source, { gives: true, ticks, takenAway: [] }, ticksVersion);
 		}
 	}
 
-	/** Puts one grant at kind version `version`. */
+	/** Puts one grant, its ticks written at the kind's ticks version `ticksVersion` (item 105). */
 	#grant(
 		tx: Tx,
 		workspace: string,
@@ -898,7 +776,7 @@ class Writes {
 		party: Party,
 		source: Source,
 		{ gives, ticks, takenAway }: { gives: boolean; ticks: readonly string[]; takenAway: readonly string[] },
-		version: number,
+		ticksVersion: number,
 	): void {
 		tx.put(this.#t.grants, {
 			workspace,
@@ -910,7 +788,7 @@ class Writes {
 			gives,
 			ticks: [...ticks],
 			takenAway: [...takenAway],
-			version,
+			ticksVersion,
 		});
 	}
 

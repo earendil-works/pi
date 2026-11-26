@@ -1,10 +1,12 @@
 // The things plugin's tests' host: the things plugin's server facet and the test kind's (`kinds.ts`), loaded as
 // modules on a host with a SQLite store in a file of its own (the differential test's reference reads it directly)
-// and the in-memory telemetry adapter (counted work); `reload` renews a plugin's facet object, as after an edit.
+// and the in-memory telemetry adapter (counted work); `reload` renews a plugin's facet object, as after an edit, and
+// `rows` reads a table of the things store from the file, as the tests check what is on disk.
 
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
 import { openNodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
 import {
 	type ChordStore,
@@ -35,6 +37,8 @@ export type World = {
 	readonly errors: readonly HostError[];
 	/** The sum of metric `name` so far (`things.access.reads`, `chord.query.runs`, ...). */
 	count(name: string): number;
+	/** Every row of the things store's table `table` (`grants`, `pending`, ...) as the file has it now. */
+	rows(table: string): Record<string, SQLOutputValue>[];
 	/** Renews plugin `name`'s facet object (or replaces it with `facet`): its objects restart, as after an edit. */
 	reload(name: string, context: Context, facet?: Facet<P3Principal>): Promise<void>;
 	close(context: Context): Promise<void>;
@@ -67,6 +71,7 @@ export async function world(context: Context, more: readonly PluginFacet<P3Princ
 				.getMetrics()
 				.filter((metric) => metric.name === name)
 				.reduce((sum, metric) => sum + metric.value, 0),
+		rows: (table) => storedRows(path, table),
 		reload: async (name, ctx, facet) => {
 			facets = facets.map((plugin) =>
 				plugin.name === name ? { ...plugin, facet: facet ?? { ...plugin.facet } } : plugin,
@@ -80,4 +85,14 @@ export async function world(context: Context, more: readonly PluginFacet<P3Princ
 			await rm(dir, { recursive: true, force: true });
 		},
 	};
+}
+
+/** Every row of the things store's table `table` in the SQLite file at `path`, read through a connection of its own. */
+export function storedRows(path: string, table: string): Record<string, SQLOutputValue>[] {
+	const database = new DatabaseSync(path, { readOnly: true });
+	try {
+		return database.prepare(`SELECT * FROM "things.store:things.${table}"`).all();
+	} finally {
+		database.close();
+	}
 }

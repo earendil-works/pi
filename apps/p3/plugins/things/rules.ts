@@ -1,9 +1,9 @@
 // The rules of access, without any state: what a workspace ends up with, from what the workspace above ends up with
 // and its own entries (rules 1 to 3), who a caller counts as there (rule 4), and their answer for one thing (rule 5),
-// as ERNDL-1142 states them. Each decision Mario may still turn is one function: a person's own grant first
-// (`precedence`, item 73), a take-away naming a person removing the tick by every route (`takenFromPerson`, 73), and a
-// people switch hiding a person by every route (`hiddenHere`, 73), and which own grant takes precedence (`countsAsOwn`,
-// open item 28). The index (`access.ts`) computes with these and nothing else.
+// as ERNDL-1142 states them. Ticks add up over every party a caller counts as (item 106: no precedence). Two rules keep
+// one person from something, each one function: a take-away naming a person removes the tick from them by every route
+// (`takenFromPerson`), and a people switch naming a person hides them by every route (`hiddenHere`). The index
+// (`access.ts`) computes with these and nothing else.
 
 import type { TickFor } from "./kind.ts";
 
@@ -50,9 +50,7 @@ export type WorkspaceEntries = {
 export type ThingHere = {
 	readonly kind: string;
 	readonly ticks: ReadonlyMap<PartyKey, ReadonlySet<string>>;
-	/** The parties whose grant here counts as their own for precedence (73, open item 28). */
-	readonly precedes: ReadonlySet<PartyKey>;
-	/** The ticks take-aways at or below the link remove from a person, whatever route they come by (73). */
+	/** The ticks take-aways at or below the link remove from a person, whatever route they come by (item 106). */
 	readonly takenFromPersons: ReadonlyMap<PartyKey, ReadonlySet<string>>;
 };
 
@@ -75,8 +73,11 @@ export type PersonEntries = {
 	readonly groups: readonly { readonly party: PartyKey; readonly outside: boolean }[];
 };
 
-/** Whom a caller counts as in a workspace: their counted parties, and their own person's key if they count as it. */
-export type Counted = { readonly parties: readonly PartyKey[]; readonly self: PartyKey | undefined };
+/**
+ * Whom a caller counts as in a workspace: their counted parties, and a person caller's own person (the take-aways
+ * naming them apply whatever route they are counted by).
+ */
+export type Counted = { readonly parties: readonly PartyKey[]; readonly person: PartyKey | undefined };
 
 /** What a caller gets for one thing: its ticks, sorted (perhaps none: here without ticks, R10). */
 export type Answer = { readonly ticks: string[] };
@@ -85,12 +86,11 @@ export type Answer = { readonly ticks: string[] };
 export const ABOVE_THE_ROOT: WorkspaceAccess = { things: new Map(), present: new Set(), hidden: new Set() };
 
 /** Counts as nothing. */
-export const NOBODY: Counted = { parties: [], self: undefined };
+export const NOBODY: Counted = { parties: [], person: undefined };
 
 const EVERYONE = "everyone";
 const AGENTS = "agents";
 const NO_TICKS: ReadonlyMap<PartyKey, ReadonlySet<string>> = new Map();
-const NO_PARTIES: ReadonlySet<PartyKey> = new Set();
 
 /** What a workspace ends up with (rules 1 to 3): shares with `above` whatever its own entries leave as it is. */
 export function accessHere(above: WorkspaceAccess, own: WorkspaceEntries, kinds: KindsLookup): WorkspaceAccess {
@@ -119,47 +119,32 @@ function thingsHere(
 	}
 	const giving = new Map<string, GrantEntry[]>();
 	for (const grant of own.grants) {
-		if (grant.gives && own.links.has(grant.thing))
-			giving.set(grant.thing, [...(giving.get(grant.thing) ?? []), grant]);
+		if (!grant.gives) continue;
+		const thing = grant.thing;
+		if (!own.links.has(thing)) continue;
+		const list = giving.get(thing);
+		if (list === undefined) giving.set(thing, [grant]);
+		else list.push(grant);
 	}
 	for (const [thing, kind] of own.links) here.set(thing, linkedHere(kind, giving.get(thing) ?? [], kinds));
 	for (const grant of own.grants) {
-		const given = here.get(grant.thing);
-		if (given === undefined || grant.takenAway.length === 0) continue;
-		here.set(grant.thing, takenAway(given, grant));
+		if (grant.takenAway.length === 0) continue;
+		const thing = grant.thing;
+		const given = here.get(thing);
+		if (given !== undefined) here.set(thing, takenAway(given, grant));
 	}
 	return here;
 }
 
-/**
- * A thing linked here: what its giving grants written here (`grants`) give each party, and the parties whose grant
- * counts as their own for precedence (nothing below a link ever adds).
- */
+/** A thing linked here: what its giving grants written here (`grants`) give each party (nothing below a link adds). */
 function linkedHere(kind: string, grants: readonly GrantEntry[], kinds: KindsLookup): ThingHere {
 	const ticks = new Map<PartyKey, Set<string>>();
-	const precedes = new Set<PartyKey>();
 	for (const grant of grants) {
 		const own = ticks.get(grant.party) ?? new Set<string>();
-		const before = own.size;
 		for (const tick of grant.ticks) if (isFor(kinds.tickFor(kind, tick), grant.audience)) own.add(tick);
 		ticks.set(grant.party, own);
-		if (countsAsOwn(grant, own.size > before)) precedes.add(grant.party);
 	}
-	return {
-		kind,
-		ticks: ticks.size === 0 ? NO_TICKS : ticks,
-		precedes: precedes.size === 0 ? NO_PARTIES : precedes,
-		takenFromPersons: NO_TICKS,
-	};
-}
-
-/**
- * Open item 28 (recommended): a grant counts as its party's own for precedence only if it was written empty on purpose
- * or keeps a tick that counts (`counted`); one whose ticks are all ignored (unknown, or for the other audience) does
- * not replace what groups and everyone give. Returning `true` would make every grant count.
- */
-function countsAsOwn(grant: GrantEntry, counted: boolean): boolean {
-	return grant.ticks.length === 0 || counted;
+	return { kind, ticks: ticks.size === 0 ? NO_TICKS : ticks, takenFromPersons: NO_TICKS };
 }
 
 /** Whether a tick for `forWhom` counts for a party of `audience` (an unknown tick counts for nobody). */
@@ -176,12 +161,13 @@ function takenAway(given: ThingHere, grant: GrantEntry): ThingHere {
 	}
 	const takenFromPersons = takenFromPerson(given.takenFromPersons, grant);
 	if (ticks === given.ticks && takenFromPersons === given.takenFromPersons) return given;
-	return { kind: given.kind, ticks, precedes: given.precedes, takenFromPersons };
+	return { kind: given.kind, ticks, takenFromPersons };
 }
 
 /**
- * Item 73: a take-away naming a person removes the tick from them by every route (their groups', everyone's), for a
- * caller who counts as that person. Returning `taken` as it is would make it remove from the person's own grant only.
+ * Item 106: a take-away naming a person removes the tick from them by every route (their own entry, their groups',
+ * everyone's), whether or not they are put in by name. Returning `taken` as it is would make it remove from the
+ * person's own grant only.
  */
 function takenFromPerson(taken: ThingHere["takenFromPersons"], grant: GrantEntry): ThingHere["takenFromPersons"] {
 	if (!grant.party.startsWith("person/")) return taken;
@@ -198,7 +184,7 @@ function partiesHere(above: ReadonlySet<PartyKey>, own: WorkspaceEntries): Reado
 }
 
 /**
- * Item 73: a people switch naming a person hides them here and below by every route (their own entry, their groups,
+ * Item 106: a people switch naming a person hides them here and below by every route (their own entry, their groups,
  * everyone), until a workspace below puts them in again. Returning `above` as it is would make the switch hide only
  * their own party (rule 3).
  */
@@ -218,40 +204,28 @@ function hiddenHere(above: ReadonlySet<PartyKey>, own: WorkspaceEntries): Readon
  */
 export function personCounts(access: WorkspaceAccess, person: PartyKey, entries: PersonEntries): Counted {
 	if (access.hidden.has(person)) return NOBODY;
-	const self = access.present.has(person) ? person : undefined;
-	const parties: PartyKey[] = self === undefined ? [] : [self];
-	let partOfEveryone = self !== undefined;
+	const self = access.present.has(person);
+	const parties: PartyKey[] = self ? [person] : [];
+	let partOfEveryone = self;
 	for (const group of entries.groups) {
 		if (!access.present.has(group.party)) continue;
 		parties.push(group.party);
 		if (!group.outside) partOfEveryone = true;
 	}
 	if (partOfEveryone) parties.push(EVERYONE);
-	return parties.length === 0 ? NOBODY : { parties, self };
+	return parties.length === 0 ? NOBODY : { parties, person };
 }
 
 /** Rule 4 for an agent: its named party and the agents, if its named party is present. */
 export function agentCounts(access: WorkspaceAccess, agent: PartyKey): Counted {
-	return access.present.has(agent) ? { parties: [agent, AGENTS], self: undefined } : NOBODY;
-}
-
-/** Rule 5 (not for an owner): the answer for one thing, `undefined` when no counted party is given anything. */
-export function answerOf(given: ThingHere, counted: Counted): Answer | undefined {
-	const ticks = precedence(given, counted);
-	if (ticks === undefined) return undefined;
-	const taken = counted.self === undefined ? undefined : given.takenFromPersons.get(counted.self);
-	const kept = taken === undefined ? [...ticks] : [...ticks].filter((tick) => !taken.has(tick));
-	return { ticks: kept.sort() };
+	return access.present.has(agent) ? { parties: [agent, AGENTS], person: undefined } : NOBODY;
 }
 
 /**
- * Item 73: a person's own grant replaces what their groups and everyone give; groups among themselves add up. Without
- * it, the union of every counted party's ticks. `undefined`: no counted party has a grant here.
+ * Rule 5 (not for an owner): the union of the ticks of every counted party given anything here, less what take-aways
+ * naming the caller's person removed; `undefined` when no counted party is given anything.
  */
-function precedence(given: ThingHere, counted: Counted): ReadonlySet<string> | undefined {
-	const own =
-		counted.self !== undefined && given.precedes.has(counted.self) ? given.ticks.get(counted.self) : undefined;
-	if (own !== undefined) return own;
+export function answerOf(given: ThingHere, counted: Counted): Answer | undefined {
 	let union: Set<string> | undefined;
 	for (const party of counted.parties) {
 		const ticks = given.ticks.get(party);
@@ -259,7 +233,10 @@ function precedence(given: ThingHere, counted: Counted): ReadonlySet<string> | u
 		union ??= new Set();
 		for (const tick of ticks) union.add(tick);
 	}
-	return union;
+	if (union === undefined) return undefined;
+	const taken = counted.person === undefined ? undefined : given.takenFromPersons.get(counted.person);
+	const kept = taken === undefined ? [...union] : [...union].filter((tick) => !taken.has(tick));
+	return { ticks: kept.sort() };
 }
 
 /** Rule 5 for an owner (items 78, 99): every tick of the kind meant for people (`people` or `all`), none for agents only. */

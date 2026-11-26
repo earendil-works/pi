@@ -129,20 +129,21 @@ beforeEach(async () => {
 afterEach(() => w.close(context));
 
 describe("what the parties get", () => {
-	it("Ada's own grant replaces everyone's (precedence, 73): it must name Draw and Moderate (scenario 2)", async () => {
+	it("Ada's own grant adds to everyone's: no precedence (item 106, scenario 2)", async () => {
 		assert.deepEqual(await ticks(c.fix, c.sketch, `person:${c.ada}`), ["draw"]);
 		await grant(c.team, c.sketch, person(c.ada), ["moderate"]);
-		assert.deepEqual(await ticks(c.fix, c.sketch, `person:${c.ada}`), ["moderate"]);
-		await grant(c.team, c.sketch, person(c.ada), ["draw", "moderate"]);
 		assert.deepEqual(await ticks(c.fix, c.sketch, `person:${c.ada}`), ["draw", "moderate"]);
+		// A grant of hers whose ticks all count for nothing takes nothing of everyone's (Opus should 6).
+		await grant(c.team, c.sketch, person(c.ada), []);
+		assert.deepEqual(await ticks(c.fix, c.sketch, `person:${c.ada}`), ["draw"]);
 	});
 
 	it("two sources' grants for one party add up; removing one leaves the other", async () => {
 		await grant(c.team, c.sketch, person(c.ada), ["moderate"]);
 		await grant(c.team, c.sketch, person(c.ada), ["write"], { kind: "plugin", plugin: "review" });
-		assert.deepEqual(await ticks(c.team, c.sketch, `person:${c.ada}`), ["moderate", "write"]);
+		assert.deepEqual(await ticks(c.team, c.sketch, `person:${c.ada}`), ["draw", "moderate", "write"]);
 		await store.deleteEverythingFrom({ source: MARIO }, context);
-		assert.deepEqual(await ticks(c.team, c.sketch, `person:${c.ada}`), ["write"]);
+		assert.deepEqual(await ticks(c.team, c.sketch, `person:${c.ada}`), ["draw", "write"]);
 	});
 
 	it("two groups add up; a grant of no tick lets its party in (scenario 10, R10)", async () => {
@@ -179,7 +180,7 @@ describe("what the parties get", () => {
 		await store.deleteEverythingFrom({ source: share }, context);
 		assert.equal(await ticks(c.fix, c.sketch, `person:${c.kim}`), undefined);
 		assert.deepEqual(await ticks(c.fix, c.sketch, `person:${c.ada}`), ["draw"]);
-		assert.deepEqual((await store.groups.one.page({ group: guests }, 1, context)).items, []);
+		assert.ok(!w.rows("groups").some(({ group }) => group === guests));
 	});
 });
 
@@ -196,20 +197,21 @@ describe("below a link only less", () => {
 		);
 	});
 
-	it("a take-away naming a person removes the tick by every route (73), only for whom counts as that person", async () => {
+	it("a take-away naming a person removes the tick from them by every route (item 106), from nobody else", async () => {
 		await takeAway(c.fix, c.sketch, person(c.ada), ["draw"]);
 		assert.deepEqual(await ticks(c.fix, c.sketch, `person:${c.ada}`), []);
 		assert.deepEqual(await ticks(c.team, c.sketch, `person:${c.ada}`), ["draw"]);
-		// Kim counts only through her group in Club: a take-away naming her does not apply there.
+		// Kim counts only through her group in Club: a take-away naming her applies there too; Jo keeps Write.
 		await takeAway(c.club, c.plan, person(c.kim), ["write"]);
-		assert.deepEqual(await ticks(c.club, c.plan, `person:${c.kim}`), ["draw", "write"]);
+		assert.deepEqual(await ticks(c.club, c.plan, `person:${c.kim}`), ["draw"]);
+		assert.deepEqual(await ticks(c.club, c.plan, `person:${c.jo}`), ["draw", "write"]);
 	});
 
 	it("unlink takes the link's grants; a take-away further below stays and applies again when it comes back (scenario 14)", async () => {
 		await store.link({ workspace: c.club, thing: c.sketch, by: MARIO }, context);
 		await store.unlink({ workspace: c.team, thing: c.sketch }, context);
 		assert.equal(await ticks(c.fix, c.sketch, `person:${c.ada}`), undefined);
-		const left = (await store.grants.ofThing.page({ thing: c.sketch }, 10, context)).items;
+		const left = w.rows("grants").filter(({ thing }) => thing === c.sketch);
 		assert.deepEqual(
 			left.filter((g) => g.workspace === c.team),
 			[],
@@ -224,7 +226,10 @@ describe("below a link only less", () => {
 		await store.unlink({ workspace: c.pi, thing: c.sketch }, context);
 		await store.unlink({ workspace: c.club, thing: c.sketch }, context);
 		assert.deepEqual((await store.things.one.page({ thing: c.sketch }, 1, context)).items, []);
-		assert.deepEqual((await store.grants.ofThing.page({ thing: c.sketch }, 10, context)).items, []);
+		assert.deepEqual(
+			w.rows("grants").filter(({ thing }) => thing === c.sketch),
+			[],
+		);
 	});
 });
 
@@ -240,7 +245,7 @@ describe("what is here, who is here", () => {
 		assert.equal(await ticks(sub, c.tools, `person:${c.ada}`), undefined);
 	});
 
-	it("a people switch on a person hides them by every route, until a workspace below puts them in (73)", async () => {
+	it("a people switch on a person hides them by every route, until a workspace below puts them in (item 106)", async () => {
 		// Jo is in Club through both groups; one switch hides him there.
 		await store.setSwitch({ workspace: c.club, item: { kind: "party", party: person(c.jo) }, shown: false }, context);
 		assert.equal(await ticks(c.club, c.plan, `person:${c.jo}`), undefined);

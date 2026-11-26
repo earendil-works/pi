@@ -54,13 +54,16 @@ export type KindInfo = {
 	readonly workspaces: Workspaces;
 	readonly makers: Makers;
 	readonly stacking: Stacking;
-	/** Whether things of it are workspaces: none of slice 1's kinds are. */
-	readonly workspace: "no" | "plain" | "leaf";
 	readonly ticks: readonly { readonly name: string; readonly label: MessageData; readonly for: TickFor }[];
 	readonly defaultGrants: DefaultGrants;
 	/**
-	 * Tick names written at an older version `from`, as this version's (item 91, as Chord's `migrate`): pure. Without
-	 * it, a grant of an older version counts for nothing and is reported, never guessed.
+	 * The version of the ticks' meaning (item 105; 1 by default): bumped only when tick names change meaning, apart
+	 * from the contract's `version`. Grants record it.
+	 */
+	readonly ticksVersion: number;
+	/**
+	 * Tick names written at an older `ticksVersion` `from`, as this one's (as a document's `migrate`): pure. A grant of
+	 * an older ticks version without one, or one it throws for, counts for nothing and is reported once.
 	 */
 	readonly migrateTicks?: (ticks: readonly string[], from: number) => string[];
 };
@@ -80,9 +83,6 @@ export type ThingKind<C extends Contract = Contract> = {
 	/** Each tick's members and flags (a flag tick's: itself). */
 	readonly gives: ReadonlyMap<string, readonly GrantableName<C>[]>;
 };
-
-/** The contract of a kind. */
-export type ContractOf<K> = K extends ThingKind<infer C> ? C : never;
 
 type States = { readonly [member: string]: Schema };
 type Methods = { readonly [member: string]: Method };
@@ -130,7 +130,7 @@ type ThingContract<
  * tick gives members and flag ticks; a tick without `gives` is a flag of its own name, decision 97; a member no tick
  * gives is there for everyone admitted), whom its ticks are for, its default grants (its maker gets every tick, item
  * 90), who makes its things (`plugin` by default), in how many workspaces one may be linked (`many`), how several
- * combine (`all`), and how ticks written at an older version read now (`migrateTicks`).
+ * combine (`all`), the version of its ticks' meaning (`ticksVersion`) and how older ticks read now (`migrateTicks`).
  */
 export function defineThing<
 	const N extends string,
@@ -153,6 +153,7 @@ export function defineThing<
 		readonly makers?: Makers;
 		readonly workspaces?: Workspaces;
 		readonly stacking?: Stacking;
+		readonly ticksVersion?: number;
 		readonly migrateTicks?: (ticks: readonly string[], from: number) => string[];
 	},
 ): ThingKind<ThingContract<N, V, S, M, E, T>> {
@@ -187,9 +188,9 @@ export function defineThing<
 		workspaces: declaration.workspaces ?? "many",
 		makers: declaration.makers ?? "plugin",
 		stacking: declaration.stacking ?? "all",
-		workspace: "no",
 		ticks: ticks.map(([tick, { label, for: forWhom }]) => ({ name: tick, label, for: forWhom ?? "all" })),
 		defaultGrants: declaration.defaultGrants ?? {},
+		ticksVersion: declaration.ticksVersion ?? 1,
 		...(declaration.migrateTicks === undefined ? {} : { migrateTicks: declaration.migrateTicks }),
 	};
 	// The contract is `remote`'s over the members marked as `ThingContract` spells out; the names are the ticks' own.
