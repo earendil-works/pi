@@ -182,8 +182,8 @@ function plainPrototype(value: object): boolean {
 
 /**
  * Chord's own copy of `value` when it is plain JSON (`samePlainJson`'s), else `undefined`: what a decision keeps to
- * compare later reads with, so nothing of the plugin's value is kept or read again. Objects are copied without a
- * prototype (an own `__proto__` key stays a key).
+ * compare later reads with, so nothing of the plugin's value is kept or read again. An own `__proto__` key stays a key;
+ * objects without fields share one copy.
  */
 export function copyPlainJson(value: unknown): unknown {
 	budget = PLAIN_VALUES;
@@ -221,15 +221,23 @@ function copied(value: unknown, depth: number): unknown {
 	}
 	if (!plainPrototype(value)) return NOT_PLAIN;
 	const fields = value as { readonly [key: string]: unknown };
-	const copy: { [key: string]: unknown } = Object.create(null);
+	// Made by the first field: an object without any shares one empty copy (a decision's data is often none).
+	let copy: { [key: string]: unknown } | undefined;
 	for (const key in fields) {
 		if (!isEnumerable.call(fields, key)) continue;
 		const field = copied(fields[key], depth - 1);
 		if (field === NOT_PLAIN) return NOT_PLAIN;
-		copy[key] = field;
+		copy ??= {};
+		// A key of its own: an assignment of `__proto__` would set the copy's prototype.
+		if (key === "__proto__")
+			Object.defineProperty(copy, key, { value: field, enumerable: true, writable: true, configurable: true });
+		else copy[key] = field;
 	}
-	return copy;
+	return copy ?? NO_FIELDS;
 }
+
+/** The copy of every object without fields: shared, never written. */
+const NO_FIELDS: { readonly [key: string]: unknown } = {};
 
 /**
  * Whether `principal` is `other`: the same default key (canonical JSON), each computed once per principal object; no

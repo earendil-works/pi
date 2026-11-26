@@ -477,34 +477,39 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 			if (refused !== undefined) return refused;
 		}
 		countWalk(context);
-		const decided = this.#decided;
-		const last = decided?.kind === "allow" ? decided : undefined;
+		const last = this.#lastAllow();
 		if (
-			last?.by.kind === "plain" &&
-			sameNames(listed as readonly unknown[] | undefined, last.by.names) === "equal" &&
-			samePlainJson(last.by.data, value, "granted") === "equal"
+			last?.kind === "allowPlain" &&
+			sameNames(listed as readonly unknown[] | undefined, namesOf(last.verdict.granted)) === "equal" &&
+			samePlainJson(last.data, value, "granted") === "equal"
 		) {
 			return last.verdict;
 		}
 		return this.#adoptAllow(value, listed as readonly string[] | undefined, grants, last);
 	}
 
+	/** The last decision when it was an allow. */
+	#lastAllow(): DecidedAllow | undefined {
+		const decided = this.#decided;
+		return decided?.kind === "allowPlain" || decided?.kind === "allowText" ? decided : undefined;
+	}
+
 	/** A route's allowed value, passed on as it is: compared with the last one's copy, else as `#adoptAllow` does. */
 	#allowRoute(value: JsonValue): Allowed {
-		const decided = this.#decided;
-		const last = decided?.kind === "allow" ? decided : undefined;
-		if (last?.by.kind === "plain" && samePlainJson(last.by.data, value) === "equal") return last.verdict;
+		const last = this.#lastAllow();
+		if (last?.kind === "allowPlain" && samePlainJson(last.data, value) === "equal") return last.verdict;
 		const copy = copyPlainJson(value);
-		if (copy !== undefined && (last === undefined || last.by.kind === "plain")) {
-			if (last?.by.kind === "plain" && samePlainJson(last.by.data, copy) === "equal") return last.verdict;
-			return this.#keepAllow(
-				{ kind: "allow", value, granted: NO_GRANTS },
-				{ kind: "plain", data: copy, names: NO_ITEMS },
-			);
+		if (copy !== undefined && last?.kind !== "allowText") {
+			if (last !== undefined && samePlainJson(last.data, copy) === "equal") return last.verdict;
+			const verdict: Allowed = { kind: "allow", value, granted: NO_GRANTS };
+			this.#decided = { kind: "allowPlain", verdict, data: copy };
+			return verdict;
 		}
 		const key = canonicalText(value);
-		if (last !== undefined && key === keptText(last.by)) return last.verdict;
-		return this.#keepAllow({ kind: "allow", value, granted: NO_GRANTS }, { kind: "text", key });
+		if (last !== undefined && key === keptText(last)) return last.verdict;
+		const verdict: Allowed = { kind: "allow", value, granted: NO_GRANTS };
+		this.#decided = { kind: "allowText", verdict, key };
+		return verdict;
 	}
 
 	/**
@@ -520,33 +525,27 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 		last: DecidedAllow | undefined,
 	): Allowed {
 		const data = dataOf(value);
-		const names = listed === undefined ? NO_ITEMS : namesOf(listed, grants);
+		const names = listed === undefined ? NO_ITEMS : sortedNames(listed, grants);
 		const copy = copyPlainJson(data);
-		let by: Kept;
-		if (copy !== undefined && (last === undefined || last.by.kind === "plain")) {
+		let key: string | undefined;
+		if (copy !== undefined && last?.kind !== "allowText") {
 			if (
-				last?.by.kind === "plain" &&
-				sameList(last.by.names, names) &&
-				samePlainJson(last.by.data, copy) === "equal"
+				last !== undefined &&
+				sameList(namesOf(last.verdict.granted), names) &&
+				samePlainJson(last.data, copy) === "equal"
 			) {
 				return last.verdict;
 			}
-			by = { kind: "plain", data: copy, names };
 		} else {
-			const key = canonicalText(normalOf(data, names));
-			if (last !== undefined && key === keptText(last.by)) return last.verdict;
-			by = { kind: "text", key };
+			key = canonicalText(normalOf(data, names));
+			if (last !== undefined && key === keptText(last)) return last.verdict;
 		}
 		const granted = names.length === 0 ? NO_GRANTS : grantedSet(grants, names);
 		// What the factory is handed: the data's copy of its own (`dataOf`), with the set.
 		(data as { [field: string]: unknown }).granted = granted;
 		const verdict: Allowed = { kind: "allow", value: data as AdmittedValue, granted };
-		this.#decided = { kind: "allow", by, verdict };
-		return verdict;
-	}
-
-	#keepAllow(verdict: Allowed, by: Kept): Allowed {
-		this.#decided = { kind: "allow", by, verdict };
+		this.#decided =
+			key === undefined ? { kind: "allowPlain", verdict, data: copy } : { kind: "allowText", verdict, key };
 		return verdict;
 	}
 
@@ -557,25 +556,29 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 	#deny(reason: string, message: unknown): Denied {
 		const decided = this.#decided;
 		// Another reason is another decision.
-		const last = decided?.kind === "deny" && decided.reason === reason ? decided : undefined;
-		if (last?.by.kind === "plain" && sameMessage(last.by.message, message)) return last.verdict;
+		const last =
+			(decided?.kind === "denyPlain" || decided?.kind === "denyText") && decided.reason === reason
+				? decided
+				: undefined;
+		if (last?.kind === "denyPlain" && sameMessage(last.message, message)) return last.verdict;
+		const copy = message === undefined ? undefined : copyPlainJson(message);
+		let key: string | undefined;
+		if ((message === undefined || copy !== undefined) && last?.kind !== "denyText") {
+			if (last !== undefined && sameMessage(last.message, copy)) return last.verdict;
+		} else {
+			// A structured key: a reason ending like a message's JSON is not that message.
+			key = denyText(reason, message);
+			const kept =
+				last === undefined ? undefined : last.kind === "denyText" ? last.key : denyText(reason, last.message);
+			if (last !== undefined && key === kept) return last.verdict;
+		}
 		// Checked by the caller: a message as data.
 		const details = message === undefined ? undefined : { message: message as MessageData };
-		const make = (): Denied => ({ kind: "deny", error: forbidden(reason, details) });
-		const copy = message === undefined ? undefined : copyPlainJson(message);
-		if ((message === undefined || copy !== undefined) && (last === undefined || last.by.kind === "plain")) {
-			if (last?.by.kind === "plain" && sameMessage(last.by.message, copy)) return last.verdict;
-			const verdict = make();
-			this.#decided = { kind: "deny", reason, by: { kind: "plain", message: copy }, verdict };
-			return verdict;
-		}
-		// A structured key: a reason ending like a message's JSON is not that message.
-		const key = denyText(reason, message);
-		const kept =
-			last === undefined ? undefined : last.by.kind === "text" ? last.by.key : denyText(reason, last.by.message);
-		if (last !== undefined && key === kept) return last.verdict;
-		const verdict = make();
-		this.#decided = { kind: "deny", reason, by: { kind: "text", key }, verdict };
+		const verdict: Denied = { kind: "deny", error: forbidden(reason, details) };
+		this.#decided =
+			key === undefined
+				? { kind: "denyPlain", verdict, reason, message: copy }
+				: { kind: "denyText", verdict, reason, key };
 		return verdict;
 	}
 
@@ -667,7 +670,7 @@ function sameList(a: readonly string[], b: readonly string[]): boolean {
  * before the hot-path pass (its second iteration of the list): for a list that iterates as an index walk, the grants
  * it lists, in the grants' order (sorted, `fingerprint.ts`), with no set made.
  */
-function namesOf(listed: readonly string[], grants: readonly string[]): readonly string[] {
+function sortedNames(listed: readonly string[], grants: readonly string[]): readonly string[] {
 	if (!plainIteration(listed)) return [...new Set(listed)].sort();
 	const names: string[] = [];
 	for (let at = 0; at < grants.length; at++) {
@@ -706,15 +709,14 @@ function normalOf(data: { readonly [field: string]: unknown }, names: readonly s
 	return (names.length === 0 ? data : { ...data, granted: names }) as JsonValue;
 }
 
-/** The text of what an allow kept: kept, or made from Chord's own plain copy (which runs no code of anyone's). */
-function keptText(kept: Kept): string {
-	if (kept.kind === "text") return kept.key;
-	// A route's copy is its value; an object's its data, with the names it granted.
-	const data = kept.data as JsonValue;
+/** The text of the last allow: kept, or made from Chord's own plain copy (which runs no code of anyone's). */
+function keptText(last: DecidedAllow): string {
+	if (last.kind === "allowText") return last.key;
+	const { data, verdict } = last;
+	// A route's copy is its value (it grants nothing); an object's its data, with the names it granted.
+	const names = namesOf(verdict.granted);
 	return canonicalText(
-		typeof data === "object" && data !== null && !Array.isArray(data) && kept.names.length > 0
-			? normalOf(data, kept.names)
-			: data,
+		names.length === 0 ? (data as JsonValue) : normalOf(data as { readonly [field: string]: unknown }, names),
 	);
 }
 
@@ -736,24 +738,18 @@ function countWalk(context: Context): void {
 }
 
 /**
- * What a decision kept of its last allow to compare the next read with, all of it Chord's own, made when the decision
- * changed (never a reference into the plugin's value, which may change or go): a copy of its plain JSON (an
- * object's data, or a route's value) with its names, sorted; or the canonical JSON text made when it was read.
+ * The last allow a decision read: its verdict and what the next read is compared with, all of it Chord's own, made when
+ * the decision changed (never a reference into the plugin's value, which may change or go): its names (the verdict's
+ * set) and a copy of its plain JSON (an object's data, a route's value), or the canonical JSON text made at that read.
  */
-type Kept =
-	| { readonly kind: "plain"; readonly data: unknown; readonly names: readonly string[] }
-	| { readonly kind: "text"; readonly key: string };
-
-/** The last allow a decision read: its verdict and what it kept. */
-type DecidedAllow = { readonly kind: "allow"; readonly by: Kept; readonly verdict: Allowed };
+type DecidedAllow =
+	| { readonly kind: "allowPlain"; readonly verdict: Allowed; readonly data: unknown }
+	| { readonly kind: "allowText"; readonly verdict: Allowed; readonly key: string };
 
 /** The last denial a decision read: its reason, a copy of its plain message (or none) or its text, and its verdict. */
-type DecidedDeny = {
-	readonly kind: "deny";
-	readonly reason: string;
-	readonly by: { readonly kind: "plain"; readonly message: unknown } | { readonly kind: "text"; readonly key: string };
-	readonly verdict: Denied;
-};
+type DecidedDeny =
+	| { readonly kind: "denyPlain"; readonly verdict: Denied; readonly reason: string; readonly message: unknown }
+	| { readonly kind: "denyText"; readonly verdict: Denied; readonly reason: string; readonly key: string };
 
 /** What a decision read last: an allow or a denial; once released, only the verdict. */
 type Decided = DecidedAllow | DecidedDeny | { readonly kind: "released"; readonly verdict: Allowed | Denied };
@@ -784,12 +780,23 @@ function grantedSet(grants: readonly string[], names: readonly string[]): Readon
 		}
 	}
 	const granted: ReadonlySet<string> = new Set(names);
+	setNames.set(granted, names);
 	const ref = new WeakRef(granted);
 	if (bucket === undefined) sets.set(hash, [ref]);
 	else bucket.push(ref);
 	collectedSets.register(granted, { sets, hash, ref });
 	return granted;
 }
+
+/**
+ * The sorted names of a granted set (`grantedSet`'s, or none): what a decision compares a read's names with, by
+ * position. Kept with the set, weakly.
+ */
+function namesOf(granted: ReadonlySet<string>): readonly string[] {
+	return setNames.get(granted) ?? NO_ITEMS;
+}
+
+const setNames = new WeakMap<ReadonlySet<string>, readonly string[]>();
 
 /** A version's granted sets by the hash of their names, each while a decision has it. */
 type GrantedSets = Map<number, WeakRef<ReadonlySet<string>>[]>;
