@@ -1,4 +1,4 @@
-import { describe, expect, expectTypeOf, it } from "vitest";
+import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT, type Context } from "../../src/context/index.ts";
 import { contractData } from "../../src/contracts/contract.ts";
 import {
@@ -233,16 +233,31 @@ describe("granted members of combinations nothing grants any more", () => {
 		});
 		const version = currentVersion(Many);
 		const names = ["a", "b", "c", "d"];
-		const entries: WeakRef<object>[] = [];
+		const tables = new Set<Map<unknown, unknown>>();
+		const pending: (() => void)[] = [];
+		// V8 need not schedule finalizers, even after a forced GC. Deliver the registered holdings explicitly.
+		class TestRegistry<T> {
+			readonly clean: (holding: T) => void;
+			constructor(clean: (holding: T) => void) {
+				this.clean = clean;
+			}
+			register(target: object, holding: T) {
+				const ref = new WeakRef(target);
+				pending.push(() => {
+					expect(ref.deref()).toBeUndefined();
+					this.clean(holding);
+				});
+			}
+		}
 		const set = Map.prototype.set;
-		// Watches the insertions into the version's table by names only: it keeps neither the table nor its entries.
+		// Keep the table observable without retaining the members behind its weak references.
 		Map.prototype.set = function (this: Map<unknown, unknown>, key: unknown, value: unknown) {
-			if (typeof key === "string" && key.startsWith("[") && value instanceof WeakRef)
-				entries.push(new WeakRef(value));
+			if (typeof key === "string" && key.startsWith("[") && value instanceof WeakRef) tables.add(this);
 			return set.call(this, key, value);
 		};
 		let made: WeakRef<object>[];
 		try {
+			vi.stubGlobal("FinalizationRegistry", TestRegistry);
 			made = (() => {
 				const refs: WeakRef<object>[] = [];
 				for (let mask = 1; mask < 16; mask++) {
@@ -254,9 +269,15 @@ describe("granted members of combinations nothing grants any more", () => {
 			})();
 		} finally {
 			Map.prototype.set = set;
+			vi.unstubAllGlobals();
 		}
-		expect(entries).toHaveLength(15);
-		await expectCollected(...made, ...entries);
+		expect(tables.size).toBe(1);
+		const [table] = tables;
+		expect(table.size).toBe(15);
+		await expectCollected(...made);
+		expect(pending).toHaveLength(15);
+		for (const clean of pending) clean();
+		expect(table.size).toBe(0);
 		const again = grantedMembers(version, new Set(["b", "d"]));
 		expect([[...again.methods.keys()], memberOrder(again).methods]).toEqual([
 			["b", "d"],
