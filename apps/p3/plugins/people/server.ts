@@ -1,7 +1,6 @@
 // The people plugin on the server: the persons and groups (`PeopleStore`, three tables), who the caller is (`Me`),
 // the owner's persons (`People`, `PeopleList`) and the invite links that make a person and sign their first browser in
-// (`invites.ts`). Removing a person removes them from every group and every session (the things they brought into
-// sessions with them) and ends their sign-ins at once.
+// (`invites.ts`). Removing a person removes them from every group and ends their sign-ins at once.
 
 import {
 	and,
@@ -22,7 +21,6 @@ import {
 	type Tx,
 } from "@earendil-works/p3/v1";
 import { ServerRuntime } from "@earendil-works/p3/v1/server";
-import { SessionsStore } from "../sessions/contract.server.ts";
 import { SignIns } from "../sign-in/contract.ts";
 import { OwnerSeeds } from "../things/contract.server.ts";
 import { PeopleStore } from "./contract.server.ts";
@@ -197,8 +195,6 @@ export default defineFacet((host) => {
 			removePerson: async (args, ctx) => {
 				await removePerson(args, ctx);
 				invites.drop(args.person);
-				// Out of every session too: their memberships, the options set for them, the things they brought.
-				await (await ctx.get(SessionsStore, {})).removePerson(args, ctx);
 				// Their sign-ins end with them: each one's open links close at once.
 				const signIns = await ctx.get(SignIns, {});
 				for (const signIn of signIns.list.value) {

@@ -1,9 +1,10 @@
 // The transcript pane of a session's view: a session's conversation. It holds the session's `Transcript` (the worker's
 // one object per conversation, starting the worker), shows the window of entries with "Load earlier" before it and the
-// running answer after it, and for writers the composer. Kept at the bottom while the reader is there.
+// running answer after it (Read), and the composer (Send; its stop button with Stop). Kept at the bottom while the
+// reader is there.
 
 import { Button } from "@earendil-works/elanor-react";
-import { type RefState, TRANSCRIPT_WRITES, Transcript, withGranted } from "@earendil-works/p3/v1";
+import { type RefState, Transcript, withGranted } from "@earendil-works/p3/v1";
 import type { ConversationView, LiveState } from "@earendil-works/p3/v1/web";
 import { useHold, useLive, useRefState, useWatch } from "@earendil-works/p3/v1/web";
 import { useLayoutEffect, useMemo, useRef } from "react";
@@ -12,18 +13,21 @@ import { type EntriesReader, useEarlier } from "./earlier.ts";
 import { Entries } from "./entries.tsx";
 import styles from "./transcript-pane.module.css";
 
-/** Session `session`'s conversation, as the caller may see it (readers) and write to it (writers). */
+/** Session `session`'s conversation, as the caller's ticks on the session let them read it, send and stop. */
 export function TranscriptPane(props: { readonly session: string }) {
 	const ref = useHold(Transcript, { session: props.session });
 	const live = useLive(ref);
-	const writer = withGranted(live, ...TRANSCRIPT_WRITES);
+	const reader = withGranted(live, "view", "entries");
+	const sender = withGranted(live, "send");
+	const stopper = withGranted(live, "stop");
 	const state = useRefState(ref);
 	// The worker sends Durable's conversation view as it is (`null` until it arrived).
-	const view = (useWatch(live?.view) ?? undefined) as ConversationView | null | undefined;
+	const view = (useWatch(reader?.view) ?? undefined) as ConversationView | null | undefined;
 	// Its items are Durable's entries, as the worker read them.
 	const read = useMemo<EntriesReader | undefined>(
-		() => (live === undefined ? undefined : (query, ctx) => live.entries(query, ctx) as ReturnType<EntriesReader>),
-		[live],
+		() =>
+			reader === undefined ? undefined : (query, ctx) => reader.entries(query, ctx) as ReturnType<EntriesReader>,
+		[reader],
 	);
 	const earlier = useEarlier(read, view ?? undefined);
 	const scroller = useStickToBottom(view);
@@ -36,7 +40,7 @@ export function TranscriptPane(props: { readonly session: string }) {
 	return (
 		<div
 			className={styles.pane}
-			data-transcript={live === undefined ? "loading" : writer === undefined ? "reader" : "writer"}
+			data-transcript={live === undefined ? "loading" : sender === undefined ? "reader" : "writer"}
 		>
 			<div className={styles.scroll} onScroll={scroller.onScroll} ref={scroller.ref}>
 				{earlier.more ? (
@@ -52,7 +56,7 @@ export function TranscriptPane(props: { readonly session: string }) {
 					</Button>
 				) : null}
 				{earlier.error === undefined ? null : <p className={styles.error}>{earlier.error}</p>}
-				{view === undefined || view === null ? (
+				{reader === undefined && live !== undefined ? null : view === undefined || view === null ? (
 					<p className={styles.note}>{waiting(state)}</p>
 				) : view.entries.length === 0 && earlier.entries.length === 0 && liveState.run === undefined ? (
 					<p className={styles.note} data-empty="">
@@ -62,10 +66,10 @@ export function TranscriptPane(props: { readonly session: string }) {
 					<Entries entries={[...earlier.entries, ...view.entries]} live={liveState} />
 				)}
 			</div>
-			{writer === undefined ? null : (
+			{sender === undefined ? null : (
 				<Composer
-					send={(message, ctx) => writer.send(message, ctx)}
-					stop={(ctx) => writer.stop(ctx)}
+					send={(message, ctx) => sender.send(message, ctx)}
+					stop={(ctx) => (stopper === undefined ? Promise.resolve(null) : stopper.stop(ctx))}
 					working={liveState.run !== undefined}
 				/>
 			)}

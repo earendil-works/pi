@@ -32,7 +32,12 @@ export function partOf(t: TestedPlugin<P3Principal>, Kind: { readonly name: stri
  * `{ value }`): a stand-in for the holding's reference, with nothing of a reference's lifecycle.
  */
 export function held(thing: string, granted: readonly string[], members: object = {}): HeldThing {
-	return { thing, workspace: "w", ref: { ...members, granted: new Set(granted) } as unknown as HeldThing["ref"] };
+	return {
+		thing,
+		workspace: "w",
+		depth: 0,
+		ref: { ...members, granted: new Set(granted) } as unknown as HeldThing["ref"],
+	};
 }
 
 /** Runs tool `name` of `extension` with `args` (a tool that uses nothing of Durable's execution API); its text. */

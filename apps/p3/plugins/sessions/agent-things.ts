@@ -16,7 +16,7 @@ export function serveAgentThings(host: FacetHost<P3Principal>): void {
 				// By id (each once): the order the worker holds them in, the same at every change.
 				Object.entries(answers)
 					.sort(([a], [b]) => (a < b ? -1 : 1))
-					.map(([thing, { kind }]) => ({ thing, kind })),
+					.map(([thing, { kind, depth }]) => ({ thing, kind, depth })),
 			),
 		};
 	});

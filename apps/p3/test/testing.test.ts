@@ -10,7 +10,7 @@ import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { after, describe, it } from "node:test";
-import { BACKGROUND_CONTEXT as context, local, Sessions, str } from "@earendil-works/p3/v1";
+import { BACKGROUND_CONTEXT as context, local, Roots, str } from "@earendil-works/p3/v1";
 import { ServerCommands } from "@earendil-works/p3/v1/server";
 import { testPlugin, testServer } from "@earendil-works/p3/v1/testing";
 import { exchange, serverSocket } from "../src/local-socket.ts";
@@ -89,7 +89,7 @@ describe("testServer", () => {
 		);
 		assert.equal(dataDir, t.dataDir);
 		// A built-in plugin's object, through a client signed in as the owner.
-		assert.equal((await (await t.client(context)).get(Sessions, {}, context)).state.value.kind, "live");
+		assert.equal((await (await t.client(context)).get(Roots, { view: "test" }, context)).state.value.kind, "live");
 		await t.stop(context);
 		assert.ok(await exists(join(dataDir, "server", "store.sqlite")));
 		const again = await t.restart(context);
@@ -132,7 +132,10 @@ describe("testServer", () => {
 		try {
 			await t.close(context);
 			assert.ok(await exists(join(next.dataDir, "server", "store.sqlite")));
-			assert.equal((await (await next.client(context)).get(Sessions, {}, context)).state.value.kind, "live");
+			assert.equal(
+				(await (await next.client(context)).get(Roots, { view: "test" }, context)).state.value.kind,
+				"live",
+			);
 		} finally {
 			await next.close(context);
 		}

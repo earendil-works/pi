@@ -16,8 +16,8 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { ownerClient, ownerCookie } from "@earendil-works/p3/v1/testing";
-import { Sessions, SessionWorker } from "../../plugins/sessions/contract.ts";
-import { childrenOf, coding, launch, offline } from "../support.ts";
+import { SessionWorker } from "../../plugins/sessions/contract.ts";
+import { childrenOf, launch, newSession, offline, TMP } from "../support.ts";
 import { eventually } from "../until.ts";
 
 const run = promisify(execFile);
@@ -72,7 +72,7 @@ describe("the installed release", () => {
 		const server = await launch(P3, join(root, "workers"));
 		try {
 			const client = await ownerClient(server.dataDir, server.port, context, 30_000);
-			const id = await (await client.get(Sessions, {}, context)).create(coding("one"), context);
+			const id = await newSession(client, "one", context, TMP);
 			const worker = await client.get(SessionWorker, { session: id }, context);
 			assert.equal(worker.state.value.kind, "live");
 			// Besides the worker, the server has esbuild's service as a child (it builds the plugins).
@@ -243,7 +243,7 @@ const HELLO = {
 		'import assert from "node:assert/strict";',
 		'import { it } from "node:test";',
 		'import { fileURLToPath } from "node:url";',
-		'import { BACKGROUND_CONTEXT as context, Sessions, THIS_DEVICE } from "@earendil-works/p3/v1";',
+		'import { BACKGROUND_CONTEXT as context, Roots, SessionKind, THIS_DEVICE, until, Workspace } from "@earendil-works/p3/v1";',
 		'import { testServer } from "@earendil-works/p3/v1/testing";',
 		'import { Hello, Where } from "../contract.ts";',
 		"",
@@ -254,7 +254,10 @@ const HELLO = {
 		'		const hello = await client.get(Hello, { tone: "plain" }, context);',
 		'		assert.equal(await hello.greet({ name: "p3" }, context), "hello, p3");',
 		"		const location = { environment: THIS_DEVICE, folder: t.dataDir };",
-		'		const session = await (await client.get(Sessions, {}, context)).create({ app: "coding", title: "one", location }, context);',
+		'		const roots = await client.get(Roots, { view: "e2e" }, context);',
+		"		const [pi] = (await until(roots.list, (list) => list.rows.length > 0, context)).rows;",
+		"		const workspace = await client.get(Workspace, { workspace: pi.workspace }, context);",
+		'		const session = await workspace.make({ kind: SessionKind.name, name: "one", input: { location } }, context);',
 		"		const where = await client.get(Where, { session }, context);",
 		"		assert.equal(where.session.value, session);",
 		'		assert.equal((await t.workers(context))[session]?.status, "running");',

@@ -1,7 +1,8 @@
 // The transcript plugin's worker facet alone (`testPlugin`), beside a stand-in harness (Durable on the worker's store
-// with a faux model, its `submit` the harness's way in) and the harness tests' stand-in server: a reader sees the view
-// and pages entries but cannot send, a writer sends and stops (not in an archived session), two readers share one
-// follower of the conversation, and a member removed while holding the transcript is denied at once.
+// with a faux model, its `submit` the harness's way in) and the harness tests' stand-in server, which answers each
+// caller's ticks on the session: Read sees the view and pages entries, Send sends, Stop stops (not in an archived
+// session); Read without Send has no send, Send without Read no view; two readers share one follower of the
+// conversation, and a caller given nothing any more while holding the transcript is denied at once.
 
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
@@ -12,9 +13,9 @@ import {
 	defineFacet,
 	isChordError,
 	type P3Principal,
-	TRANSCRIPT_WRITES,
 	Transcript,
 	until,
+	withGranted,
 } from "@earendil-works/p3/v1";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
 import {
@@ -34,7 +35,10 @@ import { within } from "../../../test/until.ts";
 import { sessionRow, standIns } from "../../harness/test/stubs.ts";
 
 const SESSION = "s1";
-/** The owner, as the stand-ins answer for them (a person who writes). */
+
+/** Every member of the transcript: the owner has every tick of the session. */
+const ALL = ["view", "entries", "send", "stop"] as const;
+/** The owner, as the stand-ins answer for them (every tick of the session). */
 const OWNER: P3Principal = { kind: "person", id: "owner", name: "Owner" };
 const ALICE: P3Principal = { kind: "person", id: "alice", name: "Alice" };
 
@@ -108,7 +112,7 @@ describe("the transcript plugin on a worker", () => {
 		counts = c.name.includes("not open yet") ? { observers: 0, opens: 0 } : { observers: 0 };
 		const stand = standIns(sessionRow(SESSION, "/tmp"), []);
 		server = stand.control;
-		server.access("person:alice", "read");
+		server.ticks("person:alice", ["read"]);
 		t = await testPlugin(
 			fileURLToPath(new URL("../", import.meta.url)),
 			{
@@ -123,12 +127,11 @@ describe("the transcript plugin on a worker", () => {
 
 	afterEach(() => t.close(context));
 
-	it("a writer sends and sees the answer; a reader sees it and pages entries, but has no send", async () => {
+	it("Send sends and Read sees the answer; Read alone pages entries but has no send", async () => {
 		await t.root(
 			async (ctx) => {
-				const writer = await ctx.get(Transcript, { session: SESSION });
-				assert.equal(writer.granted.has("send") ? "writer" : "reader", "writer");
-				assertGranted(writer, ...TRANSCRIPT_WRITES);
+				const writer = withGranted(await ctx.get(Transcript, { session: SESSION }), ...ALL)!;
+				assertGranted(writer, ...ALL);
 				await writer.send({ text: "hello", requestId: "r1" }, ctx);
 				await until(writer.view, (view) => texts(view).includes("ok: hello"), within("the answer", ctx));
 			},
@@ -137,10 +140,10 @@ describe("the transcript plugin on a worker", () => {
 		);
 		await t.root(
 			async (ctx) => {
-				const reader = await ctx.get(Transcript, { session: SESSION });
-				assert.equal(reader.granted.has("send") ? "writer" : "reader", "reader");
+				const held = await ctx.get(Transcript, { session: SESSION });
 				// Not granted `send`: the reference has none (a call over the wire anyway is refused `forbidden` by Chord).
-				assert.equal(reader.send, undefined);
+				assert.equal(held.send, undefined);
+				const reader = withGranted(held, "view", "entries")!;
 				assert.deepEqual(texts(reader.view.value), ["hello", "ok: hello"]);
 				const page = await reader.entries({ limit: 1 }, ctx);
 				assert.equal(page.items.length, 1);
@@ -152,11 +155,26 @@ describe("the transcript plugin on a worker", () => {
 		assert.deepEqual(t.errors, []);
 	});
 
-	it("lets a writer stop, except in an archived session", async () => {
+	// ERNDL-704 test 4: Send without Read (a row of its own): the composer only.
+	it("gives Send without Read the send and no view", async () => {
+		server.ticks("person:alice", ["send"]);
 		await t.root(
 			async (ctx) => {
-				const writer = await ctx.get(Transcript, { session: SESSION });
-				assertGranted(writer, ...TRANSCRIPT_WRITES);
+				const held = await ctx.get(Transcript, { session: SESSION });
+				assert.deepEqual([...held.granted].sort(), ["send"]);
+				assert.equal(held.view, undefined);
+				assert.equal(held.entries, undefined);
+				assert.equal(await withGranted(held, "send")!.send({ text: "hi", requestId: "r2" }, ctx), null);
+			},
+			context,
+			{ principal: ALICE },
+		);
+	});
+
+	it("lets Stop stop, except in an archived session", async () => {
+		await t.root(
+			async (ctx) => {
+				const writer = withGranted(await ctx.get(Transcript, { session: SESSION }), ...ALL)!;
 				assert.equal(await writer.stop(ctx), null);
 				server.row({ archivedAt: 5 });
 				await until(writer.state, (state) => state.kind === "live", within("the writer", ctx));
@@ -172,7 +190,7 @@ describe("the transcript plugin on a worker", () => {
 	it("waits for a harness that is not open yet, without a failed attempt", async () => {
 		await t.root(
 			async (ctx) => {
-				const transcript = await ctx.get(Transcript, { session: SESSION });
+				const transcript = withGranted(await ctx.get(Transcript, { session: SESSION }), "view")!;
 				await until(transcript.view, (view) => view !== null, within("the view", ctx, 5000));
 			},
 			context,
@@ -186,10 +204,10 @@ describe("the transcript plugin on a worker", () => {
 	it("follows a conversation once for two readers", async () => {
 		await t.root(
 			async (ctx) => {
-				const one = await ctx.get(Transcript, { session: SESSION });
+				const one = withGranted(await ctx.get(Transcript, { session: SESSION }), "view")!;
 				await t.root(
 					async (other) => {
-						const two = await other.get(Transcript, { session: SESSION });
+						const two = withGranted(await other.get(Transcript, { session: SESSION }), "view")!;
 						assert.deepEqual(one.view.value, two.view.value);
 					},
 					context,
@@ -202,18 +220,16 @@ describe("the transcript plugin on a worker", () => {
 		assert.equal(counts.observers, 1);
 	});
 
-	it("denies a member removed while holding the transcript", async () => {
+	it("denies a caller given nothing any more while holding the transcript", async () => {
 		await t.root(
 			async (ctx) => {
-				const transcript = await ctx.get(Transcript, { session: SESSION });
-				assert.equal(transcript.granted.has("send") ? "writer" : "reader", "reader");
-				server.access("person:alice", "none");
+				const transcript = withGranted(await ctx.get(Transcript, { session: SESSION }), "view")!;
+				assert.equal(transcript.granted.has("send"), false);
+				server.ticks("person:alice", null);
 				const state = await until(transcript.state, (value) => value.kind === "failed", within("the denial", ctx));
 				assert.ok(state.kind === "failed" && state.cause.kind === "denied");
-				assert.throws(
-					() => transcript.view.value,
-					(error) => isChordError(error) && error.code === "forbidden",
-				);
+				// Nothing granted any more: no view to read.
+				assert.equal(transcript.view, undefined);
 			},
 			context,
 			{ principal: ALICE },

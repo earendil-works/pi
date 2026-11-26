@@ -1,7 +1,7 @@
 // Two kinds of thing for the page's tests only: a note with no view of its own (it opens in the Settings view) whose
 // new links give everyone Read and the agents Write, and a wall whose view takes the whole page.
 
-import { defineMessages, defineThingKind } from "@earendil-works/p3/v1";
+import { defineMessages, defineThing } from "@earendil-works/p3/v1";
 
 /** The kinds' texts: their ticks' labels, the wall's title and the plugin's. */
 export const messages = defineMessages("page-kinds", {
@@ -9,7 +9,7 @@ export const messages = defineMessages("page-kinds", {
 });
 
 /** A note: no view; Read and Write as ticks, given at a new link to everyone (Read) and the agents (Write). */
-export const NoteKind = defineThingKind("page-kinds.note", {
+export const NoteKind = defineThing("page-kinds.note", {
 	version: 1,
 	makers: "anyone",
 	ticks: { read: { label: messages.message("read") }, write: { label: messages.message("write") } },
@@ -17,7 +17,7 @@ export const NoteKind = defineThingKind("page-kinds.note", {
 });
 
 /** A wall: a view that takes the whole page. */
-export const WallKind = defineThingKind("page-kinds.wall", {
+export const WallKind = defineThing("page-kinds.wall", {
 	version: 1,
 	makers: "anyone",
 	ticks: { look: { label: messages.message("read") } },

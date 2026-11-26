@@ -74,15 +74,15 @@ session workers           one process per session: host at Session({ id }), its 
 
 | Module | What you get |
 | --- | --- |
-| `/v1` | everything of Chord's root (`remote`, `local`, `method`, the schema helpers, `defineTable`, `query`, `queries`, `defineState`, `defineRegistry`, `allow`, `deny`, `forbidden`, `invalid`, ...), `BACKGROUND_CONTEXT`, `Context`, `withAbortSignal`, `withCancel`, `JsonValue`, `defineFacet` typed with p3's principals, the host kinds `Server()` and `Session({ id })`, the helpers `forward`, `contribute`, `until(watchable, done, context)` (the first value for which `done` holds; the base, the plugins and the tests wait with it) and `reportError` (a failure nobody awaits: stderr now, telemetry with the telemetry package), `P3Principal`, and the contracts p3 promises to third-party plugins (the sessions plugin's: `Sessions`, `SessionsList`, `SessionFacts`, `SessionWorker`, `SessionStart`, `SessionRow`, `SessionState`) |
-| `/v1/server` | Chord's HTTP surface (`Http`, `Authenticators`, cookies), `ServerRuntime` (the data directory, the machine's OS user and host name, the host, the store, the route to workers, apply, stop), `WorkerRunners` (the one runner) and `WorkerRunnerWraps` (how a plugin changes how session workers run), `LinkOpened` (hooks on accepted links), `ServerCommands` (what `p3` runs over the data directory's socket, for the owner's OS user: `stop`, `apply`, `owner-link`), `SessionRoute`, the worker control messages, the rollout types, Chord's `processLock` and `clearStaleLock` (a session's lock) |
+| `/v1` | everything of Chord's root (`remote`, `local`, `method`, the schema helpers, `defineTable`, `query`, `queries`, `defineState`, `defineRegistry`, `allow`, `deny`, `forbidden`, `invalid`, ...), `BACKGROUND_CONTEXT`, `Context`, `withAbortSignal`, `withCancel`, `JsonValue`, `defineFacet` typed with p3's principals, the host kinds `Server()` and `Session({ id })`, the helpers `forward`, `contribute`, `until(watchable, done, context)` (the first value for which `done` holds; the base, the plugins and the tests wait with it) and `reportError` (a failure nobody awaits: stderr now, telemetry with the telemetry package), `P3Principal`, and the contracts p3 promises to third-party plugins (the things plugin's: `defineThing`, `defineWorkspace`, `Workspace`, `Roots`, `WorkspaceChildren`, `MyAnswer`, ...; the sessions plugin's: `SessionKind`, `SessionObject`, `SessionDefaultsKind`, `SessionFacts`, `SessionWorker`, `SessionStart`, `SessionRow`, `SessionState`, `followSession`) |
+| `/v1/server` | the things store (`ThingsStore`, `Gives`) and `serveThing` (a kind's server side), the sessions store (`SessionsStore`), Chord's HTTP surface (`Http`, `Authenticators`, cookies), `ServerRuntime` (the data directory, the machine's OS user and host name, the host, the store, the route to workers, apply, stop), `WorkerRunners` (the one runner) and `WorkerRunnerWraps` (how a plugin changes how session workers run), `LinkOpened` (hooks on accepted links), `ServerCommands` (what `p3` runs over the data directory's socket, for the owner's OS user: `stop`, `apply`, `owner-link`), `SessionRoute`, the worker control messages, the rollout types, Chord's `processLock` and `clearStaleLock` (a session's lock) |
 | `/v1/worker` | `WorkerRuntime` (the session, the host, the store, the directory, the idle time, `close`), `WorkerBusy` (counts that keep the worker alive) |
 | `/v1/testing` | for a plugin's `test/` folder only. `testPlugin(root, { kind: "server" } or { kind: "worker", session }, context)`: Chord's plugin tier with p3's API, kinds, modules and principals, and the base's own facet as the real host has it (`ServerRuntime` of a server that does not listen, starts no worker and applies nothing; or `WorkerRuntime` and `WorkerBusy`), each test with a temporary directory of its own, removed at `close`. `testServer({ plugins }, context)`: p3's real server on a temporary data directory with the built-in plugins and the plugins under test, workers as real processes, `client(ctx)` signed in as the owner (`testing.md`, tier 3); `ownerClient`, `ownerCookie` |
 
 Principals are identity only: `{ kind: "person", id, name }`, `{ kind: "worker", session }`, `{ kind: "server" }`.
 The owner is a person too, the one whose row says so (decision "The owner is a person"). What a person may do, being
-the owner among it, is data, read by admissions (`admitSession`, `admitThing`, `admitApp`, `admitOwner`), never
-stored in the principal.
+the owner among it, is data, read by admissions (the things plugin's one admission of every kind, `followSession` for a session's
+objects on its worker, `admitOwner`), never stored in the principal.
 
 A plugin of another root (a third party's, in `<data directory>/plugins`) reaches the built-in plugins' contracts only
 through the API (Chord decision "The app kit, point 5"): a relative path out of its root is a build error. The sessions
@@ -95,12 +95,13 @@ Missing today (ask Mario, `process.md`): `withoutAbortSignal` and `pluginFile` a
 
 ```text
 package.json         { "name": "@earendil-works/p3-sessions", "private": true, "type": "module" }
-contract.ts          contracts every kind imports (one per audience)
+contract.ts          contracts every facet imports (one per audience): the kinds, the worker's objects
 contract.server.ts   the store's contract, for server facets only
-server.ts            the server facet: the table, the store, the views
-worker.ts            the worker facet
-test/server.test.ts  the plugin tier test of the server facet (`testPlugin` of `@earendil-works/p3/v1/testing`);
-                     end-to-end cases sit beside it (`testServer`, as the sign-in plugin's do)
+server.ts            the server facet: the store, the kinds (`session.ts`, `defaults.ts`), the waker, the facts
+worker.ts            the worker facet: the session's worker object, the holding of what the agent is given
+web.tsx              the web facet: the kind's icon and create step on the page
+test/session.test.ts the plugin tier test of the session kind (on the things plugin's world); end-to-end cases
+                     sit in the tests of the whole (`testServer`)
 ```
 
 **One audience per contract.** The owner, a session's worker and the server never share a contract; what some callers
@@ -110,27 +111,29 @@ messages.message("…") }`, the label a message of the plugin's `messages.ts`, w
 `plugin-authoring.md`, "What a plugin may import"). A worker reading its own session gets its own contract.
 
 ```ts
-// contract.ts: what other plugins and facets import
-export const Sessions = remote("sessions.sessions", { version: 1, params: {}, hostAddress: () => Server(),
-	methods: { create: method(obj({ title: opt(Title) }), str()), rename: …, archive: …, restore: … } });
-export const SessionsList = remote("sessions.list", { version: 1,
-	params: { app: str(), set: oneOf("active", "archived"), view: str() },          // view: the screen's own id
-	hostAddress: () => Server(),
-	state: { list: obj({ rows: arr(SessionRow), moreAfter: bool() }) }, methods: { more: method() } });
+// contract.ts: what other plugins and facets import. A session is a session workspace (a kind of the things plugin):
+// its ticks are its rights, its row a state member for everyone let in, Manage gives the changes.
+export const SessionKind = defineWorkspace("sessions.session", { version: 1, leaf: true, makers: "anyone",
+	state: { row: SessionRow },
+	methods: { rename: method(obj({ title: Title })), archive: method(), restore: method(), setModel: … },
+	ticks: { read: { label: messages.message("tickRead") }, send: { …, for: "people" }, stop: { …, for: "people" },
+		manage: { …, for: "people", gives: ["rename", "archive", "restore", "setModel"] } },
+	defaultGrants: { agents: [MAKE_ANY], everyone: ["read", "send"], guests: ["read"] },
+	create: { input: obj({ location: opt(Location) }) } });
 export const SessionFacts = remote("sessions.facts", { version: 1, params: {}, hostAddress: () => Server(),
-	state: { session: union([SessionRow, nul()]) } });   // the worker's own row: its principal names it
+	state: { session: union([SessionRow, nul()]) }, methods: { report: method(obj({ state: SessionState })) } });
 
 // contract.server.ts: the store, for server facets only; other objects read its named queries
 export const SessionsStore = local("sessions.store", { version: 1, params: {}, members: {
-	sessions: queries(SessionRow, { active: obj({ app: str() }), archived: obj({ app: str() }), one: obj({ id: str() }) }),
-	create: method(obj({ title: str(), creator: Creator }), str()), rename: …, archive: …, restore: … } });
+	sessions: queries(SessionRecord, { one: obj({ id: str() }) }),
+	insert: method(obj({ id: str(), location: opt(Location), model: … })), archive: …, report: …, working: … } });
 ```
 
 **The store owns the table; every write goes through it; reads are named queries.**
 
 ```ts
-const Rows = defineTable("sessions.rows", { version: 1, columns: ROW, key: ["id"],
-	indexes: { active: ["app", "archivedAt", "lastTouch"], archived: ["app", "archivedAt"] } });   // one index per list's order
+const Rows = defineTable("sessions.sessions", { version: 1, columns: ROW, key: ["id"],
+	indexes: { working: ["state", "archivedAt"] } });                     // one index per query's order
 
 host.serve(SessionsStore, (_params, self) => {
 	const rows = self.table(Rows);
@@ -142,38 +145,31 @@ host.serve(SessionsStore, (_params, self) => {
 	}, ctx);
 	return {
 		sessions: self.queries(rows, { map: shown }, {
-			// Index `active`: `app` and `archivedAt` fixed, in the order of `lastTouch`, then the key.
-			active: ({ app }) => query(Rows).where((s) => and(eq(s.app, app), eq(s.archivedAt, 0))).orderBy((s) => s.lastTouch, "desc"),
-			archived: ({ app }) => query(Rows).where((s) => and(eq(s.app, app), gt(s.archivedAt, 0))).orderBy((s) => s.archivedAt, "desc"),
-			one: ({ id }) => query(Rows).where((s) => eq(s.id, Session({ id }))),
+			one: ({ id }) => query(Rows).where((s) => eq(s.id, Session({ id }))),   // the key
 		}),
-		rename: ({ id, title }, ctx) => update(id, { title }, ctx),
-		archive: ({ id }, ctx) => update(id, { archivedAt: Date.now() }, ctx),
-		// create, restore …
+		archive: ({ session }, ctx) => update(session, { archivedAt: Date.now() }, ctx),
+		// insert, restore, report, working …
 	};
 });
 ```
 
-**Views forward; lists are `self.list`; a worker follows its row with `self.liveQuery`.**
+**A kind is `serveThing`: its object for one caller, its hooks; a worker follows its row with `self.liveQuery`.**
 
 ```ts
-host.serve(Sessions, (_params, principal, _admitted, self) => {      // admitted as the owner: a person
-	const store = self.get(SessionsStore, {});
-	const by = { kind: "person", id: principal.id } as const;
-	return forward(store, Sessions, {                        // members taken from the store, by the contract's names
-		create: (args, ctx) => store.create({ ...args, by }, ctx),     // one that needs the caller
-	});
-}, { admit: admitOwner });
-
-host.serve(SessionsList, ({ app, set }, principal, { every }, self) => {   // `every`: the owner's row, live
-	const list = self.list("sessions", [[self.get(SessionsStore, {}).sessions[set], { app }]], { first: 50 });
-	return { list: list.value, more: (ctx) => list.more(ctx) };
-}, { admit: admitList });
+serveThing(host, SessionKind, {
+	implement: ({ thing: session }, _admitted, self) => ({        // the things plugin admitted the caller
+		row: self.derive([sessionRow(session, self)], ([row]) => row ?? missing(session)),
+		archive: async (ctx) => { await store.archive({ session }, ctx); return null; },   // Manage only: Chord keeps it
+		// rename, restore, setModel …                                                  // from the others
+	}),
+	// Before the workspace's commit: the row, and what the nearest session defaults say of the new workspace.
+	create: async ({ thing, input, by, workspace }, ctx) => { … return { defaultGrants, showsPeople, view }; },
+	delete: async (session, ctx) => (await ctx.get(SessionsStore, {})).remove({ session }, ctx),
+});
 
 host.serve(SessionFacts, (_params, principal, self) => {
 	if (principal.kind !== "worker") throw forbidden("sessions: a session's worker only");
-	const found = self.liveQuery(self.get(SessionsStore, {}).sessions.one, { id: principal.session }, { first: 1 });
-	return { session: self.derive([found], ([{ rows }]) => rows[0] ?? null) };
+	return { session: sessionRow(principal.session, self), report: … };   // live queries of the store and the things store
 });
 ```
 

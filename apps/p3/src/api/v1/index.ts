@@ -49,14 +49,17 @@ export type {
 } from "@earendil-works/pi-ai";
 // The contracts p3 promises to third-party plugins (Chord decision "The app kit, point 5"): the built-in plugins'
 // own files, re-exported; a plugin built against `/v1` keeps v1's contracts.
-export * from "../../../plugins/apps/contract.ts";
 export * from "../../../plugins/environments/contract.ts";
 export * from "../../../plugins/people/contract.ts";
 export { LoginProviders } from "../../../plugins/providers/login-providers.ts";
 export * from "../../../plugins/sessions/contract.ts";
-// The things plugin's `defineThing`, for the page's test kinds until slice 5's push 3 swaps it in for the old layer's.
-export { defineThing as defineThingKind } from "../../../plugins/things/kind.ts";
+export * from "../../../plugins/things/contract.ts";
+// The people plugin's row schema `Group` goes with that plugin (slice 3, push B): /v1 gives the things plugin's object.
+export { Group } from "../../../plugins/things/contract.ts";
+export * from "../../../plugins/things/kind.ts";
 export * from "../../../plugins/things/workspace.ts";
+// `kind.ts`'s type and `workspace.ts`'s schema share the name: /v1 gives the schema (the type is `Static` of it).
+export { TickFor } from "../../../plugins/things/workspace.ts";
 export * from "../../../plugins/transcript/contract.ts";
 export { callerKey, P3Principal } from "../../app.ts";
 export { forward } from "./forward.ts";

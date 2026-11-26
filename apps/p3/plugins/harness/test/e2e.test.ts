@@ -1,11 +1,10 @@
 // The harness end to end (`testServer`: the real server, workers as processes, the faux login plugin under test): a
-// session that follows the owner, so it has the Pi's faux login and coding tools, answers through its transcript, its tool running in the session's
-// folder; its state reaches the owner's list (working, then settled); the worker stays alive while working with no
+// session made in Pi, so it has Pi's coding tools, with a faux login made in it, answers through its transcript, its
+// tool running in the session's folder; its state reaches its row (working, then settled); the worker stays alive while working with no
 // holder; a server restart mid-call resumes the run; an archived session's cut-off run schedules nothing; a row left
 // `working` with nothing to do (a crash before Durable took the input, or before the settled report) is settled by
-// the waker's start; a reload of the harness plugin mid-call finishes the run. (The case of the agent's things, canvases
-// and notebooks of the old sessions layer, went with the no-legacy rule; it comes back with sessions as session
-// workspaces, ERNDL-704.)
+// the waker's start; a reload of the harness plugin mid-call finishes the run; Bash withheld from the agents in one
+// session is gone from the agent's next request there, and only there (ERNDL-704 test 5).
 
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
@@ -18,20 +17,20 @@ import {
 	BACKGROUND_CONTEXT as context,
 	type Host,
 	type P3Principal,
+	SessionObject,
 	type SessionState,
-	Sessions,
-	SessionsList,
 	THIS_DEVICE,
-	TRANSCRIPT_WRITES,
 	Transcript,
 	until,
+	withGranted,
 } from "@earendil-works/p3/v1";
 import { SessionsStore } from "@earendil-works/p3/v1/server";
 import { type TestServer, type TestServerOptions, testServer } from "@earendil-works/p3/v1/testing";
-import { assertGranted } from "../../../test/granted.ts";
 import { type FauxRequest, FauxRequests, type Step } from "../../../test/plugins/faux-login/contract.ts";
-import { scriptFaux } from "../../../test/support.ts";
+import { newSession, scriptFaux } from "../../../test/support.ts";
 import { eventually, within } from "../../../test/until.ts";
+import { OneThing, ThingsStore } from "../../things/contract.server.ts";
+import { CodingToolsKind } from "../../tools/kind.ts";
 
 /** The faux login plugin, a plugin under test of a root of its own. */
 const FAUX = fileURLToPath(new URL("../../../test/plugins/faux-login/", import.meta.url));
@@ -56,16 +55,11 @@ async function directory(prefix: string): Promise<string> {
 }
 
 /**
- * A coding session on `t` in `folder`, made by the owner, so it follows them: the Pi's coding tools and faux login,
- * scripted here with `script`; its id.
+ * A session on `t` in `folder`, made in Pi by the owner (Pi's coding tools reach it), with a faux login scripted here
+ * with `script`; its id.
  */
 async function session(t: TestServer, folder: string, script: Step[]): Promise<string> {
-	const owner = await t.client(context);
-	const sessions = await owner.get(Sessions, {}, context);
-	const id = await sessions.create(
-		{ app: "coding", title: "s", location: { environment: THIS_DEVICE, folder } },
-		context,
-	);
+	const id = await newSession(await t.client(context), "s", context, { environment: THIS_DEVICE, folder });
 	// The session's faux login, made in its workspace by the server, answering from `script`.
 	await scriptFaux(t.host, id, script, context);
 	return id;
@@ -74,21 +68,16 @@ async function session(t: TestServer, folder: string, script: Step[]): Promise<s
 /** Sends `text` to `session`'s transcript as `client`'s owner, holding nothing afterwards. */
 async function send(client: Host<P3Principal>, session: string, text: string): Promise<void> {
 	await client.root(async (ctx) => {
-		const transcript = await ctx.get(Transcript, { session });
-		assertGranted(transcript, ...TRANSCRIPT_WRITES);
+		const transcript = withGranted(await ctx.get(Transcript, { session }), "send")!;
 		await transcript.send({ text, requestId: text }, ctx);
 	}, context);
 }
 
-/** Waits until `session`'s row in the owner's list is in `state`. */
+/** Waits until `session`'s row (as the owner holds the session) is in `state`. */
 async function reaches(client: Host<P3Principal>, session: string, state: SessionState, ms = 10_000): Promise<void> {
 	await client.root(async (ctx) => {
-		const list = await ctx.get(SessionsList, { app: "coding", set: "active", view: `state-${state}` });
-		await until(
-			list.list,
-			(value) => value.rows.find((row) => row.id === session)?.state === state,
-			within(`the row ${state}`, ctx, ms),
-		);
+		const held = await ctx.get(SessionObject, { workspace: session, thing: session });
+		await until(held.row, (row) => row.state === state, within(`the row ${state}`, ctx, ms));
 	}, context);
 }
 
@@ -109,7 +98,7 @@ async function start(options: TestServerOptions = {}): Promise<TestServer> {
 	return running;
 }
 
-describe("the harness end to end", { skip: "until sessions are workspaces, ERNDL-704 push 3" }, () => {
+describe("the harness end to end", () => {
 	it("answers through the transcript, its tool in the folder, working then settled, alive without a holder", async () => {
 		const folder = await directory("p3-harness-e2e-");
 		const t = await start();
@@ -129,6 +118,37 @@ describe("the harness end to end", { skip: "until sessions are workspaces, ERNDL
 		const seen = await requests(client, id);
 		assert.equal(seen.length, 2);
 		assert.ok(seen[1]?.last.includes(folder), "the tool ran in the session's folder");
+		assert.deepEqual(t.errors, []);
+	});
+
+	// ERNDL-704 test 5 (scenario 4): Bash taken from the agents in one session, the coding tools staying Pi's.
+	it("offers bash no more in a session where it is withheld from the agents, and still in another", async () => {
+		const folder = await directory("p3-harness-e2e-");
+		const t = await start();
+		const script: Step[] = [{ when: "", reply: [{ kind: "text", text: "ok" }] }];
+		const one = await session(t, folder, script);
+		const other = await session(t, folder, script);
+		const client = await t.client(context);
+		await send(client, one, "first");
+		await reaches(client, one, "settled");
+		assert.ok((await requests(client, one))[0]?.tools.includes("bash"));
+		await t.host.root(async (ctx) => {
+			const tools = (await ctx.get(OneThing, { kind: CodingToolsKind.name })).thing.value;
+			const grant = { workspace: one, thing: tools, party: { kind: "agents" }, tick: "bash", gives: false } as const;
+			await (await ctx.get(ThingsStore, {})).setGrants(
+				{ source: { kind: "plugin", plugin: "test" }, grants: [grant] },
+				ctx,
+			);
+		}, context);
+		await send(client, one, "second");
+		await reaches(client, one, "settled");
+		const seen = await requests(client, one);
+		assert.equal(seen.length, 2);
+		assert.equal(seen[1]?.tools.includes("bash"), false);
+		assert.ok(seen[1]?.tools.includes("read"));
+		await send(client, other, "there");
+		await reaches(client, other, "settled");
+		assert.ok((await requests(client, other))[0]?.tools.includes("bash"));
 		assert.deepEqual(t.errors, []);
 	});
 
@@ -163,7 +183,7 @@ describe("the harness end to end", { skip: "until sessions are workspaces, ERNDL
 		const t = await restart(first);
 		const client = await t.client(context);
 		await client.root(async (ctx) => {
-			const transcript = await ctx.get(Transcript, { session: id });
+			const transcript = withGranted(await ctx.get(Transcript, { session: id }), "view")!;
 			await until(transcript.view, (view) => view !== null, within("the transcript", ctx));
 			// Time for a resumed run to ask the model, had it resumed.
 			await new Promise((resolve) => setTimeout(resolve, 500));
@@ -201,9 +221,7 @@ describe("the harness end to end", { skip: "until sessions are workspaces, ERNDL
 			{ when: "", reply: [{ kind: "text", text: "after the reload" }] },
 		]);
 		const client = await t.client(context);
-		const transcript = await client.get(Transcript, { session: id }, context);
-		assert.equal(transcript.granted.has("send") ? "writer" : "reader", "writer");
-		assertGranted(transcript, ...TRANSCRIPT_WRITES);
+		const transcript = withGranted(await client.get(Transcript, { session: id }, context), "view", "send")!;
 		await transcript.send({ text: "@go", requestId: "go" }, context);
 		await eventually(() => existsSync(join(folder, "started")), Boolean);
 		const file = join(built, "harness", "worker.ts");

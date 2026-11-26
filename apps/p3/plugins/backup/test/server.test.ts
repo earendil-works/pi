@@ -10,14 +10,16 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { BACKGROUND_CONTEXT as context, isChordError, type P3Principal, until } from "@earendil-works/p3/v1";
-import { PeopleStore, SessionsStore } from "@earendil-works/p3/v1/server";
+import { PeopleStore } from "@earendil-works/p3/v1/server";
 import { testPlugin, testServer } from "@earendil-works/p3/v1/testing";
 import { within } from "../../../test/until.ts";
-import appsServer from "../../apps/server.ts";
-import codingServer from "../../coding/server.ts";
 import environmentsServer from "../../environments/server.ts";
 import peopleServer from "../../people/server.ts";
+import { SessionKind } from "../../sessions/contract.ts";
 import sessionsServer from "../../sessions/server.ts";
+import { ThingsStore } from "../../things/contract.server.ts";
+import { make } from "../../things/kind-server.ts";
+import thingsServer from "../../things/server.ts";
 import { Backups, SessionBackup } from "../contract.ts";
 
 /** The plugin's directory. */
@@ -27,20 +29,18 @@ const PLUGIN = fileURLToPath(new URL("../", import.meta.url));
 const WORKER: P3Principal = { kind: "worker", session: "s1" };
 
 /**
- * The plugin's server facet, with the people plugin (who the owner is), the sessions plugin (which sessions exist),
- * the environments plugin (where a new session works), and the apps plugin's `Apps` registry with the coding app in it
- * (the sessions plugin's store makes a session only of an app `Apps` has); `test` gets the owner and the ids of two
- * new sessions.
+ * The plugin's server facet, with the people plugin (who the owner is), the things and sessions plugins (which
+ * sessions exist: session workspaces) and the environments plugin (where a new session works); `test` gets the owner
+ * and the ids of two new sessions.
  */
 async function withServerFacet(
 	test: (t: Awaited<ReturnType<typeof testPlugin>>, owner: P3Principal, sessions: [string, string]) => Promise<void>,
 ): Promise<void> {
 	const stubs = [
 		{ name: "@earendil-works/p3-people", facet: peopleServer },
+		{ name: "@earendil-works/p3-things", facet: thingsServer },
 		{ name: "@earendil-works/p3-sessions", facet: sessionsServer },
 		{ name: "@earendil-works/p3-environments", facet: environmentsServer },
-		{ name: "@earendil-works/p3-apps", facet: appsServer },
-		{ name: "@earendil-works/p3-coding", facet: codingServer },
 	];
 	const t = await testPlugin(PLUGIN, { kind: "server", stubs }, context);
 	try {
@@ -48,8 +48,14 @@ async function withServerFacet(
 			async (ctx) => (await (await ctx.get(PeopleStore, {})).persons.owner.page({}, 1, ctx)).items,
 			context,
 		);
+		// Sessions are workspaces in Pi, made as server code does (no Make tick checked).
 		const create = (title: string) =>
-			t.root(async (ctx) => (await ctx.get(SessionsStore, {})).create({ app: "coding", title }, ctx), context);
+			t.root(async (ctx) => {
+				const things = await ctx.get(ThingsStore, {});
+				const [pi] = (await things.workspaces.children.page({ parent: "" }, 1, ctx)).items;
+				const by = { kind: "plugin", plugin: "test" } as const;
+				return make(SessionKind, { name: title, workspace: pi!.workspace, by, input: {} }, ctx);
+			}, context);
 		const sessions: [string, string] = [await create("one"), await create("two")];
 		await test(t, { kind: "person", id: person!.id, name: person!.name }, sessions);
 	} finally {

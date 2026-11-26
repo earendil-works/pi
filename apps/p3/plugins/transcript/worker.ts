@@ -1,12 +1,12 @@
-// The transcript plugin on a session's worker: `Transcript`, the session's root conversation as its members see it.
+// The transcript plugin on a session's worker: `Transcript`, the session's root conversation as the people in the session see it.
 // One local object per conversation follows Durable's view once (`self.follow` of `observeConversation`), however many
-// people read it; each member's `Transcript` reads that one. Readers get the view and page older entries; writers also
-// send (through the harness's `submit`, the one way to start work) and stop.
+// people read it; each holder's `Transcript` reads that one. Read gives the view and older entries, Send the send
+// (through the harness's `submit`, the one way to start work), Stop the stop: the caller's ticks on the session.
 
 import {
-	admitSession,
 	type Context,
 	defineFacet,
+	followSession,
 	forbidden,
 	invalid,
 	local,
@@ -22,7 +22,7 @@ import {
 	ROOT_CONVERSATION_ID,
 	SessionHarness,
 } from "@earendil-works/p3/v1/worker";
-import { TRANSCRIPT_WRITES, Transcript } from "./contract.ts";
+import { Transcript, transcriptGrants } from "./contract.ts";
 
 /** One conversation's view, followed once for every reader of it; `conversation` is its Durable id. */
 const Followed = local("transcript.followed", {
@@ -66,9 +66,9 @@ export default defineFacet((host) => {
 				if (value === undefined) throw invalid("args", "transcript: the session's harness is not open");
 				return value;
 			};
-			// `send` and `stop` are a writer's (`TRANSCRIPT_WRITES`): a reader's call is refused before it runs.
+			// Each member is granted by its tick (`transcriptGrants`): a call without it is refused before it runs.
 			return {
-				view: followed.view,
+				view: () => followed.view,
 				entries: async (
 					query: { minEntryId?: number; maxEntryId?: number; order?: string; limit: number },
 					ctx: Context,
@@ -88,7 +88,7 @@ export default defineFacet((host) => {
 				},
 			};
 		},
-		{ admit: admitSession(TRANSCRIPT_WRITES) },
+		{ admit: followSession(transcriptGrants) },
 	);
 });
 
