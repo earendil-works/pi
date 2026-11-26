@@ -9,6 +9,7 @@ import {
 	constant,
 	contribute,
 	defineFacet,
+	defineMessages,
 	defineThing,
 	type JsonValue,
 	obj,
@@ -61,6 +62,9 @@ export const Boards = defineThing("test.boards", {
 	initial: { draw: true },
 });
 
+/** The boards' messages, as a plugin's `messages.ts` holds them: the `draw` flag's label. */
+const boardMessages = defineMessages("test.boards", { en: { flagDraw: "Draws on the board" } });
+
 /** One board of a session as `admitThing` admits its caller: a viewer, or a drawer (writes, and `draw`: granted). */
 export const Board = remote("test.board", {
 	version: 1,
@@ -68,7 +72,7 @@ export const Board = remote("test.board", {
 	hostAddress: () => Server(),
 	admission: thingAdmission(Boards),
 	state: { thing: str() },
-	flags: { draw: "Draws on the board" },
+	flags: { draw: boardMessages.message("flagDraw") },
 });
 
 /** What the boards' hooks were called with, in order (`create` with the thing and its input; `delete` with its id). */

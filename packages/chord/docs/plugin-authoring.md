@@ -175,13 +175,13 @@ data and decides, and the factory is handed the value. What a caller may do is s
 it, a flag a right that is no member.
 
 ```ts
-// contract.ts
+// contract.ts (it may import its plugin's `messages.ts`: `import { messages } from "./messages.ts"`)
 export const Transcript = remote("notes.transcript", { version: 1, params: { session: str() },
 	hostAddress: ({ session }) => Session({ id: session }),
 	admission: obj({ mode: oneOf("read", "write") }),
 	state: { title: str(), history: grantable(arr(Change)) },        // `history`: only for writers
 	methods: { say: grantable(method(str(), str())) },
-	flags: { export: "Export the transcript" } });
+	flags: { export: messages.message("flagExport") } });   // a flag's label: a message of the plugin's catalog
 // worker.ts: `PersonHere` is a local object on the worker that follows the server's answer for this person (it
 // holds a remote object of the server, in a contract the app's API owns)
 host.serve(Transcript, (params, principal, { mode, granted }, self) => ({
@@ -256,7 +256,8 @@ Refused at build, each with the file, line and rule:
 - In a single-file plugin, anything but host packages.
 
 Contract files mention native things (React components, functions) only through `import type`; at runtime they import
-only the API and the plugin's own data-only files.
+only the API and the plugin's own data-only files. A contract file may import its plugin's `messages.ts` (for flag
+labels): it imports only the API, and its catalog functions are pure.
 
 ## An app's API is a package
 

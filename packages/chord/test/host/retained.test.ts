@@ -35,6 +35,7 @@ import type { ChordStore } from "../../src/store/store.ts";
 import {
 	assertGranted,
 	expectCollected,
+	flagLabel,
 	flushed,
 	instancesOf,
 	memoryStore,
@@ -113,7 +114,7 @@ const wide = {
 		m2: grantable(method(str(), str())),
 		m3: grantable(method(str(), str())),
 	},
-	flags: { f0: "Flag 0", f1: "Flag 1" },
+	flags: { f0: flagLabel("f0"), f1: flagLabel("f1") },
 } as const;
 /** Granted one constant set of names. */
 const Granted = remote("ret.granted", wide);

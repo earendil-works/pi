@@ -105,7 +105,7 @@ test/server.test.ts  the plugin tier test of the server facet (`testPlugin` of `
 
 **One audience per contract.** The owner, a session's worker and the server never share a contract; what some callers
 of one audience may do and others not is a `grantable(...)` member or a flag their admission grants (Chord slice 15:
-`state: { history: grantable(...) }`, `methods: { send: grantable(method(...)) }`, `flags: { export: "…" }`). A worker
+`state: { history: grantable(...) }`, `methods: { send: grantable(method(...)) }`, `flags: { export: messages.message("…") }`, the label a message of the plugin's `messages.ts`). A worker
 reading its own session gets its own contract.
 
 ```ts

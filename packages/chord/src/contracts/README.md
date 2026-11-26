@@ -15,7 +15,7 @@ export const NotesV1 = remote("notes", {
 	hostAddress: ({ session }) => Session({ id: session }),   // where an object lives; not in the fingerprint
 	state: { notes: arr(Note) },
 	methods: { add: grantable(method(Note, str())), clear: grantable(method()) },  // only for callers granted them
-	flags: { export: "Export the notes" },                    // a right that is no member
+	flags: { export: messages.message("flagExport") },        // a right that is no member; its label a message
 });
 export const Notes = evolve(NotesV1, (e) => e.args("add", obj({ text: str(), tag: str() })));
 type NotesProvider = Implementation<typeof Notes>; // { notes, add(args, context), clear(context) }
@@ -25,7 +25,8 @@ type NotesProvider = Implementation<typeof Notes>; // { notes, add(args, context
   caller, with `state` (schemas), `methods` (`method(args?, result?)`; an omitted side is `null`, and a method whose
   arguments are `null` omits them: `clear(context)`) and `events` (schemas of the JSON values the object emits,
   decision "Events: fire-and-forget members"); a member marked `grantable(...)` exists for a caller only if its
-  admission granted it, and `flags: { name: label }` are rights that are no member. `GrantableName<C>` is the union of
+  admission granted it, and `flags: { name: label }` are rights that are no member, each `label` a message as data
+  (`MessageData`, `message.ts`; declaration refuses another value), which the access UI renders. `GrantableName<C>` is the union of
   a contract's grantable members and flags. `local(name, { version, params, members })`: one flat map, where a schema is state, `method(...)` a
   method, `keyed(schema)` a keyed member and `event(schema)` an event member.
 - `admission: obj(...)` (remote only, optional; slice 14): the JSON data the type's admission hands its factory about

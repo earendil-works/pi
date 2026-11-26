@@ -21,7 +21,10 @@ import {
 	str,
 } from "../../src/contracts/index.ts";
 import { contractData, currentMembers, currentVersion } from "../../src/contracts/internal.ts";
+import type { MessageData } from "../../src/data/index.ts";
+import { defineMessages } from "../../src/surfaces/index.ts";
 import type { Watchable } from "../../src/watch.ts";
+import { flagLabel } from "../support.ts";
 
 const Note = obj({ text: str() });
 
@@ -43,7 +46,7 @@ describe("declaration checks", () => {
 			hostAddress,
 			state: { notes: arr(Note) },
 			methods: { add: grantable(method(Note, str())), clear: grantable(method()) },
-			flags: { export: "Export the notes" },
+			flags: { export: flagLabel("export") },
 		});
 		expect(Notes).toMatchObject({ kind: "remote", name: "notes", version: 1 });
 		expect(Notes.fingerprint).toMatch(/^[0-9a-f]{16}$/);
@@ -84,7 +87,30 @@ describe("declaration checks", () => {
 			"a flag without a label",
 			"n",
 			{ version: 1, params: {}, hostAddress, flags: { export: 1 } },
-			"n.flags.export: expected its label",
+			"n.flags.export: expected its label as a message ({ namespace, key, params })",
+		],
+		[
+			"a flag labelled by text, no message",
+			"n",
+			{ version: 1, params: {}, hostAddress, flags: { export: "Export" } },
+			"n.flags.export: expected its label as a message ({ namespace, key, params })",
+		],
+		[
+			"a flag label whose parameter is no plain value",
+			"n",
+			{ version: 1, params: {}, hostAddress, flags: { export: { namespace: "n", key: "k", params: [{}] } } },
+			"n.flags.export: expected its label as a message ({ namespace, key, params })",
+		],
+		[
+			"a flag label with a key a message has not",
+			"n",
+			{
+				version: 1,
+				params: {},
+				hostAddress,
+				flags: { export: { namespace: "n", key: "k", params: [], text: "x" } },
+			},
+			'n.flags.export: unknown key "text"',
 		],
 		[
 			"a schema under methods",
@@ -226,6 +252,8 @@ describe("admission (slice 14 §2.1)", () => {
 
 describe("grantable members and flags (slice 15 §1.1)", () => {
 	const Change = obj({ seq: int(), by: str() });
+	// The plugin's catalog (its `messages.ts`): a flag's label is one of its messages.
+	const messages = defineMessages("canvas", { en: { flagExport: "Export as image" } });
 	const Canvas = remote("canvas.board", {
 		version: 1,
 		params: { canvas: str() },
@@ -233,14 +261,16 @@ describe("grantable members and flags (slice 15 §1.1)", () => {
 		state: { shapes: arr(Note), history: grantable(arr(Change)) },
 		events: { motion: obj({ x: int() }), reported: grantable(obj({ by: str() })) },
 		methods: { point: method(int()), add: grantable(method(Note, str())), clear: grantable(method()) },
-		flags: { export: "Export as image" },
+		flags: { export: messages.message("flagExport") },
 	});
 
 	it("record which members are grantable and the flags; the names an admission may grant, sorted", () => {
 		const version = currentVersion(Canvas);
 		expect([...version.grantable].sort()).toEqual(["add", "clear", "history", "reported"]);
 		expect(version.grants).toEqual(["add", "clear", "export", "history", "reported"]);
-		expect([...contractData(Canvas).flags]).toEqual([["export", "Export as image"]]);
+		expect([...contractData(Canvas).flags]).toEqual([
+			["export", { namespace: "canvas", key: "flagExport", params: [] }],
+		]);
 		// A grantable member is a member like any other: its kind and schema as declared.
 		expect([...currentMembers(Canvas).state.keys()]).toEqual(["shapes", "history"]);
 	});
@@ -257,8 +287,23 @@ describe("grantable members and flags (slice 15 §1.1)", () => {
 		expectTypeOf<Factory["shapes"]>().toEqualTypeOf<Watchable<{ text: string }[]>>();
 	});
 
+	it("take a flag's label as a message of the plugin's catalog, its key checked against the catalog", () => {
+		expectTypeOf(messages.message("flagExport")).toEqualTypeOf<MessageData<"canvas", "flagExport">>();
+		// @ts-expect-error a key the catalog has not
+		messages.message("flagImport");
+		const labelledByText = () =>
+			remote("canvas.text", {
+				version: 1,
+				params: {},
+				hostAddress,
+				// @ts-expect-error a label is a message, not its text
+				flags: { export: "Export as image" },
+			});
+		expect(labelledByText).toThrow("canvas.text.flags.export: expected its label as a message");
+	});
+
 	it("put grantability and the flag names in the fingerprint, not the labels", () => {
-		const declare = (history: unknown, flags: { readonly [flag: string]: string }) =>
+		const declare = (history: unknown, flags: { readonly [flag: string]: MessageData }) =>
 			untyped.remote("canvas.board", {
 				version: 1,
 				params: {},
@@ -268,10 +313,12 @@ describe("grantable members and flags (slice 15 §1.1)", () => {
 			}) as { readonly fingerprint: string };
 		const plain = declare(arr(Change), {}).fingerprint;
 		const granted = declare(grantable(arr(Change)), {}).fingerprint;
-		const flagged = declare(arr(Change), { export: "Export" }).fingerprint;
-		const relabelled = declare(arr(Change), { export: "Export as image" }).fingerprint;
+		const flagged = declare(arr(Change), { export: flagLabel("export") }).fingerprint;
+		// Another message, and the same message with parameters.
+		const relabelled = declare(arr(Change), { export: flagLabel("exportImage") }).fingerprint;
+		const parameterized = declare(arr(Change), { export: { ...flagLabel("export"), params: ["png"] } }).fingerprint;
 		expect(new Set([plain, granted, flagged]).size).toBe(3);
-		expect(relabelled).toBe(flagged);
+		expect([relabelled, parameterized]).toEqual([flagged, flagged]);
 	});
 
 	it("refuse a name that is a member and a flag, at the type level and at declaration", () => {
@@ -283,12 +330,12 @@ describe("grantable members and flags (slice 15 §1.1)", () => {
 				// @ts-expect-error: `add` is a flag
 				methods: { add: method() },
 				// @ts-expect-error: `add` is a member
-				flags: { add: "Add" },
+				flags: { add: flagLabel("add") },
 			}),
 		).toThrow('n.flags.add: "add" is a member: a name is a member or a flag');
-		expect(() => untyped.remote("n", { version: 1, params: {}, hostAddress, flags: { granted: "x" } })).toThrow(
-			'n.flags.granted: "granted" is reserved',
-		);
+		expect(() =>
+			untyped.remote("n", { version: 1, params: {}, hostAddress, flags: { granted: flagLabel("granted") } }),
+		).toThrow('n.flags.granted: "granted" is reserved');
 	});
 
 	it("refuse grantable members in a local contract and in evolve's local editor", () => {

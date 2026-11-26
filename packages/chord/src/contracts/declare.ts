@@ -14,6 +14,7 @@ import {
 } from "./contract.ts";
 import { fingerprintOf, materialize } from "./fingerprint.ts";
 import { type Address, type KindShape, kindParams } from "./host-kind.ts";
+import type { MessageData } from "./message.ts";
 import { checkName } from "./names.ts";
 import { type Params, type RequiredFields, readParams } from "./params.ts";
 import { EventDeclaration, Grantable, KeyedMember, Method, QueriesMember, type Schema, type Static } from "./schema.ts";
@@ -23,7 +24,7 @@ type StateDeclarations = { readonly [member: string]: Schema | Grantable<Schema>
 
 type MethodDeclarations = { readonly [member: string]: Method | Grantable<Method> };
 
-type FlagDeclarations = { readonly [flag: string]: string };
+type FlagDeclarations = { readonly [flag: string]: MessageData };
 
 type LocalMembers<M extends { readonly [member: string]: LocalMember }> = {
 	state: { [K in keyof M as M[K] extends Marker ? never : K]: Exclude<M[K], Marker> };
@@ -78,7 +79,10 @@ export function remote<
 		readonly state?: S & NoInfer<Distinct<S, M & E & F>>;
 		readonly methods?: M & NoInfer<Distinct<M, S & E & F>>;
 		readonly events?: E & NoInfer<Distinct<E, S & M & F>>;
-		/** Rights that are no member, each with its label (English, for the access UI); never part of the fingerprint. */
+		/**
+		 * Rights that are no member, each with its label: a message (`messages.message("flagExport")` of the plugin's
+		 * `defineMessages`), which the access UI renders in the viewer's language; never part of the fingerprint.
+		 */
 		readonly flags?: F & NoInfer<Distinct<F, S & M & E>>;
 	},
 ): Contract<
@@ -97,10 +101,9 @@ export function remote<
 	if (typeof hostAddress !== "function") throw new Error(`${name}.hostAddress: expected a function of the params`);
 	const { members, grantable } = readRemoteMembers(declaration, name);
 	const flags = new Map(
-		entriesOf(declaration.flags ?? {}, `${name}.flags`).map(([flag, label]) => {
-			if (typeof label !== "string") throw new Error(`${name}.flags.${flag}: expected its label`);
-			return [flag, label] as const;
-		}),
+		entriesOf(declaration.flags ?? {}, `${name}.flags`).map(
+			([flag, label]) => [flag, flagLabel(label, `${name}.flags.${flag}`)] as const,
+		),
 	);
 	const { admission } = declaration;
 	const admitted = admission === undefined ? undefined : admissionData(admission, `${name}.admission`);
@@ -110,6 +113,23 @@ export function remote<
 }
 
 const REMOTE_KEYS = ["version", "params", "hostAddress", "admission", "state", "methods", "events", "flags"];
+
+/** A flag's label as `MessageSchema` describes a message: its namespace, key and plain parameters, nothing else. */
+function flagLabel(label: unknown, path: string): MessageData {
+	const { namespace, key, params } = (typeof label === "object" && label !== null ? label : {}) as {
+		namespace?: unknown;
+		key?: unknown;
+		params?: unknown;
+	};
+	const plain = (param: unknown) => param === null || ["string", "number", "boolean"].includes(typeof param);
+	if (typeof namespace !== "string" || typeof key !== "string" || !Array.isArray(params) || !params.every(plain)) {
+		throw new Error(`${path}: expected its label as a message ({ namespace, key, params })`);
+	}
+	checkKeys(label, MESSAGE_KEYS, path);
+	return label as MessageData;
+}
+
+const MESSAGE_KEYS = ["namespace", "key", "params"];
 
 /** A remote declaration's members as Chord-owned snapshots, and which of them are grantable. */
 function readRemoteMembers(
@@ -211,7 +231,7 @@ export function local<
 	return declare(base, declaration, { state, methods, keyed, events, queries }, NO_GRANTS);
 }
 
-const NO_FLAGS: ReadonlyMap<string, string> = new Map();
+const NO_FLAGS: ReadonlyMap<string, MessageData> = new Map();
 
 /** An event member's snapshot: JSON only (declaration policy: no `bytes()` leaf, events travel as JSON parts). */
 export function eventSnapshot(schema: unknown, path: string): Snapshot {
@@ -253,7 +273,7 @@ type Base = {
 	readonly name: string;
 	readonly hostAddress: HostAddress | undefined;
 	readonly admission: AdmissionData | undefined;
-	readonly flags: ReadonlyMap<string, string>;
+	readonly flags: ReadonlyMap<string, MessageData>;
 };
 
 function declare<C extends Contract>(

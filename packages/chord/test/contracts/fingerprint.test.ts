@@ -15,6 +15,7 @@ import {
 } from "../../src/contracts/index.ts";
 import { NORMAL_FORM_VERSION } from "../../src/contracts/internal.ts";
 import type { Params } from "../../src/contracts/params.ts";
+import { flagLabel } from "../support.ts";
 
 const Server = hostKind("server");
 
@@ -32,7 +33,7 @@ describe("fingerprints", () => {
 			hostAddress: () => Server(),
 			state: { notes: obj({ text: str() }) },
 			methods: { add: grantable(method(obj({ text: str() }), str())) },
-			flags: { export: "Export" },
+			flags: { export: flagLabel("export") },
 		});
 		expect(Notes.fingerprint).toBe("02c6a0d2064e8a71");
 	});

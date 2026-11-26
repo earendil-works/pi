@@ -31,7 +31,7 @@ import {
 	str,
 } from "../../src/contracts/index.ts";
 import { currentVersion } from "../../src/contracts/internal.ts";
-import { broken, ChordError } from "../../src/data/index.ts";
+import { broken, ChordError, type MessageData } from "../../src/data/index.ts";
 import { defineState } from "../../src/documents/index.ts";
 import { type Allowed, Decision } from "../../src/host/admission.ts";
 import { ChordHost } from "../../src/host/host.ts";
@@ -58,6 +58,7 @@ import {
 	delivered,
 	expectCollected,
 	failLive,
+	flagLabel,
 	holdNextCommit,
 	instancesOf,
 	linked,
@@ -469,7 +470,7 @@ describe("an equal decision of another object (hot-path pass, 2026-11-26)", () =
 		hostAddress: () => Server(),
 		state: { name: str() },
 		methods: { add: grantable(method(str(), str())) },
-		flags: { export: "Export" },
+		flags: { export: flagLabel("export") },
 	});
 	const Picks = defineState("picks", { schema: obj({ pick: str() }), version: 1, initial: () => ({ pick: "first" }) });
 	const Pick = local("eq.pick", { version: 1, params: {}, members: { pick: str(), set: method(str()) } });
@@ -847,7 +848,7 @@ describe("the order of a read", () => {
 			params: {},
 			hostAddress: () => Server(),
 			state: {},
-			flags: Object.fromEntries(codes.map((flag) => [flag, flag])),
+			flags: Object.fromEntries(codes.map((flag) => [flag, flagLabel(flag)])),
 		});
 		const read = reader(currentVersion(Flagged).grants);
 		const granted = codes.slice(0, listed);
@@ -2152,7 +2153,7 @@ describe("what a decision keeps (hold memory)", () => {
 		hostAddress: () => Server(),
 		state: { name: str() },
 		methods: { use: method(str(), str()), add: grantable(method(str(), str())) },
-		flags: { export: "Export" },
+		flags: { export: flagLabel("export") },
 	});
 	const Roles = local("heap.roles", { version: 1, params: {}, members: { names: map(str()) } });
 
@@ -2193,7 +2194,16 @@ describe("what a decision keeps (hold memory)", () => {
 			params: { n: int() },
 			hostAddress: () => Server(),
 			state: { name: str() },
-			flags: { f0: "0", f1: "1", f2: "2", f3: "3", f4: "4", f5: "5", f6: "6", f7: "7" },
+			flags: {
+				f0: flagLabel("f0"),
+				f1: flagLabel("f1"),
+				f2: flagLabel("f2"),
+				f3: flagLabel("f3"),
+				f4: flagLabel("f4"),
+				f5: flagLabel("f5"),
+				f6: flagLabel("f6"),
+				f7: flagLabel("f7"),
+			},
 		});
 		const flags = ["f0", "f1", "f2", "f3", "f4", "f5", "f6", "f7"] as const;
 		const namesOf = (n: number) => flags.filter((_, index) => (n & (1 << index)) !== 0);
@@ -2249,7 +2259,13 @@ describe("what a decision keeps (hold memory)", () => {
 					params: { n: int() },
 					hostAddress: () => Server(),
 					state: { name: str() },
-					flags: { kept0: "0", kept1: "1", kept2: "2", kept3: "3", kept4: "4" },
+					flags: {
+						kept0: flagLabel("kept0"),
+						kept1: flagLabel("kept1"),
+						kept2: flagLabel("kept2"),
+						kept3: flagLabel("kept3"),
+						kept4: flagLabel("kept4"),
+					},
 				});
 				const h = createHost<TestPrincipal>({
 					address: Server(),
@@ -2288,7 +2304,7 @@ describe("what a decision keeps (hold memory)", () => {
 			hostAddress: () => Server(),
 			state: { name: str() },
 			// Typed by a template: a plain record of strings would claim every name, `name` too.
-			flags: Object.fromEntries(names.map((name) => [name, name])) as Record<`g${number}`, string>,
+			flags: Object.fromEntries(names.map((name) => [name, flagLabel(name)])) as Record<`g${number}`, MessageData>,
 		});
 		// g00 and g31 are indexes 0 and 31 of the sorted grants (one hash when it was a bit per index modulo 31).
 		const lists: `g${number}`[][] = [["g00"], ["g31"], ["g31", "g00"], ["g00", "g31", "g00"], ["g31"]];
@@ -2324,7 +2340,7 @@ describe("what a decision keeps (hold memory)", () => {
 			params: { id: int(), mask: int() },
 			hostAddress: () => Server(),
 			state: {},
-			flags: Object.fromEntries(names.map((name) => [name, name])) as Record<`g${number}`, string>,
+			flags: Object.fromEntries(names.map((name) => [name, flagLabel(name)])) as Record<`g${number}`, MessageData>,
 		});
 		const selections = Array.from({ length: 4096 }, (_, mask) =>
 			names.filter((_, index) => index < 31 || ((1 << (index - 31)) & mask) !== 0),

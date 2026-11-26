@@ -29,7 +29,7 @@ import {
 	str,
 } from "../src/contracts/index.ts";
 import { currentVersion, grantedMembers, grantIndexes, memberOrder } from "../src/contracts/internal.ts";
-import { ChordError, isChordError, PluginError, type Principal } from "../src/data/index.ts";
+import { ChordError, isChordError, type MessageData, PluginError, type Principal } from "../src/data/index.ts";
 import { PROTOCOL_VERSION } from "../src/data/internal.ts";
 import type { Op } from "../src/delta/index.ts";
 import { defineState } from "../src/documents/index.ts";
@@ -605,6 +605,11 @@ export async function rawLinked(
 	if (options.role === "parent") server.connect(a, link, BACKGROUND_CONTEXT);
 	else server.accept(a, link, BACKGROUND_CONTEXT);
 	return { server, peer: new RawPeer(b, { hello: options.hello, ack: options.ack }), errors };
+}
+
+/** A flag's label as a test declares it: the message `key` of the namespace `test`. */
+export function flagLabel<const K extends string>(key: K): MessageData<"test", K> {
+	return { namespace: "test", key, params: [] };
 }
 
 /** Waits until messages and closes in flight on memory links (one task per hop) have arrived. */

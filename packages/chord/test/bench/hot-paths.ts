@@ -15,6 +15,7 @@ import { defineState } from "../../src/documents/index.ts";
 import { allow, createHost, defineFacet } from "../../src/host/index.ts";
 import { memoryLinkPair } from "../../src/link/index.ts";
 import { constant } from "../../src/state/index.ts";
+import { flagLabel } from "../support.ts";
 
 const N = Number(process.argv[2] ?? 170);
 const ROUNDS = Number(process.argv[3] ?? 60);
@@ -43,7 +44,7 @@ const Thing = remote("bench.thing", {
 	hostAddress: () => Server(),
 	state: { name: str(), history: grantable(arr(str())) },
 	methods: { use: method(str(), str()), add: grantable(method(str(), str())) },
-	flags: { export: "Export" },
+	flags: { export: flagLabel("export") },
 });
 
 let built = 0;

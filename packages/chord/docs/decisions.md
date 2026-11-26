@@ -3768,7 +3768,8 @@ From `research/chord-on-durable-objects.md`, adopted for the Chord v2 kernel bec
   their old pages and workers reload once (`contract_mismatch`); (3) `NORMAL_FORM_VERSION` stays 2: documents' stored
   fingerprints carry it, and the remote node's new shape (`members`, `grantable`, `flags`) changes remote
   fingerprints by itself; (4) a declared `admission` is an `obj(...)` without a field `granted`; (5) a flag's label is
-  plain English text, not a message (it is declared by code, the access UI shows it); (6) `useLive` keeps the
+  plain English text, not a message (it is declared by code, the access UI shows it; superseded by "Flag labels are
+  messages", 2026-11-26); (6) `useLive` keeps the
   reference while it loads again after it was live, a link drop included. Superseded: "C15 stands; the UI bindings
   follow the variant" and every rule about variants (§5, §7, §22, §23, §27 of `design.md` are rewritten).
 
@@ -3797,6 +3798,16 @@ From `research/chord-on-durable-objects.md`, adopted for the Chord v2 kernel bec
   and nothing was reported. Now every closed link is counted (`chord.links.closed { reason }`) and a heartbeat close
   is reported once (`link_closed`). Decided by the builder: a stall is sure to close nothing only when shorter than
   `close − ping` (the quiet time before it counts); `close` keeps its meaning.
+
+- **Flag labels are messages (Mario, 2026-11-26; the decisions of 2026-11-24 file, items 65 and 69; supersedes
+  slice 15's (B) "a flag's label is plain English text"):** everything that reaches the UI is a message, so it reads in
+  the viewer's language: `flags: { export: messages.message("flagExport") }`, the label a `MessageData` of the
+  plugin's `defineMessages` (`MessageData<N, K>`, the key a type error unless the catalog has it). It is plain data, so
+  a contract file holds it: a contract file may import its plugin's `messages.ts`, which imports only the API and whose
+  catalog functions are pure. Declaration refuses a label that is no message (`MessageSchema`: namespace, key, plain
+  parameters, nothing else); the fingerprint leaves labels out as before. The access UI renders a label with the
+  viewer's `t.render(label)` or passes it on as data. `MessageData` and `MessageSchema` are declared in the contracts
+  layer (`contracts/message.ts`, re-exported by the data layer as before), since contracts hold them.
 
 - **Refusals are static per provider and version (review of slice 15, 2026-11-26; spec `slice-15.md` §8, (B)):** a
   provider refuses an older version if that version has any refused member, whatever its caller was granted, as main

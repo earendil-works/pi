@@ -31,6 +31,7 @@ import { ipcLink } from "../../src/link/index.ts";
 import { openNodeSqliteDatabase } from "../../src/sqlite/node.ts";
 import { constant } from "../../src/state/index.ts";
 import { defineTable, eq, openStore, query, sqliteBackend } from "../../src/store/index.ts";
+import { flagLabel } from "../support.ts";
 
 const OBJECTS = 1_000;
 const WARM_UP = 1_000;
@@ -54,7 +55,7 @@ const thing = {
 	hostAddress: () => Server(),
 	state: { name: str(), history: grantable(arr(str())) },
 	methods: { use: method(str(), str()), add: grantable(method(str(), str())) },
-	flags: { export: "Export" },
+	flags: { export: flagLabel("export") },
 } as const;
 const Bare = remote("bench.bare", {
 	version: 1,

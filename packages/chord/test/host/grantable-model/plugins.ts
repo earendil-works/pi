@@ -22,7 +22,7 @@ import type { PluginFacet } from "../../../src/host/staging.ts";
 import type { JsonValue } from "../../../src/json.ts";
 import { constant } from "../../../src/state/index.ts";
 import type { Watchable } from "../../../src/watch.ts";
-import { Server, type TestPrincipal } from "../../support.ts";
+import { flagLabel, Server, type TestPrincipal } from "../../support.ts";
 import {
 	type AcceptsSpec,
 	type Case,
@@ -61,7 +61,7 @@ export function contractsOf(spec: Case, name: string): Contract[] {
 				.filter(([member]) => poolOf(spec, member).kind === kind)
 				.map(([member, shape]) => [member, declared(member, schemaOf(kind, shape))]),
 		);
-	const flags = Object.fromEntries(spec.flags.map((flag) => [flag, `Flag ${flag}`]));
+	const flags = Object.fromEntries(spec.flags.map((flag) => [flag, flagLabel(flag)]));
 	const contracts = [
 		looseRemote(name, {
 			version: 1,

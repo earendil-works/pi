@@ -29,6 +29,7 @@ import {
 	expectCollected,
 	failures,
 	fakeTimers,
+	flagLabel,
 	forEachCodec,
 	framesOf,
 	grantOf,
@@ -306,7 +307,7 @@ forEachCodec(() => {
 						params: {},
 						hostAddress: () => Server(),
 						state: { n: int() },
-						flags: { home: "Home" },
+						flags: { home: flagLabel("home") },
 					});
 					const version = new WeakRef(currentVersion(Homed));
 					const { client, peer } = await rawProvider();
@@ -357,7 +358,13 @@ forEachCodec(() => {
 						params: {},
 						hostAddress: () => Server(),
 						state: { n: int() },
-						flags: { kept0: "0", kept1: "1", kept2: "2", kept3: "3", kept4: "4" },
+						flags: {
+							kept0: flagLabel("kept0"),
+							kept1: flagLabel("kept1"),
+							kept2: flagLabel("kept2"),
+							kept3: flagLabel("kept3"),
+							kept4: flagLabel("kept4"),
+						},
 					});
 					const { client, peer } = await rawProvider();
 					const ref = client.hold(Kept, {}, context);
@@ -394,7 +401,13 @@ forEachCodec(() => {
 				params: { id: str() },
 				hostAddress: () => Server(),
 				state: { n: int() },
-				flags: { f0: "0", f1: "1", f2: "2", f3: "3", f4: "4" },
+				flags: {
+					f0: flagLabel("f0"),
+					f1: flagLabel("f1"),
+					f2: flagLabel("f2"),
+					f3: flagLabel("f3"),
+					f4: flagLabel("f4"),
+				},
 			});
 			const { client, peer } = await rawProvider();
 			// Watches the cache's insertions only: it keeps neither the map, the slot nor its set.

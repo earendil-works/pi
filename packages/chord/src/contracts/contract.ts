@@ -5,6 +5,7 @@ import type { Context } from "../context/index.ts";
 import type { Watchable, WatchHandle } from "../watch.ts";
 import type { Change, CurrentStep, History, MembersShape } from "./history.ts";
 import type { Address, KindShape } from "./host-kind.ts";
+import type { MessageData } from "./message.ts";
 import type { Params, ParamsData } from "./params.ts";
 import type { Grantable, Method, NullSchema, QueriesMember, Schema, Static, Ungranted } from "./schema.ts";
 import type { Snapshot } from "./snapshot.ts";
@@ -21,7 +22,7 @@ export type ContractShape = {
 	readonly params: Params;
 	readonly history: History;
 	readonly admission?: Schema;
-	readonly flags?: { readonly [flag: string]: string };
+	readonly flags?: { readonly [flag: string]: MessageData };
 };
 
 /** A declared contract: a branded handle, immutable by convention. Spread or hand-built copies are refused. */
@@ -215,8 +216,11 @@ export type ContractData = {
 	readonly kinds: ReadonlyMap<string, MemberKind>;
 	/** A remote contract's admission, as its current version declares it; none without one, and for local. */
 	readonly admission: AdmissionData | undefined;
-	/** A remote contract's flags (slice 15 §1.1): rights that are no member, each with its label; fixed for its history. */
-	readonly flags: ReadonlyMap<string, string>;
+	/**
+	 * A remote contract's flags (slice 15 §1.1): rights that are no member, each with its label, a message the access UI
+	 * renders; fixed for its history.
+	 */
+	readonly flags: ReadonlyMap<string, MessageData>;
 };
 
 /**

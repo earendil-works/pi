@@ -33,7 +33,7 @@ export const Canvas = remote("canvas.board", {
 	state: { shapes: arr(ShapeRow), history: grantable(arr(Change)) },
 	events: { motion: Motion, reported: grantable(obj({ shape: str(), by: str() })) },
 	methods: { point: method(Point), add: grantable(method(obj({ shapes: arr(Shape) }), arr(str()))), clear: grantable(method()) },
-	flags: { export: "Export as image" },
+	flags: { export: messages.message("flagExport") },
 });
 type Names = GrantableName<typeof Canvas>; // "history" | "reported" | "add" | "clear" | "export"
 ```
@@ -43,6 +43,10 @@ type Names = GrantableName<typeof Canvas>; // "history" | "reported" | "add" | "
 - `remote(name, { version, params, hostAddress, admission?, state?, events?, methods?, flags? })`. `variants` is gone.
   `grantable(schema)` in `state` and `events`, `grantable(method(...))` in `methods`; `flags: { name: label }`, the
   label an English text for the access UI (not a message: flags are declared by code, the UI renders it as given) **(B)**.
+  **Changed 2026-11-26, decision "Flag labels are messages" (Mario):** the label is a message as data (`MessageData`,
+  `messages.message("flagExport")` of the plugin's `defineMessages`, its key checked against the catalog), which the
+  access UI renders in the viewer's language; declaration refuses a label that is no message (`MessageSchema`); the
+  fingerprint still leaves labels out. A contract file may import its plugin's `messages.ts`.
 - `local(...)` is unchanged: a local object has no audiences; `grantable` there is a declaration error.
 - `granted` is reserved (a reference has it) and `variant` no longer is. Flag names follow member names' rules.
 - **The fingerprint** covers the members, which of them are grantable, and the flag names, never the labels:
