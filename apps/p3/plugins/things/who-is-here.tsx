@@ -1,5 +1,6 @@
 // Who is here (the Settings view's first part): the parties put in here, then those from above with a switch each
-// (shown or hidden here, with Manage people); a person or group here may be removed, and "Invite" adds people.
+// (shown or hidden here, with Manage people), and the default for those without one (decision 80); a person or group
+// here may be removed, and "Invite" adds people.
 
 import { Button, SelectionControlAndLabel, Switch } from "@earendil-works/elanor-react";
 import { BACKGROUND_CONTEXT, withGranted } from "@earendil-works/p3/v1";
@@ -19,6 +20,7 @@ import { useScreenId } from "./contract.web.tsx";
 import { page } from "./page-messages.ts";
 import styles from "./things.module.css";
 import { useErrorText, useFromText, usePartyName } from "./use-page.ts";
+import { FromAboveSwitch } from "./what-is-here.tsx";
 import { Workspace, WorkspacePeople } from "./workspace.ts";
 
 /** Who is here in `workspace`, with its switches; `onInvite` opens the invite dialog (none: no Manage people). */
@@ -28,7 +30,9 @@ export function WhoIsHere(props: { readonly workspace: string; readonly onInvite
 		useLive(useHold(WorkspacePeople, { workspace: props.workspace, view: useScreenId() }))?.list,
 	);
 	const ref = useLive(useHold(Workspace, { workspace: props.workspace }));
+	const info = useWatch(ref?.info);
 	const hider = withGranted(ref, "hideParty");
+	const defaulter = withGranted(ref, "setShowsPeople");
 	const remover = withGranted(ref, "removeParty");
 	const fromText = useFromText();
 	const nameOf = usePartyName();
@@ -46,6 +50,18 @@ export function WhoIsHere(props: { readonly workspace: string; readonly onInvite
 				)}
 			</div>
 			{failure === undefined ? null : <p className={styles.error}>{t("failed", failure)}</p>}
+			{info === undefined || !(people?.rows ?? []).some((row) => row.from.kind !== "here") ? null : (
+				<FromAboveSwitch
+					label={t("showsPeople")}
+					marker="people"
+					onChange={
+						defaulter === undefined
+							? undefined
+							: (shown) => defaulter.setShowsPeople({ shown }, BACKGROUND_CONTEXT).catch(report)
+					}
+					shown={info.showsPeople}
+				/>
+			)}
 			<ul className={styles.rows}>
 				{(people?.rows ?? []).map((row) => {
 					const key = partyKey(row.party);

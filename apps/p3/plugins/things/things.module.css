@@ -20,6 +20,20 @@
 	color: var(--semantic-color-text-secondary);
 }
 
+/* A navigator entry from above: its name, cut short when it must be, and where it comes from. */
+.entry {
+	display: flex;
+	min-inline-size: 0;
+}
+
+.entryName {
+	flex: 1 1 auto;
+	min-inline-size: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
 .from {
 	flex: none;
 	margin-inline-start: auto;
@@ -145,7 +159,7 @@
 	max-inline-size: 22rem;
 }
 
-/* The who-may table on wide screens, its cards on a phone. */
+/* The who-may table's cards, on a phone. */
 .cards {
 	display: flex;
 	flex-direction: column;
@@ -167,10 +181,6 @@
 
 .card > strong {
 	flex: 1 0 100%;
-}
-
-.wide {
-	display: none;
 }
 
 .dialog {
@@ -223,14 +233,4 @@
 	margin: 0;
 	color: var(--semantic-color-text-negative);
 	font: var(--semantic-typography-ui-secondary);
-}
-
-@media (min-width: 48rem) {
-	.wide {
-		display: block;
-	}
-
-	.cards {
-		display: none;
-	}
 }

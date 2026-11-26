@@ -66,8 +66,8 @@ export * from "../../../plugins/layout/contract.web.tsx";
 export * from "../../../plugins/things/contract.web.tsx";
 
 /**
- * The page's root: the one component the base renders inside the page's host (the chrome plugin's: the top bar and
- * the chosen app's page). The first by plugin name is used; a second is reported.
+ * The page's root: the one component the base renders inside the page's host (the chrome plugin's: the top bar, the
+ * navigator and the route's view). The first by plugin name is used; a second is reported.
  */
 export const PageRoot = defineRegistry<ComponentType, ComponentType | undefined>("p3.page-root", { version: 1 });
 

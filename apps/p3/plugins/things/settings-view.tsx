@@ -80,6 +80,7 @@ function WorkspaceSettings(props: { readonly workspace: string }) {
 				</PageHeader.Row>
 				<PageHeader.Description>{`${t("settings")} · ${place}`}</PageHeader.Description>
 			</PageHeader.Root>
+			{/* The tabs report the value of one of their `Tab`s, each a `Part`, typed `unknown` by Elanor. */}
 			<Tabs.Root onValueChange={(value) => setPart(value as Part)} value={part}>
 				<Tabs.List className={styles.tabs}>
 					<Tabs.Tab data-settings-tab="who" value="who">

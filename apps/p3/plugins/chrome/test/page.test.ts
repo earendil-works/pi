@@ -7,10 +7,13 @@
 // without in its Settings view; a thing from above is greyed and a hidden one folded; a view that takes the whole page
 // keeps only the corner button; the invite dialog says what comes with slice 3; `/me` is the person's own page; a
 // session made through the picker opens from the navigator in its transcript view, streams a scripted answer, and shows
-// a person with Read only the transcript with no way to send; a reload of the chrome plugin keeps the open page; an
-// apply whose web contracts are newer than the page's base leaves it working, and a component the base lacks is
-// reported once. Screenshots at the phone's and the desktop's size, light and dark, go to `/tmp/p3-base/shots/`
-// (`P3_SHOTS` names another directory).
+// a person with Read only the transcript with no way to send; who may's access choice and Make column, a write from
+// another page shown live, its cards on a phone; the switches for things and people from above; no link offered without
+// Link; a person present only below sees nothing of the workspaces above; `?view=` kept through the gear and Back and
+// through pane focus, and a session's pane back when its thing is shown again; the phone's screens; a reload of the
+// chrome, things and transcript plugins keeps the open page and unsent work; an apply whose web contracts are newer
+// than the page's base leaves it working, and a component the base lacks is reported once. Screenshots at the phone's
+// and the desktop's size, light and dark, go to `/tmp/p3-base/shots/` (`P3_SHOTS` names another directory).
 
 import assert from "node:assert/strict";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -23,6 +26,7 @@ import { type TestServer, testServer } from "@earendil-works/p3/v1/testing";
 import { scriptFaux } from "../../../test/support.ts";
 import { eventually, within } from "../../../test/until.ts";
 import { ThingsStore } from "../../things/contract.server.ts";
+import { Workspace } from "../../things/workspace.ts";
 import { BROWSER_SKIP, Browser, DESKTOP, PHONE } from "./browser.ts";
 
 /** The checkout's built-in plugins, which the test copies and edits. */
@@ -53,6 +57,12 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 	let owner: Host<P3Principal>;
 	/** The session the session cases share (its id: its workspace's), made through the picker. */
 	let session: string;
+	/** The Sketch, a canvas linked in Pi, made through the picker. */
+	let sketch: string;
+	/** Family, a workspace in Pi, made through the picker. */
+	let family: string;
+	/** Ada, invited and put into Pi (her person id). */
+	let ada: string;
 
 	before(async () => {
 		await mkdir(SHOTS, { recursive: true });
@@ -79,6 +89,8 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		const at = JSON.stringify(selector);
 		await browser.wait(`document.querySelector(${at}) !== null`);
 		await browser.evaluate(`document.querySelector(${at}).scrollIntoView({ block: "center" })`);
+		// Two frames for whatever follows the scroll (a popup's position) before the click looks where to land.
+		await browser.evaluate("new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))");
 		await browser.click(selector);
 	}
 
@@ -208,7 +220,7 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await browser.wait(`document.querySelector('[data-settings="${pi}"]')`);
 		await add("make:canvas.board", "Sketch");
 		await browser.wait(`[...document.querySelectorAll('[data-nav-thing]')].some((e) => e.textContent === "Sketch")`);
-		const sketch = await browser.evaluate<string>(
+		sketch = await browser.evaluate<string>(
 			`[...document.querySelectorAll('[data-nav-thing]')].find((e) => e.textContent === "Sketch").dataset.navThing`,
 		);
 		await press(`[data-nav-thing="${sketch}"]`);
@@ -248,10 +260,13 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await idles();
 		// Below the link (a thing hidden here gives nothing here, so the Sketch): everyone's Draw is inherited; unticking it
 		// withholds it here, ticking it again resets the cell; an empty box (everyone's Moderate) is disabled.
-		const sketch = await browser.evaluate<string>(
-			`[...document.querySelectorAll('[data-here-thing]')].find((e) => e.textContent.includes("Sketch")).dataset.hereThing`,
+		assert.equal(
+			await browser.evaluate<string>(
+				`[...document.querySelectorAll('[data-here-thing]')].find((e) => e.textContent.includes("Sketch")).dataset.hereThing`,
+			),
+			sketch,
 		);
-		const family = decodeURIComponent((await browser.evaluate<string>("location.pathname")).split("/")[2]!);
+		family = decodeURIComponent((await browser.evaluate<string>("location.pathname")).split("/")[2]!);
 		await browser.open(`${origin}/w/${family}/t/${sketch}/settings`);
 		await eventually(
 			() => look("everyone", "draw"),
@@ -393,7 +408,9 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 
 	it("shows a person with Read only the session's transcript, with no way to send", async () => {
 		// Ada is invited, put into Pi, and her Send on the session withheld: she keeps everyone's Read.
-		const { person: ada, link } = await (await owner.get(People, {}, context)).invite({ name: "Ada" }, context);
+		const invited = await (await owner.get(People, {}, context)).invite({ name: "Ada" }, context);
+		ada = invited.person;
+		const { link } = invited;
 		await t.host.root(async (ctx) => {
 			const store = await ctx.get(ThingsStore, {});
 			const party = { kind: "person", person: ada } as const;
@@ -416,6 +433,223 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await shots("18-reader-desktop");
 		await browser.signOut();
 		await browser.signIn(origin, await t.cookie(context));
+	});
+
+	it("writes who may's access choice and Make column, and shows another page's write without a reload", async () => {
+		await browser.size(DESKTOP);
+		await browser.open(`${origin}/w/${pi}/t/${sketch}/settings`);
+		const row = `person/${ada}`;
+		const access = `document.querySelector('[data-access="${row}"]')?.textContent.trim()`;
+		await browser.wait(`${access} === "(Can open)"`);
+		// "Can open" and "No access" each write `@open` (test 6b); resetting deletes the row.
+		for (const [choice, label] of [
+			["open", "Can open"],
+			["none", "No access"],
+		] as const) {
+			await press(`[data-access="${row}"]`);
+			await browser.settled(`[data-access-choice="${choice}"]`);
+			await press(`[data-access-choice="${choice}"]`);
+			await browser.wait(`${access} === "${label}"`);
+			await press(`[data-access="${row}"]`);
+			await browser.settled('[data-access-choice="reset"]');
+			await press('[data-access-choice="reset"]');
+			await browser.wait(`${access} === "(Can open)"`);
+		}
+		// A write from another page (the owner's client) shows here at once (test 6).
+		const workspace = await owner.get(Workspace, { workspace: pi }, context);
+		const party = { kind: "person", person: ada } as const;
+		await workspace.setTick!({ thing: sketch, party, tick: "draw", gives: false }, context);
+		await eventually(
+			() => look(row, "draw"),
+			(found) => found === "withheld",
+		);
+		await workspace.setTick!({ thing: sketch, party, tick: "draw" }, context);
+		await eventually(
+			() => look(row, "draw"),
+			(found) => found === "inherited",
+		);
+		// The Make column (test 6c): "All kinds" writes `@make:*`; two kinds write two rows, named in the summary.
+		await browser.open(`${origin}/w/${pi}/settings`);
+		await press('[data-settings-tab="may"]');
+		const summary = `document.querySelector('[data-make="${row}"]')?.textContent.trim()`;
+		await browser.wait(`${summary} === "nothing"`);
+		await press(`[data-make="${row}"]`);
+		await browser.settled("[data-make-popup]");
+		const toggle = async (tick: string, to: string) => {
+			await press(`[data-make-popup] [data-tick="${tick}"] [role="checkbox"]`);
+			await browser.wait(
+				`document.querySelector('[data-make-popup] [data-tick="${tick}"]')?.dataset.look === "${to}"`,
+			);
+		};
+		await toggle("@make:*", "given");
+		await browser.wait(`${summary} === "all kinds"`);
+		await toggle("@make:*", "empty");
+		await toggle("@make:canvas.board", "given");
+		await toggle("@make:page-kinds.note", "given");
+		await browser.wait(`${summary} === "Canvas, Note"`);
+		await toggle("@make:canvas.board", "empty");
+		await toggle("@make:page-kinds.note", "empty");
+		await browser.wait(`${summary} === "nothing"`);
+		await browser.evaluate(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))`);
+	});
+
+	it("on a phone, draws who may as one card per party, and a tick there writes its row", async () => {
+		await browser.size(PHONE);
+		await browser.open(`${origin}/w/${pi}/t/${sketch}/settings`);
+		await browser.wait(
+			`document.querySelector('[data-who-may-row="everyone"] [data-tick="draw"]')?.offsetParent != null`,
+		);
+		// One form is rendered, not both: no table on a phone (Fable S6).
+		assert.equal(await browser.evaluate(`document.querySelector("[data-who-may] table") === null`), true);
+		assert.equal(await look("everyone", "draw"), "given");
+		await press('[data-who-may-row="everyone"] [data-tick="draw"] [role="checkbox"]');
+		await eventually(
+			() => look("everyone", "draw"),
+			(found) => found === "empty",
+		);
+		await shots("21-who-may-phone");
+		await press('[data-who-may-row="everyone"] [data-tick="draw"] [role="checkbox"]');
+		await eventually(
+			() => look("everyone", "draw"),
+			(found) => found === "given",
+		);
+		await browser.size(DESKTOP);
+		await browser.wait(`document.querySelector("[data-who-may] table [data-who-may-row]")`);
+		assert.equal(
+			await browser.evaluate(`document.querySelector("[data-who-may] li[data-who-may-row]") === null`),
+			true,
+		);
+	});
+
+	it("switches the defaults for things and people from above in a workspace's Settings view", async () => {
+		await browser.open(`${origin}/w/${family}/settings`);
+		await press('[data-settings-tab="what"]');
+		const things = `document.querySelector('[data-shows-from-above="things"]')?.getAttribute("aria-checked")`;
+		await browser.wait(`${things} === "true"`);
+		// Off: Sketch, which has no switch of its own here, is hidden too; Plans was already.
+		await press('[data-shows-from-above="things"]');
+		await browser.wait(`document.querySelector('[data-here-thing="${sketch}"]')?.dataset.hidden === "true"`);
+		await press('[data-shows-from-above="things"]');
+		await browser.wait(`document.querySelector('[data-here-thing="${sketch}"]')?.dataset.hidden === "false"`);
+		await browser.wait(`document.querySelector("[data-nav-hidden]")?.textContent === "1 hidden"`);
+		await press('[data-settings-tab="who"]');
+		// Ada, put into Pi, is from above here (the owner made Family, so is put in here).
+		const adaHidden = `document.querySelector('[data-here-party="person/${ada}"]')?.dataset.hidden`;
+		await browser.wait(`${adaHidden} === "false"`);
+		await press('[data-shows-from-above="people"]');
+		await browser.wait(`${adaHidden} === "true"`);
+		await press('[data-shows-from-above="people"]');
+		await browser.wait(`${adaHidden} === "false"`);
+	});
+
+	it("offers a person without Link here nothing to link, only what they may make (test 7)", async () => {
+		// The owner may link Pi's Sketch into Family.
+		await browser.open(`${origin}/w/${family}/settings`);
+		await press('[data-settings-tab="what"]');
+		await press("[data-add-thing]");
+		await browser.wait(`document.querySelector('[data-add-offer="link:${sketch}"]')`);
+		await press('[data-add-thing-dialog] button[aria-label="Close"]');
+		// Bea has Link in Pi (so Pi's things are linkable for her) and Make in Family, where her Link is withheld.
+		const { person: bea, link } = await (await owner.get(People, {}, context)).invite({ name: "Bea" }, context);
+		await t.host.root(async (ctx) => {
+			const store = await ctx.get(ThingsStore, {});
+			const party = { kind: "person", person: bea } as const;
+			const source = { kind: "person", person: ownerId } as const;
+			await store.putParty({ workspace: pi, party, source }, ctx);
+			await store.setGrants(
+				{
+					source,
+					grants: [
+						{ workspace: pi, thing: pi, party, tick: "link", gives: true },
+						{ workspace: family, thing: family, party, tick: "link", gives: false },
+						{ workspace: family, thing: family, party, tick: "@make:*", gives: true },
+					],
+				},
+				ctx,
+			);
+		}, context);
+		await browser.signOut();
+		await browser.open(`${origin}${link}`);
+		await browser.wait(`document.querySelector("[data-person-menu]")?.textContent.includes("Bea")`);
+		await browser.open(`${origin}/w/${family}/settings`);
+		await press('[data-settings-tab="what"]');
+		await press("[data-add-thing]");
+		await browser.wait(`document.querySelector('[data-add-offer="make:canvas.board"]')`);
+		assert.equal(await browser.evaluate(`document.querySelector('[data-add-offer^="link:"]') === null`), true);
+		await browser.signOut();
+		await browser.signIn(origin, await t.cookie(context));
+	});
+
+	it("shows a person present only below no name or id of the workspaces above (test 5a)", async () => {
+		// Max is present only in Stuff, in Family: Stuff is his root, what reaches it from Family or Pi is "from above".
+		const stuff = await (await owner.get(Workspace, { workspace: family }, context)).make!(
+			{ kind: "things.workspace", name: "Stuff" },
+			context,
+		);
+		const { person: max, link } = await (await owner.get(People, {}, context)).invite({ name: "Max" }, context);
+		await (await owner.get(Workspace, { workspace: stuff }, context)).putParty!(
+			{ party: { kind: "person", person: max } },
+			context,
+		);
+		await browser.signOut();
+		await browser.open(`${origin}${link}`);
+		await browser.wait(`document.querySelector("[data-person-menu]")?.textContent.includes("Max")`);
+		await browser.open(`${origin}/`);
+		await browser.wait(`location.pathname === "/w/${stuff}"`);
+		await browser.wait(`document.querySelector('[data-nav-thing="${sketch}"]')?.textContent.includes("from above")`);
+		await press('[data-settings-tab="what"]');
+		await browser.wait(`document.querySelector('[data-here-thing="${sketch}"]')?.textContent.includes("from above")`);
+		const page = await browser.evaluate<string>("document.body.innerHTML");
+		for (const banned of ["Family", family, pi]) assert.ok(!page.includes(banned), `the page names ${banned}`);
+		await browser.signOut();
+		await browser.signIn(origin, await t.cookie(context));
+	});
+
+	it("keeps the chosen view (?view=) through the gear and Back", async () => {
+		const file = join(t.userRoot, "print.web.tsx");
+		await writeFile(
+			file,
+			[
+				'import { defineFacet } from "@earendil-works/p3/v1";',
+				'import { Views } from "@earendil-works/p3/v1/web";',
+				'function Print() { return <p data-print="">print</p>; }',
+				"export default defineFacet((_host, self) =>",
+				'	self.contribute(Views, [{ view: "print.board", title: { namespace: "print", key: "board", params: [] }, area: "main", for: { kind: "thing", thingKind: "canvas.board" }, View: Print }]),',
+				");",
+			].join("\n"),
+		);
+		await until(t.plugins, (state) => state.set, within("the new plugin seen", context, 10_000));
+		await t.apply(context);
+		await browser.size(PHONE);
+		await browser.open(`${origin}/w/${pi}/t/${sketch}?view=print.board`);
+		await browser.wait(`document.querySelector("[data-print]")`);
+		await press("[data-gear]");
+		await browser.wait(`location.pathname.endsWith("/settings") && location.search === "?view=print.board"`);
+		await press("[data-back]");
+		await browser.wait(`document.querySelector("[data-print]") && location.search === "?view=print.board"`);
+		await browser.size(DESKTOP);
+		await rm(file);
+		await until(t.plugins, (state) => state.dirty.length > 0, within("the removal seen", context, 10_000));
+		await t.apply(context);
+	});
+
+	it("brings a session's pane back when its thing is shown again, and keeps ?view= through pane focus", async () => {
+		// A board made in Pi comes down into the session, as a pane; hidden there, its pane goes.
+		const workspace = await owner.get(Workspace, { workspace: session }, context);
+		await browser.open(`${origin}/w/${session}?view=transcript.session`);
+		await browser.wait(`document.querySelector('[data-session-view="${session}"]')`);
+		const board = await (await owner.get(Workspace, { workspace: pi }, context)).make!(
+			{ kind: "canvas.board", name: "Pane board" },
+			context,
+		);
+		await press(`[data-pane-tab="${board}"] [role="tab"]`);
+		await browser.wait(
+			`location.pathname === "/w/${session}/${board}" && location.search === "?view=transcript.session"`,
+		);
+		await workspace.hide!({ thing: board, shown: false }, context);
+		await browser.wait(`document.querySelector('[data-pane-tab="${board}"]') === null`);
+		await workspace.hide!({ thing: board, shown: true }, context);
+		await browser.wait(`document.querySelector('[data-pane-tab="${board}"]')`);
 	});
 
 	it("on a phone, reaches a plain workspace's Settings from the navigator, and goes back from a session and /me", async () => {

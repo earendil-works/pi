@@ -145,9 +145,10 @@ not exist yet.
   size the viewport, wait for an expression, click and type with real input events, take screenshots, keep the page's
   console). The model is `plugins/chrome/test/page.test.ts`: `testServer` with a copy of the built-in plugins the test
   edits and the tests' faux login (`test/plugins/faux-login/`), the owner's cookie set in the browser, then the page as
-  a person uses it: the bar, a session made through the form, a scripted answer with a tool call, the session's
-  dialog, the phone's screens, a reload of a plugin while the page is open (the page keeps its state, it does not load
-  again), apps a test writes into the user root, an invited person and their refusal. Every case looks at the phone's
+  a person uses it: the bar and the navigator, the Settings view and its who may, things and sessions made through the
+  picker, a scripted answer, the phone's screens, a reload of a plugin while the page is open (the page keeps its
+  state and unsent work, it does not load again), views a test writes into the user root, invited people and what they
+  may not do. Every case looks at the phone's
   viewport (390x844, touch emulated) and the desktop's (1280x900), light and dark (`colorScheme`). Wait for what the
   page shows (`wait`), never sleep; before a screenshot of a dialog or a popup, `settled` waits until its animations
   ended and checks it is on top. The last case asserts that the server reported nothing and the page logged no error.

@@ -34,9 +34,9 @@ meaning from `packages/chord/docs/design.md` §2.
 | org | a company that manages its members' Pis | company |
 | view | one way to look at a target (a thing of a kind, a person, a group): an entry of the things plugin's `Views`; a kind has 0 to n | pane, panel, app |
 | component | a React component a plugin offers others to place (`defineComponent`, `Components`, `useComponent`): the pane layout, the navigator. Its token has no `View` suffix (`PaneLayout`, `Navigator`, `Settings`); `TargetView` is the decided name of the one that draws a target in its view | view |
-| layout | how an app arranges its views | |
+| layout | how a view arranges its panes: the layout plugin's pane layout (splits and tabs; chips on a phone) | |
 | slot | a place inside a view where other plugins add parts | |
-| chrome | the page's frame: the top bar (app switcher, person menu, connection) and the chosen app's page | workbench |
+| chrome | the page's frame: the top bar (crumbs, person menu, connection), the navigator beside the main area, and the corner button over a view that takes the whole page | workbench |
 | question | something a person is asked: an ask or an approval | |
 | artifact | something a session made to be shown | |
 | identity provider | how a person proves who they are (Radius, this device) | |

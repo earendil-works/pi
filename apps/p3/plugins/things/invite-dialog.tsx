@@ -129,6 +129,7 @@ function ByLink(props: { readonly workspace: string }) {
 	return (
 		<section className={styles.invitePart} data-invite-link-part="">
 			<h3 className={styles.pickerTitle}>{t("inviteNew")}</h3>
+			{/* The group reports the value of one of its two radios, typed `unknown` by Elanor. */}
 			<Radio.Group onValueChange={(value) => setAs(value as "member" | "guest")} value={as}>
 				<SelectionControlAndLabel
 					control={
@@ -151,6 +152,7 @@ function ByLink(props: { readonly workspace: string }) {
 			</Radio.Group>
 			<Stack align="center" direction="row" gap="small">
 				<span>{t("expires")}</span>
+				{/* The control reports one of the values it was given, the `EXPIRIES` as text. */}
 				<SegmentedControl.Root
 					onValueChange={(value) => setDays(Number(value[0] ?? 7) as (typeof EXPIRIES)[number])}
 					value={[String(days)]}

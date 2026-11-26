@@ -297,12 +297,19 @@ function EntryLink(props: {
 		<SideNavigation.Link
 			active={props.current !== undefined && targetPath(props.current) === href}
 			href={href}
-			iconEnd={props.from === undefined ? undefined : <span className={styles.from}>{props.from}</span>}
 			iconStart={<Icon />}
 			onClick={(event) => follow(event, () => props.onOpen(props.target))}
 			{...props.data}
 		>
-			{props.children}
+			{/* In the label, not as `iconEnd`: Elanor's end slot is an icon's width, which cuts "from Pi" off. */}
+			{props.from === undefined ? (
+				props.children
+			) : (
+				<span className={styles.entry}>
+					<span className={styles.entryName}>{props.children}</span>
+					<span className={styles.from}>{props.from}</span>
+				</span>
+			)}
 		</SideNavigation.Link>
 	);
 }

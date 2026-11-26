@@ -119,7 +119,7 @@ export function resizeSplit(tree: PaneNode, path: readonly number[], index: numb
 }
 
 /**
- * `tree` with only the panes `keep` holds (a pane gone from the app, a thing removed from a session), tidied; `null`
+ * `tree` with only the panes `keep` holds (a pane gone from the view, a thing removed from a session), tidied; `null`
  * when none is left.
  */
 export function keepPanes(tree: PaneNode, keep: (pane: string) => boolean): PaneNode | null {
@@ -155,7 +155,7 @@ export function sameTree(a: PaneNode, b: PaneNode): boolean {
 
 /**
  * `value` as a pane tree, or `undefined` when it is not one (a trust boundary: JSON from the browser's storage, which
- * another version of the app or a person may have written): every group with an id, tabs of strings, an active tab
+ * another version of the view or a person may have written): every group with an id, tabs of strings, an active tab
  * among them; every split with a direction and positive shares, one per child. Read trees are tidied.
  */
 export function parsePaneTree(value: unknown): PaneNode | undefined {

@@ -95,7 +95,10 @@ function Choices(props: { readonly workspace: string; readonly onChoose: (offer:
 	const { t } = useMessages(page);
 	const [query, setQuery] = useState("");
 	const kinds = useKinds();
-	const makes = useWatch(withGranted(useLive(useHold(Workspace, { workspace: props.workspace })), "makes")?.makes);
+	const ref = useLive(useHold(Workspace, { workspace: props.workspace }));
+	const makes = useWatch(withGranted(ref, "makes")?.makes);
+	// Anyone present may list what could be linked; only a person with Link here is offered those (review round 1).
+	const mayLink = withGranted(ref, "link") !== undefined;
 	const linkable = useWatch(
 		useLive(useHold(Linkable, { workspace: props.workspace, query: query.trim(), view: useScreenId() }))?.list,
 	);
@@ -109,7 +112,7 @@ function Choices(props: { readonly workspace: string; readonly onChoose: (offer:
 		if (thingKind !== undefined && names.kind(name).toLowerCase().includes(query.trim().toLowerCase()))
 			offers.push({ kind: "make", thingKind });
 	}
-	for (const row of linkable?.rows ?? []) {
+	for (const row of mayLink ? (linkable?.rows ?? []) : []) {
 		const thingKind = kinds.get(row.kind);
 		if (thingKind !== undefined) offers.push({ kind: "link", thing: row.thing, name: row.name, thingKind });
 	}

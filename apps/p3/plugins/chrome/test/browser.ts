@@ -112,6 +112,10 @@ export class Browser {
 
 	/** One DevTools command. */
 	call(method: string, params: object = {}): Promise<unknown> {
+		// A socket that is closing or closed answers nothing: fail at once instead of after the call's timeout.
+		if (this.#socket.readyState !== WebSocket.OPEN) {
+			return Promise.reject(new Error(`Browser: ${method}: the DevTools socket closed`));
+		}
 		const id = ++this.#next;
 		return new Promise((resolve, reject) => {
 			// A page that never answers (stuck in a render loop, Chromium gone) fails the call after a while instead
@@ -130,7 +134,12 @@ export class Browser {
 					reject(error);
 				},
 			});
-			this.#socket.send(JSON.stringify({ id, method, params }));
+			try {
+				this.#socket.send(JSON.stringify({ id, method, params }));
+			} catch (error) {
+				this.#pending.get(id)?.reject(error as Error);
+				this.#pending.delete(id);
+			}
 		});
 	}
 

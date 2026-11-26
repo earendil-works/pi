@@ -17,8 +17,8 @@ import { Navigator } from "../things/contract.web.tsx";
 import styles from "./frame.module.css";
 import { messages } from "./messages.ts";
 
-/** The corner button: the navigator (in a drawer) and the gear of `target`. */
-export function CornerMenu(props: { readonly target: Target | undefined }) {
+/** The corner button: the navigator (in a drawer) and the gear of `target`, which keeps the chosen `view`. */
+export function CornerMenu(props: { readonly target: Target | undefined; readonly view: string | undefined }) {
 	const { t } = useMessages(messages);
 	const NavigatorView = useComponent(Navigator);
 	const [open, setOpen] = useState(false);
@@ -44,7 +44,7 @@ export function CornerMenu(props: { readonly target: Target | undefined }) {
 								<Menu.Item
 									data-corner-settings=""
 									icon={<SettingsIcon />}
-									onClick={() => navigate(targetPath(target, { settings: true }))}
+									onClick={() => navigate(targetPath(target, { settings: true, view: props.view }))}
 								>
 									{t("settings")}
 								</Menu.Item>

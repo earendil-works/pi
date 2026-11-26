@@ -3,10 +3,16 @@
 // also its Make column (None, All kinds, Only…), folded from the `@make:` ticks. One checkbox is one grant row:
 // ticked is given here, (✓) inherited (no row here), crossed out withheld, empty not given; a click writes or deletes
 // one row (`Workspace.setTick`). Below the link nothing is given: empty boxes are disabled. A table on wide screens,
-// one card per party on a phone.
+// one card per party on a phone: one of the two is rendered, never both.
 
 import { Button, Checkbox, Menu, Popover, SelectionControlAndLabel, Table } from "@earendil-works/elanor-react";
-import { BACKGROUND_CONTEXT, type MessagesOf, type Translator, withGranted } from "@earendil-works/p3/v1";
+import {
+	BACKGROUND_CONTEXT,
+	type MessageData,
+	type MessagesOf,
+	type Translator,
+	withGranted,
+} from "@earendil-works/p3/v1";
 import {
 	CancelIcon,
 	CheckIcon,
@@ -20,11 +26,11 @@ import {
 import { useState } from "react";
 import { kindOfMakeTick, MAKE_ANY, makeTick, OPEN, type Party, partyKey } from "./contract.ts";
 import { useMessageText, useNames } from "./contract.web.tsx";
-import type { KindView } from "./kind.ts";
+import type { KindView, TickFor } from "./kind.ts";
 import { page } from "./page-messages.ts";
 import { audienceOf, isFor, makeTickFor } from "./rules.ts";
 import styles from "./things.module.css";
-import { useErrorText, useKinds, usePartyName } from "./use-page.ts";
+import { useErrorText, useKinds, usePartyName, useWide } from "./use-page.ts";
 import { type Cell, WhoMay, Workspace } from "./workspace.ts";
 
 /** What one checkbox shows (item 112). */
@@ -70,8 +76,8 @@ export function WhoMayTable(props: { readonly workspace: string; readonly thing:
 	const ref = useLive(useHold(Workspace, { workspace: props.workspace }));
 	const setter = withGranted(ref, "setTick");
 	const kinds = useKinds();
-	const text = useMessageText();
 	const [failure, setFailure] = useState<string | undefined>(undefined);
+	const wide = useWide();
 	// Who may is held by anyone present (Manage access writes ticks, item 113's grid read-only otherwise); someone
 	// not present reads why.
 	if (state?.kind === "failed" && state.cause.kind === "denied") {
@@ -95,7 +101,7 @@ export function WhoMayTable(props: { readonly workspace: string; readonly thing:
 		const found = table.rows.find((row) => row.party.kind === "person" && row.party.person === person);
 		return found === undefined || found.name === "" ? undefined : found.name;
 	};
-	const cellProps = (row: Row) => ({
+	const cellProps = (row: Row): CellProps => ({
 		personName,
 		row: { ...row, name: nameOf(row.party, row.name) },
 		linkedHere,
@@ -107,9 +113,11 @@ export function WhoMayTable(props: { readonly workspace: string; readonly thing:
 		onSet:
 			setter === undefined ? undefined : (tick: string, gives: boolean | undefined) => set(row.party, tick, gives),
 	});
-	// A tick shows only in the rows of the parties it is for (item 91), by the rule the index gives by (`isFor`).
-	const fits = (tick: { readonly for: "agents" | "people" | "all" }, row: Row) =>
-		isFor(tick.for, audienceOf(row.party.kind));
+	const forms: FormProps = {
+		ticks: table.ticks,
+		cells: table.rows.map(cellProps),
+		makes: isWorkspace ? kinds : undefined,
+	};
 	return (
 		<section className={styles.whoMay} data-who-may={props.thing}>
 			<h2 className={styles.partTitle}>{t("whoMayWith", props.name)}</h2>
@@ -119,67 +127,93 @@ export function WhoMayTable(props: { readonly workspace: string; readonly thing:
 					{t("failed", failure)}
 				</p>
 			)}
-			<Table.Container className={styles.wide}>
-				<Table.Root>
-					<Table.Head>
-						<Table.Row>
-							<Table.HeaderCell>{t("who")}</Table.HeaderCell>
-							<Table.HeaderCell>{t("access")}</Table.HeaderCell>
-							{isWorkspace ? <Table.HeaderCell>{t("make")}</Table.HeaderCell> : null}
-							{table.ticks.map((tick) => (
-								<Table.HeaderCell align="center" key={tick.name}>
-									{text(tick.label)}
-								</Table.HeaderCell>
+			{wide ? <WhoMayWide {...forms} /> : <WhoMayCards {...forms} />}
+		</section>
+	);
+}
+
+/** What both forms of who may draw: the kind's ticks, one row's cell props per party, the kinds of a Make column. */
+type FormProps = {
+	readonly ticks: readonly WhoMayTick[];
+	readonly cells: readonly CellProps[];
+	/** On a workspace, every kind by name, for its Make column; nothing on a thing. */
+	readonly makes: ReadonlyMap<string, KindView> | undefined;
+};
+
+/** One tick of the kind, as who may lists it. */
+type WhoMayTick = { readonly name: string; readonly label: MessageData; readonly for: TickFor };
+
+/** A tick shows only in the rows of the parties it is for (item 91), by the rule the index gives by (`isFor`). */
+function fits(tick: WhoMayTick, row: Row): boolean {
+	return isFor(tick.for, audienceOf(row.party.kind));
+}
+
+/** Who may on a wide screen: a table, a column per tick under its label. */
+function WhoMayWide(props: FormProps) {
+	const { t } = useMessages(page);
+	const text = useMessageText();
+	return (
+		<Table.Container>
+			<Table.Root>
+				<Table.Head>
+					<Table.Row>
+						<Table.HeaderCell>{t("who")}</Table.HeaderCell>
+						<Table.HeaderCell>{t("access")}</Table.HeaderCell>
+						{props.makes === undefined ? null : <Table.HeaderCell>{t("make")}</Table.HeaderCell>}
+						{props.ticks.map((tick) => (
+							<Table.HeaderCell align="center" key={tick.name}>
+								{text(tick.label)}
+							</Table.HeaderCell>
+						))}
+					</Table.Row>
+				</Table.Head>
+				<Table.Body>
+					{props.cells.map((cell) => (
+						<Table.Row data-who-may-row={partyKey(cell.row.party)} key={partyKey(cell.row.party)}>
+							<Table.Cell>
+								<Table.CellPrimary>{cell.row.name}</Table.CellPrimary>
+							</Table.Cell>
+							<Table.Cell>
+								<AccessChoice {...cell} />
+							</Table.Cell>
+							{props.makes === undefined ? null : (
+								<Table.Cell>
+									<MakeChoice {...cell} kinds={props.makes} />
+								</Table.Cell>
+							)}
+							{props.ticks.map((tick) => (
+								<Table.Cell align="center" key={tick.name}>
+									{fits(tick, cell.row) ? (
+										<TickBox {...cell} label={text(tick.label)} shows="box" tick={tick.name} />
+									) : null}
+								</Table.Cell>
 							))}
 						</Table.Row>
-					</Table.Head>
-					<Table.Body>
-						{table.rows.map((row) => (
-							<Table.Row data-who-may-row={partyKey(row.party)} key={partyKey(row.party)}>
-								<Table.Cell>
-									<Table.CellPrimary>{nameOf(row.party, row.name)}</Table.CellPrimary>
-								</Table.Cell>
-								<Table.Cell>
-									<AccessChoice {...cellProps(row)} />
-								</Table.Cell>
-								{isWorkspace ? (
-									<Table.Cell>
-										<MakeChoice {...cellProps(row)} kinds={kinds} />
-									</Table.Cell>
-								) : null}
-								{table.ticks.map((tick) => (
-									<Table.Cell align="center" key={tick.name}>
-										{fits(tick, row) ? (
-											<TickBox {...cellProps(row)} label={text(tick.label)} shows="box" tick={tick.name} />
-										) : null}
-									</Table.Cell>
-								))}
-							</Table.Row>
-						))}
-					</Table.Body>
-				</Table.Root>
-			</Table.Container>
-			<ul className={styles.cards}>
-				{table.rows.map((row) => (
-					<li className={styles.card} data-who-may-card={partyKey(row.party)} key={partyKey(row.party)}>
-						<strong>{nameOf(row.party, row.name)}</strong>
-						<AccessChoice {...cellProps(row)} />
-						{isWorkspace ? <MakeChoice {...cellProps(row)} kinds={kinds} /> : null}
-						{table.ticks.map((tick) =>
-							fits(tick, row) ? (
-								<TickBox
-									{...cellProps(row)}
-									key={tick.name}
-									label={text(tick.label)}
-									shows="label"
-									tick={tick.name}
-								/>
-							) : null,
-						)}
-					</li>
-				))}
-			</ul>
-		</section>
+					))}
+				</Table.Body>
+			</Table.Root>
+		</Table.Container>
+	);
+}
+
+/** Who may on a phone: a card per party, each tick with its label. */
+function WhoMayCards(props: FormProps) {
+	const text = useMessageText();
+	return (
+		<ul className={styles.cards}>
+			{props.cells.map((cell) => (
+				<li className={styles.card} data-who-may-row={partyKey(cell.row.party)} key={partyKey(cell.row.party)}>
+					<strong>{cell.row.name}</strong>
+					<AccessChoice {...cell} />
+					{props.makes === undefined ? null : <MakeChoice {...cell} kinds={props.makes} />}
+					{props.ticks.map((tick) =>
+						fits(tick, cell.row) ? (
+							<TickBox {...cell} key={tick.name} label={text(tick.label)} shows="label" tick={tick.name} />
+						) : null,
+					)}
+				</li>
+			))}
+		</ul>
 	);
 }
 

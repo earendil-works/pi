@@ -1,9 +1,10 @@
 // What the things plugin's page parts share: every registered kind by name, a message of any plugin as text, how a
-// "from" reads, what a party opens, how a party is named, and what a failed call, a denial or a gone target says.
+// "from" reads, what a party opens, how a party is named, what a failed call, a denial or a gone target says, and
+// whether the window is wide.
 
 import type { MessageData, RefState } from "@earendil-works/p3/v1";
 import { type Target, useHold, useLive, useMessages, useWatch } from "@earendil-works/p3/v1/web";
-import { useMemo } from "react";
+import { useMemo, useSyncExternalStore } from "react";
 import type { Party } from "./contract.ts";
 import { useMessageText } from "./contract.web.tsx";
 import { type KindView, ThingKindsView } from "./kind.ts";
@@ -54,7 +55,7 @@ export function usePartyName(): (party: Party, name: string) => string {
 			case "agents":
 				return t("agents");
 			case "agent":
-				return t("agentOf", party.session.slice(0, 8));
+				return t("aSessionsAgent");
 			default:
 				return name;
 		}
@@ -106,4 +107,24 @@ export function useUnavailable(state: RefState | undefined): string | undefined 
 			return message === undefined ? t("denied") : text(message);
 		}
 	}
+}
+
+/** Whether the window is a tablet's or wider (48rem): a part with a wide and a phone form renders only one. */
+export function useWide(): boolean {
+	return useSyncExternalStore(subscribeWide, isWide, () => true);
+}
+
+/** The media query of the wide forms (the layout plugin's pane layout has its own copy: no shared file between them). */
+const WIDE = "(min-width: 48rem)";
+
+/** Subscribes `changed` to the window crossing `WIDE`. */
+function subscribeWide(changed: () => void): () => void {
+	const query = matchMedia(WIDE);
+	query.addEventListener("change", changed);
+	return () => query.removeEventListener("change", changed);
+}
+
+/** Whether the window is `WIDE`. */
+function isWide(): boolean {
+	return matchMedia(WIDE).matches;
 }

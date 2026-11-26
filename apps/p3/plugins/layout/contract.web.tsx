@@ -1,7 +1,7 @@
 // The layout plugin's contract for web facets: the pane layout a view places (`PaneLayout`: a view's panes and
-// a tree of splits and tab groups the app keeps as JSON), and what an app does with that tree itself (plain data and
+// a tree of splits and tab groups the view keeps as JSON), and what a view does with that tree itself (plain data and
 // pure functions: make one, open or activate a pane, keep only known panes, read one back from storage). Dragging,
-// resizing and closing are the component's. `/v1/web` re-exports this file for third-party apps.
+// resizing and closing are the component's. `/v1/web` re-exports this file for third-party plugins.
 
 import { defineComponent } from "@earendil-works/p3/v1/web";
 import type { ReactNode } from "react";
@@ -31,8 +31,8 @@ export type Pane = {
 };
 
 /**
- * What a pane layout takes: the app's panes (a pane the tree names without one here is not shown), the tree, which
- * the app keeps (`onChange` gets every change), and the focused pane (the one the app's route names), whose change
+ * What a pane layout takes: the view's panes (a pane the tree names without one here is not shown), the tree, which
+ * the view keeps (`onChange` gets every change), and the focused pane (the one the view's route names), whose change
  * the person asks for with `onFocus`.
  */
 export type PaneLayoutProps = {
