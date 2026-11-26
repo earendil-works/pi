@@ -111,6 +111,26 @@ slice spec's section citations are for orientation, not a reading limit (owner, 
   query shares its sides and keeps exact lists (`store/read-plan.ts`, `query.ts`, `read.ts`, `live-query.ts`).
   `test/bench/hold-heap.ts`; cost guards in `test/lists.test.ts`, `test/state/dependents.test.ts`,
   `test/host/object.test.ts` and `test/host/admission.test.ts`.
+- **Hot paths** (built 2026-11-26 on the hold-memory pass, no slice of its own; `benchmarks.md` "Hot paths"): time,
+  garbage and retained memory of admitted objects held over a link, of live queries and of the commit step, for plain
+  data (values handed to Chord are immutable by convention: never copied, compared by identity first). An admission's
+  re-read compares the value with the one it read last, field by field (`sameJson` in `data/plain-json.ts`), and its
+  names as bits of the version's grant indexes (`grantTable` in `host/admission.ts`), no canonical text; granted sets
+  are found by a hash of those indexes, granted members and grant indexes by the shared set, a combination's members
+  held weakly by its names (`grantedMembers` in `contracts/contract.ts`); a checked implementation keeps the object's
+  values over the contract's names (`MemberValues` in `host/members.ts`); the rare fields of an attempt and an object
+  sit in records made on first use (`AttemptExtras`, `ObjectExtras`); holders and followers keep one member without a
+  set (`src/small-set.ts`); instance ids are built from numbers (`host/uuid.ts`). The binary codec encodes into one
+  kept buffer with one exact copy per message and decodes lists by readers (`link/binary.ts`); a hold's followed
+  member is its own subscriber, its encoder and pending queue made at first use, a served hold keeps its params as
+  their text (`remote/hold.ts`); a remote object keeps one binding without a set (`remote/bindings.ts`), makes its
+  hold request per hold, and shares its granted set per version and names (`remote/consumer.ts`). A live query keeps
+  its rows' values, not the backend's rows (`store/live-query.ts`; the backend's row contract in `store/backend.ts`);
+  reads of one named query share their plan's shape, each still compiled and checked in full (`PlanShape` in
+  `store/read-plan.ts`); the commit index files a value's one read without a set and files a read run again by
+  difference (`store/read-index.ts`). What a host retains after work came and went: `test/host/retained.test.ts`
+  (every cache evicts; no growth round after round). Benches `test/bench/hot-paths.ts`, `list-heap.ts`,
+  `hold-heap.ts` (client heap, case 8), `commit-index.ts` (case 3).
 - **Chord's shared code** (upstream pi): `src/watch.ts` (`Watch`, `NativeWatch`, `WatchHandle`, `WatchEnd`,
   `NativeWatchable`), Delta (`track`, `diffRevisions`, `applyImmutable`, encoders, `PendingOps`, `appendText`),
   context, JSON, output, SQLite drivers.
@@ -287,7 +307,7 @@ deleted (the slice's spec and code are the record). Moved here from `carry-over.
 - No CBOR; revisit only if benchmarks show encoding as a bottleneck (slice 3a's and 4a's do not). (L2 decisions.)
 - **The Durable conversation view's size on re-hold** is a known cost until pi #11327 (windowed view) lands. (Slice 4.)
 
-### Any slice (memory of held objects; from the hold-memory pass, 2026-11-25)
+### Any slice (memory of held objects and hot paths; from the hold-memory pass, 2026-11-25, and the hot-path pass, 2026-11-26)
 
 - **A decision with references keeps a signal depending on its context's** (`AbortSignal.any`, 1.2 KiB with its one
   listener, `Decision.#followUntilAborted`), only to end its follows at the place of an abort's dispatch they always
@@ -295,20 +315,34 @@ deleted (the slice's spec and code are the record). Moved here from `carry-over.
   resolver's). Both orders are observable (`test/host/admission.test.ts` "whose opener timed out…",
   `test/host/route-admission.test.ts` "is still told of a reference that fails in a listener…"). Decide the rule (an
   attempt's follows end before its abort is dispatched, say) and the owner can end them with one call, for nothing.
-- **A read plan per live query.** Every open query compiles its own `ReadPlan` (its uses with two sets, its select
-  list and statement texts, about 4 KiB of the 5.5 KiB a live query keeps), though every read of one named query
-  differs only in its condition's parameters. Share the compiled shape per named query and bound table, with the
-  parameters per read; recompile on a binding change as today. (`test/bench/hold-heap.ts`, case 4.)
 - **A reference is an object in dictionary mode.** Its `state`, its `granted` and each grantable member are own
   accessors (`Object.defineProperty`), which V8 keeps in a dictionary (256 B and about 130 B per accessor, for every
   `self.get`, `host.get` and hold). Accessors on a prototype per contract version would be fast properties, but they
   are no own properties then (`Object.keys`, a spread); decide whether that may change.
-- **The members of a checked implementation are two maps per object** (methods and state, 216 B each): the names are
-  the contract's, only the values are the object's.
-- **A hold keeps its request's params as a copied `Uint8Array`** (about 260 B for a few bytes) and the decoded address
-  and fingerprint of its message.
-- **An `Attempt` and a `ChordObject` are 46 and 42 fields** (368 B and 336 B), most of them for reloads, parking and
-  declarations few objects make; the rare ones could move into records made on first use.
+- **An activation's steps are async functions** (`#activate`, `#runAdmission`, `#ownSteps`, `#decide`, `settle` and
+  others: 0.3 to 1.2 KiB each). Running the ones whose common path never awaits as plain functions saved about 3 KiB
+  of garbage per hold and per rebuild, with the turns kept; taken out again as too brittle (owner, 2026-11-26).
+- **A list's pages keep the backend's rows** (`host/tiling.ts`): node:sqlite returns a row as an object in dictionary
+  mode, about 240 B more per row of two columns than an array of its values. Keeping the values, with one column
+  list per statement as a live query's `DecodedRows` does, costs about 11 µs per page of 50 rows run. Undecided trade
+  (`test/bench/list-heap.ts`).
+- **node:sqlite's `setReturnArrays`** in the backend: a select of 100 rows 43 → 30 µs in a micro-bench and no
+  dictionary rows at the source, but every row access of the store changes.
+- **`Binding.followInstance`** hands each reader of a named query a release closure (about 40 B per live query); a
+  token instead needs `ReferenceQuery.follow` to return something else.
+- **Composite keys are identified by a JSON text per row** (`identity` in `store/read.ts`; made once per fetched row
+  for the read and its decoding). Nested maps by column were built and taken out: more memory where the first key
+  columns differ (8-column keys 2,621 against 363 B per row), another equality (bigint) and other set sizes. A design
+  that beats the text for every key shape: choose per kept set (nested maps only where one first value covers many
+  rows), normalize values to JSON's equality first (non-finite numbers to null, bigint refused), keep `Set`'s API.
+- **A remote object stringifies its params per hold** (`remote/remote-object.ts`): about 100 B less per reference on
+  the client, a re-hold after a reconnect pays the text again (a 32 KB param: 91 against 31 µs per re-hold). Keeping
+  the text is 50 B per reference.
+- **The commit index has no recorded trace:** the reviews compared candidates, their order, the lookup SQL and the
+  skip, probe and run counts of seeded random worlds against the code before the pass. Kept as a fixture (recorded
+  once, replayed by a test, re-recorded on purpose), later changes of the index would be checked the same way.
+- **Small items** (30 to 60 B each): an open query's compiled-plan wrapper, a given query's argument wrapper, a read
+  plan's equality entries; a consumer's `#move` batch closure and list copy (about 0.3 KiB of garbage per move).
 
 ### Any slice (lifetimes)
 

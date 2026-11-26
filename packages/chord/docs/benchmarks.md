@@ -1309,3 +1309,124 @@ alternating, the quieter of two rounds):
 | slice-14 | an ordinary commit at the mix, every re-run included | 3.48 ms | 3.48 ms |
 | slice-14 | runs, keyed probes, skips of a touch | 9, 79, 144 | 9, 79, 144 |
 | commit-index | one write, 10,000 reads of other sessions (median) | 0.24 ms | 0.23 ms |
+
+## Hot paths (2026-11-26)
+
+Time, garbage and retained memory of the paths every held object runs: an admission read again, an object rebuilt on
+another grant, a hold and its release, the codec, live queries and the commit step with reads open. Before:
+`db7971285` (main with the hold-memory pass). After: the hot-path pass on top of it (`slices.md`, "Hot paths"). The
+pass assumes plain data, unpatched builtins and values that are not changed after they were handed to Chord
+(immutable by convention: no copies, identity compared first); for those, results, errors, the order of callbacks and
+turns, telemetry counts and the wire's bytes are the ones before, with the differences listed at the end. Same
+machine (slayer, Node 26.11.1), every bench pinned to one core, the two trees alternating; the machine was loaded all
+night, so times are medians of 3 to 7 runs and rough, heap numbers repeat exactly.
+
+**Admitted objects over a link** (`test/bench/hot-paths.ts`: 170 objects whose admissions derive from one source,
+server and client in one process over a memory link; time per object, and bytes allocated per object from the
+sampling heap profiler, garbage included; 7 runs):
+
+| Case | before | after |
+| --- | --- | --- |
+| hold and release | 75.7 µs, 64.5 KiB | 62.8 µs, 50.2 KiB |
+| re-read, the same decision | 1.4 µs, 2.8 KiB | 0.7 µs, 0.7 KiB |
+| rebuild, another grant | 38.1 µs, 41.6 KiB | 35.1 µs, 33.7 KiB |
+
+An admission compares what it reads with what it read last, field by field, its names as bits of the version's grant
+indexes: no canonical text, no sort, no key. With 43 grants an equal re-read takes 0.7 µs (7.0 before), a changed one
+1.7 µs (6.4); a contract of 4,096 grants reading a new combination 0.41 ms (7.27). The rebuild's time, measured as
+mean CPU per round on its own (the rounds are bimodal, a median jumps between the modes): 46.6 µs before, 44.0 after.
+
+**Heap per held object** (`test/bench/hold-heap.ts`, as in "Hold memory"; the client's heap per held reference is
+new, as is case 8):
+
+| Case | before | after |
+| --- | --- | --- |
+| a local object with a constant member, with its reference | 2.88 KiB | 2.52 KiB |
+| the same with one derive | 3.50 KiB | 3.14 KiB |
+| the same with a reference to a store | 4.12 KiB | 3.75 KiB |
+| the same with one live query of that store | 9.56 KiB | 6.81 KiB |
+| a remote object held over a link, no admission: server, client | 3.12, 3.18 KiB | 2.31, 2.57 KiB |
+| the same, a constant admission granting two names | 3.95, 3.81 KiB | 3.13, 2.98 KiB |
+| the same, its admission a derive over one reference | 7.55, 3.81 KiB | 6.74, 2.98 KiB |
+| a remote object with three state members derived from its document | 8.45, 4.24 KiB | 5.31, 3.03 KiB |
+
+**Live queries and the commit step:**
+
+| Bench | Case | before | after |
+| --- | --- | --- | --- |
+| hold-heap, case 4 by rows | an object with a live query of 1 / 20 / 100 rows | 9.55 / 18.08 / 52.93 KiB | 6.80 / 11.94 / 31.79 KiB |
+| live-query | one-row commit, a 100-row window: watched / unwatched (median) | 99.8 / 79.1 µs | 86.9 / 67.3 µs |
+| live-query | no query / another table (median) | 9.1 / 7.9 µs | 8.9 / 8.0 µs |
+| commit-index | case 3: the heap of one open read (10,000 reads) | 5,816 B | 3,170 B |
+| commit-index | case 1, one write, 10,000 reads of other sessions: the first 7 commits / 200 commits (median) | 0.14 / 0.05 ms | 0.25 / 0.04 ms |
+| commit-index | case 2, an import of 3,549 rows, 4,020 reads (median of 200) | 9.1 ms | 8.8 ms |
+| list-heap | a list of 20 pages of 50 rows | 491.0 KiB | 486.6 KiB |
+| list-heap | a message with 35 such lists open (median) | 19.1 ms | 9.4 ms |
+| slice-14 | runs, keyed probes, skips of a touch; an ordinary commit at the mix | 9, 79, 144; 3.43 ms | 9, 79, 144; 3.39 ms |
+| slice-14 | a message: one child to the top, 20 pages loaded | 0.63 ms | 0.40 ms |
+
+A live query keeps its rows' values instead of the backend's rows (node:sqlite returns each row as an object in
+dictionary mode, 256 B for two columns) and its read keeps only what the skip test needs; reads of one named query
+share their plan's shape. A list still keeps the backend's rows, in its pages (`slices.md`, "Carry-over"); its
+message got cheaper because a row a page hands back unchanged is not compared with itself. The commit index's first
+commits after 10,000 reads opened are slower (more code runs cold), its steady state is not.
+
+**The link** (`test/bench/links.ts`, binary codec; `events.ts`; `shared-holds.ts`; `state-binding.ts`; `calls.ts`):
+
+| Bench | Case | before | after |
+| --- | --- | --- | --- |
+| links | a state message of one changed field: encode / decode, heap per encode and decode | 0.3 / 0.6 µs, 1,378 B | 0.1 / 0.1 µs, 692 B |
+| links | a call message with a small argument: encode / decode, heap | 0.4 / 0.2 µs, 1,203 B | 0.1 / 0.1 µs, 525 B |
+| links | one appended item: commit to frame (median) | 0.037 ms | 0.033 ms |
+| events | one emit delivered to 1 / 10 / 70 holders | 17.9 / 77.3 / 471 µs | 16.0 / 57.8 / 346 µs |
+| events | relayed to 10 holders | 254 µs | 223 µs |
+| shared-holds | first reference: get and release | 99.1 µs | 78.9 µs |
+| shared-holds | a joining reference: get and release (the step alone) | 7.1 µs, 3,984 B | 7.1 µs, 3,709 B |
+| shared-holds | a commit to 10 references of one object, with its call | 59.2 µs | 54.6 µs |
+| shared-holds | 1,000 references held to one object: heap per reference | 1,372 B | 1,374 B |
+| state-binding | over a link: rebound (loading, bound) | 11.4 µs | 5.3 µs |
+| state-binding | same host / over a link: get and release | 6.6 / 7.2 µs | 6.6 / 7.2 µs |
+| calls | activation churn (get, live, release) | 29.1 µs, 30.3 KB | 27.7 µs, 28.1 KB |
+| calls | local method call / commit through a watched derive | 2.50 / 9.49 µs | 2.51 / 9.40 µs |
+| derives | retire + recreate under a 40-derive diamond (median) | 8.6 µs | 8.5 µs |
+
+The "heap per step" columns of `shared-holds.ts` and `state-binding.ts` read higher after the pass (a rebound 3,542 →
+6,637 B, a first reference 8.6 → 13.6 KB): they are `heapUsed` after a burst minus before it, and the tree before the
+pass runs a scavenge inside a burst that the leaner one does not reach. With a semi-space no burst fills
+(`--min-semi-space-size=128 --max-semi-space-size=128`) the bytes allocated per step are 10,246 → 6,698 B for a
+rebound and 68.9 → 58.7 KB for a first reference. The joining step of `shared-holds.ts` is given alone for the same
+reason: after the bench's first step its server's in-memory telemetry holds about 60 MiB, collections are half of
+the join's profile, and its time then moves with code layout (12.4 to 16.3 µs within one tree).
+
+**What a host retains** (`test/host/retained.test.ts`: a host with its contracts loaded, rounds of objects held with
+changing grants, live queries and lists, everything released; the heap after each round against the heap after the
+warm-up). Before the pass the heap grew about 42 KiB per round (the members of every combination of granted names a
+version saw, kept by their text); after it the six measured rounds wander around the warm-up's level (three runs
+ending +31, −35 and −9 KiB; a round's work peaks at 11 MiB). Every cache of the pass is weak in its owner:
+
+| Cache | Key | Holds | An entry goes |
+| --- | --- | --- | --- |
+| granted members (`contracts/contract.ts`) | the contract version, then the granted set; and the names' text | the members a binding granted those names has | with the set; the names' entry once nothing has its members; all with the version |
+| grant indexes (`contracts/contract.ts`) | the version, then the granted set | the indexes of the set's names | with the set or the version |
+| a version's grant table (`host/admission.ts`) | the version's grants | each grant's index; the granted sets by a hash, weakly | a set with the last decision that granted it; the table with the version |
+| a granted set's names (`host/admission.ts`) | the granted set | its sorted names | with the set |
+| member positions (`host/members.ts`) | a version's map of members | each name's position | with the version |
+| a consumer's granted sets (`remote/remote-object.ts`) | the version, then the grants' bits | the set, weakly | with the last binding that has it |
+| a plan's shape (`store/read-plan.ts`) | the named query | its last shape, weakly | with the last read that has it |
+| the encoder's buffer (`link/binary.ts`) | one per process | bytes of the last message, no value | one grown past 16 KiB is dropped after its message |
+| the id buffers (`host/uuid.ts`) | one per process | 16 bytes and 36 character codes, reused for every id | never: fixed size |
+
+**Differences a plain application can observe:**
+
+- `ref.granted` of a consumer's references of one version granted the same names is one shared set (as on the
+  provider since the hold-memory pass).
+- A list with `undefined` in an admission's value (`[undefined]`) is another value than `[]` (the canonical text made
+  them equal): one more rebuild for an admission that alternates between the two.
+- `chord.data.walks` counts no walk when an admission's source hands the same decision object again.
+- A remote object's re-hold after a reconnect makes its params' text again (linear in their size: a 32 KB param 91
+  against 31 µs).
+- Internal types the package's declarations show changed shape: the store's `Read` (its constructor, `latest`,
+  `probed`), `ReadResult` (`kept`, `ids`), `ReadPlan.equalities`, `DecodedRows`, `QuerySpec.shapes`; an object's
+  `holders` is an `Iterable`.
+
+Lines: `packages/chord/src` +2,542 −911.

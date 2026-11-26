@@ -107,7 +107,9 @@ export type DecisionOwner = {
 /**
  * Allows the caller: `value` is what the factory is handed about it, plain JSON: the names in `granted` (the grantable
  * members and flags the caller gets, slice 15 §1.2) and the data the contract's `admission` schema describes (never
- * validated). Small and rarely changing (a role): another value rebuilds the caller's object.
+ * validated). Small and rarely changing (a role): another value rebuilds the caller's object. Plain data, immutable
+ * once returned: Chord keeps the value itself (no copy) and compares a later one with it, so a value changed in place
+ * and returned again is the decision it was.
  */
 export function allow<const T extends JsonValue>(value: T): Admission<T> {
 	return { kind: "allow", value };
