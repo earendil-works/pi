@@ -1,23 +1,42 @@
-// The checklist plugin on the server (`testPlugin`, beside the things plugin's server facet): the kind (registered with
-// the things plugin, made by anyone, linked in many workspaces, Write by default for everyone and the agents, guests
-// reading; its items dropped when the checklist goes with its last link), the one admission (a person put in and the
-// session's agent get Write; Write withheld leaves a reader on the same hold, live; nobody else is admitted), items
-// keyed by the checklist (the same in every workspace it is linked in), ticks live for every holder, refusals, and
-// the limit of 500 items.
+// The checklist plugin on the server (`kindServer`: its server facet beside the things plugin's): the kind (registered
+// by its plugin, made by anyone; its items dropped when the checklist goes with its last link, also when its delete
+// runs again), the admission (a person put in gets Add and Tick, the session's agent Tick only; each tick on its own;
+// `@open` alone, or a tick withheld, leaves a reader on the same hold, live; the owner gets both without being put in;
+// a checklist hidden in a workspace, or a caller removed, is denied), items keyed by the checklist (the same in every
+// workspace it is linked in), ticks live for every holder, refusals and the limit of 500 items. The cost of the one
+// shared read, whoever holds the checklist, is counted on a host with telemetry (`world`).
 
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { BACKGROUND_CONTEXT as context, isChordError, type P3Principal, until } from "@earendil-works/p3/v1";
-import { eventually, within } from "../../../test/until.ts";
+import { fileURLToPath } from "node:url";
+import {
+	type Ctx,
+	BACKGROUND_CONTEXT as context,
+	isChordError,
+	type P3Principal,
+	type Reference,
+	until,
+} from "@earendil-works/p3/v1";
+import { collected, eventually, within } from "../../../test/until.ts";
+import { ThingHooks, ThingsStore } from "../../things/contract.server.ts";
+import { OPEN } from "../../things/contract.ts";
 import { ThingKinds } from "../../things/kind.ts";
-import { CHECKLIST_WRITES, ChecklistKind } from "../contract.ts";
-import { ChecklistStore } from "../server.ts";
-import { BY, type Checklists, checklists } from "./checklists.ts";
+import { BY, type KindServer, kindServer } from "../../things/test/kind-server.ts";
+import { world } from "../../things/test/world.ts";
+import { Checklist, ChecklistKind } from "../contract.ts";
+import checklistServer from "../server.ts";
+import { ChecklistStore } from "../store.ts";
 
-let c: Checklists;
+/** The checklist plugin's root. */
+const ROOT = fileURLToPath(new URL("../", import.meta.url));
+
+/** The session's agent of workspace `s1`. */
+const AGENT: P3Principal = { kind: "worker", session: "s1" };
+
+let c: KindServer<typeof Checklist>;
 
 beforeEach(async () => {
-	c = await checklists();
+	c = await kindServer(ROOT, ChecklistKind, context);
 });
 
 afterEach(() => c.close());
@@ -32,38 +51,26 @@ async function refused(promise: Promise<unknown>, code = "forbidden"): Promise<v
 }
 
 describe("the kind", () => {
-	it("is registered with the things plugin as declared: anyone makes, many workspaces, Write by default", async () => {
+	it("is registered by the checklist plugin, made by anyone", async () => {
 		const entry = (await c.t.host.registry(ThingKinds, context)).value.get(ChecklistKind.name);
-		assert.ok(entry !== undefined);
-		assert.equal(entry.plugin, "@earendil-works/p3-checklist");
-		const { makers, workspaces, ticks, defaultGrants } = entry.value;
-		assert.deepEqual(
-			{ makers, workspaces, ticks: ticks.map(({ name, for: forWhom }) => [name, forWhom]), defaultGrants },
-			{
-				makers: "anyone",
-				workspaces: "many",
-				ticks: [["write", "all"]],
-				defaultGrants: { everyone: ["write"], agents: ["write"], guests: [] },
-			},
-		);
-		assert.deepEqual(ChecklistKind.gives.get("write"), CHECKLIST_WRITES);
+		assert.deepEqual([entry?.plugin, entry?.value.makers], ["@earendil-works/p3-checklist", "anyone"]);
 	});
 
-	it("names a checklist by its thing, else Checklist, and follows a rename", async () => {
+	it("names a checklist by its thing, empty while it has none, and follows a rename", async () => {
 		const ann = await c.person("Ann");
-		const unnamed = await c.checklistIn(c.pi);
+		const unnamed = await c.thingIn(c.pi);
 		await c.holding(ann, c.pi, unnamed, async (list, ctx) => {
-			assert.equal(list.name.value, "Checklist");
+			assert.equal(list.name.value, "");
 			await c.things.rename({ thing: unnamed, name: "Packing" }, context);
 			await until(list.name, (name) => name === "Packing", within("the new name", ctx));
 		});
 	});
 
-	it("drops a checklist's items when it goes with its last link, and only its", async () => {
+	it("drops a checklist's items when it goes with its last link, and only its; its delete may run again", async () => {
 		const ann = await c.person("Ann");
-		const [gone, kept] = [await c.checklistIn(c.pi), await c.checklistIn(c.pi)];
-		await c.holding(ann, c.pi, gone, (list, ctx) => list.add!({ text: "gone" }, ctx));
-		await c.holding(ann, c.pi, kept, (list, ctx) => list.add!({ text: "kept" }, ctx));
+		const [gone, kept] = [await c.thingIn(c.pi), await c.thingIn(c.pi)];
+		await c.holding(ann, c.pi, gone, (list, ctx) => list.addItem!({ text: "gone" }, ctx));
+		await c.holding(ann, c.pi, kept, (list, ctx) => list.addItem!({ text: "kept" }, ctx));
 		await c.things.unlink({ workspace: c.pi, thing: gone }, context);
 		const stored = async (checklist: string) =>
 			(await (await c.t.host.get(ChecklistStore, {}, context)).items.of.page({ checklist }, 10, context)).items;
@@ -72,6 +79,9 @@ describe("the kind", () => {
 			(rows) => rows.length === 0,
 			2000,
 		);
+		// The things plugin runs a delete again after a failure or a restart: a second run finds nothing and succeeds.
+		const hook = (await c.t.host.registry(ThingHooks, context)).value.get(ChecklistKind.name)?.value.delete;
+		await c.t.root((ctx) => hook!(gone, ctx), context);
 		assert.deepEqual(
 			(await stored(kept)).map(({ text }) => text),
 			["kept"],
@@ -80,35 +90,96 @@ describe("the kind", () => {
 });
 
 describe("who may do what in a checklist", () => {
-	it("gives a person put in and the session's agent Write; nobody outside is let in", async () => {
+	it("gives a person put in Add and Tick, the session's agent Tick only; nobody outside is let in", async () => {
 		const s1 = await c.workspace("s1");
 		const ann = await c.person("Ann", s1);
-		const list = await c.checklistIn(s1);
-		const writes = [...CHECKLIST_WRITES].sort();
-		assert.deepEqual(await grantedTo(ann, s1, list), writes);
-		assert.deepEqual(await grantedTo({ kind: "worker", session: "s1" }, s1, list), writes);
+		const list = await c.thingIn(s1);
+		assert.deepEqual(await grantedTo(ann, s1, list), ["addItem", "setDone"]);
+		assert.deepEqual(await grantedTo(AGENT, s1, list), ["setDone"]);
 		await refused(grantedTo({ kind: "worker", session: "s2" }, s1, list));
 		const dana = await c.things.createPerson({ name: "Dana", madeBy: BY }, context);
 		await refused(grantedTo({ kind: "person", id: dana, name: "Dana" }, s1, list));
 	});
 
-	it("follows the grants live on the same hold: Write withheld leaves a reader, removed from Pi denied", async () => {
+	it("gives each tick its own member: Add without Tick adds, Tick without Add ticks", async () => {
+		const [ann, ben] = [await c.person("Ann"), await c.person("Ben")];
+		const thing = await c.thingIn(c.pi);
+		await c.tick(c.pi, thing, { kind: "person", person: ann.id }, "tick", false);
+		await c.tick(c.pi, thing, { kind: "person", person: ben.id }, "add", false);
+		const id = await c.holding(ann, c.pi, thing, async (list, ctx) => {
+			assert.equal(list.setDone, undefined);
+			return list.addItem!({ text: "tent" }, ctx);
+		});
+		await c.holding(ben, c.pi, thing, async (list, ctx) => {
+			assert.equal(list.addItem, undefined);
+			await list.setDone!({ id, done: true }, ctx);
+			await until(list.items, (items) => items[0]?.done === true, within("ticked", ctx));
+		});
+	});
+
+	it("lets in with @open alone a reader, who reads the items but has neither member", async () => {
 		const ann = await c.person("Ann");
-		const thing = await c.checklistIn(c.pi);
-		await c.holding(ann, c.pi, thing, async (list, ctx) => {
-			await list.add!({ text: "milk" }, ctx);
-			await c.write(c.pi, thing, { kind: "person", person: ann.id }, false);
-			await until(list.state, (state) => state.kind === "live" && list.add === undefined, within("a reader", ctx));
-			assert.deepEqual([list.tick, list.granted.size], [undefined, 0]);
+		const thing = await c.thingIn(c.pi);
+		await c.holding(ann, c.pi, thing, (list, ctx) => list.addItem!({ text: "milk" }, ctx));
+		const everyone = { kind: "everyone" } as const;
+		// The kind's rows of everyone removed, one of no tick (`OPEN`) instead.
+		await c.things.setGrants(
+			{
+				source: { kind: "plugin", plugin: "@earendil-works/p3-checklist" },
+				grants: ["add", "tick"].map((tick) => ({ workspace: c.pi, thing, party: everyone, tick })),
+			},
+			context,
+		);
+		await c.tick(c.pi, thing, everyone, OPEN, true);
+		await c.holding(ann, c.pi, thing, async (list) => {
+			assert.deepEqual([list.addItem, list.setDone, list.granted.size], [undefined, undefined, 0]);
 			assert.deepEqual(
 				list.items.value.map(({ text }) => text),
 				["milk"],
 			);
+		});
+	});
+
+	it("gives the owner both ticks without being put in, also where they are withheld from everyone", async () => {
+		const id = await c.things.createPerson({ name: "Olga", madeBy: BY }, context);
+		await c.things.setOwner({ person: id, owner: true }, context);
+		const thing = await c.thingIn(c.pi);
+		for (const tick of ["add", "tick"]) await c.tick(c.pi, thing, { kind: "everyone" }, tick, false);
+		assert.deepEqual(await grantedTo({ kind: "person", id, name: "Olga" }, c.pi, thing), ["addItem", "setDone"]);
+	});
+
+	it("follows the grants live, on the same hold: Tick withheld leaves no setDone, removed from Pi denied", async () => {
+		const ann = await c.person("Ann");
+		const thing = await c.thingIn(c.pi);
+		await c.holding(ann, c.pi, thing, async (list, ctx) => {
+			await list.addItem!({ text: "milk" }, ctx);
+			await c.tick(c.pi, thing, { kind: "person", person: ann.id }, "tick", false);
+			await until(
+				list.state,
+				(state) => state.kind === "live" && list.setDone === undefined,
+				within("no Tick", ctx),
+			);
+			assert.ok(list.addItem !== undefined);
 			await c.things.removeParty({ workspace: c.pi, party: { kind: "person", person: ann.id } }, context);
 			await until(
 				list.state,
 				(state) => state.kind === "failed" && state.cause.kind === "denied",
 				within("Ann denied", ctx),
+			);
+		});
+	});
+
+	it("denies a checklist hidden in a workspace there, live", async () => {
+		const s1 = await c.workspace("s1");
+		const ann = await c.person("Ann", s1);
+		const thing = await c.thingIn(c.pi, "Packing");
+		await c.holding(ann, s1, thing, async (list, ctx) => {
+			assert.equal(list.name.value, "Packing");
+			await c.things.setSwitch({ workspace: s1, item: { kind: "thing", thing }, shown: false }, context);
+			await until(
+				list.state,
+				(state) => state.kind === "failed" && state.cause.kind === "denied",
+				within("hidden in s1", ctx),
 			);
 		});
 	});
@@ -118,14 +189,15 @@ describe("a checklist's items", () => {
 	it("are the checklist's: the same in every workspace it is linked in, ticked live for every holder", async () => {
 		const [s1, s2] = [await c.workspace("s1"), await c.workspace("s2")];
 		const [ann, ben] = [await c.person("Ann", s1), await c.person("Ben", s2)];
-		const shared = await c.checklistIn(s1, "Plan");
+		const shared = await c.thingIn(s1, "Plan");
 		await c.things.link({ workspace: s2, thing: shared, by: BY }, context);
-		await c.write(s2, shared, { kind: "person", person: ben.id }, false);
+		await c.tick(s2, shared, { kind: "person", person: ben.id }, "add", false);
 		await c.holding(ben, s2, shared, async (watching, outer) => {
-			assert.equal(watching.add, undefined);
+			assert.equal(watching.addItem, undefined);
 			await c.holding(ann, s1, shared, async (list, ctx) => {
-				const [first, second] = [await list.add!({ text: "tent" }, ctx), await list.add!({ text: "stove" }, ctx)];
-				await list.tick!({ id: second, done: true }, ctx);
+				const first = await list.addItem!({ text: "tent" }, ctx);
+				const second = await list.addItem!({ text: "stove" }, ctx);
+				await list.setDone!({ id: second, done: true }, ctx);
 				await until(watching.items, (items) => items.some(({ done }) => done), within("the tick", outer));
 				assert.deepEqual(watching.items.value, [
 					{ id: first, text: "tent", done: false },
@@ -137,18 +209,79 @@ describe("a checklist's items", () => {
 
 	it("refuses an item of another checklist, texts outside the schema, and a 501st item", async () => {
 		const ann = await c.person("Ann");
-		const [thing, other] = [await c.checklistIn(c.pi), await c.checklistIn(c.pi)];
-		const elsewhere = await c.holding(ann, c.pi, other, (list, ctx) => list.add!({ text: "other" }, ctx));
+		const [thing, other] = [await c.thingIn(c.pi), await c.thingIn(c.pi)];
+		const elsewhere = await c.holding(ann, c.pi, other, (list, ctx) => list.addItem!({ text: "other" }, ctx));
 		await c.holding(ann, c.pi, thing, async (list, ctx) => {
-			await refused(list.tick!({ id: elsewhere, done: true }, ctx), "invalid");
-			await refused(list.add!({ text: "" }, ctx), "invalid");
-			await refused(list.add!({ text: "x".repeat(501) }, ctx), "invalid");
-			for (let i = 0; i < 500; i++) await list.add!({ text: `i${i}` }, ctx);
-			await refused(list.add!({ text: "one too many" }, ctx), "invalid");
+			await refused(list.setDone!({ id: elsewhere, done: true }, ctx), "invalid");
+			await refused(list.addItem!({ text: "" }, ctx), "invalid");
+			await refused(list.addItem!({ text: "x".repeat(501) }, ctx), "invalid");
+			for (let i = 0; i < 500; i++) await list.addItem!({ text: `i${i}` }, ctx);
+			await refused(list.addItem!({ text: "one too many" }, ctx), "invalid");
 			await until(list.items, (items) => items.length === 500, within("all 500", ctx));
 		});
 		assert.deepEqual(await c.holding(ann, c.pi, other, async (list) => list.items.value), [
 			{ id: elsewhere, text: "other", done: false },
 		]);
+	});
+});
+
+describe("the cost of a checklist's read", () => {
+	it("is one run of its items per tick, however many hold it", async () => {
+		const w = await world(context, [{ name: "@earendil-works/p3-checklist", facet: checklistServer }]);
+		try {
+			const things = await w.host.get(ThingsStore, {}, context);
+			const pi = (await things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
+			const principals: P3Principal[] = [];
+			for (const name of ["Ann", "Ben", "Cy"]) {
+				const id = await things.createPerson({ name, madeBy: BY }, context);
+				await things.putParty({ workspace: pi, party: { kind: "person", person: id }, source: BY }, context);
+				principals.push({ kind: "person", id, name });
+			}
+			const thing = await things.create({ kind: ChecklistKind.name, name: "", workspace: pi, by: BY }, context);
+			const held: { list: Reference<typeof Checklist>; ctx: Ctx<P3Principal> }[] = [];
+			const released = Promise.withResolvers<void>();
+			const holds = principals.map((principal) =>
+				w.host.root(
+					async (ctx) => {
+						held.push({ list: await ctx.get(Checklist, { workspace: pi, thing }), ctx });
+						await released.promise;
+					},
+					context,
+					{ principal },
+				),
+			);
+			await eventually(
+				async () => held.length,
+				(count) => count === 3,
+				2000,
+			);
+			const [ann] = held;
+			const id = await ann!.list.addItem!({ text: "tent" }, ann!.ctx);
+			const all = (done: boolean) =>
+				Promise.all(
+					held.map(({ list, ctx }) => until(list.items, (items) => items[0]?.done === done, within("", ctx))),
+				);
+			await all(false);
+			const before = w.count("chord.query.runs");
+			await ann!.list.setDone!({ id, done: true }, ann!.ctx);
+			await all(true);
+			assert.equal(w.count("chord.query.runs") - before, 1);
+			released.resolve();
+			await Promise.all(holds);
+		} finally {
+			await w.close(context);
+		}
+	});
+});
+
+describe("a released checklist", () => {
+	it("is collected with its shared read", async () => {
+		const ann = await c.person("Ann");
+		const thing = await c.thingIn(c.pi);
+		const refs: WeakRef<object>[] = [];
+		await c.holding(ann, c.pi, thing, async (list) => {
+			refs.push(new WeakRef(list), new WeakRef(list.items));
+		});
+		assert.ok(await collected(refs));
 	});
 });

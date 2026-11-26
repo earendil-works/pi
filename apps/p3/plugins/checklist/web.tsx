@@ -1,19 +1,22 @@
-// The checklist on the page: its view of one checklist (`ThingViews`): its items, ticked and added by a writer (granted
-// Write), shown to anyone else let in. Who may write is the things plugin's grants, edited in its Settings view.
+// The checklist on the page: its view of one checklist (`ThingViews`): its name and items; a caller granted Tick ticks
+// them, one granted Add adds them, anyone else let in reads. Who may do what is the things plugin's grants, edited in
+// its Settings view.
 
 import { Button, Checkbox, Input, SelectionControlAndLabel } from "@earendil-works/elanor-react";
-import { BACKGROUND_CONTEXT, type Context, defineFacet, withGranted } from "@earendil-works/p3/v1";
+import { BACKGROUND_CONTEXT, type Context, defineFacet } from "@earendil-works/p3/v1";
 import {
 	CheckIcon,
 	type ThingViewProps,
 	ThingViews,
 	useHold,
 	useLive,
+	useMessages,
 	useRefState,
 	useWatch,
 } from "@earendil-works/p3/v1/web";
 import { useState } from "react";
-import { CHECKLIST_WRITES, Checklist, ChecklistKind } from "./contract.ts";
+import { Checklist, ChecklistKind } from "./contract.ts";
+import { messages } from "./messages.ts";
 import styles from "./web.module.css";
 
 export default defineFacet((_host, self) =>
@@ -24,14 +27,15 @@ export default defineFacet((_host, self) =>
 	}),
 );
 
-/** Checklist `thing` of session `session`, as the viewer's admission allows: a writer ticks and adds. */
+/** Checklist `thing`, as the viewer's admission allows: Tick ticks items, Add adds them. */
 function ChecklistView(props: ThingViewProps) {
 	// Until sessions are workspaces (slice 5) a checklist is held in the workspace named by the session's id.
 	const ref = useHold(Checklist, { workspace: props.session, thing: props.thing });
 	const live = useLive(ref);
-	const writer = withGranted(live, ...CHECKLIST_WRITES);
 	const state = useRefState(ref);
+	const name = useWatch(live?.name);
 	const items = useWatch(live?.items);
+	const { t } = useMessages(messages);
 	const [text, setText] = useState("");
 	const [error, setError] = useState<string | undefined>(undefined);
 	/** Runs `call`, keeping its failure to show. */
@@ -41,26 +45,31 @@ function ChecklistView(props: ThingViewProps) {
 			setError(failure instanceof Error ? failure.message : String(failure)),
 		);
 	};
-	if (state?.kind === "failed" && state.cause.kind === "denied") {
-		return <p className={styles.note}>You may not read this checklist.</p>;
-	}
-	if (state?.kind === "failed" || state?.kind === "ended") {
-		return <p className={styles.note}>This checklist cannot be shown now.</p>;
-	}
+	if (state?.kind === "failed" && state.cause.kind === "denied") return <p className={styles.note}>{t("denied")}</p>;
+	if (state?.kind === "failed" || state?.kind === "ended") return <p className={styles.note}>{t("unavailable")}</p>;
+	const addItem = live?.addItem;
+	const setDone = live?.setDone;
 	const add = () => {
 		const item = text.trim();
-		if (writer === undefined || item === "") return;
+		if (addItem === undefined || item === "") return;
 		run(async (ctx) => {
-			await writer.add({ text: item }, ctx);
+			await addItem({ text: item }, ctx);
 			setText("");
 		});
 	};
 	return (
-		<section aria-label="Checklist" className={styles.checklist} data-checklist={writer ? "writer" : "reader"}>
+		<section
+			aria-label={name || t("untitled")}
+			className={styles.checklist}
+			data-checklist={[addItem && "add", setDone && "tick"].filter(Boolean).join(" ") || "reader"}
+		>
+			<p className={styles.title} data-checklist-name="">
+				{name || t("untitled")}
+			</p>
 			{items === undefined ? (
-				<p className={styles.note}>Loading…</p>
+				<p className={styles.note}>{t("loading")}</p>
 			) : items.length === 0 ? (
-				<p className={styles.note}>No items yet.</p>
+				<p className={styles.note}>{t("empty")}</p>
 			) : (
 				<ul className={styles.items}>
 					{items.map((item) => (
@@ -70,9 +79,9 @@ function ChecklistView(props: ThingViewProps) {
 								control={
 									<Checkbox.Root
 										checked={item.done}
-										disabled={writer === undefined}
+										disabled={setDone === undefined}
 										onCheckedChange={(done: boolean) =>
-											writer && run((ctx) => writer.tick({ id: item.id, done }, ctx))
+											setDone && run((ctx) => setDone({ id: item.id, done }, ctx))
 										}
 									>
 										<Checkbox.Indicator />
@@ -85,7 +94,7 @@ function ChecklistView(props: ThingViewProps) {
 					))}
 				</ul>
 			)}
-			{writer === undefined ? null : (
+			{addItem === undefined ? null : (
 				<form
 					className={styles.add}
 					onSubmit={(event) => {
@@ -94,15 +103,15 @@ function ChecklistView(props: ThingViewProps) {
 					}}
 				>
 					<Input
-						aria-label="New item"
+						aria-label={t("newItem")}
 						className={styles.field}
 						data-item-new=""
 						onValueChange={setText}
-						placeholder="A new item"
+						placeholder={t("newItemPlaceholder")}
 						value={text}
 					/>
 					<Button data-item-add="" disabled={text.trim() === ""} hierarchy="secondary" type="submit">
-						Add
+						{t("add")}
 					</Button>
 				</form>
 			)}

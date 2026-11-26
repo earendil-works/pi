@@ -16,7 +16,8 @@ import { EnvironmentsStore, PeopleStore, type ServerRuntime, SessionsStore } fro
 import appsServer from "../plugins/apps/server.ts";
 import canvasServer from "../plugins/canvas/server.ts";
 import { CanvasStore } from "../plugins/canvas/store.ts";
-import checklistServer, { ChecklistStore } from "../plugins/checklist/server.ts";
+import checklistServer from "../plugins/checklist/server.ts";
+import { ChecklistStore } from "../plugins/checklist/store.ts";
 import codingServer from "../plugins/coding/server.ts";
 import environmentsServer from "../plugins/environments/server.ts";
 import notesServer from "../plugins/notes/server.ts";
@@ -89,7 +90,8 @@ describe("the plans of the stores' queries", () => {
 			// Notebooks are things' ids: three notebooks of three notes each.
 			const notebooks = ["n1", "n2", "n3"];
 			for (const notebook of notebooks) {
-				for (let i = 0; i < 3; i++) await notes.add({ notebook, text: `n${i}`, author: "person:owner" }, context);
+				for (let i = 0; i < 3; i++)
+					await notes.add({ notebook, text: `n${i}`, author: { kind: "person", person: "owner" } }, context);
 			}
 			const checklists = await host.get(ChecklistStore, {}, context);
 			for (const checklist of ["c1", "c2"]) {

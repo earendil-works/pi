@@ -1,140 +1,129 @@
-// The checklist kind's harness part: the worker facet contributes it to `ThingHarnessParts`; given the checklists an
-// agent holds (real references, held as the session's worker on a server with the things plugin), it offers
-// `checklist_list` and `checklist_read` always and `checklist_add` and `checklist_tick` while one checklist gives
-// Write; `checklist_list` names each checklist with its id and whether the agent may write there; `checklist_read`
-// shows the items with their ids; adding and ticking reach the checklist, refused naming it where Write is not given
-// (also when it was taken back after the tools were offered) and for an id that is no checklist of the agent's.
+// The checklist kind's harness part, as the worker facet contributes it to `ThingHarnessParts`, given the checklists
+// an agent holds (real references, held as the session's worker on a server with the things plugin, `kindServer`): it
+// offers `checklist_list` and `checklist_read` always, `checklist_add` while one checklist gives Add and
+// `checklist_tick` while one gives Tick; `checklist_list` names each checklist with its id and what the agent may do
+// there; `checklist_read` shows the items with their ids; adding and ticking reach the checklist, each refused naming
+// it where its tick is not given (also when taken back after the tools were offered) and for an id that is no
+// checklist of the agent's.
 
 import assert from "node:assert/strict";
-import { afterEach, beforeEach, describe, it } from "node:test";
+import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { type Ctx, BACKGROUND_CONTEXT as context, type P3Principal, until } from "@earendil-works/p3/v1";
-import { testPlugin } from "@earendil-works/p3/v1/testing";
+import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
 import type { Extension } from "@earendil-works/p3/v1/worker";
 import { within } from "../../../test/until.ts";
-import { type HarnessSession, type HeldThing, ThingHarnessParts } from "../../things/contract.worker.ts";
-import { Checklist, ChecklistKind } from "../contract.ts";
-import { checklistExtension } from "../worker.ts";
-import { type Checklists, checklists } from "./checklists.ts";
+import { type HeldThing, ThingHarnessParts } from "../../things/contract.worker.ts";
+import { type KindServer, kindServer, runTool, toolNames } from "../../things/test/kind-server.ts";
+import { type Checklist, ChecklistKind } from "../contract.ts";
 
-/** The session's agent. */
-const AGENT: P3Principal = { kind: "worker", session: "s1" };
+/** The checklist plugin's root. */
+const ROOT = fileURLToPath(new URL("../", import.meta.url));
 
-let c: Checklists;
+/** The session's agent as a party: a tick withheld from it by name applies by every route (item 106). */
+const AGENT_PARTY = { kind: "agent", session: "s1" } as const;
+
+/** The worker facet, as a session's worker loads it. */
+let worker: TestedPlugin<P3Principal>;
+let c: KindServer<typeof Checklist>;
 let s1: string;
 
+before(async () => {
+	worker = await testPlugin(ROOT, { kind: "worker", session: "s1" }, context);
+});
+
+after(() => worker.close(context));
+
 beforeEach(async () => {
-	c = await checklists();
+	c = await kindServer(ROOT, ChecklistKind, context);
 	s1 = await c.workspace("s1");
 });
 
 afterEach(() => c.close());
 
-/** The agent's session as the part gets it: its calls run as the session's worker. */
-function session(): HarnessSession {
-	return { session: "s1", workspace: s1, call: (fn, ctx) => c.t.root(fn, ctx, { principal: AGENT }) };
-}
-
-/** Runs `fn` with the agent holding checklists `things` in s1: the part's extension for them, and the held things. */
-function giving<T>(
+/** Runs `fn` with s1's agent holding checklists `things` there: the part's extension for them, and the held things. */
+const giving = <T>(
 	things: readonly string[],
 	fn: (extension: Extension, ctx: Ctx<P3Principal>, held: readonly HeldThing<typeof Checklist>[]) => Promise<T>,
-) {
-	return c.t.root(
-		async (ctx) => {
-			const held: HeldThing<typeof Checklist>[] = [];
-			for (const thing of things) {
-				held.push({ thing, workspace: s1, ref: await ctx.get(Checklist, { workspace: s1, thing }) });
-			}
-			return fn(checklistExtension(held, session()), ctx, held);
-		},
-		context,
-		{ principal: AGENT },
-	);
-}
-
-/** Runs tool `name` of `extension` with `args`; its output's text. */
-async function run(extension: Extension, name: string, args: object): Promise<string> {
-	const tool = extension.tools?.find((each) => each.name === name);
-	assert.ok(tool !== undefined, name);
-	// The checklist tools use neither Durable's execution API nor arguments beyond their schema's.
-	const result = await tool.execute(args as never, {} as never, context);
-	// A park has no output: the checklist tools never park.
-	return (result.output ?? []).map((part) => (part.type === "text" ? part.text : "")).join("");
-}
-
-/** The names of `extension`'s tools. */
-const names = (extension: Extension) => extension.tools?.map((tool) => tool.name).toSorted();
+) => c.giving(worker, { session: "s1", workspace: s1 }, things, fn);
 
 describe("the checklist kind's harness part", () => {
-	it("is contributed by the worker facet", async () => {
-		const root = fileURLToPath(new URL("../", import.meta.url));
-		const t = await testPlugin(root, { kind: "worker", session: "s1" }, context);
-		try {
-			// The facet as the plugin tier builds it: its own module, so compared by kind.
-			assert.deepEqual(
-				t.contributions(ThingHarnessParts).map(({ value }) => value.kind.name),
-				[ChecklistKind.name],
-			);
-		} finally {
-			await t.close(context);
-		}
+	it("is the worker facet's one part, for the checklist kind", () => {
+		assert.deepEqual(
+			worker.contributions(ThingHarnessParts).map(({ value }) => value.kind.name),
+			[ChecklistKind.name],
+		);
 	});
 
-	it("offers adding and ticking while one checklist gives Write, and lists which", async () => {
-		const [plan, packing] = [await c.checklistIn(s1, "Plan"), await c.checklistIn(s1, "Packing")];
-		await c.write(s1, plan, { kind: "agents" }, false);
+	it("offers adding and ticking each while one checklist gives it, and lists which", async () => {
+		const [plan, packing] = [await c.thingIn(s1, "Plan"), await c.thingIn(s1, "Packing")];
+		await c.tick(s1, packing, AGENT_PARTY, "add", true);
 		await giving([plan, packing], async (extension) => {
-			assert.deepEqual(names(extension), ["checklist_add", "checklist_list", "checklist_read", "checklist_tick"]);
-			assert.deepEqual(JSON.parse(await run(extension, "checklist_list", {})), [
-				{ id: plan, name: "Plan", write: false },
-				{ id: packing, name: "Packing", write: true },
+			assert.deepEqual(toolNames(extension), [
+				"checklist_add",
+				"checklist_list",
+				"checklist_read",
+				"checklist_tick",
+			]);
+			assert.deepEqual(JSON.parse(await runTool(extension, "checklist_list", {})), [
+				{ id: plan, name: "Plan", add: false, tick: true },
+				{ id: packing, name: "Packing", add: true, tick: true },
 			]);
 		});
+		// By default the agent ticks and adds nothing (Astra: it was given Add).
 		await giving([plan], async (extension) =>
-			assert.deepEqual(names(extension), ["checklist_list", "checklist_read"]),
+			assert.deepEqual(toolNames(extension), ["checklist_list", "checklist_read", "checklist_tick"]),
+		);
+		await c.tick(s1, plan, AGENT_PARTY, "tick", false);
+		await giving([plan], async (extension) =>
+			assert.deepEqual(toolNames(extension), ["checklist_list", "checklist_read"]),
 		);
 	});
 
 	it("adds and ticks items, and reads them with their ids", async () => {
-		const packing = await c.checklistIn(s1, "Packing");
+		const packing = await c.thingIn(s1, "Packing");
+		await c.tick(s1, packing, AGENT_PARTY, "add", true);
 		await giving([packing], async (extension, ctx, [held]) => {
-			const added = await run(extension, "checklist_add", { checklist: packing, text: "tent" });
+			const added = await runTool(extension, "checklist_add", { checklist: packing, text: "tent" });
 			const id = /^Added (.+)\.$/.exec(added)?.[1];
 			assert.ok(id !== undefined, added);
-			await run(extension, "checklist_tick", { checklist: packing, item: id, done: true });
+			await runTool(extension, "checklist_tick", { checklist: packing, item: id, done: true });
 			// The read is the agent's reference's: it shows the tick once it arrived there.
 			await until(held!.ref.items, (items) => items[0]?.done === true, within("the tick", ctx));
-			assert.deepEqual(JSON.parse(await run(extension, "checklist_read", { checklist: packing })), [
+			assert.deepEqual(JSON.parse(await runTool(extension, "checklist_read", { checklist: packing })), [
 				{ id, text: "tent", done: true },
 			]);
 		});
 	});
 
-	it("refuses to change a checklist without Write, also when taken back after offering, naming it", async () => {
-		const [plan, packing] = [await c.checklistIn(s1, "Plan"), await c.checklistIn(s1, "Packing")];
-		await c.write(s1, plan, { kind: "agents" }, false);
+	it("refuses a change without its tick, also when taken back after offering, naming the checklist", async () => {
+		const [plan, packing] = [await c.thingIn(s1, "Plan"), await c.thingIn(s1, "Packing")];
+		await c.tick(s1, packing, AGENT_PARTY, "add", true);
 		await giving([plan, packing], async (extension, ctx, held) => {
-			const add = (checklist: string) => run(extension, "checklist_add", { checklist, text: "x" });
-			await assert.rejects(add(plan), /may not write in the checklist "Plan"/);
-			await c.write(s1, packing, { kind: "agents" }, false);
-			const { ref } = held[1]!;
-			await until(ref.state, () => ref.add === undefined, within("Write taken back", ctx));
-			await assert.rejects(add(packing), /may not write in the checklist "Packing"/);
 			await assert.rejects(
-				run(extension, "checklist_tick", { checklist: packing, item: "i", done: true }),
-				/may not write in the checklist "Packing"/,
+				runTool(extension, "checklist_add", { checklist: plan, text: "x" }),
+				/may not add to the checklist "Plan"/,
+			);
+			await c.tick(s1, packing, AGENT_PARTY, "tick", false);
+			const { ref } = held[1]!;
+			await until(ref.state, () => ref.setDone === undefined, within("Tick taken back", ctx));
+			await assert.rejects(
+				runTool(extension, "checklist_tick", { checklist: packing, item: "i", done: true }),
+				/may not tick the checklist "Packing"/,
 			);
 		});
 	});
 
 	it("refuses an id that is no checklist of the agent's", async () => {
-		const plan = await c.checklistIn(s1, "Plan");
-		const elsewhere = await c.checklistIn(c.pi, "Elsewhere");
+		const plan = await c.thingIn(s1, "Plan");
+		const elsewhere = await c.thingIn(c.pi, "Elsewhere");
 		await giving([plan], async (extension) => {
 			for (const checklist of ["c9", elsewhere]) {
-				await assert.rejects(run(extension, "checklist_read", { checklist }), /you have no checklist/);
-				await assert.rejects(run(extension, "checklist_add", { checklist, text: "x" }), /you have no checklist/);
+				await assert.rejects(runTool(extension, "checklist_read", { checklist }), /you have no checklist/);
+				await assert.rejects(
+					runTool(extension, "checklist_tick", { checklist, item: "i", done: true }),
+					/you have no checklist/,
+				);
 			}
 		});
 	});
