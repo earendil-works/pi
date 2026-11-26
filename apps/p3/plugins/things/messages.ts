@@ -25,7 +25,6 @@ export const messages = defineMessages("things", {
 		notLinkedHere: "This is not linked here.",
 		fromAboveOnly: "Only what comes from above can be hidden here; unlink what is linked here.",
 		leafHoldsNoWorkspaces: "This holds no workspaces.",
-		notYet: "This comes later.",
 		noAccessForAll:
 			"No access takes out a person, a group or one agent. For everyone here or the agents, hide people from above instead.",
 	},

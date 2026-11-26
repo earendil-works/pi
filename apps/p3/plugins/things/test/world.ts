@@ -113,8 +113,14 @@ type SignIn = {
  * A stand-in for the sign-in plugin's `SignIns` (the store ends a removed person's sign-ins through it): `issue`
  * signs a principal in, `revoked` lists the ids ended, in order.
  */
-export function signInsStub(): { readonly plugin: PluginFacet<P3Principal>; readonly revoked: string[] } {
+export function signInsStub(): {
+	readonly plugin: PluginFacet<P3Principal>;
+	readonly revoked: string[];
+	/** While true, `revoke` throws (a sign-in plugin that fails). */
+	failing: boolean;
+} {
 	const revoked: string[] = [];
+	const stub = { plugin: undefined as unknown as PluginFacet<P3Principal>, revoked, failing: false };
 	const plugin: PluginFacet<P3Principal> = {
 		name: "test.sign-in",
 		facet: defineFacet((host) =>
@@ -130,6 +136,7 @@ export function signInsStub(): { readonly plugin: PluginFacet<P3Principal>; read
 					},
 					verify: async () => null,
 					revoke: async (id) => {
+						if (stub.failing) throw new Error("the sign-in plugin failed");
 						revoked.push(id);
 						list.set(list.value.filter((signIn) => signIn.id !== id));
 						return null;
@@ -138,5 +145,6 @@ export function signInsStub(): { readonly plugin: PluginFacet<P3Principal>; read
 			}),
 		),
 	};
-	return { plugin, revoked };
+	stub.plugin = plugin;
+	return stub;
 }

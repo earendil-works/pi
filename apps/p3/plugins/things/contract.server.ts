@@ -275,8 +275,8 @@ export const ThingsStore = local("things.store", {
 		putParty: method(obj({ workspace: str(), party: Party, source: Source })),
 		removeParty: method(obj({ workspace: str(), party: Party })),
 		/** Makes a person (no owner flag), made by `madeBy` (the cleanup of that source takes them, step 3). */
-		createPerson: method(obj({ name: str(), madeBy: Source }), str()),
-		renamePerson: method(obj({ person: str(), name: str() })),
+		createPerson: method(obj({ name: str({ min: 1, max: 200 }), madeBy: Source }), str()),
+		renamePerson: method(obj({ person: str(), name: str({ min: 1, max: 200 }) })),
 		/** Gives or takes the owner flag; refuses taking it from the last owner. */
 		setOwner: method(obj({ person: str(), owner: bool() })),
 		/**

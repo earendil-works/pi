@@ -903,6 +903,12 @@ const MUTATIONS: readonly Mutation[] = [
 		put: "return manager || owner || membership.rows.length > 0 ? SEES : DENIED;",
 	},
 	{
+		name: "the start does not end the sign-outs left over",
+		file: "store.ts",
+		find: "if (left.length > 0) void signOut(left, ctx);",
+		put: "",
+	},
+	{
 		name: "every start makes another owner",
 		file: "people.ts",
 		find: "if (owners.items.length > 0) return null;",

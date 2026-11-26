@@ -373,7 +373,6 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		};
 		// The store's own context while it is live: what seeding after a registry change runs under.
 		let live: Ctx<P3Principal> | undefined;
-		// The lifecycle serves first: a seed that must undo a hook's work needs it (an undo waits for it to serve).
 		/**
 		 * Ends the sign-ins of the removed persons `persons` (their rows in `things.sign-outs`, written in the commit
 		 * that removed them), then drops the rows; a failure is reported, and the next start tries again.
@@ -546,7 +545,10 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 	});
 }
 
-/** What a write tells besides what it touched: the things it removed (their delete hooks run after the commit). */
+/**
+ * What a write tells besides what it touched: the things it removed (their delete hooks run after the commit) and the
+ * persons it removed (their sign-ins end after it).
+ */
 type Changes = Touched & { readonly retired: Retired[]; readonly signedOut: string[] };
 
 /** A thing removed, and its kind. */
