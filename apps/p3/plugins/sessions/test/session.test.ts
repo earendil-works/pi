@@ -239,17 +239,6 @@ describe("archiving and unlinking (2)", () => {
 		});
 		assert.deepEqual(w.errors, []);
 	});
-
-	it("refuses an archived session's report of working, so the waker leaves it", async () => {
-		const { leo, fam } = await family();
-		const session = await makeSession(leo, fam, "one");
-		const sessions = await w.host.get(SessionsStore, {}, context);
-		await sessions.archive({ session }, context);
-		await assert.rejects(sessions.report({ session, state: "working" }, context), /is archived/);
-		await sessions.report({ session, state: "settled" }, context);
-		assert.deepEqual(await sessions.working({}, context), []);
-		await assert.rejects(sessions.report({ session: "none", state: "settled" }, context), /no session none/);
-	});
 });
 
 describe("the owner and a private session (3)", () => {

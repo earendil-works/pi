@@ -121,6 +121,43 @@ describe("the harness end to end", () => {
 		assert.deepEqual(t.errors, []);
 	});
 
+	// ERNDL-704's end to end (Opus, round 1): a second person with Read only reads the answer and cannot send.
+	it("lets a person with Read only read a session's answer, without the send", async () => {
+		const folder = await directory("p3-harness-e2e-");
+		const t = await start();
+		const id = await session(t, folder, [{ when: "", reply: [{ kind: "text", text: "hello there" }] }]);
+		const by = { kind: "plugin", plugin: "test" } as const;
+		const ann = await t.host.root(async (ctx) => {
+			const things = await ctx.get(ThingsStore, {});
+			const person = await things.createPerson({ name: "Ann", madeBy: by }, ctx);
+			const pi = (await things.workspaces.children.page({ parent: "" }, 1, ctx)).items[0]!.workspace;
+			await things.putParty({ workspace: pi, party: { kind: "person", person }, source: by }, ctx);
+			// The session's grant for everyone here is Read and Send: Ann's Send is withheld on the session itself.
+			const grant = {
+				workspace: id,
+				thing: id,
+				party: { kind: "person", person },
+				tick: "send",
+				gives: false,
+			} as const;
+			await things.setGrants({ source: by, grants: [grant] }, ctx);
+			return person;
+		}, context);
+		const owner = await t.client(context);
+		await send(owner, id, "hi");
+		await reaches(owner, id, "settled");
+		const annClient = await t.client(context, { kind: "person", id: ann, name: "Ann" });
+		const held = await annClient.get(Transcript, { session: id }, context);
+		assert.equal(held.send, undefined);
+		const reader = withGranted(held, "view", "entries")!;
+		await until(
+			reader.view,
+			(view) => JSON.stringify(view).includes("hello there"),
+			within("the answer, read by Ann", context),
+		);
+		assert.deepEqual(t.errors, []);
+	});
+
 	// ERNDL-704 test 5 (scenario 4): Bash taken from the agents in one session, the coding tools staying Pi's.
 	it("offers bash no more in a session where it is withheld from the agents, and still in another", async () => {
 		const folder = await directory("p3-harness-e2e-");

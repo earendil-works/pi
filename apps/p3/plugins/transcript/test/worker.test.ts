@@ -249,4 +249,21 @@ describe("the transcript plugin on a worker", () => {
 			{ principal: ALICE },
 		);
 	});
+
+	// Opus, round 1: a tick gained or lost changes the grant on the same hold.
+	it("grants Send on the same hold once it is given, and takes the view once Read is withheld", async () => {
+		await t.root(
+			async (ctx) => {
+				const held = await ctx.get(Transcript, { session: SESSION });
+				assert.equal(held.send, undefined);
+				server.ticks("person:alice", ["read", "send"]);
+				await until(held.state, () => held.granted.has("send"), within("Send given", ctx));
+				server.ticks("person:alice", ["send"]);
+				await until(held.state, () => !held.granted.has("view"), within("Read withheld", ctx));
+				assert.equal(held.granted.has("send"), true);
+			},
+			context,
+			{ principal: ALICE },
+		);
+	});
 });

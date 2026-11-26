@@ -619,6 +619,12 @@ describe("the holding's calls under way", () => {
 			[1, 0],
 		);
 	});
+});
+
+describe("AgentThings", () => {
+	it("is for a session's worker only", async () => {
+		await assert.rejects(w.host.get(AgentThings, {}, context, { readyTimeout: 500 }), /a session's worker only/);
+	});
 
 	// Astra, round 1.
 	it("answers a worker about its own session, never a person", async () => {
