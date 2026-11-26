@@ -3808,6 +3808,16 @@ From `research/chord-on-durable-objects.md`, adopted for the Chord v2 kernel bec
   reference to a store of 23 named queries cost 8.6 KiB, all of it handles nobody read. A `queries` member is an
   object whose handles are made by their first read and kept; labels are built when asked (6.35 to 1.30 KiB).
 
+- **Values handed to Chord are never changed afterwards, and Chord compares them by identity first (owner,
+  2026-11-26; the hot-path pass, `slices.md` "Hot paths", merged as `24dc95064`):** the rule "plain data, immutable by
+  convention" (L1 review round 1, R9) is now load-bearing, not only a convention. Chord keeps what it is handed (an
+  admission's value, a reference's params, a condition, a state value, a backend's rows) without a copy and compares
+  the same object as unchanged before it looks at fields. **The footgun:** code that mutates a value it handed Chord
+  and hands the same object again (an admission's `derive` returning one kept object with `granted` pushed to; a
+  `self.writable` set to the same array after `push`) is read as "nothing changed": no rebuild, no update, holders keep the
+  old value, and nothing reports it. Make a new object for every new value. No freezing, no development mode checks
+  it (R9): the guides say it (`plugin-authoring.md` "Values you hand to Chord", p3's `chord-practices.md`).
+
 ## Still valid from `target-design.md`
 
 Documents and the store (async `tx.draft`, keys, tags, eviction, Durable's transaction rule), job sandwich, routines
