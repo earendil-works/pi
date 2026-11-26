@@ -324,15 +324,14 @@ export class Hold implements Holder, UnboundRequest {
 		// where they are equal (the same text: only who owns the memory changes, 64 B per hold), else its own: an object
 		// may still have its old contract while a reload publishes a new one (serving checked the new one).
 		const { contract } = object.served;
-		const { type, version, fingerprint, address, trace } = request;
-		const names = {
+		const { type, fingerprint } = request;
+		// Spread as `owned` did: every field of the request it came with, in its order.
+		this.#request = {
+			...request,
 			type: type === contract.name ? contract.name : type,
-			version,
 			fingerprint: fingerprint === contract.fingerprint ? contract.fingerprint : fingerprint,
-			address,
-			trace,
+			params: text,
 		};
-		this.#request = holdRequest(names, text, request.chain, request.limit);
 		this.#object = object;
 		object.hold(this);
 		this.moved();
@@ -817,31 +816,6 @@ class Followed implements Subscriber {
 	end(): void {}
 
 	endAfterDelivery(): void {}
-}
-
-/**
- * A request: `from`'s type, version, fingerprint, address and trace carrier, with `params` and, when given, `chain` and
- * `limit`. Set field by field in that order: a rest object and spreads per hold cost 0.5 KiB, and kept their fields
- * out of the object (40 B more per held object).
- */
-export function holdRequest(
-	from: Pick<HoldRequest, "type" | "version" | "fingerprint" | "address" | "trace">,
-	params: HoldRequest["params"],
-	chain: HoldRequest["chain"],
-	limit: number | undefined,
-): HoldRequest {
-	const { type, version, fingerprint, address, trace } = from;
-	const request: { -readonly [K in keyof HoldRequest]: HoldRequest[K] } = {
-		type,
-		version,
-		fingerprint,
-		params,
-		address,
-	};
-	if (trace !== undefined) request.trace = trace;
-	if (chain !== undefined) request.chain = chain;
-	if (limit !== undefined) request.limit = limit;
-	return request;
 }
 
 /** `request` with its params owned, not a view of the message they came in (which the link's buffers may hold). */
