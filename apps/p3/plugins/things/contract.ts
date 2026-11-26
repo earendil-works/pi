@@ -1,9 +1,10 @@
 // The things plugin's contract data every kind imports: the typed values its tables hold (who wrote something, whom a
 // grant names, what a switch is about, who manages a group), the one function per value that makes its key column,
 // and who calls a thing's object, as its admission hands the factory. A thing's own contract comes from `defineThing`
-// (`kind.ts`); the store and the admission's objects are server only (`contract.server.ts`).
+// (`kind.ts`); the store and the admission's objects are server only (`contract.server.ts`). And a group's object
+// (`Group`): its members and the calls its own tick gives.
 
-import { lit, obj, type Static, str, union } from "@earendil-works/p3/v1";
+import { arr, bool, grantable, lit, method, obj, remote, Server, type Static, str, union } from "@earendil-works/p3/v1";
 
 /** The prefix of the reserved tick names (item 113): a kind's own tick names cannot start with it. */
 export const RESERVED = "@";
@@ -134,3 +135,30 @@ export function managedByKey(by: ManagedBy): string {
 			return sourceKey(by);
 	}
 }
+
+/**
+ * A group as its members and managers hold it (decision 68): its info and members for both; its calls only with the
+ * group's own tick (a manager: a person named, or a person in a group named), and only on a group people manage (a
+ * share's, a provider's, a plugin's or a workspace's group is changed by its manager alone). A member added must be
+ * one the picker offers the caller (present where they are present).
+ */
+export const Group = remote("things.group", {
+	version: 1,
+	params: { group: str() },
+	hostAddress: () => Server(),
+	admission: obj({}),
+	state: {
+		info: obj({ group: str(), name: str(), outside: bool(), managedBy: ManagedBy }),
+		members: arr(obj({ person: str(), name: str(), source: Source })),
+		managers: arr(Party),
+	},
+	methods: {
+		addMember: grantable(method(obj({ person: str() }))),
+		/** Takes the person out of the group: every row but a provider's and a share's (theirs to rewrite). */
+		removeMember: grantable(method(obj({ person: str() }))),
+		rename: grantable(method(obj({ name: str({ min: 1, max: 200 }) }))),
+		setManagers: grantable(method(obj({ parties: arr(Party) }))),
+		/** Removes the group (`ThingsStore.removeGroup`); the call ends with the object, denied once the group is gone. */
+		remove: grantable(method()),
+	},
+});

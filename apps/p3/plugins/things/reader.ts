@@ -71,7 +71,7 @@ export function readerOf(q: Read, kinds: () => Kinds, reported: Set<string>): Re
 const PAGE = 1000;
 
 /** Every item of `named` for `args`, page after page (a set that decides access is read whole), each page counted. */
-async function readAll<T, A>(named: NamedQuery<T, A>, args: A, context: Context): Promise<T[]> {
+export async function readAll<T, A>(named: NamedQuery<T, A>, args: A, context: Context): Promise<T[]> {
 	const items: T[] = [];
 	let after: string | undefined;
 	do {

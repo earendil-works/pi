@@ -4,7 +4,10 @@
 // is one transaction, run one at a time with the index's loads, and followed by the index before the write answers,
 // so a caller's next admission sees it; the index and the writes see the kinds as one snapshot, installed in the
 // index's queue. A kind's seeded thing (`serveThing`'s `one`) is made here, in Pi, at the start and again whenever it
-// is deleted. The kinds' delete hooks around a thing's life are `lifecycle.ts`'s.
+// is deleted. The kinds' delete hooks around a thing's life are `lifecycle.ts`'s; the writes on persons and groups
+// `people.ts`'s, invite links `invites.ts`'s, the picker `picker.ts`'s. The cleanup when a source goes is here: what
+// the source wrote, the groups it manages, the persons it made of whom nothing is left (their sign-ins end right
+// after the commit, retried at the next start).
 
 import {
 	and,
@@ -41,8 +44,6 @@ import { AccessHandles, type GrantInput, ThingHooks, ThingsStore } from "./contr
 import {
 	Item,
 	itemKey,
-	ManagedBy,
-	managedByKey,
 	OPEN,
 	Party,
 	partyKey,
@@ -51,6 +52,7 @@ import {
 	Source as SourceSchema,
 	sourceKey,
 } from "./contract.ts";
+import { InviteWrites } from "./invites.ts";
 import { type KindInfo, ThingKinds } from "./kind.ts";
 import { Lifecycle, Pending } from "./lifecycle.ts";
 import { messages } from "./messages.ts";
@@ -69,6 +71,7 @@ import {
 	Persons,
 	SignOuts,
 } from "./people.ts";
+import { namesOf, offeredTo } from "./picker.ts";
 import { type Kinds, lookupOf, readerOf } from "./reader.ts";
 import { audienceOf, isFor } from "./rules.ts";
 
@@ -241,6 +244,7 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			return result;
 		};
 		const writes = new Writes({ ...t, pending }, kindTable);
+		const invites = new InviteWrites(t, people, (tx, touched, args) => writes.putParty(tx, touched, args));
 		const lifecycle = new Lifecycle({
 			table: pending,
 			write: (fn, ctx) => write((tx) => fn(tx), ctx),
@@ -412,7 +416,8 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 					return null;
 				}, ctx),
 			removePerson: ({ person }, ctx) => write((tx, touched) => writes.removePerson(tx, touched, person), ctx),
-			makeGroup: (args, ctx) => write(async (tx) => people.makeGroup(tx, { ...args, managers: [] }), ctx),
+			makeGroup: ({ managers, ...args }, ctx) =>
+				write(async (tx) => people.makeGroup(tx, { ...args, managers: managers ?? [] }), ctx),
 			renameGroup: ({ group, name }, ctx) =>
 				write(async (tx) => {
 					await people.renameGroup(tx, group, name);
@@ -434,6 +439,16 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 					people.removeFromGroup(tx, touched, args);
 					return null;
 				}, ctx),
+			picker: async ({ workspace, person, query: text }, ctx) => {
+				const offered = await offeredTo(q, index!, { workspace, person }, ctx);
+				return namesOf(q, offered, text, ctx);
+			},
+			offers: async ({ workspace, person, party }, ctx) =>
+				(await offeredTo(q, index!, { workspace, person }, ctx)).has(partyKey(party)),
+			createInvite: (args, ctx) =>
+				write((tx) => invites.create(tx, args, (at, workspace) => writes.mustBeWorkspace(at, workspace)), ctx),
+			redeemInvite: async ({ secret, person }, ctx) =>
+				(await write((tx, touched) => invites.redeem(tx, touched, secret, person), ctx)) ?? null,
 			deleteEverythingFrom: ({ source }, ctx) =>
 				write((tx, touched) => writes.deleteEverythingFrom(tx, touched, sourceKey(source)), ctx),
 		};
@@ -500,6 +515,9 @@ function namedQueries(self: StoreSelf<P3Principal>, t: Tables) {
 				// The key's prefix.
 				here: ({ workspace }: { workspace: string }) =>
 					query(WorkspaceMembers).where((m) => eq(m.workspace, workspace)),
+				// Index `by_party`: where a party is put in (the picker: where the caller is present).
+				where: ({ partyKey }: { partyKey: string }) =>
+					query(WorkspaceMembers).where((m) => eq(m.partyKey, partyKey)),
 			},
 		),
 		switches: self.queries(
@@ -551,6 +569,8 @@ function namedQueries(self: StoreSelf<P3Principal>, t: Tables) {
 			{
 				// The key.
 				one: ({ group }: { group: string }) => query(Groups).where((g) => eq(g.group, group)),
+				// The key, IN: the groups of a list (the picker's names).
+				ofIds: ({ groups }: { groups: string[] }) => query(Groups).where((g) => inArray(g.group, groups)),
 			},
 		),
 		groupManagers: self.queries(
@@ -683,7 +703,7 @@ class Writes {
 		}: { thing: string; kind: string; name: string; workspace: string; by: Source },
 	): Promise<null> {
 		const item = this.#kind(kind);
-		await this.#mustBeWorkspace(tx, workspace);
+		await this.mustBeWorkspace(tx, workspace);
 		tx.put(this.#t.things, { thing, kind, name, madeBy: by, madeByKey: sourceKey(by), madeAt: Date.now() });
 		this.#linked(tx, workspace, thing, item);
 		const maker = makerParty(by);
@@ -723,7 +743,7 @@ class Writes {
 		const row = await tx.get(this.#t.things, { thing });
 		if (row === undefined) throw invalid("args", `things: no thing ${thing}`);
 		const item = this.#kind(row.kind);
-		await this.#mustBeWorkspace(tx, workspace);
+		await this.mustBeWorkspace(tx, workspace);
 		if ((await tx.get(this.#t.links, { workspace, thing })) !== undefined) return null;
 		const elsewhere = await tx.page(
 			this.#t.links,
@@ -784,7 +804,7 @@ class Writes {
 		touched: Touched,
 		args: { kind: string; name: string; parent: string; by: Source; showsPeople?: boolean },
 	): Promise<string> {
-		await this.#mustBeWorkspace(tx, args.parent);
+		await this.mustBeWorkspace(tx, args.parent);
 		const workspace = putWorkspace(tx, this.#t, { ...args, showsPeople: args.showsPeople ?? true }, args.parent);
 		touched.workspaces.add(workspace);
 		return workspace;
@@ -796,7 +816,7 @@ class Writes {
 		touched: Touched,
 		{ workspace, item, shown }: { workspace: string; item: Item; shown?: boolean },
 	): Promise<null> {
-		await this.#mustBeWorkspace(tx, workspace);
+		await this.mustBeWorkspace(tx, workspace);
 		if (shown === undefined) tx.delete(this.#t.switches, { workspace, itemKey: itemKey(item) });
 		else tx.put(this.#t.switches, { workspace, itemKey: itemKey(item), item, shown });
 		touched.workspaces.add(workspace);
@@ -809,7 +829,7 @@ class Writes {
 		touched: Touched,
 		{ workspace, showsThings, showsPeople }: { workspace: string; showsThings?: boolean; showsPeople?: boolean },
 	): Promise<null> {
-		await this.#mustBeWorkspace(tx, workspace);
+		await this.mustBeWorkspace(tx, workspace);
 		tx.update(
 			this.#t.workspaces,
 			{ workspace },
@@ -939,7 +959,7 @@ class Writes {
 		if (party.kind === "everyone" || party.kind === "agents") {
 			throw invalid("args", `things: ${party.kind} is no party one puts in`);
 		}
-		await this.#mustBeWorkspace(tx, workspace);
+		await this.mustBeWorkspace(tx, workspace);
 		tx.put(this.#t.workspaceMembers, {
 			workspace,
 			partyKey: partyKey(party),
@@ -983,7 +1003,10 @@ class Writes {
 		)) {
 			if (owner === 0) made.push(person);
 		}
-		for (const person of made) if (await this.#nothingLeftOf(tx, person)) await this.#dropPerson(tx, touched, person);
+		if (made.length === 0) return null;
+		const left = await this.#somethingLeftOf(tx, made, key, new Set(managed));
+		// Nothing else names them: only their row and what hangs off it go (no read needed for the rest).
+		for (const person of made) if (!left.has(person)) this.#forget(tx, touched, person);
 		return null;
 	}
 
@@ -1020,27 +1043,86 @@ class Writes {
 		return null;
 	}
 
-	/** Whether nothing is left of `person`: no membership, entry, grant or manager row names them or is theirs. */
-	async #nothingLeftOf(tx: Tx, person: string): Promise<boolean> {
+	/**
+	 * Of `persons`, those of whom something is left once this cleanup of the source with key `key` commits: a
+	 * membership, entry, grant or manager row naming them or theirs, but the rows the cleanup deletes (the source's own,
+	 * and those of the groups it removes, `removed`). A transaction's reads see the committed rows, not its own deletes,
+	 * so those are left out by what they are. Seven reads for all of them (each an index search, IN).
+	 */
+	async #somethingLeftOf(
+		tx: Tx,
+		persons: readonly string[],
+		key: string,
+		removed: ReadonlySet<string>,
+	): Promise<ReadonlySet<string>> {
 		const t = this.#t;
-		const party = partyKey({ kind: "person", person });
-		const own = sourceKey({ kind: "person", person });
-		const probes = [
-			tx.page(t.groupMembers, query(GroupMembers).where((r) => eq(r.person, person)), 1),
-			tx.page(t.workspaceMembers, query(WorkspaceMembers).where((r) => eq(r.partyKey, party)), 1),
-			tx.page(t.grants, query(Grants).where((r) => eq(r.partyKey, party)), 1),
-			tx.page(t.groupManagers, query(GroupManagers).where((r) => eq(r.partyKey, party)), 1),
-			tx.page(t.grants, query(Grants).where((r) => eq(r.sourceKey, own)), 1),
-			tx.page(t.groupMembers, query(GroupMembers).where((r) => eq(r.sourceKey, own)), 1),
-			tx.page(t.workspaceMembers, query(WorkspaceMembers).where((r) => eq(r.sourceKey, own)), 1),
+		const parties = persons.map((person) => partyKey({ kind: "person", person }));
+		const owns = persons.map((person) => sourceKey({ kind: "person", person }));
+		// Party and source keys of a person are the same text (`person/<id>`): one map back to the person.
+		const personOf = new Map(persons.map((person) => [partyKey({ kind: "person", person }), person]));
+		const gone = (row: { sourceKey: string; group?: string; partyKey?: string }) =>
+			row.sourceKey === key ||
+			(row.group !== undefined && removed.has(row.group)) ||
+			(row.partyKey?.startsWith("group/") === true && removed.has(row.partyKey.slice("group/".length)));
+		const left = new Set<string>();
+		for await (const row of tx.rows(
+			t.groupMembers,
+			query(GroupMembers)
+				.where((r) => inArray(r.person, persons))
+				.orderBy((r) => r.person, "asc"),
+		)) {
+			if (!gone(row)) left.add(row.person);
+		}
+		const byParty = [
+			tx.rows(
+				t.workspaceMembers,
+				query(WorkspaceMembers)
+					.where((r) => inArray(r.partyKey, parties))
+					.orderBy((r) => r.partyKey, "asc"),
+			),
+			tx.rows(
+				t.grants,
+				query(Grants)
+					.where((r) => inArray(r.partyKey, parties))
+					.orderBy((r) => r.partyKey, "asc"),
+			),
 		];
-		for (const probe of probes) if ((await probe).items.length > 0) return false;
-		return true;
+		for (const rows of byParty) for await (const row of rows) if (!gone(row)) left.add(personOf.get(row.partyKey)!);
+		const bySource = [
+			tx.rows(
+				t.grants,
+				query(Grants)
+					.where((r) => inArray(r.sourceKey, owns))
+					.orderBy((r) => r.sourceKey, "asc"),
+			),
+			tx.rows(
+				t.groupMembers,
+				query(GroupMembers)
+					.where((r) => inArray(r.sourceKey, owns))
+					.orderBy((r) => r.sourceKey, "asc"),
+			),
+			tx.rows(
+				t.workspaceMembers,
+				query(WorkspaceMembers)
+					.where((r) => inArray(r.sourceKey, owns))
+					.orderBy((r) => r.sourceKey, "asc"),
+			),
+		];
+		for (const rows of bySource) for await (const row of rows) if (!gone(row)) left.add(personOf.get(row.sourceKey)!);
+		for await (const row of tx.rows(
+			t.groupManagers,
+			query(GroupManagers)
+				.where((r) => inArray(r.partyKey, parties))
+				.orderBy((r) => r.partyKey, "asc"),
+		)) {
+			if (!removed.has(row.group)) left.add(personOf.get(row.partyKey)!);
+		}
+		return left;
 	}
 
 	/**
 	 * Drops `person` and everything naming them (memberships, entries, grants, manager rows, switches), their invite
-	 * links and their row; a sign-out row ends their sign-ins after the commit.
+	 * links and their row (`#forget`).
 	 */
 	async #dropPerson(tx: Tx, touched: Changes, person: string): Promise<void> {
 		const t = this.#t;
@@ -1057,6 +1139,17 @@ class Writes {
 		await deleteTold(tx, t.grants, Grants, (r) => eq(r.partyKey, party), touched.workspaces, "workspace");
 		await deleteTold(tx, t.switches, Switches, (r) => eq(r.itemKey, party), touched.workspaces, "workspace");
 		tx.deleteWhere(t.groupManagers, (r) => eq(r.partyKey, party));
+		this.#forget(tx, touched, person);
+	}
+
+	/**
+	 * Drops `person`'s row, the switches and invite links that name them or are theirs, and writes their sign-out (their
+	 * sign-ins end after the commit). The switches change nobody's answer: a person no longer present counts nowhere.
+	 */
+	#forget(tx: Tx, touched: Changes, person: string): void {
+		const t = this.#t;
+		const party = partyKey({ kind: "person", person });
+		tx.deleteWhere(t.switches, (r) => eq(r.itemKey, party));
 		tx.deleteWhere(t.invites, (r) => eq(r.byKey, sourceKey({ kind: "person", person })));
 		tx.delete(t.persons, { person });
 		tx.put(t.signOuts, { person });
@@ -1125,7 +1218,7 @@ class Writes {
 	}
 
 	/** Throws (`invalid`) unless `workspace` exists, as `tx` sees it. */
-	async #mustBeWorkspace(tx: Tx, workspace: string): Promise<void> {
+	async mustBeWorkspace(tx: Tx, workspace: string): Promise<void> {
 		if ((await tx.get(this.#t.workspaces, { workspace })) === undefined) {
 			throw invalid("args", `things: no workspace ${workspace}`);
 		}

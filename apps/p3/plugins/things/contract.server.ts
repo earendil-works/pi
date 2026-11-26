@@ -10,17 +10,21 @@ import {
 	type Ctx,
 	defineRegistry,
 	type FollowObserver,
+	int,
 	local,
 	map,
 	method,
+	nul,
 	num,
 	obj,
+	oneOf,
 	opt,
 	type P3Principal,
 	queries,
 	type Static,
 	str,
 	type TableItem,
+	union,
 	unknown,
 } from "@earendil-works/p3/v1";
 import type { Attachment } from "./access.ts";
@@ -89,6 +93,9 @@ export const GroupManagerRow = obj({ group: str(), party: Party });
 /** A person in a group, as one source put them there, with whether the group is outside. */
 export const GroupMemberRow = obj({ group: str(), person: str(), source: Source, outside: bool() });
 
+/** A person or group the picker offers: the party and its name. */
+export const PartyInfo = obj({ party: Party, name: str() });
+
 /** A person in a group as the group's page lists them: with their name. */
 export const GroupMemberNameRow = obj({ group: str(), person: str(), name: str(), source: Source });
 
@@ -100,7 +107,10 @@ export const ThingsStore = local("things.store", {
 		things: queries(ThingRow, { one: obj({ thing: str() }), ofMaker: obj({ sourceKey: str(), kind: str() }) }),
 		workspaces: queries(WorkspaceRow, { one: obj({ workspace: str() }), children: obj({ parent: str() }) }),
 		links: queries(LinkRow, { here: obj({ workspace: str() }) }),
-		workspaceMembers: queries(WorkspaceMemberRow, { here: obj({ workspace: str() }) }),
+		workspaceMembers: queries(WorkspaceMemberRow, {
+			here: obj({ workspace: str() }),
+			where: obj({ partyKey: str() }),
+		}),
 		switches: queries(SwitchRow, { here: obj({ workspace: str() }) }),
 		grants: queries(GrantRow, { here: obj({ workspace: str() }) }),
 		// `ofIds`: the persons of a list in one read (the notes plugin reads its notes' authors' names with it).
@@ -109,7 +119,7 @@ export const ThingsStore = local("things.store", {
 			ofIds: obj({ persons: arr(str()) }),
 			owners: obj({}),
 		}),
-		groups: queries(GroupRow, { one: obj({ group: str() }) }),
+		groups: queries(GroupRow, { one: obj({ group: str() }), ofIds: obj({ groups: arr(str()) }) }),
 		groupManagers: queries(GroupManagerRow, { of: obj({ group: str() }) }),
 		groupMembers: queries(GroupMemberRow, { ofPerson: obj({ person: str() }) }),
 		groupMembersNamed: queries(GroupMemberNameRow, { ofGroup: obj({ group: str() }) }),
@@ -156,14 +166,46 @@ export const ThingsStore = local("things.store", {
 		 * row; their sign-ins end right after the commit (retried until done).
 		 */
 		removePerson: method(obj({ person: str() })),
-		/** Makes a global group; nobody has its own tick yet (`setGroupManagers`). */
-		makeGroup: method(obj({ name: str(), managedBy: ManagedBy, outside: bool() }), str()),
+		/** Makes a global group; `managers` get its own tick (its maker, as `Workspace.makeGroup` writes it). */
+		makeGroup: method(obj({ name: str(), managedBy: ManagedBy, outside: bool(), managers: opt(arr(Party)) }), str()),
 		renameGroup: method(obj({ group: str(), name: str() })),
 		/** Replaces who has the group's own tick (changing its members, renaming, removing it: decision 68). */
 		setGroupManagers: method(obj({ group: str(), parties: arr(Party) })),
 		/** Removes a group: its members, managers, every entry, grant and switch naming it, whoever wrote them. */
 		removeGroup: method(obj({ group: str() })),
 		addToGroup: method(obj({ group: str(), person: str(), source: Source })),
+		/**
+		 * What Manage people's picker offers `person` in `workspace` (R18): the persons and groups present there and in
+		 * every workspace where they are present, whose name has `query` in it (any case).
+		 */
+		picker: method(obj({ workspace: str(), person: str(), query: str() }), arr(PartyInfo)),
+		/** Whether the picker offers `person` the party `party` in `workspace` (what `putParty` and `addMember` check). */
+		offers: method(obj({ workspace: str(), person: str(), party: Party }), bool()),
+		/**
+		 * An invite link into `workspace` (R39), made by `by`: `as` a member or a guest, valid `expires` milliseconds
+		 * (7 days by default), spent by its first use unless `uses` is `several`, its redeemer also put into `group`.
+		 * Answers the link's secret (kept hashed only); `invalid` for a workspace or group that does not exist.
+		 */
+		createInvite: method(
+			obj({
+				workspace: str(),
+				name: str({ min: 1, max: 200 }),
+				as: oneOf("member", "guest"),
+				expires: opt(int({ min: 1 })),
+				uses: opt(oneOf("one", "several")),
+				group: opt(str()),
+				by: Source,
+			}),
+			str(),
+		),
+		/**
+		 * Redeems an invite link's secret for `person` (signed in already) or, left out, a new person named as the link
+		 * says, made by its maker; answers whom to sign in, `null` for a secret used up, expired or unknown.
+		 */
+		redeemInvite: method(
+			obj({ secret: str(), person: opt(str()) }),
+			union([obj({ person: str(), name: str() }), nul()]),
+		),
 		removeFromGroup: method(obj({ group: str(), person: str(), source: Source })),
 		/**
 		 * The cleanup when a source goes, one commit: what `source` wrote (grants, group members, workspace members), the

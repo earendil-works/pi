@@ -544,10 +544,101 @@ const MUTATIONS: readonly Mutation[] = [
 		find: "if (mine.ticksVersion !== Kind.info.ticksVersion) return CATCHING_UP;",
 		put: "",
 	},
+	// ---- people (ERNDL-1144) ----
+	{
+		name: "the picker offers only the workspace it is used in",
+		file: "picker.ts",
+		find: "for (const entry of await readAll(q.workspaceMembers.where, { partyKey: party }, context)) {",
+		put: "for (const entry of [] as { workspace: string }[]) {",
+	},
+	{
+		name: "the cleanup takes the persons a source made even if something else is left of them",
+		file: "store.ts",
+		find: "for (const person of made) if (!left.has(person)) this.#forget(tx, touched, person);",
+		put: "for (const person of made) this.#forget(tx, touched, person);",
+	},
+	{
+		name: "the cleanup leaves the persons a source made",
+		file: "store.ts",
+		find: "for (const person of made) if (!left.has(person)) this.#forget(tx, touched, person);",
+		put: "",
+	},
+	{
+		name: "a member of a group gets its calls",
+		file: "group.ts",
+		find: 'if ((manager || owner) && managedBy.kind === "people") return MANAGES;',
+		put: 'if (managedBy.kind === "people") return MANAGES;',
+	},
+	{
+		name: "a group a share manages gives its manager calls",
+		file: "group.ts",
+		find: 'if ((manager || owner) && managedBy.kind === "people") return MANAGES;',
+		put: "if (manager || owner) return MANAGES;",
+	},
+	{
+		name: "addMember skips the picker",
+		file: "group.ts",
+		find: 'if (!offered) throw invalid("args", "things: this person is not present where you are");',
+		put: "",
+	},
+	{
+		name: "removeMember takes a provider's row too",
+		file: "group.ts",
+		find: 'if (row.person === person && row.source.kind !== "identity" && row.source.kind !== "thing") {',
+		put: "if (row.person === person) {",
+	},
+	{
+		name: "a guest's link puts them in as a member",
+		file: "invites.ts",
+		find: 'if (row.as === "member") await this.#putParty',
+		put: "if (true) await this.#putParty",
+	},
+	{
+		name: "a link for one use is used again",
+		file: "invites.ts",
+		find: "if (row.expires <= Date.now() || !row.several) tx.delete(this.#t.invites, { invite });",
+		put: "",
+	},
+	{
+		name: "an expired link is redeemed",
+		file: "invites.ts",
+		find: "if (row.expires <= Date.now()) return undefined;",
+		put: "",
+	},
+	{
+		name: "a link's secret is not checked",
+		file: "invites.ts",
+		find: "if (row === undefined || !matchesHash(link.slice(dot + 1), row.hash)) return undefined;",
+		put: "if (row === undefined) return undefined;",
+	},
+	{
+		name: "a person with the owner flag is removed",
+		file: "store.ts",
+		find: 'if (row.owner === 1) throw invalid("args", "things: an owner is removed once the owner flag is taken");',
+		put: "",
+	},
+	{
+		name: "a removed person's sign-ins do not end",
+		file: "store.ts",
+		find: "if (signedOut.length > 0 && live !== undefined) void signOut(signedOut, live);",
+		put: "",
+	},
+	{
+		name: "a removed group leaves its managers",
+		file: "store.ts",
+		find: "		tx.deleteWhere(t.groupManagers, (m) => eq(m.group, group));\n		tx.delete(t.groups, { group });",
+		put: "		tx.delete(t.groups, { group });",
+	},
+	{
+		name: "every start makes another owner",
+		file: "people.ts",
+		find: "if (owners.items.length > 0) return;",
+		put: "",
+	},
 ];
 
 /** The plugin's tests every mutation runs. */
-const TESTS = ["access", "rules", "admission", "store", "kind", "plans", "server", "migration"].map(
+const TESTS = ["access", "rules", "admission", "store", "kind", "plans", "server", "migration", "people"].map(
 	(name) => `plugins/things/test/${name}.test.ts`,
 );
 

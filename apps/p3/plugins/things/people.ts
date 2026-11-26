@@ -20,9 +20,17 @@ import {
 	type TableOf,
 	type Tx,
 } from "@earendil-works/p3/v1";
-import type { Touched } from "./access.ts";
-import { ManagedBy, managedByKey, Party, partyKey, type Source, Source as SourceSchema, sourceKey } from "./contract.ts";
 import { SignIns } from "../sign-in/contract.ts";
+import type { Touched } from "./access.ts";
+import {
+	ManagedBy,
+	managedByKey,
+	Party,
+	partyKey,
+	type Source,
+	Source as SourceSchema,
+	sourceKey,
+} from "./contract.ts";
 import { messages } from "./messages.ts";
 
 /** A person's id and name, joined to their memberships' rows (a group's members, with names). */
@@ -87,7 +95,6 @@ export const GroupMembers = defineTable("things.group-members", {
 	key: ["group", "person", "sourceKey"],
 	indexes: { by_person: ["person"], by_source: ["sourceKey"] },
 });
-
 
 /** Who has a group's own tick (decision 68): its maker, then whom they name. By party: a removed person's. */
 export const GroupManagers = defineTable("things.group-managers", {
@@ -185,7 +192,7 @@ export class PeopleWrites {
 	async setOwner(tx: Tx, touched: Touched, { person, owner }: { person: string; owner: boolean }): Promise<void> {
 		const row = await tx.get(this.#t.persons, { person });
 		if (row === undefined) throw invalid("args", `things: no person ${person}`);
-		if (!owner && row.owner === 1 && !(await this.#anotherOwner(tx))) {
+		if (!owner && row.owner === 1 && !(await this.#twoOwners(tx))) {
 			throw invalid("args", "things: a Pi needs at least one owner", { message: messages.message("lastOwner") });
 		}
 		tx.update(this.#t.persons, { person }, { owner: owner ? 1 : 0 });
@@ -198,7 +205,12 @@ export class PeopleWrites {
 	 */
 	makeGroup(
 		tx: Tx,
-		{ name, managedBy, outside, managers }: { name: string; managedBy: ManagedBy; outside: boolean; managers: Party[] },
+		{
+			name,
+			managedBy,
+			outside,
+			managers,
+		}: { name: string; managedBy: ManagedBy; outside: boolean; managers: Party[] },
 	): string {
 		const group = crypto.randomUUID();
 		tx.put(this.#t.groups, { group, name, managedBy, managedByKey: managedByKey(managedBy), outside });
@@ -241,8 +253,8 @@ export class PeopleWrites {
 		touched.persons.add(person);
 	}
 
-	/** Whether a person other than one being asked about has the owner flag (at least two owners). */
-	async #anotherOwner(tx: Tx): Promise<boolean> {
+	/** Whether at least two persons have the owner flag (one of them may give it up). */
+	async #twoOwners(tx: Tx): Promise<boolean> {
 		const owners = await tx.page(
 			this.#t.persons,
 			query(Persons).where((p) => eq(p.owner, 1)),
@@ -253,7 +265,8 @@ export class PeopleWrites {
 
 	/** Throws (`invalid`) unless person `person` exists. */
 	async #mustBePerson(tx: Tx, person: string): Promise<void> {
-		if ((await tx.get(this.#t.persons, { person })) === undefined) throw invalid("args", `things: no person ${person}`);
+		if ((await tx.get(this.#t.persons, { person })) === undefined)
+			throw invalid("args", `things: no person ${person}`);
 	}
 
 	/** Throws (`invalid`) unless group `group` exists. */
