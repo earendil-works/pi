@@ -6,21 +6,21 @@
 
 import { defineFacet } from "@earendil-works/p3/v1";
 import { createCodingTools } from "@earendil-works/p3/v1/worker";
-import { ThingHarnessParts, thingHarnessPart } from "../things/contract.worker.ts";
-import { CodingToolsKind } from "./contract.ts";
+import { type HeldThing, ThingHarnessParts, thingHarnessPart } from "../things/contract.worker.ts";
+import { CodingToolsKind } from "./kind.ts";
 
 export default defineFacet((_host, self) => {
-	self.contribute(ThingHarnessParts, codingTools);
+	self.contribute(ThingHarnessParts, thingHarnessPart(CodingToolsKind, codingTools));
 });
 
-/** The coding tools' harness part (exported for its test). */
-export const codingTools = thingHarnessPart(CodingToolsKind, (things) => {
-	// Never called with none; the nearest is last.
+/** What the nearest coding tools thing (held last: `stacking: "nearest"`) gives: Durable's tools of its flags. */
+function codingTools(things: readonly HeldThing<typeof CodingToolsKind.contract>[]) {
 	const nearest = things[things.length - 1];
+	// Never called with none.
 	if (nearest === undefined) return {};
 	const coding = createCodingTools();
 	// Each Durable tool is named as the flag tick that gives it.
 	const granted: ReadonlySet<string> = nearest.ref.granted;
 	const tools = (coding.tools ?? []).filter((tool) => granted.has(tool.name));
-	return tools.length === 0 ? {} : { extension: { ...coding, tools } };
-});
+	return tools.length === 0 ? {} : { extension: { ...coding, name: CodingToolsKind.name, tools } };
+}

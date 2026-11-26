@@ -6,6 +6,6 @@ import { defineMessages } from "@earendil-works/p3/v1";
 /** The harness plugin's messages, by key. */
 export const messages = defineMessages("harness", {
 	en: {
-		tickUseSubagents: "Start subagents",
+		tickUse: "Start subagents",
 	},
 });

@@ -4,7 +4,7 @@
 
 import { defineFacet } from "@earendil-works/p3/v1";
 import { serveThing } from "../things/serve.ts";
-import { CodingToolsKind } from "./contract.ts";
+import { CodingToolsKind } from "./kind.ts";
 
 export default defineFacet((host) => {
 	serveThing(host, CodingToolsKind, { implement: () => ({}), one: { name: "Coding tools" } });

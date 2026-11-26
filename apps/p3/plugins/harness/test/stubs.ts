@@ -50,9 +50,9 @@ import {
 } from "../../things/contract.worker.ts";
 import { defineThing } from "../../things/kind.ts";
 import things from "../../things/worker.ts";
-import { CodingToolsKind } from "../../tools/contract.ts";
+import { CodingToolsKind } from "../../tools/kind.ts";
 import tools from "../../tools/worker.ts";
-import { SubagentsKind } from "../contract.ts";
+import { SubagentsKind } from "../kind.ts";
 
 /** One part of a scripted answer: text, or a tool call (its arguments as JSON text). */
 const Reply = union([obj({ kind: lit("text"), text: str() }), obj({ kind: lit("tool"), name: str(), args: str() })]);

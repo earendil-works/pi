@@ -23,7 +23,7 @@ import {
 	type ToolExecutionApi,
 } from "@earendil-works/p3/v1/worker";
 import { thingHarnessPart } from "../things/contract.worker.ts";
-import { SubagentsKind } from "./contract.ts";
+import { SubagentsKind } from "./kind.ts";
 
 /** The subagents' part: the four tools while the nearest reference has `use` (the kind stacks `nearest`). */
 export const subagentsPart = thingHarnessPart(SubagentsKind, (things) => {
