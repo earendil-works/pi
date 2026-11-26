@@ -199,6 +199,10 @@ I regularly publish my own `pi-mono` work sessions here:
 
 MIT
 
+### Forks and the Google AI Ultra plan sign-in
+
+pi's Google AI Ultra plan sign-in uses a Google OAuth client that Google approved for pi only (`PI_GOOGLE_AI_PLAN_CLIENT` in [`packages/coding-agent/src/core/client-identity.ts`](packages/coding-agent/src/core/client-identity.ts)). Forks and other apps built on pi's packages must register their own Google OAuth client and replace pi's. `@earendil-works/pi-ai` ships no client; see "OAuth Providers" in [`packages/ai/README.md`](packages/ai/README.md#oauth-providers).
+
 <p align="center">
   <a href="https://pi.dev">pi.dev</a> domain graciously donated by
   <br /><br />

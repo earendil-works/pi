@@ -93,3 +93,7 @@ Read [CONTRIBUTING.md](https://github.com/earendil-works/pi/blob/main/CONTRIBUTI
 ## License
 
 MIT
+
+### Forks and the Google AI Ultra plan sign-in
+
+pi's Google AI Ultra plan sign-in uses a Google OAuth client that Google approved for pi only (`PI_GOOGLE_AI_PLAN_CLIENT` in [`packages/coding-agent/src/core/client-identity.ts`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/client-identity.ts)). Forks and other apps built on pi's packages must register their own Google OAuth client and replace pi's. `@earendil-works/pi-ai` ships no client; see [OAuth Providers](https://github.com/earendil-works/pi/blob/main/packages/ai/README.md#oauth-providers) in its README.
