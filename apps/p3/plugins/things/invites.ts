@@ -4,21 +4,30 @@
 // up by its first use unless it is for several, and may put its redeemer into a group too. Its secret is kept hashed
 // in `things.invites`: the link is `<invite>.<secret>`, the secret never stored.
 
-import { and, eq, invalid, query, type Tx } from "@earendil-works/p3/v1";
+import { and, eq, invalid, lte, query, type Tx } from "@earendil-works/p3/v1";
 import { hashToken, matchesHash, newToken } from "@earendil-works/p3/v1/server";
 import type { Touched } from "./access.ts";
 import type { Invited, InviteInput } from "./contract.server.ts";
 import { managedByKey, type Party, type Source, sourceKey } from "./contract.ts";
-import { Groups, type PeopleTables, type PeopleWrites, THINGS } from "./people.ts";
+import { messages } from "./messages.ts";
+import { Groups, Invites, type PeopleTables, type PeopleWrites, THINGS } from "./people.ts";
 
 /** How long a link is valid unless it says: 7 days (R39). */
 const DEFAULT_EXPIRES = 7 * 24 * 60 * 60_000;
 
-/** What invite links need of the store's writes on workspaces, under the same transaction. */
+/** What invite links need of the store's writes on workspaces and groups, under the same transaction. */
 export type Places = {
 	putParty(tx: Tx, touched: Touched, args: { workspace: string; party: Party; source: Source }): Promise<null>;
 	mustBeWorkspace(tx: Tx, workspace: string): Promise<void>;
+	isWorkspace(tx: Tx, workspace: string): Promise<boolean>;
+	/** Whether `party` has an entry of its own in `workspace` (of any source). */
+	isPutIn(tx: Tx, workspace: string, party: Party): Promise<boolean>;
+	/** Whether `by` may change `group`'s members: its own tick (or the owner flag) on a group people manage. */
+	mayChange(tx: Tx, group: string, by: Source): Promise<boolean>;
 };
+
+/** How many expired links one sweep takes (at each new link): bounded, so a sweep never runs long. */
+const SWEEP = 100;
 
 /** The writes of invite links inside a store transaction; none checks a caller. */
 export class InviteWrites {
@@ -32,12 +41,24 @@ export class InviteWrites {
 		this.#places = places;
 	}
 
-	/** Writes a new link (the workspace and group must exist); answers `<invite>.<secret>`. */
+	/**
+	 * Writes a new link (the workspace and group must exist, and its maker must be one who may change the group:
+	 * scenario 18); answers `<invite>.<secret>`. Expired links are swept, a bounded number each time.
+	 */
 	async create(tx: Tx, args: InviteInput): Promise<string> {
 		await this.#places.mustBeWorkspace(tx, args.workspace);
-		if (args.group !== undefined && (await tx.get(this.#t.groups, { group: args.group })) === undefined) {
-			throw invalid("args", `things: no group ${args.group}`);
+		if (args.group !== undefined) {
+			if ((await tx.get(this.#t.groups, { group: args.group })) === undefined) {
+				throw invalid("args", `things: no group ${args.group}`);
+			}
+			if (!(await this.#places.mayChange(tx, args.group, args.by))) {
+				throw invalid("args", `things: ${sourceKey(args.by)} may not add people to ${args.group}`, {
+					message: messages.message("groupNotManaged"),
+				});
+			}
 		}
+		const now = Date.now();
+		await this.#sweep(tx, now);
 		const invite = crypto.randomUUID();
 		const secret = newToken();
 		tx.put(this.#t.invites, {
@@ -46,7 +67,7 @@ export class InviteWrites {
 			workspace: args.workspace,
 			as: args.as,
 			name: args.name,
-			expires: Date.now() + (args.expires ?? DEFAULT_EXPIRES),
+			expires: now + (args.expires ?? DEFAULT_EXPIRES),
 			several: args.uses === "several",
 			group: args.group ?? "",
 			by: args.by,
@@ -56,8 +77,10 @@ export class InviteWrites {
 	}
 
 	/**
-	 * Redeems `link` for `person` (signed in) or a new person made by the link's maker: puts them in as the link says;
-	 * a link for one use goes. `null` for a link that is unknown, expired (it goes) or whose secret does not match.
+	 * Redeems `link` for `person` (signed in) or a new person made by the link's maker: puts them in as the link says,
+	 * keeping an entry they have already (its source stays); a link for one use goes. `null` for a link that is
+	 * unknown, expired (it goes), whose secret does not match, into a workspace that is gone (it goes), or for a person
+	 * who does not exist (the link stays good).
 	 */
 	async redeem(tx: Tx, touched: Touched, link: string, person: string | undefined): Promise<Invited | null> {
 		const dot = link.indexOf(".");
@@ -65,14 +88,21 @@ export class InviteWrites {
 		const invite = link.slice(0, dot);
 		const row = await tx.get(this.#t.invites, { invite });
 		if (row === undefined || !matchesHash(link.slice(dot + 1), row.hash)) return null;
-		if (row.expires <= Date.now() || !row.several) tx.delete(this.#t.invites, { invite });
-		if (row.expires <= Date.now()) return null;
-		const who = await this.#redeemer(tx, person, row.name, row.by);
-		if (who === undefined) return null;
-		const party: Party = { kind: "person", person: who.person };
+		const now = Date.now();
 		const { workspace, by: source } = row;
-		if (row.as === "member") await this.#places.putParty(tx, touched, { workspace, party, source });
-		else {
+		const gone = row.expires <= now || !(await this.#places.isWorkspace(tx, workspace));
+		if (gone) {
+			tx.delete(this.#t.invites, { invite });
+			return null;
+		}
+		if (person !== undefined && (await tx.get(this.#t.persons, { person })) === undefined) return null;
+		if (!row.several) tx.delete(this.#t.invites, { invite });
+		const who = await this.#redeemer(tx, person, row.name, row.by);
+		const party: Party = { kind: "person", person: who.person };
+		if (row.as === "member") {
+			if (!(await this.#places.isPutIn(tx, workspace, party)))
+				await this.#places.putParty(tx, touched, { workspace, party, source });
+		} else {
 			const guests = await this.#guestsOf(tx, touched, workspace);
 			await this.#people.addToGroup(tx, touched, { group: guests, person: who.person, source });
 		}
@@ -82,11 +112,20 @@ export class InviteWrites {
 		return who;
 	}
 
-	/** The person a link is redeemed for: `person` if they exist, else a new one named `name`, made by `by`. */
-	async #redeemer(tx: Tx, person: string | undefined, name: string, by: Source): Promise<Invited | undefined> {
+	/** Deletes up to `SWEEP` links expired by `now` (index `by_expiry`). */
+	async #sweep(tx: Tx, now: number): Promise<void> {
+		const expired = query(Invites)
+			.where((r) => lte(r.expires, now))
+			.orderBy((r) => r.expires, "asc");
+		for (const { invite } of (await tx.page(this.#t.invites, expired, SWEEP)).items) {
+			tx.delete(this.#t.invites, { invite });
+		}
+	}
+
+	/** The person a link is redeemed for: `person` (who exists), else a new one named `name`, made by `by`. */
+	async #redeemer(tx: Tx, person: string | undefined, name: string, by: Source): Promise<Invited> {
 		if (person === undefined) return { person: await this.#people.createPerson(tx, { name, madeBy: by }), name };
-		const row = await tx.get(this.#t.persons, { person });
-		return row === undefined ? undefined : { person, name: row.name };
+		return { person, name: (await tx.get(this.#t.persons, { person }))!.name };
 	}
 
 	/** The workspace's own outside Guests group (R17), made and put into it at its first guest. */

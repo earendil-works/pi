@@ -13,6 +13,8 @@ export const messages = defineMessages("things", {
 		// No workspace named: the person may not be present where the thing is linked (decision 96).
 		belowLink: "Ticks are given where this is linked; here they can only be taken away.",
 		lastOwner: "A Pi needs at least one owner.",
+		notOffered: "This person is not present where you are: invite them with a link.",
+		groupNotManaged: "Only whoever manages this group may add people to it.",
 		tickLink: "Link",
 		tickHide: "Hide",
 		tickConfigure: "Configure",

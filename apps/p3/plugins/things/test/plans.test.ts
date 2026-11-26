@@ -158,9 +158,26 @@ describe("the plans of the things store's queries", () => {
 					`${T}.group-members:by_person`,
 				],
 				["groups.one", pages(things.groups.one, { group }), undefined],
+				["groups.ofIds", pages(things.groups.ofIds, { groups: [group, "none"] }), undefined],
+				[
+					"workspaceMembers.where",
+					pages(things.workspaceMembers.where, { partyKey: `person/${ann}` }),
+					`${T}.workspace-members:by_party`,
+				],
+				["groupMembers.of", pages(things.groupMembers.of, { group, person: ann }), undefined],
+				[
+					"groupManagers.among",
+					pages(things.groupManagers.among, { group, partyKeys: [`person/${ann}`, `person/${ben}`] }),
+					undefined,
+				],
 				["groupManagers.of", pages(things.groupManagers.of, { group }), undefined],
 				["groupMembersNamed.ofGroup", pages(things.groupMembersNamed.ofGroup, { group }), undefined],
 			];
+			// The owner's picker reads every person and group, in the key's order: a scan on purpose, never a sort.
+			for (const read of [...pages(things.persons.all, {}), ...pages(things.groups.all, {})]) {
+				const plans = await plansOf(read);
+				assert.ok(!plans.some((step) => step.includes("TEMP B-TREE")), plans.join(" | "));
+			}
 			for (const [name, read, expected] of cases) {
 				const plans = (await Promise.all(read.map((each) => plansOf(each)))).flat();
 				const own = plans.find((step) => /^(SEARCH|SCAN) t USING /.test(step));
@@ -204,9 +221,17 @@ describe("the plans of the things store's queries", () => {
 				}
 			}
 			// Of everything read since the start, only the pending deletes, removals, gone workspaces and sign-outs still to
-			// end (few rows, read at the start and when the hooks change) are read whole.
+			// end (few rows, read at the start and when the hooks change), and the persons and groups of the owner's picker
+			// are read whole.
 			const scans = [...ever].filter((sql) => plan(sql).some((step) => /^SCAN t( |$)/.test(step)));
-			const whole = [`"${T}.pending"`, `"${T}.removing"`, `"${T}.gone"`, `"${T}.sign-outs"`];
+			const whole = [
+				`"${T}.pending"`,
+				`"${T}.removing"`,
+				`"${T}.gone"`,
+				`"${T}.sign-outs"`,
+				`"${T}.persons"`,
+				`"${T}.groups"`,
+			];
 			assert.ok(
 				scans.length > 0 && scans.every((sql) => whole.some((table) => sql.includes(table))),
 				scans.join(" | "),

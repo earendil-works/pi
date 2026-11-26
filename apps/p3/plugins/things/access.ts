@@ -270,17 +270,35 @@ export class AccessIndex {
 	}
 
 	/**
-	 * The parties present in any of `workspaces` (rule 3), a person hidden in one by every route left out there (item
-	 * 106): loaded as a question loads them, one operation in the queue.
+	 * What the picker offers `person` (R18, decision 106): the parties present in `workspace` (if any) and in every one
+	 * of `candidates` where the person counts as present (put in, through a group, or shown from above; a person hidden
+	 * by every route counts nowhere), persons hidden there left out. One operation in the queue; what it loaded beyond
+	 * the budget is forgotten again (no watcher keeps it).
 	 */
-	parties(workspaces: Iterable<string>, context: Context): Promise<ReadonlySet<string>> {
+	offered(
+		workspace: string | undefined,
+		candidates: Iterable<string>,
+		person: string,
+		context: Context,
+	): Promise<ReadonlySet<string>> {
 		return this.#run(async () => {
+			await this.#ensurePerson(person, context);
+			const entries = this.#persons.get(person)!;
+			const key = partyKey({ kind: "person", person });
 			const parties = new Set<string>();
-			for (const workspace of workspaces) {
+			const add = (access: WorkspaceAccess) => {
+				for (const party of access.present) if (!access.hidden.has(party)) parties.add(party);
+			};
+			if (workspace !== undefined) {
 				await this.#ensure(workspace, context);
-				const { present, hidden } = this.#accessOf(workspace, context);
-				for (const party of present) if (!hidden.has(party)) parties.add(party);
+				add(this.#accessOf(workspace, context));
 			}
+			for (const at of candidates) {
+				await this.#ensure(at, context);
+				const access = this.#accessOf(at, context);
+				if (personCounts(access, key, entries) !== NOBODY) add(access);
+			}
+			if (this.#workspaces.size + this.#persons.size > this.#forgetWhenAbove) this.forgetUnwatched();
 			return parties;
 		});
 	}

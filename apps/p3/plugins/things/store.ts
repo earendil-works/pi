@@ -429,8 +429,12 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			if (owner === null) return;
 			// Adopted already (every start but the first, every reload): no write, so a reload ending the store meanwhile
 			// leaves no transaction behind.
-			if ((await t.persons.get({ person: owner.person }, ctx))?.owner === 1) return;
-			await write((tx, touched) => people.adoptOwner(tx, touched, owner), ctx);
+			if ((await t.adopted.get({ bridge: "owner" }, ctx)) !== undefined) return;
+			await write(
+				(tx, touched) =>
+					people.adoptOwner(tx, touched, owner, (persons) => writes.somethingLeftOf(tx, persons, "", new Set())),
+				ctx,
+			);
 		};
 		self.on(owners, async () => {
 			if (live !== undefined) await adopt(live);
@@ -525,6 +529,7 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			removeGroup: ({ group }, ctx) => write((tx, touched) => writes.removeGroup(tx, touched, group), ctx),
 			addToGroup: (args, ctx) => write((tx, touched) => people.addToGroup(tx, touched, args), ctx),
 			removeFromGroup: (args, ctx) => write((tx, touched) => people.removeFromGroup(tx, touched, args), ctx),
+			removeMember: (args, ctx) => write((tx, touched) => people.removeMember(tx, touched, args), ctx),
 			picker: async ({ workspace, person, query: text }, ctx) => {
 				const offered = await offeredTo(q, index!, { workspace, person }, ctx);
 				return namesOf(q, offered, text, ctx);
@@ -679,6 +684,8 @@ function namedQueries(self: StoreSelf<P3Principal>, t: Tables) {
 				ofIds: ({ persons }: { persons: string[] }) => query(Persons).where((p) => inArray(p.person, persons)),
 				// Index `by_owner`: the persons with the owner flag (the owner link signs in as the first).
 				owners: (_args: Record<never, never>) => query(Persons).where((p) => eq(p.owner, 1)),
+				// The key: every person (the owner's picker).
+				all: (_args: Record<never, never>) => query(Persons),
 			},
 		),
 		groups: self.queries(
@@ -689,6 +696,8 @@ function namedQueries(self: StoreSelf<P3Principal>, t: Tables) {
 				one: ({ group }: { group: string }) => query(Groups).where((g) => eq(g.group, group)),
 				// The key, IN: the groups of a list (their names: the picker's, a caller's roots').
 				ofIds: ({ groups }: { groups: string[] }) => query(Groups).where((g) => inArray(g.group, groups)),
+				// The key: every group (the owner's picker).
+				all: (_args: Record<never, never>) => query(Groups),
 			},
 		),
 		groupManagers: self.queries(
@@ -697,6 +706,11 @@ function namedQueries(self: StoreSelf<P3Principal>, t: Tables) {
 			{
 				// The key's prefix.
 				of: ({ group }: { group: string }) => query(GroupManagers).where((m) => eq(m.group, group)),
+				// The key, IN: which of `partyKeys` (a caller's person and groups) have the group's own tick.
+				among: ({ group, partyKeys }: { group: string; partyKeys: string[] }) =>
+					query(GroupManagers)
+						.where((m) => and(eq(m.group, group), inArray(m.partyKey, partyKeys)))
+						.orderBy((m) => m.partyKey, "asc"),
 			},
 		),
 		groupMembersNamed: self.queries(
@@ -724,6 +738,11 @@ function namedQueries(self: StoreSelf<P3Principal>, t: Tables) {
 				ofPerson: ({ person }: { person: string }) =>
 					query(GroupMembers)
 						.where((m) => eq(m.person, person))
+						.join(GroupColumns, (m) => ({ group: m.group })),
+				// The key's prefix: one person's rows in one group (whether they are in it).
+				of: ({ group, person }: { group: string; person: string }) =>
+					query(GroupMembers)
+						.where((m) => and(eq(m.group, group), eq(m.person, person)))
 						.join(GroupColumns, (m) => ({ group: m.group })),
 			},
 		),
@@ -1086,6 +1105,9 @@ class Writes {
 		await deleteTold(tx, t.links, Links, (l) => eq(l.thing, thing), touched.workspaces, "workspace");
 		await deleteTold(tx, t.grants, Grants, (g) => eq(g.thing, thing), touched.workspaces, "workspace");
 		await deleteTold(tx, t.switches, Switches, (w) => eq(w.itemKey, item), touched.workspaces, "workspace");
+		// A thing is a source (a share, a bot): what it wrote, the groups it manages and the persons it made go with it,
+		// in this commit (the cleanup, people.md §7).
+		await this.deleteEverythingFrom(tx, touched, sourceKey({ kind: "thing", thing }));
 		tx.delete(this.#t.things, { thing });
 		tx.put(this.#t.pending, { thing, kind });
 		touched.retired.push({ thing, kind });
@@ -1326,6 +1348,8 @@ class Writes {
 			touched.workspaces,
 			"workspace",
 		);
+		// The source's invite links go with it: none may make a person for a source that is gone.
+		tx.deleteWhere(t.invites, (r) => eq(r.byKey, key));
 		const managed = [];
 		for await (const { group } of tx.rows(
 			t.groups,
@@ -1342,7 +1366,7 @@ class Writes {
 			if (owner === 0) made.push(person);
 		}
 		if (made.length === 0) return null;
-		const left = await this.#somethingLeftOf(tx, made, key, new Set(managed));
+		const left = await this.somethingLeftOf(tx, made, key, new Set(managed));
 		// Nothing else names them: only their row and what hangs off it go (no read needed for the rest).
 		for (const person of made) if (!left.has(person)) this.#forget(tx, touched, person);
 		return null;
@@ -1353,7 +1377,10 @@ class Writes {
 		const t = this.#t;
 		await deleteTold(tx, t.groupMembers, GroupMembers, (r) => eq(r.group, group), touched.persons, "person");
 		await this.#unname(tx, touched, partyKey({ kind: "group", group }));
+		// Its own managers, and its rows as a manager of other groups; links that would put people into it.
 		tx.deleteWhere(t.groupManagers, (m) => eq(m.group, group));
+		tx.deleteWhere(t.groupManagers, (m) => eq(m.partyKey, partyKey({ kind: "group", group })));
+		tx.deleteWhere(t.invites, (r) => eq(r.group, group));
 		tx.delete(t.groups, { group });
 		return null;
 	}
@@ -1377,7 +1404,7 @@ class Writes {
 	 * and those of the groups it removes, `removed`). A transaction's reads see the committed rows, not its own deletes,
 	 * so those are left out by what they are. Seven reads for all of them (each an index search, IN).
 	 */
-	async #somethingLeftOf(
+	async somethingLeftOf(
 		tx: Tx,
 		persons: readonly string[],
 		key: string,
@@ -1411,6 +1438,14 @@ class Writes {
 		for await (const row of rowsNaming(tx, t.groupManagers, GroupManagers, (r) => r.partyKey, parties)) {
 			if (!removed.has(row.group)) left.add(personOf.get(row.partyKey)!);
 		}
+		// A person or thing they made names them as its maker: they stay (none of those goes in this commit).
+		// Index `by_maker` of things is (madeByKey, kind): the order follows it, so nothing sorts.
+		const things = query(Things)
+			.where((r) => inArray(r.madeByKey, owns))
+			.orderBy((r) => r.madeByKey, "asc")
+			.orderBy((r) => r.kind, "asc");
+		const makers = [rowsNaming(tx, t.persons, Persons, (r) => r.madeByKey, owns), tx.rows(t.things, things)];
+		for (const rows of makers) for await (const row of rows) left.add(personOf.get(row.madeByKey)!);
 		return left;
 	}
 
@@ -1591,8 +1626,34 @@ class Writes {
 
 	/** Throws (`invalid`) unless `workspace` exists, as `tx` sees it. */
 	async mustBeWorkspace(tx: Tx, workspace: string): Promise<void> {
-		if ((await tx.get(this.#t.workspaces, { workspace })) === undefined) {
-			throw invalid("args", `things: no workspace ${workspace}`);
-		}
+		if (!(await this.isWorkspace(tx, workspace))) throw invalid("args", `things: no workspace ${workspace}`);
+	}
+
+	/** Whether `workspace` exists, as `tx` sees it. */
+	async isWorkspace(tx: Tx, workspace: string): Promise<boolean> {
+		return (await tx.get(this.#t.workspaces, { workspace })) !== undefined;
+	}
+
+	/** Whether `party` has an entry of its own in `workspace`, of any source. */
+	async isPutIn(tx: Tx, workspace: string, party: Party): Promise<boolean> {
+		return (await tx.get(this.#t.workspaceMembers, { workspace, partyKey: partyKey(party) })) !== undefined;
+	}
+
+	/**
+	 * Whether `by` may change `group`'s members: server code (a plugin, a thing, a provider) always; a person with the
+	 * owner flag or the group's own tick (themself or a group of theirs named), on a group people manage only.
+	 */
+	async mayChange(tx: Tx, group: string, by: Source): Promise<boolean> {
+		if (by.kind !== "person" && by.kind !== "agent") return true;
+		const row = await tx.get(this.#t.groups, { group });
+		if (row?.managedBy.kind !== "people" || by.kind === "agent") return false;
+		if ((await tx.get(this.#t.persons, { person: by.person }))?.owner === 1) return true;
+		const keys = [partyKey({ kind: "person", person: by.person })];
+		const mine = query(GroupMembers).where((m) => eq(m.person, by.person));
+		for await (const { group: of } of tx.rows(this.#t.groupMembers, mine))
+			keys.push(partyKey({ kind: "group", group: of }));
+		for (const key of keys)
+			if ((await tx.get(this.#t.groupManagers, { group, partyKey: key })) !== undefined) return true;
+		return false;
 	}
 }

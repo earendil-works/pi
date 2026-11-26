@@ -301,7 +301,7 @@ describe("a group's own tick (scenario 18, decision 68)", () => {
 	it("Leo, a member of parents, sees it but cannot add himself; Anna, its manager, adds a person present", async () => {
 		const leo = await as(f.leo, async (ctx) => {
 			const held = await ctx.get(Group, { group: f.parents });
-			return { add: held.addMember, members: held.members.value.map(({ name }) => name).sort() };
+			return { add: held.addMember, members: held.members.value.rows.map(({ name }) => name).sort() };
 		});
 		assert.equal(leo.add, undefined);
 		assert.deepEqual(leo.members, ["Anna", "Leo"]);
@@ -320,8 +320,34 @@ describe("a group's own tick (scenario 18, decision 68)", () => {
 		);
 	});
 
-	it("someone the group is nothing to is denied; a group a share manages has no calls for anyone", async () => {
-		await assert.rejects(as(f.kim, (ctx) => ctx.get(Group, { group: f.parents })));
+	it("held by anyone it is present for, with no calls; denied to someone it is nothing to (1141 §7)", async () => {
+		// Kim is in Family, where parents is put in: she sees the group and its members.
+		const kim = await as(f.kim, async (ctx) => {
+			const held = await ctx.get(Group, { group: f.parents });
+			return { add: held.addMember, members: held.members.value.rows.map(({ name }) => name).sort() };
+		});
+		assert.deepEqual(kim, { add: undefined, members: ["Anna", "Leo"] });
+		const stranger = await store.createPerson({ name: "Stranger", madeBy: ADMIN }, context);
+		await assert.rejects(as(stranger, (ctx) => ctx.get(Group, { group: f.parents }, { readyTimeout: 1000 })));
+	});
+
+	it("the owner adds anyone, present anywhere or not; server code too", async () => {
+		const stranger = await store.createPerson({ name: "Stranger", madeBy: ADMIN }, context);
+		await store.setOwner({ person: f.kim, owner: true }, context);
+		await as(f.kim, async (ctx) =>
+			(await ctx.get(Group, { group: f.parents })).addMember!({ person: stranger }, ctx),
+		);
+		const other = await store.createPerson({ name: "Other", madeBy: ADMIN }, context);
+		await w.host.root(
+			async (ctx) => (await ctx.get(Group, { group: f.parents })).addMember!({ person: other }, ctx),
+			context,
+		);
+		const groups = async (id: string) =>
+			(await store.groupMembers.ofPerson.page({ person: id }, 10, context)).items.map(({ group: g }) => g);
+		assert.deepEqual([await groups(stranger), await groups(other)], [[f.parents], [f.parents]]);
+	});
+
+	it("a group a share manages has no calls for anyone", async () => {
 		const managed = await store.makeGroup(
 			{ name: "share", managedBy: { kind: "thing", thing: "s" }, outside: true, managers: [person(f.anna)] },
 			context,
@@ -349,7 +375,7 @@ describe("a group's page", () => {
 		// The call ends with the object it removes: its admission denies a group that is gone.
 		await assert.rejects(
 			as(f.anna, async (ctx) => (await ctx.get(Group, { group: f.parents })).remove!(ctx)),
-			/not a member or a manager/,
+			/not present for you/,
 		);
 		for (const table of ["groups", "group-members", "group-managers"]) {
 			assert.ok(!storedRows(w.path, table).some((row) => row.group === f.parents), table);
@@ -365,7 +391,7 @@ describe("a group's page", () => {
 			await store2.addToGroup({ group: f.parents, person: f.kim, source: ADMIN }, context);
 			await until(
 				held.members,
-				(members) => members.some(({ person: id }) => id === f.kim),
+				(members) => members.rows.some(({ person: id }) => id === f.kim),
 				within("Kim in the group", ctx),
 			);
 		});
@@ -462,15 +488,234 @@ describe("the cleanup when a source goes (test 8)", () => {
 		}
 		// One of them was also put into Family by hand: she stays.
 		await store.putParty({ workspace: f.family, party: person(made[0]!), source: ADMIN }, context);
-		const started = performance.now();
+		const reads = w.count("things.access.reads");
 		await store.deleteEverythingFrom({ source: share }, context);
-		const took = performance.now() - started;
+		// The index reads again only what the commit touched, however many guests went (the time: bench/things.ts).
+		const read = w.count("things.access.reads") - reads;
 		const persons = new Set(storedRows(w.path, "persons").map(({ person: id }) => id));
 		assert.ok(persons.has(made[0]!));
 		assert.equal(made.filter((id) => persons.has(id)).length, 1);
 		assert.ok(!storedRows(w.path, "groups").some(({ group: g }) => g === guests));
 		assert.ok(!w.rows("grants").some((row) => String(row.partyKey) === `group/${guests}`));
 		assert.ok(!w.rows("workspace-members").some((row) => String(row.partyKey) === `group/${guests}`));
-		assert.ok(took < 20, `the cleanup of 50 guests took ${took.toFixed(1)} ms`);
+		assert.ok(read <= 10, `the index read ${read} sets again`);
+	});
+});
+
+describe("round 1's reproductions (Opus, Astra, Fable)", () => {
+	/** A stand-in for the people plugin handing over its owner (`null`: none yet). */
+	const seedPlugin = (seed: { person: string; name: string } | null) => ({
+		name: "@earendil-works/p3-people",
+		facet: defineFacet((host) => contribute(host, "test.owner-seed", (self) => self.contribute(OwnerSeeds, seed))),
+	});
+	const ownersOf = async (at: World) =>
+		(await (await at.host.get(ThingsStore, {}, context)).persons.owners.page({}, 10, context)).items
+			.map(({ person: id }) => id)
+			.sort();
+
+	it("a thing's last unlink runs its cleanup: the persons it made go with their sign-ins and its links (Astra must 1, Opus S2)", async () => {
+		const board = await store.create({ kind: Board.name, name: "share", workspace: f.session, by: ADMIN }, context);
+		await store.link({ workspace: f.family, thing: board }, context);
+		const made = await store.createPerson({ name: "Guest", madeBy: { kind: "thing", thing: board } }, context);
+		await (await w.host.get(SignIns, {}, context)).issue(
+			{ principal: principal(made), label: "guest", kind: "browser" },
+			context,
+		);
+		const link = await store.createInvite(
+			{ workspace: f.session, name: "x", as: "member", by: { kind: "thing", thing: board } },
+			context,
+		);
+		await store.unlink({ workspace: f.family, thing: board }, context);
+		assert.ok(storedRows(w.path, "persons").some(({ person: id }) => id === made));
+		await store.unlink({ workspace: f.session, thing: board }, context);
+		assert.ok(!storedRows(w.path, "persons").some(({ person: id }) => id === made));
+		assert.equal(await store.redeemInvite({ secret: link }, context), null);
+		await until(
+			(await w.host.get(SignIns, {}, context)).list,
+			(list) => list.length === 0,
+			within("the guest's sign-in ended", context),
+		);
+	});
+
+	it("the bridge adopts once: a used placeholder and other owners stay, a handover stands (Astra must 2)", async () => {
+		const at = await world(context, [seedPlugin(null)]);
+		try {
+			const things = await at.host.get(ThingsStore, {}, context);
+			const [placeholder] = await ownersOf(at);
+			// The placeholder got something (a manager row), and another person has the flag too.
+			const g = await things.makeGroup(
+				{ name: "g", managedBy: { kind: "people" }, outside: false, managers: [person(placeholder!)] },
+				context,
+			);
+			const other = await things.createPerson({ name: "Other", madeBy: ADMIN }, context);
+			await things.setOwner({ person: other, owner: true }, context);
+			await at.reload("@earendil-works/p3-people", context, seedPlugin({ person: "seed", name: "Mario" }).facet);
+			await eventually(
+				() => ownersOf(at),
+				(ids) => ids.includes("seed"),
+			);
+			assert.deepEqual(await ownersOf(at), [other, placeholder!, "seed"].sort());
+			assert.ok(g !== "");
+			// The flag handed over from the seed's person; the seed comes again with another name: it stands.
+			const again = await at.host.get(ThingsStore, {}, context);
+			await again.setOwner({ person: "seed", owner: false }, context);
+			await at.reload("@earendil-works/p3-people", context, seedPlugin({ person: "seed", name: "Mario Z" }).facet);
+			await at.reload("@earendil-works/p3-things", context);
+			assert.deepEqual(await ownersOf(at), [other, placeholder!].sort());
+			assert.deepEqual(at.errors, []);
+		} finally {
+			await at.close(context);
+		}
+	});
+
+	it("an unused placeholder goes at the adoption; only the people plugin's contribution counts", async () => {
+		const at = await world(context, [
+			seedPlugin(null),
+			{
+				name: "z-other",
+				facet: defineFacet((host) =>
+					contribute(host, "test.other-seed", (self) =>
+						self.contribute(OwnerSeeds, { person: "impostor", name: "Eve" }),
+					),
+				),
+			},
+		]);
+		try {
+			const [placeholder] = await ownersOf(at);
+			await at.reload("@earendil-works/p3-people", context, seedPlugin({ person: "seed", name: "Mario" }).facet);
+			await eventually(
+				() => ownersOf(at),
+				(ids) => ids.includes("seed"),
+			);
+			assert.deepEqual(await ownersOf(at), ["seed"]);
+			assert.ok(placeholder !== "seed");
+		} finally {
+			await at.close(context);
+		}
+	});
+
+	it("the picker offers what is present where the caller is present, inherited below too (Opus S1, Astra must 3)", async () => {
+		// Sub is put into the session only; Anna, put into Family, is present in the session from above.
+		const sub = await store.createPerson({ name: "Sub", madeBy: ADMIN }, context);
+		await store.putParty({ workspace: f.session, party: person(sub), source: ADMIN }, context);
+		assert.equal(await store.offers({ workspace: f.family, person: f.anna, party: person(sub) }, context), true);
+		// Hidden in the session, Anna is present there no more: Sub is offered only where it is used.
+		await store.setSwitch(
+			{ workspace: f.session, item: { kind: "party", party: person(f.anna) }, shown: false },
+			context,
+		);
+		assert.equal(await store.offers({ workspace: f.family, person: f.anna, party: person(sub) }, context), false);
+		assert.equal(await store.offers({ workspace: f.session, person: f.anna, party: person(sub) }, context), true);
+	});
+
+	it("the owner's picker offers everyone (decision 78)", async () => {
+		const stranger = await store.createPerson({ name: "Stranger", madeBy: ADMIN }, context);
+		await store.setOwner({ person: f.kim, owner: true }, context);
+		assert.equal(await store.offers({ person: f.kim, party: person(stranger) }, context), true);
+	});
+
+	it("a person who made someone still present stays with the source's cleanup (Astra must 4)", async () => {
+		const share: Source = { kind: "thing", thing: "share-2" };
+		const first = await store.createPerson({ name: "First", madeBy: share }, context);
+		const second = await store.createPerson({ name: "Second", madeBy: { kind: "person", person: first } }, context);
+		await store.putParty({ workspace: f.family, party: person(second), source: ADMIN }, context);
+		await store.deleteEverythingFrom({ source: share }, context);
+		const ids = storedRows(w.path, "persons").map(({ person: id }) => id);
+		assert.ok(ids.includes(first) && ids.includes(second));
+	});
+
+	it("each route of 'something left' keeps a person; the owner flag too (Opus S7)", async () => {
+		const share: Source = { kind: "thing", thing: "share-3" };
+		const [inGroup, source, manager, owner, nothing] = await Promise.all(
+			["inGroup", "source", "manager", "owner", "nothing"].map((name) =>
+				store.createPerson({ name, madeBy: share }, context),
+			),
+		);
+		await store.addToGroup({ group: f.kids, person: inGroup!, source: ADMIN }, context);
+		await store.putParty(
+			{ workspace: f.family, party: person(f.kim), source: { kind: "person", person: source! } },
+			context,
+		);
+		await store.setGroupManagers({ group: f.kids, parties: [person(manager!)] }, context);
+		await store.setOwner({ person: owner!, owner: true }, context);
+		await store.deleteEverythingFrom({ source: share }, context);
+		const ids = new Set(storedRows(w.path, "persons").map(({ person: id }) => String(id)));
+		assert.deepEqual(
+			[inGroup!, source!, manager!, owner!, nothing!].map((id) => ids.has(id)),
+			[true, true, true, true, false],
+		);
+	});
+
+	it("removeMember takes the rows people and plugins wrote, by the group and person, keeps a provider's (Astra must 5)", async () => {
+		const radius: Source = { kind: "identity", provider: "radius" };
+		await store.addToGroup({ group: f.parents, person: f.leo, source: { kind: "person", person: f.anna } }, context);
+		await store.addToGroup({ group: f.parents, person: f.leo, source: radius }, context);
+		await store.removeMember({ group: f.parents, person: f.leo }, context);
+		const rows = storedRows(w.path, "group-members").filter((row) => row.group === f.parents && row.person === f.leo);
+		assert.deepEqual(
+			rows.map((row) => row.sourceKey),
+			["identity/radius"],
+		);
+	});
+
+	it("a group's members come a page at a time; a manager through a group of theirs gets the calls", async () => {
+		for (let i = 0; i < 101; i++) {
+			const id = await store.createPerson({ name: `m${String(i).padStart(3, "0")}`, madeBy: ADMIN }, context);
+			await store.addToGroup({ group: f.kids, person: id, source: ADMIN }, context);
+		}
+		await store.setGroupManagers({ group: f.kids, parties: [group(f.parents)] }, context);
+		await as(f.leo, async (ctx) => {
+			const held = await ctx.get(Group, { group: f.kids });
+			assert.ok(held.addMember !== undefined);
+			assert.deepEqual([held.members.value.rows.length, held.members.value.moreAfter], [100, true]);
+			await held.more(ctx);
+			assert.equal(held.members.value.rows.length, 102);
+		});
+	});
+
+	it("a redeemed link keeps an entry there already, spends nothing for a person who does not exist (Opus S3)", async () => {
+		const link = await store.createInvite(
+			{ workspace: f.family, name: "x", as: "member", by: { kind: "person", person: f.anna } },
+			context,
+		);
+		assert.equal(await store.redeemInvite({ secret: link, person: "nobody" }, context), null);
+		assert.notEqual(await store.redeemInvite({ secret: link, person: f.kim }, context), null);
+		const entry = (await store.workspaceMembers.here.page({ workspace: f.family }, 100, context)).items.find(
+			({ party }) => party.kind === "person" && party.person === f.kim,
+		);
+		assert.deepEqual(entry?.source, ADMIN);
+		const gone = await store.createWorkspace(
+			{ kind: "things.workspace", name: "g", parent: f.pi, by: ADMIN },
+			context,
+		);
+		const into = await store.createInvite({ workspace: gone, name: "y", as: "member", by: ADMIN }, context);
+		await store.removeWorkspace({ workspace: gone }, context);
+		assert.equal(await store.redeemInvite({ secret: into }, context), null);
+	});
+
+	it("a link's group needs its own tick: refused to Leo, made for Anna (scenario 18, Opus S4)", async () => {
+		await assert.rejects(
+			store.createInvite(
+				{ workspace: f.family, name: "x", as: "member", group: f.parents, by: { kind: "person", person: f.leo } },
+				context,
+			),
+			(error: Error & { details?: { message?: { key: string } } }) =>
+				error.details?.message?.key === "groupNotManaged",
+		);
+		await store.createInvite(
+			{ workspace: f.family, name: "x", as: "member", group: f.parents, by: { kind: "person", person: f.anna } },
+			context,
+		);
+	});
+
+	it("a removed group leaves no manager rows of its own elsewhere, and no link naming it (Astra)", async () => {
+		await store.setGroupManagers({ group: f.kids, parties: [group(f.parents)] }, context);
+		const link = await store.createInvite(
+			{ workspace: f.family, name: "x", as: "member", group: f.parents, by: ADMIN },
+			context,
+		);
+		await store.removeGroup({ group: f.parents }, context);
+		assert.ok(!storedRows(w.path, "group-managers").some((row) => row.partyKey === `group/${f.parents}`));
+		assert.equal(await store.redeemInvite({ secret: link }, context), null);
 	});
 });

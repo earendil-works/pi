@@ -180,10 +180,17 @@ export const ThingsStore = local("things.store", {
 			one: obj({ person: str() }),
 			ofIds: obj({ persons: arr(str()) }),
 			owners: obj({}),
+			all: obj({}),
 		}),
-		groups: queries(GroupRow, { one: obj({ group: str() }), ofIds: obj({ groups: arr(str()) }) }),
-		groupManagers: queries(GroupManagerRow, { of: obj({ group: str() }) }),
-		groupMembers: queries(GroupMemberRow, { ofPerson: obj({ person: str() }) }),
+		groups: queries(GroupRow, { one: obj({ group: str() }), ofIds: obj({ groups: arr(str()) }), all: obj({}) }),
+		groupManagers: queries(GroupManagerRow, {
+			of: obj({ group: str() }),
+			among: obj({ group: str(), partyKeys: arr(str()) }),
+		}),
+		groupMembers: queries(GroupMemberRow, {
+			ofPerson: obj({ person: str() }),
+			of: obj({ group: str(), person: str() }),
+		}),
 		groupMembersNamed: queries(GroupMemberNameRow, { ofGroup: obj({ group: str() }) }),
 		/**
 		 * Makes a thing of `kind` in `workspace`: the kind's `create` hook first, with the new id (item 34), then one
@@ -289,9 +296,9 @@ export const ThingsStore = local("things.store", {
 		 * What Manage people's picker offers `person` in `workspace` (R18): the persons and groups present there and in
 		 * every workspace where they are present, whose name has `query` in it (any case).
 		 */
-		picker: method(obj({ workspace: str(), person: str(), query: str() }), arr(PartyInfo)),
+		picker: method(obj({ workspace: opt(str()), person: str(), query: str() }), arr(PartyInfo)),
 		/** Whether the picker offers `person` the party `party` in `workspace` (what `putParty` and `addMember` check). */
-		offers: method(obj({ workspace: str(), person: str(), party: Party }), bool()),
+		offers: method(obj({ workspace: opt(str()), person: str(), party: Party }), bool()),
 		/**
 		 * Writes an invite link; answers its secret (kept hashed only); `invalid` for a workspace or group that does not
 		 * exist.
@@ -303,6 +310,11 @@ export const ThingsStore = local("things.store", {
 		 */
 		redeemInvite: method(obj({ secret: str(), person: opt(str()) }), union([Invited, nul()])),
 		removeFromGroup: method(obj({ group: str(), person: str(), source: Source })),
+		/**
+		 * Takes `person` out of `group` in one commit: every row of theirs there but a provider's and a share's (theirs
+		 * to rewrite: they would come back).
+		 */
+		removeMember: method(obj({ group: str(), person: str() })),
 		/**
 		 * The cleanup when a source goes, one commit: what `source` wrote (grants, group members, workspace members), the
 		 * groups it manages with all naming them, and the persons it made of whom nothing else is left.
@@ -439,3 +451,13 @@ export type OwnerSeed = { readonly person: string; readonly name: string } | nul
  * as has the owner flag in the access index. Composed: the first contribution, `null` while there is none.
  */
 export const OwnerSeeds = defineRegistry<OwnerSeed, OwnerSeed>("things.owner-seed", { version: 1 });
+
+/**
+ * Whether group `group` is present for person `person`: present where they are present (the picker's rule, R18), so
+ * they may hold the group's object (1141 §7). Read when held; a change of presence meanwhile is not followed.
+ */
+export const GroupPresence = local("things.group-presence", {
+	version: 1,
+	params: { group: str(), person: str() },
+	members: { present: bool() },
+});
