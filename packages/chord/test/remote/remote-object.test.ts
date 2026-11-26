@@ -15,7 +15,7 @@ import {
 } from "../../src/host/index.ts";
 import { resolveWatchable } from "../../src/host/reference.ts";
 import { type Codec, type Link, memoryLinkPair } from "../../src/link/index.ts";
-import { binaryCodec, jsonPart, wireError } from "../../src/link/internal.ts";
+import { binaryCodec, jsonPart, type StateEntry, wireError } from "../../src/link/internal.ts";
 import { Path } from "../../src/remote/path.ts";
 import { RemoteObject } from "../../src/remote/remote-object.ts";
 import { constant } from "../../src/state/index.ts";
@@ -182,6 +182,81 @@ forEachCodec(() => {
 			await transported();
 			expect(peer.closed).toBe(true);
 			expect(errors.map(({ kind }) => kind)).toEqual(["protocol_error"]);
+		});
+	});
+
+	describe("a decoded state frame (reviews of 97f229c90)", () => {
+		/** A remote object of `count` members, bound, then sent one state frame of all of them through `observe`'s codec. */
+		const frame = async (count: number, observe: (members: StateEntry["members"]) => void, retired: number[]) => {
+			const names = Array.from({ length: count }, (_, index) => `v${String(index).padStart(3, "0")}`);
+			const Wide = remote("app.wide", {
+				version: 1,
+				params: {},
+				hostAddress: () => Server(),
+				state: Object.fromEntries(names.map((name) => [name, int()])) as Record<string, ReturnType<typeof int>>,
+			});
+			const codec: Codec = {
+				name: binaryCodec.name,
+				encode: (message) => binaryCodec.encode(message),
+				decode(bytes) {
+					const message = binaryCodec.decode(bytes);
+					if (message.kind === "state") for (const entry of message.holds) observe(entry.members);
+					return message;
+				},
+			};
+			const errors: HostError[] = [];
+			const client = createHost<TestPrincipal>({ onError: (error) => errors.push(error) });
+			await client.load([], context);
+			try {
+				const [near, far] = memoryLinkPair();
+				client.connect(near, { principal: { kind: "server" }, codec }, context);
+				const peer = new RawPeer(far, { codec: binaryCodec });
+				await peer.next("hello");
+				const ref = client.hold(Wide, {}, context) as unknown as {
+					readonly state: Reference<typeof Wide>["state"];
+					readonly [member: string]: unknown;
+				};
+				const { hold } = await peer.next("hold");
+				const values = names.map((_, member) => ({ member, value: jsonPart(0) }));
+				peer.send({ kind: "bound", holds: [{ hold, granted: [], members: values, failed: [] }] });
+				await transported();
+				const members = names.map((_, member) => ({ member, ops: jsonPart([["r", 7]]) }));
+				peer.send({ kind: "state", holds: [{ hold, retired, failed: [], members }] });
+				await transported();
+				expect([errors, ref.state.value.kind]).toEqual([[], "live"]);
+				expect((ref[names[0]!] as { readonly value: unknown }).value).toBe(7);
+			} finally {
+				await client.close(context);
+			}
+		};
+
+		it("reads each member index once from what the codec decoded", async () => {
+			let reads = 0;
+			await frame(
+				32,
+				(members) => {
+					for (const entry of members) {
+						const index = entry.member;
+						Object.defineProperty(entry, "member", {
+							get() {
+								reads++;
+								return index;
+							},
+						});
+					}
+				},
+				[],
+			);
+			expect(reads).toBeLessThanOrEqual(32 * 5);
+		});
+
+		it("calls no method of a codec's list class the base did not (a retirement beside a change)", async () => {
+			class Packed<T> extends Array<T> {
+				override some(): boolean {
+					throw new Error("the list only supports its decoding operations");
+				}
+			}
+			await frame(2, (members) => void Object.setPrototypeOf(members, Packed.prototype), [0]);
 		});
 	});
 

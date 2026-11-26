@@ -758,7 +758,10 @@ export class RemoteObject implements Target {
 			// failed member keeps it for its next value).
 			if (retirements !== undefined) {
 				for (const target of retirements) {
-					if (!updates.some((update) => update.target === target)) target.retireAlone();
+					// By index: `updates` is made by the entry's `map`, of whatever class a codec gave its list.
+					let changed = false;
+					for (let at = 0; at < updates.length && !changed; at++) changed = updates[at]!.target === target;
+					if (!changed) target.retireAlone();
 				}
 			}
 		};
