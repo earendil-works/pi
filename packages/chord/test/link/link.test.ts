@@ -1,3 +1,4 @@
+import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT } from "../../src/context/index.ts";
 import { createHost } from "../../src/host/index.ts";
@@ -21,21 +22,29 @@ describe("memory links", () => {
 		expect(got).toEqual([1, 2, 3]);
 	});
 
-	it("deliver each message in a microtask of its own, queued when it was sent: others keep their place between them", async () => {
-		const [a, b] = memoryLinkPair();
-		const seen: string[] = [];
-		b.onMessage((message) => {
-			seen.push(`message ${message[0]}`);
-			// Sent back while delivering: its own microtask, after the ones queued before it.
-			if (message[0] === 1) b.send(bytes(9));
-			queueMicrotask(() => seen.push(`after ${message[0]}`));
+	it("keep no delivered message while later ones wait: a stream two deep (review of b82d506ea)", async () => {
+		const gc = runInNewContext("gc") as () => void;
+		const MiB = 1024 * 1024;
+		const [sender, receiver] = memoryLinkPair();
+		gc();
+		const before = process.memoryUsage().arrayBuffers;
+		const done = Promise.withResolvers<number>();
+		let delivered = 0;
+		receiver.onMessage(() => {
+			delivered++;
+			if (delivered < 80) {
+				sender.send(new Uint8Array(MiB));
+				return;
+			}
+			// One message still waits: of the 80 MiB sent, only it and the one being delivered are reachable (the bound leaves
+			// room for what the test runner keeps; the inbox kept all 80).
+			gc();
+			done.resolve(process.memoryUsage().arrayBuffers - before);
 		});
-		a.onMessage((message) => seen.push(`back ${message[0]}`));
-		a.send(bytes(1));
-		queueMicrotask(() => seen.push("between"));
-		a.send(bytes(2));
-		await flushed();
-		expect(seen).toEqual(["message 1", "between", "message 2", "back 9", "after 1", "after 2"]);
+		sender.send(new Uint8Array(MiB));
+		sender.send(new Uint8Array(MiB));
+		expect(await done.promise).toBeLessThan(40 * MiB);
+		sender.close();
 	});
 
 	it("close this end at once and the peer one task later; send after close is a no-op", async () => {

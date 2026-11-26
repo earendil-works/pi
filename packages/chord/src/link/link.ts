@@ -85,28 +85,11 @@ export abstract class LinkEnd implements Link {
  */
 class MemoryLink extends LinkEnd {
 	peer: MemoryLink | undefined;
-	/**
-	 * Messages sent to this end and not delivered yet, oldest first from `#next`: each send queues one delivery, which
-	 * takes the oldest (one function for all of them: a closure per message cost 0.1 KiB), so every message is still
-	 * delivered in a microtask of its own, queued when it was sent.
-	 */
-	#inbox: Uint8Array[] = [];
-	#next = 0;
-	readonly #deliverNext = (): void => {
-		const message = this.#inbox[this.#next]!;
-		this.#next++;
-		if (this.#next === this.#inbox.length) {
-			this.#inbox.length = 0;
-			this.#next = 0;
-		}
-		this.deliver(message);
-	};
 
 	send(message: Uint8Array): void {
 		if (this.closed) return;
 		const peer = this.peer!;
-		peer.#inbox.push(message);
-		queueMicrotask(peer.#deliverNext);
+		queueMicrotask(() => peer.deliver(message));
 	}
 
 	close(): void {
