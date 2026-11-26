@@ -22,21 +22,32 @@
 			"source": "./src/api/v1/worker.ts",
 			"types": "./dist/src/api/v1/worker.d.ts",
 			"import": "./dist/src/api/v1/worker.js"
+		},
+		"./v1/web": {
+			"source": "./src/api/v1/web.ts",
+			"types": "./dist/src/api/v1/web.d.ts",
+			"import": "./dist/src/api/v1/web.js"
+		},
+		"./v1/testing": {
+			"source": "./src/api/v1/testing.ts",
+			"types": "./dist/src/api/v1/testing.d.ts",
+			"import": "./dist/src/api/v1/testing.js"
 		}
 	},
 	"files": [
 		"dist",
 		"plugins",
-		"!plugins/**/*.test.ts",
+		"!plugins/*/test",
 		"src/api",
-		"src/principals.ts",
+		"src/app.ts",
+		"src/web",
 		"README.md"
 	],
 	"scripts": {
 		"build": "node --disable-warning=ExperimentalWarning scripts/build-release.ts",
 		"check": "node ../../scripts/biome-check.mjs && tsc --noEmit",
 		"format": "node ../../scripts/biome-check.mjs --write",
-		"test": "node --conditions=source --disable-warning=ExperimentalWarning --test --test-timeout=120000 --test-force-exit --test-reporter=dot \"test/*.test.ts\" \"test/kit/*.test.ts\" \"plugins/**/*.test.ts\"",
+		"test": "node --conditions=source --disable-warning=ExperimentalWarning --test --test-timeout=120000 --test-force-exit --test-reporter=dot \"test/*.test.ts\" \"plugins/*/test/*.test.ts\"",
 		"test:release": "node --conditions=source --disable-warning=ExperimentalWarning --test --test-concurrency=1 --test-timeout=900000 --test-force-exit \"test/release/*.test.ts\""
 	},
 	"engines": {
@@ -44,13 +55,21 @@
 	},
 	"dependencies": {
 		"@earendil-works/chord": "1.6.1",
+		"@earendil-works/design-tokens": "0.1.0",
+		"@earendil-works/elanor-fonts": "0.1.0",
+		"@earendil-works/elanor-icons-react": "0.1.0",
+		"@earendil-works/elanor-react": "0.1.1",
+		"@earendil-works/pi-ai": "1.6.1",
+		"@earendil-works/pi-durable": "1.6.1",
 		"@earendil-works/pi-schema": "1.6.1",
 		"@earendil-works/pi-telemetry": "1.6.1",
 		"esbuild": "0.28.2",
+		"react": "19.3.0",
+		"react-dom": "19.3.0",
 		"ws": "8.21.0"
 	},
 	"devDependencies": {
-		"@earendil-works/pi-ai": "1.6.1",
-		"@earendil-works/pi-durable": "1.6.1"
+		"@types/react": "19.2.14",
+		"@types/react-dom": "19.2.3"
 	}
 }

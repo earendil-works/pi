@@ -1,21 +1,30 @@
-// The skeleton's numbers (ERNDL-954), with p3 launched as a user starts it, from the source checkout: the server's
-// launch to listening (cold: the first, an empty compile cache; then warm), a session worker's start (the first after
-// the server's start, then warm), and memory as `performance.md` reads it: USS (what only that process holds) of the
-// server and of idle workers, each read settled (until it moves less than 0.25 MiB over 4 s, at most 40 s).
+// The skeleton's numbers (ERNDL-954), with p3 launched as its owner starts it, each phase timed at the boundary its
+// label names, in the order a Pi meets them:
+// - the server's launch to ready: `p3 server` spawned until it printed its port and owner link; the first launch cold
+//   (the release: an empty Node compile cache), then warm;
+// - a session worker's start: a hold of its `SessionWorker` until the object is there (admission, fork, load,
+//   handshake); the first after the start, before any apply, also builds the worker plugins (their first need);
+// - an apply with nothing changed (the owner's `apply` over the data directory's socket until its answer; one that is
+//   not a rollout to every host ends the bench): right after a launch, before any worker, where it builds the worker
+//   plugins (the rollout's set of every kind), and with the workers running, where it builds nothing;
+// - memory: USS of the server and of idle workers, each read settled (`performance.md`).
+// Times are medians of 20 runs with min and max, the first (cold) run apart.
 // Run from apps/p3, with Node 26: node --conditions=source --disable-warning=ExperimentalWarning bench/skeleton.ts
-// [--release <install directory>]: with it, p3 as the release installed there (`npm run release:p3:local`) runs.
+// [--release <dir>]: with it, the release `npm run release:p3:local -- --out <dir>` installed in `<dir>/install` runs.
+// Every launched server is stopped however the bench ends (`launched.ts`).
 
-import { type ChildProcess, spawn } from "node:child_process";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { parseArgs } from "node:util";
-import { createHost, type Host, webSocketLink } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
-import type { P3Principal } from "@earendil-works/p3/v1";
+import { ownerClient } from "@earendil-works/p3/v1/testing";
 import { Sessions, SessionWorker } from "../plugins/sessions/contract.ts";
 import { COMMAND } from "../src/install.ts";
+import { askServer, type Reply, type ServerAnswer } from "../src/local-socket.ts";
+import { childrenOf, coding } from "../test/support.ts";
+import { launchTracked, withServer } from "./launched.ts";
 
 /** Node's arguments that run the `p3` command: the release installed in `--release`, else this checkout's source. */
 const { release } = parseArgs({ options: { release: { type: "string" } } }).values;
@@ -25,40 +34,52 @@ const P3 =
 		: [join(release, "install", "node_modules", "@earendil-works", "p3", "dist", "p3.js")];
 console.log(`p3 from ${release === undefined ? "source" : `the release in ${release}`}, Node ${process.versions.node}`);
 
-/** How many launches and worker starts are measured. */
-const RUNS = 10;
-
-/** How many idle workers' memory is read. */
-const WORKERS = 10;
+/** How many warm launches and worker starts are measured (the cold first comes on top). */
+const RUNS = 20;
 
 const root = await mkdtemp(join(tmpdir(), "p3-bench-"));
+// The release enables Node's compile cache: a directory of the bench's own, empty for the cold launch. A source run
+// has none (as a checkout's `p3`), whatever this shell set.
+const env =
+	release === undefined
+		? { ...process.env, NODE_COMPILE_CACHE: undefined }
+		: { ...process.env, NODE_COMPILE_CACHE: join(root, "compile-cache") };
 try {
 	const launches: number[] = [];
-	for (let i = 0; i < RUNS; i++) {
-		const server = await launch(join(root, `launch-${i % 2}`));
-		launches.push(server.listening);
-		await server.stop();
+	const firstApplies: number[] = [];
+	for (let i = 0; i <= RUNS; i++) {
+		const started = performance.now();
+		const server = await launchTracked(P3, join(root, `launch-${i % 2}`), env);
+		launches.push(performance.now() - started);
+		await withServer(server, async () => firstApplies.push(await apply(server.dataDir)));
 	}
-	line("server: launch to listening, cold (first)", `${launches[0]!.toFixed(0)} ms`);
-	line("server: launch to listening, warm", stats(launches.slice(1)));
+	line("server: launch to ready, cold (first)", `${launches[0]!.toFixed(0)} ms`);
+	line("server: launch to ready, warm", stats(launches.slice(1)));
+	line("apply after the start, no worker (builds)", stats(firstApplies.slice(1), 1));
 
-	const server = await launch(join(root, "pi"));
+	const server = await launchTracked(P3, join(root, "pi"), env);
 	try {
-		const client = await ownerClient(server.dataDir, server.port);
+		const client = await ownerClient(server.dataDir, server.port, context, 30_000);
 		const sessions = await client.get(Sessions, {}, context);
 		const starts: number[] = [];
 		const held: { release(): void }[] = [];
-		for (let i = 0; i < Math.max(RUNS, WORKERS); i++) {
-			const id = await sessions.create({ title: `s${i}` }, context);
+		for (let i = 0; i <= RUNS; i++) {
+			const id = await sessions.create(coding(`s${i}`), context);
 			const started = performance.now();
 			held.push(await client.get(SessionWorker, { session: id }, context));
 			starts.push(performance.now() - started);
 		}
-		line("worker: start, the first after the server's", `${starts[0]!.toFixed(0)} ms`);
-		line("worker: start, warm", stats(starts.slice(1)));
+		line("worker: start to its first object, the first (builds)", `${starts[0]!.toFixed(0)} ms`);
+		line("worker: start to its first object, warm", stats(starts.slice(1)));
+		const applies: number[] = [];
+		for (let i = 0; i < RUNS; i++) applies.push(await apply(server.dataDir));
+		line(`apply, nothing changed, ${held.length} workers running`, stats(applies, 1));
 		line("server, settled", `USS ${mib(await settled(server.pid))}`);
-		const workers = await childrenOf(server.pid);
-		const idle = await Promise.all(workers.slice(0, WORKERS).map(settled));
+		const workers = (await childrenOf(server.pid)).filter(({ args }) =>
+			args.some((arg) => /[/\\]worker\.(js|ts)$/.test(arg)),
+		);
+		if (workers.length !== held.length) throw new Error(`bench: ${workers.length} workers run, not ${held.length}`);
+		const idle = await Promise.all(workers.map(({ pid }) => settled(pid)));
 		line(`idle worker, settled (median of ${idle.length})`, `USS ${mib(median(idle))}`);
 		for (const each of held) each.release();
 		await client.close(context);
@@ -69,44 +90,36 @@ try {
 	await rm(root, { recursive: true, force: true });
 }
 
-/** A server launched in the foreground on `dataDir`: its pid, port and how long it took to listen. */
-async function launch(dataDir: string) {
+/** The time of an apply over `dataDir`'s socket, as `p3 apply` asks it; throws unless it rolled out to every host. */
+async function apply(dataDir: string): Promise<number> {
 	const started = performance.now();
-	const child = spawn(process.execPath, [...P3, "server", "--dir", dataDir, "--port", "0"], {
-		stdio: ["ignore", "pipe", "inherit"],
-	});
-	const port = await new Promise<number>((resolve, reject) => {
-		let out = "";
-		child.stdout?.on("data", (chunk: Buffer) => {
-			out += chunk.toString();
-			const found = /port (\d+)\. Open/.exec(out);
-			if (found !== null) resolve(Number(found[1]));
-		});
-		child.once("exit", (code) => reject(new Error(`p3 server exited with ${code}`)));
-	});
-	return { pid: child.pid!, port, dataDir, listening: performance.now() - started, stop: () => stop(child) };
+	const applied = await askServer(dataDir, { kind: "command", name: "apply" }, 60_000);
+	const ms = performance.now() - started;
+	rolledOut(applied);
+	return ms;
 }
 
-/** Stops `child` with `SIGTERM` and waits for its exit. */
-async function stop(child: ChildProcess): Promise<void> {
-	const exited = new Promise((resolve) => child.once("exit", resolve));
-	child.kill("SIGTERM");
-	await exited;
-}
+/** What the control plugin's `apply` answers of one host (`plugins/control/server.ts`). */
+type AppliedHost = {
+	readonly host: string;
+	readonly failed?: readonly string[];
+	readonly stopped?: true;
+	readonly error?: string;
+};
 
-/** A client of the server on `port`, signed in as the owner with the owner token file. */
-async function ownerClient(dataDir: string, port: number): Promise<Host<P3Principal>> {
-	const token = (await readFile(join(dataDir, "owner-token"), "utf8")).trim();
-	// Node's WebSocket (undici) takes an init object with headers; the DOM type knows only protocols.
-	const init = { headers: { authorization: `Bearer ${token}` } } as unknown as string[];
-	const client = createHost<P3Principal>({ readyTimeout: 30_000, onError: (error) => console.error(error) });
-	client.connect(
-		webSocketLink(new WebSocket(`ws://127.0.0.1:${port}/chord`, init)),
-		{ principal: { kind: "server" } },
-		context,
-	);
-	await client.load([], context);
-	return client;
+/** Throws unless `reply` is an apply's answer that rolled out to every host with no plugin failed. */
+function rolledOut(reply: Reply<ServerAnswer>): void {
+	if (reply.kind === "answered" && reply.answer.kind === "answer") {
+		// The control plugin's answer to `apply`.
+		const { steps, stopped } = reply.answer.value as {
+			readonly steps: readonly { readonly hosts: readonly AppliedHost[] }[];
+			readonly stopped: string | null;
+		};
+		const hosts = steps.flatMap((step) => step.hosts);
+		const failed = hosts.some(({ failed, stopped, error }) => (failed?.length ?? 0) > 0 || stopped || error);
+		if (stopped === null && !failed) return;
+	}
+	throw new Error(`bench: the apply failed: ${JSON.stringify(reply)}`);
 }
 
 /** The USS of `pid` in KiB once it settled: it moved less than 0.25 MiB over 4 s, or 40 s passed. */
@@ -128,25 +141,14 @@ async function uss(pid: number): Promise<number> {
 	return kb("Private_Clean") + kb("Private_Dirty");
 }
 
-/** The children of `pid`: every process whose parent it is (`/proc/*\/stat`; Android has no `children` file). */
-async function childrenOf(pid: number): Promise<number[]> {
-	const children: number[] = [];
-	for (const entry of await readdir("/proc")) {
-		if (!/^\d+$/.test(entry)) continue;
-		const stat = await readFile(`/proc/${entry}/stat`, "utf8").catch(() => "");
-		const parent = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
-		if (parent === pid) children.push(Number(entry));
-	}
-	return children;
-}
-
 function median(values: readonly number[]): number {
 	const sorted = [...values].sort((a, b) => a - b);
 	return sorted[Math.floor(sorted.length / 2)]!;
 }
 
-function stats(values: readonly number[]): string {
-	return `median ${median(values).toFixed(0)} ms (min ${Math.min(...values).toFixed(0)}, max ${Math.max(...values).toFixed(0)}, n ${values.length})`;
+function stats(values: readonly number[], digits = 0): string {
+	const ms = (value: number) => value.toFixed(digits);
+	return `median ${ms(median(values))} ms (min ${ms(Math.min(...values))}, max ${ms(Math.max(...values))}, n ${values.length})`;
 }
 
 function mib(kib: number): string {
@@ -154,5 +156,5 @@ function mib(kib: number): string {
 }
 
 function line(name: string, value: string): void {
-	console.log(`${name.padEnd(48)}${value}`);
+	console.log(`${name.padEnd(56)}${value}`);
 }

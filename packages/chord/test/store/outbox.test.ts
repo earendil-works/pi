@@ -35,7 +35,7 @@ async function onFile() {
 	directory = await mkdtemp(join(tmpdir(), "chord-outbox-"));
 	const path = join(directory, "store.sqlite");
 	return async (outbox?: boolean) =>
-		(await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context, { outbox })) as ChordStore;
+		await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context, { outbox });
 }
 
 describe("the outbox", () => {
@@ -105,7 +105,7 @@ describe("the outbox", () => {
 		const transaction = db.transaction.bind(db);
 		const entered = Promise.withResolvers<void>();
 		const gate = Promise.withResolvers<void>();
-		const store = (await openStore(sqliteBackend(db), context, { outbox: true })) as ChordStore;
+		const store = await openStore(sqliteBackend(db), context, { outbox: true });
 		await created(store);
 		// The trim's DELETE committed; its transaction has not returned (the floor in memory is still 0).
 		db.transaction = async (fn) => {
@@ -126,7 +126,7 @@ describe("the outbox", () => {
 
 	it("a trim waits for a read in flight: the read gets the commits it was admitted for", async () => {
 		const db = await openNodeSqliteDatabase(":memory:");
-		const store = (await openStore(sqliteBackend(db), context, { outbox: true })) as ChordStore;
+		const store = await openStore(sqliteBackend(db), context, { outbox: true });
 		await created(store);
 		const all = db.all.bind(db);
 		const entered = Promise.withResolvers<void>();

@@ -1,0 +1,126 @@
+/*
+ * The pane layout on a phone: a row of chips that scrolls sideways (the shown one filled), the shown pane below
+ * filling the rest, sliding in from the side it came from (not when the person asked for reduced motion).
+ */
+
+.layout {
+	display: flex;
+	min-inline-size: 0;
+	min-block-size: 0;
+	flex: 1 1 auto;
+	flex-direction: column;
+}
+
+.chips {
+	display: flex;
+	flex: none;
+	gap: var(--semantic-dimension-space-gap-x-small);
+	padding: var(--semantic-dimension-space-padding-xx-small) var(--semantic-dimension-space-padding-small);
+	overflow-x: auto;
+	border-block-end: var(--semantic-dimension-border-width-small) solid var(--semantic-color-border-secondary);
+	scrollbar-width: none;
+}
+
+.chip {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	border: var(--semantic-dimension-border-width-small) solid var(--semantic-color-border-secondary);
+	border-radius: var(--semantic-dimension-radius-full);
+	background: var(--semantic-color-background-fill-ghost-neutral);
+}
+
+.chip[data-active] {
+	border-color: var(--semantic-color-text-primary);
+	background: var(--semantic-color-background-fill-ghost-neutral-active);
+}
+
+.chipButton {
+	min-block-size: var(--semantic-dimension-size-medium);
+	padding-inline: var(--semantic-dimension-space-control-padding-inline-small);
+	border: 0;
+	background: none;
+	color: var(--semantic-color-text-secondary);
+	font: var(--semantic-typography-ui-secondary);
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.chip[data-active] .chipButton {
+	color: var(--semantic-color-text-primary);
+	font-weight: var(--semantic-font-weight-ui-selected);
+}
+
+.chip:has(.close) .chipButton {
+	padding-inline-end: 0;
+}
+
+.close {
+	display: grid;
+	inline-size: var(--semantic-dimension-size-medium);
+	block-size: var(--semantic-dimension-size-medium);
+	place-items: center;
+	padding: 0;
+	border: 0;
+	border-radius: var(--semantic-dimension-radius-full);
+	background: none;
+	color: var(--semantic-color-icon-secondary);
+	cursor: pointer;
+}
+
+.close > svg {
+	inline-size: var(--semantic-dimension-size-icon);
+	block-size: var(--semantic-dimension-size-icon);
+}
+
+.chipButton:focus-visible,
+.close:focus-visible {
+	outline: var(--semantic-dimension-border-width-focus-ring) solid var(--semantic-color-focus-ring);
+	outline-offset: calc(-1 * var(--semantic-dimension-border-width-focus-ring));
+}
+
+.body {
+	display: flex;
+	min-block-size: 0;
+	flex: 1 1 auto;
+	flex-direction: column;
+	overflow: hidden;
+}
+
+/*
+ * Sideways moves are the layout's (a swipe), up and down still scroll the pane, on every element of it (touch-action
+ * is not inherited, and a scroller inside would otherwise take them). An element of a pane that sets its own (a
+ * canvas: none, a code block scrolled sideways: pan-x) keeps its gestures: `:where` weighs nothing.
+ */
+.body,
+:where(.body *) {
+	touch-action: pan-y pinch-zoom;
+}
+
+.body[data-slide="next"] {
+	animation: from-end 180ms ease-out;
+}
+
+.body[data-slide="previous"] {
+	animation: from-start 180ms ease-out;
+}
+
+@keyframes from-end {
+	from {
+		opacity: 0.4;
+		transform: translateX(30%);
+	}
+}
+
+@keyframes from-start {
+	from {
+		opacity: 0.4;
+		transform: translateX(-30%);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.body[data-slide] {
+		animation: none;
+	}
+}

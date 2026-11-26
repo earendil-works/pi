@@ -1,115 +1,208 @@
-// The local runner: each session's worker as a process on this machine (`worker-process.ts`). Per session one
-// operation at a time: a start waits for the previous worker's exit. A worker that crashes fails its session until
-// `retry` or a rollout (no restart loop); one that stopped itself idle, or was stopped, starts again on the next hold.
-// The rollout step ships changed scripts to every running worker and clears the failures.
+// The local runner: each session's worker as a process on this machine (`worker-process.ts`), one operation at a time
+// per session (a start waits for the previous worker's exit). A crash fails the session until `retry` or a rollout; a
+// stop suspends it until `retry`. A rollout reaches every running or starting worker, a start that has not forked yet
+// included. `close` refuses new starts, forks nothing for a start under way and stops every worker at once, not after
+// what its session queued: a start queued behind a worker that no longer answers would wait for its exit forever.
 
 import { join } from "node:path";
-import { type Context, type Link, Session } from "@earendil-works/p3/v1";
-import type { PluginScript, ServerRuntime, WorkerRunner, WorkerState } from "@earendil-works/p3/v1/server";
-import { keyOf, WorkerProcess } from "./worker-process.ts";
+import { type Address, type Context, type Link, reportError, Session } from "@earendil-works/p3/v1";
+import {
+	clearStaleLock,
+	type PluginScript,
+	type RolloutHost,
+	type ServerRuntime,
+	type WorkerRunner,
+	type WorkerState,
+} from "@earendil-works/p3/v1/server";
+import { WorkerProcess } from "./worker-process.ts";
 
-/** One session's worker: the tail of its operations (one at a time), its worker process, its failure. */
-type WorkerQueue = { tail: Promise<unknown>; worker: WorkerProcess | undefined; failed: string | undefined };
+/**
+ * One session's operations, one at a time (`tail`, and how many are `pending`), its worker process, the start under
+ * way that has not forked yet (`forking`: its worker, `undefined` when it forked none) and its failure; kept only while
+ * it has one of them.
+ */
+type WorkerQueue = {
+	readonly id: string;
+	tail: Promise<void>;
+	pending: number;
+	worker: WorkerProcess | undefined;
+	forking: Promise<WorkerProcess | undefined> | undefined;
+	failed: string | undefined;
+};
 
-/** The local runner over `runtime` (read at each use: a reload of the base never happens, a plugin's may). */
+/** How long a worker may take to be ready before it is killed, by default. */
+const START_MS = 60_000;
+
+/**
+ * The local runner over `runtime` (read at each use: a reload of the base never happens, a plugin's may); a worker
+ * not ready within `startMs` is killed.
+ */
 export class LocalRunner implements WorkerRunner {
 	readonly #runtime: () => ServerRuntime;
-	readonly #workers = new Map<string, WorkerQueue>();
+	readonly #startMs: number;
+	readonly #queues = new Map<string, WorkerQueue>();
+	/** Set once `close` started: nothing forks after it. */
+	#closing = false;
 
-	constructor(runtime: () => ServerRuntime) {
+	constructor(runtime: () => ServerRuntime, startMs = START_MS) {
 		this.#runtime = runtime;
+		this.#startMs = startMs;
 	}
 
-	start(address: { readonly params: { readonly id: string } }, context: Context): Promise<Link> {
+	start(address: Address<typeof Session>, context: Context): Promise<Link> {
+		if (this.#closing) return Promise.reject(closed());
 		const { id } = address.params;
 		const queue = this.#queueOf(id);
 		return this.#enqueue(queue, async () => {
 			if (queue.worker !== undefined) await queue.worker.gone;
 			if (queue.failed !== undefined) throw new Error(`p3: session ${id}: worker ${queue.failed}`);
-			const runtime = this.#runtime();
-			const worker = new WorkerProcess({
-				session: id,
-				entry: runtime.worker.entry,
-				execArgv: runtime.worker.execArgv,
-				env: { NODE_COMPILE_CACHE: join(runtime.dataDir, "cache", "node") },
-				dir: join(runtime.dataDir, "workers", id),
-				idleMs: runtime.workerIdleMs,
-				scripts: await runtime.workerScripts(context),
-				store: runtime.store,
-			});
-			queue.worker = worker;
-			void worker.gone.then((exit) => {
-				if (queue.worker === worker) queue.worker = undefined;
-				if (exit.kind === "crash") {
-					queue.failed = exit.reason;
-					console.error(`p3 runner: ${id}: worker ${exit.reason}`);
-				}
-			});
-			return worker.link;
+			const forking = this.#fork(queue, context);
+			queue.forking = forking.catch(() => undefined);
+			try {
+				return (await forking).link;
+			} finally {
+				queue.forking = undefined;
+			}
 		});
 	}
 
 	async stop(id: string): Promise<void> {
-		const queue = this.#workers.get(id);
+		// A held session's route would start it again once its link drops: suspended until `retry` or its last release.
+		this.#runtime().sessions.suspend(Session({ id }));
+		const queue = this.#queues.get(id);
 		if (queue === undefined) return;
-		await this.#enqueue(queue, async () => {
-			await queue.worker?.stop();
-		});
+		// The live worker at once: a start queued behind its exit waits for it. Then whatever that start forks.
+		void queue.worker?.stop();
+		await this.#enqueue(queue, async () => void (await queue.worker?.stop()));
 	}
 
 	retry(id: string): void {
-		const queue = this.#workers.get(id);
-		if (queue !== undefined) queue.failed = undefined;
+		const queue = this.#queues.get(id);
+		if (queue !== undefined) {
+			queue.failed = undefined;
+			this.#forget(queue);
+		}
 		this.#runtime().sessions.retry(Session({ id }));
 	}
 
 	state(): Readonly<Record<string, WorkerState>> {
 		const state: Record<string, WorkerState> = {};
-		for (const [id, { worker, failed }] of this.#workers) {
+		for (const [id, { worker, failed }] of this.#queues) {
 			if (failed !== undefined) state[id] = { status: "failed", reason: failed };
-			else if (worker !== undefined) state[id] = { status: worker.status, pid: worker.pid };
+			else if (worker !== undefined) state[id] = stateOf(worker);
 		}
 		return state;
 	}
 
-	readonly rollout = {
-		name: "workers",
-		kinds: ["worker"],
-		reload: async (_built: unknown, context: Context) => {
-			// A rollout clears the failures: the new scripts may be the fix.
-			for (const [id, queue] of this.#workers) if (queue.failed !== undefined) this.retry(id);
-			const scripts = await this.#runtime().workerScripts(context);
-			return { hosts: await Promise.all(this.#reloads(scripts)) };
-		},
-	};
-
-	/** Stops every worker: the runner's object ends. */
-	async close(): Promise<void> {
-		await Promise.all([...this.#workers.values()].map(({ worker }) => worker?.stop()));
+	pids(): readonly number[] {
+		return [...this.#queues.values()].flatMap(({ worker }) => (worker?.alive === true ? [worker.pid] : []));
 	}
 
-	/** Ships `scripts` to every running worker that runs another set: one result each. */
-	#reloads(scripts: readonly PluginScript[]) {
-		const key = keyOf(scripts);
-		return [...this.#workers]
-			.filter(([, { worker }]) => worker?.status === "running" && worker.shipped !== key)
-			.map(([id, { worker }]) => worker!.reload(id, scripts));
+	async reload(_built: unknown, context: Context) {
+		// A rollout clears the failures: the new scripts may be the fix.
+		for (const [id, queue] of this.#queues) if (queue.failed !== undefined) this.retry(id);
+		const scripts = await this.#runtime().workerScripts(context);
+		const entries = await Promise.all([...this.#queues.values()].map((queue) => this.#reloadOf(queue, scripts)));
+		return { hosts: entries.filter((entry) => entry !== undefined) };
+	}
+
+	/**
+	 * Refuses new starts (a start under way forks nothing), then stops every worker at once and resolves once each exit
+	 * counted.
+	 */
+	async close(): Promise<void> {
+		this.#closing = true;
+		await Promise.all([...this.#queues.values()].map((queue) => this.#closeWorker(queue)));
+	}
+
+	/**
+	 * Forks session `queue.id`'s worker with the current scripts. They are read last: nothing waits between that read
+	 * and the fork, and a rollout meanwhile waits for `forking`.
+	 */
+	async #fork(queue: WorkerQueue, context: Context): Promise<WorkerProcess> {
+		const { id } = queue;
+		const runtime = this.#runtime();
+		const dir = join(runtime.dataDir, "workers", id);
+		const lock = `p3-session:${dir}`;
+		// Where the lock is a file (macOS, the BSDs), one a killed worker left fails closed: the runner, the one starter of
+		// a session's workers, one start at a time, clears it.
+		await clearStaleLock(lock, context);
+		const scripts = await runtime.workerScripts(context);
+		// After the last wait, in the step that forks: a close that started meanwhile found no worker to stop.
+		if (this.#closing) throw closed();
+		const start = { kind: "start", session: id, dir, lock, idleMs: runtime.workerIdleMs, scripts } as const;
+		const worker = new WorkerProcess(runtime, start, this.#startMs, context);
+		queue.worker = worker;
+		void worker.gone.then((exit) => {
+			if (queue.worker === worker) queue.worker = undefined;
+			if (exit.kind === "crash") {
+				queue.failed = exit.reason;
+				reportError(`p3 runner: ${id}: worker`, exit.reason, context);
+			}
+			this.#forget(queue);
+		});
+		return worker;
+	}
+
+	/**
+	 * Stops `queue`'s worker for the runner's close. One stopped before it was ready may have had its link closed before
+	 * its handshake, which fails its holders until a new resolve: the route resolves it again, then on the next runner.
+	 */
+	async #closeWorker(queue: WorkerQueue): Promise<void> {
+		const worker = queue.worker;
+		if (worker === undefined) return;
+		const starting = worker.status === "starting";
+		await worker.stop();
+		if (starting) this.#runtime().sessions.retry(Session({ id: queue.id }));
+	}
+
+	/**
+	 * Ships `scripts` to `queue`'s worker unless it stops: once a start under way forked (it may have read the scripts
+	 * before this rollout), and after the worker's earlier reloads. No result when it runs them already.
+	 */
+	async #reloadOf(queue: WorkerQueue, scripts: readonly PluginScript[]): Promise<RolloutHost | undefined> {
+		const worker = queue.worker ?? (await queue.forking);
+		if (worker === undefined || worker.status === "stopping") return undefined;
+		return worker.reload(scripts);
 	}
 
 	/** Session `id`'s worker queue, made by its first use. */
 	#queueOf(id: string): WorkerQueue {
-		let queue = this.#workers.get(id);
+		let queue = this.#queues.get(id);
 		if (queue === undefined) {
-			queue = { tail: Promise.resolve(), worker: undefined, failed: undefined };
-			this.#workers.set(id, queue);
+			queue = { id, tail: Promise.resolve(), pending: 0, worker: undefined, forking: undefined, failed: undefined };
+			this.#queues.set(id, queue);
 		}
 		return queue;
 	}
 
-	/** Runs `operation` after the session's earlier ones. */
+	/** Runs `operation` after the session's earlier ones; the tail keeps only that it ended, never its value. */
 	#enqueue<T>(queue: WorkerQueue, operation: () => Promise<T>): Promise<T> {
+		queue.pending++;
 		const run = queue.tail.then(operation);
-		queue.tail = run.catch(() => {});
+		const done = (): void => {
+			queue.pending--;
+			this.#forget(queue);
+		};
+		queue.tail = run.then(done, done);
 		return run;
 	}
+
+	/** Forgets `queue` once it has no operation, no worker and no failure. */
+	#forget(queue: WorkerQueue): void {
+		if (queue.pending > 0 || queue.worker !== undefined || queue.failed !== undefined) return;
+		if (this.#queues.get(queue.id) === queue) this.#queues.delete(queue.id);
+	}
+}
+
+/** `worker`'s state: a starting one that has not said it holds its session's lock yet waits for it. */
+function stateOf(worker: WorkerProcess): WorkerState {
+	const { status, pid } = worker;
+	if (status === "starting" && !worker.locked) return { status, pid, waiting: "lock" };
+	return { status, pid };
+}
+
+/** What a start rejects with once the runner closes. */
+function closed(): Error {
+	return new Error("p3: the runner closed");
 }

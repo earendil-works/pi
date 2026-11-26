@@ -9,7 +9,7 @@ import { int, str } from "../../src/contracts/index.ts";
 import { openNodeSqliteDatabase } from "../../src/sqlite/node.ts";
 import { sqliteBackend } from "../../src/store/backend.ts";
 import type { StagedWrite } from "../../src/store/step.ts";
-import { type ChordStore, openStore } from "../../src/store/store.ts";
+import { openStore } from "../../src/store/store.ts";
 import { defineTable } from "../../src/store/table.ts";
 import { stageTable } from "../../src/store/table-writes.ts";
 import { memoryStore, tableIn } from "../support.ts";
@@ -26,10 +26,10 @@ describe("the catalog", () => {
 	it("is read once at open: a reopened store knows its tables", async () => {
 		const directory = await mkdtemp(join(tmpdir(), "chord-catalog-"));
 		const path = join(directory, "store.sqlite");
-		const first = (await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context)) as ChordStore;
+		const first = await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context);
 		await tableIn(first, Edits);
 		await first.close(context);
-		const second = (await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context)) as ChordStore;
+		const second = await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context);
 		expect(second.table(TABLE)).toEqual({
 			table: TABLE,
 			version: 1,

@@ -99,7 +99,7 @@ async function counted(path = ":memory:") {
 			});
 		},
 	};
-	const store = (await openStore(sqliteBackend(backend), context, { outbox: true })) as ChordStore;
+	const store = await openStore(sqliteBackend(backend), context, { outbox: true });
 	const storage = await StoreStorage.open(store, "harness", context);
 	await commitWrites(storage, [{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }], context);
 	return { store, storage, counts, faults };
@@ -107,7 +107,7 @@ async function counted(path = ":memory:") {
 
 /** The same storage opened again on the file at `path`, as another process would. */
 async function reopen(path: string) {
-	const store = (await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context)) as ChordStore;
+	const store = await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context);
 	return { store, storage: await StoreStorage.open(store, "harness", context) };
 }
 

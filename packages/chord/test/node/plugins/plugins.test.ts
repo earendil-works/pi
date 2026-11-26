@@ -4,6 +4,7 @@
 // over 200 reloads, and end to end a server and a worker loading plugin directories, an edit rolled out, a broken edit
 // kept old on both hosts.
 
+import { getEventListeners } from "node:events";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -13,6 +14,7 @@ import { hostKind, int, local, method, remote, str } from "../../../src/contract
 import { createHost, defineFacet, type Host, type ReloadReport } from "../../../src/host/index.ts";
 import type { ChordHost } from "../../../src/host/internal.ts";
 import { memoryLinkPair } from "../../../src/link/index.ts";
+import type * as Build from "../../../src/node/plugins/build.ts";
 import {
 	createPlugins,
 	type PluginError,
@@ -41,6 +43,24 @@ import {
 	writePackage,
 	writePlugin,
 } from "./support.ts";
+
+/** How many facets were built in this file, by anyone; `fail` makes the next build reject (esbuild's service lost). */
+const builds = vi.hoisted(() => ({ count: 0, fail: false }));
+
+vi.mock("../../../src/node/plugins/build.ts", async (importOriginal) => {
+	const original = await importOriginal<typeof Build>();
+	return {
+		...original,
+		buildFacet: (...args: Parameters<typeof Build.buildFacet>) => {
+			builds.count++;
+			if (builds.fail) {
+				builds.fail = false;
+				return Promise.reject(new Error("the build service is gone"));
+			}
+			return original.buildFacet(...args);
+		},
+	};
+});
 
 /** The fixtures' contracts, as the `contracts` fixture declares them. */
 const Worker = hostKind("test.worker");
@@ -411,6 +431,73 @@ describe("current sets (slice 10 D11)", () => {
 		await plugins.rollout([shipped], built, context);
 		expect(await digests()).not.toEqual(first);
 		plugins.close();
+	});
+
+	it("first uses at once share one making: each facet is built once, not once per caller (Astra S4)", async () => {
+		const root = await tempRoot();
+		for (const dir of ["a", "b", "c"]) await itemPlugin(root, dir, dir);
+		const { plugins } = await component(root);
+		const before = builds.count;
+		// A server's start resuming eight working sessions: each worker's start asks for the worker set at once.
+		const sets = await Promise.all(Array.from({ length: 8 }, () => plugins.scripts("worker", context)));
+		expect(builds.count - before).toBe(3);
+		for (const set of sets) expect(set.map(({ built }) => built)).toEqual(sets[0]!.map(({ built }) => built));
+		plugins.close();
+	});
+
+	it("forgets a first making that failed: the next use makes the set again", async () => {
+		const root = await tempRoot();
+		await itemPlugin(root, "a", "a");
+		const { plugins } = await component(root);
+		builds.fail = true;
+		await expect(plugins.scripts("worker", context)).rejects.toThrow("the build service is gone");
+		expect((await plugins.scripts("worker", context)).map(({ plugin }) => plugin.name)).toEqual(["@test/a"]);
+		plugins.close();
+	});
+
+	// Opus S5 and Astra S1, review round 3 of ERNDL-954: the making ran in the first caller's context, so one start going
+	// away failed every start waiting for the same first build, and a waiter going away kept its abort listener.
+	it("a first use going away fails only its own wait, first or second, and leaves no abort listener", async () => {
+		for (const first of [true, false]) {
+			const root = await tempRoot();
+			await itemPlugin(root, "a", "a");
+			const { plugins } = await component(root);
+			const gone = new AbortController();
+			const staying = new AbortController();
+			const waiting = withAbortSignal(gone.signal, context);
+			const healthy = withAbortSignal(staying.signal, context);
+			const [one, two] = first
+				? [plugins.scripts("worker", waiting), plugins.scripts("worker", healthy)]
+				: [plugins.scripts("worker", healthy), plugins.scripts("worker", waiting)];
+			gone.abort(new Error("the hold ended"));
+			const [left, stayed] = first ? [one, two] : [two, one];
+			await expect(left).rejects.toThrow("the hold ended");
+			expect((await stayed).map(({ plugin }) => plugin.name)).toEqual(["@test/a"]);
+			expect(getEventListeners(staying.signal, "abort")).toEqual([]);
+			plugins.close();
+		}
+	});
+
+	it("a close aborts a first making under way", async () => {
+		const root = await tempRoot();
+		await itemPlugin(root, "a", "a");
+		const { plugins } = await component(root);
+		const making = plugins.scripts("worker", context);
+		plugins.close();
+		await expect(making).rejects.toThrow("plugins: the component closed");
+	});
+
+	// Astra S2, review round 4 of ERNDL-954: with discovery and the builds done already, the making had nothing left to
+	// check its abort at, and published the current set after the close.
+	it("a close aborts a first making whose builds are done, and publishes no current set", async () => {
+		const root = await tempRoot();
+		await itemPlugin(root, "a", "a");
+		const { plugins } = await component(root);
+		await plugins.build([], context);
+		const making = plugins.scripts("worker", context);
+		plugins.close();
+		await expect(making).rejects.toThrow("plugins: the component closed");
+		expect(plugins.current("worker")).toBeUndefined();
 	});
 });
 

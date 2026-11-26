@@ -2,7 +2,7 @@
 // jobs or lingering objects on its host, every `WorkerBusy` count 0). Any work in between starts the wait again. How
 // long, and whether to stop at all, is the runner's choice; the base only closes (`WorkerRuntime.close`).
 
-import { contribute, defineFacet } from "@earendil-works/p3/v1";
+import { contribute, defineFacet, untilAborted } from "@earendil-works/p3/v1";
 import { WorkerBusy, WorkerRuntime } from "@earendil-works/p3/v1/worker";
 
 export default defineFacet((host) => {
@@ -12,24 +12,28 @@ export default defineFacet((host) => {
 		self.onLive(async (ctx) => {
 			const { host: worker, idleMs, close } = runtime.value;
 			const idle = (): boolean => {
-				const activity = worker.activity.value;
-				return activity.references + activity.jobs + activity.lingering === 0 && busy.value === 0;
+				const { references, calls, jobs, lingering } = worker.activity.value;
+				return references + calls + jobs + lingering === 0 && busy.value === 0;
 			};
 			let timer: ReturnType<typeof setTimeout> | undefined;
 			const check = (): void => {
 				clearTimeout(timer);
-				timer = idle() ? setTimeout(() => (idle() ? close("idle") : check()), idleMs) : undefined;
+				timer = idle() ? setTimeout(() => (idle() ? close() : check()), idleMs) : undefined;
 			};
-			const watches = [await worker.activity.watch(ctx), await busy.watch(ctx)];
-			for (const watch of watches) watch.start(async () => check());
-			check();
+			const stops: (() => Promise<unknown>)[] = [];
+			// One cleanup for every exit, an abort while a watch is being taken included.
 			try {
-				await new Promise<void>((resolve) =>
-					ctx.abortSignal?.addEventListener("abort", () => resolve(), { once: true }),
-				);
+				const activity = await worker.activity.watch(ctx);
+				stops.push(() => activity.stop());
+				const counts = await busy.watch(ctx);
+				stops.push(() => counts.stop());
+				activity.start(async () => check());
+				counts.start(async () => check());
+				check();
+				await untilAborted(ctx);
 			} finally {
 				clearTimeout(timer);
-				for (const watch of watches) await watch.stop();
+				for (const stop of stops) await stop();
 			}
 		});
 	});

@@ -1,0 +1,81 @@
+/*
+ * The session list: one button per session, drawn as Elanor's side navigation draws its links (the selected one
+ * filled and in the selected weight); the state as a small label after the title.
+ */
+
+.list ul {
+	display: flex;
+	flex-direction: column;
+	gap: var(--semantic-dimension-space-gap-xx-small);
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.item {
+	display: flex;
+	inline-size: 100%;
+	min-block-size: var(--semantic-dimension-size-large);
+	align-items: center;
+	gap: var(--semantic-dimension-space-gap-small);
+	padding-block: var(--semantic-dimension-space-control-padding-block-small);
+	padding-inline: var(--semantic-dimension-space-control-padding-inline-small);
+	border: 0;
+	border-radius: var(--semantic-dimension-radius-small);
+	background: var(--semantic-color-background-fill-ghost-neutral);
+	color: var(--semantic-color-text-secondary);
+	font: var(--semantic-typography-ui-primary);
+	text-align: start;
+	cursor: pointer;
+}
+
+@media (hover: hover) {
+	.item:hover {
+		background: var(--semantic-color-background-fill-ghost-neutral-hover);
+	}
+}
+
+.item[aria-current="page"] {
+	background: var(--semantic-color-background-fill-ghost-neutral-active);
+	color: var(--semantic-color-text-primary);
+	font-weight: var(--semantic-font-weight-ui-selected);
+}
+
+.item:focus-visible {
+	outline: var(--semantic-dimension-border-width-focus-ring) solid var(--semantic-color-focus-ring);
+	outline-offset: calc(-1 * var(--semantic-dimension-border-width-focus-ring));
+}
+
+.title {
+	flex: 1 1 auto;
+	min-inline-size: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.state {
+	flex: none;
+	color: var(--semantic-color-text-secondary);
+	font: var(--semantic-typography-ui-tertiary);
+}
+
+.state[data-state="failed"] {
+	color: var(--semantic-color-text-negative);
+}
+
+.more {
+	margin-block-start: var(--semantic-dimension-space-gap-small);
+}
+
+.note,
+.error {
+	margin: 0;
+	padding-inline: var(--semantic-dimension-space-control-padding-inline-small);
+	color: var(--semantic-color-text-secondary);
+	font: var(--semantic-typography-ui-secondary);
+}
+
+.error {
+	color: var(--semantic-color-text-negative);
+}

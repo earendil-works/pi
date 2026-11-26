@@ -1,134 +1,109 @@
-// The end-to-end harness: p3's real server in this process on a temporary data directory, with its built-in plugins
-// and the probe (`test/probe/`, copied into a root of the test's own, so a test may edit and apply it), its session
-// workers as real processes; and clients signed in as the owner over WebSocket, as a browser's page would be.
+// What the tests of the whole share besides `/v1/testing`'s `testServer`: the probe's directory (a plugin under test
+// that drives a session's worker), the faux login's, its script in a session (`scriptFaux`) and a session whose agent
+// works until the test opens its gate (`gatedSession`, `startRun`, `openGate`), a single-file worker plugin serving one value (`constantPlugin`), and for launched
+// processes (the command's and the release's tests, the bench) a foreground `p3 server` (`launch`), a process's
+// children (`childrenOf`), whether a process lives (`alive`) and when it started (`startOf`, to kill only that one).
 
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { type ChildProcess, spawn } from "node:child_process";
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { createHost, type Host, webSocketLink } from "@earendil-works/chord";
-import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
-import type { P3Principal } from "@earendil-works/p3/v1";
-import { WorkerRunners, type WorkerState } from "@earendil-works/p3/v1/server";
-import { SessionsStore } from "../plugins/sessions/contract.server.ts";
-import type { SessionState } from "../plugins/sessions/contract.ts";
-import { PLUGINS, WORKER } from "../src/install.ts";
-import { type RunningServer, type ServerError, startServer } from "../src/server.ts";
+import {
+	type Context,
+	type Host,
+	type P3Principal,
+	remote,
+	Session,
+	SessionInfo,
+	Sessions,
+	SessionsList,
+	SessionThings,
+	str,
+	THIS_DEVICE,
+	Transcript,
+	until,
+} from "@earendil-works/p3/v1";
+import { FauxLogin, type Step } from "./plugins/faux-login/contract.ts";
 
-/** A test's server and what it needs around it. */
-export type TestServer = {
-	readonly server: RunningServer;
-	readonly dataDir: string;
-	/** The test's own plugin root: the probe's directory is `<plugins>/probe`. */
-	readonly plugins: string;
-	/** What the server reported in the background. */
-	readonly errors: ServerError[];
-	/** A new client signed in as the owner (closed with the server). */
-	client(): Promise<Host<P3Principal>>;
-	/** Each session's worker as the runner sees it. */
-	workers(): Promise<Readonly<Record<string, WorkerState>>>;
-	/** Sets session `id`'s state on the server, as its worker's report does. */
-	report(id: string, state: SessionState): Promise<void>;
-	/** Closes the server and starts a new one on the same data directory. */
-	restart(): Promise<TestServer>;
-	/** Closes the clients and the server; removes the data directory unless `keep`. */
-	close(keep?: boolean): Promise<void>;
-};
+/** The probe (`test/plugins/probe/`): a test server's plugin under test (`testServer({ plugins: [PROBE] })`). */
+export const PROBE = fileURLToPath(new URL("./plugins/probe/", import.meta.url));
 
-/** How long a worker idles before it stops itself in the tests. */
-export const IDLE_MS = 300;
+/** The faux login (`test/plugins/faux-login/`): a model login answering from a script, a plugin under test. */
+export const FAUX = fileURLToPath(new URL("./plugins/faux-login/", import.meta.url));
 
-/** Starts a server on a new data directory (or again on `dataDir`). */
-export async function testServer(dataDir?: string): Promise<TestServer> {
-	const dir = dataDir ?? (await mkdtemp(join(tmpdir(), "p3-test-")));
-	const plugins = join(dir, "plugins");
-	const errors: ServerError[] = [];
-	const server = await startServer(
-		{
-			dataDir: dir,
-			roots: [
-				{ path: PLUGINS, required: true },
-				{ path: fileURLToPath(new URL("./plugins/", import.meta.url)), required: true },
-				{ path: plugins, required: false },
-			],
-			port: 0,
-			version: "test",
-			worker: WORKER,
-			workerIdleMs: IDLE_MS,
-			onStop: () => {},
-			onError: (error) => errors.push(error),
-		},
-		context,
-	);
-	const clients: Host<P3Principal>[] = [];
-	const close = async (keep = false): Promise<void> => {
-		for (const client of clients) await client.close(context);
-		await server.close(context);
-		if (!keep) await rm(dir, { recursive: true, force: true });
-	};
-	return {
-		server,
-		dataDir: dir,
-		plugins,
-		errors,
-		client: async () => {
-			const client = await ownerClient(dir, server.port);
-			clients.push(client);
-			return client;
-		},
-		report: async (id, state) => {
-			await server.runtime.host.root(
-				async (ctx) => (await ctx.get(SessionsStore, {})).report({ id, state }, ctx),
-				context,
-			);
-		},
-		workers: async () => (await server.runtime.host.registry(WorkerRunners, context)).value?.state() ?? {},
-		restart: async () => {
-			await close(true);
-			return testServer(dir);
-		},
-		close,
-	};
-}
+/** A bash command that waits until the folder has a file `gate`, then says so. */
+const UNTIL_GATE = "until [ -e gate ]; do sleep 0.05; done; echo opened";
 
-/** A client host connected over WebSocket with the owner token file's bearer token, loaded with no plugins. */
-async function ownerClient(dataDir: string, port: number): Promise<Host<P3Principal>> {
-	const token = await eventually(async () => (await readFile(join(dataDir, "owner-token"), "utf8")).trim());
-	// Node's WebSocket (undici) takes an init object with headers; the DOM type knows only protocols.
-	const init = { headers: { authorization: `Bearer ${token}` } } as unknown as string[];
-	const socket = new WebSocket(`ws://127.0.0.1:${port}/chord`, init);
-	const client = createHost<P3Principal>({
-		readyTimeout: 10_000,
-		onError: (error) => console.error("client:", error),
-	});
-	client.connect(webSocketLink(socket), { principal: { kind: "server" } }, context);
-	await client.load([], context);
-	return client;
+/**
+ * Scripts the Pi's faux login (`FAUX`, made by its plugin "in all my sessions") in `session`, which follows the owner:
+ * the session's options for it, for everyone, once the session has it. As the owner of `client`.
+ */
+export async function scriptFaux(
+	client: Host<P3Principal>,
+	session: string,
+	script: readonly Step[],
+	context: Context,
+): Promise<void> {
+	await client.root(async (ctx) => {
+		const info = await ctx.get(SessionInfo, { session });
+		const things = await until(info.things, (now) => now.some(({ kind }) => kind === FauxLogin.name), ctx);
+		const faux = things.find(({ kind }) => kind === FauxLogin.name)!;
+		const options = { provider: "faux", script, tool: false };
+		const manage = await ctx.get(SessionThings, { session });
+		if (manage.variant !== "writer") throw new Error(`scriptFaux: the owner is a ${manage.variant}`);
+		await manage.setOptions({ thing: faux.thing, for: { kind: "everyone" }, options }, ctx);
+	}, context);
 }
 
 /**
- * The first result of `probe` that does not throw and passes `done`, tried every 25 ms; rejects with the last error
- * after `ms`. For effects in other processes (a worker's exit), which no watchable shows here.
+ * A coding session titled `title` in `folder`, made by the owner of `client` (so it follows them: the Pi's coding
+ * tools and faux login), whose agent works until `folder` has a file `gate` (`openGate`): the faux login answers every
+ * request with a bash call waiting for it (a run cut off asks again and waits again) until the gate is open. Its row
+ * says `working` because the harness says so, as for any run: a test never reports a state the harness owns.
  */
-export async function eventually<T>(
-	probe: () => Promise<T>,
-	done: (value: T) => boolean = () => true,
-	ms = 10_000,
-): Promise<T> {
-	const deadline = Date.now() + ms;
-	let last: unknown = new Error("eventually: nothing passed");
-	for (;;) {
-		try {
-			const value = await probe();
-			if (done(value)) return value;
-			last = new Error(`eventually: ${JSON.stringify(value)} did not pass`);
-		} catch (error) {
-			last = error;
-		}
-		if (Date.now() > deadline) throw last;
-		await sleep(25);
-	}
+export async function gatedSession(
+	client: Host<P3Principal>,
+	title: string,
+	folder: string,
+	context: Context,
+): Promise<string> {
+	const wait = { kind: "tool", name: "bash", args: JSON.stringify({ command: UNTIL_GATE }) } as const;
+	const script: Step[] = [
+		{ when: "opened", reply: [{ kind: "text", text: "done" }] },
+		{ when: "", reply: [wait] },
+	];
+	const sessions = await client.get(Sessions, {}, context);
+	const session = await sessions.create(
+		{ app: "coding", title, location: { environment: THIS_DEVICE, folder } },
+		context,
+	);
+	await scriptFaux(client, session, script, context);
+	return session;
+}
+
+/** Lets a gated session's run (`gated`) in `folder` finish: its bash calls, on any worker, see the gate. */
+export function openGate(folder: string): Promise<void> {
+	return writeFile(join(folder, "gate"), "");
+}
+
+/**
+ * Starts the agent's run in `session` (the owner's send through its transcript) and waits until the owner's list
+ * shows the session `working`; holds nothing afterwards.
+ */
+export async function startRun(client: Host<P3Principal>, session: string, context: Context): Promise<void> {
+	await client.root(async (ctx) => {
+		const transcript = await ctx.get(Transcript, { session });
+		if (transcript.variant !== "writer") throw new Error(`startRun: the owner is a ${transcript.variant}`);
+		await transcript.send({ text: "go", requestId: "go" }, ctx);
+		const list = await ctx.get(SessionsList, { app: "coding", set: "active", view: `run-${session}` });
+		await until(list.list, (value) => value.rows.some((row) => row.id === session && row.state === "working"), ctx);
+	}, context);
+}
+
+/** What the owner's `Sessions.create` takes for a new coding session titled `title` (on this device, in `/tmp`). */
+export function coding(title: string) {
+	return { app: "coding", title, location: { environment: THIS_DEVICE, folder: tmpdir() } };
 }
 
 /** Whether process `pid` lives. */
@@ -139,4 +114,111 @@ export function alive(pid: number): boolean {
 	} catch {
 		return false;
 	}
+}
+
+/** A `p3 server` launched in the foreground: its pid and port, once it printed its owner link. */
+export type Launched = {
+	readonly pid: number;
+	readonly port: number;
+	readonly dataDir: string;
+	/** Its exit code once it exited (`null` when a signal ended it). */
+	readonly exited: Promise<number | null>;
+	/** Sends it `signal` unless it exited: never to another process that has its pid by now. */
+	kill(signal: NodeJS.Signals): void;
+	stop(): Promise<void>;
+};
+
+/**
+ * Launches `p3 server` on `dataDir` on a free port, `command` being Node's arguments that run `p3` (a checkout's
+ * `COMMAND`, or an installed release's `p3.js`), with `env` (this process's by default); resolves once it printed its
+ * port and owner link.
+ */
+export async function launch(
+	command: readonly string[],
+	dataDir: string,
+	env: NodeJS.ProcessEnv = process.env,
+): Promise<Launched> {
+	const child = spawn(process.execPath, [...command, "server", "--dir", dataDir, "--port", "0"], {
+		stdio: ["ignore", "pipe", "inherit"],
+		env,
+	});
+	const exited = new Promise<number | null>((resolve) => child.once("exit", resolve));
+	const port = await new Promise<number>((resolve, reject) => {
+		let out = "";
+		child.stdout?.on("data", (chunk: Buffer) => {
+			out += chunk.toString();
+			const found = /port (\d+)\. Open/.exec(out);
+			if (found !== null) resolve(Number(found[1]));
+		});
+		child.once("exit", (code) => reject(new Error(`p3 server exited with ${code}`)));
+	});
+	// Node signals a child only until it reaped its exit.
+	return {
+		pid: child.pid!,
+		port,
+		dataDir,
+		exited,
+		kill: (signal) => void child.kill(signal),
+		stop: () => stop(child),
+	};
+}
+
+/** Stops `child` with `SIGTERM` and waits for its exit. */
+async function stop(child: ChildProcess): Promise<void> {
+	if (child.exitCode !== null || child.signalCode !== null) return;
+	const exited = new Promise((resolve) => child.once("exit", resolve));
+	child.kill("SIGTERM");
+	await exited;
+}
+
+/**
+ * When process `pid` started (its start time in `/proc/<pid>/stat`), which a later process given the same pid does not
+ * share; `undefined` when it is gone or the system has no `/proc` (a cleanup then leaves it to `p3 stop`).
+ */
+export async function startOf(pid: number): Promise<string | undefined> {
+	const stat = await readFile(`/proc/${pid}/stat`, "utf8").catch(() => undefined);
+	// The fields after the command's closing parenthesis, from the third (the state) on: the start time is the 22nd.
+	return stat?.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
+}
+
+/** The children of process `pid`, each with its command line (`/proc/*\/stat`: Android has no `children` file). */
+export async function childrenOf(pid: number): Promise<{ readonly pid: number; readonly args: readonly string[] }[]> {
+	const children: { pid: number; args: string[] }[] = [];
+	for (const entry of await readdir("/proc")) {
+		if (!/^\d+$/.test(entry)) continue;
+		// A process may exit while it is read: it is none of the children then.
+		const stat = await readFile(`/proc/${entry}/stat`, "utf8").catch(() => "");
+		if (Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]) !== pid) continue;
+		const command = await readFile(`/proc/${entry}/cmdline`, "utf8").catch(() => "");
+		children.push({ pid: Number(entry), args: command.split("\0").filter((arg) => arg !== "") });
+	}
+	return children;
+}
+
+/** The contract of a plugin `constantPlugin` writes: one value on a session's worker, for the owner. */
+export function constantContract(name: string) {
+	return remote(`${name}.${name}`, {
+		version: 1,
+		params: { session: str() },
+		hostAddress: ({ session }) => Session({ id: session }),
+		variants: { owner: { state: { value: str() } } },
+	});
+}
+
+/**
+ * The source of single-file worker plugin `name` (`<name>.worker.ts`, written into a root) serving
+ * `constantContract(name)` with `value`: a test writes it again with another value and applies it.
+ */
+export function constantPlugin(name: string, value: string): string {
+	return `import { constant, defineFacet, remote, Session, str } from "@earendil-works/p3/v1";
+const Constant = remote(${JSON.stringify(`${name}.${name}`)}, {
+	version: 1,
+	params: { session: str() },
+	hostAddress: ({ session }) => Session({ id: session }),
+	variants: { owner: { state: { value: str() } } },
+});
+export default defineFacet((host) => {
+	host.serve(Constant, () => ({ variant: "owner", members: { value: constant(${JSON.stringify(value)}) } }));
+});
+`;
 }

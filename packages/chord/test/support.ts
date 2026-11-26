@@ -280,7 +280,7 @@ export async function loadedPlugins(
 /** A store on a fresh SQLite `:memory:` database, as Chord's layers see it. */
 export async function memoryStore(options?: { readonly outbox?: boolean }): Promise<ChordStore> {
 	const db = await openNodeSqliteDatabase(":memory:");
-	return (await openStore(sqliteBackend(db), BACKGROUND_CONTEXT, options)) as ChordStore;
+	return await openStore(sqliteBackend(db), BACKGROUND_CONTEXT, options);
 }
 
 /** A statement of the Node facade's transactions a test can make fail. */
@@ -311,7 +311,7 @@ export async function faultyStore(options?: {
 	readonly outbox?: boolean;
 }): Promise<{ readonly store: ChordStore; fail(statement: TransactionStatement): void }> {
 	const { db, fail } = faultyDatabase();
-	return { store: (await openStore(sqliteBackend(db), BACKGROUND_CONTEXT, options)) as ChordStore, fail };
+	return { store: await openStore(sqliteBackend(db), BACKGROUND_CONTEXT, options), fail };
 }
 
 /**

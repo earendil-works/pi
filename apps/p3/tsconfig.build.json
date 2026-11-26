@@ -5,6 +5,8 @@
 		"rootDir": ".",
 		"module": "NodeNext",
 		"moduleResolution": "NodeNext",
+		"lib": ["ES2024", "DOM", "DOM.Iterable"],
+		"jsx": "react-jsx",
 		"customConditions": ["source"],
 		"sourceMap": false,
 		"inlineSources": false

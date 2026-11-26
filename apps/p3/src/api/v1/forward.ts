@@ -4,7 +4,7 @@
 // Browser-safe: the API module exports it.
 
 import { type Contract, type Ctx, type Implementation, memberNames } from "@earendil-works/chord";
-import type { P3Principal } from "../../principals.ts";
+import type { P3Principal } from "../../app.ts";
 
 /** The members of the remote contract `C` as its factory returns them. */
 type Served<C extends Contract> = Implementation<C, Ctx<P3Principal>>;

@@ -14,16 +14,21 @@
 - `deny(reason, message?)`: an admission's denial carries a message as data for the person (`MessageData`), in the `forbidden` error's `details.message` (the denied reference's failure, a call's `forbidden`, a cut call's `forbidden/revoked`). A changed message is a new decision without a rebuild.
 - `MessageData`, `MessageParam` and `MessageSchema` are exported from the package root's data layer as well (still from `/surfaces`).
 - A link the heartbeat closes is reported once through `onError` as `link_closed { reason: "heartbeat", role }` (its holders wait `loading` until another link holds them), and every closed link is counted in `chord.links.closed { reason }` (`local`, `heartbeat`, `protocol`, `peer`).
+- `testPlugin` takes `hostStubs(host, store)`: stubs made once the test's host exists, for an app's registry of process values that hands out the host or its store (p3's `WorkerRuntime`).
+- `@earendil-works/chord/workers/child` exports `clearStaleLock`: an app that starts the holders of a `processLock` name itself clears a stale lock file before a start (macOS, the BSDs).
 
 ### Changed
 
 - A reference makes its named queries' handles on first use: a reference to a store with 23 named queries, none read, takes 1.3 KiB instead of 6.4 KiB.
 - A held object keeps about half the memory on its host: a local object with its reference 2.9 KiB instead of 6.3 KiB, a remote object whose admission derives from one reference 7.6 KiB instead of 13.6 KiB (`docs/benchmarks.md`, "Hold memory"). No behaviour changes; `ref.granted` of references granted the same names is one shared set.
 - A store commit skip-tests only the live reads its writes can concern (the commit index): reads are filed by the values their condition fixes with `eq`/`inArray` and by the keys of their last result. One write to one session's row with 10,000 open reads of other sessions now tests one read instead of 10,000; `chord.query.skips` counts only the reads tested.
+- `openStore` and `importStore` resolve with `ChordStore`, the one kind of store there is (was the `Store` interface): callers that need its commit, read or `settled` members no longer cast. `testPlugin`'s `hostStubs` get the test's store as a `ChordStore`.
 
 ### Fixed
 
 - A reference of an older version its provider refuses a member waits unbound (`failed { waiting }`, `contract_mismatch`) also when its object is denied (it showed the denial), and reads nothing from an instance that refuses its version: during a restart whose old attempt refuses it, it shows `loading` and its reads throw `not_ready` until the successor serves it (it showed `live` with the old attempt's values); its named queries throw `not_ready` meanwhile. A failed activation also leaves such holders waiting unbound (they showed the failure).
+- The plugins component's first uses of a kind at once (`scripts(kind)`, `load`, a rollout) share one making of its current set: each facet is built once, not once per caller (a server resuming many workers built every worker facet once per worker). A making that failed is forgotten, so the next use tries again.
+- The plugins component's shared first making of a kind's set runs in the component's own context (aborted by `close`), each caller waiting in its own: one caller going away (a worker's start whose hold ended) no longer fails every other first use waiting for the same build, and a waiter leaves no abort listener behind.
 
 ## [1.6.1] - 2026-11-25
 

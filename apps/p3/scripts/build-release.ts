@@ -1,15 +1,15 @@
 // Builds what p3 ships besides its sources (`docs/slices/26-release.md`), into `dist/`: the base code bundled, one
-// bundle per process (`main.js`, the command and the server; `worker.js`, a session worker; `supervisor.js`; the kit,
+// bundle per process (`main.js`, the command and the server; `worker.js`, a session worker; `supervisor.js`; the base,
 // Chord and `ws` inlined where used, so no process loads TypeScript, and a worker or the supervisor none of the
 // server's code), the launcher `p3.js`, and the API modules compiled one by one with their declarations
-// (`api/v1/`, and what they import of the kit), which import Chord from the package's dependency: what a plugin's type
+// (`api/v1/`, and what they import of the base), which import Chord from the package's dependency: what a plugin's type
 // check and editor resolve. `package.json` names the rest that ships (`files`).
 // Run: npm run build (in apps/p3)
 
 import { execFileSync } from "node:child_process";
-import { chmod, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { isBuiltin } from "node:module";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type BuildOptions, build, type Metafile } from "esbuild";
 
@@ -66,6 +66,7 @@ export async function buildRelease(dist: string = join(P3, "dist")): Promise<Bui
 	// package (`import("@earendil-works/chord")`), as an install resolves them.
 	const tsc = join(REPOSITORY, "node_modules", "typescript", "bin", "tsc");
 	execFileSync(process.execPath, [tsc, "-p", join(P3, "tsconfig.build.json"), "--outDir", dist], { stdio: "inherit" });
+	await copyImportedStyles(dist);
 	const files = await readdir(dist, { recursive: true, withFileTypes: true });
 	return {
 		dist,
@@ -75,6 +76,31 @@ export async function buildRelease(dist: string = join(P3, "dist")): Promise<Bui
 			.sort(),
 		bytes: Object.values(outputs).reduce((sum, output) => sum + output.bytes, LAUNCHER.length),
 	};
+}
+
+/** A compiled module's import of a stylesheet next to it (`import styles from "./x.module.css"`, `import "./x.css"`). */
+const STYLE_IMPORT = /(?:from|import)\s*"(\.{1,2}\/[^"]+\.css)"/g;
+
+/**
+ * Copies into `dist` the stylesheets the compiled API modules import (a web module's CSS module): TypeScript emits
+ * no CSS, and the page's build in an install resolves them next to the module, as in the source. Each from the
+ * checkout's file at the same path; a missing one fails the build.
+ */
+export async function copyImportedStyles(dist: string): Promise<void> {
+	const compiled = (await readdir(dist, { recursive: true, withFileTypes: true })).filter(
+		(entry) =>
+			entry.isFile() &&
+			entry.name.endsWith(".js") &&
+			relative(dist, entry.parentPath).split(sep)[0] !== "chunks" &&
+			entry.parentPath !== dist,
+	);
+	for (const entry of compiled) {
+		const file = join(entry.parentPath, entry.name);
+		for (const [, path] of (await readFile(file, "utf8")).matchAll(STYLE_IMPORT)) {
+			const target = join(entry.parentPath, path!);
+			await copyFile(join(P3, relative(dist, target)), target);
+		}
+	}
 }
 
 /** The esbuild options of one process's bundle in `dist`. */
@@ -135,23 +161,50 @@ await import("./main.js");
 export type Manifest = { readonly version: string; readonly dependencies: Readonly<Record<string, string>> };
 
 /**
- * Fails unless each dependency is pinned to the version the workspace has (`versions`): the bundle inlines the
- * workspace's Chord, the package's types come from the dependency, and the two must be one version.
+ * Fails unless each dependency that is a workspace package (`versions`, by name) is pinned to the version the
+ * workspace has: the bundle inlines the workspace's sources (Chord, Durable), the package's types come from the
+ * dependency, and the two must be one version. Other dependencies (React, Elanor) come from the registry as pinned.
  */
 export function checkVersions(manifest: Manifest, versions: Readonly<Record<string, string>>): void {
 	for (const [name, pinned] of Object.entries(manifest.dependencies)) {
-		if (versions[name] !== pinned) {
+		if (Object.hasOwn(versions, name) && versions[name] !== pinned) {
 			throw new Error(`build-release: ${name} is pinned to ${pinned}, the workspace has ${versions[name]}`);
 		}
 	}
 }
 
-/** The versions of the packages `names` as the repository's `node_modules` resolves them. */
+/** A workspace package: its name, version, directory and dependencies. */
+export type WorkspacePackage = {
+	readonly name: string;
+	readonly version: string;
+	readonly directory: string;
+	readonly dependencies: Readonly<Record<string, string>>;
+	readonly scripts: Readonly<Record<string, string>>;
+};
+
+/**
+ * The workspace package `name`, or `undefined` when it is not one: npm links a workspace package into the root's
+ * `node_modules`, so its real path lies outside every `node_modules`.
+ */
+export async function workspacePackage(name: string): Promise<WorkspacePackage | undefined> {
+	const directory = await realpath(join(REPOSITORY, "node_modules", name)).catch(() => undefined);
+	if (directory === undefined || relative(REPOSITORY, directory).split(sep).includes("node_modules")) return undefined;
+	const manifest = JSON.parse(await readFile(join(directory, "package.json"), "utf8")) as Partial<WorkspacePackage>;
+	return {
+		name,
+		version: manifest.version ?? "",
+		directory,
+		dependencies: manifest.dependencies ?? {},
+		scripts: manifest.scripts ?? {},
+	};
+}
+
+/** The versions of those of `names` that are workspace packages. */
 async function workspaceVersions(names: readonly string[]): Promise<Record<string, string>> {
 	const versions: Record<string, string> = {};
 	for (const name of names) {
-		const path = join(REPOSITORY, "node_modules", name, "package.json");
-		versions[name] = (JSON.parse(await readFile(path, "utf8")) as { version: string }).version;
+		const found = await workspacePackage(name);
+		if (found !== undefined) versions[name] = found.version;
 	}
 	return versions;
 }

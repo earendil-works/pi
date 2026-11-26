@@ -1,11 +1,11 @@
 // The test topology: p3's server and its session workers as hosts in one process, linked in memory, each with its
-// own SQLite store, the plugins' facets imported as modules (no build), clients connected as any principal. The base's
-// own pieces are the real server's and worker's (`src/server-core.ts`, `src/worker-core.ts`); the route starts a worker
-// as a host here instead of a process. A plugin reloads with `reload` (a new facet object of the same setup: its
-// objects restart, as after an edit), on the server or on a worker, so a test reloads a facet while it is in use.
+// own SQLite store, the plugins' facets imported as modules (no build). The base's pieces are the real ones
+// (`serverCoreFacet`, `admitRoute`, `workerCoreFacet`); the route starts a worker as a host, not a process, and the
+// runner it contributes is asked by the waker alone. `reload` renews a plugin's facet object on the server or a
+// worker (its objects restart, as after an edit); `count` reads the server's metrics.
 
 import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import {
 	type Address,
@@ -23,15 +23,23 @@ import type { Context } from "@earendil-works/chord/context";
 import { createHttp, type HttpError } from "@earendil-works/chord/http";
 import { openNodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
 import { type P3Principal, Server, Session } from "@earendil-works/p3/v1";
-import type { ServerRuntime } from "@earendil-works/p3/v1/server";
+import { PeopleStore, type ServerRuntime } from "@earendil-works/p3/v1/server";
 import type { WorkerRuntime } from "@earendil-works/p3/v1/worker";
+import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
+import appsServer from "../plugins/apps/server.ts";
+import codingServer from "../plugins/coding/server.ts";
+import controlServer from "../plugins/control/server.ts";
+import environmentsServer from "../plugins/environments/server.ts";
+import environmentsWorker from "../plugins/environments/worker.ts";
+import peopleServer from "../plugins/people/server.ts";
+import runnerServer from "../plugins/runner/server.ts";
 import runnerWorker from "../plugins/runner/worker.ts";
 import sessionsServer from "../plugins/sessions/server.ts";
 import sessionsWorker from "../plugins/sessions/worker.ts";
 import signInServer from "../plugins/sign-in/server.ts";
 import { SERVER, workerPrincipal } from "../src/app.ts";
-import { admitSession, serverCoreFacet } from "../src/server-core.ts";
-import { workerCoreFacets } from "../src/worker-core.ts";
+import { admitRoute, serverCoreFacet } from "../src/server.ts";
+import { workerCoreFacet } from "../src/worker.ts";
 import probeWorker from "./plugins/probe/worker.ts";
 
 /** How long a host of the topology waits for an object to go live: a failing test fails in seconds. */
@@ -42,12 +50,19 @@ type Plugin = { readonly name: string; readonly facet: Facet<P3Principal> };
 
 /** The server's plugins, by name. */
 const SERVER_PLUGINS: readonly Plugin[] = [
+	{ name: "@earendil-works/p3-apps", facet: appsServer },
+	{ name: "@earendil-works/p3-coding", facet: codingServer },
+	{ name: "@earendil-works/p3-control", facet: controlServer },
+	{ name: "@earendil-works/p3-environments", facet: environmentsServer },
+	{ name: "@earendil-works/p3-people", facet: peopleServer },
+	{ name: "@earendil-works/p3-runner", facet: runnerServer },
 	{ name: "@earendil-works/p3-sessions", facet: sessionsServer },
 	{ name: "@earendil-works/p3-sign-in", facet: signInServer },
 ];
 
 /** A worker's plugins, by name. */
 const WORKER_PLUGINS: readonly Plugin[] = [
+	{ name: "@earendil-works/p3-environments", facet: environmentsWorker },
 	{ name: "@earendil-works/p3-runner", facet: runnerWorker },
 	{ name: "@earendil-works/p3-sessions", facet: sessionsWorker },
 	{ name: "p3-test-probe", facet: probeWorker },
@@ -68,6 +83,10 @@ export type Topology = {
 		| { readonly kind: "load_failed"; readonly failed: LoadReport["failed"] }
 	)[];
 	readonly closed: readonly string[];
+	/** The owner's person (the people plugin made it at the start), as a principal. */
+	readonly owner: P3Principal;
+	/** The sum of the server's metric `name` so far (`chord.query.runs`, `chord.query.probes`, ...). */
+	count(name: string): number;
 	/** A client host connected to the server as `principal`, loaded with no plugins. */
 	client(principal: P3Principal): Promise<Host<P3Principal>>;
 	/** Reloads plugin `name` on the server (or on session `session`'s worker): every object of it restarts. */
@@ -83,10 +102,12 @@ export async function topology(context: Context, idleMs = 60_000): Promise<Topol
 	const workers = new Map<string, Worker>();
 	const clients: Host<P3Principal>[] = [];
 	const store = await storeAt(context);
+	const telemetry = new InMemoryTelemetryContext();
 	const server = createHost<P3Principal>({
 		address: Server(),
 		principal: SERVER,
 		store,
+		telemetry,
 		readyTimeout: READY,
 		onError: (error) => errors.push(error),
 	});
@@ -108,7 +129,7 @@ export async function topology(context: Context, idleMs = 60_000): Promise<Topol
 			idleMs,
 			close: () => void closed.push(session),
 		};
-		const facets = [...workerCoreFacets(runtime), ...WORKER_PLUGINS];
+		const facets = [{ name: "p3.worker", facet: workerCoreFacet(runtime) }, ...WORKER_PLUGINS];
 		workers.set(session, { host, store: workerStore, facets });
 		const [up, down] = memoryLinkPair();
 		host.connect(up, { principal: SERVER, trusted: true }, context);
@@ -119,13 +140,10 @@ export async function topology(context: Context, idleMs = 60_000): Promise<Topol
 		);
 		return { link: down, principal: workerPrincipal(session), trusted: true as const };
 	};
-	const sessions = server.route(
-		Session,
-		{ authorize: () => true, admit: admitSession, resolve: startWorker },
-		context,
-	);
+	const sessions = server.route(Session, { authorize: () => true, admit: admitRoute, resolve: startWorker }, context);
 	const runtime: ServerRuntime = {
 		dataDir,
+		machine: { user: userInfo().username, hostname: hostname() },
 		host: server,
 		store,
 		sessions,
@@ -144,11 +162,20 @@ export async function topology(context: Context, idleMs = 60_000): Promise<Topol
 		...SERVER_PLUGINS,
 	];
 	throwFailed(await server.load(serverFacets, context));
+	const [found] = (
+		await server.root(async (ctx) => (await ctx.get(PeopleStore, {})).persons.owner.page({}, 1, ctx), context)
+	).items;
 	return {
+		owner: { kind: "person", id: found!.id, name: found!.name },
 		server,
 		workers,
 		errors,
 		closed,
+		count: (name) =>
+			telemetry
+				.getMetrics()
+				.filter((metric) => metric.name === name)
+				.reduce((sum, metric) => sum + metric.value, 0),
 		client: async (principal) => {
 			const [toServer, fromClient] = memoryLinkPair();
 			const client = createHost<P3Principal>({ readyTimeout: READY, onError: (error) => errors.push(error) });
@@ -187,8 +214,7 @@ export async function topology(context: Context, idleMs = 60_000): Promise<Topol
 
 /** An in-memory store. */
 async function storeAt(context: Context): Promise<ChordStore> {
-	// `openStore` makes the one kind of store there is.
-	return (await openStore(sqliteBackend(await openNodeSqliteDatabase(":memory:")), context)) as ChordStore;
+	return await openStore(sqliteBackend(await openNodeSqliteDatabase(":memory:")), context);
 }
 
 /** Throws the failures of a load or a reload. */

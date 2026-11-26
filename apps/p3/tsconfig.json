@@ -8,5 +8,15 @@
 		"jsx": "react-jsx",
 		"customConditions": ["source"]
 	},
-	"include": ["src/**/*.ts", "plugins/**/*.ts", "test/**/*.ts", "bench/**/*.ts", "scripts/**/*.ts"]
+	"include": [
+		"src/**/*.ts",
+		"src/api/v1/css.d.ts",
+		"src/**/*.tsx",
+		"plugins/**/*.ts",
+		"plugins/**/*.tsx",
+		"test/**/*.ts",
+		"test/**/*.tsx",
+		"bench/**/*.ts",
+		"scripts/**/*.ts"
+	]
 }

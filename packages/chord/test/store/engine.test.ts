@@ -34,8 +34,7 @@ const OWNER = { owner: "app.store", namespace: "chord", kind: "notes" };
 
 /** A store on `:memory:` (or `on`) and a commit helper resolving with the created ids. */
 async function engine(on?: ChordStore) {
-	const store =
-		on ?? ((await openStore(sqliteBackend(await openNodeSqliteDatabase(":memory:")), context)) as ChordStore);
+	const store = on ?? (await openStore(sqliteBackend(await openNodeSqliteDatabase(":memory:")), context));
 	const commit = async (...writes: StagedWrite[]): Promise<readonly number[]> => {
 		let created: readonly number[] = [];
 		await store.commit(
@@ -66,7 +65,7 @@ async function engine(on?: ChordStore) {
 /** `store`'s archive with `edit` applied to its parts, imported into a fresh `:memory:` store. */
 async function reimported(store: ChordStore, edit: (parts: ArchivePart[]) => unknown[]): Promise<ChordStore> {
 	const parts = edit(await exported(store));
-	return (await importStore(sqliteBackend(await openNodeSqliteDatabase(":memory:")), parts, context)) as ChordStore;
+	return await importStore(sqliteBackend(await openNodeSqliteDatabase(":memory:")), parts, context);
 }
 
 /** A staged write applying `apply` in the step (an adapter's composite). */

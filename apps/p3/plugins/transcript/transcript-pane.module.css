@@ -1,0 +1,39 @@
+/* The transcript: the entries scroll above the composer, which stays at the bottom. */
+
+.pane {
+	display: flex;
+	min-block-size: 0;
+	flex: 1 1 auto;
+	flex-direction: column;
+}
+
+.scroll {
+	min-block-size: 0;
+	flex: 1 1 auto;
+	overflow-y: auto;
+	padding: var(--semantic-dimension-space-padding-small);
+}
+
+.earlier {
+	display: flex;
+	margin-inline: auto;
+	margin-block-end: var(--semantic-dimension-space-gap-small);
+}
+
+.note,
+.error {
+	margin: 0;
+	padding: var(--semantic-dimension-space-padding-medium);
+	color: var(--semantic-color-text-secondary);
+	text-align: center;
+}
+
+.error {
+	color: var(--semantic-color-text-negative);
+}
+
+@media (min-width: 48rem) {
+	.scroll {
+		padding: var(--semantic-dimension-space-padding-large);
+	}
+}
