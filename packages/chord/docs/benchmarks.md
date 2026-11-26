@@ -1425,8 +1425,14 @@ ending +31, −35 and −9 KiB; a round's work peaks at 11 MiB). Every cache of 
 - `chord.data.walks` counts no walk when an admission's source hands the same decision object again.
 - A remote object's re-hold (after a reconnect, or when a route admits it again on the same link) makes its params'
   text again (linear in their size: a 32 KB param 91 against 31 µs).
+- A served hold whose params are longer than a third of a link limit is walked again when its type is published
+  again (1 MiB under 2 MiB limits: 13.2 against 3.1 ms).
+- A factory that returns `null` for a contract without members, or with none granted to the caller, makes a live
+  object (`Object.keys(null)` threw before; a contract with a member refuses it as before).
+- A list whose first page has more than about 120,000 rows loads, and its `more` too (the spread of a page into
+  `push` overflowed the stack).
 - Internal types the package's declarations show changed shape: the store's `Read` (its constructor, its `sink` of
   two arguments, `latest`, `probed`), `ReadResult` (`kept`, `ids`), `ReadPlan.equalities`, `DecodedRows`, `QuerySpec.shapes`; an object's
   `holders` is an `Iterable`.
 
-Lines: `packages/chord/src` +2,568 −921.
+Lines: `packages/chord/src` +2,636 −925.

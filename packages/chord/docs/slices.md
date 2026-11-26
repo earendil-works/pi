@@ -343,8 +343,9 @@ deleted (the slice's spec and code are the record). Moved here from `carry-over.
   once, replayed by a test, re-recorded on purpose), later changes of the index would be checked the same way.
 - **Decoded lists of 2 to 17 items have `push`'s capacity** (`link/binary.ts`: a decoded `bound` of two grants 314
   against 192 B per hold, transient). Exact-size lists cost the decode 142 → 219 ns per message.
-- **A frame past the encoder's kept buffer after a much larger one** gets a buffer of the larger size once and is
-  copied out of it (`Writer` in `link/binary.ts`).
+- **A served hold placed again walks its params' text** when it is longer than a third of a link limit (`within` in
+  `link/part.ts`; the base read the kept bytes' length): 1 MiB of params under 2 MiB limits 13.2 against 3.1 ms per
+  republish. A kept byte length per served hold would end it.
 - **Small items** (30 to 60 B each): an open query's compiled-plan wrapper, a given query's argument wrapper, a read
   plan's equality entries; a consumer's `#move` batch closure and list copy (about 0.3 KiB of garbage per move).
 
