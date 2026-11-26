@@ -32,7 +32,10 @@ type Outcome<P extends Principal> =
 	| { readonly kind: "built"; readonly base: BaseBundle; readonly published: PublishedScripts<P> }
 	| { readonly kind: "failed"; readonly error: unknown };
 
-/** The set the scripts object shows before the build: no client holds it then (the page and the start wait). */
+/**
+ * The set the scripts object shows before the build: no base. A fresh page and a start wait for the build; a client
+ * reconnecting to a restarted server may hold it first and skips it (`surfaces/client.ts`).
+ */
 const UNBUILT: ScriptSet = { base: "", combined: "", plugins: [] };
 
 /** A surface's base bundle and first set, built once, after the server's load. */

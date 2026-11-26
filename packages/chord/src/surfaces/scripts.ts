@@ -15,8 +15,9 @@ const ScriptEntry = obj({ name: str(), digest: str(), url: str(), css: opt(str()
 export type ScriptEntry = Static<typeof ScriptEntry>;
 
 /**
- * A client kind's current scripts: `base` (the base bundle's hash: a change reloads the client), `combined` (the URL of
- * one file holding every plugin's script, what a fresh client loads), `plugins` (each one's script, in name order).
+ * A client kind's current scripts: `base` (the base bundle's hash: a change reloads the client; `""` while the server's
+ * surface is still building, which a client skips), `combined` (the URL of one file holding every plugin's script, what
+ * a fresh client loads), `plugins` (each one's script, in name order).
  */
 export const ScriptSet = obj({ base: str(), combined: str(), plugins: arr(ScriptEntry) });
 
