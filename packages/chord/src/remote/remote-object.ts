@@ -52,6 +52,7 @@ import {
 } from "../link/internal.ts";
 import type { DeriveSource } from "../state/internal.ts";
 import { capped, carrierOf, chordSpans, ended, OpenSpan, parentOf, spanFailed, untraced } from "../telemetry.ts";
+import { Bindings } from "./bindings.ts";
 import type { ConsumerSide } from "./consumer.ts";
 import type { HoldRequest } from "./hold.ts";
 import type { HostLink } from "./host-link.ts";
@@ -143,7 +144,7 @@ export class RemoteObject implements Target {
 	/** The hold on the path's link while one is open: that link's consumer side and this hold's id on it. */
 	#hold: { readonly side: ConsumerSide; readonly id: number } | undefined;
 	/** Its references' bindings, in the order they joined; the hold ends with the last. */
-	readonly #bindings = new Set<Binding>();
+	readonly #bindings = new Bindings<Binding>();
 	/** Takes its entry out of its path's sharing table, once; none for a private object or once taken out. */
 	#unindex: (() => void) | undefined;
 	#lastFailure: ChordError | undefined;
@@ -759,7 +760,7 @@ export class RemoteObject implements Target {
 	 * object ends first, so each ends exactly once whatever ending one does.
 	 */
 	lost(error: ChordError): void {
-		const bindings = [...this.#bindings];
+		const bindings = this.#bindings.list();
 		this.#unpublish();
 		this.#hold?.side.forget(this.#hold.id, error);
 		this.#end(error);
@@ -809,7 +810,7 @@ export class RemoteObject implements Target {
 		if (state.kind === "failed" && state.cause.kind === "broken") this.#unpublish();
 		this.#state = state;
 		if (this.#bindings.size === 0) return;
-		const bindings = [...this.#bindings];
+		const bindings = this.#bindings.list();
 		let following = false;
 		for (const binding of bindings) following ||= binding.following;
 		if (following) {
