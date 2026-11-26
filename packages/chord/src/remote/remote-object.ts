@@ -734,8 +734,9 @@ export class RemoteObject implements Target {
 			if (retirements.has(target)) throw new Error(`hold ${id}: member ${member} retired twice in one state`);
 			retirements.add(target);
 		}
-		// The indexes read so far, each read once from the entry (as ever: a codec's entries are read so).
-		const indexes: number[] = new Array(members.length);
+		// The indexes read so far, each read once from the entry (as ever: a codec's entries and lists are read so, not
+		// even its length again).
+		const indexes: number[] = [];
 		const updates = members.map(({ member, ops }, at) => {
 			const target = replicaAt(bound, id, member);
 			// A hold's members are its contract's few: the earlier ones scanned (one index, one replica), no set per

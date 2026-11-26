@@ -1,9 +1,10 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context, withCancel } from "../../src/context/index.ts";
 import { int, local, method, remote, str } from "../../src/contracts/index.ts";
 import { createHost, defineFacet, type FacetHost, type HostError } from "../../src/host/index.ts";
-import { type Compression, memoryLinkPair, type PartLimits } from "../../src/link/index.ts";
-import { jsonPart, type Message } from "../../src/link/internal.ts";
+import { type Codec, type Compression, memoryLinkPair, type PartLimits } from "../../src/link/index.ts";
+import { binaryCodec, jsonPart, type Message } from "../../src/link/internal.ts";
 import { nodeCompression } from "../../src/node/compression.ts";
 import { constant } from "../../src/state/index.ts";
 import {
@@ -562,5 +563,75 @@ describe("origins only from relays (decision, slice 10 security audit K1/K2)", (
 		// About 1 KiB per origin before: 20 MiB. The bound leaves room for heap noise (CI measured 0.6 MiB).
 		expect((await settledHeap()) - before).toBeLessThan(4 * 1024 * 1024);
 		expect(peer.closed).toBe(false);
+	}, 60_000);
+});
+
+describe("what a host reads of the messages a codec decodes (a guard; the second reviewer's read log)", () => {
+	/**
+	 * `value` behind a logging proxy, its plain objects and lists too, each read counted by its path (`#` for any index)
+	 * in `reads`: what Chord does with what a codec returned, which a codec may observe.
+	 */
+	const watched = (value: unknown, path: string, reads: Map<string, number>): unknown => {
+		if (value === null || typeof value !== "object") return value;
+		if (!Array.isArray(value) && Object.getPrototypeOf(value) !== Object.prototype) return value;
+		// A fresh decode, the test's to wrap.
+		const target = value as Record<string | symbol, unknown>;
+		for (const key of Object.keys(target)) {
+			target[key] = watched(target[key], `${path}.${Array.isArray(value) ? "#" : key}`, reads);
+		}
+		const note = (what: string) => reads.set(`${path} ${what}`, (reads.get(`${path} ${what}`) ?? 0) + 1);
+		return new Proxy(target, {
+			get(object, key, receiver) {
+				note(`get ${typeof key === "symbol" ? key.toString() : /^\d+$/.test(key) ? "#" : key}`);
+				return Reflect.get(object, key, receiver);
+			},
+			ownKeys(object) {
+				note("ownKeys");
+				return Reflect.ownKeys(object);
+			},
+			has(object, key) {
+				note(`has ${String(key)}`);
+				return Reflect.has(object, key);
+			},
+		});
+	};
+	const codecFor = (end: string, reads: Map<string, number>): Codec => ({
+		name: binaryCodec.name,
+		encode: (message) => binaryCodec.encode(message),
+		decode: (bytes) => {
+			const message = binaryCodec.decode(bytes);
+			return watched(message, `${end}:${message.kind}`, reads) as Message;
+		},
+	});
+
+	it("reads exactly what it read on 1cbc0e094: holds, bindings, state, calls, results, errors, releases", async () => {
+		const reads = new Map<string, number>();
+		const server = createHost<TestPrincipal>({ address: Server(), principal: { kind: "server" }, onError: () => {} });
+		await server.load([{ name: "@test/app", facet: defineFacet<TestPrincipal>((h) => void serveNotes(h)) }], context);
+		const client = createHost<TestPrincipal>({ onError: () => {} });
+		await client.load([], context);
+		const [near, far] = memoryLinkPair();
+		server.accept(near, { principal: { kind: "owner" }, codec: codecFor("server", reads) }, context);
+		client.connect(far, { principal: { kind: "server" }, codec: codecFor("client", reads) }, context);
+		const a = await client.get(Notes, { session: "S1" }, context);
+		const b = await client.get(Notes, { session: "S2" }, context);
+		for (let index = 0; index < 3; index++) await a.add!({ text: `t${index}` }, context);
+		await b.add!({ text: "x" }, context);
+		await a.echo!({ data: new Uint8Array([1, 2, 3]) }, context);
+		await a.fail!({ how: "chord" }, context).catch(() => {});
+		await a.fail!({ how: "plugin" }, context).catch(() => {});
+		await transported();
+		a.release();
+		await transported();
+		b.release();
+		await transported();
+		await client.close(context);
+		await server.close(context);
+		// Every read and its count (`path what count`), as the base made them: a change that reads more fails here.
+		const expected = readFileSync(new URL("fixtures/decoded-reads.txt", import.meta.url), "utf8")
+			.trim()
+			.split("\n");
+		const actual = [...reads].map(([read, count]) => `${read} ${count}`).sort();
+		expect(actual).toEqual(expected);
 	}, 60_000);
 });
